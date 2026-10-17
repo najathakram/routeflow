@@ -59,7 +59,7 @@ export function priceWriteError(err: unknown): PriceWriteError | null {
  * `refetchOnStale`: a stale answer refetches the grid and the customers' prices. Undo wants it (its preview reads the
  * served grid); Save does not: its notice owns the reload. Save itself never auto-refetches on a stale answer.
  * `writesCustomers`: a write that moved customer prices leaves the customers query behind, so it is refetched.
- * Save and Undo both refetch the product query (`["products", id]`, the key of `useProduct`) and the units list on success.
+ * Save and Undo both refetch every cached `["products", …]` query except the price grid on success.
  */
 function usePriceWrite<Req>(
   productId: string,
@@ -75,10 +75,12 @@ function usePriceWrite<Req>(
       apiClient[PRICE_WRITE_METHOD](`/products/${productId}${path}`, body).then((r) => r.data),
     onSuccess: (res, body) => {
       qc.setQueryData(priceGridKey(productId), res.grid);
-      // The product the Details form reads holds the same list price and tiers: refetch it (exact, so the grid just
-      // written above is not invalidated with it), or the next Details save works from the pre-save row.
-      void qc.invalidateQueries({ queryKey: ["products", productId], exact: true });
-      // The legacy Units card drafts its per-unit prices from this list and re-sends them on its own save.
+      // Every cached product may hold the prices this write just moved: the product the Details form reads, a legacy
+      // parent that embeds its variants, the products lists the quick-save reads, the units lists. Only the price grid
+      // (written just above) is spared. staleTime is 30s and focus refetch is off, so nothing else would refresh them.
+      void qc.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === "products" && q.queryKey[2] !== "price-grid",
+      });
       void qc.invalidateQueries({ queryKey: productUnitsKey(productId) });
       if (writesCustomers(body))
         void qc.invalidateQueries({ queryKey: productCustomerPricesKey(productId) });

@@ -103,12 +103,7 @@ import { ProductJumpLinks } from "./units-v2/nav/ProductJumpLinks";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
-import {
-  detailsPricePatch,
-  editTierPatch,
-  editTierPatchMoves,
-  type PriceDraftKey,
-} from "@/lib/product-tier-patch";
+import { detailsPriceMoves, detailsPricePatch, type PriceDraftKey } from "@/lib/product-tier-patch";
 import { keptLabelsNote } from "@/lib/kept-labels-copy";
 import { isStaffRole } from "@/lib/default-unit-line";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -420,6 +415,10 @@ export default function ProductDetailPage() {
     priceTier4: "",
     priceTier5: "",
   });
+  // The price strings the variant modal opened with: a variant price is sent only when changed against these.
+  const variantPricesWhenOpenedRef = React.useRef<Record<PriceDraftKey, string> | undefined>(
+    undefined,
+  );
   const variantSkuRef = React.useRef<HTMLInputElement>(null);
   const variantUnitSkuRef = React.useRef<HTMLInputElement>(null);
 
@@ -797,7 +796,7 @@ export default function ProductDetailPage() {
     if (variant) {
       const vp = parseFloat(String(variant.pricePerUnit));
       setEditingVariant(variant);
-      setVariantForm({
+      const form = {
         variantName: variant.variantName ?? "",
         sku: variant.sku ?? "",
         unitSku: variant.unitSku ?? "",
@@ -807,7 +806,15 @@ export default function ProductDetailPage() {
         priceTier3: String(parseFloat(String((variant as any).priceTier3 ?? vp))),
         priceTier4: String(parseFloat(String((variant as any).priceTier4 ?? vp))),
         priceTier5: String(parseFloat(String((variant as any).priceTier5 ?? vp))),
-      });
+      };
+      variantPricesWhenOpenedRef.current = {
+        pricePerUnit: form.price,
+        priceTier2: form.priceTier2,
+        priceTier3: form.priceTier3,
+        priceTier4: form.priceTier4,
+        priceTier5: form.priceTier5,
+      };
+      setVariantForm(form);
     } else {
       setEditingVariant(null);
       setVariantForm({
@@ -846,8 +853,9 @@ export default function ProductDetailPage() {
         priceTier4: variantForm.priceTier4 || variantForm.price,
         priceTier5: variantForm.priceTier5 || variantForm.price,
       };
-      const vMoved = ladderChangeNote(editTierPatchMoves(editingVariant as any, vDraft), (n) =>
-        productTierLabel(tierLabels, n),
+      const vMoved = ladderChangeNote(
+        detailsPriceMoves(editingVariant as any, vDraft, variantPricesWhenOpenedRef.current),
+        (n) => productTierLabel(tierLabels, n),
       );
       updateProduct.mutate(
         {
@@ -855,9 +863,9 @@ export default function ProductDetailPage() {
           variantName: variantForm.variantName,
           sku: variantForm.sku || undefined,
           unitSku: variantForm.unitSku || undefined,
-          pricePerUnit: vList,
-          // Untouched tiers move with the variant's list change, the same rule as the products list (audit 2026-10-14).
-          ...editTierPatch(editingVariant as any, vDraft),
+          // Only a price the operator changed is sent (never the variant row the parent's cache embeds); untouched
+          // tiers move with the variant's list change by the products list's rule (audit 2026-10-14).
+          ...detailsPricePatch(editingVariant as any, vDraft, variantPricesWhenOpenedRef.current),
         },
         {
           onSuccess: () => {
@@ -1969,7 +1977,11 @@ export default function ProductDetailPage() {
                     (() => {
                       // Names the tiers a save would move with the list (#3470 review: never a fixed string).
                       const note = ladderChangeNote(
-                        editTierPatchMoves(product, editDraft as Record<string, string>),
+                        detailsPriceMoves(
+                          product,
+                          editDraft as Record<string, string>,
+                          pricesWhenEditStartedRef.current,
+                        ),
                         (n) => productTierLabel(tierLabels, n),
                       );
                       return note ? (

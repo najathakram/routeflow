@@ -1,5 +1,10 @@
 import { applyLadderChange } from "@routeflow/pricing";
-import { detailsPricePatch, editTierPatch, editTierPatchMoves } from "./product-tier-patch";
+import {
+  detailsPriceMoves,
+  detailsPricePatch,
+  editTierPatch,
+  editTierPatchMoves,
+} from "./product-tier-patch";
 
 /**
  * REG (product page audit 2026-10-14, money): the detail page's list field did not move the tiers, unlike the products
@@ -126,34 +131,87 @@ describe("#3470 review: a list change from 0 and typed tiers", () => {
 describe("detailsPricePatch: the Details save sends only the prices the operator changed", () => {
   const s = stored("9.00", "10.00", "0.00", "10.00");
   const seeded = shown(s);
+  const none = {
+    pricePerUnit: undefined,
+    priceTier2: undefined,
+    priceTier3: undefined,
+    priceTier4: undefined,
+    priceTier5: undefined,
+  };
 
   it("REG: an untouched draft sends no price key at all (a v2 save may have moved them since)", () => {
-    expect(detailsPricePatch(s, { ...seeded }, seeded)).toEqual({
-      pricePerUnit: undefined,
-      priceTier2: undefined,
-      priceTier3: undefined,
-      priceTier4: undefined,
-      priceTier5: undefined,
+    expect(detailsPricePatch(s, { ...seeded }, seeded)).toEqual(none);
+  });
+
+  it("an equal value typed differently (10 vs 10.00) is not a change", () => {
+    expect(detailsPricePatch(s, { ...seeded, pricePerUnit: "10.00" }, seeded)).toEqual(none);
+  });
+
+  it("a changed list price is sent with ONLY the tiers the ladder moves (9/10/0/10 -> 12 sends 12, T3, T5)", () => {
+    expect(detailsPricePatch(s, { ...seeded, pricePerUnit: "12" }, seeded)).toEqual({
+      ...none,
+      pricePerUnit: "12",
+      priceTier3: "12.00",
+      priceTier5: "12.00",
     });
   });
 
-  it("a changed list price is sent with the ladder's tiers, exactly as editTierPatch builds them", () => {
-    const draft = { ...seeded, pricePerUnit: "12" };
-    expect(detailsPricePatch(s, draft, seeded)).toEqual({
-      pricePerUnit: "12",
-      ...editTierPatch(s, draft),
+  it("MUST 1: a tier a v2 save moved while the form was open is not reverted by a list edit", () => {
+    // list 10, T2 9, T3 8; the v2 grid saved T2 = 8.50 (the fresh product); the operator raises the list to 11.
+    const old = stored("9.00", "8.00", "0.00", "0.00");
+    const fresh = { ...old, priceTier2: "8.50" };
+    expect(detailsPricePatch(fresh, { ...shown(old), pricePerUnit: "11" }, shown(old))).toEqual({
+      ...none,
+      pricePerUnit: "11",
     });
+  });
+
+  it("MUST 1: whether an untouched tier moves is decided on its FRESH value, not the one the form opened with", () => {
+    // Opened with T2 tracking the list (10); the v2 grid then set T2 = 8.50, so a list change must not move it.
+    const old = stored("10.00", "8.00", "0.00", "0.00");
+    const fresh = { ...old, priceTier2: "8.50" };
+    expect(
+      detailsPricePatch(fresh, { ...shown(old), pricePerUnit: "11" }, shown(old)).priceTier2,
+    ).toBeUndefined();
+    // ...and a tier that NOW tracks the list moves from the fresh value (T3 8 -> 10 by v2, list 10 -> 11).
+    const fresh3 = { ...old, priceTier3: "10.00" };
+    expect(
+      detailsPricePatch(fresh3, { ...shown(old), pricePerUnit: "11" }, shown(old)).priceTier3,
+    ).toBe("11.00");
   });
 
   it("a changed tier is sent alone; the list price and the other tiers stay out", () => {
     const out = detailsPricePatch(s, { ...seeded, priceTier2: "7" }, seeded);
-    expect(out.priceTier2).toBe("7");
-    expect(out.pricePerUnit).toBeUndefined();
-    expect(out.priceTier3).toBeUndefined();
-    expect(out.priceTier5).toBeUndefined();
+    expect(out).toEqual({ ...none, priceTier2: "7" });
+  });
+
+  it("a tier the operator typed wins over a ladder move, whatever the fresh value is", () => {
+    const out = detailsPricePatch(s, { ...seeded, pricePerUnit: "12", priceTier3: "10.5" }, seeded);
+    expect(out.priceTier3).toBe("10.5");
+    expect(out.pricePerUnit).toBe("12");
   });
 
   it("with no recorded edit session it falls back to sending every price (the pre-fix shape)", () => {
     expect(detailsPricePatch(s, { ...seeded }, undefined).pricePerUnit).toBe("10");
+  });
+});
+
+describe("detailsPriceMoves: the note names exactly the tiers the save moves with the list", () => {
+  const s = stored("9.00", "10.00", "0.00", "10.00");
+  const seeded = shown(s);
+
+  it("names the tiers the ladder moves and none the operator typed", () => {
+    expect(detailsPriceMoves(s, { ...seeded, pricePerUnit: "12" }, seeded)).toEqual({
+      priceTier3: "12.00",
+      priceTier5: "12.00",
+    });
+    expect(
+      detailsPriceMoves(s, { ...seeded, pricePerUnit: "12", priceTier3: "10.5" }, seeded),
+    ).toEqual({ priceTier5: "12.00" });
+  });
+
+  it("is empty when nothing moves", () => {
+    expect(detailsPriceMoves(s, { ...seeded }, seeded)).toEqual({});
+    expect(detailsPriceMoves(s, { ...seeded, priceTier2: "7" }, seeded)).toEqual({});
   });
 });

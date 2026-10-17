@@ -60,70 +60,60 @@ describe("usePriceWrites", () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
   });
 
-  describe("the product the Details form reads goes stale with a write", () => {
+  describe("every cached product the write may have left stale is refetched", () => {
     const ok = { data: { revision: 8, auditId: "a1", undo: { patches: [] }, grid: {} } };
-    const productKey = { queryKey: ["products", "p1"], exact: true };
-
-    it("a successful save refetches the product query (exact: the grid just written is not invalidated)", async () => {
-      mockPost.mockResolvedValue(ok);
+    const KEYS = {
+      product: ["products", "p1"],
+      parent: ["products", "parent-1"], // the legacy parent embeds its variants' prices
+      list: ["products", { search: "x" }], // the products list's quick-save reads its rows
+      units: productUnitsKey("p1"),
+      otherUnits: productUnitsKey("v1"),
+      grid: priceGridKey("p1"),
+      orders: ["orders", "o1"],
+    } as const;
+    const seeded = () => {
       const qc = new QueryClient();
-      const spy = jest.spyOn(qc, "invalidateQueries");
+      for (const k of Object.values(KEYS)) qc.setQueryData([...k], { seeded: true });
+      return qc;
+    };
+    const stale = (qc: QueryClient, k: readonly unknown[]) =>
+      qc.getQueryState([...k])?.isInvalidated === true;
+
+    it("a successful save refetches the product, its parent, the lists and the units; never the grid it just wrote", async () => {
+      mockPost.mockResolvedValue(ok);
+      const qc = seeded();
       const { result } = renderHook(() => useSavePrices("p1"), { wrapper: wrap(qc) });
       result.current.mutate({ expectedRevision: 7, expectedPriceState: "ps", patches: [] });
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
-      expect(spy).toHaveBeenCalledWith(productKey);
-      expect(spy).not.toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
+      expect(stale(qc, KEYS.product)).toBe(true);
+      expect(stale(qc, KEYS.parent)).toBe(true);
+      expect(stale(qc, KEYS.list)).toBe(true);
+      expect(stale(qc, KEYS.units)).toBe(true);
+      expect(stale(qc, KEYS.otherUnits)).toBe(true);
+      expect(stale(qc, KEYS.grid)).toBe(false);
+      expect(stale(qc, KEYS.orders)).toBe(false);
     });
 
-    it("a successful undo refetches the product query", async () => {
+    it("a successful undo refetches the same caches", async () => {
       mockPost.mockResolvedValue(ok);
-      const qc = new QueryClient();
-      const spy = jest.spyOn(qc, "invalidateQueries");
+      const qc = seeded();
       const { result } = renderHook(() => useUndoPrices("p1"), { wrapper: wrap(qc) });
       result.current.mutate({ auditId: "a1", expectedRevision: 8, expectedPriceState: "ps" });
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
-      expect(spy).toHaveBeenCalledWith(productKey);
+      expect(stale(qc, KEYS.product)).toBe(true);
+      expect(stale(qc, KEYS.parent)).toBe(true);
+      expect(stale(qc, KEYS.list)).toBe(true);
+      expect(stale(qc, KEYS.units)).toBe(true);
+      expect(stale(qc, KEYS.grid)).toBe(false);
     });
 
-    it("a successful save refetches the units list the legacy card drafts from (not the grid)", async () => {
-      mockPost.mockResolvedValue(ok);
-      const qc = new QueryClient();
-      const spy = jest.spyOn(qc, "invalidateQueries");
-      const { result } = renderHook(() => useSavePrices("p1"), { wrapper: wrap(qc) });
-      result.current.mutate({ expectedRevision: 7, expectedPriceState: "ps", patches: [] });
-      await waitFor(() => expect(result.current.isSuccess).toBe(true));
-      expect(spy).toHaveBeenCalledWith({ queryKey: productUnitsKey("p1") });
-      expect(spy).not.toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
-    });
-
-    it("a successful undo refetches the units list too", async () => {
-      mockPost.mockResolvedValue(ok);
-      const qc = new QueryClient();
-      const spy = jest.spyOn(qc, "invalidateQueries");
-      const { result } = renderHook(() => useUndoPrices("p1"), { wrapper: wrap(qc) });
-      result.current.mutate({ auditId: "a1", expectedRevision: 8, expectedPriceState: "ps" });
-      await waitFor(() => expect(result.current.isSuccess).toBe(true));
-      expect(spy).toHaveBeenCalledWith({ queryKey: productUnitsKey("p1") });
-    });
-
-    it("a refused save leaves the units list alone", async () => {
+    it("a refused save leaves every one of them alone", async () => {
       mockPost.mockRejectedValue({ response: { data: { code: "PRICE_EDIT_INVALID" } } });
-      const qc = new QueryClient();
-      const spy = jest.spyOn(qc, "invalidateQueries");
+      const qc = seeded();
       const { result } = renderHook(() => useSavePrices("p1"), { wrapper: wrap(qc) });
       result.current.mutate({ expectedRevision: 7, expectedPriceState: "ps", patches: [] });
       await waitFor(() => expect(result.current.isError).toBe(true));
-      expect(spy).not.toHaveBeenCalledWith({ queryKey: productUnitsKey("p1") });
-    });
-
-    it("a refused save leaves the product query alone", async () => {
-      mockPost.mockRejectedValue({ response: { data: { code: "PRICE_EDIT_INVALID" } } });
-      const qc = new QueryClient();
-      const spy = jest.spyOn(qc, "invalidateQueries");
-      const { result } = renderHook(() => useSavePrices("p1"), { wrapper: wrap(qc) });
-      result.current.mutate({ expectedRevision: 7, expectedPriceState: "ps", patches: [] });
-      await waitFor(() => expect(result.current.isError).toBe(true));
-      expect(spy).not.toHaveBeenCalledWith(productKey);
+      for (const k of Object.values(KEYS)) expect(stale(qc, k)).toBe(false);
     });
   });
 

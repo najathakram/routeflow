@@ -67,27 +67,65 @@ export function editTierPatchMoves(
   return moves;
 }
 
+/** Two money strings are the same price when they match in cents ("10" = "10.00"); anything unparsable compares as text. */
+const sameMoney = (a: string | undefined, b: string | undefined): boolean => {
+  if (a === undefined || b === undefined || a.trim() === "" || b.trim() === "") return a === b;
+  const x = Number(a);
+  const y = Number(b);
+  return Number.isFinite(x) && Number.isFinite(y) ? roundMoney(x) === roundMoney(y) : a === b;
+};
+
+type PriceDraft = Partial<Record<PriceDraftKey, string | undefined>>;
+
 /**
- * The price keys of the Details save (units v2, money). A v2 price save moves prices outside this form, so the form
- * sends a price ONLY when the operator changed it: a field whose draft still equals the string the form was seeded
- * with is a dirty-less field and is omitted (never the stale snapshot). A changed list price keeps the existing
- * ladder rule, so every tier goes with it exactly as `editTierPatch` builds them. A plain string compare is the
- * whole test: the draft is seeded and edited as strings, so no money is parsed or rounded here.
- * Without the seed (no edit session recorded) this falls back to sending all of them, the pre-fix behaviour.
+ * The price keys of a Details-form or variant-modal save (units v2, money). A price save elsewhere on the page moves
+ * prices while the form is open, so the form sends a price ONLY when the operator changed it: a field whose draft still
+ * equals what the form was SEEDED with (compared in cents) is left out of the PATCH, never written back as a snapshot.
+ * "Untouched" is always draft against seeded, never draft against the refetched product.
+ *
+ * A changed list price is sent with the tiers the operator typed (always) and ONLY the untouched tiers the ladder rule
+ * (`applyLadderChange("pricePerUnit", …)`, the products list quick-save's rule) moves with it. That rule reads the
+ * FRESH product (`stored`): a tier that tracks the list now moves from its fresh value, one a v2 save has since pulled
+ * away from the list stays out of the PATCH. An untouched, unmoved tier is never sent.
+ * Without the seed (no edit session recorded) this falls back to the whole `editTierPatch` (the pre-fix shape).
  */
 export function detailsPricePatch(
   stored: TierPrices,
-  draft: Partial<Record<PriceDraftKey, string | undefined>>,
+  draft: PriceDraft,
   seeded: Record<PriceDraftKey, string> | undefined,
 ): Record<PriceDraftKey, string | undefined> {
-  const all: Record<PriceDraftKey, string | undefined> = {
-    pricePerUnit: asDecimal(draft.pricePerUnit),
-    ...editTierPatch(stored, draft),
-  };
-  if (!seeded) return all;
-  const listDirty = draft.pricePerUnit !== seeded.pricePerUnit;
-  const out = {} as Record<PriceDraftKey, string | undefined>;
-  for (const k of Object.keys(all) as PriceDraftKey[])
-    out[k] = listDirty || draft[k] !== seeded[k] ? all[k] : undefined;
+  if (!seeded)
+    return { pricePerUnit: asDecimal(draft.pricePerUnit), ...editTierPatch(stored, draft) };
+  const listDirty = !sameMoney(draft.pricePerUnit, seeded.pricePerUnit);
+  const untouched: Partial<Record<TierPriceKey, Price>> = {};
+  for (const k of TIER_PRICE_KEYS) if (sameMoney(draft[k], seeded[k])) untouched[k] = stored[k];
+  const moved = listDirty
+    ? applyLadderChange(
+        "pricePerUnit",
+        stored.pricePerUnit,
+        draft.pricePerUnit ?? stored.pricePerUnit,
+        untouched,
+      )
+    : {};
+  const out = { pricePerUnit: listDirty ? asDecimal(draft.pricePerUnit) : undefined } as Record<
+    PriceDraftKey,
+    string | undefined
+  >;
+  // A tier the operator typed wins; an untouched one is sent only when the ladder moved it.
+  for (const k of TIER_PRICE_KEYS) out[k] = k in untouched ? moved[k] : asDecimal(draft[k]);
   return out;
+}
+
+/** The tiers a save of this draft would MOVE with the list (the "tiers will move" note): exactly the ones the PATCH carries for them. */
+export function detailsPriceMoves(
+  stored: TierPrices,
+  draft: PriceDraft,
+  seeded: Record<PriceDraftKey, string> | undefined,
+): Partial<Record<TierPriceKey, string>> {
+  if (!seeded) return editTierPatchMoves(stored, draft);
+  const patch = detailsPricePatch(stored, draft, seeded);
+  const moves: Partial<Record<TierPriceKey, string>> = {};
+  for (const k of TIER_PRICE_KEYS)
+    if (patch[k] !== undefined && sameMoney(draft[k], seeded[k])) moves[k] = patch[k];
+  return moves;
 }

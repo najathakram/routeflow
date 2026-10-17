@@ -32,90 +32,112 @@ const readProduct = async (page: Page, ctx: Ctx, id: string) => {
 test.describe("Units v2 Details save after a v2 price save @ 1440", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("a rename in Details keeps the price the v2 grid just saved", async ({ page, context }) => {
-    assertTestTenant(TENANT_SLUG, "units-v2 details stale price fixtures");
-    await setTenantCookie(context, BASE);
-    const ctx = await requireUnitsV2Flag(page);
+  for (const detailsFirst of [false, true]) {
+    test(`a rename in Details keeps the price the v2 grid just saved (Details opened ${
+      detailsFirst ? "BEFORE" : "after"
+    } the v2 save)`, async ({ page, context }) => {
+      assertTestTenant(TENANT_SLUG, "units-v2 details stale price fixtures");
+      await setTenantCookie(context, BASE);
+      const ctx = await requireUnitsV2Flag(page);
 
-    const tag = Date.now().toString(36).toUpperCase();
-    const name = `QA UV2 Stale ${tag}`;
-    const created = await page.request.post(`${ctx.api}/products`, {
-      headers: ctx.headers,
-      data: {
-        name,
-        sku: `QAUV2X${tag}`,
-        unit: "Box",
-        unitsPerBox: 12,
-        pricePerUnit: START.toFixed(2),
-      },
+      const tag = Date.now().toString(36).toUpperCase();
+      const name = `QA UV2 Stale ${tag}`;
+      const created = await page.request.post(`${ctx.api}/products`, {
+        headers: ctx.headers,
+        data: {
+          name,
+          sku: `QAUV2X${tag}`,
+          unit: "Box",
+          unitsPerBox: 12,
+          pricePerUnit: START.toFixed(2),
+        },
+      });
+      expect(created.ok(), `create the throwaway product: ${created.status()}`).toBeTruthy();
+      const id = ((await created.json()) as { id: string }).id;
+      const openDetails = async () => {
+        await page.locator('button[title="Edit product"]').first().click();
+        await expect(page.locator(`input[value="${name}"]`).first()).toBeVisible({
+          timeout: 10_000,
+        });
+      };
+
+      try {
+        // 1. The case price before anything changes.
+        expect(Number((await readProduct(page, ctx, id)).pricePerUnit)).toBe(START);
+
+        // 2. Change it in the v2 grid: edit the anchor Retail cell, save with the save bar.
+        await page.goto(`/products/${id}`);
+        await expect(page.getByTestId(ID.grid)).toBeVisible({ timeout: 20_000 });
+        if (detailsFirst) await openDetails(); // the form seeds from the pre-save price
+        const grid = await page.request.get(`${ctx.api}/products/${id}/price-grid`, {
+          headers: ctx.headers,
+        });
+        expect(grid.ok(), `GET price-grid returned ${grid.status()}`).toBe(true);
+        const ref = ((await grid.json()) as { anchor: string }).anchor;
+        const cell = page.locator(`[data-testid="${ID.cell(ref, TIER)}"]:visible`);
+        const input = page.locator(`[data-testid="${ID.input(ref, TIER)}"]:visible`);
+        await cell.getByRole("button").click();
+        await expect(input).toBeFocused();
+        await input.fill(String(NEXT));
+        const saved = page.waitForResponse(
+          (r) =>
+            r.request().method() === "POST" &&
+            new URL(r.url()).pathname.endsWith(`/products/${id}/prices`),
+        );
+        // The save must refetch the product the Details form reads (the fix); wait for that read to land.
+        const refetched = page.waitForResponse(
+          (r) =>
+            r.request().method() === "GET" && new URL(r.url()).pathname.endsWith(`/products/${id}`),
+        );
+        await page.locator(`[data-testid="${ID.ebSave}"]:visible`).click();
+        expect((await saved).ok()).toBe(true);
+        await refetched;
+        await expect(
+          page.locator(`[data-testid="${ID.saveStatus}"]:visible`).first(),
+        ).toContainText(/Saved/, { timeout: 15_000 });
+        // The server holds the new price. (No reload: the page must cope with what it already has.)
+        expect(Number((await readProduct(page, ctx, id)).pricePerUnit)).toBe(NEXT);
+
+        // 3. Open Details edit (unless it already is), rename, save from the Details form itself.
+        if (!detailsFirst) await openDetails();
+        const nameInput = page.locator(`input[value="${name}"]`).first();
+        await nameInput.fill(`${name} R`);
+        const detailsForm = page
+          .locator("div")
+          .filter({ has: nameInput })
+          .filter({ has: page.getByRole("button", { name: "Cancel" }) })
+          .last();
+        const patched = page.waitForResponse(
+          (r) =>
+            r.request().method() === "PATCH" &&
+            new URL(r.url()).pathname.endsWith(`/products/${id}`),
+        );
+        await detailsForm.getByRole("button", { name: "Save", exact: true }).click();
+        const patchResp = await patched;
+        expect(patchResp.status()).toBeLessThan(300);
+
+        // 4. The product, read back through the API, still carries the NEW price (and the new name).
+        const after = await readProduct(page, ctx, id);
+        expect(after.name).toBe(`${name} R`);
+        expect(Number(after.pricePerUnit), "the rename must not restore the old case price").toBe(
+          NEXT,
+        );
+      } finally {
+        // Restore the name and the price (logged, never asserted, so a failure here cannot skip the retire),
+        // then always retire the throwaway product softly.
+        const restore = await page.request.patch(`${ctx.api}/products/${id}`, {
+          headers: ctx.headers,
+          data: { name, pricePerUnit: START.toFixed(2) },
+        });
+        if (!restore.ok()) console.warn(`restore the name and price: ${restore.status()}`);
+        const retire = await page.request.patch(`${ctx.api}/products/${id}`, {
+          headers: ctx.headers,
+          data: { isActive: false },
+        });
+        expect(retire.ok(), `retire the throwaway product: ${retire.status()}`).toBeTruthy();
+      }
     });
-    expect(created.ok(), `create the throwaway product: ${created.status()}`).toBeTruthy();
-    const id = ((await created.json()) as { id: string }).id;
-
-    try {
-      // 1. The case price before anything changes.
-      expect(Number((await readProduct(page, ctx, id)).pricePerUnit)).toBe(START);
-
-      // 2. Change it in the v2 grid: edit the anchor Retail cell, save with the save bar.
-      await page.goto(`/products/${id}`);
-      await expect(page.getByTestId(ID.grid)).toBeVisible({ timeout: 20_000 });
-      const grid = await page.request.get(`${ctx.api}/products/${id}/price-grid`, {
-        headers: ctx.headers,
-      });
-      expect(grid.ok(), `GET price-grid returned ${grid.status()}`).toBe(true);
-      const ref = ((await grid.json()) as { anchor: string }).anchor;
-      const cell = page.locator(`[data-testid="${ID.cell(ref, TIER)}"]:visible`);
-      const input = page.locator(`[data-testid="${ID.input(ref, TIER)}"]:visible`);
-      await cell.getByRole("button").click();
-      await expect(input).toBeFocused();
-      await input.fill(String(NEXT));
-      const saved = page.waitForResponse(
-        (r) =>
-          r.request().method() === "POST" &&
-          new URL(r.url()).pathname.endsWith(`/products/${id}/prices`),
-      );
-      await page.locator(`[data-testid="${ID.ebSave}"]:visible`).click();
-      expect((await saved).ok()).toBe(true);
-      await expect(page.locator(`[data-testid="${ID.saveStatus}"]:visible`).first()).toContainText(
-        /Saved/,
-        { timeout: 15_000 },
-      );
-      // The server holds the new price. (No reload: the page must cope with what it already has.)
-      expect(Number((await readProduct(page, ctx, id)).pricePerUnit)).toBe(NEXT);
-
-      // 3. Open Details edit, rename, save.
-      await page.locator('button[title="Edit product"]').first().click();
-      const nameInput = page.locator(`input[value="${name}"]`).first();
-      await expect(nameInput).toBeVisible({ timeout: 10_000 });
-      await nameInput.fill(`${name} R`);
-      const patched = page.waitForResponse(
-        (r) =>
-          r.request().method() === "PATCH" && new URL(r.url()).pathname.endsWith(`/products/${id}`),
-      );
-      await page.getByRole("button", { name: /save/i }).first().click();
-      const patchResp = await patched;
-      expect(patchResp.status()).toBeLessThan(300);
-
-      // 4. The product, read back through the API, still carries the NEW price (and the new name).
-      const after = await readProduct(page, ctx, id);
-      expect(after.name).toBe(`${name} R`);
-      expect(Number(after.pricePerUnit), "the rename must not restore the old case price").toBe(
-        NEXT,
-      );
-    } finally {
-      // Restore the name and the price, then retire the throwaway product softly.
-      const restore = await page.request.patch(`${ctx.api}/products/${id}`, {
-        headers: ctx.headers,
-        data: { name, pricePerUnit: START.toFixed(2) },
-      });
-      expect(restore.ok(), `restore the name and price: ${restore.status()}`).toBeTruthy();
-      const retire = await page.request.patch(`${ctx.api}/products/${id}`, {
-        headers: ctx.headers,
-        data: { isActive: false },
-      });
-      expect(retire.ok(), `retire the throwaway product: ${retire.status()}`).toBeTruthy();
-    }
-  });
+  }
 
   test("renaming a non-pack unit in the legacy card keeps the price the v2 grid just saved", async ({
     page,
@@ -181,8 +203,15 @@ test.describe("Units v2 Details save after a v2 price save @ 1440", () => {
           r.request().method() === "POST" &&
           new URL(r.url()).pathname.endsWith(`/products/${id}/prices`),
       );
+      // The save must refetch the units list the legacy card drafts from; wait for that read to land.
+      const refetched = page.waitForResponse(
+        (r) =>
+          r.request().method() === "GET" &&
+          new URL(r.url()).pathname.endsWith(`/products/${id}/units`),
+      );
       await page.locator(`[data-testid="${ID.ebSave}"]:visible`).click();
       expect((await saved).ok()).toBe(true);
+      await refetched;
       await expect(page.locator(`[data-testid="${ID.saveStatus}"]:visible`).first()).toContainText(
         /Saved/,
         { timeout: 15_000 },
@@ -213,7 +242,7 @@ test.describe("Units v2 Details save after a v2 price save @ 1440", () => {
           headers: ctx.headers,
           data: { label: "Pallet", price: unitPrice.toFixed(2) },
         });
-        expect(restore.ok(), `restore the unit name and price: ${restore.status()}`).toBeTruthy();
+        if (!restore.ok()) console.warn(`restore the unit name and price: ${restore.status()}`);
       }
       const retire = await page.request.patch(`${ctx.api}/products/${id}`, {
         headers: ctx.headers,

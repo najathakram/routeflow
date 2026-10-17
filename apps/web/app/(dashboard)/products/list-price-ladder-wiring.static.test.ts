@@ -14,7 +14,7 @@ const list = fs.readFileSync(path.join(__dirname, "page.tsx"), "utf8");
 describe("list-price changes move tiers by the one ladder rule", () => {
   it("detail page: the product save and the variant modal build their tiers with editTierPatch", () => {
     expect(detail).toMatch(/\.\.\.detailsPricePatch\(product, draft, /);
-    expect(detail).toMatch(/\.\.\.editTierPatch\(editingVariant as any, vDraft\)/);
+    expect(detail).toMatch(/\.\.\.detailsPricePatch\(editingVariant as any, vDraft, /);
     expect(detail).not.toMatch(/priceTier[2-5]: asDecimal\(/);
     expect(detail).toMatch(/data-testid="tiers-move-note"/);
   });
@@ -31,7 +31,7 @@ describe("list-price changes move tiers by the one ladder rule", () => {
 
   it("#3470 review: the detail note and the variant toast NAME the moved tiers; the variant modal uses one list value", () => {
     expect(detail).toMatch(
-      /ladderChangeNote\(\s*editTierPatchMoves\(product, editDraft as Record<string, string>\),/,
+      /ladderChangeNote\(\s*detailsPriceMoves\(\s*product,\s*editDraft as Record<string, string>,/,
     );
     expect(detail).not.toMatch(/TIERS_MOVE_NOTE/);
     expect(detail).toMatch(

@@ -135,14 +135,40 @@ async function renderPage() {
   return view;
 }
 
-/** A v2 save that moves the case price 10 -> 12 on the server; the response carries the fresh grid. */
-async function v2SaveToTwelve(user: ReturnType<typeof userEvent.setup>) {
+/** A v2 save that sets these fields on the server; the response carries the fresh grid. */
+async function v2SaveSetting(
+  user: ReturnType<typeof userEvent.setup>,
+  fields: Record<string, string>,
+) {
+  const before = getProduct.mock.calls.length;
   post.mockImplementationOnce(async () => {
-    server = { ...server, pricePerUnit: "12.00" };
+    server = { ...server, ...fields };
     return { data: { grid: { revision: 2 } } };
   });
   await user.click(screen.getByRole("button", { name: "price write v2" }));
   await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  // The product refetch must have LANDED before the operator's next move (the real page is no faster).
+  await waitFor(() => expect(getProduct.mock.calls.length).toBeGreaterThan(before));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+}
+
+/** A v2 save that moves the case price 10 -> 12. */
+const v2SaveToTwelve = (user: ReturnType<typeof userEvent.setup>) =>
+  v2SaveSetting(user, { pricePerUnit: "12.00" });
+
+/** Type a new list price into the open Details form (the list field is the first money input). */
+async function typeListPrice(user: ReturnType<typeof userEvent.setup>, to: string) {
+  const list = screen.getAllByDisplayValue("10.00")[0];
+  await user.clear(list);
+  await user.type(list, to);
+}
+
+async function saveDetails(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getAllByRole("button", { name: /save/i })[0]);
+  await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+  return patch.mock.calls[0][1] as Record<string, unknown>;
 }
 
 async function renameAndSave(user: ReturnType<typeof userEvent.setup>) {
@@ -180,9 +206,7 @@ describe("a Details save never restores a stale price", () => {
     const name = screen.getByDisplayValue("Acme Widget");
     await user.clear(name);
     await user.type(name, "Acme Widget 2");
-    await user.click(screen.getAllByRole("button", { name: /save/i })[0]);
-    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
-    const body = patch.mock.calls[0][1] as Record<string, unknown>;
+    const body = await saveDetails(user);
     for (const k of PRICE_KEYS) expect(body[k]).toBeUndefined();
   });
 
@@ -205,9 +229,51 @@ describe("a Details save never restores a stale price", () => {
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
     const body = patch.mock.calls[0][1] as Record<string, unknown>;
     expect(body.pricePerUnit).toBe("11");
-    // Tiers the operator did not touch keep their existing behaviour: they follow or hold exactly as before.
-    expect(body.priceTier2).toBe("9");
-    expect(body.priceTier4).toBe("0");
+    // A tier the ladder does not move (9 and 8 sit below 10, 0 follows the list) is left out of the PATCH.
+    for (const k of ["priceTier2", "priceTier3", "priceTier4", "priceTier5"])
+      expect(body[k]).toBeUndefined();
+  });
+
+  it("REG (list edit after a v2 tier save): a tier the ladder does not move is not sent, so the v2 tier price survives", async () => {
+    const user = userEvent.setup();
+    await renderPage();
+    await user.click(await screen.findByTitle("Edit product"));
+    await v2SaveSetting(user, { priceTier2: "8.50" });
+    await typeListPrice(user, "11");
+    // Nothing moves (8.50 and 8 sit below the old list, 0 follows it): no note promises a move.
+    expect(screen.queryByTestId("tiers-move-note")).toBeNull();
+    const body = await saveDetails(user);
+    expect(body.pricePerUnit).toBe("11");
+    for (const k of ["priceTier2", "priceTier3", "priceTier4", "priceTier5"])
+      expect(body[k]).toBeUndefined();
+  });
+
+  it("REG: a tier that tracked the list when the form opened is judged on its FRESH value, so a v2 price on it is not overwritten", async () => {
+    const user = userEvent.setup();
+    server = { ...server, priceTier2: "10.00" }; // Tier 2 tracks the list (10) when the form opens
+    await renderPage();
+    await user.click(await screen.findByTitle("Edit product"));
+    await v2SaveSetting(user, { priceTier2: "8.50" }); // the v2 grid breaks that tracking
+    await typeListPrice(user, "11");
+    expect(screen.queryByTestId("tiers-move-note")).toBeNull();
+    const body = await saveDetails(user);
+    expect(body.pricePerUnit).toBe("11");
+    expect(body.priceTier2).toBeUndefined();
+  });
+
+  it("a tier the ladder DOES move is sent, moving from its fresh value, and the note names exactly it", async () => {
+    const user = userEvent.setup();
+    await renderPage();
+    await user.click(await screen.findByTitle("Edit product"));
+    await v2SaveSetting(user, { priceTier3: "10.00" }); // Tier 3 now tracks the list (10)
+    await typeListPrice(user, "11");
+    const note = screen.getByTestId("tiers-move-note");
+    expect(note.textContent).toContain("Tier 3");
+    expect(note.textContent).not.toContain("Tier 2");
+    const body = await saveDetails(user);
+    expect(body.pricePerUnit).toBe("11");
+    expect(body.priceTier3).toBe("11.00");
+    expect(body.priceTier2).toBeUndefined();
   });
 
   it("editing one tier in Details sends that tier, and not the untouched case price", async () => {
