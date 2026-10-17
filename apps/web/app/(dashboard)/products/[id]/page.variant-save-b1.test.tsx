@@ -89,6 +89,12 @@ beforeEach(() => {
     opts?.onSuccess?.(),
   );
 });
+// The sticky edit bar renders its own Save; target the header one.
+const headerSave = () =>
+  screen
+    .getAllByRole("button", { name: /^save/i })
+    .find((b) => !b.closest('[data-testid="sticky-edit-bar"]'))!;
+
 const payloads = () => mutate.mock.calls.map((c) => c[0] as Record<string, unknown>);
 
 describe("B1: product detail variant save sends the bare name", () => {
@@ -96,7 +102,7 @@ describe("B1: product detail variant save sends the bare name", () => {
     current = VARIANT;
     mount();
     fireEvent.click(screen.getAllByTitle("Edit product")[0]);
-    fireEvent.click(screen.getByRole("button", { name: /^save/i }));
+    fireEvent.click(headerSave());
     expect(mutate).toHaveBeenCalledTimes(1);
     const payload = mutate.mock.calls[0][0] as { id: string; name: string };
     expect(payload.id).toBe("v1");
@@ -109,7 +115,7 @@ describe("B1: product detail variant save sends the bare name", () => {
     mount();
     for (let i = 0; i < 2; i += 1) {
       fireEvent.click(screen.getAllByTitle("Edit product")[0]);
-      fireEvent.click(screen.getByRole("button", { name: /^save/i }));
+      fireEvent.click(headerSave());
     }
     expect(payloads().map((p) => p.name)).toEqual(["Classic", "Classic"]);
   });
