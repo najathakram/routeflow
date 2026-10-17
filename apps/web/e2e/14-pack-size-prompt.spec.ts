@@ -6,7 +6,7 @@
  * Role: OPERATOR. READ-ONLY BY CONTRACT: the modal is opened once, driven
  * through three name/unit combinations that exercise HIGH, AMBIGUOUS and
  * PIECE_UNIT confidence, and closed via its own ✕ button without ever
- * submitting — the "Create Product" button is never clicked, so nothing is
+ * submitting — the "Create product" button is never clicked, so nothing is
  * saved to the tenant's catalog.
  *
  * Selectors scope to the dialog by role and name and use the form's linked labels
@@ -28,8 +28,8 @@ test.describe("Operator — Product-create pack-size prompt (WP2-14)", () => {
   /** Opens the create-product modal; returns its heading and a scope for the whole panel. */
   async function openCreateModal(page: Page) {
     await page.getByRole("button", { name: "New Product", exact: true }).click();
-    const modal = page.getByRole("dialog", { name: "New Product" });
-    const heading = modal.getByRole("heading", { name: "New Product" });
+    const modal = page.getByRole("dialog", { name: "New product" });
+    const heading = modal.getByRole("heading", { name: "New product" });
     await expect(heading).toBeVisible({ timeout: 10_000 });
     return { heading, modal };
   }
@@ -88,7 +88,7 @@ test.describe("Operator — Product-create pack-size prompt (WP2-14)", () => {
     await unitField(modal).press("Escape");
     await expectNoPrompt(page);
 
-    // Close without saving — "Create Product" is never clicked.
+    // Close without saving — "Create product" is never clicked.
     await closeCreateModal(page, heading);
   });
 });

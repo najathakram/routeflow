@@ -13,7 +13,11 @@ import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { PackSizePrompt } from "./PackSizePrompt";
 import { UnitCombobox } from "./UnitCombobox";
 import { RestoreDraftBanner } from "./product-create/RestoreDraftBanner";
-import { EMPTY_DRAFT_FORM, useProductCreateDraft } from "./product-create/product-create-draft";
+import {
+  EMPTY_DRAFT_FORM,
+  useProductCreateDraft,
+  type DraftFields,
+} from "./product-create/product-create-draft";
 import { CategoryCombobox } from "./CategoryCombobox";
 import { SubcategoryCombobox } from "./SubcategoryCombobox";
 import { SearchableProductPicker } from "./SearchableProductPicker";
@@ -134,7 +138,7 @@ export function ProductCreateModal({
   // Only once the catalog has loaded: while it is on its way "no products" would be a claim, not a fact.
   const noProductsYet = allProductsData !== undefined && parentCandidates.length === 0;
 
-  const [form, setForm] = React.useState({
+  const [form, setForm] = React.useState<DraftFields>({
     name: initialName ?? "",
     sku: initialSku ?? "",
     barcode: "",
@@ -155,12 +159,21 @@ export function ProductCreateModal({
     regUomUnit: "",
   });
 
+  // K11-26: what "pristine" is measured against. Every PROGRAMMATIC change (a prefill, a parent's pre-fill, a
+  // restored draft, a reset) is applied to this baseline as well, so only the operator's own typing makes the
+  // form dirty. Escape closes the dialog while the form still equals it and no photo is queued.
+  const baselineRef = React.useRef<DraftFields>(form);
+  const setFormProgrammatic = (update: (f: DraftFields) => DraftFields) => {
+    baselineRef.current = update(baselineRef.current);
+    setForm(update);
+  };
+
   // Re-sync prefills whenever the modal (re)opens — covers both callers that
   // conditionally mount this component fresh (products page) and callers
   // that keep it mounted and just flip `isOpen` (the scan surfaces).
   React.useEffect(() => {
     if (!isOpen) return;
-    setForm((f) => ({
+    setFormProgrammatic((f) => ({
       ...f,
       name: initialName ?? f.name,
       sku: initialSku || f.sku,
@@ -192,7 +205,7 @@ export function ProductCreateModal({
     if (!form.parentProductId) return;
     const parent = allProducts.find((p) => p.id === form.parentProductId);
     if (!parent) return;
-    setForm((f) => ({
+    setFormProgrammatic((f) => ({
       ...f,
       category: parent.category ?? f.category,
       unit: parent.unit ?? f.unit,
@@ -209,6 +222,7 @@ export function ProductCreateModal({
   const [variantOfScanLoading, setVariantOfScanLoading] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const barcodeInputRef = React.useRef<HTMLInputElement>(null);
+  const skuInputRef = React.useRef<HTMLInputElement>(null);
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const unitSkuInputRef = React.useRef<HTMLInputElement>(null);
@@ -263,26 +277,7 @@ export function ProductCreateModal({
   };
 
   const resetForm = () => {
-    setForm({
-      name: "",
-      sku: "",
-      barcode: "",
-      unitSku: "",
-      unit: "",
-      pricePerUnit: "",
-      category: "",
-      description: "",
-      costingMethod: "AVCO",
-      standardCost: "",
-      unitsPerBox: "",
-      parentProductId: "",
-      variantName: "",
-      trackedCategoryId: "",
-      trackedSubcategoryId: "",
-      regItemType: "",
-      regUomCase: "",
-      regUomUnit: "",
-    });
+    setFormProgrammatic(() => ({ ...EMPTY_DRAFT_FORM }));
     setPendingImages([]);
     setPreviews([]);
   };
@@ -299,7 +294,7 @@ export function ProductCreateModal({
       initialUnitsPerBox,
     ].every((v) => v == null),
     form,
-    onRestore: (fields) => setForm((f) => ({ ...f, ...fields })),
+    onRestore: (fields) => setFormProgrammatic((f) => ({ ...f, ...fields })),
   });
 
   // In-flight guard: a double-click posts twice (201 then 409) before isPending re-renders.
@@ -390,6 +385,11 @@ export function ProductCreateModal({
   if (!isOpen) return null;
 
   const busy = createProduct.isPending || isUploading;
+  const pristine =
+    pendingImages.length === 0 &&
+    (Object.keys(EMPTY_DRAFT_FORM) as (keyof DraftFields)[]).every(
+      (k) => form[k] === baselineRef.current[k],
+    );
 
   const packUnit = isPackUnit(form.unit);
   const unitWord = priceUnitWord(form.unit);
@@ -432,33 +432,46 @@ export function ProductCreateModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="New Product"
+      title="New product"
       scroll
       className="max-w-lg"
       // Pinned to the top, fade-in only: rows that change height must not recentre the form.
       anchor="top"
-      // A long form: only the X / Cancel close it, never a stray Escape or outside click.
-      onEscapeKeyDown={(e) => e.preventDefault()}
+      // A long form: an outside click never closes it. Escape closes it only while it is pristine (nothing
+      // typed, no photo queued), and never when it was meant for an open list (Unit, Category).
+      onEscapeKeyDown={(e) => {
+        if (!pristine || document.querySelector('[role="listbox"]')) e.preventDefault();
+      }}
       onInteractOutside={(e) => e.preventDefault()}
+      // Focus lands on the first thing to type (Flavor when a parent is set), not on the X.
+      onOpenAutoFocus={(e) => {
+        const first =
+          document.getElementById("product-variant-name") ??
+          document.getElementById("product-name");
+        if (!first) return;
+        e.preventDefault();
+        first.focus();
+      }}
       footer={
         <>
           <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
           <Button type="submit" form={FORM_ID} loading={busy}>
-            {isUploading ? "Uploading photos…" : "Create Product"}
+            {isUploading ? "Uploading photos…" : "Create product"}
           </Button>
         </>
       }
     >
-      <form id={FORM_ID} onSubmit={handleSubmit}>
+      {/* pb-20: the last field (and an open Category list) clears the pinned footer, which is ~75 px tall */}
+      <form id={FORM_ID} onSubmit={handleSubmit} className="pb-20">
         <div className="space-y-4">
           {draft.offer && (
             <RestoreDraftBanner
               onRestore={draft.restore}
               onDiscard={() => {
                 draft.discard();
-                setForm((f) => ({ ...f, ...EMPTY_DRAFT_FORM }));
+                setFormProgrammatic((f) => ({ ...f, ...EMPTY_DRAFT_FORM }));
               }}
             />
           )}
@@ -556,6 +569,7 @@ export function ProductCreateModal({
                   Flavor / variety <span className="text-danger">*</span>
                 </label>
                 <input
+                  id="product-variant-name"
                   required={!!form.parentProductId}
                   autoFocus
                   placeholder='e.g. "Chocolate", "Large", "500ml"'
@@ -595,13 +609,21 @@ export function ProductCreateModal({
               <label htmlFor="product-barcode" className="mb-1 block text-sm font-medium text-navy">
                 Barcode
               </label>
-              <input
-                id="product-barcode"
-                value={form.barcode}
-                onChange={(e) => set("barcode", e.target.value)}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                placeholder="Scan or enter the barcode"
-              />
+              <div className="flex gap-2">
+                <input
+                  id="product-barcode"
+                  ref={barcodeInputRef}
+                  value={form.barcode}
+                  onChange={(e) => set("barcode", e.target.value)}
+                  className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder="Scan or enter the barcode"
+                />
+                <BarcodeScannerButton
+                  inputRef={barcodeInputRef}
+                  onScan={(code) => set("barcode", code)}
+                  title="Scan barcode"
+                />
+              </div>
             </div>
             <div className="col-span-2">
               <label htmlFor="product-sku" className="mb-1 block text-sm font-medium text-navy">
@@ -610,14 +632,14 @@ export function ProductCreateModal({
               <div className="flex gap-2">
                 <input
                   id="product-sku"
-                  ref={barcodeInputRef}
+                  ref={skuInputRef}
                   value={form.sku}
                   onChange={(e) => set("sku", e.target.value)}
                   className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                   placeholder="Scan or enter the SKU"
                 />
                 <BarcodeScannerButton
-                  inputRef={barcodeInputRef}
+                  inputRef={skuInputRef}
                   onScan={(code) => set("sku", code)}
                   title="Scan SKU"
                 />
@@ -647,8 +669,7 @@ export function ProductCreateModal({
                 />
               </div>
               <p className="mt-0.5 text-xs text-navy/70">
-                Code on the individual unit — printed on customer invoices. Leave blank if it
-                matches the {w.pack.lower} code.
+                Printed on invoices. Leave blank if it&apos;s the same as the {w.pack.lower} code.
               </p>
             </div>
 
