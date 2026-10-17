@@ -27,7 +27,7 @@ function Page({ ids, h1 = true }: { ids: string[]; h1?: boolean }) {
   return (
     <div>
       <ProductJumpLinks />
-      {h1 ? <h1>Cola</h1> : null}
+      {h1 ? <h1 id="h-product">Cola</h1> : null}
       {ids.map((id) => (
         <section key={id}>
           <h2 id={id}>{id}</h2>
@@ -72,18 +72,67 @@ describe("ProductJumpLinks (V19)", () => {
     expect(link("h-units")).toHaveAttribute("href", "#h-units");
   });
 
-  it("uses the page's h1 as the Product section and the grid title as Units and prices", () => {
+  it("adopts the grid title as Units and prices, keeping its own id", () => {
     render(
       <div>
         <ProductJumpLinks />
-        <h1>Cola</h1>
+        <h1 id="h-product">Cola</h1>
         <h2 id="units-v2-grid-title">Prices</h2>
       </div>,
     );
-    expect(document.querySelector("h1")).toHaveAttribute("id", "h-product");
     expect(link("h-product")).toHaveAttribute("href", "#h-product");
     // The grid keeps its own id (it labels the grid); the link points at it.
     expect(link("h-units")).toHaveAttribute("href", "#units-v2-grid-title");
+  });
+
+  it("Product targets the product h1 and never stamps the dashboard header h1 before it", () => {
+    const { unmount } = render(
+      <div>
+        <header>
+          <h1 data-testid="dash-h1">RouteFlow</h1>
+        </header>
+        <ProductJumpLinks />
+        <h1 id="h-product" data-testid="product-h1">
+          Cola
+        </h1>
+        <h2 id="h-units">Units</h2>
+      </div>,
+    );
+    const header = screen.getByTestId("dash-h1");
+    expect(header).not.toHaveAttribute("id");
+    expect(header).not.toHaveAttribute("tabindex");
+    expect(header).not.toHaveAttribute("data-jump-target");
+    expect(link("h-product")).toHaveAttribute("href", "#h-product");
+    expect(screen.getByTestId("product-h1")).toHaveAttribute("data-jump-target");
+    unmount();
+  });
+
+  it("without a page h1 id there is no Product link (no h1 fallback)", () => {
+    render(
+      <div>
+        <h1>RouteFlow</h1>
+        <ProductJumpLinks />
+        <h2 id="h-units">Units</h2>
+      </div>,
+    );
+    expect(link("h-product")).toBeNull();
+    expect(document.querySelector("h1")).not.toHaveAttribute("id");
+    expect(nav()).toBeNull(); // only one section left
+  });
+
+  it("leaves nothing behind on any heading after unmount", () => {
+    document.body.innerHTML = `<h1>RouteFlow</h1><h1 id="h-product">Cola</h1><h2 id="units-v2-grid-title">Prices</h2><h2 id="h-sales" tabindex="0">Sales</h2>`;
+    const before = document.body.innerHTML;
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const { unmount } = render(<ProductJumpLinks />, { container: host });
+    expect(link("h-product")).toBeInTheDocument();
+    expect(document.getElementById("h-product")).toHaveAttribute("data-jump-target");
+    unmount();
+    host.remove();
+    expect(document.body.innerHTML).toBe(before);
+    expect(document.querySelectorAll("[data-jump-target]")).toHaveLength(0);
+    document.body.innerHTML = "";
   });
 
   it("picks up a section that arrives after mount", async () => {

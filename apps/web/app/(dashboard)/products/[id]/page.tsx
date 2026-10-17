@@ -1174,7 +1174,9 @@ export default function ProductDetailPage() {
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="text-2xl font-bold tracking-[-0.01em] text-navy">{product.name}</h1>
+              <h1 id="h-product" className="text-2xl font-bold tracking-[-0.01em] text-navy">
+                {product.name}
+              </h1>
               <Badge
                 variant={product.isActive ? "success" : "neutral"}
                 label={product.isActive ? "Active" : "Inactive"}
@@ -1194,7 +1196,6 @@ export default function ProductDetailPage() {
         </div>
 
         {v2 && product.kind !== "FAMILY" ? <ProductJumpLinks /> : null}
-
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {/* ── Left: image gallery + stock card ── */}
           <div className="space-y-4">

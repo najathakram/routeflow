@@ -40,15 +40,20 @@ export interface ProductCreateDraft {
   fields: DraftFields;
 }
 
-/** Scoped to the signed-in account (and tenant) when known, so a shared browser never crosses drafts. */
-export function draftKey(): string {
+/**
+ * The draft's storage key, scoped to tenant AND user id. With no signed-in user (no token, an expired
+ * one, or an unreadable store) there is no key and drafts are OFF: no read, no write, no banner. There
+ * is deliberately no shared fallback key, or one staff member's draft could be offered to another on
+ * the same browser.
+ */
+export function draftKey(): string | null {
   try {
     const u = getStoredUser();
     if (u?.id) return `${KEY_BASE}:${u.tenantSlug ?? "-"}:${u.id}`;
   } catch {
-    /* fall through to the fixed key */
+    /* no account, no draft */
   }
-  return KEY_BASE;
+  return null;
 }
 
 export function draftHasInput(fields: DraftFields): boolean {
@@ -119,10 +124,10 @@ export function useProductCreateDraft({
   onRestore: (fields: DraftFields) => void;
 }) {
   const keyRef = React.useRef<string | null>(null);
-  if (keyRef.current === null) keyRef.current = draftKey();
-  const [offer, setOffer] = React.useState<ProductCreateDraft | null>(() =>
-    isOpen && enabled ? readDraft(draftKey()) : null,
-  );
+  const [offer, setOffer] = React.useState<ProductCreateDraft | null>(() => {
+    keyRef.current = draftKey();
+    return isOpen && enabled && keyRef.current ? readDraft(keyRef.current) : null;
+  });
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedThisOpen = React.useRef(false);
   const wasOpen = React.useRef(isOpen);
@@ -132,12 +137,12 @@ export function useProductCreateDraft({
     timer.current = null;
   };
 
-  // A modal kept mounted and re-opened: decide again before that paint.
+  // A modal kept mounted and re-opened: decide again (for whoever is signed in now) before that paint.
   React.useLayoutEffect(() => {
     if (isOpen && !wasOpen.current) {
       keyRef.current = draftKey();
       savedThisOpen.current = false;
-      setOffer(enabled ? readDraft(keyRef.current) : null);
+      setOffer(enabled && keyRef.current ? readDraft(keyRef.current) : null);
     }
     if (!isOpen) {
       cancelTimer();
@@ -146,10 +151,10 @@ export function useProductCreateDraft({
     wasOpen.current = isOpen;
   }, [isOpen, enabled]);
 
-  // Debounced save while the form has user input.
+  // Debounced save while the form has user input. No account (no key) means no draft at all.
   React.useEffect(() => {
-    if (!isOpen || !enabled || offer) return;
-    const key = keyRef.current ?? draftKey();
+    const key = keyRef.current;
+    if (!isOpen || !enabled || !key || offer) return;
     if (!draftHasInput(form)) {
       // The user typed, then emptied the form: nothing left worth restoring.
       if (savedThisOpen.current) {
@@ -170,7 +175,7 @@ export function useProductCreateDraft({
   const clear = React.useCallback(() => {
     cancelTimer();
     savedThisOpen.current = false;
-    clearDraft(keyRef.current ?? draftKey());
+    if (keyRef.current) clearDraft(keyRef.current);
     setOffer(null);
   }, []);
 

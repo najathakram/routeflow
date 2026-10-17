@@ -13,7 +13,7 @@ import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { PackSizePrompt } from "./PackSizePrompt";
 import { UnitCombobox } from "./UnitCombobox";
 import { RestoreDraftBanner } from "./product-create/RestoreDraftBanner";
-import { useProductCreateDraft } from "./product-create/product-create-draft";
+import { EMPTY_DRAFT_FORM, useProductCreateDraft } from "./product-create/product-create-draft";
 import { CategoryCombobox } from "./CategoryCombobox";
 import { SubcategoryCombobox } from "./SubcategoryCombobox";
 import { SearchableProductPicker } from "./SearchableProductPicker";
@@ -430,7 +430,13 @@ export function ProductCreateModal({
       <form id={FORM_ID} onSubmit={handleSubmit}>
         <div className="space-y-4">
           {draft.offer && (
-            <RestoreDraftBanner onRestore={draft.restore} onDiscard={draft.discard} />
+            <RestoreDraftBanner
+              onRestore={draft.restore}
+              onDiscard={() => {
+                draft.discard();
+                setForm((f) => ({ ...f, ...EMPTY_DRAFT_FORM }));
+              }}
+            />
           )}
           {/* ── Photos ── */}
           <div>

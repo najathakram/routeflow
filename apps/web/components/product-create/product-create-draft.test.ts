@@ -1,3 +1,4 @@
+import { getStoredUser } from "@/lib/auth";
 import {
   clearDraft,
   draftHasInput,
@@ -7,11 +8,44 @@ import {
   EMPTY_DRAFT_FORM,
 } from "./product-create-draft";
 
-beforeEach(() => localStorage.clear());
+jest.mock("@/lib/auth", () => ({ getStoredUser: jest.fn() }));
+const asUser = (id: string, tenantSlug: string | null = "acme") =>
+  (getStoredUser as jest.Mock).mockReturnValue({ id, tenantSlug });
+
+beforeEach(() => {
+  localStorage.clear();
+  (getStoredUser as jest.Mock).mockReset();
+  asUser("user-a");
+});
+
+describe("draftKey (a draft is per account and tenant, never shared)", () => {
+  it("is scoped by tenant and user id", () => {
+    asUser("user-a", "acme");
+    const a = draftKey();
+    asUser("user-b", "acme");
+    const b = draftKey();
+    asUser("user-a", "globex");
+    const c = draftKey();
+    expect(new Set([a, b, c]).size).toBe(3);
+    expect(a).toContain("user-a");
+    expect(a).toContain("acme");
+  });
+
+  it("is null with no signed-in user, or an expired token, or a throwing read", () => {
+    (getStoredUser as jest.Mock).mockReturnValue(null);
+    expect(draftKey()).toBeNull();
+    (getStoredUser as jest.Mock).mockReturnValue({ id: "", tenantSlug: "acme" });
+    expect(draftKey()).toBeNull();
+    (getStoredUser as jest.Mock).mockImplementation(() => {
+      throw new Error("boom");
+    });
+    expect(draftKey()).toBeNull();
+  });
+});
 
 describe("product create draft storage", () => {
   it("round-trips a draft", () => {
-    const key = draftKey();
+    const key = draftKey()!;
     writeDraft(key, { ...EMPTY_DRAFT_FORM, name: "Cola", pricePerUnit: "12.00" });
     const draft = readDraft(key);
     expect(draft?.fields.name).toBe("Cola");
@@ -20,7 +54,7 @@ describe("product create draft storage", () => {
   });
 
   it("returns null when nothing is saved, or the saved value is junk", () => {
-    const key = draftKey();
+    const key = draftKey()!;
     expect(readDraft(key)).toBeNull();
     localStorage.setItem(key, "{not json");
     expect(readDraft(key)).toBeNull();
@@ -31,7 +65,7 @@ describe("product create draft storage", () => {
   });
 
   it("clears a draft", () => {
-    const key = draftKey();
+    const key = draftKey()!;
     writeDraft(key, { ...EMPTY_DRAFT_FORM, name: "Cola" });
     clearDraft(key);
     expect(readDraft(key)).toBeNull();
@@ -47,9 +81,9 @@ describe("product create draft storage", () => {
     const rem = jest.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
       throw new Error("denied");
     });
-    expect(readDraft(draftKey())).toBeNull();
-    expect(() => writeDraft(draftKey(), { ...EMPTY_DRAFT_FORM, name: "x" })).not.toThrow();
-    expect(() => clearDraft(draftKey())).not.toThrow();
+    expect(readDraft(draftKey()!)).toBeNull();
+    expect(() => writeDraft(draftKey()!, { ...EMPTY_DRAFT_FORM, name: "x" })).not.toThrow();
+    expect(() => clearDraft(draftKey()!)).not.toThrow();
     get.mockRestore();
     set.mockRestore();
     rem.mockRestore();

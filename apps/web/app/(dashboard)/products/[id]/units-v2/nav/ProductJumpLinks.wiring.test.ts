@@ -18,6 +18,11 @@ describe("products/[id]/page.tsx jump-links mount", () => {
     expect(src).toMatch(/\{v2 && product\.kind !== "FAMILY" \? <ProductJumpLinks \/> : null\}/);
   });
 
+  it("gives the PAGE h1 (the product name) the h-product id the Product link targets", () => {
+    expect(src).toMatch(/<h1 id="h-product" className="[^"]+">\s*\{product\.name\}\s*<\/h1>/);
+    expect(src.match(/id="h-product"/g)).toHaveLength(1);
+  });
+
   it("stays under the size-ratchet cap of 2967 lines", () => {
     expect(src.split("\n").length).toBeLessThanOrEqual(2967);
   });

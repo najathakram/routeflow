@@ -7,11 +7,16 @@ import * as React from "react";
  * the page (a family has no units grid, the Customer view loads later), so the strip is built from the
  * ids that exist in the DOM and follows it as sections appear. A link is never shown for a missing one.
  *
- * `fallback` names an existing element to adopt when no element carries the section id yet (the page's
- * h1, the prices grid title). The adopted element keeps any id it already has; the link points at it.
+ * `fallback` names an existing element to adopt when no element carries the section id yet (the prices
+ * grid title). The adopted element keeps any id it already has; the link points at it. The Product
+ * section is the page h1 carrying `id="h-product"` (set by the page itself); there is deliberately no
+ * `h1` fallback, because the dashboard header has an h1 of its own that comes first in the DOM.
+ *
+ * Whatever this component adds to a heading (tabindex, data-jump-target, an id) is removed again when it
+ * unmounts, so nothing leaks onto the next route.
  */
 const SECTIONS: { id: string; label: string; fallback?: string }[] = [
-  { id: "h-product", label: "Product", fallback: "h1" },
+  { id: "h-product", label: "Product" },
   { id: "h-units", label: "Units and prices", fallback: "#units-v2-grid-title" },
   { id: "h-exc", label: "Customers and tiers" },
   { id: "h-cust", label: "Customer view" },
@@ -25,19 +30,41 @@ interface Resolved {
   hrefId: string;
 }
 
-function resolve(): Resolved[] {
+/** What was added to an element, so unmount can take exactly that back out. */
+type Stamp = { id: boolean; tabindex: boolean };
+
+function resolve(stamps: Map<HTMLElement, Stamp>): Resolved[] {
   const out: Resolved[] = [];
   for (const s of SECTIONS) {
     const el =
       document.getElementById(s.id) ??
       (s.fallback ? document.querySelector<HTMLElement>(s.fallback) : null);
     if (!el) continue;
-    if (!el.id) el.id = s.id;
-    el.setAttribute("data-jump-target", "");
-    if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
+    if (!stamps.has(el)) {
+      const stamp: Stamp = { id: false, tabindex: false };
+      if (!el.id) {
+        el.id = s.id;
+        stamp.id = true;
+      }
+      if (!el.hasAttribute("tabindex")) {
+        el.setAttribute("tabindex", "-1");
+        stamp.tabindex = true;
+      }
+      el.setAttribute("data-jump-target", "");
+      stamps.set(el, stamp);
+    }
     out.push({ id: s.id, label: s.label, hrefId: el.id });
   }
   return out;
+}
+
+function unstamp(stamps: Map<HTMLElement, Stamp>) {
+  stamps.forEach((stamp, el) => {
+    el.removeAttribute("data-jump-target");
+    if (stamp.tabindex) el.removeAttribute("tabindex");
+    if (stamp.id) el.removeAttribute("id");
+  });
+  stamps.clear();
 }
 
 const same = (a: Resolved[], b: Resolved[]) =>
@@ -52,16 +79,18 @@ export function ProductJumpLinks() {
   const [current, setCurrent] = React.useState<string | null>(null);
   const [fade, setFade] = React.useState(false);
   const stripRef = React.useRef<HTMLDivElement>(null);
+  const stamps = React.useRef(new Map<HTMLElement, Stamp>());
 
   // Read the sections before first paint, then follow the DOM as sections arrive.
   React.useLayoutEffect(() => {
     const scan = () =>
       setSections((prev) => {
-        const next = resolve();
+        const next = resolve(stamps.current);
         return same(prev, next) ? prev : next;
       });
     scan();
-    if (typeof MutationObserver === "undefined") return;
+    const owned = stamps.current;
+    if (typeof MutationObserver === "undefined") return () => unstamp(owned);
     let raf = 0;
     const mo = new MutationObserver(() => {
       cancelAnimationFrame(raf);
@@ -71,6 +100,7 @@ export function ProductJumpLinks() {
     return () => {
       mo.disconnect();
       cancelAnimationFrame(raf);
+      unstamp(owned);
     };
   }, []);
 
