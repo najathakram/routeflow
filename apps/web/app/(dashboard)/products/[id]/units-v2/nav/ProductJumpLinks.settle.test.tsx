@@ -552,6 +552,75 @@ describe("K11-03: a refresh comes back to the section you jumped to", () => {
     expect(scrolled.map((s) => s.el.id)).toEqual(["h-sales", "h-sales"]);
   });
 
+  it("a reload keeps correcting after the 1.5 s window: late content above the heading gets ONE corrective scroll to the final spot", async () => {
+    window.history.replaceState(null, "", "/products/p1#h-sales");
+    rectById["h-sales"] = { top: 60 }; // where the first scroll left it
+    mount(SHORT_PAGE);
+    await addLate("h-sales");
+    expect(scrolled.map((s) => s.el.id)).toEqual(["h-sales"]);
+    // 3 s of nothing (the prices are still loading), well past the click path's 1.5 s window
+    act(() => {
+      jest.advanceTimersByTime(3000);
+    });
+    // the prices grid / Customer view land above Sales and push it down, in two steps
+    rectById["h-sales"] = { top: 300 };
+    await shiftPage();
+    await frames(1);
+    rectById["h-sales"] = { top: 420 };
+    await frames(1);
+    expect(scrolled).toHaveLength(1); // still moving: nothing yet
+    await frames(4);
+    expect(scrolled.map((s) => s.el.id)).toEqual(["h-sales", "h-sales"]);
+    // and nothing more once it has settled
+    act(() => {
+      jest.advanceTimersByTime(1000);
+    });
+    expect(scrolled).toHaveLength(2);
+  });
+
+  it("a reload does not scroll again when the heading never moved", async () => {
+    window.history.replaceState(null, "", "/products/p1#h-sales");
+    rectById["h-sales"] = { top: 60 };
+    mount(SHORT_PAGE);
+    await addLate("h-sales");
+    act(() => {
+      jest.advanceTimersByTime(3000);
+    });
+    await shiftPage(); // content mounted elsewhere, the heading stayed on its mark
+    await frames(4);
+    expect(scrolled).toHaveLength(1);
+  });
+
+  it("a reload stops correcting at the 8 s mount cap", async () => {
+    window.history.replaceState(null, "", "/products/p1#h-sales");
+    rectById["h-sales"] = { top: 60 };
+    mount(SHORT_PAGE);
+    await addLate("h-sales");
+    act(() => {
+      jest.advanceTimersByTime(8500);
+    });
+    rectById["h-sales"] = { top: 400 };
+    await shiftPage();
+    await frames(4);
+    expect(scrolled).toHaveLength(1);
+  });
+
+  it("a reload follows a scroll-mark change without focusing again (no focus steal on the correction)", async () => {
+    window.history.replaceState(null, "", "/products/p1#h-sales");
+    rectById["h-sales"] = { top: 60 };
+    mount(SHORT_PAGE);
+    await addLate("h-sales");
+    const focus = jest.spyOn(target("h-sales"), "focus");
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+    rectById["h-sales"] = { top: 350 };
+    await shiftPage();
+    await frames(4);
+    expect(scrolled).toHaveLength(2);
+    expect(focus).not.toHaveBeenCalled();
+  });
+
   it("does not jump when the hash names nothing on the page", () => {
     window.history.replaceState(null, "", "/products/p1#something-else");
     mount();
@@ -626,6 +695,23 @@ describe("K11 fold: the mount-hash jump never steals the person's typing", () =>
     fireEvent.click(link("h-sales"));
     expect(target("h-sales")).toHaveFocus();
   });
+
+  it.each(["wheel", "touchstart", "pointerdown", "keydown"])(
+    "a %s on an element OUTSIDE #main-content cancels the pending re-scroll after a click jump",
+    async (type) => {
+      mount();
+      rectById["h-sales"] = { top: 60 };
+      fireEvent.click(link("h-sales"));
+      act(() => {
+        // typing in the header search: non-bubbling, so only a document capture listener sees it
+        outside.dispatchEvent(new Event(type, { bubbles: false }));
+      });
+      rectById["h-sales"] = { top: 300 };
+      await shiftPage();
+      await frames();
+      expect(scrolled).toHaveLength(1);
+    },
+  );
 
   it.each(["wheel", "touchstart", "pointerdown", "keydown"])(
     "a %s anywhere in the document (capture phase, even from the header) cancels the waiting hash",

@@ -262,111 +262,129 @@ export function ProductJumpLinks() {
    * the layout has held still for two frames. The re-scroll never focuses anything, and any sign that the person
    * took over (wheel, touch, pointer, key, focus leaving the heading, another jump) ends the whole thing.
    */
-  const startJump = React.useCallback((id: string, hrefId: string, focus: boolean): boolean => {
-    const el = document.getElementById(hrefId);
-    if (!el) return false;
-    jumpRef.current?.();
-    const scroller: EventTarget = document.getElementById("main-content") ?? document;
-    const behavior: ScrollBehavior = prefersReducedMotion() ? "auto" : "smooth";
-    const scrollToTarget = () => el.scrollIntoView?.({ block: "start", behavior });
-    const cleanups: Array<() => void> = [];
-    let over = false;
-    let corrected = false;
-    let waiting = false;
-    let running = false;
+  const startJump = React.useCallback(
+    (id: string, hrefId: string, focus: boolean, hashWindowMs?: number): boolean => {
+      const el = document.getElementById(hrefId);
+      if (!el) return false;
+      jumpRef.current?.();
+      // A jump that comes from the URL hash (a reload) keeps settling until the mount cap instead of the click path's
+      // 1.5 s: the prices grid and the Customer view can land well after that, and each shift gets one correction.
+      const hash = hashWindowMs !== undefined;
+      const scroller: EventTarget = document.getElementById("main-content") ?? document;
+      const behavior: ScrollBehavior = prefersReducedMotion() ? "auto" : "smooth";
+      const scrollToTarget = () => el.scrollIntoView?.({ block: "start", behavior });
+      const cleanups: Array<() => void> = [];
+      let over = false;
+      let corrected = false;
+      let waiting = false;
+      let running = false;
 
-    const end = () => {
-      if (over) return;
-      over = true;
-      cleanups.forEach((f) => f());
-      if (heldRef.current === id) heldRef.current = null;
-      if (jumpRef.current === end) jumpRef.current = null;
-    };
-    const listen = (target: EventTarget, type: string, fn: EventListener) => {
-      target.addEventListener(type, fn, { passive: true });
-      cleanups.push(() => target.removeEventListener(type, fn));
-    };
-    const after = (ms: number, fn: () => void) => {
-      const t = window.setTimeout(fn, ms);
-      cleanups.push(() => window.clearTimeout(t));
-    };
-
-    scrollToTarget();
-    if (focus) {
-      el.focus({ preventScroll: true });
-      listen(el, "focusout", end);
-    }
-    heldRef.current = id;
-    setCurrent(id);
-    jumpRef.current = end;
-
-    if ("onscrollend" in window && behavior === "smooth") {
-      running = true;
-      const stop = () => {
-        running = false;
-      };
-      listen(scroller, "scrollend", stop);
-      after(SCROLL_RUNNING_CAP_MS, stop);
-    }
-
-    const expectedTop = () =>
-      (document.getElementById("main-content")?.getBoundingClientRect().top ?? 0) +
-      offsetRef.current +
-      (stamps.current.get(el)?.inset ?? 0);
-    const correct = () => {
-      if (over || corrected) return;
-      if (Math.abs(el.getBoundingClientRect().top - expectedTop()) <= SLACK_PX) return;
-      corrected = true;
-      scrollToTarget();
-    };
-    const onShift = () => {
-      if (over || corrected || waiting) return;
-      if (running) return correct();
-      waiting = true;
-      let prev = el.getBoundingClientRect().top;
-      let still = 0;
-      let frames = 0;
-      let raf = 0;
-      const tick = () => {
+      const end = () => {
         if (over) return;
-        const top = el.getBoundingClientRect().top;
-        still = top === prev ? still + 1 : 0;
-        prev = top;
-        if (still >= 2 || ++frames > MAX_STILL_FRAMES) {
-          waiting = false;
-          if (still >= 2) correct();
-          return;
-        }
-        raf = requestAnimationFrame(tick);
+        over = true;
+        cleanups.forEach((f) => f());
+        if (heldRef.current === id) heldRef.current = null;
+        if (jumpRef.current === end) jumpRef.current = null;
       };
-      raf = requestAnimationFrame(tick);
-      cleanups.push(() => cancelAnimationFrame(raf));
-    };
+      const listen = (target: EventTarget, type: string, fn: EventListener) => {
+        target.addEventListener(type, fn, { passive: true });
+        cleanups.push(() => target.removeEventListener(type, fn));
+      };
+      const after = (ms: number, fn: () => void) => {
+        const t = window.setTimeout(fn, ms);
+        cleanups.push(() => window.clearTimeout(t));
+      };
 
-    if (typeof MutationObserver !== "undefined") {
-      const mo = new MutationObserver((records) => {
-        const nav = navRef.current;
-        if (records.some((r) => !nav || !nav.contains(r.target))) onShift();
+      scrollToTarget();
+      if (focus) {
+        el.focus({ preventScroll: true });
+        listen(el, "focusout", end);
+      }
+      heldRef.current = id;
+      setCurrent(id);
+      jumpRef.current = end;
+
+      if ("onscrollend" in window && behavior === "smooth") {
+        running = true;
+        const stop = () => {
+          running = false;
+        };
+        listen(scroller, "scrollend", stop);
+        after(SCROLL_RUNNING_CAP_MS, stop);
+      }
+
+      const expectedTop = () =>
+        (document.getElementById("main-content")?.getBoundingClientRect().top ?? 0) +
+        offsetRef.current +
+        (stamps.current.get(el)?.inset ?? 0);
+      const correct = () => {
+        if (over || (corrected && !hash)) return;
+        if (Math.abs(el.getBoundingClientRect().top - expectedTop()) <= SLACK_PX) return;
+        corrected = true;
+        scrollToTarget();
+      };
+      const onShift = () => {
+        if (over || (corrected && !hash) || waiting) return;
+        if (running && !hash) return correct();
+        waiting = true;
+        let prev = el.getBoundingClientRect().top;
+        let still = 0;
+        let frames = 0;
+        let raf = 0;
+        const tick = () => {
+          if (over) return;
+          const top = el.getBoundingClientRect().top;
+          // "Still" = within the slack of the last frame (and, on the hash path, not mid-way through our own scroll).
+          still = Math.abs(top - prev) <= SLACK_PX && !(hash && running) ? still + 1 : 0;
+          prev = top;
+          if (still >= 2 || (!hash && ++frames > MAX_STILL_FRAMES)) {
+            waiting = false;
+            if (still >= 2) correct();
+            return;
+          }
+          raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+        cleanups.push(() => cancelAnimationFrame(raf));
+      };
+
+      if (typeof MutationObserver !== "undefined") {
+        const mo = new MutationObserver((records) => {
+          const nav = navRef.current;
+          if (records.some((r) => !nav || !nav.contains(r.target))) onShift();
+        });
+        mo.observe(document.body, { childList: true, subtree: true });
+        cleanups.push(() => mo.disconnect());
+      }
+      // On `document` in the capture phase, like the mount-hash path: typing in the header search, a touch outside
+      // #main-content, or an event something stopped from bubbling still means the person took over.
+      for (const type of USER_TAKEOVER_EVENTS)
+        document.addEventListener(type, end, { passive: true, capture: true });
+      cleanups.push(() => {
+        for (const type of USER_TAKEOVER_EVENTS)
+          document.removeEventListener(type, end, { capture: true });
       });
-      mo.observe(document.body, { childList: true, subtree: true });
-      cleanups.push(() => mo.disconnect());
-    }
-    for (const type of USER_TAKEOVER_EVENTS) listen(scroller, type, end);
-    after(SETTLE_WINDOW_MS, end);
-    return true;
-  }, []);
+      after(hash ? hashWindowMs : SETTLE_WINDOW_MS, end);
+      // A hash jump does not wait for the first mutation: the layout may already be moving.
+      if (hash) onShift();
+      return true;
+    },
+    [],
+  );
 
   React.useEffect(() => () => jumpRef.current?.(), []);
 
   // K11-03: a refresh comes back to the section the person jumped to. The hash names a section (by its id, or by
   // the adopted element's own id); it is followed ONCE, as soon as that section exists, with the same settling as a
-  // click. It is dropped when the person scrolls or jumps first, or the section never turns up.
+  // click (but kept up to the mount cap, not 1.5 s). It is dropped when the person scrolls or jumps first, or the section never turns up.
   const hashDone = React.useRef(false);
+  const hashStartedAt = React.useRef(0);
   React.useEffect(() => {
     if (!window.location.hash) {
       hashDone.current = true;
       return;
     }
+    hashStartedAt.current = Date.now();
     // On `document` in the capture phase: typing in the header search or a touch outside #main-content, or an
     // event something stopped from bubbling, still means the person took over.
     const stop = () => {
@@ -397,7 +415,10 @@ export function ProductJumpLinks() {
     // still scrolls, but typing is never stolen. A click on a link always focuses.
     const active = document.activeElement;
     const free = !active || active === document.body || active.id === "main-content";
-    startJump(hit.id, hit.hrefId, free);
+    // It then keeps settling (one correction after each layout shift, once the heading holds still) until the same
+    // 8 s mount cap, so late content above the heading still gets its one re-scroll.
+    const left = Math.max(0, HASH_WAIT_MS - (Date.now() - hashStartedAt.current));
+    startJump(hit.id, hit.hrefId, free, left);
   }, [sections, startJump]);
 
   if (!show) return null;

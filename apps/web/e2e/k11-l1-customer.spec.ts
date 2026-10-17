@@ -22,7 +22,16 @@ import { VIEWPORTS, requireUnitsV2Flag, shot } from "./helpers/units-v2-support"
 
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
-const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "";
+/** A local-lane spec never defaults to a deployed host: the base URL must be given. */
+function baseUrl(): string {
+  const url = process.env.PLAYWRIGHT_BASE_URL;
+  if (!url) {
+    throw new Error(
+      "PLAYWRIGHT_BASE_URL is not set: this local-lane spec needs the local stack URL (e.g. http://localhost:3001) and never defaults to a deployed host.",
+    );
+  }
+  return url;
+}
 
 for (const vp of VIEWPORTS) {
   test.describe(`K11 L1 customer view @ ${vp.name}`, () => {
@@ -33,7 +42,7 @@ for (const vp of VIEWPORTS) {
       context,
     }, info) => {
       assertTestTenant(TENANT_SLUG, "k11-l1 customer fixtures");
-      await setTenantCookie(context, BASE);
+      await setTenantCookie(context, baseUrl());
       const { api, headers } = await requireUnitsV2Flag(page);
       const tag = `${Date.now().toString(36).toUpperCase()}${vp.name}`;
       const customerName = `QA K11 Cust ${tag}`;
