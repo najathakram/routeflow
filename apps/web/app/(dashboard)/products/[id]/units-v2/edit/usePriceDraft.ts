@@ -31,7 +31,7 @@ import {
   useUndoPrices,
   type PriceWriteError,
 } from "@/lib/api/usePriceWrites";
-import { tierLabel } from "@/lib/tier-label";
+import { productTierLabel } from "@/lib/tier-one-label";
 import type { UndoPreviewRow } from "../confirm/types";
 import type { CellFocus, GridEditApi } from "./edit-types";
 import {
@@ -70,6 +70,10 @@ const OFFER_CLEARED =
   "Your earlier choice to update customer prices was cleared because those customers' prices changed. Tick it again to use the new prices.";
 const KEEP_CLEARED =
   "Your earlier choice to keep a customer price was cleared because that customer's prices changed.";
+// K3b NIT-1: a Keep also goes when the OWNER's own action removes the price change it was made on. Never blamed on prices.
+const keepClearedBy = (why: string) =>
+  `Your earlier choice to keep a customer price was cleared because ${why}.`;
+const PRICE_CHANGE_UNDONE = "that price change was undone";
 // A tick that was never made (the plan it came from is older than the customers), so nothing was "cleared".
 const TICK_REFUSED =
   "Those customers' prices changed, so this choice can't be used. Review the new prices.";
@@ -170,10 +174,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const gridQuery = usePriceGrid(productId);
   const grid = gridQuery.data;
   const labels = useTierLabels().data;
-  const tierName = React.useCallback(
-    (t: PriceTier) => (t === 1 ? "Retail" : tierLabel(labels, t)),
-    [labels],
-  );
+  const tierName = React.useCallback((t: PriceTier) => productTierLabel(labels, t), [labels]);
   const qc = useQueryClient();
   const save = useSavePrices(productId);
   const undoMut = useUndoPrices(productId);
@@ -259,6 +260,21 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     });
   }
 
+  // K3b NIT-1: the owner's own action (a re-type, a cell put back, Reset all to Auto) can remove the price change a customer
+  // Keep was made on. The render check above would drop it too, but say the customers' prices changed; this drops it
+  // here, said as the owner's doing. A Keep whose customer has a price of their own now is the customers' doing: left to it.
+  const dropKeepsLackingPlan = (next: readonly DraftEntry[], why: string) => {
+    if (!served || !customerRows || moves.length === 0) return;
+    const plans = foldDraft(served, rules, next, null, keeps, tierName, customers).plans;
+    const gone = staleKeepMoves(moves, plans, customers).filter(
+      (m) =>
+        (customers.find((c) => c.customerId === m.customerId)?.set?.[m.ref] ?? null) === m.from,
+    );
+    if (gone.length === 0) return;
+    setMoves((ms) => ms.filter((m) => !gone.includes(m)));
+    setNotice((n) => withLine(n, keepClearedBy(why)));
+  };
+
   const editCell = (ref: string, tier: PriceTier, typed: string): PricePlan => {
     const key = cellKey(ref, tier);
     // Re-typing THIS cell recomputes its offers, so choices ticked on the old ones are cleared, never silently.
@@ -273,6 +289,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     setEntries(next);
     setOpenKey(key);
     if (stale.length > 0) setNotice(clearedNotice(stale));
+    dropKeepsLackingPlan(next, "you changed that price again");
     const r = foldDraft(served!, rules, next, key, keeps, tierName, customers);
     return r.plans.get(key)!;
   };
@@ -301,6 +318,20 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
 
   const texts: Record<string, string> = {};
   for (const e of entries) if (e.kind === "cell") texts[e.key] = e.text;
+  // F03: a price a Change prices plan or a ticked offer wrote into the draft shows in its box like a typed one (an Auto
+  // price the draft sets back to Auto shows empty), instead of the saved price with the new one as a faint hint.
+  const drafted = new Map(
+    patches.map((p) => [cellKey(p.ref, p.tier), p.to == null ? "" : String(p.to)]),
+  );
+  // A cell a plan or an offer patched has to be typed back to its saved price as a draft entry, not by dropping one.
+  const patchedByPlan = (key: string) =>
+    entries.some(
+      (e) =>
+        e.kind !== "cell" &&
+        (e.kind === "plan" ? e.plan.patches : e.patches).some(
+          (p) => cellKey(p.ref, p.tier) === key,
+        ),
+    );
 
   // A stale-write notice stays until the user acts: Reload prices (which resets the save) or the next Save (which
   // clears the mutation's error while it runs). A refetch behind their back never takes it away. The texts are the
@@ -414,12 +445,20 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       beginEditing();
       if (cell) setFocus(cell);
     },
-    text: (ref, tier, original) => texts[cellKey(ref, tier)] ?? original,
+    text: (ref, tier, original) => {
+      const key = cellKey(ref, tier);
+      return texts[key] ?? drafted.get(key) ?? original;
+    },
     setText: (ref, tier, text, original) => {
-      if (text === original) {
-        const key = cellKey(ref, tier);
+      const key = cellKey(ref, tier);
+      if (text === original && !patchedByPlan(key)) {
         const stale = entries.filter((e) => e.kind === "offer" && e.planKey === key);
         if (stale.length > 0) setNotice(clearedNotice(stale));
+        const next = entries.filter(
+          (e) =>
+            !(e.kind === "cell" && e.key === key) && !(e.kind === "offer" && e.planKey === key),
+        );
+        dropKeepsLackingPlan(next, PRICE_CHANGE_UNDONE);
         setEntries((es) =>
           es.filter(
             (e) =>
@@ -428,7 +467,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
         );
       } else editCell(ref, tier as PriceTier, text);
     },
-    changed: (ref, tier) => cellKey(ref, tier) in texts,
+    changed: (ref, tier) => cellKey(ref, tier) in texts || drafted.has(cellKey(ref, tier)),
     // The first price on the implicit base row: the server says the unit must exist first (400 PRICE_EDIT_INVALID).
     addUnitProblem: (ref, tier) => {
       const key = cellKey(ref, tier);
@@ -538,6 +577,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       // Ticked offers (and the customer moves in them) were worked out against the plan this undoes: say so.
       const gone = entries.filter((e) => e.kind === "offer");
       if (gone.length > 0) setNotice(clearedNotice(gone, "you reset every price to Auto"));
+      dropKeepsLackingPlan(next, PRICE_CHANGE_UNDONE);
       setEntries(next);
       setOpenKey(null);
     },

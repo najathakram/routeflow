@@ -1,0 +1,287 @@
+import * as React from "react";
+import { act, render as rtlRender, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ProductPriceGridDto } from "@routeflow/types";
+import { customerChange, emptyPlan } from "../change-prices/plan.test-utils";
+import { keepMove } from "../change-prices/selection";
+import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
+import { EditablePricesGrid } from "./EditablePricesGrid";
+import { PriceDraftProvider } from "./PriceDraftProvider";
+import { PriceEditBar } from "./PriceEditBar";
+import { usePriceDraft, type PriceDraft } from "./usePriceDraft";
+
+// F03: after Change prices Apply the price boxes show the applied draft values (not the old ones with the new price as
+// a faint hint). NIT-1: a Keep the owner's own action removes is not "because that customer's prices changed".
+// Item 7: tier 1 is the tenant's own label in the draft's names.
+
+let mockGrid: { data?: ProductPriceGridDto; isLoading: boolean; isError: boolean };
+let mockLabels: Record<string, string> = {};
+let mockCustomers: unknown[] = [];
+jest.mock("@/lib/api/usePriceGrid", () => ({
+  ...jest.requireActual("@/lib/api/usePriceGrid"),
+  usePriceGrid: () => mockGrid,
+  fetchPriceGrid: () => Promise.resolve(mockGrid.data),
+}));
+jest.mock("@/lib/api/usePriceWrites", () => ({
+  ...jest.requireActual("@/lib/api/usePriceWrites"),
+  useSavePrices: () => ({ mutate: jest.fn(), reset: jest.fn(), isPending: false, error: null }),
+  useUndoPrices: () => ({ mutate: jest.fn(), isPending: false, error: null }),
+}));
+jest.mock("@/lib/api/tier-labels", () => ({ useTierLabels: () => ({ data: mockLabels }) }));
+jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => false }));
+jest.mock("@/lib/api/useProductCustomerPrices", () => ({
+  ...jest.requireActual("@/lib/api/useProductCustomerPrices"),
+  useProductCustomerPrices: () => ({ data: { customers: mockCustomers }, isFetching: false }),
+}));
+
+const cells = (v: number[], src: Array<"auto" | "set"> = []) =>
+  v.map((value, i) => ({
+    tier: (i + 1) as 1 | 2 | 3 | 4 | 5,
+    value,
+    source: src[i] ?? "auto",
+  }));
+const grid: ProductPriceGridDto = {
+  productId: "p1",
+  anchor: "piece",
+  revision: 7,
+  priceState: "ps-1",
+  tierAnchors: {},
+  tierRules: {},
+  rows: [
+    {
+      ref: "case",
+      label: "Case",
+      factor: 960,
+      kind: "pack",
+      editable: true,
+      code: null,
+      cells: cells([30, 13.91, 12.5, 11, 10], ["set", "set", "auto", "auto", "auto"]),
+    },
+    {
+      ref: "piece",
+      label: "Piece",
+      factor: 1,
+      kind: "base",
+      editable: true,
+      code: null,
+      cells: cells([0.92, 0.9, 0.88, 0.85, 0.8], ["set"]),
+    },
+  ],
+};
+const product = { id: "p1", unit: "Piece", unitsPerBox: 24, pricePerUnit: "0.92" };
+
+let draft!: PriceDraft;
+const Probe = () => {
+  draft = usePriceDraft();
+  return null;
+};
+const tree = () => (
+  <QueryClientProvider client={new QueryClient()}>
+    <PriceDraftProvider productId="p1">
+      <Probe />
+      <EditablePricesGrid product={product} />
+      <PriceEditBar />
+    </PriceDraftProvider>
+  </QueryClientProvider>
+);
+const mount = () => {
+  const r = rtlRender(tree());
+  return { ...r, again: () => r.rerender(tree()) };
+};
+const input = (ref: string, tier: number) =>
+  within(screen.getByTestId(T.row(ref))).getByTestId(T.input(ref, tier)) as HTMLInputElement;
+
+beforeEach(() => {
+  mockLabels = {};
+  mockCustomers = [];
+  mockGrid = { data: grid, isLoading: false, isError: false };
+});
+
+describe("F03: Apply writes the applied values into the price boxes", () => {
+  // What Change prices Apply hands over: the Case Retail 30 to 31.5 (a Set price), Wholesale 13.91 to 14.6.
+  const applied = emptyPlan({
+    patches: [
+      { ref: "case", tier: 1, to: 31.5 },
+      { ref: "case", tier: 2, to: 14.6 },
+      { ref: "case", tier: 3, to: 13.1 },
+    ],
+    changes: [
+      { ref: "case", label: "Case", tier: 1, from: 30, to: 31.5 },
+      { ref: "case", label: "Case", tier: 2, from: 13.91, to: 14.6 },
+      { ref: "case", label: "Case", tier: 3, from: 12.5, to: 13.1 },
+    ],
+  });
+  const apply = () => act(() => draft.applyPlan(applied, () => applied));
+
+  it("the Retail box that read 30 reads 31.5, Wholesale 14.6, and an Auto cell the plan set shows its new Set price", () => {
+    mount();
+    expect(draft.count).toBe(0);
+    apply();
+    expect(draft.editing).toBe(true);
+    expect(draft.count).toBe(3);
+    expect(input("case", 1).value).toBe("31.5");
+    expect(input("case", 2).value).toBe("14.6");
+    expect(input("case", 3).value).toBe("13.1");
+    // a price the plan did not touch is still what it was
+    expect(input("case", 4).value).toBe("");
+    expect(input("piece", 1).value).toBe("0.92");
+  });
+
+  it("the changed boxes are marked as changed, the untouched ones are not", () => {
+    mount();
+    apply();
+    expect(draft.api.changed("case", 1)).toBe(true);
+    expect(draft.api.changed("case", 3)).toBe(true);
+    expect(draft.api.changed("case", 4)).toBe(false);
+    expect(input("case", 1).className).toMatch(/(^|\s)border-brand-500/);
+    expect(input("case", 4).className).not.toMatch(/(^|\s)border-brand-500/);
+  });
+
+  it("a box the owner then edits shows what they typed, and Save carries it", async () => {
+    const user = userEvent.setup();
+    mount();
+    apply();
+    await user.clear(input("case", 1));
+    await user.type(input("case", 1), "32");
+    expect(input("case", 1).value).toBe("32");
+    expect(draft.toRequest()?.patches).toContainEqual({ ref: "case", tier: 1, to: 32 });
+  });
+
+  it("typing a box back to its saved price takes it out of the draft instead of leaving the applied one", async () => {
+    const user = userEvent.setup();
+    mount();
+    apply();
+    await user.clear(input("case", 1));
+    await user.type(input("case", 1), "30");
+    expect(input("case", 1).value).toBe("30");
+    expect(draft.toRequest()?.patches.map((p) => `${p.ref}|${p.tier}`)).not.toContain("case|1");
+    expect(draft.count).toBe(2);
+  });
+
+  it("Cancel drops the applied values: the boxes go back to the saved prices", async () => {
+    const user = userEvent.setup();
+    mount();
+    apply();
+    await user.click(screen.getByTestId(T.ebCancel));
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    await user.click(screen.getByTestId(T.btnEdit));
+    expect(input("case", 1).value).toBe("30");
+  });
+
+  it("an Auto price the plan set back to Auto shows an empty box", () => {
+    mount();
+    const toAuto = emptyPlan({
+      patches: [{ ref: "case", tier: 2, to: null }],
+      changes: [{ ref: "case", label: "Case", tier: 2, from: 13.91, to: 12.5 }],
+    });
+    act(() => draft.applyPlan(toAuto, () => toAuto));
+    expect(input("case", 2).value).toBe("");
+  });
+});
+
+describe("item 7: tier 1 is the tenant's own label in the draft", () => {
+  it("is Retail until the tenant relabels it, and then the tenant's label (the save bar's problems say it too)", () => {
+    const { again } = mount();
+    expect(draft.tierName(1)).toBe("Retail");
+    mockLabels = { "1": "Standard", "2": "Wholesale" };
+    again();
+    expect(draft.tierName(1)).toBe("Standard");
+    expect(draft.tierName(2)).toBe("Wholesale");
+    expect(draft.tierName(4)).toBe("Tier 4");
+  });
+
+  it("a Standard Case price the owner types wrong is named Standard Case in the bar", async () => {
+    mockLabels = { "1": "Standard" };
+    const user = userEvent.setup();
+    mount();
+    await user.click(screen.getByTestId(T.btnEdit));
+    await user.type(input("case", 1), "x");
+    expect(screen.getByTestId(T.ebProblems).textContent).toMatch(/^Standard Case: /);
+  });
+});
+
+describe("K3b NIT-1: a Keep the owner's own action clears is not blamed on the customer's prices", () => {
+  const BLAMES_PRICES = "that customer's prices changed";
+  const UNDONE =
+    "Your earlier choice to keep a customer price was cleared because that price change was undone.";
+  // c1 pays a set Piece price, so its Case price is derived from it: a Keep on that Case row pins the derived price.
+  const base = {
+    customerId: "c1",
+    name: "Northside",
+    tier: 2,
+    orderUnit: "piece",
+    set: { piece: 0.5 },
+  };
+  const start = () => {
+    mockCustomers = [base];
+    const view = mount();
+    act(() => draft.startEditing());
+    act(() => void draft.editCell("case", 2, "14.5"));
+    const row = draft.plan!.plan.customerChanges.find(
+      (c) => c.customerId === "c1" && c.ref === "case",
+    )!;
+    const keep = keepMove(row);
+    act(() => draft.keepCustomer(keep));
+    expect(draft.toRequest()?.customerMoves).toEqual([keep]);
+    return { ...view, keep };
+  };
+
+  it("resetting every price to Auto removes the applied plan a Keep was made on, so the Keep goes, said as undone", () => {
+    // c2 has no price of its own: the applied plan shows its derived Case price (9 now), which a Keep pins
+    const plan = emptyPlan({
+      patches: [{ ref: "case", tier: 2, to: 14 }],
+      customerChanges: [customerChange(2, { ref: "case", tier: 1, from: 9, to: 9.5 })],
+      changes: [{ ref: "case", label: "Case", tier: 2, from: 13.91, to: 14 }],
+    });
+    mockCustomers = [{ customerId: "c2", name: "Southside", tier: 1, orderUnit: null, set: {} }];
+    mount();
+    act(() => draft.applyPlan(plan, () => plan));
+    const keep = { customerId: "c2", ref: "case", tier: 1, from: null, to: 9 };
+    act(() => draft.keepCustomer(keep));
+    expect(draft.toRequest()?.customerMoves).toEqual([keep]);
+    act(() => draft.resetAllToAuto());
+    expect(draft.toRequest()?.customerMoves).toEqual([]);
+    expect(draft.notice).toBe(UNDONE);
+    expect(draft.notice).not.toContain(BLAMES_PRICES);
+  });
+
+  it("setting the cell back to its saved price clears the Keep and says the price change was undone", () => {
+    start();
+    act(() => draft.api.setText("case", 2, "13.91", "13.91"));
+    expect(draft.toRequest()?.customerMoves).toEqual([]);
+    expect(draft.notice).toBe(UNDONE);
+    expect(draft.notice).not.toContain(BLAMES_PRICES);
+  });
+
+  it("another user changing the customer still says the customer's prices changed", () => {
+    const { again } = start();
+    mockCustomers = [{ ...base, set: { piece: 0.6 } }];
+    again();
+    expect(draft.toRequest()?.customerMoves).toEqual([]);
+    expect(draft.notice).toBe(
+      "Your earlier choice to keep a customer price was cleared because that customer's prices changed.",
+    );
+  });
+
+  it("a Keep whose price change is still in the draft stays, with no notice", () => {
+    const { keep } = start();
+    act(() => draft.api.setText("case", 3, "12", "12.5"));
+    expect(draft.toRequest()?.customerMoves).toEqual([keep]);
+    expect(draft.notice).toBeNull();
+  });
+
+  it("an offer cleared by the same action keeps its own copy, and the Keep line joins it", () => {
+    mockCustomers = [{ ...base, orderUnit: "case" }];
+    mount();
+    act(() => draft.startEditing());
+    act(() => void draft.editCell("case", 2, "14.5"));
+    const idx = draft.plan!.plan.offers.findIndex((o) => o.kind === "customer");
+    act(() => draft.setOfferTicked(idx, true));
+    const row = draft.plan!.plan.customerChanges.find((c) => c.ref === "case");
+    if (row) act(() => draft.keepCustomer(keepMove(row)));
+    act(() => draft.resetAllToAuto());
+    expect(draft.notice).toMatch(/was cleared because you reset every price to Auto/);
+    expect(draft.notice).not.toContain(BLAMES_PRICES);
+  });
+});
