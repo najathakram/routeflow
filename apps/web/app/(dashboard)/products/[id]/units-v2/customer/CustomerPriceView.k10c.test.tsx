@@ -1,7 +1,7 @@
 import * as React from "react";
 import * as fs from "fs";
 import * as path from "path";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CustomerUnitPricesResponse } from "@routeflow/types";
 import { CustomerPriceView, resetCustomerViewMemory } from "./CustomerPriceView";
 import { CUSTOMER_VIEW_TESTIDS as T } from "./customer-testids";
@@ -52,6 +52,13 @@ const response = (tier: 1 | 2 | 3 | 4 | 5): CustomerUnitPricesResponse => ({
     },
   ],
 });
+
+/** The price cell's caption text, e.g. "AutoWholesale" (the Auto pill then the caption). */
+const priceCell = (ref = "pack") =>
+  (screen.getByTestId(T.row("p1", ref)).querySelectorAll("td")[1].textContent ?? "").replace(
+    /^\$[\d.]+/,
+    "",
+  );
 
 const HITS = [
   { id: "c1", businessName: "Corner Market" },
@@ -156,6 +163,55 @@ describe("F26: the customer search is a WAI-ARIA combobox", () => {
     expect(box).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("focusing the input opens the list; Escape closes it and focus stays; focus reopens", () => {
+    render(<CustomerPriceView productId="p1" />);
+    const box = input();
+    act(() => box.focus());
+    fireEvent.keyDown(box, { key: "Escape" });
+    act(() => box.blur());
+    expect(screen.queryByRole("listbox")).toBeNull();
+    act(() => box.focus());
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(box).toHaveAttribute("aria-expanded", "true");
+    fireEvent.keyDown(box, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(box).toHaveAttribute("aria-expanded", "false");
+    expect(document.activeElement).toBe(box);
+  });
+
+  it("stays open on blur (the list is inline, not a floating popup) and is closed after a pick", () => {
+    render(<CustomerPriceView productId="p1" />);
+    const box = input();
+    act(() => box.focus());
+    act(() => box.blur());
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId(T.result("c1")));
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("Escape with the list open does not reach a surrounding dialog; closed, it does", () => {
+    const parent = jest.fn();
+    const doc = jest.fn();
+    document.addEventListener("keydown", doc);
+    render(
+      <div onKeyDown={parent}>
+        <CustomerPriceView productId="p1" />
+      </div>,
+    );
+    const box = input();
+    box.focus();
+    const open = fireEvent.keyDown(box, { key: "Escape" });
+    expect(parent).not.toHaveBeenCalled();
+    expect(doc).not.toHaveBeenCalled();
+    expect(open).toBe(false); // preventDefault: type=search must not clear its text
+    expect(screen.queryByRole("listbox")).toBeNull();
+    // Now closed: the next Escape belongs to the page.
+    fireEvent.keyDown(box, { key: "Escape" });
+    expect(parent).toHaveBeenCalledTimes(1);
+    expect(doc).toHaveBeenCalledTimes(1);
+    document.removeEventListener("keydown", doc);
+  });
+
   it("typing filters through the customers list and clears the highlight", async () => {
     render(<CustomerPriceView productId="p1" />);
     const box = input();
@@ -197,7 +253,27 @@ describe("P18: tier labels", () => {
     const heads = within(screen.getByTestId(T.prices("p1"))).getAllByRole("columnheader");
     expect(heads[3]).toHaveTextContent(/^Tier 3$/);
     expect(document.body.textContent).not.toMatch(/Tier 3 tier/i);
-    expect(screen.getByTestId(T.row("p1", "pack"))).toHaveTextContent("Tier 3");
+    // No custom label: the default name, once, with no appended word.
+    expect(priceCell()).toBe("AutoTier 3");
+  });
+
+  it("a custom label that starts with 'Tier ' is printed verbatim, never doubled", () => {
+    mockLabels = { "3": "Tier A" };
+    mockPrices.mockImplementation(() => ({ data: response(3), isLoading: false, isError: false }));
+    render(<CustomerPriceView customerId="c1" />);
+    expect(priceCell()).toBe("AutoTier A");
+    expect(document.body.textContent).not.toContain("Tier A tier");
+  });
+
+  it("no custom label on tier 1 reads 'Retail tier'; a custom tier 1 label is verbatim", () => {
+    mockLabels = {};
+    mockPrices.mockImplementation(() => ({ data: response(1), isLoading: false, isError: false }));
+    const { unmount } = render(<CustomerPriceView customerId="c1" />);
+    expect(priceCell()).toBe("AutoRetail tier");
+    unmount();
+    mockLabels = { "1": "Walk-in" };
+    render(<CustomerPriceView customerId="c1" />);
+    expect(priceCell()).toBe("AutoWalk-in");
   });
 
   it("keeps a configured label as the header and the caption", () => {
@@ -209,7 +285,8 @@ describe("P18: tier labels", () => {
     render(<CustomerPriceView customerId="c1" />);
     const heads = within(screen.getByTestId(T.prices("p1"))).getAllByRole("columnheader");
     expect(heads[3]).toHaveTextContent(/^Wholesale$/);
-    expect(screen.getByTestId(T.row("p1", "pack"))).toHaveTextContent("Wholesale tier");
+    // A custom label is printed verbatim: " tier" is appended only when there is no custom label.
+    expect(priceCell()).toBe("AutoWholesale");
   });
 
   it("names tier 1 with the tenant label, never 'Tier 1', and drops the duplicate column", () => {

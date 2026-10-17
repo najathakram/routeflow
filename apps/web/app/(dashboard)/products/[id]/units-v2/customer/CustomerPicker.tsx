@@ -16,15 +16,14 @@ const optionId = (id: string) => `units-v2-cust-opt-${id}`;
 /**
  * Customer search as a WAI-ARIA combobox with a listbox popup (F26). DOM focus stays in the input;
  * the highlighted option is named by aria-activedescendant. ArrowDown/ArrowUp move it, Home/End jump,
- * Enter picks it (or the only match), Escape closes the list and keeps focus in the input, typing
- * filters and reopens. A mouse click on an option still picks.
+ * Enter picks it (or the only match), Escape closes the list (and stops there) and keeps focus in the input, focus and typing
+ * reopen it. A mouse click on an option still picks.
  */
 export function CustomerPicker({ onPick }: { onPick: (c: { id: string; name: string }) => void }) {
   const [text, setText] = React.useState("");
   const [debounced, setDebounced] = React.useState("");
   const [open, setOpen] = React.useState(true);
   const [active, setActive] = React.useState(-1);
-  const inputRef = React.useRef<HTMLInputElement>(null);
   React.useEffect(() => {
     const t = setTimeout(() => setDebounced(text.trim()), 250);
     return () => clearTimeout(t);
@@ -62,9 +61,9 @@ export function CustomerPicker({ onPick }: { onPick: (c: { id: string; name: str
     } else if (e.key === "Escape") {
       if (!expanded) return; // nothing of ours to close: let the page's own Escape handling run
       e.preventDefault(); // type=search would clear the text
+      e.stopPropagation(); // this Escape closes the list only, never also a surrounding dialog or panel
       setOpen(false);
-      setActive(-1);
-      inputRef.current?.focus();
+      setActive(-1); // focus never left the input (the key event came from it); refocusing would reopen
     }
   };
 
@@ -74,7 +73,6 @@ export function CustomerPicker({ onPick }: { onPick: (c: { id: string; name: str
         Customer
       </label>
       <input
-        ref={inputRef}
         id="units-v2-cust-search"
         data-testid={T.search}
         type="search"
@@ -85,6 +83,7 @@ export function CustomerPicker({ onPick }: { onPick: (c: { id: string; name: str
         aria-activedescendant={activeHit ? optionId(activeHit.id) : undefined}
         autoComplete="off"
         value={text}
+        onFocus={() => setOpen(true)}
         onChange={(e) => {
           setText(e.target.value);
           setOpen(true);

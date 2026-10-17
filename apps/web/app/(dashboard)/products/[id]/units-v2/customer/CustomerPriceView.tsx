@@ -34,18 +34,27 @@ export function resetCustomerViewMemory() {
   lastChoice = null;
 }
 
+/**
+ * P18: how the tier reads in a price caption. A tenant's own label is printed verbatim, whatever it says
+ * (even "Tier A"). Only when there is NO custom label do we add " tier" to the app's default name, so a
+ * numbered default ("Tier 3") is never doubled to "Tier 3 tier" and the base price reads "Retail tier".
+ */
+function captionTierName(labels: Record<string, string> | null | undefined, tier: number): string {
+  const name = productTierLabel(labels, tier);
+  if (labels?.[String(tier)]?.trim()) return name;
+  return tier === 1 ? `${name} tier` : name;
+}
+
 function SourceCaption({
   source,
-  tierName,
+  tierCaption,
   orderUnitLabel,
 }: {
   source: CustomerUnitPriceSource;
-  tierName: string;
+  tierCaption: string;
   orderUnitLabel: string;
 }) {
   if (source === "customer") return <span>Set for this customer</span>;
-  // P18: an unlabeled tier is already "Tier 3"; never "Tier 3 tier".
-  const tierCaption = /^tier\s/i.test(tierName) ? tierName : `${tierName} tier`;
   const why =
     source === "customer-shape"
       ? `From their ${orderUnitLabel} price`
@@ -70,11 +79,14 @@ function PriceCell({ row }: { row: CustomerUnitPriceRowDto }) {
 function ProductBlock({
   entry,
   tierName,
+  tierCaption,
   listName,
   showName,
 }: {
   entry: CustomerProductUnitPricesDto;
   tierName: string;
+  /** The tier as the caption under each price reads (see captionTierName). */
+  tierCaption: string;
   /** The tenant's name for tier 1 (the list price column). */
   listName: string;
   showName: boolean;
@@ -130,7 +142,7 @@ function ProductBlock({
                   <div className="mt-0.5 text-xs text-navy/60">
                     <SourceCaption
                       source={row.source}
-                      tierName={tierName}
+                      tierCaption={tierCaption}
                       orderUnitLabel={entry.orderUnitLabel}
                     />
                   </div>
@@ -257,6 +269,7 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
                     key={entry.productId}
                     entry={entry}
                     tierName={productTierLabel(labels, entry.tier)}
+                    tierCaption={captionTierName(labels, entry.tier)}
                     listName={productTierLabel(labels, 1)}
                     showName={!productId}
                   />
