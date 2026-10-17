@@ -225,6 +225,13 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
   const justFocused = React.useRef(false);
   const [inside, setInside] = React.useState(false);
   const text = edit.text(t.ref, tier, t.original);
+  // M1: select the value AFTER the box has re-rendered with its raw text. Selecting in onFocus alone is undone when the
+  // value that renders on focus differs from the settled one (the caret jumps to the end and typing appends).
+  const selectWhole = React.useRef(false);
+  React.useLayoutEffect(() => {
+    if (inside && selectWhole.current) el.current?.select();
+    selectWhole.current = false;
+  }, [inside]);
   return (
     <>
       <span className="relative block w-fit">
@@ -248,6 +255,7 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
           onFocus={(e) => {
             atFocus.current = text;
             justFocused.current = true;
+            selectWhole.current = true;
             setInside(true);
             e.currentTarget.select();
           }}
