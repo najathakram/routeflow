@@ -384,6 +384,7 @@ describe("genericToastCopy: codes users rely on", () => {
         /total below what is already paid or credited.*change the lines or discount/,
       ],
       ["FAMILY_NOT_PRICEABLE", /family can't be priced or promoted.*variants/],
+      ["VARIANT_NAME_PREFIX_ONLY", /can't be just the product name.*what makes it different/],
       // SA-770: the overdue list refuses past its id cap (422) and says how to narrow it.
       ["OVERDUE_FILTER_TOO_BROAD", /Too many invoices are overdue.*customer/],
       ["REMINDER_NO_BALANCE_DUE", /no balance due.*nothing to remind/],

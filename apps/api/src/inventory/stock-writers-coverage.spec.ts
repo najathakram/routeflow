@@ -22,29 +22,17 @@ import * as ts from "typescript";
 const MOVEMENT_WRITERS = new Set(["recordSaleMovement", "bookRestockMovement"]);
 
 /** `<file>::<enclosing function>` → why the counter write has no movement in the same function. */
-const ALLOW_UNPAIRED: Record<string, string> = {
-  // SA-136 §7 "out of scope, filed separately": the vendor-bill un-receive DELETES the bill's PURCHASE
-  // movement(s) and decrements the counter by the same pieces, so Σquantity still equals the counter
-  // (no gap) — but the receipt's history is erased instead of reversed by an appended row.
-  // SA-767 L-1: the tx body is now the `runBody` closure that retryOnTxConflict re-runs (same site).
-  "vendor-bills/vendor-bills.service.ts::VendorBillsService.revertToDraft.runBody":
-    "un-receive deletes the PURCHASE row instead of appending a reversal (filed separately, SA-136 §7)",
-};
+const ALLOW_UNPAIRED: Record<string, string> = {};
 /** The RATCHET: may only go DOWN. */
-const UNPAIRED_BASELINE = 1;
+const UNPAIRED_BASELINE = 0;
 
 /**
  * B562 PR-3 (SA-136b): a write made through `this.prisma…` / `prisma.…` rather than a transaction
  * client is NON-ATOMIC — its movement row (even when the same function writes one) can commit
  * without it, or it without the row. Such a site must be listed here; the list may only shrink.
  */
-const ALLOW_NON_ATOMIC: Record<string, string> = {
-  // SA-136b: the Zoho stock sync SETS the counter, then writes its ADJUSTMENT row in a second call,
-  // with the quantity from a pre-read. Paired, but non-atomic. Filed on its own item.
-  "import/import.service.ts::ImportService.importInventory":
-    "paired, non-atomic, filed (SA-136b; absolute set + separate ADJUSTMENT row, pre-read delta)",
-};
-const NON_ATOMIC_BASELINE = 1;
+const ALLOW_NON_ATOMIC: Record<string, string> = {};
+const NON_ATOMIC_BASELINE = 0;
 
 const SRC_ROOT = path.resolve(__dirname, "..");
 
@@ -610,9 +598,6 @@ const OTHER_WRITERS: Record<string, string> = {
     "SA-767 L-4/L-5: a return cancel re-takes stock without the Product lock",
   "returns/inline-returns.service.ts::InlineReturnsService.cancel":
     "SA-767 L-4/L-5: an inline-return cancel re-takes stock without the Product lock",
-  // The Zoho stock sync SETS the counter (absolute) and writes its ADJUSTMENT row in a second call.
-  "import/import.service.ts::ImportService.importInventory":
-    "SA-767 L-4/L-5: the Zoho stock sync sets the counter without the Product lock (also ALLOW_NON_ATOMIC above)",
   // The Zoho product import CREATES rows with their opening stock: nothing exists to lock yet.
   "products/products.service.ts::ProductsService.importFromZoho":
     "new-row create: opening stock is written on a product created in the same transaction",
