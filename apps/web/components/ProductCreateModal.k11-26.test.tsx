@@ -139,6 +139,19 @@ describe("K11-26: Escape closes only a pristine dialog", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("a list that belongs to something else on the page does not block a pristine Escape", () => {
+    const { onClose } = open();
+    const stray = document.createElement("ul");
+    stray.setAttribute("role", "listbox");
+    document.body.appendChild(stray);
+    try {
+      esc();
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      stray.remove();
+    }
+  });
+
   it("an outside click still never closes it (only X, Cancel and a pristine Escape do)", async () => {
     const { onClose } = open();
     await new Promise((r) => setTimeout(r, 20));

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { getStoredUser } from "@/lib/auth";
 import { renderWithProviders } from "@/test-utils/render";
 import { ProductCreateModal } from "./ProductCreateModal";
+import { uploadProductImages } from "@/lib/api/products";
 import {
   draftKey,
   EMPTY_DRAFT_FORM,
@@ -323,6 +324,42 @@ describe("K11-28: the write chain", () => {
       expect(onClose).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("when the piece write AND the photo upload both fail, one combined warning replaces both", async () => {
+    setupApi("units");
+    (uploadProductImages as jest.Mock).mockRejectedValueOnce(new Error("500"));
+    const { onCreated, onClose } = open();
+    await fillCase({ piece: "1.75" });
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [new File(["x"], "cola.png", { type: "image/png" })] },
+    });
+    create();
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+    expect(toastSpy).toHaveBeenCalledTimes(1);
+    expect(toastSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title:
+          "Product created, but its piece price and photos weren't saved. Set them on the product page.",
+        variant: "warning",
+      }),
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed photo upload with a saved piece price still shows only the photos warning", async () => {
+    (uploadProductImages as jest.Mock).mockRejectedValueOnce(new Error("500"));
+    const { onCreated } = open();
+    await fillCase({ piece: "1.75" });
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [new File(["x"], "cola.png", { type: "image/png" })] },
+    });
+    create();
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+    expect(toastSpy).toHaveBeenCalledTimes(1);
+    expect(toastSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Product created, but its photos didn't upload" }),
+    );
+  });
 
   it("a double-click runs the chain once (B1244 holds), and Create stays busy for all of it", async () => {
     let release!: () => void;

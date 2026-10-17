@@ -178,6 +178,19 @@ describe("FamilyVariantsGrid read-only reads like a product list (K11-24)", () =
     expect(cells.filter((c) => /max-sm:hidden/.test(c.className))).toHaveLength(5);
   });
 
+  it("the read-only Cost cell and header are right-aligned in tabular figures, like Price", () => {
+    setup({ readOnly: true, rows: saved() });
+    expect(screen.getByRole("columnheader", { name: "Cost" })).toHaveClass("text-right");
+    const cost = screen.getByText("$0.80");
+    expect(cost).toHaveClass("block", "text-right", "tabular-nums");
+  });
+
+  it("edit mode keeps the Cost input as it was (left-aligned)", () => {
+    setup({ readOnly: false, rows: saved() });
+    expect(screen.getByRole("columnheader", { name: "Cost" })).not.toHaveClass("text-right");
+    expect(screen.getByLabelText("Variant 1 cost")).not.toHaveClass("text-right");
+  });
+
   it("edit mode is unchanged: every column and every input, nothing hidden", () => {
     setup({ readOnly: false, rows: saved() });
     for (const f of ["name", "SKU", "barcode", "unit code", "pieces per box", "price", "cost"]) {

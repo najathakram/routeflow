@@ -121,6 +121,24 @@ describe("K11-27: Add variant creates and says so", () => {
   });
 });
 
+describe("K11-27: a late catalog never overwrites what the operator already typed", () => {
+  it("a Unit typed before the catalog lands is kept; fields still at their baseline are filled", async () => {
+    products = undefined;
+    const utils = renderWithProviders(el);
+    await userEvent.type(screen.getByLabelText(/^Unit \*/), "pack");
+    products = { data: [PARENT] };
+    utils.rerender(el);
+    // the untouched Price is filled from the parent, so we know the pre-fill ran
+    await waitFor(() => expect(screen.getByLabelText(/^Price per/)).toHaveValue(12));
+    expect(screen.getByLabelText(/^Unit \*/)).toHaveValue("pack");
+  });
+
+  it("an untouched Unit is still filled from the parent when the catalog lands late", async () => {
+    openAddVariantBeforeCatalog();
+    await waitFor(() => expect(screen.getByLabelText(/^Unit \*/)).toHaveValue("box"));
+  });
+});
+
 describe("K11-27: one toast per create, held 5 s, variant-aware", () => {
   async function fillStandalone() {
     await userEvent.type(screen.getByLabelText("Name *"), "Cola");

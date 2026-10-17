@@ -30,10 +30,11 @@ export function FamilyPriceSection({
         type="button"
         aria-expanded={expanded}
         aria-controls={regionId}
+        aria-disabled={isEditing || undefined}
         onClick={() => {
           if (!isEditing) setOpen((o) => !o);
         }}
-        className="mt-2 inline-flex min-h-11 items-center gap-1.5 rounded text-sm font-medium text-navy hover:text-brand-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+        className="mt-2 inline-flex min-h-11 items-center gap-1.5 rounded text-sm font-medium text-navy hover:text-brand-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 aria-disabled:cursor-default aria-disabled:hover:text-navy"
       >
         <span>
           Family price <MoneyFigure value={price} />

@@ -292,6 +292,18 @@ describe("K11-25 P23: the family price stays editable behind a disclosure", () =
     expect(btn).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("while editing the disclosure is aria-disabled with no pointer affordance; in view mode it is a live control", async () => {
+    const user = userEvent.setup();
+    show();
+    const viewBtn = screen.getByRole("button", { name: /^Family price/ });
+    expect(viewBtn).not.toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByTitle("Edit product"));
+    const btn = screen.getByRole("button", { name: /^Family price/ });
+    expect(btn).toHaveAttribute("aria-disabled", "true");
+    expect(btn.className).toMatch(/aria-disabled:cursor-default/);
+    expect(btn.className).toMatch(/aria-disabled:hover:text-navy/);
+  });
+
   it("the price row and tiers are not left in their old spots (one copy of each)", () => {
     show();
     expect(screen.getAllByText("Pricing Tiers")).toHaveLength(1);

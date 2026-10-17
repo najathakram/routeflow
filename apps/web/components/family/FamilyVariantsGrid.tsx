@@ -110,7 +110,7 @@ export function FamilyVariantsGrid({
                   key={c.field}
                   className={cn(
                     "px-2 py-2 font-semibold",
-                    c.align === "right" && "text-right",
+                    (c.align === "right" || (readOnly && c.money)) && "text-right",
                     readOnly && !c.core && "max-sm:hidden",
                   )}
                 >
@@ -133,7 +133,9 @@ export function FamilyVariantsGrid({
                     >
                       {readOnly ? (
                         <span
-                          className={cn(c.align === "right" && "block text-right tabular-nums")}
+                          className={cn(
+                            (c.align === "right" || c.money) && "block text-right tabular-nums",
+                          )}
                         >
                           {!r[c.field] ? (
                             "—"

@@ -91,6 +91,22 @@ interface ProductCreateModalProps {
   initialUnitsPerBox?: number;
 }
 
+/**
+ * Is a Unit / Category / product list open INSIDE the dialog the Escape came from? Inline lists live in the dialog;
+ * AnchoredList portals to <body> and stamps the owning dialog's id. A list elsewhere on the page is not ours.
+ */
+function listOpenInDialog(target: EventTarget | null): boolean {
+  const dialog =
+    (target instanceof Element ? target.closest('[role="dialog"]') : null) ??
+    document.querySelector('[role="dialog"]');
+  if (!dialog) return false;
+  if (dialog.querySelector('[role="listbox"]')) return true;
+  return (
+    !!dialog.id &&
+    document.querySelector(`[data-anchored-list][data-anchored-owner="${dialog.id}"]`) !== null
+  );
+}
+
 /** Only prefill units-per-box from a whole number greater than 1 — never guess/round. */
 function validUnitsPerBoxPrefill(v: number | undefined): boolean {
   return v != null && Number.isInteger(v) && v > 1;
@@ -216,10 +232,13 @@ export function ProductCreateModal({
     if (!form.parentProductId) return;
     const parent = prefillParent;
     if (!parent) return;
+    // Fill only what the operator has not touched: a field that differs from the baseline is theirs (the catalog
+    // can land after they started typing). Price and Units per box already keep any non-blank value.
+    const base = baselineRef.current;
     setFormProgrammatic((f) => ({
       ...f,
-      category: parent.category ?? f.category,
-      unit: parent.unit ?? f.unit,
+      category: f.category === base.category ? (parent.category ?? f.category) : f.category,
+      unit: f.unit === base.unit ? (parent.unit ?? f.unit) : f.unit,
       pricePerUnit: f.pricePerUnit || String(parseFloat(String(parent.pricePerUnit)).toFixed(2)),
       unitsPerBox: f.unitsPerBox || String(parent.unitsPerBox ?? ""),
     }));
@@ -409,18 +428,14 @@ export function ProductCreateModal({
 
     // K11-28: the optional piece price, after the product exists. Three separate writes, the price through S9
     // (compare-and-set, audit, undo), never on the units POST. Any failure keeps the product and stops the chain.
-    let warned = false;
+    let pieceFailed = false;
+    let photosFailed = false;
     if (pieceTo != null && product?.id) {
       setIsSavingPiece(true);
       try {
         await savePiecePrice(product.id, pieceTo);
       } catch {
-        warned = true;
-        toast({
-          title: `Product created, but its ${w.base.lower} price wasn't saved. Set it on the product page.`,
-          variant: "warning",
-          duration: CREATED_TOAST_MS,
-        });
+        pieceFailed = true;
       } finally {
         setIsSavingPiece(false);
       }
@@ -433,19 +448,33 @@ export function ProductCreateModal({
         await uploadProductImages(product.id, pendingImages);
       } catch {
         // The product EXISTS now: say the photos missed, hand the product back, and close (a retry here would duplicate it).
-        warned = true;
-        toast({
-          title: "Product created, but its photos didn't upload",
-          description: "Add them from the product page.",
-          variant: "warning",
-          duration: CREATED_TOAST_MS,
-        });
+        photosFailed = true;
       } finally {
         setIsUploading(false);
       }
     }
-    // K11-27: exactly one toast per create, held long enough to read. A warning above stands in for it.
-    if (!warned) {
+    // K11-27: exactly one toast per create, held long enough to read. Any failure above becomes ONE warning
+    // (naming everything that missed) in place of the success toast.
+    if (pieceFailed && photosFailed) {
+      toast({
+        title: `Product created, but its ${w.base.lower} price and photos weren't saved. Set them on the product page.`,
+        variant: "warning",
+        duration: CREATED_TOAST_MS,
+      });
+    } else if (pieceFailed) {
+      toast({
+        title: `Product created, but its ${w.base.lower} price wasn't saved. Set it on the product page.`,
+        variant: "warning",
+        duration: CREATED_TOAST_MS,
+      });
+    } else if (photosFailed) {
+      toast({
+        title: "Product created, but its photos didn't upload",
+        description: "Add them from the product page.",
+        variant: "warning",
+        duration: CREATED_TOAST_MS,
+      });
+    } else {
       const parentName = product?.parent?.name ?? prefillParent?.name;
       toast({
         title:
@@ -522,7 +551,7 @@ export function ProductCreateModal({
       // A long form: an outside click never closes it. Escape closes it only while it is pristine (nothing
       // typed, no photo queued), and never when it was meant for an open list (Unit, Category).
       onEscapeKeyDown={(e) => {
-        if (!pristine || document.querySelector('[role="listbox"]')) e.preventDefault();
+        if (!pristine || listOpenInDialog(e.target)) e.preventDefault();
       }}
       onInteractOutside={(e) => e.preventDefault()}
       // Focus lands on the first thing to type (Flavor when a parent is set), not on the X.

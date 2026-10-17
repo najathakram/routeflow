@@ -15,18 +15,49 @@ export const UNITS_SKU = "E2E-FIX-UNITS";
 
 export type Ctx = { api: string; headers: Record<string, string> };
 
-/** Logs in as the operator, checks the flag, and opens the fixture product's page. */
+/**
+ * Logs in as the operator, checks the flag is served, and opens a product page. By default the fixture product; pass
+ * `productId` for another one. `flagOff` opens the SAME tenant as if `flag.units_prices_v2` were not served, by
+ * stripping it from the subscription answer the browser receives (the flag is read client-side), so a flag-OFF
+ * pass needs no second tenant. API calls the spec makes itself (page.request) still see the real flags.
+ */
 export async function openFixtureProduct(
   page: Page,
   context: Parameters<typeof setTenantCookie>[0],
   sku: string = UNITS_SKU,
+  opts: { productId?: string; flagOff?: boolean } = {},
 ) {
   await setTenantCookie(context, BASE);
   const ctx = await requireUnitsV2Flag(page);
-  const product = await productBySku(page, ctx, sku);
-  await page.goto(`/products/${product.id}`);
+  const productId = opts.productId ?? (await productBySku(page, ctx, sku)).id;
+  if (opts.flagOff) {
+    await page.route("**/billing/subscription*", async (route) => {
+      const res = await route.fetch();
+      const body: any = await res.json();
+      body.flags = (body.flags ?? []).filter((f: string) => f !== "flag.units_prices_v2");
+      await route.fulfill({ response: res, json: body });
+    });
+  }
+  await page.goto(`/products/${productId}`);
   await expect(page.locator("h1#h-product")).toBeVisible({ timeout: 20_000 });
-  return { ...ctx, productId: product.id };
+  return { ...ctx, productId };
+}
+
+/** A 1x1 PNG, the smallest image the upload endpoint accepts. */
+const PNG_1X1 = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+/** Uploads `n` one-pixel images to a product over the API (one request each: the field name repeats). */
+export async function seedImages(page: Page, ctx: Ctx, productId: string, n: number) {
+  for (let i = 0; i < n; i++) {
+    const res = await page.request.post(`${ctx.api}/products/${productId}/images`, {
+      headers: ctx.headers,
+      multipart: { files: { name: `k11-${i}.png`, mimeType: "image/png", buffer: PNG_1X1 } },
+    });
+    expect(res.ok(), `upload image ${i + 1}: ${res.status()}`).toBeTruthy();
+  }
 }
 
 /** An active FAMILY product, self-provisioned on the approved test tenant when the seed has none. */
