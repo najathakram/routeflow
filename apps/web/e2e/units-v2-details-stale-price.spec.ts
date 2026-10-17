@@ -100,7 +100,7 @@ test.describe("Units v2 Details save after a v2 price save @ 1440", () => {
 
         // 3. Open Details edit (unless it already is), rename, save from the Details form itself.
         if (!detailsFirst) await openDetails();
-        const nameInput = page.locator(`input[value="${name}"]`).first();
+        const nameInput = page.locator(`input[value^="${name}"]`).first();
         await nameInput.fill(`${name} R`);
         const detailsForm = page
           .locator("div")
@@ -169,7 +169,7 @@ test.describe("Units v2 Details save after a v2 price save @ 1440", () => {
       // A non-pack unit with its own explicit price (Pallet = 20 boxes).
       const unit = await page.request.post(`${ctx.api}/products/${id}/units`, {
         headers: ctx.headers,
-        data: { label: unitLabel, factorToBase: 240, price: unitPrice.toFixed(2) },
+        data: { label: unitLabel, factorToBase: 240, price: unitPrice },
       });
       expect(unit.ok(), `create the unit: ${unit.status()}`).toBeTruthy();
       unitId = ((await unit.json()) as { id: string }).id;
@@ -240,7 +240,7 @@ test.describe("Units v2 Details save after a v2 price save @ 1440", () => {
       if (unitId) {
         const restore = await page.request.patch(`${ctx.api}/products/${id}/units/${unitId}`, {
           headers: ctx.headers,
-          data: { label: "Pallet", price: unitPrice.toFixed(2) },
+          data: { label: "Pallet", price: unitPrice },
         });
         if (!restore.ok()) console.warn(`restore the unit name and price: ${restore.status()}`);
       }
