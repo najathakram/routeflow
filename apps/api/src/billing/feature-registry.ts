@@ -645,6 +645,9 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
       added: "2026-10-16",
       routes: [
         "GET /products/:productId/price-grid (product-pricing.controller.ts, class-level)",
+        "POST /products/:productId/prices (product-pricing.controller.ts, class-level)",
+        "POST /products/:productId/prices/undo (product-pricing.controller.ts, class-level)",
+        "GET /customers/:customerId/unit-prices (customer-unit-prices.controller.ts, class-level)",
         "products.service.ts create and importFromZoho, product-families.service.ts createFamily and updateVariants (hasFlag, S4)",
       ],
       grantPath:

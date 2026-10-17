@@ -48,18 +48,18 @@ export interface CustomerPriceMove {
 }
 
 /**
- * PATCH /products/:productId/prices: everything one Save commits, in ONE transaction (SA-799 b). Aligned to K3's draft
- * payload `{ productId, patches, orderUnit, keeps }`.
+ * POST /products/:productId/prices: everything one Save commits, in ONE transaction (SA-799 b). The product id is in the URL, not
+ * the body; the body is exactly this interface.
  */
 export interface SavePricesRequest {
   /** The product's priceRevision the draft was built on (ProductPriceGridDto.revision). R-1 CAS -> 409 LADDER_REVISION_STALE. */
   expectedRevision: number;
   /**
-   * OPTIONAL (builders' shape has no field for it). ProductPriceGridDto.priceState the draft was built on: R-1's value
-   * compare-and-set over the price-bearing state. Without it the server can only check the revision, which SA-796 R-1
-   * says is not enough while legacy writers skip the bump: open item for the lead (see SPRINT-CONTRACT 9).
+   * REQUIRED (lead ruling 2026-10-16). ProductPriceGridDto.priceState the draft was built on: R-1's value
+   * compare-and-set over the price-bearing state (legacy writers skip the revision bump, so the revision alone is not
+   * enough). A mismatch is 409 LADDER_REVISION_STALE.
    */
-  expectedPriceState?: string;
+  expectedPriceState: string;
   /** At least one of patches / keeps / customerMoves is non-empty. A (ref, tier) appears at most once across patches+keeps. */
   patches: PriceCellPatch[];
   keeps?: PriceCellKeep[];
@@ -89,13 +89,37 @@ export interface SavePricesResponse {
   undo?: SavePricesUndo;
   /** The fresh grid (same read model as GET price-grid), so the client never refetches after a save. */
   grid: ProductPriceGridDto;
+  /** Undo only: the customer cells the request's `skip` list left as they are (they keep `current`). */
+  skipped?: SkippedCustomerCell[];
 }
 
-/** POST /products/:productId/prices/undo. Precondition = the CURRENT grid's revision (+ state when sent), as a save. */
+/** One customer cell an Undo was told to skip (SA-809 section 2). `seen` = the value the 409 preview showed. */
+export interface UndoSkipCell {
+  customerId: string;
+  ref: string;
+  seen: number | null;
+}
+
+/** A skipped cell in the response: left as it is, never restored later. */
+export interface SkippedCustomerCell {
+  customerId: string;
+  ref: string;
+  tier: number;
+  current: number | null;
+}
+
+/** POST /products/:productId/prices/undo. Precondition = the CURRENT grid's revision and priceState, as a save. */
 export interface UndoPricesRequest {
   auditId: string;
   expectedRevision: number;
-  expectedPriceState?: string;
+  /** REQUIRED, as on a save. */
+  expectedPriceState: string;
+  /**
+   * Customer cells to leave as they are (SA-809 section 2). Only cells the previous 409 listed in `conflicts` can be
+   * skipped (else 400 PRICE_EDIT_INVALID), never product cells, and a cell is skipped only while its current value
+   * still equals `seen` (else 409 again with the new conflicts). Everything else is restored in ONE write.
+   */
+  skip?: UndoSkipCell[];
 }
 
 /** The 409 body of LADDER_REVISION_STALE (save and undo). Nothing was written; reload the grid. */
@@ -104,9 +128,25 @@ export interface LadderRevisionStaleBody {
   message: string;
   /** The product's priceRevision now. */
   revision: number;
+  /** The current grid, so the client can reload or preview the undo on it without a second request. */
+  grid?: ProductPriceGridDto;
+  /**
+   * The customer cells whose row no longer holds the `from` the write expected (for an Undo: what the save left).
+   * This is the preview. Nothing was written; the whole call is refused.
+   */
+  conflicts?: CustomerPriceConflict[];
 }
 
-/** The 400 body of PRICE_EDIT_INVALID (PATCH prices): the pricing core's refusals (validateSetPrice, the anchor's Retail). */
+/** One customer cell that no longer holds what the save left (`expected`), but `current` (null = no row). */
+export interface CustomerPriceConflict {
+  customerId: string;
+  ref: string;
+  tier: number;
+  expected: number | null;
+  current: number | null;
+}
+
+/** The 400 body of PRICE_EDIT_INVALID (POST prices): the pricing core's refusals (validateSetPrice, the anchor's Retail). */
 export interface PriceEditInvalidBody {
   code: typeof API_ERROR_CODES.PRICE_EDIT_INVALID;
   message: string;
@@ -136,7 +176,7 @@ export interface ProductCustomerPricesResponse {
 }
 
 /** resolveCustomerUnitPrice's `source`. */
-export type CustomerUnitPriceSource = "customer" | "customer-shape" | "tier" | "list";
+export type CustomerUnitPriceSource = "customer" | "customer-shape" | "tier" | "list" | "history";
 
 /** One unit row of the customer view: what this customer pays vs the list (Retail) and their tier's price. */
 export interface CustomerUnitPriceRowDto {
@@ -159,8 +199,14 @@ export interface CustomerUnitPriceRowDto {
 export interface CustomerProductUnitPricesDto {
   productId: string;
   productName: string;
+  /** customerTierFor(customer-product tier, customer tier): the tier this customer pays at for this product. */
+  tier: PriceTierNumber;
   /** The customer's own order unit for this product, or null (the tier's anchor applies). */
   orderUnit: string | null;
+  /** Label of the unit the customer actually orders in: their own order unit, else their tier's anchor (customerAnchor). */
+  orderUnitLabel: string;
+  /** Where that label comes from: the customer's own order unit, or the product's default (no business-setting scope is read yet). */
+  orderUnitScope: "customer" | "default";
   revision: number;
   rows: CustomerUnitPriceRowDto[];
 }
@@ -174,4 +220,8 @@ export interface CustomerUnitPricesResponse {
   customerName: string;
   tier: PriceTierNumber;
   products: CustomerProductUnitPricesDto[];
+  /** Products matched (before paging), the 1-based page and the page size used. */
+  total: number;
+  page: number;
+  limit: number;
 }
