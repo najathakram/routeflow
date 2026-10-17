@@ -1,7 +1,10 @@
 import {
   isSpecialTier,
   getTierPrice,
+  customerLinePrice,
   normalizeBoxesPieces,
+  type CustomerLayerUnit,
+  type CustomerLinePrice,
   type DerivedBaseMarker,
   type LadderProduct,
 } from "@routeflow/pricing";
@@ -72,7 +75,7 @@ const snapshot = (li: PackBase): PackBase => ({
 export function applyLineUnit<T extends UnitLine>(
   li: T,
   option: UnitOption,
-  ctx: { tier: number; keepQty?: boolean },
+  ctx: { tier: number; keepQty?: boolean; layer?: readonly CustomerLayerUnit[] | null },
 ): T {
   // A derived-base line is the pack with a piece count: leave that shape first, so a snapshot or a restore
   // below always sees the PACK (never the pieces state).
@@ -80,7 +83,11 @@ export function applyLineUnit<T extends UnitLine>(
   const base = line.packBase ?? snapshot(line);
   if (option.kind === "pack") {
     if (!line.packBase) return line;
-    return restorePack(line, ctx, false);
+    const back = restorePack(line, ctx, false);
+    // S19b: the picker's pack option carries the customer's layer price; a one-time price the operator typed stands.
+    return option.layerLine && back.discountedPrice == null
+      ? withLayerLine(back, option.layerLine)
+      : back;
   }
   const special = isSpecialTier(ctx.tier);
   if (option.derived) {
@@ -115,8 +122,13 @@ export function applyLineUnit<T extends UnitLine>(
     qty: ctx.keepQty && line.unitLabel === option.value ? line.qty : 1,
     listPrice: option.listPrice,
     unitPrice: option.price,
-    priceType: special ? "SPECIAL" : "STANDARD",
-    specialPrice: special ? option.price : undefined,
+    // S19b: an option from the customer's layer carries its own priceType and baseline (MANUAL when above list).
+    priceType: option.layerLine ? option.layerLine.priceType : special ? "SPECIAL" : "STANDARD",
+    specialPrice: option.layerLine
+      ? customerLineSpecial(option.layerLine)
+      : special
+        ? option.price
+        : undefined,
     discountedPrice: undefined,
     unitCost: base.unitCost != null ? base.unitCost * option.factorToBase : undefined,
   };
@@ -131,7 +143,7 @@ export function applyLineUnit<T extends UnitLine>(
  */
 function restorePack<T extends UnitLine>(
   line: T,
-  ctx: { tier: number },
+  ctx: { tier: number; layer?: readonly CustomerLayerUnit[] | null },
   dropOneTime: boolean,
   /** The pack price the picker already shows at the customer's tier: the fallback when the line has no tier columns. */
   shownPackPrice?: number,
@@ -151,13 +163,80 @@ function restorePack<T extends UnitLine>(
     }
   }
   if ((dropOneTime || pb.discountedPrice == null) && line.tierPrices) {
-    const tierPrice = getTierPrice(line.tierPrices, ctx.tier);
-    const special = isSpecialTier(ctx.tier);
-    restored.unitPrice = tierPrice;
-    restored.priceType = special ? "SPECIAL" : "STANDARD";
-    restored.specialPrice = special ? tierPrice : undefined;
+    // S19b: through customerLinePrice. With no layer (flag off, or none for this product) it is `getTierPrice` at the tier
+    // and `isSpecialTier`, exactly as before; a layer row for the pack is the customer's price (SA-811a R1).
+    const lp = customerLinePrice({
+      product: line.tierPrices as unknown as Record<string, unknown>,
+      tier: ctx.tier,
+      layer: ctx.layer,
+    });
+    restored.unitPrice = lp.price;
+    if (lp.layered) {
+      restored.listPrice = lp.listPrice;
+      restored.priceType = lp.priceType;
+      restored.specialPrice = customerLineSpecial(lp);
+    } else {
+      restored.priceType = lp.priceType === "MANUAL" ? "STANDARD" : lp.priceType;
+      restored.specialPrice = lp.isSpecial ? lp.price : undefined;
+    }
   }
   return restored;
+}
+
+/** The special (baseline) price a layered line carries: the layer price, so a typed change is judged against it. */
+export const customerLineSpecial = (lp: CustomerLinePrice): number | undefined =>
+  lp.isSpecial || lp.priceType === "MANUAL" ? lp.price : undefined;
+
+function withLayerLine<T extends PackBase>(line: T, lp: CustomerLinePrice): T {
+  return {
+    ...line,
+    unitPrice: lp.price,
+    listPrice: lp.listPrice,
+    priceType: lp.priceType,
+    specialPrice: customerLineSpecial(lp),
+  };
+}
+
+/** The line fields `repriceLineFromLayer` reads and writes. */
+export interface LayerPricedLine extends UnitLine {
+  isUnlisted?: boolean;
+}
+
+/**
+ * S19b (SA-811a R1/R3): re-price an AUTO-priced line (no one-time `discountedPrice`) from the customer's price layer.
+ * Idempotent, and a no-op when the product has no layer row for the line's unit (flag off, no typed price): master's
+ * price stands. A layered row sets the unit price, list, priceType (MANUAL when above list) and the special baseline.
+ * Derived-base (Piece) lines are the pack's proration and the server prices them; they are left alone.
+ */
+export function repriceLineFromLayer<T extends LayerPricedLine>(
+  li: T,
+  ctx: { tier: number; layer?: readonly CustomerLayerUnit[] | null },
+): T {
+  if (!ctx.layer || li.isUnlisted || li.discountedPrice != null || li.derivedBase) return li;
+  if (!li.tierPrices) return li;
+  const lp = customerLinePrice({
+    product: ladderProductOf(li) as unknown as Record<string, unknown>,
+    tier: ctx.tier,
+    layer: ctx.layer,
+    unitLabel: li.unitLabel ?? null,
+  });
+  if (!lp.layered) return li;
+  const specialPrice = customerLineSpecial(lp);
+  if (
+    li.unitPrice === lp.price &&
+    li.listPrice === lp.listPrice &&
+    li.priceType === lp.priceType &&
+    li.specialPrice === specialPrice
+  ) {
+    return li;
+  }
+  return {
+    ...li,
+    unitPrice: lp.price,
+    listPrice: lp.listPrice,
+    priceType: lp.priceType,
+    specialPrice,
+  };
 }
 
 /** A derived-base line back on the pack: one whole pack, the case entry mode, the marker gone. */

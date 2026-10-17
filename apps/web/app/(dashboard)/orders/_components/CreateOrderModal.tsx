@@ -37,8 +37,7 @@ import {
   newLineQtyForLevel,
 } from "./add-line-merge";
 import {
-  isSpecialTier,
-  getTierPrice,
+  customerLinePrice,
   computeLineSubtotal,
   pendingScanDecision,
   undoPendingTap,
@@ -59,10 +58,13 @@ import { LineItemRow } from "@/components/LineItemRow";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import {
   applyLineUnit,
+  customerLineSpecial,
+  repriceLineFromLayer,
   sameProductUnit,
   unitLabelPayload,
   type PackBase,
 } from "@/lib/order-line-unit";
+import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
 import {
   applyUnitToLines,
   isPendingDefaultUnit,
@@ -317,7 +319,10 @@ export function CreateOrderModal({
     return map;
   }, [customerPricesData]);
 
-  // Product search state
+  // S19b (SA-811a, SA-813): flag on, the customer's price layer prices every line through customerLinePrice and a pending
+  // or failed read leaves prices UNCONFIRMED (Create/Save wait). Flag off: no request, `layerOf` is undefined, master's chain.
+  const priceLayer = useCustomerPriceLayer(selectedCustomer?.id);
+  const layerSig = priceLayer.enabled ? String(priceLayer.ready) : "";
   const [productSearch, setProductSearch] = React.useState("");
   const [debouncedProductSearch, setDebouncedProductSearch] = React.useState("");
   const [lineItems, setLineItems] = React.useState<LineItem[]>([]);
@@ -646,9 +651,14 @@ export function CreateOrderModal({
         if (li.priceType === "DISCOUNTED" || li.priceType === "MANUAL") return li;
         if (li.discountedPrice != null) return li;
         const tier = cpMap.get(li.productId) ?? selectedCustomer?.pricingTier ?? 1;
-        const tierPrice = getTierPrice(li.tierPrices, tier);
-        const priceType = isSpecialTier(tier) ? ("SPECIAL" as const) : ("STANDARD" as const);
-        const specialPrice = isSpecialTier(tier) ? tierPrice : undefined;
+        const lp = customerLinePrice({
+          product: li.tierPrices as unknown as Record<string, unknown>,
+          tier,
+          layer: priceLayer.layerOf(li.productId),
+        });
+        const tierPrice = lp.price;
+        const priceType = lp.priceType;
+        const specialPrice = customerLineSpecial(lp);
         if (
           li.unitPrice === tierPrice &&
           li.priceType === priceType &&
@@ -661,7 +671,7 @@ export function CreateOrderModal({
       });
       return changed ? next : prev;
     });
-  }, [scanV2, selectedCustomer?.pricingTier, cpMap]);
+  }, [scanV2, selectedCustomer?.pricingTier, cpMap, layerSig]);
 
   // ── Derived totals ────────────────────────────────────────────────────────
 
@@ -789,18 +799,24 @@ export function CreateOrderModal({
     const customerTier = selectedCustomer?.pricingTier ?? 1;
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
-    const tierPrice = getTierPrice(product, effectiveTier);
-    const priceType = isSpecialTier(effectiveTier) ? ("SPECIAL" as const) : ("STANDARD" as const);
+    // S19b: the customer's layer price (flag on) or master's tier price (no layer): getTierPrice lives inside the helper.
+    const linePrice = customerLinePrice({
+      product,
+      tier: effectiveTier,
+      layer: priceLayer.layerOf(product.id),
+    });
+    const tierPrice = linePrice.price;
+    const priceType = linePrice.priceType;
     // Pre-fill from customer's last-given price for this product (only when below
     // the effective tier price, and only when this isn't already a SPECIAL price
     // — SPECIAL prices are permanent, the discount is already in tierPrice).
+    // R3 (SA-811a): a price from the customer's layer is that same permanent price, so last-given is skipped for it too.
     const histEntry = priceHistory?.[product.id as string];
-    const hasHistDiscount =
-      priceType !== "SPECIAL" && histEntry != null && histEntry.lastPrice < tierPrice;
+    const permanentPrice = priceType === "SPECIAL" || linePrice.layered;
+    const hasHistDiscount = !permanentPrice && histEntry != null && histEntry.lastPrice < tierPrice;
     // Carry forward a remembered UPSELL too (a saved price ABOVE list). It pre-fills
     // as a MANUAL override, mirroring the operator's last agreed above-list price.
-    const hasHistUpsell =
-      priceType !== "SPECIAL" && histEntry != null && histEntry.lastPrice > listPrice;
+    const hasHistUpsell = !permanentPrice && histEntry != null && histEntry.lastPrice > listPrice;
     const hasHistOverride = hasHistDiscount || hasHistUpsell;
     const orderedUnit =
       opts?.ordered?.unit && opts.ordered.unit.kind !== "pack" ? opts.ordered.unit : undefined;
@@ -812,8 +828,8 @@ export function CreateOrderModal({
       // just the variant name in `product.name` (PR #44).
       productName: displayProductName(product),
       unit: product.unit ?? "each",
-      listPrice,
-      specialPrice: isSpecialTier(effectiveTier) ? tierPrice : undefined,
+      listPrice: linePrice.layered ? linePrice.listPrice : listPrice,
+      specialPrice: customerLineSpecial(linePrice),
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
       unitPrice: hasHistOverride ? histEntry!.lastPrice : tierPrice,
       priceType: hasHistUpsell
@@ -1119,6 +1135,35 @@ export function CreateOrderModal({
   /** The effective price tier for a product on this order (per-product override, else the customer's). */
   const tierForProduct = (productId: string) =>
     cpMap.get(productId) ?? selectedCustomer?.pricingTier ?? 1;
+
+  // S19b (SA-811a R1): once the customer's layer has loaded, every auto-priced line (pack or unit, however it was added or
+  // switched) takes the layer price. Idempotent (a settled line returns itself), so running it after every commit is safe;
+  // flag off or no layer for a product = the line is untouched.
+  React.useEffect(() => {
+    if (!priceLayer.enabled || !priceLayer.ready) return;
+    setLineItems((prev) => {
+      let changed = false;
+      const next = prev.map((li) => {
+        if (li.isUnlisted || !li.productId) return li;
+        const r = repriceLineFromLayer(li, {
+          tier: tierForProduct(li.productId),
+          layer: priceLayer.layerOf(li.productId),
+        });
+        if (r !== li) changed = true;
+        return r;
+      });
+      return changed ? next : prev;
+    });
+  });
+
+  // SA-813 M1/M3: flag on and the layer pending, failed, or missing a line's product (an incomplete response): the prices
+  // on screen are UNCONFIRMED, so Create / Save as draft / Confirm wait. Flag off: never blocked.
+  const priceLayerUnconfirmed =
+    priceLayer.enabled &&
+    (!priceLayer.ready ||
+      lineItems.some(
+        (li) => !li.isUnlisted && !!li.productId && !priceLayer.lineReady(li.productId),
+      ));
 
   // "Usually buys" chips + "Order again": the customer's top products and last orders. Both add through
   // addLineItem, so every line is priced today (see use-order-suggestion-actions).
@@ -1462,7 +1507,7 @@ export function CreateOrderModal({
    * (or no choice, if the customer has no active order).
    */
   const submitOrder = (data: FormValues, options: SubmitOptions = {}) => {
-    if (fulfilmentPending) return;
+    if (fulfilmentPending || priceLayerUnconfirmed) return;
     // SA-626c: any line still waiting for its default unit is resolved FIRST (never sent as the pack/case by default);
     // nothing pending = the synchronous path, unchanged.
     if (!lineItems.some(isPendingDefaultUnit)) return doSubmitOrder(data, options, lineItems);
@@ -1818,6 +1863,7 @@ export function CreateOrderModal({
         <OrderLineUnitPicker
           line={li}
           tier={tierForProduct(li.productId)}
+          customerId={selectedCustomer?.id}
           startOnDefaultUnit={li.startOnDefaultUnit}
           onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
         />
@@ -1942,12 +1988,32 @@ export function CreateOrderModal({
               Cancel
             </Button>
             <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
+            {priceLayer.enabled && priceLayer.failed ? (
+              <p
+                role="alert"
+                className="basis-full text-right text-xs text-red-700"
+                data-testid="order-price-layer-failed"
+              >
+                Couldn&apos;t load this customer&apos;s prices.{" "}
+                <button type="button" className="underline" onClick={priceLayer.refetch}>
+                  Retry
+                </button>
+              </p>
+            ) : priceLayerUnconfirmed ? (
+              <p
+                role="status"
+                className="basis-full text-right text-xs text-slate-600"
+                data-testid="order-price-layer-pending"
+              >
+                Checking this customer&apos;s prices…
+              </p>
+            ) : null}
             <WriteButton
               variant="secondary"
               type="button"
               className="max-sm:h-11"
               loading={createOrder.isPending}
-              disabled={createOrder.isPending || fulfilmentPending}
+              disabled={createOrder.isPending || fulfilmentPending || priceLayerUnconfirmed}
               onClick={onSaveDraft}
             >
               Save as draft
@@ -1959,7 +2025,10 @@ export function CreateOrderModal({
                 className="max-sm:h-11"
                 loading={createOrder.isPending}
                 disabled={
-                  createOrder.isPending || fulfilmentPending || lineItems.some(isPendingDefaultUnit)
+                  createOrder.isPending ||
+                  fulfilmentPending ||
+                  priceLayerUnconfirmed ||
+                  lineItems.some(isPendingDefaultUnit)
                 }
                 onClick={() => {
                   posFinishRef.current = "confirm";
@@ -1979,7 +2048,10 @@ export function CreateOrderModal({
               loading={createOrder.isPending}
               // #2865 case d (SA-632): no order is created while ANY line is still waiting on its default unit
               disabled={
-                createOrder.isPending || fulfilmentPending || lineItems.some(isPendingDefaultUnit)
+                createOrder.isPending ||
+                fulfilmentPending ||
+                priceLayerUnconfirmed ||
+                lineItems.some(isPendingDefaultUnit)
               }
               aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
             >

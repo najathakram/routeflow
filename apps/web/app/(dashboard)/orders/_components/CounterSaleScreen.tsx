@@ -423,7 +423,16 @@ export function CounterSaleScreen() {
 
   // The ONE add path: a scan, a picker click and a quick-key tap all land a product through here.
   const addProduct = (product: any, level: SellLevel, n: number) =>
-    setLines((prev) => addScannedProduct(prev, product, level, n, reprice.tierFor(product.id)));
+    setLines((prev) =>
+      addScannedProduct(
+        prev,
+        product,
+        level,
+        n,
+        reprice.tierFor(product.id),
+        reprice.layerOf(product.id),
+      ),
+    );
 
   // B1206-B1208: every scan joins one FIFO queue resolved through the shared exact-code ladder (see useCounterSaleScan).
   const scan = useCounterSaleScan({
@@ -431,7 +440,16 @@ export function CounterSaleScreen() {
     refocus,
     add: (product, level, n) => {
       scanCueArmedRef.current = true;
-      setLines((prev) => addScannedProduct(prev, product, level, n, reprice.tierFor(product.id)));
+      setLines((prev) =>
+        addScannedProduct(
+          prev,
+          product,
+          level,
+          n,
+          reprice.tierFor(product.id),
+          reprice.layerOf(product.id),
+        ),
+      );
     },
   });
 
@@ -558,7 +576,9 @@ export function CounterSaleScreen() {
   const undoRemove = () => {
     if (!undo || lineLocked || saleInFlight()) return;
     // A customer pick may have re-priced the cart while the line sat in the undo window: price it for them too (an edited price is kept).
-    setLines((prev) => repriceLines(restoreLine(prev, undo), reprice.tierFor).lines);
+    setLines(
+      (prev) => repriceLines(restoreLine(prev, undo), reprice.tierFor, reprice.layerOf).lines,
+    );
     dropUndo();
     refocus();
   };
@@ -1395,7 +1415,26 @@ export function CounterSaleScreen() {
             </p>
           ) : null}
 
-          {reprice.failed ? (
+          {reprice.unconfirmed === "failed" ? (
+            <p
+              role="alert"
+              className="text-sm text-red-700"
+              data-testid="counter-price-layer-failed"
+            >
+              Couldn&apos;t load this customer&apos;s prices.{" "}
+              <button type="button" className={cn(TAP_TARGET, "underline")} onClick={reprice.retry}>
+                Retry
+              </button>
+            </p>
+          ) : reprice.unconfirmed === "pending" ? (
+            <p
+              role="status"
+              className="text-sm text-navy/70"
+              data-testid="counter-price-layer-pending"
+            >
+              Checking this customer&apos;s prices…
+            </p>
+          ) : reprice.failed ? (
             <p role="alert" className="text-sm text-red-700" data-testid="counter-reprice-failed">
               Couldn&apos;t update prices for this customer. The old prices are still showing.{" "}
               <button type="button" className={cn(TAP_TARGET, "underline")} onClick={reprice.retry}>

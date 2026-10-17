@@ -1,7 +1,7 @@
 import {
-  getTierPrice,
-  isSpecialTier,
+  customerLinePrice,
   normalizeBoxesPieces,
+  type CustomerLayerUnit,
   type SellLevel,
 } from "@routeflow/pricing";
 import { displayProductName } from "@/lib/product-display";
@@ -65,6 +65,8 @@ export function addScannedProduct(
   level: SellLevel,
   n: number,
   tier: number,
+  /** S19b: the customer's price layer for this product (flag on); omitted = master's tier price. */
+  layer?: readonly CustomerLayerUnit[],
 ): SaleLine[] {
   const upb = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
   const unitScan = level === "UNIT" && (upb ?? 0) > 1;
@@ -75,6 +77,7 @@ export function addScannedProduct(
     );
   }
   // A UNIT multiplier at or over the pack size (x30 on a 24-pack) rolls into boxes: 1 box + 6 pcs, never 0 boxes + 30 pcs.
+  const lp = customerLinePrice({ product, tier, layer });
   const born = newLineQtyForLevel(upb, level, n);
   const qty = unitScan && upb ? normalizeBoxesPieces({ qty: born.qty, unitsPerBox: upb }) : null;
   return [
@@ -83,11 +86,11 @@ export function addScannedProduct(
       tempId: `${product.id}-${prev.length}`,
       productId: product.id,
       name: displayProductName(product),
-      unitPrice: getTierPrice(product, tier),
+      unitPrice: lp.price,
       unitsPerBox: upb,
       listPrice: Number(product.pricePerUnit ?? 0),
       unit: product.unit ?? "each",
-      priceType: isSpecialTier(tier) ? "SPECIAL" : "STANDARD",
+      priceType: lp.isSpecial ? "SPECIAL" : "STANDARD",
       ...(product.category ? { category: String(product.category) } : {}),
       ...(product.trackedCategoryId
         ? { trackedCategoryId: String(product.trackedCategoryId) }
