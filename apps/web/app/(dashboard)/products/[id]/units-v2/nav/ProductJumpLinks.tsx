@@ -15,17 +15,19 @@ import * as React from "react";
  * Whatever this component adds to a heading (tabindex, data-jump-target, an id) is removed again when it
  * unmounts, so nothing leaks onto the next route.
  */
-const SECTIONS: { id: string; label: string; fallback?: string }[] = [
-  { id: "h-product", label: "Product" },
-  { id: "h-units", label: "Units and prices", fallback: "#units-v2-grid-title" },
-  { id: "h-exc", label: "Customers and tiers" },
-  { id: "h-cust", label: "Customer view" },
-  { id: "h-sales", label: "Sales" },
+const SECTIONS: { id: string; label: string; short: string; fallback?: string }[] = [
+  { id: "h-product", label: "Product", short: "Product" },
+  { id: "h-units", label: "Units and prices", short: "Prices", fallback: "#units-v2-grid-title" },
+  { id: "h-exc", label: "Customers and tiers", short: "Tiers" },
+  { id: "h-cust", label: "Customer view", short: "Customer" },
+  { id: "h-sales", label: "Sales", short: "Sales" },
 ];
 
 interface Resolved {
   id: string;
   label: string;
+  /** The label used below `sm`, where the five full labels do not fit one row. */
+  short: string;
   /** The id the link points at (the section id, or the adopted element's own id). */
   hrefId: string;
 }
@@ -114,7 +116,7 @@ function resolve(stamps: Map<HTMLElement, Stamp>): Resolved[] {
       stamps.set(el, stamp);
       stampInset(el, stamp);
     }
-    out.push({ id: s.id, label: s.label, hrefId: el.id });
+    out.push({ id: s.id, label: s.label, short: s.short, hrefId: el.id });
   }
   return out;
 }
@@ -135,7 +137,7 @@ const same = (a: Resolved[], b: Resolved[]) =>
 // A programmatically focused heading is not a control: no ring (P01).
 const SCOPED_CSS = `[data-jump-target][tabindex="-1"]:focus{outline:none}
 [data-jump-target]{scroll-margin-top:calc(var(--jump-offset,0px) + var(--jump-inset,0px))}
-.units-v2-jump-strip[data-fade="true"]{-webkit-mask-image:linear-gradient(90deg,#000 85%,transparent);mask-image:linear-gradient(90deg,#000 85%,transparent)}`;
+.units-v2-jump-strip[data-fade="true"]{-webkit-mask-image:linear-gradient(90deg,#000 75%,transparent);mask-image:linear-gradient(90deg,#000 75%,transparent)}`;
 
 export function ProductJumpLinks() {
   const [sections, setSections] = React.useState<Resolved[]>([]);
@@ -381,11 +383,19 @@ export function ProductJumpLinks() {
             key={s.id}
             href={`#${s.hrefId}`}
             data-testid={`units-v2-jump-${s.id}`}
+            aria-label={s.label}
             aria-current={current === s.id ? "true" : undefined}
             onClick={(e) => go(e, s)}
-            className="inline-flex min-h-[44px] items-center whitespace-nowrap rounded-full px-3 text-sm font-semibold text-navy/70 hover:bg-surface-raised hover:text-navy aria-[current=true]:bg-surface-raised aria-[current=true]:text-navy"
+            className="inline-flex min-h-[44px] items-center whitespace-nowrap rounded-full px-2.5 text-sm sm:px-3 font-semibold text-navy/70 hover:bg-surface-raised hover:text-navy aria-[current=true]:bg-surface-raised aria-[current=true]:text-navy"
           >
-            {s.label}
+            {s.label === s.short ? (
+              s.label
+            ) : (
+              <>
+                <span className="sm:hidden">{s.short}</span>
+                <span className="hidden sm:inline">{s.label}</span>
+              </>
+            )}
           </a>
         ))}
       </div>
