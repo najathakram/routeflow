@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { isSpecialTier } from "@routeflow/pricing";
 import type {
   CustomerProductUnitPricesDto,
@@ -34,30 +34,21 @@ let lastChoice: { id: string; name: string } | null = null;
 /**
  * K11-06: the picked customer lives in the URL (`?customer=<id>`, the id only, never the name) on the product page,
  * so a refresh or a shared link comes back to the same customer. Product-page mode only: the customer page (a fixed
- * customerId) never reads or writes it. The router can be absent (a component test with no app router mounted); then
- * the write is a no-op and the session memory above still works.
+ * customerId) never reads or writes it. Reading goes through `useSearchParams`; writing is a plain
+ * `history.replaceState` (no router needed: Next syncs `useSearchParams` from it, adds no history entry, and the
+ * path, the other params and the hash are kept).
  */
 function useCustomerParam(enabled: boolean) {
-  let router: ReturnType<typeof useRouter> | null = null;
-  try {
-    // useRouter makes exactly one useContext call and throws only after it, so the hook order is the same on
-    // every render whether or not an app router is mounted.
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    router = useRouter();
-  } catch {
-    router = null; // no app router mounted
-  }
-  const pathname = usePathname();
   const searchParams = useSearchParams();
   const fromUrl = enabled ? searchParams?.get("customer") || null : null;
   const write = (id: string | null) => {
-    if (!enabled || !router) return;
-    const params = new URLSearchParams(searchParams?.toString() ?? "");
+    if (!enabled || typeof window === "undefined") return;
+    const { pathname, search, hash } = window.location;
+    const params = new URLSearchParams(search);
     if (id) params.set("customer", id);
     else params.delete("customer");
     const qs = params.toString();
-    const path = pathname ?? window.location.pathname;
-    router.replace(`${path}${qs ? `?${qs}` : ""}${window.location.hash}`, { scroll: false });
+    window.history.replaceState(null, "", `${pathname}${qs ? `?${qs}` : ""}${hash}`);
   };
   return { fromUrl, write };
 }
@@ -304,9 +295,12 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
 
       {fixed ? null : activeId && !refused ? (
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span data-testid={T.chosen} className="font-medium text-navy">
-            {customerName || "Loading customer..."}
-          </span>
+          {/* A transient failure with no name yet (503, offline): not "loading", so no name span at all. */}
+          {customerName || !q.isError ? (
+            <span data-testid={T.chosen} className="font-medium text-navy">
+              {customerName || "Loading customer\u2026"}
+            </span>
+          ) : null}
           <button
             type="button"
             data-testid={T.change}

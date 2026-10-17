@@ -7,8 +7,16 @@ import { CUSTOMER_VIEW_TESTIDS as T } from "./customer-testids";
 // K11-06 (the picked customer survives a refresh through ?customer=) and K11-07 (the table).
 const mockPrices = jest.fn();
 const mockCustomers = jest.fn();
-const mockReplace = jest.fn();
 let mockSearch = "";
+let replaceSpy: jest.SpyInstance;
+/** The page URL the component writes to (jsdom supports history.replaceState). */
+const here = () => window.location.pathname + window.location.search + window.location.hash;
+/** Put the page at `url`, and let useSearchParams read the same query (Next keeps the two in sync). */
+const at = (url: string) => {
+  window.history.replaceState(null, "", url);
+  mockSearch = window.location.search.slice(1);
+  replaceSpy.mockClear();
+};
 jest.mock("@/lib/api/useCustomerUnitPrices", () => ({
   useCustomerUnitPrices: (...a: unknown[]) => mockPrices(...a),
 }));
@@ -20,8 +28,6 @@ jest.mock("@/lib/api/tier-labels", () => ({
   useTierLabels: () => ({ data: mockLabels }),
 }));
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: mockReplace }),
-  usePathname: () => "/products/p1",
   useSearchParams: () => new URLSearchParams(mockSearch),
 }));
 
@@ -85,44 +91,45 @@ beforeEach(() => {
   mockLabels = { "1": "Retail", "2": "Wholesale" };
   mockPrices.mockReset();
   mockCustomers.mockReset();
-  mockReplace.mockReset();
   mockSearch = "";
   window.history.replaceState(null, "", "/");
+  replaceSpy = jest.spyOn(window.history, "replaceState");
   mockCustomers.mockReturnValue({
     data: { data: [{ id: "c1", businessName: "Corner Market", contactName: "Sam" }] },
   });
   mockPrices.mockImplementation((id: string | null) => (id ? loaded(response()) : idle));
 });
 
+afterEach(() => replaceSpy.mockRestore());
+
 describe("K11-06: the picked customer survives a refresh", () => {
   it("picking writes customer=<id> into the URL, keeps the other params and the hash", () => {
-    mockSearch = "tab=prices";
-    window.history.replaceState(null, "", "/#h-cust");
+    at("/products/p1?tab=prices#h-cust");
     render(<CustomerPriceView productId="p1" />);
     act(() => screen.getByTestId(T.search).focus());
     fireEvent.click(screen.getByTestId(T.result("c1")));
-    expect(mockReplace).toHaveBeenCalledTimes(1);
-    expect(mockReplace).toHaveBeenCalledWith("/products/p1?tab=prices&customer=c1#h-cust", {
-      scroll: false,
-    });
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+    expect(replaceSpy).toHaveBeenCalledWith(null, "", "/products/p1?tab=prices&customer=c1#h-cust");
+    expect(here()).toBe("/products/p1?tab=prices&customer=c1#h-cust");
   });
 
   it("the URL carries the id only, never the name", () => {
+    at("/products/p1");
     render(<CustomerPriceView productId="p1" />);
     act(() => screen.getByTestId(T.search).focus());
     fireEvent.click(screen.getByTestId(T.result("c1")));
-    const url = String(mockReplace.mock.calls[0][0]);
+    const url = here();
     expect(url).toBe("/products/p1?customer=c1");
     expect(url).not.toMatch(/corner|market/i);
   });
 
   it("mounting with ?customer=x fetches x without a pick, and names them from the response", () => {
-    mockSearch = "customer=c1";
+    at("/products/p1?customer=c1");
     render(<CustomerPriceView productId="p1" />);
     expect(mockPrices).toHaveBeenCalledWith("c1", "p1", expect.anything());
     expect(screen.queryByTestId(T.search)).toBeNull();
     expect(screen.getByTestId(T.chosen)).toHaveTextContent("Corner Market");
-    expect(mockReplace).not.toHaveBeenCalled();
+    expect(replaceSpy).not.toHaveBeenCalled();
   });
 
   it("?customer= wins over the session's last choice", () => {
@@ -130,40 +137,60 @@ describe("K11-06: the picked customer survives a refresh", () => {
     act(() => screen.getByTestId(T.search).focus());
     fireEvent.click(screen.getByTestId(T.result("c1")));
     mockPrices.mockClear();
-    mockSearch = "customer=c9";
+    at("/products/p1?customer=c9");
     render(<CustomerPriceView productId="p1" />);
     expect(mockPrices).toHaveBeenCalledWith("c9", "p1", expect.anything());
     expect(mockPrices).not.toHaveBeenCalledWith("c1", "p1", expect.anything());
   });
 
   it("Choose another customer removes the param and keeps the rest", () => {
-    mockSearch = "tab=prices&customer=c1";
+    at("/products/p1?tab=prices&customer=c1#h-cust");
     render(<CustomerPriceView productId="p1" />);
     fireEvent.click(screen.getByTestId(T.change));
-    expect(mockReplace).toHaveBeenCalledWith("/products/p1?tab=prices", { scroll: false });
+    expect(here()).toBe("/products/p1?tab=prices#h-cust");
     expect(screen.getByTestId(T.empty)).toBeInTheDocument();
   });
 
   it("an id the server refuses shows the error and the picker, and drops the param", () => {
-    mockSearch = "tab=prices&customer=gone";
+    at("/products/p1?tab=prices&customer=gone");
     mockPrices.mockImplementation((id: string | null) => (id === "gone" ? failed : idle));
     render(<CustomerPriceView productId="p1" />);
     expect(screen.getByRole("alert")).toHaveTextContent("Could not load this customer's prices.");
     expect(screen.getByTestId(T.search)).toBeInTheDocument();
-    expect(mockReplace).toHaveBeenCalledWith("/products/p1?tab=prices", { scroll: false });
+    expect(here()).toBe("/products/p1?tab=prices");
   });
 
   it("a transient failure (503) keeps the id in the URL and the chosen customer on screen", () => {
-    mockSearch = "customer=c1";
+    at("/products/p1?customer=c1");
     mockPrices.mockImplementation((id: string | null) => (id === "c1" ? failedTransient : idle));
     render(<CustomerPriceView productId="p1" />);
     expect(screen.getByRole("alert")).toHaveTextContent("Could not load this customer's prices.");
     expect(screen.getByTestId(T.change)).toBeInTheDocument();
-    expect(mockReplace).not.toHaveBeenCalled();
+    expect(replaceSpy).not.toHaveBeenCalled();
+    expect(here()).toBe("/products/p1?customer=c1");
+  });
+
+  it("a transient failure with no name yet does not claim the customer is still loading", () => {
+    at("/products/p1?customer=c1");
+    mockPrices.mockImplementation((id: string | null) => (id === "c1" ? failedTransient : idle));
+    render(<CustomerPriceView productId="p1" />);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText(/Loading customer/)).toBeNull();
+    expect(screen.getByTestId(T.change)).toHaveAccessibleName("Change customer");
+  });
+
+  it("while the customer is loading, the row says so with a single ellipsis character", () => {
+    at("/products/p1?customer=c1");
+    mockPrices.mockImplementation((id: string | null) =>
+      id === "c1" ? { data: undefined, isLoading: true, isError: false } : idle,
+    );
+    render(<CustomerPriceView productId="p1" />);
+    expect(screen.getByTestId(T.chosen)).toHaveTextContent("Loading customer\u2026");
+    expect(screen.getByTestId(T.chosen).textContent).not.toContain("...");
   });
 
   it("a refused id is not remembered for the next mount", () => {
-    mockSearch = "customer=gone";
+    at("/products/p1?customer=gone");
     mockPrices.mockImplementation((id: string | null) => (id === "gone" ? failed : idle));
     const { unmount } = render(<CustomerPriceView productId="p1" />);
     unmount();
@@ -173,11 +200,12 @@ describe("K11-06: the picked customer survives a refresh", () => {
   });
 
   it("the customer page (customerId given) never touches the URL", () => {
-    mockSearch = "customer=c9";
+    at("/customers/c1?customer=c9");
     render(<CustomerPriceView customerId="c1" />);
     expect(mockPrices).toHaveBeenCalledWith("c1", undefined, expect.anything());
     expect(mockPrices).not.toHaveBeenCalledWith("c9", expect.anything(), expect.anything());
-    expect(mockReplace).not.toHaveBeenCalled();
+    expect(replaceSpy).not.toHaveBeenCalled();
+    expect(here()).toBe("/customers/c1?customer=c9");
   });
 });
 
