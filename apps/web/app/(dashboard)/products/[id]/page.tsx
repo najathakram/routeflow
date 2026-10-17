@@ -1494,7 +1494,7 @@ export default function ProductDetailPage() {
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                   Details
                 </h3>
-                <div className="flex max-w-full flex-wrap items-center justify-end gap-2 max-sm:w-full max-sm:justify-start">
+                <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
                   {isEditing ? (
                     <>
                       <EditActionButtons
@@ -1506,9 +1506,7 @@ export default function ProductDetailPage() {
                     </>
                   ) : (
                     <>
-                      <div className="max-sm:basis-full">
-                        <EditButton onClick={startEdit} />
-                      </div>
+                      <EditButton onClick={startEdit} />
                       <ProductHeaderControls
                         product={product}
                         reactivateFlow={reactivateFlow}

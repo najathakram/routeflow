@@ -59,4 +59,30 @@ describe("product page parity inventory (T38)", () => {
       expect(card).toContain(needle);
     }
   });
+
+  it("K11-22: every header action is in the sm+ button set AND in the phone More menu", () => {
+    const src = read("ProductHeaderControls.tsx");
+    // one descriptor list feeds both renders, so an action cannot reach one and miss the other
+    expect(src).toMatch(/actions\.map\(\(a\) => \(\s*<Button/);
+    expect(src).toMatch(/actions\.map\(\(a\) => \(\s*<DropdownMenu\.Item/);
+    for (const label of [
+      "Make variant of…",
+      "Deactivate",
+      "Reactivate",
+      "Mark as tobacco",
+      "Unmark tobacco",
+    ]) {
+      expect(src).toContain(label);
+    }
+    // Delete exists twice: the danger-outline button and the red menu item, both calling onRequestDelete
+    expect(src.match(/onRequestDelete/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(src).toContain('aria-label="More actions"');
+  });
+
+  it("K11-22: the Details header is one row on a phone (Edit and the menu share it)", () => {
+    // the two classes that forced Edit and the actions onto their own rows below sm are gone
+    expect(page).not.toMatch(/max-sm:w-full max-sm:justify-start/);
+    expect(page).not.toMatch(/<div className="max-sm:basis-full">\s*<EditButton/);
+    expect(page).toMatch(/<EditButton onClick=\{startEdit\} \/>/);
+  });
 });
