@@ -22,16 +22,9 @@ import * as ts from "typescript";
 const MOVEMENT_WRITERS = new Set(["recordSaleMovement", "bookRestockMovement"]);
 
 /** `<file>::<enclosing function>` → why the counter write has no movement in the same function. */
-const ALLOW_UNPAIRED: Record<string, string> = {
-  // SA-136 §7 "out of scope, filed separately": the vendor-bill un-receive DELETES the bill's PURCHASE
-  // movement(s) and decrements the counter by the same pieces, so Σquantity still equals the counter
-  // (no gap) — but the receipt's history is erased instead of reversed by an appended row.
-  // SA-767 L-1: the tx body is now the `runBody` closure that retryOnTxConflict re-runs (same site).
-  "vendor-bills/vendor-bills.service.ts::VendorBillsService.revertToDraft.runBody":
-    "un-receive deletes the PURCHASE row instead of appending a reversal (filed separately, SA-136 §7)",
-};
+const ALLOW_UNPAIRED: Record<string, string> = {};
 /** The RATCHET: may only go DOWN. */
-const UNPAIRED_BASELINE = 1;
+const UNPAIRED_BASELINE = 0;
 
 /**
  * B562 PR-3 (SA-136b): a write made through `this.prisma…` / `prisma.…` rather than a transaction

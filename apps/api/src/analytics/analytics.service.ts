@@ -20,6 +20,7 @@ import type {
   ProductSalesHistory,
 } from "../sales-facts/legacy-product-shapes";
 import type { DemandRange } from "./demand-range";
+import { pairedReceiptIds } from "../inventory/bill-revert";
 
 const TOBACCO_ADDON_KEY = "tobacco_dealer";
 export const TOBACCO_EXCLUDE_KEY = "tobacco.excludeFromMainAnalytics";
@@ -604,8 +605,16 @@ export class AnalyticsService {
   }
 
   async getCostHistory(productId: string) {
+    // B846: a reversed vendor-bill receipt is not a cost point — drop the reversal (negative) and the
+    // receipt it pairs with. COST_BASIS rows carry quantity 0 and stay.
+    const paired = await pairedReceiptIds(this.prisma.forTenant(), productId);
     const movements = await this.prisma.forTenant().stockMovement.findMany({
-      where: { productId, type: { in: ["PURCHASE", "COST_BASIS"] } },
+      where: {
+        productId,
+        type: { in: ["PURCHASE", "COST_BASIS"] },
+        OR: [{ type: "COST_BASIS" }, { quantity: { gt: 0 } }],
+        ...(paired.length > 0 ? { id: { notIn: paired } } : {}),
+      },
       // B562: accounting order (effectiveAt), insertion time and id break ties.
       orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
       take: 100,

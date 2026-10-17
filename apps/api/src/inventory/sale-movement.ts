@@ -1,5 +1,6 @@
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { costDecimal } from "./costing";
+import { pairedReceiptIds } from "./bill-revert";
 
 /**
  * B562 PR-2 (SA-136 §2): the ONE SALE-side StockMovement writer. Extracted from
@@ -52,8 +53,16 @@ export async function resolveSaleCost(
     // what createdAt carried before it became write-once), then createdAt + id so
     // the pick is deterministic when same-day bills share a date. Falls back to the
     // average cost when the product has no purchases yet. Not lot-consuming.
+    // B846: a vendor-bill revert appends a negative PURCHASE row — only positive rows count, and a
+    // receipt a reversal has paired is no longer "last" (shared rule: inventory/bill-revert.ts).
+    const paired = await pairedReceiptIds(tx, productId);
     const lastPurchase = await tx.stockMovement.findFirst({
-      where: { productId, type: MovementType.PURCHASE },
+      where: {
+        productId,
+        type: MovementType.PURCHASE,
+        quantity: { gt: 0 },
+        ...(paired.length > 0 ? { id: { notIn: paired } } : {}),
+      },
       orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
       select: { unitCost: true },
     });

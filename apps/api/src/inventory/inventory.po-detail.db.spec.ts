@@ -11,6 +11,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { Prisma } from "@prisma/client";
 import { InventoryService } from "./inventory.service";
+import { PO_REVERSAL_NOTE } from "./bill-revert";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
@@ -326,7 +327,7 @@ describeDb("PO detail read — receipts + linked bill — real Postgres", () => 
     const w = await seedWorld("d8", 50, 2);
     const po0 = await receivedPo(w, 20, 4);
     // the real constant (an em dash, not an ASCII hyphen), and an id that is not this PO's receipt
-    const prefix = (InventoryService as unknown as { PO_REVERSAL_NOTE: string }).PO_REVERSAL_NOTE;
+    const prefix = PO_REVERSAL_NOTE;
     expect(prefix).toContain("\u2014");
     await prisma.stockMovement.create({
       data: {
