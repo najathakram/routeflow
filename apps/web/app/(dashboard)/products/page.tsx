@@ -1365,7 +1365,8 @@ export default function ProductsPage() {
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => {
             // K11-09: ArrowDown reaches the first product link of the current view (grid or table).
-            if (e.key !== "ArrowDown") return;
+            // Not during an IME composition: there ArrowDown picks a candidate.
+            if (e.key !== "ArrowDown" || e.nativeEvent.isComposing) return;
             const first = document.querySelector<HTMLAnchorElement>("a[data-product-name-link]");
             if (!first) return;
             e.preventDefault();

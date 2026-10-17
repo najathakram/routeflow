@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, within } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import ProductsPage from "./page";
 
 /**
@@ -242,6 +242,20 @@ describe.each([
     await user.keyboard("{Enter}");
     expect(mockNav).toHaveBeenCalledTimes(1);
     expect(mockNav).toHaveBeenCalledWith("/products/p1");
+  });
+
+  it("does nothing while an IME composition is open (ArrowDown picks a candidate there)", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ProductsPage />);
+    await setup(user);
+    const search = screen.getByRole("searchbox");
+    await user.click(search);
+    const notPrevented = fireEvent.keyDown(search, { key: "ArrowDown", isComposing: true });
+    expect(notPrevented).toBe(true);
+    expect(document.activeElement).toBe(search);
+    // the same key outside a composition still moves focus
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(nameLink("Acme Cola 12oz"));
   });
 
   it("leaves Tab order alone: the next Tab from the search is not the product link", async () => {
