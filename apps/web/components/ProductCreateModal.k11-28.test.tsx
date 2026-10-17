@@ -194,6 +194,26 @@ describe("K11-28: where it sits and how it reads", () => {
     expect(screen.getByText("Leave blank to sell only by the box.")).toBeInTheDocument();
   });
 
+  it("when the field appears it is scrolled into view (nearest) so it never sits under the pinned footer, without taking focus", async () => {
+    const scroll = jest.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      open();
+      await userEvent.type(screen.getByLabelText(/^Unit \*/), "case");
+      await userEvent.type(screen.getByLabelText("Units per box"), "1");
+      expect(scroll).not.toHaveBeenCalled(); // hidden at 1: nothing to reveal
+      await userEvent.type(screen.getByLabelText("Units per box"), "2");
+      await waitFor(() => expect(scroll).toHaveBeenCalledWith({ block: "nearest" }));
+      const target = scroll.mock.instances[0] as HTMLElement;
+      expect(target).toContainElement(pieceField() as HTMLElement); // the whole cell (field + helper)
+      expect(target).toHaveTextContent("Leave blank to sell only by the box.");
+      expect(document.activeElement).toBe(screen.getByLabelText("Units per box"));
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it("appearing does not move focus", async () => {
     open();
     await userEvent.type(screen.getByLabelText(/^Unit \*/), "case");

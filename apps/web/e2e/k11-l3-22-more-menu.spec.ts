@@ -19,12 +19,11 @@ for (const vp of VIEWPORTS) {
       context,
     }, info) => {
       await openFixtureProduct(page, context);
-      const header = page
-        .getByRole("heading", { name: "Details", exact: true })
-        .locator("xpath=ancestor::div[contains(@class,'border-b')][1]");
+      const header = page.getByTestId("product-details-header");
       await expect(header).toBeVisible();
       const more = page.getByRole("button", { name: "More actions" });
-      const edit = page.getByRole("button", { name: "Edit", exact: true });
+      // scoped to the header: the prices grid has its own Edit button
+      const edit = header.getByRole("button", { name: "Edit", exact: true });
 
       if (vp.width >= 640) {
         await expect(more).toBeHidden();

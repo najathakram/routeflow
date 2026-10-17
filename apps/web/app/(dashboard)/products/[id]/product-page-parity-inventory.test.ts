@@ -86,4 +86,9 @@ describe("product page parity inventory (T38)", () => {
     expect(page).not.toMatch(/<div className="max-sm:basis-full">\s*<EditButton/);
     expect(page).toMatch(/<EditButton onClick=\{startEdit\} \/>/);
   });
+
+  it("K11-22: the Details header is at most 64 px tall on a phone (44 px controls + max-sm:py-2), and the page tells the controls when the delete confirm is open", () => {
+    expect(page).toMatch(/border-b border-surface-border px-5 py-3\.5 max-sm:py-2/);
+    expect(page).toMatch(/deleteOpen=\{showDeleteConfirm\}/);
+  });
 });

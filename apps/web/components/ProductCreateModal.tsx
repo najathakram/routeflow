@@ -256,6 +256,12 @@ export function ProductCreateModal({
   const piecesPerPack = /^\d+$/.test(form.unitsPerBox.trim()) ? Number(form.unitsPerBox) : 0;
   const showPiecePrice =
     pricesV2 && unitsV1 && isPackUnit(form.unit) && piecesPerPack >= 2 && !form.parentProductId;
+  // The cell appears one row below the field being typed in, possibly past the visible part of the scroll body (on a
+  // phone, behind the pinned footer). Reveal it by the minimum scroll; focus stays where it is.
+  const pieceCellRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (showPiecePrice) pieceCellRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [showPiecePrice]);
   const [pendingImages, setPendingImages] = React.useState<File[]>([]);
   const [previews, setPreviews] = React.useState<string[]>([]);
   const [isUploading, setIsUploading] = React.useState(false);
@@ -845,7 +851,7 @@ export function ProductCreateModal({
               </div>
               {packUnit && unitsPerField}
               {showPiecePrice && (
-                <div>
+                <div ref={pieceCellRef}>
                   <label
                     htmlFor="product-base-price"
                     className="mb-1 block text-sm font-medium text-navy"

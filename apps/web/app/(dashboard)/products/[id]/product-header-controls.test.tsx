@@ -263,3 +263,55 @@ describe("K11-22: header actions in one More menu below sm", () => {
     expect(only.className).not.toMatch(/max-sm:hidden/);
   });
 });
+
+describe("K11-22: focus returns after the delete confirm", () => {
+  /** A page stand-in: opening sets deleteOpen, and a button outside plays the confirm's Cancel. */
+  function Host() {
+    const [open, setOpen] = React.useState(false);
+    return (
+      <>
+        <ProductHeaderControls
+          product={{
+            id: "p1",
+            name: "Cola 12pk",
+            isActive: true,
+            parentProductId: null,
+            kind: "SIMPLE",
+          }}
+          reactivateFlow={flow()}
+          hasTobaccoAddon={false}
+          isTobacco={false}
+          tobaccoLoading={false}
+          onToggleTobacco={jest.fn()}
+          onMakeVariant={jest.fn()}
+          onRequestDelete={() => setOpen(true)}
+          deleteOpen={open}
+        />
+        <button type="button" onClick={() => setOpen(false)}>
+          Fake cancel
+        </button>
+      </>
+    );
+  }
+
+  it("Delete from the menu, then Cancel: focus is back on the More actions trigger", async () => {
+    const user = userEvent.setup();
+    render(<Host />);
+    const trigger = screen.getByRole("button", { name: "More actions" });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    // the confirm is open; Radix's Dialog returns focus only to a Dialog.Trigger (none here), so focus is lost
+    await user.click(await screen.findByRole("button", { name: "Fake cancel", hidden: true }));
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it("Delete from the button (sm and up), then Cancel: focus is back on the Delete button", async () => {
+    const user = userEvent.setup();
+    render(<Host />);
+    const del = screen.getByRole("button", { name: "Delete" });
+    await user.click(del);
+    await user.click(screen.getByRole("button", { name: "Fake cancel" }));
+    await waitFor(() => expect(document.activeElement).toBe(del));
+  });
+});

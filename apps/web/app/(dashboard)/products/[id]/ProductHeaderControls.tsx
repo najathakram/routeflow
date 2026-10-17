@@ -37,6 +37,7 @@ export function ProductHeaderControls({
   onToggleTobacco,
   onMakeVariant,
   onRequestDelete,
+  deleteOpen,
 }: {
   product: {
     id: string;
@@ -57,6 +58,11 @@ export function ProductHeaderControls({
   onMakeVariant: () => void;
   /** Opens the page's "Delete product?" confirm (DeleteProductConfirm). */
   onRequestDelete: () => void;
+  /**
+   * Whether the page's delete confirm is open. When it closes (Cancel), focus goes back to the control that opened
+   * it: Radix's Dialog only returns focus to a Dialog.Trigger, and the confirm has none, so focus would be lost.
+   */
+  deleteOpen?: boolean;
 }) {
   const { user } = useAuth();
   // Owner ruling 2026-10-14: staff (an operator or an account admin) get every product control.
@@ -65,6 +71,23 @@ export function ProductHeaderControls({
   // A menu pick runs once the menu has closed and focus is parked on the trigger, so a dialog it opens
   // restores focus to the three dots on Cancel (and Radix's own focus return never fights the dialog).
   const afterClose = React.useRef<(() => void) | null>(null);
+  const restoreFocusTo = React.useRef<HTMLElement | null>(null);
+  const wasDeleteOpen = React.useRef(false);
+  const openDelete = () => {
+    const active = document.activeElement;
+    restoreFocusTo.current =
+      active instanceof HTMLElement && active !== document.body ? active : null;
+    onRequestDelete();
+  };
+  React.useEffect(() => {
+    if (wasDeleteOpen.current && !deleteOpen) {
+      const el = restoreFocusTo.current;
+      restoreFocusTo.current = null;
+      // after the dialog's own unmount focus handling (a timeout 0), which would otherwise leave focus on <body>
+      if (el) setTimeout(() => el.isConnected && el.focus(), 0);
+    }
+    wasDeleteOpen.current = !!deleteOpen;
+  }, [deleteOpen]);
 
   const actions: Action[] = [
     ...(isStaff && !product.parentProductId && product.kind !== "FAMILY"
@@ -129,7 +152,7 @@ export function ProductHeaderControls({
             size="sm"
             variant="danger-outline"
             leftIcon={<Trash2 className="h-4 w-4" />}
-            onClick={onRequestDelete}
+            onClick={openDelete}
           >
             Delete
           </Button>
@@ -187,7 +210,7 @@ export function ProductHeaderControls({
                     <DropdownMenu.Separator className="my-1 h-px bg-surface-border" />
                     <DropdownMenu.Item
                       onSelect={() => {
-                        afterClose.current = onRequestDelete;
+                        afterClose.current = openDelete;
                       }}
                       className={cn(ITEM, "text-danger data-[highlighted]:bg-danger/10")}
                     >

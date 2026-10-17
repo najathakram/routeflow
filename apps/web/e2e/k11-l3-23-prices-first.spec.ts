@@ -29,12 +29,9 @@ import {
 
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
-const card = (page: Page, heading: string) =>
-  page
-    .locator("div.overflow-hidden", {
-      has: page.getByRole("heading", { name: heading, exact: true }),
-    })
-    .first();
+/** The two cards by test id (a class selector would also match the app shell's overflow-hidden wrappers). */
+const card = (page: Page, heading: "Details" | "Image") =>
+  page.getByTestId(heading === "Details" ? "product-details-card" : "product-image-card");
 
 /** Master's two-column geometry at lg: Image 1/3, Details 2/3, 24 px between them, 20 px under Details. */
 async function expectTwoColumns(page: Page) {
@@ -69,18 +66,24 @@ async function expectPhoneOrder(page: Page) {
   const i = (await card(page, "Image").boundingBox())!;
   expect(d.y, "Details comes before Image").toBeLessThan(i.y);
 
-  // Tab through the first controls: each one is at or below the previous (reading order = tab order).
+  // Tab through the first controls inside the page content: each stop is at or below the previous one (reading
+  // order = tab order). Stops in the app header band are skipped, and same-row stops get a small tolerance band.
   await page.locator("h1#h-product").focus();
   let last = -1;
-  for (let n = 0; n < 12; n++) {
+  let checked = 0;
+  for (let n = 0; n < 14; n++) {
     await page.keyboard.press("Tab");
     const y = await page.evaluate(() => {
       const el = document.activeElement as HTMLElement | null;
-      return el ? el.getBoundingClientRect().top + window.scrollY : -1;
+      if (!el || !el.closest("#main-content")) return null;
+      return el.getBoundingClientRect().top + window.scrollY;
     });
-    expect(y, `Tab stop ${n + 1} does not jump back up the page`).toBeGreaterThanOrEqual(last - 2);
+    if (y == null) continue;
+    expect(y, `Tab stop ${n + 1} does not jump back up the page`).toBeGreaterThanOrEqual(last - 8);
     last = Math.max(last, y);
+    checked++;
   }
+  expect(checked, "the walk covered stops in the page content").toBeGreaterThan(3);
 }
 
 async function expectMerchLast(page: Page) {

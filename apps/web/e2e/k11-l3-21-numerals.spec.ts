@@ -16,9 +16,7 @@ for (const vp of VIEWPORTS) {
       context,
     }, info) => {
       await openFixtureProduct(page, context);
-      const card = page.locator("div.overflow-hidden", {
-        has: page.getByRole("heading", { name: "Details", exact: true }),
-      });
+      const card = page.getByTestId("product-details-card");
       await expect(card).toBeVisible();
       const figures = await card.evaluate((root) =>
         Array.from(root.querySelectorAll<HTMLElement>("*"))

@@ -1339,9 +1339,14 @@ export default function ProductDetailPage() {
             {/* Product details */}
             <div
               ref={detailsCardRef}
+              data-testid="product-details-card"
               className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card"
             >
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5">
+              {/* max-sm:py-2: with the 44 px Edit and More controls the phone header is 61 px (K11-22: <= 64) */}
+              <div
+                data-testid="product-details-header"
+                className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5 max-sm:py-2"
+              >
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                   Details
                 </h3>
@@ -1372,6 +1377,7 @@ export default function ProductDetailPage() {
                         }
                         onMakeVariant={openMakeVariantModal}
                         onRequestDelete={() => setShowDeleteConfirm(true)}
+                        deleteOpen={showDeleteConfirm}
                       />
                     </>
                   )}
@@ -1801,7 +1807,10 @@ export default function ProductDetailPage() {
           {/* ── Left: image gallery + stock card ── */}
           <div className="space-y-4 lg:col-start-1 lg:row-start-1 lg:row-span-2">
             {/* ── Image gallery ── */}
-            <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+            <div
+              data-testid="product-image-card"
+              className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card"
+            >
               <div className="border-b border-surface-border px-4 py-3">
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                   Image

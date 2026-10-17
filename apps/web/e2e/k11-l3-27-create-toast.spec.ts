@@ -1,12 +1,17 @@
 /**
  * K11-27 (F27): Create says it worked, every time, at 1440 / 768 / 390.
- *   "Add variant" (from a parent's card) with only the flavor typed creates the variant and a role=status toast
- *   "{Flavor} added to {Parent}" is still visible 3 s later. "New product" says "{Name} created". A double-click
+ *   "Add variant" (from a family's row) with only the flavor typed creates the variant and a toast
+ *   "{Flavor} added to {Family}" is still visible 3 s later. "New product" says "{Name} created". A double-click
  *   makes one product and one toast (B1244).
  *
+ * The toast is located as a listitem of the Notifications region. Radix gives role="status" only to a transient
+ * screen-reader announcer that it removes after 1 s; the visible toast has no role, so getByRole("status") would
+ * stop matching at ~1 s while the toast is still up.
+ *
  * LOCAL LANE ONLY (project `units-v2`). WRITES on the approved test tenant only (assertTestTenant first): one
- * throwaway parent with one variant (over the API), then the products the UI creates. Every one is retired softly
- * in finally (inactive, never hard-deleted), like units-v2-blank-tiers-money.
+ * throwaway FAMILY with two variants that this spec makes itself over the API (never the shared "E2E Fixture
+ * Family"), the variant the UI adds to it, and one standalone product. Everything is retired softly (inactive) in
+ * finally; a failed retire is logged, not asserted.
  */
 import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
@@ -28,15 +33,27 @@ async function idsBySearch(page: Page, ctx: Ctx, search: string): Promise<string
   return (((await res.json()) as any)?.data ?? []).map((p: any) => p.id as string);
 }
 
+/** Soft retire: log a failure, never assert (cleanup must not mask the test's own result). */
 async function retire(page: Page, ctx: Ctx, ids: string[]) {
   for (const id of ids) {
-    const r = await page.request.patch(`${ctx.api}/products/${id}`, {
-      headers: ctx.headers,
-      data: { isActive: false },
-    });
-    expect(r.ok(), `retire the throwaway product: ${r.status()}`).toBeTruthy();
+    try {
+      const r = await page.request.patch(`${ctx.api}/products/${id}`, {
+        headers: ctx.headers,
+        data: { isActive: false },
+      });
+      if (!r.ok()) console.warn(`k11-27: could not retire ${id}: ${r.status()}`);
+    } catch (e) {
+      console.warn(`k11-27: could not retire ${id}: ${String(e)}`);
+    }
   }
 }
+
+/** The visible toasts with this text (see the file header on why not role=status). */
+const toasts = (page: Page, text: string) =>
+  page
+    .getByRole("region", { name: /Notifications/ })
+    .getByRole("listitem")
+    .filter({ hasText: text });
 
 for (const vp of VIEWPORTS) {
   test.describe(`K11-27 create toast @ ${vp.name}`, () => {
@@ -50,47 +67,42 @@ for (const vp of VIEWPORTS) {
       await setTenantCookie(context, BASE);
       const ctx = await requireUnitsV2Flag(page);
       const tag = `${Date.now().toString(36).toUpperCase()}${vp.name}`;
-      const parentName = `QA K11 Parent ${tag}`;
+      const familyName = `QA K11 Family ${tag}`;
       const flavor = `Strawberry ${tag}`;
       const standalone = `QA K11 Cola ${tag}`;
       try {
-        const parent = await page.request.post(`${ctx.api}/products`, {
-          headers: ctx.headers,
-          data: { name: parentName, sku: `QAK11P${tag}`, unit: "each", pricePerUnit: "2.50" },
-        });
-        expect(parent.ok(), `create the parent: ${parent.status()}`).toBeTruthy();
-        const parentId = ((await parent.json()) as any).id as string;
-        const seed = await page.request.post(`${ctx.api}/products`, {
+        // A throwaway family of our own, over the API.
+        const made = await page.request.post(`${ctx.api}/products/families`, {
           headers: ctx.headers,
           data: {
-            name: `Seed ${tag}`,
-            variantName: `Seed ${tag}`,
-            parentProductId: parentId,
-            sku: `QAK11S${tag}`,
-            unit: "each",
-            pricePerUnit: "2.50",
+            family: { name: familyName, pricePerUnit: "2.50" },
+            variants: [
+              { name: `Seed A ${tag}`, sku: `QAK11A${tag}`, pricePerUnit: "2.50" },
+              { name: `Seed B ${tag}`, sku: `QAK11B${tag}`, pricePerUnit: "2.60" },
+            ],
           },
         });
-        expect(seed.ok(), `create the first variant: ${seed.status()}`).toBeTruthy();
+        expect(made.ok(), `create the throwaway family: ${made.status()}`).toBeTruthy();
 
-        // 1. Add variant, only the flavor typed.
+        // 1. Add variant on OUR family's row, only the flavor typed.
         await page.goto("/products");
-        await page
-          .getByPlaceholder(/search/i)
-          .first()
-          .fill(parentName);
-        await page.getByRole("button", { name: "Add variant" }).first().click({ timeout: 15_000 });
+        await page.getByPlaceholder("Name, SKU or scan barcode…").fill(familyName);
+        // wait for the list to be filtered to our family before touching any row
+        const familyLink = page.getByRole("link", { name: familyName });
+        await expect(familyLink).toBeVisible({ timeout: 15_000 });
+        await expect(page.getByRole("button", { name: "Add variant" })).toHaveCount(1, {
+          timeout: 15_000,
+        });
+        const row = familyLink.locator(
+          "xpath=ancestor::div[.//button[normalize-space()='Add variant']][1]",
+        );
+        await row.getByRole("button", { name: "Add variant" }).click();
         const dialog = page.getByRole("dialog", { name: "New product" });
         await expect(dialog).toBeVisible();
         await dialog.getByPlaceholder(/Chocolate/).fill(flavor);
         await dialog.getByRole("button", { name: "Create product" }).click();
         await page.waitForTimeout(3_000);
-        await expect(
-          page
-            .getByRole("status")
-            .filter({ hasText: `${flavor} added to ${parentName}` })
-            .first(),
-        ).toBeVisible();
+        await expect(toasts(page, `${flavor} added to ${familyName}`)).toHaveCount(1);
         await shot(page, info, "k11-27-add-variant-toast");
 
         // 2. New product, double-clicked: one product, one toast.
@@ -101,16 +113,15 @@ for (const vp of VIEWPORTS) {
         await dlg2.getByLabel(/^Price per/).fill("3.00");
         await dlg2.getByRole("button", { name: "Create product" }).dblclick();
         await page.waitForTimeout(3_000);
-        await expect(
-          page.getByRole("status").filter({ hasText: `${standalone} created` }),
-        ).toHaveCount(1);
+        await expect(toasts(page, `${standalone} created`)).toHaveCount(1);
         expect(await idsBySearch(page, ctx, standalone)).toHaveLength(1);
       } finally {
         await retire(page, ctx, [
-          ...(await idsBySearch(page, ctx, `QA K11 Parent ${tag}`)),
           ...(await idsBySearch(page, ctx, flavor)),
-          ...(await idsBySearch(page, ctx, `Seed ${tag}`)),
+          ...(await idsBySearch(page, ctx, `Seed A ${tag}`)),
+          ...(await idsBySearch(page, ctx, `Seed B ${tag}`)),
           ...(await idsBySearch(page, ctx, standalone)),
+          ...(await idsBySearch(page, ctx, familyName)),
         ]);
       }
     });

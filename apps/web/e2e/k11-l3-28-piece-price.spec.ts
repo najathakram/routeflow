@@ -47,6 +47,18 @@ for (const vp of VIEWPORTS) {
         const piece = dialog.getByLabel(/^Price per piece/);
         await expect(piece).toBeVisible();
         await piece.fill("1.75"); // 6
+        // 390: scrolled to it, the field AND its helper end above the pinned footer.
+        if (vp.width < 640) {
+          await piece.scrollIntoViewIfNeeded();
+          const helper = dialog.getByText(/^Leave blank to sell only by the/);
+          const footer = (await dialog
+            .getByRole("button", { name: "Create product" })
+            .boundingBox())!;
+          const p = (await piece.boundingBox())!;
+          const h = (await helper.boundingBox())!;
+          expect(p.y + p.height, "the field ends above the footer").toBeLessThan(footer.y);
+          expect(h.y + h.height, "the helper ends above the footer").toBeLessThan(footer.y);
+        }
         await shot(page, info, "k11-28-new-product-piece");
         await dialog.getByRole("button", { name: "Create product" }).click(); // 7
         await expect(
