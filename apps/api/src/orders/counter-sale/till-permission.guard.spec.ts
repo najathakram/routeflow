@@ -114,7 +114,7 @@ describe("the till guard over HTTP", () => {
       req.user = {
         role,
         sub: "u-1",
-        tenantId: "t-1",
+        tenantId: req.headers["x-no-tenant"] ? null : "t-1",
         impersonatedBy: req.headers["x-imp"] ? "sa-1" : undefined,
       };
       return true;
@@ -215,6 +215,19 @@ describe("the till guard over HTTP", () => {
   it("OPERATOR with no denials passes", async () => {
     const res = await send("get", "/orders/counter-sale/today", "OPERATOR");
     expect(res.status).toBe(200);
+  });
+
+  it("the permissions read is scoped to the caller's tenant (never another tenant's row)", async () => {
+    await send("get", "/orders/counter-sale/today", "OPERATOR");
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: "u-1", tenantId: "t-1" }) }),
+    );
+  });
+
+  it("OPERATOR with no tenantId on the token is refused (fails closed)", async () => {
+    const res = await send("get", "/orders/counter-sale/today", "OPERATOR").set("x-no-tenant", "1");
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("PERMISSION_DENIED");
   });
 
   it("OPERATOR with no row at all is refused (fails closed)", async () => {

@@ -91,11 +91,16 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   test.setTimeout(120_000);
-  if (savedUser) await setDenied(savedUser.denied, savedUser.version);
-  if (!before) return;
-  const restored = await restoreFulfilmentConfig(target(), before);
-  expect(restored, "the tenant's fulfilment config is back exactly as it was").toBe(true);
-  await waitForApiCapability(target(), capabilityBefore, 60_000);
+  try {
+    if (savedUser) await setDenied(savedUser.denied, savedUser.version);
+  } finally {
+    // Runs even when putting the operator back fails: the tenant profile is never left changed.
+    if (before) {
+      const restored = await restoreFulfilmentConfig(target(), before);
+      expect(restored, "the tenant's fulfilment config is back exactly as it was").toBe(true);
+      await waitForApiCapability(target(), capabilityBefore, 60_000);
+    }
+  }
 });
 
 const overflow = (page: Page) =>

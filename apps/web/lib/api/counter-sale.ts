@@ -33,9 +33,10 @@ export function useCounterSaleGate(options?: { enabled?: boolean }) {
   // A disabled gate (non-staff) stays DARK even when a cached answer is in the query cache.
   // BO-07: only an OPERATOR's admin can switch the till off, so only an operator's permissions are read. Admins (and
   // impersonation tokens, which carry TENANT_ADMIN) never fetch. A failed read leaves the till offered: the server refuses.
-  const role = useOptionalAuth()?.user?.role;
+  const authUser = useOptionalAuth()?.user;
+  const role = authUser?.role;
   const checkPermissions = enabled && role === "OPERATOR";
-  const perms = useMyPermissions({ enabled: checkPermissions });
+  const perms = useMyPermissions(authUser?.id, { enabled: checkPermissions });
   const permsPending = checkPermissions && perms.isLoading === true;
   const deniedGroups = checkPermissions && perms.data ? deniedGroupsOf(perms.data) : [];
   const mayUseTill =

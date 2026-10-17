@@ -10,9 +10,10 @@ import { apiClient } from "../api-client";
  */
 export const MY_PERMISSIONS_KEY = ["me", "permissions"] as const;
 
-export function useMyPermissions(options?: { enabled?: boolean }) {
+/** Keyed by user, so a sign-out and sign-in on the same tab never shows the previous operator's answer. */
+export function useMyPermissions(userId: string | undefined, options?: { enabled?: boolean }) {
   return useQuery<MyPermissions>({
-    queryKey: MY_PERMISSIONS_KEY,
+    queryKey: [...MY_PERMISSIONS_KEY, userId ?? null],
     queryFn: () => apiClient.get<MyPermissions>("/users/me/permissions").then((r) => r.data),
     staleTime: 60_000,
     ...options,

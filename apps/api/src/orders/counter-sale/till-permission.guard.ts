@@ -36,7 +36,9 @@ export class TillPermissionGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const user = context.switchToHttp().getRequest().user as PermissionPrincipal | undefined;
-    if (!user || user.role !== UserRole.OPERATOR) return true;
+    // Fail closed: no principal means the auth guards did not run, never "allowed".
+    if (!user) throw permissionDeniedException([STAFF_CAPABILITY_RULES.USE_POS_MODE.group]);
+    if (user.role !== UserRole.OPERATOR) return true;
     const denied = await operatorDeniedGroups(this.prisma, user);
     if (staffMay(user.role, "USE_POS_MODE", denied)) return true;
     throw permissionDeniedException([STAFF_CAPABILITY_RULES.USE_POS_MODE.group]);
