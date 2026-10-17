@@ -45,6 +45,7 @@ describeDb("B846 bill revert appends — real Postgres", () => {
   let prisma: PrismaService;
   let tenantCtx: TenantContextService;
   let bills: VendorBillsService;
+  let inventory: InventoryService;
   const createdTenantIds: string[] = [];
 
   beforeAll(async () => {
@@ -85,6 +86,7 @@ describeDb("B846 bill revert appends — real Postgres", () => {
       ],
     }).compile();
     bills = module.get(VendorBillsService);
+    inventory = module.get(InventoryService);
   });
 
   afterAll(async () => {
@@ -168,17 +170,24 @@ describeDb("B846 bill revert appends — real Postgres", () => {
 
   const inTenant = <T>(w: World, fn: () => Promise<T>) => tenantCtx.run(w.tenantId, fn);
 
-  async function receiveBill(w: World, qty: number, billNumber = "B-846-1", date = BILL_DATE) {
+  // `create()` ignores any caller-supplied bill number and assigns the next `BILL-YYYY-NNNN`
+  // (vendor-bills.service.ts `nextBillNumber`), so a test that needs the number reads it back.
+  async function createBill(w: World, qty: number, date = BILL_DATE) {
     const bill: any = await inTenant(w, () =>
       bills.create({
         supplierId: w.supplierId,
-        billNumber,
         billDate: date,
         items: [{ productId: w.productId, description: "Widget", qty, unitCost: 2 }],
       } as never),
     );
-    await inTenant(w, () => bills.receive(bill.id, undefined, w.userId));
-    return bill.id as string;
+    return { id: bill.id as string, billNumber: bill.billNumber as string };
+  }
+  const receive = (w: World, id: string) =>
+    inTenant(w, () => bills.receive(id, undefined, w.userId) as Promise<unknown>);
+  async function receiveBill(w: World, qty: number, date = BILL_DATE) {
+    const { id } = await createBill(w, qty, date);
+    await receive(w, id);
+    return id;
   }
   const revert = (w: World, id: string) =>
     inTenant(w, () => bills.revertToDraft(id, w.userId) as Promise<unknown>);
@@ -223,38 +232,43 @@ describeDb("B846 bill revert appends — real Postgres", () => {
 
   it("R1: a manual PURCHASE sharing the bill number survives the revert; one -Q reversal is appended", async () => {
     const w = await seedWorld("r1");
+    // The bill exists first so the manual purchase can share its REAL number (create() assigns it).
+    const { id, billNumber } = await createBill(w, 10);
+    // L-220: the manual purchase goes through the production writer (it stamps tenantId through the
+    // tenant transaction, writes the lot and moves the counter). Dated the month BEFORE the bill so
+    // no later row triggers a cost replay — the ledger stays exactly the three rows asserted below.
     await inTenant(w, () =>
-      prisma.stockMovement.create({
-        data: {
+      inventory.recordPurchase(
+        {
           productId: w.productId,
-          type: "PURCHASE",
           quantity: 5,
           unitCost: 1,
-          stockAfter: 5,
           supplierId: w.supplierId,
-          reference: "B-846-1",
+          reference: billNumber,
           notes: "manual purchase",
-        },
-      }),
+          effectiveDate: EARLIER_DATE,
+        } as never,
+        w.userId,
+      ),
     );
-    await prisma.product.update({
-      where: { id: w.productId },
-      data: { currentStock: 5, averageCost: 1 },
-    });
 
-    const id = await receiveBill(w, 10);
+    await receive(w, id);
     await revert(w, id);
 
     const rows = await ledger(w);
     expect(rows.map((r) => r.q)).toEqual(expect.arrayContaining([5, 10, -10]));
     expect(rows).toHaveLength(3);
     expect(rows.find((r) => r.notes === "manual purchase")).toBeDefined();
-    const receipt = rows.find(
-      (r) => r.notes === billReceiptNote("B-846-1"),
-    ) as (typeof rows)[number];
+    const receipt = rows.find((r) => r.notes === billReceiptNote(billNumber));
+    expect(receipt).toBeDefined();
     const reversal = rows.find((r) => r.q === -10) as (typeof rows)[number];
-    expect(reversal.notes).toBe(`${BILL_REVERTED_NOTE}${receipt.id}`);
+    expect(reversal.notes).toBe(`${BILL_REVERTED_NOTE}${receipt?.id}`);
     expect(rows.reduce((t, r) => t + r.q, 0)).toBe(await counter(w)); // Σq == the counter
+    // The manual lot shares the bill number; only the bill's own lot is reversed.
+    const lots = await prisma.stockLot.findMany({ where: { productId: w.productId } });
+    expect(lots.map((l) => [Number(l.qty), Number(l.remainingQty), l.reference, l.notes])).toEqual([
+      [5, 5, billNumber, "manual purchase"],
+    ]);
   });
 
   it("R2: unfiled bill month — receive Q, revert, re-receive Q': the month sums to Q' and history is kept", async () => {
@@ -328,7 +342,7 @@ describeDb("B846 bill revert appends — real Postgres", () => {
 
   it("R7: an earlier UNFILED month's bill, bill month FILED — the revert is dated now and the filed month's ending stock holds", async () => {
     const w = await seedWorld("r7", "tobacco");
-    const id = await receiveBill(w, 10, "B-846-7", EARLIER_DATE);
+    const id = await receiveBill(w, 10, EARLIER_DATE);
     await fileTobaccoMonth(w);
     const endingStock = async () =>
       (await counter(w)) -
@@ -348,7 +362,7 @@ describeDb("B846 bill revert appends — real Postgres", () => {
 
   it("a FAILED month before the latest filed one is closed; a FAILED month after it stays open", async () => {
     const w = await seedWorld("failed", "tobacco");
-    const id = await receiveBill(w, 10, "B-846-8");
+    const id = await receiveBill(w, 10);
     // bill month: FAILED, earlier month GENERATED => the bill month is after the latest filed one
     await prisma.tobaccoReport.create({
       data: {
@@ -381,7 +395,7 @@ describeDb("B846 bill revert appends — real Postgres", () => {
 
   it("a FAILED earlier month is closed once a later month is filed: dated now", async () => {
     const w = await seedWorld("failed-before", "tobacco");
-    const id = await receiveBill(w, 10, "B-846-9", EARLIER_DATE);
+    const id = await receiveBill(w, 10, EARLIER_DATE);
     const earlierStart = new Date(Date.UTC(BILL_Y, BILL_M - 2, 1));
     await prisma.tobaccoReport.create({
       data: {
@@ -497,33 +511,51 @@ describeDb("B846 bill revert appends — real Postgres", () => {
     expect(await prisma.stockLot.count({ where: { productId: w.productId } })).toBe(1);
   });
 
-  it("V5 (SA-808b item 3): a two-line, one-product bill reverts — row order (uuid on a createdAt tie) never refuses", async () => {
-    const w = await seedWorld("v5");
-    const bill: any = await inTenant(w, () =>
-      bills.create({
-        supplierId: w.supplierId,
-        billNumber: "B-846-V5",
-        billDate: BILL_DATE,
-        items: [
-          { productId: w.productId, description: "Widget", qty: 5, unitCost: 2 },
-          { productId: w.productId, description: "Widget", qty: 3, unitCost: 3 },
-        ],
-      } as never),
-    );
-    await inTenant(w, () => bills.receive(bill.id, undefined, w.userId));
-    // Observe: one receive's rows tie on createdAt (CURRENT_TIMESTAMP = transaction start).
-    const created = await prisma.stockMovement.findMany({ where: { productId: w.productId } });
-    // eslint-disable-next-line no-console
-    console.log(
-      `V5 observed: ${created.length} rows, createdAt tied=${new Set(created.map((r) => r.createdAt.getTime())).size === 1}`,
-    );
+  // The DB does not force row order, so the uuid tiebreak on a createdAt tie is pinned here: after
+  // the receive, the two receipt rows get fixed ids in each order, making the old per-line split a
+  // deterministic red. (StockMovement has no inbound FKs; resolvedMovementId is a plain string.)
+  it.each([
+    ["5-row first", [5, 3]],
+    ["3-row first", [3, 5]],
+  ] as const)(
+    "V5 (SA-808b item 3): a two-line, one-product bill reverts — %s on the uuid tiebreak",
+    async (_label, qtyOrder) => {
+      const w = await seedWorld(`v5-${qtyOrder[0]}`);
+      const bill: any = await inTenant(w, () =>
+        bills.create({
+          supplierId: w.supplierId,
+          billDate: BILL_DATE,
+          items: [
+            { productId: w.productId, description: "Widget", qty: 5, unitCost: 2 },
+            { productId: w.productId, description: "Widget", qty: 3, unitCost: 3 },
+          ],
+        } as never),
+      );
+      await inTenant(w, () => bills.receive(bill.id, undefined, w.userId));
+      const created = await prisma.stockMovement.findMany({ where: { productId: w.productId } });
+      expect(created).toHaveLength(2);
+      // The two rows share effectiveAt (the bill date) but NOT necessarily createdAt: Prisma sets
+      // `@default(now())` per create call, so the rows can differ by a millisecond and createdAt,
+      // not the uuid, would decide the order. Force the createdAt tie, then pin the uuid order.
+      expect(new Set(created.map((r) => r.effectiveAt.getTime())).size).toBe(1);
+      // Distinct per case (ids are table-global): the last hex digit carries the case, then the rank.
+      const fixed = [1, 2].map((rank) => `00000000-0000-4000-8000-0000000000${qtyOrder[0]}${rank}`);
+      for (const [i, q] of qtyOrder.entries()) {
+        const row = created.find((r) => Number(r.quantity) === q) as (typeof created)[number];
+        await prisma.$executeRaw`UPDATE "StockMovement" SET id = ${fixed[i]}, "createdAt" = (SELECT MIN("createdAt") FROM "StockMovement" WHERE "productId" = ${w.productId}) WHERE id = ${row.id}`;
+      }
+      const tied = await prisma.stockMovement.findMany({ where: { productId: w.productId } });
+      expect(new Set(tied.map((r) => r.createdAt.getTime())).size).toBe(1);
+      const pinned = await ledger(w);
+      expect(pinned.map((r) => r.q)).toEqual([...qtyOrder]);
 
-    await revert(w, bill.id);
+      await revert(w, bill.id);
 
-    const rows = await ledger(w);
-    expect(rows.map((r) => r.q).sort((a, b) => a - b)).toEqual(
-      [-5, -3, 3, 5].sort((a, b) => a - b),
-    );
-    expect(await counter(w)).toBe(0);
-  });
+      const rows = await ledger(w);
+      expect(rows.map((r) => r.q).sort((a, b) => a - b)).toEqual(
+        [-5, -3, 3, 5].sort((a, b) => a - b),
+      );
+      expect(await counter(w)).toBe(0);
+    },
+  );
 });

@@ -876,9 +876,10 @@ export default function VendorBillDetailPage() {
           // ledger has a gap (usually past sales). The copy must not imply
           // the cost wasn't updated — that reads as an invitation to hand-fix
           // a value that is already correct.
-          // Same advice as the API's INVENTORY_LEDGER_GAP conflict ("Ask an admin to
-          // look into this product") — the two used to disagree (this toast said
-          // "No action needed"): it is one ledger gap, told one way.
+          // This receive-time toast says "Ask an admin" (nothing is blocked; the cost history
+          // just needs a look). The revert path's INVENTORY_LEDGER_GAP conflict is different: it
+          // refuses, so its text says to void the bill and enter it again. Neither says "No
+          // action needed" any more — it is one ledger gap, told honestly per surface.
           const gapsToast = costHistoryGapToast(updated?.gapsDetected, "received");
           if (gapsToast) toast(gapsToast);
         },
