@@ -31,13 +31,23 @@ describe("family page with units v2 on: parity", () => {
     );
   });
 
-  it("v2Family removes exactly the units card and the create-an-order link", () => {
+  it("v2Family removes exactly the units card (K11-25: the create-an-order link is hidden on EVERY family, in FamilySalesCards)", () => {
     const uses = src
       .split("\n")
       .filter((l) => l.includes("v2Family") && !l.includes("const v2Family"));
-    expect(uses).toHaveLength(2);
+    expect(uses).toHaveLength(1);
     expect(uses.some((l) => /!v2Family && <ProductUnitsCard/.test(l))).toBe(true);
-    expect(uses.some((l) => /hideCreateOrder=\{v2Family\}/.test(l))).toBe(true);
+    const cards = fs.readFileSync(path.join(__dirname, "FamilySalesCards.tsx"), "utf8");
+    expect(cards).toMatch(
+      /<SalesHistoryCard productId=\{productId\} hideCreateOrder compactEmpty \/>/,
+    );
+    expect(src).toMatch(/<FamilySalesCards productId=\{product\.id\}/);
+  });
+
+  it("K11-25: a family's Demand card shows only when there is sales history (one empty state, not two)", () => {
+    const cards = fs.readFileSync(path.join(__dirname, "FamilySalesCards.tsx"), "utf8");
+    expect(cards).toMatch(/hasHistory && <DemandCard/);
+    expect(cards).toMatch(/useProductSales\(productId\)/);
   });
 
   it("the v2 family tiers grid is the only other family removal", () => {

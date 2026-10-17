@@ -63,6 +63,8 @@ import { unitsLabel } from "@/lib/stock-label";
 import { stockCountLabel } from "../_components/product-status";
 import { PiecesPerBoxValue } from "./PiecesPerBoxValue";
 import { MoneyFigure } from "./MoneyFigure";
+import { FamilyPriceSection } from "./FamilyPriceSection";
+import { FamilySalesCards } from "./FamilySalesCards";
 import { ProductMerchandising } from "./ProductMerchandising";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -446,6 +448,7 @@ export default function ProductDetailPage() {
   const currentStock = Number(product.currentStock ?? 0);
   const stockStatus = getStockStatus(currentStock, product.isActive, product.kind);
   const v2Family = v2 && product.kind === "FAMILY";
+  const isFamily = product.kind === "FAMILY";
 
   // MSRP — display-only, never money math. Warn (non-blocking) when it undercuts
   // the wholesale price expressed per PIECE (pricePerUnit / unitsPerBox), which is
@@ -1054,6 +1057,164 @@ export default function ProductDetailPage() {
     ) : null;
   };
 
+  // Price each (Tier 1) and Pricing Tiers. A family renders both inside FamilyPriceSection (K11-25); every
+  // other product keeps them where they always were.
+  const priceEachRow = (
+    <InfoRow
+      label={priceRowLabel(
+        isEditing ? (editDraft.unit as string) : product.unit,
+        tierOneLabel(tierLabels),
+      )}
+      value={
+        isEditing ? (
+          <>
+            <EditableNumber
+              value={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
+              onChange={(v) => setEditDraft((d) => ({ ...d, pricePerUnit: String(v) }))}
+            />
+            {perUnitHint(parseFloat(String(editDraft.pricePerUnit ?? priceNumber)))}
+          </>
+        ) : (
+          <>
+            <MoneyFigure value={priceNumber} className="font-mono" />
+            {perUnitHint(priceNumber)}
+          </>
+        )
+      }
+    />
+  );
+  const tiersBlock = (
+    <div className={isFamily ? "mt-4" : "mt-5 border-t border-surface-border pt-4"}>
+      <div className="flex items-center justify-between mb-2.5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+          Pricing Tiers
+        </p>
+        {isEditing && (
+          <button
+            type="button"
+            onClick={() => {
+              const t1 = editDraft.pricePerUnit as string;
+              setEditDraft((d) => ({
+                ...d,
+                priceTier2: t1,
+                priceTier3: t1,
+                priceTier4: t1,
+                priceTier5: t1,
+              }));
+            }}
+            className="text-xs text-brand-600 hover:underline"
+          >
+            Set all to {tierOneLabel(tierLabels)}
+          </button>
+        )}
+      </div>
+      {isEditing &&
+        (() => {
+          // Names the tiers a save would move with the list (#3470 review: never a fixed string).
+          const note = ladderChangeNote(
+            editTierPatchMoves(product, editDraft as Record<string, string>),
+            (n) => productTierLabel(tierLabels, n),
+          );
+          return note ? (
+            <p className="mb-2 text-xs text-navy/70" data-testid="tiers-move-note">
+              {note.replace(/\.$/, "")} when you save.
+            </p>
+          ) : null;
+        })()}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+        {(
+          [
+            [productTierLabel(tierLabels, 2), "priceTier2", product.priceTier2],
+            [productTierLabel(tierLabels, 3), "priceTier3", product.priceTier3],
+            [productTierLabel(tierLabels, 4), "priceTier4", product.priceTier4],
+            [productTierLabel(tierLabels, 5), "priceTier5", product.priceTier5],
+          ] as [string, string, any][]
+        ).map(([label, field, productVal], idx) => {
+          const prevFields = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4"];
+          const prevField = prevFields[idx];
+          const curVal = isEditing
+            ? parseFloat(String(editDraft[field] ?? parseFloat(String(productVal ?? priceNumber))))
+            : parseFloat(String(productVal ?? priceNumber));
+          const prevVal = isEditing
+            ? parseFloat(String(editDraft[prevField] ?? priceNumber))
+            : parseFloat(
+                String(idx === 0 ? priceNumber : ((product as any)[prevField] ?? priceNumber)),
+              );
+          const warn = isEditing && curVal > prevVal;
+          const inheritsList = !(Number(productVal) > 0);
+          return (
+            <div key={field}>
+              <p className={cn("mb-1 text-xs", warn ? "text-warning font-medium" : "text-navy/70")}>
+                {label}
+                {warn ? " ⚠" : ""}
+              </p>
+              {isEditing ? (
+                <>
+                  <EditableNumber
+                    value={curVal}
+                    onChange={(v) => setEditDraft((d) => ({ ...d, [field]: String(v) }))}
+                    onCommit={(v, atFocus) => {
+                      // P0 2026-10-14: lower tiers move only by applyLadderChange (tracking, 0 or above
+                      // the new price), never a blind copy-down, and the move is named on screen. The
+                      // OLD side is the field's own focus-time value (SA MUST: no staleable copy).
+                      const moved = applyLadderChange(
+                        field as TierField,
+                        atFocus ?? productVal,
+                        v,
+                        editDraft as Record<string, string>,
+                      );
+                      setEditDraft((d) => ({ ...d, ...moved }));
+                      setLadderNote(
+                        ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n)),
+                      );
+                    }}
+                  />
+                  {perUnitHint(curVal)}
+                </>
+              ) : (
+                <>
+                  <p className="font-mono text-sm font-medium tabular-nums text-navy">
+                    <MoneyFigure value={inheritsList ? priceNumber : Number(productVal)} />
+                    {inheritsList && (
+                      <span className="ml-1 rounded bg-surface-raised px-1 py-0.5 text-[9px] text-navy/50">
+                        list
+                      </span>
+                    )}
+                  </p>
+                  {perUnitHint(inheritsList ? priceNumber : Number(productVal))}
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {isEditing && ladderNote && (
+        <p role="status" data-testid="ladder-note" className="mt-2 text-xs text-navy/70">
+          {ladderNote}
+        </p>
+      )}
+      {isEditing &&
+        (() => {
+          const t1 = parseFloat(String(editDraft.pricePerUnit ?? priceNumber));
+          const t2 = parseFloat(String(editDraft.priceTier2 ?? (product as any).priceTier2 ?? t1));
+          const t3 = parseFloat(String(editDraft.priceTier3 ?? (product as any).priceTier3 ?? t1));
+          const t4 = parseFloat(String(editDraft.priceTier4 ?? (product as any).priceTier4 ?? t1));
+          const t5 = parseFloat(String(editDraft.priceTier5 ?? (product as any).priceTier5 ?? t1));
+          const hasViolation = t2 > t1 || t3 > t2 || t4 > t3 || t5 > t4;
+          return hasViolation ? (
+            <p className="mt-1.5 text-xs text-warning">
+              Higher tier prices should be ≤ the tier above (volume discounts are lower).
+            </p>
+          ) : null;
+        })()}
+      {isEditing && (
+        <p className="mt-1.5 text-xs text-navy/50">
+          A tier left blank or at 0 follows the list price.
+        </p>
+      )}
+    </div>
+  );
+
   return (
     <>
       {/* Crop-before-upload modal — intercepts every file selection */}
@@ -1424,30 +1585,7 @@ export default function ProductDetailPage() {
                       )
                     }
                   />
-                  <InfoRow
-                    label={priceRowLabel(
-                      isEditing ? (editDraft.unit as string) : product.unit,
-                      tierOneLabel(tierLabels),
-                    )}
-                    value={
-                      isEditing ? (
-                        <>
-                          <EditableNumber
-                            value={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
-                            onChange={(v) =>
-                              setEditDraft((d) => ({ ...d, pricePerUnit: String(v) }))
-                            }
-                          />
-                          {perUnitHint(parseFloat(String(editDraft.pricePerUnit ?? priceNumber)))}
-                        </>
-                      ) : (
-                        <>
-                          <MoneyFigure value={priceNumber} className="font-mono" />
-                          {perUnitHint(priceNumber)}
-                        </>
-                      )
-                    }
-                  />
+                  {!isFamily && priceEachRow}
                   {/* Variant of — edit only; view mode shows the parent in the header line and the banner */}
                   {isEditing && (
                     <InfoRow
@@ -1553,166 +1691,16 @@ export default function ProductDetailPage() {
                     );
                   })()}
 
-                {/* Tier Prices */}
-                <div className="mt-5 border-t border-surface-border pt-4">
-                  <div className="flex items-center justify-between mb-2.5">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                      Pricing Tiers
-                    </p>
-                    {isEditing && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const t1 = editDraft.pricePerUnit as string;
-                          setEditDraft((d) => ({
-                            ...d,
-                            priceTier2: t1,
-                            priceTier3: t1,
-                            priceTier4: t1,
-                            priceTier5: t1,
-                          }));
-                        }}
-                        className="text-xs text-brand-600 hover:underline"
-                      >
-                        Set all to {tierOneLabel(tierLabels)}
-                      </button>
-                    )}
-                  </div>
-                  {isEditing &&
-                    (() => {
-                      // Names the tiers a save would move with the list (#3470 review: never a fixed string).
-                      const note = ladderChangeNote(
-                        editTierPatchMoves(product, editDraft as Record<string, string>),
-                        (n) => productTierLabel(tierLabels, n),
-                      );
-                      return note ? (
-                        <p className="mb-2 text-xs text-navy/70" data-testid="tiers-move-note">
-                          {note.replace(/\.$/, "")} when you save.
-                        </p>
-                      ) : null;
-                    })()}
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                    {(
-                      [
-                        [productTierLabel(tierLabels, 2), "priceTier2", product.priceTier2],
-                        [productTierLabel(tierLabels, 3), "priceTier3", product.priceTier3],
-                        [productTierLabel(tierLabels, 4), "priceTier4", product.priceTier4],
-                        [productTierLabel(tierLabels, 5), "priceTier5", product.priceTier5],
-                      ] as [string, string, any][]
-                    ).map(([label, field, productVal], idx) => {
-                      const prevFields = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4"];
-                      const prevField = prevFields[idx];
-                      const curVal = isEditing
-                        ? parseFloat(
-                            String(
-                              editDraft[field] ?? parseFloat(String(productVal ?? priceNumber)),
-                            ),
-                          )
-                        : parseFloat(String(productVal ?? priceNumber));
-                      const prevVal = isEditing
-                        ? parseFloat(String(editDraft[prevField] ?? priceNumber))
-                        : parseFloat(
-                            String(
-                              idx === 0
-                                ? priceNumber
-                                : ((product as any)[prevField] ?? priceNumber),
-                            ),
-                          );
-                      const warn = isEditing && curVal > prevVal;
-                      const inheritsList = !(Number(productVal) > 0);
-                      return (
-                        <div key={field}>
-                          <p
-                            className={cn(
-                              "mb-1 text-xs",
-                              warn ? "text-warning font-medium" : "text-navy/70",
-                            )}
-                          >
-                            {label}
-                            {warn ? " ⚠" : ""}
-                          </p>
-                          {isEditing ? (
-                            <>
-                              <EditableNumber
-                                value={curVal}
-                                onChange={(v) =>
-                                  setEditDraft((d) => ({ ...d, [field]: String(v) }))
-                                }
-                                onCommit={(v, atFocus) => {
-                                  // P0 2026-10-14: lower tiers move only by applyLadderChange (tracking, 0 or above
-                                  // the new price), never a blind copy-down, and the move is named on screen. The
-                                  // OLD side is the field's own focus-time value (SA MUST: no staleable copy).
-                                  const moved = applyLadderChange(
-                                    field as TierField,
-                                    atFocus ?? productVal,
-                                    v,
-                                    editDraft as Record<string, string>,
-                                  );
-                                  setEditDraft((d) => ({ ...d, ...moved }));
-                                  setLadderNote(
-                                    ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n)),
-                                  );
-                                }}
-                              />
-                              {perUnitHint(curVal)}
-                            </>
-                          ) : (
-                            <>
-                              <p className="font-mono text-sm font-medium tabular-nums text-navy">
-                                <MoneyFigure
-                                  value={inheritsList ? priceNumber : Number(productVal)}
-                                />
-                                {inheritsList && (
-                                  <span className="ml-1 rounded bg-surface-raised px-1 py-0.5 text-[9px] text-navy/50">
-                                    list
-                                  </span>
-                                )}
-                              </p>
-                              {perUnitHint(inheritsList ? priceNumber : Number(productVal))}
-                            </>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {isEditing && ladderNote && (
-                    <p
-                      role="status"
-                      data-testid="ladder-note"
-                      className="mt-2 text-xs text-navy/70"
-                    >
-                      {ladderNote}
-                    </p>
-                  )}
-                  {isEditing &&
-                    (() => {
-                      const t1 = parseFloat(String(editDraft.pricePerUnit ?? priceNumber));
-                      const t2 = parseFloat(
-                        String(editDraft.priceTier2 ?? (product as any).priceTier2 ?? t1),
-                      );
-                      const t3 = parseFloat(
-                        String(editDraft.priceTier3 ?? (product as any).priceTier3 ?? t1),
-                      );
-                      const t4 = parseFloat(
-                        String(editDraft.priceTier4 ?? (product as any).priceTier4 ?? t1),
-                      );
-                      const t5 = parseFloat(
-                        String(editDraft.priceTier5 ?? (product as any).priceTier5 ?? t1),
-                      );
-                      const hasViolation = t2 > t1 || t3 > t2 || t4 > t3 || t5 > t4;
-                      return hasViolation ? (
-                        <p className="mt-1.5 text-xs text-warning">
-                          Higher tier prices should be ≤ the tier above (volume discounts are
-                          lower).
-                        </p>
-                      ) : null;
-                    })()}
-                  {isEditing && (
-                    <p className="mt-1.5 text-xs text-navy/50">
-                      A tier left blank or at 0 follows the list price.
-                    </p>
-                  )}
-                </div>
+                {isFamily ? (
+                  <FamilyPriceSection price={wholesaleListPrice} isEditing={isEditing}>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+                      {priceEachRow}
+                    </div>
+                    {tiersBlock}
+                  </FamilyPriceSection>
+                ) : (
+                  tiersBlock
+                )}
 
                 {/* MSRP — suggested retail, per PIECE (even for boxed products).
                     Display-only: never feeds pricing/tax/margin math. Flag-gated
@@ -1806,6 +1794,9 @@ export default function ProductDetailPage() {
                 )}
               </div>
             </div>
+            {product.kind === "FAMILY" && (
+              <FamilyVariantsEditor familyId={product.id} variants={product.variants ?? []} />
+            )}
           </div>
           {/* ── Left: image gallery + stock card ── */}
           <div className="space-y-4 lg:col-start-1 lg:row-start-1 lg:row-span-2">
@@ -2282,19 +2273,20 @@ export default function ProductDetailPage() {
             {/* Sales demand — real data from invoiced sales. In its own file (unlike
                 CostHistoryCard below) because it owns range/metric state and five
                 render states; this file is already ~2.7k lines. */}
-            <DemandCard productId={product.id} unitsPerBox={product.unitsPerBox} />
-
-            {/* Sales — per-buyer invoiced-sale history (PR-B): who bought this,
-                when, and at what price, with min/avg/max price summary chips. */}
-            <SalesHistoryCard productId={product.id} hideCreateOrder={v2Family} />
+            {isFamily ? (
+              <FamilySalesCards productId={product.id} unitsPerBox={product.unitsPerBox} />
+            ) : (
+              <>
+                <DemandCard productId={product.id} unitsPerBox={product.unitsPerBox} />
+                {/* Sales — per-buyer invoiced-sale history (PR-B): who bought this,
+                    when, and at what price, with min/avg/max price summary chips. */}
+                <SalesHistoryCard productId={product.id} />
+              </>
+            )}
             <ProductInsightsExport productId={product.id} sku={product.sku ?? product.id} />
 
             {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}
             <CostHistoryCard productId={product.id} />
-
-            {product.kind === "FAMILY" && (
-              <FamilyVariantsEditor familyId={product.id} variants={product.variants ?? []} />
-            )}
 
             {/* Variants section — only for non-variant (parent) products */}
             {!product.parentProductId && product.kind !== "FAMILY" && (
