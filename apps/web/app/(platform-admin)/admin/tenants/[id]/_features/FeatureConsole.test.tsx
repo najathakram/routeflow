@@ -12,6 +12,8 @@ import {
   uncheckedSettingEffective,
 } from "./__fixtures__/effective.fixtures";
 import { diffsFixture } from "./__fixtures__/diffs.fixtures";
+import { BADGE_COLORS } from "./badge";
+import type { EffectiveFeature, FeatureRegistryRow } from "./types";
 import { previewFixture } from "./__fixtures__/preview.fixtures";
 import { fulfilmentModeLabel } from "./setup-copy";
 
@@ -147,8 +149,8 @@ describe("FeatureConsole — loading / empty / error states (test 5)", () => {
   });
 });
 
-describe("FeatureConsole — data-driven badges (test 1)", () => {
-  it("renders 3 areas, 5 visible rows (internal hidden), and a badge matching each fixture's source", async () => {
+describe("FeatureConsole — data-driven readouts (test 1, BO-12)", () => {
+  it("renders 3 areas, 5 visible rows (internal hidden), and one readout per row that matches each fixture's source", async () => {
     render(
       <FeatureConsole
         tenant={{ id: TENANT_ID, plan: "GROWTH" }}
@@ -163,23 +165,25 @@ describe("FeatureConsole — data-driven badges (test 1)", () => {
     // internal key hidden by default
     expect(screen.queryByText("Developer mode")).not.toBeInTheDocument();
 
+    // The source badge is folded into the one readout (BO-12): Inherited and Off are dropped.
     const table: Array<[string, string]> = [
-      ["tobacco_dealer", "Removed"],
-      ["msrp", "Grandfathered"],
-      ["recurring_routes", "Purchased"],
-      ["route_optimization", "Inherited"],
+      ["tobacco_dealer", "Off, removed by override"],
+      ["msrp", "On, kept from an earlier plan"],
+      ["recurring_routes", "On, paid add-on"],
+      ["route_optimization", "On"],
       ["boxes_pieces_mode", "Off"],
     ];
-    for (const [key, badge] of table) {
+    for (const [key, readout] of table) {
       const row = document.querySelector(`[data-feature-key="${key}"]`) as HTMLElement;
       expect(row).toBeTruthy();
-      expect(within(row).getByTestId("badge")).toHaveTextContent(badge);
+      expect(within(row).getAllByTestId("readout")).toHaveLength(1);
+      expect(within(row).getByTestId("readout").textContent).toBe(readout);
     }
 
-    // Toggle "show internal" reveals the 6th row with its own badge.
+    // Toggle "show internal" reveals the 6th row with its own readout.
     fireEvent.click(screen.getByLabelText("Show internal"));
     const devRow = document.querySelector('[data-feature-key="developer_mode"]') as HTMLElement;
-    expect(within(devRow).getByTestId("badge")).toHaveTextContent("Added");
+    expect(within(devRow).getByTestId("readout")).toHaveTextContent("On, added by override");
   });
 });
 
@@ -548,7 +552,7 @@ describe("FeatureConsole — fulfilment_model row after a profile is applied (B1
       allowed: [],
       blocked: [],
     });
-    fireEvent.click(within(row).getByRole("button", { name: /Why is Where orders go/ }));
+    fireEvent.click(within(row).getByRole("button", { name: /Details for Where orders go/ }));
     const panel = document.getElementById("why-panel-fulfilment_model") as HTMLElement;
     expect(panel).toHaveTextContent(/Set to "Ship by carrier" for this business/);
     expect(panel).toHaveTextContent(/business profile/);
@@ -578,7 +582,7 @@ describe("FeatureConsole — fulfilment_model row after a profile is applied (B1
       allowed: [],
       blocked: ["delivery"],
     });
-    fireEvent.click(within(row).getByRole("button", { name: /Why is Where orders go/ }));
+    fireEvent.click(within(row).getByRole("button", { name: /Details for Where orders go/ }));
     expect(document.getElementById("why-panel-fulfilment_model")).toHaveTextContent(
       /saved value "Own delivery" is not in effect/,
     );
@@ -627,7 +631,9 @@ describe("SA-1: plain names on the console's controls", () => {
     expect(screen.getByRole("button", { name: "Preview plan change" })).toBeInTheDocument();
   });
 
-  it("explains the 'dark' and 'proposed' chips by tooltip and visually-hidden text", async () => {
+  // BO-12 (U7, U9): the release stage and the dark note moved into the Details panel as plain
+  // text, so the state is read once and no chip carries a tooltip or hidden duplicate copy.
+  it("explains the dark gate and the release stage in the Details panel text", async () => {
     mockFetchRegistry.mockResolvedValue([
       {
         ...REGISTRY_FIXTURE[0],
@@ -647,14 +653,19 @@ describe("SA-1: plain names on the console's controls", () => {
     );
     await screen.findByText("Chip row");
     const row = document.querySelector('[data-feature-key="chip_row"]') as HTMLElement;
-    const dark = within(row).getByText("dark");
-    expect(dark).toHaveAttribute("title", expect.stringMatching(/allowed|not enforced|still on/i));
-    expect(dark).not.toHaveAttribute("aria-label");
-    expect(dark.querySelector(".sr-only")?.textContent).toMatch(/not enforced/i);
-    const proposed = within(row).getByText("proposed");
-    expect(proposed.getAttribute("title")).toMatch(/not released|planned|proposed/i);
-    expect(proposed).not.toHaveAttribute("aria-label");
-    expect(proposed.querySelector(".sr-only")?.textContent).toMatch(/not released/i);
+    fireEvent.click(within(row).getByRole("button", { name: "Details for Chip row" }));
+    const panel = document.getElementById("why-panel-chip_row") as HTMLElement;
+    expect(panel).toHaveTextContent(
+      "Release stage: Planned. Not released yet, and nothing relies on it today.",
+    );
+    expect(panel).toHaveTextContent(
+      "Not enforced yet. This check only logs a warning when it would refuse the feature, and still allows it.",
+    );
+    // no chip, tooltip or hidden duplicate copy on the row itself
+    expect(row.querySelector(".sr-only")).toBeNull();
+    expect(row.querySelector("[title]")).toBeNull();
+    expect(within(row).queryByText("dark")).toBeNull();
+    expect(within(row).queryByText("proposed")).toBeNull();
   });
 });
 
@@ -754,7 +765,7 @@ describe("BO-09: Set override stops shouting and leaves rows where it does nothi
       .getAllByRole("button")
       .map((b) => b.getAttribute("aria-label"));
     expect(names).toEqual([
-      "Why is Regulated items (tobacco) on or off?",
+      "Details for Regulated items (tobacco)",
       "Set override Regulated items (tobacco)",
       "Turn on Regulated items (tobacco) as an add-on",
     ]);
@@ -766,7 +777,7 @@ describe("BO-09: Set override stops shouting and leaves rows where it does nothi
   it("a gate-less plain row's Why panel says nothing checks it, so an override would do nothing", async () => {
     const { rowOf } = await renderRows();
     const row = rowOf("unchecked_setting");
-    fireEvent.click(within(row).getByRole("button", { name: /^Why is Unchecked setting/ }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Details for Unchecked setting/ }));
     expect(document.getElementById("why-panel-unchecked_setting")).toHaveTextContent(
       "Nothing checks this setting yet, so an override would have no effect.",
     );
@@ -774,11 +785,13 @@ describe("BO-09: Set override stops shouting and leaves rows where it does nothi
 
   it("the gate-less note is not added to a gated row or to a configuration row", async () => {
     const { rowOf } = await renderRows();
-    fireEvent.click(within(rowOf("tobacco_dealer")).getByRole("button", { name: /^Why is/ }));
+    fireEvent.click(within(rowOf("tobacco_dealer")).getByRole("button", { name: /^Details for/ }));
     expect(document.getElementById("why-panel-tobacco_dealer")).not.toHaveTextContent(
       /Nothing checks/,
     );
-    fireEvent.click(within(rowOf("fulfilment_model")).getByRole("button", { name: /^Why is/ }));
+    fireEvent.click(
+      within(rowOf("fulfilment_model")).getByRole("button", { name: /^Details for/ }),
+    );
     expect(document.getElementById("why-panel-fulfilment_model")).not.toHaveTextContent(
       /Nothing checks/,
     );
@@ -871,5 +884,334 @@ describe("BO-10: the Tier picker reads the resolved plan, not the legacy plan en
       />,
     );
     expect((screen.getByLabelText("Tier") as HTMLSelectElement).value).toBe("GROWTH");
+  });
+});
+
+// BO-12: one state readout per row, release stage and the dark note in the Details panel.
+describe("BO-12: one state readout per console row", () => {
+  const DARK_NOTE =
+    "Not enforced yet. This check only logs a warning when it would refuse the feature, and still allows it.";
+
+  const regRow = (key: string, over: Partial<FeatureRegistryRow> = {}): FeatureRegistryRow => ({
+    key,
+    kind: "boolean",
+    area: "bo12",
+    label: `Row ${key}`,
+    description: `Description of ${key}.`,
+    lifecycle: "ga",
+    internal: false,
+    gate: { via: "RequirePlanFlag", state: "enforced" },
+    billing: { skus: [] },
+    ...over,
+  });
+  const effRow = (key: string, over: Partial<EffectiveFeature> = {}): EffectiveFeature => ({
+    key,
+    area: "bo12",
+    serving: false,
+    resolver: false,
+    source: "NONE",
+    detail: { planKey: "GROWTH", catalogVersionId: "catalog-v11", enforced: true },
+    billing: { charged: false },
+    ...over,
+  });
+  const SHIP_MODE = {
+    value: "ship",
+    effective: "ship",
+    source: "TENANT" as const,
+    allowed: ["unset", "delivery", "ship"],
+    blocked: [],
+  };
+
+  // Every readout state in one registry. The T1-style row is dark + no source + serving: it used
+  // to read "Off", "dark" and "On" at once.
+  const REGISTRY: FeatureRegistryRow[] = [
+    ...REGISTRY_FIXTURE,
+    FULFILMENT_MODEL_ROW,
+    UNCHECKED_SETTING_ROW,
+    regRow("t1_style", { gate: { via: "RequirePlanFlag", state: "dark" } }),
+    regRow("t1_denied", { gate: { via: "RequireAddon", state: "dark" } }),
+    regRow("not_reported"),
+    regRow("resolver_error"),
+    regRow("is_beta", { lifecycle: "beta" }),
+    regRow("is_ga", { lifecycle: "ga" }),
+    regRow("is_deprecated", { lifecycle: "deprecated" }),
+    regRow("is_sunset", { lifecycle: "sunset" }),
+    regRow("plain_on"),
+    regRow("grant_but_off"),
+  ];
+  const EFFECTIVE: EffectiveFeature[] = [
+    ...EFFECTIVE_FIXTURE,
+    fulfilmentModeEffective(SHIP_MODE),
+    uncheckedSettingEffective(),
+    effRow("t1_style", { serving: true, source: "NONE" }),
+    effRow("t1_denied", { serving: true, source: "OVERRIDE_DENY" }),
+    effRow("resolver_error", { source: "UNKNOWN" }),
+    effRow("is_beta", { serving: true, source: "PRESET" }),
+    effRow("is_ga"),
+    effRow("is_deprecated", { serving: true, source: "PRESET" }),
+    effRow("is_sunset"),
+    effRow("plain_on", { serving: true, resolver: true, source: "PRESET" }),
+    effRow("grant_but_off", { serving: false, resolver: true, source: "OVERRIDE_GRANT" }),
+  ];
+
+  async function renderAll() {
+    mockFetchRegistry.mockResolvedValue(REGISTRY);
+    mockFetchEffective.mockResolvedValue(EFFECTIVE);
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+    fireEvent.click(screen.getByLabelText("Show internal"));
+    const rowOf = (key: string) =>
+      document.querySelector(`[data-feature-key="${key}"]`) as HTMLElement;
+    const open = (key: string) =>
+      fireEvent.click(within(rowOf(key)).getByRole("button", { name: /^Details for/ }));
+    const panelOf = (key: string) => document.getElementById(`why-panel-${key}`) as HTMLElement;
+    return { rowOf, open, panelOf };
+  }
+
+  /** Everything on the row except the Details panel and the mode radios. */
+  function headerText(row: HTMLElement): string {
+    const clone = row.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll("[id^='why-panel-'], [role='radiogroup']").forEach((n) => n.remove());
+    return clone.textContent ?? "";
+  }
+
+  it("no row renders both On and Off text", async () => {
+    const { rowOf } = await renderAll();
+    for (const r of REGISTRY) {
+      const row = rowOf(r.key);
+      expect(row).toBeTruthy();
+      const stateWords = within(row).queryAllByText(/^(On|Off)\b/);
+      expect({ key: r.key, stateWords: stateWords.length <= 1 }).toEqual({
+        key: r.key,
+        stateWords: true,
+      });
+      expect(within(row).queryByText("Unknown")).toBeNull();
+      expect(within(row).queryByText("Inherited")).toBeNull();
+    }
+  });
+
+  it("every row has exactly one readout", async () => {
+    const { rowOf } = await renderAll();
+    for (const r of REGISTRY) {
+      expect({
+        key: r.key,
+        readouts: within(rowOf(r.key)).queryAllByTestId("readout").length,
+      }).toEqual({
+        key: r.key,
+        readouts: 1,
+      });
+    }
+  });
+
+  it("no row has more than one status chip outside the Details panel (the T1-style row had three)", async () => {
+    const { rowOf } = await renderAll();
+    for (const r of REGISTRY) {
+      const chips = Array.from(rowOf(r.key).querySelectorAll('[class~="text-[10px]"]')).filter(
+        (el) => !el.closest("[id^='why-panel-']") && !el.closest("[role='radiogroup']"),
+      );
+      expect({ key: r.key, atMostOne: chips.length <= 1 }).toEqual({
+        key: r.key,
+        atMostOne: true,
+      });
+    }
+    // the old lifecycle and dark chips are gone from the row for good
+    const t1 = rowOf("t1_style");
+    expect(within(t1).queryByText("dark")).toBeNull();
+    expect(within(t1).queryByText("ga")).toBeNull();
+  });
+
+  it("a mode is applied: one readout with the mode label and the source as muted text", async () => {
+    const { rowOf } = await renderAll();
+    const row = rowOf("fulfilment_model");
+    const readout = within(row).getByTestId("readout");
+    expect(readout).toHaveTextContent("Ship by carrier · Set for this business");
+    expect(within(readout).getByTestId("applied-mode-source")).toHaveClass("text-slate-400");
+    expect(within(row).getAllByTestId("readout")).toHaveLength(1);
+    expect(within(row).queryByText("Off")).toBeNull();
+    expect(within(row).queryByText("On")).toBeNull();
+  });
+
+  it("a row with no effective data reads Not reported once, in amber, and not Off", async () => {
+    const { rowOf } = await renderAll();
+    const row = rowOf("not_reported");
+    expect(within(row).getAllByText("Not reported")).toHaveLength(1);
+    expect(within(row).getByTestId("readout")).toHaveClass("text-amber-300");
+    expect(within(row).queryByText("Off")).toBeNull();
+    expect(within(row).queryByText("Unknown")).toBeNull();
+  });
+
+  it("a resolver error (source UNKNOWN) is also Not reported, never On or Off", async () => {
+    const { rowOf } = await renderAll();
+    expect(within(rowOf("resolver_error")).getByTestId("readout")).toHaveTextContent(
+      /^Not reported$/,
+    );
+  });
+
+  it("feature on, gate dark, source none or an override that removes it: On, not enforced yet, in amber", async () => {
+    const { rowOf } = await renderAll();
+    for (const key of ["t1_style", "t1_denied"]) {
+      const readout = within(rowOf(key)).getByTestId("readout");
+      expect(readout).toHaveTextContent(/^On, not enforced yet$/);
+      expect(readout).toHaveClass("text-amber-300");
+      expect(readout).not.toHaveClass("text-[10px]");
+    }
+  });
+
+  it("a dark row that is on for a real reason keeps that reason (the first rule that applies wins)", async () => {
+    const { rowOf } = await renderAll();
+    // route_optimization: dark, serving, source PRESET. developer_mode: dark, serving, GRANT.
+    expect(within(rowOf("route_optimization")).getByTestId("readout")).toHaveTextContent(/^On$/);
+    expect(within(rowOf("developer_mode")).getByTestId("readout")).toHaveTextContent(
+      /^On, added by override$/,
+    );
+  });
+
+  it("the four source chips use the badge colours and are a 10 px chip", async () => {
+    const { rowOf } = await renderAll();
+    const cases: Array<[string, string, string]> = [
+      ["developer_mode", "On, added by override", BADGE_COLORS.added],
+      ["tobacco_dealer", "Off, removed by override", BADGE_COLORS.removed],
+      ["recurring_routes", "On, paid add-on", BADGE_COLORS.purchased],
+      ["msrp", "On, kept from an earlier plan", BADGE_COLORS.grandfathered],
+    ];
+    for (const [key, text, colours] of cases) {
+      const readout = within(rowOf(key)).getByTestId("readout");
+      expect(readout.textContent).toBe(text);
+      expect(readout).toHaveClass("text-[10px]");
+      for (const cls of colours.split(" ")) expect(readout).toHaveClass(cls);
+    }
+  });
+
+  it("a plain On or Off stays 12 px text (emerald or slate), never a chip", async () => {
+    const { rowOf } = await renderAll();
+    const on = within(rowOf("plain_on")).getByTestId("readout");
+    expect(on).toHaveTextContent(/^On$/);
+    expect(on).toHaveClass("text-xs", "text-emerald-400");
+    expect(on).not.toHaveClass("text-[10px]");
+    const off = within(rowOf("is_ga")).getByTestId("readout");
+    expect(off).toHaveTextContent(/^Off$/);
+    expect(off).toHaveClass("text-xs", "text-slate-400");
+    expect(off).not.toHaveClass("text-[10px]");
+  });
+
+  it("a source that contradicts what the row is serving falls back to plain On or Off", async () => {
+    const { rowOf } = await renderAll();
+    // the resolver would grant it but it is not served today: never claim "On, added by override"
+    expect(within(rowOf("grant_but_off")).getByTestId("readout")).toHaveTextContent(/^Off$/);
+  });
+
+  it("deprecated and sunset rows carry a muted plain-text word after the label, not a chip", async () => {
+    const { rowOf } = await renderAll();
+    expect(headerText(rowOf("is_deprecated"))).toContain("· Being phased out");
+    expect(headerText(rowOf("is_sunset"))).toContain("· Retired");
+    const word = within(rowOf("is_deprecated")).getByText("· Being phased out");
+    expect(word).toHaveClass("text-slate-400");
+    expect(word).not.toHaveClass("text-[10px]");
+    // ga and beta rows say nothing about lifecycle on the row
+    const quiet = /Released|Beta|phased|Retired|Planned/;
+    expect(headerText(rowOf("is_ga"))).not.toMatch(quiet);
+    expect(headerText(rowOf("is_beta"))).not.toMatch(quiet);
+  });
+
+  it("the Details panel states the release stage in the exact copy", async () => {
+    const { open, panelOf } = await renderAll();
+    const stages: Array<[string, string]> = [
+      ["is_ga", "Release stage: Released."],
+      ["is_beta", "Release stage: Beta. Released for testing and may still change."],
+      [
+        "unchecked_setting", // lifecycle: proposed
+        "Release stage: Planned. Not released yet, and nothing relies on it today.",
+      ],
+      ["is_deprecated", "Release stage: Being phased out. Avoid turning it on for new businesses."],
+      ["is_sunset", "Release stage: Retired. No longer offered."],
+    ];
+    for (const [key, copy] of stages) {
+      open(key);
+      expect(panelOf(key)).toHaveTextContent(copy);
+    }
+  });
+
+  it("the Details panel for a dark row contains the dark note, and a non-dark row does not", async () => {
+    const { open, panelOf } = await renderAll();
+    open("t1_style");
+    expect(panelOf("t1_style")).toHaveTextContent(DARK_NOTE);
+    open("is_ga");
+    expect(panelOf("is_ga")).not.toHaveTextContent(/Not enforced yet/);
+  });
+
+  it("the Details panel renders for a row with no effective data, so the release stage stays reachable", async () => {
+    const { open, panelOf } = await renderAll();
+    open("not_reported");
+    expect(panelOf("not_reported")).toHaveTextContent("Release stage: Released.");
+    expect(panelOf("not_reported")).toHaveTextContent(
+      "The server did not report a state for this feature.",
+    );
+  });
+
+  it("the readout is plain visible text: no title, no aria-label, no hidden copy", async () => {
+    const { rowOf } = await renderAll();
+    for (const r of REGISTRY) {
+      const readout = within(rowOf(r.key)).getByTestId("readout");
+      expect(readout).not.toHaveAttribute("title");
+      expect(readout).not.toHaveAttribute("aria-label");
+      expect(readout.querySelector("[title], [aria-label], .sr-only")).toBeNull();
+      expect(rowOf(r.key).querySelector(".sr-only")).toBeNull();
+    }
+  });
+
+  it("the toggle is Details with its own name; the panel is always mounted, hidden until opened, and focus stays", async () => {
+    const { rowOf } = await renderAll();
+    const row = rowOf("tobacco_dealer");
+    const toggle = within(row).getByRole("button", {
+      name: "Details for Regulated items (tobacco)",
+    });
+    expect(toggle).toHaveTextContent("Details");
+    expect(within(row).queryByText("Why is this on/off?")).toBeNull();
+    const panelId = toggle.getAttribute("aria-controls") as string;
+    expect(document.getElementById(panelId)).toBeInTheDocument();
+    expect(document.getElementById(panelId)).toHaveAttribute("hidden");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    toggle.focus();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(document.getElementById(panelId)).not.toHaveAttribute("hidden");
+    expect(document.activeElement).toBe(toggle);
+
+    fireEvent.click(toggle);
+    expect(document.getElementById(panelId)).toHaveAttribute("hidden");
+  });
+
+  it("the Details panel comes after the mode radios, full width", async () => {
+    const { rowOf, open, panelOf } = await renderAll();
+    open("route_optimization");
+    const radios = within(rowOf("route_optimization")).getByRole("radiogroup");
+    const panel = panelOf("route_optimization");
+    expect(radios.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(panel).toHaveClass("bg-slate-900/50", "text-slate-300");
+    expect(panel.parentElement).toBe(rowOf("route_optimization"));
+  });
+
+  it("label and readout share one line; the actions follow the description under them", async () => {
+    const { rowOf } = await renderAll();
+    const row = rowOf("tobacco_dealer");
+    const label = within(row).getByText("Regulated items (tobacco)");
+    const readout = within(row).getByTestId("readout");
+    expect(readout.parentElement).toBe(label.parentElement);
+    const description = within(row).getByText(/License-column ledgers/);
+    const actions = within(row).getByRole("button", { name: /^Details for/ })
+      .parentElement as HTMLElement;
+    expect(actions.contains(readout)).toBe(false);
+    expect(
+      description.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // below lg the actions stack under the description, left aligned; from lg they sit at the right
+    expect(actions.parentElement).toHaveClass("flex-col", "lg:flex-row");
   });
 });

@@ -11,7 +11,7 @@ import {
   previewTenantFeatures,
   writeTenantFeatureConfig,
 } from "@/lib/platform-admin/features";
-import { BADGE_COLORS, BADGE_LABELS, deriveBadge } from "./badge";
+import { BADGE_COLORS, deriveReadout, type StateReadout } from "./badge";
 import {
   blockedReason,
   explainModeSentence,
@@ -123,16 +123,27 @@ const QUIET_ACTION =
 const OUTLINED_ACTION =
   "inline-flex min-h-11 items-center rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-200 ring-1 ring-slate-500 hover:bg-slate-700 md:min-h-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-800";
 
-/** What the small status chips mean, in plain words (tooltip + aria-label). */
-const DARK_HELP =
-  "Not enforced yet: the check only logs a warning when this feature would be refused, and still allows it.";
-const LIFECYCLE_HELP: Record<string, string> = {
-  proposed: "Planned, not released yet. Nothing relies on it today.",
-  beta: "Released for testing. It may still change.",
-  ga: "Fully released.",
-  deprecated: "Being phased out. Avoid turning it on for new businesses.",
-  sunset: "Retired. It is no longer offered.",
+/** The dark-gate note, shown in the Details panel (BO-12). */
+const DARK_NOTE =
+  "Not enforced yet. This check only logs a warning when it would refuse the feature, and still allows it.";
+/** Release stage, in plain words, shown in the Details panel (BO-12). */
+const RELEASE_STAGE: Record<string, string> = {
+  ga: "Release stage: Released.",
+  beta: "Release stage: Beta. Released for testing and may still change.",
+  proposed: "Release stage: Planned. Not released yet, and nothing relies on it today.",
+  deprecated: "Release stage: Being phased out. Avoid turning it on for new businesses.",
+  sunset: "Release stage: Retired. No longer offered.",
 };
+/** The only lifecycle stages worth a word on the row itself (muted plain text, not a chip). */
+const LIFECYCLE_WORD: Record<string, string> = {
+  deprecated: "Being phased out",
+  sunset: "Retired",
+};
+const NOT_REPORTED_NOTE = "The server did not report a state for this feature.";
+
+/** The Details toggle: quiet, 44 px tall below md (BO-09 tap rules). */
+const DETAILS_TOGGLE =
+  "inline-flex min-h-11 items-center rounded px-2 py-1 text-xs text-slate-400 hover:bg-slate-700 hover:text-white md:min-h-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-800";
 
 export function FeatureConsole({
   tenant,
@@ -381,7 +392,6 @@ export function FeatureConsole({
           <div className="flex flex-col gap-2">
             {rows.map((row) => {
               const feature = effectiveByKey[row.key];
-              const badge = feature ? deriveBadge(feature) : "unknown";
               // A free configuration row (no plan flag or add-on gates it): its answer is the applied
               // mode and where it came from, never on/off or "inherited from the plan" (B1132).
               const appliedMode =
@@ -390,79 +400,45 @@ export function FeatureConsole({
                 checkRequires(row.requires, effectiveKeys),
                 registryByKey,
               );
+              const isOpen = openWhy === row.key;
+              const lifecycleWord = LIFECYCLE_WORD[row.lifecycle];
               return (
                 <div
                   key={row.key}
                   className="rounded-xl bg-slate-800 p-4 ring-1 ring-white/5"
                   data-feature-key={row.key}
                 >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between lg:gap-3">
                     <div>
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                         <span className="text-sm font-semibold text-white">{row.label}</span>
                         {appliedMode ? (
-                          <span
-                            data-testid="applied-mode"
-                            className="rounded bg-indigo-900/40 px-1.5 py-0.5 text-[10px] font-medium text-indigo-200 ring-1 ring-indigo-600/30"
-                          >
-                            {modeLabel(row.config?.modes ?? [], appliedMode.effective)}
+                          <span data-testid="readout" className="text-xs">
+                            <span data-testid="applied-mode" className="font-medium text-slate-200">
+                              {modeLabel(row.config?.modes ?? [], appliedMode.effective)}
+                            </span>{" "}
+                            <span data-testid="applied-mode-source" className="text-slate-400">
+                              · {modeSourceLabel(appliedMode)}
+                            </span>
                           </span>
                         ) : (
-                          <span
-                            data-testid="badge"
-                            className={`rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ${BADGE_COLORS[badge]}`}
-                          >
-                            {BADGE_LABELS[badge]}
-                          </span>
+                          <StateReadoutText readout={deriveReadout(row.gate, feature)} />
                         )}
-                        <span
-                          title={LIFECYCLE_HELP[row.lifecycle] ?? undefined}
-                          className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400"
-                        >
-                          {row.lifecycle}
-                          {LIFECYCLE_HELP[row.lifecycle] && (
-                            <span className="sr-only">: {LIFECYCLE_HELP[row.lifecycle]}</span>
-                          )}
-                        </span>
-                        {row.gate.state === "dark" && (
-                          <span
-                            title={DARK_HELP}
-                            className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] text-amber-300"
-                          >
-                            dark
-                            <span className="sr-only">: {DARK_HELP}</span>
-                          </span>
-                        )}
-                        {appliedMode ? (
-                          <span
-                            data-testid="applied-mode-source"
-                            className="text-xs text-slate-400"
-                          >
-                            {modeSourceLabel(appliedMode)}
-                          </span>
-                        ) : (
-                          <span
-                            className={
-                              feature?.serving
-                                ? "text-emerald-400 text-xs"
-                                : "text-slate-400 text-xs"
-                            }
-                          >
-                            {feature?.serving ? "On" : "Off"}
-                          </span>
+                        {lifecycleWord && (
+                          <span className="text-xs text-slate-400">· {lifecycleWord}</span>
                         )}
                       </div>
                       <p className="mt-1 text-xs text-slate-400">{row.description}</p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
-                        onClick={() => setOpenWhy(openWhy === row.key ? null : row.key)}
-                        className="rounded px-2 py-1 text-xs text-slate-400 hover:bg-slate-700 hover:text-white"
-                        aria-expanded={openWhy === row.key}
+                        onClick={() => setOpenWhy(isOpen ? null : row.key)}
+                        className={DETAILS_TOGGLE}
+                        aria-expanded={isOpen}
                         aria-controls={`why-panel-${row.key}`}
-                        aria-label={`Why is ${row.label} on or off?`}
+                        aria-label={`Details for ${row.label}`}
                       >
-                        Why is this on/off?
+                        Details
                       </button>
                       {row.gate.via !== "none" && (
                         <button
@@ -491,31 +467,6 @@ export function FeatureConsole({
                     </div>
                   </div>
 
-                  {openWhy === row.key && feature && (
-                    <div
-                      id={`why-panel-${row.key}`}
-                      className="mt-3 rounded-lg bg-slate-900/50 p-3 text-xs text-slate-300 ring-1 ring-white/5"
-                    >
-                      <p>
-                        {appliedMode
-                          ? explainModeSentence(row.config?.modes ?? [], appliedMode)
-                          : explainSentence(feature)}
-                      </p>
-                      {row.gate.via === "none" && !row.config && (
-                        <p className="mt-2">
-                          Nothing checks this setting yet, so an override would have no effect.
-                        </p>
-                      )}
-                      {!appliedMode && feature.resolver !== feature.serving && (
-                        <p className="mt-2 text-amber-300">
-                          Note: the new resolver disagrees — it would say this is{" "}
-                          {feature.resolver ? "ON" : "OFF"}. Still in preview mode, so nothing
-                          changes for customers yet.
-                        </p>
-                      )}
-                    </div>
-                  )}
-
                   {row.config && feature?.serving && feature.mode && (
                     <ModeSelector
                       featureKey={row.key}
@@ -526,6 +477,42 @@ export function FeatureConsole({
                       onSelect={(newMode) => startModePreview(row.key, newMode)}
                     />
                   )}
+
+                  {/* Always mounted so aria-controls points at a real element; opening it never
+                      moves focus. After the mode radios, full width (BO-12 U8, U9, D5). */}
+                  <div
+                    id={`why-panel-${row.key}`}
+                    hidden={!isOpen}
+                    className="mt-3 rounded-lg bg-slate-900/50 p-3 text-xs text-slate-300 ring-1 ring-white/5"
+                  >
+                    {isOpen && (
+                      <>
+                        <p>
+                          {!feature
+                            ? NOT_REPORTED_NOTE
+                            : appliedMode
+                              ? explainModeSentence(row.config?.modes ?? [], appliedMode)
+                              : explainSentence(feature)}
+                        </p>
+                        {row.gate.via === "none" && !row.config && (
+                          <p className="mt-2">
+                            Nothing checks this setting yet, so an override would have no effect.
+                          </p>
+                        )}
+                        {feature && !appliedMode && feature.resolver !== feature.serving && (
+                          <p className="mt-2 text-amber-300">
+                            Note: the new resolver disagrees — it would say this is{" "}
+                            {feature.resolver ? "ON" : "OFF"}. Still in preview mode, so nothing
+                            changes for customers yet.
+                          </p>
+                        )}
+                        {RELEASE_STAGE[row.lifecycle] && (
+                          <p className="mt-2">{RELEASE_STAGE[row.lifecycle]}</p>
+                        )}
+                        {row.gate.state === "dark" && <p className="mt-2">{DARK_NOTE}</p>}
+                      </>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -559,6 +546,26 @@ export function FeatureConsole({
         onEnabled={load}
       />
     </div>
+  );
+}
+
+// ─── State readout ─────────────────────────────────────────────────────────────
+
+/** The one state readout on a row: plain visible text, no tooltip, no aria-label, no hidden copy,
+ *  so the state is read once. Only a readout that carries a source colour is a 10 px chip. */
+function StateReadoutText({ readout }: { readout: StateReadout }) {
+  const style =
+    readout.kind === "chip" && readout.badge
+      ? `rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ${BADGE_COLORS[readout.badge]}`
+      : readout.kind === "not-reported" || readout.kind === "not-enforced"
+        ? "text-xs text-amber-300"
+        : readout.kind === "on"
+          ? "text-xs text-emerald-400"
+          : "text-xs text-slate-400";
+  return (
+    <span data-testid="readout" className={style}>
+      {readout.text}
+    </span>
   );
 }
 
