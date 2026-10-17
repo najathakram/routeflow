@@ -270,3 +270,71 @@ describe("S19b MUST-2 / M3: every outbound action is held while prices are uncon
     expect(btn(/save and send/i)).toBeDisabled();
   });
 });
+
+describe("S19b: the correction's own paths (default start, resolve at Save)", () => {
+  it("default-unit start: a scan that starts on the default Case lands on the layer's $21, not the ladder's $22", async () => {
+    mockLadder = [level({ isDefaultSelling: true })];
+    const { user } = await open(3);
+    await notChecking();
+    await scan(user, BOXED);
+    await waitFor(() =>
+      expect(parseFloat((screen.getByLabelText("Unit price") as HTMLInputElement).value)).toBe(21),
+    );
+    await user.click(btn(/save as draft/i));
+    await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
+    expect(posted()[0]).toMatchObject({ unitLabel: "Case", unitPrice: 21 });
+  });
+
+  it("resolve at Save: a default Case still pending when Save is clicked posts $21, never the ladder's $22", async () => {
+    mockLadder = [level({ isDefaultSelling: true })];
+    let release: () => void = () => {};
+    mockLadderGate = new Promise<void>((r) => {
+      release = r;
+    });
+    const { user } = await open(3);
+    await notChecking();
+    mockBarcodeProduct = BOXED;
+    const input = screen.getByPlaceholderText(/scan barcode, or type product name/i);
+    await user.click(input);
+    await user.type(input, "CODE{Enter}");
+    await screen.findByDisplayValue(String(BOXED.name));
+    await user.click(btn(/save as draft/i));
+    release();
+    await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
+    expect(posted()[0]).toMatchObject({ unitLabel: "Case", unitPrice: 21 });
+  });
+});
+
+describe("S19b: Piece off a layered pack, and the SPECIAL judgement of a layered unit line", () => {
+  it("Piece off the layered pack: 24 pieces total the layer's $40 (not the tier $44), posted as the pack shape", async () => {
+    const { user } = await open(3);
+    await notChecking();
+    await scan(user, BOXED);
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Sell Soda by" }),
+      "Piece",
+    );
+    const pcs = screen.getByTitle("Total pieces");
+    await user.clear(pcs);
+    await user.type(pcs, "24");
+    expect(screen.getByText("= $40.00")).toBeInTheDocument();
+    await user.click(btn(/save as draft/i));
+    await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
+    expect(posted()[0]).toMatchObject({ unitPrice: 40, boxes: 1, pieces: 0 });
+    expect("unitLabel" in posted()[0]).toBe(false);
+  });
+
+  it("a layered unit line is judged SPECIAL from the layer row, not from the customer's tier: a customer on tier 1 with a typed price needs a reason to move off it", async () => {
+    const { user } = await open(1);
+    await notChecking();
+    await scan(user, BOXED);
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Sell Soda by" }), "Case");
+    await waitFor(() =>
+      expect(parseFloat((screen.getByLabelText("Unit price") as HTMLInputElement).value)).toBe(21),
+    );
+    const price = screen.getByLabelText("Unit price");
+    await user.clear(price);
+    await user.type(price, "20");
+    expect(await screen.findByLabelText("Reason (required)")).toBeInTheDocument();
+  });
+});

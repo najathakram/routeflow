@@ -44,6 +44,7 @@ import {
 import { useProducts } from "@/lib/api/products";
 import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
 import { ladderProductOf } from "@/lib/order-line-unit";
+import { correctLayerLevelLines } from "./invoice-layer-correct";
 import { usePricesV2Enabled } from "@/lib/api/units-v2";
 import { PriceLayerNotice, pricesUnconfirmed } from "@/components/PriceLayerNotice";
 import {
@@ -1049,6 +1050,9 @@ export default function NewInvoicePage() {
   // S19b MUST-1: a level pick is priced from the customer layer when its row is there (else the ladder, as master).
   const layerLevelLine = (it: LineItemState, unitLabel: string, tierPrice?: number) => {
     if (!it.productId) return undefined;
+    // A unit line with no pack snapshot (an old or corrupt draft) cannot be matched to a layer row safely: its own
+    // unit would read as the pack.
+    if (it.unitLabel && !it.packBase) return undefined;
     const rows = priceLayer.layerOf(it.productId);
     if (!rows) return undefined;
     const r = customerLinePrice({
@@ -1078,34 +1082,9 @@ export default function NewInvoicePage() {
   // after the pick) is corrected here, idempotently: a typed price stands.
   React.useEffect(() => {
     if (!priceLayer.enabled || !priceLayer.ready) return;
-    setItems((prev) => {
-      let changed = false;
-      const next = prev.map((it) => {
-        if (!it.unitLabel || it.priceEdited) return it;
-        const r = layerLevelLine(it, it.unitLabel);
-        if (!r) return it;
-        if (
-          r.price === it.unitPrice &&
-          r.listPrice === it.listPrice &&
-          r.priceType === it.priceType &&
-          it.pricing?.tierPrice === r.price &&
-          it.pricing?.listPrice === r.listPrice
-        )
-          return it;
-        changed = true;
-        const off = r.price !== r.listPrice;
-        return {
-          ...it,
-          unitPrice: r.price,
-          listPrice: r.listPrice,
-          priceType: r.priceType,
-          isSpecialPrice: off,
-          regularPrice: off ? r.listPrice : undefined,
-          pricing: { tierPrice: r.price, listPrice: r.listPrice, isSpecialTier: r.isSpecial },
-        };
-      });
-      return changed ? next : prev;
-    });
+    setItems((prev) =>
+      correctLayerLevelLines(prev, (it) => layerLevelLine(it, it.unitLabel ?? "")),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- layerLevelLine reads the current layer; items is the trigger
   }, [items, priceLayer.ready, priceLayer.enabled]);
   /** The row's pending-unit state: qty locked, the tap count, loading / failed + Retry. */
@@ -1140,7 +1119,11 @@ export default function NewInvoicePage() {
         }
         const byKey = new Map(before.map((i) => [i.key, i]));
         setItems((cur) => mergeResolvedInvoiceLines(cur, before, lines, folds, tierFor));
-        return run(lines.map((v) => fromUnitLine(byKey.get(v.tempId)!, v, tierFor)));
+        // The resolver priced the default unit from the ladder: put the customer layer's price on it before it is sent.
+        const resolved = lines.map((v) => fromUnitLine(byKey.get(v.tempId)!, v, tierFor));
+        return run(
+          correctLayerLevelLines(resolved, (it) => layerLevelLine(it, it.unitLabel ?? "")),
+        );
       })
       .finally(() => {
         resolvingRef.current = false;

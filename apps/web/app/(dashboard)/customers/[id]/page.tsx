@@ -1319,7 +1319,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                       )}
                       <td className="px-4 py-3 text-right text-sm font-semibold text-brand-600">
                         {priceUnconfirmed ? (
-                          <span className="font-normal text-navy/30">{"—"}</span>
+                          <span className="font-normal text-navy/30">{"\u2014"}</span>
                         ) : (
                           fmt(tierPrice)
                         )}
