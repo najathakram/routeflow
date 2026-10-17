@@ -340,11 +340,80 @@ describe("K11-20a window: layout comes from the window's own width", () => {
       within(inDialog().getByTestId(T.row("case"))).getByRole("rowheader").textContent,
     ).toContain("40 Boxes · No barcode");
     await waitFor(() => expect(box("case", 2)).toHaveFocus());
+    // 560 gap: a swap waits while a price box has focus, so let go of it first.
+    act(() => (document.activeElement as HTMLElement).blur());
     widthIs(400);
     expect(inDialog().queryByTestId(T.unitsTable)).toBeNull();
     expect(inDialog().getByTestId(T.card("case"))).toBeTruthy();
-    widthIs(560);
+    // 560 gap: back to the table needs 576 (hysteresis), not 560.
+    widthIs(576);
     expect(inDialog().getByTestId(T.unitsTable)).toBeTruthy();
+  });
+
+  const leaveBox = () => act(() => (document.activeElement as HTMLElement).blur());
+  const openAt = async (w: number) => {
+    render({ focus: { ref: "case", tier: 2 } });
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    widthIs(w);
+    await waitFor(() => expect(box("case", 2)).toHaveFocus());
+    leaveBox();
+  };
+  const shows = (mode: "table" | "cards") => {
+    if (mode === "table") {
+      expect(inDialog().getByTestId(T.unitsTable)).toBeTruthy();
+      expect(inDialog().queryByTestId(T.card("case"))).toBeNull();
+    } else {
+      expect(inDialog().queryByTestId(T.unitsTable)).toBeNull();
+      expect(inDialog().getByTestId(T.card("case"))).toBeTruthy();
+    }
+  };
+
+  it("560gap: crossing 560 while a price box has focus does not swap until focusout", async () => {
+    render({ focus: { ref: "case", tier: 2 } });
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    widthIs(700);
+    await waitFor(() => expect(box("case", 2)).toHaveFocus());
+    widthIs(400);
+    shows("table");
+    expect(box("case", 2)).toHaveFocus();
+    leaveBox();
+    shows("cards");
+  });
+
+  it("560gap: a focus move between price boxes keeps the swap deferred", async () => {
+    const user = userEvent.setup();
+    render({ focus: { ref: "case", tier: 2 } });
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    widthIs(700);
+    await waitFor(() => expect(box("case", 2)).toHaveFocus());
+    widthIs(400);
+    await user.tab();
+    expect(box("case", 3)).toHaveFocus();
+    shows("table");
+    leaveBox();
+    shows("cards");
+  });
+
+  it("560gap: oscillating around 560 does not flip the layout (hysteresis), from the table", async () => {
+    await openAt(700);
+    shows("table");
+    for (const w of [550, 570, 550, 570, 545]) {
+      widthIs(w);
+      shows("table");
+    }
+    widthIs(543);
+    shows("cards");
+  });
+
+  it("560gap: oscillating around 560 does not flip the layout (hysteresis), from cards", async () => {
+    await openAt(400);
+    shows("cards");
+    for (const w of [550, 570, 550, 575, 560]) {
+      widthIs(w);
+      shows("cards");
+    }
+    widthIs(576);
+    shows("table");
   });
 });
 

@@ -13,10 +13,21 @@ import { usePriceDraft } from "../edit/usePriceDraft";
 /** Why the window asked to close: a save went through, the owner cancelled a clean draft, or discarded a dirty one. */
 export type PriceEditWindowReason = "saved" | "cancel" | "discarded";
 
-/** The body is a table from this width up (its own width, never the viewport's), cards below. */
+/**
+ * The body is a table from this width up (its own width, never the viewport's), cards below. Once measured, the swap has
+ * hysteresis around 560 so a width that hovers there (a scrollbar appearing, a half-pixel) cannot flip it back and forth:
+ * a table turns into cards below 544, and cards turn into a table from 576.
+ */
 const TABLE_MIN_WIDTH = 560;
+const CARDS_BELOW = 544;
+const TABLE_FROM = 576;
 type BodyLayout = "table" | "cards";
-const layoutFor = (width: number): BodyLayout => (width >= TABLE_MIN_WIDTH ? "table" : "cards");
+const layoutFor = (width: number, current: BodyLayout | null): BodyLayout => {
+  if (current === "table") return width < CARDS_BELOW ? "cards" : "table";
+  if (current === "cards") return width >= TABLE_FROM ? "table" : "cards";
+  return width >= TABLE_MIN_WIDTH ? "table" : "cards";
+};
+const PRICE_BOX = '[data-testid^="units-v2-input-"]';
 /** Until the body has been measured: the panel is anchored (and wide enough for a table) from md up. */
 const guessLayout = (): BodyLayout =>
   typeof window !== "undefined" && window.innerWidth < 768 ? "cards" : "table";
@@ -71,6 +82,7 @@ export function PriceEditWindow({
   }, []);
 
   // --- layout: the window's own width, not the viewport's -------------------------------------------------------
+  // A swap remounts every price box, so it waits while one has focus and is applied when focus leaves the boxes.
   const [body, setBody] = React.useState<HTMLDivElement | null>(null);
   const [layout, setLayout] = React.useState<BodyLayout | null>(null);
   React.useLayoutEffect(() => {
@@ -78,18 +90,52 @@ export function PriceEditWindow({
       setLayout(null);
       return undefined;
     }
+    let current: BodyLayout | null = null;
+    let waiting: number | null = null;
+    const apply = (width: number) => {
+      const next = layoutFor(width, current);
+      if (next === current) return;
+      current = next;
+      setLayout(next);
+    };
+    const boxFocused = () => {
+      const active = document.activeElement;
+      return active instanceof HTMLElement && body.contains(active) && active.matches(PRICE_BOX);
+    };
+    const measure = (width: number) => {
+      if (width <= 0) return;
+      if (current !== null && boxFocused()) {
+        waiting = width;
+        return;
+      }
+      waiting = null;
+      apply(width);
+    };
+    const onFocusOut = (event: FocusEvent) => {
+      if (waiting === null) return;
+      const to = event.relatedTarget;
+      // Moving to another price box is still "a box has focus".
+      if (to instanceof HTMLElement && body.contains(to) && to.matches(PRICE_BOX)) return;
+      const width = waiting;
+      waiting = null;
+      apply(width);
+    };
+    body.addEventListener("focusout", onFocusOut);
     // clientWidth is the laid-out width (the open animation scales the box, so its bounding rect would lie).
-    if (body.clientWidth > 0) setLayout(layoutFor(body.clientWidth));
+    if (body.clientWidth > 0) measure(body.clientWidth);
+    let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver === "undefined") {
       if (body.clientWidth === 0) setLayout(guessLayout());
-      return undefined;
+    } else {
+      ro = new ResizeObserver((entries) => {
+        measure(entries[0]?.contentRect.width ?? body.clientWidth);
+      });
+      ro.observe(body);
     }
-    const ro = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? body.clientWidth;
-      if (width > 0) setLayout(layoutFor(width));
-    });
-    ro.observe(body);
-    return () => ro.disconnect();
+    return () => {
+      body.removeEventListener("focusout", onFocusOut);
+      ro?.disconnect();
+    };
   }, [body]);
 
   // --- start: the draft begins in this surface once the layout is known (focus targets name a layout) -------------
