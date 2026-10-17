@@ -389,22 +389,21 @@ for (const vp of VIEWPORTS) {
       await expect(page.getByText("No features are registered yet.")).toBeVisible();
     });
 
-    test(`${vp.label}px — populated: all six badges render`, async ({ page }) => {
+    test(`${vp.label}px — populated: each row reads one state (BO-12)`, async ({ page }) => {
       await mockTenantShell(page);
       await gotoFeatureConsole(page);
 
-      await expect(page.locator('[data-feature-key="tobacco_dealer"]')).toContainText("Removed");
-      await expect(page.locator('[data-feature-key="msrp"]')).toContainText("Grandfathered");
-      await expect(page.locator('[data-feature-key="recurring_routes"]')).toContainText(
-        "Purchased",
-      );
-      await expect(page.locator('[data-feature-key="route_optimization"]')).toContainText(
-        "Inherited",
-      );
-      await expect(page.locator('[data-feature-key="boxes_pieces_mode"]')).toContainText("Off");
+      const readout = (key: string) =>
+        page.locator(`[data-feature-key="${key}"]`).getByTestId("readout");
+      await expect(readout("tobacco_dealer")).toContainText("Off, removed by override");
+      await expect(readout("msrp")).toContainText("On, kept from an earlier plan");
+      await expect(readout("recurring_routes")).toContainText("On, paid add-on");
+      // a plain inherited row has no source chip: exactly one readout, which is its mode or On/Off
+      await expect(readout("route_optimization")).toHaveCount(1);
+      await expect(readout("boxes_pieces_mode")).toContainText("Off");
 
       await page.getByLabel("Show internal").check();
-      await expect(page.locator('[data-feature-key="developer_mode"]')).toContainText("Added");
+      await expect(readout("developer_mode")).toContainText("On, added by override");
     });
 
     test(`${vp.label}px — blocked mode option is disabled with the missing key named`, async ({
