@@ -146,7 +146,9 @@ interface ProductReceipts {
 
 /**
  * L-207: a reversal the ledger cannot explain is refused, never guessed (the tx rolls back).
- * SA-808b: a revert's message names the way out (void); a void is refused only for an excess.
+ * SA-808b: a revert's message names the way out (void), which covers a shortfall only.
+ * SA-808c: an excess (posted above received) has no exit here in either mode: the same repair copy,
+ * and `ledgerExcess` asks the caller to flag it (a ledger-excess audit row, after the rollback).
  */
 const ledgerGap = (
   productId: string,
@@ -154,17 +156,20 @@ const ledgerGap = (
   detail: string,
   stockDrift = 0,
   action: BillReversalAction = "reverted to draft",
+  excess?: { posted: Prisma.Decimal; received: Prisma.Decimal },
 ) =>
   new ConflictException({
     code: API_ERROR_CODES.INVENTORY_LEDGER_GAP,
-    message:
-      action === "voided"
-        ? `${name}'s stock records show more received than this bill, so it can't be voided here. It needs an admin repair.`
-        : `${name}'s stock records for this bill don't match what was received, so it can't go back to draft. Void the bill and enter it again.`,
+    message: excess
+      ? `${name}'s stock records show more received than this bill, so it can't be ${action === "voided" ? "voided" : "reverted"} here. We've flagged it for a repair.`
+      : `${name}'s stock records for this bill don't match what was received, so it can't go back to draft. Void the bill and enter it again.`,
     detail,
     productId,
     name,
     stockDrift,
+    ...(excess
+      ? { ledgerExcess: { posted: excess.posted.toString(), received: excess.received.toString() } }
+      : {}),
   });
 
 @Injectable()
@@ -1483,7 +1488,10 @@ export class VendorBillsService {
       // only (item 2), a void adjusts the shortfall instead (item 1).
       const drift = Number(posted.sub(want));
       const detail = `its stock records for bill ${bill.billNumber} (${posted.toString()}) do not match what the bill says was received (${want.toString()}).`;
-      if (posted.gt(want) || (action === "reverted to draft" && posted.lt(want))) {
+      if (posted.gt(want)) {
+        throw ledgerGap(productId, name, detail, drift, action, { posted, received: want });
+      }
+      if (action === "reverted to draft" && posted.lt(want)) {
         throw ledgerGap(productId, name, detail, drift, action);
       }
       out.set(productId, { rows, shortfall: want.sub(posted) });
@@ -1831,7 +1839,7 @@ export class VendorBillsService {
     };
     const out = await retryStockTx("vendorBills.revertToDraft", () =>
       this.prisma.tenantTransaction(runBody, STOCK_TX_OPTIONS),
-    );
+    ).catch((err: unknown) => this.flagLedgerExcess(err, bill, "reverted to draft", performedById));
     // gapsDetected is additive (as in receive): lines whose cost history could not be recomputed.
     return { ...out.updatedBill, gapsDetected: out.gapsDetected };
   }
@@ -2008,7 +2016,7 @@ export class VendorBillsService {
       };
       const out = await retryStockTx("vendorBills.voidBill", () =>
         this.prisma.tenantTransaction(runBody, STOCK_TX_OPTIONS),
-      );
+      ).catch((err: unknown) => this.flagLedgerExcess(err, bill, "voided", performedById));
       // gapsDetected is additive (as in receive / revert): products whose cost history could not be
       // recomputed after a backdated reversal.
       return { ...out.voided, gapsDetected: out.gapsDetected };
@@ -2031,6 +2039,45 @@ export class VendorBillsService {
         },
       });
     });
+  }
+
+  /**
+   * SA-808c: an excess refusal is flagged for the repair census: one `vendor-bill.ledger-excess`
+   * audit row (bill, product, posted, received), written AFTER the reversal tx rolled back so it
+   * survives the refusal. A failed audit write never replaces the 409. Always rethrows `err`.
+   */
+  private async flagLedgerExcess(
+    err: unknown,
+    bill: { id: string; billNumber: string },
+    action: BillReversalAction,
+    performedById?: string,
+  ): Promise<never> {
+    const body = err instanceof ConflictException ? (err.getResponse() as any) : null;
+    if (body?.ledgerExcess) {
+      try {
+        await this.prisma.auditLog.create({
+          data: {
+            tenantId: this.prisma.getTenantId() ?? null,
+            userId: performedById ?? null,
+            action: AUDIT_ACTIONS.VENDOR_BILL_LEDGER_EXCESS,
+            entityType: "VendorBill",
+            entityId: bill.id,
+            meta: {
+              billNumber: bill.billNumber,
+              productId: body.productId,
+              posted: body.ledgerExcess.posted,
+              received: body.ledgerExcess.received,
+              action,
+            },
+          },
+        });
+      } catch (auditErr) {
+        this.logger.error(
+          `ledger-excess flag for bill ${bill.id} not written: ${(auditErr as Error)?.message}`,
+        );
+      }
+    }
+    throw err;
   }
 
   /**

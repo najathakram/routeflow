@@ -1073,28 +1073,46 @@ describe("B846 sibling — voidBill appends a PURCHASE reversal (the tobacco fil
       ).toEqual([{ id: "mv-moved", productId: "prod-2", quantity: "10" }]);
     });
 
-    it("V3: an excess (rows above what was received) is refused for void and revert alike — nothing written", async () => {
+    it("V7 (SA-808c): an excess is refused for void and revert alike with the repair copy, and each refusal writes one ledger-excess audit row", async () => {
       const h = await harness();
       await receive(h, 10);
       h.rows[0].quantity = D(12);
       h.prisma.vendorBill.update.mockClear();
+      h.prisma.auditLog.create.mockClear();
 
       await expect(voidIt(h, 10)).rejects.toMatchObject({
+        status: 409,
         response: {
           code: API_ERROR_CODES.INVENTORY_LEDGER_GAP,
           message:
-            "Widget's stock records show more received than this bill, so it can't be voided here. It needs an admin repair.",
+            "Widget's stock records show more received than this bill, so it can't be voided here. We've flagged it for a repair.",
         },
       });
       await expect(revert(h, 10)).rejects.toMatchObject({
-        response: { code: API_ERROR_CODES.INVENTORY_LEDGER_GAP },
+        status: 409,
+        response: {
+          code: API_ERROR_CODES.INVENTORY_LEDGER_GAP,
+          message:
+            "Widget's stock records show more received than this bill, so it can't be reverted here. We've flagged it for a repair.",
+        },
       });
       expect(h.rows).toHaveLength(1);
       expect(h.prisma.vendorBill.update).not.toHaveBeenCalled();
-      expect(h.prisma.auditLog.create).not.toHaveBeenCalled();
+      const audits = h.prisma.auditLog.create.mock.calls.map((c: any) => c[0].data);
+      expect(audits).toHaveLength(2);
+      for (const a of audits) {
+        expect(a).toMatchObject({
+          action: "vendor-bill.ledger-excess",
+          entityType: "VendorBill",
+          entityId: "bill-1",
+          meta: { billNumber: "B-1", productId: "prod-1", posted: "12", received: "10" },
+        });
+      }
+      expect(audits.map((a: any) => a.meta.action)).toEqual(["voided", "reverted to draft"]);
+      expect(JSON.stringify(audits)).not.toContain("Void the bill");
     });
 
-    it("V4 (guard): revert on V1's bill is refused 409 with the message that names void", async () => {
+    it("V4 / V8 (guard): a shortfall revert on V1's bill is refused 409 with the message that names void", async () => {
       const h = await legacyWorld();
       await expect(revert(h, 10)).rejects.toMatchObject({
         response: {
@@ -1139,7 +1157,7 @@ describe("B846 sibling — voidBill appends a PURCHASE reversal (the tobacco fil
       }
     });
 
-    it("lot ambiguity never blocks a void: both candidates stand untouched, the audit row and gapsDetected name them", async () => {
+    it("V6: lot ambiguity never blocks a void: both candidates stand untouched, the audit row and gapsDetected name them", async () => {
       const h = await harness();
       await receive(h, 10);
       h.rows[0].effectiveAt = new Date("2026-09-16T08:00:00.000Z"); // legacy: lot and row disagree

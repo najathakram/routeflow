@@ -18,6 +18,8 @@ export const AUDIT_ACTIONS = {
   IMPERSONATION_ACTION_REFUSED: "impersonation.action-refused",
   /** SA-808b: a void degraded — stock with no receipt record adjusted, or a bill lot it could not identify left standing; meta {billNumber, products[{productId, found[], noReceiptQty}], lotsLeft[{productId, name, lotIds[], remainingQty}], receiptRowsOnOtherProducts[]}. */
   VENDOR_BILL_VOID_NO_RECEIPT: "vendor-bill.void-without-receipt",
+  /** SA-808c: a void or revert refused because a product's receipt rows exceed what the bill received; the repair census reads it; meta {billNumber, productId, posted, received, action}. */
+  VENDOR_BILL_LEDGER_EXCESS: "vendor-bill.ledger-excess",
 } as const;
 
 export type AuditActionName = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

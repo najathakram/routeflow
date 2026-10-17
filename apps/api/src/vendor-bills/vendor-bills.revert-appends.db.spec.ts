@@ -596,21 +596,44 @@ describeDb("B846 bill revert appends — real Postgres", () => {
     expect((await prisma.vendorBill.findUniqueOrThrow({ where: { id } })).status).toBe("VOID");
   });
 
-  it("808b-V3: an excess is refused 409 with the admin-repair text — nothing written", async () => {
+  it("808c-V7: an excess is refused 409 for void and revert with the repair copy; each refusal leaves one ledger-excess row after the rollback", async () => {
     const w = await seedWorld("b3");
     const id = await receiveBill(w, 10);
     await setReceiptQty(w, 12);
 
-    await expect(voidIt(w, id)).rejects.toMatchObject({
-      response: {
-        code: "INVENTORY_LEDGER_GAP",
-        message: expect.stringContaining(
-          "stock records show more received than this bill, so it can't be voided here. It needs an admin repair.",
-        ),
-      },
-    });
+    for (const [run, verb] of [
+      [() => voidIt(w, id), "voided"],
+      [() => revert(w, id), "reverted"],
+    ] as const) {
+      await expect(run()).rejects.toMatchObject({
+        response: {
+          code: "INVENTORY_LEDGER_GAP",
+          message: expect.stringContaining(
+            `stock records show more received than this bill, so it can't be ${verb} here. We've flagged it for a repair.`,
+          ),
+        },
+      });
+    }
     expect(await prisma.stockMovement.count({ where: { productId: w.productId } })).toBe(1);
     expect((await prisma.vendorBill.findUniqueOrThrow({ where: { id } })).status).toBe("RECEIVED");
+    const flags = await prisma.auditLog.findMany({
+      where: { entityId: id, action: "vendor-bill.ledger-excess" },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(flags.map((f) => f.meta)).toEqual([
+      expect.objectContaining({
+        productId: w.productId,
+        posted: "12",
+        received: "10",
+        action: "voided",
+      }),
+      expect.objectContaining({
+        productId: w.productId,
+        posted: "12",
+        received: "10",
+        action: "reverted to draft",
+      }),
+    ]);
   });
 
   it("808b-V4 (guard): revert on 808b-V1's bill is refused 409 with the message that names void", async () => {
