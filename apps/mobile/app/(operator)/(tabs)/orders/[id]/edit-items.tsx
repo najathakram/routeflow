@@ -35,11 +35,7 @@ import {
   packLinePrice,
   type PriceProduct,
 } from "../../../../../lib/cart-order-total";
-import {
-  LAYER_INCOMPLETE_MESSAGE,
-  priceLayerGate,
-  pricingReadyWithLayer,
-} from "../../../../../lib/price-layer-gate";
+import { priceLayerGate, pricingReadyWithLayer } from "../../../../../lib/price-layer-gate";
 import { marginFloorPrice } from "../../../../../lib/margin-floor-price";
 import { isUnitLine, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
@@ -693,6 +689,18 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
    * box. Returns the draft KEY (B775: never `p.id`) for callers tracking
    * "the last thing added" (the picker's price-edit affordance).
    */
+  /** D-5: refuse a pick the layer cannot vouch for, saying why: checking / failed (with Retry) / too many prices. */
+  const refuseUnconfirmedPick = (p: { id: string; name: string }): boolean => {
+    const gate = priceLayerGate(priceLayer, [p.id], () => p.name);
+    if (!gate.blocked) return false;
+    if (gate.canRetry)
+      confirm("Prices aren't confirmed", gate.message ?? "", () => priceLayer.refetch(), {
+        confirmText: "Retry",
+      });
+    else showToast(gate.message ?? "");
+    return true;
+  };
+
   const addPickedToDraft = (
     p: {
       id: string;
@@ -703,15 +711,14 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       priceTier4?: number | string | null;
       priceTier5?: number | string | null;
       unit?: string;
+      packLabel?: string | null;
+      baseUnitLabel?: string | null;
       unitsPerBox?: number | null;
     },
     level: SellLevel = "BOX",
   ): string => {
     // D-5: never store a price the layer cannot vouch for (pending, failed, or absent from an incomplete layer).
-    if (!priceLayer.lineReady(p.id)) {
-      showToast(LAYER_INCOMPLETE_MESSAGE);
-      return resolveDraftKeyForPick(draftRef.current, p.id, null);
-    }
+    if (refuseUnconfirmedPick(p)) return resolveDraftKeyForPick(draftRef.current, p.id, null);
     const catalogPrice = tierPriceFor(p);
     const listPrice = toNumber(p.pricePerUnit);
     const lp = packLinePrice(p, cpMap.get(p.id) ?? customerTier ?? 1, layerOf(p.id));
@@ -1185,10 +1192,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           onScanSessionEnd={() => setTrayFlash(null)}
           onPick={(p, level) => {
             if (substituteFor) {
-              if (!priceLayer.lineReady(p.id)) {
-                showToast(LAYER_INCOMPLETE_MESSAGE);
-                return;
-              }
+              if (refuseUnconfirmedPick(p)) return;
               const tierPrice = tierPriceFor(p);
               const listPrice = toNumber(p.pricePerUnit);
               updateDraft((d) => {

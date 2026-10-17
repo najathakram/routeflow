@@ -8,7 +8,7 @@ import {
   optionWithLayerPrice,
   packIsSpecial,
 } from "../lib/cart-order-total";
-import { applyUnitPick, type DraftItem } from "../lib/edit-items-draft";
+import { applyUnitPick, buildPackLadder, type DraftItem } from "../lib/edit-items-draft";
 import type { Product } from "../lib/cart-line-state";
 import {
   LAYER_INCOMPLETE_MESSAGE,
@@ -98,7 +98,8 @@ describe("MUST 2: edit-items stays closed until the layer is ready", () => {
   });
   it("pricingReady uses it, and a pick or substitute of a product the layer cannot vouch for is refused", () => {
     expect(editItems).toMatch(/pricingReadyWithLayer\(/);
-    expect(editItems).toMatch(/!priceLayer\.lineReady\(p\.id\)/);
+    expect(editItems).toMatch(/priceLayerGate\(priceLayer, \[p\.id\]/);
+    expect(editItems).toMatch(/refuseUnconfirmedPick\(p\)/);
   });
 });
 
@@ -221,5 +222,56 @@ describe("packIsSpecial equals isSpecialTier for every tier input when there is 
       expect(packIsSpecial(t, undefined)).toBe(isSpecialTier(t));
       expect(packIsSpecial(t, [])).toBe(isSpecialTier(t));
     }
+  });
+});
+
+describe('nit 1: a tenant whose base unit is named "Can" still gets the layer price on edit-items', () => {
+  const canProduct = { ...product, baseUnitLabel: "Can", packLabel: "Box" };
+  const canRow = row({ ref: "base", label: "Can", price: 1.5, listPrice: 1.75 });
+  const canOption = {
+    value: "Can",
+    label: "Can",
+    price: 1.75,
+    factorToBase: 1,
+  } as unknown as LadderOption;
+  it("buildPackLadder carries packLabel and baseUnitLabel (and adds no key when absent)", () => {
+    const ladder = buildPackLadder(canProduct);
+    expect(ladder.baseUnitLabel).toBe("Can");
+    expect(ladder.packLabel).toBe("Box");
+    expect(Object.keys(buildPackLadder(product))).not.toContain("baseUnitLabel");
+  });
+  it("optionWithLayerPrice on that ladder finds the base row (Can -> $1.50, not the tier's $1.75)", () => {
+    const ladder = buildPackLadder(canProduct);
+    expect(optionWithLayerPrice(canOption, ladder as never, 1, [packA, canRow]).price).toBe(1.5);
+  });
+  it("without the labels the same pick would miss the row (why the ladder must carry them)", () => {
+    const bare = buildPackLadder(product);
+    expect(optionWithLayerPrice(canOption, bare as never, 1, [packA, canRow])).toBe(canOption);
+  });
+  it("unitLineSpecial sees the Can line's own row through that ladder", () => {
+    const ladder = buildPackLadder(canProduct);
+    expect(lineIsSpecial({ unitLabel: "Can" }, ladder as never, 1, [packA, canRow])).toBe(true);
+  });
+  it("PickedProduct and the pick path carry the labels", () => {
+    expect(read("components/edit-items/ProductPicker.tsx")).toMatch(/baseUnitLabel\?:/);
+  });
+});
+
+describe("nit 2: the edit-items pick refusal says why", () => {
+  it("one product: pending shows the checking copy, failed the failed copy with Retry, incomplete the incomplete copy", () => {
+    const pend = priceLayerGate(status({ enabled: true, isPending: true, isError: false }), ["p1"]);
+    const fail = priceLayerGate(status({ enabled: true, isPending: false, isError: true }), ["p1"]);
+    const inc = priceLayerGate(ready({ p2: [packA] }, false), ["p1"]);
+    expect(pend.message).toBe("Checking this customer's prices…");
+    expect(fail).toMatchObject({
+      message: "Couldn't load this customer's prices. Retry.",
+      canRetry: true,
+    });
+    expect(inc.message).toBe(LAYER_INCOMPLETE_MESSAGE);
+  });
+  it("addPickedToDraft and the substitute pick use the gate (with Retry), never a fixed incomplete toast", () => {
+    expect(editItems).not.toMatch(/showToast\(LAYER_INCOMPLETE_MESSAGE\)/);
+    expect(editItems.match(/refuseUnconfirmedPick\(p\)/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    expect(editItems).toMatch(/confirmText: "Retry"/);
   });
 });
