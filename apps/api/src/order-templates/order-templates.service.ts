@@ -5,9 +5,11 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -61,6 +63,19 @@ import {
   lockTemplateThenFindReplay,
   replayCutoff,
 } from "./generate-replay";
+
+/** How long the 06:00 cron waits before its one re-attempt of a template held for a failed customer-prices read. */
+const CUSTOMER_PRICES_RETRY_BACKOFF_MS = 5_000;
+
+/** The coded 503 loadUnitsPricesV2 throws when a typed-price customer's flag read failed (nothing was written). */
+function isCustomerPricesUnavailable(err: unknown): boolean {
+  if (!(err instanceof ServiceUnavailableException)) return false;
+  const body = err.getResponse();
+  return (
+    typeof body === "object" &&
+    (body as { code?: unknown }).code === API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE
+  );
+}
 
 /** F-05 (SA-247): the LEAST privileged author of a template — STAFF only when creator AND last items-editor are staff. */
 function leastPrivilegedAuthor(t: {
@@ -587,6 +602,11 @@ export class OrderTemplatesService {
     return this.generateOrder(templateId, isStaffRole, allowOversell);
   }
 
+  /** The backoff seam of the cron's one retry (a spec replaces it, so no test waits on a real timer). */
+  private pause(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   @LeaderCron("0 6 * * *", "order-templates.generateDailyOrders")
   async generateDailyOrders() {
     const today = new Date();
@@ -612,7 +632,7 @@ export class OrderTemplatesService {
           // REG-B131: a removed (soft-deleted) customer's standing orders stop firing. Stateless on
           // purpose: restoreCustomer() clears deletedAt and the template resumes with no other write.
           where: { isActive: true, daysOfWeek: { has: dayOfWeek }, customer: { deletedAt: null } },
-          include: { items: true },
+          include: { items: true, customer: { select: { businessName: true } } },
         });
 
         // REG-B131: a template the filter above dropped enters neither counter, so a tenant whose only
@@ -633,21 +653,12 @@ export class OrderTemplatesService {
           );
         }
 
-        for (const template of templates) {
-          // Idempotency: skip if ANY order (even a since-CANCELLED one) was already generated today for
-          // this template. Cron-only rule: an order the operator cancelled is not placed again at 06:00.
-          // Manual "Generate now" is different on purpose (findReplayOrder ignores cancelled orders).
-          const existing = await this.prisma.forTenant().order.findFirst({
-            where: {
-              templateId: template.id,
-              createdAt: { gte: startOfUtcDay(today) },
-            },
-          });
-          if (existing) {
-            totalSkipped++;
-            continue;
-          }
-
+        const heldForPrices: Array<(typeof templates)[number]> = [];
+        // One unattended attempt for one template. "held" = the coded customer-prices 503 (retryable by the caller);
+        // any other failure is logged and counts as nothing (as before).
+        const attemptOne = async (
+          template: (typeof templates)[number],
+        ): Promise<"created" | "skipped" | "held" | "failed"> => {
           // F-05: the ban notice is sent AFTER the attempt, whatever its outcome (the suspension already
           // committed, so a throw past it must not lose the one notice for good).
           const ctx: {
@@ -671,13 +682,15 @@ export class OrderTemplatesService {
             );
             // null = all lines were license-gated + skipped → nothing created.
             // ctx.replayed = a concurrent manual run placed today's order first → nothing created here.
-            if (order && !ctx.replayed) totalCreated++;
-            else totalSkipped++;
+            return order && !ctx.replayed ? "created" : "skipped";
           } catch (err) {
+            const held = isCustomerPricesUnavailable(err);
             this.logger.error(
-              `[tenant:${tenant.id}] Failed to generate order for template ${template.id} (${template.name})`,
+              `[tenant:${tenant.id}] Failed to generate order for template ${template.id} (${template.name})` +
+                (held ? " (customer prices unavailable; will retry once)" : ""),
               err instanceof Error ? err.stack : String(err),
             );
+            return held ? "held" : "failed";
           } finally {
             // A replay means today's order exists (a manual run placed it; that path sends no ban
             // notice), so the customer is told it went ahead, not that it was held.
@@ -687,6 +700,43 @@ export class OrderTemplatesService {
                 ctx.ban,
                 ctx.placed || ctx.replayed ? "ordered" : "held",
               );
+          }
+        };
+
+        for (const template of templates) {
+          // Idempotency: skip if ANY order (even a since-CANCELLED one) was already generated today for
+          // this template. Cron-only rule: an order the operator cancelled is not placed again at 06:00.
+          // Manual "Generate now" is different on purpose (findReplayOrder ignores cancelled orders).
+          const existing = await this.prisma.forTenant().order.findFirst({
+            where: {
+              templateId: template.id,
+              createdAt: { gte: startOfUtcDay(today) },
+            },
+          });
+          if (existing) {
+            totalSkipped++;
+            continue;
+          }
+
+          const outcome = await attemptOne(template);
+          if (outcome === "created") totalCreated++;
+          else if (outcome === "skipped") totalSkipped++;
+          else if (outcome === "held") heldForPrices.push(template);
+        }
+
+        // SA-812a G-1: a template whose customer prices could not be loaded was NOT priced at the tier and nothing was
+        // written. Re-attempt each ONCE after a short backoff (the read is usually a blip), after every other template
+        // of the tenant has run. One still failing is announced to the operators so the day's order is not lost silently.
+        if (heldForPrices.length > 0) {
+          await this.pause(CUSTOMER_PRICES_RETRY_BACKOFF_MS);
+          for (const template of heldForPrices) {
+            const outcome = await attemptOne(template);
+            if (outcome === "created") totalCreated++;
+            else if (outcome === "skipped") totalSkipped++;
+            else if (outcome === "held") {
+              totalSkipped++;
+              await this.notifyStandingOrderHeldForPrices(template);
+            }
           }
         }
       });
@@ -1227,6 +1277,25 @@ export class OrderTemplatesService {
    * license-gated: the template stays active), "deactivated" (nothing left to order, the template was switched off).
    * Never claims a deactivation that did not happen. Best-effort: a failure here never fails the run.
    */
+  /**
+   * SA-812a G-1: the cron re-attempted a standing order once and the customer's prices still could not be loaded, so it
+   * was NOT placed (never priced at the tier instead). Tell the operators, with what to do. Best-effort: never fails a run.
+   */
+  private async notifyStandingOrderHeldForPrices(template: {
+    name: string;
+    customer?: { businessName?: string | null } | null;
+  }): Promise<void> {
+    const who = template.customer?.businessName ? ` for ${template.customer.businessName}` : "";
+    try {
+      await this.notifyOperators(
+        `Standing order "${template.name}"${who} was held and not placed: the customer's prices could not be loaded. ` +
+          `Nothing was ordered or charged. Open the template and use "Generate now" to place it.`,
+      );
+    } catch {
+      /* best-effort */
+    }
+  }
+
   private async notifyBanSkipped(
     template: { customerId: string; name: string },
     note: { count: number; names: string } | null,
