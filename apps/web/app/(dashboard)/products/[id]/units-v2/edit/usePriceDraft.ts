@@ -114,7 +114,11 @@ export interface PriceDraft {
   applyPlan: (
     plan: PricePlan,
     replan: (customers: readonly CustomerPricingWithId[]) => PricePlan,
+    /** K11-15: what this Apply did, as "Case raised 5%"; the bar says it while the draft is still exactly that. */
+    lead?: string,
   ) => void;
+  /** K11-15: what Apply staged ("Case raised 5%"), only while the draft equals it; any later edit makes it null. */
+  appliedLead: string | null;
   resetAllToAuto: () => void;
   /** The save body, or null while the grid has not loaded or the draft has a conflict (Save is then unavailable). */
   toRequest: () => SavePricesRequest | null;
@@ -189,6 +193,9 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const [lastSave, setLastSave] = React.useState<PriceDraft["lastSave"]>(null);
   const [undoStale, setUndoStale] = React.useState(false);
   const [notice, setNotice] = React.useState<string | null>(null);
+  // K11-15: the leads Apply staged and the draft they produced (its signature); read back once the draft has rendered.
+  const [applied, setApplied] = React.useState<{ leads: string[]; sig: string } | null>(null);
+  const [pendingLeads, setPendingLeads] = React.useState<string[] | null>(null);
 
   // SA-799: a plain cell edit shows customer changes too. Same query (and cache entry) as Change prices' names; only
   // fetched while editing, so the product page costs nothing extra when nobody edits.
@@ -218,6 +225,16 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const sendKeeps = keeps.filter((k) => !patched.has(cellKey(k.ref, k.tier)));
   const count = patches.length + sendKeeps.length + customerMoves.length;
   const dirty = count > 0 || problems.length > 0 || conflicts.length > 0;
+  const sig = JSON.stringify([patches, customerMoves, sendKeeps]);
+  React.useEffect(() => {
+    if (!pendingLeads) return;
+    setApplied({ leads: pendingLeads, sig });
+    setPendingLeads(null);
+  }, [pendingLeads, sig]);
+  const appliedLead =
+    applied && count > 0 && applied.sig === sig
+      ? new Intl.ListFormat("en").format(applied.leads)
+      : null;
 
   const reset = React.useCallback(() => {
     setEditing(false);
@@ -227,6 +244,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     setKeeps([]);
     setMoves([]);
     setFocus(null);
+    setApplied(null);
   }, []);
 
   // Ticked offers live in the draft (kind "offer" entries), so they outlive the open plan; the open plan's ticks are read back.
@@ -567,7 +585,14 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
         );
         return on ? [...rest, move] : rest;
       }),
-    applyPlan: (plan, replan) => {
+    applyPlan: (plan, replan, lead) => {
+      // Only a draft that was empty, or still exactly the last Apply, can be described by Apply's words.
+      const leads =
+        lead && (count === 0 || appliedLead)
+          ? [...(count === 0 ? [] : applied!.leads), lead]
+          : null;
+      setPendingLeads(leads);
+      if (!leads) setApplied(null);
       beginEditing();
       const key = `plan:${planSeq.current++}`;
       setEntries([...entries, { kind: "plan", key, plan, replan }]);
@@ -615,6 +640,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     conflicts,
     bakedTitles,
     count,
+    appliedLead,
     keeps,
     tierName,
     api,

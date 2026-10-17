@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { usePricesV2Enabled } from "@/lib/api/units-v2";
+import { UNITS_V2_TESTIDS } from "../../units-v2-testids";
 import { useEscapeCloses } from "../confirm/useEscapeCloses";
 import { ChangePricesPanel } from "./ChangePricesPanel";
 
@@ -32,5 +33,20 @@ export function ChangePrices({
   openerRef: React.RefObject<HTMLElement | null>;
 }) {
   useEscapeCloses(open, onClose, openerRef);
-  return open ? <ChangePricesPanel onClose={onClose} /> : null;
+  // K11-15: Apply closes the panel and the owner's next step is Save, so focus goes there (Cancel and Escape still go
+  // back to the opener). Two commits on purpose: the first starts edit mode and the grid's own effect then puts focus
+  // on its first price box (it is an ancestor of this component, so its effect runs after ours); the second is ours.
+  const [toSave, setToSave] = React.useState(0);
+  React.useEffect(() => {
+    if (toSave === 1) setToSave(2);
+    if (toSave === 2) {
+      document.getElementById(UNITS_V2_TESTIDS.ebSave)?.focus();
+      setToSave(0);
+    }
+  }, [toSave]);
+  const applied = () => {
+    onClose();
+    setToSave(1);
+  };
+  return open ? <ChangePricesPanel onClose={onClose} onApplied={applied} /> : null;
 }

@@ -57,6 +57,12 @@ function useClearOfShellPadding() {
   return { ref, bottom: inset === 0 ? 0 : -inset };
 }
 
+/** K11-15: right after Change prices Apply the bar says what is staged; any later edit is the plain count. */
+const countLine = (count: number, lead: string | null) =>
+  lead
+    ? `${lead}: ${count} price${count === 1 ? "" : "s"} ready. Save to keep ${count === 1 ? "it" : "them"}.`
+    : `${count} unsaved`;
+
 /**
  * V14: the ONE save bar (message left, Cancel then Save right), sticky to the bottom, clear of the draft
  * dock's band (bottom-24). V04: a labelled region with a "Ctrl+S saves" hint; Save stays focusable
@@ -94,7 +100,7 @@ export function PriceEditBar() {
               ))}
             </ul>
           ) : (
-            <span>{d.count === 0 ? "Nothing changed yet" : `${d.count} unsaved`}</span>
+            <span>{d.count === 0 ? "Nothing changed yet" : countLine(d.count, d.appliedLead)}</span>
           )}
           {!confirm && (
             <span data-testid={T.ebHint} className="ml-2 text-xs text-navy/60">

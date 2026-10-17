@@ -42,19 +42,30 @@ const NO_CHANGES = {
 type Mode = PriceChange["mode"];
 
 /** Waits for the grid: the draft has no ladder view until it loads. */
-export function ChangePricesPanel({ onClose }: { onClose: () => void }) {
+export function ChangePricesPanel({
+  onClose,
+  onApplied,
+}: {
+  onClose: () => void;
+  /** Closes the panel after Apply (K11-15: focus goes to Save); without it Apply closes like Cancel. */
+  onApplied?: () => void;
+}) {
   const draft = usePriceDraft();
-  return draft.view ? <ChangePricesForm draft={draft} view={draft.view} onClose={onClose} /> : null;
+  return draft.view ? (
+    <ChangePricesForm draft={draft} view={draft.view} onClose={onClose} onApplied={onApplied} />
+  ) : null;
 }
 
 function ChangePricesForm({
   draft,
   view,
   onClose,
+  onApplied,
 }: {
   draft: PriceDraft;
   view: LadderView;
   onClose: () => void;
+  onApplied?: () => void;
 }) {
   const { grid } = draft;
   const { tierName, customerName, customers, rules, customersTruncated } = usePlanNames();
@@ -106,15 +117,19 @@ function ChangePricesForm({
     if (!plan || !canApply) return;
     const folded = foldPlan(plan, selection);
     // The re-planner lets the customer offer follow the customers' prices if they change before Save (K3b).
-    draft.applyPlan(folded.plan, (cs) =>
-      planPriceChange(view, { ...form, value }, rules, tierName, { customers: cs }),
+    const how = mode === "percent" ? `${value}%` : formatMoney(value);
+    const lead = `${view.rows.find((r) => r.ref === unit)?.label ?? unit} ${direction === "raise" ? "raised" : "lowered"} ${how}`;
+    draft.applyPlan(
+      folded.plan,
+      (cs) => planPriceChange(view, { ...form, value }, rules, tierName, { customers: cs }),
+      lead,
     );
     if (folded.customerTicked) draft.setOfferTicked(0, true);
     folded.customerKeeps.forEach((m) => draft.keepCustomer(m));
     reset();
     setTyped("");
     setForm((f) => ({ ...f, also: false }));
-    onClose();
+    (onApplied ?? onClose)();
   };
 
   const field = (id: string, label: string, control: React.ReactNode, hint?: string) => (
