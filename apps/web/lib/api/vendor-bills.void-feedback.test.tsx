@@ -11,7 +11,12 @@ import { act, renderHook } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createTestQueryClient } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
-import { costHistoryGapToast, useVoidVendorBill, voidFailureToast } from "./vendor-bills";
+import {
+  costHistoryGapToast,
+  useVoidVendorBill,
+  voidFailureToast,
+  voidSuccessToast,
+} from "./vendor-bills";
 
 jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn(), post: jest.fn(), patch: jest.fn(), delete: jest.fn() },
@@ -76,6 +81,39 @@ describe("void feedback", () => {
     ).toContain("received and costed normally");
   });
 
+  it("SA-808b: a shortfall void says what it adjusted, exactly", () => {
+    const gap = { productId: "p1", name: "Widget", stockDrift: 3, noReceiptQty: 3 };
+    expect(voidSuccessToast("B-1", [gap])).toEqual({
+      title: "Voided. 3 Widget had no receipt record and were adjusted today.",
+      variant: "info",
+    });
+    expect(
+      voidSuccessToast("B-1", [
+        gap,
+        { productId: "p2", name: "Gadget", stockDrift: 2, noReceiptQty: 2 },
+      ]).title,
+    ).toBe("Voided. 3 Widget and 2 Gadget had no receipt record and were adjusted today.");
+    // no shortfall: today's toast; and a shortfall is not also reported as a cost-history gap
+    expect(voidSuccessToast("B-1", undefined).title).toBe("Bill voided");
+    expect(voidSuccessToast("B-1", []).description).toBe("Bill B-1 has been voided.");
+    expect(costHistoryGapToast([gap], "voided")).toBeNull();
+  });
+
+  it("SA-808b: a lot the void could not identify is named in the description, not as a cost gap", () => {
+    const lot = { productId: "p1", name: "Widget", stockDrift: 0, lotsLeft: 4 };
+    expect(voidSuccessToast("B-1", [lot])).toEqual({
+      title: "Bill voided",
+      description:
+        "Widget's stock lot couldn't be matched to this bill, so it was left as is. Ask an admin to repair it.",
+      variant: "info",
+    });
+    const gap = { productId: "p2", name: "Gadget", stockDrift: 3, noReceiptQty: 3 };
+    expect(voidSuccessToast("B-1", [gap, lot]).title).toBe(
+      "Voided. 3 Gadget had no receipt record and were adjusted today.",
+    );
+    expect(costHistoryGapToast([lot], "voided")).toBeNull();
+  });
+
   it("the bill page wires both into handleVoid", () => {
     const page = readFileSync(
       join(__dirname, "..", "..", "app", "(dashboard)", "vendor-bills", "[id]", "page.tsx"),
@@ -87,5 +125,6 @@ describe("void feedback", () => {
     );
     expect(handleVoid).toContain("toast(voidFailureToast(err))");
     expect(handleVoid).toContain('costHistoryGapToast(updated?.gapsDetected, "voided")');
+    expect(handleVoid).toContain("toast(voidSuccessToast(bill.billNumber, updated?.gapsDetected))");
   });
 });

@@ -35,6 +35,7 @@ import {
   type PackSizeUnknownError,
   costHistoryGapToast,
   voidFailureToast,
+  voidSuccessToast,
   type VendorBill,
   type VendorBillItem,
   type VendorBillStatus,
@@ -911,11 +912,7 @@ export default function VendorBillDetailPage() {
     voidBill.mutate(bill.id, {
       onSuccess: (updated) => {
         setIsVoidOpen(false);
-        toast({
-          title: "Bill voided",
-          description: `Bill ${bill.billNumber} has been voided.`,
-          variant: "info",
-        });
+        toast(voidSuccessToast(bill.billNumber, updated?.gapsDetected));
         // B846 sibling: a void's backdated reversal replays the product like receive does.
         const gapsToast = costHistoryGapToast(updated?.gapsDetected, "voided");
         if (gapsToast) toast(gapsToast);

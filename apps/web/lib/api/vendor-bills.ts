@@ -290,6 +290,10 @@ export interface VendorBillReceiveGap {
   productId: string;
   name: string;
   stockDrift: number;
+  /** SA-808b (void only): pieces adjusted today because the bill had no receipt record for them. */
+  noReceiptQty?: number;
+  /** SA-808b (void only): pieces on bill lots the void could not identify and left standing. */
+  lotsLeft?: number;
 }
 
 /** The warning toast for a stock write whose product cost history could not be recomputed. */
@@ -297,8 +301,12 @@ export function costHistoryGapToast(
   gaps: VendorBillReceiveGap[] | undefined,
   action: "received" | "voided",
 ): { title: string; description: string; variant: "warning" } | null {
-  if (!gaps || gaps.length === 0) return null;
-  const names = [...new Set(gaps.map((g) => g.name))];
+  // A shortfall or a lot left standing is reported by voidSuccessToast; this one is the replay's.
+  const costGaps = (gaps ?? []).filter(
+    (g) => !(g.noReceiptQty && g.noReceiptQty > 0) && !(g.lotsLeft && g.lotsLeft > 0),
+  );
+  if (costGaps.length === 0) return null;
+  const names = [...new Set(costGaps.map((g) => g.name))];
   const isPlural = names.length > 1;
   const its = isPlural ? "their" : "its";
   return {
@@ -309,6 +317,41 @@ export function costHistoryGapToast(
       isPlural ? "these products" : "this product"
     }.`,
     variant: "warning",
+  };
+}
+
+const andList = (parts: string[]) =>
+  parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
+
+/**
+ * SA-808b: the success toast for a void. When some stock had no receipt record the void adjusted it
+ * today, and says so: "Voided. 3 Widget had no receipt record and were adjusted today." A bill lot
+ * the void could not identify was left standing; the description says so.
+ */
+export function voidSuccessToast(
+  billNumber: string,
+  gaps: VendorBillReceiveGap[] | undefined,
+): { title: string; description?: string; variant: "info" } {
+  const missing = (gaps ?? []).filter((g) => g.noReceiptQty && g.noReceiptQty > 0);
+  const lotNames = [
+    ...new Set((gaps ?? []).filter((g) => g.lotsLeft && g.lotsLeft > 0).map((g) => g.name)),
+  ];
+  const lotNote =
+    lotNames.length > 0
+      ? `${andList(lotNames)}'s stock lot couldn't be matched to this bill, so it was left as is. Ask an admin to repair it.`
+      : undefined;
+  if (missing.length === 0) {
+    return {
+      title: "Bill voided",
+      description: lotNote ?? `Bill ${billNumber} has been voided.`,
+      variant: "info",
+    };
+  }
+  const list = andList(missing.map((g) => `${g.noReceiptQty} ${g.name}`));
+  return {
+    title: `Voided. ${list} had no receipt record and were adjusted today.`,
+    ...(lotNote ? { description: lotNote } : {}),
+    variant: "info",
   };
 }
 
