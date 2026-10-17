@@ -496,6 +496,19 @@ describe("K11-20a window: closing with the X or the scrim", () => {
     expect(draft.dirty).toBe(true);
   });
 
+  it("N2: Keep editing returns focus to the X when the question came from it (outside the body)", async () => {
+    const user = userEvent.setup();
+    render({ focus: { ref: "case", tier: 2 } });
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    await waitFor(() => expect(box("case", 2)).toHaveFocus());
+    await user.keyboard("28");
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(inDialog().getByTestId(T.ebKeep)).toHaveFocus();
+    await user.click(inDialog().getByTestId(T.ebKeep));
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+    expect(draft.dirty).toBe(true);
+  });
+
   it("dirty: a click on the scrim asks too; clean: a scrim click closes at once", async () => {
     const user = userEvent.setup();
     render({ focus: { ref: "case", tier: 2 } });

@@ -149,7 +149,7 @@ export function PriceEditWindow({
       // Keep editing took its button away: put focus back where it was (else the first price box).
       const back = beforeAsk.current;
       const target =
-        back instanceof HTMLElement && back.isConnected && body?.contains(back)
+        back instanceof HTMLElement && back.isConnected && back.closest("[data-floating-panel]")
           ? back
           : body?.querySelector<HTMLElement>('[data-testid^="units-v2-input-"]');
       target?.focus({ preventScroll: true });
