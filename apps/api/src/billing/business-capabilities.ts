@@ -42,7 +42,7 @@ export function capabilitiesFromInputs(
     opensAsChoosable: ticks.shipping && ticks.counter && !ticks.delivery,
     counterCapability: cap.counter,
     fleetHeld: cap.fleet,
-    matchedPreset: configured ? matchPreset(ticks) : null,
+    matchedPreset: configured ? matchPreset(ticks, cap.fleet) : null,
   };
 }
 
@@ -63,11 +63,19 @@ export function presetTicks(def: BusinessProfileDef): BusinessCapabilityTicks {
   };
 }
 
-/** The preset whose ticks equal these exactly (counter, delivery, door payments, shipping, opens-as), else null. */
-export function matchPreset(ticks: BusinessCapabilityTicks): BusinessProfileKey | null {
+/**
+ * The preset whose ticks equal these exactly (counter, delivery, door payments, shipping, opens-as),
+ * else null. With `fleetHeld`, the preset's fleet must match too: a stored `delivery` tenant whose
+ * fleet add-on lapsed is not that preset (applying it would grant the fleet again).
+ */
+export function matchPreset(
+  ticks: BusinessCapabilityTicks,
+  fleetHeld?: boolean,
+): BusinessProfileKey | null {
   const hit = BUSINESS_PROFILES.find((def) => {
     const t = presetTicks(def);
     return (
+      (fleetHeld === undefined || def.fleet === fleetHeld) &&
       t.delivery === ticks.delivery &&
       t.doorPayments === ticks.doorPayments &&
       t.shipping === ticks.shipping &&

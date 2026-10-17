@@ -26,7 +26,7 @@ describe("capabilitiesFromInputs", () => {
 
   it("ship + counter on is not shipping_wholesaler, and opens as a choosable order", () => {
     const c = capabilitiesFromInputs(inputs("ship", "on", false), []);
-    expect(c.matchedPreset).not.toBe("shipping_wholesaler");
+    expect(c.matchedPreset).toBeNull();
     expect(c).toMatchObject({ shipping: true, counter: true, delivery: false });
     expect(c.opensAsChoosable).toBe(true);
   });
@@ -47,6 +47,12 @@ describe("capabilitiesFromInputs", () => {
       counter: false,
       matchedPreset: null,
     });
+  });
+
+  it("Delivery without the fleet held matches no preset (a lapsed fleet add-on is not delivery_pos)", () => {
+    const c = capabilitiesFromInputs(inputs("delivery", "on", false), ["driver_payments"]);
+    expect(c.fleetHeld).toBe(false);
+    expect(c.matchedPreset).toBeNull();
   });
 
   it("a null fleet read counts as no fleet", () => {

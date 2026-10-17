@@ -19,10 +19,17 @@ function build(opts: {
   addons?: string[];
   overrides?: Record<string, "GRANT" | "DENY">;
   tenantExists?: boolean;
+  /** The config store's mode read fails (a DB error). */
+  modeReadFails?: boolean;
+  /** The add-on read fails, so the fleet cannot be read. */
+  addonReadFails?: boolean;
 }) {
   const modes = { fulfilment_model: "unset", counter_sales: "unset", ...opts.modes };
   const featureConfig = {
-    getEffectiveMode: jest.fn(async (_t: string, key: string) => modes[key as keyof typeof modes]),
+    getEffectiveMode: jest.fn(async (_t: string, key: string) => {
+      if (opts.modeReadFails) throw new Error("db down");
+      return modes[key as keyof typeof modes];
+    }),
     getState: jest.fn(),
   };
   const featureOverrides = {
@@ -38,7 +45,12 @@ function build(opts: {
     ),
     allActive: jest.fn(async () => new Map(Object.entries(opts.overrides ?? {}))),
   };
-  const addonService = { getActiveAddons: jest.fn(async () => opts.addons ?? []) };
+  const addonService = {
+    getActiveAddons: jest.fn(async () => {
+      if (opts.addonReadFails) throw new Error("db down");
+      return opts.addons ?? [];
+    }),
+  };
   const prisma = {
     tenant: {
       findUnique: jest.fn().mockResolvedValue(opts.tenantExists === false ? null : { id: T }),
@@ -125,6 +137,29 @@ describe("GET tenants/:id/business-capabilities", () => {
     const res = await c.getBusinessCapabilities(T);
     expect(res).toMatchObject({ configured: false, delivery: false, counter: false });
     expect(res.matchedPreset).toBeNull();
+  });
+
+  it("a failed mode read is a 503, never a configured tenant read as unset with nothing ticked", async () => {
+    const c = build({
+      modes: { fulfilment_model: "delivery", counter_sales: "on" },
+      addons: ["recurring_routes", "driver_payments"],
+      modeReadFails: true,
+    });
+    await expect(c.getBusinessCapabilities(T)).rejects.toMatchObject({
+      status: 503,
+      response: { code: "FEATURES_UNAVAILABLE" },
+    });
+  });
+
+  it("a failed fleet read is a 503, never fleetHeld:false", async () => {
+    const c = build({
+      modes: { fulfilment_model: "delivery", counter_sales: "on" },
+      addonReadFails: true,
+    });
+    await expect(c.getBusinessCapabilities(T)).rejects.toMatchObject({
+      status: 503,
+      response: { code: "FEATURES_UNAVAILABLE" },
+    });
   });
 
   it("404s for a missing tenant", async () => {

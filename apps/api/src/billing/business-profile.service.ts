@@ -111,6 +111,15 @@ export class BusinessProfileService {
       },
       tenantId,
     );
+    // A failed mode or fleet read must not become a guessed answer (a configured tenant read as
+    // unset, or fleetHeld:false): the same 503 Settings → Fulfillment and /tenants/me/features give.
+    if (inputs.fleet === null || inputs.modesFailed) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
+        message: "Feature resolution is temporarily unavailable. Please retry.",
+      });
+    }
     const now = Date.now();
     const rows = await this.featureOverrides.list(tenantId);
     const override = rows.find(
