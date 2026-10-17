@@ -34,6 +34,7 @@ import {
 import { linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
+import { bareVariantLabel } from "../products/product-variant-name";
 import { effectiveCostingMethod } from "./costing-method-policy";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { recordSaleMovement, resolveSaleCost } from "./sale-movement";
@@ -556,12 +557,14 @@ export class InventoryService {
             priceTier4: parent.priceTier4,
             priceTier5: parent.priceTier5,
           };
+    // B1: the stock split's new variant stores its BARE label in both columns (display composes the parent).
+    const bareName = bareVariantLabel(variantName, parent.name);
     const created = await tx.product.create({
       data: {
-        name: `${parent.name} - ${variantName}`,
-        variantName,
+        name: bareName,
+        variantName: bareName,
         parentProductId: parent.id,
-        sku: this.generateVariantSku(variantName),
+        sku: this.generateVariantSku(bareName),
         unit: parent.unit,
         ...priceColumns,
         category: parent.category ?? undefined,
@@ -755,18 +758,24 @@ export class InventoryService {
               // Two rows asking for the same new name would both clear the
               // collision check (nothing is created yet at check time) and land
               // two identically-named siblings.
-              const nameKey = input.newVariant.name.trim().toLowerCase();
+              // B1: judged on the BARE label (what is stored); a legacy row of this writer stored the composed
+              // "<parent> - <label>" in `name`, so that spelling still counts as taken.
+              const bare = bareVariantLabel(input.newVariant.name, parent.name);
+              const nameKey = bare.trim().toLowerCase();
               if (seenNewVariantNames.has(nameKey)) {
                 throw new BadRequestException(
                   `A new variant named "${input.newVariant.name}" appears more than once`,
                 );
               }
               seenNewVariantNames.add(nameKey);
-              const composedName = `${parent.name} - ${input.newVariant.name}`;
               const nameTaken = await tx.product.findFirst({
                 where: {
                   parentProductId: parent.id,
-                  name: { equals: composedName, mode: "insensitive" },
+                  OR: [
+                    { name: { equals: bare, mode: "insensitive" } },
+                    { name: { equals: `${parent.name} - ${bare}`, mode: "insensitive" } },
+                    { variantName: { equals: bare, mode: "insensitive" } },
+                  ],
                 },
                 select: { id: true },
               });
@@ -779,7 +788,7 @@ export class InventoryService {
                 qty: r.qty,
                 unitCostOverride: input.unitCostOverride,
                 existing: null,
-                newVariantName: input.newVariant.name,
+                newVariantName: bare,
               });
             } else {
               throw new BadRequestException(
