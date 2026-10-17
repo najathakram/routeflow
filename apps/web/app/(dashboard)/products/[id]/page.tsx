@@ -12,7 +12,6 @@ import {
   Pencil,
   Check,
   X,
-  Upload,
   Trash2,
   ChevronLeft,
   ChevronRight,
@@ -77,6 +76,7 @@ import { usePricesV2Enabled } from "@/lib/api/units-v2";
 import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
 import { ProductImagesEmpty } from "./ProductImagesEmpty";
+import { ProductImageActions } from "./ProductImageActions";
 import { ProductStockCostCard } from "./ProductStockCostCard";
 import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { useReactivateFlow } from "./useReactivateFlow";
@@ -1445,54 +1445,17 @@ export default function ProductDetailPage() {
                         </div>
                       )}
 
-                      {/* Action row: select-mode toggle + bulk delete + upload */}
-                      <div className="flex items-center gap-2">
-                        {selectMode ? (
-                          <>
-                            <button
-                              onClick={deleteSelected}
-                              disabled={selectedImages.size === 0 || deleteImage.isPending}
-                              className="flex items-center gap-1.5 rounded-lg bg-danger px-3 py-1.5 text-xs font-medium text-white hover:bg-danger/90 disabled:opacity-40 transition-colors"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              Delete {selectedImages.size > 0 ? `${selectedImages.size} ` : ""}
-                              selected
-                            </button>
-                            <button
-                              onClick={() => {
-                                setSelectMode(false);
-                                setSelectedImages(new Set());
-                              }}
-                              className="rounded-lg border border-surface-border px-3 py-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            onClick={() => setSelectMode(true)}
-                            className="flex items-center gap-1.5 rounded-lg border border-surface-border px-3 py-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Select to delete
-                          </button>
-                        )}
-                        <button
-                          onClick={() => fileInputRef.current?.click()}
-                          disabled={uploadImages.isPending || !!cropState}
-                          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-surface-border bg-white py-1.5 text-xs text-navy/70 hover:border-brand-500/50 hover:text-brand-500 transition-colors disabled:opacity-50"
-                        >
-                          <Upload className="h-3.5 w-3.5" />
-                          {uploadImages.isPending ? "Uploading…" : "Upload images"}
-                        </button>
-                      </div>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        className="hidden"
-                        onChange={(e) => handleUpload(e.target.files)}
+                      <ProductImageActions
+                        selectMode={selectMode}
+                        setSelectMode={setSelectMode}
+                        selectedImages={selectedImages}
+                        setSelectedImages={setSelectedImages}
+                        deleteSelected={deleteSelected}
+                        deletePending={deleteImage.isPending}
+                        uploadPending={uploadImages.isPending}
+                        cropping={!!cropState}
+                        fileInputRef={fileInputRef}
+                        handleUpload={handleUpload}
                       />
                     </div>
                   );
