@@ -89,7 +89,7 @@ export const Modal = ({
         {/* print:hidden: a printed page never carries the dimmed, blurred backdrop (CQ-21) */}
         <Dialog.Overlay
           data-modal-overlay
-          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm print:hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm print:hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 motion-reduce:!animate-none"
         />
         <Dialog.Content
           ref={contentRef}
@@ -114,6 +114,9 @@ export const Modal = ({
             scroll && "flex max-h-[92vh] flex-col",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+            // prefers-reduced-motion: the fade / slide / zoom entry and exit do not run (important: the
+            // data-[state] variants above out-rank a plain motion-reduce utility).
+            "motion-reduce:!animate-none",
             // The enter keyframe starts from translate(var(--tw-enter-translate-x), ...): x stays pinned at
             // the -50% the dialog rests at in both anchors, or it would slide in from the left edge.
             "data-[state=closed]:slide-out-to-left-1/2 data-[state=open]:slide-in-from-left-1/2",

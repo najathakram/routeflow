@@ -49,6 +49,8 @@ interface SearchableProductPickerProps {
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  /** Id of an element that explains the field (e.g. why it is disabled); set as the input's aria-describedby. */
+  describedBy?: string;
   /** Optional empty-state hint (e.g., "No standalone products yet — create one first") */
   emptyHint?: string;
   /**
@@ -103,6 +105,7 @@ export function SearchableProductPicker({
   placeholder = "Search products…",
   className,
   disabled,
+  describedBy,
   emptyHint,
   inputRef: externalInputRef,
   async: asyncMode,
@@ -251,7 +254,7 @@ export function SearchableProductPicker({
       <div
         className={cn(
           "flex items-center gap-2 rounded-lg border border-surface-border bg-white px-2.5 py-1.5 transition-colors focus-within:border-transparent focus-within:ring-2 focus-within:ring-brand-500",
-          disabled && "cursor-not-allowed opacity-60",
+          disabled && "cursor-not-allowed bg-surface-raised opacity-60",
           open && "ring-2 ring-brand-500",
         )}
       >
@@ -272,6 +275,7 @@ export function SearchableProductPicker({
             open && visibleProducts[highlight] ? `${listId}-${highlight}` : undefined
           }
           disabled={disabled}
+          aria-describedby={describedBy}
           className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/30 focus:outline-none disabled:cursor-not-allowed"
         />
         {hasSelection && !open ? (
