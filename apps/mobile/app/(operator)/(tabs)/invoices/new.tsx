@@ -102,8 +102,8 @@ import { hasUnsavedInvoiceDraft, shouldConfirmDiscard } from "../../../../lib/di
 import { displayProductName as displayName } from "../../../../lib/product-display";
 import { computeLineSubtotal, effectiveQty, type CustomerLayerUnit } from "@routeflow/pricing";
 import { useCustomerPriceLayer } from "../../../../lib/api/price-layer";
-import { packLinePrice, withLayerBase } from "../../../../lib/cart-order-total";
-import { priceLayerGate } from "../../../../lib/price-layer-gate";
+import { lineIsSpecial, packLinePrice, withLayerBase } from "../../../../lib/cart-order-total";
+import { guardLayerSave, priceLayerGate } from "../../../../lib/price-layer-gate";
 import { useCustomerPrices } from "../../../../lib/api/customers";
 import {
   computeInvoiceTotals,
@@ -526,6 +526,9 @@ function InvoiceComposer({
   ): L => withLayerBase(line, p, effectiveTierFor(p.id), layerOf(p.id));
   // #2696(c): the server's "special" — the tier it prices this product at is not tier 1.
   const isSpecialFor = (p: Product) => packPriceFor(p).isSpecial;
+  /** This LINE's SPECIAL-ness: a unit line answers with its own layer row (a Can is not the pack). */
+  const lineSpecialFor = (line: Parameters<typeof lineFor>[0], p: Product) =>
+    lineIsSpecial(line, p, effectiveTierFor(p.id), layerOf(p.id));
   const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
   // Rate the row toggles actually offer: hidden entirely for exempt customers.
   const taxRateFraction = isTaxExempt ? 0 : tenantTaxRate;
@@ -957,7 +960,7 @@ function InvoiceComposer({
     cpMap,
     customerTier,
     separateInvoiceCategoryIds,
-    priceLayer.ready,
+    priceLayer.data,
     customerId,
   ]);
 
@@ -1079,7 +1082,7 @@ function InvoiceComposer({
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, unlisted, scanOrder, productById, cpMap, customerTier, priceLayer.ready, customerId],
+    [items, unlisted, scanOrder, productById, cpMap, customerTier, priceLayer.data, customerId],
   );
 
   /**
@@ -1257,7 +1260,11 @@ function InvoiceComposer({
   // second issued invoice.
   const [saleRecorded, setSaleRecorded] = useState(false);
   // D-5 (SA-813 M3): Create stays disabled until every line's price is confirmed by the layer read.
-  const layerGate = priceLayerGate(priceLayer, Object.keys(items));
+  const layerGate = priceLayerGate(
+    priceLayer,
+    Object.keys(items),
+    (id) => productById.get(id)?.name ?? id,
+  );
   const baseOk = totalItems > 0 && !saving && !anyUnitLoading && !saleRecorded && !saleUnknown;
   const canSave = baseOk && !layerGate.blocked;
 
@@ -1395,6 +1402,12 @@ function InvoiceComposer({
    *   this. The van-sale path is gated on it — see the sale branch below.
    */
   const onSave = async (fromReview = false) => {
+    // D-5: name the layer block instead of the misleading "add an item" copy.
+    const layerBlock = guardLayerSave(layerGate, false);
+    if (layerBlock) {
+      alertInfo("Prices aren't confirmed", layerBlock);
+      return;
+    }
     if (!canSave) {
       alertInfo("Add at least one item", "Tap + on any product to start the invoice.");
       return;
@@ -1469,7 +1482,7 @@ function InvoiceComposer({
         const item = saleItemDto(lineFor(line, p), p, {
           catalogPrice: tierPriceFor(p),
           listPrice: toNumber(p.pricePerUnit),
-          isSpecial: isSpecialFor(p),
+          isSpecial: lineSpecialFor(line, p),
         });
         if ("refused" in item) {
           alertInfo("Reason needed", reasonRequiredMessage(displayName(p)));
@@ -1526,7 +1539,7 @@ function InvoiceComposer({
       const over = invoiceItemOverride(lineFor(line, p), {
         catalogPrice: tierPriceFor(p),
         listPrice: toNumber(p.pricePerUnit),
-        isSpecial: isSpecialFor(p),
+        isSpecial: lineSpecialFor(line, p),
       });
       if ("refused" in over) {
         alertInfo("Reason needed", reasonRequiredMessage(displayName(p)));
@@ -1859,6 +1872,7 @@ function InvoiceComposer({
         tierPriceFor={tierPriceFor}
         isSpecialFor={isSpecialFor}
         layerOf={layerOf}
+        pricesUnconfirmed={layerGate.blocked}
         tierFor={effectiveTierFor}
         isStaff={isStaff}
         onChangeUnit={setUnitLabel}
@@ -2019,6 +2033,7 @@ function ReviewSheet({
   tierPriceFor,
   isSpecialFor,
   layerOf,
+  pricesUnconfirmed,
   tierFor,
   isStaff,
   onChangeUnit,
@@ -2061,6 +2076,8 @@ function ReviewSheet({
   isSpecialFor: (p: Product) => boolean;
   /** S19b: the customer's price layer per product (undefined flag-off / no typed price). */
   layerOf?: (productId: string) => readonly CustomerLayerUnit[] | null | undefined;
+  /** S19b: the layer is not confirmed (unit options show an ellipsis). */
+  pricesUnconfirmed?: boolean;
   /** units_v1: the EFFECTIVE tier per product, for the picker's ladder prices. */
   tierFor: (id: string) => number;
   isStaff: boolean;
@@ -2133,7 +2150,8 @@ function ReviewSheet({
                     line={withLayerBase(line, product, tierFor(id), layerOf?.(id))}
                     taxRateFraction={taxRateFraction}
                     catalogPrice={tierPriceFor(product)}
-                    isSpecial={isSpecialFor(product)}
+                    isSpecial={lineIsSpecial(line, product, tierFor(id), layerOf?.(id))}
+                    pricesUnconfirmed={pricesUnconfirmed}
                     tier={tierFor(id)}
                     isStaff={isStaff}
                     onChangeUnit={(o) => onChangeUnit(id, o)}
@@ -2247,6 +2265,7 @@ function ReviewRow({
   line,
   taxRateFraction,
   catalogPrice: catalogPriceProp,
+  pricesUnconfirmed,
   isSpecial = false,
   tier,
   isStaff,
@@ -2272,6 +2291,8 @@ function ReviewRow({
   catalogPrice?: number;
   /** #2696(c) SA-558e: a New-sale line at a special (tier) price — moving it takes a reason. */
   isSpecial?: boolean;
+  /** S19b: the layer is not confirmed: the unit picker shows an ellipsis and stays closed. */
+  pricesUnconfirmed?: boolean;
   /** units_v1: the effective tier for this product's ladder prices. */
   tier: number;
   isStaff: boolean;
@@ -2388,6 +2409,7 @@ function ReviewRow({
           line={pickerLineOf(product.id, line, catalogPrice)}
           product={product}
           tier={tier}
+          pricesUnconfirmed={pricesUnconfirmed}
           onChange={onChangeUnit}
           style={{ marginBottom: 8 }}
         />

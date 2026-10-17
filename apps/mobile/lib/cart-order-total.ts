@@ -3,10 +3,15 @@ import {
   computeLineSubtotal,
   effectiveQty,
   roundMoney,
+  type getTierPrice,
   type CustomerLayerUnit,
   type CustomerLinePrice,
 } from "@routeflow/pricing";
+import type { UnitOption as LadderOption } from "./unit-options";
 import { effectiveUnitPrice, type LineState, type Product } from "./cart-line-state";
+
+/** What the tier/layer price helpers read of a product: getTierPrice's own parameter (no casts at call sites). */
+export type PriceProduct = Parameters<typeof getTierPrice>[0];
 
 /**
  * Pure, parameterized version of NewOrderScreen.tsx's `lineUnitFor` — lifted out so the
@@ -38,7 +43,7 @@ export function lineUnitFor(
  */
 export function lineLayerPrice(
   line: { unitLabel?: string | null; unitBasePrice?: number } | undefined,
-  product: Product,
+  product: PriceProduct,
   tier: number,
   layer?: readonly CustomerLayerUnit[] | null,
 ): CustomerLinePrice {
@@ -66,7 +71,7 @@ export function packIsSpecial(tier: number, layer?: readonly CustomerLayerUnit[]
  */
 export function layerUnitBaseFor(
   line: { unitLabel?: string | null; unitBasePrice?: number },
-  product: Product,
+  product: PriceProduct,
   tier: number,
   layer?: readonly CustomerLayerUnit[] | null,
 ): number | undefined {
@@ -82,7 +87,7 @@ export function layerUnitBaseFor(
  */
 export function withLayerBase<L extends { unitLabel?: string | null; unitBasePrice?: number }>(
   line: L,
-  product: Product,
+  product: PriceProduct,
   tier: number,
   layer?: readonly CustomerLayerUnit[] | null,
 ): L {
@@ -93,7 +98,7 @@ export function withLayerBase<L extends { unitLabel?: string | null; unitBasePri
 
 /** The customer's price for a product's PACK (no line yet): the tier, or the layer's pack row. */
 export function packLinePrice(
-  product: Product,
+  product: PriceProduct,
   tier: number,
   layer?: readonly CustomerLayerUnit[] | null,
 ): CustomerLinePrice {
@@ -164,4 +169,39 @@ export function computeOrderTotal(
     total += computeLineSubtotal({ unitPrice: u.unitPrice, qty: u.qty });
   }
   return { total: roundMoney(total), totalItems };
+}
+
+/**
+ * A unit picker option priced through the customer layer (S19b, SA-813 M2): the layer row for the option's unit replaces the
+ * tier's `price`. The pack option, a DERIVED option (billed at the pack price), no layer, or a unit with no layer row come
+ * back as the SAME object, so master's pick is untouched.
+ */
+export function optionWithLayerPrice(
+  option: LadderOption,
+  product: PriceProduct,
+  tier: number,
+  layer?: readonly CustomerLayerUnit[] | null,
+): LadderOption {
+  if (!layer || option.value === "" || option.derived) return option;
+  const lp = customerLinePrice({
+    product: product as unknown as Record<string, unknown>,
+    tier,
+    layer,
+    unitLabel: option.value,
+    tierPrice: option.price,
+  });
+  return lp.layered ? { ...option, price: lp.price } : option;
+}
+
+/**
+ * SPECIAL-ness of THIS line's unit (a Can line answers with its own layer row, never the pack's): the unit's layer row when it
+ * has one, else master's `isSpecialTier(tier)`.
+ */
+export function lineIsSpecial(
+  line: { unitLabel?: string | null; unitBasePrice?: number } | undefined,
+  product: PriceProduct,
+  tier: number,
+  layer?: readonly CustomerLayerUnit[] | null,
+): boolean {
+  return lineLayerPrice(line, product, tier, layer).isSpecial;
 }

@@ -33,6 +33,7 @@ export function CartRow({
   isSpecial,
   tier,
   layerUnitBase,
+  pricesUnconfirmed,
   marginFloor,
   historyPrice,
   onChangeBoxes,
@@ -62,6 +63,8 @@ export function CartRow({
   tier: number;
   /** S19b: a unit line whose unit is in the customer's price layer compares against THAT price, not the pack-level `catalogPrice`. */
   layerUnitBase?: number;
+  /** S19b: the layer is not confirmed, so the unit picker shows an ellipsis and stays closed. */
+  pricesUnconfirmed?: boolean;
   /** Category margin floor (fraction) for the live cost/margin hint. */
   marginFloor: number;
   historyPrice?: number;
@@ -245,6 +248,7 @@ export function CartRow({
         tier={tier}
         // Only while no qty/price edit consumed the flag (the screen clears it) and no operator price (Opus #2865 B2/r2).
         startOnDefaultUnit={isPendingDefaultUnit(line)}
+        pricesUnconfirmed={pricesUnconfirmed}
         onChange={onChangeUnit}
         style={{ marginBottom: isBoxed ? 2 : 8 }}
       />

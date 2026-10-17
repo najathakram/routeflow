@@ -73,10 +73,10 @@ import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
-import { effectiveQty, roundMoney } from "@routeflow/pricing";
+import { effectiveQty, isSpecialTier, roundMoney } from "@routeflow/pricing";
 import { useCustomerPriceLayer } from "../lib/api/price-layer";
-import { lineLayerPrice, packLinePrice } from "../lib/cart-order-total";
-import { layerAwareIsSpecial, priceLayerGate } from "../lib/price-layer-gate";
+import { lineIsSpecial, lineLayerPrice, packLinePrice } from "../lib/cart-order-total";
+import { guardLayerSave, layerAwareIsSpecial, priceLayerGate } from "../lib/price-layer-gate";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
 import { useTrackedCategories } from "../lib/api/tracked-categories";
 import {
@@ -510,6 +510,9 @@ function ProductPickView({
     lineLayerPrice(line, p, effectiveTierFor(p.id), layerOf(p.id)).price;
   /** SPECIAL (tier≠1) lines are the customer's permanent price — never overridable. */
   const isSpecialFor = (p: Product) => packPriceFor(p).isSpecial;
+  /** This LINE's SPECIAL-ness: a unit line answers with its own layer row (a Can is not the pack). */
+  const lineSpecialFor = (line: LineState | undefined, p: Product) =>
+    lineIsSpecial(line, p, effectiveTierFor(p.id), layerOf(p.id));
   const [scanOpen, setScanOpen] = useState(false);
   /** Tray line (catalog id or unlisted local id) whose price is being edited. */
   const [priceEditId, setPriceEditId] = useState<string | null>(null);
@@ -806,7 +809,7 @@ function ProductPickView({
       priceHistory?.[id],
       p ? toNumber(p.pricePerUnit) : 0,
       p ? tierPriceFor(p) : 0,
-      p ? layerAwareIsSpecial(packPriceFor(p)) : false,
+      p ? layerAwareIsSpecial(packPriceFor(p)) : isSpecialTier(effectiveTierFor(id)),
     );
     // #2865: the add decision is the pure `applyAddToItems` (lib/pending-unit-adapter): refused while the line is pending -> false.
     const input = { id, level, dflt, viaRow, code, role: userRole, upb, prefill };
@@ -1164,7 +1167,7 @@ function ProductPickView({
         layerOf,
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, productById, unlisted, cpMap, customerTier, priceLayer.ready, customerId],
+    [items, productById, unlisted, cpMap, customerTier, priceLayer.data, customerId],
   );
 
   // REG-4: live, DISPLAY-ONLY preview of how this cart will split into invoices.
@@ -1202,7 +1205,7 @@ function ProductPickView({
     splitCategoryById,
     cpMap,
     customerTier,
-    priceLayer.ready,
+    priceLayer.data,
     customerId,
   ]);
 
@@ -1222,11 +1225,11 @@ function ProductPickView({
         },
         overridable: (p) => {
           const full = productById.get(p.id);
-          return full ? !isSpecialFor(full) : true;
+          return full ? !lineSpecialFor(items[p.id], full) : true;
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, unlisted, scanOrder, productById, cpMap, customerTier, priceLayer.ready, customerId],
+    [items, unlisted, scanOrder, productById, cpMap, customerTier, priceLayer.data, customerId],
   );
 
   /**
@@ -1347,6 +1350,8 @@ function ProductPickView({
         ...(line?.unitLabel ? { base: lineBaseFor(line, p) } : {}),
         listPrice: toNumber(p.pricePerUnit),
         isSpecial: isSpecialFor(p),
+        // S19b: a unit line is judged by ITS OWN layer row, not the pack's (later key wins; a pack line is unchanged).
+        ...(line?.unitLabel ? { isSpecial: lineSpecialFor(line, p) } : {}),
         reason: line?.overrideReason,
       },
     };
@@ -1444,7 +1449,7 @@ function ProductPickView({
       if (!p) continue;
       const qty = effectiveQty(line, p.unitsPerBox);
       if (qty <= 0) continue;
-      const special = isSpecialFor(p);
+      const special = lineSpecialFor(line, p);
       const tierPrice = tierPriceFor(p);
       const listPrice = toNumber(p.pricePerUnit);
       // B747: a unit-sold line's comparison base is its OWN resolved price, never the pack's
@@ -1490,7 +1495,7 @@ function ProductPickView({
     }
     return lines;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, productById, cpMap, customerTier, priceLayer.ready, customerId]);
+  }, [items, productById, cpMap, customerTier, priceLayer.data, customerId]);
 
   const draftBuilderState = useMemo<DraftBuilderState>(
     () => ({
@@ -1750,7 +1755,11 @@ function ProductPickView({
   };
 
   // D-5 (SA-813 M3): Create stays disabled until every line's price is confirmed by the layer read.
-  const layerGate = priceLayerGate(priceLayer, Object.keys(items));
+  const layerGate = priceLayerGate(
+    priceLayer,
+    Object.keys(items),
+    (id) => productById.get(id)?.name ?? id,
+  );
   const canSave = totalItems > 0 && !createOrder.isPending && !submitting && !layerGate.blocked;
   // "Save as draft" needs only a customer (a zero-item DRAFT is allowed server-side).
   const canSaveDraft = !!customerId && !createOrder.isPending && !submitting;
@@ -1787,7 +1796,7 @@ function ProductPickView({
         const catalog = p ? lineBaseFor(line, p) : 0;
         // #2696(c): a SPECIAL line's override is sent only WITH its reason (the server refuses
         // one without); a lingering reasonless one (e.g. an old draft) is dropped, as before.
-        const specialOk = p != null && (!isSpecialFor(p) || !!line.overrideReason?.trim());
+        const specialOk = p != null && (!lineSpecialFor(line, p) || !!line.overrideReason?.trim());
         const override =
           specialOk && line.unitPrice != null && line.unitPrice !== catalog
             ? {
@@ -2059,6 +2068,12 @@ function ProductPickView({
   const onSave = (asDraft = false, finish: "invoice" | "confirm" = "invoice") => {
     // Not while a submit is in flight: Confirm only mid-flight must not downgrade Confirm & invoice.
     if (!submittingRef.current) pos.finishRef.current = finish;
+    // D-5: a charge is never saved on unconfirmed prices (a draft is not a charge).
+    const layerBlock = guardLayerSave(layerGate, asDraft);
+    if (layerBlock) {
+      alertInfo("Prices aren't confirmed", layerBlock);
+      return;
+    }
     const gate = orderSubmitGate({ hasCustomer: !!customerId, itemCount: totalItems, asDraft });
     if (!gate.ok) {
       alertInfo(gate.title ?? "Can't save yet", gate.message ?? "");
@@ -2531,6 +2546,8 @@ function ProductPickView({
         tierPriceFor={tierPriceFor}
         isSpecialFor={isSpecialFor}
         layerOf={layerOf}
+        layerGate={layerGate}
+        onRetryLayer={priceLayer.refetch}
         tierForProductId={effectiveTierFor}
         marginFloorFor={(p) => floorForCategory(marginConfig, p.category)}
         unlisted={unlisted}

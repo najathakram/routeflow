@@ -16,17 +16,50 @@ export interface PriceLayerGate {
   canRetry: boolean;
 }
 
-/** Gate a whole screen on its product ids: pending/failed block everything, an incomplete layer blocks the absent products. */
+/**
+ * Gate a whole screen on its product ids: pending/failed block everything, an incomplete layer blocks the absent products.
+ * With `nameOf`, the incomplete copy says which products could not be loaded.
+ */
 export function priceLayerGate(
   status: Pick<PriceLayerStatus, "enabled" | "ready" | "failed" | "lineReady">,
   productIds: readonly (string | null | undefined)[],
+  nameOf?: (productId: string) => string,
 ): PriceLayerGate {
   if (!status.enabled) return { blocked: false, message: null, canRetry: false };
   if (status.failed) return { blocked: true, message: LAYER_FAILED_MESSAGE, canRetry: true };
   if (!status.ready) return { blocked: true, message: LAYER_PENDING_MESSAGE, canRetry: false };
-  if (productIds.some((id) => !status.lineReady(id)))
-    return { blocked: true, message: LAYER_INCOMPLETE_MESSAGE, canRetry: false };
+  const absent = Array.from(
+    new Set(productIds.filter((id): id is string => !!id && !status.lineReady(id))),
+  );
+  if (productIds.some((id) => !status.lineReady(id))) {
+    const names = nameOf && absent.length > 0 ? absent.map(nameOf).join(", ") : null;
+    return {
+      blocked: true,
+      message: names
+        ? `${LAYER_INCOMPLETE_MESSAGE} Not loaded: ${names}.`
+        : LAYER_INCOMPLETE_MESSAGE,
+      canRetry: false,
+    };
+  }
   return { blocked: false, message: null, canRetry: false };
+}
+
+/** D-5 on a save handler: the message to alert when a CHARGE save must not go ahead, else null. A draft is never gated. */
+export function guardLayerSave(gate: PriceLayerGate, asDraft: boolean): string | null {
+  return !asDraft && gate.blocked ? gate.message : null;
+}
+
+/** edit-items' `pricingReady` with the layer folded in: the picker, Substitute, scan and price edits wait for it (flag off: the base). */
+export function pricingReadyWithLayer(
+  base: boolean,
+  status: Pick<PriceLayerStatus, "enabled" | "ready">,
+): boolean {
+  return base && (!status.enabled || status.ready);
+}
+
+/** A unit option's price detail, or an ellipsis while the layer is unconfirmed (never a tier price shown as final). */
+export function unitDetailOrUnconfirmed(detail: string, unconfirmed: boolean): string {
+  return unconfirmed ? "…" : detail;
 }
 
 /**

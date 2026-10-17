@@ -321,11 +321,7 @@ export default function CustomerCatalogScreen() {
               {priceList.map((cp, i) => {
                 const effectiveTier = cp.pricingTier ?? customerTier;
                 const clp = cp.product
-                  ? packLinePrice(
-                      cp.product as never,
-                      effectiveTier,
-                      priceLayer.layerOf(cp.productId),
-                    )
+                  ? packLinePrice(cp.product, effectiveTier, priceLayer.layerOf(cp.productId))
                   : null;
                 // null = the layer is still being read (or failed): never show the tier price as final.
                 const tierPrice = clp ? confirmedPrice(priceLayer, cp.productId, clp) : 0;

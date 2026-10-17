@@ -28,8 +28,18 @@ import { FAMILY_ADD_MESSAGE, isFamilyProduct } from "../../../../../lib/sellable
 import { confirm } from "../../../../../lib/confirm";
 import { computeLineSubtotal, effectiveQty, type SellLevel } from "@routeflow/pricing";
 import { useCustomerPriceLayer } from "../../../../../lib/api/price-layer";
-import { packIsSpecial, packLinePrice } from "../../../../../lib/cart-order-total";
-import { priceLayerGate } from "../../../../../lib/price-layer-gate";
+import {
+  lineIsSpecial,
+  optionWithLayerPrice,
+  packIsSpecial,
+  packLinePrice,
+  type PriceProduct,
+} from "../../../../../lib/cart-order-total";
+import {
+  LAYER_INCOMPLETE_MESSAGE,
+  priceLayerGate,
+  pricingReadyWithLayer,
+} from "../../../../../lib/price-layer-gate";
 import { marginFloorPrice } from "../../../../../lib/margin-floor-price";
 import { isUnitLine, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
@@ -146,17 +156,23 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // NOTE: a disabled query stays `isPending` forever, so short-circuit when
   // there is no customer; an errored fetch falls back to the tier-1 degraded
   // mode rather than wedging the editor.
+  // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, every number is master's.
+  const priceLayer = useCustomerPriceLayer(customerId);
+  const layerOf = priceLayer.layerOf;
+  // The layer is part of "pricing is ready": the picker, Substitute, scan and price edits stay closed until it is, so an add
+  // never stores a pre-layer price (a product the layer cannot vouch for is also refused at the pick, below).
   const pricingReady =
-    !customerId || ((!customerPending || customerFailed) && (!pricesPending || pricesFailed));
+    !customerId ||
+    pricingReadyWithLayer(
+      (!customerPending || customerFailed) && (!pricesPending || pricesFailed),
+      priceLayer,
+    );
   const cpMap = useMemo(() => {
     const m = new Map<string, number | null>();
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
     return m;
   }, [customerPrices]);
   const effectiveTierFor = (productId: string) => cpMap.get(productId) ?? customerTier ?? 1;
-  // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, every number is master's.
-  const priceLayer = useCustomerPriceLayer(customerId);
-  const layerOf = priceLayer.layerOf;
   /** SPECIAL (a tier other than 1) lines are the customer's permanent price — never overridable
    *  (the create surface's own rule, components/NewOrderScreen.tsx:627). Mobile's
    *  editor contradicted mobile's builder until this landed; the api-side gate is
@@ -164,7 +180,22 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // S19b: a layered SPECIAL (the customer layer's pack row) is gated like a tier SPECIAL, else Save hits the server's 400.
   // No layer (flag off / no typed price) is `isSpecialTier(tier)` exactly.
   const isSpecialFor = (productId: string) =>
-    packIsSpecial(effectiveTierFor(productId), layerOf(productId));
+    packIsSpecial(effectiveTierFor(productId), layerOf(productId)) || unitLineSpecial(productId);
+  /** A held unit line (a Can) is SPECIAL by ITS OWN layer row, not the pack's answer. */
+  const unitLineSpecial = (productId: string) =>
+    Object.values(draft).some(
+      (it) =>
+        it.productId === productId &&
+        !!it.unitLabel &&
+        !!it.packLadder &&
+        lineIsSpecial(
+          it,
+          it.packLadder as PriceProduct,
+          effectiveTierFor(productId),
+          layerOf(productId),
+        ) &&
+        layerOf(productId) != null,
+    );
   const userRole = useAuthStore((s) => s.user?.role);
   const userId = useAuthStore((s) => s.user?.id);
   // Customer accounts shouldn't reach this screen, but defend anyway —
@@ -295,8 +326,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     return Array.from(rows.values());
   }, [openCredits, order, justCreatedCredits]);
 
-  const tierPriceFor = (p: { id: string } & Record<string, unknown>) =>
-    packLinePrice(p as never, cpMap.get(p.id) ?? customerTier ?? 1, layerOf(p.id)).price;
+  const tierPriceFor = (p: { id: string } & PriceProduct) =>
+    packLinePrice(p, cpMap.get(p.id) ?? customerTier ?? 1, layerOf(p.id)).price;
 
   // Latched by a successful save. Read by the hydration guard below (the
   // post-save refetch IS the new truth, so it re-hydrates) and by the snapshot
@@ -443,6 +474,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const layerGate = priceLayerGate(
     priceLayer,
     Object.values(draft).map((it) => it.productId),
+    (id) => Object.values(draft).find((it) => it.productId === id)?.name ?? id,
   );
 
   // ── The staged edit, as one value ─────────────────────────────────────────
@@ -620,7 +652,16 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       const packTierPrice = cur.packLadder
         ? tierPriceFor({ id: cur.productId, ...cur.packLadder })
         : cur.catalogPrice;
-      return { ...d, [id]: applyUnitPick(cur, option, packTierPrice) };
+      // S19b (SA-813 M2): a unit in the customer layer takes the layer price, not the tier's (typed pack $33 -> Case $377.14).
+      const layered = cur.packLadder
+        ? optionWithLayerPrice(
+            option,
+            cur.packLadder as PriceProduct,
+            effectiveTierFor(cur.productId),
+            layerOf(cur.productId),
+          )
+        : option;
+      return { ...d, [id]: applyUnitPick(cur, layered, packTierPrice) };
     });
 
   // "Set to floor" one-tap fix (P10-POS-1) — same price-write path as the
@@ -666,9 +707,14 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     },
     level: SellLevel = "BOX",
   ): string => {
+    // D-5: never store a price the layer cannot vouch for (pending, failed, or absent from an incomplete layer).
+    if (!priceLayer.lineReady(p.id)) {
+      showToast(LAYER_INCOMPLETE_MESSAGE);
+      return resolveDraftKeyForPick(draftRef.current, p.id, null);
+    }
     const catalogPrice = tierPriceFor(p);
     const listPrice = toNumber(p.pricePerUnit);
-    const lp = packLinePrice(p as never, cpMap.get(p.id) ?? customerTier ?? 1, layerOf(p.id));
+    const lp = packLinePrice(p, cpMap.get(p.id) ?? customerTier ?? 1, layerOf(p.id));
     const isSpecial = lp.isSpecial || lp.layered; // R3: a layered price is the resolver's, no last-given pre-fill
     const upbRaw = p.unitsPerBox;
     const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
@@ -1139,6 +1185,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           onScanSessionEnd={() => setTrayFlash(null)}
           onPick={(p, level) => {
             if (substituteFor) {
+              if (!priceLayer.lineReady(p.id)) {
+                showToast(LAYER_INCOMPLETE_MESSAGE);
+                return;
+              }
               const tierPrice = tierPriceFor(p);
               const listPrice = toNumber(p.pricePerUnit);
               updateDraft((d) => {
@@ -1322,6 +1372,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                       canEditPrice={canEditPriceFor(it.productId)}
                       pricingReady={pricingReady}
                       tier={effectiveTierFor(it.productId)}
+                      pricesUnconfirmed={layerGate.blocked}
                       marginFloor={floorForCategory(marginConfig, it.category)}
                       acked={floorAcked.has(key)}
                       onSetToFloor={(price) => setLinePrice(key, price)}
