@@ -124,6 +124,8 @@ export function PriceEditBar({
       setTold(false);
       return;
     }
+    // A bar that is not shown (the window is the editing surface) must not eat the other surface's Ctrl/Cmd+S.
+    if (!here) return;
     setConfirm(false);
     const block = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
@@ -134,7 +136,7 @@ export function PriceEditBar({
     };
     window.addEventListener("keydown", block, true);
     return () => window.removeEventListener("keydown", block, true);
-  }, [changePricesOpen, setConfirm]);
+  }, [changePricesOpen, here, setConfirm]);
   if (!here) return null;
   const label = (ref: string) => d.grid?.rows.find((r) => r.ref === ref)?.label ?? ref;
   return (

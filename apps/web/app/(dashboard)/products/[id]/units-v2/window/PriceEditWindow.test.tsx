@@ -324,6 +324,20 @@ describe("K11-20a window: Save", () => {
     });
   });
 
+  it("M1: with the inline Change prices panel open behind it, Ctrl+S in the window still saves once", async () => {
+    const user = userEvent.setup();
+    render({ startOpen: false });
+    // The inline panel is open first (not editing); the page bar is not shown, so it must not eat Ctrl+S.
+    await user.click(screen.getByTestId(T.btnChange));
+    expect(document.getElementById("change-panel")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Open price editor" }));
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    await waitFor(() => expect(box("case", 1)).toHaveFocus());
+    await user.keyboard("14.5");
+    fireEvent.keyDown(box("case", 1), { key: "s", ctrlKey: true });
+    expect(mockSave).toHaveBeenCalledTimes(1);
+  });
+
   it("a successful save closes with 'saved'; the line shows in the window's place, not the section's", async () => {
     mockSave.mockImplementation((_req, o) => {
       mockGrid = { data: SAVED_GRID, isLoading: false, isError: false };
