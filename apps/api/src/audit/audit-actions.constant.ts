@@ -16,6 +16,8 @@ export const AUDIT_ACTIONS = {
   INVOICE_DELIBERATE_OVERPAYMENT: "invoice.deliberate-overpayment",
   /** SA-778: a support-session request refused by @NoImpersonation before the handler ran; meta {superAdminId, tenantId, method, route}. */
   IMPERSONATION_ACTION_REFUSED: "impersonation.action-refused",
+  /** SA-808b: a void degraded — stock with no receipt record adjusted, or a bill lot it could not identify left standing; meta {billNumber, products[{productId, found[], noReceiptQty}], lotsLeft[{productId, name, lotIds[], remainingQty}], receiptRowsOnOtherProducts[]}. */
+  VENDOR_BILL_VOID_NO_RECEIPT: "vendor-bill.void-without-receipt",
 } as const;
 
 export type AuditActionName = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
