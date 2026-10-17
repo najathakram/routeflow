@@ -1,5 +1,6 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { productCodeInUse } from "./product-code-in-use";
+import { bareVariantNames } from "./product-variant-name";
 import {
   assertSafeProductCategory,
   assertSafeProductNames,
@@ -801,6 +802,9 @@ export class ProductsService {
     dto: CreateProductDto,
     options?: { suppressEmit?: boolean; actorId?: string | null; actorName?: string | null },
   ) {
+    // B1: a variant stores its BARE label; strip a composed "<parent> - <label>" first, so the guard and the name
+    // uniqueness check below judge what will actually be stored.
+    await bareVariantNames(this.prisma.forTenant(), dto, dto.parentProductId);
     assertSafeProductNames(dto); // B964-2: a formula-led name/variantName is refused before any read or write
     assertCostingMethodAllowed(dto.costingMethod); // SA-804 (1): FIFO/LIFO are retired: 400 COSTING_METHOD_RETIRED before any read or write
     // B990: the typed free-text category too, UNCONDITIONALLY: even with a structured subcategory chosen or a parent without one
@@ -1092,6 +1096,13 @@ export class ProductsService {
         "deactivateHolderIds only applies when reactivating an inactive product",
       );
     }
+    // B1: a variant stores its BARE label; a composed "<parent> - <label>" from a client is stripped first (so the
+    // change-only name guard and the uniqueness check below judge the label that will actually be stored).
+    await bareVariantNames(
+      this.prisma.forTenant(),
+      dto,
+      dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId,
+    );
     assertSafeProductNames(dto, existing); // B964-2: change-only against the one read already made
     // B990: change-only for the free-text category, BEFORE resolveOrCreateTobaccoCategory below, so a refusal never leaves an orphan Tobacco type
     if (dto.category !== undefined)

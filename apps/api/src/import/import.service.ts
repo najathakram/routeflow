@@ -4,6 +4,7 @@ import {
   HttpException,
   Injectable,
   Logger,
+  NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { calendarStampFromInput } from "../common/calendar-date";
@@ -29,7 +30,9 @@ import {
 } from "./import-payment-status";
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 import { parse } from "csv-parse/sync";
-import { ImportEntityType, InvoiceStatus, MovementType, UserRole } from "@prisma/client";
+import { ImportEntityType, InvoiceStatus, MovementType, Prisma, UserRole } from "@prisma/client";
+import { lockProductsForStock, STOCK_TX_OPTIONS } from "../common/product-locks";
+import { retryStockTx } from "../common/tx-retry";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { addressStateFields } from "../customers/address-state";
@@ -2981,23 +2984,40 @@ export class ImportService {
         }
 
         if (product) {
-          // Update stock level
-          await this.prisma.forTenant().product.update({
-            where: { id: product.id },
-            data: { currentStock: closingStock },
-          });
-          // Record the stock adjustment as a stock movement
-          if (closingStock !== Number(product.currentStock)) {
-            await this.prisma.forTenant().stockMovement.create({
-              data: {
-                productId: product.id,
-                type: "ADJUSTMENT",
-                quantity: closingStock - Number(product.currentStock),
-                notes: "Zoho stock sync",
-                performedById: userId,
-              },
-            });
-          }
+          // B568: the counter move and its ADJUSTMENT row are ONE stock transaction, taken under the Product row
+          // lock, from the LOCKED stock (a sale that committed after the pre-read above must survive: the delta is
+          // `closing - locked`, written as an increment). A movement failure rolls the counter back with it.
+          // Positive deltas still open no StockLot (unchanged; filed as a follow-up).
+          const productId = product.id;
+          const syncTenantId = this.prisma.getTenantId();
+          await retryStockTx("import.importInventory", () =>
+            this.prisma.tenantTransaction(async (tx: any) => {
+              await lockProductsForStock(tx, syncTenantId, [productId]);
+              const locked = await tx.product.findFirst({
+                where: { id: productId },
+                select: { currentStock: true, averageCost: true },
+              });
+              if (!locked) throw new NotFoundException("Product not found");
+              const delta = new Prisma.Decimal(closingStock).minus(locked.currentStock);
+              if (delta.eq(0)) return;
+              const after = await tx.product.update({
+                where: { id: productId },
+                data: { currentStock: { increment: delta } },
+                select: { currentStock: true },
+              });
+              await tx.stockMovement.create({
+                data: {
+                  productId,
+                  type: MovementType.ADJUSTMENT,
+                  quantity: delta,
+                  stockAfter: after.currentStock,
+                  avgCostAfter: locked.averageCost,
+                  notes: "Zoho stock sync",
+                  performedById: userId,
+                },
+              });
+            }, STOCK_TX_OPTIONS),
+          );
           updated++;
         } else {
           // B964-2: a NEW product's name is written here; a formula-led one rejects THIS row (a matched existing product

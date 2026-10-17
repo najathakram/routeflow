@@ -89,7 +89,7 @@ function walk(dir: string, acc: string[] = []): string[] {
 }
 
 const all: Site[] = ROOTS.flatMap((r) => walk(path.join(REPO_ROOT, r))).flatMap((p) =>
-  findSites(path.relative(REPO_ROOT, p), fs.readFileSync(p, "utf8")),
+  findSites(path.relative(REPO_ROOT, p).split(path.sep).join("/"), fs.readFileSync(p, "utf8")),
 );
 const key = (s: Site) => `${s.file}:${s.ordinal}`;
 const complete = (s: Site) => s.hasSource && s.hasRecorded;

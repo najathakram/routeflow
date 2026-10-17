@@ -138,6 +138,9 @@ const CODE_COPY: Record<string, string> = {
     "This merge request was already decided by someone else. Refresh to see its status.",
   [API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY]:
     "The invoice changed while this was happening. Refresh and try again.",
+  // B1 R3: a variant name that is only its product's name and the separator; nothing was saved.
+  [API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY]:
+    "A variant name can't be just the product name. Type what makes it different, such as a flavor or size.",
   [API_ERROR_CODES.LABEL_NAME_TAKEN]:
     "A product label with this name already exists. Use that label or pick another name.",
   [API_ERROR_CODES.LABEL_CHANGE_IN_PROGRESS]:

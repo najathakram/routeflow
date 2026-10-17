@@ -100,7 +100,7 @@ function walk(dir: string, acc: string[] = []): string[] {
 
 const key = (s: Site) => `${s.file}:${s.ordinal}`;
 const scanned: Site[] = ROOTS.flatMap((r) => walk(path.join(REPO_ROOT, r))).flatMap((p) =>
-  findSites(path.relative(REPO_ROOT, p), fs.readFileSync(p, "utf8")),
+  findSites(path.relative(REPO_ROOT, p).split(path.sep).join("/"), fs.readFileSync(p, "utf8")),
 );
 const all: Site[] = scanned.filter((s) => !(key(s) in NOT_ORDER_ITEM));
 const perFile = (sites: Site[]) =>
