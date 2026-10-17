@@ -26,7 +26,11 @@ import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers
 import { showToast } from "../../../../../lib/toast";
 import { FAMILY_ADD_MESSAGE, isFamilyProduct } from "../../../../../lib/sellable-products";
 import { confirm } from "../../../../../lib/confirm";
-import { computeLineSubtotal, effectiveQty, type SellLevel } from "@routeflow/pricing";
+import { effectiveQty, type SellLevel } from "@routeflow/pricing";
+import { useEditItemsTrayHandlers } from "../../../../../hooks/useEditItemsTrayHandlers";
+import { PriceLayerGateNotice } from "../../../../../components/PriceLayerGateNotice";
+import { draftTotal } from "../../../../../lib/edit-items-total";
+import { buildCreditRows } from "../../../../../lib/edit-items-credit-rows";
 import { useCustomerPriceLayer } from "../../../../../lib/api/price-layer";
 import {
   lineIsSpecial,
@@ -41,7 +45,6 @@ import { isUnitLine, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
 import { useMarginConfig, floorForCategory } from "../../../../../lib/api/margin";
 import {
-  draftFreeUnits,
   draftTrayRows,
   applyBoxEdit,
   applyPieceEdit,
@@ -268,59 +271,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // can be applied — before the ["credit-notes"] refetch lands.
   const [createCreditOpen, setCreateCreditOpen] = useState(false);
   const [justCreatedCredits, setJustCreatedCredits] = useState<CreditNote[]>([]);
-  // Rows to show: the customer's open credits, PLUS any credit already
-  // applied to this order even if it's no longer ISSUED (e.g. fully consumed)
-  // — otherwise a previously-applied credit would vanish from the list
-  // instead of showing checked — PLUS any credit just created this session.
-  const creditRows = useMemo(() => {
-    const rows = new Map<
-      string,
-      {
-        id: string;
-        creditNoteNumber: string;
-        reason?: string;
-        amount: number;
-        amountUsed?: number;
-        expiresAt?: string | null;
-      }
-    >();
-    for (const cn of openCredits?.data ?? []) {
-      rows.set(cn.id, {
-        id: cn.id,
-        creditNoteNumber: cn.creditNoteNumber,
-        reason: cn.reason,
-        amount: cn.amount,
-        amountUsed: cn.amountUsed,
-        expiresAt: cn.expiresAt,
-      });
-    }
-    for (const oc of (order as any)?.orderCreditNotes ?? []) {
-      if (!rows.has(oc.creditNoteId) && oc.creditNote) {
-        rows.set(oc.creditNoteId, {
-          id: oc.creditNoteId,
-          creditNoteNumber: oc.creditNote.creditNoteNumber,
-          reason: oc.creditNote.reason ?? undefined,
-          amount: toNumber(oc.creditNote.amount),
-          amountUsed:
-            oc.creditNote.amountUsed != null ? toNumber(oc.creditNote.amountUsed) : undefined,
-          expiresAt: oc.creditNote.expiresAt ?? null,
-        });
-      }
-    }
-    for (const cn of justCreatedCredits) {
-      if (!rows.has(cn.id)) {
-        rows.set(cn.id, {
-          id: cn.id,
-          creditNoteNumber: cn.creditNoteNumber,
-          reason: cn.reason,
-          amount: cn.amount,
-          amountUsed: cn.amountUsed,
-          expiresAt: cn.expiresAt,
-        });
-      }
-    }
-    return Array.from(rows.values());
-  }, [openCredits, order, justCreatedCredits]);
+  // Rows to show: open credits + any already applied to this order + any just created (lib/edit-items-credit-rows.ts).
+  const creditRows = useMemo(
+    () => buildCreditRows(openCredits, order, justCreatedCredits),
+    [openCredits, order, justCreatedCredits],
+  );
 
   const tierPriceFor = (p: { id: string } & PriceProduct) =>
     packLinePrice(p, cpMap.get(p.id) ?? customerTier ?? 1, layerOf(p.id)).price;
@@ -438,29 +393,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   }, [order, baselineOrder, restored, restoreState, setDraft]);
 
   // Live total mirrors the server math (BOX-price proration when split).
-  const total = useMemo(() => {
-    let t = 0;
-    for (const it of Object.values(draft)) {
-      const qty = effectiveQty(it, it.unitsPerBox);
-      if (qty <= 0) continue;
-      t += computeLineSubtotal({
-        unitPrice: it.unitPrice,
-        qty,
-        boxes: it.boxes ?? null,
-        pieces: it.pieces ?? null,
-        unitsPerBox: it.unitsPerBox ?? null,
-        // BUY_N_GET_M: free whole units come off before pricing, exactly like
-        // the server — otherwise the preview bills an agreed 12-boxes-2-free
-        // line at full price and disagrees with what the save writes back.
-        freeUnits: draftFreeUnits(it),
-      });
-    }
-    for (const u of unlisted) {
-      if (u.qty <= 0) continue;
-      t += computeLineSubtotal({ unitPrice: u.unitPrice, qty: u.qty });
-    }
-    return t;
-  }, [draft, unlisted]);
+  const total = useMemo(() => draftTotal(draft, unlisted), [draft, unlisted]);
 
   const itemCount =
     Object.values(draft).filter((it) => effectiveQty(it, it.unitsPerBox) > 0).length +
@@ -800,32 +733,19 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     () => draftTrayRows({ draft, unlisted, scanOrder }),
     [draft, unlisted, scanOrder],
   );
-  // ScanTray memoizes its rows on callback identity (components/ScanTray.tsx),
-  // so these four have to be referentially stable — a "latest deps" ref keeps
-  // them stable while still dispatching against the current draft.
-  const trayDepsRef = useRef({
-    draft,
-    unlisted,
-    setUnits,
-    setQty,
-    incQty,
-    decQty,
-    removeLine,
-    setUnlistedQty,
-    removeUnlisted,
-  });
-  trayDepsRef.current = {
-    draft,
-    unlisted,
-    setUnits,
-    setQty,
-    incQty,
-    decQty,
-    removeLine,
-    setUnlistedQty,
-    removeUnlisted,
-  };
-  const unlistedRow = (id: string) => trayDepsRef.current.unlisted.find((u) => u.id === id);
+  // ScanTray's stable handlers (hooks/useEditItemsTrayHandlers.ts).
+  const { trayDepsRef, unlistedRow, onTrayIncrement, onTrayDecrement, onTrayRemove } =
+    useEditItemsTrayHandlers({
+      draft,
+      unlisted,
+      setUnits,
+      setQty,
+      incQty,
+      decQty,
+      removeLine,
+      setUnlistedQty,
+      removeUnlisted,
+    });
   // ScanTray hands a TOTAL UNIT count (ScanTray.tsx), which is exactly what
   // `setUnits` normalises back into cases + loose — except a unit-sold line (units_v1,
   // SA-085f), whose total IS the count already, so it goes through `setQty` instead.
@@ -834,23 +754,6 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     if (unlistedRow(id)) d.setUnlistedQty(id, units);
     else if (isUnitLine(d.draft[id] ?? {})) d.setQty(id, units);
     else d.setUnits(id, units);
-  }, []);
-  const onTrayIncrement = useCallback((id: string) => {
-    const d = trayDepsRef.current;
-    const u = unlistedRow(id);
-    if (u) d.setUnlistedQty(id, u.qty + 1);
-    else d.incQty(id);
-  }, []);
-  const onTrayDecrement = useCallback((id: string) => {
-    const d = trayDepsRef.current;
-    const u = unlistedRow(id);
-    if (u) d.setUnlistedQty(id, u.qty - 1);
-    else d.decQty(id);
-  }, []);
-  const onTrayRemove = useCallback((id: string) => {
-    const d = trayDepsRef.current;
-    if (unlistedRow(id)) d.removeUnlisted(id);
-    else d.removeLine(id);
   }, []);
 
   // ── Save ─────────────────────────────────────────────────────────────────
@@ -1451,17 +1354,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                 {itemCount} ITEM{itemCount === 1 ? "" : "S"}
               </Text>
               <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
-              {layerGate.message ? (
-                <Pressable
-                  onPress={layerGate.canRetry ? priceLayer.refetch : undefined}
-                  disabled={!layerGate.canRetry}
-                  accessibilityRole={layerGate.canRetry ? "button" : "text"}
-                  accessibilityLabel={layerGate.message}
-                  hitSlop={6}
-                >
-                  <Text style={{ fontSize: 12, textAlign: "center" }}>{layerGate.message}</Text>
-                </Pressable>
-              ) : null}
+              <PriceLayerGateNotice
+                gate={layerGate}
+                onRetry={priceLayer.refetch}
+                textStyle={{ fontSize: 12, textAlign: "center" }}
+              />
             </View>
             <Pressable
               style={[

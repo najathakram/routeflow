@@ -75,16 +75,14 @@ import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
 import { displayProductName as displayName } from "../lib/product-display";
 import { effectiveQty, isSpecialTier, roundMoney } from "@routeflow/pricing";
 import { useCustomerPriceLayer } from "../lib/api/price-layer";
+import { PriceLayerGateNotice } from "./PriceLayerGateNotice";
+import { buildInvoiceSplitPreview } from "../lib/invoice-split-preview";
+import { buildDraftCatalogLines } from "../lib/draft-catalog-lines";
 import { lineIsSpecial, lineLayerPrice, packLinePrice } from "../lib/cart-order-total";
 import { guardLayerSave, layerAwareIsSpecial, priceLayerGate } from "../lib/price-layer-gate";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
 import { useTrackedCategories } from "../lib/api/tracked-categories";
-import {
-  groupLinesForInvoiceSplit,
-  type InvoiceSplitCategory,
-  type InvoiceSplitLineInput,
-  type InvoiceSplitPreview,
-} from "../lib/invoice-split";
+import { type InvoiceSplitCategory, type InvoiceSplitPreview } from "../lib/invoice-split";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import { ProductPickerSheet } from "./ProductPickerSheet";
 import { BoxedQtyBand } from "./BoxedQtyBand";
@@ -1176,38 +1174,24 @@ function ProductPickView({
   // inside groupLinesForInvoiceSplit produces the same pre-tax per-line amounts
   // the total memo already sums; this just also buckets them by category. The
   // server (createSplitInvoices) is the sole source of truth for the real split.
-  const invoiceSplit: InvoiceSplitPreview = useMemo(() => {
-    const splitLines: InvoiceSplitLineInput[] = [];
-    for (const [id, line] of Object.entries(items)) {
-      const p = productById.get(id);
-      if (!p) continue;
-      const qty = effectiveQty(line, p.unitsPerBox);
-      if (qty <= 0) continue;
-      splitLines.push({
-        trackedCategoryId: p.trackedCategoryId ?? null,
-        unitPrice: lineUnitFor(line, p, effectiveTierFor(p.id)),
-        qty,
-        boxes: line.boxes ?? null,
-        pieces: line.pieces ?? null,
-        unitsPerBox: p.unitsPerBox ?? null,
-      });
-    }
-    for (const u of unlisted) {
-      if (u.qty <= 0) continue;
-      splitLines.push({ trackedCategoryId: null, unitPrice: u.unitPrice, qty: u.qty });
-    }
-    return groupLinesForInvoiceSplit(splitLines, splitCategoryById);
+  const invoiceSplit: InvoiceSplitPreview = useMemo(
+    () =>
+      buildInvoiceSplitPreview(items, productById, unlisted, splitCategoryById, {
+        lineUnitFor,
+        effectiveTierFor,
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    items,
-    productById,
-    unlisted,
-    splitCategoryById,
-    cpMap,
-    customerTier,
-    priceLayer.data,
-    customerId,
-  ]);
+    [
+      items,
+      productById,
+      unlisted,
+      splitCategoryById,
+      cpMap,
+      customerTier,
+      priceLayer.data,
+      customerId,
+    ],
+  );
 
   // Newest-first "order so far" for the scan tray. Same inputs as the total
   // memo, so the tray and the footer cannot disagree.
@@ -1442,60 +1426,11 @@ function ProductPickView({
   // these variables 1:1 by design — see drafts-payload.ts). Every money value
   // flows through computeLineSubtotal elsewhere (never re-derived here); this
   // memo just packages the CURRENT effective price/qty per line.
-  const draftCatalogLines = useMemo<DraftCatalogLine[]>(() => {
-    const lines: DraftCatalogLine[] = [];
-    for (const [productId, line] of Object.entries(items)) {
-      const p = productById.get(productId);
-      if (!p) continue;
-      const qty = effectiveQty(line, p.unitsPerBox);
-      if (qty <= 0) continue;
-      const special = lineSpecialFor(line, p);
-      const tierPrice = tierPriceFor(p);
-      const listPrice = toNumber(p.pricePerUnit);
-      // B747: a unit-sold line's comparison base is its OWN resolved price, never the pack's
-      // tier price — same fix as lineUnitFor/computeOrderTotal (lib/cart-order-total.ts). Before
-      // this, a parked unit line was written to the wire as a plain STANDARD/pack line (no
-      // unitLabel at all), so this screen's own drafts never actually carried the field the old
-      // whole-draft resume refusal keyed on — that refusal only ever fired for a draft parked by
-      // a different client.
-      const priceBase = lineBaseFor(line, p);
-      // Mobile has no separate "permanent discount" concept — any explicit
-      // override the operator set is tagged MANUAL (never DISCOUNTED), which
-      // is exactly what the resume-hydration pin rule above checks for.
-      // #2696(c): a special line's override parks only WITH its reason (as submit sends it).
-      const hasOverride =
-        (!special || !!line.overrideReason?.trim()) &&
-        line.unitPrice != null &&
-        line.unitPrice !== priceBase;
-      lines.push({
-        productId,
-        productName: displayName(p),
-        unit: p.unit ?? "each",
-        listPrice,
-        ...(special ? { specialPrice: tierPrice } : {}),
-        ...(hasOverride ? { discountedPrice: line.unitPrice } : {}),
-        ...(hasOverride && line.overrideReason ? { overrideReason: line.overrideReason } : {}),
-        unitPrice: hasOverride ? line.unitPrice! : priceBase,
-        priceType: hasOverride ? "MANUAL" : special ? "SPECIAL" : "STANDARD",
-        qty,
-        ...(p.unitsPerBox ? { unitsPerBox: Number(p.unitsPerBox) } : {}),
-        ...(line.boxes != null ? { boxes: line.boxes } : {}),
-        ...(line.pieces != null ? { pieces: line.pieces } : {}),
-        ...(line.unitLabel ? { unitLabel: line.unitLabel } : {}),
-        ...(line.derivedBase ? { derivedBase: line.derivedBase } : {}),
-        ...(hasOverride && line.priceSource ? { priceSource: line.priceSource } : {}),
-        ...(p.averageCost != null
-          ? { unitCost: toNumber(p.averageCost) }
-          : p.standardCost != null
-            ? { unitCost: toNumber(p.standardCost) }
-            : {}),
-        ...(p.category ? { category: p.category } : {}),
-        ...(line.note?.trim() ? { note: line.note.trim() } : {}),
-      });
-    }
-    return lines;
+  const draftCatalogLines = useMemo<DraftCatalogLine[]>(
+    () => buildDraftCatalogLines(items, productById, { lineSpecialFor, tierPriceFor, lineBaseFor }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, productById, cpMap, customerTier, priceLayer.data, customerId]);
+    [items, productById, cpMap, customerTier, priceLayer.data, customerId],
+  );
 
   const draftBuilderState = useMemo<DraftBuilderState>(
     () => ({
@@ -2389,19 +2324,11 @@ function ProductPickView({
             <Ionicons name="arrow-forward" size={14} color="#fff" />
           </Pressable>
         </View>
-        {layerGate.message ? (
-          <Pressable
-            onPress={layerGate.canRetry ? priceLayer.refetch : undefined}
-            disabled={!layerGate.canRetry}
-            accessibilityRole={layerGate.canRetry ? "button" : "text"}
-            accessibilityLabel={layerGate.message}
-            hitSlop={6}
-          >
-            <Text style={{ color: ios.system.orangeInk, fontSize: 12, textAlign: "center" }}>
-              {layerGate.message}
-            </Text>
-          </Pressable>
-        ) : null}
+        <PriceLayerGateNotice
+          gate={layerGate}
+          onRetry={priceLayer.refetch}
+          textStyle={{ color: ios.system.orangeInk, fontSize: 12, textAlign: "center" }}
+        />
         <View style={styles.footerSubRow}>
           {/* A rejected draft write used to be silent everywhere. The order
               itself is never at risk — it is right here on screen — so say
