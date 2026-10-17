@@ -504,11 +504,15 @@ describe("K11-03: a refresh comes back to the section you jumped to", () => {
     expect(window.location.hash).toBe("#units-v2-grid-title");
   });
 
-  it("hands the router's own history state back unchanged", () => {
+  it("writes the hash with replaceState(null, ...): the old state object is not carried over", () => {
+    // K11 fold (NIT1): this used to assert the router's state was handed back unchanged.
     window.history.replaceState({ __NA: true, tree: [1] }, "", "/products/p1");
+    const replace = jest.spyOn(window.history, "replaceState");
     mount();
     fireEvent.click(link("h-sales"));
-    expect(window.history.state).toEqual({ __NA: true, tree: [1] });
+    expect(replace).toHaveBeenCalledWith(null, "", "/products/p1#h-sales");
+    expect(window.history.state).toBeNull();
+    replace.mockRestore();
   });
 
   it("on mount, a hash naming a section jumps to it once and focuses its heading", () => {
@@ -573,5 +577,94 @@ describe("K11-03: a refresh comes back to the section you jumped to", () => {
     await addLate("h-sales");
     expect(scrolled.map((s) => s.el.id)).toEqual(["h-units"]);
     expect(window.location.hash).toBe("#h-units");
+  });
+});
+
+describe("K11 fold: the mount-hash jump never steals the person's typing", () => {
+  const SHORT_PAGE = (
+    <div>
+      <ProductJumpLinks />
+      <h1 id="h-product">Cola</h1>
+      <h2 id="h-units">Units</h2>
+    </div>
+  );
+  let outside: HTMLInputElement;
+  beforeEach(() => {
+    // The dashboard header search lives outside #main-content.
+    outside = document.createElement("input");
+    document.body.appendChild(outside);
+  });
+  afterEach(() => outside.remove());
+
+  it("scrolls but does not focus when focus is already in another field", () => {
+    window.history.replaceState(null, "", "/products/p1#h-sales");
+    outside.focus();
+    mount();
+    expect(scrolled.map((s) => s.el.id)).toEqual(["h-sales"]);
+    expect(outside).toHaveFocus();
+    expect(target("h-sales")).not.toHaveFocus();
+  });
+
+  it("still focuses the heading when nothing has focus (body)", () => {
+    window.history.replaceState(null, "", "/products/p1#h-sales");
+    (document.activeElement as HTMLElement | null)?.blur();
+    mount();
+    expect(target("h-sales")).toHaveFocus();
+  });
+
+  it("still focuses the heading when #main-content itself has focus", () => {
+    window.history.replaceState(null, "", "/products/p1#h-sales");
+    main.setAttribute("tabindex", "-1");
+    main.focus();
+    mount();
+    expect(target("h-sales")).toHaveFocus();
+  });
+
+  it("a click on a link still focuses the heading, whatever had focus before", () => {
+    outside.focus();
+    mount();
+    fireEvent.click(link("h-sales"));
+    expect(target("h-sales")).toHaveFocus();
+  });
+
+  it.each(["wheel", "touchstart", "pointerdown", "keydown"])(
+    "a %s anywhere in the document (capture phase, even from the header) cancels the waiting hash",
+    async (type) => {
+      window.history.replaceState(null, "", "/products/p1#h-sales");
+      mount(SHORT_PAGE);
+      act(() => {
+        // Non-bubbling and outside #main-content: only a document capture listener sees it.
+        outside.dispatchEvent(new Event(type, { bubbles: false }));
+      });
+      const late = document.createElement("h2");
+      late.id = "h-sales";
+      late.setAttribute("data-shift", "");
+      await act(async () => {
+        document.body.appendChild(late);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await frames();
+      expect(scrolled).toHaveLength(0);
+    },
+  );
+});
+
+describe("K11 fold: the section observer watches the scroller", () => {
+  it("roots the IntersectionObserver on #main-content", () => {
+    mount();
+    expect(ioOptions?.root).toBe(main);
+  });
+
+  it("falls back to the viewport (null) when #main-content is absent", () => {
+    main.remove();
+    document.body.appendChild(host);
+    try {
+      mount();
+      expect(ioOptions).toBeDefined();
+      expect(ioOptions?.root).toBeNull();
+    } finally {
+      host.remove();
+    }
   });
 });

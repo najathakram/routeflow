@@ -230,7 +230,8 @@ export function ProductJumpLinks() {
         if (on) setCurrent(on.id);
         else if ([...visible.values()].every((v) => !v)) setCurrent(null);
       },
-      { rootMargin: `${-stripH}px 0px -60% 0px` },
+      // The page scrolls inside #main-content, so that is the observer's root (null, the viewport, without it).
+      { root: document.getElementById("main-content"), rootMargin: `${-stripH}px 0px -60% 0px` },
     );
     for (const s of sections) {
       const el = document.getElementById(s.hrefId);
@@ -366,15 +367,17 @@ export function ProductJumpLinks() {
       hashDone.current = true;
       return;
     }
-    const scroller: EventTarget = document.getElementById("main-content") ?? document;
+    // On `document` in the capture phase: typing in the header search or a touch outside #main-content, or an
+    // event something stopped from bubbling, still means the person took over.
     const stop = () => {
       hashDone.current = true;
     };
     for (const type of USER_TAKEOVER_EVENTS)
-      scroller.addEventListener(type, stop, { passive: true });
+      document.addEventListener(type, stop, { passive: true, capture: true });
     const t = window.setTimeout(stop, HASH_WAIT_MS);
     return () => {
-      for (const type of USER_TAKEOVER_EVENTS) scroller.removeEventListener(type, stop);
+      for (const type of USER_TAKEOVER_EVENTS)
+        document.removeEventListener(type, stop, { capture: true });
       window.clearTimeout(t);
     };
   }, []);
@@ -390,7 +393,11 @@ export function ProductJumpLinks() {
     const hit = sections.find((s) => s.id === name || s.hrefId === name);
     if (!hit) return;
     hashDone.current = true;
-    startJump(hit.id, hit.hrefId, true);
+    // Focus the heading only when focus is not somewhere the person put it (a header search, Ctrl+K): the page
+    // still scrolls, but typing is never stolen. A click on a link always focuses.
+    const active = document.activeElement;
+    const free = !active || active === document.body || active.id === "main-content";
+    startJump(hit.id, hit.hrefId, free);
   }, [sections, startJump]);
 
   if (!show) return null;
@@ -400,11 +407,11 @@ export function ProductJumpLinks() {
     e.preventDefault();
     hashDone.current = true;
     if (!startJump(s.id, s.hrefId, true)) return;
-    // The hash is the section's own id; replaceState keeps the path, the query (`?customer=`) and the
-    // router's history state, and adds no history entry.
+    // The hash is the section's own id; replaceState keeps the path and the query (`?customer=`), adds no
+    // history entry, and passes `null` state rather than the router's own object.
     try {
       window.history.replaceState(
-        window.history.state,
+        null,
         "",
         `${window.location.pathname}${window.location.search}#${s.hrefId}`,
       );
