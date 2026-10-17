@@ -12,6 +12,7 @@ import type { UnitsCardProduct } from "./ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "./units-v2-testids";
 import type { GridEditApi } from "./units-v2/edit/edit-types";
 import { useAddUnitIntent, type AddUnitIntent } from "./units-v2/edit/add-unit-intent";
+import { canonicalPriceText } from "./units-v2/edit/price-text";
 import { ADD_UNIT_FIRST } from "./units-v2/edit/view-from-grid";
 
 /**
@@ -79,9 +80,11 @@ function cellView(
   return { tier, display, word, aria: `${name} ${row.label} price, ${display}` };
 }
 
-/** The text an input starts from: a typed (Set) price as the API gave it; Auto and No price start empty. */
+/** The text an input starts from: a typed (Set) price in its money text ("30.00"); Auto and No price start empty. */
 const originalText = (cell: ProductPriceGridCellDto | undefined): string =>
-  cell && cell.source === "set" && Number(cell.value) > 0 ? String(cell.value) : "";
+  cell && cell.source === "set" && Number(cell.value) > 0
+    ? canonicalPriceText(String(cell.value))
+    : "";
 
 interface EditTarget {
   edit: GridEditApi;
@@ -196,23 +199,73 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
   const addUnit = edit.addUnitProblem(t.ref, tier);
   const problem = edit.problem(t.ref, tier) ?? addUnit;
   const pid = T.problem(t.layout, t.ref, tier);
+  // K11-12: the text the box held when it took focus (Escape puts it back), and whether focus is in it. While it is
+  // not, a price shows in its money text, so a value a plan drafted ("1.4") reads "1.40" too.
+  const atFocus = React.useRef<string | null>(null);
+  const justFocused = React.useRef(false);
+  const [inside, setInside] = React.useState(false);
+  const text = edit.text(t.ref, tier, t.original);
   return (
     <>
-      <input
-        ref={el}
-        type="text"
-        inputMode="decimal"
-        data-testid={T.input(t.ref, tier)}
-        aria-label={`${t.name} ${t.unit} price`}
-        aria-invalid={problem ? true : undefined}
-        aria-describedby={problem ? pid : undefined}
-        placeholder={view.display}
-        value={edit.text(t.ref, tier, t.original)}
-        onChange={(e) => edit.setText(t.ref, tier, e.target.value, t.original)}
-        className={`h-9 w-24 rounded-md border bg-white px-2 text-sm tabular-nums text-navy focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 ${
-          problem ? "border-red-600" : edit.changed(t.ref, tier) ? "border-brand-500" : FIELD_BORDER
-        }`}
-      />
+      <span className="relative block w-fit">
+        <span
+          aria-hidden="true"
+          data-testid={T.inputPrefix(t.ref, tier, t.layout)}
+          className="pointer-events-none absolute inset-y-0 left-2 flex items-center text-sm text-navy/50"
+        >
+          $
+        </span>
+        <input
+          ref={el}
+          type="text"
+          inputMode="decimal"
+          data-testid={T.input(t.ref, tier)}
+          aria-label={`${t.name} ${t.unit} price`}
+          aria-invalid={problem ? true : undefined}
+          aria-describedby={problem ? pid : undefined}
+          placeholder={view.display}
+          value={inside ? text : canonicalPriceText(text)}
+          onFocus={(e) => {
+            atFocus.current = text;
+            justFocused.current = true;
+            setInside(true);
+            e.currentTarget.select();
+          }}
+          onMouseUp={(e) => {
+            // The click that gave the box focus must not collapse the selection the focus made (Safari does).
+            if (justFocused.current) e.preventDefault();
+            justFocused.current = false;
+          }}
+          onBlur={() => {
+            justFocused.current = false;
+            setInside(false);
+            // A price the user typed settles to its money text; one equal to the saved price is then no change at all.
+            // (Not while the server's "add the unit first" refusal of this very text is showing: its pointer is what
+            // the user is about to click, and rewriting the text would take it away.)
+            if (atFocus.current !== null && text !== atFocus.current && !addUnit) {
+              const settled = canonicalPriceText(text);
+              if (settled !== text) edit.setText(t.ref, tier, settled, t.original);
+            }
+            atFocus.current = null;
+          }}
+          onKeyDown={(e) => {
+            // Escape puts the box back to what it held on focus; with nothing to put back it goes on to the page.
+            if (e.key !== "Escape" || e.nativeEvent.isComposing) return;
+            if (atFocus.current === null || text === atFocus.current) return;
+            e.preventDefault();
+            e.stopPropagation();
+            edit.setText(t.ref, tier, atFocus.current, t.original);
+          }}
+          onChange={(e) => edit.setText(t.ref, tier, e.target.value, t.original)}
+          className={`h-9 w-24 rounded-md border bg-white pl-5 pr-2 text-sm tabular-nums text-navy focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 ${
+            problem
+              ? "border-red-600"
+              : edit.changed(t.ref, tier)
+                ? "border-brand-500"
+                : FIELD_BORDER
+          }`}
+        />
+      </span>
       {problem && (
         <p id={pid} className="mt-1 max-w-[12rem] text-[11px] text-red-600">
           {problem}

@@ -205,7 +205,7 @@ describe("units v2 edit grid (S12a)", () => {
     await user.click(screen.getByTestId(T.ebCancel));
     expect(screen.getByTestId(T.ebText).textContent).toContain("Discard your unsaved changes?");
     await user.click(screen.getByTestId(T.ebKeep));
-    expect((caseRow().getByTestId(T.input("case", 2)) as HTMLInputElement).value).toBe("14.5");
+    expect((caseRow().getByTestId(T.input("case", 2)) as HTMLInputElement).value).toBe("14.50");
     await user.click(screen.getByTestId(T.ebCancel));
     await user.click(screen.getByTestId(T.ebDiscard));
     expect(mockSave).not.toHaveBeenCalled();

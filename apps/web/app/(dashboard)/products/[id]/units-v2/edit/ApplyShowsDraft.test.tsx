@@ -128,8 +128,8 @@ describe("F03: Apply writes the applied values into the price boxes", () => {
     expect(draft.editing).toBe(true);
     expect(draft.count).toBe(3);
     expect(input("case", 1).value).toBe("31.5");
-    expect(input("case", 2).value).toBe("14.6");
-    expect(input("case", 3).value).toBe("13.1");
+    expect(input("case", 2).value).toBe("14.60");
+    expect(input("case", 3).value).toBe("13.10");
     // a price the plan did not touch is still what it was
     expect(input("case", 4).value).toBe("");
     expect(input("piece", 1).value).toBe("0.92");
@@ -231,7 +231,7 @@ describe("F03: Apply writes the applied values into the price boxes", () => {
     await user.click(screen.getByTestId(T.ebCancel));
     await user.click(screen.getByRole("button", { name: "Discard" }));
     await user.click(screen.getByTestId(T.btnEdit));
-    expect(input("case", 1).value).toBe("30");
+    expect(input("case", 1).value).toBe("30.00");
   });
 
   it("an Auto price the plan set back to Auto shows an empty box", () => {
@@ -452,7 +452,7 @@ describe("entry order: the box text equals the request value", () => {
     mount();
     const plan = planTo("case", 2, 14.6);
     act(() => draft.applyPlan(plan, () => plan));
-    expect(input("case", 2).value).toBe("14.6");
+    expect(input("case", 2).value).toBe("14.60");
     await typeInto(user, 2, "");
     expect(input("case", 2).value).toBe("");
     expect(sent(2)).toEqual({ ref: "case", tier: 2, to: null });
@@ -506,7 +506,7 @@ describe("entry order: the box text equals the request value", () => {
     await user.click(screen.getByTestId(T.btnEdit));
     expect(draft.count).toBe(0);
     expect(draft.toRequest()?.patches).toEqual([]);
-    expect(input("case", 1).value).toBe("30");
+    expect(input("case", 1).value).toBe("30.00");
     expect(input("case", 2).value).toBe("13.91");
     expect(input("piece", 1).value).toBe("0.92");
   });
