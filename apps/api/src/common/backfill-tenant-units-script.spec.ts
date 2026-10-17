@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -35,6 +36,9 @@ function helpers(): Record<string, unknown> {
       liveBoth: tryIt(() => m.assertLiveApplyAllowed({ liveOverride: true, backupTaken: true }, false)),
       subNoPlan: m.subOf({ planKey: null, stripeSubId: null, couponFull: undefined }),
       subPlanRaw: m.subOf({ planKey: "GROWTH", stripeSubId: "sub_1", couponFull: true }),
+      applyDefault: m.parseArgs(["--tenant", ${JSON.stringify(ID)}]).apply,
+      applyLocal: m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--local"]).apply,
+      applyFlag: m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--apply"]).apply,
       backupAlias: m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--backup-taken"]).backupTaken,
       skips: m.parentSkipLines([{ reason: "b" }, { reason: "a" }, { reason: "b" }]),
       pieceRows: m.explicitPieceLines([{ label: "Case" }, { label: " Box " }, { label: "Case" }]),
@@ -81,6 +85,38 @@ describe("backfill-tenant-units.mjs gates (U-6, SA M3)", () => {
     const r = run(["--tenant", ID], { DATABASE_URL: "postgresql://u:p@localhost:5432/db" });
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("Missing Railway proxy variables");
+  });
+
+  describe("dry run is the default (SA-810 c)", () => {
+    const h = helpers();
+    const src = readFileSync(SCRIPT, "utf8");
+
+    it("a write needs the explicit --apply flag: --tenant and --local alone never write", () => {
+      expect(h.applyDefault).toBe(false);
+      expect(h.applyLocal).toBe(false);
+      expect(h.applyFlag).toBe(true);
+    });
+
+    it("the plan is applied only behind args.apply, after the live-target guards", () => {
+      const call = src.indexOf("await applyTenantUnitsPlan(");
+      expect(call).toBeGreaterThan(0);
+      expect(src.match(/applyTenantUnitsPlan\(/g)).toHaveLength(1);
+      const block = src.lastIndexOf("if (args.apply) {", call);
+      expect(block).toBeGreaterThan(0);
+      for (const guard of [
+        "assertLiveApplyAllowed(args,",
+        "confirmProtectedOverride(",
+        "assertWritableTenant(",
+      ]) {
+        const at = src.indexOf(guard, block);
+        expect(at).toBeGreaterThan(block);
+        expect(at).toBeLessThan(call);
+      }
+    });
+
+    it("reports the cap overflow in every run, dry or applied", () => {
+      expect(src).toContain("overflowLines(plan.overflow");
+    });
   });
 
   describe("pure helpers", () => {

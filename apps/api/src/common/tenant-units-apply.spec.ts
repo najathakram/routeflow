@@ -28,7 +28,13 @@ type Unit = {
   perParent: number | null;
 };
 type State = {
-  tenantUnits: Array<{ id: string; tenantId: string; nameKey: string; name: string }>;
+  tenantUnits: Array<{
+    id: string;
+    tenantId: string;
+    nameKey: string;
+    name: string;
+    archivedAt?: Date | null;
+  }>;
   productUnits: Unit[];
   products: Array<{ id: string; tenantId: string; unit: string; unitsPerBox: number | null }>;
 };
@@ -81,6 +87,13 @@ function fake(
         .map((u) => ({ id: u.id, productId: u.productId, factorToBase: u.factorToBase }));
     },
     tenantUnit: {
+      // active units (archivedAt null), what U-1's unitRoom counts
+      count: async ({ where }: any) => {
+        log.push("count");
+        return state.tenantUnits.filter(
+          (u) => u.tenantId === where.tenantId && (u.archivedAt ?? null) === where.archivedAt,
+        ).length;
+      },
       // skipDuplicates on the unique (tenantId, nameKey): returns the rows ACTUALLY inserted
       createMany: async ({ data, skipDuplicates }: any) => {
         log.push("createMany");
@@ -390,5 +403,86 @@ describe("batched backfill apply (U-6)", () => {
       perParent: null,
     });
     expect(r.parentsChanged).toBeGreaterThanOrEqual(1);
+  });
+
+  describe("SA-810 cap at apply time (a system writer: never refuses, never exceeds 200)", () => {
+    const crowd = (n: number, archived = 0) => [
+      ...Array.from({ length: n }, (_, i) => ({
+        id: `x${i}`,
+        tenantId: TENANT,
+        nameKey: `have${i}`,
+        name: `Have${i}`,
+      })),
+      ...Array.from({ length: archived }, (_, i) => ({
+        id: `a${i}`,
+        tenantId: TENANT,
+        nameKey: `old${i}`,
+        name: `Old${i}`,
+        archivedAt: new Date("2026-01-01"),
+      })),
+    ];
+    const toCreate = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ name: `New${i}`, nameKey: `new${i}` }));
+    const active = (s: State) => s.tenantUnits.filter((u) => !u.archivedAt).length;
+
+    it("units added by someone else since planning shrink the room: it creates only what fits", async () => {
+      const state: State = { ...seed(0), tenantUnits: crowd(198) };
+      const f = fake(state);
+      const r = await applyTenantUnitsPlan({
+        prisma: f.db,
+        tenantId: TENANT,
+        plan: { toCreate: toCreate(5), links: [], parentFills: [] },
+        productIdByUnit: new Map(),
+      });
+      expect(r.unitsCreated).toBe(2);
+      expect(r.unitsCapped).toBe(3);
+      expect(active(state)).toBe(200);
+    });
+
+    it("a tenant over the cap (230 active, 7 archived) gets 0 new units and no createMany at all", async () => {
+      const state: State = { ...seed(0), tenantUnits: crowd(230, 7) };
+      const f = fake(state);
+      const r = await applyTenantUnitsPlan({
+        prisma: f.db,
+        tenantId: TENANT,
+        plan: { toCreate: toCreate(4), links: [], parentFills: [] },
+        productIdByUnit: new Map(),
+      });
+      expect(r.unitsCreated).toBe(0);
+      expect(r.unitsCapped).toBe(4);
+      expect(active(state)).toBe(230);
+      expect(f.stats.ops.flat()).not.toContain("createMany");
+    });
+
+    it("archived units are not counted: 190 active + 40 archived leaves room for 10", async () => {
+      const state: State = { ...seed(0), tenantUnits: crowd(190, 40) };
+      const r = await applyTenantUnitsPlan({
+        prisma: fake(state).db,
+        tenantId: TENANT,
+        plan: { toCreate: toCreate(10), links: [], parentFills: [] },
+        productIdByUnit: new Map(),
+      });
+      expect(r.unitsCreated).toBe(10);
+      expect(r.unitsCapped).toBe(0);
+    });
+
+    it("a level whose unit was capped out at apply time is left unlinked, reported as changed", async () => {
+      const state: State = { ...seed(1), tenantUnits: crowd(200) };
+      const plan = {
+        toCreate: [{ name: "Case", nameKey: "case" }],
+        links: [{ productUnitId: "pu0", nameKey: "case", label: "Case" }],
+        parentFills: [],
+      };
+      const r = await applyTenantUnitsPlan({
+        prisma: fake(state).db,
+        tenantId: TENANT,
+        plan,
+        productIdByUnit: new Map([["pu0", "p0"]]),
+      });
+      expect(r.unitsCreated).toBe(0);
+      expect(r.linked).toBe(0);
+      expect(r.linksChanged).toBe(1);
+      expect(state.productUnits[0].tenantUnitId).toBeNull();
+    });
   });
 });

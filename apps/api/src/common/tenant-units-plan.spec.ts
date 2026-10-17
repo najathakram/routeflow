@@ -6,7 +6,10 @@ const {
   planTenantUnits,
   planParentFills,
   nameKeyOf,
+  unitNameKey,
   archivedLinkLines,
+  overflowLines,
+  MAX_ACTIVE_TENANT_UNITS,
 } = require("../../scripts/lib/tenant-units-plan.cjs");
 
 type PU = {
@@ -44,7 +47,7 @@ const plan = (productUnits: PU[], products: P[], existing: string[] = []) =>
   });
 
 describe("planTenantUnits (U-6)", () => {
-  it("nameKey is lower(trim(name))", () => {
+  it("nameKey is NFC, then trim, then case-fold (unitNameKey)", () => {
     expect(nameKeyOf("  CaSe ")).toBe("case");
   });
 
@@ -388,5 +391,150 @@ describe("planTenantUnits (U-6)", () => {
       productUnitsLinked: 0,
       productUnitsParentFilled: 0,
     });
+  });
+});
+
+describe("one unit-name key (U-6, SA-810 / SA-797 G1)", () => {
+  // The planner keys by the SAME function U-1's `unitNameKey` is: NFC, then trim, then case-fold.
+  // `tenant-units-parity.spec.ts` pins the port against the TypeScript original.
+  it("exports unitNameKey, and nameKeyOf is that very function", () => {
+    expect(typeof unitNameKey).toBe("function");
+    expect(nameKeyOf).toBe(unitNameKey);
+  });
+
+  it.each([
+    ["Caf\u00e9 (NFC)", "Caf\u00e9", "caf\u00e9"],
+    ["Cafe + U+0301 (NFD)", "Cafe\u0301", "caf\u00e9"],
+    ["\u00c9TUI", "\u00c9TUI", "\u00e9tui"],
+    ["E + U+0301 + TUI (NFD)", "E\u0301TUI", "\u00e9tui"],
+    ["NBSP padded", "\u00a0Case\u00a0", "case"],
+    ["Stra\u00dfe keeps the sharp s", "Stra\u00dfe", "stra\u00dfe"],
+    ["STRASSE stays its own word", "STRASSE", "strasse"],
+    ["trailing spaces", "Case   ", "case"],
+    ["mixed unicode whitespace", "\u2003\ufeffCase\u3000", "case"],
+  ])("keys %s", (_label, input, key) => {
+    expect(unitNameKey(input)).toBe(key);
+  });
+
+  it("the plan merges NFC / NFD / \u00c9TUI / NBSP spellings and keeps Stra\u00dfe and STRASSE apart", () => {
+    const r = plan(
+      [
+        pu("a", "Caf\u00e9"),
+        pu("b", "Cafe\u0301"),
+        pu("c", "\u00c9TUI"),
+        pu("d", "E\u0301tui\u00a0"),
+        pu("e", "Stra\u00dfe"),
+        pu("f", "STRASSE"),
+        pu("g", "Case  "),
+        pu("h", "\u00a0case"),
+      ],
+      [],
+    );
+    expect(r.toCreate.map((c: { nameKey: string }) => c.nameKey)).toEqual([
+      "caf\u00e9",
+      "case",
+      "strasse",
+      "stra\u00dfe",
+      "\u00e9tui",
+    ]);
+  });
+});
+
+describe("SA-810 cap: the backfill is a SYSTEM writer (U-6)", () => {
+  const units = (active: number, archived = 0) => [
+    ...Array.from({ length: active }, (_, i) => ({ nameKey: `have${i}`, name: `Have${i}` })),
+    ...Array.from({ length: archived }, (_, i) => ({
+      nameKey: `old${i}`,
+      name: `Old${i}`,
+      archivedAt: new Date("2026-01-01"),
+    })),
+  ];
+  const words = (n: number) => Array.from({ length: n }, (_, i) => pu(`w${i}`, `Word${i}`));
+  const run = (existingUnits: object[], productUnits: PU[], products: P[] = []) =>
+    planTenantUnits({ productUnits, products, existingUnits });
+  const keys = (r: { toCreate: Array<{ nameKey: string }> }) => r.toCreate.map((c) => c.nameKey);
+
+  it("pins the cap at SA-810's 200", () => {
+    expect(MAX_ACTIVE_TENANT_UNITS).toBe(200);
+  });
+
+  it("195 active + 10 planned: 5 created, 5 reported as overflow, those levels left unlinked", () => {
+    const r = run(units(195), words(10));
+    expect(r.toCreate).toHaveLength(5);
+    expect(r.overflow).toHaveLength(5);
+    expect(r.counts).toMatchObject({
+      tenantUnitsCreated: 5,
+      tenantUnitsOverflow: 5,
+      productUnitsLinked: 5,
+      productUnitsUnlinkedOverflow: 5,
+    });
+    const created = new Set(keys(r));
+    const over = new Set(r.overflow.map((o: { name: string }) => o.name.toLowerCase()));
+    expect(created.size + over.size).toBe(10);
+    for (const k of created) expect(over.has(k)).toBe(false);
+    // a link is planned only for a level whose unit is created: an overflow level stays unlinked
+    expect(r.links.every((l: { nameKey: string }) => created.has(l.nameKey))).toBe(true);
+    expect(195 + r.toCreate.length).toBe(MAX_ACTIVE_TENANT_UNITS);
+  });
+
+  it("keeps the most used names and reports the rest by name with their counts", () => {
+    const levels = [...words(6), pu("x1", "Word5"), pu("x2", "word5"), pu("y1", "Word4")];
+    const r = run(units(197), levels, [prod("p1", "Word4"), prod("p2", "Word0")]);
+    expect(keys(r)).toEqual(["word0", "word4", "word5"]);
+    expect(r.overflow).toEqual([
+      { name: "Word1", levels: 1, products: 0 },
+      { name: "Word2", levels: 1, products: 0 },
+      { name: "Word3", levels: 1, products: 0 },
+    ]);
+  });
+
+  it("a tenant already over the cap is grandfathered: 0 new units, nothing refused", () => {
+    const r = run(units(230), [pu("c", "Case"), ...words(3)]);
+    expect(r.toCreate).toEqual([]);
+    expect(r.counts.tenantUnitsCreated).toBe(0);
+    expect(r.overflow.map((o: { name: string }) => o.name)).toEqual([
+      "Case",
+      "Word0",
+      "Word1",
+      "Word2",
+    ]);
+  });
+
+  it("a grandfathered tenant still links levels to units it already has", () => {
+    const r = run([...units(230), { nameKey: "case", name: "Case" }], [pu("c", "Case")]);
+    expect(r.toCreate).toEqual([]);
+    expect(r.overflow).toEqual([]);
+    expect(r.links).toEqual([{ productUnitId: "c", nameKey: "case", label: "Case" }]);
+  });
+
+  it("exactly 200 active: no room; 199: room for one", () => {
+    expect(run(units(200), words(2)).toCreate).toHaveLength(0);
+    expect(run(units(199), words(2)).toCreate).toHaveLength(1);
+  });
+
+  it("archived units do not count against the cap (U-1 unitRoom counts archivedAt null only)", () => {
+    const r = run(units(190, 40), words(10));
+    expect(r.toCreate).toHaveLength(10);
+    expect(r.overflow).toEqual([]);
+  });
+
+  it("under the cap nothing changes: no overflow, every unit created", () => {
+    const r = run(units(10), words(3));
+    expect(r.toCreate).toHaveLength(3);
+    expect(r.overflow).toEqual([]);
+    expect(r.counts).toMatchObject({ tenantUnitsOverflow: 0, productUnitsUnlinkedOverflow: 0 });
+  });
+
+  it("prints the overflow as names and counts only, capped at 50 names", () => {
+    expect(overflowLines([])).toEqual([]);
+    expect(overflowLines([{ name: "Word1", levels: 2, products: 1 }])).toEqual([
+      "not added, the tenant is at the 200-unit cap (SA-810): 1 unit name(s); " +
+        "their levels stay unlinked and still sell by label",
+      "  Word1: 2 level(s), 1 pack word(s)",
+    ]);
+    const many = Array.from({ length: 60 }, (_, i) => ({ name: `N${i}`, levels: 1, products: 0 }));
+    const lines = overflowLines(many);
+    expect(lines).toHaveLength(1 + 50 + 1);
+    expect(lines[lines.length - 1]).toBe("  ... and 10 more");
   });
 });
