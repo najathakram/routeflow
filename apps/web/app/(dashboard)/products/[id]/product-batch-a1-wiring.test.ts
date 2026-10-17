@@ -50,7 +50,8 @@ describe("products/[id]/page.tsx — batch A1 wiring", () => {
     expect(src).toMatch(/object-contain max-lg:!\[object-position:50%_50%\] lg:object-cover/);
   });
 
-  it("D1: the Details actions container left-aligns full-width below sm, stays justify-end from sm", () => {
-    expect(src).toContain("justify-end gap-2 max-sm:w-full max-sm:justify-start");
+  it("D1 (K11-22): the Details actions container no longer forces its own row below sm; Edit and the More menu share the header's row", () => {
+    expect(src).toContain("justify-end gap-2");
+    expect(src).not.toContain("max-sm:w-full max-sm:justify-start");
   });
 });
