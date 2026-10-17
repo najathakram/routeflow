@@ -50,7 +50,7 @@ export function ProductPricingV2({
       />
       <SaveStatus productId={product.id} />
       <CustomerPriceView productId={product.id} />
-      <PriceEditBar />
+      <PriceEditBar changePricesOpen={cp.open} />
     </PriceDraftProvider>
   );
 }

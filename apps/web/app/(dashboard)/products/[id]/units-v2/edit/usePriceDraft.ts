@@ -194,8 +194,11 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const [undoStale, setUndoStale] = React.useState(false);
   const [notice, setNotice] = React.useState<string | null>(null);
   // K11-15: the leads Apply staged and the draft they produced (its signature); read back once the draft has rendered.
-  const [applied, setApplied] = React.useState<{ leads: string[]; sig: string } | null>(null);
-  const [pendingLeads, setPendingLeads] = React.useState<string[] | null>(null);
+  // `sig` is null for the render Apply produced (the draft is exactly what Apply made, so the sentence shows at once);
+  // an effect then records the draft's signature, and any later difference is an edit.
+  const [applied, setApplied] = React.useState<{ leads: string[]; sig: string | null } | null>(
+    null,
+  );
 
   // SA-799: a plain cell edit shows customer changes too. Same query (and cache entry) as Change prices' names; only
   // fetched while editing, so the product page costs nothing extra when nobody edits.
@@ -227,12 +230,10 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const dirty = count > 0 || problems.length > 0 || conflicts.length > 0;
   const sig = JSON.stringify([patches, customerMoves, sendKeeps]);
   React.useEffect(() => {
-    if (!pendingLeads) return;
-    setApplied({ leads: pendingLeads, sig });
-    setPendingLeads(null);
-  }, [pendingLeads, sig]);
+    if (applied && applied.sig === null) setApplied({ leads: applied.leads, sig });
+  }, [applied, sig]);
   const appliedLead =
-    applied && count > 0 && applied.sig === sig
+    applied && count > 0 && (applied.sig === null || applied.sig === sig)
       ? new Intl.ListFormat("en").format(applied.leads)
       : null;
 
@@ -591,8 +592,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
         lead && (count === 0 || appliedLead)
           ? [...(count === 0 ? [] : applied!.leads), lead]
           : null;
-      setPendingLeads(leads);
-      if (!leads) setApplied(null);
+      setApplied(leads ? { leads, sig: null } : null);
       beginEditing();
       const key = `plan:${planSeq.current++}`;
       setEntries([...entries, { kind: "plan", key, plan, replan }]);

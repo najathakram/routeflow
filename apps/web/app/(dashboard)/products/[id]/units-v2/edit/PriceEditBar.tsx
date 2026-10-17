@@ -57,6 +57,8 @@ function useClearOfShellPadding() {
   return { ref, bottom: inset === 0 ? 0 : -inset };
 }
 
+const FINISH_FIRST = "Finish Change prices first.";
+
 /** K11-15: right after Change prices Apply the bar says what is staged; any later edit is the plain count. */
 const countLine = (count: number, lead: string | null) =>
   lead
@@ -69,13 +71,33 @@ const countLine = (count: number, lead: string | null) =>
  * (aria-disabled) so the skip link can always reach it. Cancel on a changed draft asks first.
  * A failed save keeps the draft and says why in a role="alert" line.
  */
-export function PriceEditBar() {
+export function PriceEditBar({ changePricesOpen = false }: { changePricesOpen?: boolean }) {
   const d = usePriceDraft();
-  const [confirm, setConfirm] = React.useState(false);
+  const [asking, setConfirm] = React.useState(false);
+  // K11-18: while Change prices is open the panel owns Cancel and the primary; the bar's pair (and a Discard question
+  // that would be a second primary) steps aside, and Ctrl/Cmd+S says so instead of saving.
+  const confirm = asking && !changePricesOpen;
+  const [told, setTold] = React.useState(false);
   const clear = useClearOfShellPadding();
   React.useEffect(() => {
     if (!d.editing) setConfirm(false);
   }, [d.editing]);
+  React.useEffect(() => {
+    if (!changePricesOpen) {
+      setTold(false);
+      return;
+    }
+    setConfirm(false);
+    const block = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        e.stopPropagation(); // before the draft's own Ctrl/Cmd+S listener on the document
+        setTold(true);
+      }
+    };
+    window.addEventListener("keydown", block, true);
+    return () => window.removeEventListener("keydown", block, true);
+  }, [changePricesOpen]);
   if (!d.editing) return null;
   const label = (ref: string) => d.grid?.rows.find((r) => r.ref === ref)?.label ?? ref;
   return (
@@ -102,7 +124,8 @@ export function PriceEditBar() {
           ) : (
             <span>{d.count === 0 ? "Nothing changed yet" : countLine(d.count, d.appliedLead)}</span>
           )}
-          {!confirm && (
+          {told && changePricesOpen && <span className="ml-2">{FINISH_FIRST}</span>}
+          {!confirm && !changePricesOpen && (
             <span data-testid={T.ebHint} className="ml-2 text-xs text-navy/60">
               {isMac() ? "⌘S saves" : "Ctrl+S saves"}
             </span>
@@ -156,6 +179,16 @@ export function PriceEditBar() {
               Keep editing
             </button>
           </div>
+        ) : changePricesOpen ? (
+          <div className="flex min-h-9 items-center">
+            <button
+              type="button"
+              onClick={() => document.getElementById("change-panel")?.focus()}
+              className="rounded text-sm font-medium text-navy underline underline-offset-2 hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
+            >
+              {FINISH_FIRST}
+            </button>
+          </div>
         ) : (
           <div className="flex items-center gap-2">
             <button
@@ -207,7 +240,12 @@ export function SkipToSave() {
       data-testid={T.skipSave}
       onClick={(e) => {
         e.preventDefault();
-        document.getElementById(T.ebSave)?.focus();
+        // K11-18: with Change prices open the bar has no Save; the next step is Apply (or the panel, while Apply is off).
+        const apply = document.getElementById("ch-apply") as HTMLButtonElement | null;
+        (
+          document.getElementById(T.ebSave) ??
+          (apply && !apply.disabled ? apply : document.getElementById("change-panel"))
+        )?.focus();
       }}
       className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-white focus:px-3 focus:py-1.5 focus:text-sm focus:font-medium focus:text-navy focus:shadow"
     >

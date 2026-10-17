@@ -164,8 +164,9 @@ function ChangePricesForm({
           <span>
             Also {direction} the prices you set
             <span className="block text-xs text-ink-500">
-              {new Intl.ListFormat("en").format(setCells)}
-              {mode === "percent" && value > 0 ? `, by ${value}%.` : "."}
+              {also
+                ? `${new Intl.ListFormat("en").format(setCells)}${mode === "percent" && value > 0 ? `, by ${value}%.` : "."}`
+                : `Prices you set stay as they are: ${new Intl.ListFormat("en").format(setCells)}. Tick to ${direction} them too.`}
             </span>
           </span>
         </label>
@@ -188,7 +189,7 @@ function ChangePricesForm({
       <h3 id={`${ids}-title`} className={LBL}>
         Change prices
       </h3>
-      <p className="mt-1 text-sm text-ink-500">Pick one unit and say how much to move it.</p>
+      <p className="mt-1 text-sm text-ink-500">Pick a unit and how much to move it.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {field(
           "unit",
@@ -250,7 +251,7 @@ function ChangePricesForm({
             onBlur={() => setBlurred(true)}
           />,
           mode === "percent"
-            ? "Other units that move change by the same percent."
+            ? "Other units move by the same percent."
             : `Per ${view.rows.find((r) => r.ref === unit)?.label ?? "unit"}. Other units that move change in proportion to what they contain.`,
         )}
       </div>

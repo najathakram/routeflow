@@ -7,6 +7,7 @@ import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { EditablePricesGrid } from "../edit/EditablePricesGrid";
 import { PriceDraftProvider } from "../edit/PriceDraftProvider";
 import { PriceEditBar } from "../edit/PriceEditBar";
+import { usePriceDraft } from "../edit/usePriceDraft";
 import { ChangePrices, useChangePrices } from "./ChangePrices";
 import { PLAN_TESTIDS as P } from "./plan-testids";
 
@@ -69,6 +70,13 @@ const mockGrid: ProductPriceGridDto = {
 };
 const product = { id: "p1", unit: "Piece", unitsPerBox: 24, pricePerUnit: "1.25" };
 
+const seen: Array<{ count: number; lead: string | null }> = [];
+function Probe() {
+  const d = usePriceDraft();
+  seen.push({ count: d.count, lead: d.appliedLead });
+  return null;
+}
+
 function Harness() {
   const cp = useChangePrices();
   return (
@@ -80,7 +88,8 @@ function Harness() {
         changePricesRef={cp.opener}
         panel={<ChangePrices open={cp.open} onClose={cp.close} openerRef={cp.opener} />}
       />
-      <PriceEditBar />
+      <Probe />
+      <PriceEditBar changePricesOpen={cp.open} />
     </PriceDraftProvider>
   );
 }
@@ -110,6 +119,17 @@ describe("K11-15: after Apply the bar says what is staged and focus goes to Save
     );
     expect(barText()).not.toMatch(/unsaved/);
     expect(document.activeElement).toBe(document.getElementById(T.ebSave));
+  });
+
+  it("no render shows staged prices without the sentence (no one-frame unsaved flash)", async () => {
+    const user = userEvent.setup();
+    mount();
+    await raiseCaseFivePercent(user);
+    seen.length = 0;
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    const staged = seen.filter((r) => r.count > 0);
+    expect(staged.length).toBeGreaterThan(0);
+    expect(staged.every((r) => r.lead === "Case raised 5%")).toBe(true);
   });
 
   it("any later edit returns the bar to the plain count", async () => {
