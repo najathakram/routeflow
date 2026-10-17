@@ -88,13 +88,22 @@ const FRIENDLY: [RegExp, (newPassword?: string) => string][] = [
     /^New password must differ from current password/i,
     () => "Your new password must be different from your current one.",
   ],
+  [
+    /uses Google sign-in and has no password/i,
+    () => "This account signs in with Google and has no password to change yet.",
+  ],
+  [
+    /already has a password/i,
+    () => "This account already has a password. Use Change password instead.",
+  ],
 ];
 
 /**
  * The API's error for a password change, in plain words. A 400 from class-validator carries
  * `message` as an ARRAY (a string-only check dropped it to "Failed"). The policy message does not
- * say which rule failed, so it is narrowed with the password that was sent. Only an error with no
- * message at all falls back, and the fallback says to try again.
+ * say which rule failed, so it is narrowed with the password that was sent. B986: the server's text
+ * is only LOOKED UP here, never rendered; a message this table does not know falls back, and the
+ * fallback says to try again.
  */
 export function passwordErrorMessage(
   err: unknown,
@@ -104,7 +113,8 @@ export function passwordErrorMessage(
   const msg = (err as { response?: { data?: { message?: unknown } } })?.response?.data?.message;
   const parts = (Array.isArray(msg) ? msg : [msg])
     .filter((m): m is string => typeof m === "string" && m.trim() !== "")
-    .map((m) => FRIENDLY.find(([re]) => re.test(m))?.[1](newPassword) ?? m.trim());
+    .map((m) => FRIENDLY.find(([re]) => re.test(m))?.[1](newPassword))
+    .filter((m): m is string => m !== undefined);
   if (parts.length === 0) return fallback;
   const unique = [...new Set(parts)];
   const end = /[.!?]$/.test(unique[unique.length - 1]) ? "." : "";
