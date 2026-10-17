@@ -40,8 +40,9 @@ describe("product page parity inventory (T38)", () => {
   });
 
   it("with the flag on and a non-FAMILY product, the v2 grid AND the old units card both render", () => {
+    // K11-20c: the section sits in ProductPricingRegion (the inline edit mode's full-width wrapper)
     expect(page).toMatch(
-      /\{v2 && product\.kind !== "FAMILY" \? <ProductPricingV2 product=\{product\} \/> : null\}/,
+      /\{v2 && product\.kind !== "FAMILY" \? \(\s*<ProductPricingRegion>\s*<ProductPricingV2 product=\{product\} \/>\s*<\/ProductPricingRegion>\s*\) : null\}/,
     );
     // the old card's gate never mentions v2 except to hide it for a v2 FAMILY
     const oldGate = page.match(/\{([^{}]*)<ProductUnitsCard/);
@@ -50,8 +51,8 @@ describe("product page parity inventory (T38)", () => {
 
   it("the v2 shell is mounted exactly once, only behind the flag", () => {
     expect(page.match(/<ProductPricingV2/g)?.length).toBe(1);
-    const before = page.slice(0, page.indexOf("<ProductPricingV2")).split("\n").slice(-1)[0];
-    expect(before).toMatch(/\{v2 && /);
+    const upTo = page.slice(0, page.indexOf("<ProductPricingV2"));
+    expect(upTo.split("\n").slice(-3, -2)[0]).toMatch(/\{v2 && /);
   });
 
   it("the old Units card keeps its edit controls (name, price, tiers, default, save, remove)", () => {
@@ -90,5 +91,76 @@ describe("product page parity inventory (T38)", () => {
   it("K11-22: the Details header is at most 64 px tall on a phone (44 px controls + max-sm:py-2), and the page tells the controls when the delete confirm is open", () => {
     expect(page).toMatch(/border-b border-surface-border px-5 py-3\.5 max-sm:py-2/);
     expect(page).toMatch(/deleteOpen=\{showDeleteConfirm\}/);
+  });
+});
+
+/**
+ * K11-20c: with the flag on and a product the price window can edit, the legacy card and Details stop editing prices.
+ * Each row of K11-20 section 4 is pinned at the place it lives after the change (source pins; the behaviour is in
+ * ProductUnitsCard.k11-20c.test.tsx, PriceWindowHost.test.tsx and page.k11-20c.test.tsx).
+ */
+describe("K11-20c: where every legacy-card control lives after the change (section 4)", () => {
+  const card = read("ProductUnitsCard.tsx");
+  const figs = read("PriceFigures.tsx");
+
+  it.each([
+    ["1 Unit Name input", card, "aria-label={`${unit.label} name`}"],
+    ["2 factor input", card, 'aria-label={isPiece ? "Smallest unit size"'],
+    ["3 per-row Save and Cancel", card, "onClick={() => onSave(unit, draft)}"],
+    ["3 a v2 row never sends a price key", card, "const dirtyPrice = (i: number) => !figures &&"],
+    ["4 retail figure opens the window", card, "{figure(1)}"],
+    [
+      "4 the figure is a button named Edit {tier} {unit} price",
+      figs,
+      "aria-label={`Edit ${productTierLabel(names, tier)} ${row.label} price`}",
+    ],
+    ["5 Tier prices disclosure stays", card, "Tier prices</summary>"],
+    ["5 four tier figures", card, "{figure(t as (typeof TIERS)[number])}"],
+    [
+      "6 helper sentence replaced by the Auto or Set word",
+      figs,
+      '{cell.source === "set" ? "Set" : "Auto"}',
+    ],
+    ["7 default order unit radio per row", card, "Default order unit\n        </label>"],
+    ["8 Remove per row", card, "hideRemove"],
+    ["9 pack figure reads the grid's pack row", card, "row={packRowOf(grid)}"],
+    ["10 pack Default order unit radio", card, "checked={noneDefault}"],
+    ["11 Couldn't load units, Try again", card, "Try again"],
+    [
+      "12 Add unit: Name and factor stay, Price hidden in v2",
+      card,
+      '{!figures && (\n              <div>\n                <label className={LABEL} htmlFor="new-unit-price">',
+    ],
+    [
+      "13 cascade never offered when no price moved",
+      card,
+      "if (!figures) setProposals(proposeCascade(",
+    ],
+    ["14 Remove confirm dialog", card, "Its prices are deleted."],
+    ["15 header Edit prices button", card, "Edit prices\n            </button>"],
+    ["15 saved line under it", card, 'surface="window"'],
+  ])("%s", (_row, src, needle) => {
+    expect(src).toContain(needle as string);
+  });
+
+  it("the flag-off card and Details keep every price input path", () => {
+    expect(card).toContain("aria-label={`${unit.label} price`}");
+    expect(card).toContain('id="new-unit-price"');
+    expect(page).toContain("{!isFamily && !pricesInWindow && priceEachRow}");
+    expect(page).toContain("Set all to {tierOneLabel(tierLabels)}");
+    expect(page).toMatch(
+      /pricesInWindow\s*\? \{\}\s*: \{ \.\.\.detailsPricePatch\(product, draft, pricesWhenEditStartedRef\.current\) \}/,
+    );
+  });
+
+  it("Details in v2 shows the one price line, and a governed product never gets it", () => {
+    expect(page).toContain("const pricesInWindow = v2 && !unitStructureGoverned(product);");
+    expect(page).toMatch(/pricesInWindow \? \(\s*<DetailsPriceLine/);
+    expect(read("PriceFigures.tsx")).toContain("Save or cancel Details first");
+  });
+
+  it("the page mounts the price host once, around the whole page", () => {
+    expect(page.match(/<PriceWindowHost /g)?.length).toBe(1);
+    expect(page).toContain("<PriceWindowHost product={product} enabled={pricesInWindow}>");
   });
 });

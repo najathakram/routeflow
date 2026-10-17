@@ -103,6 +103,9 @@ import { ProductLabelsCard } from "./ProductLabelsCard";
 import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ProductPricingV2 } from "./ProductPricingV2";
+import { PriceWindowHost, ProductPricingRegion } from "./PriceWindowHost";
+import { DetailsPriceLine } from "./PriceFigures";
+import { unitStructureGoverned } from "./units-v2/structure/unit-structure";
 import { ProductJumpLinks } from "./units-v2/nav/ProductJumpLinks";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
@@ -461,6 +464,9 @@ export default function ProductDetailPage() {
   const currentStock = Number(product.currentStock ?? 0);
   const stockStatus = getStockStatus(currentStock, product.isActive, product.kind);
   const v2Family = v2 && product.kind === "FAMILY";
+  // K11-20c: on a product whose prices the window can edit (not a family, recipe or variant), Details shows its
+  // prices read-only and the Details save carries none: the price window (S9) is the only price writer.
+  const pricesInWindow = v2 && !unitStructureGoverned(product);
   const isFamily = product.kind === "FAMILY";
 
   // MSRP — display-only, never money math. Warn (non-blocking) when it undercuts
@@ -592,7 +598,9 @@ export default function ProductDetailPage() {
         // Only a price the operator changed is sent: a price save elsewhere on the page moves prices outside this
         // form, so the snapshot it opened with must never be written back. Untouched tiers move with a list change exactly like
         // the products list (applyLadderChange, audit 2026-10-14).
-        ...detailsPricePatch(product, draft, pricesWhenEditStartedRef.current),
+        ...(pricesInWindow
+          ? {}
+          : { ...detailsPricePatch(product, draft, pricesWhenEditStartedRef.current) }),
         unitsPerBox: unitsPerBoxToSend,
         // Regulated tags: value to set, null to clear (server auto-nulls the
         // category when the type is cleared).
@@ -1247,7 +1255,7 @@ export default function ProductDetailPage() {
   );
 
   return (
-    <>
+    <PriceWindowHost product={product} enabled={pricesInWindow}>
       {/* Crop-before-upload modal — intercepts every file selection */}
       {cropState && (
         <CropModal
@@ -1622,7 +1630,7 @@ export default function ProductDetailPage() {
                       )
                     }
                   />
-                  {!isFamily && priceEachRow}
+                  {!isFamily && !pricesInWindow && priceEachRow}
                   {/* Variant of — edit only; view mode shows the parent in the header line and the banner */}
                   {isEditing && (
                     <InfoRow
@@ -1735,6 +1743,12 @@ export default function ProductDetailPage() {
                     </div>
                     {tiersBlock}
                   </FamilyPriceSection>
+                ) : pricesInWindow ? (
+                  <DetailsPriceLine
+                    productId={product.id}
+                    isEditing={isEditing}
+                    anchor={() => detailsCardRef.current}
+                  />
                 ) : (
                   tiersBlock
                 )}
@@ -2307,7 +2321,11 @@ export default function ProductDetailPage() {
 
             <ProductLabelsCard productId={product.id} />
             <ProductPortalVisibilityCard product={product} />
-            {v2 && product.kind !== "FAMILY" ? <ProductPricingV2 product={product} /> : null}
+            {v2 && product.kind !== "FAMILY" ? (
+              <ProductPricingRegion>
+                <ProductPricingV2 product={product} />
+              </ProductPricingRegion>
+            ) : null}
             {!v2Family && <ProductUnitsCard product={product} hideAddForm={v2} />}
 
             {/* Sales demand — real data from invoiced sales. In its own file (unlike
@@ -2856,6 +2874,6 @@ export default function ProductDetailPage() {
           )}
         </div>
       </Modal>
-    </>
+    </PriceWindowHost>
   );
 }
