@@ -219,3 +219,47 @@ describe("F10: grid card keeps click-anywhere for the mouse", () => {
     expect(card.contains(document.activeElement)).toBe(false);
   });
 });
+
+describe.each([
+  ["grid", async (_user: ReturnType<typeof userEvent.setup>) => {}],
+  [
+    "list",
+    async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByTitle("Table view"));
+    },
+  ],
+] as const)("K11-09: %s view, ArrowDown from the search", (_view, setup) => {
+  it("moves focus to the first product link and Enter opens it", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ProductsPage />);
+    await setup(user);
+    const search = screen.getByRole("searchbox");
+    await user.click(search);
+    await user.keyboard("Acme");
+    expect(document.activeElement).toBe(search);
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(nameLink("Acme Cola 12oz"));
+    await user.keyboard("{Enter}");
+    expect(mockNav).toHaveBeenCalledTimes(1);
+    expect(mockNav).toHaveBeenCalledWith("/products/p1");
+  });
+
+  it("leaves Tab order alone: the next Tab from the search is not the product link", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ProductsPage />);
+    await setup(user);
+    const search = screen.getByRole("searchbox");
+    search.focus();
+    await user.tab();
+    expect(document.activeElement).not.toBe(nameLink("Acme Cola 12oz"));
+  });
+});
+
+describe("K11-09: the stretched focus ring is drawn inset", () => {
+  it("the card link's ::after ring is inset so the card's overflow-hidden cannot clip it", () => {
+    renderWithProviders(<ProductsPage />);
+    const cls = nameLink("Acme Cola 12oz").className;
+    expect(cls).toMatch(/focus-visible:after:ring-2/);
+    expect(cls).toMatch(/focus-visible:after:ring-inset/);
+  });
+});

@@ -10,7 +10,8 @@ import { cn } from "@routeflow/ui/web";
  *
  * `stretched` (grid card): the link's `::after` covers the whole card (the card is `relative`), so the
  * mouse still clicks anywhere on it. Other controls on the card sit above with `relative z-10`.
- * Its focus ring is drawn on that overlay, so the whole card shows where focus is.
+ * Its focus ring is drawn on that overlay, so the whole card shows where focus is. The ring is inset
+ * (K11-09): the card is `overflow-hidden`, which clipped an outside ring.
  *
  * The click stops here: the card and the table row also have their own click-to-open handler for mouse
  * users, and one click must open the product once.
@@ -30,11 +31,12 @@ export function ProductNameLink({
   return (
     <Link
       href={`/products/${id}`}
+      data-product-name-link=""
       onClick={(e) => e.stopPropagation()}
       className={cn(
         "hover:underline focus-visible:outline-none",
         stretched
-          ? "after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-brand-500"
+          ? "after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-brand-500"
           : "rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500",
       )}
     >
