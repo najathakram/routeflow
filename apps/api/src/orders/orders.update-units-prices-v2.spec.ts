@@ -176,7 +176,7 @@ const liveCategory = {
 describe("OrdersService.updateOrderItems — billing reads typed customer unit prices (S19)", () => {
   let service: OrdersService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let entitlements: { hasFlag: jest.Mock };
+  let entitlements: { hasFlag: jest.Mock; hasFlagStrict: jest.Mock };
   let invoicesService: { revertLinkedInvoicesForOrderEdit: jest.Mock };
 
   beforeEach(async () => {
@@ -286,7 +286,13 @@ describe("OrdersService.updateOrderItems — billing reads typed customer unit p
             removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
         },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+        {
+          provide: EntitlementsService,
+          useValue: (() => {
+            const flagRead = jest.fn().mockResolvedValue(true);
+            return { hasFlag: flagRead, hasFlagStrict: flagRead };
+          })(),
+        },
         {
           provide: RegulatedLedgerService,
           useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },

@@ -16,6 +16,7 @@ import {
   loadUnitsPricesV2,
   omitCustomerLayerHistory,
   UNITS_PRICES_V2_FLAG,
+  type UnitsPricesV2Deps,
 } from "./units-prices-v2";
 
 // Fixture (SA-811a): pack list $42 (a 24-piece Box), Case of 288 at $480, Piece (1) at $1.75.
@@ -72,7 +73,11 @@ const deps = (opts: { rows?: Rows; flag?: boolean | Error; units?: unknown[] }) 
     productUnit: { findMany: jest.fn().mockResolvedValue(opts.units ?? [piece, case288]) },
     productTierUnit: { findMany: jest.fn().mockResolvedValue([]) },
   };
-  return { hasFlag, db, d: { entitlements: { hasFlag }, db, tenantId: "t1" } as never };
+  return {
+    hasFlag,
+    db,
+    d: { entitlements: { hasFlag, hasFlagStrict: hasFlag }, db, tenantId: "t1" } as never,
+  };
 };
 const svcOf = (h: ReturnType<typeof deps>) =>
   ({
@@ -83,10 +88,31 @@ const svcOf = (h: ReturnType<typeof deps>) =>
       }),
       getTenantId: () => "t1",
     },
-    entitlements: { hasFlag: h.hasFlag },
+    entitlements: { hasFlag: h.hasFlag, hasFlagStrict: h.hasFlag },
   }) as never;
 
 describe("loadUnitsPricesV2", () => {
+  // SA-812a G-1: the strict read is the only reader the type accepts. A plain `hasFlag` swallows a failed override lookup
+  // as "no override" (a clean false for this override-only flag), so it must not compile; the directive below fails the
+  // type-check (an unused @ts-expect-error is itself an error) the day hasFlagStrict becomes optional again.
+  it("G-1: a plain { hasFlag } reader does not compile, and is never consulted at run time", async () => {
+    const hasFlag = jest.fn(async () => true);
+    const deps: UnitsPricesV2Deps = {
+      // @ts-expect-error hasFlagStrict is required: a hasFlag-only reader is a type error
+      entitlements: { hasFlag },
+      db: {
+        customerUnitPrice: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue([{ productId: "p1", unitRef: "pack", price: "33" }]),
+        },
+      },
+      tenantId: "t1",
+    };
+    await expect(loadUnitsPricesV2(deps, "c1", ["p1"])).resolves.toBeNull();
+    expect(hasFlag).not.toHaveBeenCalled();
+  });
+
   it("flag on + typed rows: reads them by (customer, products), the ladder of those products, and asks the flag", async () => {
     const h = deps({ rows: [["pack", 33]] });
     const v2 = await loadUnitsPricesV2(h.d, "c1", ["p1", "p1", null]);
@@ -165,7 +191,7 @@ describe("loadUnitsPricesV2", () => {
     const hasFlag = jest.fn().mockResolvedValue(true);
     expect(
       await loadUnitsPricesV2(
-        { entitlements: { hasFlag }, db: {}, tenantId: "t1" },
+        { entitlements: { hasFlagStrict: hasFlag }, db: {}, tenantId: "t1" },
         "c1",
         ["p1"],
         [7],
@@ -173,7 +199,11 @@ describe("loadUnitsPricesV2", () => {
     ).not.toBeNull();
     expect(await loadUnitsPricesV2(deps({}).d, null, ["p1"])).toBeNull();
     expect(
-      await loadUnitsPricesV2({ entitlements: { hasFlag }, db: {}, tenantId: null }, "c1", ["p1"]),
+      await loadUnitsPricesV2(
+        { entitlements: { hasFlagStrict: hasFlag }, db: {}, tenantId: null },
+        "c1",
+        ["p1"],
+      ),
     ).toBeNull();
   });
 });
@@ -402,7 +432,7 @@ describe("R3 / R3a: the pre-fill is the resolver's price, never last-given", () 
         }),
         getTenantId: () => "t1",
       },
-      entitlements: { hasFlag: h.hasFlag },
+      entitlements: { hasFlag: h.hasFlag, hasFlagStrict: h.hasFlag },
     } as never;
     return omitCustomerLayerHistory(svc, "c1", history);
   };
@@ -428,7 +458,7 @@ describe("R3 / R3a: the pre-fill is the resolver's price, never last-given", () 
         }),
         getTenantId: () => "t1",
       },
-      entitlements: { hasFlag: h.hasFlag },
+      entitlements: { hasFlag: h.hasFlag, hasFlagStrict: h.hasFlag },
     } as never;
     await omitCustomerLayerHistory(svc, "c1", { p1: { lastPrice: 36, listPriceAtTime: 42 } });
     expect(seen).toHaveLength(3);

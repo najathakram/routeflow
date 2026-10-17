@@ -58,14 +58,13 @@ export interface UnitsPricesV2 {
 }
 
 export interface UnitsPricesV2Deps {
+  /**
+   * Only the STRICT read is accepted (EntitlementsService.hasFlagStrict): it throws on a failed override or plan read.
+   * A plain `{ hasFlag }` reader swallows a failed override lookup as "no override", which for this override-only flag
+   * is a clean false that would bill a typed-price customer the tier price, so it must not compile.
+   */
   entitlements:
-    | {
-        hasFlag?: (tenantId: string, flag: string) => Promise<boolean>;
-        /** Throws on a failed override or plan read instead of answering false (EntitlementsService.hasFlagStrict). */
-        hasFlagStrict?: (tenantId: string, flag: string) => Promise<boolean>;
-      }
-    | null
-    | undefined;
+    { hasFlagStrict: (tenantId: string, flag: string) => Promise<boolean> } | null | undefined;
   /** A tenant-scoped client or a transaction client. */
   db: {
     customerUnitPrice?: { findMany(args: any): Promise<any[]> };
@@ -162,10 +161,7 @@ export async function loadUnitsPricesV2(
         })
       : [];
   if (rows.length === 0 && !rawTiers.some(isOddTier)) return null;
-  // Prefer the strict read: plain hasFlag() swallows a failed OVERRIDE lookup as "no override", and this flag is in no
-  // plan (override-only), so that would read as a clean false. A reader with only hasFlag (a test fake) still works.
-  const readFlag = entitlements?.hasFlagStrict ?? entitlements?.hasFlag;
-  if (typeof readFlag !== "function") return null;
+  if (typeof entitlements?.hasFlagStrict !== "function") return null;
   // SA-812a G-1: a clean `false` (DENY, revoked, never granted) prices as master. A FAILED read is different: when the
   // customer has typed rows they are owed their typed price, and answering "off" would quietly bill them the tier price on
   // every server-priced path (buyer checkout, standing orders, returns). So with typed rows a failed read is a coded,
@@ -173,7 +169,7 @@ export async function loadUnitsPricesV2(
   // would give for an unconfigured tenant, so the fallback stays.
   let on = false;
   try {
-    on = !!(await readFlag.call(entitlements, tenantId, UNITS_PRICES_V2_FLAG));
+    on = !!(await entitlements.hasFlagStrict(tenantId, UNITS_PRICES_V2_FLAG));
   } catch {
     if (rows.length > 0) {
       throw new ServiceUnavailableException({

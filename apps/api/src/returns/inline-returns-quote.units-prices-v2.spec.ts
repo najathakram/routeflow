@@ -34,7 +34,7 @@ describe("InlineReturnsQuoteService: an unreferenced return reads the customer l
         InlineReturnsQuoteService,
         { provide: PrismaService, useValue: prisma },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-        { provide: EntitlementsService, useValue: { hasFlag } },
+        { provide: EntitlementsService, useValue: { hasFlag, hasFlagStrict: hasFlag } },
       ],
     }).compile();
     service = mod.get(InlineReturnsQuoteService);

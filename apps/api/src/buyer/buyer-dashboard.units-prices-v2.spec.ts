@@ -49,7 +49,7 @@ describe("BuyerDashboardService tiles: the customer layer (S19b A-2)", () => {
             computeGate: jest.fn().mockResolvedValue({ hiddenIds: new Set(), locked: [] }),
           },
         },
-        { provide: EntitlementsService, useValue: { hasFlag } },
+        { provide: EntitlementsService, useValue: { hasFlag, hasFlagStrict: hasFlag } },
         noRestrictionsProvider,
       ],
     }).compile();

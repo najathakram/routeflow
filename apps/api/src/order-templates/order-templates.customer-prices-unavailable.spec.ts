@@ -145,6 +145,41 @@ describe("OrderTemplatesService.generateDailyOrders: customer prices unavailable
     expect(summary()).toContain("2 created, 0 skipped");
   });
 
+  it("one backoff for the WHOLE run: two tenants both held wait once, then each retries in its own scope", async () => {
+    await boot([]);
+    const prisma = (service as any).prisma;
+    prisma.tenant.findMany.mockResolvedValue([{ id: "tn-1" }, { id: "tn-2" }]);
+    prisma.orderTemplate.findMany
+      .mockResolvedValueOnce([template("t1", "Weekly", "c1", "Acme Foods")])
+      .mockResolvedValueOnce([template("t2", "Daily", "c2", "Beta Mart")]);
+    const tenantRun = (service as any).tenantCtx.run as jest.Mock;
+    createSpy.mockImplementation(async (t: { id: string }) => {
+      if (createSpy.mock.calls.filter((c) => c[0].id === t.id).length === 1) throw pricesDown();
+      return { id: `o-${t.id}` };
+    });
+    await service.generateDailyOrders();
+    // both first attempts, THEN both retries, with exactly one pause between the two phases
+    expect(createSpy.mock.calls.map((c) => c[0].id)).toEqual(["t1", "t2", "t1", "t2"]);
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+    expect(tenantRun.mock.calls.map((c) => c[0])).toEqual(["tn-1", "tn-2", "tn-1", "tn-2"]);
+    expect(summary()).toContain("2 created, 0 skipped");
+  });
+
+  it("two tenants held twice: each tenant's operators are told, and the pause is still one", async () => {
+    await boot([]);
+    const prisma = (service as any).prisma;
+    prisma.tenant.findMany.mockResolvedValue([{ id: "tn-1" }, { id: "tn-2" }]);
+    prisma.orderTemplate.findMany
+      .mockResolvedValueOnce([template("t1", "Weekly", "c1", "Acme Foods")])
+      .mockResolvedValueOnce([template("t2", "Daily", "c2", "Beta Mart")]);
+    createSpy.mockRejectedValue(pricesDown());
+    await service.generateDailyOrders();
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+    expect(sendToUser.mock.calls.filter((c) => /Acme Foods/.test(c[1].body))).toHaveLength(2);
+    expect(sendToUser.mock.calls.filter((c) => /Beta Mart/.test(c[1].body))).toHaveLength(2);
+    expect(summary()).toContain("0 created, 2 skipped");
+  });
+
   it("any other error is logged only: not retried, not announced", async () => {
     await boot([template("t1", "Weekly", "c1", "Acme Foods")]);
     createSpy.mockRejectedValue(new Error("boom"));

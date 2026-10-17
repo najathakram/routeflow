@@ -64,6 +64,24 @@ import {
   replayCutoff,
 } from "./generate-replay";
 
+/** A due template as the 06:00 cron loads it (its items and the customer's name for operator notices). */
+interface DueTemplate {
+  id: string;
+  customerId: string;
+  name: string;
+  isActive?: boolean;
+  createdByRole?: string | null;
+  itemsEditedByRole?: string | null;
+  items: Array<{
+    id?: string;
+    productId: string;
+    qty: number;
+    notes?: string | null;
+    suspendedAt?: Date | null;
+  }>;
+  customer?: { businessName?: string | null } | null;
+}
+
 /** How long the 06:00 cron waits before its one re-attempt of a template held for a failed customer-prices read. */
 const CUSTOMER_PRICES_RETRY_BACKOFF_MS = 5_000;
 
@@ -626,6 +644,72 @@ export class OrderTemplatesService {
     let totalSkipped = 0;
     let totalSuppressed = 0;
 
+    const heldForPrices: Array<{
+      tenantId: string;
+      template: DueTemplate;
+      ban: { count: number; names: string } | null;
+    }> = [];
+    // One unattended attempt for one template. "held" = the coded customer-prices 503 (the caller re-attempts it once);
+    // any other failure is logged and counts as nothing (as before). `retry` (the second attempt) carries the first
+    // attempt's ban note and tells createOrderFromTemplate its pre-pricing side effects already ran.
+    const attemptOne = async (
+      tenantId: string,
+      template: DueTemplate,
+      retry: { ban: { count: number; names: string } | null } | null,
+    ): Promise<{
+      outcome: "created" | "skipped" | "held" | "failed";
+      ban: { count: number; names: string } | null;
+    }> => {
+      // F-05: the ban notice is sent AFTER the attempt, whatever its outcome (the suspension already
+      // committed, so a throw past it must not lose the one notice for good).
+      const ctx: {
+        ban: { count: number; names: string } | null;
+        placed?: boolean;
+        replayed?: boolean;
+        retry?: boolean;
+      } = { ban: retry?.ban ?? null, retry: retry != null };
+      let held = false;
+      try {
+        // Unattended cron run — same warn-and-oversell posture as an operator.
+        // B1054: the unlocked check above cannot see a manual "Generate now" that is still in
+        // flight, so the run also passes the start of today (UTC) as `replaySince`: the order
+        // transaction then takes the template's row lock first and re-reads, exactly like the
+        // manual path, and a twin that committed meanwhile is answered instead of doubled.
+        const order = await this.createOrderFromTemplate(
+          template,
+          true,
+          true,
+          ctx,
+          undefined,
+          startOfUtcDay(today),
+        );
+        // null = all lines were license-gated + skipped → nothing created.
+        // ctx.replayed = a concurrent manual run placed today's order first → nothing created here.
+        return { outcome: order && !ctx.replayed ? "created" : "skipped", ban: null };
+      } catch (err) {
+        const pricesDown = isCustomerPricesUnavailable(err);
+        // Only the FIRST attempt hands a held template to the retry; the second one gives up.
+        held = pricesDown && retry == null;
+        this.logger.error(
+          `[tenant:${tenantId}] Failed to generate order for template ${template.id} (${template.name})` +
+            (held ? " (customer prices unavailable; will retry once)" : ""),
+          err instanceof Error ? err.stack : String(err),
+        );
+        return { outcome: pricesDown ? "held" : "failed", ban: ctx.ban };
+      } finally {
+        // A replay means today's order exists (a manual run placed it; that path sends no ban
+        // notice), so the customer is told it went ahead, not that it was held. A first attempt
+        // that is being retried says nothing yet: the retry's outcome decides the ONE notice
+        // ("ordered" if it places the order, "held" if it does not), never a "held" followed by "ordered".
+        if (ctx.ban && !held)
+          await this.notifyBanSkipped(
+            template,
+            ctx.ban,
+            ctx.placed || ctx.replayed ? "ordered" : "held",
+          );
+      }
+    };
+
     for (const tenant of activeTenants) {
       await this.tenantCtx.run(tenant.id, async () => {
         const templates = await this.prisma.forTenant().orderTemplate.findMany({
@@ -653,56 +737,6 @@ export class OrderTemplatesService {
           );
         }
 
-        const heldForPrices: Array<(typeof templates)[number]> = [];
-        // One unattended attempt for one template. "held" = the coded customer-prices 503 (retryable by the caller);
-        // any other failure is logged and counts as nothing (as before).
-        const attemptOne = async (
-          template: (typeof templates)[number],
-        ): Promise<"created" | "skipped" | "held" | "failed"> => {
-          // F-05: the ban notice is sent AFTER the attempt, whatever its outcome (the suspension already
-          // committed, so a throw past it must not lose the one notice for good).
-          const ctx: {
-            ban: { count: number; names: string } | null;
-            placed?: boolean;
-            replayed?: boolean;
-          } = { ban: null };
-          try {
-            // Unattended cron run — same warn-and-oversell posture as an operator.
-            // B1054: the unlocked check above cannot see a manual "Generate now" that is still in
-            // flight, so the run also passes the start of today (UTC) as `replaySince`: the order
-            // transaction then takes the template's row lock first and re-reads, exactly like the
-            // manual path, and a twin that committed meanwhile is answered instead of doubled.
-            const order = await this.createOrderFromTemplate(
-              template,
-              true,
-              true,
-              ctx,
-              undefined,
-              startOfUtcDay(today),
-            );
-            // null = all lines were license-gated + skipped → nothing created.
-            // ctx.replayed = a concurrent manual run placed today's order first → nothing created here.
-            return order && !ctx.replayed ? "created" : "skipped";
-          } catch (err) {
-            const held = isCustomerPricesUnavailable(err);
-            this.logger.error(
-              `[tenant:${tenant.id}] Failed to generate order for template ${template.id} (${template.name})` +
-                (held ? " (customer prices unavailable; will retry once)" : ""),
-              err instanceof Error ? err.stack : String(err),
-            );
-            return held ? "held" : "failed";
-          } finally {
-            // A replay means today's order exists (a manual run placed it; that path sends no ban
-            // notice), so the customer is told it went ahead, not that it was held.
-            if (ctx.ban)
-              await this.notifyBanSkipped(
-                template,
-                ctx.ban,
-                ctx.placed || ctx.replayed ? "ordered" : "held",
-              );
-          }
-        };
-
         for (const template of templates) {
           // Idempotency: skip if ANY order (even a since-CANCELLED one) was already generated today for
           // this template. Cron-only rule: an order the operator cancelled is not placed again at 06:00.
@@ -718,28 +752,33 @@ export class OrderTemplatesService {
             continue;
           }
 
-          const outcome = await attemptOne(template);
-          if (outcome === "created") totalCreated++;
-          else if (outcome === "skipped") totalSkipped++;
-          else if (outcome === "held") heldForPrices.push(template);
-        }
-
-        // SA-812a G-1: a template whose customer prices could not be loaded was NOT priced at the tier and nothing was
-        // written. Re-attempt each ONCE after a short backoff (the read is usually a blip), after every other template
-        // of the tenant has run. One still failing is announced to the operators so the day's order is not lost silently.
-        if (heldForPrices.length > 0) {
-          await this.pause(CUSTOMER_PRICES_RETRY_BACKOFF_MS);
-          for (const template of heldForPrices) {
-            const outcome = await attemptOne(template);
-            if (outcome === "created") totalCreated++;
-            else if (outcome === "skipped") totalSkipped++;
-            else if (outcome === "held") {
-              totalSkipped++;
-              await this.notifyStandingOrderHeldForPrices(template);
-            }
-          }
+          const r = await attemptOne(tenant.id, template, null);
+          if (r.outcome === "created") totalCreated++;
+          else if (r.outcome === "skipped") totalSkipped++;
+          else if (r.outcome === "held")
+            heldForPrices.push({ tenantId: tenant.id, template, ban: r.ban });
         }
       });
+    }
+
+    // SA-812a G-1: a template whose customer prices could not be loaded was NOT priced at the tier and nothing was
+    // written. After EVERY tenant has run, wait ONCE (a wide outage costs one backoff, not one per tenant) and re-attempt
+    // each held template once, in its own tenant scope. One still failing is announced to that tenant's operators so the
+    // day's order is not lost silently. The retry must not repeat the side effects the first attempt already had
+    // (see `retry` on the ctx and the carried ban note), so the buyer gets exactly one notice.
+    if (heldForPrices.length > 0) {
+      await this.pause(CUSTOMER_PRICES_RETRY_BACKOFF_MS);
+      for (const held of heldForPrices) {
+        await this.tenantCtx.run(held.tenantId, async () => {
+          const r = await attemptOne(held.tenantId, held.template, { ban: held.ban });
+          if (r.outcome === "created") totalCreated++;
+          else if (r.outcome === "skipped") totalSkipped++;
+          else if (r.outcome === "held") {
+            totalSkipped++;
+            await this.notifyStandingOrderHeldForPrices(held.template);
+          }
+        });
+      }
     }
 
     this.logger.log(
@@ -770,6 +809,11 @@ export class OrderTemplatesService {
       ban: { count: number; names: string } | null;
       placed?: boolean;
       replayed?: boolean;
+      /**
+       * The cron's ONE re-attempt after a customer-prices 503: the first attempt already suspended + audited the banned
+       * lines and told the buyer about regulated skips, so none of that is repeated (`ctx.ban` is carried in).
+       */
+      retry?: boolean;
       /** A buyer's manual run: the lines left out because a selling restriction hides them from this buyer. */
       restricted?: BuyerReorderSkippedLine[];
     },
@@ -867,7 +911,8 @@ export class OrderTemplatesService {
           : [],
       );
       if (banned.size > 0) {
-        await this.suspendBannedLines(template, banned, verdict.reasons);
+        // the retry only re-derives WHICH lines are banned: they are already suspended and audited
+        if (!ctx?.retry) await this.suspendBannedLines(template, banned, verdict.reasons);
         banNote = {
           count: banned.size,
           names: [...new Set(verdict.reasons.map((r) => r.productName).filter(Boolean))].join(", "),
@@ -969,7 +1014,7 @@ export class OrderTemplatesService {
     const unavailableNote =
       inactiveCount > 0 ? ` (${inactiveCount} item(s) skipped — no longer available)` : "";
 
-    if (skippedCount > 0) {
+    if (skippedCount > 0 && !ctx?.retry) {
       await this.notifySkippedRegulatedLines(template, blocked, skippedCount).catch(() => {});
     }
     // Every line was a license-gated category the customer isn't verified for —
@@ -1272,12 +1317,6 @@ export class OrderTemplatesService {
   }
 
   /**
-   * F-05: the ONE notice a banning run sends, worded after the filtering — what actually happened:
-   * "ordered" (the rest went ahead), "held" (banned lines suspended but nothing was ordered, e.g. the rest is
-   * license-gated: the template stays active), "deactivated" (nothing left to order, the template was switched off).
-   * Never claims a deactivation that did not happen. Best-effort: a failure here never fails the run.
-   */
-  /**
    * SA-812a G-1: the cron re-attempted a standing order once and the customer's prices still could not be loaded, so it
    * was NOT placed (never priced at the tier instead). Tell the operators, with what to do. Best-effort: never fails a run.
    */
@@ -1296,6 +1335,12 @@ export class OrderTemplatesService {
     }
   }
 
+  /**
+   * F-05: the ONE notice a banning run sends, worded after the filtering — what actually happened:
+   * "ordered" (the rest went ahead), "held" (banned lines suspended but nothing was ordered, e.g. the rest is
+   * license-gated: the template stays active), "deactivated" (nothing left to order, the template was switched off).
+   * Never claims a deactivation that did not happen. Best-effort: a failure here never fails the run.
+   */
   private async notifyBanSkipped(
     template: { customerId: string; name: string },
     note: { count: number; names: string } | null,
