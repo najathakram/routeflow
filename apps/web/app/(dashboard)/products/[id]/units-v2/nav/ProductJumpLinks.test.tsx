@@ -2,6 +2,14 @@ import * as React from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ProductJumpLinks } from "./ProductJumpLinks";
+import { CustomerPriceView } from "../customer/CustomerPriceView";
+
+// K10c (F27): the Customer view is reached through the jump strip, so its hooks are mocked here.
+jest.mock("@/lib/api/useCustomerUnitPrices", () => ({
+  useCustomerUnitPrices: () => ({ data: undefined, isLoading: false, isError: false }),
+}));
+jest.mock("@/lib/api/customers", () => ({ useCustomers: () => ({ data: { data: [] } }) }));
+jest.mock("@/lib/api/tier-labels", () => ({ useTierLabels: () => ({ data: {} }) }));
 
 type IOCallback = (entries: Partial<IntersectionObserverEntry>[]) => void;
 let ioCallback: IOCallback | null = null;
@@ -144,6 +152,7 @@ describe("ProductJumpLinks (V19)", () => {
       document.body.appendChild(h);
     });
     await waitFor(() => expect(link("h-cust")).toBeInTheDocument());
+    document.getElementById("h-cust")?.remove(); // appended to body: RTL cleanup does not own it
   });
 
   it("marks the link of the section in view with aria-current", () => {
@@ -224,5 +233,99 @@ describe("ProductJumpLinks (V19)", () => {
       });
       expect(strip).toHaveAttribute("data-fade", "false");
     });
+  });
+});
+
+describe("ProductJumpLinks: the Customer view entry (K10c, F27)", () => {
+  const CUSTOMER_HEADING = "units-v2-h-cust";
+
+  function PageWithCustomer({ customer = true }: { customer?: boolean }) {
+    return (
+      <div>
+        <ProductJumpLinks />
+        <h1 id="h-product">Cola</h1>
+        <h2 id="units-v2-grid-title">Prices</h2>
+        <h2 id="h-exc">Customers and tiers</h2>
+        {customer ? (
+          <h2 id={CUSTOMER_HEADING} tabIndex={-1}>
+            Customer view
+          </h2>
+        ) : null}
+        <h2 id="h-sales">Sales</h2>
+      </div>
+    );
+  }
+
+  it("lists Customer view, pointing at the heading's own id", () => {
+    render(<PageWithCustomer />);
+    expect(link("h-cust")).toHaveTextContent("Customer view");
+    expect(link("h-cust")).toHaveAttribute("href", `#${CUSTOMER_HEADING}`);
+  });
+
+  it("is absent when the Customer view heading is not rendered", () => {
+    render(<PageWithCustomer customer={false} />);
+    expect(link("h-cust")).toBeNull();
+    expect(link("h-sales")).toBeInTheDocument();
+  });
+
+  it("clicking scrolls to the heading and focuses it", async () => {
+    render(<PageWithCustomer />);
+    await userEvent.click(link("h-cust")!);
+    const heading = document.getElementById(CUSTOMER_HEADING)!;
+    expect(heading.scrollIntoView).toHaveBeenCalled();
+    expect(heading).toHaveFocus();
+  });
+
+  it("is keyboard reachable: Enter on the focused link focuses the heading", async () => {
+    render(<PageWithCustomer />);
+    link("h-cust")!.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(document.getElementById(CUSTOMER_HEADING)).toHaveFocus();
+  });
+
+  it("orders the links the way the sections sit in the page", () => {
+    render(<PageWithCustomer />);
+    const order = Array.from(screen.getByTestId("units-v2-jump-strip").querySelectorAll("a")).map(
+      (a) => a.getAttribute("data-testid"),
+    );
+    expect(order).toEqual([
+      "units-v2-jump-h-product",
+      "units-v2-jump-h-units",
+      "units-v2-jump-h-exc",
+      "units-v2-jump-h-cust",
+      "units-v2-jump-h-sales",
+    ]);
+  });
+
+  it("marks the Customer view link current while its heading is in view", () => {
+    render(<PageWithCustomer />);
+    const heading = document.getElementById(CUSTOMER_HEADING)!;
+    act(() => {
+      ioCallback?.([{ target: heading, isIntersecting: true, intersectionRatio: 1 }]);
+    });
+    expect(link("h-cust")).toHaveAttribute("aria-current", "true");
+    expect(link("h-sales")).not.toHaveAttribute("aria-current");
+  });
+
+  it("finds the real CustomerPriceView heading, and adds the link when it mounts later", async () => {
+    const { rerender } = render(
+      <div>
+        <ProductJumpLinks />
+        <h1 id="h-product">Cola</h1>
+        <h2 id="h-sales">Sales</h2>
+      </div>,
+    );
+    expect(link("h-cust")).toBeNull();
+    rerender(
+      <div>
+        <ProductJumpLinks />
+        <h1 id="h-product">Cola</h1>
+        <CustomerPriceView productId="p1" />
+        <h2 id="h-sales">Sales</h2>
+      </div>,
+    );
+    await waitFor(() => expect(link("h-cust")).toBeInTheDocument());
+    await userEvent.click(link("h-cust")!);
+    expect(screen.getByRole("heading", { name: "Customer view" })).toHaveFocus();
   });
 });
