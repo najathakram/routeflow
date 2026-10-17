@@ -34,7 +34,13 @@ function SummaryChip({ label, value, hint }: { label: string; value: string; hin
   );
 }
 
-export function SalesHistoryCard({ productId }: { productId: string }) {
+export function SalesHistoryCard({
+  productId,
+  hideCreateOrder,
+}: {
+  productId: string;
+  hideCreateOrder?: boolean;
+}) {
   const { data, isLoading, isError, refetch } = useProductSales(productId);
   const lines = data?.lines ?? [];
 
@@ -79,12 +85,14 @@ export function SalesHistoryCard({ productId }: { productId: string }) {
             <p className="text-xs text-navy/70">
               This product hasn&apos;t appeared on an invoice yet.
             </p>
-            <Link
-              href="/orders?action=new"
-              className="text-xs font-medium text-brand-600 hover:text-brand-700"
-            >
-              Create an order with this product →
-            </Link>
+            {hideCreateOrder !== true && (
+              <Link
+                href="/orders?action=new"
+                className="text-xs font-medium text-brand-600 hover:text-brand-700"
+              >
+                Create an order with this product →
+              </Link>
+            )}
           </div>
         ) : (
           data && (

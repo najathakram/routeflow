@@ -488,7 +488,7 @@ export class CatchupClaimService {
         invoice: invoiceId,
         amount: stubCents,
         currency: "usd",
-        description: String(meta[CATCHUP_META.stubLabel] ?? "Subscription — catch-up"),
+        description: String(meta[CATCHUP_META.stubLabel] ?? "Catch-up subscription"),
         metadata: { catchup_for: session.id, tenantId },
       },
       { idempotencyKey: `${tenantId}:trial-stub-item:${session.id}` },

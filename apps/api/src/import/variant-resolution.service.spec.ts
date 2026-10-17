@@ -54,7 +54,8 @@ describe("VariantResolutionService", () => {
           priceTier2: "9.50",
           category: "Snacks",
           unitsPerBox: 12,
-          costingMethod: "FIFO",
+          // SA-804 (1): the parent is still stored as FIFO; the variant takes the AVCO it is costed as.
+          costingMethod: "AVCO",
           isTobacco: false,
         }),
       );

@@ -357,7 +357,12 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
       { provide: StorageService, useValue: { presignedUrls: jest.fn().mockResolvedValue([]) } },
       { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
       { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-      { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+      {
+        provide: EntitlementsService,
+        useValue: {
+          hasFlag: jest.fn(async (_t: string, k: string) => k !== "flag.units_prices_v2"),
+        },
+      },
       entitlementAuthorityFromEntitlements,
       // #2185: the reorder gate's deny body reads admin overrides.
       { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },

@@ -41,6 +41,12 @@ const NON_ATOMIC_BASELINE = 1;
 
 const SRC_ROOT = path.resolve(__dirname, "..");
 
+/**
+ * DB-spec seed fixtures that set up counters directly (a historic booked state), never production writers.
+ * Named files, not a directory: a new writer under a `testing/` folder still fails this census.
+ */
+const SEED_FIXTURES = new Set(["inventory/testing/order-stock-world.ts"]);
+
 function collectSourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
@@ -50,6 +56,7 @@ function collectSourceFiles(dir: string, out: string[] = []): string[] {
       continue;
     }
     if (!entry.name.endsWith(".ts") || entry.name.endsWith(".spec.ts")) continue;
+    if (SEED_FIXTURES.has(path.relative(SRC_ROOT, full).split(path.sep).join("/"))) continue;
     out.push(full);
   }
   return out;

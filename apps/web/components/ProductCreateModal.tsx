@@ -8,6 +8,7 @@ import { useCreateProduct, useProducts, uploadProductImages } from "@/lib/api/pr
 import { apiClient } from "@/lib/api-client";
 import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
 import { isPackUnit, priceUnitWord } from "@/lib/product-unit-label";
+import { priceQtyHint } from "@/lib/price-qty-hint";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { PackSizePrompt } from "./PackSizePrompt";
 import { UnitCombobox } from "./UnitCombobox";
@@ -352,6 +353,13 @@ export function ProductCreateModal({
 
   const packUnit = isPackUnit(form.unit);
   const unitWord = priceUnitWord(form.unit);
+  const qtyHint = packUnit
+    ? priceQtyHint({
+        price: form.pricePerUnit,
+        unitsPerBox: form.unitsPerBox,
+        packWord: w.pack.lower,
+      })
+    : null;
   const unitsPerField = (
     <div>
       <label htmlFor="product-units-per" className="mb-1 block text-sm font-medium text-navy">
@@ -617,6 +625,7 @@ export function ProductCreateModal({
                     min="0"
                     step="0.01"
                     placeholder="0.00"
+                    aria-describedby={qtyHint ? "price-qty-hint" : undefined}
                     value={form.pricePerUnit}
                     onChange={(e) => {
                       set("pricePerUnit", e.target.value);
@@ -626,6 +635,13 @@ export function ProductCreateModal({
                   />
                 </div>
                 {priceError && <p className="mt-1 text-xs text-danger">{priceError}</p>}
+                <p
+                  id="price-qty-hint"
+                  aria-live="polite"
+                  className="mt-1 text-xs text-navy/70 empty:hidden"
+                >
+                  {qtyHint}
+                </p>
                 {initialCost != null && initialCost > 0 && (
                   <p className="mt-1 text-[11px] text-navy/70">
                     {validUnitsPerBoxPrefill(initialUnitsPerBox)
@@ -807,8 +823,6 @@ export function ProductCreateModal({
                 onChange={(e) => set("costingMethod", e.target.value)}
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
-                <option value="FIFO">FIFO — First In, First Out</option>
-                <option value="LIFO">LIFO — Last In, First Out</option>
                 <option value="AVCO">AVCO — Weighted Average Cost</option>
                 <option value="LAST_COST">Last Cost — most recent purchase price</option>
                 <option value="STANDARD">Standard Cost</option>

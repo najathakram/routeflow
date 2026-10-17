@@ -363,6 +363,28 @@ export class VendorBillsService {
     return `${prefix}${String(seq).padStart(4, "0")}`;
   }
 
+  /**
+   * B1236: every line's productId must be a product of the caller's own catalog. One scoped read for
+   * the set of ids; any id it does not return is refused (404 naming them) before a bill row is written.
+   */
+  private async assertLineProductsInCatalog(items: any[] | undefined | null) {
+    if (!Array.isArray(items)) return;
+    const ids = [...new Set(items.map((i) => i?.productId).filter(Boolean))] as string[];
+    if (ids.length === 0) return;
+    const found = await this.prisma.forTenant().product.findMany({
+      where: { id: { in: ids } },
+      select: { id: true },
+    });
+    const have = new Set(found.map((p) => p.id));
+    const missing = ids.filter((id) => !have.has(id));
+    if (missing.length > 0) {
+      throw new NotFoundException({
+        message: "Product not found",
+        missingProductIds: missing,
+      });
+    }
+  }
+
   async create(dto: any) {
     // #2488: the literal calendar day, refused (400 naming the field) before any read or write.
     const dueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : null;
@@ -373,6 +395,7 @@ export class VendorBillsService {
       }
     }
     const supplierId = dto.supplierId && dto.supplierId.trim() ? dto.supplierId.trim() : null;
+    await this.assertLineProductsInCatalog(dto.items);
 
     // Calculate totalOwed from line items if provided, otherwise use dto.totalOwed
     let preTaxOwed = dto.totalOwed ?? 0;
@@ -963,6 +986,8 @@ export class VendorBillsService {
         "This bill is linked to a purchase order — its supplier can't be changed.",
       );
     }
+
+    if (Array.isArray(dto.items)) await this.assertLineProductsInCatalog(dto.items);
 
     // Recalculate total if items are provided. Mirror create(): fold the
     // bill's tax back in and round — the old recompute dropped taxAmount on
