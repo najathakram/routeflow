@@ -273,7 +273,7 @@ export function SearchableProductPicker({
       }
       disabled={disabled}
       aria-describedby={showHint ? hintId : undefined}
-      className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/30 focus:outline-none disabled:cursor-not-allowed"
+      className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/30 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
     />
   );
 
@@ -282,11 +282,11 @@ export function SearchableProductPicker({
       <div
         className={cn(
           "flex items-center gap-2 rounded-lg border border-surface-border bg-white px-2.5 py-1.5 transition-colors focus-within:border-transparent focus-within:ring-2 focus-within:ring-brand-500",
-          disabled && "cursor-not-allowed bg-surface-raised opacity-60",
+          disabled && "cursor-not-allowed bg-surface-raised",
           open && "ring-2 ring-brand-500",
         )}
       >
-        <Search className="h-3.5 w-3.5 shrink-0 text-navy/70" />
+        <Search className={cn("h-3.5 w-3.5 shrink-0 text-navy/70", disabled && "opacity-60")} />
         {disabledHint === undefined ? (
           inputEl
         ) : (
@@ -316,7 +316,11 @@ export function SearchableProductPicker({
           </button>
         ) : (
           <ChevronDown
-            className={cn("h-3.5 w-3.5 text-navy/70 transition-transform", open && "rotate-180")}
+            className={cn(
+              "h-3.5 w-3.5 text-navy/70 transition-transform",
+              open && "rotate-180",
+              disabled && "opacity-60",
+            )}
           />
         )}
       </div>

@@ -68,6 +68,20 @@ describe("Variant of with no products", () => {
     expect(help.className).not.toContain("text-navy/30");
   });
 
+  it("the reason is not faded: no opacity on the hint or on any ancestor up to the field frame", () => {
+    open();
+    const help = screen.getByText(REASON);
+    const frame = picker().closest("div.rounded-lg")!;
+    const faded = (el: Element) => el.className.split(/\s+/).filter((c) => /(^|:)opacity-/.test(c));
+    for (let el: Element | null = help; el; el = el === frame ? null : el.parentElement) {
+      expect(faded(el)).toEqual([]);
+    }
+    // the muted fill, the cursor and the dimmed input say "disabled" instead
+    expect(frame.className).toContain("cursor-not-allowed");
+    expect(frame.className).toContain("bg-surface-raised");
+    expect(help.className).toContain("text-navy/70");
+  });
+
   it("keeps the placeholder empty so the reason is not drawn twice", () => {
     open();
     expect(picker().placeholder).toBe("");
