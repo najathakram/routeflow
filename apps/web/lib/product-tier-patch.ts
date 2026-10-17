@@ -8,6 +8,8 @@ export const TIER_PRICE_KEYS: readonly TierPriceKey[] = [
   "priceTier5",
 ];
 type Price = { toString(): string } | string | number | null | undefined;
+/** The price fields of the Details form's draft: the list price and tiers 2-5. */
+export type PriceDraftKey = "pricePerUnit" | TierPriceKey;
 export type TierPrices = { pricePerUnit: Price } & Partial<Record<TierPriceKey, Price>>;
 
 const asDecimal = (v: unknown): string | undefined => {
@@ -63,4 +65,29 @@ export function editTierPatchMoves(
       moves[k] = patch[k];
   }
   return moves;
+}
+
+/**
+ * The price keys of the Details save (units v2, money). A v2 price save moves prices outside this form, so the form
+ * sends a price ONLY when the operator changed it: a field whose draft still equals the string the form was seeded
+ * with is a dirty-less field and is omitted (never the stale snapshot). A changed list price keeps the existing
+ * ladder rule, so every tier goes with it exactly as `editTierPatch` builds them. A plain string compare is the
+ * whole test: the draft is seeded and edited as strings, so no money is parsed or rounded here.
+ * Without the seed (no edit session recorded) this falls back to sending all of them, the pre-fix behaviour.
+ */
+export function detailsPricePatch(
+  stored: TierPrices,
+  draft: Partial<Record<PriceDraftKey, string | undefined>>,
+  seeded: Record<PriceDraftKey, string> | undefined,
+): Record<PriceDraftKey, string | undefined> {
+  const all: Record<PriceDraftKey, string | undefined> = {
+    pricePerUnit: asDecimal(draft.pricePerUnit),
+    ...editTierPatch(stored, draft),
+  };
+  if (!seeded) return all;
+  const listDirty = draft.pricePerUnit !== seeded.pricePerUnit;
+  const out = {} as Record<PriceDraftKey, string | undefined>;
+  for (const k of Object.keys(all) as PriceDraftKey[])
+    out[k] = listDirty || draft[k] !== seeded[k] ? all[k] : undefined;
+  return out;
 }

@@ -59,6 +59,42 @@ describe("usePriceWrites", () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
   });
 
+  describe("the product the Details form reads goes stale with a write", () => {
+    const ok = { data: { revision: 8, auditId: "a1", undo: { patches: [] }, grid: {} } };
+    const productKey = { queryKey: ["products", "p1"], exact: true };
+
+    it("a successful save refetches the product query (exact: the grid just written is not invalidated)", async () => {
+      mockPost.mockResolvedValue(ok);
+      const qc = new QueryClient();
+      const spy = jest.spyOn(qc, "invalidateQueries");
+      const { result } = renderHook(() => useSavePrices("p1"), { wrapper: wrap(qc) });
+      result.current.mutate({ expectedRevision: 7, expectedPriceState: "ps", patches: [] });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(spy).toHaveBeenCalledWith(productKey);
+      expect(spy).not.toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
+    });
+
+    it("a successful undo refetches the product query", async () => {
+      mockPost.mockResolvedValue(ok);
+      const qc = new QueryClient();
+      const spy = jest.spyOn(qc, "invalidateQueries");
+      const { result } = renderHook(() => useUndoPrices("p1"), { wrapper: wrap(qc) });
+      result.current.mutate({ auditId: "a1", expectedRevision: 8, expectedPriceState: "ps" });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(spy).toHaveBeenCalledWith(productKey);
+    });
+
+    it("a refused save leaves the product query alone", async () => {
+      mockPost.mockRejectedValue({ response: { data: { code: "PRICE_EDIT_INVALID" } } });
+      const qc = new QueryClient();
+      const spy = jest.spyOn(qc, "invalidateQueries");
+      const { result } = renderHook(() => useSavePrices("p1"), { wrapper: wrap(qc) });
+      result.current.mutate({ expectedRevision: 7, expectedPriceState: "ps", patches: [] });
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(spy).not.toHaveBeenCalledWith(productKey);
+    });
+  });
+
   describe("customer prices go stale with a write", () => {
     const ok = {
       data: { revision: 8, auditId: "a1", undo: { patches: [], customerMoves: [] }, grid: {} },
@@ -86,8 +122,9 @@ describe("usePriceWrites", () => {
     });
 
     it("a save with no customer moves leaves them alone", async () => {
-      expect(await saveWith({ customerMoves: [] })).not.toHaveBeenCalled();
-      expect(await saveWith({})).not.toHaveBeenCalled();
+      const customers = { queryKey: productCustomerPricesKey("p1") };
+      expect(await saveWith({ customerMoves: [] })).not.toHaveBeenCalledWith(customers);
+      expect(await saveWith({})).not.toHaveBeenCalledWith(customers);
     });
 
     it("a successful undo refetches the customers too (it reversed customer prices server-side)", async () => {

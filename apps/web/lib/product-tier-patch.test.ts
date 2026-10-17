@@ -1,5 +1,5 @@
 import { applyLadderChange } from "@routeflow/pricing";
-import { editTierPatch, editTierPatchMoves } from "./product-tier-patch";
+import { detailsPricePatch, editTierPatch, editTierPatchMoves } from "./product-tier-patch";
 
 /**
  * REG (product page audit 2026-10-14, money): the detail page's list field did not move the tiers, unlike the products
@@ -120,5 +120,40 @@ describe("#3470 review: a list change from 0 and typed tiers", () => {
       priceTier5: "0",
     });
     expect(p).toEqual({ priceTier2: "0", priceTier3: "9", priceTier4: "0", priceTier5: "0" });
+  });
+});
+
+describe("detailsPricePatch: the Details save sends only the prices the operator changed", () => {
+  const s = stored("9.00", "10.00", "0.00", "10.00");
+  const seeded = shown(s);
+
+  it("REG: an untouched draft sends no price key at all (a v2 save may have moved them since)", () => {
+    expect(detailsPricePatch(s, { ...seeded }, seeded)).toEqual({
+      pricePerUnit: undefined,
+      priceTier2: undefined,
+      priceTier3: undefined,
+      priceTier4: undefined,
+      priceTier5: undefined,
+    });
+  });
+
+  it("a changed list price is sent with the ladder's tiers, exactly as editTierPatch builds them", () => {
+    const draft = { ...seeded, pricePerUnit: "12" };
+    expect(detailsPricePatch(s, draft, seeded)).toEqual({
+      pricePerUnit: "12",
+      ...editTierPatch(s, draft),
+    });
+  });
+
+  it("a changed tier is sent alone; the list price and the other tiers stay out", () => {
+    const out = detailsPricePatch(s, { ...seeded, priceTier2: "7" }, seeded);
+    expect(out.priceTier2).toBe("7");
+    expect(out.pricePerUnit).toBeUndefined();
+    expect(out.priceTier3).toBeUndefined();
+    expect(out.priceTier5).toBeUndefined();
+  });
+
+  it("with no recorded edit session it falls back to sending every price (the pre-fix shape)", () => {
+    expect(detailsPricePatch(s, { ...seeded }, undefined).pricePerUnit).toBe("10");
   });
 });

@@ -103,7 +103,12 @@ import { ProductJumpLinks } from "./units-v2/nav/ProductJumpLinks";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
-import { editTierPatch, editTierPatchMoves } from "@/lib/product-tier-patch";
+import {
+  detailsPricePatch,
+  editTierPatch,
+  editTierPatchMoves,
+  type PriceDraftKey,
+} from "@/lib/product-tier-patch";
 import { keptLabelsNote } from "@/lib/kept-labels-copy";
 import { isStaffRole } from "@/lib/default-unit-line";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -353,6 +358,10 @@ export default function ProductDetailPage() {
   // The pack the form opened with: a save sends `unit` only if the operator changed it, and then sends this
   // pack back as the expected values (SA-797), so a Settings > Units rename made meanwhile is a 409, not lost.
   const packWhenEditStartedRef = React.useRef<ProductPackAtOpen | undefined>(undefined);
+  // The price strings the Details form was SEEDED with: a price is sent only when the draft differs (a dirty field).
+  const pricesWhenEditStartedRef = React.useRef<Record<PriceDraftKey, string> | undefined>(
+    undefined,
+  );
 
   // Regulated type picker (edit mode). The Category field below renders the
   // structured SubcategoryCombobox in place of the free-text combobox once a
@@ -524,17 +533,21 @@ export default function ProductDetailPage() {
       unitsPerBox: product.unitsPerBox ?? null,
       packTenantUnitId: product.packTenantUnitId,
     };
+    const seededPrices: Record<PriceDraftKey, string> = {
+      pricePerUnit: String(priceNumber),
+      priceTier2: String(parseFloat(String(product.priceTier2 ?? priceNumber))),
+      priceTier3: String(parseFloat(String(product.priceTier3 ?? priceNumber))),
+      priceTier4: String(parseFloat(String(product.priceTier4 ?? priceNumber))),
+      priceTier5: String(parseFloat(String(product.priceTier5 ?? priceNumber))),
+    };
+    pricesWhenEditStartedRef.current = seededPrices;
     setEditDraft({
       name: product.name,
       sku: product.sku ?? "",
       barcode: product.barcode ?? "",
       unitSku: product.unitSku ?? "",
       unit: product.unit,
-      pricePerUnit: String(priceNumber),
-      priceTier2: String(parseFloat(String(product.priceTier2 ?? priceNumber))),
-      priceTier3: String(parseFloat(String(product.priceTier3 ?? priceNumber))),
-      priceTier4: String(parseFloat(String(product.priceTier4 ?? priceNumber))),
-      priceTier5: String(parseFloat(String(product.priceTier5 ?? priceNumber))),
+      ...seededPrices,
       msrp: product.msrp != null ? String(parseFloat(String(product.msrp))) : "",
       category: product.category ?? "",
       description: product.description ?? "",
@@ -598,10 +611,6 @@ export default function ProductDetailPage() {
     // parentProductId: "" for every standalone product, which @IsUUID rejects,
     // so saving from this form (tier prices included) silently 400'd.
     // Invalid/blank price fields are omitted (leave unchanged), never "".
-    const asDecimal = (v: unknown): string | undefined => {
-      const n = parseFloat(String(v ?? ""));
-      return Number.isFinite(n) && n >= 0 ? String(n) : undefined;
-    };
     const unitToSend = packWordToSend(draft.unit, packWhenEditStartedRef.current?.unit);
     const unitsPerBoxToSend = draft.unitsPerBox?.trim() ? parseInt(draft.unitsPerBox, 10) : null;
     updateProduct.mutate(
@@ -623,9 +632,10 @@ export default function ProductDetailPage() {
         // null-clears semantics.
         category: draft.trackedCategoryId ? undefined : draft.category?.trim() || null,
         description: draft.description?.trim() || null,
-        pricePerUnit: asDecimal(draft.pricePerUnit),
-        // Untouched tiers move with a list change exactly like the products list (applyLadderChange, audit 2026-10-14).
-        ...editTierPatch(product, draft),
+        // Only a price the operator changed is sent: a price save elsewhere on the page moves prices outside this
+        // form, so the snapshot it opened with must never be written back. Untouched tiers move with a list change exactly like
+        // the products list (applyLadderChange, audit 2026-10-14).
+        ...detailsPricePatch(product, draft, pricesWhenEditStartedRef.current),
         unitsPerBox: unitsPerBoxToSend,
         // Regulated tags: value to set, null to clear (server auto-nulls the
         // category when the type is cleared).

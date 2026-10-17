@@ -58,6 +58,7 @@ export function priceWriteError(err: unknown): PriceWriteError | null {
  * `refetchOnStale`: a stale answer refetches the grid and the customers' prices. Undo wants it (its preview reads the
  * served grid); Save does not: its notice owns the reload. Save itself never auto-refetches on a stale answer.
  * `writesCustomers`: a write that moved customer prices leaves the customers query behind, so it is refetched.
+ * Save and Undo both refetch the product query on success (`["products", id]`, the key of `useProduct`).
  */
 function usePriceWrite<Req>(
   productId: string,
@@ -73,6 +74,9 @@ function usePriceWrite<Req>(
       apiClient[PRICE_WRITE_METHOD](`/products/${productId}${path}`, body).then((r) => r.data),
     onSuccess: (res, body) => {
       qc.setQueryData(priceGridKey(productId), res.grid);
+      // The product the Details form reads holds the same list price and tiers: refetch it (exact, so the grid just
+      // written above is not invalidated with it), or the next Details save works from the pre-save row.
+      void qc.invalidateQueries({ queryKey: ["products", productId], exact: true });
       if (writesCustomers(body))
         void qc.invalidateQueries({ queryKey: productCustomerPricesKey(productId) });
     },
