@@ -30,9 +30,12 @@ describe("products/[id]/page.tsx — batch A1 wiring", () => {
   });
 
   it("P-17: the merch switches say they apply immediately while editing", () => {
-    expect(src).toMatch(
+    // K11-23: the card moved to ProductMerchandising.tsx (the end of the Details body)
+    const merch = fs.readFileSync(path.join(__dirname, "ProductMerchandising.tsx"), "utf8");
+    expect(merch).toMatch(
       /isEditing && \(\s*<p className="[^"]*">\s*These switches apply immediately, without Save\./,
     );
+    expect(src).toMatch(/<ProductMerchandising/);
   });
 
   it("J3 reverted: the Move left / Move right reorder controls stay (the only reorder path); on-image arrows stay", () => {

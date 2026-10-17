@@ -63,6 +63,7 @@ import { unitsLabel } from "@/lib/stock-label";
 import { stockCountLabel } from "../_components/product-status";
 import { PiecesPerBoxValue } from "./PiecesPerBoxValue";
 import { MoneyFigure } from "./MoneyFigure";
+import { ProductMerchandising } from "./ProductMerchandising";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { DecimalInput } from "@/components/MoneyInput";
@@ -175,58 +176,6 @@ function regUomLabel(
     if (match) return match.label;
   }
   return code;
-}
-
-// ─── Merchandising flag toggle (P5-01) ──────────────────────────────────────────
-
-function MerchFlagToggle({
-  label,
-  description,
-  active,
-  disabled,
-  onToggle,
-}: {
-  label: string;
-  description: string;
-  active: boolean;
-  disabled?: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={active}
-      disabled={disabled}
-      onClick={onToggle}
-      className={cn(
-        "flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors disabled:opacity-50",
-        active
-          ? "border-brand-300 bg-brand-50"
-          : "border-surface-border bg-white hover:bg-surface-raised",
-      )}
-    >
-      <span className="min-w-0">
-        <span className={cn("block text-sm font-medium", active ? "text-brand-700" : "text-navy")}>
-          {label}
-        </span>
-        <span className="block text-[11px] text-navy/60">{description}</span>
-      </span>
-      <span
-        className={cn(
-          "relative inline-flex h-5 w-9 flex-none items-center rounded-full transition-colors",
-          active ? "bg-brand-500" : "bg-navy/20",
-        )}
-      >
-        <span
-          className={cn(
-            "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
-            active ? "translate-x-4" : "translate-x-0.5",
-          )}
-        />
-      </span>
-    </button>
-  );
 }
 
 // ─── Inline number field ──────────────────────────────────────────────────────
@@ -1222,269 +1171,10 @@ export default function ProductDetailPage() {
         </div>
 
         {v2 && product.kind !== "FAMILY" ? <ProductJumpLinks /> : null}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          {/* ── Left: image gallery + stock card ── */}
-          <div className="space-y-4">
-            {/* ── Image gallery ── */}
-            <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-              <div className="border-b border-surface-border px-4 py-3">
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                  Image
-                </h3>
-              </div>
-              <div className="p-4">
-                {(() => {
-                  const images: string[] = (product as any).imageUrls ?? [];
-                  const safeIdx = Math.min(activeImageIdx, images.length - 1);
-
-                  const handleUpload = (files: FileList | null) => queueForCrop(files);
-
-                  const toggleSelectImage = (i: number) => {
-                    setSelectedImages((prev) => {
-                      const next = new Set(prev);
-                      next.has(i) ? next.delete(i) : next.add(i);
-                      return next;
-                    });
-                  };
-
-                  const deleteSelected = () => {
-                    const keys = (product as any).imageKeys ?? [];
-                    const toDelete = Array.from(selectedImages)
-                      .map((i) => keys[i])
-                      .filter(Boolean);
-                    if (toDelete.length > 0) setPendingImageDelete(toDelete);
-                  };
-
-                  if (images.length === 0)
-                    return (
-                      <ProductImagesEmpty onFiles={handleUpload} busy={uploadImages.isPending} />
-                    );
-                  return (
-                    <div className="space-y-2">
-                      {/* Main image / drop zone — 4:5 portrait viewport matching the
-                    upload ratio. Below lg the photo is shown whole (contain, centred);
-                    lg+ crops with object-cover by each image's stored focal point
-                    (older images default to centre). */}
-                      <div
-                        onDragOver={(e) => {
-                          e.preventDefault();
-                          setIsDragging(true);
-                        }}
-                        onDragLeave={() => setIsDragging(false)}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          setIsDragging(false);
-                          handleUpload(e.dataTransfer.files);
-                        }}
-                        className={cn(
-                          "relative h-44 w-full overflow-hidden rounded-xl border lg:h-auto lg:aspect-[4/5]",
-                          isDragging && "ring-2 ring-brand-500",
-                          stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
-                          stockStatus === "OUT_OF_STOCK" && "border-warning/30 bg-warning-bg",
-                          stockStatus === "IN_STOCK" && "border-surface-border bg-surface-raised",
-                        )}
-                      >
-                        <>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={images[safeIdx]}
-                            alt={`${product.name} — image ${safeIdx + 1}`}
-                            className="absolute inset-0 h-full w-full cursor-zoom-in object-contain max-lg:![object-position:50%_50%] lg:object-cover"
-                            style={{ objectPosition: objectPositionForUrl(images[safeIdx]) }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setLightboxIdx(safeIdx);
-                              setLightboxOpen(true);
-                            }}
-                          />
-                          {/* Delete current image (single) */}
-                          {!selectMode && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const key = (product as any).imageKeys?.[safeIdx];
-                                if (key) setPendingImageDelete([key]);
-                              }}
-                              className={cn(
-                                TAP_TARGET,
-                                "absolute right-2 top-2 rounded-full bg-black/50 text-white hover:bg-danger transition-colors",
-                              )}
-                              title="Delete this image"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                          {/* Prev / next arrows */}
-                          {images.length > 1 && !selectMode && (
-                            <>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveImageIdx((i) => (i - 1 + images.length) % images.length);
-                                }}
-                                className={cn(
-                                  TAP_TARGET,
-                                  "absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
-                                )}
-                              >
-                                <ChevronLeft className="h-4 w-4" />
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveImageIdx((i) => (i + 1) % images.length);
-                                }}
-                                className={cn(
-                                  TAP_TARGET,
-                                  "absolute right-8 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
-                                )}
-                              >
-                                <ChevronRight className="h-4 w-4" />
-                              </button>
-                            </>
-                          )}
-                          {/* Page indicator */}
-                          {images.length > 1 && !selectMode && (
-                            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-2 py-0.5 text-xs text-white">
-                              {safeIdx + 1} / {images.length}
-                            </div>
-                          )}
-                        </>
-                      </div>
-
-                      {/* Thumbnail strip with checkboxes in select mode */}
-                      {images.length > 0 && (
-                        <div className="flex gap-1.5 overflow-x-auto pb-1">
-                          {images.map((url, i) => (
-                            <div key={i} className="relative shrink-0">
-                              <button
-                                onClick={() =>
-                                  selectMode ? toggleSelectImage(i) : setActiveImageIdx(i)
-                                }
-                                className={cn(
-                                  "h-14 w-14 overflow-hidden rounded-lg border-2 transition-all",
-                                  selectMode && selectedImages.has(i) && "border-danger",
-                                  !selectMode && i === safeIdx
-                                    ? "border-brand-500"
-                                    : !selectMode
-                                      ? "border-transparent opacity-60 hover:opacity-100"
-                                      : "border-surface-border",
-                                )}
-                              >
-                                <ThumbImage
-                                  url={url}
-                                  alt={`Image ${i + 1} of ${images.length}`}
-                                  objectPosition={objectPositionForUrl(url)}
-                                />
-                              </button>
-                              {selectMode && (
-                                <input
-                                  type="checkbox"
-                                  checked={selectedImages.has(i)}
-                                  onChange={() => toggleSelectImage(i)}
-                                  className="absolute left-0.5 top-0.5 h-3.5 w-3.5 cursor-pointer accent-danger"
-                                />
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Operator-only controls for the active image */}
-                      {isStaff && !selectMode && (
-                        <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-border pt-2">
-                          {/* Move left / right */}
-                          <button
-                            onClick={() => handleMoveImage(safeIdx, safeIdx - 1)}
-                            disabled={safeIdx === 0 || updateProduct.isPending}
-                            title="Move left"
-                            className={cn(
-                              TAP_TARGET,
-                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
-                            )}
-                          >
-                            <ChevronLeft className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleMoveImage(safeIdx, safeIdx + 1)}
-                            disabled={safeIdx === images.length - 1 || updateProduct.isPending}
-                            title="Move right"
-                            className={cn(
-                              TAP_TARGET,
-                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
-                            )}
-                          >
-                            <ChevronRight className="h-3.5 w-3.5" />
-                          </button>
-
-                          {/* Default / Set default */}
-                          {safeIdx === 0 ? (
-                            <span className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-600 select-none">
-                              <Star className="h-3 w-3 fill-brand-500 text-brand-500" />
-                              Default
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => handleSetDefault(safeIdx)}
-                              disabled={updateProduct.isPending}
-                              title="Set as default image (move to first position)"
-                              className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/70 hover:border-brand-200 hover:text-brand-500 disabled:opacity-30 transition-colors"
-                            >
-                              <Star className="h-3 w-3" />
-                              Set default
-                            </button>
-                          )}
-
-                          {/* Crop / re-set focal — re-runs the crop + focal-point
-                        flow on the existing image and replaces the original. */}
-                          <button
-                            onClick={() =>
-                              handleCropExisting(
-                                images[safeIdx],
-                                (product as any).imageKeys?.[safeIdx],
-                              )
-                            }
-                            disabled={!!cropState || uploadImages.isPending}
-                            title="Re-crop and/or move the focal point (replaces the original image)"
-                            className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/70 hover:text-navy disabled:opacity-30 transition-colors"
-                          >
-                            <Scissors className="h-3 w-3" />
-                            Crop / focal
-                          </button>
-                        </div>
-                      )}
-
-                      <ProductImageActions
-                        selectMode={selectMode}
-                        setSelectMode={setSelectMode}
-                        selectedImages={selectedImages}
-                        setSelectedImages={setSelectedImages}
-                        deleteSelected={deleteSelected}
-                        deletePending={deleteImage.isPending}
-                        uploadPending={uploadImages.isPending}
-                        cropping={!!cropState}
-                        fileInputRef={fileInputRef}
-                        handleUpload={handleUpload}
-                      />
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-
-            {product.kind !== "FAMILY" && (
-              <ProductStockCostCard
-                product={product}
-                stockStatus={stockStatus}
-                currentStock={currentStock}
-                onSetCost={() => setShowCostModal(true)}
-                pricesV2={v2}
-              />
-            )}
-          </div>
-
-          {/* ── Right: details + chart ── */}
-          <div className="space-y-5 lg:col-span-2">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 lg:gap-y-5">
+          {/* DOM order is the phone reading order and the tab order: Details, then Image and stock, then the rest.
+              The columns are placed at lg with grid lines, not order-* classes (K11-23). */}
+          <div className="space-y-5 lg:col-span-2 lg:col-start-2 lg:row-start-1">
             {/* Product details */}
             <div
               ref={detailsCardRef}
@@ -1586,72 +1276,6 @@ export default function ProductDetailPage() {
                     >
                       Regulated Items →
                     </Link>
-                  </div>
-                )}
-
-                {/* Buyer merchandising flags (P5-01) */}
-                {isStaff && (
-                  <div className="mb-4 rounded-lg border border-surface-border bg-white p-4">
-                    <div className="mb-2.5 flex items-center gap-2">
-                      <Star className="h-4 w-4 text-brand-500" />
-                      <h3 className="text-sm font-semibold text-navy">Buyer merchandising</h3>
-                    </div>
-                    {isEditing && (
-                      <p className="mb-2 text-xs font-medium text-navy/60">
-                        These switches apply immediately, without Save.
-                      </p>
-                    )}
-                    <p className="mb-3 text-xs text-navy/60">
-                      Highlight this product on the buyer catalogue with badges and smart
-                      collections. These are display flags only — they don&apos;t change price.
-                    </p>
-                    <div className="grid gap-2 sm:grid-cols-3">
-                      <MerchFlagToggle
-                        label="Featured"
-                        description="Pin to the featured shelf"
-                        active={!!(product as any).isFeatured}
-                        disabled={updateProduct.isPending}
-                        onToggle={() =>
-                          updateProduct.mutate(
-                            { id: id, isFeatured: !(product as any).isFeatured } as any,
-                            {
-                              onSuccess: () =>
-                                toast({ title: "Merchandising updated", variant: "success" }),
-                              onError: () => toast({ title: "Failed to update", variant: "error" }),
-                            },
-                          )
-                        }
-                      />
-                      <MerchFlagToggle
-                        label="New"
-                        description={'Show a "New" badge'}
-                        active={!!(product as any).isNew}
-                        disabled={updateProduct.isPending}
-                        onToggle={() =>
-                          updateProduct.mutate({ id: id, isNew: !(product as any).isNew } as any, {
-                            onSuccess: () =>
-                              toast({ title: "Merchandising updated", variant: "success" }),
-                            onError: () => toast({ title: "Failed to update", variant: "error" }),
-                          })
-                        }
-                      />
-                      <MerchFlagToggle
-                        label="Deal"
-                        description={'Show a "Deal" badge'}
-                        active={!!(product as any).isDeal}
-                        disabled={updateProduct.isPending}
-                        onToggle={() =>
-                          updateProduct.mutate(
-                            { id: id, isDeal: !(product as any).isDeal } as any,
-                            {
-                              onSuccess: () =>
-                                toast({ title: "Merchandising updated", variant: "success" }),
-                              onError: () => toast({ title: "Failed to update", variant: "error" }),
-                            },
-                          )
-                        }
-                      />
-                    </div>
                   </div>
                 )}
 
@@ -2164,9 +1788,286 @@ export default function ProductDetailPage() {
                     <p className="text-sm text-navy/80">{product.description}</p>
                   )}
                 </div>
+
+                {/* Buyer merchandising flags (P5-01): last in Details, so the price comes first (K11-23) */}
+                {isStaff && (
+                  <ProductMerchandising
+                    product={product as any}
+                    isEditing={isEditing}
+                    pending={updateProduct.isPending}
+                    onToggle={(flag, next) =>
+                      updateProduct.mutate({ id: id, [flag]: next } as any, {
+                        onSuccess: () =>
+                          toast({ title: "Merchandising updated", variant: "success" }),
+                        onError: () => toast({ title: "Failed to update", variant: "error" }),
+                      })
+                    }
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+          {/* ── Left: image gallery + stock card ── */}
+          <div className="space-y-4 lg:col-start-1 lg:row-start-1 lg:row-span-2">
+            {/* ── Image gallery ── */}
+            <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+              <div className="border-b border-surface-border px-4 py-3">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                  Image
+                </h3>
+              </div>
+              <div className="p-4">
+                {(() => {
+                  const images: string[] = (product as any).imageUrls ?? [];
+                  const safeIdx = Math.min(activeImageIdx, images.length - 1);
+
+                  const handleUpload = (files: FileList | null) => queueForCrop(files);
+
+                  const toggleSelectImage = (i: number) => {
+                    setSelectedImages((prev) => {
+                      const next = new Set(prev);
+                      next.has(i) ? next.delete(i) : next.add(i);
+                      return next;
+                    });
+                  };
+
+                  const deleteSelected = () => {
+                    const keys = (product as any).imageKeys ?? [];
+                    const toDelete = Array.from(selectedImages)
+                      .map((i) => keys[i])
+                      .filter(Boolean);
+                    if (toDelete.length > 0) setPendingImageDelete(toDelete);
+                  };
+
+                  if (images.length === 0)
+                    return (
+                      <ProductImagesEmpty onFiles={handleUpload} busy={uploadImages.isPending} />
+                    );
+                  return (
+                    <div className="space-y-2">
+                      {/* Main image / drop zone — 4:5 portrait viewport matching the
+                    upload ratio. Below lg the photo is shown whole (contain, centred);
+                    lg+ crops with object-cover by each image's stored focal point
+                    (older images default to centre). */}
+                      <div
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setIsDragging(true);
+                        }}
+                        onDragLeave={() => setIsDragging(false)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setIsDragging(false);
+                          handleUpload(e.dataTransfer.files);
+                        }}
+                        className={cn(
+                          "relative h-44 w-full overflow-hidden rounded-xl border lg:h-auto lg:aspect-[4/5]",
+                          isDragging && "ring-2 ring-brand-500",
+                          stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
+                          stockStatus === "OUT_OF_STOCK" && "border-warning/30 bg-warning-bg",
+                          stockStatus === "IN_STOCK" && "border-surface-border bg-surface-raised",
+                        )}
+                      >
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={images[safeIdx]}
+                            alt={`${product.name} — image ${safeIdx + 1}`}
+                            className="absolute inset-0 h-full w-full cursor-zoom-in object-contain max-lg:![object-position:50%_50%] lg:object-cover"
+                            style={{ objectPosition: objectPositionForUrl(images[safeIdx]) }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setLightboxIdx(safeIdx);
+                              setLightboxOpen(true);
+                            }}
+                          />
+                          {/* Delete current image (single) */}
+                          {!selectMode && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const key = (product as any).imageKeys?.[safeIdx];
+                                if (key) setPendingImageDelete([key]);
+                              }}
+                              className={cn(
+                                TAP_TARGET,
+                                "absolute right-2 top-2 rounded-full bg-black/50 text-white hover:bg-danger transition-colors",
+                              )}
+                              title="Delete this image"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {/* Prev / next arrows */}
+                          {images.length > 1 && !selectMode && (
+                            <>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveImageIdx((i) => (i - 1 + images.length) % images.length);
+                                }}
+                                className={cn(
+                                  TAP_TARGET,
+                                  "absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
+                                )}
+                              >
+                                <ChevronLeft className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveImageIdx((i) => (i + 1) % images.length);
+                                }}
+                                className={cn(
+                                  TAP_TARGET,
+                                  "absolute right-8 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
+                                )}
+                              >
+                                <ChevronRight className="h-4 w-4" />
+                              </button>
+                            </>
+                          )}
+                          {/* Page indicator */}
+                          {images.length > 1 && !selectMode && (
+                            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-2 py-0.5 text-xs text-white">
+                              {safeIdx + 1} / {images.length}
+                            </div>
+                          )}
+                        </>
+                      </div>
+
+                      {/* Thumbnail strip with checkboxes in select mode */}
+                      {images.length > 0 && (
+                        <div className="flex gap-1.5 overflow-x-auto pb-1">
+                          {images.map((url, i) => (
+                            <div key={i} className="relative shrink-0">
+                              <button
+                                onClick={() =>
+                                  selectMode ? toggleSelectImage(i) : setActiveImageIdx(i)
+                                }
+                                className={cn(
+                                  "h-14 w-14 overflow-hidden rounded-lg border-2 transition-all",
+                                  selectMode && selectedImages.has(i) && "border-danger",
+                                  !selectMode && i === safeIdx
+                                    ? "border-brand-500"
+                                    : !selectMode
+                                      ? "border-transparent opacity-60 hover:opacity-100"
+                                      : "border-surface-border",
+                                )}
+                              >
+                                <ThumbImage
+                                  url={url}
+                                  alt={`Image ${i + 1} of ${images.length}`}
+                                  objectPosition={objectPositionForUrl(url)}
+                                />
+                              </button>
+                              {selectMode && (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedImages.has(i)}
+                                  onChange={() => toggleSelectImage(i)}
+                                  className="absolute left-0.5 top-0.5 h-3.5 w-3.5 cursor-pointer accent-danger"
+                                />
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Operator-only controls for the active image */}
+                      {isStaff && !selectMode && (
+                        <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-border pt-2">
+                          {/* Move left / right */}
+                          <button
+                            onClick={() => handleMoveImage(safeIdx, safeIdx - 1)}
+                            disabled={safeIdx === 0 || updateProduct.isPending}
+                            title="Move left"
+                            className={cn(
+                              TAP_TARGET,
+                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
+                            )}
+                          >
+                            <ChevronLeft className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleMoveImage(safeIdx, safeIdx + 1)}
+                            disabled={safeIdx === images.length - 1 || updateProduct.isPending}
+                            title="Move right"
+                            className={cn(
+                              TAP_TARGET,
+                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
+                            )}
+                          >
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          </button>
+
+                          {/* Default / Set default */}
+                          {safeIdx === 0 ? (
+                            <span className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-600 select-none">
+                              <Star className="h-3 w-3 fill-brand-500 text-brand-500" />
+                              Default
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleSetDefault(safeIdx)}
+                              disabled={updateProduct.isPending}
+                              title="Set as default image (move to first position)"
+                              className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/70 hover:border-brand-200 hover:text-brand-500 disabled:opacity-30 transition-colors"
+                            >
+                              <Star className="h-3 w-3" />
+                              Set default
+                            </button>
+                          )}
+
+                          {/* Crop / re-set focal — re-runs the crop + focal-point
+                        flow on the existing image and replaces the original. */}
+                          <button
+                            onClick={() =>
+                              handleCropExisting(
+                                images[safeIdx],
+                                (product as any).imageKeys?.[safeIdx],
+                              )
+                            }
+                            disabled={!!cropState || uploadImages.isPending}
+                            title="Re-crop and/or move the focal point (replaces the original image)"
+                            className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/70 hover:text-navy disabled:opacity-30 transition-colors"
+                          >
+                            <Scissors className="h-3 w-3" />
+                            Crop / focal
+                          </button>
+                        </div>
+                      )}
+
+                      <ProductImageActions
+                        selectMode={selectMode}
+                        setSelectMode={setSelectMode}
+                        selectedImages={selectedImages}
+                        setSelectedImages={setSelectedImages}
+                        deleteSelected={deleteSelected}
+                        deletePending={deleteImage.isPending}
+                        uploadPending={uploadImages.isPending}
+                        cropping={!!cropState}
+                        fileInputRef={fileInputRef}
+                        handleUpload={handleUpload}
+                      />
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
+            {product.kind !== "FAMILY" && (
+              <ProductStockCostCard
+                product={product}
+                stockStatus={stockStatus}
+                currentStock={currentStock}
+                onSetCost={() => setShowCostModal(true)}
+                pricesV2={v2}
+              />
+            )}
+          </div>
+
+          <div className="space-y-5 lg:col-span-2 lg:col-start-2 lg:row-start-2">
             {/* ── Regulatory reporting ──────────────────────────────────────────
                 Filing vocabulary only (regulated type + the codes a report files
                 under), kept in its own card so it can't be mistaken for the

@@ -22,6 +22,7 @@ const MOUNTED: Array<[tag: string, file: string]> = [
   ["ProductInsightsExport", "ProductInsightsExport.tsx"],
   ["LegacyVariantsActions", "LegacyVariantsActions.tsx"],
   ["PiecesPerBoxValue", "PiecesPerBoxValue.tsx"],
+  ["ProductMerchandising", "ProductMerchandising.tsx"],
 ];
 
 describe("product page parity inventory (T38)", () => {
