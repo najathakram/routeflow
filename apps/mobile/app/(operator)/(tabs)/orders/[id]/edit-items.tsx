@@ -26,13 +26,16 @@ import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers
 import { showToast } from "../../../../../lib/toast";
 import { FAMILY_ADD_MESSAGE, isFamilyProduct } from "../../../../../lib/sellable-products";
 import { confirm } from "../../../../../lib/confirm";
+import { computeLineSubtotal, effectiveQty, type SellLevel } from "@routeflow/pricing";
+import { useCustomerPriceLayer } from "../../../../../lib/api/price-layer";
 import {
-  computeLineSubtotal,
-  effectiveQty,
-  getTierPrice,
-  isSpecialTier,
-  type SellLevel,
-} from "@routeflow/pricing";
+  lineIsSpecial,
+  optionWithLayerPrice,
+  packIsSpecial,
+  packLinePrice,
+  type PriceProduct,
+} from "../../../../../lib/cart-order-total";
+import { priceLayerGate, pricingReadyWithLayer } from "../../../../../lib/price-layer-gate";
 import { marginFloorPrice } from "../../../../../lib/margin-floor-price";
 import { isUnitLine, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
@@ -149,8 +152,17 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // NOTE: a disabled query stays `isPending` forever, so short-circuit when
   // there is no customer; an errored fetch falls back to the tier-1 degraded
   // mode rather than wedging the editor.
+  // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, every number is master's.
+  const priceLayer = useCustomerPriceLayer(customerId);
+  const layerOf = priceLayer.layerOf;
+  // The layer is part of "pricing is ready": the picker, Substitute, scan and price edits stay closed until it is, so an add
+  // never stores a pre-layer price (a product the layer cannot vouch for is also refused at the pick, below).
   const pricingReady =
-    !customerId || ((!customerPending || customerFailed) && (!pricesPending || pricesFailed));
+    !customerId ||
+    pricingReadyWithLayer(
+      (!customerPending || customerFailed) && (!pricesPending || pricesFailed),
+      priceLayer,
+    );
   const cpMap = useMemo(() => {
     const m = new Map<string, number | null>();
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
@@ -161,7 +173,25 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
    *  (the create surface's own rule, components/NewOrderScreen.tsx:627). Mobile's
    *  editor contradicted mobile's builder until this landed; the api-side gate is
    *  still the owner's call, so this is a CLIENT gate only (RULINGS R2/R9). */
-  const isSpecialFor = (productId: string) => isSpecialTier(effectiveTierFor(productId));
+  // S19b: a layered SPECIAL (the customer layer's pack row) is gated like a tier SPECIAL, else Save hits the server's 400.
+  // No layer (flag off / no typed price) is `isSpecialTier(tier)` exactly.
+  const isSpecialFor = (productId: string) =>
+    packIsSpecial(effectiveTierFor(productId), layerOf(productId)) || unitLineSpecial(productId);
+  /** A held unit line (a Can) is SPECIAL by ITS OWN layer row, not the pack's answer. */
+  const unitLineSpecial = (productId: string) =>
+    Object.values(draft).some(
+      (it) =>
+        it.productId === productId &&
+        !!it.unitLabel &&
+        !!it.packLadder &&
+        lineIsSpecial(
+          it,
+          it.packLadder as PriceProduct,
+          effectiveTierFor(productId),
+          layerOf(productId),
+        ) &&
+        layerOf(productId) != null,
+    );
   const userRole = useAuthStore((s) => s.user?.role);
   const userId = useAuthStore((s) => s.user?.id);
   // Customer accounts shouldn't reach this screen, but defend anyway —
@@ -292,8 +322,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     return Array.from(rows.values());
   }, [openCredits, order, justCreatedCredits]);
 
-  const tierPriceFor = (p: { id: string } & Parameters<typeof getTierPrice>[0]) =>
-    getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
+  const tierPriceFor = (p: { id: string } & PriceProduct) =>
+    packLinePrice(p, cpMap.get(p.id) ?? customerTier ?? 1, layerOf(p.id)).price;
 
   // Latched by a successful save. Read by the hydration guard below (the
   // post-save refetch IS the new truth, so it re-hydrates) and by the snapshot
@@ -435,6 +465,13 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const itemCount =
     Object.values(draft).filter((it) => effectiveQty(it, it.unitsPerBox) > 0).length +
     unlisted.filter((u) => u.qty > 0).length;
+
+  // D-5 (SA-813 M3): Save stays disabled until every staged product's price is confirmed by the layer read.
+  const layerGate = priceLayerGate(
+    priceLayer,
+    Object.values(draft).map((it) => it.productId),
+    (id) => Object.values(draft).find((it) => it.productId === id)?.name ?? id,
+  );
 
   // ── The staged edit, as one value ─────────────────────────────────────────
   // `originals` and `staged` are the SAME inputs `save()` builds its payload
@@ -611,7 +648,16 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       const packTierPrice = cur.packLadder
         ? tierPriceFor({ id: cur.productId, ...cur.packLadder })
         : cur.catalogPrice;
-      return { ...d, [id]: applyUnitPick(cur, option, packTierPrice) };
+      // S19b (SA-813 M2): a unit in the customer layer takes the layer price, not the tier's (typed pack $33 -> Case $377.14).
+      const layered = cur.packLadder
+        ? optionWithLayerPrice(
+            option,
+            cur.packLadder as PriceProduct,
+            effectiveTierFor(cur.productId),
+            layerOf(cur.productId),
+          )
+        : option;
+      return { ...d, [id]: applyUnitPick(cur, layered, packTierPrice) };
     });
 
   // "Set to floor" one-tap fix (P10-POS-1) — same price-write path as the
@@ -643,6 +689,18 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
    * box. Returns the draft KEY (B775: never `p.id`) for callers tracking
    * "the last thing added" (the picker's price-edit affordance).
    */
+  /** D-5: refuse a pick the layer cannot vouch for, saying why: checking / failed (with Retry) / too many prices. */
+  const refuseUnconfirmedPick = (p: { id: string; name: string }): boolean => {
+    const gate = priceLayerGate(priceLayer, [p.id], () => p.name);
+    if (!gate.blocked) return false;
+    if (gate.canRetry)
+      confirm("Prices aren't confirmed", gate.message ?? "", () => priceLayer.refetch(), {
+        confirmText: "Retry",
+      });
+    else showToast(gate.message ?? "");
+    return true;
+  };
+
   const addPickedToDraft = (
     p: {
       id: string;
@@ -653,13 +711,18 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       priceTier4?: number | string | null;
       priceTier5?: number | string | null;
       unit?: string;
+      packLabel?: string | null;
+      baseUnitLabel?: string | null;
       unitsPerBox?: number | null;
     },
     level: SellLevel = "BOX",
   ): string => {
+    // D-5: never store a price the layer cannot vouch for (pending, failed, or absent from an incomplete layer).
+    if (refuseUnconfirmedPick(p)) return resolveDraftKeyForPick(draftRef.current, p.id, null);
     const catalogPrice = tierPriceFor(p);
     const listPrice = toNumber(p.pricePerUnit);
-    const isSpecial = isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1);
+    const lp = packLinePrice(p, cpMap.get(p.id) ?? customerTier ?? 1, layerOf(p.id));
+    const isSpecial = lp.isSpecial || lp.layered; // R3: a layered price is the resolver's, no last-given pre-fill
     const upbRaw = p.unitsPerBox;
     const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
     // Fresh-add starting price — only a genuine discount (below tier) or
@@ -1129,6 +1192,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           onScanSessionEnd={() => setTrayFlash(null)}
           onPick={(p, level) => {
             if (substituteFor) {
+              if (refuseUnconfirmedPick(p)) return;
               const tierPrice = tierPriceFor(p);
               const listPrice = toNumber(p.pricePerUnit);
               updateDraft((d) => {
@@ -1312,6 +1376,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                       canEditPrice={canEditPriceFor(it.productId)}
                       pricingReady={pricingReady}
                       tier={effectiveTierFor(it.productId)}
+                      pricesUnconfirmed={layerGate.blocked}
                       marginFloor={floorForCategory(marginConfig, it.category)}
                       acked={floorAcked.has(key)}
                       onSetToFloor={(price) => setLinePrice(key, price)}
@@ -1386,11 +1451,25 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                 {itemCount} ITEM{itemCount === 1 ? "" : "S"}
               </Text>
               <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
+              {layerGate.message ? (
+                <Pressable
+                  onPress={layerGate.canRetry ? priceLayer.refetch : undefined}
+                  disabled={!layerGate.canRetry}
+                  accessibilityRole={layerGate.canRetry ? "button" : "text"}
+                  accessibilityLabel={layerGate.message}
+                  hitSlop={6}
+                >
+                  <Text style={{ fontSize: 12, textAlign: "center" }}>{layerGate.message}</Text>
+                </Pressable>
+              ) : null}
             </View>
             <Pressable
-              style={[styles.saveBtn, updateMut.isPending && styles.saveBtnDisabled]}
+              style={[
+                styles.saveBtn,
+                (updateMut.isPending || layerGate.blocked) && styles.saveBtnDisabled,
+              ]}
               onPress={save}
-              disabled={updateMut.isPending}
+              disabled={updateMut.isPending || layerGate.blocked}
             >
               <Text style={styles.saveBtnText}>
                 {updateMut.isPending ? "Saving…" : "Save changes"}

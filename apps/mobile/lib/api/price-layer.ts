@@ -27,6 +27,8 @@ export const priceLayerKey = (customerId: string) =>
 
 export interface CustomerPriceLayer extends PriceLayerStatus {
   layerOf(productId: string | null | undefined): readonly CustomerLayerUnit[] | undefined;
+  /** The raw read (memo deps track it, not just `ready`). */
+  data: CustomerPriceLayerResponse | undefined;
   error: unknown;
   refetch: () => void;
 }
@@ -52,6 +54,7 @@ export function useCustomerPriceLayer(customerId: string | null | undefined): Cu
   return {
     ...status,
     layerOf: (productId) => (enabled && productId ? q.data?.products[productId] : undefined),
+    data: q.data,
     error: q.error,
     refetch: () => void q.refetch(),
   };
