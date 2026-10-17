@@ -1,4 +1,10 @@
-import { getTierPrice, normalizeBoxesPieces } from "@routeflow/pricing";
+import {
+  customerLinePrice,
+  getTierPrice,
+  layerRowForLabel,
+  normalizeBoxesPieces,
+  type CustomerLayerUnit,
+} from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { buildUnitOptions } from "@/lib/unit-options";
 import type { InvoiceDraftLine, InvoiceDraftSnapshot } from "@/lib/invoice-draft-storage";
@@ -69,12 +75,22 @@ interface Resolved {
 export function repriceLine(
   stored: InvoiceDraftLine,
   product: any,
-  o: { customerTier: number; customerPrice?: number; lineTier: number; ladder?: UnitLadder },
+  o: {
+    customerTier: number;
+    customerPrice?: number;
+    lineTier: number;
+    ladder?: UnitLadder;
+    /** S19b: this product's rows in the flag-on customer price layer (`CustomerPriceLayerResponse.products[id]`). */
+    layer?: readonly CustomerLayerUnit[];
+  },
 ): Resolved {
   if (!product || !Number.isFinite(parseFloat(String(product.pricePerUnit)))) {
     return { line: stored, updated: false };
   }
-  const fresh = catalogPricing(product, o);
+  const layerLine = o.layer
+    ? customerLinePrice({ product, tier: o.lineTier, layer: o.layer, unitLabel: null })
+    : undefined;
+  const fresh = catalogPricing(product, { ...o, layerLine });
   const typed = stored.priceEdited === true;
   const common: Partial<InvoiceDraftLine> = {
     pricing: fresh.pricing,
@@ -94,10 +110,28 @@ export function repriceLine(
       (x) => x.value.trim().toLowerCase() === want,
     );
     if (!opt) return { line: null, updated: false, unitDropped: true };
-    const line: InvoiceDraftLine = { ...stored, ...common, listPrice: opt.listPrice };
+    // S19b R3: when the line's unit is in the customer layer, the layer's price is the line's price.
+    const unitRow = o.layer ? layerRowForLabel(product, o.layer, stored.unitLabel) : undefined;
+    const unitLine = unitRow
+      ? customerLinePrice({
+          product,
+          tier: o.lineTier,
+          layer: o.layer,
+          unitLabel: stored.unitLabel,
+        })
+      : undefined;
+    const line: InvoiceDraftLine = {
+      ...stored,
+      ...common,
+      listPrice: unitLine ? unitLine.listPrice : opt.listPrice,
+    };
     if (!typed) {
-      line.unitPrice = opt.price;
-      line.priceType = opt.price !== opt.listPrice ? "SPECIAL" : "STANDARD";
+      line.unitPrice = unitLine ? unitLine.price : opt.price;
+      line.priceType = unitLine
+        ? unitLine.priceType
+        : opt.price !== opt.listPrice
+          ? "SPECIAL"
+          : "STANDARD";
       delete line.priceEdited;
     }
     return { line, updated: !typed && line.unitPrice !== stored.unitPrice };
@@ -126,7 +160,7 @@ export function repriceLine(
   }
   if (!typed) {
     line.unitPrice = fresh.effectivePrice;
-    line.priceType = fresh.isSpecial ? "SPECIAL" : "STANDARD";
+    line.priceType = fresh.priceType;
     line.isSpecialPrice = fresh.isSpecial || undefined;
     line.regularPrice = fresh.isSpecial ? fresh.listPrice : undefined;
     delete line.priceEdited;
@@ -139,6 +173,8 @@ export function repriceLine(
 export async function checkDraftReferences(
   snapshot: InvoiceDraftSnapshot,
   get: Get,
+  /** S19b: `pricesV2` = flag.units_prices_v2 is on. Off (the default) fires no price-layer request and changes nothing. */
+  opts?: { pricesV2?: boolean },
 ): Promise<RestoreCheck> {
   const productIds = [
     ...new Set(snapshot.lines.map((l) => l.productId).filter(Boolean)),
@@ -193,6 +229,27 @@ export async function checkDraftReferences(
     }
   }
 
+  // S19b: the customer layer (billing's own resolved rows). A failed read means the prices are UNCONFIRMED: such lines
+  // are kept as stored and counted unchecked, never re-priced at the tier.
+  let layerProducts: Record<string, CustomerLayerUnit[]> | undefined;
+  let layerComplete = true;
+  let layerUnknown = false;
+  if (opts?.pricesV2 && customer) {
+    try {
+      const res = await get(`/customers/${encodeURIComponent(customer.id)}/price-layer`);
+      const d = res?.data as
+        { complete?: boolean; products?: Record<string, CustomerLayerUnit[]> } | undefined;
+      if (d && d.products && typeof d.products === "object") {
+        layerProducts = d.products;
+        layerComplete = d.complete !== false;
+      } else {
+        layerUnknown = true;
+      }
+    } catch {
+      layerUnknown = true;
+    }
+  }
+
   const productById = new Map<string, unknown>();
   productIds.forEach((id, i) => {
     const r = productRes[i];
@@ -232,7 +289,13 @@ export async function checkDraftReferences(
       lines.push(l); // free-text line
       continue;
     }
-    if (!productById.has(l.productId) || (rowsUnknown && !l.priceEdited)) {
+    const layerMissing =
+      !!opts?.pricesV2 &&
+      !!customer &&
+      (layerUnknown ||
+        (!layerComplete &&
+          !Object.prototype.hasOwnProperty.call(layerProducts ?? {}, l.productId)));
+    if (!productById.has(l.productId) || ((rowsUnknown || layerMissing) && !l.priceEdited)) {
       // The product (or this customer's price rows) could not be read: keep the line as stored and say so.
       if (!l.priceEdited) pricesUnchecked += 1;
       lines.push(l);
@@ -243,6 +306,7 @@ export async function checkDraftReferences(
       customerPrice: customerPrice[l.productId],
       lineTier: lineTier[l.productId] ?? customerTier,
       ladder: ladders.get(l.productId),
+      layer: layerProducts?.[l.productId],
     });
     if (r.unitDropped) unitsDropped += 1;
     if (r.unchecked) pricesUnchecked += 1;

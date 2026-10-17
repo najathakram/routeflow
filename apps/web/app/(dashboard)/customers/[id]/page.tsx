@@ -61,6 +61,8 @@ import {
   Legend,
 } from "recharts";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
+import { PriceLayerNotice } from "@/components/PriceLayerNotice";
 import { useAuth } from "@/lib/auth-context";
 import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/portal-approvals";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
@@ -70,6 +72,7 @@ import { statementMoney } from "@/lib/customer-statement-display";
 import {
   isSpecialTier,
   getTierPrice,
+  customerLinePrice,
   computeMarginFraction,
   classifyMargin,
 } from "@routeflow/pricing";
@@ -1081,6 +1084,9 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   };
 
   const priceList: CustomerPrice[] = prices ?? [];
+  // S19b (SA-811a/813): flag-on, the price list shows billing's own customer-layer price (not the bare tier price).
+  // Flag off: no request, the tier price as today. Pending or failed: unconfirmed, never a final tier price.
+  const priceLayer = useCustomerPriceLayer(customerId);
 
   return (
     <Tabs.Content value="special-prices" className="mt-5 focus:outline-none">
@@ -1258,7 +1264,23 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                   // No tier override on this row (MSRP-only) \u2192 price at the
                   // customer's default tier, same as an ordinary order would.
                   const effectiveTier = cp.pricingTier ?? customer?.pricingTier ?? 1;
-                  const tierPrice = cp.product ? getTierPrice(cp.product, effectiveTier) : 0;
+                  const layerRows = priceLayer.layerOf(cp.productId);
+                  const layered =
+                    cp.product && layerRows
+                      ? customerLinePrice({
+                          product: cp.product as unknown as Record<string, unknown>,
+                          tier: effectiveTier,
+                          layer: layerRows,
+                          unitLabel: null,
+                        })
+                      : undefined;
+                  const tierPrice = layered?.layered
+                    ? layered.price
+                    : cp.product
+                      ? getTierPrice(cp.product, effectiveTier)
+                      : 0;
+                  const priceUnconfirmed =
+                    priceLayer.enabled && !priceLayer.lineReady(cp.productId);
                   return (
                     <tr key={cp.id} className="hover:bg-gray-50/60">
                       <td className="px-6 py-3 text-sm font-medium text-navy">
@@ -1292,10 +1314,21 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                         </td>
                       )}
                       <td className="px-4 py-3 text-right text-sm font-semibold text-brand-600">
-                        {fmt(tierPrice)}
-                        {cp.pricingTier != null && tierUnset(cp.product, cp.pricingTier) && (
-                          <span className="ml-1 text-xs font-normal text-navy/50">(list)</span>
+                        {priceUnconfirmed ? (
+                          <PriceLayerNotice
+                            layer={priceLayer}
+                            unconfirmed
+                            className="text-xs font-normal text-navy/60"
+                          />
+                        ) : (
+                          fmt(tierPrice)
                         )}
+                        {!priceUnconfirmed &&
+                          !layered?.layered &&
+                          cp.pricingTier != null &&
+                          tierUnset(cp.product, cp.pricingTier) && (
+                            <span className="ml-1 text-xs font-normal text-navy/50">(list)</span>
+                          )}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-xs">
                         {(() => {

@@ -19,6 +19,8 @@ import {
   type CustomerPrice,
 } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
+import { PriceLayerNotice, pricesUnconfirmed } from "@/components/PriceLayerNotice";
 import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -35,6 +37,7 @@ import {
   normalizeBoxesPieces,
   packFromOwnSplit,
   getTierPrice,
+  customerLinePrice,
   isNsfLine,
 } from "@routeflow/pricing";
 
@@ -461,7 +464,13 @@ export default function EditInvoicePage() {
   // and `tierPriceFor` would answer LIST. Block selection until they settle.
   // (v5 `isLoading` is false while a query is disabled or after it errors, so an
   // invoice with no customer, or a failed fetch, never leaves the rows stuck.)
-  const tierPricingPending = customerQuery.isLoading || customerPricesQuery.isLoading;
+  // S19b (SA-811a/813): flag-on, billing's own customer layer. Flag off = no request, master's chain below. Until it is read
+  // (or after it failed) a pick would price at the tier, so selection waits and Save stays disabled with the M3 copy.
+  const priceLayer = useCustomerPriceLayer(invoice?.customerId);
+  const tierPricingPending =
+    customerQuery.isLoading ||
+    customerPricesQuery.isLoading ||
+    (priceLayer.enabled && !priceLayer.ready);
   // Per-product PRICE resolved from the CustomerPrice TIER override through the
   // product's tier ladder. An msrp-only override row has pricingTier null —
   // price at the customer's default tier (Post-MSRP hazard).
@@ -481,13 +490,27 @@ export default function EditInvoicePage() {
     (product: TierPriceableProduct) => {
       const listPrice = parseFloat(String(product.pricePerUnit ?? 0)) || 0;
       const customerTier = customer?.pricingTier ?? 1;
+      const layer = priceLayer.layerOf(product.id);
+      if (layer) {
+        // The layer row, when this product has one for its pack (R3); otherwise master's chain below.
+        const cp = ((customerPricesData ?? []) as CustomerPrice[]).find(
+          (c) => c.productId === product.id,
+        );
+        const r = customerLinePrice({
+          product: product as unknown as Record<string, unknown>,
+          tier: cp?.pricingTier ?? customerTier,
+          layer,
+          unitLabel: null,
+        });
+        if (r.layered) return r.price;
+      }
       const tierLadderPrice = isSpecialTier(customerTier)
         ? getTierPrice(product, customerTier)
         : undefined;
       const specialPrice = priceMap[product.id] ?? tierLadderPrice;
       return specialPrice != null && Number.isFinite(specialPrice) ? specialPrice : listPrice;
     },
-    [customer, priceMap],
+    [customer, priceMap, priceLayer, customerPricesData],
   );
 
   const [initialized, setInitialized] = React.useState(false);
@@ -636,7 +659,13 @@ export default function EditInvoicePage() {
 
   // ── Submit ────────────────────────────────────────────────────────────────────
 
+  const priceBlocked = pricesUnconfirmed(
+    priceLayer,
+    items.map((i) => i.productId),
+  );
+
   function handleSubmit() {
+    if (priceBlocked) return;
     if (!validate()) return;
 
     const dto = {
@@ -1181,11 +1210,16 @@ export default function EditInvoicePage() {
                   </Button>
                 </div>
               )}
+              <PriceLayerNotice
+                layer={priceLayer}
+                unconfirmed={priceBlocked}
+                className="block text-xs text-amber-700"
+              />
               <Button
                 className="w-full"
                 onClick={handleSubmit}
                 loading={updateInvoice.isPending}
-                disabled={updateInvoice.isPending}
+                disabled={updateInvoice.isPending || priceBlocked}
               >
                 Save Changes
               </Button>
