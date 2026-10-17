@@ -14,6 +14,7 @@ import {
   normalizeBoxesPieces,
   resolveLadderLevel,
   resolveUnitPrice,
+  unitNameKey,
   type CategoryTaxSnapshot,
   type CategoryTaxType,
   type LadderProduct,
@@ -241,7 +242,7 @@ export function replayLineKey(
   },
   stored: boolean,
 ): string {
-  const unit = (r.unitLabel ?? "").trim().toLowerCase();
+  const unit = unitNameKey(r.unitLabel ?? "");
   let count: unknown = stored && unit ? (r.boxes ?? r.qty) : r.qty;
   // A boxes/pieces-only request line has no qty: derive the piece count the writer stores (same
   // normalizeBoxesPieces) instead of keying NaN, which can never match a stored line. Without a pack size
@@ -412,7 +413,7 @@ export function buildUnitLine(input: {
   const snap = input.existing;
   const gone =
     snap != null &&
-    (snap.unitLabel ?? "").trim().toLowerCase() === label.trim().toLowerCase() &&
+    unitNameKey(snap.unitLabel ?? "") === unitNameKey(label) &&
     Number(snap.unitPrice) >= 0 &&
     !ladderNames(ladderProduct, units, label);
   let listPrice: number;

@@ -18,6 +18,7 @@ import {
   useUpdateProductUnit,
 } from "@/lib/api/product-units";
 import { cascadePatch, proposeCascade, type CascadeProposal } from "@/lib/unit-cascade";
+import { unitNotListedNotice } from "@/lib/api/tenant-units";
 import { usePriceGrid } from "@/lib/api/usePriceGrid";
 import {
   shellHasUnitControls,
@@ -268,6 +269,12 @@ export function ProductUnitsCard({
   // B594: no component-level error toasts — app/providers.tsx's global MutationCache handler
   // already toasts the server's message for every failed mutation, so a second one here doubled it.
 
+  // SA-810: the level saved, but its name was not added to the full unit list. Say so, once.
+  const notListed = (saved: unknown) => {
+    const notice = unitNotListedNotice(saved);
+    if (notice) toast({ title: notice, variant: "info" });
+  };
+
   const save = (unit: ProductUnitLevel, d: Draft) => {
     const oldPrices = draftOf(unit).prices;
     const newPrices = d.prices.map(priceOrNull);
@@ -283,7 +290,10 @@ export function ProductUnitsCard({
     };
     update.mutate(body, {
       // EVERY tier cascades, each independently (a tier-2 edit offers tier 2 to the others).
-      onSuccess: () => setProposals(proposeCascade(units, unit.id, oldPrices, newPrices)),
+      onSuccess: (saved) => {
+        notListed(saved);
+        setProposals(proposeCascade(units, unit.id, oldPrices, newPrices));
+      },
     });
   };
 
@@ -310,7 +320,8 @@ export function ProductUnitsCard({
     create.mutate(
       { label: name.trim(), factorToBase: factor, price: priceOrNull(price) },
       {
-        onSuccess: () => {
+        onSuccess: (saved) => {
+          notListed(saved);
           setName("");
           setFactor(null);
           setPrice(null);

@@ -73,6 +73,7 @@ import {
   UNIT_NOT_OFFERED_MESSAGE,
   chooseInvoiceUnit,
   dropStaleUnitLines,
+  offeredByLadder,
   invoiceItemDto,
   invoiceItemOverride,
   invoiceTotalsLine,
@@ -1300,18 +1301,14 @@ function InvoiceComposer({
             queryFn: () => fetchProductUnits(id),
             staleTime: 0,
           });
-          offered[id] = units.map((u) => u.label.trim().toLowerCase());
+          offered[id] = units.map((u) => u.label);
         } catch {
           // ladder unreachable: that product's lines are left alone (the next save re-checks)
         }
       }),
     );
     setItems((cur) =>
-      dropStaleUnitLines(
-        cur,
-        (id, label) => !(id in offered) || offered[id]!.includes(label.trim().toLowerCase()),
-        (id) => productById.get(id)?.unitsPerBox,
-      ),
+      dropStaleUnitLines(cur, offeredByLadder(offered), (id) => productById.get(id)?.unitsPerBox),
     );
   };
 

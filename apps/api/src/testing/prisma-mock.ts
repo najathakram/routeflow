@@ -113,6 +113,8 @@ export function createMockPrisma(): MockPrisma {
     driverLocation: modelProxy(),
     product: productProxy(),
     productUnit: modelProxy(),
+    // SA-797: the pack word's tenant unit (findOne's packTenantUnitId, the update's value precondition).
+    tenantUnit: modelProxy(),
     // #2717 M1: additive barcode-by-level / photo rows (product-catalog-sync.ts). Default
     // findMany() -> [] (modelProxy) matches "no rows yet" — a spec that seeds rows stubs
     // .findMany.mockResolvedValue([...]) same as any other model.

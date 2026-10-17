@@ -143,6 +143,7 @@ export * from "./order-applied-credits";
 
 export * from "./order-line-backorder";
 export * from "./invoice-line-code";
+export * from "./piece-synonyms";
 export * from "./api/enums";
 export * from "./api/billing";
 export * from "./api/orders";

@@ -499,7 +499,31 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
       added: "2026-09-19",
       routes: ["ALL /products/:productId/units (class-level)"],
       grantPath: "Owner override GRANT per tenant (feature grants) — no plan bundles it yet",
-      backfill: "New key: no tenant has used it, so there is nothing to backfill.",
+      backfill:
+        "New key: no tenant had used it at ship time, so there was nothing to backfill. Settings > Units (/units) is NOT gated by it: that moved to flag.units_settings_v1 below.",
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: false,
+  },
+  {
+    key: "flag.units_settings_v1",
+    kind: "boolean",
+    area: "catalog",
+    label: "Settings > Units (rename units)",
+    description:
+      "The Settings > Units page and its API: add, rename, archive and restore the unit names tenants sell by. A rename rewrites the unit text on every product that uses it.",
+    gate: {
+      via: "RequirePlanFlag",
+      // ENFORCED, never dark: a dark flag is courtesy-allowed to every tenant, and a rename
+      // rewrites product rows. flag.units_v1 is already ACTIVE on a live tenant, so /units
+      // cannot ride on it; this key is granted per tenant only after the U-6 backfill shows 0/0/0.
+      state: "enforced",
+      added: "2026-10-14",
+      routes: ["ALL /units (class-level)"],
+      grantPath:
+        "Owner override GRANT per tenant (feature grants), only after that tenant's U-6 unit backfill shows 0/0/0 — no plan bundles it",
+      backfill:
+        "New key: nobody holds it, so every tenant (including those with flag.units_v1) is refused on /units until the owner grants it. Nothing to backfill; the grant itself is the gated step.",
     },
     billing: { skus: [], selfService: false },
     defaultGranted: false,

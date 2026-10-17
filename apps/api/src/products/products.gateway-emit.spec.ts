@@ -98,7 +98,7 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
     prisma.product.findFirst.mockResolvedValue(null);
     prisma.product.update.mockResolvedValue({ ...MOCK_PRODUCT, pricePerUnit: 9.99 } as any);
 
-    await service.update("prod-1", { pricePerUnit: 9.99 } as any);
+    await service.update("prod-1", { pricePerUnit: 9.99 } as any, { packPrecondition: "internal" });
 
     expect(gateway.emitProductUpdated).toHaveBeenCalledTimes(1);
     expect(gateway.emitProductUpdated).toHaveBeenCalledWith("test-tenant", {
@@ -295,7 +295,9 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
     // Without the try/catch inside emitProductChanged, this throw would
     // propagate out of update() and turn an already-committed Prisma write
     // into a 500 for the caller.
-    await expect(service.update("prod-1", { pricePerUnit: 9.99 } as any)).resolves.toEqual({
+    await expect(
+      service.update("prod-1", { pricePerUnit: 9.99 } as any, { packPrecondition: "internal" }),
+    ).resolves.toEqual({
       ...MOCK_PRODUCT,
       pricePerUnit: 9.99,
     });

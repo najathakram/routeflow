@@ -118,7 +118,16 @@ export class UnknownUnitError extends Error {
   }
 }
 
-const norm = (s: string) => s.trim().toLowerCase();
+/**
+ * The comparison key of a unit / pack label: NFC-normalise, THEN trim, THEN case-fold. The ONE
+ * implementation for every label match on the ladder (a sale-line label against the pack word, a level
+ * row, Piece), so "Cafe"+U+0301 and U+00E9 are one word. Pricing may only import @routeflow/types for
+ * types (no-runtime-types-import.spec), so the helper lives here; `packages/types` keeps a literal copy
+ * for the web, pinned equal to this by `apps/api/src/units/piece-words-parity.spec.ts`, and the API
+ * imports this one directly. ASCII labels key exactly as the old `trim().toLowerCase()` did.
+ */
+export const unitNameKey = (s: string): string => s.normalize("NFC").trim().toLowerCase();
+const norm = unitNameKey;
 const noLevel = {
   price: null,
   priceTier2: null,

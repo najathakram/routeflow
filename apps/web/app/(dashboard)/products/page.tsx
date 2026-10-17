@@ -41,6 +41,7 @@ import { AssignToSectionModal } from "@/components/AssignToSectionModal";
 import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
+import { quickPackEdit } from "@/lib/quick-edit-pack";
 import { SectionEditCell } from "./_components/SectionEditCell";
 import {
   PortalBulkButtons,
@@ -312,7 +313,7 @@ function makeTableColumns(
     field: string,
     newVal: string,
     record: EditRecord,
-  ) => Promise<void>,
+  ) => Promise<void | false>,
   barcodeRefs: React.MutableRefObject<Record<string, React.RefObject<HTMLInputElement | null>>>,
   productIds: string[],
   categories: string[],
@@ -650,6 +651,9 @@ function makeTableColumns(
               productId={p.id}
               productName={p.name}
               field="unitsPerBox"
+              type="number"
+              min={1}
+              step={1}
               value={p.unitsPerBox != null ? String(p.unitsPerBox) : ""}
               quickEditMode={quickEditMode}
               onSave={(val, rec) => onQuickSave(p, "unitsPerBox", val, rec)}
@@ -798,6 +802,23 @@ export default function ProductsPage() {
 
   const handleQuickSave = React.useCallback(
     async (product: ApiProduct, field: string, newVal: string, record: EditRecord) => {
+      // SA-797a: the size as a number, with the pack the cell read; undo / redo carry their own expected pack.
+      if (field === "unitsPerBox") {
+        const pack = quickPackEdit(product, newVal);
+        if (!pack.ok) {
+          // Invalid size: no PATCH, the cell stays open (the `false` result) so the typo can be fixed.
+          toast({ title: pack.message, variant: "error" });
+          return false;
+        }
+        await updateProduct.mutateAsync({ id: product.id, ...pack.save });
+        toast({ title: `${field} updated`, variant: "success" });
+        setUndoStack((prev) => [
+          ...prev.slice(-19),
+          { ...record, oldValue: pack.undo, newValue: pack.redo },
+        ]);
+        setRedoStack([]);
+        return;
+      }
       const updates: { id: string; [k: string]: unknown } = {
         id: product.id,
         [field]: newVal || null,

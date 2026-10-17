@@ -57,6 +57,10 @@ const EXEMPT: Record<string, { writes: number; reason: string }> = {
     writes: 1,
     reason: "writes the five pack price columns, packAuto and priceRevision only; never category",
   },
+  "units/units.service.ts": {
+    writes: 3,
+    reason: "a unit rename rewrites baseUnitLabel, packLabel and unit by nameKey; never category",
+  },
   "products/product-code-release.ts": {
     writes: 2,
     reason: "moves sku/barcode/unitSku to and from their retired columns only",

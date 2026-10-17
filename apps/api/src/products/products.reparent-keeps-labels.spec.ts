@@ -127,10 +127,12 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
   it("an unreadable OLD chain refuses the move with the coded 409 BEFORE any write", async () => {
     seedVariant("old");
     plan.mockRejectedValue(new ProductChainUnreadableError());
-    const err = await service.update("prod-1", { parentProductId: "fam" } as never).then(
-      () => null,
-      (e: unknown) => e,
-    );
+    const err = await service
+      .update("prod-1", { parentProductId: "fam" } as never, { packPrecondition: "internal" })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
     expect(err).toBeInstanceOf(ProductChainUnreadableError);
     expect((err as ProductChainUnreadableError).getStatus()).toBe(409);
     expect((err as ProductChainUnreadableError).getResponse()).toMatchObject({
@@ -159,6 +161,7 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
       return { keptLabels: ["CA ban"] };
     });
     const out = await service.update("prod-1", { parentProductId: "fam" } as never, {
+      packPrecondition: "internal",
       actorId: "u1",
       actorName: "Ann",
     });
@@ -181,7 +184,9 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
     seedVariant("fam");
     prisma.product.update.mockResolvedValue({ ...PRODUCT, parentProductId: null });
     keep.mockResolvedValue({ keptLabels: ["NY ban"] });
-    const out = await service.update("prod-1", { parentProductId: null } as never);
+    const out = await service.update("prod-1", { parentProductId: null } as never, {
+      packPrecondition: "internal",
+    });
     expect(keep).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ fromParentId: "fam", toParentId: null }),
@@ -198,11 +203,15 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
           ? FAMILY
           : null,
     );
-    const echo = await service.update("prod-1", {
-      parentProductId: "fam",
-      description: "x",
-    } as never);
-    await service.update("prod-1", { description: "y" } as never);
+    const echo = await service.update(
+      "prod-1",
+      {
+        parentProductId: "fam",
+        description: "x",
+      } as never,
+      { packPrecondition: "internal" },
+    );
+    await service.update("prod-1", { description: "y" } as never, { packPrecondition: "internal" });
     expect(keep).not.toHaveBeenCalled();
     expect(echo).not.toHaveProperty("keptLabels");
   });
@@ -211,9 +220,11 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
     seedVariant("old");
     keep.mockRejectedValue(new Error("materialise failed"));
     const emit = jest.spyOn(service as never, "emitProductChanged" as never);
-    await expect(service.update("prod-1", { parentProductId: "fam" } as never)).rejects.toThrow(
-      "materialise failed",
-    );
+    await expect(
+      service.update("prod-1", { parentProductId: "fam" } as never, {
+        packPrecondition: "internal",
+      }),
+    ).rejects.toThrow("materialise failed");
     expect(prisma.tenantTransaction).toHaveBeenCalled();
     expect(emit).not.toHaveBeenCalled();
   });
@@ -221,7 +232,9 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
   it("an unlink keeps the variant's name and variantName: neither is written", async () => {
     seedVariant("fam");
     prisma.product.update.mockResolvedValue({ ...PRODUCT, parentProductId: null });
-    await service.update("prod-1", { parentProductId: null } as never);
+    await service.update("prod-1", { parentProductId: null } as never, {
+      packPrecondition: "internal",
+    });
     const data = prisma.product.update.mock.calls[0][0].data as Record<string, unknown>;
     expect(data).toMatchObject({ parentProductId: null, kind: "STANDARD" });
     expect(data).not.toHaveProperty("variantName");
@@ -249,9 +262,11 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
       expect(tx).toBe(txs[0]); // the keep got the very tx the update ran in
       throw new Error("materialise failed");
     });
-    await expect(service.update("prod-1", { parentProductId: "fam" } as never)).rejects.toThrow(
-      "materialise failed",
-    );
+    await expect(
+      service.update("prod-1", { parentProductId: "fam" } as never, {
+        packPrecondition: "internal",
+      }),
+    ).rejects.toThrow("materialise failed");
     expect(prisma.product.update).toHaveBeenCalledTimes(1);
     expect(committed).toBe(false);
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
