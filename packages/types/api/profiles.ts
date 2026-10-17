@@ -17,6 +17,9 @@ export const BUSINESS_PROFILE_KEYS = [
   "in_store_retailer",
   "in_store_shipping_retailer",
   "delivery_pos",
+  // BO-04: the two combinations the original five could not name (Delivery + Shipping, and all three).
+  "delivery_shipping",
+  "delivery_shipping_pos",
 ] as const;
 export type BusinessProfileKey = (typeof BUSINESS_PROFILE_KEYS)[number];
 
@@ -175,4 +178,70 @@ export interface BusinessProfileBillingFailedBody {
   failedStep: { step: "billing" | "grant" | "mode" | "deny" | "audit"; key: string };
   addons: BusinessProfileBillingFailedAddon[];
   message: string;
+}
+
+// ─── Capability ticks → preview / apply (BO-04) ─────────────────────────────────────────────
+//
+// A platform admin ticks what a business does (Delivery, Shipping, Counter) and the server maps the ticks to the ONE
+// planner the five presets already use (`ticksToProfileDef` in apps/api/src/billing/business-capabilities.ts). The
+// preset endpoints (`business-profile`, `business-profile/preview`) stay as thin aliases onto the same path.
+
+/** The ticks an admin sends. Every field is optional: nothing ticked is a 400 `BUSINESS_CAPABILITIES_EMPTY`. */
+export interface BusinessCapabilitiesRequest {
+  delivery?: boolean;
+  /** Collect payment at the door. Default true with Delivery; ignored (false) without it. */
+  doorPayments?: boolean;
+  shipping?: boolean;
+  counter?: boolean;
+  /** Where new staff orders open. Honoured only for Shipping + Counter without Delivery (D6 default: "counter"). */
+  opensAs?: "order" | "counter";
+  /** Confirm only; the audit rows default to "Business profile: <label>". */
+  reason?: string;
+}
+
+/** `POST /platform-admin/tenants/:id/business-capabilities` (confirm): the preview's `planFingerprint` is required. */
+export interface ConfirmBusinessCapabilitiesRequest extends BusinessCapabilitiesRequest {
+  planFingerprint: string;
+}
+
+/**
+ * Why a plan cannot be confirmed right now (the preview still returns the plan; Confirm is disabled):
+ * - `FULFILMENT_CARRIER_IN_TRANSIT`: carrier orders are shipped and not delivered, and the change moves the billing moment.
+ * - `FEATURE_REQUIRES_UNMET`: a module the plan would comp is refused by the comp path's own `requires` check
+ *   (the same refusal `AddonService.enableAddon` gives), so applying would stop in the middle.
+ */
+export interface BusinessPlanBlockedInTransit {
+  code: typeof API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT;
+  count: number;
+}
+export interface BusinessPlanBlockedRequires {
+  code: typeof API_ERROR_CODES.FEATURE_REQUIRES_UNMET;
+  /** The module whose comp would be refused. */
+  key: string;
+  /** What it needs, in words (registry labels), e.g. "Recurring routes or Ad hoc order delivery". */
+  missing: string;
+}
+export type BusinessPlanBlocked = BusinessPlanBlockedInTransit | BusinessPlanBlockedRequires;
+
+/** `POST /platform-admin/tenants/:id/business-capabilities/preview`. Writes nothing. */
+export interface BusinessCapabilitiesPreviewResponse extends FeaturePreviewResponse {
+  /** The normalised ticks the server planned (what the audit row will record). */
+  capabilities: BusinessCapabilityTicks;
+  /** The preset whose ticks equal `capabilities`, else null (a "custom" combination). */
+  preset: BusinessProfileKey | null;
+  plan: BusinessProfilePlan;
+  summary: string[];
+  changes: string[];
+  planFingerprint: string;
+  /** Non-null = Confirm must be disabled; confirming would be refused with this code before any write. */
+  blocked: BusinessPlanBlocked | null;
+}
+
+/** `POST /platform-admin/tenants/:id/business-capabilities` (confirm). Re-applying is idempotent. */
+export interface BusinessCapabilitiesApplyResponse {
+  capabilities: BusinessCapabilityTicks;
+  preset: BusinessProfileKey | null;
+  plan: BusinessProfilePlan;
+  changed: string[];
+  summary: string[];
 }

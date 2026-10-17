@@ -1,10 +1,13 @@
+import { BadRequestException } from "@nestjs/common";
 import type {
   BusinessCapabilities,
+  BusinessCapabilitiesRequest,
   BusinessCapabilityTicks,
   BusinessProfileKey,
 } from "@routeflow/types";
-import { BUSINESS_PROFILES, type BusinessProfileDef } from "./business-profiles";
-import { capabilityFromInputs, type FulfilmentInputs } from "./fulfilment-capability";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { BUSINESS_PROFILES, wants, type BusinessProfileDef } from "./business-profiles";
+import { FLEET_KEYS, capabilityFromInputs, type FulfilmentInputs } from "./fulfilment-capability";
 
 /**
  * BO-03: the capability ticks a platform admin sees for one tenant, read back from the server.
@@ -51,16 +54,74 @@ export function presetTicks(def: BusinessProfileDef): BusinessCapabilityTicks {
   const cap = capabilityFromInputs({
     fulfilmentMode: def.modes.fulfilment_model ?? "unset",
     counterSales: def.modes.counter_sales ?? "unset",
-    fleet: def.fleet,
+    fleet: FLEET_KEYS.some((k) => wants(def, k)),
     modesFailed: false,
   });
   return {
     delivery: cap.methods.includes("ROUTE"),
-    doorPayments: def.fleet,
+    // BO-04: door payments are the driver_payments module, which a per-module map may switch off beside the fleet
+    doorPayments: wants(def, "driver_payments"),
     shipping: cap.methods.includes("SHIP"),
     counter: cap.counter !== "off",
     opensAs: cap.staffOpensAs,
   };
+}
+
+/**
+ * BO-04: the ticks an admin sends, as a `BusinessProfileDef` the ONE planner already understands (a second INPUT,
+ * not a second planner). `counter_sales` is ALWAYS in `modes` (`on` or `unset`), so unticking Counter switches it off.
+ *
+ *   D -> delivery | S -> ship | C -> pickup | S+C -> pickup_ship (opens as counter, the D6 default) or ship (opens as order)
+ *   D+C -> delivery | D+S -> both | D+S+C -> both          (counter_sales on with C, unset without)
+ *
+ * `doorPayments` is true by default with Delivery and ignored (false) without it; Delivery with door payments off
+ * keeps the two fleet keys and switches `driver_payments` off through the def's `modules` map. `opensAs` is honoured
+ * only for Shipping + Counter without Delivery; everywhere else it is whatever the mode derives. Nothing ticked is a
+ * 400 BUSINESS_CAPABILITIES_EMPTY.
+ *
+ * `normalised` is `presetTicks` of the resulting def (what the audit row and the response echo); `preset` is the
+ * preset it equals, else null (the def is then keyed "custom"). A tuple equal to a preset returns that preset's own def.
+ */
+export function ticksToProfileDef(input: BusinessCapabilitiesRequest): {
+  def: BusinessProfileDef;
+  normalised: BusinessCapabilityTicks;
+  preset: BusinessProfileKey | null;
+} {
+  const delivery = input.delivery === true;
+  const shipping = input.shipping === true;
+  const counter = input.counter === true;
+  if (!delivery && !shipping && !counter) {
+    throw new BadRequestException({
+      statusCode: 400,
+      code: API_ERROR_CODES.BUSINESS_CAPABILITIES_EMPTY,
+      message: "Choose at least one of Delivery, Shipping or Counter.",
+    });
+  }
+  const doorPayments = delivery && input.doorPayments !== false;
+  const opensAsCounter = input.opensAs !== "order"; // D6 default: Shipping + Counter opens as a Counter sale
+  const mode = delivery
+    ? shipping
+      ? "both"
+      : "delivery"
+    : shipping
+      ? counter && opensAsCounter
+        ? "pickup_ship"
+        : "ship"
+      : "pickup";
+  const custom: BusinessProfileDef = {
+    key: "custom",
+    label: "Custom capabilities",
+    description: "A combination of delivery, shipping and counter sales chosen for this business.",
+    fleet: delivery,
+    ...(delivery && !doorPayments
+      ? { modules: { recurring_routes: true, order_delivery: true, driver_payments: false } }
+      : {}),
+    modes: { fulfilment_model: mode, counter_sales: counter ? "on" : "unset" },
+  };
+  const normalised = presetTicks(custom);
+  const preset = matchPreset(normalised);
+  const def = preset ? (BUSINESS_PROFILES.find((p) => p.key === preset) ?? custom) : custom;
+  return { def, normalised, preset };
 }
 
 /**
