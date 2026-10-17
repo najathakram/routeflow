@@ -59,6 +59,7 @@ import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import {
   applyLineUnit,
   customerLineSpecial,
+  isLayerManualLine,
   repriceLineFromLayer,
   masterLayerFrom,
   type LayerFrom,
@@ -1897,7 +1898,7 @@ export function CreateOrderModal({
       pendingUnit={pendingUnitOf(li)}
       unitSlot={
         <OrderLineUnitPicker
-          line={li}
+          line={{ ...li, layerManual: isLayerManualLine(li, priceLayer.layerOf(li.productId)) }}
           tier={tierForProduct(li.productId)}
           layer={priceLayer.layerOf(li.productId)}
           startOnDefaultUnit={li.startOnDefaultUnit}

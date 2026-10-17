@@ -541,6 +541,10 @@ export interface EditItemState {
   priceType?: PriceType;
   /** A line ADDED here starts on the product's default selling unit (OrderLineUnitPicker applies it). */
   startOnDefaultUnit?: boolean;
+  /** The product's PACK label and pack size, kept when a unit pick overwrites `unit` / `unitsPerBox` (S19b: the per-line
+   *  SPECIAL judgement names the real product, so a level called "Box" is not read as the pack). */
+  packUnit?: string;
+  packUnitsPerBox?: number | null;
 }
 
 // ─── Boxed proration helpers ──────────────────────────────────────────────────
@@ -727,6 +731,9 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
       ? Math.trunc(Number(isUnitLine ? unitCount : li.boxes != null ? li.boxes : li.qty) || 0)
       : null,
     unit: li.product?.unit ?? "",
+    packUnit: li.product?.unit ?? undefined,
+    packUnitsPerBox:
+      li.product?.unitsPerBox ?? (isUnitLine ? undefined : (li.unitsPerBox ?? undefined)),
     unitLabel: li.unitLabel ?? undefined,
     priceType: li.priceType,
   };
@@ -1048,6 +1055,20 @@ function SubstitutePicker({
 
 // ─── Edit mode line items ──────────────────────────────────────────────────────
 
+/** What the per-line SPECIAL judgement reads off an edit line (S19b). */
+type SpecialLine = {
+  unitLabel?: string | null;
+  derivedBase?: unknown;
+  unit?: string;
+  packUnit?: string;
+  packUnitsPerBox?: number | null;
+  unitsPerBox?: number | null;
+};
+const specialProductOf = (line?: SpecialLine) =>
+  line
+    ? { unit: line.packUnit ?? line.unit, unitsPerBox: line.packUnitsPerBox ?? line.unitsPerBox }
+    : undefined;
+
 export function EditableLineItems({
   items,
   onChange,
@@ -1078,10 +1099,7 @@ export function EditableLineItems({
   tierPriceFor: (product: SubstituteOption) => number;
   /** True when this customer's effective tier for the product is not tier 1 — a
    *  contracted price a stale remembered price must never outrank. */
-  isSpecialTierFor: (
-    product: SubstituteOption,
-    line?: { unitLabel?: string | null; derivedBase?: unknown },
-  ) => boolean;
+  isSpecialTierFor: (product: SubstituteOption, line?: SpecialLine) => boolean;
   /** units_v1: the EFFECTIVE numeric tier (1-5) for a product — `OrderLineUnitPicker` resolves
    *  the ladder price at this tier, same source as `isSpecialTierFor`. */
   tierForProductId: (productId: string) => number;
@@ -1292,6 +1310,8 @@ export function EditableLineItems({
       derivedBase: undefined,
       startOnDefaultUnit: false, // any unit choice consumes the default start
       unit: option.label,
+      packUnit: current.packUnit ?? current.unit,
+      packUnitsPerBox: current.packUnitsPerBox ?? current.unitsPerBox,
       unitsPerBox: option.factorToBase,
       boxSplit: false,
       qty: refresh && current.unitLabel === option.value ? current.qty : 1,
@@ -1922,11 +1942,12 @@ export default function OrderDetailPage() {
   );
   // Per line (S19b integration review): a unit line answers with its own unit's layer row, like mobile's lineIsSpecial.
   const isSpecialTierFor = React.useCallback(
-    (p: SubstituteOption, line?: { unitLabel?: string | null; derivedBase?: unknown }) =>
+    (p: SubstituteOption, line?: SpecialLine) =>
       lineIsSpecialAt({
         tier: cpMap.get(p.id) ?? customerTier ?? 1,
         layer: priceLayer.layerOf(p.id),
         line,
+        product: specialProductOf(line),
       }),
     [cpMap, customerTier, priceLayer.layerOf],
   );
@@ -1934,11 +1955,12 @@ export default function OrderDetailPage() {
   // EditItemState line, not a full SubstituteOption/product row) — same rule,
   // shared so the save-time guard below and the row's own render never drift.
   const isSpecialTierForProductId = React.useCallback(
-    (productId: string, line?: { unitLabel?: string | null; derivedBase?: unknown }) =>
+    (productId: string, line?: SpecialLine) =>
       lineIsSpecialAt({
         tier: cpMap.get(productId) ?? customerTier ?? 1,
         layer: priceLayer.layerOf(productId),
         line,
+        product: specialProductOf(line),
       }),
     [cpMap, customerTier, priceLayer.layerOf],
   );

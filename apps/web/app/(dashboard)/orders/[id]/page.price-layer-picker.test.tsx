@@ -7,7 +7,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as React from "react";
 import { fireEvent, renderWithProviders, screen } from "@/test-utils/render";
-import { EditableLineItems, type EditItemState } from "./page";
+import { EditableLineItems, buildItemUpdates, type EditItemState } from "./page";
 
 let mockDefaultSelling = false;
 jest.mock("@/lib/api/product-units", () => ({
@@ -153,6 +153,37 @@ describe("order edit: a NEW line that starts on the default unit takes the same 
     } finally {
       mockDefaultSelling = false;
     }
+  });
+});
+
+describe("order edit, flag off: a stored MANUAL unit line keeps its price (master)", () => {
+  it("a loaded MANUAL Case line at $410 is not re-priced to the ladder's $7200-class price and Save sends nothing", () => {
+    const stored: EditItemState = {
+      ...packLine(),
+      id: "li-case",
+      unitLabel: "Case",
+      unitsPerBox: 192,
+      qty: 2,
+      originalQty: 2,
+      unitPrice: 410,
+      basePrice: 410,
+      originalUnitPrice: 410,
+      priceType: "MANUAL",
+    };
+    const onChange = jest.fn();
+    renderRow([stored], {}, onChange);
+    expect(onChange).not.toHaveBeenCalled();
+    const original = [
+      {
+        id: "li-case",
+        qty: 2,
+        unitPrice: "410",
+        unitLabel: "Case",
+        unitsPerBox: 192,
+        productId: "p-case",
+      },
+    ] as never;
+    expect(buildItemUpdates([stored], original)).toEqual([]);
   });
 });
 

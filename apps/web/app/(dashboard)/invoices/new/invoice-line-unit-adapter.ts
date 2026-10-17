@@ -8,7 +8,12 @@ import {
   type DefaultUnitLine,
   type UnitFold,
 } from "@/lib/default-unit-line";
-import { sameProductUnit, type PackBase, type UnitLine } from "@/lib/order-line-unit";
+import {
+  isLayerManualLine,
+  sameProductUnit,
+  type PackBase,
+  type UnitLine,
+} from "@/lib/order-line-unit";
 import type { OrderLineUnitPickerLine } from "@/components/OrderLineUnitPicker";
 import type { UnitOption } from "@/lib/unit-options";
 import type { CustomerLayerUnit } from "@routeflow/pricing";
@@ -217,9 +222,12 @@ export function chooseUnit<T extends InvoiceUnitFields>(
  * What `OrderLineUnitPicker` is fed. A pack line in Piece mode is shown as "Piece" at the Piece option's price
  * (information only); the stored line keeps its unitsPerBox + BOX price and no unitLabel.
  */
-export function pickerLineOf(it: InvoiceUnitFields): OrderLineUnitPickerLine {
+export function pickerLineOf(
+  it: InvoiceUnitFields,
+  layer?: readonly CustomerLayerUnit[] | null,
+): OrderLineUnitPickerLine {
   const pieceMode = !it.unitLabel && it.sellBy === "unit" && (it.unitsPerBox ?? 0) > 1;
-  return {
+  const line: OrderLineUnitPickerLine = {
     productId: it.productId ?? "",
     productName: it.description,
     isUnlisted: !it.productId,
@@ -234,6 +242,9 @@ export function pickerLineOf(it: InvoiceUnitFields): OrderLineUnitPickerLine {
     tierPrices: it.tierPrices,
     priceEdited: it.priceEdited,
   };
+  // S19b: the picker re-prices a MANUAL line only when it is the layer's own above-list price; flag off (no layer) never.
+  const rows = pickerLayerFor(it, layer);
+  return { ...line, layerManual: rows ? isLayerManualLine(line, rows) : false };
 }
 
 /**
@@ -245,7 +256,9 @@ export function pickerLayerFor(
   rows: readonly CustomerLayerUnit[] | null | undefined,
 ): readonly CustomerLayerUnit[] | undefined {
   if (!rows) return undefined;
-  return it.unitLabel && !it.packBase ? undefined : rows;
+  // no snapshot, or a "snapshot" that is the unit itself (a corrupt draft): the line's own unit would read as the pack
+  if (it.unitLabel && (!it.packBase || it.packBase.unit === it.unitLabel)) return undefined;
+  return rows;
 }
 
 /** A typed price: shapes the line (consumes the default start, survives a tier refresh: #2381). */

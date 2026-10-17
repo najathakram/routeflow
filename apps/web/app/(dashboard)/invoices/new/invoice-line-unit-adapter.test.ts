@@ -252,3 +252,51 @@ describe("pickerLayerFor (integration review SHOULD 4)", () => {
     ).toBeUndefined();
   });
 });
+
+describe("pickerLayerFor: corrupt snapshot (review nit 1)", () => {
+  const rows = [
+    { ref: "pack", label: null, price: 38, listPrice: 42, source: "customer", aboveList: false },
+  ] as never;
+  it("a packBase whose unit equals the line's own unitLabel is the unit itself, not a pack: no layer (a Case line must not take the pack's $38)", () => {
+    expect(
+      pickerLayerFor(
+        {
+          key: "k",
+          description: "d",
+          qty: 1,
+          unitPrice: 1,
+          unitLabel: "Case",
+          packBase: {
+            unit: "Case",
+            qty: 1,
+            listPrice: 42,
+            unitPrice: 38,
+            priceType: "STANDARD",
+          } as never,
+        },
+        rows,
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe("pickerLineOf layerManual (flag-off money, invoices/new)", () => {
+  const aboveRow = [
+    { ref: "pack", label: null, price: 50, listPrice: 42, source: "customer", aboveList: true },
+  ] as never;
+  const manual = {
+    key: "k",
+    description: "d",
+    qty: 1,
+    unitPrice: 410,
+    unit: "Box",
+    priceType: "MANUAL" as const,
+  };
+  it("flag off (no layer): a MANUAL line is never marked, so the picker leaves it alone as on master", () => {
+    expect(pickerLineOf(manual).layerManual).toBeFalsy();
+    expect(pickerLineOf(manual, undefined).layerManual).toBeFalsy();
+  });
+  it("flag on and the unit's layer row is above list: marked", () => {
+    expect(pickerLineOf(manual, aboveRow).layerManual).toBe(true);
+  });
+});

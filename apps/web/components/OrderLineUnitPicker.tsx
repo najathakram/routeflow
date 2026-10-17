@@ -33,6 +33,11 @@ export interface OrderLineUnitPickerLine extends DerivedBaseMarker {
   /** #2381: the operator TYPED this line's price this session. The first-sight refresh (which
    *  re-runs on every remount, e.g. "Not available" → Undo) must not snap it back to the ladder. */
   priceEdited?: boolean;
+  /**
+   * S19b: this MANUAL line is the customer layer's own above-list price (`isLayerManualLine`), so it follows the ladder like any
+   * system price. Absent or false = master: every MANUAL line is the operator's and the picker never re-prices it.
+   */
+  layerManual?: boolean;
 }
 
 /**
@@ -143,10 +148,18 @@ function OrderLineUnitPickerInner({
     // the operator typed stands. A real move afterwards (the tier changed) still re-prices.
     if (firstSight && line.priceEdited) return;
     if (line.priceType === "DISCOUNTED") return;
-    // MANUAL with a one-time price is the operator's; without one it is the layer's above-list price and follows the ladder
-    if (line.priceType === "MANUAL" && line.discountedPrice != null) return;
+    // master: MANUAL is the operator's and stands; only the layer's own above-list price (marked by the surface) follows
+    if (line.priceType === "MANUAL" && !line.layerManual) return;
     if (held.price !== line.unitPrice) onChange(held, true);
-  }, [line.unitLabel, line.priceType, line.unitPrice, line.priceEdited, held, onChange]);
+  }, [
+    line.unitLabel,
+    line.priceType,
+    line.layerManual,
+    line.unitPrice,
+    line.priceEdited,
+    held,
+    onChange,
+  ]);
 
   return (
     <UnitPicker

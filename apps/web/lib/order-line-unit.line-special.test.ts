@@ -1,5 +1,5 @@
 import { isSpecialTier, type CustomerLayerUnit } from "@routeflow/pricing";
-import { lineIsSpecialAt } from "./order-line-unit";
+import { isLayerManualLine, lineIsSpecialAt } from "./order-line-unit";
 import { saleLinePricing } from "./sale-line-pricing";
 
 // S19b integration review MUST-1: SPECIAL-ness is judged PER LINE (the line's own unit row), like mobile's lineIsSpecial,
@@ -65,5 +65,43 @@ describe("saleLinePricing with a layer line (SHOULD 3)", () => {
       layered: true,
     });
     expect(r.listPrice).toBe(48);
+  });
+});
+
+describe("lineIsSpecialAt with the real product (review nit 2)", () => {
+  // a product whose pack is named "Case" and a LEVEL literally named "Box": the "Box" row is the level's own, not the pack's
+  const boxLevel = row({ ref: "u-box", label: "Box", price: 30, listPrice: 30 }); // not special
+  it("with {} the label 'Box' reads the PACK row (wrong); with the real product it reads the level's row", () => {
+    const layer = [pack, boxLevel];
+    expect(lineIsSpecialAt({ tier: 1, layer, line: { unitLabel: "Box" } })).toBe(true);
+    expect(
+      lineIsSpecialAt({
+        tier: 1,
+        layer,
+        line: { unitLabel: "Box" },
+        product: { unit: "Case", unitsPerBox: 24 },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("isLayerManualLine (the picker's re-price mark)", () => {
+  const aboveRow = row({ ref: "pack", price: 50, listPrice: 42, aboveList: true });
+  const line = {
+    unit: "Box",
+    listPrice: 42,
+    priceType: "MANUAL",
+    unitLabel: undefined as string | undefined,
+  };
+  it("true only for a MANUAL line the operator did not shape, on a unit whose layer row is above list", () => {
+    expect(isLayerManualLine(line, [aboveRow])).toBe(true);
+    expect(isLayerManualLine({ ...line, discountedPrice: 50 }, [aboveRow])).toBe(false);
+    expect(isLayerManualLine({ ...line, priceEdited: true }, [aboveRow])).toBe(false);
+    expect(isLayerManualLine({ ...line, priceType: "SPECIAL" }, [aboveRow])).toBe(false);
+    expect(isLayerManualLine(line, [pack])).toBe(false);
+  });
+  it("flag off (no layer) is never layer-manual: master skips every MANUAL line", () => {
+    expect(isLayerManualLine(line, undefined)).toBe(false);
+    expect(isLayerManualLine(line, null)).toBe(false);
   });
 });

@@ -2,6 +2,7 @@ import {
   isSpecialTier,
   getTierPrice,
   customerLinePrice,
+  layerRowForLabel,
   normalizeBoxesPieces,
   type CustomerLayerUnit,
   type CustomerLinePrice,
@@ -367,8 +368,44 @@ export function lineIsSpecialAt(i: {
   tier: number;
   layer?: readonly CustomerLayerUnit[] | null;
   line?: { unitLabel?: string | null; derivedBase?: unknown } | null;
+  /**
+   * The product's pack inputs (`unit` / `packLabel`, `unitsPerBox`, `baseUnitLabel`) so a level named like a DEFAULT pack
+   * label ("Box" on a product whose pack is "Case") reads its own row and not the pack's. Omitted = the defaults.
+   */
+  product?: Record<string, unknown>;
 }): boolean {
   const unitLabel = i.line?.derivedBase ? null : (i.line?.unitLabel ?? null);
-  return customerLinePrice({ product: {}, tier: i.tier, layer: i.layer, unitLabel, tierPrice: 0 })
-    .isSpecial;
+  return customerLinePrice({
+    product: i.product ?? {},
+    tier: i.tier,
+    layer: i.layer,
+    unitLabel,
+    tierPrice: 0,
+  }).isSpecial;
+}
+
+/**
+ * Is this MANUAL line the customer layer's OWN above-list price (SA-811a R2), as opposed to a price somebody typed or a stored
+ * MANUAL line? Only then does the unit picker re-price it when the ladder moves. Flag off there is no layer, so this is false
+ * and the picker skips EVERY MANUAL line, exactly as master does.
+ */
+export function isLayerManualLine(
+  line: Parameters<typeof ladderProductOf>[0] & {
+    priceType?: string;
+    discountedPrice?: number | null;
+    priceEdited?: boolean;
+    unitLabel?: string | null;
+    derivedBase?: unknown;
+  },
+  layer?: readonly CustomerLayerUnit[] | null,
+): boolean {
+  if (!layer || line.priceType !== "MANUAL" || line.discountedPrice != null || line.priceEdited) {
+    return false;
+  }
+  const row = layerRowForLabel(
+    ladderProductOf(line),
+    layer,
+    line.derivedBase ? null : (line.unitLabel ?? null),
+  );
+  return !!row?.aboveList;
 }

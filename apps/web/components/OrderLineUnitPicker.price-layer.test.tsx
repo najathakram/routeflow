@@ -114,7 +114,7 @@ describe("OrderLineUnitPicker - the customer's layer (picker add-on)", () => {
     expect(back.unitPrice).toBe(33);
   });
 
-  it("nit 4: a system MANUAL unit line (no one-time price) re-prices when its ladder price moves; an operator MANUAL stands", () => {
+  it("nit 4: a MANUAL unit line re-prices when its ladder price moves ONLY when it is the layer's own above-list price (layerManual); every other MANUAL stands, as on master", () => {
     const base = {
       ...line,
       unitLabel: "Case",
@@ -122,15 +122,43 @@ describe("OrderLineUnitPicker - the customer's layer (picker add-on)", () => {
       unitPrice: 999,
       priceType: "MANUAL" as const,
     };
-    const system = jest.fn();
-    render(<OrderLineUnitPicker line={base} tier={3} onChange={system} />);
-    expect(system).toHaveBeenCalledTimes(1);
-    expect(system.mock.calls[0][0].price).toBe(412.57);
-    expect(system.mock.calls[0][1]).toBe(true);
+    const layerOwn = jest.fn();
+    render(
+      <OrderLineUnitPicker line={{ ...base, layerManual: true }} tier={3} onChange={layerOwn} />,
+    );
+    expect(layerOwn).toHaveBeenCalledTimes(1);
+    expect(layerOwn.mock.calls[0][0].price).toBe(412.57);
+    expect(layerOwn.mock.calls[0][1]).toBe(true);
+    // master: a stored / typed MANUAL line is never re-priced by the picker (flag off: no layer, no mark)
+    const stored = jest.fn();
+    render(<OrderLineUnitPicker line={base} tier={3} onChange={stored} />);
+    expect(stored).not.toHaveBeenCalled();
     const operator = jest.fn();
     render(
-      <OrderLineUnitPicker line={{ ...base, discountedPrice: 999 }} tier={3} onChange={operator} />,
+      <OrderLineUnitPicker
+        line={{ ...base, discountedPrice: 999, layerManual: false }}
+        tier={3}
+        onChange={operator}
+      />,
     );
     expect(operator).not.toHaveBeenCalled();
+  });
+
+  it("flag-off money: a loaded MANUAL Case line at $410 is not re-priced to the ladder's $412.57", () => {
+    const onChange = jest.fn();
+    render(
+      <OrderLineUnitPicker
+        line={{
+          ...line,
+          unitLabel: "Case",
+          packBase: { ...line, qty: 1 } as never,
+          unitPrice: 410,
+          priceType: "MANUAL" as const,
+        }}
+        tier={3}
+        onChange={onChange}
+      />,
+    );
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

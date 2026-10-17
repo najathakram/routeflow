@@ -760,7 +760,7 @@ function LineUnitControl({
   return (
     <div className="mt-1 [&_select]:h-8 max-md:[&_select]:h-11">
       <OrderLineUnitPicker
-        line={pickerLineOf(item)}
+        line={pickerLineOf(item, layer)}
         tier={tier}
         layer={pickerLayerFor(item, layer)}
         startOnDefaultUnit={!!item.startOnDefaultUnit}
