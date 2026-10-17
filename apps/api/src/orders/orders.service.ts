@@ -1719,6 +1719,8 @@ export class OrdersService implements OnApplicationBootstrap {
           taxFor: (qty, sub) => unitLines.categoryTaxForLine(category, qty, sub),
           position: index,
           tenantId: this.prisma.getTenantId(),
+          // buildUnitLine copies this onto the line ONLY when staff really changed the price; the EDIT_LINE_PRICE gate below keys on
+          // that stamp, so a ladder-priced line (customer layer MANUAL, no stamp) is never refused for a right the cashier lacks.
           overriddenBy: user.sub,
         });
         // POS-5, as the pack branch. A staff override carries the editor's stamp; a layer-MANUAL line (SA-811a R2) is priced by the ladder and has none.
