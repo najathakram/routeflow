@@ -784,3 +784,92 @@ describe("BO-09: Set override stops shouting and leaves rows where it does nothi
     );
   });
 });
+
+// BO-10 (keep-the-picker fallback): the console marks "current" from the resolved plan,
+// `planKey ?? plan`, the same value the header and Overview show. The picker stays.
+describe("BO-10: the Tier picker reads the resolved plan, not the legacy plan enum", () => {
+  async function renderBusinessOnScale(extra: { planKey?: string } = { planKey: "SCALE" }) {
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "BUSINESS", ...extra }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+    return screen.getByLabelText("Tier") as HTMLSelectElement;
+  }
+
+  // PROFESSIONAL is the legacy enum whose display label is "Business" (the header-vs-console
+  // mismatch the audit saw); BUSINESS is the raw value from the card and renders as-is.
+  it.each(["BUSINESS", "PROFESSIONAL"])(
+    "never shows the legacy plan %s as current when planKey says otherwise",
+    async (legacy) => {
+      render(
+        <FeatureConsole
+          tenant={{ id: TENANT_ID, plan: legacy, planKey: "SCALE" }}
+          onChangePlan={jest.fn()}
+          onCustomise={jest.fn()}
+        />,
+      );
+      await screen.findByText("compliance");
+      const select = screen.getByLabelText("Tier") as HTMLSelectElement;
+      const labels = Array.from(select.options).map((o) => o.textContent ?? "");
+      expect(labels.some((l) => /business/i.test(l))).toBe(false);
+      expect(screen.queryByText(/business\s+—\s+current/i)).toBeNull();
+    },
+  );
+
+  it("marks the resolved plan (Scale) as current and selects it", async () => {
+    const select = await renderBusinessOnScale();
+    expect(select.value).toBe("SCALE");
+    const current = Array.from(select.options).filter((o) => /current/.test(o.textContent ?? ""));
+    expect(current.map((o) => o.value)).toEqual(["SCALE"]);
+    expect(current[0]?.textContent).toMatch(/Scale/);
+  });
+
+  it("disables Preview plan change while the resolved plan is selected, and enables it for another", async () => {
+    const select = await renderBusinessOnScale();
+    const preview = screen.getByRole("button", { name: "Preview plan change" });
+    expect(preview).toBeDisabled();
+    fireEvent.change(select, { target: { value: "STARTER" } });
+    expect(preview).not.toBeDisabled();
+    fireEvent.change(select, { target: { value: "SCALE" } });
+    expect(preview).toBeDisabled();
+  });
+
+  it("falls back to the plan enum when there is no planKey, so a legacy-only tenant still shows its tier", async () => {
+    const select = await renderBusinessOnScale({});
+    expect(select.value).toBe("BUSINESS");
+    expect(
+      Array.from(select.options)
+        .filter((o) => /current/.test(o.textContent ?? ""))
+        .map((o) => o.value),
+    ).toEqual(["BUSINESS"]);
+  });
+
+  it("keeps the picker and its preview button (the lead default for this build)", async () => {
+    await renderBusinessOnScale();
+    expect(screen.getByLabelText("Tier")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preview plan change" })).toBeInTheDocument();
+  });
+
+  it("follows the resolved plan when it changes after mount", async () => {
+    const { rerender } = render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "BUSINESS", planKey: "SCALE" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+    rerender(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "BUSINESS", planKey: "GROWTH" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    expect((screen.getByLabelText("Tier") as HTMLSelectElement).value).toBe("GROWTH");
+  });
+});

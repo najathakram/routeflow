@@ -102,7 +102,9 @@ function describeUnmetRequirement(
 }
 
 export interface FeatureConsoleProps {
-  tenant: { id: string; plan: string };
+  /** `planKey` is the resolved plan (what the header and Overview show); `plan` is the legacy enum
+   *  and is only the fallback when there is no planKey (BO-10). */
+  tenant: { id: string; plan: string; planKey?: string | null };
   /** Shown in the "Enable as add-on" modal's two-step confirm; falls back to `tenant.id`. */
   tenantLabel?: string;
   /** Calls the page's EXISTING plan-change action (`handleAction("change-plan", { plan })`) —
@@ -153,7 +155,8 @@ export function FeatureConsole({
   const [showInternal, setShowInternal] = React.useState(false);
   const [openWhy, setOpenWhy] = React.useState<string | null>(null);
 
-  const [selectedPlan, setSelectedPlan] = React.useState(tenant.plan);
+  const currentPlan = tenant.planKey ?? tenant.plan;
+  const [selectedPlan, setSelectedPlan] = React.useState(currentPlan);
   const [pending, setPending] = React.useState<PendingPreview | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
@@ -191,8 +194,8 @@ export function FeatureConsole({
   }, [load]);
 
   React.useEffect(() => {
-    setSelectedPlan(tenant.plan);
-  }, [tenant.plan]);
+    setSelectedPlan(currentPlan);
+  }, [currentPlan]);
 
   const registryByKey = React.useMemo(
     () => Object.fromEntries((registry ?? []).map((r) => [r.key, r])),
@@ -223,9 +226,9 @@ export function FeatureConsole({
   // tier selectable and visibly current, so it's appended when missing.
   const tierOptions = React.useMemo(() => {
     const keys: string[] = [...PLAN_KEYS];
-    if (!keys.includes(tenant.plan)) keys.push(tenant.plan);
+    if (!keys.includes(currentPlan)) keys.push(currentPlan);
     return keys;
-  }, [tenant.plan]);
+  }, [currentPlan]);
 
   // Every hook above runs unconditionally on every render (rules-of-hooks) — the SUPER_ADMIN
   // gate and the loading/error/empty early returns come only after all of them are declared.
@@ -325,12 +328,12 @@ export function FeatureConsole({
               <option key={p} value={p}>
                 {planLabel(p)}
                 {p === "LITE" ? " (invite-only)" : ""}
-                {p === tenant.plan ? " — current" : ""}
+                {p === currentPlan ? " — current" : ""}
               </option>
             ))}
           </select>
           <button
-            disabled={selectedPlan === tenant.plan || previewLoading || changePlanLoading}
+            disabled={selectedPlan === currentPlan || previewLoading || changePlanLoading}
             onClick={startTierPreview}
             className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
           >
