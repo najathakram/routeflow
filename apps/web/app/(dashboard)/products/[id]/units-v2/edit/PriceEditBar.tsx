@@ -70,18 +70,60 @@ const countLine = (count: number, lead: string | null) =>
  * dock's band (bottom-24). V04: a labelled region with a "Ctrl+S saves" hint; Save stays focusable
  * (aria-disabled) so the skip link can always reach it. Cancel on a changed draft asks first.
  * A failed save keeps the draft and says why in a role="alert" line.
+ *
+ * K11-20: `placement="page"` (default) is all of the above and shows while the inline section edits.
+ * `placement="window"` is the floating price window's footer: pinned by the window (not sticky), no change to
+ * `#main-content`, and shown while the window edits. Message, problems, conflicts, the stale notice, Cancel, Save and
+ * the discard question are the same. `asking` / `onAskingChange` let the window put the bar into (and out of) the
+ * discard question from its own close paths; left out, the bar keeps that state itself.
  */
-export function PriceEditBar({ changePricesOpen = false }: { changePricesOpen?: boolean }) {
+export function PriceEditBar({
+  changePricesOpen = false,
+  placement = "page",
+  idSuffix,
+  asking: askingProp,
+  onAskingChange,
+}: {
+  changePricesOpen?: boolean;
+  placement?: "page" | "window";
+  /** Suffix for the Save id and the Change prices panel it points at. Default: none on the page, generated in a window. */
+  idSuffix?: string;
+  asking?: boolean;
+  onAskingChange?: (asking: boolean) => void;
+}) {
   const d = usePriceDraft();
-  const [asking, setConfirm] = React.useState(false);
+  const windowed = placement === "window";
+  const surface = windowed ? "window" : "inline";
+  const uid = React.useId();
+  const sfx = idSuffix ?? (windowed ? `-${uid.replace(/[^a-zA-Z0-9_-]/g, "")}` : "");
+  const here = d.editingIn === surface;
+  const [innerAsking, setInnerAsking] = React.useState(false);
+  const asking = askingProp ?? innerAsking;
+  const setConfirm = React.useCallback(
+    (on: boolean) => {
+      setInnerAsking(on);
+      onAskingChange?.(on);
+    },
+    [onAskingChange],
+  );
   // K11-18: while Change prices is open the panel owns Cancel and the primary; the bar's pair (and a Discard question
   // that would be a second primary) steps aside, and Ctrl/Cmd+S says so instead of saving.
   const confirm = asking && !changePricesOpen;
+  // Keep editing is a fresh node (see the keys below), so focus must be handed back when the question goes: to Cancel,
+  // which raised it. A host that controls `asking` (the window) puts focus back itself.
+  const cancelRef = React.useRef<HTMLButtonElement>(null);
+  const wasConfirm = React.useRef(false);
+  React.useEffect(() => {
+    const lost = !document.activeElement || document.activeElement === document.body;
+    if (wasConfirm.current && !confirm && lost && askingProp === undefined)
+      cancelRef.current?.focus({ preventScroll: true });
+    wasConfirm.current = confirm;
+  }, [confirm, askingProp]);
   const [told, setTold] = React.useState(false);
   const clear = useClearOfShellPadding();
   React.useEffect(() => {
-    if (!d.editing) setConfirm(false);
-  }, [d.editing]);
+    if (!here) setConfirm(false);
+  }, [here, setConfirm]);
   React.useEffect(() => {
     if (!changePricesOpen) {
       setTold(false);
@@ -97,17 +139,22 @@ export function PriceEditBar({ changePricesOpen = false }: { changePricesOpen?: 
     };
     window.addEventListener("keydown", block, true);
     return () => window.removeEventListener("keydown", block, true);
-  }, [changePricesOpen]);
-  if (!d.editing) return null;
+  }, [changePricesOpen, setConfirm]);
+  if (!here) return null;
   const label = (ref: string) => d.grid?.rows.find((r) => r.ref === ref)?.label ?? ref;
   return (
     <div
-      ref={clear.ref}
+      // A window's bar neither measures itself for #main-content nor sticks: the window pins it.
+      ref={windowed ? undefined : clear.ref}
       role="region"
       aria-label="Unsaved changes"
       data-testid={T.editbar}
-      style={{ bottom: `${clear.bottom}px` }}
-      className={`sticky z-30 mt-4 rounded-lg border bg-white/95 px-4 py-3 backdrop-blur ${FRAME_BORDER}`}
+      style={windowed ? undefined : { bottom: `${clear.bottom}px` }}
+      className={
+        windowed
+          ? "bg-white"
+          : `sticky z-30 mt-4 rounded-lg border bg-white/95 px-4 py-3 backdrop-blur ${FRAME_BORDER}`
+      }
     >
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div data-testid={T.ebText} className="min-w-0 flex-1 text-sm text-navy" aria-live="polite">
@@ -164,8 +211,10 @@ export function PriceEditBar({ changePricesOpen = false }: { changePricesOpen?: 
             )
           )}
         </div>
+        {/* Keyed so each state is a fresh set of buttons: Keep editing's autoFocus only runs on a new node, and a reused
+            Cancel node would keep focus while reading "Discard". */}
         {confirm ? (
-          <div className="flex items-center gap-2">
+          <div key="confirm" className="flex items-center gap-2">
             <button type="button" data-testid={T.ebDiscard} className={BTN} onClick={d.discard}>
               Discard
             </button>
@@ -180,18 +229,19 @@ export function PriceEditBar({ changePricesOpen = false }: { changePricesOpen?: 
             </button>
           </div>
         ) : changePricesOpen ? (
-          <div className="flex min-h-9 items-center">
+          <div key="finish" className="flex min-h-9 items-center">
             <button
               type="button"
-              onClick={() => document.getElementById("change-panel")?.focus()}
+              onClick={() => document.getElementById(`change-panel${sfx}`)?.focus()}
               className="rounded text-sm font-medium text-navy underline underline-offset-2 hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
             >
               {FINISH_FIRST}
             </button>
           </div>
         ) : (
-          <div className="flex items-center gap-2">
+          <div key="actions" className="flex items-center gap-2">
             <button
+              ref={cancelRef}
               type="button"
               data-testid={T.ebCancel}
               className={BTN}
@@ -201,7 +251,7 @@ export function PriceEditBar({ changePricesOpen = false }: { changePricesOpen?: 
             </button>
             <button
               type="button"
-              id={T.ebSave}
+              id={`${T.ebSave}${sfx}`}
               data-testid={T.ebSave}
               aria-disabled={!d.canSave}
               onClick={() => d.canSave && d.save()}

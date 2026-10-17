@@ -25,6 +25,15 @@ import { ADD_UNIT_FIRST } from "./units-v2/edit/view-from-grid";
 
 const TIERS = [1, 2, 3, 4, 5] as const;
 
+/**
+ * K11-20: which layout the grid shows. "auto" (the default, and the inline grid) follows the viewport with Tailwind's
+ * md: classes; "table" and "cards" are chosen by a host that measured its own width (the floating price window), so
+ * only that one is rendered.
+ */
+export type GridLayout = "auto" | "table" | "cards";
+/** "compact" folds Contains and the barcode into the Unit cell's second line ("40 Boxes · No barcode"). */
+export type GridDensity = "default" | "compact";
+
 // V12: shared tokens only (PR #3499). --field is for CONTROL borders (the price inputs, the order-unit select);
 // the grid frame, its cards and the save bar keep the surface line, and the row dividers --line-strong.
 export const FIELD_BORDER = "border-field";
@@ -97,6 +106,8 @@ interface EditTarget {
   unit: string;
   layout: "table" | "card";
   original: string;
+  /** K11-20: the instance suffix of every id this cell owns (empty for the inline grid, so its ids are today's). */
+  sfx: string;
 }
 
 /**
@@ -213,10 +224,10 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
   });
   const addUnit = edit.addUnitProblem(t.ref, tier);
   const problem = edit.problem(t.ref, tier) ?? addUnit;
-  const pid = T.problem(t.layout, t.ref, tier);
+  const pid = `${T.problem(t.layout, t.ref, tier)}${t.sfx}`;
   // K11-14: an Auto box's "Auto" is not drawn under it, so the input is described by the hidden word instead.
   const describedBy =
-    [problem ? pid : null, view.word === "Auto" ? T.word(t.layout, t.ref, tier) : null]
+    [problem ? pid : null, view.word === "Auto" ? `${T.word(t.layout, t.ref, tier)}${t.sfx}` : null]
       .filter(Boolean)
       .join(" ") || undefined;
   // K11-12: the text the box held when it took focus (Escape puts it back), and whether focus is in it. While it is
@@ -225,6 +236,9 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
   const justFocused = React.useRef(false);
   const [inside, setInside] = React.useState(false);
   const text = edit.text(t.ref, tier, t.original);
+  // K11-20: true while Escape has something to put back here. The floating window reads it (it always takes Radix's own
+  // Escape) to leave this key to the box.
+  const reverts = inside && atFocus.current !== null && text !== atFocus.current;
   return (
     <>
       <span className="relative block w-fit">
@@ -243,6 +257,7 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
           aria-label={`${t.name} ${t.unit} price`}
           aria-invalid={problem ? true : undefined}
           aria-describedby={describedBy}
+          data-escape-reverts={reverts ? "true" : undefined}
           placeholder={view.display}
           value={inside ? text : canonicalPriceText(text)}
           onFocus={(e) => {
@@ -311,7 +326,11 @@ function PriceCell({
       {target && edit?.editing ? (
         <>
           <CellInput t={target} tier={view.tier} view={view} />
-          <CellDisplay view={view} dim wordId={T.word(target.layout, target.ref, view.tier)} />
+          <CellDisplay
+            view={view}
+            dim
+            wordId={`${T.word(target.layout, target.ref, view.tier)}${target.sfx}`}
+          />
         </>
       ) : target && edit ? (
         <button
@@ -341,7 +360,18 @@ const joinNames = (names: string[]): string =>
  * names are never hard-coded and the line goes away once the end is in view). The pinned Unit column gets a divider
  * while the box is scrolled.
  */
-function ScrollRegion({ names, children }: { names: string[]; children: React.ReactNode }) {
+function ScrollRegion({
+  names,
+  labelId,
+  className,
+  children,
+}: {
+  names: string[];
+  labelId: string;
+  /** Where the table shows: from md up ("hidden md:block") or always ("block"). */
+  className: string;
+  children: React.ReactNode;
+}) {
   const region = React.useRef<HTMLDivElement>(null);
   const [clipped, setClipped] = React.useState<number[]>([]);
   const [scrolled, setScrolled] = React.useState(false);
@@ -367,14 +397,14 @@ function ScrollRegion({ names, children }: { names: string[]; children: React.Re
   }, []);
   const hidden = clipped.map((t) => names[t - 1]);
   return (
-    <div className="hidden md:block">
+    <div className={className}>
       <div className="relative">
         <div
           ref={region}
           role="region"
           data-testid={T.unitsTable}
           data-scrolled={scrolled}
-          aria-labelledby="units-v2-grid-title"
+          aria-labelledby={labelId}
           tabIndex={0}
           onScroll={(e) => setScrolled(e.currentTarget.scrollLeft > 0)}
           className="group overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
@@ -402,12 +432,20 @@ export function ProductPricesGrid({
   product,
   edit,
   rowAction,
+  layout = "auto",
+  density = "default",
+  idSuffix = "",
 }: {
   product: UnitsCardProduct & { msrp?: number | string | null };
   /** Edit mode (S12a, behind flag.units_prices_v2). Omitted = today's read-only grid, unchanged. */
   edit?: GridEditApi;
   /** A control under a unit's name (K10d: Remove), or nothing for a row that has none. */
   rowAction?: (row: ProductPriceGridRowDto, layout: "table" | "card") => React.ReactNode;
+  /** K11-20: "auto" follows the viewport (today's markup); "table" / "cards" render only that layout. */
+  layout?: GridLayout;
+  density?: GridDensity;
+  /** K11-20: suffix for the ids this grid owns when a second grid is on the page (the floating window's). */
+  idSuffix?: string;
 }) {
   const grid = usePriceGrid(product.id);
   const labels = useTierLabels().data;
@@ -434,6 +472,8 @@ export function ProductPricesGrid({
   const ascending = [...rows].reverse();
   const baseLabel = grid.data.rows.find((x) => x.kind === "base")?.label;
   const names = TIERS.map((t) => productTierLabel(labels, t));
+  const compact = density === "compact";
+  const titleId = `units-v2-grid-title${idSuffix}`;
   const targetFor = (
     row: ProductPriceGridRowDto,
     i: number,
@@ -449,6 +489,7 @@ export function ProductPricesGrid({
       original: originalText(
         served.find((r) => r.ref === row.ref)?.cells.find((c) => c.tier === TIERS[i]),
       ),
+      sfx: idSuffix,
     };
   };
 
@@ -458,7 +499,7 @@ export function ProductPricesGrid({
       className={`rounded-lg border bg-white p-4 ${FRAME_BORDER} ${edit?.editing ? "pb-6" : ""}`}
     >
       <h2
-        id="units-v2-grid-title"
+        id={titleId}
         data-testid={T.hUnits}
         tabIndex={-1}
         className="mb-3 text-sm font-semibold text-navy focus:outline-none"
@@ -466,123 +507,148 @@ export function ProductPricesGrid({
         Prices by unit
       </h2>
 
-      <ScrollRegion names={names}>
-        <table className="w-full border-collapse text-left text-sm">
-          <thead>
-            <tr
-              className={`border-b text-[11px] uppercase tracking-wide text-navy/60 ${GRID_DIVIDER}`}
-            >
-              <th scope="col" className={`${UNIT_CELL} py-2 font-medium`}>
-                Unit
-              </th>
-              {rowAction && (
-                <th scope="col" className="px-2 py-2 font-medium">
-                  <span className="sr-only">Unit actions</span>
-                </th>
-              )}
-              <th scope="col" className="min-w-[7rem] px-2 py-2 font-medium">
-                Contains
-              </th>
-              {names.map((n, i) => (
-                <th key={i} scope="col" data-tier-head={i + 1} className="px-2 py-2 font-medium">
-                  {n}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
+      {layout !== "cards" && (
+        <ScrollRegion
+          names={names}
+          labelId={titleId}
+          className={layout === "table" ? "block" : "hidden md:block"}
+        >
+          <table className="w-full border-collapse text-left text-sm">
+            <thead>
               <tr
-                key={row.ref}
-                data-testid={T.row(row.ref)}
-                className={`border-b align-top last:border-b-0 ${GRID_DIVIDER}`}
+                className={`border-b text-[11px] uppercase tracking-wide text-navy/60 ${GRID_DIVIDER}`}
               >
-                <th scope="row" className={`${UNIT_CELL} py-3 font-medium text-navy`}>
-                  {row.label}
-                  <div
-                    data-testid={T.code(row.ref)}
-                    className="mt-0.5 text-xs font-normal tabular-nums text-navy/60"
-                  >
-                    {row.code ?? "No barcode"}
-                  </div>
-                  <NotEditable row={row} />
+                <th scope="col" className={`${UNIT_CELL} py-2 font-medium`}>
+                  Unit
                 </th>
-                {rowAction && <td className="px-2 py-3">{rowAction(row, "table")}</td>}
-                <td className="min-w-[7rem] px-2 py-3 text-navy/80">
-                  {containsLines(row, ascending).map((l, n) => (
-                    <div
-                      key={l}
-                      className={
-                        n === 0 ? "whitespace-nowrap" : "whitespace-nowrap text-xs text-navy/60"
-                      }
-                    >
-                      {l}
-                    </div>
-                  ))}
-                </td>
-                {TIERS.map((t, i) => (
-                  <td key={t} className="px-2 py-3">
-                    <PriceCell
-                      testId={T.cell(row.ref, t)}
-                      target={targetFor(row, i, "table")}
-                      view={cellView(
-                        row,
-                        t,
-                        names[i],
-                        row.cells.find((c) => c.tier === t),
-                      )}
-                    />
-                  </td>
+                {rowAction && (
+                  <th scope="col" className="px-2 py-2 font-medium">
+                    <span className="sr-only">Unit actions</span>
+                  </th>
+                )}
+                {!compact && (
+                  <th scope="col" className="min-w-[7rem] px-2 py-2 font-medium">
+                    Contains
+                  </th>
+                )}
+                {names.map((n, i) => (
+                  <th key={i} scope="col" data-tier-head={i + 1} className="px-2 py-2 font-medium">
+                    {n}
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </ScrollRegion>
-
-      <div className="space-y-3 md:hidden">
-        {rows.map((row) => (
-          <div
-            key={row.ref}
-            data-testid={T.card(row.ref)}
-            className={`rounded-md border p-3 ${FRAME_BORDER}`}
-          >
-            <div className="font-medium text-navy">{row.label}</div>
-            <NotEditable row={row} />
-            {rowAction?.(row, "card")}
-            <div className="text-xs text-navy/70">
-              {containsLines(row, ascending).map((l) => (
-                <div key={l}>{l}</div>
-              ))}
-            </div>
-            <div className="mb-2 text-xs text-navy/70">
-              Barcode: <span data-testid={T.code(row.ref)}>{row.code ?? "No barcode"}</span>
-            </div>
-            <dl className="grid grid-cols-2 gap-2">
-              {TIERS.map((t, i) => {
-                const view = cellView(
-                  row,
-                  t,
-                  names[i],
-                  row.cells.find((c) => c.tier === t),
-                );
-                return (
-                  <div key={t}>
-                    <dt className="text-[11px] uppercase tracking-wide text-navy/60">{names[i]}</dt>
-                    <dd>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr
+                  key={row.ref}
+                  data-testid={T.row(row.ref)}
+                  className={`border-b align-top last:border-b-0 ${GRID_DIVIDER}`}
+                >
+                  <th scope="row" className={`${UNIT_CELL} py-3 font-medium text-navy`}>
+                    {row.label}
+                    {compact ? (
+                      <div className="mt-0.5 text-xs font-normal text-navy/60">
+                        {containsLines(row, ascending)[0]
+                          ? `${containsLines(row, ascending)[0]} · `
+                          : ""}
+                        <span data-testid={T.code(row.ref)} className="tabular-nums">
+                          {row.code ?? "No barcode"}
+                        </span>
+                      </div>
+                    ) : (
+                      <div
+                        data-testid={T.code(row.ref)}
+                        className="mt-0.5 text-xs font-normal tabular-nums text-navy/60"
+                      >
+                        {row.code ?? "No barcode"}
+                      </div>
+                    )}
+                    <NotEditable row={row} />
+                  </th>
+                  {rowAction && <td className="px-2 py-3">{rowAction(row, "table")}</td>}
+                  {!compact && (
+                    <td className="min-w-[7rem] px-2 py-3 text-navy/80">
+                      {containsLines(row, ascending).map((l, n) => (
+                        <div
+                          key={l}
+                          className={
+                            n === 0 ? "whitespace-nowrap" : "whitespace-nowrap text-xs text-navy/60"
+                          }
+                        >
+                          {l}
+                        </div>
+                      ))}
+                    </td>
+                  )}
+                  {TIERS.map((t, i) => (
+                    <td key={t} className="px-2 py-3">
                       <PriceCell
-                        view={view}
                         testId={T.cell(row.ref, t)}
-                        target={targetFor(row, i, "card")}
+                        target={targetFor(row, i, "table")}
+                        view={cellView(
+                          row,
+                          t,
+                          names[i],
+                          row.cells.find((c) => c.tier === t),
+                        )}
                       />
-                    </dd>
-                  </div>
-                );
-              })}
-            </dl>
-          </div>
-        ))}
-      </div>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </ScrollRegion>
+      )}
+
+      {layout !== "table" && (
+        <div className={layout === "cards" ? "space-y-3" : "space-y-3 md:hidden"}>
+          {rows.map((row) => (
+            <div
+              key={row.ref}
+              data-testid={T.card(row.ref)}
+              className={`rounded-md border p-3 ${FRAME_BORDER}`}
+            >
+              <div className="font-medium text-navy">{row.label}</div>
+              <NotEditable row={row} />
+              {rowAction?.(row, "card")}
+              <div className="text-xs text-navy/70">
+                {containsLines(row, ascending).map((l) => (
+                  <div key={l}>{l}</div>
+                ))}
+              </div>
+              <div className="mb-2 text-xs text-navy/70">
+                Barcode: <span data-testid={T.code(row.ref)}>{row.code ?? "No barcode"}</span>
+              </div>
+              <dl className="grid grid-cols-2 gap-2">
+                {TIERS.map((t, i) => {
+                  const view = cellView(
+                    row,
+                    t,
+                    names[i],
+                    row.cells.find((c) => c.tier === t),
+                  );
+                  return (
+                    <div key={t}>
+                      <dt className="text-[11px] uppercase tracking-wide text-navy/60">
+                        {names[i]}
+                      </dt>
+                      <dd>
+                        <PriceCell
+                          view={view}
+                          testId={T.cell(row.ref, t)}
+                          target={targetFor(row, i, "card")}
+                        />
+                      </dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            </div>
+          ))}
+        </div>
+      )}
 
       {showMsrp && (
         <p className="mt-3 text-xs text-navy/70">

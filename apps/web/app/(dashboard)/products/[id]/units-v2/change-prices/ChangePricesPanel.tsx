@@ -46,14 +46,23 @@ type Mode = PriceChange["mode"];
 export function ChangePricesPanel({
   onClose,
   onApplied,
+  idSuffix = "",
 }: {
   onClose: () => void;
   /** Closes the panel after Apply (K11-15: focus goes to Save); without it Apply closes like Cancel. */
   onApplied?: () => void;
+  /** K11-20: suffix for the three fixed ids when a second panel is on the page (the floating price window). */
+  idSuffix?: string;
 }) {
   const draft = usePriceDraft();
   return draft.view ? (
-    <ChangePricesForm draft={draft} view={draft.view} onClose={onClose} onApplied={onApplied} />
+    <ChangePricesForm
+      draft={draft}
+      view={draft.view}
+      onClose={onClose}
+      onApplied={onApplied}
+      idSuffix={idSuffix}
+    />
   ) : null;
 }
 
@@ -62,11 +71,13 @@ function ChangePricesForm({
   view,
   onClose,
   onApplied,
+  idSuffix,
 }: {
   draft: PriceDraft;
   view: LadderView;
   onClose: () => void;
   onApplied?: () => void;
+  idSuffix: string;
 }) {
   const { grid } = draft;
   const { tierName, customerName, customers, rules, customersTruncated } = usePlanNames();
@@ -178,7 +189,7 @@ function ChangePricesForm({
 
   return (
     <section
-      id="change-panel"
+      id={`change-panel${idSuffix}`}
       ref={root}
       tabIndex={-1}
       data-testid={T.changePanel}
@@ -326,10 +337,10 @@ function ChangePricesForm({
         data-testid={T.changeFooter}
         className="mt-4 flex gap-2 border-t border-surface-border bg-white py-2.5"
       >
-        <Button id="ch-apply" type="button" disabled={!canApply} onClick={apply}>
+        <Button id={`ch-apply${idSuffix}`} type="button" disabled={!canApply} onClick={apply}>
           Apply
         </Button>
-        <Button id="ch-cancel" variant="secondary" type="button" onClick={onClose}>
+        <Button id={`ch-cancel${idSuffix}`} variant="secondary" type="button" onClick={onClose}>
           Cancel
         </Button>
       </div>

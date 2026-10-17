@@ -27,10 +27,13 @@ export function ChangePrices({
   open,
   onClose,
   openerRef,
+  idSuffix = "",
 }: {
   open: boolean;
   onClose: () => void;
   openerRef: React.RefObject<HTMLElement | null>;
+  /** K11-20: the floating price window's instance suffix for the fixed ids; the page's own panel has none. */
+  idSuffix?: string;
 }) {
   useEscapeCloses(open, onClose, openerRef);
   // K11-15: Apply closes the panel and the owner's next step is Save, so focus goes there (Cancel and Escape still go
@@ -40,13 +43,15 @@ export function ChangePrices({
   React.useEffect(() => {
     if (toSave === 1) setToSave(2);
     if (toSave === 2) {
-      document.getElementById(UNITS_V2_TESTIDS.ebSave)?.focus();
+      document.getElementById(`${UNITS_V2_TESTIDS.ebSave}${idSuffix}`)?.focus();
       setToSave(0);
     }
-  }, [toSave]);
+  }, [toSave, idSuffix]);
   const applied = () => {
     onClose();
     setToSave(1);
   };
-  return open ? <ChangePricesPanel onClose={onClose} onApplied={applied} /> : null;
+  return open ? (
+    <ChangePricesPanel onClose={onClose} onApplied={applied} idSuffix={idSuffix} />
+  ) : null;
 }

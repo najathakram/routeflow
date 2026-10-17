@@ -38,4 +38,6 @@ export const UNITS_V2_TESTIDS = {
   hUnits: "units-v2-h-units",
   orderUnit: "units-v2-order-unit",
   orderUnitReason: "units-v2-order-unit-reason",
+  /** K11-20: the floating price window's body (the editor inside the dialog). */
+  priceWindow: "units-v2-price-window",
 } as const;
