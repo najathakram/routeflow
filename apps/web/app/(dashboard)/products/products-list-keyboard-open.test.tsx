@@ -202,4 +202,20 @@ describe("F10: grid card keeps click-anywhere for the mouse", () => {
     const badge = screen.getByTitle("Type");
     expect(badge).toHaveClass("relative", "z-10");
   });
+
+  it("the badge text is reachable from the single product link (no hover, no extra tab stop)", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ProductsPage />);
+    const link = nameLink("Acme Tracked Item");
+    expect(link).toHaveAccessibleName(/Acme Tracked Item.*Type/);
+    // the visual badge is hidden from AT so the text is announced once
+    expect(screen.getByTitle("Type")).toHaveAttribute("aria-hidden", "true");
+    expect(link.querySelector(".sr-only")).toHaveTextContent("Type"); // the sr-only copy
+    // exactly one tab stop on the card: the link; nothing inside the card is focusable besides it
+    const card = link.closest(".shadow-card") as HTMLElement;
+    expect(card.querySelectorAll("a, button, [tabindex]:not([tabindex='-1'])")).toHaveLength(1);
+    link.focus();
+    await user.tab();
+    expect(card.contains(document.activeElement)).toBe(false);
+  });
 });

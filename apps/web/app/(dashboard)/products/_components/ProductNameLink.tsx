@@ -18,10 +18,13 @@ import { cn } from "@routeflow/ui/web";
 export function ProductNameLink({
   id,
   stretched,
+  srNote,
   children,
 }: {
   id: string;
   stretched?: boolean;
+  /** Text of a mouse-only tooltip (e.g. the card's type badge), read from this single tab stop. */
+  srNote?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -36,6 +39,7 @@ export function ProductNameLink({
       )}
     >
       {children}
+      {srNote ? <span className="sr-only">, {srNote}</span> : null}
     </Link>
   );
 }

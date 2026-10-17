@@ -160,6 +160,11 @@ function ProductCard({
   sectionNameById: Map<string, string>;
 }) {
   const status = getProductStatus(product);
+  const trackedTypeTitle = product.trackedCategoryId
+    ? ((product as any).trackedSubcategory?.name ??
+      sectionNameById.get(product.trackedCategoryId) ??
+      "Type")
+    : undefined;
   return (
     <div
       className={cn(
@@ -232,7 +237,7 @@ function ProductCard({
             {selectionMode ? (
               (product.variantName ?? product.name)
             ) : (
-              <ProductNameLink id={product.id} stretched>
+              <ProductNameLink id={product.id} stretched srNote={trackedTypeTitle}>
                 {product.variantName ?? product.name}
               </ProductNameLink>
             )}
@@ -260,11 +265,8 @@ function ProductCard({
           <MerchBadges product={product} />
           {product.trackedCategoryId && (
             <span
-              title={
-                (product as any).trackedSubcategory?.name ??
-                sectionNameById.get(product.trackedCategoryId) ??
-                "Type"
-              }
+              title={trackedTypeTitle}
+              aria-hidden="true"
               className="relative z-10 rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
             >
               {sectionNameById.get(product.trackedCategoryId) ?? "Type"}
