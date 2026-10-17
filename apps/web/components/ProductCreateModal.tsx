@@ -292,8 +292,20 @@ export function ProductCreateModal({
     onRestore: (fields) => setForm((f) => ({ ...f, ...fields })),
   });
 
+  // In-flight guard: a double-click posts twice (201 then 409) before isPending re-renders.
+  const submittingRef = React.useRef(false);
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      await submitProduct();
+    } finally {
+      submittingRef.current = false;
+    }
+  };
+
+  const submitProduct = async () => {
     if (!form.pricePerUnit || parseFloat(form.pricePerUnit) < 0) {
       setPriceError("Please enter a valid price.");
       return;
