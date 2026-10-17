@@ -1363,6 +1363,14 @@ export default function ProductsPage() {
           placeholder="Name, SKU or scan barcode…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => {
+            // K11-09: ArrowDown reaches the first product link of the current view (grid or table).
+            if (e.key !== "ArrowDown") return;
+            const first = document.querySelector<HTMLAnchorElement>("a[data-product-name-link]");
+            if (!first) return;
+            e.preventDefault();
+            first.focus();
+          }}
           className="ml-auto h-8 w-64 rounded-lg border border-surface-border bg-white px-3 text-xs text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <div className="w-40">
