@@ -45,6 +45,7 @@ import {
   type CellProblem,
   type DraftEntry,
 } from "./fold-draft";
+import { canonicalPriceText } from "./price-text";
 import { ADD_UNIT_FIRST, previewRows, rulesFromGrid, viewFromGrid } from "./view-from-grid";
 
 /** The open plan and what the "also update" panel (K4) reads of the draft's choices on it. */
@@ -380,8 +381,14 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   }
   // F03: a price a Change prices plan or a ticked offer wrote into the draft shows in its box like a typed one (an Auto
   // price the draft sets back to Auto shows empty), instead of the saved price with the new one as a faint hint.
+  // M1: in canonical two-decimal text ("31.50"), the text the box settles to, so focusing it changes nothing under the
+  // selection (a raw "31.5" was re-rendered in on focus, the caret went to the end and typing 32 made 31.532). Display
+  // only: the staged number is `p.to`, untouched.
   const drafted = new Map(
-    patches.map((p) => [cellKey(p.ref, p.tier), p.to == null ? "" : String(p.to)]),
+    patches.map((p) => [
+      cellKey(p.ref, p.tier),
+      p.to == null ? "" : canonicalPriceText(String(p.to)),
+    ]),
   );
   // A cell a plan or an offer patched has to be typed back to its saved price as a draft entry, not by dropping one.
   const patchedByPlan = (key: string) =>

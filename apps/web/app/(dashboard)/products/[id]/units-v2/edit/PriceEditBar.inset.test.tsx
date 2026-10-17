@@ -6,10 +6,24 @@ import type { ProductPriceGridDto } from "@routeflow/types";
 import { EditablePricesGrid } from "./EditablePricesGrid";
 import { PriceDraftProvider } from "./PriceDraftProvider";
 import { PriceEditBar } from "./PriceEditBar";
+import { useShellBottom } from "./useClearOfShellPadding";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 
 // F22: the dashboard's #main-content is the scroller and has pb-24. A sticky bar stops at that padding, so it floated
 // 96px up and covered the Case and Piece rows when Edit first opened. Same cure as the counter's checkout bar (#3500).
+
+// N2: lets a test force what the shared `useShellBottom` answers, to prove the bar really asks it.
+let mockShellBottom: number | null = null;
+jest.mock("./useClearOfShellPadding", () => {
+  const actual = jest.requireActual("./useClearOfShellPadding");
+  return {
+    ...actual,
+    useShellBottom: (active: boolean) => {
+      const real = actual.useShellBottom(active);
+      return mockShellBottom ?? real;
+    },
+  };
+});
 
 let mockGrid: { data?: ProductPriceGridDto; isLoading: boolean; isError: boolean };
 jest.mock("@/lib/api/usePriceGrid", () => ({
@@ -64,6 +78,7 @@ const BAR_HEIGHT = 60;
 const realHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
 let main: HTMLElement | null = null;
 beforeEach(() => {
+  mockShellBottom = null;
   mockGrid = { data: grid, isLoading: false, isError: false };
   Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
     configurable: true,
@@ -152,5 +167,37 @@ describe("F22: the save bar never covers the grid rows", () => {
     mount();
     await edit();
     expect(screen.getByTestId(T.editbar).style.bottom).toBe("0px");
+  });
+});
+
+describe("N2: the bar and the saved line share ONE shell-bottom rule", () => {
+  it("the bar's bottom is whatever the shared useShellBottom answers", async () => {
+    shell("96px");
+    mockShellBottom = -42;
+    mount();
+    await edit();
+    expect(screen.getByTestId(T.editbar).style.bottom).toBe("-42px");
+  });
+
+  it("the bar and a user of the shared hook read the same value from the same shell", async () => {
+    shell("96px");
+    let shared = NaN;
+    const Probe = () => {
+      shared = useShellBottom(true);
+      return null;
+    };
+    rtlRender(
+      <QueryClientProvider client={new QueryClient()}>
+        <PriceDraftProvider productId="p1">
+          <EditablePricesGrid product={product} />
+          <PriceEditBar />
+          <Probe />
+        </PriceDraftProvider>
+      </QueryClientProvider>,
+      { container: main?.appendChild(document.createElement("div")) },
+    );
+    await edit();
+    expect(shared).toBe(-96);
+    expect(screen.getByTestId(T.editbar).style.bottom).toBe(`${shared}px`);
   });
 });

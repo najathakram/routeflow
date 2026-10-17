@@ -96,6 +96,7 @@ const mount = () =>
   );
 
 const FINISH = "Finish Change prices first.";
+const PAUSED = "Save is paused while Change prices is open.";
 const barText = () => screen.getByTestId(T.ebText).textContent ?? "";
 const pieceBox = () =>
   within(screen.getByTestId(T.row("piece"))).getByTestId(T.input("piece", 2)) as HTMLInputElement;
@@ -174,8 +175,19 @@ describe("K11-18: one Cancel and one primary while Change prices is open", () =>
     fireEvent.keyDown(document, { key: "s", ctrlKey: true });
     fireEvent.keyDown(document, { key: "s", ctrlKey: true });
     expect(mockSave).not.toHaveBeenCalled();
-    expect(barText().split(FINISH)).toHaveLength(2);
+    expect(barText().split(PAUSED)).toHaveLength(2);
     expect(screen.getByTestId(T.ebText)).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("N3: after Ctrl+S 'Finish Change prices first.' is on screen once; the polite region announces in other, sr-only words", async () => {
+    const user = userEvent.setup();
+    mount();
+    await dirtyThenOpen(user);
+    fireEvent.keyDown(document, { key: "s", ctrlKey: true });
+    expect(screen.getAllByText(FINISH)).toHaveLength(1);
+    expect(screen.getAllByText(FINISH)[0]).toBe(screen.getByRole("button", { name: FINISH }));
+    const note = within(screen.getByTestId(T.ebText)).getByText(PAUSED);
+    expect(note.className).toContain("sr-only");
   });
 
   it("Ctrl+S saves again once the panel is closed", async () => {

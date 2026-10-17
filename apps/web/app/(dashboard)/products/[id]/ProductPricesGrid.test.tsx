@@ -236,6 +236,24 @@ describe("K11-11: a unit that does not exist yet shows no price", () => {
     ).toBeTruthy();
   });
 
+  it("N7: the button is not part of the row header, so the header's name stays the unit name", () => {
+    withPhantom();
+    render(<ProductPricesGrid product={product} />);
+    const row = within(screen.getByTestId(T.row("base")));
+    const head = row.getByRole("rowheader");
+    expect(head.textContent).not.toContain("Add Piece unit");
+    expect(row.queryByRole("rowheader", { name: /Add Piece unit/ })).toBeNull();
+    expect(row.getByRole("rowheader", { name: /^Piece/ })).toBe(head);
+    const add = row.getByRole("button", { name: "Add Piece unit" });
+    expect(add.closest("th")).toBeNull();
+    expect(add.closest("td")).not.toBeNull();
+    expect(add.closest("tr")).toBe(screen.getByTestId(T.row("base")));
+    // the phone card keeps it, in the card
+    expect(
+      within(screen.getByTestId(T.card("base"))).getAllByRole("button", { name: "Add Piece unit" }),
+    ).toHaveLength(1);
+  });
+
   it("a family-governed row with another reason keeps its prices", () => {
     withPhantom({ notEditableReason: "Its price is set on the family." });
     render(<ProductPricesGrid product={product} />);

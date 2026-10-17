@@ -70,11 +70,17 @@ describe("K11-16: the saved line takes the bar's slot for 5 s", () => {
     expect(savedRegions()).toHaveLength(1);
     expect(savedRegions()[0]).toBe(line());
     const cls = line().className.split(/\s+/);
-    for (const c of ["sticky", "border-t", "bg-white/95", "backdrop-blur"])
+    for (const c of ["sticky", "bg-white/95", "backdrop-blur"]) expect(cls).toContain(c);
+  });
+
+  it("N1: the pinned line has the bar's CURRENT look: a rounded-lg border, off the content edge (no -mx-4 / border-t)", () => {
+    render(<Section />);
+    save("a1");
+    const cls = line().className.split(/\s+/);
+    for (const c of ["rounded-lg", "border", "border-surface-border", "px-4", "py-3", "z-30"])
       expect(cls).toContain(c);
-    // The bar's edge alignment (-mx-4 px-4), so the line sits over the bar's footprint.
-    expect(cls).toContain("-mx-4");
-    expect(cls).toContain("px-4");
+    expect(cls).not.toContain("-mx-4");
+    expect(cls).not.toContain("border-t");
   });
 
   it("after 5 s the SAME element loses the pinned look and keeps Saved + Undo (no remount, no second copy)", () => {

@@ -199,13 +199,17 @@ function AddUnitPointer({ unit, button = false }: { unit: string; button?: boole
   );
 }
 
-/** A family-governed row is read-only: say why, quietly. */
-function NotEditable({ row }: { row: ProductPriceGridRowDto }) {
+/**
+ * A family-governed row is read-only: say why, quietly. `pointer` false leaves the missing unit's Add button out: the
+ * table keeps it OUT of the row header (N7: a button inside the `th` makes it part of the header's name) and puts it in
+ * the row's next cell instead; the phone card keeps it here.
+ */
+function NotEditable({ row, pointer = true }: { row: ProductPriceGridRowDto; pointer?: boolean }) {
   if (row.editable || !row.notEditableReason) return null;
   return (
     <p data-testid={T.notEditable(row.ref)} className="mt-0.5 text-[11px] font-normal text-navy/55">
       {row.notEditableReason}
-      {isMissingUnit(row) && <AddUnitPointer unit={row.label} button />}
+      {pointer && isMissingUnit(row) && <AddUnitPointer unit={row.label} button />}
     </p>
   );
 }
@@ -239,6 +243,13 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
   // K11-20: true while Escape has something to put back here. The floating window reads it (it always takes Radix's own
   // Escape) to leave this key to the box.
   const reverts = inside && atFocus.current !== null && text !== atFocus.current;
+  // M1: select the value AFTER the box has re-rendered with its raw text. Selecting in onFocus alone is undone when the
+  // value that renders on focus differs from the settled one (the caret jumps to the end and typing appends).
+  const selectWhole = React.useRef(false);
+  React.useLayoutEffect(() => {
+    if (inside && selectWhole.current) el.current?.select();
+    selectWhole.current = false;
+  }, [inside]);
   return (
     <>
       <span className="relative block w-fit">
@@ -263,6 +274,7 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
           onFocus={(e) => {
             atFocus.current = text;
             justFocused.current = true;
+            selectWhole.current = true;
             setInside(true);
             e.currentTarget.select();
           }}
@@ -564,7 +576,8 @@ export function ProductPricesGrid({
                         {row.code ?? "No barcode"}
                       </div>
                     )}
-                    <NotEditable row={row} />
+                    {/* N7: outside the row header (it would join the header's name); compact has no Contains cell, so there it stays */}
+                    <NotEditable row={row} pointer={compact} />
                   </th>
                   {rowAction && <td className="px-2 py-3">{rowAction(row, "table")}</td>}
                   {!compact && (
@@ -579,6 +592,7 @@ export function ProductPricesGrid({
                           {l}
                         </div>
                       ))}
+                      {isMissingUnit(row) && <AddUnitPointer unit={row.label} button />}
                     </td>
                   )}
                   {TIERS.map((t, i) => (
