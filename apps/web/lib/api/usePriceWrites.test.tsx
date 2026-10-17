@@ -9,6 +9,7 @@ import {
 } from "./usePriceWrites";
 import { priceGridKey } from "./usePriceGrid";
 import { productCustomerPricesKey } from "./useProductCustomerPrices";
+import { productUnitsKey } from "./product-units";
 import { queryClientWithGlobalErrorToast, refusal } from "@/test-utils/global-error-toast";
 
 const mockPost = jest.fn();
@@ -82,6 +83,37 @@ describe("usePriceWrites", () => {
       result.current.mutate({ auditId: "a1", expectedRevision: 8, expectedPriceState: "ps" });
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(spy).toHaveBeenCalledWith(productKey);
+    });
+
+    it("a successful save refetches the units list the legacy card drafts from (not the grid)", async () => {
+      mockPost.mockResolvedValue(ok);
+      const qc = new QueryClient();
+      const spy = jest.spyOn(qc, "invalidateQueries");
+      const { result } = renderHook(() => useSavePrices("p1"), { wrapper: wrap(qc) });
+      result.current.mutate({ expectedRevision: 7, expectedPriceState: "ps", patches: [] });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(spy).toHaveBeenCalledWith({ queryKey: productUnitsKey("p1") });
+      expect(spy).not.toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
+    });
+
+    it("a successful undo refetches the units list too", async () => {
+      mockPost.mockResolvedValue(ok);
+      const qc = new QueryClient();
+      const spy = jest.spyOn(qc, "invalidateQueries");
+      const { result } = renderHook(() => useUndoPrices("p1"), { wrapper: wrap(qc) });
+      result.current.mutate({ auditId: "a1", expectedRevision: 8, expectedPriceState: "ps" });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(spy).toHaveBeenCalledWith({ queryKey: productUnitsKey("p1") });
+    });
+
+    it("a refused save leaves the units list alone", async () => {
+      mockPost.mockRejectedValue({ response: { data: { code: "PRICE_EDIT_INVALID" } } });
+      const qc = new QueryClient();
+      const spy = jest.spyOn(qc, "invalidateQueries");
+      const { result } = renderHook(() => useSavePrices("p1"), { wrapper: wrap(qc) });
+      result.current.mutate({ expectedRevision: 7, expectedPriceState: "ps", patches: [] });
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(spy).not.toHaveBeenCalledWith({ queryKey: productUnitsKey("p1") });
     });
 
     it("a refused save leaves the product query alone", async () => {

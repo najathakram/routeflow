@@ -3,6 +3,7 @@ import { API_ERROR_CODES } from "@routeflow/types";
 import type { SavePricesRequest, SavePricesResponse, UndoPricesRequest } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { priceGridKey } from "./usePriceGrid";
+import { productUnitsKey } from "./product-units";
 import { productCustomerPricesKey } from "./useProductCustomerPrices";
 
 /** The HTTP method of both price writes (lead final ruling 2026-10-16: POST; the method is one constant, change it here). */
@@ -58,7 +59,7 @@ export function priceWriteError(err: unknown): PriceWriteError | null {
  * `refetchOnStale`: a stale answer refetches the grid and the customers' prices. Undo wants it (its preview reads the
  * served grid); Save does not: its notice owns the reload. Save itself never auto-refetches on a stale answer.
  * `writesCustomers`: a write that moved customer prices leaves the customers query behind, so it is refetched.
- * Save and Undo both refetch the product query on success (`["products", id]`, the key of `useProduct`).
+ * Save and Undo both refetch the product query (`["products", id]`, the key of `useProduct`) and the units list on success.
  */
 function usePriceWrite<Req>(
   productId: string,
@@ -77,6 +78,8 @@ function usePriceWrite<Req>(
       // The product the Details form reads holds the same list price and tiers: refetch it (exact, so the grid just
       // written above is not invalidated with it), or the next Details save works from the pre-save row.
       void qc.invalidateQueries({ queryKey: ["products", productId], exact: true });
+      // The legacy Units card drafts its per-unit prices from this list and re-sends them on its own save.
+      void qc.invalidateQueries({ queryKey: productUnitsKey(productId) });
       if (writesCustomers(body))
         void qc.invalidateQueries({ queryKey: productCustomerPricesKey(productId) });
     },
