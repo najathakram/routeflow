@@ -128,6 +128,16 @@ describe("F22: the save bar never covers the grid rows", () => {
     expect(m.style.getPropertyValue("scroll-padding-bottom")).toBe("");
   });
 
+  it("puts back the scroller's own scroll-padding-bottom instead of clearing it", async () => {
+    const m = shell("96px");
+    m.style.setProperty("scroll-padding-bottom", "12px");
+    mount();
+    const user = await edit();
+    expect(m.style.getPropertyValue("scroll-padding-bottom")).toBe(`${BAR_HEIGHT}px`);
+    await user.click(screen.getByTestId(T.ebCancel));
+    expect(m.style.getPropertyValue("scroll-padding-bottom")).toBe("12px");
+  });
+
   it("lets go of the scroller on unmount", async () => {
     const m = shell("96px");
     const view = mount();

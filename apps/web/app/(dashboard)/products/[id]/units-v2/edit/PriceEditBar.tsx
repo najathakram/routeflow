@@ -43,11 +43,15 @@ function useClearOfShellPadding() {
       setInset(0);
       return;
     }
-    setInset(parseInt(getComputedStyle(main).paddingBottom, 10) || 0);
+    // The computed padding is always "<n>px" (read with Number(): the edit folder's guard spec keeps float parsers out).
+    const padding = Number(getComputedStyle(main).paddingBottom.replace("px", ""));
+    setInset(Number.isFinite(padding) ? padding : 0);
     if (height === 0) return;
+    const before = main.style.getPropertyValue("scroll-padding-bottom");
     main.style.setProperty("scroll-padding-bottom", `${height}px`);
     return () => {
-      main.style.removeProperty("scroll-padding-bottom");
+      if (before) main.style.setProperty("scroll-padding-bottom", before);
+      else main.style.removeProperty("scroll-padding-bottom");
     };
   }, [height]);
   return { ref, bottom: inset === 0 ? 0 : -inset };

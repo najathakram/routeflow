@@ -316,8 +316,15 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     conflicts.length === 0 &&
     !!grid;
 
+  // In entry order: a plan or a ticked offer that comes AFTER a typed cell patches over it (the fold writes the later
+  // value), so the typed text is dropped and the drafted value shows; a cell typed after them wins, as it does in the fold.
   const texts: Record<string, string> = {};
-  for (const e of entries) if (e.kind === "cell") texts[e.key] = e.text;
+  for (const e of entries) {
+    if (e.kind === "cell") texts[e.key] = e.text;
+    else
+      for (const p of e.kind === "plan" ? e.plan.patches : e.patches)
+        delete texts[cellKey(p.ref, p.tier)];
+  }
   // F03: a price a Change prices plan or a ticked offer wrote into the draft shows in its box like a typed one (an Auto
   // price the draft sets back to Auto shows empty), instead of the saved price with the new one as a faint hint.
   const drafted = new Map(

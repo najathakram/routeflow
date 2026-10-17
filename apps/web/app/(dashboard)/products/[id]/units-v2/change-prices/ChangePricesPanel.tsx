@@ -200,7 +200,6 @@ function ChangePricesForm({
                   id={`${ids}-${d}`}
                   className="peer sr-only"
                   checked={direction === d}
-                  aria-checked={direction === d}
                   onChange={() => change({ direction: d })}
                 />
                 <label

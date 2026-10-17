@@ -1,7 +1,7 @@
 /**
  * Units v2 (units-v2-polish-k10a): the product page's pricing polish, proven in a real browser at 1440 / 768 / 390.
  *   F02  Change prices: Apply/Cancel sit below the preview (never on it) and the Also update text is fully readable
- *   P13  Raise / Lower: only the chosen half is filled, the choice is announced (aria-checked)
+ *   P13  Raise / Lower: only the chosen half is filled (the native radio's checked state)
  *   F22  Edit: the save bar rests at the real bottom and never covers a price box that takes focus
  *   F03  After Apply the price box shows the applied value, not the old one
  *   NIT-3  the "customers capped" note shows only when the server said truncated
@@ -10,7 +10,7 @@
  * Role: OPERATOR on the approved test tenant; fixture product E2E-FIX-UNITS (apps/api/scripts/e2e-seed.js). A tenant not
  * served `flag.units_prices_v2` FAILS the spec.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
 import { VIEWPORTS, productBySku, requireUnitsV2Flag, shot } from "./helpers/units-v2-support";
 
@@ -69,10 +69,9 @@ const box = async (page: Page, testId: string) => {
   return b!;
 };
 
-const bg = (page: Page, label: string) =>
-  page
-    .locator("label", { hasText: new RegExp(`^${label}$`) })
-    .evaluate((el) => getComputedStyle(el).backgroundColor);
+/** The background of one Raise / Lower half, found inside the panel by its label. */
+const bg = (panel: Locator, label: string) =>
+  panel.locator("label", { hasText: label }).evaluate((el) => getComputedStyle(el).backgroundColor);
 
 for (const vp of VIEWPORTS) {
   test.describe(`Units v2 polish K10a @ ${vp.name}`, () => {
@@ -88,46 +87,69 @@ for (const vp of VIEWPORTS) {
       const panel = page.getByTestId(ID.panel);
       await expect(panel).toBeVisible();
 
-      // P13: Raise is chosen first: filled, announced; Lower is outlined (a different, lighter fill)
+      // P13: Raise is chosen first and filled; Lower is outlined (a different, lighter fill)
       const raise = panel.getByRole("radio", { name: "Raise" });
       const lower = panel.getByRole("radio", { name: "Lower" });
       await expect(raise).toBeChecked();
-      await expect(raise).toHaveAttribute("aria-checked", "true");
-      await expect(lower).toHaveAttribute("aria-checked", "false");
-      const [raiseOn, lowerOff] = [await bg(page, "Raise"), await bg(page, "Lower")];
+      await expect(lower).not.toBeChecked();
+      const [raiseOn, lowerOff] = [await bg(panel, "Raise"), await bg(panel, "Lower")];
       expect(raiseOn, "the chosen half is filled").not.toBe(lowerOff);
-      await page.getByText("Lower", { exact: true }).click();
-      await expect(lower).toHaveAttribute("aria-checked", "true");
-      await expect(raise).toHaveAttribute("aria-checked", "false");
-      expect(await bg(page, "Lower"), "the fill moved to Lower").toBe(raiseOn);
-      expect(await bg(page, "Raise")).toBe(lowerOff);
-      await page.getByText("Raise", { exact: true }).click();
+      await panel.locator("label", { hasText: "Lower" }).click();
+      await expect(lower).toBeChecked();
+      await expect(raise).not.toBeChecked();
+      expect(await bg(panel, "Lower"), "the fill moved to Lower").toBe(raiseOn);
+      expect(await bg(panel, "Raise")).toBe(lowerOff);
+      await panel.locator("label", { hasText: "Raise" }).click();
 
       // F02: with an amount typed the preview shows, and Apply/Cancel sit BELOW it, on nothing
       await panel.getByLabel("Unit").selectOption(unit.ref);
       await panel.getByLabel("Amount").fill("5");
       const preview = page.getByTestId(ID.preview);
       await expect(preview.getByRole("row").first()).toBeVisible();
-      await preview.scrollIntoViewIfNeeded();
       const rows = preview.getByRole("row");
-      const footer = await box(page, ID.footer);
       const n = await rows.count();
       expect(n, "the preview lists the changed prices").toBeGreaterThan(0);
-      for (let i = 0; i < n; i++) {
-        const r = await rows.nth(i).boundingBox();
-        expect(r!.y + r!.height, `preview row ${i} ends above Apply/Cancel`).toBeLessThanOrEqual(
-          footer.y + 1,
-        );
-      }
-      // the Also update text reads in full: its box is as tall as its content
       const also = page.getByTestId(ID.alsoUpdate);
       await expect(also).toBeVisible();
       const clipped = await also.evaluate((el) => el.scrollHeight > el.clientHeight + 1);
       expect(clipped, "the Also update box is not clipped").toBe(false);
-      const alsoBox = await box(page, ID.alsoUpdate);
-      expect(alsoBox.y + alsoBox.height, "Also update ends above Apply/Cancel").toBeLessThanOrEqual(
-        footer.y + 1,
-      );
+      const vh = page.viewportSize()!.height;
+
+      // Two scroll positions of #main-content: the very bottom, and the one that leaves Apply's natural place in the 96px
+      // band under the shell's padding, where a sticky footer used to be lifted onto the last preview rows.
+      const scrollMain = (to: "bottom" | number) =>
+        page.evaluate((target) => {
+          const m = document.getElementById("main-content")!;
+          m.scrollTop = target === "bottom" ? m.scrollHeight : m.scrollTop + target;
+        }, to);
+      const positions: Array<"bottom" | "band"> = ["bottom", "band"];
+      for (const where of positions) {
+        if (where === "bottom") await scrollMain("bottom");
+        else {
+          await scrollMain("bottom");
+          await scrollMain(-1000);
+          const f = await box(page, ID.footer);
+          await scrollMain(f.y + f.height - (vh - 40));
+        }
+        const footer = await box(page, ID.footer);
+        const ends: Array<[string, number]> = [];
+        for (let i = 0; i < n; i++) {
+          const r = await rows.nth(i).boundingBox();
+          ends.push([`preview row ${i}`, r!.y + r!.height]);
+        }
+        const a = await box(page, ID.alsoUpdate);
+        ends.push(["the Also update text", a.y + a.height]);
+        for (const [what, end] of ends) {
+          expect(end, `${what} ends above Apply/Cancel (${where})`).toBeLessThanOrEqual(
+            footer.y + 1,
+          );
+          expect(end, `${what} is not below the fold (${where})`).toBeLessThanOrEqual(vh);
+        }
+        expect(
+          footer.y + footer.height,
+          `Apply/Cancel is in the viewport (${where})`,
+        ).toBeLessThanOrEqual(vh);
+      }
       await shot(page, info, "k10a-change-prices");
     });
 
@@ -165,7 +187,7 @@ for (const vp of VIEWPORTS) {
       const viewportBottom = page.viewportSize()!.height;
       const first = await box(page, ID.bar);
       expect(
-        viewportBottom - (first.y + first.height),
+        Math.abs(viewportBottom - (first.y + first.height)),
         "the bar sits at the real bottom, not lifted by the shell's padding",
       ).toBeLessThanOrEqual(2);
 

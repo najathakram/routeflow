@@ -159,6 +159,64 @@ describe("F03: Apply writes the applied values into the price boxes", () => {
     expect(draft.count).toBe(2);
   });
 
+  it("MUST: a price typed BEFORE the plan shows the plan's value, which is what Save writes", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.click(screen.getByTestId(T.btnEdit));
+    await user.clear(input("case", 1));
+    await user.type(input("case", 1), "32");
+    expect(input("case", 1).value).toBe("32");
+    const raised = emptyPlan({
+      patches: [{ ref: "case", tier: 1, to: 35.2 }],
+      changes: [{ ref: "case", label: "Case", tier: 1, from: 30, to: 35.2 }],
+    });
+    act(() => draft.applyPlan(raised, () => raised));
+    expect(draft.toRequest()?.patches).toContainEqual({ ref: "case", tier: 1, to: 35.2 });
+    expect(input("case", 1).value).toBe("35.2");
+  });
+
+  it("MUST: a price typed before a tier offer is ticked shows the offer's value, which is what Save writes", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.click(screen.getByTestId(T.btnEdit));
+    await user.clear(input("case", 3));
+    await user.type(input("case", 3), "12");
+    expect(input("case", 3).value).toBe("12");
+    const withOffer = emptyPlan({
+      patches: [{ ref: "case", tier: 2, to: 14 }],
+      changes: [{ ref: "case", label: "Case", tier: 2, from: 13.91, to: 14 }],
+      offers: [
+        {
+          kind: "tier",
+          ticked: false,
+          ref: "case",
+          tier: 2,
+          tiers: [3],
+          value: 14,
+          warning: "Tier 3 is higher than Wholesale ($14.00).",
+          title: "Set Tier 3 to $13.10 too",
+          patches: [{ ref: "case", tier: 3, to: 13.1 }],
+        },
+      ],
+    });
+    act(() => draft.applyPlan(withOffer, () => withOffer));
+    // the typed 12 is still its own value until the offer is ticked
+    expect(input("case", 3).value).toBe("12");
+    act(() => draft.setOfferTicked(0, true));
+    expect(draft.toRequest()?.patches).toContainEqual({ ref: "case", tier: 3, to: 13.1 });
+    expect(input("case", 3).value).toBe("13.1");
+  });
+
+  it("a price typed AFTER the plan still wins over the plan's value", async () => {
+    const user = userEvent.setup();
+    mount();
+    apply();
+    await user.clear(input("case", 1));
+    await user.type(input("case", 1), "40");
+    expect(input("case", 1).value).toBe("40");
+    expect(draft.toRequest()?.patches).toContainEqual({ ref: "case", tier: 1, to: 40 });
+  });
+
   it("Cancel drops the applied values: the boxes go back to the saved prices", async () => {
     const user = userEvent.setup();
     mount();

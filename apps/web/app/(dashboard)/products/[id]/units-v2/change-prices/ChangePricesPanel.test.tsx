@@ -153,23 +153,23 @@ describe("ChangePricesPanel (V03, V05, V18)", () => {
     expect(box).toHaveTextContent("Case Tier 2 $12.50");
   });
 
-  it("P13: only the chosen Raise/Lower half is filled; the other is outlined, and the choice is announced", () => {
+  it("P13: only the chosen Raise/Lower half is filled; the other is outlined, and the choice is the native radio's checked state", () => {
     mount();
     const half = (name: string) => screen.getByText(name, { selector: "label" });
     const radio = (name: string) => screen.getByRole("radio", { name });
     expect(half("Raise").className).toContain("bg-accent-strong");
     expect(half("Lower").className).not.toContain("bg-accent-strong");
     expect(half("Lower").className).toContain("border");
-    expect(radio("Raise")).toHaveAttribute("aria-checked", "true");
-    expect(radio("Lower")).toHaveAttribute("aria-checked", "false");
+    expect(radio("Raise")).toBeChecked();
+    expect(radio("Lower")).not.toBeChecked();
     // the fill is never driven by `peer-checked:`: a later sibling label would match the checked radio before it
     expect(half("Raise").className).not.toContain("peer-checked");
     expect(half("Lower").className).not.toContain("peer-checked");
     fireEvent.click(radio("Lower"));
     expect(half("Lower").className).toContain("bg-accent-strong");
     expect(half("Raise").className).not.toContain("bg-accent-strong");
-    expect(radio("Lower")).toHaveAttribute("aria-checked", "true");
-    expect(radio("Raise")).toHaveAttribute("aria-checked", "false");
+    expect(radio("Lower")).toBeChecked();
+    expect(radio("Raise")).not.toBeChecked();
   });
 
   it("K3b NIT-3: the Also update section says the customer list was capped, only when it was", () => {
