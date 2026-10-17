@@ -61,6 +61,27 @@
   the hot path, history in a changelog.**
 - **Guard:** code-map CHANGELOG convention; this register's own caps.
 
+### L-284 · 2026-10-08 · process · lanes report events only, review depth follows risk, and a bug in a file you are changing rides in its own commit
+
+- **Symptom:** recorded by the 2026-10-08 operating review as an operating-model rule; the incident detail is in the lead's notes.
+- **Root cause:** coordination messages cost more than the work they describe, review effort is only worth spending where the risk is, and a bug fixed inside a commit about something else cannot be reviewed or reverted on its own.
+- **Lesson:** **Lanes report EVENTS only (pushed <sha> / blocked <why> / done / needs ruling), never status or load pings. Review depth follows risk: Opus for money, tenant security, concurrency and migrations; Sonnet for UI and docs; non-money nits go to a follow-up row, not a re-review loop. A bug found in a file you are already changing rides along in its OWN commit on the same branch, with a red-first test.**
+- **Guard:** the lane rules and the `pre-merge-review` skill.
+
+### L-281 · 2026-10-08 · process · on a shared host never `git stash` in a lane session and never kill processes by name
+
+- **Symptom:** recorded by the 2026-10-08 operating review as a standing hazard of several sessions sharing one machine; the incident detail is in the lead's notes.
+- **Root cause:** a stash is repo-wide and invisible in any working tree, so a `pop` in the wrong worktree restores or loses another lane's work. A name or pattern match (`pkill`, grep-and-kill) on a shared host cannot tell your jobs from another lane's, so it kills theirs.
+- **Lesson:** **In a builder or worktree session never use `git stash`: commit a WIP commit instead. Never kill by name or pattern: kill only the PID tree you started.**
+- **Guard:** the standing lane rules in the start prompt; no script yet.
+
+### L-273 · 2026-10-07 · process · a pre-push log piped through `tail` hides the real failure
+
+- **Symptom:** a builder diagnosed a warning near the end of a pre-push log as the failure and chased it.
+- **Root cause:** the log was piped through `tail`, so the failing test's output had scrolled out of view and only trailing warnings showed.
+- **Lesson:** **Save the full pre-push or verify log to a file and grep it for `FAIL` and `Tests:` before diagnosing; never judge a failure from the tail of a piped log.**
+- **Guard:** run verify as `... > log 2>&1` and read `grep -n "FAIL\|Tests:" log` first.
+
 ## tooling
 
 ### L-067 · 2026-09-04 · tooling · #597

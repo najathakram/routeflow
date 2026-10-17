@@ -54,20 +54,6 @@
 - **Lesson:** **For a train push whose members were each verified and whose tip CI will test, do the seconds-long pre-flight only (`npm run lint:migrations`, `split-prisma-schema.mjs --check`, the fail-fast guards) and let CI in the window be the gate. Do not add FULL_VERIFY or the database lane to such a push. Bypassing the pre-push hook is still an owner decision (an audited SKIP_VERIFY), never a lane's.**
 - **Guard:** none automatic; the lead's lane rules and the audited `SKIP_VERIFY_REASON` line in `.git/skip-verify.log`.
 
-### L-284 · 2026-10-08 · process · lanes report events only, review depth follows risk, and a bug in a file you are changing rides in its own commit
-
-- **Symptom:** recorded by the 2026-10-08 operating review as an operating-model rule; the incident detail is in the lead's notes.
-- **Root cause:** coordination messages cost more than the work they describe, review effort is only worth spending where the risk is, and a bug fixed inside a commit about something else cannot be reviewed or reverted on its own.
-- **Lesson:** **Lanes report EVENTS only (pushed <sha> / blocked <why> / done / needs ruling), never status or load pings. Review depth follows risk: Opus for money, tenant security, concurrency and migrations; Sonnet for UI and docs; non-money nits go to a follow-up row, not a re-review loop. A bug found in a file you are already changing rides along in its OWN commit on the same branch, with a red-first test.**
-- **Guard:** the lane rules and the `pre-merge-review` skill.
-
-### L-281 · 2026-10-08 · process · on a shared host never `git stash` in a lane session and never kill processes by name
-
-- **Symptom:** recorded by the 2026-10-08 operating review as a standing hazard of several sessions sharing one machine; the incident detail is in the lead's notes.
-- **Root cause:** a stash is repo-wide and invisible in any working tree, so a `pop` in the wrong worktree restores or loses another lane's work. A name or pattern match (`pkill`, grep-and-kill) on a shared host cannot tell your jobs from another lane's, so it kills theirs.
-- **Lesson:** **In a builder or worktree session never use `git stash`: commit a WIP commit instead. Never kill by name or pattern: kill only the PID tree you started.**
-- **Guard:** the standing lane rules in the start prompt; no script yet.
-
 ### L-215 · 2026-09-23 · process · an approval covers only the exact value or sha it names
 
 - **Symptom:** a relayed brief said "set the ratchet baseline to the actual 5716" (a lowering from
@@ -200,13 +186,6 @@
 - **Root cause:** the window outlived the watchdog's deadline and nothing re-armed it or re-read visibility; the lane assumed the window was still open because nobody had said otherwise.
 - **Lesson:** **Re-arm the visibility watchdog on a timer at least 5 minutes before its deadline (an app restart also kills it), and read the repo's visibility immediately before every merge; a merge never proceeds on the belief that the window is open.**
 - **Guard:** none automatic yet; propose a pre-merge step in the landing script that fails on `PRIVATE` or on under 5 minutes of watchdog time left. Cf. [[L-253]] (archived).
-
-### L-273 · 2026-10-07 · process · a pre-push log piped through `tail` hides the real failure
-
-- **Symptom:** a builder diagnosed a warning near the end of a pre-push log as the failure and chased it.
-- **Root cause:** the log was piped through `tail`, so the failing test's output had scrolled out of view and only trailing warnings showed.
-- **Lesson:** **Save the full pre-push or verify log to a file and grep it for `FAIL` and `Tests:` before diagnosing; never judge a failure from the tail of a piped log.**
-- **Guard:** run verify as `... > log 2>&1` and read `grep -n "FAIL\|Tests:" log` first.
 
 ### L-280 · 2026-10-08 · process · a delete-by-filter ran with an erroring age filter and removed recent files
 
@@ -373,6 +352,13 @@
 
 ## testing
 
+### L-314 · 2026-10-17 · testing · back-to-back creates can tie on createdAt, so a test that asserts "oldest" pins the timestamps
+
+- **Symptom:** two label-sync specs picked the wrong category about half the time on a fast runner ("Dup" and "dup" created one statement apart); the b846 twin hit the same tie.
+- **Root cause:** the writer orders by `createdAt asc, id asc`; two rows created in the same millisecond tie on createdAt and the id tie-break is a random uuid, so "the oldest" is a coin flip the test never controlled.
+- **Lesson:** **A test that asserts an oldest, newest or first-created pick sets `createdAt` explicitly on every row it ranks (a second apart), or forces the tie on purpose and asserts the documented tie-break. Never rely on insertion order or the wall clock to separate two rows.**
+- **Guard:** the pinned `createdAt` in `label-sync.db.spec.ts` (branch fix/label-sync-oldest-tie) and the forced tie in the b846 twin (`vendor-bills.revert-appends.db.spec.ts`); none automatic.
+
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
 
 - **Symptom:** `touch-reveal-b511.test.ts` and `edit-line-item-row-b513.test.ts` both asserted a
@@ -438,6 +424,20 @@
 - **Recurrence (2026-10-08):** a master merge, or a merge of another branch, makes the api and mobile `.campaign/runs` reports STALE even when no test file changed on your branch, because turbo serves cached test results and never regenerates them. Regenerate with the full suite (`cd apps/api && npx jest --maxWorkers=2`, the same in mobile) before the push.
 
 ## domain
+
+### L-315 · 2026-10-17 · domain · a signature over checkout terms signs the exact params the builder sends, and an absent signature is a mismatch, not unknown
+
+- **Symptom:** a reused Stripe checkout session stayed open after the plan's terms changed, and a session created before signing existed was trusted as current (542d).
+- **Root cause:** the session carried no digest of the terms it was built from, so staleness was inferred from fields that did not cover every term, and a missing signature was read as "nothing to compare".
+- **Lesson:** **Sign (sha256) the exact params the session builder sends, store the signature in the session metadata, and on reuse recompute it from a fresh plan. A missing or different signature means expire-then-release and replan, never reuse. Gate the rule by a dated SIGNING_SINCE so older sessions are replaced, not grandfathered silently.**
+- **Guard:** `catchup-session-terms.spec.ts`, `payment-due.terms.spec.ts`, `payment-due.stale-session.spec.ts` (`catchupTermsSignature`, `assertSignedSession`).
+
+### L-313 · 2026-10-17 · domain · a write that changes a row's type breaks every spec and reader that finds rows of the old type
+
+- **Symptom:** a bill revert and a purchase-order edit began appending a negative PURCHASE row instead of an ADJUSTMENT or a delete; specs that found "the receipt" by type alone picked the reversal, and a PO-edit case asserted against the wrong row (B846 and its PO-edit siblings).
+- **Root cause:** the stock ledger is read by type, and the new write put a row of an old, widely-read type on the table with the opposite sign. Every finder that said "the PURCHASE row" now has two candidates.
+- **Lesson:** **When a write starts producing a row of a type that already exists (ADJUSTMENT to a negative PURCHASE), search every spec and reader that selects that type and give each an explicit order and a sign filter (qty > 0 for receipts, < 0 for reversals), or find the row by id. Prove it with a fixture that holds both the receipt and its reversal.**
+- **Guard:** `vendor-bills.revert-appends.db.spec.ts`, `inventory.po-edit-reversal.db.spec.ts`, `inventory.po-edit.db.spec.ts` (case 8 pinned to the original receipt row).
 
 ### L-310 · 2026-10-16 · domain · every path that destroys a row holding booked stock settles that stock through the cancel's own unwind
 
