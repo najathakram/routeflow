@@ -1,5 +1,5 @@
 {
-  "mappedSha": "PENDING",
+  "mappedSha": "5caf64725e1033a83e759d5b498cadcfe0100d78",
   "generatedAt": "2026-10-16T21:56:06.321Z",
   "layout": "split-2026-09-13",
   "areas": [
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1141,
-  "notes": "2026-10-16 — Bookkeeping, second batch: #3497 units release 1, fixes-2 (`cf1c419a7..30d9b89c5`, `30d9b89c5..125bd77fe`; docs-only, Option B follow-up; units-v2-2 (#3501, `30d9b89c5...177a09061`): price save and undo write path, customer unit prices read, editable prices grid and change-prices plan). New `api/`, `web/`, `mobile/landing-2026-10-16-bk2.md` (TOC row in each area file) and a packages.md section. #3497: units/prices v2 schema (`packAuto`, `orderUnitRef`, `ProductTierUnit`, `CustomerUnitPrice`, invoice-unit snapshots), `flag.units_prices_v2` price grid read, the `@routeflow/pricing` ladder/anchor/default/pack-write-path modules, `PRICING_RULES_NOT_READY`, nullable credit limit with audit row. fixes-2: stock returned on live-order and customer delete, reopen claim, buyer new-order choice kept apart, catalog-validated bill lines, FIFO/LIFO retired, payment-due banner and self-serve Pay. Lessons L-310 to L-312. `mappedSha` PENDING (lead stamps the final master sha). Morning train additions: K3b (customer-prices read, offer staleness), #3498, #3500, fixes-2 final tree; no new lesson. Full history: CHANGELOG.md."
+  "notes": "2026-10-16 — Bookkeeping, second batch: #3497 units release 1, fixes-2 (`cf1c419a7..30d9b89c5`, `30d9b89c5..125bd77fe`; docs-only, Option B follow-up; units-v2-2 (#3501, `30d9b89c5...177a09061`): price save and undo write path, customer unit prices read, editable prices grid and change-prices plan). New `api/`, `web/`, `mobile/landing-2026-10-16-bk2.md` (TOC row in each area file) and a packages.md section. #3497: units/prices v2 schema (`packAuto`, `orderUnitRef`, `ProductTierUnit`, `CustomerUnitPrice`, invoice-unit snapshots), `flag.units_prices_v2` price grid read, the `@routeflow/pricing` ladder/anchor/default/pack-write-path modules, `PRICING_RULES_NOT_READY`, nullable credit limit with audit row. fixes-2: stock returned on live-order and customer delete, reopen claim, buyer new-order choice kept apart, catalog-validated bill lines, FIFO/LIFO retired, payment-due banner and self-serve Pay. Lessons L-310 to L-312. `mappedSha` PENDING (lead stamps the final master sha). Morning train additions: K3b (customer-prices read, offer staleness), #3498, #3500, fixes-2 final tree; no new lesson. Full history: CHANGELOG.md. Train-fix notes: the pack-write-path allow-list (apps/api/src/products/pack-write-path.spec.ts) lists the new price writers; the U-3a unit-word pins now read CasesPiecesInput (moved out of LineItemRow)."
 }
