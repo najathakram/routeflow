@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { isSpecialTier } from "@routeflow/pricing";
 import type {
   CustomerProductUnitPricesDto,
   CustomerUnitPriceRowDto,
@@ -92,7 +93,7 @@ function ProductBlock({
   showName: boolean;
 }) {
   // A tier 1 customer pays the list price: a second column under the same name would print it twice.
-  const showTierColumn = entry.tier !== 1;
+  const showTierColumn = isSpecialTier(entry.tier);
   const own = entry.orderUnitScope === "customer";
   const rows = entry.rows;
   return (
