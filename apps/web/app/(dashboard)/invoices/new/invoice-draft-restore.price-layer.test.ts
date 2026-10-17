@@ -134,6 +134,16 @@ describe("S19b C-1: draft restore prices from the customer layer", () => {
     expect(r.pricesUpdated).toBe(0);
   });
 
+  it("fails closed: a response with no `complete` flag is treated as incomplete", async () => {
+    const r = await checkDraftReferences(
+      snap([stored({ unitPrice: 30 })]),
+      getter({ customerId: "c-1", products: {} }),
+      { pricesV2: true },
+    );
+    expect(r.snapshot.lines[0].unitPrice).toBe(30);
+    expect(r.pricesUnchecked).toBe(1);
+  });
+
   it("A-8: an incomplete layer leaves a product it does not list unchecked", async () => {
     const r = await checkDraftReferences(
       snap([stored({ unitPrice: 30 })]),

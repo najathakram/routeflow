@@ -40,7 +40,6 @@ import {
   isSpecialTier,
   computeInvoiceLineTotal,
   computeInvoiceTotals,
-  getTierPrice,
   customerLinePrice,
   type InvoiceTotalsLine,
 } from "@routeflow/pricing";
@@ -117,7 +116,7 @@ interface EstimateLineItem {
   tierPrice: number;
   discountedPrice?: number;
   unitPrice: number;
-  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED";
+  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
   qty: number;
   unitsPerBox?: number;
   boxes?: number;
@@ -283,15 +282,17 @@ function CreateEstimateModal({
     const customerTier = selectedCustomer?.pricingTier ?? 1;
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
-    let tierPrice = getTierPrice(product, effectiveTier);
-    let priceType = isSpecialTier(effectiveTier) ? ("SPECIAL" as const) : ("STANDARD" as const);
+    let tierPrice = customerLinePrice({ product, tier: effectiveTier }).price;
+    let priceType: EstimateLineItem["priceType"] = isSpecialTier(effectiveTier)
+      ? "SPECIAL"
+      : "STANDARD";
     const layer = priceLayer.layerOf(product.id);
     if (layer) {
       const r = customerLinePrice({ product, tier: effectiveTier, layer, unitLabel: null });
       if (r.layered) {
-        // The layer's price is the line's price; an above-list one is MANUAL, so no tier badge or strikethrough.
+        // The layer's price is the line's price; an above-list one is MANUAL (badged MANUAL, no tier badge or strikethrough).
         tierPrice = r.price;
-        priceType = r.priceType === "SPECIAL" ? "SPECIAL" : "STANDARD";
+        priceType = r.priceType;
       }
     }
     setLineItems((prev) => [
@@ -765,6 +766,11 @@ function CreateEstimateModal({
                       <span className="text-sm font-medium text-navy truncate">
                         {li.productName}
                       </span>
+                      {li.priceType === "MANUAL" && (
+                        <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                          MANUAL
+                        </span>
+                      )}
                       {li.priceType === "SPECIAL" && (
                         <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
                           TIER

@@ -1225,6 +1225,14 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
           </div>
         ) : (
           <div className="-mx-6 -mb-6 overflow-x-auto">
+            {/* One notice for the whole list while any price is unconfirmed (SA-813 M3), never one per row. */}
+            <PriceLayerNotice
+              layer={priceLayer}
+              unconfirmed={
+                priceLayer.enabled && priceList.some((cp) => !priceLayer.lineReady(cp.productId))
+              }
+              className="block px-6 pb-3 text-xs text-amber-700"
+            />
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-surface-border bg-gray-50">
@@ -1265,20 +1273,16 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                   // customer's default tier, same as an ordinary order would.
                   const effectiveTier = cp.pricingTier ?? customer?.pricingTier ?? 1;
                   const layerRows = priceLayer.layerOf(cp.productId);
-                  const layered =
-                    cp.product && layerRows
-                      ? customerLinePrice({
-                          product: cp.product as unknown as Record<string, unknown>,
-                          tier: effectiveTier,
-                          layer: layerRows,
-                          unitLabel: null,
-                        })
-                      : undefined;
-                  const tierPrice = layered?.layered
-                    ? layered.price
-                    : cp.product
-                      ? getTierPrice(cp.product, effectiveTier)
-                      : 0;
+                  // No layer row: customerLinePrice returns master's tier price exactly.
+                  const layered = cp.product
+                    ? customerLinePrice({
+                        product: cp.product as unknown as Record<string, unknown>,
+                        tier: effectiveTier,
+                        layer: layerRows,
+                        unitLabel: null,
+                      })
+                    : undefined;
+                  const tierPrice = layered ? layered.price : 0;
                   const priceUnconfirmed =
                     priceLayer.enabled && !priceLayer.lineReady(cp.productId);
                   return (
@@ -1315,11 +1319,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                       )}
                       <td className="px-4 py-3 text-right text-sm font-semibold text-brand-600">
                         {priceUnconfirmed ? (
-                          <PriceLayerNotice
-                            layer={priceLayer}
-                            unconfirmed
-                            className="text-xs font-normal text-navy/60"
-                          />
+                          <span className="font-normal text-navy/30">{"—"}</span>
                         ) : (
                           fmt(tierPrice)
                         )}
@@ -1337,7 +1337,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                             cp.product?.averageCost != null ? Number(cp.product.averageCost) : null,
                             cp.product?.unitsPerBox,
                           );
-                          if (margin == null)
+                          if (margin == null || priceUnconfirmed)
                             return <span className="text-navy/30">{"\u2014"}</span>;
                           const cls = classifyMargin(margin, marginFloor);
                           const color =

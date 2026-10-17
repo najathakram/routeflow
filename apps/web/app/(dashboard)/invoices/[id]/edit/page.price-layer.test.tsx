@@ -133,6 +133,15 @@ describe("S19b C-2: invoice edit adds from the customer layer", () => {
     expect(saveBtn()).toBeDisabled();
   });
 
+  it("a failed layer read stops the Loading customer pricing spinner copy (it is a failure, not a wait)", async () => {
+    layerResponder = () => Promise.reject(new Error("boom"));
+    renderWithProviders(<EditInvoicePage />);
+    expect(
+      await screen.findByPlaceholderText(/couldn't load this customer's prices/i),
+    ).toBeDisabled();
+    expect(screen.queryByPlaceholderText(/loading customer pricing/i)).not.toBeInTheDocument();
+  });
+
   it("M3: a failed layer read says so with Retry and keeps Save disabled", async () => {
     layerResponder = () => Promise.reject(new Error("boom"));
     renderWithProviders(<EditInvoicePage />);

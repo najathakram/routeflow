@@ -1,4 +1,4 @@
-import { getTierPrice, isSpecialTier, type CustomerLinePrice } from "@routeflow/pricing";
+import { customerLinePrice, isSpecialTier, type CustomerLinePrice } from "@routeflow/pricing";
 import { saleLinePricing } from "@/lib/sale-line-pricing";
 
 /**
@@ -47,7 +47,7 @@ export function catalogPricing(
   }
   const listPrice = parseFloat(String(product.pricePerUnit ?? 0));
   const tierLadderPrice = isSpecialTier(o.customerTier)
-    ? getTierPrice(product, o.customerTier)
+    ? customerLinePrice({ product, tier: o.customerTier }).price
     : undefined;
   const specialPrice: number | undefined = o.customerPrice ?? tierLadderPrice;
   const effectivePrice =

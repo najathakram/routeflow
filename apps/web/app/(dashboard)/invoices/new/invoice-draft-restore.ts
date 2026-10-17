@@ -1,6 +1,5 @@
 import {
   customerLinePrice,
-  getTierPrice,
   layerRowForLabel,
   normalizeBoxesPieces,
   type CustomerLayerUnit,
@@ -219,7 +218,10 @@ export async function checkDraftReferences(
         const tier = typeof cp.pricingTier === "number" ? cp.pricingTier : customerTier;
         lineTier[pid] = tier;
         if (cp.product && typeof cp.product === "object") {
-          const price = getTierPrice(cp.product, tier);
+          const price = customerLinePrice({
+            product: cp.product as Record<string, unknown>,
+            tier,
+          }).price;
           if (Number.isFinite(price)) customerPrice[pid] = price;
         }
       }
@@ -232,7 +234,7 @@ export async function checkDraftReferences(
   // S19b: the customer layer (billing's own resolved rows). A failed read means the prices are UNCONFIRMED: such lines
   // are kept as stored and counted unchecked, never re-priced at the tier.
   let layerProducts: Record<string, CustomerLayerUnit[]> | undefined;
-  let layerComplete = true;
+  let layerComplete = false;
   let layerUnknown = false;
   if (opts?.pricesV2 && customer) {
     try {
@@ -241,7 +243,7 @@ export async function checkDraftReferences(
         { complete?: boolean; products?: Record<string, CustomerLayerUnit[]> } | undefined;
       if (d && d.products && typeof d.products === "object") {
         layerProducts = d.products;
-        layerComplete = d.complete !== false;
+        layerComplete = d.complete === true;
       } else {
         layerUnknown = true;
       }

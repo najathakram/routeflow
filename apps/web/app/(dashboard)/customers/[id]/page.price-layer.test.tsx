@@ -55,6 +55,12 @@ const priceRow = {
   pricingTier: 3,
   product: { id: "p1", name: "Soda", sku: "S1", pricePerUnit: "42", priceTier3: "36" },
 };
+const priceRow2 = {
+  id: "cp2",
+  productId: "p2",
+  pricingTier: 3,
+  product: { id: "p2", name: "Juice", sku: "J1", pricePerUnit: "20", priceTier3: "18" },
+};
 const layerRow = {
   ref: "pack",
   label: null,
@@ -67,7 +73,7 @@ const layerRow = {
 const open = async (layer: () => Promise<unknown>) => {
   get.mockImplementation((url: string) => {
     if (url === "/customers/c1") return Promise.resolve({ data: customer });
-    if (url === "/customers/c1/prices") return Promise.resolve({ data: [priceRow] });
+    if (url === "/customers/c1/prices") return Promise.resolve({ data: [priceRow, priceRow2] });
     if (url === "/customers/c1/price-layer") return layer();
     if (url === "/customers/c1/statement")
       return Promise.resolve({ data: { transactions: [], creditExposure: 0 } });
@@ -113,6 +119,12 @@ describe("S19b C-4: the customer price list shows the layer price", () => {
     await open(() => new Promise(() => {}));
     expect(await screen.findByText("Checking this customer's prices\u2026")).toBeInTheDocument();
     expect(screen.queryByText("$36.00")).not.toBeInTheDocument();
+  });
+
+  it("M3: one notice for the whole list, not one per row", async () => {
+    await open(() => new Promise(() => {}));
+    await screen.findByText("Juice");
+    expect(screen.getAllByText("Checking this customer's prices…")).toHaveLength(1);
   });
 
   it("M3: a failed layer read says so, with Retry, and shows no tier price", async () => {

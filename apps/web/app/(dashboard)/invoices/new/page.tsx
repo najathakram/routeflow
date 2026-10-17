@@ -43,6 +43,7 @@ import {
 } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
+import { ladderProductOf } from "@/lib/order-line-unit";
 import { usePricesV2Enabled } from "@/lib/api/units-v2";
 import { PriceLayerNotice, pricesUnconfirmed } from "@/components/PriceLayerNotice";
 import {
@@ -77,7 +78,6 @@ import {
   computeInvoiceLineTotal,
   computeInvoiceTotals,
   type InvoiceTotalsLine,
-  getTierPrice,
   customerLinePrice,
   normalizeBoxesPieces,
   perUnitPrice,
@@ -994,7 +994,11 @@ export default function NewInvoicePage() {
     for (const cp of (customerPricesData ?? []) as CustomerPrice[]) {
       if (!cp.product) continue;
       // An msrp-only override row has pricingTier null — price at the customer's default tier.
-      const price = getTierPrice(cp.product, cp.pricingTier ?? customer?.pricingTier ?? 1);
+      // No layer row: customerLinePrice returns master's getTierPrice number exactly.
+      const price = customerLinePrice({
+        product: cp.product as unknown as Record<string, unknown>,
+        tier: cp.pricingTier ?? customer?.pricingTier ?? 1,
+      }).price;
       if (Number.isFinite(price)) map[cp.productId] = price;
     }
     return map;
@@ -1042,8 +1046,68 @@ export default function NewInvoicePage() {
     staff,
   );
   const resolvingRef = React.useRef(false);
+  // S19b MUST-1: a level pick is priced from the customer layer when its row is there (else the ladder, as master).
+  const layerLevelLine = (it: LineItemState, unitLabel: string, tierPrice?: number) => {
+    if (!it.productId) return undefined;
+    const rows = priceLayer.layerOf(it.productId);
+    if (!rows) return undefined;
+    const r = customerLinePrice({
+      product: ladderProductOf({
+        ...it,
+        unit: it.unit ?? "each",
+        listPrice: it.listPrice ?? it.unitPrice,
+      }) as unknown as Record<string, unknown>,
+      tier: tierFor(it.productId),
+      layer: rows,
+      unitLabel,
+      tierPrice,
+    });
+    return r.layered ? r : undefined;
+  };
   const setLineUnit = (key: string, option: Parameters<typeof chooseUnit>[2], refresh: boolean) =>
-    setItems((prev) => chooseUnit(prev, key, option, refresh, tierFor));
+    setItems((prev) => {
+      let opt = option;
+      const target = prev.find((i) => i.key === key);
+      if (option.kind === "level" && target) {
+        const r = layerLevelLine(target, option.value, option.price);
+        if (r) opt = { ...option, price: r.price, listPrice: r.listPrice };
+      }
+      return chooseUnit(prev, key, opt, refresh, tierFor);
+    });
+  // Any other path that lands a unit line on the ladder price (the default-unit resolver, a restore, the layer arriving
+  // after the pick) is corrected here, idempotently: a typed price stands.
+  React.useEffect(() => {
+    if (!priceLayer.enabled || !priceLayer.ready) return;
+    setItems((prev) => {
+      let changed = false;
+      const next = prev.map((it) => {
+        if (!it.unitLabel || it.priceEdited) return it;
+        const r = layerLevelLine(it, it.unitLabel);
+        if (!r) return it;
+        if (
+          r.price === it.unitPrice &&
+          r.listPrice === it.listPrice &&
+          r.priceType === it.priceType &&
+          it.pricing?.tierPrice === r.price &&
+          it.pricing?.listPrice === r.listPrice
+        )
+          return it;
+        changed = true;
+        const off = r.price !== r.listPrice;
+        return {
+          ...it,
+          unitPrice: r.price,
+          listPrice: r.listPrice,
+          priceType: r.priceType,
+          isSpecialPrice: off,
+          regularPrice: off ? r.listPrice : undefined,
+          pricing: { tierPrice: r.price, listPrice: r.listPrice, isSpecialTier: r.isSpecial },
+        };
+      });
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- layerLevelLine reads the current layer; items is the trigger
+  }, [items, priceLayer.ready, priceLayer.enabled]);
   /** The row's pending-unit state: qty locked, the tap count, loading / failed + Retry. */
   const pendingUnitOf = (it: LineItemState) => {
     const status = statusFor(toUnitLine(it));
@@ -1669,6 +1733,7 @@ export default function NewInvoicePage() {
   }
 
   async function handlePreview(lines: LineItemState[] = items) {
+    if (priceBlocked) return;
     // Lenient check — only customer + dates required. Empty rows are dropped.
     if (!validateForPreview()) return;
     setPreviewLoading(true);
@@ -1715,6 +1780,7 @@ export default function NewInvoicePage() {
    */
   const [downloadLoading, setDownloadLoading] = React.useState(false);
   async function handleDownload(lines: LineItemState[] = items) {
+    if (priceBlocked) return;
     if (!validateForPreview()) return;
     setDownloadLoading(true);
     try {
@@ -1748,7 +1814,7 @@ export default function NewInvoicePage() {
   }
 
   async function handleSendFromPreview() {
-    if (!currentDraftId) return;
+    if (!currentDraftId || priceBlocked) return;
     try {
       await apiClient.post(`/invoices/${currentDraftId}/send`);
       draft.clear();
@@ -2491,8 +2557,9 @@ export default function NewInvoicePage() {
                               : pid
                                 ? priceMap[pid]
                                 : undefined;
-                          const effectivePrice =
-                            specialPrice ?? (price ? parseFloat(price) : item.unitPrice);
+                          const effectivePrice = layerLine
+                            ? layerLine.price
+                            : (specialPrice ?? (price ? parseFloat(price) : item.unitPrice));
                           const upb = boxedUnitsPerBox(unitsPerBox);
                           updateItem(item.key, {
                             description: desc,
@@ -2997,7 +3064,7 @@ export default function NewInvoicePage() {
                   leftIcon={<Eye className="h-4 w-4" />}
                   onClick={() => withResolvedItems((l) => handlePreview(l))}
                   loading={previewLoading}
-                  disabled={previewLoading || createInvoice.isPending}
+                  disabled={previewLoading || createInvoice.isPending || priceBlocked}
                 >
                   Preview
                 </Button>
@@ -3006,7 +3073,12 @@ export default function NewInvoicePage() {
                   leftIcon={<Download className="h-4 w-4" />}
                   onClick={() => withResolvedItems((l) => handleDownload(l))}
                   loading={downloadLoading}
-                  disabled={downloadLoading || createInvoice.isPending || updateInvoice.isPending}
+                  disabled={
+                    downloadLoading ||
+                    createInvoice.isPending ||
+                    updateInvoice.isPending ||
+                    priceBlocked
+                  }
                   title="Save as draft and download the PDF without sending"
                 >
                   Download
@@ -3068,7 +3140,7 @@ export default function NewInvoicePage() {
                 >
                   Close
                 </Button>
-                <Button onClick={handleSendFromPreview} disabled={previewLoading}>
+                <Button onClick={handleSendFromPreview} disabled={previewLoading || priceBlocked}>
                   Send invoice
                 </Button>
               </div>

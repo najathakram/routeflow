@@ -106,6 +106,7 @@ describe("S19b C-3: estimate add from the customer layer", () => {
     await addWidget(user, dialog);
     expect(await within(dialog).findByText(/\$45\.00\/each/)).toBeInTheDocument();
     expect(within(dialog).queryByText("TIER")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("MANUAL")).toBeInTheDocument();
   });
 
   it("flag OFF: no price-layer request and master's tier price ($36.00)", async () => {
