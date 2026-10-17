@@ -278,15 +278,18 @@ export function ProductUnitsCard({
   const save = (unit: ProductUnitLevel, d: Draft) => {
     const oldPrices = draftOf(unit).prices;
     const newPrices = d.prices.map(priceOrNull);
+    // Only a price the operator changed is sent (a draft price that still equals the value the row was seeded with is
+    // left out): a v2 price save moves prices outside this card, so the row's snapshot is never written back.
+    const dirtyPrice = (i: number) => d.prices[i] !== oldPrices[i];
     const body = {
       id: unit.id,
       label: d.label.trim(),
       factorToBase: d.factor ?? unit.factorToBase,
-      price: newPrices[0],
-      priceTier2: newPrices[1],
-      priceTier3: newPrices[2],
-      priceTier4: newPrices[3],
-      priceTier5: newPrices[4],
+      ...(dirtyPrice(0) ? { price: newPrices[0] } : {}),
+      ...(dirtyPrice(1) ? { priceTier2: newPrices[1] } : {}),
+      ...(dirtyPrice(2) ? { priceTier3: newPrices[2] } : {}),
+      ...(dirtyPrice(3) ? { priceTier4: newPrices[3] } : {}),
+      ...(dirtyPrice(4) ? { priceTier5: newPrices[4] } : {}),
     };
     update.mutate(body, {
       // EVERY tier cascades, each independently (a tier-2 edit offers tier 2 to the others).

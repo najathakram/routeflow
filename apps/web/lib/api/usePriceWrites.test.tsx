@@ -9,6 +9,7 @@ import {
 } from "./usePriceWrites";
 import { priceGridKey } from "./usePriceGrid";
 import { productCustomerPricesKey } from "./useProductCustomerPrices";
+import { productUnitsKey } from "./product-units";
 import { queryClientWithGlobalErrorToast, refusal } from "@/test-utils/global-error-toast";
 
 const mockPost = jest.fn();
@@ -59,6 +60,63 @@ describe("usePriceWrites", () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
   });
 
+  describe("every cached product the write may have left stale is refetched", () => {
+    const ok = { data: { revision: 8, auditId: "a1", undo: { patches: [] }, grid: {} } };
+    const KEYS = {
+      product: ["products", "p1"],
+      parent: ["products", "parent-1"], // the legacy parent embeds its variants' prices
+      list: ["products", { search: "x" }], // the products list's quick-save reads its rows
+      units: productUnitsKey("p1"),
+      otherUnits: productUnitsKey("v1"),
+      grid: priceGridKey("p1"),
+      orders: ["orders", "o1"],
+    } as const;
+    const seeded = () => {
+      const qc = new QueryClient();
+      for (const k of Object.values(KEYS)) qc.setQueryData([...k], { seeded: true });
+      return qc;
+    };
+    const stale = (qc: QueryClient, k: readonly unknown[]) =>
+      qc.getQueryState([...k])?.isInvalidated === true;
+
+    it("a successful save refetches the product, its parent, the lists and the units; never the grid it just wrote", async () => {
+      mockPost.mockResolvedValue(ok);
+      const qc = seeded();
+      const { result } = renderHook(() => useSavePrices("p1"), { wrapper: wrap(qc) });
+      result.current.mutate({ expectedRevision: 7, expectedPriceState: "ps", patches: [] });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(stale(qc, KEYS.product)).toBe(true);
+      expect(stale(qc, KEYS.parent)).toBe(true);
+      expect(stale(qc, KEYS.list)).toBe(true);
+      expect(stale(qc, KEYS.units)).toBe(true);
+      expect(stale(qc, KEYS.otherUnits)).toBe(true);
+      expect(stale(qc, KEYS.grid)).toBe(false);
+      expect(stale(qc, KEYS.orders)).toBe(false);
+    });
+
+    it("a successful undo refetches the same caches", async () => {
+      mockPost.mockResolvedValue(ok);
+      const qc = seeded();
+      const { result } = renderHook(() => useUndoPrices("p1"), { wrapper: wrap(qc) });
+      result.current.mutate({ auditId: "a1", expectedRevision: 8, expectedPriceState: "ps" });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(stale(qc, KEYS.product)).toBe(true);
+      expect(stale(qc, KEYS.parent)).toBe(true);
+      expect(stale(qc, KEYS.list)).toBe(true);
+      expect(stale(qc, KEYS.units)).toBe(true);
+      expect(stale(qc, KEYS.grid)).toBe(false);
+    });
+
+    it("a refused save leaves every one of them alone", async () => {
+      mockPost.mockRejectedValue({ response: { data: { code: "PRICE_EDIT_INVALID" } } });
+      const qc = seeded();
+      const { result } = renderHook(() => useSavePrices("p1"), { wrapper: wrap(qc) });
+      result.current.mutate({ expectedRevision: 7, expectedPriceState: "ps", patches: [] });
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      for (const k of Object.values(KEYS)) expect(stale(qc, k)).toBe(false);
+    });
+  });
+
   describe("customer prices go stale with a write", () => {
     const ok = {
       data: { revision: 8, auditId: "a1", undo: { patches: [], customerMoves: [] }, grid: {} },
@@ -86,8 +144,9 @@ describe("usePriceWrites", () => {
     });
 
     it("a save with no customer moves leaves them alone", async () => {
-      expect(await saveWith({ customerMoves: [] })).not.toHaveBeenCalled();
-      expect(await saveWith({})).not.toHaveBeenCalled();
+      const customers = { queryKey: productCustomerPricesKey("p1") };
+      expect(await saveWith({ customerMoves: [] })).not.toHaveBeenCalledWith(customers);
+      expect(await saveWith({})).not.toHaveBeenCalledWith(customers);
     });
 
     it("a successful undo refetches the customers too (it reversed customer prices server-side)", async () => {

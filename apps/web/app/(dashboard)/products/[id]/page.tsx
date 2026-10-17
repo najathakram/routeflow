@@ -107,7 +107,12 @@ import { ProductJumpLinks } from "./units-v2/nav/ProductJumpLinks";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
-import { editTierPatch, editTierPatchMoves } from "@/lib/product-tier-patch";
+import {
+  cascadeTiers,
+  detailsPriceMoves,
+  detailsPricePatch,
+  type PriceDraftKey,
+} from "@/lib/product-tier-patch";
 import { keptLabelsNote } from "@/lib/kept-labels-copy";
 import { isStaffRole } from "@/lib/default-unit-line";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -305,6 +310,10 @@ export default function ProductDetailPage() {
   // The pack the form opened with: a save sends `unit` only if the operator changed it, and then sends this
   // pack back as the expected values (SA-797), so a Settings > Units rename made meanwhile is a 409, not lost.
   const packWhenEditStartedRef = React.useRef<ProductPackAtOpen | undefined>(undefined);
+  // The price strings the Details form was SEEDED with: a price is sent only when the draft differs (a dirty field).
+  const pricesWhenEditStartedRef = React.useRef<Record<PriceDraftKey, string> | undefined>(
+    undefined,
+  );
 
   // Regulated type picker (edit mode). The Category field below renders the
   // structured SubcategoryCombobox in place of the free-text combobox once a
@@ -363,6 +372,10 @@ export default function ProductDetailPage() {
     priceTier4: "",
     priceTier5: "",
   });
+  // The price strings the variant modal opened with: a variant price is sent only when changed against these.
+  const variantPricesWhenOpenedRef = React.useRef<Record<PriceDraftKey, string> | undefined>(
+    undefined,
+  );
   const variantSkuRef = React.useRef<HTMLInputElement>(null);
   const variantUnitSkuRef = React.useRef<HTMLInputElement>(null);
 
@@ -477,17 +490,21 @@ export default function ProductDetailPage() {
       unitsPerBox: product.unitsPerBox ?? null,
       packTenantUnitId: product.packTenantUnitId,
     };
+    const seededPrices: Record<PriceDraftKey, string> = {
+      pricePerUnit: String(priceNumber),
+      priceTier2: String(parseFloat(String(product.priceTier2 ?? priceNumber))),
+      priceTier3: String(parseFloat(String(product.priceTier3 ?? priceNumber))),
+      priceTier4: String(parseFloat(String(product.priceTier4 ?? priceNumber))),
+      priceTier5: String(parseFloat(String(product.priceTier5 ?? priceNumber))),
+    };
+    pricesWhenEditStartedRef.current = seededPrices;
     setEditDraft({
       name: product.name,
       sku: product.sku ?? "",
       barcode: product.barcode ?? "",
       unitSku: product.unitSku ?? "",
       unit: product.unit,
-      pricePerUnit: String(priceNumber),
-      priceTier2: String(parseFloat(String(product.priceTier2 ?? priceNumber))),
-      priceTier3: String(parseFloat(String(product.priceTier3 ?? priceNumber))),
-      priceTier4: String(parseFloat(String(product.priceTier4 ?? priceNumber))),
-      priceTier5: String(parseFloat(String(product.priceTier5 ?? priceNumber))),
+      ...seededPrices,
       msrp: product.msrp != null ? String(parseFloat(String(product.msrp))) : "",
       category: product.category ?? "",
       description: product.description ?? "",
@@ -551,10 +568,6 @@ export default function ProductDetailPage() {
     // parentProductId: "" for every standalone product, which @IsUUID rejects,
     // so saving from this form (tier prices included) silently 400'd.
     // Invalid/blank price fields are omitted (leave unchanged), never "".
-    const asDecimal = (v: unknown): string | undefined => {
-      const n = parseFloat(String(v ?? ""));
-      return Number.isFinite(n) && n >= 0 ? String(n) : undefined;
-    };
     const unitToSend = packWordToSend(draft.unit, packWhenEditStartedRef.current?.unit);
     const unitsPerBoxToSend = draft.unitsPerBox?.trim() ? parseInt(draft.unitsPerBox, 10) : null;
     updateProduct.mutate(
@@ -576,9 +589,10 @@ export default function ProductDetailPage() {
         // null-clears semantics.
         category: draft.trackedCategoryId ? undefined : draft.category?.trim() || null,
         description: draft.description?.trim() || null,
-        pricePerUnit: asDecimal(draft.pricePerUnit),
-        // Untouched tiers move with a list change exactly like the products list (applyLadderChange, audit 2026-10-14).
-        ...editTierPatch(product, draft),
+        // Only a price the operator changed is sent: a price save elsewhere on the page moves prices outside this
+        // form, so the snapshot it opened with must never be written back. Untouched tiers move with a list change exactly like
+        // the products list (applyLadderChange, audit 2026-10-14).
+        ...detailsPricePatch(product, draft, pricesWhenEditStartedRef.current),
         unitsPerBox: unitsPerBoxToSend,
         // Regulated tags: value to set, null to clear (server auto-nulls the
         // category when the type is cleared).
@@ -740,7 +754,7 @@ export default function ProductDetailPage() {
     if (variant) {
       const vp = parseFloat(String(variant.pricePerUnit));
       setEditingVariant(variant);
-      setVariantForm({
+      const form = {
         variantName: variant.variantName ?? "",
         sku: variant.sku ?? "",
         unitSku: variant.unitSku ?? "",
@@ -750,7 +764,15 @@ export default function ProductDetailPage() {
         priceTier3: String(parseFloat(String((variant as any).priceTier3 ?? vp))),
         priceTier4: String(parseFloat(String((variant as any).priceTier4 ?? vp))),
         priceTier5: String(parseFloat(String((variant as any).priceTier5 ?? vp))),
-      });
+      };
+      variantPricesWhenOpenedRef.current = {
+        pricePerUnit: form.price,
+        priceTier2: form.priceTier2,
+        priceTier3: form.priceTier3,
+        priceTier4: form.priceTier4,
+        priceTier5: form.priceTier5,
+      };
+      setVariantForm(form);
     } else {
       setEditingVariant(null);
       setVariantForm({
@@ -789,8 +811,9 @@ export default function ProductDetailPage() {
         priceTier4: variantForm.priceTier4 || variantForm.price,
         priceTier5: variantForm.priceTier5 || variantForm.price,
       };
-      const vMoved = ladderChangeNote(editTierPatchMoves(editingVariant as any, vDraft), (n) =>
-        productTierLabel(tierLabels, n),
+      const vMoved = ladderChangeNote(
+        detailsPriceMoves(editingVariant as any, vDraft, variantPricesWhenOpenedRef.current),
+        (n) => productTierLabel(tierLabels, n),
       );
       updateProduct.mutate(
         {
@@ -798,9 +821,9 @@ export default function ProductDetailPage() {
           variantName: variantForm.variantName,
           sku: variantForm.sku || undefined,
           unitSku: variantForm.unitSku || undefined,
-          pricePerUnit: vList,
-          // Untouched tiers move with the variant's list change, the same rule as the products list (audit 2026-10-14).
-          ...editTierPatch(editingVariant as any, vDraft),
+          // Only a price the operator changed is sent (never the variant row the parent's cache embeds); untouched
+          // tiers move with the variant's list change by the products list's rule (audit 2026-10-14).
+          ...detailsPricePatch(editingVariant as any, vDraft, variantPricesWhenOpenedRef.current),
         },
         {
           onSuccess: () => {
@@ -1112,7 +1135,11 @@ export default function ProductDetailPage() {
         (() => {
           // Names the tiers a save would move with the list (#3470 review: never a fixed string).
           const note = ladderChangeNote(
-            editTierPatchMoves(product, editDraft as Record<string, string>),
+            detailsPriceMoves(
+              product,
+              editDraft as Record<string, string>,
+              pricesWhenEditStartedRef.current,
+            ),
             (n) => productTierLabel(tierLabels, n),
           );
           return note ? (
@@ -1161,7 +1188,11 @@ export default function ProductDetailPage() {
                         field as TierField,
                         atFocus ?? productVal,
                         v,
-                        editDraft as Record<string, string>,
+                        cascadeTiers(
+                          product,
+                          editDraft as Record<string, string>,
+                          pricesWhenEditStartedRef.current,
+                        ),
                       );
                       setEditDraft((d) => ({ ...d, ...moved }));
                       setLadderNote(
