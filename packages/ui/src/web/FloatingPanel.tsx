@@ -30,7 +30,10 @@ export interface FloatingPanelProps {
   variant?: "auto" | "anchored" | "sheet";
   /** Where focus goes on open. Never the Close button; omitted, focus lands on the panel itself. */
   initialFocus?: FloatingPanelTarget;
-  /** Where focus goes on close. Falls back to the element focused at open, then to `origin`. */
+  /**
+   * Fallback only: where focus goes on close when the element that had focus at open (the opener) is gone. Tried
+   * after the opener and before `origin`.
+   */
   returnFocus?: FloatingPanelTarget;
   /** Call `event.preventDefault()` to keep the panel open on Escape. */
   onEscapeKeyDown?: (event: KeyboardEvent) => void;
@@ -250,10 +253,11 @@ export function FloatingPanel({
             (resolveTarget(initialFocus) ?? contentRef.current)?.focus();
           }}
           onCloseAutoFocus={(event) => {
-            // The opener is not a Radix Dialog.Trigger, so restore focus explicitly: the caller's
-            // element, else whatever had focus at open, else the origin; skip any that is gone.
+            // The opener is not a Radix Dialog.Trigger, so restore focus explicitly: whatever had focus
+            // at open (the clicked figure), else the caller's fallback, else the origin; skip any that
+            // is gone.
             event.preventDefault();
-            const target = [resolveTarget(returnFocus), openerRef.current, origin ?? null].find(
+            const target = [openerRef.current, resolveTarget(returnFocus), origin ?? null].find(
               (el): el is HTMLElement => !!el && el.isConnected,
             );
             target?.focus();

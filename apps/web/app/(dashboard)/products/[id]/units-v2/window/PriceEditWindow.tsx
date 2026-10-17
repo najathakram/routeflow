@@ -47,7 +47,7 @@ export function PriceEditWindow({
   origin: HTMLElement | null | undefined;
   /** The price the window opens on; without it, the first editable box. */
   focus?: { ref: string; tier: number };
-  /** Where focus goes on close when the opener is gone (the caller passes the card heading's getter). */
+  /** Fallback only: where focus goes on close when the element that opened the window is gone (the card heading's getter). */
   returnFocus?: FloatingPanelTarget;
   onClose: (reason: PriceEditWindowReason) => void;
 }) {
