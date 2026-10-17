@@ -113,6 +113,14 @@ export interface FeatureConsoleProps {
   onCustomise: (featureKey: string) => void;
 }
 
+/** "Set override": a quiet link-button, no fill, so the only filled indigo buttons on the page are
+ *  real primaries (BO-09). 44 px tall below md, 24 px from md up. */
+const QUIET_ACTION =
+  "inline-flex min-h-11 items-center rounded px-2 py-1 text-xs font-semibold text-indigo-300 hover:text-indigo-200 hover:underline md:min-h-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-800";
+/** "Turn on as add-on": an outlined secondary, no fill (BO-09). */
+const OUTLINED_ACTION =
+  "inline-flex min-h-11 items-center rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-200 ring-1 ring-slate-500 hover:bg-slate-700 md:min-h-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-800";
+
 /** What the small status chips mean, in plain words (tooltip + aria-label). */
 const DARK_HELP =
   "Not enforced yet: the check only logs a warning when this feature would be refused, and still allows it.";
@@ -453,13 +461,15 @@ export function FeatureConsole({
                       >
                         Why is this on/off?
                       </button>
-                      <button
-                        onClick={() => onCustomise(row.key)}
-                        className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
-                        aria-label={`Set override ${row.label}`}
-                      >
-                        Set override
-                      </button>
+                      {row.gate.via !== "none" && (
+                        <button
+                          onClick={() => onCustomise(row.key)}
+                          className={QUIET_ACTION}
+                          aria-label={`Set override ${row.label}`}
+                        >
+                          Set override
+                        </button>
+                      )}
                       {ADDON_ROW_KEY_BY_REGISTRY_KEY[row.key] && (
                         <button
                           onClick={() =>
@@ -469,7 +479,7 @@ export function FeatureConsole({
                               unmetRequirement,
                             })
                           }
-                          className="rounded-lg bg-slate-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-500"
+                          className={OUTLINED_ACTION}
                           aria-label={`Turn on ${row.label} as an add-on`}
                         >
                           Turn on as add-on
@@ -488,6 +498,11 @@ export function FeatureConsole({
                           ? explainModeSentence(row.config?.modes ?? [], appliedMode)
                           : explainSentence(feature)}
                       </p>
+                      {row.gate.via === "none" && !row.config && (
+                        <p className="mt-2">
+                          Nothing checks this setting yet, so an override would have no effect.
+                        </p>
+                      )}
                       {!appliedMode && feature.resolver !== feature.serving && (
                         <p className="mt-2 text-amber-300">
                           Note: the new resolver disagrees — it would say this is{" "}

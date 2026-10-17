@@ -1,8 +1,16 @@
 import * as React from "react";
 import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import { ADDON_ROW_KEY_BY_REGISTRY_KEY, FeatureConsole } from "./FeatureConsole";
-import { REGISTRY_FIXTURE } from "./__fixtures__/registry.fixtures";
-import { EFFECTIVE_FIXTURE } from "./__fixtures__/effective.fixtures";
+import {
+  FULFILMENT_MODEL_ROW,
+  REGISTRY_FIXTURE,
+  UNCHECKED_SETTING_ROW,
+} from "./__fixtures__/registry.fixtures";
+import {
+  EFFECTIVE_FIXTURE,
+  fulfilmentModeEffective,
+  uncheckedSettingEffective,
+} from "./__fixtures__/effective.fixtures";
 import { diffsFixture } from "./__fixtures__/diffs.fixtures";
 import { previewFixture } from "./__fixtures__/preview.fixtures";
 import { fulfilmentModeLabel } from "./setup-copy";
@@ -647,5 +655,132 @@ describe("SA-1: plain names on the console's controls", () => {
     expect(proposed.getAttribute("title")).toMatch(/not released|planned|proposed/i);
     expect(proposed).not.toHaveAttribute("aria-label");
     expect(proposed.querySelector(".sr-only")?.textContent).toMatch(/not released/i);
+  });
+});
+
+// BO-09: "Set override" is a quiet link-button, and is not offered where it would do nothing.
+describe("BO-09: Set override stops shouting and leaves rows where it does nothing", () => {
+  const SHIP_MODE = {
+    value: "ship",
+    effective: "ship",
+    source: "TENANT" as const,
+    allowed: ["unset", "delivery", "ship"],
+    blocked: [],
+  };
+
+  async function renderRows() {
+    mockFetchRegistry.mockResolvedValue([
+      ...REGISTRY_FIXTURE,
+      FULFILMENT_MODEL_ROW,
+      UNCHECKED_SETTING_ROW,
+    ]);
+    mockFetchEffective.mockResolvedValue([
+      ...EFFECTIVE_FIXTURE,
+      fulfilmentModeEffective(SHIP_MODE),
+      uncheckedSettingEffective(),
+    ]);
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+    const rowOf = (key: string) =>
+      document.querySelector(`[data-feature-key="${key}"]`) as HTMLElement;
+    return { rowOf };
+  }
+
+  it("a gate-less configuration row (Where orders go) has no Set override button", async () => {
+    const { rowOf } = await renderRows();
+    expect(
+      within(rowOf("fulfilment_model")).queryByRole("button", { name: /^Set override/ }),
+    ).toBeNull();
+  });
+
+  it("a gate-less plain row has no Set override button either", async () => {
+    const { rowOf } = await renderRows();
+    expect(
+      within(rowOf("unchecked_setting")).queryByRole("button", { name: /^Set override/ }),
+    ).toBeNull();
+  });
+
+  it("a gated row keeps Set override, as a quiet link-button with no fill", async () => {
+    const { rowOf } = await renderRows();
+    const btn = within(rowOf("tobacco_dealer")).getByRole("button", { name: /^Set override/ });
+    expect(btn).toHaveAttribute("aria-label", "Set override Regulated items (tobacco)");
+    expect(btn).not.toHaveClass("bg-indigo-600");
+    expect(btn.className).not.toMatch(/(^|\s)bg-/);
+    expect(btn).toHaveClass("text-indigo-300");
+  });
+
+  it("Set override has a visible keyboard focus ring and a 44 px tap target below md", async () => {
+    const { rowOf } = await renderRows();
+    const btn = within(rowOf("tobacco_dealer")).getByRole("button", { name: /^Set override/ });
+    for (const cls of [
+      "focus-visible:ring-2",
+      "focus-visible:ring-indigo-400",
+      "focus-visible:ring-offset-2",
+      "focus-visible:ring-offset-slate-800",
+      "min-h-11",
+      "md:min-h-0",
+    ]) {
+      expect(btn).toHaveClass(cls);
+    }
+  });
+
+  it("Turn on as add-on is an outlined secondary: a ring and no fill", async () => {
+    const { rowOf } = await renderRows();
+    const btn = within(rowOf("tobacco_dealer")).getByRole("button", {
+      name: /Turn on .* as an add-on/,
+    });
+    expect(btn.className).not.toMatch(/(^|\s)bg-/);
+    expect(btn).toHaveClass("ring-1", "ring-slate-500");
+  });
+
+  it("no Setup row has a filled indigo button (only real primaries are filled)", async () => {
+    const { rowOf } = await renderRows();
+    for (const key of ["tobacco_dealer", "recurring_routes", "msrp", "route_optimization"]) {
+      for (const b of within(rowOf(key)).queryAllByRole("button")) {
+        expect(b).not.toHaveClass("bg-indigo-600");
+      }
+    }
+  });
+
+  it("buttons read in the order Why, Set override, Turn on as add-on", async () => {
+    const { rowOf } = await renderRows();
+    const names = within(rowOf("tobacco_dealer"))
+      .getAllByRole("button")
+      .map((b) => b.getAttribute("aria-label"));
+    expect(names).toEqual([
+      "Why is Regulated items (tobacco) on or off?",
+      "Set override Regulated items (tobacco)",
+      "Turn on Regulated items (tobacco) as an add-on",
+    ]);
+    expect(
+      within(rowOf("tobacco_dealer")).getByRole("button", { name: /^Set override/ }).parentElement,
+    ).toHaveClass("gap-2");
+  });
+
+  it("a gate-less plain row's Why panel says nothing checks it, so an override would do nothing", async () => {
+    const { rowOf } = await renderRows();
+    const row = rowOf("unchecked_setting");
+    fireEvent.click(within(row).getByRole("button", { name: /^Why is Unchecked setting/ }));
+    expect(document.getElementById("why-panel-unchecked_setting")).toHaveTextContent(
+      "Nothing checks this setting yet, so an override would have no effect.",
+    );
+  });
+
+  it("the gate-less note is not added to a gated row or to a configuration row", async () => {
+    const { rowOf } = await renderRows();
+    fireEvent.click(within(rowOf("tobacco_dealer")).getByRole("button", { name: /^Why is/ }));
+    expect(document.getElementById("why-panel-tobacco_dealer")).not.toHaveTextContent(
+      /Nothing checks/,
+    );
+    fireEvent.click(within(rowOf("fulfilment_model")).getByRole("button", { name: /^Why is/ }));
+    expect(document.getElementById("why-panel-fulfilment_model")).not.toHaveTextContent(
+      /Nothing checks/,
+    );
   });
 });
