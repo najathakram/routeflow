@@ -1,3 +1,4 @@
+import { ServiceUnavailableException } from "@nestjs/common";
 import {
   buildLadderView,
   customerLayerPrice,
@@ -11,6 +12,7 @@ import {
   type PriceTier,
   type UnitRef,
 } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { asLadderProduct } from "../products/line-units";
 
 /**
@@ -132,7 +134,7 @@ export async function loadTierOrderUnits(
 
 /**
  * The flag-on pricing context for one customer and the products an operation touches, or null (flag off, nothing that
- * could differ, no customer, or the entitlement read failed: master's chain then). The flag is asked ONLY when it can
+ * could differ, no customer, or the entitlement read failed with no typed row: master's chain then; a failed read WITH typed rows throws a 503). The flag is asked ONLY when it can
  * matter: the customer has a typed row for these products, or a raw tier value is junk. So a tenant with neither reads one
  * indexed row-set and consults no entitlement, and every flag-off path stays what it was.
  */
@@ -154,11 +156,22 @@ export async function loadUnitsPricesV2(
       : [];
   if (rows.length === 0 && !rawTiers.some(isOddTier)) return null;
   if (typeof entitlements?.hasFlag !== "function") return null;
-  // A failed entitlement read must not fail the order: it prices as master (the flag is dark by default).
+  // SA-812a G-1: a clean `false` (DENY, revoked, never granted) prices as master. A FAILED read is different: when the
+  // customer has typed rows they are owed their typed price, and answering "off" would quietly bill them the tier price on
+  // every server-priced path (buyer checkout, standing orders, returns). So with typed rows a failed read is a coded,
+  // retryable 503 and nothing is written; with no typed rows (only an odd tier) master's chain is the same answer the flag
+  // would give for an unconfigured tenant, so the fallback stays.
   let on = false;
   try {
     on = !!(await entitlements.hasFlag(tenantId, UNITS_PRICES_V2_FLAG));
   } catch {
+    if (rows.length > 0) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE,
+        message: "Customer prices are temporarily unavailable. Please try again.",
+      });
+    }
     on = false;
   }
   if (!on) return null;

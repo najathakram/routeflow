@@ -5,7 +5,9 @@
  * Retail ladder price the layer is priced like the sticky upsell (MANUAL, no promo). Flag off, or the unit not in the layer:
  * master's code path, untouched. Pure seams only; the wiring is pinned in orders.units-prices-v2.spec.ts and the others.
  */
+import { ServiceUnavailableException } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { resolveBuyerLinePrice } from "./buyer-merge-pricing";
 import { decideTierOverride } from "./staff-override";
 import { buildUnitLine } from "./unit-line-build";
@@ -118,9 +120,31 @@ describe("loadUnitsPricesV2", () => {
     ).toBeNull();
   });
 
-  it("item 3: a failed entitlement read prices as master (null), it never fails the order", async () => {
+  // SA-812a G-1: a customer WITH typed rows is owed their typed price. A transient entitlement read error must never
+  // quietly bill them the tier price on a server-priced path: it is a coded, retryable 503 and nothing is written.
+  it("G-1: typed rows + a failed flag read throws a coded retryable 503 (never master's tier price)", async () => {
     const h = deps({ rows: [["pack", 33]], flag: new Error("entitlements down") });
+    const err = await loadUnitsPricesV2(h.d, "c1", ["p1"]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect((err as ServiceUnavailableException).getStatus()).toBe(503);
+    expect((err as ServiceUnavailableException).getResponse()).toMatchObject({
+      statusCode: 503,
+      code: API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE,
+    });
+    // it fails before the ladder is read: nothing downstream ran
+    expect(h.db.productUnit.findMany).not.toHaveBeenCalled();
+  });
+
+  it("G-1 guard: NO typed rows (only an odd tier) + a failed flag read keeps the master fallback", async () => {
+    const h = deps({ flag: new Error("entitlements down") });
+    await expect(loadUnitsPricesV2(h.d, "c1", ["p1"], [9, 2])).resolves.toBeNull();
+    expect(h.hasFlag).toHaveBeenCalledTimes(1);
+  });
+
+  it("G-1 guard: a DENIED or revoked flag (a clean false) still prices as master, even with typed rows", async () => {
+    const h = deps({ rows: [["pack", 33]], flag: false });
     await expect(loadUnitsPricesV2(h.d, "c1", ["p1"])).resolves.toBeNull();
+    expect(h.hasFlag).toHaveBeenCalledTimes(1);
   });
 
   it("no typed row and ordinary tiers: the flag is never consulted (nothing could differ)", async () => {
