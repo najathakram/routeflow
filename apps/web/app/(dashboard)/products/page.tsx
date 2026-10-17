@@ -27,7 +27,7 @@ import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
 import { applyLadderChange, ladderChangeNote, unitWords, type TierField } from "@routeflow/pricing";
-import { tierLabel } from "@/lib/tier-label";
+import { productTierLabel } from "@/lib/tier-one-label";
 import { useTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { unitsLabel } from "@/lib/stock-label";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
@@ -265,7 +265,7 @@ function ProductCard({
                 sectionNameById.get(product.trackedCategoryId) ??
                 "Type"
               }
-              className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
+              className="relative z-10 rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
             >
               {sectionNameById.get(product.trackedCategoryId) ?? "Type"}
             </span>
@@ -813,7 +813,7 @@ export default function ProductsPage() {
           product as never,
         );
         Object.assign(updates, moved);
-        ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
+        ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
       }
 
       // P0 2026-10-14: a tier commit moves lower tiers only by applyLadderChange (tracking the old value, 0, or above
@@ -826,7 +826,7 @@ export default function ProductsPage() {
           product as never,
         );
         Object.assign(updates, moved);
-        ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
+        ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
       }
 
       await updateProduct.mutateAsync(updates);
@@ -958,7 +958,7 @@ export default function ProductsPage() {
         ? applyLadderChange("pricePerUnit", product.pricePerUnit, newPriceStr, product as never)
         : {};
       Object.assign(updates, moved);
-      const ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
+      const ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
       await updateProduct.mutateAsync(updates);
       toast({
         title: "Price updated",

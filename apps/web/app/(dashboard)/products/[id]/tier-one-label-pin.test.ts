@@ -7,7 +7,9 @@ import * as path from "path";
  * A hard-coded "Tier 1" or a raw `tierLabel(..., 1)` is how the page said "Tier 1" in one place and
  * "Retail" in another.
  */
-const FILES = ["page.tsx", "ProductPricesGrid.tsx", "ProductUnitsCard.tsx"];
+// Paths are relative to this folder. products/page.tsx (the list) joined with the K10b P02 completeness pass.
+// TODO(K10c): add the customer-view files here when they land on this branch (not present on K10b).
+const FILES = ["page.tsx", "ProductPricesGrid.tsx", "ProductUnitsCard.tsx", "../page.tsx"];
 const stripComments = (s: string) =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 const read = (f: string) => stripComments(fs.readFileSync(path.join(__dirname, f), "utf8"));
@@ -31,8 +33,8 @@ describe.each(FILES)("%s", (file) => {
   });
 });
 
-it("the grid and the page both use the shared helper", () => {
-  for (const f of ["page.tsx", "ProductPricesGrid.tsx"]) {
+it("the grid, the page and the list page all use the shared helper", () => {
+  for (const f of ["page.tsx", "ProductPricesGrid.tsx", "../page.tsx"]) {
     expect(read(f)).toMatch(/from "@\/lib\/tier-one-label"/);
   }
 });
