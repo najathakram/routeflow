@@ -17,4 +17,15 @@ describe("Quick Edit pieces-per-box goes through quickPackEdit on save, undo and
     expect(list).toMatch(/updateProduct\.mutateAsync\(\{ id: product\.id, \.\.\.pack\.save \}\)/);
     expect(list).toMatch(/oldValue: pack\.undo,\s*newValue: pack\.redo/);
   });
+
+  it("an invalid size sends NO PATCH: the error toast and `return false` come before mutateAsync, the cell is type=number min 1 step 1", () => {
+    const block = list.slice(list.indexOf('if (field === "unitsPerBox") {'));
+    const invalid = block.indexOf("if (!pack.ok) {");
+    expect(invalid).toBeGreaterThan(-1);
+    expect(block.indexOf("toast({ title: pack.message")).toBeGreaterThan(invalid);
+    expect(block.indexOf("return false;")).toBeGreaterThan(invalid);
+    // order: guard < toast < return false < the one mutateAsync of this branch
+    expect(block.indexOf("return false;")).toBeLessThan(block.indexOf("updateProduct.mutateAsync"));
+    expect(list).toMatch(/field="unitsPerBox"\s*type="number"\s*min=\{1\}\s*step=\{1\}/);
+  });
 });

@@ -1,4 +1,11 @@
-import { quickPackEdit } from "./quick-edit-pack";
+import { quickPackEdit as quickPackEditRaw } from "./quick-edit-pack";
+
+/** Valid-input cases: unwrap the tagged result (an invalid cell fails the test loudly here). */
+const quickPackEdit = (row: Parameters<typeof quickPackEditRaw>[0], raw: string) => {
+  const r = quickPackEditRaw(row, raw);
+  if (!r.ok) throw new Error(`expected "${raw}" to be valid, got: ${r.message}`);
+  return r;
+};
 
 describe("Quick Edit pieces-per-box (SA-797a MUST-1): the pack the cell read rides on save, undo and redo", () => {
   const row = { unit: "Box", unitsPerBox: 12, packTenantUnitId: "tu-box" };
@@ -41,6 +48,30 @@ describe("Quick Edit pieces-per-box (SA-797a MUST-1): the pack the cell read rid
       unitsPerBox: 24,
       expectedUnit: "Each",
       expectedUnitsPerBox: null,
+    });
+  });
+
+  describe("an invalid cell is a tagged result, never a silent null / truncation", () => {
+    const MESSAGE = "Pieces per box must be a whole number of 1 or more.";
+    it.each(["abc", "0", "-3", "1.5", "12abc", "1e3", "+5", "0x10", "٣"])(
+      "%j is invalid (no patch is built)",
+      (raw) => {
+        expect(quickPackEditRaw(row, raw)).toEqual({ ok: false, message: MESSAGE });
+      },
+    );
+    it.each([
+      ["12", 12],
+      [" 7 ", 7],
+      ["1", 1],
+    ])("%j is the whole number %d", (raw, n) => {
+      const r = quickPackEditRaw(row, raw);
+      expect(r.ok && r.save.unitsPerBox).toBe(n);
+    });
+    it("blank and whitespace-only are still valid and mean unboxed (null)", () => {
+      for (const raw of ["", "   "]) {
+        const r = quickPackEditRaw(row, raw);
+        expect(r.ok && r.save.unitsPerBox).toBeNull();
+      }
     });
   });
 });

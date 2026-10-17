@@ -48,7 +48,7 @@ export function unguardedPackChanges(
 ): Array<"unit" | "unitsPerBox"> {
   const out: Array<"unit" | "unitsPerBox"> = [];
   // Keyed by unitNameKey (NFC, trim, case-fold): an old build re-sending an imported NFD or padded word is
-  // an echo, not a change. The caller keeps the STORED spelling for such an echo (`packEchoUnit`).
+  // an echo, not a change. The caller (ProductsService.update) keeps the STORED spelling for such an echo.
   if (
     dto.unit !== undefined &&
     dto.expectedUnit === undefined &&

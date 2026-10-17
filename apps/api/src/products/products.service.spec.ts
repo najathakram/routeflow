@@ -1075,12 +1075,36 @@ describe("ProductsService", () => {
             async (_k, stored, sent) => {
               underLock({ unit: stored, unitsPerBox: 12 });
               lockingTx(jest.fn().mockResolvedValue(0));
-              await service.update("prod-1", { unit: sent, unitsPerBox: 12 } as any, CLIENT);
-              expect(prisma.product.update).toHaveBeenCalledTimes(1);
-              const data = prisma.product.update.mock.calls[0][0].data;
-              expect(data.unit ?? stored).toBe(stored);
+              prisma.product.findUnique.mockResolvedValueOnce({
+                ...withUnit,
+                unit: stored,
+                unitsPerBox: 12,
+              });
+              const res: any = await service.update(
+                "prod-1",
+                { unit: sent, unitsPerBox: 12 } as any,
+                CLIENT,
+              );
+              // A pure echo writes nothing and answers with the stored spelling.
+              expect(prisma.product.update).not.toHaveBeenCalled();
+              expect(res.unit).toBe(stored);
             },
           );
+
+          it("N1e: an old client sending unit 'case' (stored 'Case') with no expected*: 200, stored spelling in the response, no product write, no audit row", async () => {
+            underLock({ unit: "Case", unitsPerBox: 12 });
+            prisma.product.findUnique.mockResolvedValueOnce({
+              ...withUnit,
+              unit: "Case",
+              unitsPerBox: 12,
+            });
+            lockingTx(jest.fn().mockResolvedValue(0));
+            const res: any = await service.update("prod-1", { unit: "case" } as any, CLIENT);
+            expect(res.unit).toBe("Case");
+            expect(prisma.product.update).not.toHaveBeenCalled();
+            expect((prisma as any).auditLog.create).not.toHaveBeenCalled();
+            expect((prisma as any).auditLog.createMany).not.toHaveBeenCalled();
+          });
 
           it("NIT2: the logged User-Agent is capped at 256 characters", async () => {
             underLock({ unit: "Box", unitsPerBox: 12 });

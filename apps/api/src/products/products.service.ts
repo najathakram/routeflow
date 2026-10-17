@@ -1287,6 +1287,10 @@ export class ProductsService {
       hasPriceColumns(dto) || dto.parentProductId
         ? await readFamilyPriceMode(this.featureConfig, tenantId)
         : "off";
+    // Set when an old client's pack echo was stripped from the write; a PATCH left with nothing else to write
+    // then writes no row at all (no UPDATE, no event) and answers with the stored row.
+    let packEchoStripped = false;
+    let wroteRow = true;
     let propagatedRows = 0;
     let doorDeactivated: string[] = [];
     let cascaded: string[] = [];
@@ -1331,10 +1335,16 @@ export class ProductsService {
               message: PRODUCT_PACK_PRECONDITION_REQUIRED_MESSAGE,
             });
           }
-          // An echo of the pack word (same unitNameKey, no expectedUnit) changes nothing: keep the stored spelling.
+          // An echo of the pack word (same unitNameKey, no expectedUnit) changes nothing: keep the stored spelling,
+          // and drop it (and an equal size, which unguardedPackChanges already let through) from the write.
           if (dto.unit !== undefined && dto.expectedUnit === undefined) {
             dto.unit = locked.unit;
-            data.unit = locked.unit;
+            delete data.unit;
+            packEchoStripped = true;
+          }
+          if (dto.unitsPerBox !== undefined && dto.expectedUnitsPerBox === undefined) {
+            delete data.unitsPerBox;
+            packEchoStripped = true;
           }
         }
         const nextUnit = dto.unit !== undefined ? dto.unit : locked.unit;
@@ -1520,6 +1530,10 @@ export class ProductsService {
           confirmed: !!dto.confirmCascade,
         });
       }
+      if (packEchoStripped && Object.values(data).every((v) => v === undefined)) {
+        wroteRow = false;
+        return tx.product.findUnique({ where: { id } });
+      }
       // The category text this write REPLACES, read inside the tx (the label sync below compares name keys against it,
       // never the pre-transaction read). A plain read: the UPDATE right after takes the row lock (house lock order).
       const before = await tx.product.findFirst({
@@ -1593,7 +1607,7 @@ export class ProductsService {
     });
     // suppressEmit lets a caller that loops this method (bulkAssignParent) emit
     // ONE coalesced event after the loop instead of one per row.
-    if (!options?.suppressEmit) this.emitProductChanged(id, "updated");
+    if (!options?.suppressEmit && wroteRow) this.emitProductChanged(id, "updated");
     // The one-tx door deactivated blocking products too: buyer/driver caches must not keep them visible (SA-603j LOW, N4).
     if (doorDeactivated.length > 0 || cascaded.length > 0) this.emitProductChanged(null, "bulk");
     // The family edit moved its children's prices: ONE coalesced event, after the commit (L-237).
