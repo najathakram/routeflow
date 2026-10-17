@@ -121,15 +121,53 @@ describe("ChangePricesPanel (V03, V05, V18)", () => {
     expect(screen.getByTestId(T.againstSummary)).toBeInTheDocument();
   });
 
-  it("keeps Apply in the DOM inside the sticky footer while the preview is long", () => {
+  it("F02: Apply and Cancel sit below the preview in normal flow, on the card background, so no row is under them", () => {
     plan.mockReturnValue(longPlan(40));
     mount();
     type("5");
-    expect(within(screen.getByTestId(T.changePreview)).getAllByRole("row")).toHaveLength(40);
+    const preview = screen.getByTestId(T.changePreview);
+    expect(within(preview).getAllByRole("row")).toHaveLength(40);
     const footer = screen.getByTestId(T.changeFooter);
-    expect(footer.className).toContain("sticky");
-    expect(footer.style.bottom).toBe("var(--editbar-h, 0px)");
+    // not sticky: a sticky row stops at #main-content's pb-24 and lands on the preview table's last rows
+    expect(footer.className).not.toMatch(/\b(sticky|fixed|absolute)\b/);
+    expect(footer.style.bottom).toBe("");
+    expect(footer.className).toContain("bg-white");
+    expect(preview.compareDocumentPosition(footer)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(within(footer).getByRole("button", { name: "Apply" })).toBeEnabled();
+    expect(within(footer).getByRole("button", { name: "Cancel" })).toBeEnabled();
+  });
+
+  it("F02: the Also update box grows to its content: nothing on it or above it clips, clamps or caps the height", () => {
+    mount();
+    type("5%");
+    const box = screen.getByTestId(T.alsoUpdate);
+    const clip = /\b(overflow-hidden|overflow-y-hidden|truncate|max-h-\S+|h-\d\S*|line-clamp-\d)\b/;
+    for (let el: HTMLElement | null = box; el && el !== document.body; el = el.parentElement) {
+      expect(el.className).not.toMatch(clip);
+      expect(el.style.maxHeight).toBe("");
+      expect(el.style.height).toBe("");
+    }
+    expect(box).toHaveTextContent("Also raise the prices you set");
+    expect(box).toHaveTextContent("Case Tier 2 $12.50");
+  });
+
+  it("P13: only the chosen Raise/Lower half is filled; the other is outlined, and the choice is announced", () => {
+    mount();
+    const half = (name: string) => screen.getByText(name, { selector: "label" });
+    const radio = (name: string) => screen.getByRole("radio", { name });
+    expect(half("Raise").className).toContain("bg-accent-strong");
+    expect(half("Lower").className).not.toContain("bg-accent-strong");
+    expect(half("Lower").className).toContain("border");
+    expect(radio("Raise")).toHaveAttribute("aria-checked", "true");
+    expect(radio("Lower")).toHaveAttribute("aria-checked", "false");
+    // the fill is never driven by `peer-checked:`: a later sibling label would match the checked radio before it
+    expect(half("Raise").className).not.toContain("peer-checked");
+    expect(half("Lower").className).not.toContain("peer-checked");
+    fireEvent.click(radio("Lower"));
+    expect(half("Lower").className).toContain("bg-accent-strong");
+    expect(half("Raise").className).not.toContain("bg-accent-strong");
+    expect(radio("Lower")).toHaveAttribute("aria-checked", "true");
+    expect(radio("Raise")).toHaveAttribute("aria-checked", "false");
   });
 
   it("disables Apply and does not plan until an amount is typed", () => {
