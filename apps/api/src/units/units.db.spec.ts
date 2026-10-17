@@ -7,11 +7,17 @@
  * nameKey) and the rename transaction through the REAL tenant-wrapped `tenantTransaction` proxy,
  * including the all-or-nothing collision refusal and tenant isolation.
  *
+ * Cleanup is two-phase (`wipe`): every row that points at a Product (order / invoice lines of BOTH test
+ * tenants, stock movements and lots) goes first, then the tenants' own rows. The isolation case leaves
+ * tenant B's lines on tenant A's product, so a per-tenant sweep that deleted A's products first hit
+ * OrderItem_productId_fkey and failed every case after it.
+ *
  * Run via `npm run local:test:db` against the compose Postgres. Every tenant is a throwaway
  * `qa-unit-<run>-*` slug approved by `assertTestTenant`; afterAll deletes exactly what it made.
  */
 import { randomUUID } from "crypto";
-import { ConflictException, NotFoundException } from "@nestjs/common";
+import { ConflictException, NotFoundException, ValidationPipe } from "@nestjs/common";
+import { Test } from "@nestjs/testing";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -25,6 +31,20 @@ import { sqlKeyOf } from "./unit-name-sql";
 import { MAX_ACTIVE_TENANT_UNITS } from "./unit-room";
 import { VariantResolutionService } from "../import/variant-resolution.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { ProductsService } from "../products/products.service";
+import { ProductsController } from "../products/products.controller";
+import { ProductUnitsService } from "../products/product-units.service";
+import { UpdateProductDto } from "../products/dto/update-product.dto";
+import { InventoryService } from "../inventory/inventory.service";
+import { StorageService } from "../storage/storage.service";
+import { AddonService } from "../billing/addon.service";
+import { SystemConfigService } from "../system-config/system-config.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
+import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -37,6 +57,14 @@ describeDb("tenant units against real Postgres", () => {
   let prisma: PrismaService;
   let ctx: TenantContextService;
   let service: UnitsService;
+  let countedClient: PrismaClient;
+  let countingService: UnitsService;
+  let products: ProductsService;
+  let productsController: ProductsController;
+  let productUnits: ProductUnitsService;
+  let inventory: InventoryService;
+  let operatorId: string;
+  const queries: Array<{ query: string }> = [];
 
   const run = randomUUID().slice(0, 8);
   const slugA = assertTestTenant(`qa-unit-${run}-a`, "units.db.spec.ts");
@@ -50,7 +78,12 @@ describeDb("tenant units against real Postgres", () => {
   const product = (
     tenantId: string,
     name: string,
-    over: { baseUnitLabel?: string | null; packLabel?: string | null; unit?: string } = {},
+    over: {
+      baseUnitLabel?: string | null;
+      packLabel?: string | null;
+      unit?: string;
+      unitsPerBox?: number;
+    } = {},
   ) =>
     raw.product.create({
       data: { name, unit: over.unit ?? "Each", pricePerUnit: "1.00", tenantId, ...over },
@@ -145,45 +178,140 @@ describeDb("tenant units against real Postgres", () => {
     service = new UnitsService(prisma, new AuditService(prisma));
     A = (await raw.tenant.create({ data: { slug: slugA, name: `Units spec ${slugA}` } })).id;
     B = (await raw.tenant.create({ data: { slug: slugB, name: `Units spec ${slugB}` } })).id;
+
+    // G6e: a second client that logs every statement it sends. Only `getTenantId` and `$queryRaw` are
+    // reached by `list()`, so a thin proxy over the logging client stands in for PrismaService there.
+    countedClient = new PrismaClient({
+      adapter: new PrismaPg(pool),
+      log: [{ emit: "event", level: "query" }],
+    });
+    (countedClient as unknown as { $on(e: "query", cb: (q: { query: string }) => void): void }).$on(
+      "query",
+      (q) => queries.push(q),
+    );
+    const countedPrisma = new Proxy(countedClient, {
+      get(target, key) {
+        if (key === "getTenantId") return () => ctx.getOrNull();
+        const value = (target as unknown as Record<string | symbol, unknown>)[key];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as unknown as PrismaService;
+    countingService = new UnitsService(countedPrisma, new AuditService(countedPrisma));
+
+    // N2 / G6b: the REAL products, controller, level and inventory code paths over the same database.
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        ProductsService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: StorageService,
+          useValue: {
+            presignedUrl: jest.fn().mockResolvedValue("http://mock-url"),
+            presignedUrls: jest.fn().mockResolvedValue([]),
+          },
+        },
+        { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
+        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        entitlementAuthorityFromEntitlements,
+        {
+          provide: PlanCatalogService,
+          useValue: { upgradeTargetForFlag: jest.fn().mockResolvedValue(null) },
+        },
+        { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
+      ],
+    }).compile();
+    products = moduleRef.get(ProductsService);
+    productsController = new ProductsController(products, {} as never);
+    productUnits = new ProductUnitsService(prisma);
+    inventory = new InventoryService(prisma, {
+      fireForProducts: jest.fn().mockResolvedValue(undefined),
+    } as never);
   }, 120_000);
+
+  /**
+   * FK-safe wipe of everything this spec can create for the given tenants, in two phases. Phase 1 deletes
+   * every row that points at a Product, matched by tenant, by parent order / invoice AND by product id, so
+   * a line of the OTHER test tenant sitting on this tenant's product (the isolation case) goes too. Phase 2
+   * deletes the tenants' own rows. Only the spec's own qa-unit-* tenants are ever named (assertTestTenant
+   * re-checks each slug); there is no unfiltered deleteMany.
+   */
+  const wipe = async (tenantIds: string[]) => {
+    const ids = tenantIds.filter(Boolean);
+    if (ids.length === 0) return;
+    for (const t of await raw.tenant.findMany({
+      where: { id: { in: ids } },
+      select: { slug: true },
+    })) {
+      assertTestTenant(t.slug, "units.db.spec.ts");
+    }
+    const productIds = (
+      await raw.product.findMany({ where: { tenantId: { in: ids } }, select: { id: true } })
+    ).map((p) => p.id);
+    // Phase 1: children of Product (and of the tenants' orders / invoices).
+    await raw.invoiceItem.deleteMany({
+      where: {
+        OR: [
+          { tenantId: { in: ids } },
+          { invoice: { tenantId: { in: ids } } },
+          { productId: { in: productIds } },
+        ],
+      },
+    });
+    await raw.orderItem.deleteMany({
+      where: {
+        OR: [
+          { tenantId: { in: ids } },
+          { order: { tenantId: { in: ids } } },
+          { productId: { in: productIds } },
+        ],
+      },
+    });
+    await raw.stockMovement.deleteMany({
+      where: { OR: [{ tenantId: { in: ids } }, { productId: { in: productIds } }] },
+    });
+    await raw.stockLot.deleteMany({
+      where: { OR: [{ tenantId: { in: ids } }, { productId: { in: productIds } }] },
+    });
+    await raw.productUnit.deleteMany({
+      where: { OR: [{ tenantId: { in: ids } }, { productId: { in: productIds } }] },
+    });
+    // Phase 2: the tenants' own rows, parents after children.
+    await raw.auditLog.deleteMany({ where: { tenantId: { in: ids } } });
+    await raw.invoice.deleteMany({ where: { tenantId: { in: ids } } });
+    await raw.order.deleteMany({ where: { tenantId: { in: ids } } });
+    await raw.customer.deleteMany({ where: { tenantId: { in: ids } } });
+    await raw.user.deleteMany({ where: { tenantId: { in: ids } } });
+    await raw.product.deleteMany({ where: { tenantId: { in: ids } } });
+    await raw.tenantUnit.deleteMany({ where: { tenantId: { in: ids } } });
+  };
 
   afterAll(async () => {
     const tenants = [A, B].filter(Boolean);
-    // Sold lines first, for BOTH tenants: the isolation case seeds a tenant-B line that points at a
-    // tenant-A product, so A's products cannot be deleted while B's lines still exist.
-    for (const t of tenants) {
-      await raw.invoiceItem.deleteMany({ where: { invoice: { tenantId: t } } });
-      await raw.orderItem.deleteMany({ where: { order: { tenantId: t } } });
-    }
-    for (const t of tenants) {
-      await raw.auditLog.deleteMany({ where: { tenantId: t } });
-      await raw.invoice.deleteMany({ where: { tenantId: t } });
-      await raw.order.deleteMany({ where: { tenantId: t } });
-      await raw.customer.deleteMany({ where: { tenantId: t } });
-      await raw.user.deleteMany({ where: { tenantId: t } });
-      await raw.productUnit.deleteMany({ where: { tenantId: t } });
-      await raw.product.deleteMany({ where: { tenantId: t } });
-      await raw.tenantUnit.deleteMany({ where: { tenantId: t } });
-      await raw.tenant.deleteMany({ where: { id: t } });
-    }
+    await wipe(tenants);
+    if (tenants.length > 0) await raw.tenant.deleteMany({ where: { id: { in: tenants } } });
     await prisma.$disconnect();
+    await countedClient.$disconnect();
     await raw.$disconnect();
     await pool.end();
   }, 120_000);
 
   beforeEach(async () => {
-    for (const t of [A, B]) {
-      await raw.auditLog.deleteMany({ where: { tenantId: t } });
-      await raw.invoiceItem.deleteMany({ where: { invoice: { tenantId: t } } });
-      await raw.invoice.deleteMany({ where: { tenantId: t } });
-      await raw.orderItem.deleteMany({ where: { order: { tenantId: t } } });
-      await raw.order.deleteMany({ where: { tenantId: t } });
-      await raw.customer.deleteMany({ where: { tenantId: t } });
-      await raw.user.deleteMany({ where: { tenantId: t } });
-      await raw.productUnit.deleteMany({ where: { tenantId: t } });
-      await raw.product.deleteMany({ where: { tenantId: t } });
-      await raw.tenantUnit.deleteMany({ where: { tenantId: t } });
-    }
+    await wipe([A, B]);
+    // The user a stock movement is performed by (StockMovement.performedById is a real FK).
+    const tag = randomUUID().slice(0, 8);
+    operatorId = (
+      await raw.user.create({
+        data: {
+          email: `op-${tag}@example.test`,
+          username: `op-${tag}`,
+          role: "OPERATOR",
+          tenantId: A,
+        },
+      })
+    ).id;
+    queries.length = 0;
   });
 
   it("productCount is DISTINCT across the level label and the base / pack / unit text, matched by nameKey", async () => {
@@ -572,23 +700,177 @@ describeDb("tenant units against real Postgres", () => {
       expect(after).toHaveLength(MAX_ACTIVE_TENANT_UNITS);
     });
 
-    it("at 200 active units a person add is 409 TENANT_UNIT_LIMIT; archive one and the add succeeds", async () => {
-      await raw.tenantUnit.createMany({
-        data: Array.from({ length: MAX_ACTIVE_TENANT_UNITS }, (_, i) => ({
-          tenantId: A,
+    const fillUnits = (tenantId: string, count: number) =>
+      raw.tenantUnit.createMany({
+        data: Array.from({ length: count }, (_, i) => ({
+          tenantId,
           name: `U${i}`,
           nameKey: `u${i}`,
         })),
       });
-      await expect(asA(() => service.create({ name: "Crate" }, user))).rejects.toBeInstanceOf(
-        ConflictException,
-      );
-      const one = await raw.tenantUnit.findFirst({ where: { tenantId: A, nameKey: "u0" } });
-      await asA(() => service.update(one!.id, { archived: true }, user));
+
+    it("G6a: a person adds unit #200, then unit #201 is 409 TENANT_UNIT_LIMIT with nothing written; archiving one frees a slot", async () => {
+      await fillUnits(A, MAX_ACTIVE_TENANT_UNITS - 1);
       await expect(asA(() => service.create({ name: "Crate" }, user))).resolves.toMatchObject({
         name: "Crate",
       });
       expect(await raw.tenantUnit.count({ where: { tenantId: A, archivedAt: null } })).toBe(200);
+      const err = await asA(() => service.create({ name: "Tray" }, user)).catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({
+        code: API_ERROR_CODES.TENANT_UNIT_LIMIT,
+        limit: MAX_ACTIVE_TENANT_UNITS,
+        active: MAX_ACTIVE_TENANT_UNITS,
+      });
+      expect(await raw.tenantUnit.count({ where: { tenantId: A, nameKey: "tray" } })).toBe(0);
+      expect(await raw.tenantUnit.count({ where: { tenantId: A } })).toBe(200);
+      // Another tenant is not held back by A's full list.
+      await expect(asB(() => service.create({ name: "Tray" }, user))).resolves.toMatchObject({
+        name: "Tray",
+      });
+      const one = await raw.tenantUnit.findFirst({ where: { tenantId: A, nameKey: "u0" } });
+      await asA(() => service.update(one!.id, { archived: true }, user));
+      await expect(asA(() => service.create({ name: "Tray" }, user))).resolves.toMatchObject({
+        name: "Tray",
+      });
+      expect(await raw.tenantUnit.count({ where: { tenantId: A, archivedAt: null } })).toBe(200);
+    });
+
+    it("G6b: a level write that would auto-add a unit at the cap saves unlinked with unitNotListed and adds no TenantUnit; with room it links", async () => {
+      await fillUnits(A, MAX_ACTIVE_TENANT_UNITS);
+      const p = await product(A, "Mug");
+      const full = await asA(() =>
+        productUnits.create(p.id, { label: "Crate", factorToBase: 12 }, operatorId),
+      );
+      expect(full).toMatchObject({ label: "Crate", factorToBase: 12, unitNotListed: ["Crate"] });
+      const saved = await raw.productUnit.findFirst({ where: { productId: p.id, label: "Crate" } });
+      expect(saved).toMatchObject({ tenantUnitId: null, factorToBase: 12 });
+      expect(await raw.tenantUnit.count({ where: { tenantId: A } })).toBe(200);
+      expect(await raw.tenantUnit.count({ where: { tenantId: A, nameKey: "crate" } })).toBe(0);
+      expect(
+        await raw.auditLog.count({ where: { tenantId: A, action: "tenant_unit.created" } }),
+      ).toBe(0);
+      // Control: free one slot and the same kind of write adds the unit and links the level to it.
+      const one = await raw.tenantUnit.findFirst({ where: { tenantId: A, nameKey: "u0" } });
+      await asA(() => service.update(one!.id, { archived: true }, user));
+      const roomy = await asA(() =>
+        productUnits.create(p.id, { label: "Tray", factorToBase: 24 }, operatorId),
+      );
+      expect(roomy).not.toHaveProperty("unitNotListed");
+      const tray = await raw.tenantUnit.findFirst({ where: { tenantId: A, nameKey: "tray" } });
+      expect(tray).not.toBeNull();
+      expect(
+        (await raw.productUnit.findFirst({ where: { productId: p.id, label: "Tray" } }))
+          ?.tenantUnitId,
+      ).toBe(tray!.id);
+    });
+
+    describe("G6e: the units list sends exactly one usage query, however many units there are", () => {
+      /** Run `list()` on the statement-logging client and return the SELECTs it sent. */
+      const listSelects = async () => {
+        queries.length = 0;
+        const rows = await ctx.run(A, () => countingService.list());
+        await new Promise((resolve) => setTimeout(resolve, 100)); // query events are delivered async
+        return { rows, selects: queries.filter((q) => /^\s*(WITH|SELECT)/i.test(q.query)) };
+      };
+
+      it("1 unit: one statement, and it carries the count", async () => {
+        const unit = await asA(() => service.create({ name: "Case" }, user));
+        await product(A, "P1", { unit: "Case" });
+        const { rows, selects } = await listSelects();
+        expect(selects).toHaveLength(1);
+        expect(selects[0].query).toMatch(/"Product"/);
+        expect(rows.map((r) => [r.id, r.productCount])).toEqual([[unit.id, 1]]);
+      });
+
+      it("200 units: still one statement, and the counts are right", async () => {
+        await fillUnits(A, MAX_ACTIVE_TENANT_UNITS);
+        await product(A, "P1", { unit: "U7" });
+        await product(A, "P2", { packLabel: " u7 ", baseUnitLabel: "U199" });
+        const { rows, selects } = await listSelects();
+        expect(selects).toHaveLength(1);
+        expect(rows).toHaveLength(MAX_ACTIVE_TENANT_UNITS);
+        const count = (name: string) => rows.find((r) => r.name === name)?.productCount;
+        expect(count("U7")).toBe(2);
+        expect(count("U199")).toBe(1);
+        expect(count("U0")).toBe(0);
+      });
+    });
+  });
+
+  describe("N2 (SA-797): the pack precondition is a VALUE compare, through the real PATCH controller", () => {
+    const pipe = new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true,
+    });
+    /** The body goes through the same ValidationPipe options main.ts uses, then the real controller. */
+    const patch = async (productId: string, body: Record<string, unknown>) => {
+      const dto = (await pipe.transform(body, {
+        type: "body",
+        metatype: UpdateProductDto,
+      })) as UpdateProductDto;
+      const jwt = { sub: operatorId, username: "db-spec-op" } as JwtPayload;
+      return asA(() => productsController.update(productId, dto, jwt, "RouteFlow/db-spec"));
+    };
+    const caseProduct = async () => {
+      const caseUnit = await asA(() => service.create({ name: "Case" }, user));
+      const p = await product(A, "Mug", { unit: "Case", unitsPerBox: 12 });
+      return { caseUnit, p };
+    };
+
+    it("a purchase received while the form was open moves updatedAt but not the pack: the save with the expected pack succeeds", async () => {
+      const { caseUnit, p } = await caseProduct();
+      const opened = await asA(() => products.findOne(p.id)); // the form "opens": it reads the pack
+      expect(opened).toMatchObject({
+        unit: "Case",
+        unitsPerBox: 12,
+        packTenantUnitId: caseUnit.id,
+      });
+
+      await asA(() =>
+        inventory.recordPurchase({ productId: p.id, quantity: 24, unitCost: 2 }, operatorId),
+      );
+      const afterBuy = await raw.product.findUnique({ where: { id: p.id } });
+      expect(afterBuy!.updatedAt.getTime()).toBeGreaterThan(opened.updatedAt.getTime());
+      expect(Number(afterBuy!.currentStock)).toBe(24);
+
+      const saved = await patch(p.id, {
+        unit: "Carton",
+        expectedUnit: opened.unit,
+        expectedUnitsPerBox: opened.unitsPerBox,
+        expectedTenantUnitId: opened.packTenantUnitId,
+      });
+      expect(saved).toMatchObject({ unit: "Carton", unitsPerBox: 12 });
+      const row = await raw.product.findUnique({ where: { id: p.id } });
+      expect(row).toMatchObject({ unit: "Carton", unitsPerBox: 12 });
+      expect(Number(row!.currentStock)).toBe(24); // the receipt survived the save
+    });
+
+    it("a pack-word rename committed between open and save is 409 PRODUCT_PACK_STALE and nothing is written", async () => {
+      const { caseUnit, p } = await caseProduct();
+      const opened = await asA(() => products.findOne(p.id));
+      // Another operator renames the unit (it rewrites Product.unit) while the form is open.
+      await asA(() => service.update(caseUnit.id, { name: "Carton" }, user));
+      const before = await raw.product.findUnique({ where: { id: p.id } });
+      expect(before!.unit).toBe("Carton");
+
+      const err = await patch(p.id, {
+        name: "Mug 2",
+        unit: "Crate",
+        expectedUnit: opened.unit,
+        expectedUnitsPerBox: opened.unitsPerBox,
+        expectedTenantUnitId: opened.packTenantUnitId,
+      }).catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.PRODUCT_PACK_STALE });
+      // Neither the pack word nor the name in the same PATCH was written.
+      expect(await raw.product.findUnique({ where: { id: p.id } })).toEqual(before);
+      expect((await raw.tenantUnit.findUnique({ where: { id: caseUnit.id } }))?.name).toBe(
+        "Carton",
+      );
     });
   });
 });
