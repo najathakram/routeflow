@@ -164,7 +164,9 @@ export function ProductPricingRegion({ children }: { children: React.ReactNode }
       data-testid={PRICING_REGION_TESTID}
       data-wide={wide ? "true" : undefined}
       className={cn(
-        "lg:transition-[margin,width] lg:duration-200 lg:ease-out motion-reduce:lg:transition-none",
+        // motion-safe only: under prefers-reduced-motion there is no transition rule at all (stacking motion-reduce on
+        // lg let the later lg: rule win in the built stylesheet).
+        "motion-safe:lg:transition-[margin,width] motion-safe:lg:duration-200 motion-safe:lg:ease-out",
         // Opaque and raised while it covers the image column: nothing shows through, and the column is inert.
         wide &&
           "lg:relative lg:z-10 lg:-ml-[calc(50%+0.75rem)] lg:w-[calc(150%+0.75rem)] lg:rounded-lg lg:bg-white lg:shadow-card",

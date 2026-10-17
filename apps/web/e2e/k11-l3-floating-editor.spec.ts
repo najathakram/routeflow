@@ -378,7 +378,8 @@ for (const vp of VIEWPORTS) {
         await page.waitForTimeout(500);
         const seen = await page.evaluate(() => (window as unknown as { __tf: string[] }).__tf);
         expect(seen.length).toBeGreaterThan(0);
-        for (const t of seen) expect(t).toBe("none");
+        // A panel at rest reports the identity matrix; "none" is also fine. Any other value means it moved or scaled.
+        for (const t of seen) expect(["none", "matrix(1, 0, 0, 1, 0, 0)"]).toContain(t);
       });
     });
 
@@ -457,7 +458,7 @@ test.describe("K11-20c inline edit: the prices grid is full width at 1440 (K11-1
         const s = getComputedStyle(el);
         return { property: s.transitionProperty, duration: s.transitionDuration };
       });
-      expect(t.property).toBe("none");
+      // Under reduced motion the build emits no transition rule at all (motion-safe only): every duration is 0 s.
       expect(t.duration.split(",").every((d) => parseFloat(d) === 0)).toBe(true);
     });
   });
@@ -477,6 +478,10 @@ test.describe("K11-20c inline edit: the prices grid is full width at 1440 (K11-1
         await expect(region).toHaveAttribute("data-wide", "true");
         await page.waitForTimeout(450);
         await expect(covered).toHaveAttribute("inert", "");
+        // The covered photos are dimmed (not hidden) so it is clear they are still underneath.
+        await expect
+          .poll(() => covered.evaluate((el) => parseFloat(getComputedStyle(el).opacity)))
+          .toBeLessThan(1);
         // Opaque: a real background, and the topmost element over the covered column's area is the grid's own.
         const bg = await region.evaluate((el) => getComputedStyle(el).backgroundColor);
         expect(bg, "an opaque background").not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);

@@ -1860,7 +1860,10 @@ export default function ProductDetailPage() {
             )}
           </div>
           {/* ── Left: image gallery + stock card ── */}
-          <div data-region-covers className="space-y-4 lg:col-start-1 lg:row-start-1 lg:row-span-2">
+          <div
+            data-region-covers
+            className="space-y-4 lg:col-start-1 lg:row-start-1 lg:row-span-2 lg:[&[inert]]:opacity-40 motion-safe:lg:transition-opacity motion-safe:lg:duration-200"
+          >
             {/* ── Image gallery ── */}
             <div
               data-testid="product-image-card"

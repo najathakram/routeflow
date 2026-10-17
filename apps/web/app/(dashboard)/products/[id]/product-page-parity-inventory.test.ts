@@ -182,8 +182,12 @@ describe("K11-20c: where every legacy-card control lives after the change (secti
     expect(read("PriceFigures.tsx")).toContain("Save or cancel Details first");
   });
 
-  it("the covered image column is marked for the inline full-width region, and the Details heading is the figures' fallback", () => {
+  it("the covered image column is marked for the inline full-width region, dims while inert, and the Details heading is the figures' fallback", () => {
     expect(page).toContain("data-region-covers");
+    // dimmed only while inert (the region is wide at lg+), faded in 200 ms, and not at all under reduced motion
+    expect(page).toContain("lg:[&[inert]]:opacity-40");
+    expect(page).toContain("motion-safe:lg:transition-opacity");
+    expect(page).toContain("motion-safe:lg:duration-200");
     expect(page).toContain('data-testid="product-details-heading"');
     expect(page).toMatch(/<DetailsPriceLine[\s\S]*?fallback=\{/);
   });

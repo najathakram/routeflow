@@ -247,7 +247,7 @@ describe("K11-20c region: the prices grid is full width only while the inline ed
       .className.split(/\s+/)
       .filter((c) => /(^|:)(-?ml-|w-|transition|duration|ease)/.test(c));
     expect(widthish.length).toBeGreaterThan(0);
-    for (const c of widthish) expect(c).toMatch(/^(motion-reduce:)?lg:/);
+    for (const c of widthish) expect(c).toMatch(/^(motion-safe:)?lg:/);
   });
 
   it("stays normal while the WINDOW edits (it floats over the card, the page does not move)", () => {
@@ -270,10 +270,17 @@ describe("K11-20c region: the prices grid is full width only while the inline ed
   it("animates the width change in 200 ms ease-out, and not at all under prefers-reduced-motion", () => {
     mount(true, <ProductPricingRegion>x</ProductPricingRegion>);
     const cls = region().className;
-    expect(cls).toMatch(/lg:transition-\[margin,width\]/);
-    expect(cls).toMatch(/lg:duration-200/);
-    expect(cls).toMatch(/lg:ease-out/);
-    expect(cls).toMatch(/motion-reduce:lg:transition-none/);
+    // The transition exists ONLY under motion-safe: under prefers-reduced-motion no transition rule applies at all, so
+    // no stylesheet ordering of lg: against motion-reduce: can let an animation win.
+    expect(cls).toContain("motion-safe:lg:transition-[margin,width]");
+    expect(cls).toContain("motion-safe:lg:duration-200");
+    expect(cls).toContain("motion-safe:lg:ease-out");
+    expect(cls).not.toMatch(/motion-reduce/);
+    expect(cls.split(/\s+/).filter((c) => /transition|duration|ease/.test(c))).toEqual([
+      "motion-safe:lg:transition-[margin,width]",
+      "motion-safe:lg:duration-200",
+      "motion-safe:lg:ease-out",
+    ]);
   });
 
   it("the width change never remounts the grid: a focused element inside keeps focus", () => {
