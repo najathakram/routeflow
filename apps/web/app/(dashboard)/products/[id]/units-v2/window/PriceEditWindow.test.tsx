@@ -24,6 +24,7 @@ import { PriceEditWindow } from "./PriceEditWindow";
 let mockGrid: { data?: ProductPriceGridDto; isLoading: boolean; isError: boolean };
 const mockSave = jest.fn();
 let mockSaveOutcome: unknown = null;
+let mockPending = false;
 jest.mock("@/lib/api/usePriceGrid", () => ({
   ...jest.requireActual("@/lib/api/usePriceGrid"),
   usePriceGrid: () => mockGrid,
@@ -43,7 +44,7 @@ jest.mock("@/lib/api/usePriceWrites", () => ({
         setAfter({ error: mockSaveOutcome });
       },
       reset: () => setAfter({ error: null }),
-      isPending: false,
+      isPending: mockPending,
       error: after ? after.error : null,
     };
   },
@@ -138,6 +139,7 @@ beforeEach(() => {
   mockSave.mockReset();
   onClose.mockReset();
   mockSaveOutcome = null;
+  mockPending = false;
 });
 
 describe("K11-20a window: what it contains", () => {
@@ -564,6 +566,31 @@ describe("K11-20a window: closing with the X or the scrim", () => {
     expect(draft.dirty).toBe(false);
     fireEvent.pointerDown(scrim());
     await waitFor(() => expect(onClose).toHaveBeenCalledWith("cancel"));
+  });
+});
+
+describe("K11-20a window: a save in flight", () => {
+  it("N4: the X, Escape and the scrim are ignored until the save answers", async () => {
+    mockSave.mockImplementation(() => {
+      mockPending = true;
+    });
+    const user = userEvent.setup();
+    render({ focus: { ref: "case", tier: 2 } });
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    await waitFor(() => expect(box("case", 2)).toHaveFocus());
+    await armed();
+    await user.keyboard("14.5");
+    await user.click(inDialog().getByTestId(T.ebSave));
+    await waitFor(() => expect(inDialog().getByTestId(T.ebSave)).toHaveTextContent("Saving…"));
+    expect(draft.saving).toBe(true);
+    await user.keyboard("{Escape}");
+    fireEvent.pointerDown(document.querySelector("[data-floating-panel-scrim]") as HTMLElement);
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(inDialog().queryByText("Discard your unsaved changes?")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(dialog()).toBeInTheDocument();
+    expect(draft.editingIn).toBe("window");
+    expect(draft.count).toBe(1);
   });
 });
 

@@ -160,6 +160,8 @@ export function PriceEditWindow({
   // A close that is not a Cancel button: the X, the scrim, and Escape when nothing more local wants it.
   const requestClose = React.useCallback(() => {
     const cur = live.current;
+    // A save is in flight: closing now would orphan its answer (the status line, Undo, a conflict). Wait for it.
+    if (cur.d.saving) return;
     if (cur.cpOpen) {
       // The Change prices panel owns Cancel while it is open (K11-18): close it first.
       closeTopEscapePanel();
