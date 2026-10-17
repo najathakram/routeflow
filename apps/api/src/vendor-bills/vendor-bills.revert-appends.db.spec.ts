@@ -496,4 +496,34 @@ describeDb("B846 bill revert appends — real Postgres", () => {
     expect(await counter(w)).toBe(5);
     expect(await prisma.stockLot.count({ where: { productId: w.productId } })).toBe(1);
   });
+
+  it("V5 (SA-808b item 3): a two-line, one-product bill reverts — row order (uuid on a createdAt tie) never refuses", async () => {
+    const w = await seedWorld("v5");
+    const bill: any = await inTenant(w, () =>
+      bills.create({
+        supplierId: w.supplierId,
+        billNumber: "B-846-V5",
+        billDate: BILL_DATE,
+        items: [
+          { productId: w.productId, description: "Widget", qty: 5, unitCost: 2 },
+          { productId: w.productId, description: "Widget", qty: 3, unitCost: 3 },
+        ],
+      } as never),
+    );
+    await inTenant(w, () => bills.receive(bill.id, undefined, w.userId));
+    // Observe: one receive's rows tie on createdAt (CURRENT_TIMESTAMP = transaction start).
+    const created = await prisma.stockMovement.findMany({ where: { productId: w.productId } });
+    // eslint-disable-next-line no-console
+    console.log(
+      `V5 observed: ${created.length} rows, createdAt tied=${new Set(created.map((r) => r.createdAt.getTime())).size === 1}`,
+    );
+
+    await revert(w, bill.id);
+
+    const rows = await ledger(w);
+    expect(rows.map((r) => r.q).sort((a, b) => a - b)).toEqual(
+      [-5, -3, 3, 5].sort((a, b) => a - b),
+    );
+    expect(await counter(w)).toBe(0);
+  });
 });
