@@ -1,11 +1,20 @@
 "use client";
 
 import * as React from "react";
+import { flushSync } from "react-dom";
 import { Button } from "@routeflow/ui/web";
 import { UNITS_V2_CONFIRM_TESTIDS as IDS } from "./confirm-testids";
 import type { UndoSkipCell } from "@routeflow/types";
 import type { LastSave, UndoConflict, UndoFn, UndoPreviewRow } from "./types";
+import { useShellBottom } from "../edit/useClearOfShellPadding";
 import { useEscapeCloses } from "./useEscapeCloses";
+
+/** K11-16: how long the saved line holds the Edit bar's slot, and the fade that lets go of it. */
+const PIN_MS = 5000;
+const FADE_MS = 150;
+
+/** "on" = pinned in the bar's slot, "fading" = letting go, "off" = settled in its place in the section. */
+type Pin = "on" | "fading" | "off";
 
 type Phase = "idle" | "saved" | "preview" | "undone" | "error" | "unavailable";
 interface State {
@@ -23,8 +32,11 @@ interface State {
   revision?: number;
   priceState?: string;
   busy: boolean;
+  pin: Pin;
 }
 type Action =
+  | { type: "fade" }
+  | { type: "unpin" }
   | { type: "saved"; auditId: string; summary: string }
   | { type: "edit" }
   | { type: "cleared" }
@@ -51,17 +63,22 @@ const IDLE: State = {
   conflicts: [],
   skipped: 0,
   busy: false,
+  pin: "off",
 };
 
 function reduce(s: State, a: Action): State {
   switch (a.type) {
     case "saved":
-      return { ...IDLE, phase: "saved", auditId: a.auditId, summary: a.summary };
+      return { ...IDLE, phase: "saved", auditId: a.auditId, summary: a.summary, pin: "on" };
     case "edit":
       return s.phase === "idle" ? s : IDLE;
     case "cleared":
       // The draft forgot its save: an Undo-able line goes, but a finished Undo's answer stays on screen.
       return s.phase === "saved" || s.phase === "preview" || s.phase === "error" ? IDLE : s;
+    case "fade":
+      return s.pin === "on" ? { ...s, pin: "fading" } : s;
+    case "unpin":
+      return s.pin === "off" ? s : { ...s, pin: "off" };
     case "busy":
       return { ...s, busy: true };
     case "undone":
@@ -78,13 +95,25 @@ function reduce(s: State, a: Action): State {
         revision: a.revision,
         priceState: a.priceState,
         busy: false,
+        pin: "off",
       };
     case "dismiss":
-      return { ...s, phase: "saved", rows: [], busy: false };
+      return { ...s, phase: "saved", rows: [], busy: false, pin: "off" };
     case "failed":
-      return { ...s, phase: "error", rows: [], busy: false };
+      return { ...s, phase: "error", rows: [], busy: false, pin: "off" };
   }
 }
+
+/** The bar's look (PriceEditBar: sticky, border-t, bg-white/95 + blur, -mx-4 px-4), on the one live region. */
+const PINNED_CLASS =
+  "sticky z-30 -mx-4 mt-2 flex flex-wrap items-center gap-2 border-t border-surface-border bg-white/95 px-4 py-2 text-[13px] text-navy backdrop-blur focus:outline-none";
+const FADING_CLASS = " opacity-0 transition-opacity duration-150 motion-reduce:transition-none";
+const SETTLED_CLASS =
+  "mt-2 flex flex-wrap items-center gap-2 rounded-ctl border border-line bg-surface-raised px-3 py-2 text-[13px] text-navy focus:outline-none";
+
+const prefersReducedMotion = () =>
+  typeof window !== "undefined" &&
+  window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -137,6 +166,45 @@ export function PriceSaveStatusLine({
 
   const { phase, busy } = state;
   const previewing = phase === "preview";
+  const pinned = phase === "saved" && state.pin !== "off";
+
+  // K11-16: the 5 s in the bar's slot. It restarts on each new save, and waits while the pointer is over the line or
+  // focus is inside it (never un-pin under a focused Undo). Hover and focus are forgotten once the Undo is gone: a
+  // removed node fires no mouseleave or blur.
+  const [hover, setHover] = React.useState(false);
+  const [focusIn, setFocusIn] = React.useState(false);
+  const hold = hover || focusIn;
+  const hasUndoNow = phase === "saved" || previewing || phase === "error";
+  React.useEffect(() => {
+    if (hasUndoNow) return;
+    setHover(false);
+    setFocusIn(false);
+  }, [hasUndoNow]);
+  const pinOn = phase === "saved" && state.pin === "on";
+  React.useEffect(() => {
+    if (!pinOn || hold) return;
+    const t = setTimeout(
+      () => dispatch({ type: prefersReducedMotion() ? "unpin" : "fade" }),
+      PIN_MS,
+    );
+    return () => clearTimeout(t);
+  }, [pinOn, hold, state.auditId]);
+  React.useEffect(() => {
+    if (state.pin !== "fading") return;
+    const t = setTimeout(() => dispatch({ type: "unpin" }), FADE_MS);
+    return () => clearTimeout(t);
+  }, [state.pin]);
+  const shellBottom = useShellBottom(pinned);
+
+  const onUndoClick = () => {
+    if (previewing) return close();
+    if (pinned) {
+      // Un-pin first (synchronously, so the line is back in its place), then bring it into view, then show the preview.
+      flushSync(() => dispatch({ type: "unpin" }));
+      lineRef.current?.scrollIntoView?.({ block: "nearest" });
+    }
+    void run(false);
+  };
   const close = React.useCallback(() => {
     refocusUndo.current = true;
     dispatch({ type: "dismiss" });
@@ -199,10 +267,22 @@ export function PriceSaveStatusLine({
         role="status"
         tabIndex={-1}
         data-testid={IDS.saveStatus}
+        data-pinned={
+          phase === "saved" ? (state.pin === "fading" ? "settling" : String(pinned)) : "false"
+        }
+        style={pinned ? { bottom: `${shellBottom}px` } : undefined}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        onFocus={() => setFocusIn(true)}
+        onBlur={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusIn(false);
+        }}
         className={
           phase === "idle"
             ? undefined
-            : "mt-2 flex flex-wrap items-center gap-2 rounded-ctl border border-line bg-surface-raised px-3 py-2 text-[13px] text-navy focus:outline-none"
+            : pinned
+              ? PINNED_CLASS + (state.pin === "fading" ? FADING_CLASS : "")
+              : SETTLED_CLASS
         }
       >
         {hasUndo ? (
@@ -222,7 +302,7 @@ export function PriceSaveStatusLine({
               aria-expanded={previewing}
               aria-controls={previewing ? previewId : undefined}
               aria-disabled={busy || undefined}
-              onClick={() => (previewing ? close() : run(false))}
+              onClick={onUndoClick}
             >
               Undo
             </Button>
