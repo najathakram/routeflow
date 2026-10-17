@@ -30,6 +30,9 @@ const TIERS = [1, 2, 3, 4, 5] as const;
 export const FIELD_BORDER = "border-field";
 export const FRAME_BORDER = "border-surface-border";
 const GRID_DIVIDER = "border-line-strong";
+// K11-10: the pinned Unit column. Bounded, so a long reason cannot widen it; a hairline shows while the table is scrolled.
+const UNIT_CELL =
+  "sticky left-0 z-10 min-w-[7rem] max-w-[10rem] whitespace-normal bg-white px-2 text-left group-data-[scrolled=true]:shadow-[inset_-1px_0_0_rgba(15,23,42,0.15)]";
 
 const plural = (label: string, n: number) =>
   n === 1 ? label : /(s|x|ch|sh)$/i.test(label) ? `${label}es` : `${label}s`;
@@ -274,7 +277,7 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
             edit.setText(t.ref, tier, atFocus.current, t.original);
           }}
           onChange={(e) => edit.setText(t.ref, tier, e.target.value, t.original)}
-          className={`h-9 w-24 rounded-md border bg-white pl-5 pr-2 text-sm tabular-nums text-navy focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 ${
+          className={`h-9 w-[5.5rem] rounded-md border bg-white pl-[1.125rem] pr-1.5 text-sm tabular-nums text-navy focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 ${
             problem
               ? "border-red-600"
               : edit.changed(t.ref, tier)
@@ -321,6 +324,75 @@ function PriceCell({
         </button>
       ) : (
         <CellDisplay view={view} />
+      )}
+    </div>
+  );
+}
+
+/** "Tier 4", "Tier 4 and Tier 5", "A, B and C". */
+const joinNames = (names: string[]): string =>
+  names.length <= 1
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
+/**
+ * K11-10: the table's scroll box. Wherever it is narrower than its table, a fade on its right edge and a line under it
+ * name the tiers that are actually cut off (an IntersectionObserver on the tier headers, rooted at the box, so the
+ * names are never hard-coded and the line goes away once the end is in view). The pinned Unit column gets a divider
+ * while the box is scrolled.
+ */
+function ScrollRegion({ names, children }: { names: string[]; children: React.ReactNode }) {
+  const region = React.useRef<HTMLDivElement>(null);
+  const [clipped, setClipped] = React.useState<number[]>([]);
+  const [scrolled, setScrolled] = React.useState(false);
+  React.useEffect(() => {
+    const root = region.current;
+    if (!root || typeof IntersectionObserver === "undefined") return;
+    const cut = new Set<number>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          const tier = Number((e.target as HTMLElement).dataset.tierHead);
+          const edge = e.rootBounds?.right ?? Infinity;
+          // Cut off on the RIGHT only: a header scrolled out on the left is not "more to scroll for".
+          if (e.intersectionRatio < 0.98 && e.boundingClientRect.right > edge + 0.5) cut.add(tier);
+          else cut.delete(tier);
+        }
+        setClipped([...cut].sort((a, b) => a - b));
+      },
+      { root, threshold: [0, 0.5, 0.98, 1] },
+    );
+    root.querySelectorAll("th[data-tier-head]").forEach((th) => observer.observe(th));
+    return () => observer.disconnect();
+  }, []);
+  const hidden = clipped.map((t) => names[t - 1]);
+  return (
+    <div className="hidden md:block">
+      <div className="relative">
+        <div
+          ref={region}
+          role="region"
+          data-testid={T.unitsTable}
+          data-scrolled={scrolled}
+          aria-labelledby="units-v2-grid-title"
+          tabIndex={0}
+          onScroll={(e) => setScrolled(e.currentTarget.scrollLeft > 0)}
+          className="group overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+        >
+          {children}
+        </div>
+        <div
+          aria-hidden="true"
+          data-testid={T.scrollFade}
+          className={`pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-r from-transparent to-white transition-opacity duration-150 motion-reduce:transition-none ${
+            clipped.length > 0 ? "opacity-100" : "opacity-0"
+          }`}
+        />
+      </div>
+      {clipped.length > 0 && (
+        <p data-testid={T.scrollCue} className="mt-2 text-xs text-navy/60">
+          Scroll for {joinNames(hidden)}
+        </p>
       )}
     </div>
   );
@@ -394,19 +466,13 @@ export function ProductPricesGrid({
         Prices by unit
       </h2>
 
-      <div
-        role="region"
-        data-testid={T.unitsTable}
-        aria-labelledby="units-v2-grid-title"
-        tabIndex={0}
-        className="hidden overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 md:block"
-      >
-        <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+      <ScrollRegion names={names}>
+        <table className="w-full border-collapse text-left text-sm">
           <thead>
             <tr
               className={`border-b text-[11px] uppercase tracking-wide text-navy/60 ${GRID_DIVIDER}`}
             >
-              <th scope="col" className="sticky left-0 z-10 bg-white px-2 py-2 font-medium">
+              <th scope="col" className={`${UNIT_CELL} py-2 font-medium`}>
                 Unit
               </th>
               {rowAction && (
@@ -414,14 +480,11 @@ export function ProductPricesGrid({
                   <span className="sr-only">Unit actions</span>
                 </th>
               )}
-              <th scope="col" className="px-2 py-2 font-medium">
+              <th scope="col" className="min-w-[7rem] px-2 py-2 font-medium">
                 Contains
               </th>
-              <th scope="col" className="px-2 py-2 font-medium">
-                Barcode
-              </th>
               {names.map((n, i) => (
-                <th key={i} scope="col" className="px-2 py-2 font-medium">
+                <th key={i} scope="col" data-tier-head={i + 1} className="px-2 py-2 font-medium">
                   {n}
                 </th>
               ))}
@@ -434,21 +497,28 @@ export function ProductPricesGrid({
                 data-testid={T.row(row.ref)}
                 className={`border-b align-top last:border-b-0 ${GRID_DIVIDER}`}
               >
-                <th
-                  scope="row"
-                  className="sticky left-0 z-10 bg-white px-2 py-3 text-left font-medium text-navy"
-                >
+                <th scope="row" className={`${UNIT_CELL} py-3 font-medium text-navy`}>
                   {row.label}
+                  <div
+                    data-testid={T.code(row.ref)}
+                    className="mt-0.5 text-xs font-normal tabular-nums text-navy/60"
+                  >
+                    {row.code ?? "No barcode"}
+                  </div>
                   <NotEditable row={row} />
                 </th>
                 {rowAction && <td className="px-2 py-3">{rowAction(row, "table")}</td>}
-                <td className="px-2 py-3 text-navy/80">
-                  {containsLines(row, ascending).map((l) => (
-                    <div key={l}>{l}</div>
+                <td className="min-w-[7rem] px-2 py-3 text-navy/80">
+                  {containsLines(row, ascending).map((l, n) => (
+                    <div
+                      key={l}
+                      className={
+                        n === 0 ? "whitespace-nowrap" : "whitespace-nowrap text-xs text-navy/60"
+                      }
+                    >
+                      {l}
+                    </div>
                   ))}
-                </td>
-                <td className="px-2 py-3 text-navy/80">
-                  <span data-testid={T.code(row.ref)}>{row.code ?? "No barcode"}</span>
                 </td>
                 {TIERS.map((t, i) => (
                   <td key={t} className="px-2 py-3">
@@ -468,7 +538,7 @@ export function ProductPricesGrid({
             ))}
           </tbody>
         </table>
-      </div>
+      </ScrollRegion>
 
       <div className="space-y-3 md:hidden">
         {rows.map((row) => (

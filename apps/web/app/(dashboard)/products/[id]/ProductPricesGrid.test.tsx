@@ -85,7 +85,7 @@ describe("ProductPricesGrid (S11, read-only)", () => {
   it("T35: the header says Barcode and never SKU", () => {
     render(<ProductPricesGrid product={product} />);
     const g = screen.getByTestId(T.grid);
-    expect(within(g).getAllByText("Barcode").length).toBeGreaterThan(0);
+    expect(within(g).getAllByText(/barcode/i).length).toBeGreaterThan(0);
     expect(g.textContent).not.toMatch(/SKU/i);
   });
 

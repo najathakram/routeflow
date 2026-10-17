@@ -302,12 +302,13 @@ describe("K10d: the add-unit pointer", () => {
 describe("K10d fold: the row header stays clean", () => {
   it("each unit's row-header name is just the unit label, and Remove sits in its own cell", () => {
     render();
-    expect(screen.getAllByRole("rowheader").map((h) => h.textContent)).toEqual([
+    // K11-10: the barcode is now the unit cell's second line, so the NAME is the cell's first text node.
+    expect(screen.getAllByRole("rowheader").map((h) => h.firstChild?.textContent)).toEqual([
       "Case",
       "Box",
       "Piece",
     ]);
-    expect(screen.getByRole("rowheader", { name: "Box" })).toBeInTheDocument();
+    expect(screen.getByRole("rowheader", { name: /^Box/ })).toBeInTheDocument();
     const rm = removeOpener();
     expect(rm.closest("th")).toBeNull();
     expect(rm.closest("td")).not.toBeNull();
@@ -330,7 +331,8 @@ describe("K10d fold: the row header stays clean", () => {
   it("without the controls the table has no extra column", () => {
     mockUnitsOn = false;
     render();
-    expect(screen.getAllByRole("columnheader")).toHaveLength(8);
+    // K11-10: Barcode is no longer a column (it moved into the Unit cell).
+    expect(screen.getAllByRole("columnheader")).toHaveLength(7);
   });
 });
 

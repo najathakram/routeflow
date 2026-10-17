@@ -33,6 +33,8 @@ export const UNITS_V2_TESTIDS = {
   ebProblems: "units-v2-eb-problems",
   skipSave: "units-v2-skip-save",
   unitsTable: "units-v2-units-table",
+  scrollCue: "units-v2-scroll-cue",
+  scrollFade: "units-v2-scroll-fade",
   hUnits: "units-v2-h-units",
   orderUnit: "units-v2-order-unit",
   orderUnitReason: "units-v2-order-unit-reason",
