@@ -42,6 +42,7 @@ const OUTSIDE_WRITERS: readonly string[] = [
   "apps/api/src/import/variant-resolution.service.ts",
   "apps/api/src/inventory/inventory.service.ts",
   "apps/api/src/inventory/testing/count-db-harness.ts",
+  "apps/api/src/inventory/testing/order-stock-world.ts", // a test fixture that seeds stock worlds, never production
   "apps/api/src/invoices/invoice-edit-plan.ts",
   "apps/api/src/invoices/invoice-restriction-lines.ts",
   "apps/api/src/orders/orders.service.ts",

@@ -2309,9 +2309,7 @@ function CostingTab() {
   const { data: config, isLoading } = useMarginConfig();
   const update = useUpdateMarginConfig();
 
-  const [method, setMethod] = React.useState<"WEIGHTED_AVERAGE" | "FIFO" | "LAST_COST">(
-    "WEIGHTED_AVERAGE",
-  );
+  const [method, setMethod] = React.useState<"WEIGHTED_AVERAGE" | "LAST_COST">("WEIGHTED_AVERAGE");
   const [floorPct, setFloorPct] = React.useState("15");
 
   React.useEffect(() => {
@@ -2358,7 +2356,6 @@ function CostingTab() {
             disabled={!isAdmin}
             options={[
               { value: "WEIGHTED_AVERAGE", label: "Weighted average" },
-              { value: "FIFO", label: "FIFO (first in, first out)" },
               { value: "LAST_COST", label: "Last cost" },
             ]}
           />

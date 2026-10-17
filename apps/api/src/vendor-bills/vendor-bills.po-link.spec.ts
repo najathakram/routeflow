@@ -94,6 +94,10 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // B1236: bill lines are validated against the catalog; by default every named id resolves.
+    prisma.product.findMany.mockImplementation(async (args: any) =>
+      (args?.where?.id?.in ?? []).map((id: string) => ({ id })),
+    );
     // receive() re-reads the bill inside its transaction (B285 row lock): repeat the last bill read
     prisma.vendorBill.findUnique.mockImplementation(
       () =>

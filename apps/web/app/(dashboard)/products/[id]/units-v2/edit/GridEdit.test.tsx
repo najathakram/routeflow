@@ -33,6 +33,11 @@ jest.mock("@/lib/api/tier-labels", () => ({
   useTierLabels: () => ({ data: { "2": "Wholesale", "3": "Distributor" } }),
 }));
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => false }));
+// The customers query is settled (Save also waits for it) and holds nobody; Seams.test.tsx drives it.
+jest.mock("@/lib/api/useProductCustomerPrices", () => ({
+  ...jest.requireActual("@/lib/api/useProductCustomerPrices"),
+  useProductCustomerPrices: () => ({ data: { customers: [] }, isFetching: false }),
+}));
 
 const cells = (v: number[], src: Array<"auto" | "set"> = []) =>
   v.map((value, i) => ({

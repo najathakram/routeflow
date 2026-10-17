@@ -34,6 +34,7 @@ describe("flag.units_prices_v2 (SA-796 R-5: enforced-but-ungranted, not dark)", 
           added: "2026-10-16",
           routes: [
             "GET /products/:productId/price-grid (product-pricing.controller.ts, class-level)",
+            "GET /products/:productId/customer-prices (product-pricing.controller.ts, class-level)",
             "POST /products/:productId/prices (product-pricing.controller.ts, class-level)",
             "POST /products/:productId/prices/undo (product-pricing.controller.ts, class-level)",
             "GET /customers/:customerId/unit-prices (customer-unit-prices.controller.ts, class-level)",

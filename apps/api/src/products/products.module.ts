@@ -5,6 +5,7 @@ import { ProductsController } from "./products.controller";
 import { ProductPortalVisibilityController } from "./product-portal-visibility.controller";
 import { ProductPortalVisibilityService } from "./product-portal-visibility.service";
 import { ProductsService } from "./products.service";
+import { ProductCustomerPricesService } from "./product-customer-prices.service";
 import { ProductPriceGridService } from "./product-price-grid.service";
 import { ProductPriceWriteService } from "./product-price-write.service";
 import { ProductPricingController } from "./product-pricing.controller";
@@ -44,6 +45,7 @@ import { GatewaysModule } from "../gateways/gateways.module";
     ProductUnitsService,
     ProductPriceGridService,
     ProductPriceWriteService,
+    ProductCustomerPricesService,
     RecipesService,
     ProductsExportService,
   ],
