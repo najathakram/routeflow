@@ -2530,6 +2530,7 @@ function ProductPickView({
         priceHistory={priceHistory}
         tierPriceFor={tierPriceFor}
         isSpecialFor={isSpecialFor}
+        layerOf={layerOf}
         tierForProductId={effectiveTierFor}
         marginFloorFor={(p) => floorForCategory(marginConfig, p.category)}
         unlisted={unlisted}

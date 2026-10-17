@@ -9,7 +9,8 @@ import { type LineState, type Product } from "../../lib/cart-line-state";
 import { CartRow } from "../CartRow";
 import { CartStepperRow } from "../CartStepperRow";
 import { type CustomerPriceHistory } from "../../lib/api/orders";
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { computeLineSubtotal, type CustomerLayerUnit } from "@routeflow/pricing";
+import { layerUnitBaseFor } from "../../lib/cart-order-total";
 import { type InvoiceSplitPreview } from "../../lib/invoice-split";
 import { MoneyTextInput } from "../MoneyTextInput";
 import { fmtCalendarDate } from "../../lib/format-date";
@@ -253,6 +254,7 @@ export function CartModal({
   tierPriceFor,
   isSpecialFor,
   tierForProductId,
+  layerOf,
   marginFloorFor,
   unlisted,
   total,
@@ -296,6 +298,8 @@ export function CartModal({
   /** units_v1: the EFFECTIVE numeric tier (1-5) for a product — `UnitPickerRow` resolves the
    *  ladder price at this tier, same source as `isSpecialFor`/`tierPriceFor`. */
   tierForProductId: (productId: string) => number;
+  /** S19b: the customer's price layer for a product (undefined flag-off / no typed price): unit lines use its price. */
+  layerOf?: (productId: string) => readonly CustomerLayerUnit[] | null | undefined;
   /** The customer's effective margin floor (fraction) for a product's category. */
   marginFloorFor: (p: Product) => number;
   unlisted: UnlistedLine[];
@@ -384,6 +388,12 @@ export function CartModal({
                     catalogPrice={tierPriceFor(product)}
                     isSpecial={isSpecialFor(product)}
                     tier={tierForProductId(product.id)}
+                    layerUnitBase={layerUnitBaseFor(
+                      line,
+                      product,
+                      tierForProductId(product.id),
+                      layerOf?.(product.id),
+                    )}
                     marginFloor={marginFloorFor(product)}
                     historyPrice={priceHistory?.[id]?.lastPrice}
                     onChangeBoxes={(n) => onChangeBoxes(id, n)}

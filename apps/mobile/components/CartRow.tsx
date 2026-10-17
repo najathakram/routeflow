@@ -32,6 +32,7 @@ export function CartRow({
   catalogPrice,
   isSpecial,
   tier,
+  layerUnitBase,
   marginFloor,
   historyPrice,
   onChangeBoxes,
@@ -59,6 +60,8 @@ export function CartRow({
   isSpecial: boolean;
   /** units_v1: the EFFECTIVE numeric tier for `UnitPickerRow` to resolve the ladder price at. */
   tier: number;
+  /** S19b: a unit line whose unit is in the customer's price layer compares against THAT price, not the pack-level `catalogPrice`. */
+  layerUnitBase?: number;
   /** Category margin floor (fraction) for the live cost/margin hint. */
   marginFloor: number;
   historyPrice?: number;
@@ -88,7 +91,7 @@ export function CartRow({
   const isBoxed = upb > 1 && !line.unitLabel;
   const sellBy = line.sellBy ?? "case";
   // units_v1: see lib/unit-options.ts#unitPriceBase.
-  const priceBase = unitPriceBase(line, catalogPrice);
+  const priceBase = layerUnitBase ?? unitPriceBase(line, catalogPrice);
   const effUnit = isSpecial ? priceBase : effectiveUnitPrice(line, priceBase);
   const isOverridden = !isSpecial && line.unitPrice != null && line.unitPrice !== priceBase;
   const qty = effectiveQty(line, product.unitsPerBox);

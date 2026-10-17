@@ -26,14 +26,9 @@ import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers
 import { showToast } from "../../../../../lib/toast";
 import { FAMILY_ADD_MESSAGE, isFamilyProduct } from "../../../../../lib/sellable-products";
 import { confirm } from "../../../../../lib/confirm";
-import {
-  computeLineSubtotal,
-  effectiveQty,
-  isSpecialTier,
-  type SellLevel,
-} from "@routeflow/pricing";
+import { computeLineSubtotal, effectiveQty, type SellLevel } from "@routeflow/pricing";
 import { useCustomerPriceLayer } from "../../../../../lib/api/price-layer";
-import { packLinePrice } from "../../../../../lib/cart-order-total";
+import { packIsSpecial, packLinePrice } from "../../../../../lib/cart-order-total";
 import { priceLayerGate } from "../../../../../lib/price-layer-gate";
 import { marginFloorPrice } from "../../../../../lib/margin-floor-price";
 import { isUnitLine, setLineUnits } from "../../../../../lib/sale-line";
@@ -166,7 +161,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
    *  (the create surface's own rule, components/NewOrderScreen.tsx:627). Mobile's
    *  editor contradicted mobile's builder until this landed; the api-side gate is
    *  still the owner's call, so this is a CLIENT gate only (RULINGS R2/R9). */
-  const isSpecialFor = (productId: string) => isSpecialTier(effectiveTierFor(productId));
+  // S19b: a layered SPECIAL (the customer layer's pack row) is gated like a tier SPECIAL, else Save hits the server's 400.
+  // No layer (flag off / no typed price) is `isSpecialTier(tier)` exactly.
+  const isSpecialFor = (productId: string) =>
+    packIsSpecial(effectiveTierFor(productId), layerOf(productId));
   const userRole = useAuthStore((s) => s.user?.role);
   const userId = useAuthStore((s) => s.user?.id);
   // Customer accounts shouldn't reach this screen, but defend anyway —

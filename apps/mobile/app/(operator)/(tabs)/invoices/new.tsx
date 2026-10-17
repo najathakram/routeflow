@@ -100,7 +100,7 @@ import { useAuthStore } from "../../../../lib/auth-store";
 import { hasUnsavedInvoiceDraft, shouldConfirmDiscard } from "../../../../lib/discard-guard";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
-import { computeLineSubtotal, effectiveQty } from "@routeflow/pricing";
+import { computeLineSubtotal, effectiveQty, type CustomerLayerUnit } from "@routeflow/pricing";
 import { useCustomerPriceLayer } from "../../../../lib/api/price-layer";
 import { packLinePrice, withLayerBase } from "../../../../lib/cart-order-total";
 import { priceLayerGate } from "../../../../lib/price-layer-gate";
@@ -1258,13 +1258,8 @@ function InvoiceComposer({
   const [saleRecorded, setSaleRecorded] = useState(false);
   // D-5 (SA-813 M3): Create stays disabled until every line's price is confirmed by the layer read.
   const layerGate = priceLayerGate(priceLayer, Object.keys(items));
-  const canSave =
-    totalItems > 0 &&
-    !saving &&
-    !anyUnitLoading &&
-    !saleRecorded &&
-    !saleUnknown &&
-    !layerGate.blocked;
+  const baseOk = totalItems > 0 && !saving && !anyUnitLoading && !saleRecorded && !saleUnknown;
+  const canSave = baseOk && !layerGate.blocked;
 
   // No FormSheet on this screen, so it applies the same choke-point rule as
   // FormSheet.tsx's handleCancel directly: never prompt "Discard invoice?"
@@ -1863,6 +1858,7 @@ function InvoiceComposer({
         taxRateFraction={taxRateFraction}
         tierPriceFor={tierPriceFor}
         isSpecialFor={isSpecialFor}
+        layerOf={layerOf}
         tierFor={effectiveTierFor}
         isStaff={isStaff}
         onChangeUnit={setUnitLabel}
@@ -2022,6 +2018,7 @@ function ReviewSheet({
   taxRateFraction,
   tierPriceFor,
   isSpecialFor,
+  layerOf,
   tierFor,
   isStaff,
   onChangeUnit,
@@ -2062,6 +2059,8 @@ function ReviewSheet({
   tierPriceFor: (p: Product) => number;
   /** #2696(c): the server's "special" for this customer (tier ≠ 1). */
   isSpecialFor: (p: Product) => boolean;
+  /** S19b: the customer's price layer per product (undefined flag-off / no typed price). */
+  layerOf?: (productId: string) => readonly CustomerLayerUnit[] | null | undefined;
   /** units_v1: the EFFECTIVE tier per product, for the picker's ladder prices. */
   tierFor: (id: string) => number;
   isStaff: boolean;
@@ -2131,7 +2130,7 @@ function ReviewSheet({
                   <ReviewRow
                     key={id}
                     product={product}
-                    line={line}
+                    line={withLayerBase(line, product, tierFor(id), layerOf?.(id))}
                     taxRateFraction={taxRateFraction}
                     catalogPrice={tierPriceFor(product)}
                     isSpecial={isSpecialFor(product)}

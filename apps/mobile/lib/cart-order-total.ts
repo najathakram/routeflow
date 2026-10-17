@@ -61,6 +61,21 @@ export function packIsSpecial(tier: number, layer?: readonly CustomerLayerUnit[]
 }
 
 /**
+ * The layer price of a unit-sold line's unit, or undefined (a pack line, a unit with no layer row, flag off). The cart row
+ * prefers it over the pack-level `catalogPrice` it would otherwise compare against.
+ */
+export function layerUnitBaseFor(
+  line: { unitLabel?: string | null; unitBasePrice?: number },
+  product: Product,
+  tier: number,
+  layer?: readonly CustomerLayerUnit[] | null,
+): number | undefined {
+  if (!line.unitLabel || !layer) return undefined;
+  const lp = lineLayerPrice(line, product, tier, layer);
+  return lp.layered ? lp.price : undefined;
+}
+
+/**
  * A unit-sold line whose unit has a row in the customer layer carries THAT price as its base (`unitBasePrice`), so every
  * downstream `unitPriceBase(line, ...)` reads billing's number. With no layer row (flag off, or no typed price) it returns the
  * SAME line object, so master's paths are untouched.
