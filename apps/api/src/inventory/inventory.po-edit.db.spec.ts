@@ -396,12 +396,32 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
       ),
     );
 
+    // Positive rows only: the reversal also writes a NEGATIVE PURCHASE row at the same unitCost 4,
+    // dated now, and an unordered read can return it ahead of the original receipt.
     const purchases = await prisma.stockMovement.findMany({
-      where: { tenantId: w.tenantId, reference: po.poNumber, type: "PURCHASE" },
+      where: {
+        tenantId: w.tenantId,
+        reference: po.poNumber,
+        type: "PURCHASE",
+        quantity: { gt: 0 },
+      },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     const kept = purchases.find((m) => m.unitCost!.toString() === "4")!;
     const repost = purchases.find((m) => m.unitCost!.toString() === "5")!;
     expect(kept.createdAt.toISOString()).toBe(original.toISOString()); // August is untouched
+    const compensations = await prisma.stockMovement.findMany({
+      where: {
+        tenantId: w.tenantId,
+        reference: po.poNumber,
+        type: "PURCHASE",
+        quantity: { lt: 0 },
+      },
+    });
+    expect(compensations).toHaveLength(1);
+    expect(Number(compensations[0].quantity)).toBe(-20);
+    expect(compensations[0].unitCost!.toString()).toBe("4");
+    expect(compensations[0].createdAt.getTime()).toBeGreaterThan(original.getTime());
     expect(repost.createdAt.getTime()).toBeGreaterThan(original.getTime()); // the correction is dated now
     const [lot] = await prisma.stockLot.findMany({
       where: { tenantId: w.tenantId, reference: po.poNumber },
