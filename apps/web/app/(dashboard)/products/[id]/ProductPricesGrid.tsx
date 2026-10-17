@@ -7,7 +7,7 @@ import { useHasAddon } from "@/lib/api/tobacco";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { usePriceGrid } from "@/lib/api/usePriceGrid";
 import { formatMoney } from "@/lib/format";
-import { tierLabel } from "@/lib/tier-label";
+import { productTierLabel } from "@/lib/tier-one-label";
 import type { UnitsCardProduct } from "./ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "./units-v2-testids";
 import type { GridEditApi } from "./units-v2/edit/edit-types";
@@ -237,7 +237,7 @@ export function ProductPricesGrid({
   const rows = [...(edit?.rows ?? served)].sort((a, b) => b.factor - a.factor);
   const ascending = [...rows].reverse();
   const baseLabel = grid.data.rows.find((x) => x.kind === "base")?.label;
-  const names = TIERS.map((t) => (t === 1 ? "Retail" : tierLabel(labels, t)));
+  const names = TIERS.map((t) => productTierLabel(labels, t));
   const targetFor = (
     row: ProductPriceGridRowDto,
     i: number,

@@ -54,6 +54,7 @@ import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactiv
 import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
+import { ProductNameLink } from "./_components/ProductNameLink";
 import { RestrictMenu } from "@/components/restrictions/RestrictMenu";
 import { SelectAllMatching } from "@/components/restrictions/SelectAllMatching";
 import { OFF_PAGE_HINT, OFF_PAGE_HINT_ID } from "@/lib/rule-chooser";
@@ -228,7 +229,13 @@ function ProductCard({
                 context is rendered below as a small caption. Falls back to
                 full `name` for variants whose row still has the legacy
                 "Parent - Variant" composite name (pre-fix data). */}
-            {product.variantName ?? product.name}
+            {selectionMode ? (
+              (product.variantName ?? product.name)
+            ) : (
+              <ProductNameLink id={product.id} stretched>
+                {product.variantName ?? product.name}
+              </ProductNameLink>
+            )}
           </p>
         </div>
         <div className="mt-auto flex items-end justify-between gap-1">
@@ -272,7 +279,7 @@ function ProductCard({
               e.stopPropagation();
               onAddVariant(product.id);
             }}
-            className="mt-1 flex items-center gap-1 text-[10px] text-navy/70 hover:text-brand-500 transition-colors"
+            className="relative z-10 mt-1 flex items-center gap-1 text-[10px] text-navy/70 hover:text-brand-500 transition-colors"
           >
             <Plus className="h-2.5 w-2.5" />
             Add variant
@@ -457,7 +464,7 @@ function makeTableColumns(
             </div>
             <div className="min-w-0">
               <p className="font-semibold text-navy">
-                {p.name}
+                {selectMode ? p.name : <ProductNameLink id={p.id}>{p.name}</ProductNameLink>}
                 {(p as any).isTobacco && (
                   <span
                     title="Tobacco product — tracked separately for monthly tax reports"

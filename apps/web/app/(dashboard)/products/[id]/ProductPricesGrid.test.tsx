@@ -8,9 +8,10 @@ import { UNITS_V2_TESTIDS as T } from "./units-v2-testids";
 
 let mockGrid: { data?: ProductPriceGridDto; isLoading: boolean; isError: boolean };
 let mockMsrpAddon = false;
+let mockLabels: Record<string, string> = { "2": "Wholesale", "3": "Distributor" };
 jest.mock("@/lib/api/usePriceGrid", () => ({ usePriceGrid: () => mockGrid }));
 jest.mock("@/lib/api/tier-labels", () => ({
-  useTierLabels: () => ({ data: { "2": "Wholesale", "3": "Distributor" } }),
+  useTierLabels: () => ({ data: mockLabels }),
 }));
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => mockMsrpAddon }));
 
@@ -62,10 +63,24 @@ const product = { id: "p1", unit: "Piece", unitsPerBox: 24, pricePerUnit: "0.92"
 
 beforeEach(() => {
   mockMsrpAddon = false;
+  mockLabels = { "2": "Wholesale", "3": "Distributor" };
   mockGrid = { data: grid, isLoading: false, isError: false };
 });
 
 describe("ProductPricesGrid (S11, read-only)", () => {
+  it("P02: the base price column is Retail by default and the tenant's own label when set, never Tier 1", () => {
+    const { unmount } = render(<ProductPricesGrid product={product} />);
+    const g = screen.getByTestId(T.grid);
+    expect(within(g).getAllByText("Retail").length).toBeGreaterThan(0);
+    expect(g.textContent).not.toMatch(/Tier 1/);
+    unmount();
+    mockLabels = { "1": "Walk-in" };
+    render(<ProductPricesGrid product={product} />);
+    const g2 = screen.getByTestId(T.grid);
+    expect(within(g2).getAllByText("Walk-in").length).toBeGreaterThan(0);
+    expect(g2.textContent).not.toMatch(/Retail|Tier 1/);
+  });
+
   it("T35: the header says Barcode and never SKU", () => {
     render(<ProductPricesGrid product={product} />);
     const g = screen.getByTestId(T.grid);

@@ -58,7 +58,7 @@ import {
   type TierField,
 } from "@routeflow/pricing";
 import { useTierLabels } from "@/lib/api/tier-labels";
-import { tierLabel } from "@/lib/tier-label";
+import { productTierLabel, tierOneLabel } from "@/lib/tier-one-label";
 import { unitsLabel } from "@/lib/stock-label";
 import { stockCountLabel } from "../_components/product-status";
 import { PiecesPerBoxValue } from "./PiecesPerBoxValue";
@@ -75,6 +75,7 @@ import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { usePricesV2Enabled } from "@/lib/api/units-v2";
 import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
+import { ProductImagesEmpty } from "./ProductImagesEmpty";
 import { ProductStockCostCard } from "./ProductStockCostCard";
 import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { useReactivateFlow } from "./useReactivateFlow";
@@ -817,7 +818,7 @@ export default function ProductDetailPage() {
         priceTier5: variantForm.priceTier5 || variantForm.price,
       };
       const vMoved = ladderChangeNote(editTierPatchMoves(editingVariant as any, vDraft), (n) =>
-        tierLabel(tierLabels, n),
+        productTierLabel(tierLabels, n),
       );
       updateProduct.mutate(
         {
@@ -1226,6 +1227,10 @@ export default function ProductDetailPage() {
                     if (toDelete.length > 0) setPendingImageDelete(toDelete);
                   };
 
+                  if (!hasImages)
+                    return (
+                      <ProductImagesEmpty onFiles={handleUpload} busy={uploadImages.isPending} />
+                    );
                   return (
                     <div className="space-y-2">
                       {/* Main image / drop zone — 4:5 portrait viewport matching the
@@ -1830,7 +1835,7 @@ export default function ProductDetailPage() {
                   <InfoRow
                     label={priceRowLabel(
                       isEditing ? (editDraft.unit as string) : product.unit,
-                      tierLabel(tierLabels, 1),
+                      tierOneLabel(tierLabels),
                     )}
                     value={
                       isEditing ? (
@@ -1977,7 +1982,7 @@ export default function ProductDetailPage() {
                         }}
                         className="text-xs text-brand-600 hover:underline"
                       >
-                        Set all to {tierLabel(tierLabels, 1)}
+                        Set all to {tierOneLabel(tierLabels)}
                       </button>
                     )}
                   </div>
@@ -1986,7 +1991,7 @@ export default function ProductDetailPage() {
                       // Names the tiers a save would move with the list (#3470 review: never a fixed string).
                       const note = ladderChangeNote(
                         editTierPatchMoves(product, editDraft as Record<string, string>),
-                        (n) => tierLabel(tierLabels, n),
+                        (n) => productTierLabel(tierLabels, n),
                       );
                       return note ? (
                         <p className="mb-2 text-xs text-navy/70" data-testid="tiers-move-note">
@@ -1997,10 +2002,10 @@ export default function ProductDetailPage() {
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
                     {(
                       [
-                        [tierLabel(tierLabels, 2), "priceTier2", product.priceTier2],
-                        [tierLabel(tierLabels, 3), "priceTier3", product.priceTier3],
-                        [tierLabel(tierLabels, 4), "priceTier4", product.priceTier4],
-                        [tierLabel(tierLabels, 5), "priceTier5", product.priceTier5],
+                        [productTierLabel(tierLabels, 2), "priceTier2", product.priceTier2],
+                        [productTierLabel(tierLabels, 3), "priceTier3", product.priceTier3],
+                        [productTierLabel(tierLabels, 4), "priceTier4", product.priceTier4],
+                        [productTierLabel(tierLabels, 5), "priceTier5", product.priceTier5],
                       ] as [string, string, any][]
                     ).map(([label, field, productVal], idx) => {
                       const prevFields = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4"];
@@ -2053,7 +2058,7 @@ export default function ProductDetailPage() {
                                   );
                                   setEditDraft((d) => ({ ...d, ...moved }));
                                   setLadderNote(
-                                    ladderChangeNote(moved, (n) => tierLabel(tierLabels, n)),
+                                    ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n)),
                                   );
                                 }}
                               />
@@ -2452,10 +2457,10 @@ export default function ProductDetailPage() {
                             SKU
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            {tierLabel(tierLabels, 1)}
+                            {tierOneLabel(tierLabels)}
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            {tierLabel(tierLabels, 2)}
+                            {productTierLabel(tierLabels, 2)}
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
                             Status
@@ -2698,7 +2703,7 @@ export default function ProductDetailPage() {
               })}
             </div>
             <p className="mt-1.5 text-xs text-navy/70">
-              Higher tiers (volume) are typically equal to or lower than {tierLabel(tierLabels, 1)}.
+              Higher tiers (volume) are typically equal to or lower than {tierOneLabel(tierLabels)}.
             </p>
           </div>
 
