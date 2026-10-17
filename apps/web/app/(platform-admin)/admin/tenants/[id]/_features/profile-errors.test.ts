@@ -41,6 +41,26 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
     ).toBe("This business profile isn't available for this tenant.");
   });
 
+  it("FULFILMENT_CARRIER_IN_TRANSIT → the blocker in fixed copy, with the count, never the server text", () => {
+    const copy = profileErrorCopy(
+      apiError(409, {
+        code: API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT,
+        count: 3,
+        message: "server text",
+      }),
+      FALLBACK,
+    );
+    expect(copy).toBe(
+      "3 orders are with the carrier right now. Apply this profile once they are delivered: changing how orders ship now would bill them twice or not at all.",
+    );
+    expect(
+      profileErrorCopy(
+        apiError(409, { code: API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT, count: 1 }),
+        FALLBACK,
+      ),
+    ).toMatch(/^1 order is with the carrier right now\./);
+  });
+
   it("FULFILMENT_MODE_NEEDS_FLEET → names the fleet features, never raw keys", () => {
     const copy = profileErrorCopy(
       apiError(409, {

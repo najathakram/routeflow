@@ -36,6 +36,7 @@ import {
   type BusinessProfileDef,
   type BusinessProfileState,
 } from "./business-profiles";
+import { assertNoCarrierInTransit } from "../orders/carrier-in-transit-guard";
 
 /** Canonical JSON (object keys sorted, array order kept): the same plan always hashes the same. */
 const canonical = (v: unknown): unknown =>
@@ -180,6 +181,10 @@ export class BusinessProfileService {
     }
 
     const plan = planBusinessProfile(profile, state);
+    // Item 8: the same in-transit guard as Settings → Fulfillment. Preview shows it as the blocker,
+    // and confirm re-plans first, so it refuses before any write.
+    const model = plan.modes.find((m) => m.key === "fulfilment_model");
+    if (model) await assertNoCarrierInTransit(this.prisma, tenantId, model.from, model.to);
     const reason = `Business profile: ${profile.label}`;
     const revokeOverrideIds: Record<string, string> = {};
     for (const o of plan.overrides) {
