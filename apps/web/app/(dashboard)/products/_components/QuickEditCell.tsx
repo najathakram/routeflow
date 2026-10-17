@@ -94,6 +94,15 @@ export const QuickEditCell = React.forwardRef<HTMLInputElement, QuickEditCellPro
 
     const commit = async (overrideDraft?: string) => {
       if (saving) return;
+      // A number input holding garbled text ("1e") reports value "" — that must never read as a
+      // cleared cell (it would unbox the product). Keep the cell open and save nothing.
+      if (
+        overrideDraft === undefined &&
+        type === "number" &&
+        inputRef.current?.validity?.badInput
+      ) {
+        return;
+      }
       const trimmed = (overrideDraft ?? draft).trim();
       const oldValue = value != null ? String(value) : null;
       if (trimmed === oldValue || (trimmed === "" && oldValue === null)) {

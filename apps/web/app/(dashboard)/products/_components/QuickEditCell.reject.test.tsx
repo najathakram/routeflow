@@ -39,6 +39,18 @@ describe("QuickEditCell: onSave resolving false keeps the cell in edit mode", ()
     expect(screen.getByRole("spinbutton")).toHaveProperty("value", "0");
   });
 
+  it("garbled number input (badInput, value '') never saves as a cleared cell; the cell stays open", async () => {
+    const onSave = jest.fn().mockResolvedValue(undefined);
+    const input = open(onSave);
+    // jsdom can't produce badInput; a browser reports "1e" as value "" with validity.badInput true.
+    fireEvent.change(input, { target: { value: "" } });
+    Object.defineProperty(input, "validity", { value: { badInput: true }, configurable: true });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByRole("spinbutton")).toBeTruthy();
+  });
+
   it("void from onSave: the cell closes as before", async () => {
     const onSave = jest.fn().mockResolvedValue(undefined);
     const input = open(onSave);
