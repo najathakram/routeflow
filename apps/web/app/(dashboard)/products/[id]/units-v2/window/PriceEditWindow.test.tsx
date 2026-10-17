@@ -14,7 +14,7 @@ import { PriceSaveStatus, ProductPricingV2 } from "../../ProductPricingV2";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { PriceDraftProvider } from "../edit/PriceDraftProvider";
 import { usePriceDraft, type PriceDraft } from "../edit/usePriceDraft";
-import { GRID, PRODUCT, SAVE_RESPONSE, SAVED_GRID } from "./k11-20a.fixtures";
+import { GRID, MISSING_PIECE_GRID, PRODUCT, SAVE_RESPONSE, SAVED_GRID } from "./k11-20a.fixtures";
 import { PriceEditWindow } from "./PriceEditWindow";
 
 // K11-20a: the floating price window, on the shared draft. jsdom lays nothing out, so geometry (placement, the real
@@ -97,6 +97,10 @@ function Harness({
         <div id="main-content">
           <ProductPricingV2 product={PRODUCT} />
         </div>
+        {/* The page's Add a unit opener: the grid's missing-unit pointer only shows when it exists. */}
+        <button type="button" data-testid="units-v2-add-open">
+          Add a unit
+        </button>
         <button type="button" onClick={() => setOpen(false)}>
           Close from outside
         </button>
@@ -209,6 +213,39 @@ describe("K11-20a window: what it contains", () => {
     });
     await waitFor(() => expect(onClose).toHaveBeenCalledWith("cancel"));
     expect(draft.editingIn).toBe("inline");
+  });
+});
+
+describe("K11-20a window: the missing unit's Add pointer", () => {
+  const pointers = () =>
+    [...document.querySelectorAll<HTMLElement>(`[data-testid="${T.addUnitPointer}"]`)].filter(
+      (el) => el.textContent === "Add Piece unit",
+    );
+
+  it("N3: the window's table has no Add Piece unit button (it would click a hidden page control)", async () => {
+    mockGrid = { data: MISSING_PIECE_GRID, isLoading: false, isError: false };
+    render();
+    await screen.findByRole("dialog", { name: "Edit prices" });
+    expect(inDialog().getByTestId(T.unitsTable)).toBeTruthy();
+    expect(inDialog().getByTestId(T.row("piece"))).toBeTruthy();
+    // The inline grid behind it keeps its pointer.
+    await waitFor(() => expect(pointers().length).toBeGreaterThan(0));
+    expect(pointers().filter((el) => dialog().contains(el))).toHaveLength(0);
+  });
+
+  it("N3: the window's phone cards have none either", async () => {
+    const was = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 500 });
+    try {
+      mockGrid = { data: MISSING_PIECE_GRID, isLoading: false, isError: false };
+      render();
+      await screen.findByRole("dialog", { name: "Edit prices" });
+      expect(inDialog().getByTestId(T.card("piece"))).toBeTruthy();
+      await waitFor(() => expect(pointers().length).toBeGreaterThan(0));
+      expect(pointers().filter((el) => dialog().contains(el))).toHaveLength(0);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: was });
+    }
   });
 });
 

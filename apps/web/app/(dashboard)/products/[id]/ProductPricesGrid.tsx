@@ -184,6 +184,9 @@ function openAddUnit(intent: AddUnitIntent | null, asPiece: boolean) {
   }
 }
 
+/** K11-20a N3: false inside the floating window, where the Add unit control is a hidden PAGE control behind the scrim. */
+const AddUnitPointersContext = React.createContext(true);
+
 /**
  * A pointer from a missing unit (or a refused first price) to the Add unit control: nothing when the control does not
  * exist. `button` is the missing unit's row head, a real secondary button; the inline form sits in a refusal message.
@@ -193,7 +196,8 @@ function AddUnitPointer({ unit, button = false }: { unit: string; button?: boole
   const [has, setHas] = React.useState(false);
   React.useEffect(() => setHas(addUnitTarget() != null), []);
   const intent = useAddUnitIntent();
-  if (!has) return null;
+  const allowed = React.useContext(AddUnitPointersContext);
+  if (!has || !allowed) return null;
   return (
     <button
       type="button"
@@ -451,7 +455,7 @@ function ScrollRegion({
   );
 }
 
-export function ProductPricesGrid({
+function PricesGridBody({
   product,
   edit,
   rowAction,
@@ -682,5 +686,19 @@ export function ProductPricesGrid({
         </p>
       )}
     </div>
+  );
+}
+
+export function ProductPricesGrid({
+  addUnitPointers = true,
+  ...props
+}: React.ComponentProps<typeof PricesGridBody> & {
+  /** K11-20a: false leaves the missing unit's "Add {unit} unit" pointers out (the floating window has no Add control). */
+  addUnitPointers?: boolean;
+}) {
+  return (
+    <AddUnitPointersContext.Provider value={addUnitPointers}>
+      <PricesGridBody {...props} />
+    </AddUnitPointersContext.Provider>
   );
 }

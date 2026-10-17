@@ -150,6 +150,8 @@ export function EditablePricesGrid({
           layout={layout}
           density={density}
           idSuffix={sfx}
+          // The window has no Add a unit control of its own; the pointer would click a hidden page control.
+          addUnitPointers={surface !== "window"}
         />
         {editing && <OrderUnitDraft />}
         {editing && d.plan && <AlsoUpdatePanel plan={d.plan.plan} />}
