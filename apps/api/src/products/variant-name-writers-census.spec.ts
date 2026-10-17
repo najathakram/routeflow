@@ -198,6 +198,11 @@ const BLOCKS: Record<string, BlockPin> = {
     why: "test harness: seeds standalone 'Widget' products for the inventory count db specs",
     standalone: true,
   },
+  "src/inventory/testing/order-stock-world.ts": {
+    blocks: { "buildOrderStockWorld:create": 1 },
+    why: "test fixture: seeds a standalone product for the order-stock db specs (B284), never production",
+    standalone: true,
+  },
   "src/import/variant-resolution.service.ts": {
     blocks: { "completeSetup:update": 1 },
     why: "completes an import-created product's price / unit / unitsPerBox / category with conditional spreads (`...(dto.x !== undefined && { x })`, surfaced by the parenthesised-spread rule); the dto has no name field and the row's label is never touched",
