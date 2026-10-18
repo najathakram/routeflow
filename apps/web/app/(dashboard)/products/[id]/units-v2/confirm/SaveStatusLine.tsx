@@ -126,10 +126,10 @@ const px = (v: string) =>
 
 /**
  * Where the fixed saved line goes: `bottom` is the gap between the shell's scroller (`#main-content`) and the viewport
- * bottom (0 with no shell), so it rests exactly where the sticky bar does; `left` / `width` are the line's own parent's
- * content box, so it stays in the page's content column. Re-measured on resize while pinned.
+ * bottom (0 with no shell), so it rests exactly where the sticky bar does; `left` / `width` are the content box of the
+ * parent of the line's slot (the in-flow wrapper), so it stays in the page's content column. Re-measured on resize while pinned.
  */
-function usePinnedBox(active: boolean, line: React.RefObject<HTMLElement | null>): PinnedBox {
+function usePinnedBox(active: boolean, slot: React.RefObject<HTMLElement | null>): PinnedBox {
   const [box, setBox] = React.useState<PinnedBox>({ bottom: 0 });
   React.useLayoutEffect(() => {
     if (!active) return undefined;
@@ -138,7 +138,7 @@ function usePinnedBox(active: boolean, line: React.RefObject<HTMLElement | null>
       const bottom = main
         ? Math.max(0, Math.round(window.innerHeight - main.getBoundingClientRect().bottom))
         : 0;
-      const parent = line.current?.parentElement;
+      const parent = slot.current?.parentElement;
       const next: PinnedBox = { bottom };
       if (parent) {
         const rect = parent.getBoundingClientRect();
@@ -159,8 +159,44 @@ function usePinnedBox(active: boolean, line: React.RefObject<HTMLElement | null>
     measure();
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
-  }, [active, line]);
+  }, [active, slot]);
   return box;
+}
+
+/**
+ * While the line is pinned it is `fixed` and takes no space in the section, so when it settles back into the flow whatever
+ * follows would jump down by its height (K11-16, +45.5 px at every width). This is the height to hold open in its slot
+ * while pinned (null otherwise): the pinned node's own `offsetHeight`, re-measured when its content or the column width
+ * changes (`key`, a window resize, a ResizeObserver where there is one). Derived from `active` on every render, so the
+ * reservation is dropped in the very render the node settles.
+ */
+function useReservedHeight(
+  active: boolean,
+  line: React.RefObject<HTMLElement | null>,
+  key: string,
+): number | null {
+  const [height, setHeight] = React.useState<number | null>(null);
+  React.useLayoutEffect(() => {
+    if (!active) {
+      setHeight(null);
+      return undefined;
+    }
+    const el = line.current;
+    if (!el) return undefined;
+    const measure = () => {
+      const h = el.offsetHeight;
+      if (h > 0) setHeight((prev) => (prev === h ? prev : h));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    ro?.observe(el);
+    return () => {
+      window.removeEventListener("resize", measure);
+      ro?.disconnect();
+    };
+  }, [active, line, key]);
+  return active ? height : null;
 }
 
 const prefersReducedMotion = () =>
@@ -201,6 +237,7 @@ export function PriceSaveStatusLine({
 }) {
   const [state, dispatch] = React.useReducer(reduce, IDLE);
   const lineRef = React.useRef<HTMLDivElement>(null);
+  const slotRef = React.useRef<HTMLDivElement>(null);
   const undoRef = React.useRef<HTMLButtonElement>(null);
   const refocusUndo = React.useRef(false);
   const live = React.useRef<string | null>(null);
@@ -246,7 +283,12 @@ export function PriceSaveStatusLine({
     const t = setTimeout(() => dispatch({ type: "unpin" }), FADE_MS);
     return () => clearTimeout(t);
   }, [state.pin]);
-  const box = usePinnedBox(pinned, lineRef);
+  const box = usePinnedBox(pinned, slotRef);
+  const reserved = useReservedHeight(
+    pinned,
+    lineRef,
+    `${detail}|${phase}|${box.left}|${box.width}|${box.bottom}`,
+  );
 
   const onUndoClick = () => {
     if (previewing) return close();
@@ -313,67 +355,71 @@ export function PriceSaveStatusLine({
   const previewId = `${id}-preview`;
   return (
     <>
-      <div
-        id={id}
-        ref={lineRef}
-        role="status"
-        tabIndex={-1}
-        data-testid={IDS.saveStatus}
-        data-pinned={
-          phase === "saved" ? (state.pin === "fading" ? "settling" : String(pinned)) : "false"
-        }
-        style={
-          pinned
-            ? box.width !== undefined
-              ? { bottom: `${box.bottom}px`, left: `${box.left}px`, width: `${box.width}px` }
-              : { bottom: `${box.bottom}px`, left: 0, right: 0 }
-            : undefined
-        }
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
-        onFocus={() => setFocusIn(true)}
-        onBlur={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusIn(false);
-        }}
-        className={
-          phase === "idle"
-            ? undefined
-            : pinned
-              ? PINNED_CLASS + (state.pin === "fading" ? FADING_CLASS : "")
-              : SETTLED_CLASS
-        }
-      >
-        {hasUndo ? (
-          <>
+      {/* K11-16: an ordinary in-flow slot (no role, one live region inside it). While the line is pinned the slot holds
+          its height open, so settling back into the flow moves nothing. */}
+      <div ref={slotRef} style={reserved ? { minHeight: `${reserved}px` } : undefined}>
+        <div
+          id={id}
+          ref={lineRef}
+          role="status"
+          tabIndex={-1}
+          data-testid={IDS.saveStatus}
+          data-pinned={
+            phase === "saved" ? (state.pin === "fading" ? "settling" : String(pinned)) : "false"
+          }
+          style={
+            pinned
+              ? box.width !== undefined
+                ? { bottom: `${box.bottom}px`, left: `${box.left}px`, width: `${box.width}px` }
+                : { bottom: `${box.bottom}px`, left: 0, right: 0 }
+              : undefined
+          }
+          onMouseEnter={() => setHover(true)}
+          onMouseLeave={() => setHover(false)}
+          onFocus={() => setFocusIn(true)}
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusIn(false);
+          }}
+          className={
+            phase === "idle"
+              ? undefined
+              : pinned
+                ? PINNED_CLASS + (state.pin === "fading" ? FADING_CLASS : "")
+                : SETTLED_CLASS
+          }
+        >
+          {hasUndo ? (
+            <>
+              <span>
+                <strong>{detail ? "Saved" : "Saved."}</strong>
+                {detail ? ` ${detail}.` : ""}
+              </span>
+              {phase === "error" ? <span>Couldn&apos;t undo. Try again.</span> : null}
+              <Button
+                id={`${id}-undo`}
+                ref={undoRef}
+                type="button"
+                size="sm"
+                variant="link"
+                data-testid={IDS.saveUndo}
+                aria-expanded={previewing}
+                aria-controls={previewing ? previewId : undefined}
+                aria-disabled={busy || undefined}
+                onClick={onUndoClick}
+              >
+                Undo
+              </Button>
+            </>
+          ) : null}
+          {phase === "undone" ? (
             <span>
-              <strong>{detail ? "Saved" : "Saved."}</strong>
-              {detail ? ` ${detail}.` : ""}
+              {state.skipped > 0
+                ? `Undone. Kept ${plural(state.skipped, "customer price", "customer prices")} that changed since.`
+                : "Save undone."}
             </span>
-            {phase === "error" ? <span>Couldn&apos;t undo. Try again.</span> : null}
-            <Button
-              id={`${id}-undo`}
-              ref={undoRef}
-              type="button"
-              size="sm"
-              variant="link"
-              data-testid={IDS.saveUndo}
-              aria-expanded={previewing}
-              aria-controls={previewing ? previewId : undefined}
-              aria-disabled={busy || undefined}
-              onClick={onUndoClick}
-            >
-              Undo
-            </Button>
-          </>
-        ) : null}
-        {phase === "undone" ? (
-          <span>
-            {state.skipped > 0
-              ? `Undone. Kept ${plural(state.skipped, "customer price", "customer prices")} that changed since.`
-              : "Save undone."}
-          </span>
-        ) : null}
-        {phase === "unavailable" ? <span>This save can&apos;t be undone any more.</span> : null}
+          ) : null}
+          {phase === "unavailable" ? <span>This save can&apos;t be undone any more.</span> : null}
+        </div>
       </div>
       {previewing ? (
         <div
