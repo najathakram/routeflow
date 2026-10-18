@@ -602,6 +602,35 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
       expect(writesTo("li-del")).toEqual([]);
     });
 
+    it("a rename of a delivered UNLISTED line (the web page's {id, name, qty} shape) is saved as {name}", async () => {
+      const unlisted = line({
+        id: "li-unl",
+        productId: null,
+        name: "Delivery fee",
+        qty: 1,
+        deliveredQty: 1,
+      });
+      seed("PARTIALLY_DELIVERED", [unlisted, OPEN_LINE]);
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-unl", action: "UPDATE", name: "Delivery fee (dock)", qty: 1 }] } as any,
+        operator,
+      );
+      const writes = writesTo("li-unl");
+      expect(writes).toHaveLength(1);
+      expect(writes[0].data).toEqual({ name: "Delivery fee (dock)" });
+    });
+
+    it("a name on a delivered LISTED line writes nothing (a listed line is named by its product)", async () => {
+      seed("PARTIALLY_DELIVERED", [DELIVERED_LINE, OPEN_LINE]);
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-del", action: "UPDATE", name: "Renamed", qty: 5 }] } as any,
+        operator,
+      );
+      expect(writesTo("li-del")).toEqual([]);
+    });
+
     it("the undelivered line of the same order still reprices as before", async () => {
       seed("PARTIALLY_DELIVERED", [DELIVERED_LINE, OPEN_LINE]);
       await service.updateOrderItems(

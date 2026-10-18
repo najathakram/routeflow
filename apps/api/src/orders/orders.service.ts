@@ -3860,7 +3860,10 @@ export class OrdersService implements OnApplicationBootstrap {
                 // reason-only and notes-only writes below were unreachable dead code
                 // for exactly the payload shape that needs them.
                 item.overrideReason !== undefined ||
-                item.notes !== undefined
+                item.notes !== undefined ||
+                // B1234: a delivered unlisted line's entry is reduced to {id, action, name}; a rename alone must
+                // still reach the fast path below (a name on a LISTED line is filtered out there, never written).
+                item.name !== undefined
               ) {
                 const li = item.id ? heldById.get(item.id) : undefined;
                 if (!li) continue;
@@ -3879,25 +3882,28 @@ export class OrdersService implements OnApplicationBootstrap {
                   item.boxes == null &&
                   item.pieces == null &&
                   item.unitPrice === undefined &&
-                  (item.overrideReason !== undefined || item.notes !== undefined);
+                  (item.overrideReason !== undefined ||
+                    item.notes !== undefined ||
+                    item.name !== undefined);
                 if (isReasonOrNotesOnly) {
-                  await tx.orderItem.update({
-                    where: { id: item.id },
-                    data: {
-                      // Round 3 finding 1 (independent review, PR-2): `name` is not a pricing
-                      // field — an unlisted line's rename must survive this fast path exactly
-                      // like the full path below allows it, or a payload combining a rename
-                      // with a reason/notes edit silently drops the rename.
-                      ...(isUnlisted && item.name !== undefined ? { name: item.name } : {}),
-                      ...(item.notes !== undefined ? { notes: item.notes } : {}),
-                      ...(item.overrideReason !== undefined
-                        ? {
-                            overrideReason: item.overrideReason ?? null,
-                            overriddenBy: user?.sub ?? null,
-                          }
-                        : {}),
-                    },
-                  });
+                  const fastData = {
+                    // Round 3 finding 1 (independent review, PR-2): `name` is not a pricing
+                    // field — an unlisted line's rename must survive this fast path exactly
+                    // like the full path below allows it, or a payload combining a rename
+                    // with a reason/notes edit silently drops the rename.
+                    ...(isUnlisted && item.name !== undefined ? { name: item.name } : {}),
+                    ...(item.notes !== undefined ? { notes: item.notes } : {}),
+                    ...(item.overrideReason !== undefined
+                      ? {
+                          overrideReason: item.overrideReason ?? null,
+                          overriddenBy: user?.sub ?? null,
+                        }
+                      : {}),
+                  };
+                  // A name-only entry on a listed line carries nothing to write.
+                  if (Object.keys(fastData).length > 0) {
+                    await tx.orderItem.update({ where: { id: item.id }, data: fastData });
+                  }
                   continue;
                 }
                 const unitRow = unitRows.get(item);
