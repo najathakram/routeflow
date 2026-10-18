@@ -62,6 +62,9 @@ jest.mock("@/lib/api/product-sales", () => ({ useProductSales: () => sales }));
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: "p1" }),
   useRouter: () => ({ push: jest.fn() }),
+  // CustomerPriceView (K11-06) reads ?customer= through these
+  usePathname: () => "/products/p1",
+  useSearchParams: () => new URLSearchParams(),
 }));
 jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: jest.fn() }) }));
 jest.mock("@/lib/auth-context", () => ({
