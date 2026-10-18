@@ -18,6 +18,10 @@
  */
 "use strict";
 
+/**
+ * The longest unit name. A copy of `MAX_UNIT_NAME_LENGTH` (units.service.ts) and the DTOs'
+ * `@MaxLength(30)`; tenant-units-parity.spec.ts pins them equal.
+ */
 const MAX_NAME_LENGTH = 30;
 /**
  * The most ACTIVE units (archivedAt null) a tenant may have (SA-810). A copy of
@@ -27,9 +31,10 @@ const MAX_NAME_LENGTH = 30;
 const MAX_ACTIVE_TENANT_UNITS = 200;
 /** The names printed in the overflow report; the rest are a count (never an unbounded wall of text). */
 const OVERFLOW_NAMES_PRINTED = 50;
-// Single typed source will be PIECE_SYNONYMS in packages/types (added by the U-1 branch); a parity
-// spec pinning this copy follows the merge.
-/** Piece synonyms: base words, never a TenantUnit (null baseUnitLabel already means "Piece"). */
+/**
+ * Piece synonyms: base words, never a TenantUnit (null baseUnitLabel already means "Piece"). A copy of
+ * `PIECE_SYNONYMS` in apps/api/src/units/piece-words.ts; tenant-units-parity.spec.ts pins the two equal.
+ */
 const PIECE_SYNONYMS = new Set(["piece", "pieces", "each", "unit", "pcs"]);
 
 const isMixedCase = (w) => w !== w.toUpperCase() && w !== w.toLowerCase();
@@ -146,30 +151,25 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
   }
 
   // SA-810: add at most the room the tenant has left (a tenant at or over the cap gets none, and
-  // keeps every row it has). The names kept are the most used; ties break by key, so the plan is
-  // deterministic. The rest are reported, and their levels stay unlinked.
+  // keeps every row it has). `toCreate` is ALWAYS ordered most used first, then by key, so the plan
+  // is deterministic and the apply step, which may find less room than this read did, cuts the
+  // LEAST used names off its tail. The rest are reported, and their levels stay unlinked.
   const room = Math.max(0, unitRoomOf(existingUnits));
   const uses = (key) => [...casings.get(key).values()].reduce((a, b) => a + b, 0);
-  let toCreate = candidates;
+  const byUsesThenKey = (a, b) =>
+    uses(b.nameKey) - uses(a.nameKey) ||
+    (a.nameKey < b.nameKey ? -1 : a.nameKey > b.nameKey ? 1 : 0);
+  const ranked = [...candidates].sort(byUsesThenKey);
+  const toCreate = ranked.slice(0, room);
   const overflow = [];
   const overflowKeys = new Set();
-  if (candidates.length > room) {
-    const keep = new Set(
-      [...candidates]
-        .sort((a, b) => uses(b.nameKey) - uses(a.nameKey) || (a.nameKey < b.nameKey ? -1 : 1))
-        .slice(0, room)
-        .map((c) => c.nameKey),
-    );
-    toCreate = candidates.filter((c) => keep.has(c.nameKey));
-    for (const c of candidates) {
-      if (keep.has(c.nameKey)) continue;
-      overflowKeys.add(c.nameKey);
-      overflow.push({
-        name: c.name,
-        levels: levelsByKey.get(c.nameKey) ?? 0,
-        products: productsByKey.get(c.nameKey) ?? 0,
-      });
-    }
+  for (const c of ranked.slice(room)) {
+    overflowKeys.add(c.nameKey);
+    overflow.push({
+      name: c.name,
+      levels: levelsByKey.get(c.nameKey) ?? 0,
+      products: productsByKey.get(c.nameKey) ?? 0,
+    });
   }
 
   const links = [];
@@ -346,8 +346,25 @@ function overflowLines(overflow) {
   return lines;
 }
 
+/**
+ * The unit names the apply step left out because the tenant reached the cap after the plan was made
+ * (the plan's own `overflow` is reported by `overflowLines`). Names only, bounded like the overflow.
+ */
+function cappedAtApplyLines(names) {
+  if (names.length === 0) return [];
+  const shown = names.slice(0, OVERFLOW_NAMES_PRINTED);
+  const lines = [
+    `left out at apply time, the tenant reached the ${MAX_ACTIVE_TENANT_UNITS}-unit cap since ` +
+      `planning (SA-810): ${names.length} unit name(s)`,
+    ...shown.map((n) => `  ${n}`),
+  ];
+  if (names.length > shown.length) lines.push(`  ... and ${names.length - shown.length} more`);
+  return lines;
+}
+
 module.exports = {
   planTenantUnits,
+  cappedAtApplyLines,
   planParentFills,
   unitNameKey,
   nameKeyOf,

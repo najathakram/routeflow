@@ -13,6 +13,8 @@ const {
   batchWrites,
   BACKFILL_BATCH_SIZE,
   WRITE_TIMEOUTS,
+  TENANT_UNITS_LOCK_SQL,
+  PRODUCT_UNITS_LOCK_SQL,
 } = require("../../scripts/lib/tenant-units-apply.cjs");
 
 const TENANT = "t1";
@@ -63,8 +65,8 @@ function fake(
   let log: string[] = [];
   // No `product` model: the backfill must never write (or even reach for) a Product (SA M1).
   const db = {
-    $executeRawUnsafe: async (sql: string) => {
-      log.push(`exec:${sql}`);
+    $executeRawUnsafe: async (sql: string, ...params: unknown[]) => {
+      log.push(params.length > 0 ? `exec:${sql} [${params.join(",")}]` : `exec:${sql}`);
       return 0;
     },
     $queryRawUnsafe: async (sql: string, tenantId: string, ids: string[]) => {
@@ -93,6 +95,13 @@ function fake(
         return state.tenantUnits.filter(
           (u) => u.tenantId === where.tenantId && (u.archivedAt ?? null) === where.archivedAt,
         ).length;
+      },
+      // the names that already exist (archived included: the unique key spans them)
+      findMany: async ({ where }: any) => {
+        log.push("findMany");
+        return state.tenantUnits
+          .filter((u) => u.tenantId === where.tenantId && where.nameKey.in.includes(u.nameKey))
+          .map((u) => ({ nameKey: u.nameKey }));
       },
       // skipDuplicates on the unique (tenantId, nameKey): returns the rows ACTUALLY inserted
       createMany: async ({ data, skipDuplicates }: any) => {
@@ -282,6 +291,65 @@ describe("batched backfill apply (U-6)", () => {
     });
   });
 
+  describe("U-1's ladder locks (MUST 2): tenant units SHARED, then each product, before any row lock", () => {
+    const tenantLock = `exec:${TENANT_UNITS_LOCK_SQL} [${TENANT}]`;
+    const productLock = (id: string) => `exec:${PRODUCT_UNITS_LOCK_SQL} [${id}]`;
+
+    it("the exact statements are the ones tenant-units-lock.ts issues", () => {
+      expect(TENANT_UNITS_LOCK_SQL).toBe(
+        "SELECT pg_advisory_xact_lock_shared(hashtext('tenant-units'), hashtext($1))",
+      );
+      expect(PRODUCT_UNITS_LOCK_SQL).toBe(
+        "SELECT pg_advisory_xact_lock(hashtext('product-units'), hashtext($1))",
+      );
+    });
+
+    it("each batch tx: timeouts, the tenant lock, the batch's products sorted, THEN reads and writes", async () => {
+      const state = seed(5); // p0..p4, batch size 2 => [p0,p1] [p2,p3] [p4]
+      const f = fake(state);
+      await runOnce(state, f, 2);
+      const batches = f.stats.ops.slice(1); // ops[0] is the unit-create tx
+      expect(batches).toHaveLength(3);
+      const expected = [["p0", "p1"], ["p2", "p3"], ["p4"]];
+      batches.forEach((ops, i) => {
+        expect(ops.slice(0, 2 + 1 + expected[i].length)).toEqual([
+          ...WRITE_TIMEOUTS.map((s: string) => `exec:${s}`),
+          tenantLock,
+          ...expected[i].map(productLock),
+        ]);
+        const firstRowOp = ops.findIndex((o) => o.startsWith("share:") || o === "write");
+        expect(firstRowOp).toBe(2 + 1 + expected[i].length);
+      });
+    });
+
+    it("products are locked in sorted order whatever order the plan lists them", async () => {
+      const state = seed(3);
+      state.productUnits.reverse(); // plan sees pu2, pu1, pu0
+      const f = fake(state);
+      await runOnce(state, f, 5);
+      expect(f.stats.ops[1].slice(2, 6)).toEqual([
+        tenantLock,
+        productLock("p0"),
+        productLock("p1"),
+        productLock("p2"),
+      ]);
+    });
+
+    it("a product with a link AND a parent fill is locked once", async () => {
+      const state = seed(1);
+      const f = fake(state);
+      await runOnce(state, f, 5);
+      expect(f.stats.ops[1].filter((o) => o.includes("product-units"))).toHaveLength(1);
+    });
+
+    it("the unit-create tx takes no ladder lock (it writes no ladder data)", async () => {
+      const state = seed(1);
+      const f = fake(state);
+      await runOnce(state, f, 5);
+      expect(f.stats.ops[0].some((o) => o.includes("advisory"))).toBe(false);
+    });
+  });
+
   it("is idempotent: a second run opens no transaction and writes nothing", async () => {
     const state = seed(5);
     await runOnce(state, fake(state), 2);
@@ -308,6 +376,30 @@ describe("batched backfill apply (U-6)", () => {
     expect(state.productUnits.every((u) => u.tenantUnitId && u.perParent === 12)).toBe(true);
     // resume only did the remaining 2 batches (no unit-create transaction needed)
     expect(f2.stats.transactions).toBe(2);
+  });
+
+  it("a mid-run failure says how many batches had committed, and onBatch saw each commit", async () => {
+    const state = seed(6);
+    const seen: Array<[number, number]> = [];
+    const f = fake(state, { failUnitUpdateAt: 9 }); // batch 3 of 3 (4 writes per batch)
+    const plan = planTenantUnits({
+      productUnits: state.productUnits.map((u) => ({ ...u })),
+      products: state.products,
+      existingUnits: [],
+    });
+    const err = await applyTenantUnitsPlan({
+      prisma: f.db,
+      tenantId: TENANT,
+      plan,
+      productIdByUnit: new Map(state.productUnits.map((u) => [u.id, u.productId])),
+      batchSize: 2,
+      onBatch: (done: number, total: number) => seen.push([done, total]),
+    }).catch((e: unknown) => e);
+    expect(seen).toEqual([
+      [1, 3],
+      [2, 3],
+    ]);
+    expect(err).toMatchObject({ message: "boom", batchesCommitted: 2, batchesTotal: 3 });
   });
 
   it("a row edited between plan and apply is never overwritten, and is reported as changed", async () => {
@@ -466,7 +558,7 @@ describe("batched backfill apply (U-6)", () => {
       expect(r.unitsCapped).toBe(0);
     });
 
-    it("a level whose unit was capped out at apply time is left unlinked, reported as changed", async () => {
+    it("a level whose unit was capped out at apply time is left unlinked, reported as over the cap (not 'changed')", async () => {
       const state: State = { ...seed(1), tenantUnits: crowd(200) };
       const plan = {
         toCreate: [{ name: "Case", nameKey: "case" }],
@@ -481,8 +573,84 @@ describe("batched backfill apply (U-6)", () => {
       });
       expect(r.unitsCreated).toBe(0);
       expect(r.linked).toBe(0);
-      expect(r.linksChanged).toBe(1);
+      expect(r.linksOverCap).toBe(1);
+      expect(r.linksChanged).toBe(0);
+      expect(r.unitsCappedNames).toEqual(["Case"]);
       expect(state.productUnits[0].tenantUnitId).toBeNull();
+    });
+
+    // 3 words, 197 active: room 3 at planning. aaa and bbb have 1 use each, zzz has 100.
+    const usageState = (): State => {
+      const s = seed(0);
+      s.tenantUnits = crowd(197);
+      s.products = [
+        { id: "pa", tenantId: TENANT, unit: "aaa", unitsPerBox: null },
+        { id: "pb", tenantId: TENANT, unit: "bbb", unitsPerBox: null },
+      ];
+      s.productUnits = Array.from({ length: 100 }, (_, i) => ({
+        id: `z${i}`,
+        tenantId: TENANT,
+        productId: `pz${i}`,
+        label: "zzz",
+        tenantUnitId: null,
+        factorToBase: 1,
+        parentUnitId: null,
+        perParent: null,
+      }));
+      return s;
+    };
+    const planned = (s: State) =>
+      planTenantUnits({
+        productUnits: s.productUnits.map((u) => ({ ...u })),
+        products: s.products,
+        existingUnits: s.tenantUnits.map((u) => ({ nameKey: u.nameKey })),
+      });
+    const applyIt = (s: State, f: ReturnType<typeof fake>) =>
+      applyTenantUnitsPlan({
+        prisma: f.db,
+        tenantId: TENANT,
+        plan: planned(s),
+        productIdByUnit: new Map(s.productUnits.map((u) => [u.id, u.productId])),
+      });
+    const addTwo = (n: number, st: State) => {
+      if (n !== 1) return;
+      for (const k of ["mine1", "mine2"])
+        st.tenantUnits.push({ id: k, tenantId: TENANT, nameKey: k, name: k });
+    };
+
+    it("the plan lists the most used first, so a shrunken room keeps zzz (100 uses), not aaa", async () => {
+      const state = usageState();
+      expect(planned(state).toCreate.map((c: { nameKey: string }) => c.nameKey)).toEqual([
+        "zzz",
+        "aaa",
+        "bbb",
+      ]);
+      // two units added since planning: room 3 -> 1
+      const r = await applyIt(state, fake(state, { beforeTx: addTwo }));
+      expect(r.unitsCreated).toBe(1);
+      expect(state.tenantUnits.some((u) => u.nameKey === "zzz")).toBe(true);
+      expect(state.tenantUnits.some((u) => u.nameKey === "aaa")).toBe(false);
+      expect(r.unitsCapped).toBe(2);
+      expect(r.unitsCappedNames).toEqual(["aaa", "bbb"]);
+      // zzz's 100 levels are linked; the capped names have no levels
+      expect(r.linked).toBe(100);
+    });
+
+    it("a name someone created since planning does not waste a slot", async () => {
+      const state = usageState();
+      // 1 unit added (room 3 -> 2) and it is zzz itself: [aaa, bbb] both still fit
+      const r = await applyIt(
+        state,
+        fake(state, {
+          beforeTx: (n, st) => {
+            if (n === 1)
+              st.tenantUnits.push({ id: "theirs", tenantId: TENANT, nameKey: "zzz", name: "Zzz" });
+          },
+        }),
+      );
+      expect(r.unitsCreated).toBe(2);
+      expect(r.unitsCapped).toBe(0);
+      expect(state.tenantUnits.filter((u) => !u.archivedAt)).toHaveLength(200);
     });
   });
 });

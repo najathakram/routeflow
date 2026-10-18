@@ -9,6 +9,7 @@ const {
   unitNameKey,
   archivedLinkLines,
   overflowLines,
+  cappedAtApplyLines,
   MAX_ACTIVE_TENANT_UNITS,
 } = require("../../scripts/lib/tenant-units-plan.cjs");
 
@@ -430,12 +431,13 @@ describe("one unit-name key (U-6, SA-810 / SA-797 G1)", () => {
       ],
       [],
     );
+    // most used first (two spellings each for caf\u00e9, case, \u00e9tui), then by key
     expect(r.toCreate.map((c: { nameKey: string }) => c.nameKey)).toEqual([
       "caf\u00e9",
       "case",
+      "\u00e9tui",
       "strasse",
       "stra\u00dfe",
-      "\u00e9tui",
     ]);
   });
 });
@@ -480,12 +482,39 @@ describe("SA-810 cap: the backfill is a SYSTEM writer (U-6)", () => {
   it("keeps the most used names and reports the rest by name with their counts", () => {
     const levels = [...words(6), pu("x1", "Word5"), pu("x2", "word5"), pu("y1", "Word4")];
     const r = run(units(197), levels, [prod("p1", "Word4"), prod("p2", "Word0")]);
-    expect(keys(r)).toEqual(["word0", "word4", "word5"]);
+    // most used first (Word4 and Word5 tie on 3 uses, broken by key), NOT alphabetical
+    expect(keys(r)).toEqual(["word4", "word5", "word0"]);
     expect(r.overflow).toEqual([
       { name: "Word1", levels: 1, products: 0 },
       { name: "Word2", levels: 1, products: 0 },
       { name: "Word3", levels: 1, products: 0 },
     ]);
+  });
+
+  it("toCreate is ordered by uses desc then key asc even when everything fits the room", () => {
+    // room 3, three candidates: nothing overflows, but the apply may find less room and cut the tail
+    const levels = [
+      pu("a", "aaa"),
+      pu("b", "bbb"),
+      ...Array.from({ length: 100 }, (_, i) => pu(`z${i}`, "zzz")),
+    ];
+    const r = run(units(197), levels);
+    expect(r.overflow).toEqual([]);
+    expect(keys(r)).toEqual(["zzz", "aaa", "bbb"]);
+  });
+
+  it("cappedAtApplyLines names every unit the apply-time cap left out, capped at 50 names", () => {
+    expect(cappedAtApplyLines([])).toEqual([]);
+    expect(cappedAtApplyLines(["Bbb", "Aaa"])).toEqual([
+      "left out at apply time, the tenant reached the 200-unit cap since planning (SA-810): " +
+        "2 unit name(s)",
+      "  Bbb",
+      "  Aaa",
+    ]);
+    const many = Array.from({ length: 60 }, (_, i) => `N${i}`);
+    const lines = cappedAtApplyLines(many);
+    expect(lines).toHaveLength(1 + 50 + 1);
+    expect(lines[lines.length - 1]).toBe("  ... and 10 more");
   });
 
   it("a tenant already over the cap is grandfathered: 0 new units, nothing refused", () => {

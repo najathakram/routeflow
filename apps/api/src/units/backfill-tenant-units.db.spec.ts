@@ -14,6 +14,9 @@
  *   - SA-810 (the 200-unit cap): a system writer never refuses and never exceeds 200 ACTIVE units. A
  *     tenant at 195 with 10 new names gets 5 and the other 5 are reported and left unlinked; a tenant
  *     already at 230 gets none and keeps every row; archived units do not count;
+ *   - U-1's ladder locks (a rename vs a batch): a batch holds the tenant units lock SHARED and its
+ *     products' locks until COMMIT, so a rename's EXCLUSIVE lock cannot be taken meanwhile; and a
+ *     rename holding the lock makes a batch WAIT, then run, never interleave;
  *   - the unit-name key is the units service's (NFC, trim, case-fold), and the database's own
  *     `lower()` agrees with it on the stored keys (ÉTUI, NFD and NFC Café, NBSP, Straße).
  * Runs only under `npm run local:test:db`. Output never names a tenant, slug or row id.
@@ -79,7 +82,7 @@ describeDb("tenant unit backfill (U-6)", () => {
     url = requireLocalDatabaseUrl();
     pool = new Pool({ connectionString: url });
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-    for (const k of ["a", "ctl", "p", "edit", "arch", "pk", "cap", "over", "key"]) {
+    for (const k of ["a", "ctl", "p", "edit", "arch", "pk", "cap", "over", "key", "lock"]) {
       ids[k] = (await prisma.tenant.create({ data: { slug: slug(k), name: `u6 ${k}` } })).id;
     }
     // Tenant A: casing "Case" wins 2:1, a synonym level, a too-long level, legacy words.
@@ -385,6 +388,133 @@ describeDb("tenant unit backfill (U-6)", () => {
       expect(linked?.tenantUnitId).not.toBeNull();
       const zed = await prisma.productUnit.findFirst({ where: { tenantId: t, label: "Zed" } });
       expect(zed?.tenantUnitId).toBeNull();
+    });
+  });
+
+  describe("U-1's ladder locks: a rename and a backfill batch never interleave", () => {
+    const planFor = async (t: string) => {
+      const [productUnits, prods, existingUnits] = await Promise.all([
+        prisma.productUnit.findMany({ where: { tenantId: t } }),
+        prisma.product.findMany({ where: { tenantId: t }, select: { id: true, unit: true } }),
+        prisma.tenantUnit.findMany({ where: { tenantId: t } }),
+      ]);
+      return {
+        plan: planTenantUnits({ productUnits, products: prods, existingUnits }),
+        productIdByUnit: new Map(productUnits.map((u) => [u.id, u.productId])),
+      };
+    };
+    /** `try` an advisory lock on its own connection and report whether it was free (then release it). */
+    const tryLock = async (family: string, key: string, exclusive: boolean) => {
+      const c = await pool.connect();
+      try {
+        await c.query("BEGIN");
+        const fn = exclusive ? "pg_try_advisory_xact_lock" : "pg_try_advisory_xact_lock_shared";
+        const r = await c.query(`SELECT ${fn}(hashtext($1), hashtext($2)) AS got`, [family, key]);
+        return r.rows[0].got as boolean;
+      } finally {
+        await c.query("ROLLBACK");
+        c.release();
+      }
+    };
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    it("while a batch is open, a rename's EXCLUSIVE tenant lock and the product lock are not free", async () => {
+      const t = ids.lock;
+      const p = await product(t, "l1", "Pail", [["Pail", 6]]);
+      const { plan, productIdByUnit } = await planFor(t);
+      expect(plan.links).toHaveLength(1);
+
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let entered!: () => void;
+      const inBatch = new Promise<void>((r) => (entered = r));
+      let gated = false;
+      // Pause the (only) batch transaction at its first FOR SHARE read: the locks are held by then.
+      const paused = new Proxy(prisma, {
+        get(target, prop, receiver) {
+          if (prop !== "$transaction") return Reflect.get(target, prop, receiver);
+          return (fn: (tx: any) => Promise<unknown>, opts?: object) =>
+            target.$transaction(
+              (tx) =>
+                fn(
+                  new Proxy(tx as object, {
+                    get(tt, kk) {
+                      const v = Reflect.get(tt, kk);
+                      if (kk === "$queryRawUnsafe") {
+                        return async (...a: unknown[]) => {
+                          if (!gated) {
+                            gated = true;
+                            entered();
+                            await gate;
+                          }
+                          return (v as (...x: unknown[]) => unknown).apply(tt, a);
+                        };
+                      }
+                      return typeof v === "function" ? v.bind(tt) : v;
+                    },
+                  }),
+                ),
+              opts as never,
+            );
+        },
+      });
+      const done = applyTenantUnitsPlan({
+        prisma: paused,
+        tenantId: t,
+        plan,
+        productIdByUnit,
+        batchSize: 1,
+      });
+      await inBatch;
+      // a rename (units.service rename) takes this EXCLUSIVE: it must wait for the batch...
+      expect(await tryLock("tenant-units", t, true)).toBe(false);
+      // ...while other ladder writers (shared) run side by side with it...
+      expect(await tryLock("tenant-units", t, false)).toBe(true);
+      // ...and a pack edit / level write of the SAME product is held off by its product lock.
+      expect(await tryLock("product-units", p.id, true)).toBe(false);
+      release();
+      const r = await done;
+      expect(r).toMatchObject({ batches: 1, linked: 1 });
+      // committed: both locks are free again
+      expect(await tryLock("tenant-units", t, true)).toBe(true);
+      expect(await tryLock("product-units", p.id, true)).toBe(true);
+    });
+
+    it("a rename holding the tenant lock makes a batch WAIT, then it runs", async () => {
+      const t = ids.lock;
+      await product(t, "l2", "Keg", [["Keg", 8]]);
+      const { plan, productIdByUnit } = await planFor(t);
+      expect(plan.links.length).toBeGreaterThan(0);
+      const renamer = await pool.connect();
+      try {
+        await renamer.query("BEGIN");
+        await renamer.query(
+          "SELECT pg_advisory_xact_lock(hashtext('tenant-units'), hashtext($1))",
+          [t],
+        );
+        let settled = false;
+        const done = applyTenantUnitsPlan({
+          prisma,
+          tenantId: t,
+          plan,
+          productIdByUnit,
+          batchSize: 1,
+        }).finally(() => (settled = true));
+        await sleep(600); // well inside the batch's 5 s lock_timeout
+        expect(settled).toBe(false); // waiting on the rename, not writing
+        const before = await prisma.productUnit.count({
+          where: { tenantId: t, tenantUnitId: { not: null } },
+        });
+        await renamer.query("COMMIT");
+        const r = await done;
+        expect(r.linked).toBeGreaterThan(0);
+        expect(
+          await prisma.productUnit.count({ where: { tenantId: t, tenantUnitId: { not: null } } }),
+        ).toBeGreaterThan(before);
+      } finally {
+        await renamer.query("ROLLBACK").catch(() => undefined);
+        renamer.release();
+      }
     });
   });
 

@@ -32,8 +32,10 @@
 //     is typed at a real terminal (lib/live-target-guard.cjs). Dry runs read any tenant.
 //   - Writes go in small transactions (lib/tenant-units-apply.cjs), each with lock_timeout +
 //     statement_timeout: one for the TenantUnit upserts, then one per batch of BACKFILL_BATCH_SIZE
-//     products. Each batch re-reads its TenantUnits and parents FOR SHARE and writes compare-and-set,
-//     so a row edited since planning is skipped and reported, never overwritten. Idempotent: a re-run
+//     products. Each batch first takes U-1's ladder locks (the tenant units lock SHARED, then each
+//     product's lock, sorted), so a unit rename never interleaves with it, then re-reads its
+//     TenantUnits and parents FOR SHARE and writes compare-and-set, so a row edited since planning
+//     is skipped and reported, never overwritten. Idempotent: a re-run
 //     plans only what is still missing; a crash between batches keeps the finished batches.
 //   - Output: counts, plus unit NAMES where a report needs one (archived units). Never a tenant name,
 //     slug or row id.
@@ -64,7 +66,7 @@ const {
   planTenantUnits,
   archivedLinkLines,
   overflowLines,
-  MAX_ACTIVE_TENANT_UNITS,
+  cappedAtApplyLines,
 } = require("./lib/tenant-units-plan.cjs");
 const { applyTenantUnitsPlan, BACKFILL_BATCH_SIZE } = require("./lib/tenant-units-apply.cjs");
 
@@ -235,13 +237,31 @@ async function main(argv = process.argv.slice(2), env = process.env) {
           : await confirmProtectedOverride({ tenantId: args.tenantId, argv });
       assertWritableTenant(snap.tenant, sub, slugs, { allowProtected });
 
-      const result = await applyTenantUnitsPlan({
-        prisma,
-        tenantId: args.tenantId,
-        plan,
-        productIdByUnit: new Map(snap.productUnits.map((u) => [u.id, u.productId])),
-        batchSize: BACKFILL_BATCH_SIZE,
-      });
+      let batchesCommitted = 0;
+      let result;
+      try {
+        result = await applyTenantUnitsPlan({
+          prisma,
+          tenantId: args.tenantId,
+          plan,
+          productIdByUnit: new Map(snap.productUnits.map((u) => [u.id, u.productId])),
+          batchSize: BACKFILL_BATCH_SIZE,
+          onBatch: (done, total) => {
+            batchesCommitted = done;
+            console.log(`Batch ${done}/${total} committed`);
+          },
+        });
+      } catch (err) {
+        // The finished batches stay committed; a re-run plans only what is still missing.
+        const total = err?.batchesTotal;
+        console.error(
+          total === undefined
+            ? "Stopped before any product batch ran (the unit-create step failed or was rolled back)."
+            : `Stopped after ${err?.batchesCommitted ?? batchesCommitted} of ${total} product ` +
+                "batch(es) committed; re-run to resume.",
+        );
+        throw err;
+      }
       console.log(`Batches: ${result.batches} (up to ${BACKFILL_BATCH_SIZE} products each)`);
       if (result.linksChanged + result.parentsChanged > 0) {
         console.log(
@@ -249,12 +269,13 @@ async function main(argv = process.argv.slice(2), env = process.env) {
             `parents=${result.parentsChanged}; re-run to pick them up.`,
         );
       }
-      if (result.unitsCapped > 0) {
+      if (result.linksOverCap > 0) {
         console.log(
-          `Left out at apply time: ${result.unitsCapped} unit name(s), the tenant reached the ` +
-            `${MAX_ACTIVE_TENANT_UNITS}-unit cap since planning (SA-810).`,
+          `Not linked, their unit is over the cap: ${result.linksOverCap} level(s) ` +
+            "(they keep their label; a re-run links them once there is room).",
         );
       }
+      for (const line of cappedAtApplyLines(result.unitsCappedNames)) console.log(line);
       // What the writes actually did: a unit someone else created since planning counts as existing;
       // one the cap left out at apply time is overflow (its levels stay unlinked).
       counts = {

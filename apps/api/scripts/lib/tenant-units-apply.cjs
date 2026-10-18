@@ -8,13 +8,25 @@
  *   1. ONE small transaction creates the planned TenantUnits (idempotent: skipDuplicates by nameKey).
  *      SA-810: it first re-counts the tenant's ACTIVE units and creates only what still fits under
  *      MAX_ACTIVE_TENANT_UNITS (the plan was made from an earlier read); it never refuses and never
- *      exceeds the cap. A unit left out is not linked below (the link is reported as changed).
+ *      exceeds the cap. The plan lists `toCreate` most used first, so the names cut are the least
+ *      used, and they are returned BY NAME (`unitsCappedNames`). A name someone created since
+ *      planning is dropped before the cut (it would only waste a slot). A unit left out is not
+ *      linked below (the link is reported as `linksOverCap`, not as changed).
  *   2. The ladder links and parent fills are grouped by PRODUCT and applied in batches of
  *      BACKFILL_BATCH_SIZE products, each batch in its own transaction, so no transaction grows with
  *      the size of the catalog and a crash loses at most the batch in flight.
  * Every transaction sets a lock_timeout and a statement_timeout first.
  *
- * Inside each batch, BEFORE any write (SA M4): the batch's TenantUnits are re-read by nameKey FOR SHARE
+ * LADDER LOCKS (U-1, apps/api/src/units/tenant-units-lock.ts): this script writes ladder data
+ * (tenantUnitId links, parentUnitId / perParent fills), so each batch transaction takes what every
+ * ladder writer takes, FIRST, before any row lock: the tenant units advisory lock SHARED (a rename
+ * holds it EXCLUSIVE, so a rename and a batch never interleave), then the per-product `product-units`
+ * lock of every product in the batch, in sorted order (a second backfill of the same tenant locks in
+ * the same order, so two cannot deadlock). The SQL below is the same statement text U-1 issues; the
+ * script is CommonJS and cannot import the TypeScript, so tenant-units-parity.spec.ts runs U-1's own
+ * `lockProductPack` and requires the two to match. The `lock_timeout` set first bounds the wait.
+ *
+ * Inside each batch, AFTER the locks and BEFORE any write (SA M4): the batch's TenantUnits are re-read by nameKey FOR SHARE
  * (a unit deleted since planning is not linked; the share lock keeps it from being renamed or deleted
  * until COMMIT), every planned parent row is re-read FOR SHARE (its factor and product must still be
  * the planned ones), and for a fill planned with no parent row (the base or the pack) the product's
@@ -41,6 +53,13 @@ const TX_OPTIONS = { timeout: 60000, maxWait: 10000 };
 /** SET LOCAL inside every write transaction: wait at most 5 s for a row lock, 60 s per statement. */
 const WRITE_TIMEOUTS = ["SET LOCAL lock_timeout = '5s'", "SET LOCAL statement_timeout = '60s'"];
 
+/** `takeTenantLock(tx, tenantId, "shared")` in tenant-units-lock.ts. $1 = the tenant id. */
+const TENANT_UNITS_LOCK_SQL =
+  "SELECT pg_advisory_xact_lock_shared(hashtext('tenant-units'), hashtext($1))";
+/** The per-product lock `lockProductPack` takes right after it. $1 = the product id. */
+const PRODUCT_UNITS_LOCK_SQL =
+  "SELECT pg_advisory_xact_lock(hashtext('product-units'), hashtext($1))";
+
 const UNITS_FOR_SHARE = `SELECT id, "nameKey" FROM "TenantUnit"
   WHERE "tenantId" = $1 AND "nameKey" = ANY($2::text[]) FOR SHARE`;
 const PARENTS_FOR_SHARE = `SELECT id, "productId", "factorToBase" FROM "ProductUnit"
@@ -60,7 +79,8 @@ const packOf = (unitsPerBox) => {
  *           parentFills: Array<{productUnitId: string, productId: string}> }} plan
  * @param {Map<string, string>} productIdByUnit ProductUnit.id -> Product.id
  * @param {number} size products per batch
- * @returns {Array<{ links: Array<object>, parentFills: Array<object> }>}
+ * @returns {Array<{ links: Array<object>, parentFills: Array<object>, productIds: string[] }>}
+ *   `productIds`: the batch's real products, sorted (the order their locks are taken in).
  */
 function batchWrites(plan, productIdByUnit, size = BACKFILL_BATCH_SIZE) {
   if (!Number.isInteger(size) || size < 1) {
@@ -72,20 +92,24 @@ function batchWrites(plan, productIdByUnit, size = BACKFILL_BATCH_SIZE) {
     if (!s) byProduct.set(key, (s = { links: [], parentFills: [] }));
     return s;
   };
+  const unknown = new Set();
   for (const l of plan.links) {
     // A unit whose product is unknown still gets its own slot rather than being dropped.
-    slot(productIdByUnit.get(l.productUnitId) ?? `unit:${l.productUnitId}`).links.push(l);
+    const productId = productIdByUnit.get(l.productUnitId);
+    if (productId == null) unknown.add(`unit:${l.productUnitId}`);
+    slot(productId ?? `unit:${l.productUnitId}`).links.push(l);
   }
   for (const f of plan.parentFills ?? []) slot(f.productId).parentFills.push(f);
 
   const keys = [...byProduct.keys()].sort();
   const batches = [];
   for (let i = 0; i < keys.length; i += size) {
-    const batch = { links: [], parentFills: [] };
+    const batch = { links: [], parentFills: [], productIds: [] };
     for (const key of keys.slice(i, i + size)) {
       const s = byProduct.get(key);
       batch.links.push(...s.links);
       batch.parentFills.push(...s.parentFills);
+      if (!unknown.has(key)) batch.productIds.push(key);
     }
     batches.push(batch);
   }
@@ -106,10 +130,13 @@ function requireIds(...ids) {
  *           productIdByUnit: Map<string, string>,
  *           batchSize?: number,
  *           onBatch?: (done: number, total: number) => void }} args
- * @returns {Promise<{ batches: number, unitsCreated: number, unitsCapped: number, linked: number,
- *                     parentFilled: number, linksChanged: number, parentsChanged: number }>}
+ * @returns {Promise<{ batches: number, unitsCreated: number, unitsCapped: number,
+ *                     unitsCappedNames: string[], linked: number, parentFilled: number,
+ *                     linksChanged: number, linksOverCap: number, parentsChanged: number }>}
  *   linked/parentFilled are rows ACTUALLY written; linksChanged/parentsChanged are planned writes that
- *   were skipped because a row changed since planning (left for a re-run, never overwritten).
+ *   were skipped because a row changed since planning (left for a re-run, never overwritten);
+ *   linksOverCap are links skipped because their unit was cut by the cap at apply time.
+ *   A failure rethrows with `batchesCommitted` and `batchesTotal` set on the error.
  */
 async function applyTenantUnitsPlan({
   prisma,
@@ -128,8 +155,9 @@ async function applyTenantUnitsPlan({
   // Inserted rows, counted by the database: a unit created by someone else since planning is skipped
   // (the unique (tenantId, nameKey) holds), so this is what the run actually created.
   let unitsCreated = 0;
-  // Planned units left out because the room shrank since planning (SA-810).
-  let unitsCapped = 0;
+  // Planned units left out because the room shrank since planning (SA-810), by name.
+  const unitsCappedNames = [];
+  const cappedKeys = new Set();
   if (plan.toCreate.length > 0) {
     await prisma.$transaction(async (db) => {
       await setTimeouts(db);
@@ -137,8 +165,23 @@ async function applyTenantUnitsPlan({
       // person's add runs under no lock); this transaction is short, so any overshoot stays bounded.
       const active = await db.tenantUnit.count({ where: { tenantId, archivedAt: null } });
       const room = Math.max(0, MAX_ACTIVE_TENANT_UNITS - active);
-      const fit = plan.toCreate.slice(0, room);
-      unitsCapped = plan.toCreate.length - fit.length;
+      // A name that exists NOW (archived included: the unique key spans them) would be skipped by
+      // skipDuplicates and still cost a slot in the cut below, so it is dropped first.
+      const present = new Set(
+        (
+          await db.tenantUnit.findMany({
+            where: { tenantId, nameKey: { in: plan.toCreate.map((c) => c.nameKey) } },
+            select: { nameKey: true },
+          })
+        ).map((r) => r.nameKey),
+      );
+      // `plan.toCreate` is most used first: the cut takes the tail, the least used.
+      const missing = plan.toCreate.filter((c) => !present.has(c.nameKey));
+      const fit = missing.slice(0, room);
+      for (const c of missing.slice(room)) {
+        unitsCappedNames.push(c.name);
+        cappedKeys.add(c.nameKey);
+      }
       if (fit.length === 0) return;
       const res = await db.tenantUnit.createMany({
         data: fit.map((c) => ({ tenantId, name: c.name, nameKey: c.nameKey })),
@@ -148,13 +191,15 @@ async function applyTenantUnitsPlan({
     }, TX_OPTIONS);
   }
 
-  const totals = { linked: 0, parentFilled: 0, linksChanged: 0, parentsChanged: 0 };
-  let done = 0;
-  for (const batch of batches) {
-    // Counted per batch and added to the totals only once the batch has committed.
-    const got = { linked: 0, parentFilled: 0, linksChanged: 0, parentsChanged: 0 };
-    await prisma.$transaction(async (db) => {
+  const applyBatch = (batch, got) => {
+    return prisma.$transaction(async (db) => {
       await setTimeouts(db);
+      // U-1's ladder locks, FIRST (before any row lock): the tenant units lock SHARED, then every
+      // product of the batch, sorted. See the header.
+      await db.$executeRawUnsafe(TENANT_UNITS_LOCK_SQL, tenantId);
+      for (const productId of batch.productIds) {
+        await db.$executeRawUnsafe(PRODUCT_UNITS_LOCK_SQL, productId);
+      }
 
       // M4: the units this batch links, re-read and share-locked before any write.
       const keys = [...new Set(batch.links.map((l) => l.nameKey))];
@@ -189,7 +234,9 @@ async function applyTenantUnitsPlan({
         const tenantUnitId = idByKey.get(l.nameKey);
         // The unit was deleted (or never committed) since planning: not ours to recreate here.
         if (!tenantUnitId) {
-          got.linksChanged += 1;
+          // cut by the cap just now, or deleted since planning
+          if (cappedKeys.has(l.nameKey)) got.linksOverCap += 1;
+          else got.linksChanged += 1;
           continue;
         }
         requireIds(l.productUnitId, tenantUnitId);
@@ -235,11 +282,47 @@ async function applyTenantUnitsPlan({
         else got.parentsChanged += 1;
       }
     }, TX_OPTIONS);
+  };
+
+  const totals = {
+    linked: 0,
+    parentFilled: 0,
+    linksChanged: 0,
+    linksOverCap: 0,
+    parentsChanged: 0,
+  };
+  let done = 0;
+  for (const batch of batches) {
+    // Counted per batch and added to the totals only once the batch has committed.
+    const got = { linked: 0, parentFilled: 0, linksChanged: 0, linksOverCap: 0, parentsChanged: 0 };
+    try {
+      await applyBatch(batch, got);
+    } catch (err) {
+      // Say how far the run got: finished batches are committed and a re-run resumes after them.
+      if (err && typeof err === "object") {
+        err.batchesCommitted = done;
+        err.batchesTotal = batches.length;
+      }
+      throw err;
+    }
     for (const k of Object.keys(totals)) totals[k] += got[k];
     done += 1;
     if (onBatch) onBatch(done, batches.length);
   }
-  return { batches: batches.length, unitsCreated, unitsCapped, ...totals };
+  return {
+    batches: batches.length,
+    unitsCreated,
+    unitsCapped: unitsCappedNames.length,
+    unitsCappedNames,
+    ...totals,
+  };
 }
 
-module.exports = { applyTenantUnitsPlan, batchWrites, BACKFILL_BATCH_SIZE, WRITE_TIMEOUTS };
+module.exports = {
+  applyTenantUnitsPlan,
+  batchWrites,
+  BACKFILL_BATCH_SIZE,
+  WRITE_TIMEOUTS,
+  TENANT_UNITS_LOCK_SQL,
+  PRODUCT_UNITS_LOCK_SQL,
+};

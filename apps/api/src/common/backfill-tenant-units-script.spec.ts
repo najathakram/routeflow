@@ -117,6 +117,20 @@ describe("backfill-tenant-units.mjs gates (U-6, SA M3)", () => {
     it("reports the cap overflow in every run, dry or applied", () => {
       expect(src).toContain("overflowLines(plan.overflow");
     });
+
+    it("wires onBatch and says how many batches had committed when a run stops midway", () => {
+      expect(src).toMatch(/applyTenantUnitsPlan\([\s\S]*?onBatch:/);
+      expect(src).toContain("batch(es) committed; re-run to resume.");
+      expect(src).toContain("err?.batchesCommitted");
+    });
+
+    it("links dropped by the cap are reported as over the cap, never as 'changed since planning'", () => {
+      expect(src).toContain("result.linksOverCap");
+      expect(src).toContain("their unit is over the cap");
+      // the 'changed' line counts only links/parents whose ROW changed
+      expect(src).toMatch(/result\.linksChanged \+ result\.parentsChanged > 0/);
+      expect(src).toContain("cappedAtApplyLines(result.unitsCappedNames)");
+    });
   });
 
   describe("pure helpers", () => {
