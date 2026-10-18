@@ -1,11 +1,10 @@
 import { BadRequestException } from "@nestjs/common";
-import {
-  isOpensAsChoosable,
-  type BusinessCapabilities,
-  type BusinessCapabilitiesRequest,
-  type BusinessCapabilityTicks,
-  type BusinessProfileKey,
-  type CapabilityAvailability,
+import type {
+  BusinessCapabilities,
+  BusinessCapabilitiesRequest,
+  BusinessCapabilityTicks,
+  BusinessProfileKey,
+  CapabilityAvailability,
 } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { BUSINESS_PROFILES, wants, type BusinessProfileDef } from "./business-profiles";
@@ -18,6 +17,15 @@ import { FEATURE_REGISTRY } from "./feature-registry";
  * Pure. Every fulfilment fact goes through `capabilityFromInputs` (the ONE derivation, fulfilment-capability.ts);
  * nothing here re-derives a mode. `driver_payments` is a module, not a mode, so the caller passes the held modules.
  */
+/**
+ * The opens-as rule: Shipping + Counter without Delivery is the only combination where staff may pick. The API may
+ * not value-import @routeflow/types (a compiled-source runtime-import pin), so this is the API's copy of the shared
+ * `isOpensAsChoosable`; business-capabilities.spec.ts pins the two equal over every combination.
+ */
+export const isOpensAsChoosable = (
+  t: Pick<BusinessCapabilityTicks, "delivery" | "shipping" | "counter">,
+): boolean => t.shipping && t.counter && !t.delivery;
+
 const NO_TICKS: BusinessCapabilityTicks = {
   delivery: false,
   doorPayments: false,
