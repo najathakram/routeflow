@@ -7,6 +7,7 @@ import {
   assertTaxStateRecomputable,
   countOrderInvoices,
   orderSiblingCountOf,
+  stalePathOf,
   staleTaxStateError,
 } from "./stored-tax-state";
 
@@ -217,10 +218,9 @@ export function planHeaderOnlyTotals(
     orderSiblingCount: orderSiblingCountOf({ orderId: invoice.orderId, orderInvoiceCount }),
     discount,
     shipping: shippingFee,
-    path: "DRAFT_EDIT",
   }).totals;
   if (differs(t.subtotal, invoice.subtotal)) {
-    throw staleTaxStateError("DRAFT_EDIT");
+    throw staleTaxStateError(stalePathOf(invoice));
   }
   return { discount, shippingFee, total: t.total, subtotal: t.subtotal };
 }

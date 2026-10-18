@@ -282,6 +282,7 @@ export function priceAdjustmentTaxState(
     subtotal?: unknown;
     taxAmount?: unknown;
     items: any[];
+    status?: unknown;
     orderId?: unknown;
     /** SA-814e: non-VOID invoices sharing the order (read under the same lock / in the pre-flight). */
     orderInvoiceCount?: unknown;
@@ -295,7 +296,6 @@ export function priceAdjustmentTaxState(
     isTaxExempt,
     refuseExemptLevy: true,
     orderSiblingCount: orderSiblingCountOf(inv),
-    path: "PRICE_ADJUSTMENT",
   });
 }
 

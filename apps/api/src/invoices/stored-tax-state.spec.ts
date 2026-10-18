@@ -15,7 +15,7 @@ import {
  * helper's callers. The behavioural proof through the three recompute paths is
  * invoices.service.stored-tax-state.spec.ts.
  */
-const base = { canRestamp: true, path: "PRICE_ADJUSTMENT" as const };
+const base = { canRestamp: true };
 // $10,000 at 8.875%: the inferred rate rounds to 0.0888, and 10000 x 0.0888 = 888.00 != 887.50.
 const UNVERIFIABLE = { subtotal: 10000, taxAmount: 887.5 };
 const VERIFIED = { subtotal: 100, taxAmount: 7.5 };
@@ -60,10 +60,33 @@ describe("assertTaxStateRecomputable", () => {
     } catch (e) {
       expect((e as ConflictException).getResponse()).toEqual({
         code: "INVOICE_TAX_STATE_STALE",
-        message: TAX_STATE_STALE_COPY.PRICE_ADJUSTMENT,
-        path: "PRICE_ADJUSTMENT",
+        message: TAX_STATE_STALE_COPY.ISSUED,
+        path: "ISSUED",
       });
     }
+  });
+
+  it("the 409's path follows the invoice: issued, order-linked DRAFT, manual DRAFT (SA-814g)", () => {
+    const pathOf = (inv: object) => {
+      try {
+        assertTaxStateRecomputable({
+          ...base,
+          invoice: { ...UNVERIFIABLE, ...inv },
+          storedLines: [zero(10000)],
+        });
+      } catch (e) {
+        return (e as ConflictException).getResponse() as { path: string; message: string };
+      }
+      throw new Error("expected a refusal");
+    };
+    expect(pathOf({ status: "SENT", orderId: "o" }).path).toBe("ISSUED");
+    expect(pathOf({ status: "SENT" }).path).toBe("ISSUED");
+    expect(pathOf({ status: "DRAFT", orderId: "o" }).path).toBe("DRAFT_ORDER");
+    expect(pathOf({ status: "DRAFT" }).path).toBe("DRAFT_MANUAL");
+    expect(pathOf({ status: "DRAFT" }).message).toBe(TAX_STATE_STALE_COPY.DRAFT_MANUAL);
+    expect(pathOf({ status: "DRAFT", orderId: "o" }).message).toBe(
+      TAX_STATE_STALE_COPY.DRAFT_ORDER,
+    );
   });
 
   it("every-line-zero that VERIFIES hands back the rate to stamp instead of throwing", () => {
@@ -199,7 +222,7 @@ describe("guardItemsEditTaxState (the DRAFT items edit)", () => {
         editLines: [edited(r)],
       }),
     ).toThrow(ConflictException);
-    expect(TAX_STATE_STALE_COPY.DRAFT_EDIT.length).toBeGreaterThan(0);
+    expect(TAX_STATE_STALE_COPY.DRAFT_MANUAL.length).toBeGreaterThan(0);
   });
 
   it("a kept line whose payload rate differs from the stored one is the user's own change: proceeds", () => {

@@ -5,17 +5,17 @@ import { allocateOrderRegularTax } from "./manual-invoice-context";
 import {
   assertTaxStateRecomputable,
   guardItemsEditTaxState,
-  ORDER_ALLOCATION_TOLERANCE_CENTS,
+  orderAllocationToleranceCents,
   orderSiblingCountOf,
 } from "./stored-tax-state";
 
 /**
- * SA-814e — an ORDER-LINKED invoice's tax is the order's tax allocated across the invoices cut from it, so a
- * correct one can sit a cent per sibling away from the sum of its lines at their stored rate. The guard
- * tolerates exactly that (ORDER_ALLOCATION_TOLERANCE_CENTS x the siblings sharing the order, plus half a cent)
- * and still refuses a stored state that is really wrong (the B294 all-zero rows, B296's 4-place rate).
+ * SA-814e/g — an ORDER-LINKED invoice's tax is the order's tax allocated across the n invoices cut from it, so
+ * a correct one can sit up to ceil(n / 2) cents from the sum of its lines at their stored rate (the SA's
+ * derived bound, orderAllocationToleranceCents). The guard tolerates exactly that plus half a cent and still
+ * refuses a stored state that is really wrong (the B294 all-zero rows, B296's 4-place rate).
  */
-const base = { canRestamp: false, path: "DRAFT_EDIT" as const };
+const base = { canRestamp: false };
 
 /** mulberry32: a tiny deterministic PRNG so the property cases are the same on every run. */
 function prng(seed: number): () => number {
@@ -34,8 +34,8 @@ const storedRate = (orderTax: number, orderSubtotal: number): number =>
   Math.round(effectiveTaxRateFromTotals(orderTax, orderSubtotal, false) * 10_000) / 10_000;
 
 describe("the order-allocation tolerance", () => {
-  it("is one named constant: 1 cent per invoice sharing the order", () => {
-    expect(ORDER_ALLOCATION_TOLERANCE_CENTS).toBe(1);
+  it("the bound is ceil(n / 2) cents for n invoices sharing the order (at least 1)", () => {
+    expect([0, 1, 2, 3, 4, 5, 6].map(orderAllocationToleranceCents)).toEqual([1, 1, 1, 2, 2, 3, 3]);
   });
 
   it("orderSiblingCountOf: null without an order, at least 1 with one", () => {
@@ -116,18 +116,42 @@ describe("the order-allocation tolerance", () => {
       ).toThrow(ConflictException);
     });
 
-    it("a drift of n+1 cents on an n-way order is refused; n cents is allowed", () => {
-      const at = (taxAmount: number, n: number) => () =>
-        assertTaxStateRecomputable({
-          ...base,
-          invoice: { subtotal: 100, taxAmount },
-          storedLines: [{ subtotal: 100, taxRate: 0.07 }], // lines say 7.00
-          orderSiblingCount: n,
-        });
-      expect(at(7.02, 2)).not.toThrow();
-      expect(at(7.03, 2)).toThrow(ConflictException);
-      expect(at(7.01, 1)).not.toThrow();
-      expect(at(7.02, 1)).toThrow(ConflictException);
+    /** Hand-built worst cases: lines say 7.00; the stored tax sits `drift` cents above it. */
+    const driftRun = (drift: number, n: number) => () =>
+      assertTaxStateRecomputable({
+        ...base,
+        invoice: { subtotal: 100, taxAmount: 7 + drift / 100 },
+        storedLines: [{ subtotal: 100, taxRate: 0.07 }],
+        orderSiblingCount: n,
+      });
+
+    it.each([
+      [2, 1],
+      [3, 2],
+      [4, 2],
+    ])(
+      "n = %s: a drift of exactly the bound (%s cent[s]) passes, one cent beyond is refused",
+      (n, bound) => {
+        expect(driftRun(bound, n)).not.toThrow();
+        expect(driftRun(-bound, n)).not.toThrow();
+        expect(driftRun(bound + 1, n)).toThrow(ConflictException);
+        expect(driftRun(-(bound + 1), n)).toThrow(ConflictException);
+      },
+    );
+
+    it("B296's 6 cent drift is refused for every n up to 10 (the bound reaches 5 cents) and a manual invoice", () => {
+      for (let n = 1; n <= 10; n++) {
+        expect(() =>
+          assertTaxStateRecomputable({ ...base, ...eightEightSeventyFive, orderSiblingCount: n }),
+        ).toThrow(ConflictException);
+      }
+      expect(() =>
+        assertTaxStateRecomputable({ ...base, ...eightEightSeventyFive, orderSiblingCount: 6 }),
+      ).toThrow(ConflictException);
+      // the bound is derived, not a cliff: at n = 12 (6 cents) the same drift would pass
+      expect(() =>
+        assertTaxStateRecomputable({ ...base, ...eightEightSeventyFive, orderSiblingCount: 12 }),
+      ).not.toThrow();
     });
   });
 

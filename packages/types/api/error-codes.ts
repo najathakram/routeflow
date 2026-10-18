@@ -840,17 +840,24 @@ export const SHIPPED_ORDER_MESSAGE =
   "This order has already shipped. Contact the seller for changes.";
 
 /**
- * SA-814e: the 409 INVOICE_TAX_STATE_STALE body carries `path`, which recompute refused: a DRAFT edit (the
- * lines save, or the discount / shipping PATCH) or an ISSUED invoice's price adjustment. Web and mobile pick
- * their copy from it; the API keeps a literal copy (`TAX_STATE_STALE_COPY`, apps/api/src/invoices/
- * stored-tax-state.ts) pinned byte-equal by apps/api/src/common/invoice-tax-state-copy-parity.spec.ts.
+ * SA-814g: the 409 INVOICE_TAX_STATE_STALE body carries `path`, the kind of invoice that refused: an
+ * order-linked DRAFT, a manual DRAFT, or an ISSUED invoice (whichever recompute asked: lines save, discount /
+ * shipping, price adjustment). Web and mobile pick their copy from it; the API keeps a literal copy
+ * (`TAX_STATE_STALE_COPY`, apps/api/src/invoices/stored-tax-state.ts) pinned byte-equal by
+ * apps/api/src/common/invoice-tax-state-copy-parity.spec.ts.
  */
-export const INVOICE_TAX_STATE_STALE_PATH_VALUES = ["DRAFT_EDIT", "PRICE_ADJUSTMENT"] as const;
+export const INVOICE_TAX_STATE_STALE_PATH_VALUES = [
+  "DRAFT_ORDER",
+  "DRAFT_MANUAL",
+  "ISSUED",
+] as const;
 export type InvoiceTaxStateStalePath = (typeof INVOICE_TAX_STATE_STALE_PATH_VALUES)[number];
 
 export const INVOICE_TAX_STATE_STALE_COPY: Record<InvoiceTaxStateStalePath, string> = {
-  DRAFT_EDIT:
+  DRAFT_ORDER:
     "This draft's tax was saved by an older version and can't be recalculated safely. Create it again from the order, or contact support.",
-  PRICE_ADJUSTMENT:
+  DRAFT_MANUAL:
+    "This draft's tax was saved by an older version and can't be recalculated safely. Create the draft again, or contact support.",
+  ISSUED:
     "This invoice's stored tax can't be recalculated safely. Issue a credit note or contact support.",
 };

@@ -453,9 +453,11 @@ module.exports = {
   },
   // SA-814e: hand copy of packages/types/api/error-codes.ts (pinned to the API's literal by the API parity spec).
   INVOICE_TAX_STATE_STALE_COPY: {
-    DRAFT_EDIT:
+    DRAFT_ORDER:
       "This draft's tax was saved by an older version and can't be recalculated safely. Create it again from the order, or contact support.",
-    PRICE_ADJUSTMENT:
+    DRAFT_MANUAL:
+      "This draft's tax was saved by an older version and can't be recalculated safely. Create the draft again, or contact support.",
+    ISSUED:
       "This invoice's stored tax can't be recalculated safely. Issue a credit note or contact support.",
   },
   CHECK_TRANSITIONS: {

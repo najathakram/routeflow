@@ -6,7 +6,7 @@
  * The rule now (F1, "lines unchanged => tax unchanged"): lock the order + invoice, read the stored lines in
  * the tx, run the ONE builder (`sumInvoiceTotals`) over them. If its subtotal or tax differs from the invoice's
  * stored subtotal / taxAmount the header cannot be trusted and the PATCH is refused with 409
- * INVOICE_TAX_STATE_STALE (SA-814e copy: a draft saved by an older version, create it again), nothing written. Otherwise only discount, shippingFee
+ * INVOICE_TAX_STATE_STALE (SA-814g copy: a draft saved by an older version, create it again), nothing written. Otherwise only discount, shippingFee
  * and total are written. A dedicated file: invoices.service.spec.ts sits at its size-ratchet ceiling.
  */
 
@@ -193,7 +193,7 @@ describe("InvoicesService.update() — B1043 the header-only PATCH on the one bu
         response: { code: "INVOICE_TAX_STATE_STALE" },
       });
       await expect(run).rejects.toThrow(
-        /can't be recalculated safely.*Create it again from the order/i,
+        /can't be recalculated safely. Create the draft again, or contact support/i,
       );
       nothingWritten();
     });

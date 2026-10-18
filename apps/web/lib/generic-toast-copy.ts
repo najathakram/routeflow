@@ -150,8 +150,8 @@ const CODE_COPY: Record<string, string> = {
   // SA-812a G-1: a typed-price customer's flag read failed (503); the write never ran, so a retry is safe.
   [API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE]:
     "Customer prices couldn't be loaded. Nothing was saved. Try again in a moment.",
-  // SA-814e: a draft is the default; an ISSUED invoice's price adjustment says `path: PRICE_ADJUSTMENT` (taxStateStaleCopy).
-  [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]: INVOICE_TAX_STATE_STALE_COPY.DRAFT_EDIT,
+  // SA-814g: the sentence follows the body's `path` (codedToastCopy, taxStateStaleCopy); this is the no-path default.
+  [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]: INVOICE_TAX_STATE_STALE_COPY.ISSUED,
   [API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID]:
     "That change would take the invoice total below what is already paid or credited. Remove the credit first, or change the lines or discount.",
   PO_ALREADY_BILLED: "That purchase order already has a bill.",
@@ -352,11 +352,15 @@ function sentenceForMessage(data: Record<string, unknown>): string | null {
  * sentence), or null when the failure is uncoded / unknown / has no HTTP response. A surface whose uncoded server sentence
  * already tells the user what to fix uses `codedToastCopy(err) ?? <today's text>` so it never gets LESS actionable.
  */
-/** SA-814e: the 409 INVOICE_TAX_STATE_STALE sentence for the path that refused (draft edit unless the body says otherwise). */
+/**
+ * SA-814g: the 409 INVOICE_TAX_STATE_STALE sentence for the kind of invoice that refused (`path`); a body with no
+ * (or an unknown) path gets the issued-invoice sentence, which makes no claim about drafts.
+ */
 function taxStateStaleCopy(data: Record<string, unknown>): string {
-  return data.path === "PRICE_ADJUSTMENT"
-    ? INVOICE_TAX_STATE_STALE_COPY.PRICE_ADJUSTMENT
-    : INVOICE_TAX_STATE_STALE_COPY.DRAFT_EDIT;
+  const copy = INVOICE_TAX_STATE_STALE_COPY as Record<string, string>;
+  return typeof data.path === "string" && Object.prototype.hasOwnProperty.call(copy, data.path)
+    ? copy[data.path]
+    : INVOICE_TAX_STATE_STALE_COPY.ISSUED;
 }
 
 export function codedToastCopy(err: unknown): string | null {

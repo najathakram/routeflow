@@ -34,19 +34,27 @@ export type StoredTaxLine = {
 };
 
 /**
- * Which recompute refused, echoed as `path` in the 409 body so a client picks its copy (SA-814e):
- * a DRAFT edit (the lines save or the discount / shipping PATCH) or an ISSUED invoice's price adjustment.
- * The values and the copy mirror `INVOICE_TAX_STATE_STALE_*` in @routeflow/types (web and mobile read those).
+ * Which kind of invoice refused, echoed as `path` in the 409 body so a client picks its copy (SA-814g): an
+ * order-linked DRAFT, a manual DRAFT, or an ISSUED invoice (whatever recompute asked). The values and the copy
+ * mirror `INVOICE_TAX_STATE_STALE_*` in @routeflow/types (web and mobile read those).
  */
-export type TaxStateStalePath = "DRAFT_EDIT" | "PRICE_ADJUSTMENT";
+export type TaxStateStalePath = "DRAFT_ORDER" | "DRAFT_MANUAL" | "ISSUED";
 
 /** The copy for each path: the 409's `message` (mobile shows it as sent); web's table carries the same sentences. */
 export const TAX_STATE_STALE_COPY: Record<TaxStateStalePath, string> = {
-  DRAFT_EDIT:
+  DRAFT_ORDER:
     "This draft's tax was saved by an older version and can't be recalculated safely. Create it again from the order, or contact support.",
-  PRICE_ADJUSTMENT:
+  DRAFT_MANUAL:
+    "This draft's tax was saved by an older version and can't be recalculated safely. Create the draft again, or contact support.",
+  ISSUED:
     "This invoice's stored tax can't be recalculated safely. Issue a credit note or contact support.",
 };
+
+/** The copy key of an invoice: DRAFT is order-linked (orderId set) or manual; anything else is issued. */
+export function stalePathOf(inv: { status?: unknown; orderId?: unknown }): TaxStateStalePath {
+  if (inv.status !== InvoiceStatus.DRAFT) return "ISSUED";
+  return inv.orderId ? "DRAFT_ORDER" : "DRAFT_MANUAL";
+}
 
 /** The 409 every recompute path throws for a stale tax state (one body shape: code, message, path). */
 export function staleTaxStateError(path: TaxStateStalePath): ConflictException {
@@ -58,12 +66,16 @@ export function staleTaxStateError(path: TaxStateStalePath): ConflictException {
 }
 
 /**
- * SA-814e: an ORDER-LINKED invoice's tax is the order's tax ALLOCATED across the invoices cut from it
- * (cents-rounded per invoice, the rounding remainder on the largest one), while its lines are re-taxed at the
- * rate stored on them. A correct order-derived invoice can therefore differ from `Σ subtotal x rate` by up to
- * this many cents PER invoice sharing the order. The ONE tolerance; a manual invoice keeps half a cent.
+ * SA-814g: an ORDER-LINKED invoice's tax is the order's tax ALLOCATED across the n non-VOID invoices cut from
+ * it, while its lines are re-taxed at the rate stored on them (4 places). A correct order-derived invoice
+ * can therefore sit this far from `Σ subtotal x rate`. The SA's derivation: a non-largest share is
+ * `round(T x g / S)` and drifts from the lines' figure by < 1.5 cents, so by at most 1 cent after rounding to
+ * cents; the largest share also takes the allocation remainder, at most floor((n + 1) / 2) cents; a lone
+ * `regularTaxShare` cut is at most 1 cent. The maximum is ceil(n / 2) cents. The ONE bound; a manual invoice
+ * (no order) keeps half a cent.
  */
-export const ORDER_ALLOCATION_TOLERANCE_CENTS = 1;
+export const orderAllocationToleranceCents = (siblings: number): number =>
+  Math.ceil(Math.max(1, siblings) / 2);
 
 const toCents = (v: unknown): number => Math.round(roundMoney(Number(v ?? 0)) * 100);
 
@@ -120,7 +132,7 @@ export interface TaxStateVerdict {
 
 export interface TaxStateArgs {
   /** The invoice row's stored header (subtotal and taxAmount are read). */
-  invoice: { subtotal?: unknown; taxAmount?: unknown };
+  invoice: { subtotal?: unknown; taxAmount?: unknown; status?: unknown; orderId?: unknown };
   /** Its stored lines, read under the caller's lock. */
   storedLines: ReadonlyArray<StoredTaxLine>;
   /** True when the caller can write the inferred rate onto the lines (price adjustment, the items edit). */
@@ -157,9 +169,7 @@ export function taxStateOf(args: TaxStateArgs): TaxStateVerdict {
     !!isTaxExempt &&
     storedLines.some((l) => toCents(l.categoryTaxAmount) !== 0);
   const toleranceCents =
-    orderSiblingCount == null
-      ? 0
-      : ORDER_ALLOCATION_TOLERANCE_CENTS * Math.max(1, orderSiblingCount);
+    orderSiblingCount == null ? 0 : orderAllocationToleranceCents(orderSiblingCount);
   const stale = exemptWithLevy || differsBeyond(totals.tax, invoice.taxAmount, toleranceCents);
   if (!stale || !canRestamp || isTaxExempt) return { totals, stale, restampRate: null };
   const inferred = inferredGoodsFlatRate({
@@ -175,11 +185,11 @@ export function taxStateOf(args: TaxStateArgs): TaxStateVerdict {
  * verified re-stamp is possible; otherwise returns the verdict (a verified `restampRate` is the caller's
  * to stamp, then it proceeds).
  */
-export function assertTaxStateRecomputable(
-  args: TaxStateArgs & { path: TaxStateStalePath },
-): TaxStateVerdict {
+export function assertTaxStateRecomputable(args: TaxStateArgs): TaxStateVerdict {
   const verdict = taxStateOf(args);
-  if (verdict.stale && verdict.restampRate == null) throw staleTaxStateError(args.path);
+  if (verdict.stale && verdict.restampRate == null) {
+    throw staleTaxStateError(stalePathOf(args.invoice));
+  }
   return verdict;
 }
 
@@ -225,7 +235,7 @@ export function guardItemsEditTaxState(args: {
   if (!verdict.stale) return;
   if (!matches.some((m) => m.row)) return; // every stored line is gone: nothing is being re-taxed
   if (matches.some((m, i) => m.row && !sameRate(items[i]?.taxRate, m.row.taxRate))) return; // user set a rate
-  if (verdict.restampRate == null) throw staleTaxStateError("DRAFT_EDIT");
+  if (verdict.restampRate == null) throw staleTaxStateError(stalePathOf(locked.invoice));
   for (const l of editLines) {
     const row = l.rowId ? locked.storedRows.find((r) => r.id === l.rowId) : undefined;
     const storedZero = row && Number(row.taxRate ?? 0) === 0;

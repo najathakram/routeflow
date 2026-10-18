@@ -444,7 +444,7 @@ describe("genericToastCopy: codes users rely on", () => {
       ["INVOICE_CHANGED_CONCURRENTLY", /invoice changed.*Refresh and try again/],
       [
         "INVOICE_TAX_STATE_STALE",
-        /draft's tax was saved by an older version.*Create it again from the order/,
+        /stored tax can't be recalculated safely.*Issue a credit note/, // the no-path default
       ],
       [
         "INVOICE_TOTAL_BELOW_PAID",
@@ -744,31 +744,40 @@ describe("a selling-restriction refusal (409 SELLING_RESTRICTED) in a dialog wit
   });
 });
 
-describe("SA-814e: 409 INVOICE_TAX_STATE_STALE copy follows the path that refused", () => {
+describe("SA-814g: 409 INVOICE_TAX_STATE_STALE copy follows the kind of invoice that refused", () => {
   const stale = (data: Record<string, unknown> = {}) =>
     err(409, { code: API_ERROR_CODES.INVOICE_TAX_STATE_STALE, ...data });
 
-  it("a DRAFT edit says the draft can't be recalculated and to create it again, never 'Re-save the invoice lines'", () => {
-    const copy = genericToastCopy(stale({ path: "DRAFT_EDIT" }));
-    expect(copy).toBe(INVOICE_TAX_STATE_STALE_COPY.DRAFT_EDIT);
+  it("an order-linked DRAFT says to create it again from the order, never 'Re-save the invoice lines'", () => {
+    const copy = genericToastCopy(stale({ path: "DRAFT_ORDER" }));
+    expect(copy).toBe(INVOICE_TAX_STATE_STALE_COPY.DRAFT_ORDER);
     expect(copy).toMatch(/Create it again from the order, or contact support/);
     expect(copy).not.toMatch(/Re-save/);
     expect(copy).not.toContain(RAW);
   });
 
-  it("an issued invoice's price adjustment points at a credit note", () => {
-    const copy = genericToastCopy(stale({ path: "PRICE_ADJUSTMENT" }));
-    expect(copy).toBe(INVOICE_TAX_STATE_STALE_COPY.PRICE_ADJUSTMENT);
+  it("a manual DRAFT says to create the draft again", () => {
+    const copy = genericToastCopy(stale({ path: "DRAFT_MANUAL" }));
+    expect(copy).toBe(INVOICE_TAX_STATE_STALE_COPY.DRAFT_MANUAL);
+    expect(copy).toMatch(/Create the draft again, or contact support/);
+  });
+
+  it("an issued invoice points at a credit note", () => {
+    const copy = genericToastCopy(stale({ path: "ISSUED" }));
+    expect(copy).toBe(INVOICE_TAX_STATE_STALE_COPY.ISSUED);
     expect(copy).toMatch(/Issue a credit note or contact support/);
   });
 
-  it("a body with no path (an older server) gets the draft sentence", () => {
-    expect(genericToastCopy(stale())).toBe(INVOICE_TAX_STATE_STALE_COPY.DRAFT_EDIT);
+  it("a body with no (or an unknown) path gets the issued sentence, which claims nothing about drafts", () => {
+    expect(genericToastCopy(stale())).toBe(INVOICE_TAX_STATE_STALE_COPY.ISSUED);
+    expect(genericToastCopy(stale({ path: "SOMETHING_NEW" }))).toBe(
+      INVOICE_TAX_STATE_STALE_COPY.ISSUED,
+    );
   });
 
-  it("codedToastCopy recognises it on both paths", () => {
-    expect(codedToastCopy(stale({ path: "PRICE_ADJUSTMENT" }))).toBe(
-      INVOICE_TAX_STATE_STALE_COPY.PRICE_ADJUSTMENT,
+  it("codedToastCopy recognises it on every path", () => {
+    expect(codedToastCopy(stale({ path: "DRAFT_MANUAL" }))).toBe(
+      INVOICE_TAX_STATE_STALE_COPY.DRAFT_MANUAL,
     );
   });
 });
