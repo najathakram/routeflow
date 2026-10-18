@@ -16,11 +16,6 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useProducts, type ApiProduct } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import { sellableOnly } from "@/lib/product-search-groups";
-import {
-  PROMO_PICKER_LIMIT,
-  usePromotionProductSearch,
-  usePromotionProductsByIds,
-} from "@/lib/api/product-search-promotions";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import {
   ruleCanZeroPrice,
@@ -176,21 +171,16 @@ function ProductMultiSelect({
   onChange: (ids: string[]) => void;
 }) {
   const [q, setQ] = React.useState("");
-  // The picker asks the server for the few rows being searched (not the whole catalog).
-  const { data } = usePromotionProductSearch(q);
-  const products: ApiProduct[] = React.useMemo(() => data?.data ?? [], [data]);
+  const { data } = useProducts({ limit: 0 });
+  const products: Array<{ id: string; name: string; sku?: string; kind?: string | null }> =
+    React.useMemo(() => data?.data ?? [], [data]);
   const selectedSet = new Set(selected);
-  // Rows the operator picked this session keep their name on the chip after the search moves on.
-  const [picked, setPicked] = React.useState<Map<string, ApiProduct>>(() => new Map());
-  const known = new Set<string>([...picked.keys(), ...products.map((p) => p.id)]);
-  // Chips for products chosen earlier (editing a saved promotion): one cached by-id read each.
-  const fetchedById = usePromotionProductsByIds(selected, known);
 
   const filtered = React.useMemo(() => {
     const term = q.trim().toLowerCase();
     // A FAMILY is a container a promotion can never price (B1215 C7); a variant is found by "<Parent> - <Variant>".
     const base = sellableOnly(products).filter((p) => !selectedSet.has(p.id));
-    if (!term) return base.slice(0, PROMO_PICKER_LIMIT);
+    if (!term) return base.slice(0, 50);
     return base
       .filter(
         (p) =>
@@ -198,15 +188,11 @@ function ProductMultiSelect({
             .toLowerCase()
             .includes(term) || (p.sku ?? "").toLowerCase().includes(term),
       )
-      .slice(0, PROMO_PICKER_LIMIT);
+      .slice(0, 50);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, products, selected.join(",")]);
 
-  const byId = new Map<string, ApiProduct>([
-    ...fetchedById,
-    ...products.map((p) => [p.id, p] as const),
-    ...picked,
-  ]);
+  const byId = React.useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
 
   return (
     <div>
@@ -248,10 +234,7 @@ function ProductMultiSelect({
             <button
               key={p.id}
               type="button"
-              onClick={() => {
-                setPicked((m) => new Map(m).set(p.id, p));
-                onChange([...selected, p.id]);
-              }}
+              onClick={() => onChange([...selected, p.id])}
               className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-navy hover:bg-surface-raised"
             >
               <span className="truncate">{displayProductName(p as any)}</span>
