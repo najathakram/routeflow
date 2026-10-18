@@ -11,6 +11,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { usePlanFlag } from "@/lib/api/plan-flags";
 import { planFlagVisible } from "@/lib/plan-gated-nav";
 import { useProducts } from "@/lib/api/products";
+import { useProductsByIds } from "@/lib/api/purchase-order-products";
 import { displayProductName } from "@/lib/product-display";
 import { sellableOnly } from "@/lib/product-search-groups";
 import {
@@ -30,6 +31,14 @@ import {
 } from "../../inventory/_components/purchase-orders-shared";
 import { poActions } from "./po-detail-logic";
 
+const toPickerProducts = (rows: any[]) =>
+  sellableOnly<any>(rows).map((p: any) => ({
+    id: p.id,
+    name: displayProductName(p),
+    sku: p.sku,
+    unitsPerBox: p.unitsPerBox ?? null,
+  }));
+
 const errorStatus = (e: unknown): number | undefined =>
   (e as { response?: { status?: number } } | null)?.response?.status;
 
@@ -41,7 +50,6 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const { data, isLoading, isError, error, refetch } = usePurchaseOrder(id);
   const po = data as PurchaseOrder | undefined;
   const { data: suppliers = [] } = useSuppliers();
-  const { data: productsData } = useProducts({ isActive: true, limit: 0 });
   const billsFlag = usePlanFlag("flag.ap_bills");
   const sendPO = useSendPurchaseOrder();
   const closePO = useClosePurchaseOrder();
@@ -52,18 +60,22 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     setTitle(po?.poNumber ?? "Purchase Order");
   }, [setTitle, po?.poNumber]);
 
-  // A FAMILY is a container, never a purchasable line (B1215 C7); a variant reads "<Parent> - <Variant>".
-  const products = sellableOnly<any>(productsData?.data ?? []).map((p: any) => ({
-    id: p.id,
-    name: displayProductName(p),
-    sku: p.sku,
-    unitsPerBox: p.unitsPerBox ?? null,
-  }));
+  // The lines table, receipts and the receive modal only need the products this order points at,
+  // read by id. A FAMILY is a container, never a purchasable line (B1215 C7); a variant reads
+  // "<Parent> - <Variant>".
+  const { data: lineProductRows } = useProductsByIds((po?.items ?? []).map((i) => i.productId));
+  const products = toPickerProducts(lineProductRows);
   const catalogById = React.useMemo(
     () => new Map(products.map((p: { id: string }) => [p.id, p])),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [productsData],
+    [lineProductRows],
   ) as Map<string, { id: string; name?: string; unitsPerBox?: number | null }>;
+  // Only the edit modal's "add a line" picker lists the whole catalog (a native select in
+  // inventory/_components/PurchaseOrderLinesTable.tsx), so the fetch-all waits for the Edit click
+  // instead of firing on every page load. BOARD NOTE: a server-searched picker in that modal
+  // would retire the last `limit: 0` here.
+  const { data: catalogData } = useProducts({ isActive: true, limit: 0 }, { enabled: editing });
+  const catalogProducts = toPickerProducts(catalogData?.data ?? []);
 
   if (isLoading) {
     return (
@@ -283,7 +295,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         <PurchaseOrdersEditModal
           po={po}
           suppliers={suppliers as Supplier[]}
-          products={products}
+          products={catalogProducts}
           onClose={() => setEditing(false)}
         />
       )}
