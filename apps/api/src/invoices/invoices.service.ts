@@ -4117,7 +4117,8 @@ export class InvoicesService {
         // B299: the goods only exist on a cancelled line - nothing live to re-claim them on.
         const cancelled = orderItems.find((oi: any) => oi.productId === productId);
         if (cancelled) claim(cancelled, qty, true);
-        else unmatchedLines += 1;
+        // SA-814f: an unlinked product line with no order line at all is skipped like a free-form line.
+        // Accepted residual: void -> hard-delete the uninvoiced order line -> unvoid is a mismatch, not a double bill.
       }
     }
 

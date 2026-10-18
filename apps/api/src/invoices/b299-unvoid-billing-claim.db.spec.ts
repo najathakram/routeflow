@@ -335,17 +335,13 @@ describeDb("B299: unvoid re-claims invoicedQty only when the quantity is still f
     expect(await readBack(s)).toEqual({ status: "VOID", invoicedQty: 0 });
   });
 
-  it("SA-814: A's order line was hard-deleted (orderItemId SetNull, product not on the order) -> 409 LINE_REDUCED; A stays VOID", async () => {
+  it("SA-814f: A's order line was hard-deleted (orderItemId SetNull, product not on the order) -> the unlinked line is skipped; A unvoids to DRAFT", async () => {
     const s = await seedVoidA();
     await prisma.orderItem.delete({ where: { id: s.orderItemId } });
-    await expect(unvoidA(s)()).rejects.toMatchObject({
-      status: 409,
-      response: expect.objectContaining({
-        code: "ORDER_BILLING_CHANGED",
-        reason: "LINE_REDUCED",
-      }),
-    });
-    expect((await prisma.invoice.findUnique({ where: { id: s.invoiceAId } }))!.status).toBe("VOID");
+    await unvoidA(s)();
+    expect((await prisma.invoice.findUnique({ where: { id: s.invoiceAId } }))!.status).toBe(
+      "DRAFT",
+    );
   });
 
   it("SA-814 control: a free-form line (no productId, no orderItemId) beside a matched line is NOT refused", async () => {

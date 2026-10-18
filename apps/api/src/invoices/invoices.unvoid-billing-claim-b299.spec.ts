@@ -181,14 +181,15 @@ describe("B299: unvoid re-claims invoicedQty only when the quantity is still fre
     });
   });
 
-  describe("SA-814: an invoice line with no live order line is refused on unvoid (+1 only)", () => {
-    it("a product line whose order line is gone (orderItemId null, product not on the order) -> 409 LINE_REDUCED, no write", async () => {
+  describe("SA-814f: an unlinked product line with no order line at all is skipped on unvoid (+1)", () => {
+    it("a product line whose order line is gone (orderItemId null, product not on the order) -> unvoids, no refusal", async () => {
       seedVoidA({}, { orderItemId: null, productId: "p-gone" });
-      await expectRefused("LINE_REDUCED");
-      expect(db.line("oi-1").invoicedQty).toBe(0);
+      await service.unvoidInvoice("inv-a");
+      expect(statusOfA()).toBe("DRAFT");
+      expect(db.line("oi-1").invoicedQty).toBe(0); // the unlinked line claims nothing
     });
 
-    it("it is all-or-nothing: a matched line beside the unmatched one is not re-claimed", async () => {
+    it("a matched line beside the unlinked one is re-claimed; the unlinked one is skipped", async () => {
       seedVoidA();
       db.invoiceItems.push({
         id: "ii-a2",
@@ -197,6 +198,13 @@ describe("B299: unvoid re-claims invoicedQty only when the quantity is still fre
         productId: "p-gone",
         qty: 5,
       });
+      await service.unvoidInvoice("inv-a");
+      expect(statusOfA()).toBe("DRAFT");
+      expect(db.line("oi-1").invoicedQty).toBe(60);
+    });
+
+    it("a byOrderItem entry whose orderItemId no longer resolves is still refused LINE_REDUCED", async () => {
+      seedVoidA({}, { orderItemId: "oi-gone" });
       await expectRefused("LINE_REDUCED");
       expect(db.line("oi-1").invoicedQty).toBe(0);
     });
