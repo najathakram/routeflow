@@ -39,7 +39,7 @@ describe("S19: a standing order prices from the customer layer (flag.units_price
     loadActivePromotions: jest.Mock;
     getCustomerPriceHistory: jest.Mock;
     resolveBuyerLinePrice: jest.Mock;
-    entitlements: { hasFlag: jest.Mock };
+    entitlements: { hasFlag: jest.Mock; hasFlagStrict: jest.Mock };
   };
   let authGuard: { checkAuthorized: jest.Mock };
   let notifications: { sendToCustomer: jest.Mock; sendToUser: jest.Mock };
@@ -50,12 +50,13 @@ describe("S19: a standing order prices from the customer layer (flag.units_price
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    const flagRead = jest.fn(async (_t: string, k: string) => k === V2 && v2On);
     ordersService = {
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       loadActivePromotions: jest.fn().mockResolvedValue([]),
       getCustomerPriceHistory: jest.fn().mockResolvedValue({}),
       resolveBuyerLinePrice: jest.fn((...args: any[]) => realResolver(...args)),
-      entitlements: { hasFlag: jest.fn(async (_t: string, k: string) => k === V2 && v2On) },
+      entitlements: { hasFlag: flagRead, hasFlagStrict: flagRead },
     };
     authGuard = { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) };
     notifications = {

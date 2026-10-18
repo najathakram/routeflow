@@ -176,6 +176,17 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(copy).not.toContain(RAW);
   });
 
+  // SA-812a G-1: the units_prices_v2 fail-closed 503. Without a mapped code a 503 reads as the generic "our side" copy.
+  it("CUSTOMER_PRICES_UNAVAILABLE (503) says nothing was saved and to retry, never the server message", () => {
+    const e = err(503, { code: API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE });
+    expect(genericToastCopy(e)).toBe(
+      "Customer prices couldn't be loaded. Nothing was saved. Try again in a moment.",
+    );
+    expect(codedToastCopy(e)).toBe(genericToastCopy(e));
+    expect(genericToastCopy(e)).not.toContain(RAW);
+    expect(genericToastCopy(e)).not.toMatch(/[–—]/);
+  });
+
   it("ORDER_LINE_CHANGED is mapped through the shared constant", () => {
     expect(genericToastCopy(err(409, { code: API_ERROR_CODES.ORDER_LINE_CHANGED }))).toMatch(
       /changed while it was being billed/,

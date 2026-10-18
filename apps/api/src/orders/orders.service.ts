@@ -2923,6 +2923,9 @@ export class OrdersService implements OnApplicationBootstrap {
         });
     }
 
+    // SA-812a G-1: a failed customer-prices read (503) must surface BEFORE the un-tx'd invoice revert below commits.
+    await unitEdit.preflightCustomerPrices(this, order, dto, user, unitCtx);
+
     // R1: a POST-DELIVERY edit (order already OUT_FOR_DELIVERY / PARTIALLY_DELIVERED /
     // DELIVERED) re-syncs its finalized / paid / delivery-batch invoice(s) IN PLACE
     // after the mutation (resyncOrderInvoicesForEdit) — keeping payments and surfacing
