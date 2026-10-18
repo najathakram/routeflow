@@ -14,6 +14,8 @@ interface AdminModalProps {
   sheet?: boolean;
   /** `alertdialog` for a destructive confirm that interrupts the admin (BO-05: "Stop billing for N add-ons?"). */
   role?: "dialog" | "alertdialog";
+  /** The id of the element that describes the dialog (an alert dialog's body). */
+  describedBy?: string;
 }
 
 const FOCUSABLE_SELECTOR =
@@ -28,6 +30,7 @@ export function AdminModal({
   initialFocusRef,
   sheet,
   role = "dialog",
+  describedBy,
 }: AdminModalProps) {
   const panelRef = React.useRef<HTMLDivElement>(null);
   const triggerRef = React.useRef<HTMLElement | null>(null);
@@ -98,6 +101,7 @@ export function AdminModal({
         role={role}
         aria-modal="true"
         aria-labelledby={titleId}
+        aria-describedby={describedBy}
         tabIndex={-1}
         className={`relative w-full max-w-lg rounded-xl bg-slate-800 ring-1 ring-white/10 shadow-2xl ${
           sheet ? "max-h-[80vh] overflow-y-auto rounded-b-none sm:max-h-[90vh] sm:rounded-b-xl" : ""

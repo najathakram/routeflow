@@ -63,6 +63,8 @@ export function CapabilityChoices({
       {presets.length > 0 && (
         <StartFromMenu
           idPrefix={idPrefix}
+          ticks={ticks}
+          unavailable={unavailable}
           presets={presets}
           matchedPreset={matchedPreset}
           disabled={disabled}
@@ -189,9 +191,11 @@ function CheckRow({
   focusTarget?: string;
   onChange: (on: boolean) => void;
 }) {
-  const why = unavailableReason ?? reason;
-  const whyId = unavailableReason ? `${id}-unavailable` : reasonId;
-  const off = disabled || !!unavailableReason;
+  // An unavailable capability cannot be newly ticked, but one that is already ticked must stay untickable-off.
+  const blockedByServer = !!unavailableReason && !checked;
+  const why = blockedByServer ? unavailableReason : reason;
+  const whyId = blockedByServer ? `${id}-unavailable` : reasonId;
+  const off = disabled || blockedByServer;
   return (
     <div>
       <label
@@ -225,12 +229,16 @@ function CheckRow({
 
 function StartFromMenu({
   idPrefix,
+  ticks,
+  unavailable,
   presets,
   matchedPreset,
   disabled,
   onPick,
 }: {
   idPrefix: string;
+  ticks: CapabilityTicks;
+  unavailable?: CapabilityAvailability;
   presets: readonly CapabilityPresetSummary[];
   matchedPreset: CapabilityPresetKey | null;
   disabled?: boolean;
@@ -305,7 +313,12 @@ function StartFromMenu({
           {presets.map((p, i) => {
             const copy = profilePlainCopy(p.key, p.label, p.description);
             const current = matchedPreset === p.key;
-            const unavailable = !p.available;
+            // A preset never ticks a box the server marks unavailable (one already ticked may stay).
+            const blockedReason = (["delivery", "shipping", "counter"] as const)
+              .filter((box) => p.ticks[box] && !ticks[box])
+              .map((box) => unavailable?.[box])
+              .find((r): r is string => !!r);
+            const off = !p.available || !!blockedReason;
             const lineId = `${idPrefix}-preset-${p.key}-line`;
             return (
               <button
@@ -318,14 +331,14 @@ function StartFromMenu({
                 tabIndex={-1}
                 aria-label={current ? `${copy.name}, current setup` : copy.name}
                 aria-describedby={lineId}
-                aria-disabled={unavailable || undefined}
+                aria-disabled={off || undefined}
                 onClick={() => {
-                  if (unavailable) return;
+                  if (off) return;
                   onPick(p);
                   close(true);
                 }}
                 className={`flex min-h-[44px] w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left hover:bg-slate-700 ${FOCUS_RING} ${
-                  unavailable ? "cursor-not-allowed opacity-60" : ""
+                  off ? "cursor-not-allowed opacity-60" : ""
                 }`}
               >
                 <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-white">
@@ -337,7 +350,7 @@ function StartFromMenu({
                   )}
                 </span>
                 <span id={lineId} className="text-xs text-slate-400">
-                  {unavailable ? "Not available for this tenant." : copy.line}
+                  {blockedReason ?? (!p.available ? "Not available for this tenant." : copy.line)}
                 </span>
               </button>
             );

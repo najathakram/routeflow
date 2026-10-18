@@ -33,8 +33,13 @@ const CARRIER_COPY = "Orders are with the carrier right now. Change this once th
 
 /** One finished preview request: tied to the ticks it was asked for, never to "whatever is on screen now". */
 type Settled =
-  | { key: string; ticks: CapabilityTicks; response: BusinessCapabilitiesPreviewResponse }
-  | { key: string; error: string };
+  | {
+      gen: number;
+      key: string;
+      ticks: CapabilityTicks;
+      response: BusinessCapabilitiesPreviewResponse;
+    }
+  | { gen: number; key: string; error: string };
 
 function isCancel(err: unknown): boolean {
   const e = err as { code?: string; name?: string } | null;
@@ -72,7 +77,14 @@ export function CapabilitiesCard({
   const [ticks, setTicks] = React.useState<CapabilityTicks>(NO_TICKS);
   const [result, setResult] = React.useState<Settled | null>(null);
   const [lastOk, setLastOk] = React.useState<Extract<Settled, { response: unknown }> | null>(null);
-  const [attempt, setAttempt] = React.useState(0);
+  /**
+   * Bumped by every change to the ticks and every re-ask. A preview answer only counts for the generation that asked
+   * for it, so an older answer is never reused as the fresh one, even when its ticks happen to match again.
+   */
+  const [gen, setGen] = React.useState(0);
+  const [refreshNote, setRefreshNote] = React.useState<string | null>(null);
+  const [focusToken, setFocusToken] = React.useState(0);
+  const rootRef = React.useRef<HTMLDivElement>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [applying, setApplying] = React.useState(false);
   const [applyError, setApplyError] = React.useState<string | null>(null);
@@ -88,6 +100,8 @@ export function CapabilitiesCard({
   }, []);
   const ticksRef = React.useRef(ticks);
   ticksRef.current = ticks;
+  const genRef = React.useRef(gen);
+  genRef.current = gen;
   /** The next preview request goes out now (a retry, or a stale plan), not after the debounce. */
   const immediate = React.useRef(false);
 
@@ -98,6 +112,7 @@ export function CapabilitiesCard({
       setCaps(next);
       if (resetTicks) {
         setTicks(ticksFromCapabilities(next));
+        setGen((g) => g + 1);
         setResult(null);
         setLastOk(null);
         setNotice(null);
@@ -131,6 +146,7 @@ export function CapabilitiesCard({
     if (!needsPreview) return;
     const asked = ticksRef.current;
     const askedKey = ticksKey(asked);
+    const askedGen = genRef.current;
     const controller = new AbortController();
     const delay = immediate.current ? 0 : 300;
     immediate.current = false;
@@ -138,26 +154,28 @@ export function CapabilitiesCard({
       previewBusinessCapabilities(tenantId, ticksToRequest(asked), controller.signal)
         .then((response) => {
           if (controller.signal.aborted || !mounted.current) return;
-          if (ticksKey(ticksRef.current) !== askedKey) return;
-          const ok = { key: askedKey, ticks: asked, response };
+          if (genRef.current !== askedGen) return;
+          const ok = { gen: askedGen, key: askedKey, ticks: asked, response };
           setResult(ok);
           setLastOk(ok);
         })
         .catch((err: unknown) => {
           if (controller.signal.aborted || isCancel(err) || !mounted.current) return;
-          if (ticksKey(ticksRef.current) !== askedKey) return;
-          setResult({ key: askedKey, error: profileErrorCopy(err, "") });
+          if (genRef.current !== askedGen) return;
+          setResult({ gen: askedGen, key: askedKey, error: profileErrorCopy(err, "") });
         });
     }, delay);
     return () => {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [key, attempt, needsPreview, tenantId]);
+  }, [gen, needsPreview, tenantId]);
 
   function changeTicks(next: CapabilityTicks) {
     setTicks(next);
+    setGen((g) => g + 1);
     setNotice(null);
+    setRefreshNote(null);
     setSavedNote(null);
     setApplyError(null);
   }
@@ -165,10 +183,10 @@ export function CapabilitiesCard({
   function previewAgain() {
     immediate.current = true;
     setResult(null);
-    setAttempt((a) => a + 1);
+    setGen((g) => g + 1);
   }
 
-  const settled = result && result.key === key ? result : null;
+  const settled = result && result.gen === gen ? result : null;
   const fresh = settled && "response" in settled ? settled : null;
   const failedPreview = settled && "error" in settled ? settled : null;
   const loading = needsPreview && !settled;
@@ -194,17 +212,44 @@ export function CapabilitiesCard({
     setApplying(true);
     setApplyError(null);
     setSavedNote(null);
+    setRefreshNote(null);
+    const applied = fresh.ticks;
+    let written = false;
     try {
       await applyBusinessCapabilities(
         tenantId,
-        ticksToRequest(fresh.ticks),
+        ticksToRequest(applied),
         fresh.response.planFingerprint,
       );
-      const names = tickedNames(fresh.ticks);
+      written = true;
+      const names = tickedNames(applied);
       setSavedNote(`Saved: ${names.length > 0 ? names.join(", ") : "nothing ticked"}.`);
-      await readCaps(true);
+      try {
+        await readCaps(true);
+      } catch {
+        // The write succeeded; only the read-back failed. Show the applied ticks as the saved ones (no preset can be
+        // claimed) and ask softly for a reload, never "Could not apply".
+        if (mounted.current) {
+          setCaps((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  configured: true,
+                  delivery: applied.delivery,
+                  doorPayments: applied.doorPayments,
+                  shipping: applied.shipping,
+                  counter: applied.counter,
+                  opensAs: applied.opensAs,
+                  matchedPreset: null,
+                }
+              : prev,
+          );
+          setRefreshNote("Couldn't refresh. Reload the page to see the saved setup.");
+        }
+      }
       onApplied();
     } catch (err) {
+      if (written) return;
       const changed = profilePlanChanged(err);
       const partly = profilePartlyApplied(err);
       if (partly) {
@@ -213,6 +258,8 @@ export function CapabilitiesCard({
         onApplied();
       }
       if (changed || partly) {
+        // Re-read what is saved first, so Saved / Current / "already set up" agree with the server, then re-preview.
+        if (changed) await readCaps(false).catch(() => undefined);
         setNotice(changed ? PLAN_CHANGED_NOTICE : null);
         if (partly) setApplyError(profileErrorCopy(err, "Could not apply this change. Try again."));
         previewAgain();
@@ -220,9 +267,27 @@ export function CapabilitiesCard({
         setApplyError(profileErrorCopy(err, "Could not apply this change. Try again."));
       }
     } finally {
-      if (mounted.current) setApplying(false);
+      if (mounted.current) {
+        setApplying(false);
+        setFocusToken((t) => t + 1);
+      }
     }
   }
+
+  // After an apply the Apply button may be off and the dialog is gone: land focus on the first box, not on <body>.
+  React.useEffect(() => {
+    if (focusToken === 0) return;
+    const el = rootRef.current?.querySelector<HTMLElement>(
+      "[data-focus-target='capabilities'] input:not([disabled])",
+    );
+    el?.focus();
+  }, [focusToken]);
+
+  // The stale-plan notice only lives until the fresh preview is on screen.
+  const freshResult = result && result.gen === gen && "response" in result ? result : null;
+  React.useEffect(() => {
+    if (freshResult) setNotice(null);
+  }, [freshResult]);
 
   function onApplyClick() {
     if (!canApply) return;
@@ -230,17 +295,14 @@ export function CapabilitiesCard({
     else void doApply();
   }
 
-  const summaryLine =
-    notice ??
-    (shown
-      ? (() => {
-          const s = billingStops(shown.response).length;
-          if (s > 0) return `Billing stops for ${s} ${plural(s, "add-on", "add-ons")}.`;
-          const n =
-            (shown.response.plan?.comps ?? []).length + (shown.response.changes ?? []).length;
-          return `${n} ${plural(n, "change", "changes")} to review.`;
-        })()
-      : "");
+  const summaryLine = shown
+    ? (() => {
+        const s = billingStops(shown.response).length;
+        if (s > 0) return `Billing stops for ${s} ${plural(s, "add-on", "add-ons")}.`;
+        const n = (shown.response.plan?.comps ?? []).length + (shown.response.changes ?? []).length;
+        return `${n} ${plural(n, "change", "changes")} to review.`;
+      })()
+    : "";
 
   const savedNames = tickedNames(savedTicks);
 
@@ -260,7 +322,7 @@ export function CapabilitiesCard({
       ) : loadState === "loading" || !caps ? (
         <p className="text-sm text-slate-400">Loading what this business does...</p>
       ) : (
-        <div className="grid gap-x-6 gap-y-4 lg:grid-cols-2">
+        <div ref={rootRef} className="grid gap-x-6 gap-y-4 lg:grid-cols-2">
           <div className="flex flex-col gap-3 lg:col-start-1 lg:row-start-1">
             <p className="text-sm text-slate-300">
               {caps.configured
@@ -292,6 +354,11 @@ export function CapabilitiesCard({
                 <p aria-live="polite" className="text-sm font-medium text-slate-200">
                   {summaryLine}
                 </p>
+                {notice && (
+                  <p role="status" className="text-sm text-slate-300">
+                    {notice}
+                  </p>
+                )}
                 {failedPreview ? (
                   <div
                     id={errorId}
@@ -357,6 +424,7 @@ export function CapabilitiesCard({
                 {savedNote}
               </p>
             )}
+            {refreshNote && <p className="text-sm text-slate-300">{refreshNote}</p>}
             {applyError && (
               <p role="alert" className="text-sm text-red-400">
                 {applyError}

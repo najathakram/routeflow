@@ -458,14 +458,20 @@ describe("CapabilitiesCard: apply", () => {
     await renderCard();
     fireEvent.click(box(SHIPPING));
     await waitFor(() => expect(applyButton()).toBeEnabled());
-    mockPreview.mockResolvedValue(
-      capabilitiesPreview({ changes: ["Fresh plan"], planFingerprint: "9".repeat(64) }),
-    );
+    const next = deferred<BusinessCapabilitiesPreviewResponse>();
+    mockPreview.mockReturnValue(next.promise);
     fireEvent.click(applyButton());
-    expect(
-      await screen.findByText("This business changed. Check the preview again."),
-    ).toBeVisible();
+    const notice = await screen.findByText("This business changed. Check the preview again.");
+    expect(notice).toBeVisible();
+    expect(applyButton()).toBeDisabled();
+    await act(async () => {
+      next.resolve(
+        capabilitiesPreview({ changes: ["Fresh plan"], planFingerprint: "9".repeat(64) }),
+      );
+    });
     expect(await screen.findByText("Fresh plan")).toBeVisible();
+    // the notice goes away once the fresh preview is on screen
+    expect(screen.queryByText("This business changed. Check the preview again.")).toBeNull();
     expect(mockPreview).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(applyButton()).toBeEnabled());
     fireEvent.click(applyButton());
@@ -499,5 +505,145 @@ describe("CapabilitiesCard: apply", () => {
     await act(async () => {
       pending.resolve({ plan: {}, changed: [], summary: [] });
     });
+  });
+});
+
+describe("CapabilitiesCard: review fixes", () => {
+  it("a refresh that fails AFTER a successful apply still says Saved, softly asks for a reload, and tells the screen", async () => {
+    const { onApplied } = await renderCard();
+    fireEvent.click(box(SHIPPING));
+    await waitFor(() => expect(applyButton()).toBeEnabled());
+    mockFetchCapabilities.mockRejectedValue(apiError(503, { code: "FEATURES_UNAVAILABLE" }));
+    fireEvent.click(applyButton());
+    await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/^Saved:/)).toBeVisible();
+    expect(
+      screen.getByText("Couldn't refresh. Reload the page to see the saved setup."),
+    ).toBeVisible();
+    expect(screen.queryByText("Could not apply this change. Try again.")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    // the boxes now read as the saved setup, so nothing is offered to apply again
+    expect(box(SHIPPING)).toBeChecked();
+    expect(screen.getByText("Already set up this way.")).toBeVisible();
+  });
+
+  it("a 409 re-reads what is saved, so the card agrees with the server", async () => {
+    mockApply.mockRejectedValueOnce(apiError(409, { code: API_ERROR_CODES.PROFILE_PLAN_CHANGED }));
+    await renderCard();
+    fireEvent.click(box(SHIPPING));
+    await waitFor(() => expect(applyButton()).toBeEnabled());
+    const reads = mockFetchCapabilities.mock.calls.length;
+    // someone else already saved exactly these ticks
+    mockFetchCapabilities.mockResolvedValue(
+      capabilitiesFixture({
+        delivery: true,
+        doorPayments: true,
+        shipping: true,
+        counter: true,
+        matchedPreset: "delivery_shipping_pos",
+      }),
+    );
+    fireEvent.click(applyButton());
+    await waitFor(() => expect(mockFetchCapabilities.mock.calls.length).toBeGreaterThan(reads));
+    expect(await screen.findByText("Already set up this way.")).toBeVisible();
+    expect(screen.queryByTestId("capability-preview")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Start from…" }));
+    expect(screen.getByRole("menuitem", { name: "Everything, current setup" })).toBeInTheDocument();
+  });
+
+  it("the stale-plan notice is never inside the aria-live summary line", async () => {
+    mockApply.mockRejectedValueOnce(apiError(409, { code: API_ERROR_CODES.PROFILE_PLAN_CHANGED }));
+    await renderCard();
+    fireEvent.click(box(SHIPPING));
+    await waitFor(() => expect(applyButton()).toBeEnabled());
+    const next = deferred<BusinessCapabilitiesPreviewResponse>();
+    mockPreview.mockReturnValue(next.promise);
+    fireEvent.click(applyButton());
+    const notice = await screen.findByText("This business changed. Check the preview again.");
+    const live = document.querySelector("[aria-live]")!;
+    expect(live.contains(notice)).toBe(false);
+    expect(live.textContent).not.toContain("This business changed");
+    await act(async () => {
+      next.resolve(capabilitiesPreview());
+    });
+  });
+
+  it("a saved, ticked box that is now unavailable can still be unticked; an unticked one cannot be ticked", async () => {
+    mockFetchCapabilities.mockResolvedValue({
+      ...DELIVERY_COUNTER_FIXTURE,
+      unavailable: { counter: "Not available yet", shipping: "Not available yet" },
+    });
+    await renderCard();
+    expect(box(COUNTER)).toBeChecked();
+    expect(box(COUNTER)).toBeEnabled();
+    expect(box(SHIPPING)).toBeDisabled();
+    expect(screen.getByText("Not available yet")).toBeVisible();
+    fireEvent.click(box(COUNTER));
+    expect(box(COUNTER)).not.toBeChecked();
+    await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(1));
+    expect(mockPreview.mock.calls[0]![1]).toEqual({
+      delivery: true,
+      doorPayments: true,
+      shipping: false,
+      counter: false,
+    });
+  });
+
+  it("a preset that would tick an unavailable box cannot be chosen from the menu", async () => {
+    mockFetchCapabilities.mockResolvedValue({
+      ...DELIVERY_COUNTER_FIXTURE,
+      unavailable: { shipping: "Not available yet" },
+    });
+    await renderCard();
+    fireEvent.click(screen.getByRole("button", { name: "Start from…" }));
+    const everything = screen.getByRole("menuitem", { name: "Everything" });
+    expect(everything).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(everything);
+    expect(box(SHIPPING)).not.toBeChecked();
+    expect(mockPreview).not.toHaveBeenCalled();
+    // a preset that needs nothing unavailable still works
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delivery" }));
+    expect(box(COUNTER)).not.toBeChecked();
+  });
+
+  it("the billing dialog is described by its add-on list, and focus returns to a stable control after Apply", async () => {
+    mockPreview.mockResolvedValue(capabilitiesPreviewWithBilling());
+    await renderCard();
+    fireEvent.click(box(DELIVERY));
+    await waitFor(() => expect(applyButton()).toBeEnabled());
+    fireEvent.click(applyButton());
+    const dialog = await screen.findByRole("alertdialog", { name: "Stop billing for 2 add-ons?" });
+    expect(dialog).toHaveAccessibleDescription(/Billing stops now\./);
+    expect(dialog).toHaveAccessibleDescription(/Remove it from their manual invoice\./);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop billing and apply" }));
+    await waitFor(() => expect(mockApply).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    // not the (now disabled) Apply button, and not <body>
+    await waitFor(() => expect(box(DELIVERY)).toHaveFocus());
+  });
+
+  it("Apply stays off until the answer for the CURRENT ticks lands, even if an older answer matches them", async () => {
+    mockPreview.mockResolvedValueOnce(capabilitiesPreview({ planFingerprint: "1".repeat(64) }));
+    await renderCard();
+    fireEvent.click(box(SHIPPING));
+    await waitFor(() => expect(applyButton()).toBeEnabled());
+
+    const second = deferred<BusinessCapabilitiesPreviewResponse>();
+    mockPreview.mockReturnValue(second.promise);
+    fireEvent.click(box(SHIPPING)); // back to the saved ticks
+    fireEvent.click(box(SHIPPING)); // and the first ticks again: the old answer matches their key
+    expect(applyButton()).toBeDisabled();
+    expect(screen.getByText("Updating preview…", { selector: "p" })).toBeVisible();
+    await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
+    expect(applyButton()).toBeDisabled();
+
+    await act(async () => {
+      second.resolve(capabilitiesPreview({ planFingerprint: "2".repeat(64) }));
+    });
+    await waitFor(() => expect(applyButton()).toBeEnabled());
+    fireEvent.click(applyButton());
+    await waitFor(() => expect(mockApply).toHaveBeenCalledTimes(1));
+    expect(mockApply.mock.calls[0]![2]).toBe("2".repeat(64));
   });
 });

@@ -24,6 +24,7 @@ export function CapabilityBillingDialog({
   onConfirm: () => void;
 }) {
   const cancelRef = React.useRef<HTMLButtonElement>(null);
+  const listId = React.useId();
   const n = rows.length;
   return (
     <AdminModal
@@ -32,6 +33,7 @@ export function CapabilityBillingDialog({
       onClose={busy ? () => {} : onCancel}
       title={`Stop billing for ${n} add-on${n === 1 ? "" : "s"}?`}
       initialFocusRef={cancelRef}
+      describedBy={listId}
       footer={
         <>
           <button
@@ -54,7 +56,7 @@ export function CapabilityBillingDialog({
         </>
       }
     >
-      <ul className="flex flex-col gap-2 text-sm text-slate-200">
+      <ul id={listId} className="flex flex-col gap-2 text-sm text-slate-200">
         {rows.map((r) => (
           <li key={r.featureKey}>
             {keyLabel(r.featureKey)}.{" "}

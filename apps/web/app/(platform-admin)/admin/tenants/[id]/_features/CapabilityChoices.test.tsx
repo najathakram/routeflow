@@ -116,6 +116,21 @@ describe("CapabilityChoices: the three boxes", () => {
     expect(box(SHIPPING)).toBeEnabled();
   });
 
+  it("an unavailable box that is already ticked stays enabled so it can be unticked", () => {
+    render(
+      <Harness
+        initial={{ ...NO_TICKS, counter: true }}
+        unavailable={{ counter: "Not available yet" }}
+      />,
+    );
+    expect(box(COUNTER)).toBeChecked();
+    expect(box(COUNTER)).toBeEnabled();
+    fireEvent.click(box(COUNTER));
+    expect(box(COUNTER)).not.toBeChecked();
+    expect(box(COUNTER)).toBeDisabled();
+    expect(screen.getByText("Not available yet")).toBeVisible();
+  });
+
   it("a disabled form disables every box and the preset menu", () => {
     render(
       <CapabilityChoices
@@ -281,6 +296,27 @@ describe("CapabilityChoices: Start from…", () => {
     expect(item).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(item);
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("a preset that would tick an unavailable box is disabled with the reason and never ticks it", () => {
+    const onChange = jest.fn();
+    render(<Harness onChange={onChange} unavailable={{ shipping: "Not available yet" }} />);
+    openMenu();
+    for (const name of [
+      "Shipping only",
+      "Counter + shipping",
+      "Delivery + shipping",
+      "Everything",
+    ]) {
+      const item = screen.getByRole("menuitem", { name });
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      fireEvent.click(item);
+    }
+    expect(onChange).not.toHaveBeenCalled();
+    expect(box(SHIPPING)).not.toBeChecked();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delivery + counter" }));
+    expect(box(DELIVERY)).toBeChecked();
+    expect(box(SHIPPING)).not.toBeChecked();
   });
 
   it("without presets there is no menu button", () => {
