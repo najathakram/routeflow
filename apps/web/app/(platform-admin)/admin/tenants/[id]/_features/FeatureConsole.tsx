@@ -407,6 +407,7 @@ export function FeatureConsole({
                   key={row.key}
                   className="rounded-xl bg-slate-800 p-4 ring-1 ring-white/5"
                   data-feature-key={row.key}
+                  id={`feature-${row.key}`}
                 >
                   <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between lg:gap-3">
                     <div>
@@ -467,9 +468,13 @@ export function FeatureConsole({
                     </div>
                   </div>
 
-                  {row.config && feature?.serving && feature.mode && (
+                  {/* Gated on the reported mode, not on `serving`: a gate-less config row (fulfilment_model)
+                      reports serving:false yet is still settable. The server refuses delivery/both
+                      without a fleet (FeatureConfigService.set). */}
+                  {row.config && feature?.mode && (
                     <ModeSelector
                       featureKey={row.key}
+                      label={row.label}
                       options={row.config.modes}
                       mode={feature.mode}
                       effectiveKeys={effectiveKeys}
@@ -573,6 +578,7 @@ function StateReadoutText({ readout }: { readout: StateReadout }) {
 
 function ModeSelector({
   featureKey,
+  label,
   options,
   mode,
   effectiveKeys,
@@ -580,6 +586,7 @@ function ModeSelector({
   onSelect,
 }: {
   featureKey: string;
+  label: string;
   options: FeatureModeOption[];
   mode: NonNullable<EffectiveFeature["mode"]>;
   effectiveKeys: ReadonlySet<string>;
@@ -596,7 +603,7 @@ function ModeSelector({
           {MIXED_LABEL}
         </span>
       )}
-      <div role="radiogroup" aria-label={`${featureKey} mode`} className="flex flex-wrap gap-3">
+      <div role="radiogroup" aria-label={`${label} mode`} className="flex flex-wrap gap-3">
         {radios.map((option) => {
           const blocked = isOptionBlocked(option, mode);
           const checked = !isMixed && mode.effective === option.key;

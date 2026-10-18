@@ -1215,3 +1215,117 @@ describe("BO-12: one state readout per console row", () => {
     expect(actions.parentElement).toHaveClass("flex-col", "lg:flex-row");
   });
 });
+
+describe("BO-06: console mode radios render for config rows", () => {
+  const MODE = {
+    value: "ship",
+    effective: "ship",
+    source: "TENANT" as const,
+    allowed: ["unset", "delivery", "ship", "both"],
+    blocked: [] as string[],
+  };
+  // fulfilment_model with the fourth option the server also accepts.
+  const FULFIL_ROW: FeatureRegistryRow = {
+    ...FULFILMENT_MODEL_ROW,
+    config: {
+      fallbackMode: "unset",
+      modes: [
+        ...(FULFILMENT_MODEL_ROW.config?.modes ?? []),
+        { key: "both", label: "Delivery and shipping", lifecycle: "ga" },
+      ],
+    },
+  };
+
+  // previewFixture only flips keys that EFFECTIVE_FIXTURE holds, so build this row's own diff.
+  function previewFulfil(to: string) {
+    const before = fulfilmentModeEffective(MODE);
+    const after = { ...before, mode: { ...MODE, value: to, effective: to } };
+    return { before: [before], after: [after], changed: ["fulfilment_model"] };
+  }
+
+  async function renderRows(effective: EffectiveFeature[]) {
+    mockFetchRegistry.mockResolvedValue([...REGISTRY_FIXTURE, FULFIL_ROW, UNCHECKED_SETTING_ROW]);
+    mockFetchEffective.mockResolvedValue([...EFFECTIVE_FIXTURE, ...effective]);
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+    fireEvent.click(screen.getByLabelText("Show internal"));
+    return (key: string) => document.querySelector(`[data-feature-key="${key}"]`) as HTMLElement;
+  }
+
+  it("a gate-less config row that reports serving:false still gets its radios, named by the label", async () => {
+    const rowOf = await renderRows([fulfilmentModeEffective(MODE), uncheckedSettingEffective()]);
+    const group = within(rowOf("fulfilment_model")).getByRole("radiogroup", {
+      name: "Where orders go mode",
+    });
+    expect(within(group).getByRole("radio", { name: "Ship by carrier" })).toBeChecked();
+    expect(within(group).getByRole("radio", { name: "Delivery and shipping" })).not.toBeChecked();
+  });
+
+  it("names every radiogroup by the row label, never the raw key", async () => {
+    const rowOf = await renderRows([fulfilmentModeEffective(MODE), uncheckedSettingEffective()]);
+    expect(
+      within(rowOf("route_optimization")).getByRole("radiogroup", {
+        name: "Route optimization mode mode",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: /fulfilment_model|route_optimization/ })).toBe(
+      null,
+    );
+  });
+
+  it("a row without config renders no radiogroup, and a config row with no mode reported renders none", async () => {
+    const rowOf = await renderRows([
+      fulfilmentModeEffective(undefined),
+      uncheckedSettingEffective(),
+    ]);
+    expect(within(rowOf("unchecked_setting")).queryByRole("radiogroup")).toBeNull();
+    expect(within(rowOf("tobacco_dealer")).queryByRole("radiogroup")).toBeNull();
+    expect(within(rowOf("fulfilment_model")).queryByRole("radiogroup")).toBeNull();
+  });
+
+  it("gives each console row a stable link target id", async () => {
+    const rowOf = await renderRows([fulfilmentModeEffective(MODE), uncheckedSettingEffective()]);
+    expect(document.getElementById("feature-fulfilment_model")).toBe(rowOf("fulfilment_model"));
+    expect(document.getElementById("feature-route_optimization")).toBe(rowOf("route_optimization"));
+  });
+
+  it("picking a mode opens the preview drawer and Cancel writes nothing", async () => {
+    mockPreview.mockResolvedValueOnce(previewFulfil("delivery"));
+    const rowOf = await renderRows([fulfilmentModeEffective(MODE), uncheckedSettingEffective()]);
+    fireEvent.click(within(rowOf("fulfilment_model")).getByRole("radio", { name: "Own delivery" }));
+    expect(await screen.findByText("Preview mode change", { selector: "h3" })).toBeInTheDocument();
+    expect(mockPreview).toHaveBeenCalledWith(TENANT_ID, {
+      modes: { fulfilment_model: "delivery" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(mockWriteConfig).not.toHaveBeenCalled();
+  });
+
+  it("picking both on a tenant without a fleet shows the console's fixed copy, never the server text", async () => {
+    const SERVER_TEXT =
+      "SERVER-TEXT fulfilment_model both needs driver_app_addon or route_optimization";
+    mockPreview.mockResolvedValueOnce(previewFulfil("both"));
+    mockWriteConfig.mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: { code: "FULFILMENT_MODE_NEEDS_FLEET", message: SERVER_TEXT },
+      },
+    });
+    const rowOf = await renderRows([fulfilmentModeEffective(MODE), uncheckedSettingEffective()]);
+    fireEvent.click(
+      within(rowOf("fulfilment_model")).getByRole("radio", { name: "Delivery and shipping" }),
+    );
+    await screen.findByText("Preview mode change", { selector: "h3" });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    // Today the console maps no error code: every failed apply reads the one fixed line below.
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Could not apply that change. Try again.");
+    expect(document.body).not.toHaveTextContent("SERVER-TEXT");
+  });
+});
