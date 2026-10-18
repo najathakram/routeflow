@@ -117,7 +117,7 @@ describe("K11-14: the caption under a box says Set only", () => {
     expect(words.every((w) => w.className.includes("sr-only"))).toBe(true);
     const input = within(cell).getByTestId(T.input("case", 3));
     expect(input).toHaveAccessibleDescription("Auto");
-    expect(input.getAttribute("placeholder")).toBe("$28.50");
+    expect(input.getAttribute("placeholder")).toBe("28.50");
   });
 
   it("a Set box is not described as Auto", async () => {

@@ -284,7 +284,7 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
           aria-invalid={problem ? true : undefined}
           aria-describedby={describedBy}
           data-escape-reverts={reverts ? "true" : undefined}
-          placeholder={view.display}
+          placeholder={view.display.replace(/^\$/, "")}
           value={inside ? text : canonicalPriceText(text)}
           onFocus={(e) => {
             atFocus.current = text;

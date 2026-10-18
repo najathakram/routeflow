@@ -373,7 +373,7 @@ describe("units v2 edit grid (S12a)", () => {
       within(screen.getByTestId(T.row("box")))
         .getByTestId(T.input("box", 1))
         .getAttribute("placeholder"),
-    ).toBe("$30.00");
+    ).toBe("30.00");
   });
 
   it("the grid without an edit api is today's read-only grid", () => {
