@@ -291,8 +291,16 @@ export function FeatureConsole({
       }
       setPending(null);
       load();
-    } catch {
-      setPreviewError("Could not apply that change. Try again.");
+    } catch (err) {
+      const code = (err as { response?: { data?: { code?: unknown } } } | null)?.response?.data
+        ?.code;
+      setPreviewError(
+        code === "FULFILMENT_MODE_NEEDS_FLEET"
+          ? "This business has no delivery fleet, so Delivery and shipping can't be turned on yet."
+          : code === "FULFILMENT_CARRIER_IN_TRANSIT"
+            ? "A carrier shipment is still in transit. Change the mode once it is delivered."
+            : "Could not apply that change. Try again.",
+      );
     } finally {
       setApplying(false);
     }
@@ -407,6 +415,7 @@ export function FeatureConsole({
                   key={row.key}
                   className="rounded-xl bg-slate-800 p-4 ring-1 ring-white/5"
                   data-feature-key={row.key}
+                  id={`feature-${row.key}`}
                 >
                   <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between lg:gap-3">
                     <div>
@@ -467,9 +476,13 @@ export function FeatureConsole({
                     </div>
                   </div>
 
-                  {row.config && feature?.serving && feature.mode && (
+                  {/* Gated on the reported mode, not on `serving`: a gate-less config row (fulfilment_model)
+                      reports serving:false yet is still settable. The server refuses delivery/both
+                      without a fleet (FeatureConfigService.set). */}
+                  {row.config && feature?.mode && (feature.serving || row.gate.via === "none") && (
                     <ModeSelector
                       featureKey={row.key}
+                      label={row.label}
                       options={row.config.modes}
                       mode={feature.mode}
                       effectiveKeys={effectiveKeys}
@@ -573,6 +586,7 @@ function StateReadoutText({ readout }: { readout: StateReadout }) {
 
 function ModeSelector({
   featureKey,
+  label,
   options,
   mode,
   effectiveKeys,
@@ -580,6 +594,7 @@ function ModeSelector({
   onSelect,
 }: {
   featureKey: string;
+  label: string;
   options: FeatureModeOption[];
   mode: NonNullable<EffectiveFeature["mode"]>;
   effectiveKeys: ReadonlySet<string>;
@@ -596,7 +611,11 @@ function ModeSelector({
           {MIXED_LABEL}
         </span>
       )}
-      <div role="radiogroup" aria-label={`${featureKey} mode`} className="flex flex-wrap gap-3">
+      <div
+        role="radiogroup"
+        aria-label={label.toLowerCase().endsWith(" mode") ? label : `${label} mode`}
+        className="flex flex-wrap gap-3"
+      >
         {radios.map((option) => {
           const blocked = isOptionBlocked(option, mode);
           const checked = !isMixed && mode.effective === option.key;

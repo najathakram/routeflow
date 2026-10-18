@@ -13,6 +13,7 @@ import {
 import { AdminCard } from "../../../../_components/AdminCard";
 import { CapabilityBillingDialog } from "./CapabilityBillingDialog";
 import { CapabilityChoices } from "./CapabilityChoices";
+import { useFocusTarget } from "./useFocusTarget";
 import { CapabilityPlanSections, billingStops, isEmptyPlan } from "./CapabilityPlanSections";
 import {
   NO_TICKS,
@@ -84,6 +85,9 @@ export function CapabilitiesCard({
   const [gen, setGen] = React.useState(0);
   const [refreshNote, setRefreshNote] = React.useState<string | null>(null);
   const [focusToken, setFocusToken] = React.useState(0);
+  // BO-02 "Choose" and the unset-counter links land here: ?focus=capabilities / ?focus=counter.
+  useFocusTarget("capabilities");
+  useFocusTarget("counter");
   const rootRef = React.useRef<HTMLDivElement>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [applying, setApplying] = React.useState(false);
