@@ -126,4 +126,22 @@ describe("InventoryPage catalog reads", () => {
     expect(screen.getByRole("button", { name: /boxed gadget/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /retired gizmo/i })).not.toBeInTheDocument();
   });
+
+  it("reads the parent/variant lookup while the Stock tab is showing", () => {
+    render(<InventoryPage />);
+    expect(useProducts).toHaveBeenCalled();
+    for (const [params, options] of useProducts.mock.calls) {
+      expect(params).toEqual({ includeVariants: true, limit: 0 });
+      expect(options?.enabled).toBe(true);
+    }
+  });
+
+  it("skips the parent/variant lookup on another tab", () => {
+    tab = "suppliers";
+    render(<InventoryPage />);
+    expect(useProducts).toHaveBeenCalled();
+    for (const [, options] of useProducts.mock.calls) {
+      expect(options?.enabled).toBe(false);
+    }
+  });
 });

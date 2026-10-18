@@ -1252,7 +1252,15 @@ export default function InventoryPage() {
   // `/inventory/overview`, which selects neither field) since it needs every
   // product's `parentProductId` plus `includeVariants` to know which rows are
   // splittable generics.
-  const { data: variantProductsData } = useProducts({ includeVariants: true, limit: 0 });
+  //
+  // Still a whole-catalog read (`limit: 0`): no endpoint says which products have variants (there is
+  // no family filter on GET /products, and /inventory/overview selects neither parentProductId nor
+  // the variants), and the Stock table shows every row, so the answer is needed for any of them.
+  // It is only consumed by the Stock tab, so it is enabled only while that tab is showing.
+  const { data: variantProductsData } = useProducts(
+    { includeVariants: true, limit: 0 },
+    { enabled: activeTab === "stock" },
+  );
   const variantInfoById = React.useMemo(() => {
     const map = new Map<string, VariantInfo>();
     for (const p of variantProductsData?.data ?? []) {
