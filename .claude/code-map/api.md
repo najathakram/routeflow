@@ -50,6 +50,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-10-16-bk2.md](api/landing-2026-10-16-bk2.md) | Landing 2026-10-16 (2nd): units v2 schema and price grid, delete returns stock, reopen claim, FIFO/LIFO retire, payment due |
 | [api/landing-2026-10-17-bk3.md](api/landing-2026-10-17-bk3.md) | Landing 2026-10-17 (3rd): B1 bare variant name, B846 bill revert appends, B568 Zoho sync atomic, 542d session terms sig |
 | [api/landing-2026-10-17-units-v2-3.md](api/landing-2026-10-17-units-v2-3.md) | Landing 2026-10-17 units-v2-3: S19 customer price layer, U-1 tenant units module, pack precondition |
+| [api/landing-2026-10-18-fixes-4.md](api/landing-2026-10-18-fixes-4.md) | Landing 2026-10-18 fixes-4: one web base for return URLs, strict customer-price flag read (503), carrier-in-transit guard |
 | [api/landing-2026-10-12-r52.md](api/landing-2026-10-12-r52.md) | Landing 2026-10-12 Release 5.2: order edit revision guard, edit-line pairing, category trio from snapshot, read-only registries |
 | [api/landing-2026-10-12-r51-r42.md](api/landing-2026-10-12-r51-r42.md) | Landing 2026-10-12 Release 5.1 + 4.2: unpaid ACH checkout never activates, failed-payment email dedupe, one till-money classification, hand-over rows and stamp, UTC session pin |
 | [api/landing-2026-10-12-macbook.md](api/landing-2026-10-12-macbook.md) | Landing 2026-10-12 MacBook lane (pushed): delivery_pos business profile |
