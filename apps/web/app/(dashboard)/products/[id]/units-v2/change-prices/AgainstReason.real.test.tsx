@@ -46,12 +46,13 @@ it("Raise Case 5%: the Tier 2 Piece row is against, and its reason names Retail 
   expect(within(row).getByText("$1.40")).toBeTruthy();
   expect(within(row).getByText("$1.33")).toBeTruthy();
   expect(row.textContent).toContain("Retail Piece $1.50");
-  expect(row.textContent).toContain('Tick "Also raise the prices you set" to move it.');
+  expect(row.textContent).toContain("Goes down: it follows Retail Piece $1.50");
+  expect(row.textContent).toContain('Tick "Also raise the prices you set" to raise it.');
   // the reason is its own row under the figures, never a cell beside them
   const rows = row.querySelectorAll("tr");
   expect(rows).toHaveLength(2);
-  expect(rows[0].textContent).not.toContain("Follows");
-  expect(rows[1].textContent).toContain("Follows");
+  expect(rows[0].textContent).not.toContain("follows");
+  expect(rows[1].textContent).toContain("follows");
 });
 
 it("rows that go the right way have no reason line", () => {
@@ -59,7 +60,7 @@ it("rows that go the right way have no reason line", () => {
   const ok = groupOf(/Retail Case/);
   expect(ok.getAttribute("data-against")).toBe("false");
   expect(ok.querySelectorAll("tr")).toHaveLength(1);
-  expect(ok.textContent).not.toContain("Follows");
+  expect(ok.textContent).not.toContain("follows");
 });
 
 it("rule: no preview row with a lower price on a Raise renders without a reason line", () => {
@@ -72,4 +73,14 @@ it("rule: no preview row with a lower price on a Raise renders without a reason 
     if (down) expect(g.querySelectorAll("tr")).toHaveLength(2);
   }
   expect(preview().querySelectorAll('tbody[data-against="true"]').length).toBeGreaterThan(0);
+});
+
+it("F03: the count line names how many prices go down, so a falling row is no surprise", () => {
+  raiseCase();
+  const n = preview().querySelectorAll("tbody").length;
+  const down = preview().querySelectorAll('tbody[data-against="true"]').length;
+  expect(down).toBeGreaterThan(0);
+  expect(preview().parentElement!.textContent).toContain(
+    `${n} prices will change, ${down} ${down === 1 ? "goes" : "go"} down.`,
+  );
 });
