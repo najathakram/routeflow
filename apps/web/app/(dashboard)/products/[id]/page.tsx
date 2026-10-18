@@ -103,6 +103,9 @@ import { ProductLabelsCard } from "./ProductLabelsCard";
 import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ProductPricingV2 } from "./ProductPricingV2";
+import { PriceWindowHost, ProductPricingRegion } from "./PriceWindowHost";
+import { DetailsPriceLine } from "./PriceFigures";
+import { unitStructureGoverned } from "./units-v2/structure/unit-structure";
 import { ProductJumpLinks } from "./units-v2/nav/ProductJumpLinks";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
@@ -461,6 +464,9 @@ export default function ProductDetailPage() {
   const currentStock = Number(product.currentStock ?? 0);
   const stockStatus = getStockStatus(currentStock, product.isActive, product.kind);
   const v2Family = v2 && product.kind === "FAMILY";
+  // K11-20c: on a product whose prices the window can edit (not a family, recipe or variant), Details shows its
+  // prices read-only and the Details save carries none: the price window (S9) is the only price writer.
+  const pricesInWindow = v2 && !unitStructureGoverned(product);
   const isFamily = product.kind === "FAMILY";
 
   // MSRP — display-only, never money math. Warn (non-blocking) when it undercuts
@@ -592,7 +598,9 @@ export default function ProductDetailPage() {
         // Only a price the operator changed is sent: a price save elsewhere on the page moves prices outside this
         // form, so the snapshot it opened with must never be written back. Untouched tiers move with a list change exactly like
         // the products list (applyLadderChange, audit 2026-10-14).
-        ...detailsPricePatch(product, draft, pricesWhenEditStartedRef.current),
+        ...(pricesInWindow
+          ? {}
+          : { ...detailsPricePatch(product, draft, pricesWhenEditStartedRef.current) }),
         unitsPerBox: unitsPerBoxToSend,
         // Regulated tags: value to set, null to clear (server auto-nulls the
         // category when the type is cleared).
@@ -1247,7 +1255,7 @@ export default function ProductDetailPage() {
   );
 
   return (
-    <>
+    <PriceWindowHost product={product} enabled={pricesInWindow}>
       {/* Crop-before-upload modal — intercepts every file selection */}
       {cropState && (
         <CropModal
@@ -1378,7 +1386,11 @@ export default function ProductDetailPage() {
                 data-testid="product-details-header"
                 className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5 max-sm:py-2"
               >
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                <h3
+                  data-testid="product-details-heading"
+                  tabIndex={-1}
+                  className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70 outline-none"
+                >
                   Details
                 </h3>
                 <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
@@ -1441,6 +1453,7 @@ export default function ProductDetailPage() {
                         </div>
                       ) : (
                         <input
+                          aria-label="Product name"
                           value={(editDraft.name as string) ?? ""}
                           onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
                           className="w-full rounded border border-surface-border px-2 py-1 text-lg font-bold text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -1622,7 +1635,7 @@ export default function ProductDetailPage() {
                       )
                     }
                   />
-                  {!isFamily && priceEachRow}
+                  {!isFamily && !pricesInWindow && priceEachRow}
                   {/* Variant of — edit only; view mode shows the parent in the header line and the banner */}
                   {isEditing && (
                     <InfoRow
@@ -1735,6 +1748,17 @@ export default function ProductDetailPage() {
                     </div>
                     {tiersBlock}
                   </FamilyPriceSection>
+                ) : pricesInWindow ? (
+                  <DetailsPriceLine
+                    productId={product.id}
+                    isEditing={isEditing}
+                    anchor={() => detailsCardRef.current}
+                    fallback={() =>
+                      detailsCardRef.current?.querySelector<HTMLElement>(
+                        '[data-testid="product-details-heading"]',
+                      )
+                    }
+                  />
                 ) : (
                   tiersBlock
                 )}
@@ -1836,7 +1860,10 @@ export default function ProductDetailPage() {
             )}
           </div>
           {/* ── Left: image gallery + stock card ── */}
-          <div className="space-y-4 lg:col-start-1 lg:row-start-1 lg:row-span-2">
+          <div
+            data-region-covers
+            className="space-y-4 lg:col-start-1 lg:row-start-1 lg:row-span-2 lg:[&[inert]]:opacity-40 motion-safe:lg:transition-opacity motion-safe:lg:duration-200"
+          >
             {/* ── Image gallery ── */}
             <div
               data-testid="product-image-card"
@@ -2307,7 +2334,11 @@ export default function ProductDetailPage() {
 
             <ProductLabelsCard productId={product.id} />
             <ProductPortalVisibilityCard product={product} />
-            {v2 && product.kind !== "FAMILY" ? <ProductPricingV2 product={product} /> : null}
+            {v2 && product.kind !== "FAMILY" ? (
+              <ProductPricingRegion>
+                <ProductPricingV2 product={product} />
+              </ProductPricingRegion>
+            ) : null}
             {!v2Family && <ProductUnitsCard product={product} hideAddForm={v2} />}
 
             {/* Sales demand — real data from invoiced sales. In its own file (unlike
@@ -2856,6 +2887,6 @@ export default function ProductDetailPage() {
           )}
         </div>
       </Modal>
-    </>
+    </PriceWindowHost>
   );
 }

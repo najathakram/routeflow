@@ -59,8 +59,11 @@ async function expectTwoColumns(page: Page) {
   expect(Math.abs(next.x - d.x), "the right column keeps its left edge").toBeLessThanOrEqual(1);
 }
 
-async function expectPhoneOrder(page: Page) {
-  const label = page.getByText(/^Price per /).first();
+async function expectPhoneOrder(page: Page, flagOff: boolean) {
+  // flag OFF: the old "Price per ..." row. flag ON (K11-20c): the read-only Details price line replaced it.
+  const label = flagOff
+    ? page.getByText(/^Price per /).first()
+    : page.getByTestId("details-price-line");
   const top = (await label.boundingBox())!.y;
   expect(top, "the price label is on the first screen").toBeLessThan(viewportHeight(page));
   const d = (await card(page, "Details").boundingBox())!;
@@ -107,7 +110,7 @@ for (const flagOff of [false, true]) {
           flagOff ? 0 : 1,
         );
         if (vp.width >= 1024) await expectTwoColumns(page);
-        else await expectPhoneOrder(page);
+        else await expectPhoneOrder(page, flagOff);
         await expectMerchLast(page);
         await shot(page, info, `k11-23-prices-first-flag-${flagOff ? "off" : "on"}`);
       });

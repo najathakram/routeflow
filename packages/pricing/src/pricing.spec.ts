@@ -31,6 +31,9 @@ import {
   type PromoScopeProduct,
   type TrackedCategoryRow,
 } from "./pricing";
+import { buildLadderView } from "./price-ladder";
+import { explainMove, planPriceChange } from "./price-change";
+import type { LadderProduct } from "./unit-levels";
 
 /**
  * Money-math regression suite. These lock the fixes for the reported
@@ -1552,5 +1555,86 @@ describe("invoiceLineQtyText", () => {
     expect(invoiceLineQtyText({ qty: 576, boxes: 2, pieces: 0, unitLabel: "  Case " })).toBe(
       "2 Cases",
     );
+  });
+});
+
+// K11-17: explainMove names the Set price an Auto price that moved the wrong way is following (the planner's own ladder
+// rules, P3/P4), so the Change prices preview can say why. The K9 fixture: Case $30.00 with a Tier 2 of $28.00 (both set),
+// Piece Retail set at $1.50, Piece Tier 2 Auto ($1.50 x 28 / 30 = $1.40).
+describe("explainMove (K11-17)", () => {
+  const product = { unit: "Case", unitsPerBox: 24, pricePerUnit: "30.00", priceTier2: "28.00" };
+  const piece = {
+    label: "Piece",
+    factorToBase: 1,
+    price: "1.50",
+    priceTier2: null,
+    priceTier3: null,
+    priceTier4: null,
+    priceTier5: null,
+  };
+  const view = buildLadderView(product as LadderProduct, [piece]);
+  const raise = planPriceChange(view, {
+    unit: "pack",
+    direction: "raise",
+    mode: "percent",
+    value: 5,
+  });
+  const pieceTier2 = raise.changes.find((c) => c.ref === "base" && c.tier === 2)!;
+
+  it("the fixture really does show Tier 2 Piece going down on a 5% Case raise", () => {
+    expect(pieceTier2).toMatchObject({ from: 1.4, to: 1.33 });
+  });
+
+  it("an Auto price that moved the wrong way follows the unit's own Set Retail", () => {
+    expect(explainMove(view, {}, pieceTier2, raise.changes)).toEqual({
+      kind: "follows-set",
+      ref: "base",
+      tier: 1,
+      label: "Piece",
+      value: 1.5,
+    });
+  });
+
+  it("the source is not named when it moves too (Also raise ticked moves every Set price)", () => {
+    const also = planPriceChange(view, {
+      unit: "pack",
+      direction: "raise",
+      mode: "percent",
+      value: 5,
+      also: true,
+    });
+    expect(also.changes.find((c) => c.ref === "base" && c.tier === 2)).toMatchObject({
+      from: 1.4,
+      to: 1.47,
+    });
+    expect(explainMove(view, {}, pieceTier2, also.changes)).toBeNull();
+  });
+
+  it("a Set cell, a cell the view does not have, or a change that is not this view's price is no move to explain", () => {
+    expect(
+      explainMove(view, {}, { ref: "pack", label: "Case", tier: 1, from: 30, to: 31.5 }),
+    ).toBeNull();
+    expect(
+      explainMove(view, {}, { ref: "nope", label: "X", tier: 2, from: 1, to: 0.5 }),
+    ).toBeNull();
+    expect(explainMove(view, {}, { ...pieceTier2, from: 9.99 })).toBeNull();
+  });
+
+  it("every Raise (and Lower) change that goes the wrong way on this ladder has a derivable reason", () => {
+    const wrong: string[] = [];
+    for (const unit of ["pack", "base"]) {
+      for (const direction of ["raise", "lower"] as const) {
+        for (const value of [1, 5, 12.5, 40]) {
+          const plan = planPriceChange(view, { unit, direction, mode: "percent", value });
+          for (const c of plan.changes) {
+            const against = direction === "raise" ? c.to < c.from : c.to > c.from;
+            if (against && !explainMove(view, {}, c, plan.changes)) {
+              wrong.push(`${unit} ${direction} ${value}: ${c.ref} T${c.tier}`);
+            }
+          }
+        }
+      }
+    }
+    expect(wrong).toEqual([]);
   });
 });

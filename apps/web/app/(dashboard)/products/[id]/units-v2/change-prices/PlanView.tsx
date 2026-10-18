@@ -25,7 +25,7 @@ export interface PlanViewProps {
 // there is no money math here. Offers start unticked, and no row is hidden: rounding moves sit in a <details>.
 
 const SECTION_LABEL = "text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70";
-const AGAINST = "border-l-4 border-warning bg-warning-bg pl-2";
+export const AGAINST = "border-l-4 border-warning bg-warning-bg pl-2";
 
 function Diff({ from, to }: { from: number; to: number }) {
   return (

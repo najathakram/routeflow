@@ -245,7 +245,9 @@ for (const vp of VIEWPORTS) {
         await panel.getByRole("button", { name: "Apply" }).click();
 
         await expect(panel).toHaveCount(0);
-        await expect(page.getByTestId(ID.editbar)).toContainText(/\d+ unsaved/);
+        await expect(page.getByTestId(ID.editbar)).toContainText(
+          /raised 5%: \d+ prices? ready\. Save to keep (it|them)\./,
+        );
         expect(writes, "Apply folds into the draft; it sends nothing").toBe(0);
         await shot(page, info, "save-undo-change-prices-draft");
 

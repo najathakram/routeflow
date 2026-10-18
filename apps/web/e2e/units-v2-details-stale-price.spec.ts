@@ -139,7 +139,7 @@ test.describe("Units v2 Details save after a v2 price save @ 1440", () => {
     });
   }
 
-  test("renaming a non-pack unit in the legacy card keeps the price the v2 grid just saved", async ({
+  test("a row Save in the legacy card writes the name and factor only: no price key, so the v2 price stands", async ({
     page,
     context,
   }) => {
@@ -229,7 +229,17 @@ test.describe("Units v2 Details save after a v2 price save @ 1440", () => {
           new URL(r.url()).pathname.endsWith(`/products/${id}/units/${unitId}`),
       );
       await row.getByRole("button", { name: "Save", exact: true }).click();
-      expect((await patched).status()).toBeLessThan(300);
+      const patchResponse = await patched;
+      expect(patchResponse.status()).toBeLessThan(300);
+      // K11-20c: with the v2 price host the card never writes a price, so the row's PATCH carries none.
+      const patchBody = JSON.parse(patchResponse.request().postData() ?? "{}") as Record<
+        string,
+        unknown
+      >;
+      expect(patchBody.label).toBe("Pallet R");
+      for (const k of ["price", "priceTier2", "priceTier3", "priceTier4", "priceTier5"]) {
+        expect(Object.keys(patchBody), `the row Save must not carry ${k}`).not.toContain(k);
+      }
 
       // 3. Read the unit back: renamed, and still at the v2 price.
       const after = await readUnit();
