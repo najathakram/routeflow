@@ -212,6 +212,121 @@ describe("K11-16: the saved line takes the bar's slot for 5 s", () => {
     expect(isPinned()).toBe(false);
   });
 
+  describe("no layout shift when the line settles (MM's proof: content below jumped by the line's height)", () => {
+    const H = 45;
+    let spy: jest.SpyInstance;
+    let height = H;
+    beforeEach(() => {
+      height = H;
+      // jsdom cannot lay out: the status node "measures" `height` wherever it is once it has content (an empty one is 0).
+      spy = jest.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        return this.getAttribute("data-testid") === "units-v2-save-status" && this.textContent
+          ? height
+          : 0;
+      });
+    });
+    afterEach(() => spy.mockRestore());
+
+    const slot = () => line().parentElement as HTMLElement;
+    const minH = () => Number.parseFloat(slot().style.minHeight || "0") || 0;
+    /** What the section sees for the line: the container's reservation, or the node's own in-flow box. */
+    const footprint = () => Math.max(minH(), isPinned() ? 0 : line().offsetHeight);
+
+    it("(e) before any save the container reserves nothing", () => {
+      render(<Section />);
+      expect(slot().style.minHeight).toBe("");
+      expect(footprint()).toBe(0);
+    });
+
+    it("(a) while pinned the container reserves the node's measured height; the node is fixed", () => {
+      render(<Section />);
+      save("a1");
+      expect(isPinned()).toBe(true);
+      expect(slot().style.minHeight).toBe(`${H}px`);
+      expect(slot().getAttribute("role")).toBeNull();
+      expect(slot().contains(line())).toBe(true);
+      expect(slot().querySelectorAll("[role=status]")).toHaveLength(1);
+    });
+
+    it("(b)+(c) the footprint never drops below the pinned height at any step, and one 'Saved' region throughout", () => {
+      render(<Section />);
+      save("a1");
+      const seen: number[] = [];
+      const step = () => {
+        seen.push(footprint());
+        expect(savedRegions()).toHaveLength(1);
+        expect(savedRegions()[0]).toBe(line());
+      };
+      step();
+      tick(4999);
+      step();
+      tick(1); // fading: still fixed, still reserved
+      expect(line().getAttribute("data-pinned")).toBe("settling");
+      step();
+      tick(149);
+      step();
+      tick(1); // settled in the same render the reservation is dropped
+      expect(isPinned()).toBe(false);
+      expect(slot().style.minHeight).toBe("");
+      step();
+      expect(seen.every((h) => h >= H)).toBe(true);
+    });
+
+    it("(b) reduced motion: un-pins instantly with no gap in the footprint", () => {
+      reducedMotion(true);
+      render(<Section />);
+      save("a1");
+      expect(footprint()).toBe(H);
+      tick(5000);
+      expect(isPinned()).toBe(false);
+      expect(slot().style.minHeight).toBe("");
+      expect(footprint()).toBe(H);
+    });
+
+    it("(d) a second save restarts the pin and re-measures", () => {
+      render(<Section />);
+      save("a1");
+      tick(5000);
+      tick(150);
+      expect(slot().style.minHeight).toBe("");
+      height = 64; // e.g. the second save wraps to two lines
+      save("a2");
+      expect(isPinned()).toBe(true);
+      expect(slot().style.minHeight).toBe("64px");
+      expect(savedRegions()).toHaveLength(1);
+    });
+
+    it("re-measures a pinned line whose content changes (a different summary)", () => {
+      const { rerender } = render(<Section />);
+      save("a1");
+      expect(slot().style.minHeight).toBe(`${H}px`);
+      height = 70;
+      act(() => window.dispatchEvent(new Event("resize")));
+      expect(slot().style.minHeight).toBe("70px");
+      rerender(<Section />);
+    });
+
+    it("Undo while pinned un-pins and drops the reservation in the same render", async () => {
+      undo.mockResolvedValueOnce(CHANGED);
+      render(<Section />);
+      save("a1");
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+      });
+      await screen.findByText("Wholesale Case");
+      expect(slot().style.minHeight).toBe("");
+    });
+
+    it("a new edit clears the line and the reservation", () => {
+      render(<Section />);
+      save("a1");
+      act(() => setDirty(true));
+      expect(slot().style.minHeight).toBe("");
+    });
+  });
+
   describe("docked to the viewport bottom (it must not sit where its section ends)", () => {
     const rectOf = (r: Partial<DOMRect>) =>
       ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, ...r }) as DOMRect;

@@ -215,6 +215,26 @@ export function FloatingPanel({
     variant === "auto" ? (wide ? "anchored" : "sheet") : variant;
   const sheet = resolved === "sheet";
 
+  // Sheet only: the pinned footer's measured height (it grows with the safe-area inset, the discard
+  // prompt and errors), published as --fp-footer-h so the body's bottom padding always clears it.
+  const [footerEl, setFooterEl] = React.useState<HTMLDivElement | null>(null);
+  const [footerH, setFooterH] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    if (!sheet || !footerEl) {
+      setFooterH(null);
+      return;
+    }
+    const measure = () => setFooterH(footerEl.offsetHeight);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(footerEl);
+    return () => {
+      observer.disconnect();
+      setFooterH(null);
+    };
+  }, [sheet, footerEl]);
+
   const durationOpen =
     sheet && !reduceMotion ? "data-[state=open]:duration-200" : "data-[state=open]:duration-150";
 
@@ -321,7 +341,15 @@ export function FloatingPanel({
           {/* Body: the only part that scrolls */}
           <div
             data-floating-panel-body
-            className="min-h-0 flex-1 overflow-y-auto px-4 py-4 text-sm text-navy/80"
+            className={cn(
+              "min-h-0 flex-1 overflow-y-auto px-4 py-4 text-sm text-navy/80",
+              sheet && "pb-[calc(var(--fp-footer-h,0px)+1rem)]",
+            )}
+            style={
+              sheet && footerH !== null
+                ? ({ "--fp-footer-h": `${footerH}px` } as React.CSSProperties)
+                : undefined
+            }
           >
             {children}
           </div>
@@ -329,6 +357,7 @@ export function FloatingPanel({
           {/* Footer: pinned */}
           {footer ? (
             <div
+              ref={setFooterEl}
               data-floating-panel-footer
               className={cn(
                 "shrink-0 border-t border-surface-border px-4 pt-3",

@@ -1,7 +1,7 @@
 /**
  * K11-16 (lane L2): "Saved N prices. Undo" shows where the Edit bar was, for 5 s, then settles back into the section.
  *
- * NOT RUN: written without a browser (Jest + RTL proves the classes, timers, order and one-live-region rule in
+ * NOT RUN: written without a browser (Jest + RTL proves the classes, timers, order, reserved height and one-live-region rule in
  * `units-v2/confirm/SaveStatusLine.k11-16.test.tsx`). This spec carries the pixel claims and must be run on the local
  * compose stack (`npm run local:up` + `local:seed`, then `npm run local:e2e`), flag `flag.units_prices_v2` ON.
  *
@@ -52,6 +52,23 @@ async function inViewport(page: Page, testId: string) {
   return !!b && b.y >= 0 && b.y + b.height <= vp.height && b.x >= 0 && b.x + b.width <= vp.width;
 }
 
+/**
+ * The distance from the pricing section's top to the first element after the section (document order, outside it).
+ * Section-relative, so it does not depend on scroll. K11-16 (MM's proof): the settled line used to add its own height
+ * here (+45.5 px at every width) because the fixed line took no space while pinned.
+ */
+async function belowOffset(page: Page): Promise<number> {
+  return page.getByTestId(ID.line).evaluate((line) => {
+    const section = line.closest("section");
+    if (!section) throw new Error("the saved line is not inside a <section>");
+    let n: Element | null = section;
+    while (n && !n.nextElementSibling) n = n.parentElement;
+    const below = n?.nextElementSibling;
+    if (!below) throw new Error("nothing follows the pricing section to measure against");
+    return below.getBoundingClientRect().top - section.getBoundingClientRect().top;
+  });
+}
+
 for (const vp of VIEWPORTS) {
   test.describe(`K11-16 saved line @ ${vp.name}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
@@ -81,8 +98,16 @@ for (const vp of VIEWPORTS) {
           "pinned at the real bottom",
         ).toBeLessThanOrEqual(2);
 
+        // The space under the line is reserved while it is pinned: what follows the section does not move when it settles.
+        const belowPinned = await belowOffset(page);
+
         // After 5 s it lets go: same element, still saying Saved with Undo, back in its place in the section.
         await expect(line).toHaveAttribute("data-pinned", "false", { timeout: 7000 });
+        await page.waitForTimeout(300); // the fade is 150 ms; measure once it is fully settled
+        expect(
+          Math.abs((await belowOffset(page)) - belowPinned),
+          "the element below the section does not jump when the saved line settles (K11-16)",
+        ).toBeLessThanOrEqual(1);
         await expect(line).toContainText("Saved");
         await expect(page.getByTestId(ID.undo)).toBeVisible();
         await expect(page.getByRole("status").filter({ hasText: "Saved" })).toHaveCount(1);
