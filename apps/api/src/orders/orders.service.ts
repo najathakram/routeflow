@@ -128,7 +128,7 @@ import {
   type IdempotencyLookupDeps,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
-import { cancelBlockedMessage, cancelImpact } from "./order-cancel-impact";
+import { assertQuantitiesKnown, cancelBlockedMessage, cancelImpact } from "./order-cancel-impact";
 import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
 import { claimReopenInTx } from "./order-reopen-claim";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
@@ -2703,6 +2703,7 @@ export class OrdersService implements OnApplicationBootstrap {
     if (impact.canCancel) return;
     if (impact.blockingPayments.length > 0)
       throw new BadRequestException(cancelBlockedMessage(impact.blockingPayments));
+    assertQuantitiesKnown(impact); // B692: legacy delivered row, no quantity recorded
     // B56 (REG-B56): delivered goods can't be un-delivered by cancelling the
     // order out from under them — that would erase the revenue for goods the
     // customer already has. Record a return, or edit the order down instead.

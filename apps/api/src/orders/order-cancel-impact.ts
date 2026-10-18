@@ -5,6 +5,10 @@ import { formatMoney } from "../messaging/messaging.helpers";
 import { isBlockingPayment, roundMoney } from "@routeflow/pricing";
 import type { CreditNotesService } from "../credit-notes/credit-notes.service";
 import type { PrismaService } from "../prisma/prisma.service";
+import {
+  cancelBlockedByMissingQuantities,
+  throwDeliveryQuantitiesMissing,
+} from "./order-pd-quantities";
 
 /** What `cancelImpact` reads: the tenant-scoped client and the credit-note release preview. */
 export interface CancelImpactDeps {
@@ -125,6 +129,8 @@ export async function cancelImpact(deps: CancelImpactDeps, id: string) {
     where: { orderId: id, status: { not: "CANCELLED" } },
     select: { qty: true, deliveredQty: true },
   });
+  // B692 (SA-814 R4-3): a DELIVERED / PARTIALLY_DELIVERED order with no recorded quantity is not "undelivered".
+  const quantitiesMissing = await cancelBlockedByMissingQuantities(deps.prisma.forTenant(), order);
   const deliveredUnits =
     Math.round(activeLines.reduce((s, li) => s + Number(li.deliveredQty ?? 0), 0) * 1000) / 1000;
 
@@ -160,6 +166,13 @@ export async function cancelImpact(deps: CancelImpactDeps, id: string) {
     advanceToRestore: advances,
     blockingPayments: blockers,
     deliveredUnits,
-    canCancel: blockers.length === 0 && deliveredUnits <= 0.001,
+    /** B692: delivered but no delivery quantity recorded (legacy rows): the cancel is refused, never read as undelivered. */
+    deliveryQuantitiesMissing: quantitiesMissing,
+    canCancel: blockers.length === 0 && deliveredUnits <= 0.001 && !quantitiesMissing,
   };
+}
+
+/** The cancel refusal for a delivered order whose quantities were never recorded (409, after the payments check). */
+export function assertQuantitiesKnown(impact: { deliveryQuantitiesMissing: boolean }): void {
+  if (impact.deliveryQuantitiesMissing) throwDeliveryQuantitiesMissing();
 }
