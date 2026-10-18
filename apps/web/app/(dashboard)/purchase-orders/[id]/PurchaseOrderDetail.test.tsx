@@ -29,18 +29,56 @@ jest.mock("@/lib/api/inventory", () => ({
   useUpdatePurchaseOrder: () => ({ mutate: jest.fn(), isPending: false }),
   useSuppliers: () => ({ data: [{ id: "s1", name: "Acme Supply", isActive: true }] }),
 }));
+const useProductsCalls: Array<{ params: unknown; options: unknown }> = [];
+const byIdsCalls: string[][] = [];
 jest.mock("@/lib/api/products", () => ({
-  useProducts: () => ({ data: { data: [{ id: "p1", name: "Widget", sku: "W-1" }] } }),
+  useProducts: (params: unknown, options: { enabled?: boolean } | undefined) => {
+    useProductsCalls.push({ params, options });
+    // the whole catalog only comes back once the call is enabled
+    return {
+      data:
+        options?.enabled === false
+          ? undefined
+          : {
+              data: [
+                { id: "p1", name: "Widget", sku: "W-1" },
+                { id: "p2", name: "Gadget", sku: "G-1" },
+              ],
+            },
+    };
+  },
+}));
+jest.mock("@/lib/api/purchase-order-products", () => ({
+  useProductsByIds: (ids: string[]) => {
+    byIdsCalls.push(ids);
+    return { data: ids.length ? [{ id: "p1", name: "Widget", sku: "W-1" }] : [], isLoading: false };
+  },
 }));
 // the existing modals have their own tests; here they are markers
 jest.mock("../../inventory/_components/PurchaseOrdersEditModal", () => ({
-  PurchaseOrdersEditModal: ({ po }: { po: { poNumber: string } }) => (
-    <div data-testid="edit-modal">{po.poNumber}</div>
+  PurchaseOrdersEditModal: ({
+    po,
+    products,
+  }: {
+    po: { poNumber: string };
+    products: Array<{ id: string }>;
+  }) => (
+    <div data-testid="edit-modal" data-products={products.map((p) => p.id).join(",")}>
+      {po.poNumber}
+    </div>
   ),
 }));
 jest.mock("../../inventory/_components/PurchaseOrdersReceiveModal", () => ({
-  ReceivePOModal: ({ po }: { po: { poNumber: string } }) => (
-    <div data-testid="receive-modal">{po.poNumber}</div>
+  ReceivePOModal: ({
+    po,
+    products,
+  }: {
+    po: { poNumber: string };
+    products: Array<{ id: string }>;
+  }) => (
+    <div data-testid="receive-modal" data-products={products.map((p) => p.id).join(",")}>
+      {po.poNumber}
+    </div>
   ),
 }));
 
@@ -76,6 +114,8 @@ const show = (data: unknown) => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  useProductsCalls.length = 0;
+  byIdsCalls.length = 0;
   poState = { isLoading: false, isError: false };
   planFlag = { enabled: true, resolved: true, failed: false };
 });
@@ -125,6 +165,28 @@ describe("PurchaseOrderDetail", () => {
     show(po());
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     expect(screen.getByTestId("edit-modal")).toHaveTextContent("PO-0007");
+  });
+
+  it("reads only the products this order points at, not the whole catalog, on load", () => {
+    show(po({ status: "SENT" }));
+    expect(byIdsCalls.some((ids) => ids.length === 1 && ids[0] === "p1")).toBe(true);
+    // the catalog call stays disabled until the operator opens the edit picker
+    expect(useProductsCalls.length).toBeGreaterThan(0);
+    for (const call of useProductsCalls) expect(call.options).toMatchObject({ enabled: false });
+    // the receive modal gets the order's own products
+    fireEvent.click(screen.getByRole("button", { name: "Receive" }));
+    expect(screen.getByTestId("receive-modal")).toHaveAttribute("data-products", "p1");
+    for (const call of useProductsCalls) expect(call.options).toMatchObject({ enabled: false });
+  });
+
+  it("Edit is what enables the catalog read, and the picker then gets the full list", () => {
+    show(po());
+    expect(
+      useProductsCalls.every((c) => (c.options as { enabled: boolean }).enabled === false),
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(useProductsCalls[useProductsCalls.length - 1].options).toMatchObject({ enabled: true });
+    expect(screen.getByTestId("edit-modal")).toHaveAttribute("data-products", "p1,p2");
   });
 
   it("CLOSED has no actions at all", () => {

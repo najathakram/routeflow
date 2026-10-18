@@ -20,6 +20,13 @@ export default function PurchaseOrdersPage() {
 
   const [highlightId, setHighlightId] = React.useState<string | null>(null);
   const { data: suppliers = [] } = useSuppliers();
+  // KEPT AS FETCH-ALL (board note): `products` is threaded into PurchaseOrdersTab, whose create and
+  // edit modals pick lines from a native <select> over every active product, and whose receive
+  // modal and expanded rows look lines up by id. The modal-open state lives inside the tab
+  // (inventory/_components, outside this page), so this page cannot defer the read the way
+  // [id]/PurchaseOrderDetail.tsx does. Fix there: have the tab fetch the catalog only while a
+  // create/edit modal is open (or search the server from the picker) and look lines up by id via
+  // useProductsByIds (lib/api/purchase-order-products.ts); then drop this call.
   const { data: productsData } = useProducts({ isActive: true, limit: 0 });
   // A FAMILY is a container, never a purchasable line (B1215 C7); a variant reads "<Parent> - <Variant>".
   const products = sellableOnly<any>(productsData?.data ?? []).map((p: any) => ({
