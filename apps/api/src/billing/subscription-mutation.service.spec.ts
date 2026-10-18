@@ -57,6 +57,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: MockLockUnavailableError,
 }));
 
+import { PLAN_CHANGE_ADDONS_CHANGED } from "./plan-change-stripe";
 import {
   BadRequestException,
   ConflictException,
@@ -748,6 +749,43 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
         "admin",
       );
       expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+    });
+
+    it("a plan pick whose target plan INCLUDES a billed Stripe add-on refuses (409), never clearing its live item", async () => {
+      const v = catalog();
+      const inc = {
+        ...v,
+        addonSkus: v.addonSkus.map((s) =>
+          s.sku === "FORECASTING" ? { ...s, includedAtPlan: "BUSINESS" } : s,
+        ),
+      } as ReturnType<typeof catalog>;
+      const forecasting = {
+        id: "a-fc",
+        addonKey: "FORECASTING",
+        sku: "FORECASTING",
+        quantity: 1,
+        active: true,
+        isComp: false,
+        priceSnapshot: 25,
+        stripeItemId: "si_fc",
+      };
+      const { svc, tx, events } = make({
+        catalog: inc,
+        tenantStatus: "ACTIVE",
+        sub: { ...BILLED_SUB, planKey: "TEAM" },
+        priorAddons: [forecasting],
+      });
+      await expect(
+        svc.subscribe(
+          "t1",
+          { planKey: "BUSINESS", cycle: "ANNUAL", addons: [{ sku: "FORECASTING", quantity: 1 }] },
+          "admin",
+        ),
+      ).rejects.toThrow(PLAN_CHANGE_ADDONS_CHANGED);
+      // the row (price 25, item si_fc) is never rewritten, and nothing reaches the ledger
+      expect(tx.tenantAddon.update).not.toHaveBeenCalled();
+      expect(tx.tenantAddon.upsert).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
     });
 
     // SA-693: a comp is a platform grant, not the tenant's to drop. subscribe() reconciles the tenant's

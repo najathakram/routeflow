@@ -91,6 +91,7 @@ describe("stopBillingIncludedAddonsTx - a Stripe item is never orphaned", () => 
     expect(tx.tenantAddon.update).toHaveBeenCalledTimes(1);
   });
 
+  // A comp is never billed, so it is never expected to hold a live Stripe item.
   it("a COMP row owns no billed item: clears under NO_STRIPE_PUSH even with a stale pointer", async () => {
     const { tx, run } = make([row({ isComp: true })]);
     await run(NO_STRIPE_PUSH);
