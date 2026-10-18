@@ -63,6 +63,9 @@ const CODE_COPY: Record<string, string> = {
   DUPLICATE_LINE_ID: "A line appears twice. Refresh the page and try again.",
   // Row 531: a buyer cart whose quantity and box split disagree; nothing was saved.
   QTY_SPLIT_MISMATCH: BUYER_QTY_SPLIT_MISMATCH_COPY,
+  // B692: a partial delivery needs per-line quantities; a delivered order with none recorded is not cancelled blind.
+  ORDER_PD_NEEDS_QUANTITIES: "Record what was delivered for each line first.",
+  ORDER_DELIVERY_QUANTITIES_MISSING: "Delivery quantities are missing; set them before cancelling.",
   ORDER_BILLING_CHANGED:
     "This order's billing changed while you were working on it. Refresh and try again.",
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
