@@ -1,9 +1,13 @@
 import { BadRequestException, ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
-import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { sumConfirmed } from "./payment-predicates";
+import {
+  assertTaxStateRecomputable,
+  staleTaxStateError,
+  TAX_STATE_STALE_MESSAGES,
+} from "./stored-tax-state";
 
 /**
  * B1043 (SA-742r2 INV-A): the ONE locked read both branches of `InvoicesService.update()` start from,
@@ -193,19 +197,20 @@ export function planHeaderOnlyTotals(
   const { invoice, storedRows, isTaxExempt } = locked;
   const discount = intakeMoney(dto.discount, invoice.discount);
   const shippingFee = intakeMoney(dto.shippingFee, invoice.shippingFee);
-  const t = sumInvoiceTotalsStrict(storedRows, { discount, shipping: shippingFee, isTaxExempt });
+  // SA-814 R5-2: the tax half is the ONE recompute guard (stored-tax-state.ts); this path cannot stamp a rate.
+  const t = assertTaxStateRecomputable({
+    invoice,
+    storedLines: storedRows,
+    canRestamp: false,
+    isTaxExempt,
+    discount,
+    shipping: shippingFee,
+    message: TAX_STATE_STALE_MESSAGES.header,
+  }).totals;
   const exemptWithLevy =
     isTaxExempt && storedRows.some((r) => differs(r.categoryTaxAmount ?? 0, 0));
-  if (
-    exemptWithLevy ||
-    differs(t.subtotal, invoice.subtotal) ||
-    differs(t.tax, invoice.taxAmount)
-  ) {
-    throw new ConflictException({
-      code: API_ERROR_CODES.INVOICE_TAX_STATE_STALE,
-      message:
-        "This invoice's subtotal or tax no longer matches its lines, so the discount or shipping change can't be priced. Re-save the invoice lines, then try again.",
-    });
+  if (exemptWithLevy || differs(t.subtotal, invoice.subtotal)) {
+    throw staleTaxStateError(TAX_STATE_STALE_MESSAGES.header);
   }
   return { discount, shippingFee, total: t.total, subtotal: t.subtotal };
 }

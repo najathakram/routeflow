@@ -552,6 +552,8 @@ export function inPlacePatch(line: EditedLine, row: StoredEditRow): Record<strin
   }
   if (!same(data.categoryTaxAmount ?? 0, row.categoryTaxAmount ?? 0))
     patch.categoryTaxAmount = data.categoryTaxAmount;
+  // SA-814 R5-2: a verified B294 rate stamped on a kept legacy rate-0 line (stored-tax-state.ts) is the one rate write.
+  if (!same(data.taxRate ?? 0, row.taxRate ?? 0)) patch.taxRate = data.taxRate;
   return Object.keys(patch).length > 0 ? patch : null;
 }
 

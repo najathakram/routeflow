@@ -39,7 +39,6 @@ import {
   roundMoney,
   normalizeBoxesPieces,
   remainingCapacity,
-  inferredGoodsFlatRate,
   OVERPAID_EPSILON,
   isPaidAtSale,
 } from "@routeflow/pricing";
@@ -149,7 +148,9 @@ import {
   loadPriceAdjustmentReference,
   lockInvoiceForPriceAdjustment,
   preflightBulkPriceAdjustment,
+  priceAdjustmentTaxState,
 } from "./price-adjustment-ledger";
+import { guardItemsEditTaxState } from "./stored-tax-state";
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -3161,6 +3162,7 @@ export class InvoicesService {
           warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
           override,
         });
+        guardItemsEditTaxState({ locked, items, matches, editLines }); // SA-814 R5-2
         const itemsData = editLines.map((l) => l.data);
         // B1026: the SAME discount-exceeds-line guard create() runs, over the lines THIS edit writes
         // (changed or new), before any write; a stored line the edit leaves verbatim is not re-judged.
@@ -5812,7 +5814,7 @@ export class InvoicesService {
       // B662: item writes, invoice totals and the regulated-ledger sync commit or fail TOGETHER.
       await this.prisma.tenantTransaction(async (tx: any) => {
         const live = await lockInvoiceForPriceAdjustment(tx, inv); // Invoice FIRST, then its rows
-        const inferred = inferredGoodsFlatRate({ ...live, lines: live.items }); // #2656: goods only
+        const { restampRate } = priceAdjustmentTaxState(live); // SA-814 R5-2 (409 if unverifiable)
         const { categoriesById, unitsPerBoxByProduct } = await loadPriceAdjustmentReference(
           tx,
           live.items,
@@ -5828,10 +5830,10 @@ export class InvoicesService {
           warn: (m) => this.logger.warn(m),
         });
         assertAdjustedTotalsSane(live, itemUpdates); // B1031: totals stay sane, before any write
-        if (inferred?.verified) {
+        if (restampRate != null) {
           await tx.invoiceItem.updateMany({
             where: { invoiceId: inv.id, taxRate: 0, AND: [notNsfLineWhere] }, // #2243: NSF stays 0
-            data: { taxRate: inferred.rate },
+            data: { taxRate: restampRate },
           });
         }
         for (const u of itemUpdates)

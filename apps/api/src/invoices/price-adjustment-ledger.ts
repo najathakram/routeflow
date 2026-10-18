@@ -3,7 +3,6 @@ import { InvoiceStatus } from "@prisma/client";
 import {
   computeLineSubtotal,
   hasNullTrio,
-  inferredGoodsFlatRate,
   packFromOwnSplit,
   recomputeCategoryTax,
   regulatedUnitBasis,
@@ -18,6 +17,11 @@ import {
 } from "../common/money-invariants.util";
 import type { PriceAdjustmentOverpaidInvoice } from "@routeflow/types";
 import { isNsfLine } from "./nsf-line";
+import {
+  assertTaxStateRecomputable,
+  TAX_STATE_STALE_MESSAGES,
+  type TaxStateVerdict,
+} from "./stored-tax-state";
 import { sumConfirmed, type ConfirmablePaymentRow } from "./payment-predicates";
 
 const logger = new Logger("PriceAdjustment");
@@ -262,6 +266,26 @@ export function buildPriceAdjustmentUpdates(args: {
   return updates;
 }
 
+/**
+ * SA-814 R5-2: the stored-tax guard for a price adjustment (`stored-tax-state.ts`), shared by the tx and the bulk
+ * pre-flight. The recompute below is `Σ subtotal x taxRate`, so lines whose stored rates cannot reproduce the
+ * stored tax would be silently re-taxed. A VERIFIED B294 flat rate comes back as `restampRate` (the tx stamps it
+ * on the rate-0 goods lines before totalling); an unverifiable one is 409 INVOICE_TAX_STATE_STALE, nothing
+ * written. The exemption is NOT passed: `totalsFromLines` ignores it, so the check mirrors what it would write.
+ */
+export function priceAdjustmentTaxState(inv: {
+  subtotal?: unknown;
+  taxAmount?: unknown;
+  items: any[];
+}): TaxStateVerdict {
+  return assertTaxStateRecomputable({
+    invoice: inv,
+    storedLines: inv.items,
+    canRestamp: true,
+    message: TAX_STATE_STALE_MESSAGES.price,
+  });
+}
+
 type InvoiceTotalsFacts = {
   items: any[];
   discount?: unknown;
@@ -446,12 +470,8 @@ export async function preflightBulkPriceAdjustment(
         ...reference,
       });
       assertAdjustedTotalsSane(inv, updates);
-      const flat = inferredGoodsFlatRate({
-        subtotal: inv.subtotal,
-        taxAmount: inv.taxAmount,
-        lines: inv.items,
-      });
-      const newTotal = projectedTotals(inv, updates, flat?.verified ? flat.rate : undefined).total;
+      const { restampRate } = priceAdjustmentTaxState(inv); // SA-814 R5-2: refuses before any write
+      const newTotal = projectedTotals(inv, updates, restampRate ?? undefined).total;
       projected.set(inv.id, newTotal);
       const entry = overpaidEntry(inv, sumConfirmed(inv.payments), newTotal);
       if (entry) overpaid.push(entry);
