@@ -157,3 +157,19 @@ export async function recordPartialDeliveryInTx(
     });
   }
 }
+
+/**
+ * A step OUT of PARTIALLY_DELIVERED (to OUT_FOR_DELIVERY, "Back out for delivery") in the status write's
+ * transaction (after the status CAS, so the order row is locked). A legacy PD row with no delivery signal must
+ * not step back: OUT_FOR_DELIVERY -> CANCELLED would restock every unit and void every invoice for goods the
+ * customer holds, the cancel guard's blind spot. `deliveries[]` on the request is stamped first (as the PD path
+ * does); if the order still has no signal: 409 ORDER_DELIVERY_QUANTITIES_MISSING, which rolls the status back.
+ */
+export async function leavePartialDeliveryInTx(
+  tx: any,
+  orderId: string,
+  deliveries: readonly OfficeDeliveryLine[] | undefined,
+): Promise<void> {
+  if (deliveries && deliveries.length > 0) await writeOfficeDeliveries(tx, orderId, deliveries);
+  if (await deliveryQuantitiesMissing(tx, orderId)) throwDeliveryQuantitiesMissing();
+}

@@ -30,7 +30,11 @@ import { appendOrderRevisionInTx } from "./order-revisions";
 import { type buildStatusUpdateData, writeStatusIfUnchanged } from "./order-status-claim";
 import { billsAtShipment } from "./order-status-invoicing";
 import { stampDeliveredInFull } from "./delivered-stamp";
-import { type OfficeDeliveryLine, recordPartialDeliveryInTx } from "./order-pd-quantities";
+import {
+  type OfficeDeliveryLine,
+  leavePartialDeliveryInTx,
+  recordPartialDeliveryInTx,
+} from "./order-pd-quantities";
 import { SHIP_STATE_REOPENED, SHIP_STATE_SOURCES, SHIP_STATE_UNMARKED } from "./ship-state-markers";
 
 export {
@@ -102,6 +106,14 @@ export async function updateStatusWithShipMarker(
       return prisma.tenantTransaction(async (tx) => {
         const row = await writeStatusIfUnchanged(tx, order.id, order.status, data);
         await recordPartialDeliveryInTx(tx, order.id, deliveries);
+        return row;
+      });
+    }
+    if (order.status === OrderStatus.PARTIALLY_DELIVERED && to === OrderStatus.OUT_FOR_DELIVERY) {
+      // B692: "Back out for delivery" on a legacy PD row (no quantities) is refused in the SAME tx as the status.
+      return prisma.tenantTransaction(async (tx) => {
+        const row = await writeStatusIfUnchanged(tx, order.id, order.status, data);
+        await leavePartialDeliveryInTx(tx, order.id, deliveries);
         return row;
       });
     }

@@ -253,6 +253,25 @@ describeDb("B692 — the office PARTIALLY_DELIVERED quantities on real Postgres"
     expect(impact.canCancel).toBe(true);
   });
 
+  it("(e) a legacy PD cannot step back to OUT_FOR_DELIVERY to dodge the cancel guard", async () => {
+    const { orderId, lineIds } = await seed({
+      status: "PARTIALLY_DELIVERED",
+      lines: [{ qty: 10 }, { qty: 4 }],
+    });
+    await expect(change(orderId, "PARTIALLY_DELIVERED", "OUT_FOR_DELIVERY")).rejects.toMatchObject({
+      response: { code: "ORDER_DELIVERY_QUANTITIES_MISSING" },
+      status: 409,
+    });
+    expect(await statusOf(orderId)).toBe("PARTIALLY_DELIVERED"); // red on HEAD: OUT_FOR_DELIVERY
+    // with deliveries[] the step back stamps them first, and the cancel is then refused on the delivered part
+    await change(orderId, "PARTIALLY_DELIVERED", "OUT_FOR_DELIVERY", [
+      { orderItemId: lineIds[0], quantityDelivered: 6 },
+    ]);
+    expect(await statusOf(orderId)).toBe("OUT_FOR_DELIVERY");
+    expect(await dq(lineIds[0])).toBe(6);
+    expect((await impactOf(orderId)).canCancel).toBe(false);
+  });
+
   it("(d) control: a manual DELIVERED still stamps qty and writes no evidence row", async () => {
     const { orderId, lineIds } = await seed({
       status: "CONFIRMED",

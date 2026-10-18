@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsEnum,
   IsNumber,
@@ -32,10 +33,12 @@ export class ChangeOrderStatusDto {
   /**
    * B692 (SA-814 R4-3): per-line quantities for a manual PARTIALLY_DELIVERED, written as delivery evidence in the
    * status transaction. Required unless the order already carries delivery data (a line with deliveredQty > 0, or
-   * an evidence row): otherwise 409 ORDER_PD_NEEDS_QUANTITIES. Unused for any other transition.
+   * an evidence row): otherwise 409 ORDER_PD_NEEDS_QUANTITIES. Also accepted on PARTIALLY_DELIVERED -> OUT_FOR_DELIVERY for a legacy row with no quantities.
+   * Unused for any other transition.
    */
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(500)
   @ValidateNested({ each: true })
   @Type(() => OfficeDeliveryLineDto)
   deliveries?: OfficeDeliveryLineDto[];

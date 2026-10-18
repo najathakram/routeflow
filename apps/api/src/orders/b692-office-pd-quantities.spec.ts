@@ -361,3 +361,63 @@ describe("(d) control: the DELIVERED path is unchanged", () => {
     expect(db.calls.txCount).toBe(0);
   });
 });
+
+describe("(e) a legacy PARTIALLY_DELIVERED cannot step back to OUT_FOR_DELIVERY to dodge the cancel guard", () => {
+  const stepBack = (db: Db, deliveries?: Delivery[]) => {
+    const dto: Record<string, unknown> = {
+      status: OrderStatus.OUT_FOR_DELIVERY,
+      reason: "back out",
+    };
+    if (deliveries) dto.deliveries = deliveries;
+    return updateStatusWithShipMarker(
+      { prisma: db.prisma },
+      { ...header(db), status: OrderStatus.PARTIALLY_DELIVERED },
+      dto as never,
+      undefined,
+      buildStatusUpdateData(header(db) as never, OrderStatus.OUT_FOR_DELIVERY, {
+        isDeliveredDemotion: false,
+      }),
+    );
+  };
+
+  it("legacy PD (all lines 0, no evidence): 409 ORDER_DELIVERY_QUANTITIES_MISSING, status unchanged", async () => {
+    const db = makeStampDb({ status: "PARTIALLY_DELIVERED", lines: THREE_LINES });
+    await expect(stepBack(db)).rejects.toMatchObject({
+      response: { code: "ORDER_DELIVERY_QUANTITIES_MISSING" },
+      status: 409,
+    });
+    expect(db.committed.order.status).toBe("PARTIALLY_DELIVERED"); // red on HEAD: OUT_FOR_DELIVERY
+  });
+
+  it("legacy PD with deliveries[]: stamps them, then steps back", async () => {
+    const db = makeStampDb({ status: "PARTIALLY_DELIVERED", lines: THREE_LINES });
+    await stepBack(db, [{ orderItemId: "a", quantityDelivered: 6 }]);
+    expect(db.committed.order.status).toBe("OUT_FOR_DELIVERY");
+    expect(db.line("a").deliveredQty).toBe(6);
+    expect(db.committed.mutations).toHaveLength(1);
+  });
+
+  it("legacy PD with a bad deliveries[] entry: refused, status unchanged", async () => {
+    const db = makeStampDb({ status: "PARTIALLY_DELIVERED", lines: THREE_LINES });
+    await expect(stepBack(db, [{ orderItemId: "a", quantityDelivered: 99 }])).rejects.toMatchObject(
+      { status: 400 },
+    );
+    expect(db.committed.order.status).toBe("PARTIALLY_DELIVERED");
+  });
+
+  it("control: a PD order WITH a stamped line or an evidence row can still go back", async () => {
+    const stamped = makeStampDb({
+      status: "PARTIALLY_DELIVERED",
+      lines: [{ id: "a", qty: 10, deliveredQty: 3 }],
+    });
+    await stepBack(stamped);
+    expect(stamped.committed.order.status).toBe("OUT_FOR_DELIVERY");
+    const evidenced = makeStampDb({
+      status: "PARTIALLY_DELIVERED",
+      lines: THREE_LINES,
+      mutations: [{ orderItemId: "a", type: "PARTIAL", quantityDelivered: 2 }],
+    });
+    await stepBack(evidenced);
+    expect(evidenced.committed.order.status).toBe("OUT_FOR_DELIVERY");
+  });
+});
