@@ -8,9 +8,11 @@ import { EFFECTIVE_FIXTURE } from "./_features/__fixtures__/effective.fixtures";
 import { diffsFixture } from "./_features/__fixtures__/diffs.fixtures";
 import { previewFixture } from "./_features/__fixtures__/preview.fixtures";
 import {
-  PROFILES_FIXTURE,
-  shippingPreviewWithBilling,
-} from "./_features/__fixtures__/profiles.fixtures";
+  CAPABILITY_PRESETS_FIXTURE,
+  capabilitiesFixture,
+  capabilitiesPreviewWithBilling,
+} from "./_features/__fixtures__/capabilities.fixtures";
+import type { BusinessCapabilities } from "@/lib/platform-admin/capabilities-contract";
 
 const TENANT_ID = "tenant-1";
 
@@ -95,6 +97,8 @@ const mockSetImpersonation = jest.fn();
 const mockProfilePreview = jest.fn();
 const mockProfileApply = jest.fn();
 let fulfilmentModeValue = "delivery";
+/** What `GET .../business-capabilities` answers (BO-05). */
+let capabilitiesValue: BusinessCapabilities = capabilitiesFixture();
 
 jest.mock("@/lib/admin-api", () => ({
   superAdminClient: {
@@ -107,7 +111,8 @@ jest.mock("@/lib/admin-api", () => ({
       if (/\/features\/registry$/.test(url))
         return Promise.resolve({ data: OVERRIDES_REGISTRY_OPTION_FIXTURE });
       if (/\/platform-admin\/business-profiles$/.test(url))
-        return Promise.resolve({ data: { profiles: PROFILES_FIXTURE } });
+        return Promise.resolve({ data: { profiles: CAPABILITY_PRESETS_FIXTURE } });
+      if (/\/business-capabilities$/.test(url)) return Promise.resolve({ data: capabilitiesValue });
       if (/\/feature-config\/fulfilment_model$/.test(url))
         return Promise.resolve({ data: { value: fulfilmentModeValue } });
       if (/\/feature-config\/counter_sales$/.test(url))
@@ -121,8 +126,8 @@ jest.mock("@/lib/admin-api", () => ({
         callOrder.push("create");
         return mockPost(url, body);
       }
-      if (/\/business-profile\/preview$/.test(url)) return mockProfilePreview(url, body);
-      if (/\/business-profile$/.test(url)) return mockProfileApply(url, body);
+      if (/\/business-capabilities\/preview$/.test(url)) return mockProfilePreview(url, body);
+      if (/\/business-capabilities$/.test(url)) return mockProfileApply(url, body);
       return Promise.resolve({ data: {} });
     }),
     patch: jest.fn().mockResolvedValue({ data: {} }),
@@ -166,9 +171,14 @@ beforeEach(() => {
   mockFetchDiffs.mockResolvedValue(diffsFixture(TENANT_ID));
   mockFetchMode.mockResolvedValue({ mode: "shadow" });
   mockPost.mockResolvedValue({ data: {} });
-  mockProfilePreview.mockResolvedValue({ data: shippingPreviewWithBilling() });
+  mockProfilePreview.mockResolvedValue({ data: capabilitiesPreviewWithBilling() });
   mockProfileApply.mockResolvedValue({ data: {} });
   fulfilmentModeValue = "delivery";
+  capabilitiesValue = capabilitiesFixture({
+    delivery: true,
+    doorPayments: true,
+    matchedPreset: "delivery_distributor",
+  });
   mockSearch = "";
   tenantOverrides = {};
   mockAdmin = null;
@@ -391,46 +401,52 @@ describe("Tenant detail page — the Setup tab (business profiles)", () => {
     expect(screen.queryByRole("button", { name: "Addons & Features" })).not.toBeInTheDocument();
   });
 
-  it("opens with the plain-English current setup, then the profile picker, then the feature console", async () => {
+  it("opens with the plain-English current setup, then What this business does, then the feature console", async () => {
     await gotoSetupTab();
     expect(await screen.findByText("Current setup")).toBeInTheDocument();
     expect(
       await screen.findByText("Own delivery: orders go out on the business's own trucks"),
     ).toBeInTheDocument();
     expect(screen.getByText("Counter sales")).toBeInTheDocument();
-    expect(await screen.findByRole("radio", { name: /Delivery distributor/ })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: /In-store retailer/ })).toBeDisabled();
-    expect(screen.queryByText("Available when counter sales launch")).toBeNull();
+    expect(
+      await screen.findByRole("heading", { name: "What this business does" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole("checkbox", { name: "Delivers on own trucks" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sells at the counter" })).not.toBeChecked();
+    expect(screen.queryByRole("radio", { name: /Delivery distributor/ })).toBeNull();
     // The existing feature console is still there, below.
     expect(screen.getByText("compliance")).toBeInTheDocument();
   });
 
-  it("previews with the API's change list, then Confirm applies once and the setup reloads", async () => {
+  it("previews the ticks live, then Apply (after the billing dialog) writes once and the setup reloads", async () => {
     await gotoSetupTab();
-    fireEvent.click(await screen.findByRole("radio", { name: /Shipping wholesaler/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Delivers on own trucks" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Ships by carrier" }));
 
-    const dialog = await screen.findByRole("dialog");
-    expect(mockProfilePreview).toHaveBeenCalledWith(
-      `/platform-admin/tenants/${TENANT_ID}/business-profile/preview`,
-      { profile: "shipping_wholesaler" },
+    await waitFor(() => expect(mockProfilePreview).toHaveBeenCalled());
+    expect(mockProfilePreview).toHaveBeenLastCalledWith(
+      `/platform-admin/tenants/${TENANT_ID}/business-capabilities/preview`,
+      { delivery: false, shipping: true, counter: false },
     );
     expect(mockProfileApply).not.toHaveBeenCalled();
     expect(
-      within(dialog).getByText(
-        "At-door payment collection will be switched off and its billing stopped",
-      ),
+      await screen.findByText("Turn off At-door payment collection. Billing stops."),
     ).toBeInTheDocument();
+
+    const stop = await screen.findByRole("button", { name: "Stop billing and apply" });
+    await waitFor(() => expect(stop).toBeEnabled());
+    fireEvent.click(stop);
+    const dialog = await screen.findByRole("alertdialog", { name: "Stop billing for 2 add-ons?" });
 
     const registryCalls = mockFetchRegistry.mock.calls.length;
     fulfilmentModeValue = "ship";
-    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop billing and apply" }));
 
     await waitFor(() => expect(mockProfileApply).toHaveBeenCalledTimes(1));
     expect(mockProfileApply).toHaveBeenCalledWith(
-      `/platform-admin/tenants/${TENANT_ID}/business-profile`,
+      `/platform-admin/tenants/${TENANT_ID}/business-capabilities`,
       // the confirm sends back the previewed plan's fingerprint (#3199)
-      { profile: "shipping_wholesaler", planFingerprint: "a".repeat(64) },
+      { delivery: false, shipping: true, counter: false, planFingerprint: "a".repeat(64) },
     );
     expect(
       await screen.findByText("Ship by carrier: orders are shipped, not delivered"),
@@ -806,35 +822,32 @@ describe("SA-1: the tab lives in the URL (?tab=)", () => {
   });
 });
 
-describe("SA-1: the applied business profile is marked 'Current'", () => {
-  it("marks the profile the tenant's stored setup matches, and no other row", async () => {
-    fulfilmentModeValue = "delivery";
+describe("SA-1: only the server's matched preset is marked 'Current'", () => {
+  const openMenu = async () => {
     await gotoSetupTab();
-    const current = await screen.findByTestId("profile-current");
-    expect(current).toHaveTextContent("Current");
-    expect(screen.getAllByTestId("profile-current")).toHaveLength(1);
+    fireEvent.click(await screen.findByRole("button", { name: "Start from…" }));
+  };
+
+  it("marks the preset the server matched, and no other row", async () => {
+    await openMenu();
     expect(
-      within(
-        screen.getByRole("radio", { name: /Delivery distributor/ }).closest("label")!,
-      ).getByTestId("profile-current"),
+      await screen.findByRole("menuitem", { name: "Delivery, current setup" }),
     ).toBeInTheDocument();
-    // Still selectable.
-    expect(screen.getByRole("radio", { name: /Delivery distributor/ })).toBeEnabled();
+    expect(screen.getAllByText("Current")).toHaveLength(1);
   });
 
-  it("no profile applied (mode unset) shows no marker", async () => {
+  it("a tenant nobody set up shows no marker and nothing ticked", async () => {
+    capabilitiesValue = capabilitiesFixture({ configured: false });
     fulfilmentModeValue = "unset";
-    await gotoSetupTab();
-    await screen.findByRole("radio", { name: /Delivery distributor/ });
-    await screen.findByText(/Not set/);
-    expect(screen.queryByTestId("profile-current")).toBeNull();
+    await openMenu();
+    expect(screen.queryByText("Current")).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "Delivers on own trucks" })).not.toBeChecked();
   });
 
-  it("a mode no profile sets ('both') shows no marker", async () => {
-    fulfilmentModeValue = "both";
-    await gotoSetupTab();
-    await screen.findByRole("radio", { name: /Delivery distributor/ });
-    expect(screen.queryByTestId("profile-current")).toBeNull();
+  it("a setup no preset equals shows no marker", async () => {
+    capabilitiesValue = capabilitiesFixture({ shipping: true, counter: true, matchedPreset: null });
+    await openMenu();
+    expect(screen.queryByText("Current")).toBeNull();
   });
 });
 

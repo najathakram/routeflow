@@ -30,7 +30,7 @@ export function keyLabel(key: unknown): string {
 }
 
 export const FULFILMENT_MODE_LABELS: Record<FulfilmentMode, string> = {
-  unset: "Not set (works the way it did before business profiles)",
+  unset: "Not set (the business works as before)",
   delivery: "Own delivery: orders go out on the business's own trucks",
   ship: "Ship by carrier: orders are shipped, not delivered",
   both: "Own delivery and carrier shipping",

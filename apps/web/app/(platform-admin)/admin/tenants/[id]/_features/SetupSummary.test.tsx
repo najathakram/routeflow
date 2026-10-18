@@ -108,9 +108,7 @@ describe("SetupSummary — the tenant's current setup in plain English", () => {
   it("an untouched tenant reads 'Not set' and says nothing is different from before", async () => {
     setup({}, { recurring_routes: true });
     render(<SetupSummary tenantId={TENANT_ID} />);
-    expect(
-      await screen.findByText("Not set (works the way it did before business profiles)"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Not set (the business works as before)")).toBeInTheDocument();
     expect(within(row("Counter sales")).getByText("Off")).toBeInTheDocument();
   });
 
@@ -125,7 +123,7 @@ describe("SetupSummary — the tenant's current setup in plain English", () => {
     setup({ fulfilment: "pickup" }, {});
     render(<SetupSummary tenantId={TENANT_ID} />);
     expect(
-      await screen.findByText("Always on: in-store setups have the counter"),
+      await screen.findByText("Always on: this setup includes the counter"),
     ).toBeInTheDocument();
   });
 
@@ -134,7 +132,7 @@ describe("SetupSummary — the tenant's current setup in plain English", () => {
     render(<SetupSummary tenantId={TENANT_ID} />);
     const warning = await screen.findByTestId("capability-warning");
     expect(warning).toHaveTextContent(
-      "Orders are set to use delivery, but no fleet feature is on. Turn on Recurring routes or Ad hoc order delivery, or change the fulfilment model.",
+      "Orders are set to use delivery, but no fleet feature is on. Turn on Recurring routes or Ad hoc order delivery, or change where orders go.",
     );
   });
 
