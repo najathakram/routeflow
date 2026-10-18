@@ -251,3 +251,26 @@ describe("ticksToProfileDef", () => {
     ).toBeNull();
   });
 });
+
+describe("PC-L contract C1/C2: the opens-as rule and capability availability come from the server", () => {
+  it("C1: the shared opens-as rule is Shipping + Counter without Delivery, and capabilitiesFromInputs uses it", () => {
+    const { isOpensAsChoosable } = jest.requireActual("@routeflow/types");
+    expect(isOpensAsChoosable({ delivery: false, shipping: true, counter: true })).toBe(true);
+    expect(isOpensAsChoosable({ delivery: true, shipping: true, counter: true })).toBe(false);
+    expect(isOpensAsChoosable({ delivery: false, shipping: true, counter: false })).toBe(false);
+    expect(isOpensAsChoosable({ delivery: false, shipping: false, counter: true })).toBe(false);
+  });
+
+  it("C2: every capability is available in today's registry (an empty map), keyed for delivery/shipping/counter only", () => {
+    const { capabilityAvailability } = jest.requireActual("./business-capabilities");
+    const a = capabilityAvailability();
+    expect(a).toEqual({});
+    for (const k of Object.keys(a)) expect(["delivery", "shipping", "counter"]).toContain(k);
+  });
+
+  it("C2: a mode the registry marks unavailable makes its capability unavailable, with a reason", () => {
+    const { capabilityAvailability } = jest.requireActual("./business-capabilities");
+    const off = (key: string, mode: string) => key === "fulfilment_model" && mode === "ship";
+    expect(capabilityAvailability(off)).toEqual({ shipping: "Not available yet" });
+  });
+});

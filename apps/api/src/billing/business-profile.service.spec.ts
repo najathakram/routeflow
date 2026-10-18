@@ -573,6 +573,18 @@ describe("BO-04 — capabilities (ticks) through the one planner", () => {
     expect((await svc.previewCapabilities(T, { shipping: true })).blocked).toBeNull();
   });
 
+  it("PC-L C1: the preview echoes opensAs and opensAsChoosable for the UNSAVED ticks it was given", async () => {
+    const { svc } = build({ inTransit: 0 });
+    const sc = await svc.previewCapabilities(T, {
+      shipping: true,
+      counter: true,
+      opensAs: "order",
+    });
+    expect(sc).toMatchObject({ opensAs: "order", opensAsChoosable: true });
+    const dsc = await svc.previewCapabilities(T, { delivery: true, shipping: true, counter: true });
+    expect(dsc.opensAsChoosable).toBe(false);
+  });
+
   it("assertNotBlocked: in transit is the Settings guard's own 409 body; a clear plan passes", async () => {
     const { svc } = build({ inTransit: 2 });
     const blocked = await svc.planCapabilities(T, { shipping: true });
