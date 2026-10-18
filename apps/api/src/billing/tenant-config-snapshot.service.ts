@@ -1,3 +1,4 @@
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { carrierInTransitCount } from "../orders/carrier-in-transit-guard";
@@ -346,8 +347,15 @@ export class TenantConfigSnapshotService {
         now,
       );
       if (!fleet) {
-        plan = holdConfigEntry(plan, FULFILMENT_MODEL_KEY, "FULFILMENT_MODE_NEEDS_FLEET");
-        return { plan, held: [{ ...base, reason: "FULFILMENT_MODE_NEEDS_FLEET" }] };
+        plan = holdConfigEntry(
+          plan,
+          FULFILMENT_MODEL_KEY,
+          API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET,
+        );
+        return {
+          plan,
+          held: [{ ...base, reason: API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET }],
+        };
       }
     }
     return { plan, held: [] };
