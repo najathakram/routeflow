@@ -322,6 +322,9 @@ export function ladderProductFor(
 /** A fresh add's ladder snapshot (SA-085f HIGH #2, size-ratchet extraction) — see `packLadder`. */
 export function buildPackLadder(p: {
   unit?: string;
+  /** The tenant's names for the pack / base unit: the customer layer matches a unit label through them (S19b). */
+  packLabel?: string | null;
+  baseUnitLabel?: string | null;
   unitsPerBox?: number | null;
   pricePerUnit: number | string;
   priceTier2?: number | string | null;
@@ -337,6 +340,8 @@ export function buildPackLadder(p: {
     priceTier3: p.priceTier3 ?? null,
     priceTier4: p.priceTier4 ?? null,
     priceTier5: p.priceTier5 ?? null,
+    ...(p.packLabel != null ? { packLabel: p.packLabel } : {}),
+    ...(p.baseUnitLabel != null ? { baseUnitLabel: p.baseUnitLabel } : {}),
   };
 }
 

@@ -113,6 +113,22 @@ export class EntitlementsService {
   }
 
   /**
+   * hasFlag() for a caller that must tell "the flag is off" from "the flag could not be read".
+   * Same decision order, but a failed override lookup (which hasFlag() reads as "no override")
+   * or a failed plan resolution THROWS instead of answering false. Used by units_prices_v2,
+   * a flag no plan carries (override-only), where a swallowed override error would quietly
+   * bill a typed-price customer the tier price.
+   */
+  async hasFlagStrict(tenantId: string, flagKey: string): Promise<boolean> {
+    const override = await this.featureOverrides.get(tenantId, flagKey, { strict: true });
+    if (override === "GRANT") return true;
+    if (override === "DENY") return false;
+
+    const ent = await this.resolve(tenantId);
+    return ent.flags.includes(flagKey);
+  }
+
+  /**
    * True when `tenantId`'s plan is an always-enforced plan (R3a.3/R3a.7 — today just
    * LITE): such a tenant never gets the PLAN_FLAG_ENFORCEMENT kill switch's dark-flag
    * courtesy allow, on PlanFlagGuard or AddonGuard. Never throws — an unresolvable

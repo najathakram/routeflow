@@ -47,7 +47,7 @@ const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs")
 
 const RUN = randomUUID().slice(0, 8);
 const RULE_REASON = "H2 CA/NY ban";
-const ACTOR = { actorId: null, actorName: "h2-keep" };
+const ACTOR = { packPrecondition: "internal" as const, actorId: null, actorName: "h2-keep" };
 
 describeDb("H2: a reparent keeps the CA/NY ban (real Postgres)", () => {
   let prisma: PrismaService;
@@ -84,6 +84,7 @@ describeDb("H2: a reparent keeps the CA/NY ban (real Postgres)", () => {
           customerId: customers[state],
           lines: [{ productId, qtyDelta: 1 }],
           channel: "STAFF",
+          fulfilmentKind: "DELIVERY",
         }),
       );
       expect(res.outcome).toBe("BLOCK");
@@ -95,6 +96,7 @@ describeDb("H2: a reparent keeps the CA/NY ban (real Postgres)", () => {
         customerId: customers.TX,
         lines: [{ productId, qtyDelta: 1 }],
         channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
       }),
     );
     expect(tx.outcome).toBe("ALLOW"); // control: the rule names CA and NY only
@@ -323,6 +325,7 @@ describeDb("H2: a reparent keeps the CA/NY ban (real Postgres)", () => {
             customerId: customers.TX,
             lines: [{ productId: v, qtyDelta: 1 }],
             channel: "STAFF",
+            fulfilmentKind: "DELIVERY",
           }),
         )
       ).outcome;

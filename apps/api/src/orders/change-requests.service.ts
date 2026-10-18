@@ -26,6 +26,10 @@ import {
 } from "@prisma/client";
 import { assertSellableLines } from "../products/sellable-lines";
 import {
+  saleFulfilmentKind,
+  type SaleFulfilmentFacts,
+} from "../selling-restrictions/sale-fulfilment";
+import {
   buyerVisibilityFor,
   isBuyerVisibleProduct,
   PORTAL_PARENT_INCLUDE,
@@ -287,7 +291,7 @@ export class ChangeRequestsService {
    */
   private async assertBuyerMayFile(
     product: Parameters<typeof isBuyerVisibleProduct>[1],
-    order: { customerId: string },
+    order: { customerId: string } & SaleFulfilmentFacts,
   ): Promise<void> {
     const tenantId = requireRestrictionTenantId(this.prisma.getTenantId());
     const visibility = await buyerVisibilityFor(
@@ -302,6 +306,7 @@ export class ChangeRequestsService {
       customerId: order.customerId,
       lines: [{ productId: product.id }],
       channel: "BUYER_PORTAL",
+      fulfilmentKind: saleFulfilmentKind(order), // L8: a pickup order is judged on the store state
     });
   }
 

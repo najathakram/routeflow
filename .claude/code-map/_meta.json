@@ -1,6 +1,6 @@
 {
-  "mappedSha": "96fc7351fb78f50296579936e88c3369627265cf",
-  "generatedAt": "2026-10-12T17:00:00.000Z",
+  "mappedSha": "32fbe05428d2577e51ef71802544326e8f63ca54",
+  "generatedAt": "2026-10-18T12:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 20,
-    "web": 16,
-    "mobile": 11,
+    "api": 24,
+    "web": 20,
+    "mobile": 13,
     "packages": 0
   },
   "fileCount": 1141,
-  "notes": "- **2026-10-12 — R5.2 tail bookkeeping (`7f9dfb180..96fc7351f`, row 381 and four small hotfix members; docs-only, Option B follow-up).** New `api/` and `web/landing-2026-10-12-r52-tail.md` (TOC row in each area file; 28 non-test source files, 26 test files counted only; no migration). Row 381: the automatic-lock pause switch (`platform.autoLocksPaused`, fail-closed class gate before each writer's first write, class inside the compare-and-swap, held-case claim and audit rows), the platform-admin switch API with preview, the super-admin card, and the writer-census pin; platform/tenant auth callbacks turn the wrong state type away first; the Connect callback refuses a workspace not accepting changes with status-specific copy; the invoice PDF pointer is written only when it changes. Lesson L-306. `mappedSha` = master `96fc7351f`."
+  "notes": "- **2026-10-18 — Bookkeeping for fixes-4 (#3511 and #3510; `127bac4ce..32fbe0542`; docs-only, Option B follow-up).** New `api/` and `web/landing-2026-10-18-fixes-4.md` (TOC row in each area file) and a packages.md section: one web base for every return URL (`config/web-base-url.ts`, boot check, `returnUrlsOffBase` stale sessions), strict customer-price reads (`CUSTOMER_PRICES_UNAVAILABLE` 503, `preflightCustomerPrices`, standing-order retry), carrier-in-transit guard on business-profile apply, password policy, db-lane `process.exitCode`; web: K10e Piece unit and default-unit undo, K11 L1 (jump strip, customer picker, `?customer=`), K11 L3 (family and product page, More menu, new product piece price), password checklist. Lesson L-316 (a piped script sets process.exitCode); L-264 recurrence note; L-275 archived. mappedSha 32fbe0542. Full history: CHANGELOG.md."
 }

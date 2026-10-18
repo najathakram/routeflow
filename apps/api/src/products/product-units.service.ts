@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import {
   PIECE_LABEL,
   baseLabelOf,
@@ -13,7 +14,13 @@ import {
   type ChainLevel,
   type ChainViolation,
 } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
+import { isPieceSynonym, unitNameKey } from "../units/piece-words";
+import { sqlKeyOf } from "../units/unit-name-sql";
+import { unitRoom } from "../units/unit-room";
+import { lockProductPack } from "../units/tenant-units-lock";
+import { MAX_UNIT_NAME_LENGTH } from "../units/units.service";
 import { CreateProductUnitDto, UpdateProductUnitDto } from "./dto/product-unit.dto";
 
 interface PackInfo {
@@ -37,7 +44,20 @@ type Sibling = LevelKey & {
   perParent?: number | null;
 };
 
-const norm = (s: string) => s.trim().toLowerCase();
+const norm = unitNameKey;
+
+/** A level's link to its tenant unit; `unitNotListed` = the name was not added because the list is full. */
+interface UnitLink {
+  tenantUnitId: string | null;
+  unitNotListed?: string;
+}
+
+/** A saved level, plus `unitNotListed: [name]` when its name was not added to the full unit list (SA-810). */
+const withNotListed = <T extends object>(
+  row: T,
+  link: UnitLink,
+): T & { unitNotListed?: string[] } =>
+  link.unitNotListed ? { ...row, unitNotListed: [link.unitNotListed] } : row;
 
 /** What the API returns for a level — never `tenantId` or audit columns. */
 const UNIT_SELECT = {
@@ -80,7 +100,7 @@ export class ProductUnitsService {
     });
   }
 
-  create(productId: string, dto: CreateProductUnitDto) {
+  create(productId: string, dto: CreateProductUnitDto, actorId: string | null = null) {
     return this.locked(productId, async (tx) => {
       const pack = await this.loadPack(tx, productId);
       const label = this.cleanLabel(dto.label, dto.factorToBase, pack);
@@ -96,7 +116,8 @@ export class ProductUnitsService {
       await this.assertNoLineDisagrees(tx, productId, label, dto.factorToBase);
       const makeDefault = dto.isDefaultSelling === true;
       if (makeDefault) await this.clearDefaults(tx, productId);
-      return tx.productUnit.create({
+      const link = await this.tenantUnitIdFor(tx, productId, label, actorId);
+      const created = await tx.productUnit.create({
         data: {
           productId,
           label,
@@ -110,13 +131,20 @@ export class ProductUnitsService {
           priceTier5: dto.priceTier5 ?? null,
           isDefaultSelling: makeDefault,
           sortOrder: dto.sortOrder ?? 0,
+          tenantUnitId: link.tenantUnitId,
         },
         select: UNIT_SELECT,
       });
+      return withNotListed(created, link);
     });
   }
 
-  update(productId: string, unitId: string, dto: UpdateProductUnitDto) {
+  update(
+    productId: string,
+    unitId: string,
+    dto: UpdateProductUnitDto,
+    actorId: string | null = null,
+  ) {
     return this.locked(productId, async (tx) => {
       const pack = await this.loadPack(tx, productId);
       const row = await tx.productUnit.findFirst({ where: { id: unitId, productId } });
@@ -152,16 +180,21 @@ export class ProductUnitsService {
           data: { factorToBase: d.factorToBase },
         });
       }
-      return tx.productUnit.update({
+      // The link follows the NAME: a retyped label must leave the old unit's rename behind.
+      const link =
+        dto.label !== undefined ? await this.tenantUnitIdFor(tx, productId, label, actorId) : null;
+      const updated = await tx.productUnit.update({
         where: { id: unitId },
         data: {
           ...rest,
           label,
           factorToBase,
           ...(isDefaultSelling !== undefined ? { isDefaultSelling } : {}),
+          ...(link ? { tenantUnitId: link.tenantUnitId } : {}),
         },
         select: UNIT_SELECT,
       });
+      return link ? withNotListed(updated, link) : updated;
     });
   }
 
@@ -191,16 +224,18 @@ export class ProductUnitsService {
 
   // ─── helpers ────────────────────────────────────────────────────────────────
 
-  /** One transaction + a per-product advisory xact lock; unique-index races become a 409. */
+  /** One transaction + the tenant units lock (shared) + a per-product advisory xact lock; unique-index races become a 409. */
   private async locked<T>(productId: string, fn: (tx: any) => Promise<T>): Promise<T> {
     // A write needs a tenant: without one `tenantTransaction` hands back the raw client and the
     // insert would carry no tenantId (a 500 on the NOT NULL column). SUPER_ADMIN must act inside a tenant.
-    if (!this.prisma.getTenantId()) {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) {
       throw new BadRequestException("Select a tenant before editing a product's units.");
     }
     try {
       return await this.prisma.tenantTransaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('product-units'), hashtext(${productId}))`;
+        // Tenant units lock (shared; a rename holds it exclusive), then this product's lock.
+        await lockProductPack(tx, tenantId, productId);
         return fn(tx);
       });
     } catch (e) {
@@ -209,6 +244,74 @@ export class ProductUnitsService {
       }
       throw e;
     }
+  }
+
+  /**
+   * The tenant unit a level's label names, so a unit rename relabels the level. The unit is added
+   * when the tenant has none (ON CONFLICT DO NOTHING: a racing add must not abort this transaction).
+   * Piece and its synonyms, and any name past the unit-name limit, are never units: unlinked (null).
+   * An ARCHIVED unit is refused (UNIT_ARCHIVED) unless this product already uses it: a level that
+   * already carries the name keeps its meaning, but archiving means "stop offering it", so no new
+   * level may pick it up. This is the ONE place that rule lives (create and update both come here).
+   *
+   * At the active-unit cap (SA-810, `unitRoom`) a NEW name is not added and not refused: the level saves
+   * unlinked with its label (a names list is never a math source) and the result reports
+   * `unitNotListed`. Refusing would block a catalog save over a names list (L-207); adding would make the
+   * cap meaningless. The count is read under the SHARED tenant-units lock this write already holds.
+   */
+  private async tenantUnitIdFor(
+    tx: any,
+    productId: string,
+    label: string,
+    actorId: string | null,
+  ): Promise<UnitLink> {
+    const name = label.normalize("NFC").trim();
+    if (!name || name.length > MAX_UNIT_NAME_LENGTH || isPieceSynonym(name)) {
+      return { tenantUnitId: null };
+    }
+    // Every caller runs inside locked(), which refused a call with no tenant.
+    const tenantId = this.prisma.getTenantId() as string;
+    const nameKey = unitNameKey(name);
+    const find = () =>
+      tx.tenantUnit.findFirst({
+        where: { tenantId, nameKey },
+        select: { id: true, archivedAt: true },
+      });
+    let unit = await find();
+    if (!unit) {
+      if ((await unitRoom(tx, tenantId)) <= 0) return { tenantUnitId: null, unitNotListed: name };
+      const { count } = await tx.tenantUnit.createMany({
+        data: [{ tenantId, name, nameKey }],
+        skipDuplicates: true,
+      });
+      unit = await find();
+      // Only the creator audits: a skipDuplicates loser (count 0) re-read the winner's row.
+      if (count === 1 && unit) {
+        await tx.auditLog.create({
+          data: {
+            tenantId,
+            userId: actorId,
+            action: "tenant_unit.created",
+            entityType: "TenantUnit",
+            entityId: unit.id,
+            meta: { name, via: "level" },
+          },
+        });
+      }
+    }
+    if (unit?.archivedAt) {
+      const used = await tx.productUnit.findFirst({
+        where: { productId, tenantUnitId: unit.id },
+        select: { id: true },
+      });
+      if (!used) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.UNIT_ARCHIVED,
+          message: `The unit ${name} is archived. Restore it in Settings > Units first.`,
+        });
+      }
+    }
+    return { tenantUnitId: unit?.id ?? null };
   }
 
   /** `findFirst` (not `findUnique`) so the tenant filter is ANDed into the WHERE — a foreign
@@ -361,23 +464,29 @@ export class ProductUnitsService {
     label: string,
     factorToBase: number,
   ): Promise<void> {
-    // Through the PARENT (order/invoice) relation, never `orderItem`/`invoiceItem` top-level: a
-    // top-level read is scoped by the ITEM's nullable tenantId and would miss a NULL-tenant line.
-    const lineWhere = {
-      productId,
-      unitLabel: { equals: label, mode: "insensitive" as const },
-      // Explicit OR: SQL `NOT (col = n)` drops NULL rows, and a line with no snapshot factor is
-      // exactly the one we must not let slip past.
-      OR: [{ unitsPerBox: null }, { unitsPerBox: { not: factorToBase } }],
-    };
-    const [order, invoice] = await Promise.all([
-      db.order.findFirst({ where: { lineItems: { some: lineWhere } }, select: { id: true } }),
-      db.invoice.findFirst({ where: { items: { some: lineWhere } }, select: { id: true } }),
-    ]);
-    if (order || invoice) {
-      throw new ConflictException(
-        `"${label}" is already used on an order or invoice at a different size, so its size cannot change. Create a new unit instead.`,
-      );
+    // Through the PARENT order / invoice of THIS tenant, never the item tables top-level: a top-level
+    // read is scoped by the ITEM's nullable tenantId and would miss a NULL-tenant line. The label is
+    // compared by the shared NFC key in SQL (a Prisma `equals`/insensitive cannot fold NFC), so lines
+    // carrying the NFD spelling of the label are found too. A line with no size snapshot counts as a
+    // different size (SQL `<>` drops NULLs, hence the explicit IS NULL).
+    const tenantId = this.prisma.getTenantId();
+    const key = unitNameKey(label);
+    const hit: unknown[] = await db.$queryRaw(Prisma.sql`
+      SELECT 1 FROM "OrderItem" oi JOIN "Order" o ON o."id" = oi."orderId"
+      WHERE o."tenantId" = ${tenantId} AND oi."productId" = ${productId}
+        AND ${sqlKeyOf(Prisma.sql`oi."unitLabel"`)} = ${key}
+        AND (oi."unitsPerBox" IS NULL OR oi."unitsPerBox" <> ${factorToBase})
+      UNION ALL
+      SELECT 1 FROM "InvoiceItem" ii JOIN "Invoice" i ON i."id" = ii."invoiceId"
+      WHERE i."tenantId" = ${tenantId} AND ii."productId" = ${productId}
+        AND ${sqlKeyOf(Prisma.sql`ii."unitLabel"`)} = ${key}
+        AND (ii."unitsPerBox" IS NULL OR ii."unitsPerBox" <> ${factorToBase})
+      LIMIT 1`);
+    if (hit.length > 0) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.UNIT_SIZE_IN_USE,
+        message: `"${label}" is already used on an order or invoice at a different size, so its size cannot change.`,
+      });
     }
   }
 }

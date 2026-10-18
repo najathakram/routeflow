@@ -543,7 +543,12 @@ describeDb("row 509 PR3: edit a rule in place, with history — real Postgres", 
     const decide = (channel: "STAFF" | "BUYER_PORTAL") =>
       as(
         async () =>
-          (await engine.evaluate(tenantId, cust.ca, [{ productId: p.a }], { channel })).outcome,
+          (
+            await engine.evaluate(tenantId, cust.ca, [{ productId: p.a }], {
+              fulfilmentKind: "DELIVERY",
+              channel,
+            })
+          ).outcome,
       );
     expect(await decide("STAFF")).toBe("ALLOW"); // CA is not in the rule yet
 
@@ -560,6 +565,7 @@ describeDb("row 509 PR3: edit a rule in place, with history — real Postgres", 
     await expect(
       as(() =>
         engine.assertLinesSellable({
+          fulfilmentKind: "DELIVERY",
           tenantId,
           customerId: cust.ca,
           lines: [{ productId: p.a }],

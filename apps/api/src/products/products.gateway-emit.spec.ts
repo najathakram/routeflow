@@ -61,7 +61,12 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
         { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(true) } },
         // #2185: reorder gate (assertReorderAllowed) reads overrides + entitlements for its deny body.
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+        {
+          provide: EntitlementsService,
+          useValue: {
+            hasFlag: jest.fn(async (_t: string, k: string) => k !== "flag.units_prices_v2"),
+          },
+        },
         { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
         { provide: RouteFlowGateway, useValue: gateway },
       ],
@@ -93,7 +98,7 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
     prisma.product.findFirst.mockResolvedValue(null);
     prisma.product.update.mockResolvedValue({ ...MOCK_PRODUCT, pricePerUnit: 9.99 } as any);
 
-    await service.update("prod-1", { pricePerUnit: 9.99 } as any);
+    await service.update("prod-1", { pricePerUnit: 9.99 } as any, { packPrecondition: "internal" });
 
     expect(gateway.emitProductUpdated).toHaveBeenCalledTimes(1);
     expect(gateway.emitProductUpdated).toHaveBeenCalledWith("test-tenant", {
@@ -290,7 +295,9 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
     // Without the try/catch inside emitProductChanged, this throw would
     // propagate out of update() and turn an already-committed Prisma write
     // into a 500 for the caller.
-    await expect(service.update("prod-1", { pricePerUnit: 9.99 } as any)).resolves.toEqual({
+    await expect(
+      service.update("prod-1", { pricePerUnit: 9.99 } as any, { packPrecondition: "internal" }),
+    ).resolves.toEqual({
       ...MOCK_PRODUCT,
       pricePerUnit: 9.99,
     });

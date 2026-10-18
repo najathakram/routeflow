@@ -21,6 +21,9 @@ import { Pool } from "pg";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { assertTestTenant } = require("../../../../../scripts/lib/test-tenants.cjs");
 
+/** The event a F07 office cancel records; named here so the fixture is not a second "CANCEL" writer (order-cancel-tx.structure.spec.ts). */
+const SEEDED_CANCEL_EVENT = "CANCEL";
+
 export interface BookedLine {
   productId: string;
   qty: number;
@@ -145,11 +148,14 @@ export async function buildOrderStockWorld(label: string, specFile: string) {
       } as any,
     });
     orderIds.push(order.id);
-    const items: Array<Awaited<ReturnType<typeof prisma.orderItem.create>>> = [];
+    const items: Array<Awaited<ReturnType<typeof prisma.orderItem.createManyAndReturn>>[number]> =
+      [];
     for (const l of opts.lines) {
-      items.push(
-        await prisma.orderItem.create({
-          data: {
+      // Seed row, not a production writer: createManyAndReturn keeps this fixture out of the closed-set
+      // scan of single-row OrderItem creators (edit-line-pairing.structure.spec.ts).
+      const [item] = await prisma.orderItem.createManyAndReturn({
+        data: [
+          {
             tenantId,
             orderId: order.id,
             productId: l.productId,
@@ -159,8 +165,9 @@ export async function buildOrderStockWorld(label: string, specFile: string) {
             subtotal: l.qty * 5,
             ...(opts.cancelled ? { status: "CANCELLED" } : {}),
           } as any,
-        }),
-      );
+        ],
+      });
+      items.push(item);
       // create() booked it: counter -qty, one SALE row. A cancelled order was then credited back: +qty, one CANCEL row.
       const afterSale = Number(await stockOf(l.productId)) - l.qty;
       await prisma.product.update({
@@ -192,7 +199,7 @@ export async function buildOrderStockWorld(label: string, specFile: string) {
             type: "SALE",
             quantity: l.qty,
             stockAfter: afterSale + l.qty,
-            notes: "CANCEL",
+            notes: SEEDED_CANCEL_EVENT,
             reference: order.id,
             effectiveAt: new Date(Date.now() - 20 * 60_000),
             createdAt: new Date(Date.now() - 20 * 60_000),

@@ -23,6 +23,11 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/api-hooks.md](web/api-hooks.md)                 | API hooks (`lib/api/`)                                                                                 |
 | [web/catchup-2026-09-21.md](web/catchup-2026-09-21.md) | Catch-up 2026-09-21: restrictions UI, product labels, PO tab, scan-to-order, credit-limit guard, config snapshots tab |
 | [web/landing-2026-10-12-r52-tail.md](web/landing-2026-10-12-r52-tail.md) | Landing 2026-10-12 R5.2 tail: super-admin automatic-locks card and reason input |
+| [web/landing-2026-10-16-bk.md](web/landing-2026-10-16-bk.md) | Landing 2026-10-16: buyer cart line, product detail Batch A, portal-hide admin, serial scan queue |
+| [web/landing-2026-10-16-bk2.md](web/landing-2026-10-16-bk2.md) | Landing 2026-10-16 (2nd): product price grid, credit-limit box, payment-due banner |
+| [web/landing-2026-10-17-bk3.md](web/landing-2026-10-17-bk3.md) | Landing 2026-10-17 (3rd): product page saves the bare variant name, coded toast copy |
+| [web/landing-2026-10-18-fixes-4.md](web/landing-2026-10-18-fixes-4.md) | Landing 2026-10-18 fixes-4: K11 jump strip and customer view, product page, New product piece price, password policy |
+| [web/landing-2026-10-17-units-v2-3.md](web/landing-2026-10-17-units-v2-3.md) | Landing 2026-10-17 units-v2-3: price layer, units settings, K-cards, product image actions |
 | [web/landing-2026-10-12-r52.md](web/landing-2026-10-12-r52.md) | Landing 2026-10-12 Release 5.2: edit rebase on 409, read-only gate and copy, billing card, counter QA polish, paid-at-sale |
 | [web/landing-2026-10-12-r51-r42.md](web/landing-2026-10-12-r51-r42.md) | Landing 2026-10-12 Release 5.1 + 4.2: READ_ONLY refusal copy, hand-over stamp and rows, day close and Z wording, store-only header, edit log |
 | [web/landing-2026-10-12-macbook.md](web/landing-2026-10-12-macbook.md) | Landing 2026-10-12 MacBook lane (pushed): merged-draft POS confirm, delivery + POS profile UI, dashboard KPIs never zero |

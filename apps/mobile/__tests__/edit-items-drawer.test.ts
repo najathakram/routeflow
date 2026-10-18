@@ -128,8 +128,10 @@ describe("edit-items.tsx lazy catalogue idle state (REG-EDIT-IDLE)", () => {
 
 describe("edit-items.tsx per-line price gate (REG-EDIT-PRICE-GATE)", () => {
   it("REG-EDIT-PRICE-GATE: the SPECIAL-tier lock mirrors the create surface", () => {
-    expect(parentSrc).toContain(
-      "const isSpecialFor = (productId: string) => isSpecialTier(effectiveTierFor(productId));",
+    // S19b: the definition now reads the customer layer; with no layer `packIsSpecial(tier, undefined)` IS
+    // `isSpecialTier(tier)` (pinned for tiers 1-5 in s19b-d-cartrow-edit-items.test.ts).
+    expect(parentSrc).toMatch(
+      /const isSpecialFor = \(productId: string\) =>\s*packIsSpecial\(effectiveTierFor\(productId\), layerOf\(productId\)\)/,
     );
     expect(parentSrc).toContain(
       "const effectiveTierFor = (productId: string) => cpMap.get(productId) ?? customerTier ?? 1;",

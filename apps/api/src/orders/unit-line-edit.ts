@@ -2,6 +2,7 @@ import { ConflictException, ForbiddenException } from "@nestjs/common";
 import {
   PIECE_LABEL,
   baseLabelOf,
+  type CustomerLayerPrice,
   type LadderUnit,
   type TrackedCategoryRow,
 } from "@routeflow/pricing";
@@ -22,6 +23,7 @@ import {
 } from "../products/line-units";
 import { raisedBy, type LineAuthorLookup } from "./line-author-channel";
 import { norm } from "./unit-label-norm";
+import { customerPricing, type CustomerPricing } from "./units-prices-v2";
 import { liveLines } from "./order-edit-cancelled";
 import { writeLineUpdate } from "./order-line-removal";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
@@ -119,7 +121,13 @@ export async function loadOperatorTiers(
   },
   customerId: string | null | undefined,
   productIds: string[],
-): Promise<{ operatorCpMap: Map<string, number | null>; operatorDefaultTier: number }> {
+  /** The service: tier maps and S19's typed unit prices (flag.units_prices_v2) are built by `customerPricing`. */
+  svc: Parameters<typeof customerPricing>[0],
+): Promise<{
+  operatorCpMap: Map<string, number | null>;
+  operatorDefaultTier: number;
+  operatorPc: CustomerPricing;
+}> {
   const customer = customerId
     ? await tx.customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } })
     : null;
@@ -127,12 +135,44 @@ export async function loadOperatorTiers(
     customerId && productIds.length
       ? await tx.customerPrice.findMany({ where: { customerId, productId: { in: productIds } } })
       : [];
-  return {
-    operatorCpMap: new Map<string, number | null>(
-      rows.map((cp: any) => [cp.productId, cp.pricingTier]),
+  const pc = await customerPricing(svc, customerId, productIds, customer, rows, tx as never);
+  return { operatorCpMap: pc.cpMap, operatorDefaultTier: pc.defaultTier, operatorPc: pc };
+}
+
+/**
+ * SA-812a G-1: the edit's customer-prices read, run EARLY and its answer thrown away. The real read happens inside the edit
+ * transaction, but `revertLinkedInvoicesForOrderEdit` commits on its own connection BEFORE that transaction opens. So if the
+ * flag read is going to fail (the coded 503 CUSTOMER_PRICES_UNAVAILABLE), it must fail here, before any commit, or a SENT
+ * invoice's mirror would stay reverted to DRAFT with nothing left to re-sync it. Same ids and same customer as the in-tx
+ * read (payload products, substitutes, and the products of the existing lines the payload names). Only roles that price
+ * from the customer's tier (staff, buyer) read anything; a driver edit keeps list pricing and reads nothing.
+ */
+export async function preflightCustomerPrices(
+  svc: Parameters<typeof customerPricing>[0],
+  order: { customerId?: string | null },
+  dto: {
+    items?: ReadonlyArray<{
+      id?: string | null;
+      productId?: string | null;
+      substituteProductId?: string | null;
+    }>;
+  },
+  user: { role?: string } | undefined,
+  ctx: Pick<UnitEditContext, "existingById">,
+): Promise<void> {
+  const role = user?.role;
+  if (role !== "OPERATOR" && role !== "TENANT_ADMIN" && role !== "CUSTOMER") return;
+  const productIds = [
+    ...new Set(
+      (dto.items ?? []).flatMap((i) => [
+        i.productId,
+        i.substituteProductId,
+        i.id ? ctx.existingById.get(i.id)?.productId : null,
+      ]),
     ),
-    operatorDefaultTier: customer?.pricingTier ?? 1,
-  };
+  ].filter((id): id is string => !!id);
+  if (productIds.length === 0) return;
+  await customerPricing(svc, order.customerId, productIds, null, []);
 }
 
 /**
@@ -265,6 +305,8 @@ export interface UnitWriteContext {
   ladders: Map<string, LadderUnit[]>;
   tenantId: string | null | undefined;
   tier: (productId: string) => number;
+  /** S19, flag.units_prices_v2 only: a product's unit in the customer layer (null = master's tier price). */
+  layerOf?: (product: any, label: string) => CustomerLayerPrice | null;
   /** H3: the acting staff user, stamped on a unit line whose typed price overrides the customer's price. */
   overriddenBy?: string | null;
   /** H3: the order's lines as held under the edit's row lock, by id: the stored side of a re-sent price. */
@@ -337,6 +379,7 @@ export async function createUnitLine(
     resolved,
     item: { ...item, productId: product.id },
     tier: ctx.tier(product.id),
+    customerLayer: ctx.layerOf?.(product, resolved.unitLabel as string),
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position,
     tenantId: ctx.tenantId,
@@ -408,6 +451,7 @@ export async function updateUnitLine(
     resolved,
     item: { ...item, productId: product.id },
     tier: ctx.tier(product.id),
+    customerLayer: ctx.layerOf?.(product, resolved.unitLabel as string),
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position: 0,
     tenantId: ctx.tenantId,

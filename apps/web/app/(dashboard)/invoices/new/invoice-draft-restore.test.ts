@@ -1,5 +1,5 @@
 import { sanitizeSnapshot } from "@/lib/invoice-draft-storage";
-import { checkDraftReferences } from "./invoice-draft-restore";
+import { checkDraftReferences, repriceLine } from "./invoice-draft-restore";
 
 const snap = (lines: Array<Record<string, unknown>>, customer = true) =>
   sanitizeSnapshot({
@@ -386,5 +386,39 @@ describe("checkDraftReferences: prices are re-resolved, not trusted (ROW 447)", 
       expect(r.unitsDropped).toBe(0);
       expect(r.pricesUpdated).toBe(0);
     });
+  });
+});
+
+describe("repriceLine: the unit is matched by unitNameKey, the key the picker options use (MUST-1)", () => {
+  const cafeLevel = {
+    id: "l-cafe",
+    label: "Café",
+    factorToBase: 6,
+    price: "30.00",
+    priceTier2: null,
+    priceTier3: null,
+    priceTier4: null,
+    priceTier5: null,
+    isDefaultSelling: false,
+    sortOrder: 0,
+  };
+  const product = { id: "p-1", name: "Beans", unit: "Box", unitsPerBox: 12, pricePerUnit: "50.00" };
+  const stored = (unitLabel: string) =>
+    ({ ...line("p-1"), unitLabel, unitFactor: 6, qty: 2 }) as Parameters<typeof repriceLine>[0];
+  const ladder = { kind: "ok" as const, levels: [cafeLevel] };
+
+  it.each([
+    ["NFD", "Café"],
+    ["NFC", "Café"],
+    ["padded, other case", "  CAFÉ "],
+  ])("a %s draft line comes back on the NFC option (not unitDropped)", (_k, unitLabel) => {
+    const r = repriceLine(stored(unitLabel), product, { customerTier: 1, lineTier: 1, ladder });
+    expect(r.unitDropped).toBeUndefined();
+    expect(r.line).not.toBeNull();
+  });
+
+  it("a unit the ladder no longer offers still drops (guard)", () => {
+    const r = repriceLine(stored("Crate"), product, { customerTier: 1, lineTier: 1, ladder });
+    expect(r).toMatchObject({ line: null, unitDropped: true });
   });
 });

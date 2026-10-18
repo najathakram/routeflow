@@ -5,6 +5,7 @@ import {
   describeBaseOption,
   resolveLadderLevel,
   resolveUnitPrice,
+  unitNameKey,
   type LadderProduct,
   type LadderUnit,
 } from "./unit-levels";
@@ -42,7 +43,8 @@ export type DerivedBaseMarker = {
   derivedBase?: string;
 };
 
-const norm = (s: string) => s.trim().toLowerCase();
+// The shared label key (NFC, trim, case-fold): the same one the server ladder compares by (SA M2).
+const norm = unitNameKey;
 
 export function buildLadderOptions(
   product: LadderProduct,
@@ -50,6 +52,12 @@ export function buildLadderOptions(
   tier: number | string = 1,
   /** The price the parent already shows for the PACK (promotions / remembered upsell). Omitted = the tier price. */
   packPrice?: number,
+  /**
+   * S19b, flag.units_prices_v2 only (from `customerLinePrice`): the pack's CUSTOMER-LAYER price. A derived base (Piece) bills as the
+   * pack's pieces at that price, so its option reads 1/n of it. Separate from `packPrice`, whose meaning is unchanged: callers pass
+   * the line's CURRENT price there (a one-time override included), and the derived base then stays on the tier ladder, as on master.
+   */
+  layerPackPrice?: number,
 ): LadderOption[] {
   const price = (label: string) => resolveUnitPrice(product, units, label, tier);
   const list = (label: string) => resolveUnitPrice(product, units, label, 1);
@@ -101,7 +109,16 @@ export function buildLadderOptions(
     };
     const info = describeBaseOption(product, units, tier);
     if (info.source === "derived" && info.fractionOf && info.fractionOf.n > 1) {
-      base.derived = { ...info.fractionOf, exact: info.exact };
+      const n = info.fractionOf.n;
+      // master: the tier ladder. Only the flag-on customer-layer pack price (never `packPrice`) moves the derived base.
+      const pack = layerPackPrice ?? info.fractionOf.packPrice;
+      const cents = (pack * 100) / n;
+      base.derived = {
+        n,
+        packPrice: pack,
+        exact: layerPackPrice == null ? info.exact : Math.abs(cents - Math.round(cents)) < 1e-9,
+      };
+      if (layerPackPrice != null) base.price = roundMoney(pack / n);
     }
     options.push(base);
   }

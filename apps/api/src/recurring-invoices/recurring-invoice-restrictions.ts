@@ -1,3 +1,4 @@
+import type { SaleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 /**
@@ -14,6 +15,7 @@ export async function blockedTemplateLines(
   tenantId: string,
   ri: { customerId: string; items: ReadonlyArray<{ productId?: string | null }> },
   unattended: boolean,
+  sale: { fulfilmentKind: SaleFulfilmentKind }, // L8: from `defaultSaleFulfilmentKind` (a template has no order)
 ) {
   const lines = ri.items.flatMap((it) => (it.productId ? [{ productId: it.productId }] : []));
   if (!unattended) {
@@ -22,6 +24,7 @@ export async function blockedTemplateLines(
       customerId: ri.customerId,
       lines,
       channel: "STAFF",
+      fulfilmentKind: sale.fulfilmentKind,
     });
     return null;
   }
@@ -30,6 +33,7 @@ export async function blockedTemplateLines(
     customerId: ri.customerId,
     lines,
     channel: "STAFF",
+    fulfilmentKind: sale.fulfilmentKind,
   });
   return verdict.outcome === "BLOCK" || verdict.outcome === "INDETERMINATE"
     ? verdict.reasons
