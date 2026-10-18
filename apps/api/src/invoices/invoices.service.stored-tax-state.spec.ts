@@ -216,6 +216,37 @@ describe("SA-814 R5-2 — one recompute guard for stored tax state", () => {
     });
   });
 
+  describe("tax exemption (SA-814c): the recompute honours it like creation does", () => {
+    // An exempt customer's invoice: the lines carry a rate but the stored tax is $0 (create() owes $0 whatever
+    // the rate). Master's recompute ignored the exemption and ADDED the tax: $95 x 7.5% = $7.13, total $102.13.
+    const EXEMPT = { subtotal: 100, taxAmount: 0, total: 100 };
+
+    it("(h) a price adjustment on an exempt customer's rated invoice keeps the tax at $0", async () => {
+      withInvoice(EXEMPT, [line("li-1", 100, 0.075)]);
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: true });
+
+      await service.applyPriceAdjustment("inv-1", {
+        items: [{ itemId: "li-1", newUnitPrice: 95 }],
+        scope: "SINGLE",
+      });
+
+      expect(invoiceWrite()).toMatchObject({ subtotal: 95, taxAmount: 0, total: 95 });
+    });
+
+    it("(h2) an exempt invoice that still carries a levy snapshot stays stale: 409, nothing written", async () => {
+      withInvoice(EXEMPT, [{ ...line("li-1", 100, 0), categoryTaxAmount: 5 }]);
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: true });
+
+      await expect(
+        service.applyPriceAdjustment("inv-1", {
+          items: [{ itemId: "li-1", newUnitPrice: 95 }],
+          scope: "SINGLE",
+        }),
+      ).rejects.toMatchObject(STALE);
+      nothingWritten();
+    });
+  });
+
   describe("DRAFT items edit (a web re-save re-sends the stored rate, 0 for a legacy row)", () => {
     const draft = { status: InvoiceStatus.DRAFT };
 
