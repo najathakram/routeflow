@@ -34,6 +34,7 @@ import { emitAddonDelta, lockTenantForLedger } from "./addon-ledger";
 import { addonCodeOf, findAddonRow } from "./addon-row";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
+import { roundMoney } from "@routeflow/pricing";
 
 /**
  * A Stripe `resource_missing` / 404 error means the item we tried to act on is
@@ -689,7 +690,7 @@ export class AddonService {
                 actor,
               });
             }
-            const price = Number(manualSkuDef.monthlyPrice);
+            const price = roundMoney(Number(manualSkuDef.monthlyPrice));
             const row = await updateAddonRowTx(tx, this.events, {
               id: current.id,
               data: { isComp: false, priceSnapshot: price },

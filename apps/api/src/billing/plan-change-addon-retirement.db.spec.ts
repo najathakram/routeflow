@@ -21,6 +21,7 @@ import { ProrationService } from "./proration.service";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
 import { AddonService } from "./addon.service";
+import { NO_STRIPE_PUSH, stopBillingIncludedAddonsTx } from "./addon-inclusion";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -217,6 +218,42 @@ describeDb(
 
       const row = await prisma.tenantAddon.findFirstOrThrow({ where: { tenantId: id } });
       expect(row.active).toBe(true);
+      expect((await deltas(id)).filter((e) => e.type === "addon.disabled")).toEqual([]);
+    }, 30_000);
+
+    it("a plan change that sent NOTHING to Stripe never clears a billed add-on's Stripe item: 409, the row keeps its price and its item, nothing books", async () => {
+      const id = await tenantOnGrowth("live-item", false, { stripeSubId: "sub_qa_live_item" });
+      await addon(id, "FORECASTING", { stripeItemId: "si_qa_live_item" });
+
+      await expect(
+        prisma.$transaction((tx) =>
+          stopBillingIncludedAddonsTx(tx, new BillingEventService(prisma as any), {
+            tenantId: id,
+            fromPlanKey: "GROWTH",
+            toPlanKey: "SCALE",
+            toPlanName: "Scale",
+            addonSkus: [
+              {
+                sku: "FORECASTING",
+                name: "Forecasting",
+                monthlyPrice: 25,
+                includedAtPlan: "SCALE",
+              },
+            ],
+            ctx: NO_STRIPE_PUSH,
+            manualPay: false,
+            tenantLabel: "",
+            actorId: "admin-b1103",
+          }),
+        ),
+      ).rejects.toThrow("Add-ons changed concurrently");
+
+      const row = await prisma.tenantAddon.findFirstOrThrow({ where: { tenantId: id } });
+      expect([row.active, Number(row.priceSnapshot), row.stripeItemId]).toEqual([
+        true,
+        25,
+        "si_qa_live_item",
+      ]);
       expect((await deltas(id)).filter((e) => e.type === "addon.disabled")).toEqual([]);
     }, 30_000);
 
