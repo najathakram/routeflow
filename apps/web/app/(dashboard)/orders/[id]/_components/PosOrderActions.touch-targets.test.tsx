@@ -2,6 +2,9 @@ import * as React from "react";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+jest.mock("@/lib/api/counter-sale", () => ({
+  useCounterSaleGate: () => ({ mayUseTill: true, loading: false }),
+}));
 jest.mock("@/lib/api/invoices", () => ({
   useCreateInvoiceFromOrder: () => ({ isPending: false, mutate: jest.fn() }),
 }));

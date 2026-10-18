@@ -728,7 +728,9 @@ export default function OrdersPage() {
                 ]}
               />
             ) : null}
-            {storeOnlyHeader && staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups) ? (
+            {storeOnlyHeader &&
+            counterGate.permsKnown &&
+            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups) ? (
               <Button
                 variant="secondary"
                 className="max-sm:h-11"

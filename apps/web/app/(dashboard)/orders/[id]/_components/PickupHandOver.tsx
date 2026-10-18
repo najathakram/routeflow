@@ -25,8 +25,8 @@ export function PickupHandOverButton({
 }) {
   // BO-07: completing a pickup is a till action, so an operator whose admin switched ORDERS off is not offered it
   // (the server refuses it too).
-  const { mayUseTill } = useCounterSaleGate();
-  if (!mayUseTill) return null;
+  const { mayUseTill, loading } = useCounterSaleGate();
+  if (!mayUseTill || loading) return null;
   return (
     <Button
       size="sm"

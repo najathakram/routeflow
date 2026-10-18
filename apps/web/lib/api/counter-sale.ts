@@ -39,6 +39,9 @@ export function useCounterSaleGate(options?: { enabled?: boolean }) {
   const perms = useMyPermissions(authUser?.id, { enabled: checkPermissions });
   const permsPending = checkPermissions && perms.isLoading === true;
   const deniedGroups = checkPermissions && perms.data ? deniedGroupsOf(perms.data) : [];
+  // Fail-closed flag for the builder's POS path: false while the read is pending AND after it errors (deniedGroups is
+  // [] in both, which would read as "nothing denied"). Everyone but an OPERATOR has nothing to read: true.
+  const permsKnown = !checkPermissions || perms.data !== undefined;
   const mayUseTill =
     checkPermissions && perms.data ? staffMay(role, "USE_POS_MODE", deniedGroups) : true;
   const baseGate = enabled
@@ -61,6 +64,8 @@ export function useCounterSaleGate(options?: { enabled?: boolean }) {
     mayUseTill,
     /** BO-07: the groups the operator's admin switched off (empty for everyone else); feeds `staffMay(role, action, denied)`. */
     deniedGroups,
+    /** BO-07: the operator's denied groups are actually known (true for non-operators; false while pending or on error). */
+    permsKnown,
     capability: enabled ? cap : null,
     loading: enabled && (isLoading === true || permsPending),
     // CQ-30: the lookup itself FAILED (a server error) or could not even start (React Query PAUSES a query while the browser is

@@ -48,7 +48,15 @@ describe("PickupHandOverButton and the operator's till permission", () => {
     renderWithProviders(<PickupHandOverButton onOpen={jest.fn()} />);
     await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/users/me/permissions"));
     await act(async () => {});
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Picked up" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "Picked up" })).toBeNull();
+  });
+
+  it("while the permissions read is pending: the entry is absent", async () => {
+    mockGet.mockImplementation(() => new Promise(() => undefined));
+    renderWithProviders(<PickupHandOverButton onOpen={jest.fn()} />);
+    await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/users/me/permissions"));
+    await act(async () => {});
+    expect(screen.queryByRole("button", { name: "Picked up" })).toBeNull();
   });
 
   it("an operator with ORDERS: the entry is offered", async () => {

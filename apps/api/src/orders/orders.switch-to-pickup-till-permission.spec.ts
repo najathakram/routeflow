@@ -6,7 +6,7 @@ import { buildOrdersService, operatorPayload } from "./testing/orders-service-ha
  */
 describe("OrdersService.updateFulfillPath: POS mode and the operator's denied groups", () => {
   let h: Awaited<ReturnType<typeof buildOrdersService>>;
-  const operator = { ...operatorPayload, tenantId: "t-1" };
+  const operator = { ...operatorPayload };
 
   const toPickup = (user: unknown) =>
     h.service.updateFulfillPath("ord-1", { fulfillPath: "PICKUP" } as any, user as any);

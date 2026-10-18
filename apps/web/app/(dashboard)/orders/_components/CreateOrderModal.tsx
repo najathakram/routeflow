@@ -269,8 +269,8 @@ export function CreateOrderModal({
   const { user: posUser } = useAuth();
   // The switch and PICKUP are for roles with USE_POS_MODE only: a stored preference never applies without it.
   // BO-07: and not for an operator whose admin switched ORDERS off (the same deny list the till reads).
-  const { deniedGroups: posDenied } = useCounterSaleGate();
-  const posAllowed = staffMay(posUser?.role, "USE_POS_MODE", posDenied);
+  const { deniedGroups: posDenied, permsKnown } = useCounterSaleGate();
+  const posAllowed = permsKnown && staffMay(posUser?.role, "USE_POS_MODE", posDenied);
   // A store-only business (capabilities.fulfilment: PICKUP is its only method) has no delivery to switch back to:
   // the builder is simply POS mode, with no switch and no preference involved (row 331).
   const storeOnly = isStoreOnly(useFulfilmentCaps());

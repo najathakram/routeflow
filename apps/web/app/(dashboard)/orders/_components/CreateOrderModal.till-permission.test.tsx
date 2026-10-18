@@ -122,6 +122,34 @@ describe("CreateOrderModal: POS mode switch and the operator's till permission",
     expect(screen.getByRole("button", { name: /^create order$/i })).toBeInTheDocument();
   });
 
+  it("while the permissions read is pending: no switch, and a stored posMode=true is not applied", async () => {
+    mockPrefs = { "orders.posMode": "true" };
+    get.mockImplementation((url: string) =>
+      url === "/users/me/permissions"
+        ? new Promise(() => undefined)
+        : Promise.resolve({ data: url === "/users/me/preferences" ? mockPrefs : { taxRate: 0 } }),
+    );
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/users/me/permissions"));
+    await act(async () => {});
+    expect(screen.queryByRole("switch", { name: /pos mode/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm and invoice" })).not.toBeInTheDocument();
+  });
+
+  it("when the permissions read fails: no switch, and a stored posMode=true is not applied", async () => {
+    mockPrefs = { "orders.posMode": "true" };
+    get.mockImplementation((url: string) =>
+      url === "/users/me/permissions"
+        ? Promise.reject(new Error("boom"))
+        : Promise.resolve({ data: url === "/users/me/preferences" ? mockPrefs : { taxRate: 0 } }),
+    );
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/users/me/permissions"));
+    await act(async () => {});
+    expect(screen.queryByRole("switch", { name: /pos mode/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm and invoice" })).not.toBeInTheDocument();
+  });
+
   it("an operator with ORDERS: the switch is offered", async () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     expect(await screen.findByRole("switch", { name: /pos mode/i })).toBeInTheDocument();

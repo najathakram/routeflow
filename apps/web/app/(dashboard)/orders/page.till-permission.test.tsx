@@ -115,10 +115,19 @@ describe("Orders header and the operator's till permission", () => {
       renderWithProviders(<OrdersPage />);
       await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/users/me/permissions"));
       await act(async () => {});
-      // the entry is offered until the answer lands, then withdrawn
-      await waitFor(() =>
-        expect(screen.queryByRole("button", { name: "Invoice a customer" })).toBeNull(),
+      expect(screen.queryByRole("button", { name: "Invoice a customer" })).toBeNull();
+    });
+
+    it("while the permissions read is pending: Invoice a customer is absent", async () => {
+      mockGet.mockImplementation((url: string) =>
+        url === "/users/me/permissions"
+          ? new Promise(() => undefined)
+          : Promise.resolve({ data: { data: [], meta: { total: 0 } } }),
       );
+      renderWithProviders(<OrdersPage />);
+      await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/users/me/permissions"));
+      await act(async () => {});
+      expect(screen.queryByRole("button", { name: "Invoice a customer" })).toBeNull();
     });
 
     it("an operator with ORDERS: Invoice a customer opens the builder", async () => {
