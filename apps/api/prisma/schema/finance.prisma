@@ -49,6 +49,19 @@ enum CheckReturnReason {
   OTHER
 }
 
+/// SA-760 R-3 / SA-772 folder 3 (sitting 4; B1105): an order invoice's billing role, set at creation once R-3 ships.
+/// MIRROR = the order's own mirror invoice; PARTIAL = createPartialFromOrder; REMAINDER = the delivery remainder;
+/// MANUAL = named by the SA-760 rule text, no creation path assigned yet (R-3 defines it). NULL = not stamped
+/// (legacy, or an invoice with no order): read through billingRoleOf()'s inference until the R-3 census + backfill.
+/// Only MIRROR drafts are ever rebuilt automatically.
+/// Mirrored by packages/types/api/enums.ts INVOICE_ORDER_BILLING_ROLE_VALUES (enum-parity.spec.ts).
+enum InvoiceOrderBillingRole {
+  MIRROR
+  PARTIAL
+  REMAINDER
+  MANUAL
+}
+
 // ─── New Enums (Zoho-parity) ──────────────────────────────────────────────────
 
 enum InvoiceStatus {
@@ -176,15 +189,15 @@ model Payment {
 // ─── Standalone invoicing ──────────────────────────────────────────
 
 model Invoice {
-  id                     String        @id @default(uuid())
+  id                     String                   @id @default(uuid())
   invoiceNumber          String
   customerId             String
-  status                 InvoiceStatus @default(DRAFT)
-  subtotal               Decimal       @db.Decimal(10, 2)
-  taxAmount              Decimal       @default(0) @db.Decimal(10, 2)
-  discount               Decimal       @default(0) @db.Decimal(10, 2)
-  shippingFee            Decimal       @default(0) @db.Decimal(10, 2)
-  total                  Decimal       @db.Decimal(10, 2)
+  status                 InvoiceStatus            @default(DRAFT)
+  subtotal               Decimal                  @db.Decimal(10, 2)
+  taxAmount              Decimal                  @default(0) @db.Decimal(10, 2)
+  discount               Decimal                  @default(0) @db.Decimal(10, 2)
+  shippingFee            Decimal                  @default(0) @db.Decimal(10, 2)
+  total                  Decimal                  @db.Decimal(10, 2)
   dueDate                DateTime?
   sentAt                 DateTime?
   viewedAt               DateTime?
@@ -203,9 +216,9 @@ model Invoice {
   // Deliberately minimal deposit schedule (Tier 1): the deposit AMOUNT is always
   // derived from depositPercent * total at read time (see InvoicesService), never
   // stored. No InvoiceInstallment table / deposit-aware statuses in this phase.
-  depositPercent         Decimal?      @db.Decimal(5, 2)
+  depositPercent         Decimal?                 @db.Decimal(5, 2)
   depositDueDate         DateTime?
-  issueDate              DateTime      @default(now())
+  issueDate              DateTime                 @default(now())
   pdfUrl                 String?
   // Carrier shipment tracking — copied from the linked order on invoice generation,
   // and editable on the invoice itself. Carrier is a label (UPS/FedEx/USPS/DHL/Other);
@@ -227,8 +240,11 @@ model Invoice {
   // InvoicePayment.nsfFeeInvoiceId's own no-FK rationale. Null on every
   // ordinary invoice.
   feeForPaymentId        String?
-  createdAt              DateTime      @default(now())
-  updatedAt              DateTime      @updatedAt
+  // SA-760 R-3 / SA-772 folder 3 (sitting 4): see InvoiceOrderBillingRole. Nullable, no default, no backfill, no
+  // index in v1 (read per order; the Invoice(orderId) index serves it). No writer or reader until R-3 merges.
+  orderBillingRole       InvoiceOrderBillingRole?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
   tenantId               String?
 
   customer           Customer               @relation(fields: [customerId], references: [id])
