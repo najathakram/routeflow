@@ -39,7 +39,13 @@ function make(rows: Record<string, unknown>[]) {
     $queryRaw: jest.fn().mockResolvedValue([]),
     tenantAddon: {
       findMany: jest.fn().mockResolvedValue(rows),
-      update: jest.fn().mockResolvedValue({}),
+      // The one writer (tenant-addon-writer.ts) locks, reads `before`, then updates.
+      findUnique: jest.fn(({ where }: any) =>
+        Promise.resolve(rows.find((r) => r.id === where.id) ?? null),
+      ),
+      update: jest.fn(({ where, data }: any) =>
+        Promise.resolve({ ...(rows.find((r) => r.id === where.id) ?? {}), ...data }),
+      ),
     },
     tenant: {
       findUniqueOrThrow: jest.fn().mockResolvedValue({
