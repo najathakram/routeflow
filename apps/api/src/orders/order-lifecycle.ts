@@ -32,6 +32,7 @@ import type { SellingRestrictionsService } from "../selling-restrictions/selling
 import { SHIPPED_STATUSES, notifyTrackingAdded } from "./shipment-notifications";
 import { resolveShipmentText } from "./shipment-text";
 import { assertFulfilPathOffered } from "./fulfil-path-resolver";
+import { operatorDeniedGroups } from "./counter-sale/till-permission.guard";
 
 const switchLogger = new Logger("OrderFulfilPathSwitch");
 
@@ -114,7 +115,12 @@ export async function updateFulfillPathImpl(
   restrictions?: Pick<SellingRestrictionsService, "assertLinesSellable">,
 ) {
   // POS mode (SA-763r R3): switching an order to PICKUP is a hand-over at the till, a staff capability.
-  if (dto.fulfillPath === FulfillPath.PICKUP && !staffMay(user?.role, "USE_POS_MODE")) {
+  // BO-07: an OPERATOR's denied ORDERS group is read live (only for the PICKUP switch; everyone else is `[]`).
+  const posDenied =
+    dto.fulfillPath === FulfillPath.PICKUP && user?.role === UserRole.OPERATOR
+      ? await operatorDeniedGroups(self.prisma, user)
+      : [];
+  if (dto.fulfillPath === FulfillPath.PICKUP && !staffMay(user?.role, "USE_POS_MODE", posDenied)) {
     throw new ForbiddenException({
       code: API_ERROR_CODES.POS_MODE_NOT_PERMITTED,
       message: "You don't have access to switch an order to pickup.",

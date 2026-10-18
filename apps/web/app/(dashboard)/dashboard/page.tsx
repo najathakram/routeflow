@@ -922,7 +922,10 @@ export default function DashboardPage() {
             {/* Store-only tenant: the SAME rule as the Orders header. New Order would open the counter too, so the
                 header is Invoice a customer (secondary) + Counter sale (primary); `builder=1` opens the builder
                 itself where the counter is the default. */}
-            {quickCreate.storeOnly && staffMay(user?.role, "USE_POS_MODE") ? (
+            {/* BO-07: the builder's PICKUP path is the till, so a denied operator does not see it (the server refuses it too). */}
+            {quickCreate.storeOnly &&
+            counterGate.permsKnown &&
+            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups) ? (
               <WriteButton
                 href="/orders?action=new&builder=1"
                 size="sm"

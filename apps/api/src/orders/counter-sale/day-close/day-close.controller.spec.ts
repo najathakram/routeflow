@@ -35,10 +35,10 @@ describe("CounterDayCloseController: routes", () => {
     ]);
   });
 
-  it("every route is OPERATOR (which admits TENANT_ADMIN) behind the roles guard", () => {
+  it("every route is OPERATOR (which admits TENANT_ADMIN) behind the roles guard and the till guard", () => {
     for (const n of ["state", "latest", "byId", "close", "reopen", "report"] as const) {
       expect(routeOf(n).roles).toEqual([UserRole.OPERATOR]);
-      expect(routeOf(n).guards).toHaveLength(1);
+      expect(routeOf(n).guards).toHaveLength(2); // RolesGuard, TillPermissionGuard (BO-07)
     }
     expect(Reflect.getMetadata("__guards__", CounterDayCloseController)).toHaveLength(1);
   });
