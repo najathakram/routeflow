@@ -16,14 +16,13 @@ describe("opensAsChoosableFor", () => {
   });
 
   it("ignores everything else on the ticks (door payments, opens as)", () => {
-    expect(
-      opensAsChoosableFor({
-        delivery: false,
-        shipping: true,
-        counter: true,
-        doorPayments: true,
-        opensAs: "order",
-      }),
-    ).toBe(true);
+    const ticks = {
+      delivery: false,
+      shipping: true,
+      counter: true,
+      doorPayments: true,
+      opensAs: "order",
+    };
+    expect(opensAsChoosableFor(ticks)).toBe(true);
   });
 });

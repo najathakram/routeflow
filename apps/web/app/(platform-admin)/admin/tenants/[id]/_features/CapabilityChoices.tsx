@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import type {
+  CapabilityAvailability,
   CapabilityPresetKey,
   CapabilityPresetSummary,
 } from "@/lib/platform-admin/capabilities-contract";
@@ -29,8 +30,8 @@ export interface CapabilityChoicesProps {
   /** While a write is in flight (or the form is submitting). */
   disabled?: boolean;
   legend?: string;
-  /** A capability the plan excludes, with the plan's name: shown disabled as "Not on the {Plan} plan.". */
-  excluded?: Partial<Record<CapabilityBox, string>>;
+  /** A capability that cannot be ticked, with the server's visible reason ("Not available yet"). */
+  unavailable?: CapabilityAvailability;
 }
 
 const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400";
@@ -49,7 +50,7 @@ export function CapabilityChoices({
   idPrefix,
   disabled,
   legend = "What this business does",
-  excluded,
+  unavailable,
 }: CapabilityChoicesProps) {
   const id = (part: string) => `${idPrefix}-${part}`;
   const choosable = opensAsChoosableFor(ticks);
@@ -81,7 +82,7 @@ export function CapabilityChoices({
           id={id("delivery")}
           label={CAPABILITY_LABELS.delivery}
           checked={ticks.delivery}
-          excludedPlan={excluded?.delivery}
+          unavailableReason={unavailable?.delivery}
           onChange={(on) => onChange(toggleCapability(ticks, "delivery", on))}
         />
         <div
@@ -104,14 +105,14 @@ export function CapabilityChoices({
           id={id("shipping")}
           label={CAPABILITY_LABELS.shipping}
           checked={ticks.shipping}
-          excludedPlan={excluded?.shipping}
+          unavailableReason={unavailable?.shipping}
           onChange={(on) => onChange(toggleCapability(ticks, "shipping", on))}
         />
         <CheckRow
           id={id("counter")}
           label={CAPABILITY_LABELS.counter}
           checked={ticks.counter}
-          excludedPlan={excluded?.counter}
+          unavailableReason={unavailable?.counter}
           focusTarget="counter"
           onChange={(on) => onChange(toggleCapability(ticks, "counter", on))}
         />
@@ -173,7 +174,7 @@ function CheckRow({
   disabled,
   reason,
   reasonId,
-  excludedPlan,
+  unavailableReason,
   focusTarget,
   onChange,
 }: {
@@ -184,14 +185,13 @@ function CheckRow({
   /** Why the box is off, as visible text tied to the input by aria-describedby. */
   reason?: string;
   reasonId?: string;
-  excludedPlan?: string;
+  unavailableReason?: string;
   focusTarget?: string;
   onChange: (on: boolean) => void;
 }) {
-  const excludedId = `${id}-plan`;
-  const why = excludedPlan ? `Not on the ${excludedPlan} plan.` : reason;
-  const whyId = excludedPlan ? excludedId : reasonId;
-  const off = disabled || !!excludedPlan;
+  const why = unavailableReason ?? reason;
+  const whyId = unavailableReason ? `${id}-unavailable` : reasonId;
+  const off = disabled || !!unavailableReason;
   return (
     <div>
       <label

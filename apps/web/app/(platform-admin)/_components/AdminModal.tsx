@@ -12,6 +12,8 @@ interface AdminModalProps {
   initialFocusRef?: React.RefObject<HTMLElement | null>;
   /** Phone width: a bottom sheet (about 80% height, scrolling inside); from `sm` up it is the usual centred dialog. */
   sheet?: boolean;
+  /** `alertdialog` for a destructive confirm that interrupts the admin (BO-05: "Stop billing for N add-ons?"). */
+  role?: "dialog" | "alertdialog";
 }
 
 const FOCUSABLE_SELECTOR =
@@ -25,6 +27,7 @@ export function AdminModal({
   footer,
   initialFocusRef,
   sheet,
+  role = "dialog",
 }: AdminModalProps) {
   const panelRef = React.useRef<HTMLDivElement>(null);
   const triggerRef = React.useRef<HTMLElement | null>(null);
@@ -92,7 +95,7 @@ export function AdminModal({
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div
         ref={panelRef}
-        role="dialog"
+        role={role}
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
@@ -108,7 +111,7 @@ export function AdminModal({
             type="button"
             onClick={onClose}
             aria-label="Close dialog"
-            className="text-slate-400 hover:text-white text-lg leading-none"
+            className="inline-flex h-11 w-11 items-center justify-center text-lg leading-none text-slate-400 hover:text-white"
           >
             <span aria-hidden="true">&times;</span>
           </button>

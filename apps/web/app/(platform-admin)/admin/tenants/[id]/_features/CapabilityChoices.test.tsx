@@ -11,13 +11,13 @@ function Harness({
   initial = NO_TICKS,
   onChange,
   matchedPreset = null,
-  excluded,
+  unavailable,
   presets = CAPABILITY_PRESETS_FIXTURE,
 }: {
   initial?: CapabilityTicks;
   onChange?: (t: CapabilityTicks) => void;
   matchedPreset?: CapabilityPresetKey | null;
-  excluded?: Props["excluded"];
+  unavailable?: Props["unavailable"];
   presets?: Props["presets"];
 }) {
   const [ticks, setTicks] = React.useState(initial);
@@ -31,7 +31,7 @@ function Harness({
       }}
       presets={presets}
       matchedPreset={matchedPreset}
-      excluded={excluded}
+      unavailable={unavailable}
     />
   );
 }
@@ -108,11 +108,11 @@ describe("CapabilityChoices: the three boxes", () => {
     );
   });
 
-  it("a capability the plan excludes is disabled with 'Not on the {Plan} plan.' tied to the box", () => {
-    render(<Harness excluded={{ counter: "Starter" }} />);
+  it("a capability the server marks unavailable is disabled with its visible reason tied to the box", () => {
+    render(<Harness unavailable={{ counter: "Not available yet" }} />);
     expect(box(COUNTER)).toBeDisabled();
-    expect(screen.getByText("Not on the Starter plan.")).toBeVisible();
-    expect(box(COUNTER)).toHaveAccessibleDescription("Not on the Starter plan.");
+    expect(screen.getByText("Not available yet")).toBeVisible();
+    expect(box(COUNTER)).toHaveAccessibleDescription("Not available yet");
     expect(box(SHIPPING)).toBeEnabled();
   });
 
