@@ -1271,7 +1271,7 @@ describe("BO-06: console mode radios render for config rows", () => {
     const rowOf = await renderRows([fulfilmentModeEffective(MODE), uncheckedSettingEffective()]);
     expect(
       within(rowOf("route_optimization")).getByRole("radiogroup", {
-        name: "Route optimization mode mode",
+        name: "Route optimization mode",
       }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("radiogroup", { name: /fulfilment_model|route_optimization/ })).toBe(
@@ -1323,9 +1323,10 @@ describe("BO-06: console mode radios render for config rows", () => {
     );
     await screen.findByText("Preview mode change", { selector: "h3" });
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-    // Today the console maps no error code: every failed apply reads the one fixed line below.
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Could not apply that change. Try again.");
+    expect(alert).toHaveTextContent(
+      "This business has no delivery fleet, so Delivery and shipping can't be turned on yet.",
+    );
     expect(document.body).not.toHaveTextContent("SERVER-TEXT");
   });
 });
