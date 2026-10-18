@@ -46,6 +46,7 @@ import {
 import { computeDepositFields } from "./deposit-fields";
 import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-read";
 import { withComponentViews } from "../orders/component-view";
+import { QTY_EPSILON } from "../orders/merge-idempotency";
 import {
   HANDOVER_SOLD_BY_SELECT,
   seesHandOverStamp,
@@ -4046,7 +4047,8 @@ export class InvoicesService {
    *   - direction -1 (void/delete): RELEASE the qty so `qty - invoicedQty` reflects
    *     what's still billable and the operator can re-split.
    *   - direction +1 (unvoid): RE-CLAIM the qty the invoice bills again, so a later
-   *     invoice can't double-bill it. Capped at the order line's qty.
+   *     invoice can't double-bill it. NOT clamped (B299): a line that no longer has the qty
+   *     free (or is CANCELLED) throws 409 ORDER_BILLING_CHANGED before any write.
    *
    * Match is by the invoice line's `orderItemId` provenance — precise even when an
    * order has multiple lines for the same product. Legacy invoice rows that predate
@@ -4082,25 +4084,57 @@ export class InvoicesService {
       where: { orderId },
       select: { id: true, productId: true, status: true, qty: true, invoicedQty: true },
     });
-    const adjust = async (oi: any, qtyDelta: number) => {
-      // Clamp into [0, line qty]: never negative, never claim more than the line has.
-      const next = Math.min(
-        Number(oi.qty ?? 0),
-        Math.max(0, Number(oi.invoicedQty ?? 0) + direction * qtyDelta),
-      );
-      await tx.orderItem.update({ where: { id: oi.id }, data: { invoicedQty: next } });
-    };
 
+    // Resolve every invoice line to its order line FIRST, so a refusal below happens before any write.
+    const claims = new Map<string, { oi: any; qty: number; cancelledTarget: boolean }>();
+    const claim = (oi: any, qty: number, cancelledTarget = false) => {
+      const prior = claims.get(oi.id);
+      claims.set(oi.id, {
+        oi,
+        qty: (prior?.qty ?? 0) + qty,
+        cancelledTarget: (prior?.cancelledTarget ?? false) || cancelledTarget,
+      });
+    };
     for (const [orderItemId, qty] of byOrderItem) {
       const target = orderItems.find((oi: any) => oi.id === orderItemId);
-      if (target) await adjust(target, qty);
+      if (target) claim(target, qty, target.status === "CANCELLED");
     }
     for (const [productId, qty] of byProduct) {
       // #1185 round 5, item 3: never pick a CANCELLED line as the fallback target.
-      const target = orderItems.find(
+      const live = orderItems.find(
         (oi: any) => oi.productId === productId && oi.status !== "CANCELLED",
       );
-      if (target) await adjust(target, qty);
+      if (live) claim(live, qty);
+      else if (direction === 1) {
+        // B299: the goods only exist on a cancelled line - nothing live to re-claim them on.
+        const cancelled = orderItems.find((oi: any) => oi.productId === productId);
+        if (cancelled) claim(cancelled, qty, true);
+      }
+    }
+
+    if (direction === 1) {
+      // B299 / SA-814 R4-5: a re-claim is never clamped. Under the caller's locks every line must still
+      // have `qty - invoicedQty >= delta` on a non-CANCELLED order line; otherwise another invoice bills
+      // these goods now and restoring this one would double-bill them. No write has happened yet.
+      for (const { oi, qty, cancelledTarget } of claims.values()) {
+        const free = Number(oi.qty ?? 0) - Number(oi.invoicedQty ?? 0);
+        if (cancelledTarget || free < qty - QTY_EPSILON) {
+          throw new ConflictException({
+            code: API_ERROR_CODES.ORDER_BILLING_CHANGED,
+            message: "Another invoice now bills these items. Void it first.",
+          });
+        }
+      }
+    }
+
+    for (const { oi, qty } of claims.values()) {
+      // Void direction: clamp into [0, line qty] (never negative, never more than the line has). The
+      // re-claim direction was verified above, so its sum is already within the line.
+      const next = Math.min(
+        Number(oi.qty ?? 0),
+        Math.max(0, Number(oi.invoicedQty ?? 0) + direction * qty),
+      );
+      await tx.orderItem.update({ where: { id: oi.id }, data: { invoicedQty: next } });
     }
   }
 
@@ -4231,12 +4265,13 @@ export class InvoicesService {
           code: API_ERROR_CODES.ORDER_BILLING_CHANGED,
           message: "The invoice changed while it was being restored. Refresh and try again.",
         });
-      const restored = await tx.invoice.update({
+      // B299 / SA-814 R4-5: the re-claim runs FIRST and is not clamped - if another invoice now bills these
+      // goods (or the line is CANCELLED) it throws 409 ORDER_BILLING_CHANGED before the status flip writes.
+      await this.adjustInvoicedQtyForInvoice(tx, id, inv.orderId, 1);
+      return tx.invoice.update({
         where: { id },
         data: { status: InvoiceStatus.DRAFT },
       });
-      await this.adjustInvoicedQtyForInvoice(tx, id, inv.orderId, 1);
-      return restored;
     });
   }
 
