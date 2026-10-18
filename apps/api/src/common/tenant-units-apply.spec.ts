@@ -97,7 +97,7 @@ function fake(
         ).length;
       },
       // the names that already exist (archived included: the unique key spans them)
-      findMany: async ({ where }: any) => {
+      findMany: async ({ where }: { where: { tenantId: string; nameKey: { in: string[] } } }) => {
         log.push("findMany");
         return state.tenantUnits
           .filter((u) => u.tenantId === where.tenantId && where.nameKey.in.includes(u.nameKey))

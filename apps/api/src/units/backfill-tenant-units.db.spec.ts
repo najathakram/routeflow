@@ -433,7 +433,7 @@ describeDb("tenant unit backfill (U-6)", () => {
       const paused = new Proxy(prisma, {
         get(target, prop, receiver) {
           if (prop !== "$transaction") return Reflect.get(target, prop, receiver);
-          return (fn: (tx: any) => Promise<unknown>, opts?: object) =>
+          return (fn: (tx: unknown) => Promise<unknown>, opts?: object) =>
             target.$transaction(
               (tx) =>
                 fn(
