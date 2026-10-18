@@ -146,7 +146,7 @@ export function EditablePricesGrid({
         <ProductPricesGrid
           product={product}
           edit={edit}
-          rowAction={rowAction}
+          rowAction={editing ? rowAction : undefined}
           layout={layout}
           density={density}
           idSuffix={sfx}
