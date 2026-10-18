@@ -135,7 +135,7 @@ function invalidFields(form: {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.adminEmail)) bad.push("adminEmail");
   if (form.adminUsername.length < 3 || form.adminUsername.length > 50) bad.push("adminUsername");
   const pw = form.adminPassword;
-  if (pw && (pw.length < 8 || !/^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W])/.test(pw))) {
+  if (pw && (pw.length < 8 || !/^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W_])/.test(pw))) {
     bad.push("adminPassword");
   }
   return bad;

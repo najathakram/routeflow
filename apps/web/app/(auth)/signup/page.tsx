@@ -38,7 +38,7 @@ const signupSchema = z
       .min(8, "Password must be at least 8 characters")
       .regex(/[A-Z]/, "Must contain at least one uppercase letter")
       .regex(/[a-z]/, "Must contain at least one lowercase letter")
-      .regex(/[0-9\W]/, "Must contain at least one number or special character"),
+      .regex(/[0-9\W_]/, "Must contain at least one number or special character"),
     confirmPassword: z.string().min(1, "Please confirm your password"),
   })
   .refine((d) => d.adminPassword === d.confirmPassword, {

@@ -12,6 +12,8 @@ interface ErrorBody {
   missing?: unknown;
   alreadyDisabled?: unknown;
   failedStep?: { step?: unknown; key?: unknown } | null;
+  /** FULFILMENT_CARRIER_IN_TRANSIT: open carrier orders blocking a billing-moment change. */
+  count?: unknown;
   /** ROW c: per-add-on outcomes (`BusinessProfileBillingFailedAddon[]`); absent from an older server. */
   addons?: unknown;
 }
@@ -144,6 +146,14 @@ export function profileErrorCopy(err: unknown, fallback: string): string {
       return labels.length > 0
         ? `Delivery needs a fleet feature turned on first: ${labels.join(" or ")}. Any one is enough.`
         : "Delivery needs a fleet feature turned on first.";
+    }
+    case API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT: {
+      const n = typeof body.count === "number" && body.count > 0 ? body.count : null;
+      const who = n === null ? "Orders are" : n === 1 ? "1 order is" : `${n} orders are`;
+      return (
+        `${who} with the carrier right now. Apply this profile once they are delivered: changing ` +
+        "how orders ship now would bill them twice or not at all."
+      );
     }
     case API_ERROR_CODES.FEATURE_MODE_REQUIRES:
       return KNOWN_KEY(body.missing)
