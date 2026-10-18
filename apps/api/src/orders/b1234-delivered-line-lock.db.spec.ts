@@ -300,6 +300,45 @@ describeDb(
       expect(await stock(p)).toBe(stockBefore);
     });
 
+    it("stale status: the pre-tx read shows CONFIRMED, a delivery flips the order to PARTIALLY_DELIVERED, the LOCKED status refuses", async () => {
+      const p = await product("flip");
+      const o = await order([plain(p, 5, 0), plain(p, 4, 0)], "CONFIRMED");
+      const target = o.lineItems.find((l) => Number(l.qty) === 5)!;
+      const before = await snapshot(o.id);
+      const stockBefore = await stock(p);
+      // The first read of the order (the pre-tx one) returns CONFIRMED, then the delivery lands before the Order lock.
+      const orderModel = (prisma as any).order;
+      const real = orderModel.findUnique.bind(orderModel);
+      let landed = false;
+      const spy = jest
+        .spyOn(orderModel, "findUnique")
+        .mockImplementation(async (...args: any[]) => {
+          const res = await real(...args);
+          if (!landed) {
+            landed = true;
+            await raw.orderItem.update({ where: { id: target.id }, data: { deliveredQty: "3" } });
+            await raw.order.update({
+              where: { id: o.id },
+              data: { status: "PARTIALLY_DELIVERED" },
+            });
+          }
+          return res;
+        });
+      try {
+        await expect(
+          edit(o.id, { replaceAll: false, items: [{ id: target.id, qty: 2 }] }),
+        ).rejects.toMatchObject(REFUSED);
+      } finally {
+        spy.mockRestore();
+      }
+      const after = await snapshot(o.id);
+      const lineAfter = after.lines.find((l) => l.id === target.id)!;
+      expect(Number(lineAfter.qty)).toBe(5);
+      expect(Number(lineAfter.deliveredQty)).toBe(3);
+      expect(after.header).toEqual({ ...before.header, status: "PARTIALLY_DELIVERED" });
+      expect(await stock(p)).toBe(stockBefore);
+    });
+
     it("stale read: the pre-tx read shows A undelivered, a delivery lands, the LOCKED read refuses", async () => {
       const p = await product("stale");
       const o = await order([plain(p, 5, 0), plain(p, 4, 0)], "PARTIALLY_DELIVERED");

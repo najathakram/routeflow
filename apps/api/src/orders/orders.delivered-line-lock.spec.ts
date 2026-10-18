@@ -429,6 +429,26 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
       },
     );
 
+    it("the order flipped into PARTIALLY_DELIVERED between the pre-tx read and the lock: the locked status decides, the cut is refused, nothing written", async () => {
+      const a = line({ id: "li-a", position: 0, qty: 5 });
+      // Pre-tx read: CONFIRMED, A undelivered (neither guard can fire on it). Locked read: the driver delivered 3 of A
+      // and the order is PARTIALLY_DELIVERED.
+      seed("CONFIRMED", [a, OPEN_LINE], [{ ...a, deliveredQty: 3 }, OPEN_LINE]);
+      prisma.order.findUnique
+        .mockResolvedValueOnce(orderWith("CONFIRMED", [a, OPEN_LINE]))
+        .mockResolvedValue({
+          ...orderWith("PARTIALLY_DELIVERED", [{ ...a, deliveredQty: 3 }, OPEN_LINE]),
+        });
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ id: "li-a", action: "UPDATE", qty: 2 }] } as any,
+          operator,
+        ),
+      ).rejects.toMatchObject(LOCKED);
+      nothingWritten();
+    });
+
     it("a line another writer delivered while this edit waited on the lock is refused, nothing written", async () => {
       // Snapshot: nothing delivered. Locked read: li-open now has deliveredQty 2.
       seed(

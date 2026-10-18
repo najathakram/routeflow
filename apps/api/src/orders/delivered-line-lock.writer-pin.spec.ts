@@ -364,6 +364,9 @@ describe("delivered-line lock: every writer of an existing OrderItem is guarded 
     const body = sites.get("orders/orders.service.ts::updateOrderItems") ?? "";
     expect(body.match(/assertDeliveredLinesUntouched\(/g)?.length).toBeGreaterThanOrEqual(2);
     expect(body).toMatch(/assertDeliveredLinesUntouched\(order, order\.lineItems/);
-    expect(body).toMatch(/assertDeliveredLinesUntouched\(order, heldItems/);
+    // SA-814: the locked call decides applicability from the status read under the Order lock, never `order.status`.
+    expect(body).toMatch(
+      /assertDeliveredLinesUntouched\(\s*\{ status: lockedStatus\?\.status \?\? order\.status \},\s*heldItems/,
+    );
   });
 });

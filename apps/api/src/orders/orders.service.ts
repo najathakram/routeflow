@@ -3049,7 +3049,19 @@ export class OrdersService implements OnApplicationBootstrap {
         await assertNoMirrorAppearedUnderLock(tx, orderId, judgeEdit, order.status); // DRAFT edit vs a concurrent bill
         await driverAccess.assertDriverMayEditOrder(tx, orderId, user); // SA-429: re-derived under the Order lock
         cancelledLines.assertHeldCancelledLines(heldItems, dto.items, user, isDiffPayload); // SA-422
-        assertDeliveredLinesUntouched(order, heldItems, dto, user, isDiffPayload); // B1234: the locked lines
+        // B1234 / SA-814: the binding check. Applicability comes from the status read UNDER the Order lock (a delivery
+        // can flip the order to PARTIALLY_DELIVERED after the pre-tx read), never from `order.status`.
+        const lockedStatus = await tx.order.findUnique({
+          where: { id: orderId },
+          select: { status: true },
+        });
+        assertDeliveredLinesUntouched(
+          { status: lockedStatus?.status ?? order.status },
+          heldItems,
+          dto,
+          user,
+          isDiffPayload,
+        ); // B1234: the locked lines
 
         // units_v1 (A1, #1102 precedent): the pre-lock resolution above can go stale under a
         // concurrent edit of the SAME line — re-run it against the just-locked, authoritative
