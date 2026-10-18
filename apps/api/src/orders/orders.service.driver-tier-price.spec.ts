@@ -499,10 +499,34 @@ describe("OrdersService.updateOrderItems — driver lines resolve the customer's
       expect(created()).toMatchObject({ unitPrice: 7, priceType: "SPECIAL", originalPrice: 10 });
     });
 
-    it("R3: boxed replace-all: 1 box at the tier-2 box price is $100 (computeLineSubtotal), never qty x box price", async () => {
+    it("R3: boxed replace-all: a NEW pack line of 1 box bills the tier-2 BOX price $100, never 24 x the box price", async () => {
       prime([], 2, [BOXED]);
-      await replaceAll([{ productId: "prod-2", boxes: 1, pieces: 0 }]);
+      await replaceAll([{ productId: "prod-2", qty: 1 }]);
       expect(created()).toMatchObject({ unitPrice: 100, subtotal: 100, priceType: "SPECIAL" });
+    });
+
+    it("R4: boxed replace-all of a box-split line keeps its stored box price and prorates (computeLineSubtotal)", async () => {
+      prime(
+        [
+          line({
+            productId: "prod-2",
+            qty: 24,
+            boxes: 1,
+            pieces: 0,
+            unitsPerBox: 24,
+            unitPrice: 120,
+          }),
+        ],
+        2,
+        [BOXED],
+      );
+      await replaceAll([{ productId: "prod-2", qty: 36 }]);
+      expect(createdFor("prod-2")).toMatchObject({
+        unitPrice: 120,
+        boxes: 1,
+        pieces: 12,
+        subtotal: 180,
+      });
     });
 
     it("K1: a listed line the order already has keeps its stored price; only the NEW product resolves the tier", async () => {

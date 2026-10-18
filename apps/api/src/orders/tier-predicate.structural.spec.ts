@@ -60,7 +60,7 @@ describe("B1036: only linesPriceAtCustomerTier chooses a tier or a layer in orde
     ).toHaveLength(1);
     expect(
       staffTernariesChoosingTierOrLayer(
-        "const tierForProduct =\n isStaffEdit && li.productId\n ? operatorCpMap.get(li.productId)\n : 1;",
+        "const tierForProduct =\n isStaffEdit && li.productId\n ? (operatorCpMap.get(li.productId) ?? operatorDefaultTier)\n : 1;",
       ),
     ).toHaveLength(1);
     expect(
@@ -86,7 +86,7 @@ describe("B1036: only linesPriceAtCustomerTier chooses a tier or a layer in orde
   });
 
   it("the edit-items gates read the predicate: updateOrderItems, the replace-all builder and priceReplacedLine", () => {
-    const service = read("orders.service.ts");
+    const service = stripComments(read("orders.service.ts"));
     expect(service).toContain("const tierCaller = linesPriceAtCustomerTier(user);");
     expect(service).not.toMatch(/\bisStaffCaller\b/);
     // the diff add, the substitute, the qty-edit layer and the staff replace-all builder all read it
