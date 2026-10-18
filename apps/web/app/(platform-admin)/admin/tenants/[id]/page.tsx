@@ -33,6 +33,7 @@ import {
 } from "../../../_components/TenantActionDialogs";
 import { TenantPricingCard } from "./_components/TenantPricingCard";
 import { ReadinessCard, type AdminReadState } from "./_components/ReadinessCard";
+import { useFocusTarget } from "./_features/useFocusTarget";
 import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText, Archive } from "lucide-react";
 import { FeatureConsole } from "./_features/FeatureConsole";
 import { SetupSection } from "./_features/SetupSection";
@@ -399,6 +400,9 @@ function OverviewTab({
     state: AdminReadState;
   }>({ admin: null, state: "loading" });
   const adminUsername = adminRead.admin?.username ?? null;
+  // "Create admin" on the Readiness card lands here: ?focus=admin-account scrolls <main> to the card and focuses it.
+  const adminAccountRef = React.useRef<HTMLDivElement>(null);
+  useFocusTarget("admin-account", adminAccountRef);
   const handleAdminChange = React.useCallback(
     (admin: TenantAdminUser | null, state: AdminReadState) => setAdminRead({ admin, state }),
     [],
@@ -554,7 +558,12 @@ function OverviewTab({
       )}
 
       {/* Admin Account */}
-      <div id="admin-account" className="min-w-0">
+      <div
+        id="admin-account"
+        ref={adminAccountRef}
+        tabIndex={-1}
+        className="min-w-0 scroll-mt-4 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+      >
         <TenantAdminSection
           tenantId={tenant.id}
           onRefreshTenant={onRefreshTenant}

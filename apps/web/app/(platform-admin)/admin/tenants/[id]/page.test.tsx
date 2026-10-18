@@ -95,6 +95,20 @@ const mockSetImpersonation = jest.fn();
 const mockProfilePreview = jest.fn();
 const mockProfileApply = jest.fn();
 let fulfilmentModeValue = "delivery";
+// GET .../business-capabilities (the Readiness card's one read): a configured tenant with the counter on.
+const CAPABILITIES_COUNTER_ON = {
+  configured: true,
+  delivery: false,
+  doorPayments: false,
+  shipping: false,
+  counter: true,
+  opensAs: "counter",
+  opensAsChoosable: false,
+  counterCapability: "always",
+  fleetHeld: false,
+  matchedPreset: null,
+};
+let mockCapabilities: Record<string, unknown> = CAPABILITIES_COUNTER_ON;
 
 jest.mock("@/lib/admin-api", () => ({
   superAdminClient: {
@@ -106,6 +120,7 @@ jest.mock("@/lib/admin-api", () => ({
       if (/\/feature-overrides$/.test(url)) return Promise.resolve({ data: [] });
       if (/\/features\/registry$/.test(url))
         return Promise.resolve({ data: OVERRIDES_REGISTRY_OPTION_FIXTURE });
+      if (/\/business-capabilities$/.test(url)) return Promise.resolve({ data: mockCapabilities });
       if (/\/platform-admin\/business-profiles$/.test(url))
         return Promise.resolve({ data: { profiles: PROFILES_FIXTURE } });
       if (/\/feature-config\/fulfilment_model$/.test(url))
@@ -169,6 +184,7 @@ beforeEach(() => {
   mockProfilePreview.mockResolvedValue({ data: shippingPreviewWithBilling() });
   mockProfileApply.mockResolvedValue({ data: {} });
   fulfilmentModeValue = "delivery";
+  mockCapabilities = CAPABILITIES_COUNTER_ON;
   mockSearch = "";
   tenantOverrides = {};
   mockAdmin = null;
@@ -840,13 +856,6 @@ describe("SA-1: the applied business profile is marked 'Current'", () => {
 
 describe("SA-3: the Readiness card on Overview", () => {
   it("is the first card, above Tenant Info, and the fix anchors exist", async () => {
-    mockFetchEffective.mockResolvedValue([
-      {
-        ...EFFECTIVE_FIXTURE[0],
-        key: "fulfilment_model",
-        mode: { value: "pickup", effective: "pickup", source: "TENANT", allowed: [], blocked: [] },
-      },
-    ]);
     const { container } = render(<TenantDetailPage />);
     const heading = await screen.findByRole("heading", { name: "Ready to take a sale?" });
     const info = await screen.findByRole("heading", { name: "Tenant Info" });
@@ -854,15 +863,24 @@ describe("SA-3: the Readiness card on Overview", () => {
     expect(container.querySelector("#admin-account")).not.toBeNull();
   });
 
+  it("?focus=admin-account focuses the Admin Account card and the Create admin link points at it", async () => {
+    mockSearch = "focus=admin-account";
+    render(<TenantDetailPage />);
+    const card = await waitFor(() => {
+      const el = document.getElementById("admin-account");
+      expect(el).not.toBeNull();
+      expect(el).toHaveFocus();
+      return el as HTMLElement;
+    });
+    expect(card).toHaveAttribute("tabindex", "-1");
+    expect(await screen.findByRole("link", { name: /^Create admin for/ })).toHaveAttribute(
+      "href",
+      `/admin/tenants/${TENANT_ID}?focus=admin-account`,
+    );
+  });
+
   it("fetches the admin once, and Create admin flips the Has an admin row without a refetch", async () => {
     mockAdmin = null;
-    mockFetchEffective.mockResolvedValue([
-      {
-        ...EFFECTIVE_FIXTURE[0],
-        key: "fulfilment_model",
-        mode: { value: "pickup", effective: "pickup", source: "TENANT", allowed: [], blocked: [] },
-      },
-    ]);
     (superAdminClient.post as unknown as jest.Mock).mockImplementationOnce(() =>
       Promise.resolve({
         data: { id: "u-9", username: "new_admin", email: "a@b.co", status: "ACTIVE" },
