@@ -104,6 +104,8 @@ import { useInvalidFocus } from "@/lib/form-errors";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { isReadOnlyRefusal, showReadOnlyRefusal } from "@/lib/read-only-refusal";
 import { userStatusRefusalCopy } from "@/lib/user-status-refusal";
+import { newPasswordSchema, passwordErrorMessage } from "@/lib/password-policy";
+import { PasswordChecklist } from "@/components/auth";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -1976,13 +1978,7 @@ const passwordCardSchema = z
   .object({
     currentPassword: z.string(),
     // Mirrors the server policy: min 8, upper + lower + digit-or-special.
-    newPassword: z
-      .string()
-      .min(8, "At least 8 characters")
-      .regex(
-        /^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W])/,
-        "Must include an uppercase letter, a lowercase letter, and a number or symbol",
-      ),
+    newPassword: newPasswordSchema,
     confirmPassword: z.string().min(1, "Please confirm your new password"),
   })
   .refine((d) => d.newPassword === d.confirmPassword, {
@@ -2015,11 +2011,14 @@ function PasswordCard() {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<PasswordCardValues>({
     resolver: zodResolver(passwordCardSchema),
     defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
   });
+  const newPassword = watch("newPassword") ?? "";
+  const checklistId = React.useId();
 
   const onSubmit = async (data: PasswordCardValues) => {
     setApiError(null);
@@ -2041,10 +2040,7 @@ function PasswordCard() {
       void queryClient.invalidateQueries({ queryKey: ["users", "me"] });
       void queryClient.invalidateQueries({ queryKey: ["auth", "sessions"] });
     } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        "Failed to update password.";
-      setApiError(typeof msg === "string" ? msg : "Failed to update password.");
+      setApiError(passwordErrorMessage(err, data.newPassword));
     }
   };
 
@@ -2092,8 +2088,10 @@ function PasswordCard() {
               label="New password"
               autoComplete="new-password"
               register={register("newPassword")}
+              aria-describedby={checklistId}
               error={errors.newPassword?.message}
             />
+            <PasswordChecklist value={newPassword} id={checklistId} />
             <PasswordInput
               label="Confirm new password"
               autoComplete="new-password"

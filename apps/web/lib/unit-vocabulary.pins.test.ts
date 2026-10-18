@@ -206,7 +206,7 @@ const FILES: Pin[] = [
     present: [
       "placeholder={`Same as ${UW.pack.lower} code`}",
       "placeholder={`Leave blank if it matches the ${UW.pack.lower} code`}",
-      "≈ ${pu.toFixed(2)} / {UW.base.short.one}",
+      "≈ <MoneyFigure value={pu} /> / {UW.base.short.one}",
       "— (same as {UW.pack.lower} code)",
       "<PiecesPerBoxValue",
     ],
@@ -215,6 +215,9 @@ const FILES: Pin[] = [
   {
     file: `${W}components/ProductCreateModal.tsx`,
     gone: ["Case code (SKU", ">Units per box<", "matches the case code"],
+    // K11-28: "Piece" is the SERVER's name for a 1-piece unit (product-units cleanLabel), the identity the units POST
+    // must send for a new product, not display copy.
+    allow: ["Piece"],
   },
   { file: `${W}components/InlineCreateProductModal.tsx`, gone: [">Units per box<"] },
   { file: `${W}components/PackSizePrompt.tsx`, gone: ['aria-label="Units per box"'] },

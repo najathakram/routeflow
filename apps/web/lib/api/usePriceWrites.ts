@@ -3,6 +3,7 @@ import { API_ERROR_CODES } from "@routeflow/types";
 import type { SavePricesRequest, SavePricesResponse, UndoPricesRequest } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { priceGridKey } from "./usePriceGrid";
+import { productUnitsKey } from "./product-units";
 import { productCustomerPricesKey } from "./useProductCustomerPrices";
 
 /** The HTTP method of both price writes (lead final ruling 2026-10-16: POST; the method is one constant, change it here). */
@@ -58,6 +59,7 @@ export function priceWriteError(err: unknown): PriceWriteError | null {
  * `refetchOnStale`: a stale answer refetches the grid and the customers' prices. Undo wants it (its preview reads the
  * served grid); Save does not: its notice owns the reload. Save itself never auto-refetches on a stale answer.
  * `writesCustomers`: a write that moved customer prices leaves the customers query behind, so it is refetched.
+ * Save and Undo both refetch every cached `["products", …]` query except the price grid on success.
  */
 function usePriceWrite<Req>(
   productId: string,
@@ -73,6 +75,15 @@ function usePriceWrite<Req>(
       apiClient[PRICE_WRITE_METHOD](`/products/${productId}${path}`, body).then((r) => r.data),
     onSuccess: (res, body) => {
       qc.setQueryData(priceGridKey(productId), res.grid);
+      // Every cached product may hold the prices this write just moved: the product the Details form reads, a legacy
+      // parent that embeds its variants, the products lists the quick-save reads, the units lists. Only the price grid
+      // (written just above) is spared. staleTime is 30s and focus refetch is off, so nothing else would refresh them.
+      // (The predicate also marks non-price products keys stale: categories, demand, sales, customer-prices. That is
+      // harmless: only a query with an active observer refetches.)
+      void qc.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === "products" && q.queryKey[2] !== "price-grid",
+      });
+      void qc.invalidateQueries({ queryKey: productUnitsKey(productId) });
       if (writesCustomers(body))
         void qc.invalidateQueries({ queryKey: productCustomerPricesKey(productId) });
     },

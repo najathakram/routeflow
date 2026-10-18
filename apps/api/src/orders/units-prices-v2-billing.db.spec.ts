@@ -100,7 +100,10 @@ describeDb("S19: billing reads typed customer unit prices, real Postgres", () =>
       prisma,
       gateway: { emitOrderStatusChanged: jest.fn(), emitOrderCreated: jest.fn() },
       systemConfig,
-      entitlements: { hasFlag: async (_t: string, k: string) => k !== V2 || v2On },
+      entitlements: (() => {
+        const flagRead = async (_t: string, k: string) => k !== V2 || v2On;
+        return { hasFlag: flagRead, hasFlagStrict: flagRead };
+      })(),
       sellingRestrictions: {
         getPolicy: async () => ({ enabled: false }),
         assertLinesSellable: async () => undefined,

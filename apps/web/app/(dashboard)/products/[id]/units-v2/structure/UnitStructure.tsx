@@ -5,6 +5,7 @@ import { priceGrid, validateSetPrice } from "@routeflow/pricing";
 import type { ProductPriceGridDto, ProductPriceGridRowDto } from "@routeflow/types";
 import { usePriceGrid } from "@/lib/api/usePriceGrid";
 import { formatMoney } from "@/lib/format";
+import { UNITS_V2_TESTIDS } from "../../units-v2-testids";
 import { usePriceDraft } from "../edit/usePriceDraft";
 import { rulesFromGrid, viewFromGrid } from "../edit/view-from-grid";
 import { AddUnitPanel, RemoveUnitControl, ResetToAutoPanel, type AddedUnit } from "../units";
@@ -26,6 +27,27 @@ export function UnitStructureControls({ productId }: { productId: string }) {
   const [pendingPrice, setPendingPrice] = React.useState<AddedUnit | null>(null);
   const [note, setNote] = React.useState("");
   const [focusBar, setFocusBar] = React.useState(false);
+
+  // F07: the grid's "Add the Piece unit first" pointer opens this panel by clicking its opener, so the panel cannot tell
+  // that path from a plain open. Note the pointer click in the capture phase (it runs before the pointer's own handler),
+  // and let the opener's onOpen read and clear it: only the pointer opens the form already set up as that Piece.
+  const fromPointer = React.useRef(false);
+  const [prefillPiece, setPrefillPiece] = React.useState(false);
+  React.useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      const hit = e.target instanceof Element && e.target.closest(POINTER_SELECTOR);
+      if (!hit) return;
+      fromPointer.current = true;
+      // The pointer's click opens the form within this same dispatch. If it does not (the opener is disabled, or the panel
+      // is already open and the click closes it) the flag must not wait for some later plain open. A timeout, not a
+      // microtask: a browser runs microtasks between a native click's listeners, which would clear it too early.
+      setTimeout(() => {
+        fromPointer.current = false;
+      }, 0);
+    };
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, []);
 
   // A price typed in Add a unit: the unit is created WITHOUT it. The create call refetches the grid before it reports
   // back, so the FIRST settled grid after the add decides, once: if it serves the new unit (matched by its id, never by
@@ -84,6 +106,7 @@ export function UnitStructureControls({ productId }: { productId: string }) {
   const ofUnits = rows
     .filter((r) => r !== base)
     .map((r) => ({ label: r.label, factorToBase: r.factor }));
+  const pieceMissing = pieceIsMissing(rows);
   const anchor = served.rows.find((r) => r.ref === served.anchor);
   const reset = resetPreview(served);
 
@@ -94,8 +117,14 @@ export function UnitStructureControls({ productId }: { productId: string }) {
         baseLabel={base?.label ?? "Piece"}
         ofUnits={ofUnits}
         dirty={draft.dirty}
+        pieceMissing={pieceMissing}
+        prefillPiece={prefillPiece}
         validatePrice={cellPriceProblem}
-        onOpen={() => setNote("")}
+        onOpen={() => {
+          setNote("");
+          setPrefillPiece(fromPointer.current);
+          fromPointer.current = false;
+        }}
         onAdded={(added) => {
           setNote("");
           if (added.price !== "") setPendingPrice(added);
@@ -119,6 +148,20 @@ export function UnitStructureControls({ productId }: { productId: string }) {
         />
       )}
     </div>
+  );
+}
+
+const POINTER_SELECTOR = `[data-testid="${UNITS_V2_TESTIDS.addUnitPointer}"]`;
+
+/**
+ * True when the grid shows a base (Piece) row that no unit backs yet. The signal is structural, not the server's wording:
+ * the implicit Piece row is the one row locked while another row of the grid is still editable. A family, recipe or
+ * variant product locks EVERY row, so it never reads as a missing Piece.
+ */
+function pieceIsMissing(rows: ProductPriceGridRowDto[]): boolean {
+  const base = rows.find((r) => r.kind === "base");
+  return (
+    base != null && base.editable === false && rows.some((r) => r.kind !== "base" && r.editable)
   );
 }
 

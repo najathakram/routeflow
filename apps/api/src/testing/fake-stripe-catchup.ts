@@ -147,7 +147,16 @@ export function fakeStripeCatchup(
           create: jest.fn(async (params: any, opts?: any) => {
             calls.push("sessions.create");
             const id = `cs_catchup${++seq}`;
-            sessions[id] = { id, status: "open", metadata: params.metadata, params, opts };
+            // like Stripe's own Session object, the return URLs are top-level fields
+            sessions[id] = {
+              id,
+              status: "open",
+              metadata: params.metadata,
+              success_url: params.success_url,
+              cancel_url: params.cancel_url,
+              params,
+              opts,
+            };
             return { id, url: `https://pay.test/${id}` };
           }),
         },

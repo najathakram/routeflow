@@ -529,3 +529,63 @@ describe("542d nit 2: the lost-race path never expires a FRESHER winner", () => 
     expect(t.db.subs[0].catchupState).toBe("SESSION_OPEN");
   });
 });
+
+describe("billing-return-url: a session created before the web base was fixed", () => {
+  const savedWeb = process.env.WEB_URL;
+  const savedFront = process.env.FRONTEND_URL;
+  afterEach(() => {
+    if (savedWeb === undefined) delete process.env.WEB_URL;
+    else process.env.WEB_URL = savedWeb;
+    if (savedFront === undefined) delete process.env.FRONTEND_URL;
+    else process.env.FRONTEND_URL = savedFront;
+  });
+
+  it("an open session whose success_url is on localhost (matching terms) is expired and replaced on the www base", async () => {
+    delete process.env.WEB_URL;
+    delete process.env.FRONTEND_URL; // the misconfigured prod: the session is built on the localhost default
+    const t = make([OCT_OPEN]);
+    const first = await t.svc.pay("t1", NOW);
+    const oldId = goLive(t, NOW, first.checkoutUrl);
+    expect(createCalls(t)[0][0].success_url).toMatch(/^http:\/\/localhost:3001\//);
+
+    process.env.WEB_URL = "https://www.routeflow.test"; // the deploy that fixes it
+    const out = await t.svc.pay("t1", NOW);
+
+    expect(out.checkoutUrl).not.toBe(first.checkoutUrl);
+    expect(expireCalls(t)).toEqual([`expireCheckoutSession:${oldId}`]);
+    expect(createCalls(t)).toHaveLength(2);
+    expect(createCalls(t)[1][0].success_url).toBe(
+      "https://www.routeflow.test/settings/billing?paid=1",
+    );
+    expect(createCalls(t)[1][0].cancel_url).toBe(
+      "https://www.routeflow.test/settings/billing?checkout=cancelled",
+    );
+    expect((t.stripe as any).sessions[oldId].status).toBe("expired");
+    expect(t.db.subs[0].catchupSessionId).not.toBe(oldId);
+  });
+
+  it("guard: a session already on the www base is reused (no expire, no second create)", async () => {
+    process.env.WEB_URL = "https://www.routeflow.test";
+    const t = make([OCT_OPEN]);
+    const first = await t.svc.pay("t1", NOW);
+    goLive(t, NOW, first.checkoutUrl);
+    const again = await t.svc.pay("t1", NOW);
+    expect(again.checkoutUrl).toBe(first.checkoutUrl);
+    expect(expireCalls(t)).toEqual([]);
+    expect(createCalls(t)).toHaveLength(1);
+  });
+
+  it("SA-800d: a stale-url session that Stripe says is already COMPLETE is never replaced (AWAITING_FIRST_PAYMENT)", async () => {
+    delete process.env.WEB_URL;
+    delete process.env.FRONTEND_URL;
+    const t = make([OCT_OPEN]);
+    const first = await t.svc.pay("t1", NOW);
+    const oldId = goLive(t, NOW, first.checkoutUrl);
+    (t.stripe as any).sessions[oldId].status = "complete"; // paid in the gap
+    process.env.WEB_URL = "https://www.routeflow.test";
+    await expect(t.svc.pay("t1", NOW)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: expect.any(String) }),
+    });
+    expect(createCalls(t)).toHaveLength(1);
+  });
+});

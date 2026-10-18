@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useSearchParams } from "next/navigation";
 import { isSpecialTier } from "@routeflow/pricing";
 import type {
   CustomerProductUnitPricesDto,
@@ -30,6 +31,28 @@ const PAGE_SIZE = 10;
 /** V10: "Remember the last choice for the session". Module scope: lives for the SPA session, gone on reload. */
 let lastChoice: { id: string; name: string } | null = null;
 
+/**
+ * K11-06: the picked customer lives in the URL (`?customer=<id>`, the id only, never the name) on the product page,
+ * so a refresh or a shared link comes back to the same customer. Product-page mode only: the customer page (a fixed
+ * customerId) never reads or writes it. Reading goes through `useSearchParams`; writing is a plain
+ * `history.replaceState` (no router needed: Next syncs `useSearchParams` from it, adds no history entry, and the
+ * path, the other params and the hash are kept).
+ */
+function useCustomerParam(enabled: boolean) {
+  const searchParams = useSearchParams();
+  const fromUrl = enabled ? searchParams?.get("customer") || null : null;
+  const write = (id: string | null) => {
+    if (!enabled || typeof window === "undefined") return;
+    const { pathname, search, hash } = window.location;
+    const params = new URLSearchParams(search);
+    if (id) params.set("customer", id);
+    else params.delete("customer");
+    const qs = params.toString();
+    window.history.replaceState(null, "", `${pathname}${qs ? `?${qs}` : ""}${hash}`);
+  };
+  return { fromUrl, write };
+}
+
 /** Forget the remembered customer (tests; a sign-out could call it too). */
 export function resetCustomerViewMemory() {
   lastChoice = null;
@@ -46,16 +69,43 @@ function captionTierName(labels: Record<string, string> | null | undefined, tier
   return tier === 1 ? `${name} tier` : name;
 }
 
+/**
+ * K11-07: what the tier would charge, in the caption of a row whose price is NOT the tier price. This replaces the
+ * old tier column (which repeated the Price figure on every tier-priced row), so no information is lost. Hidden
+ * below sm, where the table shows the price alone.
+ */
+function TierFigure({ tierName, tierPrice }: { tierName: string; tierPrice: number | null }) {
+  if (tierPrice === null) return null;
+  return (
+    <span className="hidden sm:inline">
+      {" "}
+      · {tierName}: <span className="font-normal tabular-nums">{formatMoney(tierPrice)}</span>
+    </span>
+  );
+}
+
 function SourceCaption({
   source,
   tierCaption,
+  tierName,
+  tierPrice,
   orderUnitLabel,
 }: {
   source: CustomerUnitPriceSource;
   tierCaption: string;
+  tierName: string;
+  /** The tier's own price for this unit, only on a row that is not priced by the tier; otherwise null. */
+  tierPrice: number | null;
   orderUnitLabel: string;
 }) {
-  if (source === "customer") return <span>Set for this customer</span>;
+  if (source === "customer") {
+    return (
+      <span>
+        Set for this customer
+        <TierFigure tierName={tierName} tierPrice={tierPrice} />
+      </span>
+    );
+  }
   const why =
     source === "customer-shape"
       ? `From their ${orderUnitLabel} price`
@@ -68,7 +118,10 @@ function SourceCaption({
       <span className="rounded-full bg-navy/10 px-1.5 py-0.5 text-[11px] font-medium text-navy">
         Auto
       </span>
-      <span>{why}</span>
+      <span>
+        {why}
+        <TierFigure tierName={tierName} tierPrice={tierPrice} />
+      </span>
     </span>
   );
 }
@@ -83,6 +136,7 @@ function ProductBlock({
   tierCaption,
   listName,
   showName,
+  single,
 }: {
   entry: CustomerProductUnitPricesDto;
   tierName: string;
@@ -91,15 +145,17 @@ function ProductBlock({
   /** The tenant's name for tier 1 (the list price column). */
   listName: string;
   showName: boolean;
+  /** One product (the product page): the card fills its column instead of sitting in half a row. */
+  single: boolean;
 }) {
-  // A tier 1 customer pays the list price: a second column under the same name would print it twice.
-  const showTierColumn = isSpecialTier(entry.tier);
+  // A tier 1 customer pays the list price, which the Retail column already shows: no tier figure to add.
+  const hasTierFigure = isSpecialTier(entry.tier);
   const own = entry.orderUnitScope === "customer";
   const rows = entry.rows;
   return (
     <article
       data-testid={T.product(entry.productId)}
-      className="min-w-0 self-start rounded-lg border border-surface-border p-4"
+      className={`min-w-0 rounded-lg border border-surface-border p-4 ${single ? "" : "self-start"}`}
     >
       {showName ? <h3 className="text-sm font-semibold text-navy">{entry.productName}</h3> : null}
       <p data-testid={T.ordersIn(entry.productId)} className="mt-1 text-sm text-navy/80">
@@ -120,11 +176,6 @@ function ProductBlock({
               <th scope="col" className="hidden py-1.5 pr-3 align-top font-medium sm:table-cell">
                 {listName}
               </th>
-              {showTierColumn ? (
-                <th scope="col" className="hidden py-1.5 align-top font-medium sm:table-cell">
-                  {tierName}
-                </th>
-              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -144,18 +195,22 @@ function ProductBlock({
                     <SourceCaption
                       source={row.source}
                       tierCaption={tierCaption}
+                      tierName={tierName}
+                      tierPrice={
+                        hasTierFigure &&
+                        (row.source === "customer" ||
+                          row.source === "customer-shape" ||
+                          row.source === "history")
+                          ? row.tierPrice
+                          : null
+                      }
                       orderUnitLabel={entry.orderUnitLabel}
                     />
                   </div>
                 </td>
-                <td className="hidden py-2 pr-3 align-top tabular-nums text-navy/70 sm:table-cell">
+                <td className="hidden py-2 pr-3 align-top font-normal tabular-nums text-navy/70 sm:table-cell">
                   {formatMoney(row.listPrice)}
                 </td>
-                {showTierColumn ? (
-                  <td className="hidden py-2 align-top tabular-nums text-navy/70 sm:table-cell">
-                    {formatMoney(row.tierPrice)}
-                  </td>
-                ) : null}
               </tr>
             ))}
           </tbody>
@@ -192,8 +247,9 @@ export interface CustomerPriceViewProps {
 
 export function CustomerPriceView({ customerId, productId }: CustomerPriceViewProps) {
   const fixed = customerId ?? null;
+  const url = useCustomerParam(!fixed);
   const [picked, setPicked] = React.useState<{ id: string; name: string } | null>(
-    fixed ? null : lastChoice,
+    fixed ? null : url.fromUrl ? { id: url.fromUrl, name: "" } : lastChoice,
   );
   const [page, setPage] = React.useState(1);
   const activeId = fixed ?? picked?.id ?? null;
@@ -204,7 +260,23 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
     lastChoice = c;
     setPicked(c);
     setPage(1);
+    url.write(c?.id ?? null);
   };
+
+  // K11-06: an id the server refuses (gone, or not this business's) drops out of the URL and the session memory,
+  // so a refresh does not loop on it. The error line and the picker stay on screen.
+  // Only a 4xx that means "not yours / not there" drops it; a transient failure (5xx, offline) keeps it.
+  const failedStatus = (q.error as { response?: { status?: number } } | null | undefined)?.response
+    ?.status;
+  const refused =
+    !fixed && activeId !== null && q.isError && [400, 403, 404].includes(failedStatus ?? 0);
+  const dropRefused = React.useRef(url.write);
+  dropRefused.current = url.write;
+  React.useEffect(() => {
+    if (!refused) return;
+    if (lastChoice?.id === activeId) lastChoice = null;
+    dropRefused.current(null);
+  }, [refused, activeId]);
 
   const res = q.data;
   const customerName = res?.customerName ?? picked?.name ?? "";
@@ -221,16 +293,19 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
         {fixed ? "Unit prices" : "Customer view"}
       </h2>
 
-      {fixed ? null : activeId ? (
+      {fixed ? null : activeId && !refused ? (
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span data-testid={T.chosen} className="font-medium text-navy">
-            {customerName}
-          </span>
+          {/* A transient failure with no name yet (503, offline): not "loading", so no name span at all. */}
+          {customerName || !q.isError ? (
+            <span data-testid={T.chosen} className="font-medium text-navy">
+              {customerName || "Loading customer\u2026"}
+            </span>
+          ) : null}
           <button
             type="button"
             data-testid={T.change}
             onClick={() => choose(null)}
-            aria-label={`Change customer, now ${customerName}`}
+            aria-label={customerName ? `Change customer, now ${customerName}` : "Change customer"}
             className="text-sm text-brand-600 underline"
           >
             Choose another customer
@@ -239,9 +314,11 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
       ) : (
         <>
           <CustomerPicker onPick={choose} />
-          <p data-testid={T.empty} className="text-sm text-navy/70">
-            Choose a customer to see their units and prices.
-          </p>
+          {refused ? null : (
+            <p data-testid={T.empty} className="text-sm text-navy/70">
+              Choose a customer to see their units and prices.
+            </p>
+          )}
         </>
       )}
 
@@ -264,7 +341,7 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
                 product.
               </p>
             ) : (
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className={`grid gap-4 ${productId ? "" : "lg:grid-cols-2"}`}>
                 {res.products.map((entry) => (
                   <ProductBlock
                     key={entry.productId}
@@ -273,6 +350,7 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
                     tierCaption={captionTierName(labels, entry.tier)}
                     listName={productTierLabel(labels, 1)}
                     showName={!productId}
+                    single={Boolean(productId)}
                   />
                 ))}
               </div>

@@ -65,7 +65,7 @@ describe("CustomerPriceHistoryService references: the customer layer (S19b A-3)"
       providers: [
         CustomerPriceHistoryService,
         { provide: PrismaService, useValue: prisma },
-        { provide: EntitlementsService, useValue: { hasFlag } },
+        { provide: EntitlementsService, useValue: { hasFlag, hasFlagStrict: hasFlag } },
       ],
     }).compile();
     service = mod.get(CustomerPriceHistoryService);
@@ -133,7 +133,13 @@ describe("S19b nit 4: after a pack-size change the old 'Box' label shows null as
         providers: [
           CustomerPriceHistoryService,
           { provide: PrismaService, useValue: prisma },
-          { provide: EntitlementsService, useValue: { hasFlag: jest.fn(async () => on) } },
+          {
+            provide: EntitlementsService,
+            useValue: (() => {
+              const flagRead = jest.fn(async () => on);
+              return { hasFlag: flagRead, hasFlagStrict: flagRead };
+            })(),
+          },
         ],
       }).compile();
       return (
