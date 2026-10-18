@@ -2,10 +2,10 @@ import * as React from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import AdminCreateTenantPage from "./page";
 import { superAdminClient } from "@/lib/admin-api";
-import { PROFILES_FIXTURE } from "../[id]/_features/__fixtures__/profiles.fixtures";
+import { CAPABILITY_PRESETS_FIXTURE } from "../[id]/_features/__fixtures__/capabilities.fixtures";
 
-// SA-2: the Create Tenant page — Plan and start, plain profile choices, Free add-ons, the review sheet,
-// the create chain (tenant -> activate -> profile -> add-ons) and the result banner that scrolls and takes focus.
+// SA-2: the Create Tenant page — Plan and start, capability choices (BO-05), Free add-ons, the review sheet,
+// the create chain (tenant -> activate -> capabilities -> add-ons) and the result banner that scrolls and takes focus.
 
 jest.mock("@/lib/admin-api", () => ({
   superAdminClient: { post: jest.fn() },
@@ -17,12 +17,13 @@ const mockApplyProfile = jest.fn();
 const mockPreviewProfile = jest.fn();
 const mockFetchRegistry = jest.fn();
 
-jest.mock("@/lib/platform-admin/business-profiles", () => ({
-  fetchBusinessProfiles: () => mockFetchProfiles(),
-  previewBusinessProfile: (tenantId: string, profile: string) =>
-    mockPreviewProfile(tenantId, profile),
-  applyBusinessProfile: (tenantId: string, profile: string, planFingerprint: string) =>
-    mockApplyProfile(tenantId, profile, planFingerprint),
+jest.mock("@/lib/platform-admin/capabilities-contract", () => ({
+  CAPABILITIES_ERROR_CODES: { BUSINESS_CAPABILITIES_EMPTY: "BUSINESS_CAPABILITIES_EMPTY" },
+  fetchCapabilityCatalog: () => mockFetchProfiles(),
+  previewBusinessCapabilities: (tenantId: string, body: unknown) =>
+    mockPreviewProfile(tenantId, body),
+  applyBusinessCapabilities: (tenantId: string, body: unknown, planFingerprint: string) =>
+    mockApplyProfile(tenantId, body, planFingerprint),
 }));
 jest.mock("@/lib/platform-admin/features", () => ({
   ...jest.requireActual("@/lib/platform-admin/features"),
@@ -35,7 +36,12 @@ jest.mock("@/lib/api/platform-pricing", () => ({
 const post = superAdminClient.post as jest.Mock;
 const scrollIntoView = jest.fn();
 
-const ALL_PROFILES = PROFILES_FIXTURE.map((p) => ({ ...p, available: true }));
+const CATALOG_RESPONSE = { presets: CAPABILITY_PRESETS_FIXTURE, availability: {} };
+
+const SHIPPING = "Ships by carrier";
+const DELIVERY = "Delivers on own trucks";
+const COUNTER = "Sells at the counter";
+const tick = (name: string) => fireEvent.click(screen.getByRole("checkbox", { name }));
 
 function planEntry(planKey: string, sortOrder: number, monthlyPrice = "99") {
   return { planKey, name: planKey, monthlyPrice, annualPrice: null, isCustom: false, sortOrder };
@@ -117,16 +123,16 @@ beforeEach(() => {
   jest.clearAllMocks();
   Element.prototype.scrollIntoView = scrollIntoView;
   mockFetchPlanCatalog.mockResolvedValue(CATALOG);
-  mockFetchProfiles.mockResolvedValue(ALL_PROFILES);
+  mockFetchProfiles.mockResolvedValue(CATALOG_RESPONSE);
   mockFetchRegistry.mockResolvedValue(REGISTRY);
   mockApplyProfile.mockResolvedValue({ summary: [] });
-  mockPreviewProfile.mockResolvedValue({ planFingerprint: "f".repeat(64) });
+  mockPreviewProfile.mockResolvedValue({ planFingerprint: "f".repeat(64), blocked: null });
   setPost();
 });
 
 async function renderPage() {
   render(<AdminCreateTenantPage />);
-  await screen.findByRole("radio", { name: /Shipping only/ });
+  await screen.findByRole("button", { name: "Start from…" });
   await waitFor(() => expect(screen.getByLabelText("Plan")).toHaveValue("STARTER"));
 }
 
@@ -197,19 +203,19 @@ describe("SA-2 Plan and start", () => {
   });
 });
 
-describe("SA-2 plain profile choices", () => {
-  it("(8) Custom is the default and nothing is applied, activated or comped", async () => {
+describe("SA-2 capability choices", () => {
+  it("(8) nothing is ticked by default, nothing is applied, activated or comped", async () => {
     await renderPage();
+    for (const n of [DELIVERY, SHIPPING, COUNTER]) {
+      expect(screen.getByRole("checkbox", { name: n })).not.toBeChecked();
+    }
+    expect(screen.queryByRole("radio", { name: /Custom/ })).toBeNull();
     expect(
-      screen.getByRole("radio", { name: /Custom: I'll choose the features myself/ }),
-    ).toBeChecked();
-    expect(
-      screen.getByText("Starts with the plan's defaults. Nothing else is turned on."),
+      screen.getByText(
+        "Nothing ticked: the account starts with the plan's defaults. You can set this later in Setup.",
+      ),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("Pick the closest match. You can change it later in Setup."),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "What does this business do?" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "What this business does" })).toBeInTheDocument();
     fillForm();
     await createThroughSheet();
     await screen.findByText("Tenant created successfully!");
@@ -218,18 +224,37 @@ describe("SA-2 plain profile choices", () => {
     expect(mockApplyProfile).not.toHaveBeenCalled();
   });
 
-  it("only the SELECTED choice expands its bullets and muted profile id", async () => {
+  it("Start from… only pre-ticks: nothing is sent until the tenant is created", async () => {
     await renderPage();
-    expect(screen.queryByText("Counter in the menu")).toBeNull();
-    fireEvent.click(screen.getByRole("radio", { name: /^Counter sales/ }));
-    expect(screen.getByText("What this business will see")).toBeInTheDocument();
-    expect(screen.getByText("Counter in the menu")).toBeInTheDocument();
-    expect(screen.getByText("Orders are collected at the counter only")).toBeInTheDocument();
-    expect(screen.getByText("No routes, delivery or driver payments")).toBeInTheDocument();
-    expect(screen.getByText("Profile ID: in_store_retailer")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
-    expect(screen.queryByText("Counter in the menu")).toBeNull();
-    expect(screen.getByText("Profile ID: shipping_wholesaler")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start from…" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Counter + shipping" }));
+    expect(screen.getByRole("checkbox", { name: SHIPPING })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: COUNTER })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Counter sale" })).toBeChecked();
+    expect(post).not.toHaveBeenCalled();
+    expect(mockPreviewProfile).not.toHaveBeenCalled();
+  });
+
+  it("a catalog that cannot load still leaves the boxes, with a note and no menu", async () => {
+    mockFetchProfiles.mockRejectedValue(new Error("down"));
+    render(<AdminCreateTenantPage />);
+    expect(await screen.findByRole("checkbox", { name: SHIPPING })).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "The presets could not be loaded. You can still tick what the business does, or set it later in Setup.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start from…" })).toBeNull();
+  });
+
+  it("a capability the server marks unavailable is disabled with its reason", async () => {
+    mockFetchProfiles.mockResolvedValue({
+      presets: CAPABILITY_PRESETS_FIXTURE,
+      availability: { counter: "Not available yet" },
+    });
+    await renderPage();
+    expect(screen.getByRole("checkbox", { name: COUNTER })).toBeDisabled();
+    expect(screen.getByText("Not available yet")).toBeVisible();
   });
 });
 
@@ -313,44 +338,20 @@ describe("SA-2 review sheet", () => {
   });
 
   it.each([
-    ["delivery_distributor", ["Orders go out on the business's own trucks", "Delivery routes on"]],
-    ["shipping_wholesaler", ["Orders ship by carrier", "Delivery routes off"]],
     [
-      "in_store_retailer",
-      ["Counter sales on", "Orders are in-store pickup only", "Delivery routes off"],
+      "Delivery + counter",
+      [DELIVERY, COUNTER],
+      ["Delivers on own trucks", "Collect payment at the door", "Sells at the counter"],
     ],
-    [
-      "in_store_shipping_retailer",
-      ["Counter sales on", "Orders are in-store pickup or carrier shipping", "Delivery routes off"],
-    ],
-    [
-      "delivery_pos",
-      ["Counter sales on", "Orders go out on the business's own trucks", "Delivery routes on"],
-    ],
-  ])("(5) the Setup lines for %s are derived from the profile list", async (key, lines) => {
+    ["Shipping only", [SHIPPING], ["Ships by carrier"]],
+    ["nothing ticked", [], ["Plan defaults only. Nothing else is turned on."]],
+  ])("(5) the review for %s lists only the ticked names", async (_label, boxes, lines) => {
     await renderPage();
     fillForm();
-    fireEvent.click(document.getElementById(`create-tenant-profile-${key}`)!);
+    for (const n of boxes) tick(n);
     const dialog = await openSheet();
     const items = within(within(dialog).getByTestId("sheet-setup")).getAllByRole("listitem");
     expect(items.map((li) => li.textContent)).toEqual(lines);
-  });
-
-  it("(5b) the lines follow the data: a changed registry changes the lines", async () => {
-    mockFetchProfiles.mockResolvedValue(
-      ALL_PROFILES.map((p) =>
-        p.key === "shipping_wholesaler"
-          ? { ...p, modes: { fulfilment_model: "both" }, grants: ["recurring_routes"], denies: [] }
-          : p,
-      ),
-    );
-    await renderPage();
-    fillForm();
-    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
-    const dialog = await openSheet();
-    const text = within(dialog).getByTestId("sheet-setup").textContent;
-    expect(text).toContain("Recurring routes on");
-    expect(text).not.toContain("Delivery routes off");
   });
 
   it("(9) the native required-field bubble still works: an empty slug opens no sheet", async () => {
@@ -369,7 +370,7 @@ describe("SA-2 chain and partial failure", () => {
     });
     await renderPage();
     fireEvent.click(screen.getByRole("radio", { name: "Start active" }));
-    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    tick(SHIPPING);
     fillForm();
     await createThroughSheet();
     const banner = await screen.findByTestId("partial-banner");
@@ -384,15 +385,15 @@ describe("SA-2 chain and partial failure", () => {
     expect(mockApplyProfile).not.toHaveBeenCalled();
   });
 
-  it("(6b) a profile that fails after the create names the step, links the tenant's Setup", async () => {
+  it("(6b) capabilities that fail after the create name the step, links the tenant's Setup", async () => {
     mockApplyProfile.mockRejectedValueOnce(new Error("boom"));
     await renderPage();
-    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    tick(SHIPPING);
     fillForm();
     await createThroughSheet();
     const banner = await screen.findByTestId("partial-banner");
     expect(banner).toHaveTextContent(
-      "Created Acme, but the profile didn't apply. Open Setup to finish it.",
+      "Created Acme, but what this business does didn't save. Open Setup to finish it.",
     );
     expect(screen.getByRole("link", { name: "Open Acme" })).toHaveAttribute(
       "href",
@@ -411,13 +412,13 @@ describe("SA-2 chain and partial failure", () => {
     expect(banner).toHaveTextContent("Receipt scanning");
   });
 
-  it("SA-769: an add-on the profile already comped is not enabled again, and is not reported as failed", async () => {
+  it("SA-769: an add-on the capabilities already comped is not enabled again, and is not reported as failed", async () => {
     mockApplyProfile.mockResolvedValue({
       summary: [],
       plan: { overrides: [], comps: [{ featureKey: "driver_payments" }], modes: [], billing: [] },
     });
     await renderPage();
-    fireEvent.click(screen.getByRole("radio", { name: /Delivery distributor/ }));
+    tick(DELIVERY);
     fireEvent.click(await screen.findByRole("checkbox", { name: /At-door payment collection/ }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /Receipt scanning/ }));
     fillForm();
@@ -426,7 +427,7 @@ describe("SA-2 chain and partial failure", () => {
     const enabled = post.mock.calls
       .filter((c) => c[0] === "/platform-admin/tenants/t1/addons/enable")
       .map((c) => (c[1] as { addonKey: string }).addonKey);
-    expect(enabled).toEqual(["ocr"]); // driver_payments is on already: the profile comped it
+    expect(enabled).toEqual(["ocr"]); // driver_payments is on already: the apply comped it
     expect(screen.queryByTestId("partial-banner")).not.toBeInTheDocument();
   });
 
@@ -449,7 +450,6 @@ describe("SA-2 chain and partial failure", () => {
 
   it("SA-769: after the billing-stop review, the comped add-ons are skipped too", async () => {
     mockPreviewProfile.mockResolvedValueOnce({
-      profile: "shipping_wholesaler",
       plan: {
         overrides: [],
         comps: [],
@@ -459,21 +459,22 @@ describe("SA-2 chain and partial failure", () => {
       summary: [],
       changes: [],
       planFingerprint: "e".repeat(64),
+      blocked: null,
     });
     mockApplyProfile.mockResolvedValue({
       summary: [],
       plan: { overrides: [], comps: [{ featureKey: "driver_payments" }], modes: [], billing: [] },
     });
     await renderPage();
-    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    tick(SHIPPING);
     fireEvent.click(await screen.findByRole("checkbox", { name: /At-door payment collection/ }));
     fillForm();
     await createThroughSheet();
-    await screen.findByText("Billing stops as soon as you confirm.");
-    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await screen.findByText("Turn off At-door payment collection. Billing stops.");
+    fireEvent.click(screen.getByRole("button", { name: "Stop billing and apply" }));
     await waitFor(() => expect(mockApplyProfile).toHaveBeenCalled());
     await waitFor(() =>
-      expect(screen.queryByText("Billing stops as soon as you confirm.")).toBeNull(),
+      expect(screen.queryByText("Turn off At-door payment collection. Billing stops.")).toBeNull(),
     );
     expect(urls()).not.toContain("/platform-admin/tenants/t1/addons/enable");
     expect(screen.queryByTestId("partial-banner")).not.toBeInTheDocument();
@@ -491,7 +492,6 @@ describe("SA-2 chain and partial failure", () => {
 
   it("the billing-stop confirm still appears, and add-ons wait for it", async () => {
     mockPreviewProfile.mockResolvedValueOnce({
-      profile: "shipping_wholesaler",
       plan: {
         overrides: [],
         comps: [],
@@ -501,18 +501,23 @@ describe("SA-2 chain and partial failure", () => {
       summary: [],
       changes: [],
       planFingerprint: "e".repeat(64),
+      blocked: null,
     });
     await renderPage();
-    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    tick(SHIPPING);
     fireEvent.click(await screen.findByRole("checkbox", { name: /Receipt scanning/ }));
     fillForm();
     await createThroughSheet();
-    const review = await screen.findByText("Billing stops as soon as you confirm.");
+    const review = await screen.findByText("Turn off At-door payment collection. Billing stops.");
     expect(review).toBeInTheDocument();
     expect(urls()).not.toContain("/platform-admin/tenants/t1/addons/enable");
-    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop billing and apply" }));
     await waitFor(() => expect(urls()).toContain("/platform-admin/tenants/t1/addons/enable"));
-    expect(mockApplyProfile).toHaveBeenCalledWith("t1", "shipping_wholesaler", "e".repeat(64));
+    expect(mockApplyProfile).toHaveBeenCalledWith(
+      "t1",
+      { delivery: false, shipping: true, counter: false },
+      "e".repeat(64),
+    );
   });
 
   it("while creating, the button reads Creating... and inputs are disabled", async () => {
@@ -669,7 +674,7 @@ describe("SA-2 addendum: the result lands in view and takes focus", () => {
   it("a partial-failure banner takes focus too", async () => {
     mockApplyProfile.mockRejectedValueOnce(new Error("boom"));
     await renderPage();
-    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    tick(SHIPPING);
     fillForm();
     await createThroughSheet();
     const banner = await screen.findByTestId("create-banner");
@@ -685,7 +690,7 @@ describe("SA-1 review nit: the applied-summary list keys are unique", () => {
       summary: ["Recurring routes: off", "Recurring routes: off"],
     });
     await renderPage();
-    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    tick(SHIPPING);
     fillForm();
     await createThroughSheet();
     const list = await screen.findByTestId("profile-applied-summary");
