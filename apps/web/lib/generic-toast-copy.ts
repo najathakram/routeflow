@@ -1,6 +1,7 @@
 import {
   API_ERROR_CODES,
   CREDITS_PENDING_COPY,
+  INVOICE_TAX_STATE_STALE_COPY,
   SHIPPED_ORDER_MESSAGE,
   productInOpenCountCopy,
 } from "@routeflow/types";
@@ -149,8 +150,8 @@ const CODE_COPY: Record<string, string> = {
   // SA-812a G-1: a typed-price customer's flag read failed (503); the write never ran, so a retry is safe.
   [API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE]:
     "Customer prices couldn't be loaded. Nothing was saved. Try again in a moment.",
-  [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]:
-    "This invoice's tax no longer matches its lines. Re-save the invoice lines, then try again.",
+  // SA-814e: a draft is the default; an ISSUED invoice's price adjustment says `path: PRICE_ADJUSTMENT` (taxStateStaleCopy).
+  [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]: INVOICE_TAX_STATE_STALE_COPY.DRAFT_EDIT,
   [API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID]:
     "That change would take the invoice total below what is already paid or credited. Remove the credit first, or change the lines or discount.",
   PO_ALREADY_BILLED: "That purchase order already has a bill.",
@@ -351,6 +352,13 @@ function sentenceForMessage(data: Record<string, unknown>): string | null {
  * sentence), or null when the failure is uncoded / unknown / has no HTTP response. A surface whose uncoded server sentence
  * already tells the user what to fix uses `codedToastCopy(err) ?? <today's text>` so it never gets LESS actionable.
  */
+/** SA-814e: the 409 INVOICE_TAX_STATE_STALE sentence for the path that refused (draft edit unless the body says otherwise). */
+function taxStateStaleCopy(data: Record<string, unknown>): string {
+  return data.path === "PRICE_ADJUSTMENT"
+    ? INVOICE_TAX_STATE_STALE_COPY.PRICE_ADJUSTMENT
+    : INVOICE_TAX_STATE_STALE_COPY.DRAFT_EDIT;
+}
+
 export function codedToastCopy(err: unknown): string | null {
   const refusal = safeTextErrorCopy(err);
   if (refusal) return refusal;
@@ -366,6 +374,7 @@ export function codedToastCopy(err: unknown): string | null {
   const code = typeof data.code === "string" ? data.code : "";
   if (code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
   if (code === API_ERROR_CODES.READ_ONLY) return READ_ONLY_COPY;
+  if (code === API_ERROR_CODES.INVOICE_TAX_STATE_STALE) return taxStateStaleCopy(data);
   if (code === API_ERROR_CODES.INSUFFICIENT_STOCK) return STOCK_COPY;
   // B986: coded refusals whose server sentence tells the user what to fix; the numbers come from STRUCTURED fields.
   if (code === API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT) return allocationsCopy(data);

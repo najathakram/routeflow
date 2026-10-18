@@ -451,6 +451,13 @@ module.exports = {
     PRICE_UNDO_UNAVAILABLE: "PRICE_UNDO_UNAVAILABLE",
     CUSTOMER_PRICES_UNAVAILABLE: "CUSTOMER_PRICES_UNAVAILABLE",
   },
+  // SA-814e: hand copy of packages/types/api/error-codes.ts (pinned to the API's literal by the API parity spec).
+  INVOICE_TAX_STATE_STALE_COPY: {
+    DRAFT_EDIT:
+      "This draft's tax was saved by an older version and can't be recalculated safely. Create it again from the order, or contact support.",
+    PRICE_ADJUSTMENT:
+      "This invoice's stored tax can't be recalculated safely. Issue a credit note or contact support.",
+  },
   CHECK_TRANSITIONS: {
     RECORDED: ["DEPOSITED", "BOUNCED"],
     DEPOSITED: ["CLEARED", "BOUNCED"],

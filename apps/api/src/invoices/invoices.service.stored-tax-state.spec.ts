@@ -269,6 +269,51 @@ describe("SA-814 R5-2 — one recompute guard for stored tax state", () => {
     });
   });
 
+  describe("order-linked allocation cent (SA-814e)", () => {
+    // $384.20 + $29.97 at 6.25%, order tax $25.89: this invoice carries 24.02, its lines at 0.0625 make 24.01.
+    const ORDER_INVOICE = { subtotal: 384.2, taxAmount: 24.02, total: 408.22 };
+
+    it("(k) a price adjust on the larger of two order invoices proceeds and re-taxes from its lines", async () => {
+      withInvoice({ orderId: "ord-1", ...ORDER_INVOICE }, [line("li-1", 384.2, 0.0625)]);
+      prisma.invoice.count.mockResolvedValue(2);
+      jest.spyOn(service, "recomputeOrderFromInvoices").mockResolvedValue(null as any);
+
+      await service.applyPriceAdjustment("inv-1", {
+        items: [{ itemId: "li-1", newUnitPrice: 380 }],
+        scope: "SINGLE",
+      });
+
+      expect(invoiceWrite()).toMatchObject({ subtotal: 380, taxAmount: 23.75, total: 403.75 });
+    });
+
+    it("(k2) the same figures on a manual invoice (no order) are still refused", async () => {
+      withInvoice(ORDER_INVOICE, [line("li-1", 384.2, 0.0625)]);
+
+      await expect(
+        service.applyPriceAdjustment("inv-1", {
+          items: [{ itemId: "li-1", newUnitPrice: 380 }],
+          scope: "SINGLE",
+        }),
+      ).rejects.toMatchObject(STALE);
+      nothingWritten();
+    });
+
+    it("(k3) B296 on an order-linked invoice with n = 1 is still refused (6 cents of drift)", async () => {
+      withInvoice({ orderId: "ord-1", subtotal: 1234.56, taxAmount: 109.57, total: 1344.13 }, [
+        line("li-1", 1234.56, 0.0888),
+      ]);
+      prisma.invoice.count.mockResolvedValue(1);
+
+      await expect(
+        service.applyPriceAdjustment("inv-1", {
+          items: [{ itemId: "li-1", newUnitPrice: 1000 }],
+          scope: "SINGLE",
+        }),
+      ).rejects.toMatchObject(STALE);
+      nothingWritten();
+    });
+  });
+
   describe("DRAFT items edit (a web re-save re-sends the stored rate, 0 for a legacy row)", () => {
     const draft = { status: InvoiceStatus.DRAFT };
 

@@ -150,7 +150,7 @@ import {
   preflightBulkPriceAdjustment,
   priceAdjustmentTaxState,
 } from "./price-adjustment-ledger";
-import { guardItemsEditTaxState } from "./stored-tax-state";
+import { countOrdersInvoices, guardItemsEditTaxState } from "./stored-tax-state";
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -209,6 +209,7 @@ import {
 import { buildManualInvoiceLines } from "./manual-invoice-lines";
 import { loadOverride, type ManualInvoiceDto } from "./invoice-line-override";
 import {
+  allocateOrderRegularTax,
   foldCategoryTax,
   loadManualLineContext,
   regularTaxShare,
@@ -1112,7 +1113,6 @@ export class InvoicesService {
       },
     );
     const orderSubtotal = Number(order.subtotal) || 1;
-    const orderTax = Number(order.tax) || 0;
 
     const groupData = groups.map((g) => {
       const pids = new Set(g.items.map(({ li }: any) => li.productId));
@@ -1153,31 +1153,16 @@ export class InvoicesService {
     }
 
     const totalSubtotal = roundMoney(groupData.reduce((s, gd) => s + gd.subtotal, 0));
-    const totalRegularTax = isTaxExempt
-      ? 0
-      : roundMoney(orderTax * (totalSubtotal / orderSubtotal));
-    // Allocate the order's regular tax proportionally by subtotal, then give the
-    // rounding remainder to the LARGEST-subtotal group — never a tiny trailing
-    // group, which could otherwise round to a NEGATIVE tax. Σ(group tax) still
-    // equals the single-invoice tax exactly, so siblings sum to the order total.
-    if (isTaxExempt) {
-      groupData.forEach((gd) => {
-        gd.regularTax = 0;
-      });
-    } else {
-      let allocated = 0;
-      groupData.forEach((gd) => {
-        gd.regularTax = roundMoney(orderTax * (gd.subtotal / orderSubtotal));
-        allocated = roundMoney(allocated + gd.regularTax);
-      });
-      const remainder = roundMoney(totalRegularTax - allocated);
-      if (remainder !== 0 && groupData.length > 0) {
-        let maxIdx = 0;
-        for (let i = 1; i < groupData.length; i++)
-          if (groupData[i].subtotal > groupData[maxIdx].subtotal) maxIdx = i;
-        groupData[maxIdx].regularTax = roundMoney(groupData[maxIdx].regularTax + remainder);
-      }
-    }
+    // Allocate the order's regular tax proportionally by subtotal; the rounding remainder goes to the
+    // LARGEST-subtotal group (allocateOrderRegularTax, the one allocator).
+    const regularTaxes = allocateOrderRegularTax(
+      order,
+      groupData.map((gd) => gd.subtotal),
+      isTaxExempt,
+    );
+    groupData.forEach((gd, i) => {
+      gd.regularTax = regularTaxes[i];
+    });
     // Order-level discount: allocate proportionally by subtotal — SAME shape as
     // the regular-tax allocator above (never invent a new scheme) — so a fully
     // discounted order zeroes its invoice(s) and a split order's sibling
@@ -1188,7 +1173,7 @@ export class InvoicesService {
     const orderDiscount = roundMoney(Number((order as any).discountAmount ?? 0));
     if (orderDiscount > 0 && groupData.length > 0) {
       // The remainder is measured against the discount owed on the portion being
-      // BILLED (totalSubtotal / orderSubtotal), exactly like totalRegularTax above —
+      // BILLED (totalSubtotal / orderSubtotal), exactly like the regular tax above —
       // never against the full order discount. A second-pass generation bills only
       // `qty − invoicedQty`, so an unscaled target would force the entire order
       // discount onto that invoice (double-counted across siblings, and a total
@@ -1981,8 +1966,6 @@ export class InvoicesService {
       select: { isTaxExempt: true },
     });
     const isTaxExempt = !!customer?.isTaxExempt;
-    const orderSubtotal = Number(order.subtotal) || 1;
-    const orderTax = Number(order.tax) || 0;
     // SA-113a/B785: same evidence basis and reader as reconcileOrderDraftInvoice — one
     // derivation. Fetched once per order, not per draft/line.
     const evidenceBasis = basis === "delivered" ? await deliveredBasisByLine(db, order.id) : null;
@@ -2022,22 +2005,14 @@ export class InvoicesService {
       await this.applyMsrpSnapshots(db, order.customerId, pd.itemsData);
     }
 
-    if (!isTaxExempt && orderTax !== 0) {
-      const totalSubtotal = roundMoney(perDraft.reduce((s, pd) => s + pd.subtotal, 0));
-      const totalTax = roundMoney(orderTax * (totalSubtotal / orderSubtotal));
-      let allocated = 0;
-      perDraft.forEach((pd) => {
-        pd.regularTax = roundMoney(orderTax * (pd.subtotal / orderSubtotal));
-        allocated = roundMoney(allocated + pd.regularTax);
-      });
-      const remainder = roundMoney(totalTax - allocated);
-      if (remainder !== 0 && perDraft.length > 0) {
-        let maxIdx = 0;
-        for (let i = 1; i < perDraft.length; i++)
-          if (perDraft[i].subtotal > perDraft[maxIdx].subtotal) maxIdx = i;
-        perDraft[maxIdx].regularTax = roundMoney(perDraft[maxIdx].regularTax + remainder);
-      }
-    }
+    const draftTaxes = allocateOrderRegularTax(
+      order,
+      perDraft.map((pd) => pd.subtotal),
+      isTaxExempt,
+    );
+    perDraft.forEach((pd, i) => {
+      pd.regularTax = draftTaxes[i];
+    });
     // Sibling fee placement. If the current sibling fees already sum to the order
     // fee, keep each sibling's own placement (an operator may have moved the fee
     // to a specific sibling via an invoice edit — that edit back-synced the order,
@@ -5896,7 +5871,11 @@ export class InvoicesService {
         if (localMap.size > 0) plans.push({ inv, localMap });
       }
       // B1031/B1058: judge every target (bad line, totals, overpayment) BEFORE writing any.
-      await preflightBulkPriceAdjustment(plans, isTaxExempt, this.prisma.forTenant());
+      const orderCounts = await countOrdersInvoices(
+        this.prisma.forTenant(),
+        plans.map((p) => p.inv.orderId),
+      ); // SA-814e: the guard's per-order allocation tolerance
+      await preflightBulkPriceAdjustment(plans, isTaxExempt, this.prisma.forTenant(), orderCounts);
       // SA-651 MED-1: each tx re-judges under its own lock; a race refusal is named, and a partial batch is reported.
       await applyBulkPriceAdjustment(plans, applyToInvoice);
     }

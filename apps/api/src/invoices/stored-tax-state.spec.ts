@@ -6,7 +6,7 @@ import {
   assertTaxStateRecomputable,
   guardItemsEditTaxState,
   taxStateOf,
-  TAX_STATE_STALE_MESSAGES,
+  TAX_STATE_STALE_COPY,
 } from "./stored-tax-state";
 
 /**
@@ -15,8 +15,7 @@ import {
  * helper's callers. The behavioural proof through the three recompute paths is
  * invoices.service.stored-tax-state.spec.ts.
  */
-const MSG = "stale";
-const base = { canRestamp: true, message: MSG };
+const base = { canRestamp: true, path: "PRICE_ADJUSTMENT" as const };
 // $10,000 at 8.875%: the inferred rate rounds to 0.0888, and 10000 x 0.0888 = 888.00 != 887.50.
 const UNVERIFIABLE = { subtotal: 10000, taxAmount: 887.5 };
 const VERIFIED = { subtotal: 100, taxAmount: 7.5 };
@@ -61,7 +60,8 @@ describe("assertTaxStateRecomputable", () => {
     } catch (e) {
       expect((e as ConflictException).getResponse()).toEqual({
         code: "INVOICE_TAX_STATE_STALE",
-        message: MSG,
+        message: TAX_STATE_STALE_COPY.PRICE_ADJUSTMENT,
+        path: "PRICE_ADJUSTMENT",
       });
     }
   });
@@ -199,7 +199,7 @@ describe("guardItemsEditTaxState (the DRAFT items edit)", () => {
         editLines: [edited(r)],
       }),
     ).toThrow(ConflictException);
-    expect(TAX_STATE_STALE_MESSAGES.edit.length).toBeGreaterThan(0);
+    expect(TAX_STATE_STALE_COPY.DRAFT_EDIT.length).toBeGreaterThan(0);
   });
 
   it("a kept line whose payload rate differs from the stored one is the user's own change: proceeds", () => {
@@ -284,7 +284,9 @@ describe("no sumInvoiceTotals* over stored rows outside the guard's callers", ()
 
   it("price adjustment (tx and bulk pre-flight), the items edit and the header-only path all call the guard", () => {
     expect(text("invoices.service.ts")).toMatch(/priceAdjustmentTaxState\(live,/);
-    expect(text("price-adjustment-ledger.ts")).toMatch(/priceAdjustmentTaxState\(inv,/);
+    expect(text("price-adjustment-ledger.ts")).toMatch(
+      /priceAdjustmentTaxState\(\s*\{\s*\.\.\.inv,/,
+    );
     expect(text("invoices.service.ts")).toMatch(/guardItemsEditTaxState\(\{/);
     expect(text("locked-invoice-edit.ts")).toMatch(/assertTaxStateRecomputable\(\{/);
   });

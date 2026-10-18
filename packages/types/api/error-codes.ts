@@ -226,8 +226,8 @@
 //                    committed but whose payment did not. An order create / buyer submit asking for a fulfilment method the business does
 //                    not offer is 400 FULFIL_METHOD_NOT_OFFERED.
 //   B1043 (invoice header-only PATCH, discount or shippingFee without items) — 409 INVOICE_TAX_STATE_STALE: the invoice's stored subtotal or
-//                    tax does not match its lines, so the discount/shipping change cannot be priced safely; nothing is written; re-save the
-//                    invoice lines. 409 INVOICE_TOTAL_BELOW_PAID (B1046): the edit would take a DRAFT's total below the amount already paid
+//                    tax does not match its lines, so the discount/shipping change cannot be priced safely; nothing is written. SA-814e: body
+//                    {code, message, path} where path is DRAFT_EDIT or PRICE_ADJUSTMENT (INVOICE_TAX_STATE_STALE_COPY). 409 INVOICE_TOTAL_BELOW_PAID (B1046): the edit would take a DRAFT's total below the amount already paid
 //                    or credited against it. Body {code, message}.
 
 export const API_ERROR_CODES = {
@@ -838,3 +838,19 @@ export type CreditNoteErrorCode = (typeof CREDIT_NOTE_ERROR_CODES)[number];
  */
 export const SHIPPED_ORDER_MESSAGE =
   "This order has already shipped. Contact the seller for changes.";
+
+/**
+ * SA-814e: the 409 INVOICE_TAX_STATE_STALE body carries `path`, which recompute refused: a DRAFT edit (the
+ * lines save, or the discount / shipping PATCH) or an ISSUED invoice's price adjustment. Web and mobile pick
+ * their copy from it; the API keeps a literal copy (`TAX_STATE_STALE_COPY`, apps/api/src/invoices/
+ * stored-tax-state.ts) pinned byte-equal by apps/api/src/common/invoice-tax-state-copy-parity.spec.ts.
+ */
+export const INVOICE_TAX_STATE_STALE_PATH_VALUES = ["DRAFT_EDIT", "PRICE_ADJUSTMENT"] as const;
+export type InvoiceTaxStateStalePath = (typeof INVOICE_TAX_STATE_STALE_PATH_VALUES)[number];
+
+export const INVOICE_TAX_STATE_STALE_COPY: Record<InvoiceTaxStateStalePath, string> = {
+  DRAFT_EDIT:
+    "This draft's tax was saved by an older version and can't be recalculated safely. Create it again from the order, or contact support.",
+  PRICE_ADJUSTMENT:
+    "This invoice's stored tax can't be recalculated safely. Issue a credit note or contact support.",
+};

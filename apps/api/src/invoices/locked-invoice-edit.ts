@@ -5,8 +5,9 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { sumConfirmed } from "./payment-predicates";
 import {
   assertTaxStateRecomputable,
+  countOrderInvoices,
+  orderSiblingCountOf,
   staleTaxStateError,
-  TAX_STATE_STALE_MESSAGES,
 } from "./stored-tax-state";
 
 /**
@@ -30,6 +31,8 @@ export interface LockedInvoiceForEdit {
   isTaxExempt: boolean;
   /** Its payment rows (amount + status), read under the lock for the B1046 overpayment guard. */
   payments: Array<{ amount: unknown; status: unknown }>;
+  /** SA-814e: non-VOID invoices sharing the invoice's order, counted under the same lock (null = no order). */
+  orderInvoiceCount?: number | null;
 }
 
 /**
@@ -79,7 +82,14 @@ export async function loadLockedInvoiceForEdit(
     where: { invoiceId: id },
     select: { amount: true, status: true },
   });
-  return { invoice, storedRows, isTaxExempt: !!customer?.isTaxExempt, payments: payments ?? [] };
+  const orderInvoiceCount = invoice.orderId ? await countOrderInvoices(tx, invoice.orderId) : null;
+  return {
+    invoice,
+    storedRows,
+    isTaxExempt: !!customer?.isTaxExempt,
+    payments: payments ?? [],
+    orderInvoiceCount,
+  };
 }
 
 /**
@@ -194,7 +204,7 @@ export function planHeaderOnlyTotals(
   locked: LockedInvoiceForEdit,
   dto: { discount?: number; shippingFee?: number },
 ): { discount: number; shippingFee: number; total: number; subtotal: number } {
-  const { invoice, storedRows, isTaxExempt } = locked;
+  const { invoice, storedRows, isTaxExempt, orderInvoiceCount } = locked;
   const discount = intakeMoney(dto.discount, invoice.discount);
   const shippingFee = intakeMoney(dto.shippingFee, invoice.shippingFee);
   // SA-814 R5-2: the tax half is the ONE recompute guard (stored-tax-state.ts); this path cannot stamp a rate.
@@ -204,12 +214,13 @@ export function planHeaderOnlyTotals(
     canRestamp: false,
     isTaxExempt,
     refuseExemptLevy: true,
+    orderSiblingCount: orderSiblingCountOf({ orderId: invoice.orderId, orderInvoiceCount }),
     discount,
     shipping: shippingFee,
-    message: TAX_STATE_STALE_MESSAGES.header,
+    path: "DRAFT_EDIT",
   }).totals;
   if (differs(t.subtotal, invoice.subtotal)) {
-    throw staleTaxStateError(TAX_STATE_STALE_MESSAGES.header);
+    throw staleTaxStateError("DRAFT_EDIT");
   }
   return { discount, shippingFee, total: t.total, subtotal: t.subtotal };
 }

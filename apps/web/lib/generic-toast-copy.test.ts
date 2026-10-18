@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { handleMutationError } from "./mutation-error-toast";
-import { API_ERROR_CODES } from "@routeflow/types";
+import { API_ERROR_CODES, INVOICE_TAX_STATE_STALE_COPY } from "@routeflow/types";
 import { codedToastCopy, genericToastCopy } from "./generic-toast-copy";
 
 /**
@@ -442,7 +442,10 @@ describe("genericToastCopy: codes users rely on", () => {
       ["UNIT_AWARE_LINE_UNVERIFIABLE", /lines couldn't be verified.*Ask an admin/],
       ["CHANGE_REQUEST_PACK_CHANGED", /pack size changed.*Decline it and re-add/],
       ["INVOICE_CHANGED_CONCURRENTLY", /invoice changed.*Refresh and try again/],
-      ["INVOICE_TAX_STATE_STALE", /tax no longer matches.*Re-save the invoice lines/],
+      [
+        "INVOICE_TAX_STATE_STALE",
+        /draft's tax was saved by an older version.*Create it again from the order/,
+      ],
       [
         "INVOICE_TOTAL_BELOW_PAID",
         /total below what is already paid or credited.*change the lines or discount/,
@@ -738,5 +741,34 @@ describe("a selling-restriction refusal (409 SELLING_RESTRICTED) in a dialog wit
 
   it("a body with no lines still gets the sentence", () => {
     expect(genericToastCopy(restricted(undefined))).toContain("selling restrictions");
+  });
+});
+
+describe("SA-814e: 409 INVOICE_TAX_STATE_STALE copy follows the path that refused", () => {
+  const stale = (data: Record<string, unknown> = {}) =>
+    err(409, { code: API_ERROR_CODES.INVOICE_TAX_STATE_STALE, ...data });
+
+  it("a DRAFT edit says the draft can't be recalculated and to create it again, never 'Re-save the invoice lines'", () => {
+    const copy = genericToastCopy(stale({ path: "DRAFT_EDIT" }));
+    expect(copy).toBe(INVOICE_TAX_STATE_STALE_COPY.DRAFT_EDIT);
+    expect(copy).toMatch(/Create it again from the order, or contact support/);
+    expect(copy).not.toMatch(/Re-save/);
+    expect(copy).not.toContain(RAW);
+  });
+
+  it("an issued invoice's price adjustment points at a credit note", () => {
+    const copy = genericToastCopy(stale({ path: "PRICE_ADJUSTMENT" }));
+    expect(copy).toBe(INVOICE_TAX_STATE_STALE_COPY.PRICE_ADJUSTMENT);
+    expect(copy).toMatch(/Issue a credit note or contact support/);
+  });
+
+  it("a body with no path (an older server) gets the draft sentence", () => {
+    expect(genericToastCopy(stale())).toBe(INVOICE_TAX_STATE_STALE_COPY.DRAFT_EDIT);
+  });
+
+  it("codedToastCopy recognises it on both paths", () => {
+    expect(codedToastCopy(stale({ path: "PRICE_ADJUSTMENT" }))).toBe(
+      INVOICE_TAX_STATE_STALE_COPY.PRICE_ADJUSTMENT,
+    );
   });
 });

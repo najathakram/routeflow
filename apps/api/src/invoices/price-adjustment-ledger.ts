@@ -20,7 +20,8 @@ import type { PriceAdjustmentOverpaidInvoice } from "@routeflow/types";
 import { isNsfLine } from "./nsf-line";
 import {
   assertTaxStateRecomputable,
-  TAX_STATE_STALE_MESSAGES,
+  countOrderInvoices,
+  orderSiblingCountOf,
   type TaxStateVerdict,
 } from "./stored-tax-state";
 import { sumConfirmed, type ConfirmablePaymentRow } from "./payment-predicates";
@@ -277,7 +278,14 @@ export function buildPriceAdjustmentUpdates(args: {
  * snapshot stays stale (the header-only rule).
  */
 export function priceAdjustmentTaxState(
-  inv: { subtotal?: unknown; taxAmount?: unknown; items: any[] },
+  inv: {
+    subtotal?: unknown;
+    taxAmount?: unknown;
+    items: any[];
+    orderId?: unknown;
+    /** SA-814e: non-VOID invoices sharing the order (read under the same lock / in the pre-flight). */
+    orderInvoiceCount?: unknown;
+  },
   isTaxExempt: boolean,
 ): TaxStateVerdict {
   return assertTaxStateRecomputable({
@@ -286,7 +294,8 @@ export function priceAdjustmentTaxState(
     canRestamp: true,
     isTaxExempt,
     refuseExemptLevy: true,
-    message: TAX_STATE_STALE_MESSAGES.price,
+    orderSiblingCount: orderSiblingCountOf(inv),
+    path: "PRICE_ADJUSTMENT",
   });
 }
 
@@ -454,6 +463,7 @@ export async function preflightBulkPriceAdjustment(
       subtotal?: unknown;
       taxAmount?: unknown;
       total?: unknown;
+      orderId?: string | null;
       status?: string | null;
       payments?: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null;
     };
@@ -461,6 +471,8 @@ export async function preflightBulkPriceAdjustment(
   }>,
   isTaxExempt: boolean,
   db: PriceReferenceDb,
+  /** SA-814e: non-VOID invoices per order (`countOrdersInvoices`), the guard's allocation tolerance. */
+  orderInvoiceCounts?: ReadonlyMap<string, number>,
 ): Promise<ReadonlyMap<string, number>> {
   const overpaid: PriceAdjustmentOverpaidInvoice[] = [];
   const projected = new Map<string, number>();
@@ -475,7 +487,14 @@ export async function preflightBulkPriceAdjustment(
         ...reference,
       });
       assertAdjustedTotalsSane(inv, updates, isTaxExempt);
-      const { restampRate } = priceAdjustmentTaxState(inv, isTaxExempt); // SA-814 R5-2: refuses before any write
+      // SA-814 R5-2: refuses before any write
+      const { restampRate } = priceAdjustmentTaxState(
+        {
+          ...inv,
+          orderInvoiceCount: inv.orderId ? orderInvoiceCounts?.get(inv.orderId) : undefined,
+        },
+        isTaxExempt,
+      );
       const newTotal = projectedTotals(inv, updates, isTaxExempt, restampRate ?? undefined).total;
       projected.set(inv.id, newTotal);
       const entry = overpaidEntry(inv, sumConfirmed(inv.payments), newTotal);
@@ -648,7 +667,10 @@ export async function lockInvoiceForPriceAdjustment(tx: any, inv: any): Promise<
       message: "The invoice's lines changed while the price was being adjusted. Retry.",
     });
   }
-  return { ...inv, ...live };
+  const merged = { ...inv, ...live };
+  // SA-814e: the order's other invoices, counted under the same lock (the guard's allocation tolerance)
+  if (merged.orderId) merged.orderInvoiceCount = await countOrderInvoices(tx, merged.orderId);
+  return merged;
 }
 
 /**
