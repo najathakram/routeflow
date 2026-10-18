@@ -1240,8 +1240,13 @@ export default function InventoryPage() {
 
   const { data: stockItems = [], isLoading: stockLoading } = useStockOverview();
   const { data: suppliers = [], isLoading: suppliersLoading } = useSuppliers();
-  const { data: productsData } = useProducts({ isActive: true, limit: 0 });
-  const products = productsData?.data ?? [];
+  // The pickers (Adjust Stock, Quick Restock, Create PO) list the active products. The stock
+  // overview above already carries every field they read (id, name, sku, unit, currentStock,
+  // unitsPerBox), so derive them from it rather than fetching the whole catalog a second time.
+  const products = React.useMemo(
+    () => (stockItems as StockItem[]).filter((i) => i.isActive),
+    [stockItems],
+  );
   // Parent/variant lookup for the Stock tab's "Assign to variants" row action
   // (PR-D) — a separate fetch (not the active-only `products` above, and not
   // `/inventory/overview`, which selects neither field) since it needs every
