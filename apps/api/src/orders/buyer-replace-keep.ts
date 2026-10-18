@@ -26,6 +26,10 @@ export interface HeldPriceLine {
   /** Set on a box-split line. With no `unitsPerBox` snapshot it is a legacy row whose box size is unknown. */
   boxes?: unknown;
   status?: string | null;
+  /** The stored quantity: a driver's kept line keeps its free units only when this quantity is unchanged. */
+  qty?: unknown;
+  /** The sale-time BUY_N_GET_M free units the stored line earned. */
+  promoFreeUnits?: unknown;
   unitPrice?: unknown;
   priceType?: string | null;
   originalPrice?: unknown;
@@ -51,6 +55,9 @@ export const isStoredOverride = (l: Pick<HeldPriceLine, "priceType" | "overrideR
   l.priceType === PriceType.MANUAL ||
   (l.priceType === PriceType.SPECIAL && !!l.overrideReason?.trim());
 
+const freeUnitsOf = (l: Pick<HeldPriceLine, "promoFreeUnits">): number =>
+  Math.max(0, Number(l.promoFreeUnits ?? 0));
+
 /**
  * `item.sourceLineId` is set by the pairing helper (`pairEditLines`, or the buyer cart fold); `held` is the
  * order's lines read UNDER the row lock. Null for everything that is not an unchanged stored override.
@@ -60,12 +67,17 @@ export function keptOverrideFor(
   held: ReadonlyMap<string, HeldPriceLine>,
   /** The product's LIVE box size: the replace re-splits at it (see below). */
   liveUnitsPerBox?: unknown,
+  /**
+   * B1036 (ruling 2026-10-03, forward-only), a DRIVER's full list only: its NEW quantity. A driver's re-listed line keeps
+   * its stored price whatever the price type (a tier line too, not just an override), and its free units while the quantity is unchanged.
+   */
+  driverQty?: number,
 ): KeptOverride | null {
   const own = item.sourceLineId ? held.get(item.sourceLineId) : undefined;
   if (!own || own.status === "CANCELLED" || own.unitPrice == null) return null;
   if (own.productId !== item.productId) return null; // a changed product is a new sale
   if ((own.unitLabel ?? null) !== null || (item.unitLabel ?? null) !== null) return null; // pack lines only
-  if (!isStoredOverride(own)) return null;
+  if (driverQty === undefined && !isStoredOverride(own)) return null;
   // The kept price is per BOX, and the replace re-splits the quantity at the LIVE box size. A line sold in
   // boxes of 12 whose product is now boxes of 6 would bill 2 x $36 as 4 x $36, so it prices fresh instead.
   // Fail closed: a legacy box-split row has no snapshot of the box size its price was set at.
@@ -77,7 +89,7 @@ export function keptOverrideFor(
       unitPrice: Number(own.unitPrice),
       originalPrice: own.originalPrice == null ? null : Number(own.originalPrice),
       priceType: own.priceType as PriceType,
-      freeUnits: 0,
+      freeUnits: driverQty !== undefined && Number(own.qty) === driverQty ? freeUnitsOf(own) : 0,
     },
     stamp: { overrideReason: own.overrideReason ?? null, overriddenBy: own.overriddenBy ?? null },
   };
@@ -147,14 +159,19 @@ export function assertSafeOverrideReasons(
 
 /**
  * The price (and, for a kept override, the stamp) of one line of a replace-all payload. A BUYER's line takes its
- * tier price plus the best promotion, unless it is an unchanged stored override (`keptOverrideFor`); anyone
- * else (the driver) keeps the legacy list price. A split-promo `group` shares one product's promotion across its lines.
+ * tier price plus the best promotion, unless it is an unchanged stored override (`keptOverrideFor`). A DRIVER's
+ * (B1036) takes the same tier chain, but a line already on the order keeps its stored price (`keptOverrideFor`'s `driverQty`).
+ * Anyone else keeps the list price. A split-promo `group` shares one product's promotion across its lines.
  */
 export function priceReplacedLine(a: {
   product: { id: string; category: string | null; pricePerUnit: unknown; unitsPerBox?: unknown };
   item: { productId: string; sourceLineId?: string };
   held: ReadonlyMap<string, HeldPriceLine>;
   isBuyerEdit: boolean;
+  /** B1036: a DRIVER's full list. Resolves the same tier chain as the buyer's, but keeps a re-listed line's stored price. */
+  isDriverEdit?: boolean;
+  /** The line's stored quantity (pieces when re-split): a kept line's free units survive only an unchanged one. */
+  qty?: number;
   group: SplitPromoGroup | undefined;
   tier: number;
   /** S19, flag.units_prices_v2 only: the pack's customer-layer price (above sticky history and the tier price). */
@@ -168,9 +185,14 @@ export function priceReplacedLine(a: {
   priced: KeptOverride["price"];
   stamp?: KeptOverride["stamp"];
 } {
-  const kept = a.isBuyerEdit ? keptOverrideFor(a.item, a.held, a.product.unitsPerBox) : null;
+  const driverQty = a.isDriverEdit && !a.isBuyerEdit ? (a.qty ?? 0) : undefined;
+  const kept =
+    a.isBuyerEdit || a.isDriverEdit
+      ? keptOverrideFor(a.item, a.held, a.product.unitsPerBox, driverQty)
+      : null;
   if (kept) return { priced: kept.price, stamp: kept.stamp };
-  const raw = a.isBuyerEdit
+  const atTier = a.isBuyerEdit || !!a.isDriverEdit;
+  const raw = atTier
     ? resolveBuyerLinePrice(
         a.product,
         a.tier,

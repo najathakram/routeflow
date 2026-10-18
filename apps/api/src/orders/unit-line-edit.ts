@@ -145,7 +145,7 @@ export async function loadOperatorTiers(
  * flag read is going to fail (the coded 503 CUSTOMER_PRICES_UNAVAILABLE), it must fail here, before any commit, or a SENT
  * invoice's mirror would stay reverted to DRAFT with nothing left to re-sync it. Same ids and same customer as the in-tx
  * read (payload products, substitutes, and the products of the existing lines the payload names). Only roles that price
- * from the customer's tier (staff, buyer) read anything; a driver edit keeps list pricing and reads nothing.
+ * from the customer's tier (staff, buyer, driver) read anything.
  */
 export async function preflightCustomerPrices(
   svc: Parameters<typeof customerPricing>[0],
@@ -161,7 +161,9 @@ export async function preflightCustomerPrices(
   ctx: Pick<UnitEditContext, "existingById">,
 ): Promise<void> {
   const role = user?.role;
-  if (role !== "OPERATOR" && role !== "TENANT_ADMIN" && role !== "CUSTOMER") return;
+  // B1036: a DRIVER's NEW / SUBSTITUTED lines resolve the customer's prices too (ruling 2026-10-03).
+  if (role !== "OPERATOR" && role !== "TENANT_ADMIN" && role !== "CUSTOMER" && role !== "DRIVER")
+    return;
   const productIds = [
     ...new Set(
       (dto.items ?? []).flatMap((i) => [

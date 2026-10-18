@@ -5134,12 +5134,11 @@ describe("OrdersService", () => {
       );
     });
 
-    it("a driver's substitution attempt bills at the substitute's list price — override never reaches this line", async () => {
-      // A DRIVER never reaches the staff-only substituteProductId branch above —
-      // role routes to the always-replace buyer/driver path (top of this
-      // transaction), which already re-prices server-side regardless of any
-      // client-sent unitPrice. This pins that a driver can't gain price control
-      // via a substitution-shaped edit either — B13, non-staff never set prices.
+    it("a driver's substitution attempt bills at the substitute's price (list for a tier-1 customer) — override never reaches this line", async () => {
+      // A productId-only driver list (no ids) takes the always-replace buyer/driver path
+      // (top of this transaction), which re-prices server-side (tier since B1036, ruling
+      // 2026-10-03) regardless of any client-sent unitPrice. This pins that a driver can't
+      // gain price control via a substitution-shaped edit either — B13, non-staff never set prices.
       prisma.order.findUnique.mockResolvedValue(orderWithItems);
       prisma.product.findMany.mockResolvedValue([
         { id: "prod-tob", pricePerUnit: 8, unitsPerBox: null },
@@ -6627,10 +6626,10 @@ describe("OrdersService", () => {
       );
     });
 
-    it("a driver diff fresh add bills LIST even for a tiered customer — tier resolution is staff-only", async () => {
+    it("a driver diff fresh add bills the customer's TIER price (B1036, ruling 2026-10-03), not list", async () => {
       // WP1 gave the operator/admin branch a tier ladder, and a DRIVER diff is
-      // routed through that same branch (A4). Driver edits keep the legacy list
-      // pricing, so the customer's tier 3 ($6) must not touch this line.
+      // routed through that same branch (A4). Owner ruling 2026-10-03: a customer's own
+      // tier 3 ($6) prices a driver-entered line too (this pinned LIST $9 before).
       prisma.order.findUnique.mockResolvedValue(twoLineOrder);
       prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
       prisma.customerPrice.findMany.mockResolvedValue([
@@ -6655,10 +6654,10 @@ describe("OrdersService", () => {
         expect.objectContaining({
           data: expect.objectContaining({
             productId: "prod-C",
-            unitPrice: 9,
-            originalPrice: null,
-            priceType: "STANDARD",
-            subtotal: 18,
+            unitPrice: 6,
+            originalPrice: 9,
+            priceType: "SPECIAL",
+            subtotal: 12,
           }),
         }),
       );
