@@ -687,7 +687,7 @@ export default function PromotionsPage() {
   // list price against every saved rule (row warnings) and the rule being typed (live count); the API offers no
   // impact-scan endpoint (it only refuses at save), so there is no narrower read that keeps the guard whole.
   // Replace with a server-side impact scan, then drop this read. Board note: "promotions $0.00 guard needs a
-  // server scan endpoint". The product PICKER no longer shares this read (see product-search-promotions.ts).
+  // server scan endpoint". The product PICKER shares this read (same query key) because it matches variants by their composed "Parent - Variant" name, which the server search does not.
   const { data: allProducts } = useProducts({ limit: 0 });
 
   const createPromo = useCreatePromotion();
