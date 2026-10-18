@@ -29,5 +29,8 @@ export async function fetchBusinessCapabilities(tenantId: string): Promise<Busin
   if (!data || typeof data !== "object" || typeof data.configured !== "boolean") {
     throw new Error("Unexpected business-capabilities response");
   }
+  if (data.configured && !["always", "optional", "off"].includes(data.counterCapability)) {
+    throw new Error("Unexpected business-capabilities response");
+  }
   return data;
 }

@@ -471,7 +471,7 @@ export function FeatureConsole({
                   {/* Gated on the reported mode, not on `serving`: a gate-less config row (fulfilment_model)
                       reports serving:false yet is still settable. The server refuses delivery/both
                       without a fleet (FeatureConfigService.set). */}
-                  {row.config && feature?.mode && (
+                  {row.config && feature?.mode && (feature.serving || row.gate.via === "none") && (
                     <ModeSelector
                       featureKey={row.key}
                       label={row.label}

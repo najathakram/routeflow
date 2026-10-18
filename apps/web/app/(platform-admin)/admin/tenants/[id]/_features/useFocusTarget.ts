@@ -38,7 +38,9 @@ function clearFocusParam(): void {
   const url = new URL(window.location.href);
   if (!url.searchParams.has("focus")) return;
   url.searchParams.delete("focus");
-  window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+  // null state: Next's patched replaceState then copies its own entry state and syncs
+  // useSearchParams(); passing the old state back leaves the router still holding `focus`.
+  window.history.replaceState(null, "", url.pathname + url.search + url.hash);
 }
 
 /**
