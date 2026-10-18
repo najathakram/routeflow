@@ -76,11 +76,13 @@ export class CounterSaleController {
   /**
    * A DEFINITIVE answer about a key (the unknown-outcome rule of the till): the sale this key rang, read back
    * from storage with `replayed: true`, or 404 COUNTER_SALE_NOT_FOUND. NOT gated by the counter capability
-   * (an answer must be possible even if the gate flipped off) and writes nothing. The optional `?method=` is the
+   * or the till permission (an answer must be possible even if the gate flipped off) and writes nothing. The optional `?method=` is the
    * method the till rang; with it POST's own `paymentRecorded` rule applies to it.
    */
   @Get("counter-sale/by-key/:key")
-  @UseGuards(RolesGuard, TillPermissionGuard)
+  // No TillPermissionGuard (BO-07): settling an unknown outcome is the safety path, so a denied operator
+  // can still learn what a lost response did.
+  @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
   async byKey(@Param("key") rawKey: string, @Query("method") rawMethod?: string) {
     return this.counterSale.byKey(this.normalizeKey(rawKey), this.parseMethod(rawMethod));

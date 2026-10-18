@@ -40,11 +40,10 @@ const request = require("supertest");
 const ID = "00000000-0000-4000-8000-000000000001";
 const IDEM = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
 
-/** The 15 till handlers, pinned: a counter handler added without the guard fails the census (L-202). */
+/** The 14 guarded till handlers, pinned: a counter handler added without the guard fails the census (L-202). */
 const GUARDED = [
   "CounterSaleController.today",
   "CounterSaleController.quickKeysGrid",
-  "CounterSaleController.byKey",
   "CounterSaleController.ring",
   "CounterParkController.park",
   "CounterParkController.list",
@@ -58,7 +57,12 @@ const GUARDED = [
   "CounterDayCloseController.reopen",
   "CounterDayCloseController.report",
 ];
-const EXCLUDED = ["CounterSaleVoidController.voidSale"];
+/**
+ * Exempt on purpose: the void stays on VOID_SALE, and byKey is the unknown-outcome settle path (a till that
+ * lost a response must still be able to learn what happened, even after its operator was denied).
+ */
+const EXCLUDED = ["CounterSaleController.byKey", "CounterSaleVoidController.voidSale"];
+const VOID = "CounterSaleVoidController.voidSale";
 
 describe("the till guard is on every counter handler (route metadata)", () => {
   const isTill = (path: string) =>
@@ -71,7 +75,7 @@ describe("the till guard is on every counter handler (route metadata)", () => {
     expect(discovered.length).toBeGreaterThanOrEqual(GUARDED.length);
   });
 
-  it("the counter handlers are exactly the pinned fifteen plus the excluded void", () => {
+  it("the counter handlers are exactly the pinned fourteen plus the exempted byKey and void", () => {
     expect(discovered.map(keyOf).sort()).toEqual([...GUARDED, ...EXCLUDED].sort());
   });
 
@@ -85,8 +89,15 @@ describe("the till guard is on every counter handler (route metadata)", () => {
   });
 
   it("the counter-sale void stays on VOID_SALE: no till guard", () => {
-    const r = discovered.find((x) => keyOf(x) === EXCLUDED[0]);
+    const r = discovered.find((x) => keyOf(x) === VOID);
     expect(r).toBeDefined();
+    expect(r!.guards).not.toContain("TillPermissionGuard");
+  });
+
+  it("byKey (settling an unknown outcome) is exempt from the till guard but keeps the role gate", () => {
+    const r = discovered.find((x) => keyOf(x) === "CounterSaleController.byKey");
+    expect(r).toBeDefined();
+    expect(r!.guards).toContain("RolesGuard");
     expect(r!.guards).not.toContain("TillPermissionGuard");
   });
 });
@@ -187,7 +198,6 @@ describe("the till guard over HTTP", () => {
   it.each([
     ["get", "/orders/counter-sale/today"],
     ["get", "/orders/counter-sale/quick-keys"],
-    ["get", "/orders/counter-sale/by-key/k-1"],
     ["get", "/orders/counter-sale/parked"],
     ["post", "/orders/counter-sale/parked"],
     ["post", `/orders/counter-sale/parked/${ID}/resume`],
@@ -204,6 +214,13 @@ describe("the till guard over HTTP", () => {
     const res = await send(verb, path, "OPERATOR").send({});
     expect(res.status).toBe(403);
     expect(res.body.code).toBe("PERMISSION_DENIED");
+  });
+
+  it("a denied OPERATOR can still settle an unknown outcome: GET by-key is 200 and reads no permissions", async () => {
+    deny(["ORDERS"]);
+    const res = await send("get", "/orders/counter-sale/by-key/k-1", "OPERATOR");
+    expect(res.status).toBe(200);
+    expect(findFirst).not.toHaveBeenCalled();
   });
 
   it("OPERATOR with other groups denied (not ORDERS) still passes", async () => {
