@@ -700,6 +700,11 @@ export default function PromotionsPage() {
   }, [setTitle]);
 
   const { data: promotions, isLoading, isError } = usePromotions();
+  // DELIBERATE fetch-all (the one `limit: 0` left on this page). The $0.00 guard scans EVERY active product's
+  // list price against every saved rule (row warnings) and the rule being typed (live count); the API offers no
+  // impact-scan endpoint (it only refuses at save), so there is no narrower read that keeps the guard whole.
+  // Replace with a server-side impact scan, then drop this read. Board note: "promotions $0.00 guard needs a
+  // server scan endpoint". The product PICKER no longer shares this read (see product-search-promotions.ts).
   const { data: allProducts } = useProducts({ limit: 0 });
 
   const createPromo = useCreatePromotion();
