@@ -12,6 +12,7 @@ import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { EmailService } from "../email/email.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 // Same stand-in as the sibling customers.service specs: a real advisory lock needs a live DB
@@ -89,7 +90,7 @@ describe("CustomersService.applyAdvancePaymentToInvoice — customer match (B808
 
     expect(err).toBeInstanceOf(BadRequestException);
     expect(err.getResponse()).toEqual(
-      expect.objectContaining({ code: "ADVANCE_CUSTOMER_MISMATCH" }),
+      expect.objectContaining({ code: API_ERROR_CODES.ADVANCE_CUSTOMER_MISMATCH }),
     );
     // The advance balance is untouched and no InvoicePayment row exists.
     expectNothingWritten();
