@@ -27,6 +27,8 @@ function AddUnitForm({
   productId,
   baseLabel,
   ofUnits,
+  pieceMissing,
+  prefillPiece,
   validatePrice,
   onDone,
   onCancel,
@@ -34,6 +36,8 @@ function AddUnitForm({
   productId: string;
   baseLabel: string;
   ofUnits: AddUnitOf[];
+  pieceMissing: boolean;
+  prefillPiece: boolean;
   validatePrice?: (text: string) => string | null;
   onDone: (added: AddedUnit) => void;
   onCancel: () => void;
@@ -42,7 +46,8 @@ function AddUnitForm({
   const uid = React.useId();
   const nameRef = React.useRef<HTMLInputElement>(null);
   const [name, setName] = React.useState("");
-  const [n, setN] = React.useState("");
+  // F07: opened from the grid's "Add the Piece unit first" pointer, the form starts as that Piece.
+  const [n, setN] = React.useState(pieceMissing && prefillPiece ? "1" : "");
   const options: AddUnitOf[] = [{ label: baseLabel, factorToBase: 1 }, ...ofUnits];
   const [ofIdx, setOfIdx] = React.useState(0);
   const [price, setPrice] = React.useState("");
@@ -56,8 +61,13 @@ function AddUnitForm({
   useRevealOnOpen(formRef);
 
   const count = Number(n);
-  const countOk = Number.isInteger(count) && count >= 2;
-  const canSubmit = name.trim() !== "" && countOk && !create.isPending;
+  // F07: "1 of the base unit" IS the Piece, so it is offered only while the product has none (the server refuses a
+  // second one). 1 of any other unit would repeat that unit, so it stays refused, as does a count under 1.
+  const isPiece = pieceMissing && n.trim() !== "" && count === 1 && ofIdx === 0;
+  const countOk = Number.isInteger(count) && (count >= 2 || isPiece);
+  // A 1-piece unit is always the base unit's own name (the server's rule): lock the box to it, never refuse it later.
+  const shownName = isPiece ? baseLabel : name;
+  const canSubmit = shownName.trim() !== "" && countOk && !create.isPending;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,7 +82,7 @@ function AddUnitForm({
       setPriceRefused(true);
       return;
     }
-    const label = name.trim();
+    const label = shownName.trim();
     create.mutate(
       { label, factorToBase: count * options[ofIdx].factorToBase },
       {
@@ -111,9 +121,20 @@ function AddUnitForm({
             className={FIELD}
             placeholder="e.g. Case"
             maxLength={40}
-            value={name}
+            value={shownName}
+            readOnly={isPiece}
+            aria-describedby={isPiece ? `${uid}-name-hint` : undefined}
             onChange={(e) => setName(e.target.value)}
           />
+          {isPiece && (
+            <p
+              id={`${uid}-name-hint`}
+              data-testid="units-v2-add-name-hint"
+              className="mt-1 text-xs text-navy/70"
+            >
+              A 1-piece unit is always called &quot;{baseLabel}&quot;.
+            </p>
+          )}
         </div>
         <div>
           <label className={LABEL} htmlFor={`${uid}-n`}>
@@ -125,7 +146,7 @@ function AddUnitForm({
               data-testid="units-v2-add-n"
               className={FIELD}
               type="number"
-              min={2}
+              min={pieceMissing ? 1 : 2}
               step={1}
               inputMode="numeric"
               placeholder="e.g. 12"
@@ -211,6 +232,8 @@ export function AddUnitPanel({
   ofUnits = [],
   dirty = false,
   disabled = false,
+  pieceMissing = false,
+  prefillPiece = false,
   validatePrice,
   onOpen,
   onAdded,
@@ -223,6 +246,13 @@ export function AddUnitPanel({
   /** The price draft has unsaved changes: Add waits (shown with a hint). */
   dirty?: boolean;
   disabled?: boolean;
+  /**
+   * The product has no 1-piece unit yet (F07): "Contains 1 of {base}" is then allowed, and it adds that Piece, with
+   * its name locked to the base name. Leave false once a Piece exists: the form keeps its "2 or more" rule.
+   */
+  pieceMissing?: boolean;
+  /** With `pieceMissing`: open the form as that Piece (Contains 1, base name) instead of blank. */
+  prefillPiece?: boolean;
   /**
    * Adds an optional "Price (optional)" box. Return the message to refuse a typed price with, or null to accept it
    * (blank is always fine: Auto). The panel never writes the price: it hands the text to `onAdded`.
@@ -271,6 +301,8 @@ export function AddUnitPanel({
           productId={productId}
           baseLabel={baseLabel}
           ofUnits={ofUnits}
+          pieceMissing={pieceMissing}
+          prefillPiece={prefillPiece}
           validatePrice={validatePrice}
           onCancel={close}
           onDone={(added) => {
