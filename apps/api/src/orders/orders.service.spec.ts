@@ -5134,14 +5134,13 @@ describe("OrdersService", () => {
       );
     });
 
-    it("a driver's substitution attempt bills at the substitute's price (list for a tier-1 customer) — override never reaches this line", async () => {
-      // A productId-only driver list (no ids) takes the always-replace buyer/driver path
-      // (top of this transaction), which re-prices server-side (tier since B1036, ruling
-      // 2026-10-03) regardless of any client-sent unitPrice. This pins that a driver can't
-      // gain price control via a substitution-shaped edit either — B13, non-staff never set prices.
+    it("a driver's substitution attempt bills at the customer's TIER price (B1036) — override never reaches this line", async () => {
+      // A productId-only driver list takes the always-replace path: it prices server-side at the customer's
+      // tier 3 ($6, was LIST $8 before ruling 2026-10-03), whatever unitPrice the client sent (B13).
       prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 });
       prisma.product.findMany.mockResolvedValue([
-        { id: "prod-tob", pricePerUnit: 8, unitsPerBox: null },
+        { id: "prod-tob", pricePerUnit: 8, priceTier3: 6, unitsPerBox: null },
       ]);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 24, status: "PENDING" }]);
 
@@ -5157,8 +5156,9 @@ describe("OrdersService", () => {
         expect.objectContaining({
           data: expect.objectContaining({
             productId: "prod-tob",
-            unitPrice: 8,
-            priceType: "STANDARD",
+            unitPrice: 6,
+            priceType: "SPECIAL",
+            originalPrice: 8,
           }),
         }),
       );
@@ -6627,9 +6627,8 @@ describe("OrdersService", () => {
     });
 
     it("a driver diff fresh add bills the customer's TIER price (B1036, ruling 2026-10-03), not list", async () => {
-      // WP1 gave the operator/admin branch a tier ladder, and a DRIVER diff is
-      // routed through that same branch (A4). Owner ruling 2026-10-03: a customer's own
-      // tier 3 ($6) prices a driver-entered line too (this pinned LIST $9 before).
+      // A DRIVER diff is routed through the operator branch (A4). Owner ruling 2026-10-03: the
+      // customer's own tier 3 ($6) prices a driver-entered line too (this pinned LIST $9 before).
       prisma.order.findUnique.mockResolvedValue(twoLineOrder);
       prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
       prisma.customerPrice.findMany.mockResolvedValue([
@@ -6682,11 +6681,13 @@ describe("OrdersService", () => {
       });
     });
 
-    it("a driver diff substitution bills the substitute's list price (B13 — no price control)", async () => {
+    it("a driver diff substitution bills the substitute at the customer's TIER price, the client price ignored (B1036, B13)", async () => {
       prisma.order.findUnique.mockResolvedValue(twoLineOrder);
+      prisma.customerPrice.findMany.mockResolvedValue([{ productId: "prod-sub", pricingTier: 3 }]);
       prisma.product.findUniqueOrThrow.mockResolvedValue({
         id: "prod-sub",
         pricePerUnit: 8,
+        priceTier3: 6,
         unitsPerBox: null,
       });
       prisma.orderItem.findMany.mockResolvedValue([
@@ -6708,9 +6709,9 @@ describe("OrdersService", () => {
           where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-sub",
-            unitPrice: 8,
-            priceType: "STANDARD",
-            originalPrice: null,
+            unitPrice: 6,
+            priceType: "SPECIAL",
+            originalPrice: 8,
           }),
         }),
       );

@@ -557,7 +557,7 @@ describe("OrdersService.updateOrderItems — driver lines resolve the customer's
       expect(createdFor("prod-1")).toMatchObject({ unitPrice: 8, priceType: "SPECIAL" });
     });
 
-    it("K5: a kept line keeps its BUY_N_GET_M free units only while the quantity is unchanged", async () => {
+    it("K5: a kept line's free units are re-derived for a changed qty at the rate they were earned when the promo has ended", async () => {
       prime(
         [line({ qty: 6, unitPrice: 10, subtotal: 50, priceType: "PROMO", promoFreeUnits: 1 })],
         2,
@@ -570,8 +570,48 @@ describe("OrdersService.updateOrderItems — driver lines resolve the customer's
       });
       clearWrites();
       await replaceAll([{ productId: "prod-1", qty: 7 }]);
-      expect(createdFor("prod-1")).toMatchObject({ unitPrice: 10, subtotal: 70 });
-      expect(createdFor("prod-1").promoFreeUnits ?? null).toBeNull();
+      // floor(1 free x 7 / 6) = 1: (7 - 1) x $10. The old drop-to-zero billed 7 x $10 = 70.
+      expect(createdFor("prod-1")).toMatchObject({
+        unitPrice: 10,
+        promoFreeUnits: 1,
+        subtotal: 60,
+      });
+    });
+
+    it("K6: buy-5-get-1 at $10, 6 -> 12 on a kept driver line earns 2 free and bills $100, the same as the diff qty edit", async () => {
+      const bogo = [
+        {
+          id: "pr-bogo",
+          type: "BUY_N_GET_M",
+          value: 1,
+          minQty: 5,
+          scope: "ALL",
+          category: null,
+          productIds: [],
+        },
+      ];
+      const stored = line({
+        qty: 6,
+        unitPrice: 10,
+        subtotal: 50,
+        priceType: "PROMO",
+        promoFreeUnits: 1,
+      });
+      prime([stored], 2);
+      promotionsService.activeForCatalog.mockResolvedValue(bogo);
+      await replaceAll([{ productId: "prod-1", qty: 12 }]);
+      // Dropping the free units billed 12 x $10 = $120 here.
+      expect(createdFor("prod-1")).toMatchObject({
+        unitPrice: 10,
+        promoFreeUnits: 2,
+        subtotal: 100,
+      });
+      const viaReplace = createdFor("prod-1").subtotal;
+      clearWrites();
+      prime([stored], 2);
+      promotionsService.activeForCatalog.mockResolvedValue(bogo);
+      await edit("driver", [{ id: "li-1", action: "UPDATE", qty: 12 }]);
+      expect(updated().subtotal).toBe(viaReplace);
     });
   });
 

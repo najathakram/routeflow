@@ -143,7 +143,8 @@ export interface ReplaceAllLineBuildCtx {
   // ambiguous and skips both). No DTO field: sourceLineId only ever travels on the internal
   // fold -> updateOrderItems call, never through the public DTO (which still rejects it).
   existingLineById: Map<string, ExistingLineForReplaceAll>;
-  isStaffEdit: boolean;
+  /** linesPriceAtCustomerTier(user): the ONE predicate that chooses the customer's tier / layer (not a role test). */
+  atCustomerTier: boolean;
   operatorCpMap: Map<string, number | null>;
   operatorDefaultTier: number;
   /** S19, flag.units_prices_v2 only: the pack's customer-layer price per product (the tier price's replacement). */
@@ -224,7 +225,7 @@ export function buildReplaceAllLineData(
   const replaceAllExisting = sourceLineId
     ? ctx.existingLineById.get(sourceLineId)
     : ctx.existingLineByProduct.get(productId);
-  const replaceAllTierForProduct = ctx.isStaffEdit
+  const replaceAllTierForProduct = ctx.atCustomerTier
     ? (ctx.operatorCpMap.get(productId) ?? ctx.operatorDefaultTier)
     : 1;
   const replaceAllHasOverrideReason = !!(
@@ -342,7 +343,7 @@ export function buildReplaceAllLineData(
             priceType: replaceAllDecision.priceType,
             freeUnits: 0,
           }
-        : ctx.isStaffEdit
+        : ctx.atCustomerTier
           ? resolveBuyerLinePrice(
               product,
               ctx.operatorCpMap.get(productId) ?? ctx.operatorDefaultTier,

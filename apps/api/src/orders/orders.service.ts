@@ -3221,8 +3221,8 @@ export class OrdersService implements OnApplicationBootstrap {
               item: item as typeof item & { productId: string },
               held: heldById,
               isBuyerEdit,
-              isDriverEdit: !isBuyerEdit, // B1036: tier price, but a re-listed line keeps its stored one
-              qty,
+              user, // B1036: a DRIVER's list too: tier price, but a re-listed line keeps its stored one
+              bogoPromos,
               group: splitPromos.get(item.productId),
               tier: buyerCpMap.get(item.productId) ?? buyerDefaultTier,
               layer: buyerPc.layer(product),
@@ -3403,10 +3403,10 @@ export class OrdersService implements OnApplicationBootstrap {
               bogoPromos,
               existingLineByProduct,
               existingLineById,
-              isStaffEdit,
+              atCustomerTier: tierCaller,
               operatorCpMap,
               operatorDefaultTier,
-              layerOf: isStaffEdit ? operatorPc.layer : undefined,
+              layerOf: tierCaller ? operatorPc.layer : undefined,
               isCreateMerge: opts?.isCreateMerge,
               buyerPromos,
               userId: user?.sub ?? null,
@@ -3749,7 +3749,6 @@ export class OrdersService implements OnApplicationBootstrap {
                 // never set prices. No override (or one equal to the substitute's own
                 // tier price) keeps today's SPECIAL/STANDARD tier-priced behavior. B1036: a DRIVER substitute
                 // resolves the same tier (ruling 2026-10-03); only staff's typed price counts.
-                const isStaffCaller = isStaffEdit;
                 // B466: this branch never checked tier at all — a bare unitPrice on a
                 // substitute to a SPECIAL-tier product was compared only against LIST
                 // price, so a correctly-priced substitute (typed at this customer's real
@@ -3765,7 +3764,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // #2696(c): the ONE rule A, shared with create (decideTierOverride → pricing's
                 // decideStaffOverride, rounded) — pinned byte-identical to this branch's B466 shape.
                 const overridePrice =
-                  isStaffCaller && item.unitPrice != null ? Number(item.unitPrice) : null;
+                  isStaffEdit && item.unitPrice != null ? Number(item.unitPrice) : null;
                 const layerSub = tierCaller ? operatorPc.layer(product) : null;
                 const decided = decideTierOverride(
                   product,
@@ -3938,7 +3937,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 const existingUnitPrice = Number(li.unitPrice);
                 const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
                 const tierForProduct =
-                  isStaffEdit && li.productId
+                  tierCaller && li.productId
                     ? (operatorCpMap.get(li.productId) ?? operatorDefaultTier)
                     : 1;
                 const storedOverrideReason = (li as any).overrideReason ?? null;
@@ -3956,7 +3955,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     where: { id: li.productId },
                   });
                 }
-                const layerEdit = editProduct && isStaffEdit ? operatorPc.layer(editProduct) : null;
+                const layerEdit = editProduct && tierCaller ? operatorPc.layer(editProduct) : null;
                 const repriced = decideEditedLinePrice({
                   overridePrice,
                   storedPrice: existingUnitPrice,
