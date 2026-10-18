@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { allPermissionGroups, type MyPermissions } from "@routeflow/types";
+import { API_ERROR_CODES, allPermissionGroups, type MyPermissions } from "@routeflow/types";
 import { apiClient } from "../api-client";
 
 /**
@@ -31,7 +31,7 @@ export function deniedGroupsOf(perms: Pick<MyPermissions, "groups"> | null | und
 export function isPermissionDenied(err: unknown): boolean {
   return (
     (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response?.data
-      ?.code === "PERMISSION_DENIED"
+      ?.code === API_ERROR_CODES.PERMISSION_DENIED
   );
 }
 
