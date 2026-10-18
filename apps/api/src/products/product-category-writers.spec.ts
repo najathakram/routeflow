@@ -53,6 +53,14 @@ const HOOKED: Record<string, { writes: number; syncs: number; via: string }> = {
 
 /** Files whose product writes can never set `Product.category` (one-line reason each). */
 const EXEMPT: Record<string, { writes: number; reason: string }> = {
+  "products/product-price-write.service.ts": {
+    writes: 1,
+    reason: "writes the five pack price columns, packAuto and priceRevision only; never category",
+  },
+  "units/units.service.ts": {
+    writes: 3,
+    reason: "a unit rename rewrites baseUnitLabel, packLabel and unit by nameKey; never category",
+  },
   "products/product-code-release.ts": {
     writes: 2,
     reason: "moves sku/barcode/unitSku to and from their retired columns only",

@@ -145,6 +145,7 @@ function world(
   };
 
   const prisma: any = {
+    order: { count: jest.fn().mockResolvedValue(0) },
     tenant: {
       findUnique: jest.fn().mockResolvedValue({ id: T, slug: "acme" }),
       findUniqueOrThrow: jest.fn().mockResolvedValue({

@@ -1357,11 +1357,14 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       <div className="relative flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
         {subscriptionStatus ? (
-          <BillingShellBanner
-            view={subscriptionStatus}
-            userRole={user?.role}
-            scope={billingScope}
-          />
+          // useSearchParams() (the ?paid=1 return) needs a Suspense boundary for the static prerender
+          <React.Suspense fallback={null}>
+            <BillingShellBanner
+              view={subscriptionStatus}
+              userRole={user?.role}
+              scope={billingScope}
+            />
+          </React.Suspense>
         ) : isStaff && !subscriptionFailed ? (
           <BillingStripReserve scope={billingScope} />
         ) : user?.role === "DRIVER" ? (

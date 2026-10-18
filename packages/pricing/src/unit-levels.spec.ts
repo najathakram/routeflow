@@ -9,6 +9,7 @@ import {
   resolveLevelPrice,
   resolveUnitPrice,
   toBaseQty,
+  unitNameKey,
   type LadderProduct,
   type LadderUnit,
 } from "./unit-levels";
@@ -368,5 +369,77 @@ describe("defaultSellingLabel (#2784: the ONE default-selling-unit resolver)", (
       row({ label: "Carton", factorToBase: 48, isDefaultSelling: true }),
     ];
     expect(defaultSellingLabel(boxedProduct, units)).toBe("Case");
+  });
+});
+
+describe("unit label matching: NFC, trim, case-fold (the shared unitNameKey)", () => {
+  const product: LadderProduct = { unit: "Box", unitsPerBox: 24, pricePerUnit: "24.00" };
+  const ladder: LadderUnit[] = [
+    { ...emptyLevel, label: "Case", factorToBase: 48, price: 40 },
+    { ...emptyLevel, label: "Caf\u00e9", factorToBase: 6, price: 7 },
+  ];
+
+  // ASCII labels must resolve and price EXACTLY as they did before the shared normaliser.
+  it.each([
+    ["Piece", "Piece", 1, "piece", 1],
+    ["piece", "Piece", 1, "piece", 1],
+    ["  PIECE  ", "Piece", 1, "piece", 1],
+    ["Box", "Box", 24, "pack", 24],
+    ["box", "Box", 24, "pack", 24],
+    [" BOX ", "Box", 24, "pack", 24],
+    ["Case", "Case", 48, "level", 40],
+    ["case", "Case", 48, "level", 40],
+    ["  CASE", "Case", 48, "level", 40],
+    ["", "Box", 24, "pack", 24],
+    ["   ", "Box", 24, "pack", 24],
+    [null, "Box", 24, "pack", 24],
+    [undefined, "Box", 24, "pack", 24],
+  ])("%j resolves to %s (factor %i, %s) and prices %d", (input, label, factor, kind, price) => {
+    const level = resolveLadderLevel(product, ladder, input);
+    expect({ label: level.label, factorToBase: level.factorToBase, kind: level.kind }).toEqual({
+      label,
+      factorToBase: factor,
+      kind,
+    });
+    // Piece derives off the pack: 24.00 / 24 = 1.00; the pack and an explicit level price as stored.
+    expect(resolveUnitPrice(product, ladder, input, 1)).toBe(kind === "piece" ? 1 : price);
+  });
+
+  it("a blank pack word is the pack called Box, whatever the case of the request", () => {
+    for (const unit of [null, undefined, "", "   "]) {
+      const p: LadderProduct = { ...product, unit };
+      expect(resolveLadderLevel(p, ladder, "BOX")).toMatchObject({ label: "Box", kind: "pack" });
+      expect(resolveLadderLevel(p, ladder, null)).toMatchObject({ label: "Box", kind: "pack" });
+    }
+  });
+
+  it("an unknown label still throws", () => {
+    expect(() => resolveLadderLevel(product, ladder, "Pallet")).toThrow(UnknownUnitError);
+  });
+
+  it("an NFD sale-line label matches the NFC level and prices at that level's factor and price", () => {
+    const nfd = "Cafe\u0301";
+    expect(nfd).not.toBe("Caf\u00e9");
+    const level = resolveLadderLevel(product, ladder, nfd);
+    expect(level).toMatchObject({ factorToBase: 6, kind: "level" });
+    expect(resolveUnitPrice(product, ladder, nfd, 1)).toBe(7);
+  });
+
+  it("an NFC request matches an NFD level row, and an NFD pack word is the pack for the NFC request", () => {
+    const nfdLadder: LadderUnit[] = [
+      { ...emptyLevel, label: "Cafe\u0301", factorToBase: 6, price: 7 },
+    ];
+    expect(resolveLadderLevel(product, nfdLadder, "Caf\u00e9")).toMatchObject({ factorToBase: 6 });
+    const p: LadderProduct = { ...product, unit: "Cafe\u0301" };
+    expect(resolveLadderLevel(p, [], "CAF\u00c9")).toMatchObject({
+      kind: "pack",
+      factorToBase: 24,
+    });
+  });
+
+  it("unitNameKey is NFC, then trim, then case-fold", () => {
+    expect(unitNameKey("  Cafe\u0301 ")).toBe("caf\u00e9");
+    expect(unitNameKey("\u00a0EACH\u00a0")).toBe("each");
+    expect(unitNameKey("")).toBe("");
   });
 });

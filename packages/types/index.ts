@@ -143,6 +143,7 @@ export * from "./order-applied-credits";
 
 export * from "./order-line-backorder";
 export * from "./invoice-line-code";
+export * from "./piece-synonyms";
 export * from "./api/enums";
 export * from "./api/billing";
 export * from "./api/platform-admin-activation";
@@ -150,6 +151,7 @@ export * from "./api/orders";
 export * from "./api/purchase-orders";
 export * from "./api/customers";
 export * from "./api/products";
+export * from "./api/product-prices-v2";
 export * from "./api/finance";
 export * from "./api/credit-notes";
 export * from "./api/returns";

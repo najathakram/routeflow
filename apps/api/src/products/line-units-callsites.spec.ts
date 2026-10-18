@@ -117,6 +117,9 @@ const NON_WRITERS = new Set([
   // H3b (#3435): ladderProduct copies the live unitsPerBox into the price-ladder input the override decision
   // reads (the same base as unit-line-build); it derives no line factor and writes no pack. (Train M1.)
   "invoices/invoice-line-override.ts",
+  // Units v2 K1 fold: computePriceState folds the live pack size into the price-state fingerprint so a concurrent unit
+  // edit changes the token. It hashes the value; it derives no line factor, quantity or price and writes nothing.
+  "products/price-state.ts",
   "regulated/tx-report.ts",
   // B661: packAtSaleByProduct's `p.unitsPerBox` read is a write-time SNAPSHOT for the ledger's
   // regulatedUnitBasis, not a line-factor decision — never re-read later to reclassify an old row.
@@ -139,6 +142,10 @@ const NON_WRITERS = new Set([
   // no-snapshot line (is the product boxed today?), exactly as product-insights does; every row's unit
   // and pack come from the line's own snapshot. Writes no line.
   "customers/customer-price-history.service.ts",
+  // completeSetup (import setup confirmation): reads the product's LIVE pack ONLY to tell whether the pack
+  // it is about to WRITE moved, and to check it against the product's levels (assertPackKeepsLevelsValid)
+  // under the product's units lock. It builds no line and derives no factor, quantity or price.
+  "import/variant-resolution.service.ts",
   // "Usually buys" / "Order again" (staff New Order): read-only. Passes the product's CURRENT catalog columns
   // (incl. unitsPerBox) through to the order builder, which prices every added line through its own add-line
   // path; a past line's own snapshot (unitsPerBox/unitLabel) is returned as ordered. Writes no line.

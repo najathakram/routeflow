@@ -195,7 +195,12 @@ export function normalizeDerivedBaseLine<
   product: LadderProduct | null | undefined,
   units: readonly LadderUnit[],
   tier: number | string,
-  opts?: { price?: "drop" | "pack"; held?: string | null },
+  opts?: {
+    price?: "drop" | "pack";
+    held?: string | null;
+    /** `price: "pack"` only: the pack price to stamp when it is NOT the tier's (S19: the customer layer's). */
+    packPrice?: number | null;
+  },
 ): T {
   const label = (item.unitLabel ?? "").trim();
   if (!label || !product) return item;
@@ -226,7 +231,7 @@ export function normalizeDerivedBaseLine<
     pieces: split.pieces,
   } as T;
   if (opts?.price === "pack")
-    (out as { unitPrice?: number | null }).unitPrice = billing.packUnitPrice;
+    (out as { unitPrice?: number | null }).unitPrice = opts.packPrice ?? billing.packUnitPrice;
   else delete (out as { unitPrice?: number | null }).unitPrice;
   return out;
 }

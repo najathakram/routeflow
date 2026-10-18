@@ -17,6 +17,7 @@ import {
   type ScanEngineStep,
   type ScanOutcome,
 } from "@routeflow/scanning";
+import { UNITS_LOADING_SCAN_MESSAGE } from "@/lib/default-unit-line";
 import { playScanCue, unlockScanCue } from "@/lib/scan-cue";
 import { readScanMode, writeScanMode } from "@/lib/scan-mode-store";
 import {
@@ -230,7 +231,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
           res.kind === "archived"
             ? `${res.name} is archived`
             : res.kind === "refused"
-              ? res.message
+              ? UNITS_LOADING_SCAN_MESSAGE
               : res.kind === "unknown"
                 ? `Not in the catalog: ${code}`
                 : res.kind === "suggested"

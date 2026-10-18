@@ -55,6 +55,14 @@ export interface ModalProps {
   scroll?: boolean;
   /** Extra classes for the header X (e.g. a 44 px tap target on a touch screen). */
   closeClassName?: string;
+  /**
+   * Where the dialog rests. "center" (default) centres it vertically and enters with a zoom + slide.
+   * "top" pins its top edge 4vh from the viewport top and enters with a fade only: a long form whose
+   * rows change height as data loads would otherwise recentre (every row that mounts moves every
+   * field by half its height) and its fields would travel during the zoom, so a field measured right
+   * after the dialog opens would not be where it settles.
+   */
+  anchor?: "center" | "top";
 }
 
 export const Modal = ({
@@ -71,6 +79,7 @@ export const Modal = ({
   onCloseAutoFocus,
   scroll = false,
   closeClassName,
+  anchor = "center",
 }: ModalProps) => {
   const contentRef = React.useRef<HTMLDivElement>(null);
   const notice = React.useContext(ModalNoticeContext);
@@ -80,7 +89,7 @@ export const Modal = ({
         {/* print:hidden: a printed page never carries the dimmed, blurred backdrop (CQ-21) */}
         <Dialog.Overlay
           data-modal-overlay
-          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm print:hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm print:hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 motion-reduce:!animate-none"
         />
         <Dialog.Content
           ref={contentRef}
@@ -100,13 +109,21 @@ export const Modal = ({
           onOpenAutoFocus={onOpenAutoFocus}
           onCloseAutoFocus={onCloseAutoFocus}
           className={cn(
-            "fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-modal",
+            "fixed left-1/2 z-50 w-full max-w-lg -translate-x-1/2 rounded-xl bg-white p-6 shadow-modal",
+            anchor === "top" ? "top-[4vh] translate-y-0" : "top-1/2 -translate-y-1/2",
             scroll && "flex max-h-[92vh] flex-col",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-            "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
-            "data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%]",
-            "data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]",
+            // prefers-reduced-motion: the fade / slide / zoom entry and exit do not run (important: the
+            // data-[state] variants above out-rank a plain motion-reduce utility).
+            "motion-reduce:!animate-none",
+            // The enter keyframe starts from translate(var(--tw-enter-translate-x), ...): x stays pinned at
+            // the -50% the dialog rests at in both anchors, or it would slide in from the left edge.
+            "data-[state=closed]:slide-out-to-left-1/2 data-[state=open]:slide-in-from-left-1/2",
+            anchor === "center" && [
+              "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+              "data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-top-[48%]",
+            ],
             className,
           )}
         >

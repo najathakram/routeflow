@@ -19,7 +19,7 @@ const PLAN_LINE = {
   currency: "usd",
   unit_amount: 31000,
   recurring: { interval: "month" },
-  product_data: { name: "RouteFlow Growth — monthly" },
+  product_data: { name: "RouteFlow Growth" },
 };
 const ADDON_LINE = {
   price_data: {

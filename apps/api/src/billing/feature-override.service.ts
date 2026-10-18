@@ -116,12 +116,21 @@ export class FeatureOverrideService {
    * The active override effect for one key, or null when none applies. Fails open to null on
    * a DB error — every consulting guard/read path then falls back to its plan-only decision,
    * never a 500 into a guarded route.
+   *
+   * `{ strict: true }` is for the one caller that must not guess: a money path where "no
+   * override" and "the lookup failed" bill differently (units_prices_v2). A DB error then
+   * propagates instead of reading as null. Every other caller keeps the fail-open default.
    */
-  async get(tenantId: string, featureKey: string): Promise<FeatureOverrideEffect | null> {
+  async get(
+    tenantId: string,
+    featureKey: string,
+    opts?: { strict?: boolean },
+  ): Promise<FeatureOverrideEffect | null> {
     try {
       const rows = await this.activeRows(tenantId);
       return this.effectAt(rows, featureKey, Date.now());
     } catch (err) {
+      if (opts?.strict) throw err;
       this.logger.error(
         `Override lookup failed for tenant ${tenantId} key ${featureKey}`,
         err as Error,

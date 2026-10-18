@@ -6,6 +6,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { Button, cn } from "@routeflow/ui/web";
 import { unitWords } from "@routeflow/pricing";
 import { MAX_FAMILY_ROWS, blankRow, type GridRow, type RowField } from "@/lib/family-grid";
+import { formatMoney } from "@/lib/format";
 
 export interface CellMessage {
   message: string;
@@ -23,8 +24,14 @@ const COLUMNS: Array<{
   placeholder?: string;
   width: string;
   inputMode?: "decimal" | "numeric";
+  /** V20: money lines up on its right edge, with tabular numbers. */
+  align?: "right";
+  /** K11-24: read-only prints this as money. */
+  money?: boolean;
+  /** K11-24: read-only keeps this column on a phone; the others return from `sm` up. */
+  core?: boolean;
 }> = [
-  { field: "name", label: "Name", ariaLabel: "name", width: "min-w-[10rem]" },
+  { field: "name", label: "Name", ariaLabel: "name", width: "min-w-[10rem]", core: true },
   { field: "sku", label: "SKU", ariaLabel: "SKU", width: "min-w-[7rem]" },
   { field: "barcode", label: "Barcode", ariaLabel: "barcode", width: "min-w-[8rem]" },
   { field: "unitSku", label: "Unit code", ariaLabel: "unit code", width: "min-w-[7rem]" },
@@ -41,6 +48,9 @@ const COLUMNS: Array<{
     ariaLabel: "price",
     width: "min-w-[5rem]",
     inputMode: "decimal",
+    align: "right",
+    money: true,
+    core: true,
   },
   {
     field: "standardCost",
@@ -49,6 +59,7 @@ const COLUMNS: Array<{
     placeholder: "Family cost",
     width: "min-w-[5rem]",
     inputMode: "decimal",
+    money: true,
   },
 ];
 const CODE_FIELDS = new Set<RowField>(["sku", "barcode", "unitSku"]);
@@ -95,7 +106,14 @@ export function FamilyVariantsGrid({
             <tr>
               <th className="w-8 px-2 py-2">#</th>
               {COLUMNS.map((c) => (
-                <th key={c.field} className="px-2 py-2 font-semibold">
+                <th
+                  key={c.field}
+                  className={cn(
+                    "px-2 py-2 font-semibold",
+                    (c.align === "right" || (readOnly && c.money)) && "text-right",
+                    readOnly && !c.core && "max-sm:hidden",
+                  )}
+                >
                   {c.label}
                 </th>
               ))}
@@ -109,9 +127,31 @@ export function FamilyVariantsGrid({
                 {COLUMNS.map((c) => {
                   const msg = cellMessages[`${i}:${c.field}`];
                   return (
-                    <td key={c.field} className={cn("px-2 py-1.5", c.width)}>
+                    <td
+                      key={c.field}
+                      className={cn("px-2 py-1.5", c.width, readOnly && !c.core && "max-sm:hidden")}
+                    >
                       {readOnly ? (
-                        <span>{r[c.field] || "—"}</span>
+                        <span
+                          className={cn(
+                            (c.align === "right" || c.money) && "block text-right tabular-nums",
+                          )}
+                        >
+                          {!r[c.field] ? (
+                            "—"
+                          ) : c.money ? (
+                            formatMoney(r[c.field])
+                          ) : c.field === "name" && r.id ? (
+                            <Link
+                              href={`/products/${r.id}`}
+                              className="font-medium text-brand-600 underline-offset-2 hover:underline"
+                            >
+                              {r.name}
+                            </Link>
+                          ) : (
+                            r[c.field]
+                          )}
+                        </span>
                       ) : (
                         <input
                           aria-label={`Variant ${i + 1} ${c.ariaLabel}`}
@@ -133,6 +173,7 @@ export function FamilyVariantsGrid({
                           }}
                           className={cn(
                             "w-full rounded border bg-white px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500",
+                            c.align === "right" && "text-right tabular-nums",
                             msg ? "border-danger" : "border-surface-border",
                           )}
                         />

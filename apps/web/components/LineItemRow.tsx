@@ -3,6 +3,7 @@
 import * as React from "react";
 import { X, StickyNote, Pencil } from "lucide-react";
 import { cn, type BadgeStatus } from "@routeflow/ui/web";
+import { CasesPiecesInput } from "./CasesPiecesInput";
 import {
   computeLineSubtotal,
   perUnitPrice,
@@ -15,6 +16,7 @@ import { MoneyInput } from "@/components/MoneyInput";
 import { PriceChips, PriceHistoryButton } from "@/components/PriceHistory";
 import type { PackBase } from "@/lib/order-line-unit";
 import type { TrackedCategory } from "@/lib/api/tracked-categories";
+import type { PriceSummaryResponse } from "@routeflow/types";
 
 /**
  * A single order line item, as built by `CreateOrderModal` (and, in future, the
@@ -80,6 +82,11 @@ export interface LineItemRowProps {
     customerId?: string | null;
     customerName?: string | null;
     onUsePrice: (price: number) => void;
+    /** The order screen's ONE batched `usePriceSummary` result; the "Recent prices" chips read their
+     *  line's entry from it (no per-line request). Absent = no chips. */
+    summary?: PriceSummaryResponse;
+    /** The order being edited/copied: its own price is never shown as history (hunt2 F6). */
+    excludeOrderId?: string | null;
   };
   /** Last-scanned highlight ring (scanner-redesign-spec.md §4.1/§5.1) — unused by
    *  `CreateOrderModal`, which never passes it; reserved for the scan screen. */
@@ -154,6 +161,9 @@ export const caseWord = (n: number | null | undefined, w: UnitWords = unitWords(
 export const unitWord = (n: number | null | undefined, w: UnitWords = unitWords()) =>
   w.baseShortFor(n ?? 0);
 
+/** Moved to CasesPiecesInput (O1); re-exported so existing importers (PriceEditor, CounterLinePriceEdit) are unchanged. */
+export { useLooseUnitsToggle } from "./CasesPiecesInput";
+
 /**
  * Renders one order line item: name/price display, the case/unit qty controls
  * (or a plain +/- stepper for non-boxed products), the live line total, the
@@ -161,21 +171,6 @@ export const unitWord = (n: number | null | undefined, w: UnitWords = unitWords(
  * `CreateOrderModal.tsx`'s inline `.map()` — every branch below existed there
  * unchanged; see that file's git history for prior art. No behavior change.
  */
-/**
- * #2696 (d): on a case-packed line in Case mode the loose-units field is OPT-IN ("+ units"), never
- * shown by default — so a new line submits pieces = 0. Shown whenever pieces > 0 regardless (an
- * edited line with boxes + pieces, or one switched back from Unit mode, never hides its units).
- * Shared by the row and the scan screen's PriceEditor so the two cannot drift.
- */
-export function useLooseUnitsToggle(pieces: number | null | undefined) {
-  const [open, setOpen] = React.useState(false);
-  return {
-    showLooseUnits: open || (pieces ?? 0) > 0,
-    openLooseUnits: () => setOpen(true),
-    closeLooseUnits: () => setOpen(false),
-  };
-}
-
 export function LineItemRow({
   item: li,
   category,
@@ -205,7 +200,6 @@ export function LineItemRow({
   onSetQty,
   rowRef,
 }: LineItemRowProps) {
-  const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(li.pieces);
   const qtyLocked = !!pendingUnit;
   const w = unitWords({ packLabel: li.packLabel, baseUnitLabel: li.baseLabel });
   const historyButton = customerPriceHistory && !li.isUnlisted && (
@@ -217,6 +211,7 @@ export function LineItemRow({
       unitHint={li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)}
       packHint={li.unitsPerBox ?? null}
       onUsePrice={customerPriceHistory.onUsePrice}
+      excludeOrderId={customerPriceHistory.excludeOrderId}
       focusSelector="[data-line-price-input]"
     />
   );
@@ -339,8 +334,7 @@ export function LineItemRow({
               {historyButton}
               <span className="hidden whitespace-nowrap sm:inline">Price history</span>
               <PriceChips
-                customerId={customerPriceHistory?.customerId}
-                productId={li.productId || null}
+                entry={customerPriceHistory?.summary?.[li.productId]}
                 unitHint={li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)}
                 packHint={li.unitsPerBox ?? null}
                 onUsePrice={customerPriceHistory!.onUsePrice}
@@ -486,83 +480,15 @@ export function LineItemRow({
               </span>
             </div>
           ) : (
-            // Two no-wrap groups in a wrapping row: "[n] cases" and "+ [n] units" together
-            // need ~186px, but under `sm` the column's track can be narrower (~170-182px at
-            // 320px, less as the line total in column 2 grows). The second group drops to
-            // its own line there instead of overflowing into the line total; on one line
-            // (every `sm`+ layout) nothing changes.
-            <div
-              data-testid="line-qty-cases-row"
-              className="flex flex-wrap items-center gap-x-1.5 gap-y-1"
-            >
-              <span className="flex items-center gap-1.5 whitespace-nowrap">
-                <input
-                  disabled={qtyLocked}
-                  type="number"
-                  min={0}
-                  value={li.boxes ?? 0}
-                  onChange={(e) => onSetBoxes(parseInt(e.target.value, 10))}
-                  onFocus={(e) => e.target.select()}
-                  className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  title={`Number of whole ${w.pack.lowerOther}`}
-                />
-                <span
-                  className="min-w-0 max-w-[6rem] truncate text-xs text-navy/70"
-                  title={w.isDefaultPack ? undefined : w.pack.other}
-                >
-                  {caseWord(li.boxes ?? 0, w)}
-                </span>
-              </span>
-              {showLooseUnits ? (
-                <span className="flex items-center gap-1.5 whitespace-nowrap">
-                  <span className="text-xs text-navy/30">+</span>
-                  <input
-                    disabled={qtyLocked}
-                    type="number"
-                    min={0}
-                    max={li.unitsPerBox - 1}
-                    value={li.pieces ?? 0}
-                    onChange={(e) => onSetPieces(parseInt(e.target.value, 10))}
-                    onFocus={(e) => e.target.select()}
-                    className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                    title={`Extra ${w.base.lowerOther} (less than a full ${w.pack.lower})`}
-                    aria-label={`Extra ${w.base.lowerOther}`}
-                  />
-                  <span
-                    className="min-w-0 max-w-[6rem] truncate text-xs text-navy/70"
-                    title={w.isDefaultBase ? undefined : w.base.other}
-                  >
-                    {unitWord(li.pieces ?? 0, w)}
-                  </span>
-                  {/* SA-563: hidden at 0 cases — the units ARE the line then, never a removable extra. */}
-                  {(li.boxes ?? 0) >= 1 && (
-                    <button
-                      disabled={qtyLocked}
-                      type="button"
-                      onClick={() => {
-                        onSetPieces(0);
-                        closeLooseUnits();
-                      }}
-                      aria-label={`Remove extra ${w.base.lowerOther}`}
-                      className="relative before:absolute before:-inset-2 before:content-[''] text-xs text-navy/50 hover:text-danger"
-                    >
-                      ×
-                    </button>
-                  )}
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  disabled={qtyLocked}
-                  onClick={openLooseUnits}
-                  aria-label={`+ ${w.base.lowerOther}: add extra ${w.base.lowerOther}`}
-                  // hitSlop 8 (mobile parity, #2706): the pseudo-element grows the tap target, not the layout.
-                  className="relative before:absolute before:-inset-2 before:content-[''] whitespace-nowrap rounded border border-dashed border-surface-border px-1.5 py-0.5 text-[10px] font-medium text-navy/60 hover:bg-surface-raised"
-                >
-                  + {w.base.lowerOther}
-                </button>
-              )}
-            </div>
+            <CasesPiecesInput
+              boxes={li.boxes}
+              pieces={li.pieces}
+              unitsPerBox={li.unitsPerBox}
+              words={w}
+              disabled={qtyLocked}
+              onSetBoxes={onSetBoxes}
+              onSetPieces={onSetPieces}
+            />
           )}
           <span className="text-[10px] text-navy/30">
             1 {w.pack.lower} = {li.unitsPerBox} {w.base.short.other}

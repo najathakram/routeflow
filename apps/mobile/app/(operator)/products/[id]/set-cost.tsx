@@ -72,7 +72,9 @@ export default function SetCostScreen() {
         <View style={styles.switchRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.switchLabel}>Also rewrite open stock lots</Text>
-            <Text style={styles.switchHint}>For FIFO/LIFO products only.</Text>
+            <Text style={styles.switchHint}>
+              Lot history only. It does not change what a sale costs.
+            </Text>
           </View>
           <Switch value={applyToLots} onValueChange={setApplyToLots} />
         </View>

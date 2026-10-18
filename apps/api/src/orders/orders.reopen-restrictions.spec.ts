@@ -51,7 +51,19 @@ describe("OrdersService.reopenOrder — selling restrictions (F-05)", () => {
         { productId: "prod-live" },
       ],
       channel: "STAFF",
+      fulfilmentKind: "DELIVERY",
     });
+  });
+
+  it.each([
+    [{ fulfillPath: "PICKUP" }, "PICKUP"],
+    [{ counterSale: true, fulfillPath: "PICKUP" }, "COUNTER"],
+    [{ fulfillPath: "SHIP" }, "DELIVERY"],
+  ])("L8: the order's fulfilment %j is judged as %s", async (facts, kind) => {
+    await reopen({ ...order([live]), ...facts }).catch(() => undefined);
+    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: kind }),
+    );
   });
 
   it("a ban on an item-CANCELLED line refuses the reopen with the 409 and writes NOTHING", async () => {

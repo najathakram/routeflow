@@ -11,6 +11,7 @@ import { RedisIoAdapter } from "./gateways/redis-io.adapter";
 import { registerGlobalExceptionFilters } from "./common/global-exception-filters";
 import { schemelessLinkBaseVars } from "./common/html-escape";
 import { assertSecrets } from "./assert-secrets";
+import { assertWebBaseUrlAtBoot } from "./config/web-base-url";
 
 const DEFAULT_CORS_ORIGINS = [
   "http://localhost:3001", // web dashboard
@@ -38,6 +39,9 @@ function buildWildcardPatterns(): RegExp[] {
 
 async function bootstrap() {
   assertSecrets();
+  // Production never defaults the public web origin to localhost (a payer was once sent there by Checkout); this throws
+  // before anything listens and exports the resolved base into WEB_URL for every reader.
+  assertWebBaseUrlAtBoot();
   // B809: every email link is built from these. Without a scheme, each link renders as plain
   // text (see safeLinkHref), so say so loudly at boot rather than per email.
   for (const name of schemelessLinkBaseVars()) {
