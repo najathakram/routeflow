@@ -275,10 +275,12 @@ export function PriceSaveStatusLine({
   const pinOn = phase === "saved" && state.pin === "on";
   React.useEffect(() => {
     if (!pinOn || hold) return;
-    const t = setTimeout(
-      () => dispatch({ type: prefersReducedMotion() ? "unpin" : "fade" }),
-      PIN_MS,
-    );
+    const t = setTimeout(() => {
+      // A line that pinned under a pointer already resting there (where the bar's Save was) never got mouseenter, but
+      // the browser reports it as :hover: hold it, and its mouseleave gives the 5 s back (K11-20c).
+      if (lineRef.current?.matches?.(":hover")) return setHover(true);
+      dispatch({ type: prefersReducedMotion() ? "unpin" : "fade" });
+    }, PIN_MS);
     return () => clearTimeout(t);
   }, [pinOn, hold, state.auditId]);
   React.useEffect(() => {

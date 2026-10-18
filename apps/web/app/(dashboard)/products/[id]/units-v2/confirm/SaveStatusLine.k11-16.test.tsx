@@ -129,6 +129,30 @@ describe("K11-16: the saved line takes the bar's slot for 5 s", () => {
     expect(isPinned()).toBe(false);
   });
 
+  it("holds when the line pins under a pointer already resting there (no mouseenter ever fires)", () => {
+    // K11-20c (MM probe at 768/390): the line pins where the bar's Save was, under the pointer that just clicked it.
+    // The browser reports it as :hover, but a node that appears under a still pointer never gets mouseenter.
+    const matches = jest.spyOn(Element.prototype, "matches");
+    matches.mockImplementation(function (this: Element, sel: string) {
+      return sel === ":hover" ? this.id === "units-msg" : false;
+    });
+    try {
+      render(<Section />);
+      save("a1");
+      tick(20_000);
+      expect(isPinned()).toBe(true);
+      matches.mockImplementation(() => false);
+      fireEvent.mouseLeave(line());
+      tick(4999);
+      expect(isPinned()).toBe(true);
+      tick(1);
+      tick(200);
+      expect(isPinned()).toBe(false);
+    } finally {
+      matches.mockRestore();
+    }
+  });
+
   it("pauses while focus is inside it (never un-pins under a focused Undo)", () => {
     render(<Section />);
     save("a1");
