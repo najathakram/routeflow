@@ -922,9 +922,9 @@ export default function DashboardPage() {
             {/* Store-only tenant: the SAME rule as the Orders header. New Order would open the counter too, so the
                 header is Invoice a customer (secondary) + Counter sale (primary); `builder=1` opens the builder
                 itself where the counter is the default. */}
-            {/* BO-07: no deny list yet, matching the Orders header (orders/page.tsx); the builder's PICKUP path is
-                refused server-side only once the deniedGroups threading (BO-07 steps 3-4) lands. */}
-            {quickCreate.storeOnly && staffMay(user?.role, "USE_POS_MODE") ? (
+            {/* BO-07: the builder's PICKUP path is the till, so a denied operator does not see it (the server refuses it too). */}
+            {quickCreate.storeOnly &&
+            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups) ? (
               <WriteButton
                 href="/orders?action=new&builder=1"
                 size="sm"

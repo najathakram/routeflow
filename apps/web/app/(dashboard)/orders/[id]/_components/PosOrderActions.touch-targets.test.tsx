@@ -49,7 +49,13 @@ describe("POS order action buttons are touch-sized (>= 44 px)", () => {
   });
 
   it("the Picked up button is 44 px too", () => {
-    render(<PickupHandOverButton onOpen={noop} />);
+    // BO-07: the entry reads the till gate, which needs a query client.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <PickupHandOverButton onOpen={noop} />
+      </QueryClientProvider>,
+    );
     expect(screen.getByRole("button", { name: "Picked up" }).className).toMatch(/\bh-11\b/);
   });
 });

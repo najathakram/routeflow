@@ -34,11 +34,12 @@ jest.mock("@/lib/api/addons", () => ({
   useDeliveryAccess: () => ({ enabled: false, resolved: true }),
 }));
 let mockCounter = "optional";
+let mockMethods: string[] = ["PICKUP", "ROUTE"];
 jest.mock("@/lib/tenant-features", () => ({
   useTenantFeatures: () => ({
     isLoading: false,
     data: {
-      capabilities: { fulfilment: { counter: mockCounter, methods: ["PICKUP", "ROUTE"] } },
+      capabilities: { fulfilment: { counter: mockCounter, methods: mockMethods } },
     },
   }),
 }));
@@ -56,6 +57,7 @@ jest.mock("./_components/CreateOrderModal", () => ({
 beforeEach(() => {
   mockRole = "OPERATOR";
   mockCounter = "optional";
+  mockMethods = ["PICKUP", "ROUTE"];
   mockGroups = ["PRICING", "ORDERS", "FINANCE"];
   push.mockReset();
   mockGet.mockReset();
@@ -100,6 +102,36 @@ describe("Orders header and the operator's till permission", () => {
     fireEvent.click(screen.getByRole("button", { name: "New Order" }));
     expect(screen.getByTestId("order-builder-open")).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
+  });
+
+  describe("a store-only account's Invoice a customer entry (the builder's PICKUP path)", () => {
+    beforeEach(() => {
+      mockCounter = "always";
+      mockMethods = ["PICKUP"];
+    });
+
+    it("an operator without ORDERS: no Invoice a customer", async () => {
+      mockGroups = ["PRICING", "FINANCE"];
+      renderWithProviders(<OrdersPage />);
+      await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/users/me/permissions"));
+      await act(async () => {});
+      // the entry is offered until the answer lands, then withdrawn
+      await waitFor(() =>
+        expect(screen.queryByRole("button", { name: "Invoice a customer" })).toBeNull(),
+      );
+    });
+
+    it("an operator with ORDERS: Invoice a customer opens the builder", async () => {
+      renderWithProviders(<OrdersPage />);
+      fireEvent.click(await screen.findByRole("button", { name: "Invoice a customer" }));
+      expect(screen.getByTestId("order-builder-open")).toBeInTheDocument();
+    });
+
+    it("a tenant admin: Invoice a customer is offered", async () => {
+      mockRole = "TENANT_ADMIN";
+      renderWithProviders(<OrdersPage />);
+      expect(await screen.findByRole("button", { name: "Invoice a customer" })).toBeInTheDocument();
+    });
   });
 
   it("a tenant admin never asks for permissions", async () => {

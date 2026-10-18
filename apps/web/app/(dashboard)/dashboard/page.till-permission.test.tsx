@@ -5,8 +5,8 @@ import DashboardPage from "./page";
 /**
  * BO-07: the dashboard header follows the till permission. The REAL useCounterSaleGate runs over the mocked API
  * (the capability and GET /users/me/permissions): an operator whose admin turned ORDERS off sees no Counter sale
- * sale. "Invoice a customer" (the builder) stays, matching the Orders header, until the server refuses that PICKUP
- * path for a denied operator (BO-07 steps 3-4); then both headers drop it together.
+ * sale, and no "Invoice a customer" either: the builder's PICKUP path is the same till, and the server refuses it
+ * for a denied operator (order-lifecycle), so both headers drop it together.
  */
 jest.mock("next/navigation", () => ({
   ...jest.requireActual("next/navigation"),
@@ -82,13 +82,15 @@ beforeEach(() => {
 });
 
 describe("Dashboard header and the operator's till permission", () => {
-  it("an operator without ORDERS: no Counter sale; Invoice a customer stays, as on the Orders header", async () => {
+  it("an operator without ORDERS: neither Counter sale nor Invoice a customer", async () => {
     mockGroups = ["PRICING", "FINANCE"];
     renderWithProviders(<DashboardPage />);
     await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/users/me/permissions"));
     await act(async () => {}); // the answer has landed: the entries must still be absent
     expect(screen.queryByText("Counter sale")).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Invoice a customer" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("link", { name: "Invoice a customer" })).toBeNull(),
+    );
   });
 
   it("an operator with ORDERS: both are offered", async () => {

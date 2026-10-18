@@ -26,6 +26,10 @@ const CONSUMERS: Record<string, string> = {
     "header Counter sale + Invoice a customer (showButton, deniedGroups)",
   "app/(dashboard)/invoices/[id]/page.tsx": "capability only: wording, nothing hidden",
   "app/(dashboard)/layout.tsx": "sidebar, drawer and g t (showButton)",
+  "app/(dashboard)/orders/[id]/_components/PickupHandOver.tsx":
+    "the Picked up entry (mayUseTill): completing a pickup is a till action",
+  "app/(dashboard)/orders/_components/CreateOrderModal.tsx":
+    "the POS mode switch (deniedGroups into staffMay USE_POS_MODE)",
   "app/(dashboard)/orders/_components/CounterSaleScreen.tsx":
     "the screen: no-access panel (mayUseTill)",
   "app/(dashboard)/orders/page.tsx":
@@ -42,7 +46,7 @@ describe("useCounterSaleGate readers (census)", () => {
     .filter((rel) => /\buseCounterSaleGate\b/.test(fs.readFileSync(path.join(WEB, rel), "utf8")))
     .sort();
 
-  it("is exactly the seven pinned modules", () => {
+  it("is exactly the nine pinned modules", () => {
     expect(readers).toEqual(Object.keys(CONSUMERS).sort());
   });
 });
