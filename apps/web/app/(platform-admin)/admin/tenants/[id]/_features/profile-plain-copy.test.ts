@@ -2,9 +2,16 @@ import { BUSINESS_PROFILE_KEYS } from "@routeflow/types";
 import { INCLUDED_FREE_COPY, profileBullets, profilePlainCopy } from "./profile-plain-copy";
 import * as setupCopy from "./setup-copy";
 
+/** The five shared profile keys plus the two presets BO-04 adds (not in `@routeflow/types` until that lands). */
+const PRESET_KEYS = [
+  ...BUSINESS_PROFILE_KEYS,
+  "delivery_shipping",
+  "delivery_shipping_pos",
+] as const;
+
 describe("SA-1: profile plain copy", () => {
   it("has plain copy for every profile key the contract lists", () => {
-    for (const key of BUSINESS_PROFILE_KEYS) {
+    for (const key of PRESET_KEYS) {
       const copy = profilePlainCopy(key, "Server label", "Server description");
       expect(copy.name).not.toBe("Server label");
       expect(copy.line.length).toBeGreaterThan(10);
@@ -12,9 +19,9 @@ describe("SA-1: profile plain copy", () => {
     }
   });
 
-  it("maps the four profiles to their plain names", () => {
+  it("maps every preset to its plain name", () => {
     const names = Object.fromEntries(
-      BUSINESS_PROFILE_KEYS.map((k) => [k, profilePlainCopy(k, "x", "y").name]),
+      PRESET_KEYS.map((k) => [k, profilePlainCopy(k, "x", "y").name]),
     );
     expect(names).toEqual({
       delivery_distributor: "Delivery",
@@ -22,6 +29,8 @@ describe("SA-1: profile plain copy", () => {
       in_store_retailer: "Counter sales only",
       in_store_shipping_retailer: "Counter + shipping",
       delivery_pos: "Delivery + counter",
+      delivery_shipping: "Delivery + shipping",
+      delivery_shipping_pos: "Everything",
     });
   });
 
@@ -34,7 +43,7 @@ describe("SA-1: profile plain copy", () => {
   });
 
   it("SA-2: each profile has exactly three 'what the business will see' bullets; unknown keys have none", () => {
-    for (const key of BUSINESS_PROFILE_KEYS) expect(profileBullets(key)).toHaveLength(3);
+    for (const key of PRESET_KEYS) expect(profileBullets(key)).toHaveLength(3);
     expect(profileBullets("in_store_retailer")).toEqual([
       "Counter in the menu",
       "Orders are collected at the counter only",
@@ -46,7 +55,7 @@ describe("SA-1: profile plain copy", () => {
 
 describe("SA-769: the comp line of the profile preview", () => {
   it("the copy a module the profile will comp carries is fixed here, not typed in the modal", () => {
-    expect(INCLUDED_FREE_COPY).toBe("Included free with this profile");
+    expect(INCLUDED_FREE_COPY).toBe("Included free");
   });
 });
 
@@ -55,20 +64,22 @@ describe("SA-769: the comp line of the profile preview", () => {
  * `unset`; the three counter presets write `on`). The server definitions live in
  * `apps/api/src/billing/business-profiles.ts`; web cannot import them, so the table is pinned here.
  */
-const COUNTER_EFFECT: Record<(typeof BUSINESS_PROFILE_KEYS)[number], "unset" | "on"> = {
+const COUNTER_EFFECT: Record<(typeof PRESET_KEYS)[number], "unset" | "on"> = {
   delivery_distributor: "unset",
   shipping_wholesaler: "unset",
   in_store_retailer: "on",
   in_store_shipping_retailer: "on",
   delivery_pos: "on",
+  delivery_shipping: "unset",
+  delivery_shipping_pos: "on",
 };
 
 describe("BO-11: every counter promise matches what the preset writes", () => {
   it("pins an effect for every preset key", () => {
-    expect(Object.keys(COUNTER_EFFECT).sort()).toEqual([...BUSINESS_PROFILE_KEYS].sort());
+    expect(Object.keys(COUNTER_EFFECT).sort()).toEqual([...PRESET_KEYS].sort());
   });
 
-  it.each(BUSINESS_PROFILE_KEYS.filter((k) => COUNTER_EFFECT[k] === "unset"))(
+  it.each(PRESET_KEYS.filter((k) => COUNTER_EFFECT[k] === "unset"))(
     "%s turns counter sales off, so its copy never says the counter is left as it is",
     (key) => {
       const all = [profilePlainCopy(key, "x", "y").line, ...profileBullets(key)];
@@ -77,7 +88,7 @@ describe("BO-11: every counter promise matches what the preset writes", () => {
     },
   );
 
-  it.each(BUSINESS_PROFILE_KEYS.filter((k) => COUNTER_EFFECT[k] === "on"))(
+  it.each(PRESET_KEYS.filter((k) => COUNTER_EFFECT[k] === "on"))(
     "%s turns counter sales on, so a bullet promises the counter and none denies it",
     (key) => {
       const bullets = profileBullets(key);
@@ -100,7 +111,7 @@ describe("BO-11: one name per idea in the Backoffice copy", () => {
   const strings = [
     ...collectStrings(setupCopy),
     INCLUDED_FREE_COPY,
-    ...BUSINESS_PROFILE_KEYS.flatMap((k) => {
+    ...PRESET_KEYS.flatMap((k) => {
       const c = profilePlainCopy(k, "x", "y");
       return [c.name, c.line, ...profileBullets(k)];
     }),

@@ -58,13 +58,32 @@ const PLAIN_PROFILES: Record<string, PlainProfile> = {
       "Counter in the menu, optional beside delivery",
     ],
   },
+  delivery_shipping: {
+    name: "Delivery + shipping",
+    line: "Delivers on its own trucks and also ships by carrier.",
+    bullets: [
+      "Routes, ad hoc delivery and at-door payments in the menu",
+      "Orders go out on the business's own trucks or ship by carrier",
+      "No counter sales",
+    ],
+  },
+  delivery_shipping_pos: {
+    name: "Everything",
+    line: "Delivers on its own trucks, ships by carrier and sells over the counter.",
+    bullets: [
+      "Routes, ad hoc delivery and at-door payments in the menu",
+      "Orders go out on the business's own trucks or ship by carrier",
+      "Counter in the menu, optional beside delivery",
+    ],
+  },
 };
 
 /**
- * SA-769: what the profile preview says next to each module the profile will turn on as a comp (a free add-on row,
- * never billed, no end date). One string, so the modal and its tests cannot drift apart.
+ * SA-769: what the preview says next to each module it will turn on as a comp (a free add-on row, never billed, no
+ * end date). One string, so the preview, the review dialog and their tests cannot drift apart. BO-05: no longer "with
+ * this profile": the ticks, not a profile, turn the module on.
  */
-export const INCLUDED_FREE_COPY = "Included free with this profile";
+export const INCLUDED_FREE_COPY = "Included free";
 
 export interface ProfilePlainCopy {
   /** The choice's name. */

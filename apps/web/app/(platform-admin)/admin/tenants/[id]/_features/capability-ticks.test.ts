@@ -5,6 +5,7 @@ import {
   setDoorPayments,
   setOpensAs,
   tickedNames,
+  ticksFromPreset,
   ticksFromCapabilities,
   ticksKey,
   ticksToRequest,
@@ -124,5 +125,37 @@ describe("tickedNames", () => {
       "Sells at the counter",
     ]);
     expect(tickedNames(NO_TICKS)).toEqual([]);
+  });
+});
+
+describe("ticksFromPreset", () => {
+  it("takes the preset's tuple as the ticks", () => {
+    expect(
+      ticksFromPreset({
+        delivery: true,
+        doorPayments: true,
+        shipping: false,
+        counter: true,
+        opensAs: "order",
+      }),
+    ).toEqual({
+      delivery: true,
+      doorPayments: true,
+      shipping: false,
+      counter: true,
+      opensAs: "order",
+    });
+  });
+
+  it("keeps opens-as only where it can be chosen, and door payments only with Delivery", () => {
+    expect(
+      ticksFromPreset({ ...NO_TICKS, shipping: true, counter: true, opensAs: "counter" }).opensAs,
+    ).toBe("counter");
+    expect(ticksFromPreset({ ...NO_TICKS, counter: true, opensAs: "counter" }).opensAs).toBe(
+      "order",
+    );
+    expect(ticksFromPreset({ ...NO_TICKS, shipping: true, doorPayments: true }).doorPayments).toBe(
+      false,
+    );
   });
 });

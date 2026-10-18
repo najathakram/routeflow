@@ -30,6 +30,12 @@ export const CAPABILITY_LABELS = {
   counter: "Sells at the counter",
 } as const;
 
+/** What a preset pre-ticks (a tap on "Start from…"): the preset's own tuple, cleaned the way a toggle would. */
+export function ticksFromPreset(p: CapabilityPresetTicks): CapabilityTicks {
+  const base = { ...p, doorPayments: p.delivery && p.doorPayments };
+  return { ...base, opensAs: opensAsChoosableFor(base) ? p.opensAs : "order" };
+}
+
 export function nothingTicked(t: CapabilityTicks): boolean {
   return !t.delivery && !t.shipping && !t.counter;
 }
