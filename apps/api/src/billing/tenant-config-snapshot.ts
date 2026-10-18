@@ -26,7 +26,7 @@
  */
 import type { ConfigSnapshotHeld, ConfigSnapshotSkipReason } from "@routeflow/types";
 import { featureDefByKey } from "./feature-registry";
-import { FLEET_KEYS } from "./fulfilment-capability";
+import { applyAddonOverrides, fleetHeldIn } from "./fulfilment-capability";
 
 export const SNAPSHOT_PAYLOAD_VERSION = 1 as const;
 
@@ -298,16 +298,20 @@ export function holdConfigEntry(
  */
 export function fleetHeldAfterRestore(
   plan: RestorePlan,
-  current: { overrides: readonly OverrideRow[]; activeAddonKeys: Iterable<string> },
+  current: {
+    overrides: readonly OverrideRow[];
+    activeAddonKeys: Iterable<string>;
+    /** Add-on keys the SAME transaction activates AFTER the restore (a checkout's `desiredNow`): held at commit. */
+    pendingAddonKeys?: Iterable<string>;
+  },
   now: Date,
 ): boolean {
-  const held = new Set<string>(current.activeAddonKeys);
-  const apply = (key: string, effect: "GRANT" | "DENY") => {
-    if (!(FLEET_KEYS as readonly string[]).includes(key)) return;
-    if (effect === "GRANT") held.add(key);
-    else held.delete(key);
-  };
-  for (const o of current.overrides) if (isActive(o, now)) apply(o.featureKey, o.effect);
-  for (const e of plan.overrides.create) apply(e.featureKey, e.effect);
-  return FLEET_KEYS.some((k) => held.has(k));
+  const effects: [string, "GRANT" | "DENY"][] = [
+    ...current.overrides
+      .filter((o) => isActive(o, now))
+      .map((o): [string, "GRANT" | "DENY"] => [o.featureKey, o.effect]),
+    ...plan.overrides.create.map((e): [string, "GRANT" | "DENY"] => [e.featureKey, e.effect]),
+  ];
+  const rows = [...current.activeAddonKeys, ...(current.pendingAddonKeys ?? [])];
+  return fleetHeldIn(applyAddonOverrides(rows, effects));
 }

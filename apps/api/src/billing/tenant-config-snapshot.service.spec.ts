@@ -889,6 +889,42 @@ describe("TenantConfigSnapshotService — held fulfilment_model (BO-13)", () => 
     ]);
   });
 
+  // M1: the restore runs inside a checkout BEFORE the same transaction activates the add-on rows it buys.
+  it("M1: a re-upgrade re-buying a fleet add-on in the SAME checkout restores `delivery` (pendingAddonKeys count as held)", async () => {
+    const t = fakeTx({ configs: [fmRow("ship")] }); // no TenantAddon row yet: the checkout activates it after the hook
+    await seedSnapshot(t, [fmRow("delivery")]);
+
+    const res = await svc.restoreLatest(t.tx, TENANT, HIGH, NOW, undefined, undefined, [FLEET]);
+
+    expect(res!.held).toEqual([]);
+    expect(t.state.configs[0].mode).toBe("delivery");
+    expect(t.state.snapshots[0].restoredAt).toEqual(NOW);
+  });
+
+  it("M1 control: no fleet anywhere (no row, nothing pending) is still held; a non-fleet pending key does not help; a live DENY beats a pending key", async () => {
+    const none = fakeTx({ configs: [fmRow("ship")] });
+    await seedSnapshot(none, [fmRow("delivery")]);
+    expect((await svc.restoreLatest(none.tx, TENANT, HIGH, NOW))!.held).toMatchObject([
+      { reason: "FULFILMENT_MODE_NEEDS_FLEET" },
+    ]);
+
+    const other = fakeTx({ configs: [fmRow("ship")] });
+    await seedSnapshot(other, [fmRow("delivery")]);
+    expect(
+      (await svc.restoreLatest(other.tx, TENANT, HIGH, NOW, undefined, undefined, ["other_sku"]))!
+        .held,
+    ).toHaveLength(1);
+
+    const denied = fakeTx({
+      configs: [fmRow("ship")],
+      overrides: [ovrRow({ featureKey: FLEET, effect: "DENY" })],
+    });
+    await seedSnapshot(denied, [fmRow("delivery")]);
+    expect(
+      (await svc.restoreLatest(denied.tx, TENANT, HIGH, NOW, undefined, undefined, [FLEET]))!.held,
+    ).toHaveLength(1);
+  });
+
   it("a non-fleet mode never queries the add-ons (ship/pickup/unset need no fleet)", async () => {
     const t = fakeTx({ configs: [fmRow("ship")] });
     const id = await seedSnapshot(t, [fmRow("pickup")]);

@@ -249,6 +249,25 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
       });
     });
 
+    it("a held run does NOT also log the 'Restored tenant' success line", async () => {
+      const { svc, snapshots } = build(true);
+      snapshots.restoreLatest.mockResolvedValue(partial());
+      const log = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+      const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+
+      await runTransition(svc, up);
+
+      expect(log.mock.calls.filter((c) => String(c[0]).includes("Restored tenant"))).toEqual([]);
+      log.mockRestore();
+      warn.mockRestore();
+    });
+
+    it("M1: hands the add-on keys the same transaction will activate to the restore", async () => {
+      const { svc, snapshots } = build(true);
+      await runTransition(svc, { ...up, pendingAddonKeys: ["recurring_routes"] });
+      expect(snapshots.restoreLatest.mock.calls[0][6]).toEqual(["recurring_routes"]);
+    });
+
     it("logs a warning that names the held row and its reason", async () => {
       const { svc, snapshots } = build(true);
       snapshots.restoreLatest.mockResolvedValue(partial());

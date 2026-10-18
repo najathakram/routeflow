@@ -32,6 +32,12 @@ export interface PlanTransition {
    */
   toPlanVersionId: string | null;
   actor?: SnapshotActor;
+  /**
+   * BO-13: add-on keys the caller's transaction activates AFTER `onPlanChange` (a checkout's purchased
+   * add-ons). The restore runs first, so without these a re-upgrade that re-buys a fleet module in the same
+   * checkout would read as "no fleet" and hold `delivery`. Only `restoreLatest` reads them.
+   */
+  pendingAddonKeys?: readonly string[];
 }
 
 /**
@@ -212,6 +218,8 @@ export class PlanTransitionConfigService implements OnModuleInit {
         t.toPlanKey,
         now,
         planAllows,
+        undefined,
+        t.pendingAddonKeys,
       );
       // BO-13: a HELD row (a delivery-method change under a shipment, or own delivery with no fleet) makes
       // the restore partial. The upgrade still proceeds; the snapshot stays claimable (not stamped), and
@@ -244,17 +252,16 @@ export class PlanTransitionConfigService implements OnModuleInit {
         });
       }
       await tx.$executeRaw`RELEASE SAVEPOINT config_snapshot_restore`;
-      if (restore && held.length) {
+      if (restore && held.length === 0) {
+        this.logger.log(
+          `Restored tenant ${t.tenantId} feature config from snapshot ${restore.snapshotId} on ` +
+            `${t.fromPlanKey} -> ${t.toPlanKey}: ${JSON.stringify(restore.report)}`,
+        );
+      } else if (restore) {
         this.logger.warn(
           `Config restore for tenant ${t.tenantId} (${t.fromPlanKey} -> ${t.toPlanKey}) HELD ` +
             `${held.map((h) => `${h.featureKey} ${h.from}->${h.to} (${h.reason})`).join(", ")}; ` +
             `snapshot ${restore.snapshotId} stays restorable — "Restore now" once cleared`,
-        );
-      }
-      if (restore) {
-        this.logger.log(
-          `Restored tenant ${t.tenantId} feature config from snapshot ${restore.snapshotId} on ` +
-            `${t.fromPlanKey} -> ${t.toPlanKey}: ${JSON.stringify(restore.report)}`,
         );
       }
       return { action: "restore", restore };

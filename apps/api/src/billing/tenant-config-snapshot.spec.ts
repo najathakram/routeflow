@@ -1,4 +1,5 @@
 import { FEATURE_REGISTRY } from "./feature-registry";
+import { FLEET_KEYS, isFleetHeld } from "./fulfilment-capability";
 import {
   buildSnapshotPayload,
   parseSnapshotPayload,
@@ -428,5 +429,61 @@ describe("fleetHeldAfterRestore (BO-13)", () => {
         NOW,
       ),
     ).toBe(true);
+  });
+});
+
+describe("fleetHeldAfterRestore — pending add-ons and parity with isFleetHeld (BO-13)", () => {
+  const emptyPlan = () =>
+    planRestore(
+      { version: 1, configs: [], overrides: [] },
+      { configs: [], overrides: [] },
+      T_SNAPSHOT,
+      NOW,
+    );
+
+  it("an add-on the SAME transaction is about to activate counts as held", () => {
+    expect(
+      fleetHeldAfterRestore(
+        emptyPlan(),
+        { overrides: [], activeAddonKeys: [], pendingAddonKeys: [FLEET_KEYS[0]] },
+        NOW,
+      ),
+    ).toBe(true);
+    expect(
+      fleetHeldAfterRestore(
+        emptyPlan(),
+        { overrides: [], activeAddonKeys: [], pendingAddonKeys: ["other"] },
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  it("parity: for every add-on x override combination it answers exactly what isFleetHeld answers", async () => {
+    const addonSets = [[], [FLEET_KEYS[0]], [FLEET_KEYS[1]], [...FLEET_KEYS], ["other"]];
+    const overrideSets: { key: string; effect: "GRANT" | "DENY" }[][] = [
+      [],
+      ...FLEET_KEYS.flatMap((key) => [
+        [{ key, effect: "GRANT" as const }],
+        [{ key, effect: "DENY" as const }],
+      ]),
+      [{ key: "other", effect: "GRANT" }],
+      [
+        { key: FLEET_KEYS[0], effect: "DENY" },
+        { key: FLEET_KEYS[1], effect: "DENY" },
+      ],
+    ];
+    for (const addons of addonSets) {
+      for (const live of overrideSets) {
+        const rows = live.map((o, i) => ovr({ id: `o${i}`, featureKey: o.key, effect: o.effect }));
+        const expected = await isFleetHeld(
+          { getActiveAddons: async () => addons },
+          { allActive: async () => new Map(live.map((o) => [o.key, o.effect])) },
+          "t1",
+        );
+        expect(
+          fleetHeldAfterRestore(emptyPlan(), { overrides: rows, activeAddonKeys: addons }, NOW),
+        ).toBe(expected);
+      }
+    }
   });
 });
