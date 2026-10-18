@@ -1247,7 +1247,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="surface-operator flex h-screen overflow-hidden">
+    // overflow-clip (with overflow-hidden as the fallback where clip is unsupported): these shell wrappers only clip. A
+    // hidden box is still a scroll container that scrollIntoView and focus can scroll, which pushed the header off screen
+    // (K11-20c: a mouse Save at 1440 scrolled the content wrapper by 64 px); a clip box cannot be scrolled at all.
+    <div className="surface-operator flex h-screen overflow-hidden overflow-clip">
       <SkipToContentLink />
       {/* Sidebar — static rail on lg+, replaced by a drawer below lg */}
       <aside
@@ -1354,7 +1357,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       {/* Right column — `relative` so the draft dock anchors to the bottom-left of
           the content area (right of the rail), not over the sidebar's collapse
           control; below lg the rail is a drawer so it becomes the viewport corner. */}
-      <div className="relative flex flex-1 flex-col overflow-hidden">
+      <div className="relative flex flex-1 flex-col overflow-hidden overflow-clip">
         <ImpersonationBanner />
         {subscriptionStatus ? (
           // useSearchParams() (the ?paid=1 return) needs a Suspense boundary for the static prerender
