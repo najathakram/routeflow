@@ -171,6 +171,14 @@ export function FeatureConsole({
   const [pending, setPending] = React.useState<PendingPreview | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
+  /** The mode radio whose preview is being fetched (a visible pending state) and the row whose preview failed. */
+  const [modeTarget, setModeTarget] = React.useState<{
+    featureKey: string;
+    newMode: string;
+  } | null>(null);
+  const [modeError, setModeError] = React.useState<{ featureKey: string; text: string } | null>(
+    null,
+  );
   const [applying, setApplying] = React.useState(false);
 
   const load = React.useCallback(() => {
@@ -264,6 +272,8 @@ export function FeatureConsole({
 
   async function startModePreview(featureKey: string, newMode: string) {
     setPreviewError(null);
+    setModeError(null);
+    setModeTarget({ featureKey, newMode });
     setPreviewLoading(true);
     try {
       const response = await previewTenantFeatures(tenant.id, {
@@ -271,9 +281,11 @@ export function FeatureConsole({
       });
       setPending({ kind: "mode", featureKey, newMode, response });
     } catch {
-      setPreviewError("Could not preview that mode change. Try again.");
+      // The drawer is closed on a failed preview, so the failure is shown on the row that was clicked.
+      setModeError({ featureKey, text: "Could not preview that mode change. Try again." });
     } finally {
       setPreviewLoading(false);
+      setModeTarget(null);
     }
   }
 
@@ -487,6 +499,8 @@ export function FeatureConsole({
                       mode={feature.mode}
                       effectiveKeys={effectiveKeys}
                       disabled={previewLoading}
+                      pendingOption={modeTarget?.featureKey === row.key ? modeTarget.newMode : null}
+                      error={modeError?.featureKey === row.key ? modeError.text : null}
                       onSelect={(newMode) => startModePreview(row.key, newMode)}
                     />
                   )}
@@ -591,6 +605,8 @@ function ModeSelector({
   mode,
   effectiveKeys,
   disabled,
+  pendingOption,
+  error,
   onSelect,
 }: {
   featureKey: string;
@@ -599,6 +615,10 @@ function ModeSelector({
   mode: NonNullable<EffectiveFeature["mode"]>;
   effectiveKeys: ReadonlySet<string>;
   disabled?: boolean;
+  /** The option whose preview is loading: it shows a visible pending state, so a click is never silent. */
+  pendingOption?: string | null;
+  /** A failed preview for this row, shown here because the drawer never opened. */
+  error?: string | null;
   onSelect: (newMode: string) => void;
 }) {
   const radios = selectableOptions(options);
@@ -619,27 +639,52 @@ function ModeSelector({
         {radios.map((option) => {
           const blocked = isOptionBlocked(option, mode);
           const checked = !isMixed && mode.effective === option.key;
+          const pending = pendingOption === option.key;
+          const reason = blocked ? blockedReason(option, effectiveKeys) : null;
+          const reasonId = `mode-${featureKey}-${option.key}-why`;
+          const pendingId = `mode-${featureKey}-${option.key}-pending`;
+          const describedBy = [reason ? reasonId : "", pending ? pendingId : ""]
+            .filter(Boolean)
+            .join(" ");
           return (
-            <label
-              key={option.key}
-              title={blocked ? (blockedReason(option, effectiveKeys) ?? undefined) : undefined}
-              className={`flex items-center gap-1.5 text-xs ${
-                blocked ? "cursor-not-allowed text-slate-400" : "text-slate-300"
-              }`}
-            >
-              <input
-                type="radio"
-                name={`mode-${featureKey}`}
-                value={option.key}
-                checked={checked}
-                disabled={disabled || blocked}
-                onChange={() => onSelect(option.key)}
-              />
-              {option.label}
-            </label>
+            <div key={option.key} className="flex flex-col">
+              <label
+                title={reason ?? undefined}
+                className={`flex min-h-[44px] items-center gap-1.5 text-xs sm:min-h-6 ${
+                  blocked ? "cursor-not-allowed text-slate-400" : "text-slate-300"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name={`mode-${featureKey}`}
+                  value={option.key}
+                  checked={checked}
+                  disabled={disabled || blocked}
+                  aria-busy={pending || undefined}
+                  aria-describedby={describedBy || undefined}
+                  onChange={() => onSelect(option.key)}
+                />
+                {option.label}
+              </label>
+              {reason && (
+                <span id={reasonId} className="max-w-[16rem] text-[11px] text-slate-400">
+                  {reason}
+                </span>
+              )}
+              {pending && (
+                <span id={pendingId} className="text-[11px] text-indigo-300">
+                  Checking what would change…
+                </span>
+              )}
+            </div>
           );
         })}
       </div>
+      {error && (
+        <p role="alert" className="w-full text-xs text-red-400">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

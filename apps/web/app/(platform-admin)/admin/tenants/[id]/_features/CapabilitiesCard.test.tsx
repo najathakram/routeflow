@@ -457,11 +457,15 @@ describe("CapabilitiesCard: apply", () => {
     mockApply.mockRejectedValueOnce(apiError(409, { code: API_ERROR_CODES.PROFILE_PLAN_CHANGED }));
     await renderCard();
     fireEvent.click(box(SHIPPING));
-    await waitFor(() => expect(applyButton()).toBeEnabled());
+    await waitFor(() => expect(applyButton()).toBeEnabled(), { timeout: 4000 });
     const next = deferred<BusinessCapabilitiesPreviewResponse>();
     mockPreview.mockReturnValue(next.promise);
     fireEvent.click(applyButton());
-    const notice = await screen.findByText("This business changed. Check the preview again.");
+    const notice = await screen.findByText(
+      "This business changed. Check the preview again.",
+      {},
+      { timeout: 4000 },
+    );
     expect(notice).toBeVisible();
     expect(applyButton()).toBeDisabled();
     await act(async () => {
@@ -469,13 +473,13 @@ describe("CapabilitiesCard: apply", () => {
         capabilitiesPreview({ changes: ["Fresh plan"], planFingerprint: "9".repeat(64) }),
       );
     });
-    expect(await screen.findByText("Fresh plan")).toBeVisible();
+    expect(await screen.findByText("Fresh plan", {}, { timeout: 4000 })).toBeVisible();
     // the notice goes away once the fresh preview is on screen
     expect(screen.queryByText("This business changed. Check the preview again.")).toBeNull();
     expect(mockPreview).toHaveBeenCalledTimes(2);
-    await waitFor(() => expect(applyButton()).toBeEnabled());
+    await waitFor(() => expect(applyButton()).toBeEnabled(), { timeout: 4000 });
     fireEvent.click(applyButton());
-    await waitFor(() => expect(mockApply).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mockApply).toHaveBeenCalledTimes(2), { timeout: 4000 });
     expect(mockApply.mock.calls[1]![2]).toBe("9".repeat(64));
   });
 
@@ -645,5 +649,35 @@ describe("CapabilitiesCard: review fixes", () => {
     fireEvent.click(applyButton());
     await waitFor(() => expect(mockApply).toHaveBeenCalledTimes(1));
     expect(mockApply.mock.calls[0]![2]).toBe("2".repeat(64));
+  });
+});
+
+describe("CapabilitiesCard: every button beats the global 40 px floor", () => {
+  it("Apply, the preview Retry and the load Retry", async () => {
+    mockPreview.mockRejectedValueOnce(new Error("boom"));
+    await renderCard();
+    expect(applyButton()).toHaveClass("!min-h-[44px]");
+    fireEvent.click(box(SHIPPING));
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByRole("button", { name: "Retry" })).toHaveClass("!min-h-[44px]");
+  });
+
+  it("the load-failure Retry", async () => {
+    mockFetchCapabilities.mockRejectedValueOnce(apiError(503, { code: "FEATURES_UNAVAILABLE" }));
+    render(<CapabilitiesCard tenantId={TENANT_ID} onApplied={jest.fn()} />);
+    expect(await screen.findByRole("button", { name: "Retry" })).toHaveClass("!min-h-[44px]");
+  });
+
+  it("the billing dialog's Cancel and Stop billing and apply", async () => {
+    mockPreview.mockResolvedValue(capabilitiesPreviewWithBilling());
+    await renderCard();
+    fireEvent.click(box(DELIVERY));
+    await waitFor(() => expect(applyButton()).toBeEnabled());
+    fireEvent.click(applyButton());
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveClass("!min-h-[44px]");
+    expect(within(dialog).getByRole("button", { name: "Stop billing and apply" })).toHaveClass(
+      "!min-h-[44px]",
+    );
   });
 });

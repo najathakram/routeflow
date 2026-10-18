@@ -318,7 +318,7 @@ export function CapabilitiesCard({
           <button
             type="button"
             onClick={load}
-            className="min-h-[44px] rounded px-3 py-1 text-slate-200 hover:bg-slate-700"
+            className="!min-h-[44px] rounded px-3 py-1 text-slate-200 hover:bg-slate-700"
           >
             Retry
           </button>
@@ -376,7 +376,7 @@ export function CapabilitiesCard({
                     <button
                       type="button"
                       onClick={previewAgain}
-                      className="min-h-[44px] rounded px-3 py-1 font-medium text-indigo-300 hover:bg-slate-700"
+                      className="!min-h-[44px] rounded px-3 py-1 font-medium text-indigo-300 hover:bg-slate-700"
                     >
                       Retry
                     </button>
@@ -414,7 +414,7 @@ export function CapabilitiesCard({
               disabled={!canApply}
               onClick={onApplyClick}
               aria-describedby={failedPreview ? errorId : reason ? reasonId : undefined}
-              className="min-h-[44px] w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 sm:w-auto sm:self-start"
+              className="!min-h-[44px] w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 sm:w-auto sm:self-start"
             >
               {applying ? "Applying…" : stops.length > 0 ? "Stop billing and apply" : "Apply"}
             </button>

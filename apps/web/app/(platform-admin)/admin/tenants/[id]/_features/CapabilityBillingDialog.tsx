@@ -41,7 +41,7 @@ export function CapabilityBillingDialog({
             type="button"
             onClick={onCancel}
             disabled={busy}
-            className="min-h-[44px] rounded-lg px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 disabled:opacity-50"
+            className="!min-h-[44px] rounded-lg px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 disabled:opacity-50"
           >
             Cancel
           </button>
@@ -49,7 +49,7 @@ export function CapabilityBillingDialog({
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            className="min-h-[44px] rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+            className="!min-h-[44px] rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
           >
             Stop billing and apply
           </button>

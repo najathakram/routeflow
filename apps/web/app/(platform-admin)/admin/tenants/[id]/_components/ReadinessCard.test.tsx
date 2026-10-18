@@ -294,3 +294,37 @@ describe("ReadinessCard (SA-3, BO-02)", () => {
     expect(screen.queryByRole("link", { name: /Extend/i })).toBeNull();
   });
 });
+
+// The global admin floor is `.surface-admin button { min-height: 40px }` (specificity 0,1,1) which beats a plain
+// Tailwind min-h utility, so the actions carry the important variants: 44 px below sm, 24 px from sm up.
+describe("BO-05 follow-up: the card's links and buttons are real tap targets", () => {
+  const TAP = ["inline-flex", "items-center", "!min-h-[44px]", "sm:!min-h-6"];
+
+  it("the 'Choose' link on an unset tenant", async () => {
+    mockFetchCaps.mockResolvedValue(caps({ configured: false }));
+    render(<Card tenant={tenant()} />);
+    const link = await screen.findByRole("link", { name: "Choose how Acme Retail sells" });
+    expect(link).toHaveClass(...TAP);
+  });
+
+  it("every row action link (Create admin, Activate)", async () => {
+    admin = null;
+    render(<Card tenant={tenant({ status: "READ_ONLY" })} />);
+    await ready();
+    const links = screen.getAllByRole("link");
+    expect(links.length).toBeGreaterThanOrEqual(2);
+    for (const link of links) expect(link).toHaveClass(...TAP);
+  });
+
+  it("Show details and Retry", async () => {
+    render(<Card tenant={tenant()} />);
+    await loaded();
+    expect(screen.getByRole("button", { name: "Show details" })).toHaveClass(...TAP);
+  });
+
+  it("Retry after a failed read", async () => {
+    mockFetchCaps.mockRejectedValueOnce(new Error("boom"));
+    render(<Card tenant={tenant()} />);
+    expect(await screen.findByRole("button", { name: "Retry" })).toHaveClass(...TAP);
+  });
+});

@@ -9,6 +9,7 @@
  * decodes the JWT payload locally, no server round-trip.
  */
 import { test, expect, type Page, type Route } from "@playwright/test";
+import { mockOverviewReads, mockUnmockedBackoffice } from "./helpers/bo-api-mocks";
 
 const TENANT_ID = "e2e-fc-tenant-1";
 
@@ -261,6 +262,10 @@ function fulfillJson(route: Route, body: unknown, status = 200) {
 
 /** Installs mocks for every endpoint the tenant page's Overview + Addons tabs touch. */
 async function mockTenantShell(page: Page, opts: { registryStatus?: number } = {}) {
+  // Registered first, so every route below wins: nothing the page reads can reach the real API (a 401 there wipes
+  // the fake token and redirects to /admin-login).
+  await mockUnmockedBackoffice(page);
+  await mockOverviewReads(page, TENANT_ID);
   await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}$`), (route) =>
     fulfillJson(route, tenantFixture()),
   );

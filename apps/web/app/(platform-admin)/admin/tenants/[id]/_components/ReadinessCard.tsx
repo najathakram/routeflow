@@ -156,7 +156,7 @@ export function ReadinessCard({
           <button
             type="button"
             onClick={load}
-            className="admin-tap-text rounded-lg border border-slate-600 px-3 py-1.5 text-slate-200 hover:bg-slate-700"
+            className="admin-tap-text inline-flex !min-h-[44px] items-center rounded-lg border border-slate-600 px-3 py-1.5 text-slate-200 hover:bg-slate-700 sm:!min-h-6"
           >
             Retry
           </button>
@@ -178,7 +178,7 @@ export function ReadinessCard({
             href={`/admin/tenants/${tenant.id}?tab=setup&focus=capabilities`}
             scroll={false}
             aria-label={`Choose how ${name} sells`}
-            className="admin-tap-text ml-auto text-indigo-400 hover:underline"
+            className="admin-tap-text ml-auto inline-flex !min-h-[44px] items-center px-1 text-indigo-400 hover:underline sm:!min-h-6"
           >
             Choose
           </Link>
@@ -218,7 +218,7 @@ export function ReadinessCard({
             type="button"
             aria-expanded={open}
             onClick={() => setOpen((o) => !o)}
-            className="admin-tap-text text-sm text-indigo-400 hover:underline"
+            className="admin-tap-text inline-flex !min-h-[44px] items-center px-1 text-sm text-indigo-400 hover:underline sm:!min-h-6"
           >
             {open ? "Hide details" : "Show details"}
           </button>
@@ -248,7 +248,7 @@ export function ReadinessCard({
                   href={r.link.href}
                   scroll={false}
                   aria-label={r.link.aria}
-                  className="admin-tap-text ml-auto text-indigo-400 hover:underline"
+                  className="admin-tap-text ml-auto inline-flex !min-h-[44px] items-center px-1 text-indigo-400 hover:underline sm:!min-h-6"
                 >
                   {r.link.text}
                 </Link>

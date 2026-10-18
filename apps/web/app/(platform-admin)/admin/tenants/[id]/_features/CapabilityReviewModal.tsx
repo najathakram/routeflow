@@ -51,7 +51,7 @@ export function CapabilityReviewModal({
             type="button"
             onClick={handleClose}
             disabled={confirming}
-            className="min-h-[44px] rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700 disabled:opacity-50"
+            className="!min-h-[44px] rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700 disabled:opacity-50"
           >
             Cancel
           </button>
@@ -59,7 +59,7 @@ export function CapabilityReviewModal({
             type="button"
             onClick={onConfirm}
             disabled={confirming || empty}
-            className="min-h-[44px] rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+            className="!min-h-[44px] rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
             {confirming ? "Applying..." : stopsBilling ? "Stop billing and apply" : "Apply"}
           </button>

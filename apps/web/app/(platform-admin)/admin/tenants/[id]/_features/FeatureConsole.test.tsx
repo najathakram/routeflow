@@ -1307,6 +1307,89 @@ describe("BO-06: console mode radios render for config rows", () => {
     expect(mockWriteConfig).not.toHaveBeenCalled();
   });
 
+  describe("BO-05 follow-up: a click on a radio is never silent", () => {
+    const BLOCKED_MODE = { ...MODE, blocked: ["both"] };
+    const withRequires = {
+      ...FULFIL_ROW,
+      config: {
+        fallbackMode: "unset",
+        modes: (FULFIL_ROW.config?.modes ?? []).map((m) =>
+          m.key === "both" ? { ...m, requires: ["order_delivery"] } : m,
+        ),
+      },
+    };
+
+    async function renderBlocked() {
+      mockFetchRegistry.mockResolvedValue([
+        ...REGISTRY_FIXTURE,
+        withRequires,
+        UNCHECKED_SETTING_ROW,
+      ]);
+      mockFetchEffective.mockResolvedValue([
+        ...EFFECTIVE_FIXTURE,
+        fulfilmentModeEffective(BLOCKED_MODE),
+        uncheckedSettingEffective(),
+      ]);
+      render(
+        <FeatureConsole
+          tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+          onChangePlan={jest.fn()}
+          onCustomise={jest.fn()}
+        />,
+      );
+      await screen.findByText("compliance");
+      fireEvent.click(screen.getByLabelText("Show internal"));
+      return document.querySelector('[data-feature-key="fulfilment_model"]') as HTMLElement;
+    }
+
+    it("a blocked option says why in visible text tied to the radio, not only in a tooltip", async () => {
+      const row = await renderBlocked();
+      const radio = within(row).getByRole("radio", { name: "Delivery and shipping" });
+      expect(radio).toBeDisabled();
+      const reason = within(row).getByText(/Requires order_delivery/);
+      expect(reason).toBeVisible();
+      expect(radio).toHaveAccessibleDescription(reason.textContent!);
+    });
+
+    it("an enabled option shows a pending state the moment it is clicked, then the drawer opens", async () => {
+      let release: (v: unknown) => void = () => {};
+      mockPreview.mockReturnValueOnce(new Promise((r) => (release = r)));
+      const rowOf = await renderRows([fulfilmentModeEffective(MODE), uncheckedSettingEffective()]);
+      const row = rowOf("fulfilment_model");
+      const radio = within(row).getByRole("radio", { name: "Own delivery" });
+      fireEvent.click(radio);
+      await waitFor(() => expect(radio).toHaveAttribute("aria-busy", "true"));
+      expect(within(row).getByText("Checking what would change…")).toBeVisible();
+      release(previewFulfil("delivery"));
+      expect(
+        await screen.findByText("Preview mode change", { selector: "h3" }),
+      ).toBeInTheDocument();
+      expect(radio).not.toHaveAttribute("aria-busy", "true");
+      expect(within(row).queryByText("Checking what would change…")).toBeNull();
+      // the radio still reads the server's value: it changes only after Confirm
+      expect(within(row).getByRole("radio", { name: "Ship by carrier" })).toBeChecked();
+    });
+
+    it("a preview that fails says so on the row instead of doing nothing", async () => {
+      mockPreview.mockRejectedValueOnce(new Error("down"));
+      const rowOf = await renderRows([fulfilmentModeEffective(MODE), uncheckedSettingEffective()]);
+      const row = rowOf("fulfilment_model");
+      fireEvent.click(within(row).getByRole("radio", { name: "Own delivery" }));
+      const alert = await within(row).findByRole("alert");
+      expect(alert).toHaveTextContent("Could not preview that mode change. Try again.");
+      expect(screen.queryByText("Preview mode change", { selector: "h3" })).toBeNull();
+      expect(mockWriteConfig).not.toHaveBeenCalled();
+    });
+
+    it("each option's label row is a 44 px target below sm", async () => {
+      const rowOf = await renderRows([fulfilmentModeEffective(MODE), uncheckedSettingEffective()]);
+      const label = within(rowOf("fulfilment_model"))
+        .getByRole("radio", { name: "Own delivery" })
+        .closest("label")!;
+      expect(label).toHaveClass("min-h-[44px]", "sm:min-h-6");
+    });
+  });
+
   it("picking both on a tenant without a fleet shows the console's fixed copy, never the server text", async () => {
     const SERVER_TEXT =
       "SERVER-TEXT fulfilment_model both needs driver_app_addon or route_optimization";

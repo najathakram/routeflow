@@ -14,6 +14,7 @@
  * `data-focus-target="capabilities"` and `useFocusTarget`.
  */
 import { test, expect, type Page, type Route } from "@playwright/test";
+import { mockOverviewReads, mockUnmockedBackoffice } from "./helpers/bo-api-mocks";
 
 function baseUrl(): string {
   const value = process.env.PLAYWRIGHT_BASE_URL;
@@ -91,6 +92,10 @@ interface Shell {
 async function gotoOverview(page: Page, shell: Shell, search = "") {
   const requested: string[] = [];
   page.on("request", (r) => requested.push(r.url()));
+  // Registered first, so every route below wins: nothing the page reads can reach the real API (a 401 there wipes
+  // the fake token and redirects to /admin-login).
+  await mockUnmockedBackoffice(page);
+  await mockOverviewReads(page, TENANT_ID);
   await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}$`), (route) =>
     fulfillJson(route, {
       id: TENANT_ID,

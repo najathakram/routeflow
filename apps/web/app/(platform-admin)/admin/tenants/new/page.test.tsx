@@ -579,6 +579,9 @@ describe("create-tenant capabilities", () => {
       name: "Change what this business does",
     });
     expect(within(reviewDialog).getByRole("button", { name: "Apply" })).toBeEnabled();
+    for (const name of ["Cancel", "Apply"]) {
+      expect(within(reviewDialog).getByRole("button", { name })).toHaveClass("!min-h-[44px]");
+    }
   });
 
   it("#3220: a failed preview applies NOTHING and says so", async () => {

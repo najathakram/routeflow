@@ -131,6 +131,27 @@ describe("CapabilityChoices: the three boxes", () => {
     expect(screen.getByText("Not available yet")).toBeVisible();
   });
 
+  it("every row is a 44 px target: checkbox rows, the nested door row and the opens-as radios (min-h pinned; px are in Playwright)", () => {
+    render(<Harness />);
+    fireEvent.click(box(DELIVERY));
+    fireEvent.click(box(SHIPPING));
+    fireEvent.click(box(COUNTER));
+    for (const name of [DELIVERY, DOOR, SHIPPING, COUNTER]) {
+      expect(box(name).closest("label")).toHaveClass("min-h-[44px]");
+    }
+    for (const name of ["Order", "Counter sale"]) {
+      expect(screen.getByRole("radio", { name }).closest("label")).toHaveClass("min-h-[44px]");
+    }
+  });
+
+  it("the Start from… trigger and its items beat the global 40 px button floor", () => {
+    render(<Harness />);
+    const trigger = screen.getByRole("button", { name: "Start from…" });
+    expect(trigger).toHaveClass("!min-h-[44px]");
+    fireEvent.click(trigger);
+    for (const item of screen.getAllByRole("menuitem")) expect(item).toHaveClass("!min-h-[44px]");
+  });
+
   it("a disabled form disables every box and the preset menu", () => {
     render(
       <CapabilityChoices

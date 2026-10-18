@@ -298,7 +298,7 @@ function StartFromMenu({
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         onClick={() => setOpen((v) => !v)}
-        className={`flex min-h-[44px] items-center rounded-lg px-4 text-sm font-medium text-slate-200 ring-1 ring-white/15 hover:bg-slate-700 disabled:opacity-50 ${FOCUS_RING}`}
+        className={`flex !min-h-[44px] items-center rounded-lg px-4 text-sm font-medium text-slate-200 ring-1 ring-white/15 hover:bg-slate-700 disabled:opacity-50 ${FOCUS_RING}`}
       >
         Start from…
       </button>
@@ -337,7 +337,7 @@ function StartFromMenu({
                   onPick(p);
                   close(true);
                 }}
-                className={`flex min-h-[44px] w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left hover:bg-slate-700 ${FOCUS_RING} ${
+                className={`flex !min-h-[44px] w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left hover:bg-slate-700 ${FOCUS_RING} ${
                   off ? "cursor-not-allowed opacity-60" : ""
                 }`}
               >
