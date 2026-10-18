@@ -1093,6 +1093,23 @@ describe("SubscriptionMutationService.subscribe — A2b plan-transition hook", (
     expect(transition.toPlanVersionId).toEqual(expect.any(String));
   });
 
+  // BO-13 M1: the restore runs BEFORE the checkout's add-on loop activates the rows, so the hook is told
+  // which add-on keys this same transaction will activate (a re-upgrade re-buying Routes must not read
+  // as "no fleet").
+  it("BO-13: tells the hook which add-on keys this checkout will activate (pendingAddonKeys)", async () => {
+    const { svc, planTransition } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    await svc.subscribe(
+      "t1",
+      { planKey: "TEAM", cycle: "MONTHLY", addons: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }] },
+      "admin",
+    );
+    expect(planTransition.onPlanChange.mock.calls[0][1].pendingAddonKeys).toEqual([
+      "CUSTOMER_PACK_100",
+    ]);
+  });
+
   it("a failing hook aborts the subscribe: no subscription write survives", async () => {
     const { svc, tx, planTransition } = make({
       sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },

@@ -183,6 +183,8 @@ export class TenantConfigSnapshotService {
       maxRows: AUTO_RESTORE_MAX_ROWS,
       timeBudgetMs: AUTO_RESTORE_TIME_BUDGET_MS,
     },
+    /** BO-13: add-on keys the caller's transaction activates AFTER this restore (a checkout's purchased add-ons). */
+    pendingAddonKeys: readonly string[] = [],
   ): Promise<RestoreResult | null> {
     const clock = budget.clock ?? Date.now;
     const deadline = clock() + budget.timeBudgetMs;
@@ -208,10 +210,16 @@ export class TenantConfigSnapshotService {
 
     // ONLY the automatic path is bounded (see AUTO_RESTORE_MAX_ROWS): the admin's explicit
     // "Restore now" (restoreSnapshot) passes no bounds.
-    return this.applySnapshot(tx, tenantId, snapshot, newPlanKey, now, planAllows, {
-      maxRows: budget.maxRows,
-      withinBudget,
-    });
+    return this.applySnapshot(
+      tx,
+      tenantId,
+      snapshot,
+      newPlanKey,
+      now,
+      planAllows,
+      { maxRows: budget.maxRows, withinBudget },
+      pendingAddonKeys,
+    );
   }
 
   /**
@@ -305,6 +313,7 @@ export class TenantConfigSnapshotService {
     takenAt: Date,
     now: Date,
     planAllows?: (featureKey: string) => boolean,
+    pendingAddonKeys: readonly string[] = [],
   ): Promise<{ plan: RestorePlan; held: HeldEntry[] }> {
     let plan = planRestore(payload, current, takenAt, now, planAllows);
     const create = plan.configs.create.find((e) => e.featureKey === FULFILMENT_MODEL_KEY);
@@ -329,7 +338,11 @@ export class TenantConfigSnapshotService {
       });
       const fleet = fleetHeldAfterRestore(
         plan,
-        { overrides: current.overrides, activeAddonKeys: addons.map((a) => a.addonKey) },
+        {
+          overrides: current.overrides,
+          activeAddonKeys: addons.map((a) => a.addonKey),
+          pendingAddonKeys,
+        },
         now,
       );
       if (!fleet) {
@@ -372,6 +385,7 @@ export class TenantConfigSnapshotService {
     planAllows?: (featureKey: string) => boolean,
     /** Present only for the automatic restore; absent = unbounded (the admin path). */
     bounds?: { maxRows: number; withinBudget: () => void },
+    pendingAddonKeys: readonly string[] = [],
   ): Promise<RestoreResult | null> {
     const [configs, overrides] = await Promise.all([
       tx.tenantFeatureConfig.findMany({ where: { tenantId } }),
@@ -390,6 +404,7 @@ export class TenantConfigSnapshotService {
       snapshot.takenAt,
       now,
       planAllows,
+      pendingAddonKeys,
     );
     const rows =
       plan.configs.create.length + plan.configs.update.length + plan.overrides.create.length;

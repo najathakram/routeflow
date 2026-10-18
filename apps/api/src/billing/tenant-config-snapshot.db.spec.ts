@@ -9,7 +9,7 @@
  * (snapshots/overrides/configs cascade with the tenant).
  */
 import { randomUUID } from "crypto";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
@@ -343,7 +343,7 @@ describeDb("TenantConfigSnapshotService — real Postgres round trip", () => {
       const audit = await prisma.auditLog.findFirstOrThrow({
         where: { tenantId, action: "CONFIG_SNAPSHOT_RESTORE_HELD" },
       });
-      expect((audit.meta as any).report.skipped).toBe(1);
+      expect(((audit.meta as Prisma.JsonObject).report as Prisma.JsonObject).skipped).toBe(1);
       await prisma.auditLog.deleteMany({
         where: { tenantId, action: "CONFIG_SNAPSHOT_RESTORE_HELD" },
       });

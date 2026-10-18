@@ -81,6 +81,18 @@ export async function heldAddonKeys(
 ): Promise<Set<string>> {
   const active = await addonService.getActiveAddons(tenantId);
   const overrides = await featureOverrides.allActive(tenantId);
+  return applyAddonOverrides(active, overrides);
+}
+
+/**
+ * The pure core of {@link heldAddonKeys}: add-on rows with overrides absolute (GRANT adds, DENY removes; only
+ * RequireAddon-gated keys). Shared with the snapshot restore's end-state fleet check
+ * (`fleetHeldAfterRestore`) so the two can never disagree on what "held" means.
+ */
+export function applyAddonOverrides(
+  active: Iterable<string>,
+  overrides: Iterable<readonly [string, "GRANT" | "DENY"]>,
+): Set<string> {
   const addons = new Set(active);
   for (const [key, effect] of overrides) {
     if (gateVia(key) !== "RequireAddon") continue;
@@ -88,6 +100,11 @@ export async function heldAddonKeys(
     else addons.delete(key);
   }
   return addons;
+}
+
+/** Either fleet module held in this set of effectively-held add-on keys. */
+export function fleetHeldIn(held: ReadonlySet<string>): boolean {
+  return FLEET_KEYS.some((k) => held.has(k));
 }
 
 /**
@@ -100,8 +117,7 @@ export async function isFleetHeld(
   featureOverrides: Pick<FeatureOverrideService, "allActive">,
   tenantId: string,
 ): Promise<boolean> {
-  const held = await heldAddonKeys(addonService, featureOverrides, tenantId);
-  return FLEET_KEYS.some((k) => held.has(k));
+  return fleetHeldIn(await heldAddonKeys(addonService, featureOverrides, tenantId));
 }
 
 /** The services the tenant-level capability read needs (the same three `GET /tenants/me/features` uses). */
