@@ -31,6 +31,7 @@ import { buildCatchupSessionParams } from "./catchup-session-params";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { withCheckoutPolicy } from "./checkout-session-params";
 import { StripeService } from "./stripe.service";
+import { webBaseUrl } from "../config/web-base-url";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 
 /**
@@ -411,7 +412,7 @@ export class CatchupCheckoutService {
         throw new ChangedUnderClaim();
       }
       const customerId = await this.billing.ensureStripeCustomer(tenantId);
-      const base = process.env.FRONTEND_URL ?? "http://localhost:3001";
+      const base = webBaseUrl();
       const params = buildCatchupSessionParams({
         tenantId,
         slug: report.slug,
@@ -422,7 +423,7 @@ export class CatchupCheckoutService {
         addonSkus: fresh._inputs!.addonSkus,
         plan: fresh.plan,
         now,
-        // PATHS ("/settings/billing?..."), joined to the one FRONTEND_URL base here
+        // PATHS ("/settings/billing?..."), joined to the one web base (webBaseUrl) here
         successUrl: `${base}${successPath}`,
         cancelUrl: `${base}${cancelPath}`,
       });

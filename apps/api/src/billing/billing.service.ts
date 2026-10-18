@@ -89,6 +89,7 @@ import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./pr
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { retryOnTxConflict } from "../common/tx-retry";
 import { withCheckoutPolicy } from "./checkout-session-params";
+import { webBaseUrl } from "../config/web-base-url";
 import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
   STRIPE_CHECKOUT_ASYNC_FAILED_ACTION,
@@ -629,7 +630,7 @@ export class BillingService {
     const pricing = await this.pricing.resolveTenantPricing(tenantId);
     const priceData = await this.pricing.checkoutPriceData(tenantId, interval);
 
-    const baseUrl = process.env.FRONTEND_URL ?? "http://localhost:3001";
+    const baseUrl = webBaseUrl();
     // SA-733 D6 / M6: ALWAYS an explicit anchor (the next 1st, 12:00 UTC), prorations created, and a session that
     // expires before the anchor so it can never complete after it (Stripe would then charge the full period).
 
@@ -990,7 +991,7 @@ export class BillingService {
       );
     }
 
-    const baseUrl = process.env.FRONTEND_URL ?? "http://localhost:3001";
+    const baseUrl = webBaseUrl();
 
     const portalSession = await this.stripe.createBillingPortalSession(
       {

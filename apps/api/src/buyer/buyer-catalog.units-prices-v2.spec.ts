@@ -46,9 +46,10 @@ describe("BuyerCatalogService — the tile shows the customer-layer price the ca
       findAll: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }),
       findOne: jest.fn(),
     };
+    const flagRead = jest.fn(async (_t: string, k: string) => k === V2 && v2On);
     ordersService = {
       getCustomerPriceHistory: jest.fn().mockResolvedValue({}),
-      entitlements: { hasFlag: jest.fn(async (_t: string, k: string) => k === V2 && v2On) },
+      entitlements: { hasFlag: flagRead, hasFlagStrict: flagRead },
     } as never;
     storage = { presignedUrl: jest.fn(), presignedUrls: jest.fn().mockResolvedValue([]) };
     replenishment = { estimates: jest.fn().mockResolvedValue([]) };

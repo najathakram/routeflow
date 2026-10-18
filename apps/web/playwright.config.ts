@@ -84,6 +84,17 @@ export default defineConfig({
       },
     },
 
+    // ── Backoffice web cards (BO-01 …): super-admin, approved test tenants only ──
+    {
+      name: "bo-web",
+      testMatch: /bo-web-.*\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "super-admin.json"),
+      },
+    },
+
     // ── Operator tests ─────────────────────────────────────────────────────────
     {
       name: "operator",

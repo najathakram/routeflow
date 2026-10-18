@@ -306,6 +306,17 @@ describe("db-lane.mjs — FULL mode, flags and exits", () => {
     expect(specLines(r2.out)).toHaveLength(5);
   });
 
+  it("12b. a FULL listing larger than a pipe buffer still ends with its summary line (stdout is flushed before exit)", () => {
+    // On Linux a piped stdout is asynchronous: `process.exit()` right after the last console.log cut a long listing off
+    // before its final "DB-LANE FULL (...)" line (the fixes-4 train CI). 1,700 specs is ~77 KB, past a 64 KB pipe.
+    const root = fixture({ "apps/api/src/common/testing/db-spec.ts": "export {};\n" }, 1700);
+    const r = lane(root, ["--files", "apps/api/src/common/testing/db-spec.ts"]);
+    expect(specLines(r.out)).toHaveLength(1700);
+    expect(r.out.length).toBeGreaterThan(65_536);
+    expect(r.out.trimEnd().split("\n").pop()).toMatch(/^DB-LANE FULL \(.*db-spec\.ts.*\)$/);
+    expect(r.status).toBe(0);
+  });
+
   it("13. a bad --base ⇒ exit 2 with no list; a changed file importing ./missing ⇒ exit 3 naming it", () => {
     const root = fixture({ "apps/api/src/k/bad.ts": 'import "./missing";\n' });
     const r = lane(root, ["--base", "no-such-ref"]);

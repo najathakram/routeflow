@@ -5,7 +5,9 @@
  * Retail ladder price the layer is priced like the sticky upsell (MANUAL, no promo). Flag off, or the unit not in the layer:
  * master's code path, untouched. Pure seams only; the wiring is pinned in orders.units-prices-v2.spec.ts and the others.
  */
+import { ServiceUnavailableException } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { resolveBuyerLinePrice } from "./buyer-merge-pricing";
 import { decideTierOverride } from "./staff-override";
 import { buildUnitLine } from "./unit-line-build";
@@ -14,6 +16,7 @@ import {
   loadUnitsPricesV2,
   omitCustomerLayerHistory,
   UNITS_PRICES_V2_FLAG,
+  type UnitsPricesV2Deps,
 } from "./units-prices-v2";
 
 // Fixture (SA-811a): pack list $42 (a 24-piece Box), Case of 288 at $480, Piece (1) at $1.75.
@@ -70,7 +73,11 @@ const deps = (opts: { rows?: Rows; flag?: boolean | Error; units?: unknown[] }) 
     productUnit: { findMany: jest.fn().mockResolvedValue(opts.units ?? [piece, case288]) },
     productTierUnit: { findMany: jest.fn().mockResolvedValue([]) },
   };
-  return { hasFlag, db, d: { entitlements: { hasFlag }, db, tenantId: "t1" } as never };
+  return {
+    hasFlag,
+    db,
+    d: { entitlements: { hasFlag, hasFlagStrict: hasFlag }, db, tenantId: "t1" } as never,
+  };
 };
 const svcOf = (h: ReturnType<typeof deps>) =>
   ({
@@ -81,10 +88,31 @@ const svcOf = (h: ReturnType<typeof deps>) =>
       }),
       getTenantId: () => "t1",
     },
-    entitlements: { hasFlag: h.hasFlag },
+    entitlements: { hasFlag: h.hasFlag, hasFlagStrict: h.hasFlag },
   }) as never;
 
 describe("loadUnitsPricesV2", () => {
+  // SA-812a G-1: the strict read is the only reader the type accepts. A plain `hasFlag` swallows a failed override lookup
+  // as "no override" (a clean false for this override-only flag), so it must not compile; the directive below fails the
+  // type-check (an unused @ts-expect-error is itself an error) the day hasFlagStrict becomes optional again.
+  it("G-1: a plain { hasFlag } reader does not compile, and is never consulted at run time", async () => {
+    const hasFlag = jest.fn(async () => true);
+    const deps: UnitsPricesV2Deps = {
+      // @ts-expect-error hasFlagStrict is required: a hasFlag-only reader is a type error
+      entitlements: { hasFlag },
+      db: {
+        customerUnitPrice: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue([{ productId: "p1", unitRef: "pack", price: "33" }]),
+        },
+      },
+      tenantId: "t1",
+    };
+    await expect(loadUnitsPricesV2(deps, "c1", ["p1"])).resolves.toBeNull();
+    expect(hasFlag).not.toHaveBeenCalled();
+  });
+
   it("flag on + typed rows: reads them by (customer, products), the ladder of those products, and asks the flag", async () => {
     const h = deps({ rows: [["pack", 33]] });
     const v2 = await loadUnitsPricesV2(h.d, "c1", ["p1", "p1", null]);
@@ -118,9 +146,31 @@ describe("loadUnitsPricesV2", () => {
     ).toBeNull();
   });
 
-  it("item 3: a failed entitlement read prices as master (null), it never fails the order", async () => {
+  // SA-812a G-1: a customer WITH typed rows is owed their typed price. A transient entitlement read error must never
+  // quietly bill them the tier price on a server-priced path: it is a coded, retryable 503 and nothing is written.
+  it("G-1: typed rows + a failed flag read throws a coded retryable 503 (never master's tier price)", async () => {
     const h = deps({ rows: [["pack", 33]], flag: new Error("entitlements down") });
+    const err = await loadUnitsPricesV2(h.d, "c1", ["p1"]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect((err as ServiceUnavailableException).getStatus()).toBe(503);
+    expect((err as ServiceUnavailableException).getResponse()).toMatchObject({
+      statusCode: 503,
+      code: API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE,
+    });
+    // it fails before the ladder is read: nothing downstream ran
+    expect(h.db.productUnit.findMany).not.toHaveBeenCalled();
+  });
+
+  it("G-1 guard: NO typed rows (only an odd tier) + a failed flag read keeps the master fallback", async () => {
+    const h = deps({ flag: new Error("entitlements down") });
+    await expect(loadUnitsPricesV2(h.d, "c1", ["p1"], [9, 2])).resolves.toBeNull();
+    expect(h.hasFlag).toHaveBeenCalledTimes(1);
+  });
+
+  it("G-1 guard: a DENIED or revoked flag (a clean false) still prices as master, even with typed rows", async () => {
+    const h = deps({ rows: [["pack", 33]], flag: false });
     await expect(loadUnitsPricesV2(h.d, "c1", ["p1"])).resolves.toBeNull();
+    expect(h.hasFlag).toHaveBeenCalledTimes(1);
   });
 
   it("no typed row and ordinary tiers: the flag is never consulted (nothing could differ)", async () => {
@@ -141,7 +191,7 @@ describe("loadUnitsPricesV2", () => {
     const hasFlag = jest.fn().mockResolvedValue(true);
     expect(
       await loadUnitsPricesV2(
-        { entitlements: { hasFlag }, db: {}, tenantId: "t1" },
+        { entitlements: { hasFlagStrict: hasFlag }, db: {}, tenantId: "t1" },
         "c1",
         ["p1"],
         [7],
@@ -149,7 +199,11 @@ describe("loadUnitsPricesV2", () => {
     ).not.toBeNull();
     expect(await loadUnitsPricesV2(deps({}).d, null, ["p1"])).toBeNull();
     expect(
-      await loadUnitsPricesV2({ entitlements: { hasFlag }, db: {}, tenantId: null }, "c1", ["p1"]),
+      await loadUnitsPricesV2(
+        { entitlements: { hasFlagStrict: hasFlag }, db: {}, tenantId: null },
+        "c1",
+        ["p1"],
+      ),
     ).toBeNull();
   });
 });
@@ -378,7 +432,7 @@ describe("R3 / R3a: the pre-fill is the resolver's price, never last-given", () 
         }),
         getTenantId: () => "t1",
       },
-      entitlements: { hasFlag: h.hasFlag },
+      entitlements: { hasFlag: h.hasFlag, hasFlagStrict: h.hasFlag },
     } as never;
     return omitCustomerLayerHistory(svc, "c1", history);
   };
@@ -404,7 +458,7 @@ describe("R3 / R3a: the pre-fill is the resolver's price, never last-given", () 
         }),
         getTenantId: () => "t1",
       },
-      entitlements: { hasFlag: h.hasFlag },
+      entitlements: { hasFlag: h.hasFlag, hasFlagStrict: h.hasFlag },
     } as never;
     await omitCustomerLayerHistory(svc, "c1", { p1: { lastPrice: 36, listPriceAtTime: 42 } });
     expect(seen).toHaveLength(3);

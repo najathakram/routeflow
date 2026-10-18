@@ -49,9 +49,7 @@ function harness(opts: { flag: boolean; typed: Array<[string, number]>; tier?: n
       { customerId: "c1", items: [{ productId: "p1" }] },
       ladders as never,
       "actor",
-      {
-        hasFlag,
-      },
+      { hasFlagStrict: hasFlag },
     );
   return { hasFlag, load };
 }

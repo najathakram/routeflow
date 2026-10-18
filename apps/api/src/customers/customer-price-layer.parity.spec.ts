@@ -81,7 +81,7 @@ function harness(opts: {
   };
   const svc = {
     prisma: { forTenant: () => db, getTenantId: () => "t1" },
-    entitlements: { hasFlag },
+    entitlements: { hasFlag, hasFlagStrict: hasFlag },
   } as never;
   return { db, svc, hasFlag };
 }
@@ -306,7 +306,7 @@ describe("A-6: the route is gated like K6 and tenant-scoped", () => {
     }
     const svc = new CustomerUnitPricesService(
       { forTenant: () => h.db, getTenantId: () => "t1" } as never,
-      { hasFlag: h.hasFlag } as never,
+      { hasFlag: h.hasFlag, hasFlagStrict: h.hasFlag } as never,
     );
     expect((await svc.priceLayer("c1")).products.p1).toBeDefined();
   });

@@ -81,7 +81,7 @@ describe("OrdersService.create: billing reads typed customer unit prices (S19)",
       .useMocker((token) => {
         if (token === PrismaService) return prisma;
         if (token === ConfigService) return { get: jest.fn().mockReturnValue(0.1) };
-        if (token === EntitlementsService) return { hasFlag };
+        if (token === EntitlementsService) return { hasFlag, hasFlagStrict: hasFlag };
         if (token === PromotionsService) return { activeForCatalog: jest.fn(async () => promos) };
         return autoMock();
       })

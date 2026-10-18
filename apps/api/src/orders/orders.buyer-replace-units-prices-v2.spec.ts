@@ -216,7 +216,7 @@ describe("S19: a BUYER replace-all prices a pack line from the customer layer (p
         },
         {
           provide: EntitlementsService,
-          useValue: { hasFlag: hasFlagMock },
+          useValue: { hasFlag: hasFlagMock, hasFlagStrict: hasFlagMock },
         },
         // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
         {

@@ -88,6 +88,10 @@ describe("F26: the customer search is a WAI-ARIA combobox", () => {
     render(<CustomerPriceView productId="p1" />);
     const box = input();
     expect(box).toHaveAttribute("role", "combobox");
+    // K11-04: the list starts shut; focus opens it.
+    expect(box).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    act(() => box.focus());
     expect(box).toHaveAttribute("aria-expanded", "true");
     expect(box).toHaveAttribute("aria-autocomplete", "list");
     const list = screen.getByRole("listbox", { name: "Customers" });
@@ -137,6 +141,7 @@ describe("F26: the customer search is a WAI-ARIA combobox", () => {
   it("Enter on a single match picks it without moving first", () => {
     setHits([HITS[0]]);
     render(<CustomerPriceView productId="p1" />);
+    act(() => input().focus());
     fireEvent.keyDown(input(), { key: "Enter" });
     expect(screen.getByTestId(T.chosen)).toBeInTheDocument();
     expect(mockPrices).toHaveBeenLastCalledWith("c1", "p1", expect.anything());
@@ -179,12 +184,13 @@ describe("F26: the customer search is a WAI-ARIA combobox", () => {
     expect(document.activeElement).toBe(box);
   });
 
-  it("stays open on blur (the list is inline, not a floating popup) and is closed after a pick", () => {
+  it("closes on blur (K11-04: shut until asked) and is closed after a pick", () => {
     render(<CustomerPriceView productId="p1" />);
     const box = input();
     act(() => box.focus());
     act(() => box.blur());
-    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(screen.queryByRole("listbox")).toBeNull();
+    act(() => box.focus());
     fireEvent.click(screen.getByTestId(T.result("c1")));
     expect(screen.queryByRole("listbox")).toBeNull();
   });
@@ -199,7 +205,7 @@ describe("F26: the customer search is a WAI-ARIA combobox", () => {
       </div>,
     );
     const box = input();
-    box.focus();
+    act(() => box.focus());
     const open = fireEvent.keyDown(box, { key: "Escape" });
     expect(parent).not.toHaveBeenCalled();
     expect(doc).not.toHaveBeenCalled();
@@ -225,6 +231,7 @@ describe("F26: the customer search is a WAI-ARIA combobox", () => {
 
   it("a mouse click still picks, and options are 44px touch targets", () => {
     render(<CustomerPriceView productId="p1" />);
+    act(() => input().focus());
     const opt = screen.getByTestId(T.result("c3"));
     expect(opt.className).toContain("min-h-11");
     fireEvent.click(opt);
@@ -242,7 +249,7 @@ describe("F26: the customer search is a WAI-ARIA combobox", () => {
 });
 
 describe("P18: tier labels", () => {
-  it("prints an unlabeled tier once: header 'Tier 3', never 'Tier 3 tier'", () => {
+  it("prints an unlabeled tier once: the caption says 'Tier 3', never 'Tier 3 tier'", () => {
     mockLabels = {};
     mockPrices.mockImplementation(() => ({
       data: response(3),
@@ -251,7 +258,8 @@ describe("P18: tier labels", () => {
     }));
     render(<CustomerPriceView customerId="c1" />);
     const heads = within(screen.getByTestId(T.prices("p1"))).getAllByRole("columnheader");
-    expect(heads[3]).toHaveTextContent(/^Tier 3$/);
+    // K11-07: the tier column is gone (its figure moved into the caption), so the tier is named once, there.
+    expect(heads.map((h) => h.textContent)).toEqual(["Unit", "Price", "Retail"]);
     expect(document.body.textContent).not.toMatch(/Tier 3 tier/i);
     // No custom label: the default name, once, with no appended word.
     expect(priceCell()).toBe("AutoTier 3");
@@ -276,7 +284,7 @@ describe("P18: tier labels", () => {
     expect(priceCell()).toBe("AutoWalk-in");
   });
 
-  it("keeps a configured label as the header and the caption", () => {
+  it("keeps a configured label in the caption (K11-07: the tier column is gone)", () => {
     mockPrices.mockImplementation(() => ({
       data: response(2),
       isLoading: false,
@@ -284,7 +292,8 @@ describe("P18: tier labels", () => {
     }));
     render(<CustomerPriceView customerId="c1" />);
     const heads = within(screen.getByTestId(T.prices("p1"))).getAllByRole("columnheader");
-    expect(heads[3]).toHaveTextContent(/^Wholesale$/);
+    // K11-07: no tier column; the configured label names the tier in the caption.
+    expect(heads.map((h) => h.textContent)).toEqual(["Unit", "Price", "Retail"]);
     // A custom label is printed verbatim: " tier" is appended only when there is no custom label.
     expect(priceCell()).toBe("AutoWholesale");
   });

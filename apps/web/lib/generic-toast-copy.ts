@@ -146,6 +146,9 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.LABEL_CHANGE_IN_PROGRESS]:
     "Another product label change is in progress. Try again in a moment.",
   [API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE]: "This product's family chain can't be read.",
+  // SA-812a G-1: a typed-price customer's flag read failed (503); the write never ran, so a retry is safe.
+  [API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE]:
+    "Customer prices couldn't be loaded. Nothing was saved. Try again in a moment.",
   [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]:
     "This invoice's tax no longer matches its lines. Re-save the invoice lines, then try again.",
   [API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID]:

@@ -10,26 +10,45 @@ interface CustomerHit {
   contactName?: string;
 }
 
+/** Rows whose business or contact name contains the text (case-insensitive); all rows for empty text. */
+function localMatches(rows: CustomerHit[], text: string): CustomerHit[] {
+  const needle = text.toLowerCase();
+  if (!needle) return rows;
+  return rows.filter(
+    (r) =>
+      (r.businessName ?? "").toLowerCase().includes(needle) ||
+      (r.contactName ?? "").toLowerCase().includes(needle),
+  );
+}
+
 const LISTBOX_ID = "units-v2-cust-listbox";
 const optionId = (id: string) => `units-v2-cust-opt-${id}`;
 
 /**
  * Customer search as a WAI-ARIA combobox with a listbox popup (F26). DOM focus stays in the input;
  * the highlighted option is named by aria-activedescendant. ArrowDown/ArrowUp move it, Home/End jump,
- * Enter picks it (or the only match), Escape closes the list (and stops there) and keeps focus in the input, focus and typing
- * reopen it. A mouse click on an option still picks.
+ * Enter picks it (or the only match), Escape closes the list (and stops there) and keeps focus in the input, blur closes it too (K11-04: the list
+ * starts shut), focus and typing reopen it. A mouse click on an option still picks.
  */
 export function CustomerPicker({ onPick }: { onPick: (c: { id: string; name: string }) => void }) {
   const [text, setText] = React.useState("");
   const [debounced, setDebounced] = React.useState("");
-  const [open, setOpen] = React.useState(true);
+  const [open, setOpen] = React.useState(false); // K11-04: shut until the owner asks (focus or typing)
   const [active, setActive] = React.useState(-1);
   React.useEffect(() => {
     const t = setTimeout(() => setDebounced(text.trim()), 250);
     return () => clearTimeout(t);
   }, [text]);
   const list = useCustomers({ search: debounced || undefined, limit: 8 });
-  const hits = ((list.data as { data?: CustomerHit[] } | undefined)?.data ?? []).slice(0, 8);
+  // K11-05: the 250 ms debounce gates the API call only. Until the response for the current text lands,
+  // the rows already loaded are filtered by the text on every keystroke, so the list follows the keys at
+  // once; the server result replaces it when it arrives (it may match on more than the name).
+  const loaded = (list.data as { data?: CustomerHit[] } | undefined)?.data;
+  const lastLoaded = React.useRef<CustomerHit[]>([]);
+  if (loaded) lastLoaded.current = loaded;
+  const trimmed = text.trim();
+  const fresh = loaded !== undefined && trimmed === debounced;
+  const hits = (fresh ? loaded : localMatches(lastLoaded.current, trimmed)).slice(0, 8);
   const expanded = open && hits.length > 0;
   const activeHit = expanded && active >= 0 && active < hits.length ? hits[active] : null;
 
@@ -84,6 +103,10 @@ export function CustomerPicker({ onPick }: { onPick: (c: { id: string; name: str
         autoComplete="off"
         value={text}
         onFocus={() => setOpen(true)}
+        onBlur={() => {
+          setOpen(false);
+          setActive(-1);
+        }}
         onChange={(e) => {
           setText(e.target.value);
           setOpen(true);
@@ -111,15 +134,19 @@ export function CustomerPicker({ onPick }: { onPick: (c: { id: string; name: str
               onMouseDown={(e) => e.preventDefault()} // keep focus in the input
               onMouseEnter={() => setActive(i)}
               onClick={() => pick(c)}
-              className={`flex min-h-11 cursor-pointer items-center px-3 py-2 text-left text-sm text-navy hover:bg-surface-muted ${
-                i === active ? "bg-surface-muted" : ""
+              // K11-04: the highlight is a brand tint plus a left bar (not the hover grey), and hover moves
+              // the same highlight (onMouseEnter sets active), so mouse and keyboard look alike.
+              className={`flex min-h-11 cursor-pointer items-center border-l-[3px] px-3 py-2 text-left text-sm text-navy ${
+                i === active
+                  ? "border-l-brand-600 bg-brand-500/10 font-medium"
+                  : "border-l-transparent"
               }`}
             >
               {c.businessName ?? c.contactName}
             </li>
           ))}
         </ul>
-      ) : debounced && hits.length === 0 ? (
+      ) : fresh && debounced && hits.length === 0 ? (
         <p className="text-xs text-navy/60">No customer matches that name.</p>
       ) : null}
     </div>

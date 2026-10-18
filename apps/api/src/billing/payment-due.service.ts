@@ -6,6 +6,7 @@ import { CatchupCheckoutService } from "./catchup-checkout.service";
 import { CATCHUP_META, claimRefusal } from "./catchup-claim";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { chargeNowCents, describeStubPeriod } from "./catchup-plan";
+import { webBaseUrl } from "../config/web-base-url";
 import {
   SIGNING_SINCE,
   checkSessionTerms,
@@ -248,7 +249,7 @@ export class PaymentDueService {
       const out = await this.catchup.open(tenantId, {
         expectedStubCents: stubCents,
         now,
-        // paths: open() joins them to its one FRONTEND_URL base
+        // paths: open() joins them to its one web base (webBaseUrl)
         successPath: view.cardNeeded ? CARD_RETURN_PATH : PAID_RETURN_PATH,
         cancelPath: "/settings/billing?checkout=cancelled",
       });
@@ -307,6 +308,8 @@ export class PaymentDueService {
       expires_at?: number | null;
       created?: number | null;
       metadata?: unknown;
+      success_url?: string | null;
+      cancel_url?: string | null;
     } | null;
     try {
       session = await this.stripe.getCheckoutSession(sessionId);
@@ -324,15 +327,20 @@ export class PaymentDueService {
     const expiresMs = Number(session.expires_at ?? 0) * 1000;
     if (session.url && expiresMs > now.getTime()) {
       const verdict = this.termsVerdict(tenantId, session.metadata, terms);
-      if (verdict === "match") return session.url;
+      // A session built before the web base was fixed carries a localhost (or other-origin) return URL for up to 23 h:
+      // matching terms are not enough, it takes the same Stripe-confirmed expire, release and recreate path.
+      const urlsOffBase = this.returnUrlsOffBase(tenantId, sessionId, session);
+      if (verdict === "match" && !urlsOffBase) return session.url;
       if (verdict === "unknown") throw this.stateUnknown(tenantId, "terms_unreadable", "read");
-      this.warnIfUnsignedAfterSigning(tenantId, sessionId, session);
-      if (raced) {
+      if (verdict !== "match") this.warnIfUnsignedAfterSigning(tenantId, sessionId, session);
+      if (raced && verdict !== "match") {
         // This request's plan may be the older one (a click planned just before D, the winner just after): re-plan
         // ONCE with a fresh clock. A session that matches that plan is authoritative: never expire a fresh winner.
         // No plan to compare with (nothing payable any more, or the read failed) decides nothing: retry, expire nothing.
         const again = await this.replanAfterRace(tenantId);
-        if (this.termsVerdict(tenantId, session.metadata, again) === "match") return session.url;
+        if (this.termsVerdict(tenantId, session.metadata, again) === "match" && !urlsOffBase) {
+          return session.url;
+        }
         staleWinner = true;
       }
       this.logger.log(
@@ -406,6 +414,27 @@ export class PaymentDueService {
     this.logger.warn(
       `payment-due: the open catch-up session ${sessionId} of tenant ${tenantId} has no terms signature although it was created after signing began (reason=unsigned_after_signing): a creation path is not signing`,
     );
+  }
+
+  /**
+   * True when the stored session's own success or cancel URL is not on the configured web base (a session created while
+   * the API fell back to a localhost default). A URL Stripe did not report is not judged (nothing to compare).
+   */
+  private returnUrlsOffBase(
+    tenantId: string,
+    sessionId: string,
+    session: { success_url?: string | null; cancel_url?: string | null },
+  ): boolean {
+    const base = webBaseUrl();
+    const off = [session.success_url, session.cancel_url].filter(
+      (u): u is string =>
+        typeof u === "string" && u !== "" && u !== base && !u.startsWith(`${base}/`),
+    );
+    if (off.length === 0) return false;
+    this.logger.warn(
+      `payment-due: the open catch-up session ${sessionId} of tenant ${tenantId} returns to another origin than the web base (reason=return_url_off_base); expiring it`,
+    );
+    return true;
   }
 
   /** A raced winner that still disagreed with the fresh plan was expired and released. */

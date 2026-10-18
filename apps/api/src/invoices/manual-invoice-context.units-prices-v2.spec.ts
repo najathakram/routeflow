@@ -45,7 +45,7 @@ function run(opts: { typed?: boolean; flag?: boolean }) {
   const items: any[] = [{ productId: "p1", unitLabel: "Piece", qty: 3, unitPrice: 1.75 }];
   return loadManualLineContext(items as never, {
     prisma: { getTenantId: () => "t1", forTenant: () => db },
-    entitlements: { hasFlag } as never,
+    entitlements: { hasFlag, hasFlagStrict: hasFlag } as never,
     derivedBaseCustomer: { id: "c1", tier: 1 },
   }).then(() => ({ item: items[0], hasFlag }));
 }
