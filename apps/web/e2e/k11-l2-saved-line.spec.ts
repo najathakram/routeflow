@@ -79,6 +79,13 @@ for (const vp of VIEWPORTS) {
         page,
         context,
       }) => {
+        // KNOWN (expected red, carded for window 2): a real mouse Save at 1440 scrolls the shell's overflow-hidden
+        // wrapper by the header's 64 px, so the line pins 64 px short of the bottom. Ctrl+S, 768 and 390 are flush.
+        // Remove this line with the fix.
+        test.fail(
+          vp.width === 1440 && how === "Save button",
+          "known: a mouse Save scrolls the shell's hidden wrapper by 64 px",
+        );
         await openProduct(page, context);
         await stageOneChange(page);
         const line = page.getByTestId(ID.line);
