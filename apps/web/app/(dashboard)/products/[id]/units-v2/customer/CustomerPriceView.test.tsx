@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CustomerUnitPricesResponse } from "@routeflow/types";
 import { CustomerPriceView, resetCustomerViewMemory } from "./CustomerPriceView";
 import { CUSTOMER_VIEW_TESTIDS as T } from "./customer-testids";
@@ -114,6 +114,8 @@ describe("CustomerPriceView on the product page (V10: start on no one, find any 
 
   it("remembers the last choice for the session and can go back to no one", async () => {
     const { unmount } = render(<CustomerPriceView productId="p1" />);
+    // K11-04: the list is shut until the field is focused.
+    act(() => screen.getByTestId(T.search).focus());
     fireEvent.click(await screen.findByTestId(T.result("c1")));
     unmount();
     render(<CustomerPriceView productId="p1" />);

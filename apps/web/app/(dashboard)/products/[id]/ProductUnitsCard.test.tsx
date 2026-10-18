@@ -1,5 +1,6 @@
 import * as React from "react";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ToastProvider } from "@routeflow/ui/web";
 import { createTestQueryClient } from "@/test-utils/render";
@@ -205,7 +206,10 @@ describe("ProductUnitsCard", () => {
     mockUnits = [caseUnit];
     renderCard();
     fireEvent.click(screen.getAllByRole("radio")[1]); // [0] = the pack row's radio
-    expect(updateMutate).toHaveBeenCalledWith({ id: "u-case", isDefaultSelling: true });
+    expect(updateMutate).toHaveBeenCalledWith(
+      { id: "u-case", isDefaultSelling: true },
+      expect.any(Object),
+    );
   });
 
   it("Remove asks first, and only deletes on confirm", async () => {
@@ -419,5 +423,375 @@ describe("ProductUnitsCard on the v2 surface (K10d: one Add a unit, one Remove p
     loaded(gridRow("pack", "pack"), gridRow("u-case", "unit", false));
     renderWith({ hideAddForm: true });
     expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+  });
+});
+
+describe("K10e F18: changing the default order unit says so and can be undone (inline, no timer)", () => {
+  const palletDefault = { ...palletUnit, isDefaultSelling: true };
+  const status = () => screen.getByTestId("units-default-note");
+  const radios = () => screen.getAllByRole("radio"); // [0] = the pack row, then one per unit
+  /** Settle the last write the way the API client does. */
+  const succeed = (call = updateMutate.mock.calls.length - 1) =>
+    act(() => {
+      updateMutate.mock.calls[call][1]?.onSuccess?.({});
+    });
+
+  it("the status region is mounted empty, before anything has changed (so it is announced when it fills)", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    expect(status()).toHaveAttribute("role", "status");
+    expect(status()).toHaveTextContent("");
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("a change shows '<Unit> is now the default order unit.' with Undo, only once the write has succeeded", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    expect(status()).toHaveTextContent("");
+    succeed();
+    expect(status()).toHaveTextContent("Case is now the default order unit.");
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+  });
+
+  it("Undo makes ONE write that restores the previous default, then announces it and drops Undo", () => {
+    mockUnits = [caseUnit, palletDefault];
+    renderCard();
+    fireEvent.click(radios()[1]); // Case becomes the default; Pallet was
+    succeed();
+    updateMutate.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    expect(updateMutate.mock.calls[0][0]).toEqual({ id: "u-pallet", isDefaultSelling: true });
+    expect(status()).toHaveTextContent("Case is now the default order unit."); // not announced until it is saved
+    succeed(0);
+    expect(status()).toHaveTextContent("Pallet is the default order unit again.");
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("when the pack unit was the default, Undo clears the new default with one write and names the pack", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    updateMutate.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    expect(updateMutate.mock.calls[0][0]).toEqual({ id: "u-case", isDefaultSelling: false });
+    succeed(0);
+    expect(status()).toHaveTextContent("Box is the default order unit again.");
+  });
+
+  it("choosing the pack row's radio names the pack, and Undo puts the old unit back", () => {
+    mockUnits = [{ ...caseUnit, isDefaultSelling: true }];
+    renderCard();
+    fireEvent.click(radios()[0]);
+    expect(updateMutate.mock.calls[0][0]).toEqual({ id: "u-case", isDefaultSelling: false });
+    succeed();
+    expect(status()).toHaveTextContent("Box is now the default order unit.");
+    updateMutate.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(updateMutate.mock.calls[0][0]).toEqual({ id: "u-case", isDefaultSelling: true });
+  });
+
+  it("a failed write shows no status (nothing changed)", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    act(() => {
+      updateMutate.mock.calls[0][1]?.onError?.(new Error("nope"));
+    });
+    expect(status()).toHaveTextContent("");
+  });
+
+  it("there is no timer: the status is still there long after 10 seconds", () => {
+    jest.useFakeTimers();
+    try {
+      mockUnits = [caseUnit];
+      renderCard();
+      fireEvent.click(radios()[1]);
+      succeed();
+      act(() => {
+        jest.advanceTimersByTime(120_000);
+      });
+      expect(status()).toHaveTextContent("Case is now the default order unit.");
+      expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("Dismiss (a named button) clears it", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    expect(status()).toHaveTextContent("");
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+    expect(updateMutate).toHaveBeenCalledTimes(1); // dismissing writes nothing
+  });
+
+  it("Dismiss also clears the 'again' message after an Undo", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    succeed();
+    expect(status()).toHaveTextContent("Box is the default order unit again.");
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    expect(status()).toHaveTextContent("");
+  });
+
+  it("the next unit write clears it: saving a unit's edit", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    fireEvent.change(screen.getByLabelText("Case price"), { target: { value: "500" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(status()).toHaveTextContent("");
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("the next unit write clears it: adding a unit", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    fireEvent.change(screen.getByLabelText("New unit"), { target: { value: "Pallet" } });
+    fireEvent.change(screen.getByLabelText("Pieces per new unit"), { target: { value: "500" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add unit" }));
+    expect(status()).toHaveTextContent("");
+  });
+
+  it("the next unit write clears it: removing a unit", async () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove" }),
+    );
+    expect(status()).toHaveTextContent("");
+  });
+
+  it("the next default change replaces it (Undo then undoes only the latest)", () => {
+    mockUnits = [caseUnit, palletUnit];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    fireEvent.click(radios()[2]);
+    succeed();
+    expect(status()).toHaveTextContent("Pallet is now the default order unit.");
+    expect(screen.getAllByRole("button", { name: "Undo" })).toHaveLength(1);
+  });
+
+  it("a write made elsewhere on the page (another mutation) clears it, so Undo is never stale", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    expect(status()).toHaveTextContent("Case is now the default order unit.");
+    act(() => {
+      queryClient.getMutationCache().build(queryClient, { mutationFn: async () => 1 });
+    });
+    expect(status()).toHaveTextContent("");
+  });
+
+  it("Dismiss returns focus to the default order unit radio, not to a hidden message", () => {
+    mockUnits = [caseUnit, palletDefault];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    expect(radios()[2]).toHaveFocus(); // Pallet is still the checked one in this data
+  });
+
+  it("pack is the default: Dismiss focuses the pack radio, which is the checked one (never the unchecked Case)", () => {
+    mockUnits = [{ ...caseUnit, isDefaultSelling: true }];
+    const { rerender } = renderCard();
+    fireEvent.click(radios()[0]); // the pack becomes the default
+    mockUnits = [caseUnit]; // the refetch before the write reports back
+    rerender(<Card />);
+    succeed();
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    expect(radios()[0]).toBeChecked();
+    expect(radios()[0]).toHaveFocus();
+    expect(radios()[1]).not.toHaveFocus();
+  });
+
+  it("the checked pack radio stays focusable: aria-disabled, not natively disabled", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    expect(radios()[0]).toBeChecked();
+    expect(radios()[0]).not.toBeDisabled();
+    expect(radios()[0]).toHaveAttribute("aria-disabled", "true");
+    radios()[0].focus();
+    expect(radios()[0]).toHaveFocus();
+  });
+
+  it("activating the aria-disabled checked pack radio is ignored: Space and click send no write and show no note", async () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    const user = userEvent.setup();
+    radios()[0].focus();
+    await user.keyboard(" ");
+    await user.keyboard("{Enter}");
+    await user.click(radios()[0]);
+    fireEvent.click(radios()[0]);
+    expect(updateMutate).not.toHaveBeenCalled();
+    expect(status()).toHaveTextContent("");
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("Space on the pack radio commits it and focus STAYS on that radio (it is not disabled by the commit)", async () => {
+    mockUnits = [{ ...caseUnit, isDefaultSelling: true }];
+    const { rerender } = renderCard();
+    const user = userEvent.setup();
+    radios()[0].focus();
+    await user.keyboard(" ");
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    expect(updateMutate.mock.calls[0][0]).toEqual({ id: "u-case", isDefaultSelling: false });
+    mockUnits = [caseUnit];
+    rerender(<Card />);
+    succeed();
+    expect(status()).toHaveTextContent("Box is now the default order unit.");
+    expect(radios()[0]).toBeChecked();
+    expect(radios()[0]).toHaveFocus();
+  });
+
+  it("Undo of a pack default focuses the checked radio (the restored unit), whichever it is", () => {
+    mockUnits = [{ ...caseUnit, isDefaultSelling: true }];
+    const { rerender } = renderCard();
+    fireEvent.click(radios()[0]);
+    mockUnits = [caseUnit];
+    rerender(<Card />);
+    succeed();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    mockUnits = [{ ...caseUnit, isDefaultSelling: true }];
+    rerender(<Card />);
+    succeed(updateMutate.mock.calls.length - 1);
+    expect(status()).toHaveTextContent("Case is the default order unit again.");
+    expect(radios()[1]).toBeChecked();
+    expect(radios()[1]).toHaveFocus();
+  });
+
+  it("the changed radio is scrolled into view (nearest) when the message appears, and focus does not move", () => {
+    const scroll = jest.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      mockUnits = [caseUnit, palletDefault];
+      renderCard();
+      const before = document.activeElement;
+      fireEvent.click(radios()[1]);
+      succeed();
+      expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+      expect(document.activeElement).toBe(before);
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it("Dismiss is a 44px-tall target (min-h-11) in the quiet text style", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    expect(screen.getByRole("button", { name: /dismiss/i })).toHaveClass("min-h-11");
+  });
+
+  it("after Undo, focus is on the default order unit radio, not on the message", () => {
+    mockUnits = [caseUnit, palletDefault];
+    renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    succeed();
+    expect(status()).toHaveTextContent("Pallet is the default order unit again.");
+    expect(radios()[2]).toHaveFocus();
+  });
+
+  it("a default that changes elsewhere (another tab, a non-hook write) drops the message", () => {
+    mockUnits = [caseUnit, palletUnit];
+    const { rerender } = renderCard();
+    fireEvent.click(radios()[1]);
+    succeed();
+    // the refetch after our own write: Case is the default, as the message says
+    mockUnits = [{ ...caseUnit, isDefaultSelling: true }, palletUnit];
+    rerender(<Card />);
+    expect(status()).toHaveTextContent("Case is now the default order unit.");
+    // someone else makes Pallet the default
+    mockUnits = [caseUnit, { ...palletUnit, isDefaultSelling: true }];
+    rerender(<Card />);
+    expect(status()).toHaveTextContent("");
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("every default radio says how the keys work, in a visually hidden hint", () => {
+    mockUnits = [caseUnit];
+    renderCard();
+    for (const r of radios()) {
+      expect(r).toHaveAccessibleDescription(
+        "Use arrow keys to move, Space to make it the default.",
+      );
+    }
+  });
+
+  describe("keyboard: arrows move focus without saving; Space or Enter commits", () => {
+    it("ArrowDown / ArrowUp move focus between the radios and write nothing", async () => {
+      mockUnits = [caseUnit, palletUnit];
+      renderCard();
+      const user = userEvent.setup();
+      radios()[1].focus();
+      await user.keyboard("{ArrowDown}");
+      expect(radios()[2]).toHaveFocus();
+      await user.keyboard("{ArrowRight}");
+      expect(radios()[0]).toHaveFocus(); // wraps past the end to the pack radio (focusable, though it is the default)
+      expect(updateMutate).not.toHaveBeenCalled();
+      expect(radios()[2]).not.toBeChecked();
+    });
+
+    it("ArrowUp moves back, still writing nothing", async () => {
+      mockUnits = [caseUnit, palletUnit];
+      renderCard();
+      const user = userEvent.setup();
+      radios()[2].focus();
+      await user.keyboard("{ArrowUp}");
+      expect(radios()[1]).toHaveFocus();
+      expect(updateMutate).not.toHaveBeenCalled();
+    });
+
+    it("Space on the focused radio commits it", async () => {
+      mockUnits = [caseUnit, palletUnit];
+      renderCard();
+      const user = userEvent.setup();
+      radios()[1].focus();
+      await user.keyboard("{ArrowDown}");
+      await user.keyboard(" ");
+      expect(updateMutate).toHaveBeenCalledTimes(1);
+      expect(updateMutate.mock.calls[0][0]).toEqual({ id: "u-pallet", isDefaultSelling: true });
+    });
+
+    it("Enter on the focused radio commits it", async () => {
+      mockUnits = [caseUnit, palletUnit];
+      renderCard();
+      const user = userEvent.setup();
+      radios()[2].focus();
+      await user.keyboard("{Enter}");
+      expect(updateMutate).toHaveBeenCalledTimes(1);
+      expect(updateMutate.mock.calls[0][0]).toEqual({ id: "u-pallet", isDefaultSelling: true });
+    });
+
+    it("Enter on the radio that is already the default writes nothing", async () => {
+      mockUnits = [caseUnit, { ...palletUnit, isDefaultSelling: true }];
+      renderCard();
+      const user = userEvent.setup();
+      radios()[2].focus();
+      await user.keyboard("{Enter}");
+      expect(updateMutate).not.toHaveBeenCalled();
+    });
   });
 });

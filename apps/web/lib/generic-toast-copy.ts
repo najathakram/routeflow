@@ -146,6 +146,9 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.LABEL_CHANGE_IN_PROGRESS]:
     "Another product label change is in progress. Try again in a moment.",
   [API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE]: "This product's family chain can't be read.",
+  // SA-812a G-1: a typed-price customer's flag read failed (503); the write never ran, so a retry is safe.
+  [API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE]:
+    "Customer prices couldn't be loaded. Nothing was saved. Try again in a moment.",
   [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]:
     "This invoice's tax no longer matches its lines. Re-save the invoice lines, then try again.",
   [API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID]:
@@ -293,6 +296,12 @@ function unlinkedCopy(data: Record<string, unknown>): string {
 /** The closed duplicate-name 409s ("A category named "X" already exists."): the noun is matched, the typed name is never shown. */
 const DUPLICATE_NAME =
   /^A (category|subcategory|product) named ".*" already exists(?: in this section)?\.?$/;
+/**
+ * K10e/O1: the units service's uncoded 400 for a 1-piece unit with any other name. It echoes the TENANT's piece name (set in
+ * Settings, "Piece" when unset), never text a user typed here, so a short plain name (any letters or digits) is shown back and anything else is not.
+ */
+const ONE_PIECE_NAME =
+  /^A 1-piece unit is always named "([\p{L}\p{N}][\p{L}\p{N} ._'-]{0,39})"\.$/u;
 /** Static server sentences that already tell the user what to do (B986-7: send email, delete order). */
 const ACTIONABLE_REFUSALS: Record<string, string> = {
   // the unit-selling plan limit is an uncoded 403: say it is a PLAN limit, not a permission problem
@@ -325,6 +334,9 @@ function sentenceForMessage(data: Record<string, unknown>): string | null {
     return ACTIONABLE_REFUSALS[message];
   if (DELETE_STATUS.test(message))
     return "Only draft, pending or cancelled orders can be deleted. Cancel this order first if it's still open.";
+  const onePiece = ONE_PIECE_NAME.exec(message);
+  if (onePiece)
+    return `A 1-piece unit is always called ${onePiece[1]}. Rename it to ${onePiece[1]}, or give it more than one piece.`;
   const dup = DUPLICATE_NAME.exec(message);
   if (dup) return `A ${dup[1]} with that name already exists. Choose a different name.`;
   return null;

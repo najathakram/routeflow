@@ -28,7 +28,7 @@ describe("EstimatesService.create: the customer layer (S19)", () => {
         { provide: SellingRestrictionsService, useValue: { assertLinesSellable: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
-        { provide: EntitlementsService, useValue: { hasFlag } },
+        { provide: EntitlementsService, useValue: { hasFlag, hasFlagStrict: hasFlag } },
         {
           provide: NumberingService,
           useValue: { reserveNext: jest.fn().mockResolvedValue("EST-1") },

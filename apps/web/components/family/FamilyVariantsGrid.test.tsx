@@ -113,10 +113,93 @@ describe("FamilyVariantsGrid price column (V20)", () => {
 
   it("read-only prices share the same right-aligned, tabular cell", () => {
     setup({ readOnly: true });
-    const priceCells = screen.getAllByText("1.00");
+    const priceCells = screen.getAllByText("$1.00");
     expect(priceCells.length).toBe(2);
     for (const cell of priceCells) {
       expect(cell).toHaveClass("block", "text-right", "tabular-nums");
     }
+  });
+});
+
+describe("FamilyVariantsGrid read-only reads like a product list (K11-24)", () => {
+  const saved = (): GridRow[] => [
+    {
+      ...blankRow("a"),
+      id: "v-1",
+      name: "Strawberry",
+      sku: "AW-STR",
+      barcode: "0123",
+      unitSku: "AW-STR-U",
+      unitsPerBox: "12",
+      pricePerUnit: "1.25",
+      standardCost: "0.8",
+    },
+    { ...blankRow("b"), id: "v-2", name: "Vanilla", pricePerUnit: "1800", standardCost: "" },
+  ];
+
+  it("prints Price and Cost as money, never the raw text", () => {
+    setup({ readOnly: true, rows: saved() });
+    expect(screen.getByText("$1.25")).toBeInTheDocument();
+    expect(screen.getByText("$1,800.00")).toBeInTheDocument();
+    expect(screen.getByText("$0.80")).toBeInTheDocument();
+    expect(screen.queryByText("1.25")).toBeNull();
+    // a blank cost still means "the family cost", so it stays a dash, not $0.00
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("each saved variant's name goes to its own page", () => {
+    setup({ readOnly: true, rows: saved() });
+    expect(screen.getByRole("link", { name: "Strawberry" })).toHaveAttribute(
+      "href",
+      "/products/v-1",
+    );
+    expect(screen.getByRole("link", { name: "Vanilla" })).toHaveAttribute("href", "/products/v-2");
+  });
+
+  it("a row with no id (not saved yet) keeps a plain name", () => {
+    setup({ readOnly: true, rows: [{ ...blankRow("n"), name: "Unsaved", pricePerUnit: "2" }] });
+    expect(screen.getByText("Unsaved")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Unsaved" })).toBeNull();
+  });
+
+  it("below sm only #, Name and Price show; every other column is in the DOM and returns from sm up", () => {
+    setup({ readOnly: true, rows: saved() });
+    const keep = ["#", "Name", "Price"];
+    const drop = ["SKU", "Barcode", "Unit code", "Pieces per box", "Cost"];
+    for (const h of keep) {
+      expect(screen.getByRole("columnheader", { name: h }).className).not.toMatch(/max-sm:hidden/);
+    }
+    for (const h of drop) {
+      expect(screen.getByRole("columnheader", { name: h }).className).toMatch(/max-sm:hidden/);
+    }
+    const row = screen.getAllByRole("row")[1];
+    const cells = within(row).getAllByRole("cell");
+    // # + 7 data columns: the five dropped ones carry the class, # / Name / Price do not
+    expect(cells.filter((c) => /max-sm:hidden/.test(c.className))).toHaveLength(5);
+  });
+
+  it("the read-only Cost cell and header are right-aligned in tabular figures, like Price", () => {
+    setup({ readOnly: true, rows: saved() });
+    expect(screen.getByRole("columnheader", { name: "Cost" })).toHaveClass("text-right");
+    const cost = screen.getByText("$0.80");
+    expect(cost).toHaveClass("block", "text-right", "tabular-nums");
+  });
+
+  it("edit mode keeps the Cost input as it was (left-aligned)", () => {
+    setup({ readOnly: false, rows: saved() });
+    expect(screen.getByRole("columnheader", { name: "Cost" })).not.toHaveClass("text-right");
+    expect(screen.getByLabelText("Variant 1 cost")).not.toHaveClass("text-right");
+  });
+
+  it("edit mode is unchanged: every column and every input, nothing hidden", () => {
+    setup({ readOnly: false, rows: saved() });
+    for (const f of ["name", "SKU", "barcode", "unit code", "pieces per box", "price", "cost"]) {
+      expect(screen.getByLabelText(new RegExp(`^Variant 1 ${f}$`, "i"))).toBeInTheDocument();
+    }
+    expect(screen.getByLabelText("Variant 1 price")).toHaveValue("1.25");
+    for (const th of screen.getAllByRole("columnheader")) {
+      expect(th.className).not.toMatch(/max-sm:hidden/);
+    }
+    expect(screen.queryByRole("link", { name: "Strawberry" })).toBeNull();
   });
 });

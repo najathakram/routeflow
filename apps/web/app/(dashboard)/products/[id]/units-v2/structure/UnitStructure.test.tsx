@@ -600,3 +600,129 @@ describe("K10d: a panel opened under the Edit save bar is scrolled clear of it",
     expect(seen).toContain(screen.getByTestId("units-v2-reset-panel"));
   });
 });
+
+describe("K10e F07: a product with no 1-piece unit can get one from the pointer", () => {
+  const pack = { ...grid.rows[0], ref: "pack", label: "Case", factor: 24 };
+  const missingPiece = {
+    ref: "base",
+    label: "Piece",
+    factor: 1,
+    kind: "base" as const,
+    editable: false,
+    notEditableReason: "Add the Piece unit first.",
+    code: null,
+    cells: cells([0, 0, 0, 0, 0]),
+  };
+  const withoutPiece = () => {
+    mockGrid = {
+      data: { ...grid, anchor: "pack", rows: [pack, missingPiece] },
+      isLoading: false,
+      isError: false,
+    };
+  };
+  const pointer = () => within(screen.getByTestId(T.row("base"))).getByTestId(T.addUnitPointer);
+  const count = () => screen.getByTestId("units-v2-add-n") as HTMLInputElement;
+  const name = () => screen.getByTestId("units-v2-add-name") as HTMLInputElement;
+
+  it("the pointer opens Add a unit as the Piece (Contains 1, name Piece) and Add creates {label: Piece, factorToBase: 1}", async () => {
+    withoutPiece();
+    (apiClient.post as jest.Mock).mockResolvedValue({ data: { id: "u-piece", label: "Piece" } });
+    const user = userEvent.setup();
+    render();
+    await user.click(pointer());
+    expect(count()).toHaveValue(1);
+    expect(name()).toHaveValue("Piece");
+    expect(name()).toHaveAttribute("readonly");
+    expect(screen.getByTestId("units-v2-add-submit")).toBeEnabled();
+    await user.click(screen.getByTestId("units-v2-add-submit"));
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(1));
+    expect(apiClient.post).toHaveBeenCalledWith("/products/p1/units", {
+      label: "Piece",
+      factorToBase: 1,
+    });
+  });
+
+  it("the plain Add a unit opener, with the Piece missing, opens blank (the pointer is what prefills) but still allows Contains 1", async () => {
+    withoutPiece();
+    const user = userEvent.setup();
+    render();
+    await user.click(addOpener());
+    expect(count()).toHaveValue(null);
+    expect(name()).toHaveValue("");
+    await user.type(name(), "Single");
+    await user.type(count(), "1");
+    expect(name()).toHaveValue("Piece");
+    expect(screen.getByTestId("units-v2-add-submit")).toBeEnabled();
+  });
+
+  it("a later plain open is blank again after a pointer open was cancelled", async () => {
+    withoutPiece();
+    const user = userEvent.setup();
+    render();
+    await user.click(pointer());
+    expect(count()).toHaveValue(1);
+    await user.click(screen.getByTestId("units-v2-add-cancel"));
+    await user.click(addOpener());
+    expect(count()).toHaveValue(null);
+  });
+
+  it("when the Piece already exists, Contains 1 is not offered", async () => {
+    const user = userEvent.setup();
+    render();
+    await user.click(addOpener());
+    await user.type(name(), "Single");
+    await user.type(count(), "1");
+    expect(count()).toHaveAttribute("min", "2");
+    expect(screen.getByTestId("units-v2-add-submit")).toBeDisabled();
+    expect(name()).toHaveValue("Single");
+  });
+
+  it("a product priced elsewhere (family: every row locked) never reads as 'Piece missing'", async () => {
+    mockGrid = {
+      data: {
+        ...grid,
+        rows: grid.rows.map((r) => ({
+          ...r,
+          editable: false,
+          notEditableReason:
+            r.kind === "base" ? "Add the Piece unit first." : "Priced by the family.",
+        })),
+      },
+      isLoading: false,
+      isError: false,
+    };
+    const user = userEvent.setup();
+    render();
+    await user.click(addOpener());
+    expect(count()).toHaveAttribute("min", "2");
+  });
+
+  it("the signal is structural: a locked base row beside editable rows is a missing Piece whatever its reason says", async () => {
+    mockGrid = {
+      data: {
+        ...grid,
+        anchor: "pack",
+        rows: [pack, { ...missingPiece, notEditableReason: "No unit for this level yet." }],
+      },
+      isLoading: false,
+      isError: false,
+    };
+    const user = userEvent.setup();
+    render();
+    await user.click(addOpener());
+    await user.type(count(), "1");
+    expect(screen.getByTestId("units-v2-add-submit")).toBeEnabled();
+  });
+
+  it("a pointer click that does not open the form (panel already open) leaves no stale prefill for the next plain open", async () => {
+    withoutPiece();
+    const user = userEvent.setup();
+    render();
+    await user.click(addOpener()); // panel open, blank
+    await user.click(pointer()); // the opener toggles it SHUT: onOpen never fires for this pointer click
+    expect(screen.queryByTestId("units-v2-add-panel")).toBeNull();
+    await user.click(addOpener());
+    expect(count()).toHaveValue(null);
+    expect(name()).toHaveValue("");
+  });
+});
