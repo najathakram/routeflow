@@ -82,6 +82,8 @@ jest.mock("@/lib/api/products", () => ({
   }),
   useUpdateProduct: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
   useBulkDeleteProducts: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
+  // master: the list reads its category filter from the tenant categories endpoint (limit=0 partial, #3513).
+  useProductCategories: () => ({ data: undefined }),
 }));
 jest.mock("@/lib/api/tier-labels", () => ({ useTierLabels: () => ({ data: undefined }) }));
 jest.mock("@/lib/api/tracked-categories", () => ({
