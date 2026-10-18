@@ -32,7 +32,7 @@ const PRICE_NOT_KEPT = "Unit added. Type its price in the grid.";
  * `data-last-opened`, which the row sets from the opener clicks.
  *
  * Every class below is written out whole, on purpose: Tailwind builds its CSS by scanning this file's TEXT, so a class
- * assembled from a template string (`has-[${PANEL}]:...`) is never generated and the panels came out narrower than the
+ * assembled from a template string (a `has-[...]` variant with a hole in it) is never generated and the panels came out narrower than the
  * row and in DOM order. The selectors are per item (`:has(panel)`), never `[&>*]`, so an opener with no panel is left
  * alone. `UnitStructure.k11-19.test.tsx` compiles this very file.
  */
