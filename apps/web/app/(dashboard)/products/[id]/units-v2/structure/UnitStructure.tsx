@@ -5,10 +5,16 @@ import { priceGrid, validateSetPrice } from "@routeflow/pricing";
 import type { ProductPriceGridDto, ProductPriceGridRowDto } from "@routeflow/types";
 import { usePriceGrid } from "@/lib/api/usePriceGrid";
 import { formatMoney } from "@/lib/format";
-import { UNITS_V2_TESTIDS } from "../../units-v2-testids";
+import { takeAddUnitIntent, useAddUnitIntent } from "../edit/add-unit-intent";
 import { usePriceDraft } from "../edit/usePriceDraft";
 import { rulesFromGrid, viewFromGrid } from "../edit/view-from-grid";
-import { AddUnitPanel, RemoveUnitControl, ResetToAutoPanel, type AddedUnit } from "../units";
+import {
+  AddUnitPanel,
+  DIRTY_HINT,
+  RemoveUnitControl,
+  ResetToAutoPanel,
+  type AddedUnit,
+} from "../units";
 
 /**
  * K10d: K7's unit panels mounted in the v2 shell (V15, V17). Everything here reads the ONE shared price draft:
@@ -19,6 +25,30 @@ import { AddUnitPanel, RemoveUnitControl, ResetToAutoPanel, type AddedUnit } fro
 
 const PRICE_NOT_KEPT = "Unit added. Type its price in the grid.";
 
+/**
+ * K11-19: the two openers share one row (8px gap; wrap on a narrow screen). An opened panel takes the full row below
+ * them: the panel is inside its opener's item, so the ROW keys on `:has(panel)` and AddUnitPanel / ResetToAutoPanel stay
+ * untouched. When both are open they stack in the order they were opened: the later one gets a higher `order`, read from
+ * `data-last-opened`, which the row sets from the opener clicks.
+ *
+ * Every class below is written out whole, on purpose: Tailwind builds its CSS by scanning this file's TEXT, so a class
+ * assembled from a template string (a `has-[...]` variant with a hole in it) is never generated and the panels came out narrower than the
+ * row and in DOM order. The selectors are per item (`:has(panel)`), never `[&>*]`, so an opener with no panel is left
+ * alone. `UnitStructure.k11-19.test.tsx` compiles this very file.
+ */
+const OPENER_ROW =
+  "mt-3 flex flex-wrap items-start gap-2 " +
+  "[&>*:has([data-testid=units-v2-add-panel])]:order-last " +
+  "[&>*:has([data-testid=units-v2-add-panel])]:basis-full " +
+  "[&>*:has([data-testid=units-v2-add-panel])]:w-full " +
+  "[&>*:has([data-testid=units-v2-add-panel])]:min-w-0 " +
+  "[&>*:has([data-testid=units-v2-reset-panel])]:order-last " +
+  "[&>*:has([data-testid=units-v2-reset-panel])]:basis-full " +
+  "[&>*:has([data-testid=units-v2-reset-panel])]:w-full " +
+  "[&>*:has([data-testid=units-v2-reset-panel])]:min-w-0 " +
+  "[&[data-last-opened=add]>*:has([data-testid=units-v2-add-panel])]:order-[10000] " +
+  "[&[data-last-opened=reset]>*:has([data-testid=units-v2-reset-panel])]:order-[10000]";
+
 /** Add a unit + Reset all to Auto, above the grid. */
 export function UnitStructureControls({ productId }: { productId: string }) {
   const draft = usePriceDraft();
@@ -27,27 +57,15 @@ export function UnitStructureControls({ productId }: { productId: string }) {
   const [pendingPrice, setPendingPrice] = React.useState<AddedUnit | null>(null);
   const [note, setNote] = React.useState("");
   const [focusBar, setFocusBar] = React.useState(false);
+  // K11-19: which opener was used last, so two open panels stack in opener order (see OPENER_ROW).
+  // K11-19: the one unsaved-changes hint for the opener row; both disabled openers point at it.
+  const hintId = React.useId();
+  const [lastOpened, setLastOpened] = React.useState<"add" | "reset" | null>(null);
 
-  // F07: the grid's "Add the Piece unit first" pointer opens this panel by clicking its opener, so the panel cannot tell
-  // that path from a plain open. Note the pointer click in the capture phase (it runs before the pointer's own handler),
-  // and let the opener's onOpen read and clear it: only the pointer opens the form already set up as that Piece.
-  const fromPointer = React.useRef(false);
+  // F07 / K11-11: the grid's "Add the Piece unit first" pointer sets the shared intent for the span of its click on
+  // the opener, and the opener's onOpen reads and clears it: only the pointer opens the form already set up as that Piece.
+  const intent = useAddUnitIntent();
   const [prefillPiece, setPrefillPiece] = React.useState(false);
-  React.useEffect(() => {
-    const onClick = (e: MouseEvent) => {
-      const hit = e.target instanceof Element && e.target.closest(POINTER_SELECTOR);
-      if (!hit) return;
-      fromPointer.current = true;
-      // The pointer's click opens the form within this same dispatch. If it does not (the opener is disabled, or the panel
-      // is already open and the click closes it) the flag must not wait for some later plain open. A timeout, not a
-      // microtask: a browser runs microtasks between a native click's listeners, which would clear it too early.
-      setTimeout(() => {
-        fromPointer.current = false;
-      }, 0);
-    };
-    document.addEventListener("click", onClick, true);
-    return () => document.removeEventListener("click", onClick, true);
-  }, []);
 
   // A price typed in Add a unit: the unit is created WITHOUT it. The create call refetches the grid before it reports
   // back, so the FIRST settled grid after the add decides, once: if it serves the new unit (matched by its id, never by
@@ -94,7 +112,11 @@ export function UnitStructureControls({ productId }: { productId: string }) {
 
   // The note is a live region: mounted before it has anything to say, so a screen reader announces the text.
   const noteRegion = (
-    <p role="status" data-testid="units-v2-add-note" className="text-sm text-navy/80">
+    <p
+      role="status"
+      data-testid="units-v2-add-note"
+      className={note ? "mt-2 text-sm text-navy/80" : "text-sm text-navy/80"}
+    >
       {note}
     </p>
   );
@@ -111,47 +133,64 @@ export function UnitStructureControls({ productId }: { productId: string }) {
   const reset = resetPreview(served);
 
   return (
-    <div data-testid="units-v2-structure" className="mb-3 space-y-3">
-      <AddUnitPanel
-        productId={productId}
-        baseLabel={base?.label ?? "Piece"}
-        ofUnits={ofUnits}
-        dirty={draft.dirty}
-        pieceMissing={pieceMissing}
-        prefillPiece={prefillPiece}
-        validatePrice={cellPriceProblem}
-        onOpen={() => {
-          setNote("");
-          setPrefillPiece(fromPointer.current);
-          fromPointer.current = false;
+    <div data-testid="units-v2-structure" className="mb-3">
+      <div
+        data-testid="units-v2-structure-row"
+        data-last-opened={lastOpened ?? undefined}
+        className={OPENER_ROW}
+        onClickCapture={(e) => {
+          const hit = e.target instanceof Element ? e.target : null;
+          if (hit?.closest('[data-testid="units-v2-add-open"]')) setLastOpened("add");
+          else if (hit?.closest('[data-testid="units-v2-reset-open"]')) setLastOpened("reset");
         }}
-        onAdded={(added) => {
-          setNote("");
-          if (added.price !== "") setPendingPrice(added);
-        }}
-      />
-      {noteRegion}
-      {reset.rows.length > 0 && (
-        <ResetToAutoPanel
-          disabled={draft.dirty}
-          onApply={() => {
-            if (draft.dirty) return;
-            // The draft's reset only fills the draft: open edit mode too, so the save bar is there to Save or Cancel.
-            draft.startEditing();
-            draft.resetAllToAuto();
-            setFocusBar(true);
-          }}
-          changedCount={reset.rows.length}
-          anchorName={anchor?.label}
+      >
+        <AddUnitPanel
+          productId={productId}
+          baseLabel={base?.label ?? "Piece"}
+          ofUnits={ofUnits}
           dirty={draft.dirty}
-          preview={<ResetPreview rows={reset.rows} />}
+          hideHint
+          hintId={hintId}
+          pieceMissing={pieceMissing}
+          prefillPiece={prefillPiece}
+          validatePrice={cellPriceProblem}
+          onOpen={() => {
+            setNote("");
+            setPrefillPiece(takeAddUnitIntent(intent));
+          }}
+          onAdded={(added) => {
+            setNote("");
+            if (added.price !== "") setPendingPrice(added);
+          }}
         />
+        {reset.rows.length > 0 && (
+          <ResetToAutoPanel
+            disabled={draft.dirty}
+            onApply={() => {
+              if (draft.dirty) return;
+              // The draft's reset only fills the draft: open edit mode too, so the save bar is there to Save or Cancel.
+              draft.startEditing();
+              draft.resetAllToAuto();
+              setFocusBar(true);
+            }}
+            changedCount={reset.rows.length}
+            anchorName={anchor?.label}
+            dirty={draft.dirty}
+            hideHint
+            hintId={hintId}
+            preview={<ResetPreview rows={reset.rows} />}
+          />
+        )}
+      </div>
+      {draft.dirty && (
+        <p id={hintId} className="mt-2 text-xs text-navy/70" data-testid="units-v2-structure-hint">
+          {DIRTY_HINT}
+        </p>
       )}
+      {noteRegion}
     </div>
   );
 }
-
-const POINTER_SELECTOR = `[data-testid="${UNITS_V2_TESTIDS.addUnitPointer}"]`;
 
 /**
  * True when the grid shows a base (Piece) row that no unit backs yet. The signal is structural, not the server's wording:

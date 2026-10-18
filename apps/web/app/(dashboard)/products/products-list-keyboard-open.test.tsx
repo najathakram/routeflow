@@ -82,6 +82,7 @@ jest.mock("@/lib/api/products", () => ({
     isLoading: false,
     isError: false,
   }),
+  useProductCategories: () => ({ data: undefined }),
   useUpdateProduct: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
   useBulkDeleteProducts: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
 }));

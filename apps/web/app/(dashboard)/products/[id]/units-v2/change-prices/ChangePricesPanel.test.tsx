@@ -102,8 +102,10 @@ describe("ChangePricesPanel (V03, V05, V18)", () => {
     type("5%");
     const also = screen.getByRole("checkbox", { name: /Also raise the prices you set/ });
     expect(also).not.toBeChecked();
-    expect(also.closest("label")).toHaveTextContent(", by 5%.");
+    // K11-18: unticked, the box names what stays put; the parsed value shows once it is ticked
+    expect(also.closest("label")).toHaveTextContent("stay as they are");
     fireEvent.click(also);
+    expect(also.closest("label")).toHaveTextContent(", by 5%.");
     expect(plan).toHaveBeenLastCalledWith(
       VIEW,
       expect.objectContaining({ also: true }),

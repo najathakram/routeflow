@@ -205,7 +205,7 @@ describe("units v2 edit grid (S12a)", () => {
     await user.click(screen.getByTestId(T.ebCancel));
     expect(screen.getByTestId(T.ebText).textContent).toContain("Discard your unsaved changes?");
     await user.click(screen.getByTestId(T.ebKeep));
-    expect((caseRow().getByTestId(T.input("case", 2)) as HTMLInputElement).value).toBe("14.5");
+    expect((caseRow().getByTestId(T.input("case", 2)) as HTMLInputElement).value).toBe("14.50");
     await user.click(screen.getByTestId(T.ebCancel));
     await user.click(screen.getByTestId(T.ebDiscard));
     expect(mockSave).not.toHaveBeenCalled();
@@ -333,7 +333,13 @@ describe("units v2 edit grid (S12a)", () => {
     expect(onEdit).toHaveBeenCalled();
     await type(user, 2, "14.5");
     await user.click(screen.getByTestId(T.ebSave));
-    expect(onSaved).toHaveBeenCalledWith({ auditId: "a1", revision: 8, undo: expect.anything() });
+    // K11-20a: the saved record now says where it was made.
+    expect(onSaved).toHaveBeenCalledWith({
+      auditId: "a1",
+      revision: 8,
+      undo: expect.anything(),
+      surface: "inline",
+    });
     expect(draft.lastSave?.auditId).toBe("a1");
     const preview = await draft.loadUndoPreview();
     expect(preview.revision).toBe(8);

@@ -12,7 +12,8 @@ import { Button } from "@routeflow/ui/web";
 import { formatMoney } from "@/lib/format";
 import { usePriceDraft, type PriceDraft } from "../edit/usePriceDraft";
 import { PLAN_TESTIDS as T } from "./plan-testids";
-import { PlanView } from "./PlanView";
+import { againstReason, movesAgainst } from "./against-reason";
+import { AGAINST, PlanView } from "./PlanView";
 import { foldPlan, parseAmount, usePlanSelection } from "./selection";
 import { usePlanNames } from "./usePlanNames";
 
@@ -42,19 +43,41 @@ const NO_CHANGES = {
 type Mode = PriceChange["mode"];
 
 /** Waits for the grid: the draft has no ladder view until it loads. */
-export function ChangePricesPanel({ onClose }: { onClose: () => void }) {
+export function ChangePricesPanel({
+  onClose,
+  onApplied,
+  idSuffix = "",
+}: {
+  onClose: () => void;
+  /** Closes the panel after Apply (K11-15: focus goes to Save); without it Apply closes like Cancel. */
+  onApplied?: () => void;
+  /** K11-20: suffix for the three fixed ids when a second panel is on the page (the floating price window). */
+  idSuffix?: string;
+}) {
   const draft = usePriceDraft();
-  return draft.view ? <ChangePricesForm draft={draft} view={draft.view} onClose={onClose} /> : null;
+  return draft.view ? (
+    <ChangePricesForm
+      draft={draft}
+      view={draft.view}
+      onClose={onClose}
+      onApplied={onApplied}
+      idSuffix={idSuffix}
+    />
+  ) : null;
 }
 
 function ChangePricesForm({
   draft,
   view,
   onClose,
+  onApplied,
+  idSuffix,
 }: {
   draft: PriceDraft;
   view: LadderView;
   onClose: () => void;
+  onApplied?: () => void;
+  idSuffix: string;
 }) {
   const { grid } = draft;
   const { tierName, customerName, customers, rules, customersTruncated } = usePlanNames();
@@ -106,15 +129,19 @@ function ChangePricesForm({
     if (!plan || !canApply) return;
     const folded = foldPlan(plan, selection);
     // The re-planner lets the customer offer follow the customers' prices if they change before Save (K3b).
-    draft.applyPlan(folded.plan, (cs) =>
-      planPriceChange(view, { ...form, value }, rules, tierName, { customers: cs }),
+    const how = mode === "percent" ? `${value}%` : formatMoney(value);
+    const lead = `${view.rows.find((r) => r.ref === unit)?.label ?? unit} ${direction === "raise" ? "raised" : "lowered"} ${how}`;
+    draft.applyPlan(
+      folded.plan,
+      (cs) => planPriceChange(view, { ...form, value }, rules, tierName, { customers: cs }),
+      lead,
     );
     if (folded.customerTicked) draft.setOfferTicked(0, true);
     folded.customerKeeps.forEach((m) => draft.keepCustomer(m));
     reset();
     setTyped("");
     setForm((f) => ({ ...f, also: false }));
-    onClose();
+    (onApplied ?? onClose)();
   };
 
   const field = (id: string, label: string, control: React.ReactNode, hint?: string) => (
@@ -148,8 +175,9 @@ function ChangePricesForm({
           <span>
             Also {direction} the prices you set
             <span className="block text-xs text-ink-500">
-              {new Intl.ListFormat("en").format(setCells)}
-              {mode === "percent" && value > 0 ? `, by ${value}%.` : "."}
+              {also
+                ? `${new Intl.ListFormat("en").format(setCells)}${mode === "percent" && value > 0 ? `, by ${value}%.` : "."}`
+                : `Prices you set stay as they are: ${new Intl.ListFormat("en").format(setCells)}. Tick to ${direction} them too.`}
             </span>
           </span>
         </label>
@@ -161,7 +189,7 @@ function ChangePricesForm({
 
   return (
     <section
-      id="change-panel"
+      id={`change-panel${idSuffix}`}
       ref={root}
       tabIndex={-1}
       data-testid={T.changePanel}
@@ -172,7 +200,7 @@ function ChangePricesForm({
       <h3 id={`${ids}-title`} className={LBL}>
         Change prices
       </h3>
-      <p className="mt-1 text-sm text-ink-500">Pick one unit and say how much to move it.</p>
+      <p className="mt-1 text-sm text-ink-500">Pick a unit and how much to move it.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {field(
           "unit",
@@ -234,7 +262,7 @@ function ChangePricesForm({
             onBlur={() => setBlurred(true)}
           />,
           mode === "percent"
-            ? "Other units that move change by the same percent."
+            ? "Other units move by the same percent."
             : `Per ${view.rows.find((r) => r.ref === unit)?.label ?? "unit"}. Other units that move change in proportion to what they contain.`,
         )}
       </div>
@@ -261,17 +289,41 @@ function ChangePricesForm({
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[300px] text-sm">
                   <caption className="sr-only">Old and new prices for every unit and tier</caption>
-                  <tbody>
-                    {plan.changes.map((c) => (
-                      <tr key={`${c.ref}|${c.tier}`} className="border-t border-surface-border">
-                        <th scope="row" className="py-1 text-left font-normal text-navy">
-                          {tierName(c.tier)} {c.label}
-                        </th>
-                        <td className="tabular-nums text-ink-500">{formatMoney(c.from)}</td>
-                        <td className="tabular-nums font-medium text-navy">{formatMoney(c.to)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
+                  {plan.changes.map((c) => {
+                    const against = movesAgainst(direction, c);
+                    return (
+                      <tbody
+                        key={`${c.ref}|${c.tier}`}
+                        data-against={against ? "true" : "false"}
+                        className="border-t border-surface-border"
+                      >
+                        <tr className={against ? AGAINST : undefined}>
+                          <th scope="row" className="py-1 text-left font-normal text-navy">
+                            {tierName(c.tier)} {c.label}
+                          </th>
+                          <td className="tabular-nums text-ink-500">{formatMoney(c.from)}</td>
+                          <td className="tabular-nums font-medium text-navy">
+                            {formatMoney(c.to)}
+                          </td>
+                        </tr>
+                        {against && (
+                          <tr className={AGAINST}>
+                            <td colSpan={3} className="pb-1.5 text-xs text-ink-500">
+                              {againstReason({
+                                view,
+                                rules: rules ?? {},
+                                plan,
+                                change: c,
+                                direction,
+                                also: !!also,
+                                tierName,
+                              })}
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    );
+                  })}
                 </table>
               </div>
               <p className="mt-2 text-xs text-ink-500">
@@ -285,10 +337,10 @@ function ChangePricesForm({
         data-testid={T.changeFooter}
         className="mt-4 flex gap-2 border-t border-surface-border bg-white py-2.5"
       >
-        <Button id="ch-apply" type="button" disabled={!canApply} onClick={apply}>
+        <Button id={`ch-apply${idSuffix}`} type="button" disabled={!canApply} onClick={apply}>
           Apply
         </Button>
-        <Button id="ch-cancel" variant="secondary" type="button" onClick={onClose}>
+        <Button id={`ch-cancel${idSuffix}`} variant="secondary" type="button" onClick={onClose}>
           Cancel
         </Button>
       </div>

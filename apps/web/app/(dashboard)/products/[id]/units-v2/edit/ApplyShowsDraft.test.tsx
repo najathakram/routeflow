@@ -127,9 +127,9 @@ describe("F03: Apply writes the applied values into the price boxes", () => {
     apply();
     expect(draft.editing).toBe(true);
     expect(draft.count).toBe(3);
-    expect(input("case", 1).value).toBe("31.5");
-    expect(input("case", 2).value).toBe("14.6");
-    expect(input("case", 3).value).toBe("13.1");
+    expect(input("case", 1).value).toBe("31.50");
+    expect(input("case", 2).value).toBe("14.60");
+    expect(input("case", 3).value).toBe("13.10");
     // a price the plan did not touch is still what it was
     expect(input("case", 4).value).toBe("");
     expect(input("piece", 1).value).toBe("0.92");
@@ -179,7 +179,7 @@ describe("F03: Apply writes the applied values into the price boxes", () => {
     });
     act(() => draft.applyPlan(raised, () => raised));
     expect(draft.toRequest()?.patches).toContainEqual({ ref: "case", tier: 1, to: 35.2 });
-    expect(input("case", 1).value).toBe("35.2");
+    expect(input("case", 1).value).toBe("35.20");
   });
 
   it("MUST: a price typed before a tier offer is ticked shows the offer's value, which is what Save writes", async () => {
@@ -211,7 +211,7 @@ describe("F03: Apply writes the applied values into the price boxes", () => {
     expect(input("case", 3).value).toBe("12");
     act(() => draft.setOfferTicked(0, true));
     expect(draft.toRequest()?.patches).toContainEqual({ ref: "case", tier: 3, to: 13.1 });
-    expect(input("case", 3).value).toBe("13.1");
+    expect(input("case", 3).value).toBe("13.10");
   });
 
   it("a price typed AFTER the plan still wins over the plan's value", async () => {
@@ -231,7 +231,7 @@ describe("F03: Apply writes the applied values into the price boxes", () => {
     await user.click(screen.getByTestId(T.ebCancel));
     await user.click(screen.getByRole("button", { name: "Discard" }));
     await user.click(screen.getByTestId(T.btnEdit));
-    expect(input("case", 1).value).toBe("30");
+    expect(input("case", 1).value).toBe("30.00");
   });
 
   it("an Auto price the plan set back to Auto shows an empty box", () => {
@@ -393,7 +393,7 @@ describe("entry order: the box text equals the request value", () => {
     expect(draft.canSave).toBe(false);
     const plan = planTo("case", 1, 33);
     act(() => draft.applyPlan(plan, () => plan));
-    expect(input("case", 1).value).toBe("33");
+    expect(input("case", 1).value).toBe("33.00");
     expect(draft.problems).toEqual([]);
     expect(input("case", 1).getAttribute("aria-invalid")).toBeNull();
     expect(screen.queryByText(/Enter a price like/)).toBeNull();
@@ -410,7 +410,7 @@ describe("entry order: the box text equals the request value", () => {
     act(() => draft.applyPlan(plan, () => plan));
     expect(draft.problems).toHaveLength(1);
     act(() => draft.setOfferTicked(0, true));
-    expect(input("case", 3).value).toBe("13.1");
+    expect(input("case", 3).value).toBe("13.10");
     expect(draft.problems).toEqual([]);
     expect(draft.canSave).toBe(true);
     expect(sent(3)).toEqual({ ref: "case", tier: 3, to: 13.1 });
@@ -429,7 +429,7 @@ describe("entry order: the box text equals the request value", () => {
     const plan = tierOffer(13.1);
     act(() => draft.applyPlan(plan, () => plan));
     act(() => draft.setOfferTicked(0, true));
-    expect(input("case", 3).value).toBe("13.1");
+    expect(input("case", 3).value).toBe("13.10");
     expect(sent(3)?.to).toBe(13.1);
     act(() => draft.setOfferTicked(0, false));
     expect(input("case", 3).value).toBe("12");
@@ -441,9 +441,9 @@ describe("entry order: the box text equals the request value", () => {
     const first = planTo("case", 1, 31.5);
     const second = planTo("case", 1, 33);
     act(() => draft.applyPlan(first, () => first));
-    expect(input("case", 1).value).toBe("31.5");
+    expect(input("case", 1).value).toBe("31.50");
     act(() => draft.applyPlan(second, () => second));
-    expect(input("case", 1).value).toBe("33");
+    expect(input("case", 1).value).toBe("33.00");
     expect(sent(1)?.to).toBe(33);
   });
 
@@ -452,7 +452,7 @@ describe("entry order: the box text equals the request value", () => {
     mount();
     const plan = planTo("case", 2, 14.6);
     act(() => draft.applyPlan(plan, () => plan));
-    expect(input("case", 2).value).toBe("14.6");
+    expect(input("case", 2).value).toBe("14.60");
     await typeInto(user, 2, "");
     expect(input("case", 2).value).toBe("");
     expect(sent(2)).toEqual({ ref: "case", tier: 2, to: null });
@@ -465,7 +465,7 @@ describe("entry order: the box text equals the request value", () => {
     await typeInto(user, 1, "32");
     const plan = planTo("case", 1, 35.2);
     act(() => draft.applyPlan(plan, () => plan));
-    expect(input("case", 1).value).toBe("35.2");
+    expect(input("case", 1).value).toBe("35.20");
     await typeInto(user, 1, "40");
     expect(input("case", 1).value).toBe("40");
     expect(sent(1)?.to).toBe(40);
@@ -476,7 +476,7 @@ describe("entry order: the box text equals the request value", () => {
     const { again } = mount();
     const plan = planTo("case", 1, 35.2);
     act(() => draft.applyPlan(plan, () => plan));
-    expect(input("case", 1).value).toBe("35.2");
+    expect(input("case", 1).value).toBe("35.20");
     const saved: ProductPriceGridDto = {
       ...grid,
       revision: 8,
@@ -506,8 +506,72 @@ describe("entry order: the box text equals the request value", () => {
     await user.click(screen.getByTestId(T.btnEdit));
     expect(draft.count).toBe(0);
     expect(draft.toRequest()?.patches).toEqual([]);
-    expect(input("case", 1).value).toBe("30");
+    expect(input("case", 1).value).toBe("30.00");
     expect(input("case", 2).value).toBe("13.91");
     expect(input("piece", 1).value).toBe("0.92");
+  });
+});
+
+// K11 L2 fold M1 (money entry): a box a plan filled shows canonical two-decimal text, and focusing it then typing
+// REPLACES the value (31.5 + "32" was "31.532", staged silently as $31.53).
+describe("M1: a box Change prices filled is replaced by typing, never appended to", () => {
+  const raise = emptyPlan({
+    patches: [{ ref: "case", tier: 1, to: 31.5 }],
+    changes: [{ ref: "case", label: "Case", tier: 1, from: 30, to: 31.5 }],
+  });
+  const filled = () => act(() => draft.applyPlan(raise, () => raise));
+  const refocus = () => {
+    act(() => input("case", 1).blur());
+    act(() => input("case", 1).focus());
+  };
+
+  it("the filled box displays 31.50 (focused or not) while the staged number stays exactly 31.5", () => {
+    mount();
+    filled();
+    expect(input("case", 1).value).toBe("31.50");
+    refocus();
+    expect(input("case", 1).value).toBe("31.50");
+    act(() => input("case", 1).blur());
+    expect(input("case", 1).value).toBe("31.50");
+    expect(draft.toRequest()?.patches).toContainEqual({ ref: "case", tier: 1, to: 31.5 });
+    expect(draft.count).toBe(1);
+  });
+
+  it("focus then type 32: the value is 32, not 31.532, and 32 is what Save carries", async () => {
+    const user = userEvent.setup();
+    mount();
+    filled();
+    refocus();
+    await user.keyboard("32");
+    expect(input("case", 1).value).toBe("32");
+    expect(draft.toRequest()?.patches).toContainEqual({ ref: "case", tier: 1, to: 32 });
+  });
+
+  it("a text the draft holds un-settled (31.5, not yet 31.50) still gets selected whole on focus", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.click(screen.getByTestId(T.btnEdit));
+    act(() => {
+      draft.editCell("case", 2, "13.5");
+    });
+    act(() => input("case", 2).focus());
+    expect(input("case", 2).value).toBe("13.5");
+    expect(input("case", 2).selectionStart).toBe(0);
+    expect(input("case", 2).selectionEnd).toBe("13.5".length);
+    await user.keyboard("14");
+    expect(input("case", 2).value).toBe("14");
+  });
+
+  it("typing the saved price back (30.00) is no change, and Escape restores the filled text", async () => {
+    const user = userEvent.setup();
+    mount();
+    filled();
+    refocus();
+    await user.keyboard("{Escape}");
+    expect(input("case", 1).value).toBe("31.50");
+    await user.keyboard("30.00");
+    await user.tab();
+    expect(draft.toRequest()?.patches.map((p) => `${p.ref}|${p.tier}`)).not.toContain("case|1");
+    expect(draft.count).toBe(0);
   });
 });

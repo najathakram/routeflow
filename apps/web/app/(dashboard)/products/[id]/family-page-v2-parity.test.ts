@@ -51,23 +51,26 @@ describe("family page with units v2 on: parity", () => {
   });
 
   it("the v2 family tiers grid is the only other family removal", () => {
+    // K11-20c: the section sits in ProductPricingRegion (the inline edit mode's full-width wrapper)
     expect(src).toMatch(
-      /v2 && product\.kind !== "FAMILY" \? <ProductPricingV2 product=\{product\} \/>/,
+      /v2 && product\.kind !== "FAMILY" \? \(\s*<ProductPricingRegion>\s*<ProductPricingV2 product=\{product\} \/>/,
     );
   });
 
-  it("pins every bare v2 reference in page.tsx to the known six", () => {
+  it("pins every bare v2 reference in page.tsx to the known set", () => {
     const refs = src
       .split("\n")
       .filter((l) => /(?<![-\w/"])v2(?![\w-])/.test(l))
       .filter((l) => !/const v2( |Family)/.test(l))
       .map((l) => l.trim());
     expect(refs).toEqual([
+      // K11-20c: prices are edited in the floating window (and shown read-only in Details) for a non-governed product
+      "const pricesInWindow = v2 && !unitStructureGoverned(product);",
       '{v2 ? null : stockStatus === "OUT_OF_STOCK" ? (',
       "<ProductHeaderLine product={product} currentStock={currentStock} pricesV2={v2} />",
       '{v2 && product.kind !== "FAMILY" ? <ProductJumpLinks /> : null}',
       "pricesV2={v2}",
-      '{v2 && product.kind !== "FAMILY" ? <ProductPricingV2 product={product} /> : null}',
+      '{v2 && product.kind !== "FAMILY" ? (',
       // K10d: the v2 flag drops the old Units card's always-open Add form (the shell's Add a unit replaces it)
       "{!v2Family && <ProductUnitsCard product={product} hideAddForm={v2} />}",
     ]);

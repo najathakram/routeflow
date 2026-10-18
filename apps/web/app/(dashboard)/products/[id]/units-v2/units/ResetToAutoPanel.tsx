@@ -18,6 +18,8 @@ export function ResetToAutoPanel({
   anchorName,
   dirty = false,
   disabled = false,
+  hideHint = false,
+  hintId: sharedHintId,
 }: {
   onApply: () => void;
   onCancel?: () => void;
@@ -30,6 +32,10 @@ export function ResetToAutoPanel({
   /** The price draft has unsaved changes: Reset waits (shown with a hint). */
   dirty?: boolean;
   disabled?: boolean;
+  /** The caller prints one shared unsaved-changes hint for a row of openers: leave this panel's own out. */
+  hideHint?: boolean;
+  /** With `hideHint`: the id of the shared hint that describes this opener while it waits. */
+  hintId?: string;
 }) {
   const { open, close, toggle, openerRef } = usePanelDisclosure();
   const hintId = React.useId();
@@ -50,7 +56,7 @@ export function ResetToAutoPanel({
         data-testid="units-v2-reset-open"
         aria-expanded={open}
         aria-controls="units-v2-reset-panel"
-        aria-describedby={dirty ? hintId : undefined}
+        aria-describedby={dirty ? (hideHint ? sharedHintId : hintId) : undefined}
         disabled={blocked && !open}
         hidden={open}
         style={open ? { display: "none" } : undefined}
@@ -58,7 +64,7 @@ export function ResetToAutoPanel({
       >
         Reset all to Auto
       </Button>
-      {dirty && (
+      {dirty && !hideHint && (
         <p id={hintId} className="text-xs text-navy/70">
           {DIRTY_HINT}
         </p>

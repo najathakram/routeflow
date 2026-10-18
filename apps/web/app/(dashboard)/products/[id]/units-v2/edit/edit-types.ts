@@ -9,8 +9,11 @@ export interface CellFocus {
 
 export interface GridEditApi {
   editing: boolean;
-  /** Enter edit mode; `cell` asks for that cell's input to take focus. */
-  begin: (cell?: CellFocus) => void;
+  /**
+   * Enter edit mode in `surface` (default "inline"); `cell` asks for that cell's input to take focus. Returns false,
+   * doing nothing, while the other surface is editing.
+   */
+  begin: (cell?: CellFocus, surface?: "inline" | "window") => boolean;
   /** What the cell's input shows: the draft text, or `original` when untouched. */
   text: (ref: string, tier: number, original: string) => string;
   setText: (ref: string, tier: number, text: string, original: string) => void;

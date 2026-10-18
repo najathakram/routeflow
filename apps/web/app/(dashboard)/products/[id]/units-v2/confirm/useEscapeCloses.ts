@@ -5,13 +5,24 @@ type Entry = { close: () => void; opener: () => HTMLElement | null };
 /** Open panels, oldest first: Escape only ever reaches the last one (V17). */
 const stack: Entry[] = [];
 
-function onKeyDown(e: KeyboardEvent) {
-  if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+/**
+ * Close the topmost open panel and focus the control that opened it, exactly as its Escape does. Returns whether a panel
+ * was open. K11-20: a host that handles Escape before this stack's own listener sees it (the floating price window:
+ * Radix runs first and the window always takes the event) calls this when the panel is the next thing to close.
+ */
+export function closeTopEscapePanel(): boolean {
   const top = stack[stack.length - 1];
-  if (!top) return;
-  e.preventDefault();
+  if (!top) return false;
   top.close();
   top.opener()?.focus();
+  return true;
+}
+
+function onKeyDown(e: KeyboardEvent) {
+  if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+  if (stack.length === 0) return;
+  e.preventDefault();
+  closeTopEscapePanel();
 }
 
 /** True while any panel using `useEscapeCloses` is open (a Radix Dialog host can skip its own Escape). */
