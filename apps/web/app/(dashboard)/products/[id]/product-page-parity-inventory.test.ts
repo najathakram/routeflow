@@ -163,7 +163,7 @@ describe("K11-20c: where every legacy-card control lives after the change (secti
     expect(win + grid + figs + read("units-v2/edit/EditablePricesGrid.tsx")).toContain(needle);
     // and in v2 Details, the legacy controls are not rendered
     expect(page).toContain("{!isFamily && !pricesInWindow && priceEachRow}");
-    expect(page).toMatch(/pricesInWindow \? \(\s*<DetailsPriceLine/);
+    expect(page).toMatch(/pricesInWindow \? null/);
   });
 
   it("the flag-off card and Details keep every price input path", () => {
@@ -176,10 +176,9 @@ describe("K11-20c: where every legacy-card control lives after the change (secti
     );
   });
 
-  it("Details in v2 shows the one price line, and a governed product never gets it", () => {
+  it("Details in v2 shows no price row (the grid owns it), and a governed product never gets the window", () => {
     expect(page).toContain("const pricesInWindow = v2 && !unitStructureGoverned(product);");
-    expect(page).toMatch(/pricesInWindow \? \(\s*<DetailsPriceLine/);
-    expect(read("PriceFigures.tsx")).toContain("Save or cancel Details first");
+    expect(page).toMatch(/pricesInWindow \? null/);
   });
 
   it("the covered image column is marked for the inline full-width region, dims while inert, and the Details heading is the figures' fallback", () => {
@@ -189,7 +188,6 @@ describe("K11-20c: where every legacy-card control lives after the change (secti
     expect(page).toContain("motion-safe:lg:transition-opacity");
     expect(page).toContain("motion-safe:lg:duration-200");
     expect(page).toContain('data-testid="product-details-heading"');
-    expect(page).toMatch(/<DetailsPriceLine[\s\S]*?fallback=\{/);
   });
 
   it("the page mounts the price host once, around the whole page", () => {

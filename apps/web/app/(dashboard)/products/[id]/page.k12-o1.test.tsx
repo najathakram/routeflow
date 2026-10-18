@@ -149,7 +149,6 @@ async function renderPage() {
   await screen.findByTitle("Edit product");
   return view;
 }
-const line = () => screen.getByTestId("details-price-line");
 const edit = async (user: ReturnType<typeof userEvent.setup>) =>
   user.click(await screen.findByTitle("Edit product"));
 const rename = async (user: ReturnType<typeof userEvent.setup>) => {

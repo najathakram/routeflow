@@ -104,7 +104,6 @@ import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ProductPricingV2 } from "./ProductPricingV2";
 import { PriceWindowHost, ProductPricingRegion } from "./PriceWindowHost";
-import { DetailsPriceLine } from "./PriceFigures";
 import { unitStructureGoverned } from "./units-v2/structure/unit-structure";
 import { ProductJumpLinks } from "./units-v2/nav/ProductJumpLinks";
 import { ImageLightbox } from "./ImageLightbox";
@@ -1757,18 +1756,7 @@ export default function ProductDetailPage() {
                     </div>
                     {tiersBlock}
                   </FamilyPriceSection>
-                ) : pricesInWindow ? (
-                  <DetailsPriceLine
-                    productId={product.id}
-                    isEditing={isEditing}
-                    anchor={() => detailsCardRef.current}
-                    fallback={() =>
-                      detailsCardRef.current?.querySelector<HTMLElement>(
-                        '[data-testid="product-details-heading"]',
-                      )
-                    }
-                  />
-                ) : (
+                ) : pricesInWindow ? null /* K12 P06: the v2 grid owns the prices; no Pricing Tiers row here */ : (
                   tiersBlock
                 )}
 

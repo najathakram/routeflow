@@ -317,6 +317,7 @@ describe("K11-25 P23: the family price stays editable behind a disclosure", () =
     show();
     expect(screen.queryByRole("button", { name: /^Family price/ })).toBeNull();
     expect(screen.queryByText("New variants start from the family price.")).toBeNull();
-    expect(screen.getAllByText("Pricing Tiers")).toHaveLength(1);
+    // K12 P06: with the v2 grid on, Details carries no Pricing Tiers row.
+    expect(screen.queryByText("Pricing Tiers")).toBeNull();
   });
 });
