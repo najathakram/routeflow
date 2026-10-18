@@ -13,8 +13,9 @@ import { join, relative } from "path";
  *     functions; a new caller fails here;
  *   - "not-a-lock-column": it writes only columns the lock does not cover (deliveredQty, invoicedQty, derived
  *     tax / free-unit snapshots, a composition stamp, an informational marker);
- *   - "open": a whole-order or invoice-driven path the ruling does not name; listed with the question the
- *     owner still has to answer (see the B1234 report), NOT a statement that it is safe.
+ *   - "excluded": deliberately outside the lock (SA-814a); `reason` states why;
+ *   - "deferred": not guarded yet, tracked by a named follow-up row (SA-814a); `reason` names the row.
+ * No writer stays "open": every entry is one of the kinds above.
  * A NEW writer that is not listed, a stale entry, a "guarded" function that lost its call, a "status-gated"
  * file that lost its gate, a "via-guarded" helper with a new caller, and an entry without a reason all fail here.
  */
@@ -25,7 +26,8 @@ type Entry =
   | { kind: "status-gated"; gate: RegExp; gateFile?: string; reason: string }
   | { kind: "via-guarded"; callee: string; callers: string[]; reason: string }
   | { kind: "not-a-lock-column"; reason: string }
-  | { kind: "open"; reason: string };
+  | { kind: "excluded"; reason: string }
+  | { kind: "deferred"; reason: string };
 
 const MERGE_GATE = {
   gate: /status: OrderStatus\.PENDING/,
@@ -154,33 +156,32 @@ const REGISTRY: Record<string, Entry> = {
     reason: "invoicedQty set to what each draft bills",
   },
 
-  // Not named by the ruling: the owner decides (B1234 report, open questions).
+  // Whole-order and invoice-driven paths the ruling does not name (SA-814a): excluded or deferred, never open.
   "orders/orders.service.ts::deleteOrder": {
-    kind: "open",
-    reason:
-      "whole-order delete by staff in any status, incl. PARTIALLY_DELIVERED: is deleting an order with delivered lines meant to stay possible?",
+    kind: "deferred",
+    reason: "deferred: row (P2, delivery lane) refuse delete when any line has deliveredQty > 0",
   },
   "customers/customers.service.ts::deleteCustomer": {
-    kind: "open",
-    reason: "customer purge deletes every order line of that customer",
+    kind: "excluded",
+    reason: "excluded: by design (SA-814a)",
   },
   "customers/customers.service.ts::deleteAllCustomers": {
-    kind: "open",
-    reason: "tenant-wide customer purge deletes every order line",
+    kind: "excluded",
+    reason: "excluded: by design (SA-814a)",
   },
   "customers/customers.service.ts::runImportedCustomersCleanup": {
-    kind: "open",
-    reason: "imported-customer cleanup deletes the order lines of those customers",
+    kind: "excluded",
+    reason: "excluded: by design (SA-814a)",
   },
   "invoices/invoices.service.ts::recomputeOrderFromInvoices": {
-    kind: "open",
+    kind: "excluded",
     reason:
-      "invoice edit back-sync rewrites order line qty / price and can cancel unbilled lines: should an invoice edit of a delivered line also be refused?",
+      "excluded: the invoice is the billing authority (SA-803/B663); B1050 keeps stock booked at max(qty, delivered)",
   },
   "invoices/finalize-order-recompute.ts::finalizeOrderRecompute": {
-    kind: "open",
+    kind: "excluded",
     reason:
-      "invoice finalize zeroes an orphan line (billed, then no longer billed) to a cancelled line: same question as recomputeOrderFromInvoices",
+      "excluded: the invoice is the billing authority (SA-803/B663); B1050 keeps stock booked at max(qty, delivered)",
   },
 };
 
@@ -193,6 +194,16 @@ const INTERMEDIATE: Record<string, { callee: string; callers: string[] }> = {
     callee: "updateUnitLine",
     callers: ["orders/orders.service.ts::updateOrderItems"],
   },
+};
+
+/**
+ * Not OrderItem writers (so not in REGISTRY), but a known gap in the same lock, named so it is not forgotten:
+ * the un-tx'd `revertLinkedInvoicesForOrderEdit` before the binding 409 can commit a revert when the
+ * pre-tx status was stale (b1234-delivered-line-lock.db.spec.ts carries the matching `it.todo`).
+ */
+const DEFERRED_NON_WRITERS: Record<string, string> = {
+  "orders/orders.service.ts::updateOrderItems -> revertLinkedInvoicesForOrderEdit (pre-tx)":
+    "deferred: row (P2) pre-tx preflight read-only; revert in-tx under the lock",
 };
 
 const SITE =
@@ -321,6 +332,25 @@ describe("delivered-line lock: every writer of an existing OrderItem is guarded 
       ([, e]) => e.kind !== "guarded" && !(e as { reason?: string }).reason,
     );
     expect(bare).toEqual([]);
+  });
+
+  it("no writer stays open: every entry is one of the accounted kinds, and excluded / deferred say why", () => {
+    const kinds = [
+      "guarded",
+      "status-gated",
+      "via-guarded",
+      "not-a-lock-column",
+      "excluded",
+      "deferred",
+    ];
+    expect(Object.entries(REGISTRY).filter(([, e]) => !kinds.includes(e.kind))).toEqual([]);
+    for (const [, e] of Object.entries(REGISTRY)) {
+      if (e.kind === "excluded") expect(e.reason).toMatch(/^excluded: /);
+      if (e.kind === "deferred") expect(e.reason).toMatch(/^deferred: row \(P2/);
+    }
+    for (const reason of Object.values(DEFERRED_NON_WRITERS)) {
+      expect(reason).toMatch(/^deferred: row \(P2\)/);
+    }
   });
 
   it.each(Object.entries(REGISTRY).filter(([, e]) => e.kind === "guarded"))(

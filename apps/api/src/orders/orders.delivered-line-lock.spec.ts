@@ -88,6 +88,7 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
   let service: OrdersService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let invoices: Record<string, jest.Mock>;
+  let promotions: Record<string, jest.Mock>;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -157,6 +158,7 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
     }).compile();
     service = module.get<OrdersService>(OrdersService);
     invoices = module.get(InvoicesService) as any;
+    promotions = module.get(PromotionsService) as any;
 
     prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
     prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
@@ -464,6 +466,150 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
         ),
       ).rejects.toMatchObject(LOCKED);
       nothingWritten();
+    });
+  });
+
+  describe("(6) a note on a delivered line never reprices it (the web page's full-payload shape)", () => {
+    /** The write(s) the edit made to one line, whichever writer (update / updateMany) it used. */
+    const writesTo = (id: string) =>
+      [...prisma.orderItem.update.mock.calls, ...prisma.orderItem.updateMany.mock.calls]
+        .map(([a]: any[]) => a)
+        .filter((a) => a?.where?.id === id);
+    const MONEY = [
+      "qty",
+      "boxes",
+      "pieces",
+      "unitPrice",
+      "subtotal",
+      "promoFreeUnits",
+      "unitsPerBox",
+    ];
+
+    it("a BOGO line whose live promotion would earn more free units: the note is saved, no money column is written", async () => {
+      // Sold under "buy 4 get 1": 6 units, 1 free, 5 billed at $5. The live promotion is now "buy 2 get 1" (2 free).
+      const bogo = line({
+        id: "li-bogo",
+        qty: 6,
+        unitPrice: 5,
+        subtotal: 25,
+        promoFreeUnits: 1,
+        deliveredQty: 6,
+      });
+      seed("PARTIALLY_DELIVERED", [bogo, OPEN_LINE]);
+      promotions.activeForCatalog.mockResolvedValue([
+        {
+          id: "promo-1",
+          type: "BUY_N_GET_M",
+          value: 1,
+          minQty: 2,
+          scope: "ALL",
+          category: null,
+          productIds: [],
+        },
+      ]);
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-bogo", action: "UPDATE", qty: 6, unitPrice: 5, notes: "x" }] } as any,
+        operator,
+      );
+      const writes = writesTo("li-bogo");
+      expect(writes).toHaveLength(1);
+      expect(writes[0].data).toEqual({ notes: "x" });
+      for (const col of MONEY) expect(writes[0].data).not.toHaveProperty(col);
+    });
+
+    it("a box-split line with no unitsPerBox snapshot: the box split is not re-derived from the live product", async () => {
+      // 2 boxes of 12 = 24 units, no snapshot; the live product now says 10 per box (a re-derive would write qty 20).
+      const boxed = line({
+        id: "li-box",
+        qty: 24,
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: null,
+        unitPrice: 12,
+        subtotal: 24,
+        deliveredQty: 24,
+      });
+      seed("PARTIALLY_DELIVERED", [boxed, OPEN_LINE]);
+      prisma.product.findFirst.mockResolvedValue({ unitsPerBox: 10, category: null });
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-box", action: "UPDATE", qty: 24, boxes: 2, pieces: 0, notes: "x" }],
+        } as any,
+        operator,
+      );
+      const writes = writesTo("li-box");
+      expect(writes).toHaveLength(1);
+      expect(writes[0].data).toEqual({ notes: "x" });
+    });
+
+    it("a unit-aware (Case) line: a note edit (unitLabel + productId + qty restated) never goes through updateUnitLine", async () => {
+      const caseLine = line({
+        id: "li-case",
+        qty: 36,
+        boxes: 3,
+        pieces: 0,
+        unitsPerBox: 12,
+        unitLabel: "Case",
+        unitPrice: 24,
+        subtotal: 72,
+        deliveredQty: 36,
+      });
+      seed("PARTIALLY_DELIVERED", [caseLine, OPEN_LINE]);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-1", name: "Cola", pricePerUnit: 3, unitsPerBox: 12, trackedCategoryId: null },
+        {
+          id: "prod-2",
+          name: "Onions",
+          pricePerUnit: 5,
+          unitsPerBox: null,
+          trackedCategoryId: null,
+        },
+      ]);
+      // The Case price on the live ladder moved from $24 to $30 since the sale.
+      prisma.productUnit.findMany.mockResolvedValue([
+        { productId: "prod-1", label: "Case", factorToBase: 12, price: 30, sortOrder: 1 },
+      ]);
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            {
+              id: "li-case",
+              action: "UPDATE",
+              productId: "prod-1",
+              unitLabel: "Case",
+              qty: 3,
+              notes: "x",
+            },
+          ],
+        } as any,
+        operator,
+      );
+      const writes = writesTo("li-case");
+      expect(writes).toHaveLength(1);
+      expect(writes[0].data).toEqual({ notes: "x" });
+    });
+
+    it("an entry that restates the line and carries nothing else writes nothing to it", async () => {
+      seed("PARTIALLY_DELIVERED", [DELIVERED_LINE, OPEN_LINE]);
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-del", action: "UPDATE", qty: 5, unitPrice: 5 }] } as any,
+        operator,
+      );
+      expect(writesTo("li-del")).toEqual([]);
+    });
+
+    it("the undelivered line of the same order still reprices as before", async () => {
+      seed("PARTIALLY_DELIVERED", [DELIVERED_LINE, OPEN_LINE]);
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-open", action: "UPDATE", qty: 3 }] } as any,
+        operator,
+      );
+      expect(writesTo("li-open")[0].data).toMatchObject({ qty: 3, subtotal: 15 });
     });
   });
 });

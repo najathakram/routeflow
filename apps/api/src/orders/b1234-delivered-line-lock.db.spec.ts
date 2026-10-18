@@ -55,6 +55,9 @@ describeDb(
     let customerId = "";
     const productIds: string[] = [];
     const orderIds: string[] = [];
+    const invoiceIds: string[] = [];
+    /** What the (mocked) active promotions endpoint returns; the BOGO case sets it for one edit. */
+    let activePromos: any[] = [];
 
     const principal = (role: "OPERATOR" | "DRIVER", sub: string): JwtPayload =>
       ({
@@ -103,13 +106,18 @@ describeDb(
 
     const edit = (orderId: string, dto: any, who: JwtPayload = operator()) =>
       tenantCtx.run(tenantId, () => orders.updateOrderItems(orderId, dto, who));
-    /** The whole order as stored: its header money and every line (ids included). */
+    /** The whole order as stored: its header money, every line (ids included) and its linked invoices. */
     const snapshot = async (orderId: string) => ({
       header: await raw.order.findUniqueOrThrow({
         where: { id: orderId },
         select: { subtotal: true, total: true, status: true },
       }),
       lines: await rows(orderId),
+      invoices: await raw.invoice.findMany({
+        where: { orderId },
+        orderBy: { id: "asc" },
+        select: { id: true, status: true, subtotal: true, taxAmount: true, total: true },
+      }),
     });
     const rows = (orderId: string) =>
       raw.orderItem.findMany({ where: { orderId }, orderBy: { createdAt: "asc" } });
@@ -136,7 +144,7 @@ describeDb(
           assertLinesSellable: async () => undefined,
         },
         authGuard: { assertAuthorizedOrThrow: async () => undefined },
-        promotionsService: { activeForCatalog: async () => [] },
+        promotionsService: { activeForCatalog: async () => activePromos },
         tenantCtx,
         invoicesService: {
           revertLinkedInvoicesForOrderEdit: async () => undefined,
@@ -183,6 +191,7 @@ describeDb(
     }, 120_000);
 
     afterAll(async () => {
+      await raw.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
       await raw.orderRevision?.deleteMany?.({ where: { orderId: { in: orderIds } } });
       await raw.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
       await raw.order.deleteMany({ where: { id: { in: orderIds } } });
@@ -215,10 +224,32 @@ describeDb(
     const ledgerRows = (productId: string) => raw.stockMovement.findMany({ where: { productId } });
     const REFUSED = { response: { code: "LINE_ALREADY_DELIVERED" }, status: 409 };
 
-    /** A: 5 ordered, 3 delivered. B: 4 ordered, undelivered. Status PARTIALLY_DELIVERED. */
+    /** A SENT invoice linked to the order, billing what the lines are worth. */
+    async function sentInvoice(orderId: string, total: string) {
+      const inv = await raw.invoice.create({
+        data: {
+          tenantId,
+          customerId,
+          orderId,
+          invoiceNumber: `INV-${randomUUID().slice(0, 8)}`,
+          status: "SENT",
+          subtotal: total,
+          total,
+          sentAt: new Date(),
+        },
+      });
+      invoiceIds.push(inv.id);
+      return inv;
+    }
+
+    /**
+     * A: 5 ordered, 3 delivered. B: 4 ordered, undelivered. Status PARTIALLY_DELIVERED, with a linked SENT
+     * invoice (9.00) that every refusal must leave exactly as it was (`snapshot` reads it).
+     */
     async function pdOrder() {
       const p = await product("pd");
       const o = await order([plain(p, 5, 3), plain(p, 4, 0)], "PARTIALLY_DELIVERED");
+      await sentInvoice(o.id, "9.00");
       const a = o.lineItems.find((l) => Number(l.deliveredQty) > 0)!;
       const b = o.lineItems.find((l) => Number(l.deliveredQty) === 0)!;
       return { p, o, a, b };
@@ -299,6 +330,63 @@ describeDb(
       expect(Number(after.qty)).toBe(5);
       expect(await stock(p)).toBe(stockBefore);
     });
+
+    it("a note on a BOGO line, sent the way the web page sends it, never reprices the delivered line", async () => {
+      // Sold under "buy 4 get 1": 6 units, 1 free, 5 billed at $5.00 = $25.00, all delivered. The live promotion is
+      // now "buy 2 get 1" (2 free for 6), so a repricing edit would write promoFreeUnits 2 and subtotal 20.00.
+      const p = await product("bogo");
+      const o = await order(
+        [
+          {
+            productId: p,
+            qty: 6,
+            deliveredQty: 6,
+            unitPrice: "5.00",
+            subtotal: "25.00",
+            promoFreeUnits: 1,
+          },
+        ],
+        "PARTIALLY_DELIVERED",
+      );
+      await sentInvoice(o.id, "25.00");
+      const a = o.lineItems[0];
+      const before = await snapshot(o.id);
+      activePromos = [
+        {
+          id: "promo-1",
+          type: "BUY_N_GET_M",
+          value: 1,
+          minQty: 2,
+          scope: "ALL",
+          category: null,
+          productIds: [],
+        },
+      ];
+      try {
+        await edit(o.id, {
+          replaceAll: false,
+          items: [{ id: a.id, action: "UPDATE", qty: 6, unitPrice: 5, notes: "gate code 4412" }],
+        });
+      } finally {
+        activePromos = [];
+      }
+      const after = await snapshot(o.id);
+      const lineAfter = after.lines.find((l) => l.id === a.id)!;
+      expect(lineAfter.notes).toBe("gate code 4412");
+      expect(Number(lineAfter.subtotal)).toBe(25);
+      expect(lineAfter.promoFreeUnits).toBe(1);
+      expect(Number(lineAfter.unitPrice)).toBe(5);
+      expect(Number(lineAfter.qty)).toBe(6);
+      expect(after.invoices).toEqual(before.invoices);
+    });
+
+    // deferred: row (P2) pre-tx preflight read-only; revert in-tx under the lock. The un-tx'd
+    // revertLinkedInvoicesForOrderEdit (orders.service.ts, before the transaction) runs when the pre-tx status is
+    // still CONFIRMED and commits on its own connection BEFORE the binding 409, so a linked SENT invoice can be
+    // left reverted to DRAFT by a refused edit. It predates B1234; the fix is that row, not this PR.
+    it.todo(
+      "stale status: the linked SENT invoice is unchanged (status + totals) after the locked-status refusal (deferred: row (P2) pre-tx preflight read-only; revert in-tx under the lock)",
+    );
 
     it("stale status: the pre-tx read shows CONFIRMED, a delivery flips the order to PARTIALLY_DELIVERED, the LOCKED status refuses", async () => {
       const p = await product("flip");

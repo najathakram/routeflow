@@ -111,7 +111,7 @@ import {
 import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
-import { assertDeliveredLinesUntouched } from "./delivered-line-lock";
+import { assertDeliveredLinesUntouched, reduceDeliveredLineEntries } from "./delivered-line-lock";
 import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
@@ -3062,6 +3062,15 @@ export class OrdersService implements OnApplicationBootstrap {
           user,
           isDiffPayload,
         ); // B1234: the locked lines
+        // B1234: a delivered line's entry that the guard let through (it restated qty / price / split / unit)
+        // is cut to its note / reason / rename NOW, so the write loop below never reprices a delivered line
+        // from live promotions, the live product or the live ladder. Replaces the items in place: every later
+        // read of `dto.items` (the unit resolution below included) sees the reduced entries.
+        dto.items = reduceDeliveredLineEntries(
+          { status: lockedStatus?.status ?? order.status },
+          heldItems,
+          dto.items,
+        ) as typeof dto.items;
 
         // units_v1 (A1, #1102 precedent): the pre-lock resolution above can go stale under a
         // concurrent edit of the SAME line — re-run it against the just-locked, authoritative

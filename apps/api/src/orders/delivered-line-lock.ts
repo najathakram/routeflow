@@ -52,6 +52,9 @@ export interface DeliveredLockEntry {
   boxes?: number;
   pieces?: number;
   unitPrice?: number;
+  name?: string;
+  notes?: string;
+  overrideReason?: string | null;
 }
 
 /** True when the order status is one the delivered-line lock applies to. */
@@ -72,6 +75,8 @@ function entryTouchesLine(entry: DeliveredLockEntry, held: DeliveredLockLine): b
   if (entry.action === "CANCEL" || entry.action === "DELETE") return true;
   if (entry.substituteProductId != null) return true;
   if (entry.productId != null && entry.productId !== (held.productId ?? null)) return true;
+  // `unitLabel: null` (clearing a unit) is not read as a change here: it is refused later, whatever the line's
+  // status, by SA-474 (`assertNoPackRedenomination`, unit-line-edit.ts), before the binding check runs.
   if (entry.unitLabel != null && entry.unitLabel !== (held.unitLabel ?? null)) return true;
   // The half-cent band is pricing's (no-override-band-tokens.spec.ts): the money columns are 2 dp.
   if (
@@ -120,6 +125,47 @@ export function assertDeliveredLinesUntouched(
     const line = id ? deliveredById.get(id) : undefined;
     if (line && entryTouchesLine(entry, line)) throw deliveredLineLocked();
   }
+}
+
+/**
+ * The fields a payload entry for a delivered line may carry once the guard has let it through: the line's
+ * identity, a note, an override reason and (for an unlisted line) a rename. Nothing else.
+ */
+const DELIVERED_LINE_ALLOWED_FIELDS = [
+  "id",
+  "orderItemId",
+  "action",
+  "name",
+  "notes",
+  "overrideReason",
+] as const;
+
+/**
+ * B1234 (binding stage). The guard lets through an entry that RESTATES a delivered line (the web page sends
+ * `qty`, the box split and `unitPrice` along with every note edit). Letting the restated fields reach the write
+ * loop would still reprice the line: `rescaleBogoFreeUnits` reads the LIVE promotions, a box split without a
+ * snapshot is re-derived from the LIVE product, a unit line is re-priced from the live ladder. So, on a
+ * delivered-lock order, an entry that names a delivered line is reduced to the fields above before any write; it
+ * then takes the notes-only path (or, carrying none of them, writes nothing). Returns the same array when
+ * nothing applies. Call it AFTER `assertDeliveredLinesUntouched` on the locked lines (a refusal never reaches it).
+ */
+export function reduceDeliveredLineEntries<T extends DeliveredLockEntry>(
+  order: { status: string },
+  held: readonly DeliveredLockLine[],
+  items: T[] | undefined,
+): T[] | undefined {
+  if (!items || !deliveredLockApplies(order.status)) return items;
+  const deliveredIds = new Set(held.filter(isDeliveredLine).map((l) => l.id));
+  if (deliveredIds.size === 0) return items;
+  return items.map((entry) => {
+    const id = entry.id ?? entry.orderItemId;
+    if (!id || !deliveredIds.has(id)) return entry;
+    const reduced: Record<string, unknown> = {};
+    for (const key of DELIVERED_LINE_ALLOWED_FIELDS) {
+      if (entry[key] !== undefined) reduced[key] = entry[key];
+    }
+    return reduced as T;
+  });
 }
 
 function deliveredLineLocked(): ConflictException {

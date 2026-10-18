@@ -4,6 +4,7 @@ import {
   assertDeliveredLinesUntouched,
   deliveredLockApplies,
   isDeliveredLine,
+  reduceDeliveredLineEntries,
   type DeliveredLockLine,
 } from "./delivered-line-lock";
 
@@ -191,5 +192,55 @@ describe("the refusal", () => {
       expect(e.getResponse()).toMatchObject({ code: "LINE_ALREADY_DELIVERED" });
       expect(JSON.stringify(e.getResponse())).not.toMatch(/[–—]/);
     }
+  });
+});
+
+describe("reduceDeliveredLineEntries (the binding-stage reduction)", () => {
+  const web = {
+    id: "d",
+    action: "UPDATE" as const,
+    productId: "p1",
+    qty: 10,
+    boxes: 2,
+    pieces: 0,
+    unitPrice: 4.5,
+    unitLabel: "Case",
+    notes: "x",
+    overrideReason: "damaged",
+    name: "Renamed",
+  };
+  const other = { id: "o", action: "UPDATE" as const, qty: 3 };
+
+  it("cuts a delivered line's entry to id, action, name, notes and overrideReason", () => {
+    const out = reduceDeliveredLineEntries(PD, [DELIVERED, OPEN], [web, other]);
+    expect(out?.[0]).toEqual({
+      id: "d",
+      action: "UPDATE",
+      notes: "x",
+      overrideReason: "damaged",
+      name: "Renamed",
+    });
+  });
+
+  it("leaves an undelivered line's entry, a new line's entry and the array identity alone", () => {
+    const fresh = { name: "Ad hoc", qty: 1, unitPrice: 3 };
+    const out = reduceDeliveredLineEntries(PD, [DELIVERED, OPEN], [other, fresh]);
+    expect(out?.[0]).toBe(other);
+    expect(out?.[1]).toBe(fresh);
+    const items = [other];
+    expect(reduceDeliveredLineEntries(PD, [OPEN], items)).toBe(items);
+  });
+
+  it.each(["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED"])(
+    "%s: nothing is reduced (the lock is PARTIALLY_DELIVERED only)",
+    (status) => {
+      const items = [web];
+      expect(reduceDeliveredLineEntries({ status }, [DELIVERED], items)).toBe(items);
+    },
+  );
+
+  it("keeps an absent field absent (a note-only entry stays note-only)", () => {
+    const out = reduceDeliveredLineEntries(PD, [DELIVERED], [{ id: "d", notes: "n" }]);
+    expect(out?.[0]).toEqual({ id: "d", notes: "n" });
   });
 });
