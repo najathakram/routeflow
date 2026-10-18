@@ -2,6 +2,7 @@ import { ConflictException, NotFoundException, UnprocessableEntityException } fr
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { PLAN_KEYS } from "./plan-catalog.constants";
 import { TenantConfigSnapshotAdminService } from "./tenant-config-snapshot-admin.service";
+import { TenantConfigSnapshotService } from "./tenant-config-snapshot.service";
 
 const HIGH = PLAN_KEYS[PLAN_KEYS.length - 1];
 const LOW = PLAN_KEYS[0];
@@ -48,6 +49,8 @@ function build(opts: { tenant?: any; preview?: any; restore?: any } = {}) {
             takenAt: TAKEN,
             planKey: HIGH,
             report: { restored: 2, skipped: 1, keptNewer: 0, unchanged: 0 },
+            supersededSnapshots: 0,
+            held: [],
           }
         : opts.restore,
     ),
@@ -428,5 +431,177 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
         preview: { snapshotId: "s1", takenAt: TAKEN, planKey: LOW, restoredAt: null, plan: null },
       }).svc.restoreNow("t1", "s1"),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+});
+
+// ─── BO-13: through the REAL snapshot service over an in-memory tx, so the preview, the Restore now
+// write, the held reporting and the "claimable until it completes" rule are proven end to end.
+describe("TenantConfigSnapshotAdminService — a held delivery method (BO-13)", () => {
+  const FM = "fulfilment_model";
+  const T0 = new Date("2026-09-01T00:00:00.000Z");
+
+  function buildReal(seed: { stored: string; snapshotMode: string; inTransit: number }) {
+    const state = {
+      inTransit: seed.inTransit,
+      configs: [
+        {
+          id: "c-fm",
+          tenantId: "t1",
+          featureKey: FM,
+          mode: seed.stored,
+          settings: null,
+          reason: "r",
+          updatedById: null,
+          updatedAt: T0,
+        },
+        {
+          id: "c-other",
+          tenantId: "t1",
+          featureKey: CONFIG_KEY,
+          mode: "stale",
+          settings: null,
+          reason: "r",
+          updatedById: null,
+          updatedAt: T0,
+        },
+      ] as any[],
+      snapshot: {
+        id: "s1",
+        tenantId: "t1",
+        planKey: HIGH,
+        reason: "DOWNGRADE",
+        takenAt: TAKEN,
+        restoredAt: null as Date | null,
+        restoredToPlanKey: null as string | null,
+        payload: {
+          version: 1,
+          configs: [
+            {
+              featureKey: FM,
+              mode: seed.snapshotMode,
+              settings: null,
+              reason: "r",
+              updatedById: null,
+            },
+            {
+              featureKey: CONFIG_KEY,
+              mode: Object.keys(
+                FEATURE_REGISTRY.find((f) => f.key === CONFIG_KEY)!.config!.modes,
+              )[0],
+              settings: null,
+              reason: "r",
+              updatedById: null,
+            },
+          ],
+          overrides: [],
+        },
+      },
+      audits: [] as any[],
+    };
+    const delegates = {
+      order: { count: jest.fn(async () => state.inTransit) },
+      tenantAddon: { findMany: jest.fn(async () => []) },
+      tenantFeatureOverride: { findMany: async () => [] },
+      tenantFeatureConfig: {
+        findMany: async () => state.configs.map((c) => ({ ...c })),
+        upsert: async () => undefined,
+        updateMany: async ({ where, data }: any) => {
+          const row = state.configs.find((c) => c.id === where.id);
+          if (row) Object.assign(row, data, { updatedAt: NOW });
+          return { count: row ? 1 : 0 };
+        },
+      },
+      tenantFeatureConfigSnapshot: {
+        findFirst: async ({ where }: any) =>
+          where.restoredAt === null && state.snapshot.restoredAt !== null
+            ? null
+            : { ...state.snapshot },
+        updateMany: async ({ where, data }: any) => {
+          if (where.id) {
+            if (state.snapshot.restoredAt !== where.restoredAt) return { count: 0 };
+            Object.assign(state.snapshot, data);
+            return { count: 1 };
+          }
+          return { count: 0 };
+        },
+      },
+      auditLog: { create: jest.fn(async ({ data }: any) => state.audits.push(data)) },
+    };
+    const prisma = {
+      ...delegates,
+      tenant: {
+        findUnique: jest.fn().mockResolvedValue({
+          plan: "STARTER",
+          planVersionId: null,
+          subscription: { planKey: HIGH },
+        }),
+      },
+      $transaction: jest.fn(async (fn: any) => fn(delegates)),
+    };
+    const svc = new TenantConfigSnapshotAdminService(
+      prisma as never,
+      new TenantConfigSnapshotService(),
+      { planAllowsFor: jest.fn().mockResolvedValue(() => true) } as never,
+      { invalidate: jest.fn() } as never,
+      { invalidate: jest.fn() } as never,
+      { invalidate: jest.fn() } as never,
+    );
+    return { svc, state, delegates, prisma };
+  }
+
+  it("preview lists the held row as skipped with CARRIER_IN_TRANSIT and does not offer to restore it", async () => {
+    const { svc } = buildReal({ stored: "delivery", snapshotMode: "ship", inTransit: 2 });
+
+    const view = await svc.preview("t1", "s1");
+
+    expect(view.skipped).toEqual([
+      { kind: "config", featureKey: FM, reason: "CARRIER_IN_TRANSIT" },
+    ]);
+    expect(view.willRestore.map((w) => w.featureKey)).toEqual([CONFIG_KEY]);
+  });
+
+  it("preview lists FULFILMENT_MODE_NEEDS_FLEET for own delivery on an account with no fleet", async () => {
+    const { svc } = buildReal({ stored: "ship", snapshotMode: "delivery", inTransit: 0 });
+    const view = await svc.preview("t1", "s1");
+    expect(view.skipped).toEqual([
+      { kind: "config", featureKey: FM, reason: "FULFILMENT_MODE_NEEDS_FLEET" },
+    ]);
+  });
+
+  it("restoreNow restores the rest, returns held, leaves the snapshot claimable and audits the partial run on its own action", async () => {
+    const { svc, state } = buildReal({ stored: "delivery", snapshotMode: "ship", inTransit: 2 });
+
+    const res = await svc.restoreNow("t1", "s1", "admin-1", NOW);
+
+    expect(res.held).toEqual([
+      { featureKey: FM, from: "delivery", to: "ship", reason: "CARRIER_IN_TRANSIT", count: 2 },
+    ]);
+    expect(state.configs.find((c) => c.id === "c-fm")!.mode).toBe("delivery");
+    expect(state.configs.find((c) => c.id === "c-other")!.mode).not.toBe("stale");
+    expect(state.snapshot.restoredAt).toBeNull();
+    expect(state.audits).toHaveLength(1);
+    expect(state.audits[0]).toMatchObject({
+      action: "CONFIG_SNAPSHOT_RESTORE_HELD",
+      meta: { report: { skipped: 1 }, held: [{ featureKey: FM, reason: "CARRIER_IN_TRANSIT" }] },
+    });
+  });
+
+  it("a second restoreNow after the orders are delivered applies the held row and only THEN stamps the snapshot", async () => {
+    const { svc, state } = buildReal({ stored: "delivery", snapshotMode: "ship", inTransit: 2 });
+    await svc.restoreNow("t1", "s1", "admin-1", NOW);
+
+    state.inTransit = 0; // delivered
+    const res = await svc.restoreNow("t1", "s1", "admin-1", NOW);
+
+    expect(res.held).toEqual([]);
+    expect(state.configs.find((c) => c.id === "c-fm")!.mode).toBe("ship");
+    expect(state.snapshot).toMatchObject({ restoredAt: NOW, restoredToPlanKey: HIGH });
+    expect(state.audits.map((a) => a.action)).toEqual([
+      "CONFIG_SNAPSHOT_RESTORE_HELD",
+      "CONFIG_SNAPSHOT_RESTORED",
+    ]);
+    await expect(svc.restoreNow("t1", "s1", "admin-1", NOW)).rejects.toThrow(
+      "This snapshot was already restored",
+    );
   });
 });

@@ -7,7 +7,9 @@
  * controller's own audited override + feature-config writes.
  */
 import { BadRequestException, NotFoundException } from "@nestjs/common";
-import { BusinessProfileService } from "./business-profile.service";
+import { BusinessProfileService, planFingerprint } from "./business-profile.service";
+import { presetTicks } from "./business-capabilities";
+import { businessProfileByKey } from "./business-profiles";
 import { FEATURE_REGISTRY } from "./feature-registry";
 
 const T = "tenant-a";
@@ -31,12 +33,15 @@ function build(
     /** Active TenantAddon rows; `paid` = a Stripe item or a positive price, else a comped row. */
     addons?: (string | { key: string; paid: boolean; manual?: boolean; comp?: boolean })[];
     modes?: Record<string, string>;
+    /** Open SHIP orders already handed to the carrier (shippedAt set). */
+    inTransit?: number;
   } = {},
 ) {
   const addonRows = (opts.addons ?? []).map((a) =>
     typeof a === "string" ? { key: a, paid: true, manual: false } : { manual: false, ...a },
   );
   const prisma = {
+    order: { count: jest.fn().mockResolvedValue(opts.inTransit ?? 0) },
     tenant: {
       findUnique: jest.fn().mockResolvedValue(opts.tenant === undefined ? { id: T } : opts.tenant),
     },
@@ -95,7 +100,7 @@ function build(
 }
 
 describe("BusinessProfileService.list", () => {
-  it("returns the five profiles as shared summaries, in registry order", () => {
+  it("returns the seven profiles as shared summaries, in registry order (BO-04: + two)", () => {
     const { svc } = build();
     const res = svc.list();
     expect(res.profiles.map((p) => p.key)).toEqual([
@@ -104,9 +109,19 @@ describe("BusinessProfileService.list", () => {
       "in_store_retailer",
       "in_store_shipping_retailer",
       "delivery_pos",
+      "delivery_shipping",
+      "delivery_shipping_pos",
     ]);
     // availability comes from the feature registry (SA-671 M1 lifted): the pickup modes are available
-    expect(res.profiles.map((p) => p.available)).toEqual([true, true, true, true, true]);
+    expect(res.profiles.map((p) => p.available)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
   });
 });
 
@@ -139,7 +154,8 @@ describe("BusinessProfileService.preview", () => {
         { featureKey: "recurring_routes", effect: "DENY", reason },
         { featureKey: "driver_payments", effect: "DENY", reason },
       ],
-      modes: { fulfilment_model: "ship" },
+      // BO-04: counter_sales is always written (deliberate pin change: + counter_sales "unset")
+      modes: { fulfilment_model: "ship", counter_sales: "unset" },
     });
     expect(res).toEqual({
       ...previewResponse,
@@ -313,7 +329,8 @@ describe("SA-769 — a profile grants add-on modules as COMPS and never re-price
         { featureKey: "order_delivery", effect: "GRANT", reason },
         { featureKey: "driver_payments", effect: "GRANT", reason },
       ],
-      modes: { fulfilment_model: "delivery" },
+      // BO-04: counter_sales is always written (deliberate pin change: + counter_sales "unset")
+      modes: { fulfilment_model: "delivery", counter_sales: "unset" },
     });
     expect(res.summary.slice(0, 3)).toEqual([
       "Turn on Recurring routes: included free with this profile, no charge added",
@@ -439,6 +456,163 @@ describe("SA SHOULD — a MANUAL-pay add-on", () => {
     ]);
     expect(res.summary[0]).toBe(
       "Ad hoc order delivery will be switched off; remove it from their manual invoice",
+    );
+  });
+});
+
+describe("Item 8 — a profile that moves the billing moment refuses while carrier orders are in transit", () => {
+  it("unset → ship with an order with the carrier: 409 FULFILMENT_CARRIER_IN_TRANSIT, the Settings guard's own", async () => {
+    const { svc, prisma, featurePreview } = build({ inTransit: 2 });
+    await expect(svc.preview(T, "shipping_wholesaler")).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: "FULFILMENT_CARRIER_IN_TRANSIT",
+        count: 2,
+        message:
+          "Orders are with the carrier right now. Change the delivery method once they are delivered.",
+      },
+    });
+    // BO-04: plan() no longer throws on a carrier in transit: it resolves with `blocked`, so the capabilities
+    // preview can return 200 + the plan. The alias preview above still rejects (assertNotBlocked, Q1).
+    await expect(svc.plan(T, "shipping_wholesaler")).resolves.toMatchObject({
+      blocked: { code: "FULFILMENT_CARRIER_IN_TRANSIT", count: 2 },
+    });
+    expect(prisma.order.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        tenantId: T,
+        fulfillPath: "SHIP",
+        shippedAt: { not: null },
+      }),
+    });
+    expect(featurePreview.preview).not.toHaveBeenCalled();
+  });
+
+  it("guard row: no order in transit — the profile previews and plans as today", async () => {
+    const { svc } = build({ inTransit: 0 });
+    const res = await svc.preview(T, "shipping_wholesaler");
+    expect(res.plan.modes).toEqual([{ key: "fulfilment_model", from: "unset", to: "ship" }]);
+  });
+
+  it("a profile that keeps the billing moment never counts (ship → ship is no change)", async () => {
+    const { svc, prisma } = build({
+      inTransit: 3,
+      modes: { fulfilment_model: "ship", counter_sales: "unset" },
+    });
+    await svc.preview(T, "shipping_wholesaler");
+    expect(prisma.order.count).not.toHaveBeenCalled();
+  });
+});
+
+describe("BO-04 — capabilities (ticks) through the one planner", () => {
+  it("planCapabilities: the same plan the alias preset gets, with the normalised ticks and the preset it equals", async () => {
+    const { svc } = build({ inTransit: 0 });
+    const viaTicks = await svc.planCapabilities(T, { delivery: true, counter: true });
+    const viaAlias = await svc.plan(T, "delivery_pos");
+    expect(viaTicks.plan).toEqual(viaAlias.plan);
+    expect(viaTicks.preset).toBe("delivery_pos");
+    expect(viaTicks.capabilities).toEqual({
+      delivery: true,
+      doorPayments: true,
+      shipping: false,
+      counter: true,
+      opensAs: "order",
+    });
+    expect(viaTicks.aliasProfile).toBeUndefined();
+    expect(viaAlias.aliasProfile).toBe("delivery_pos");
+    expect(viaAlias.preset).toBe("delivery_pos");
+    expect(planFingerprint(viaTicks.plan)).toBe(planFingerprint(viaAlias.plan));
+  });
+
+  it("nothing ticked: 400 BUSINESS_CAPABILITIES_EMPTY before any read", async () => {
+    const { svc, prisma } = build();
+    const err = await svc.planCapabilities(T, {}).catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({ code: "BUSINESS_CAPABILITIES_EMPTY" });
+    expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("a per-module def reads paying per module: door payments off stops billing for the paid driver_payments row", async () => {
+    const { svc } = build({ addons: [{ key: "driver_payments", paid: true }] });
+    const res = await svc.planCapabilities(T, { delivery: true, doorPayments: false });
+    expect(res.plan.billing).toEqual([
+      { featureKey: "driver_payments", action: "disable", manual: false },
+    ]);
+    expect(res.plan.comps.map((c) => c.featureKey)).toEqual(["recurring_routes", "order_delivery"]);
+    expect(res.preset).toBeNull();
+    expect(res.summary[0]).toBe(
+      "At-door payment collection will be switched off and its billing stopped",
+    );
+  });
+
+  it("two orders in transit: planCapabilities RESOLVES with blocked.count 2 (it does not throw)", async () => {
+    const { svc } = build({ inTransit: 2 });
+    const res = await svc.planCapabilities(T, { shipping: true });
+    expect(res.blocked).toEqual({ code: "FULFILMENT_CARRIER_IN_TRANSIT", count: 2 });
+    expect(res.plan.modes).toEqual([{ key: "fulfilment_model", from: "unset", to: "ship" }]);
+  });
+
+  it("previewCapabilities with orders in transit is a 200 with the plan, the fingerprint and blocked", async () => {
+    const { svc, featurePreview, previewResponse } = build({ inTransit: 1 });
+    const res = await svc.previewCapabilities(T, { shipping: true });
+    expect(res).toMatchObject({
+      ...previewResponse,
+      capabilities: { delivery: false, shipping: true, counter: false },
+      preset: "shipping_wholesaler",
+      blocked: { code: "FULFILMENT_CARRIER_IN_TRANSIT", count: 1 },
+      planFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+    expect(res.plan.modes).toEqual([{ key: "fulfilment_model", from: "unset", to: "ship" }]);
+    expect(res.changes).toEqual([
+      "Where orders go: Not configured (today's behavior) → Ship by carrier",
+    ]);
+    expect(featurePreview.preview).toHaveBeenCalledTimes(1);
+  });
+
+  it("previewCapabilities with nothing in transit: blocked is null", async () => {
+    const { svc } = build({ inTransit: 0 });
+    expect((await svc.previewCapabilities(T, { shipping: true })).blocked).toBeNull();
+  });
+
+  it("assertNotBlocked: in transit is the Settings guard's own 409 body; a clear plan passes", async () => {
+    const { svc } = build({ inTransit: 2 });
+    const blocked = await svc.planCapabilities(T, { shipping: true });
+    expect(() => svc.assertNotBlocked(blocked)).toThrow(
+      expect.objectContaining({
+        status: 409,
+        response: expect.objectContaining({
+          statusCode: 409,
+          code: "FULFILMENT_CARRIER_IN_TRANSIT",
+          count: 2,
+        }),
+      }),
+    );
+    const { svc: clear } = build({ inTransit: 0 });
+    const ok = await clear.planCapabilities(T, { shipping: true });
+    expect(() => clear.assertNotBlocked(ok)).not.toThrow();
+  });
+
+  it("a comp the comp path would refuse (FEATURE_REQUIRES_UNMET) is `blocked`, not thrown mid-apply", async () => {
+    const { svc } = build();
+    // door payments wanted with no fleet key anywhere: the comp of driver_payments would be refused
+    const oddDef = {
+      ...businessProfileByKey("shipping_wholesaler")!,
+      key: "custom",
+      modules: { driver_payments: true },
+    };
+    const res = await svc.planDef(T, oddDef, { capabilities: presetTicks(oddDef), preset: null });
+    expect(res.blocked).toEqual({
+      code: "FEATURE_REQUIRES_UNMET",
+      key: "driver_payments",
+      missing: "Recurring routes or Ad hoc order delivery",
+    });
+    expect(() => svc.assertNotBlocked(res)).toThrow(
+      expect.objectContaining({
+        status: 400,
+        response: expect.objectContaining({
+          code: "FEATURE_REQUIRES_UNMET",
+          key: "driver_payments",
+        }),
+      }),
     );
   });
 });

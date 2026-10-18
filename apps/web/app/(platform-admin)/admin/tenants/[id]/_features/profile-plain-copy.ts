@@ -58,6 +58,25 @@ const PLAIN_PROFILES: Record<string, PlainProfile> = {
       "Counter in the menu, optional beside delivery",
     ],
   },
+  // BO-04: the two combinations the original five could not name
+  delivery_shipping: {
+    name: "Delivery + shipping",
+    line: "Delivers on its own trucks and ships by carrier.",
+    bullets: [
+      "Routes, ad hoc delivery and at-door payments in the menu",
+      "Orders go out on the business's own trucks or by carrier",
+      "No counter sales",
+    ],
+  },
+  delivery_shipping_pos: {
+    name: "Everything",
+    line: "Delivers on its own trucks, ships by carrier and sells over the counter.",
+    bullets: [
+      "Routes, ad hoc delivery and at-door payments in the menu",
+      "Orders go out on the business's own trucks or by carrier",
+      "Counter in the menu, optional beside delivery and shipping",
+    ],
+  },
 };
 
 /**

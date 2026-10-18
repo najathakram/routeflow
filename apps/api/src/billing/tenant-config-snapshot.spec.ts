@@ -4,6 +4,9 @@ import {
   parseSnapshotPayload,
   planRestore,
   summarizeRestore,
+  holdConfigEntry,
+  fleetHeldAfterRestore,
+  FULFILMENT_MODEL_KEY,
   type ConfigRow,
   type OverrideRow,
 } from "./tenant-config-snapshot";
@@ -282,5 +285,148 @@ describe("parseSnapshotPayload", () => {
     expect(parseSnapshotPayload({ version: 2, configs: [], overrides: [] })).toBeNull();
     expect(parseSnapshotPayload({ version: 1, configs: {}, overrides: [] })).toBeNull();
     expect(parseSnapshotPayload({ version: 1, configs: [] })).toBeNull();
+  });
+});
+
+describe("holdConfigEntry (BO-13)", () => {
+  const payloadFor = (entries: { featureKey: string; mode: string }[]) =>
+    buildSnapshotPayload(
+      entries.map((e, i) => cfg({ id: `s${i}`, ...e })),
+      [],
+      T_SNAPSHOT,
+    );
+
+  it("moves an UPDATE to skipped with the reason (restored -1, skipped +1)", () => {
+    const plan = planRestore(
+      payloadFor([{ featureKey: CONFIG_KEY, mode: MODE_B }]),
+      { configs: [cfg({ mode: MODE_A })], overrides: [] },
+      T_SNAPSHOT,
+      NOW,
+    );
+    expect(plan.configs.update).toHaveLength(1);
+    const before = summarizeRestore(plan);
+
+    const held = holdConfigEntry(plan, CONFIG_KEY, "CARRIER_IN_TRANSIT");
+
+    expect(held.configs.update).toEqual([]);
+    expect(held.configs.skipped).toEqual([
+      { featureKey: CONFIG_KEY, reason: "CARRIER_IN_TRANSIT" },
+    ]);
+    const after = summarizeRestore(held);
+    expect(after.restored).toBe(before.restored - 1);
+    expect(after.skipped).toBe(before.skipped + 1);
+    // pure: the input plan is untouched
+    expect(plan.configs.update).toHaveLength(1);
+    expect(plan.configs.skipped).toEqual([]);
+  });
+
+  it("moves a CREATE to skipped with the reason", () => {
+    const plan = planRestore(
+      payloadFor([{ featureKey: CONFIG_KEY, mode: MODE_B }]),
+      { configs: [], overrides: [] },
+      T_SNAPSHOT,
+      NOW,
+    );
+    expect(plan.configs.create).toHaveLength(1);
+    const held = holdConfigEntry(plan, CONFIG_KEY, "FULFILMENT_MODE_NEEDS_FLEET");
+    expect(held.configs.create).toEqual([]);
+    expect(held.configs.skipped).toEqual([
+      { featureKey: CONFIG_KEY, reason: "FULFILMENT_MODE_NEEDS_FLEET" },
+    ]);
+  });
+
+  it("leaves unchanged, keptNewer and other writes alone", () => {
+    const keys = FEATURE_REGISTRY.filter((f) => f.config).map((f) => f.key);
+    const [a, b, c] = keys;
+    const mode = (k: string) =>
+      Object.keys(FEATURE_REGISTRY.find((f) => f.key === k)!.config!.modes);
+    const plan = planRestore(
+      payloadFor([
+        { featureKey: a, mode: mode(a)[0] }, // unchanged
+        { featureKey: b, mode: mode(b)[1] ?? mode(b)[0] }, // keptNewer (row updated after the snapshot)
+        { featureKey: c, mode: mode(c)[0] }, // create
+      ]),
+      {
+        configs: [
+          cfg({ id: "ca", featureKey: a, mode: mode(a)[0] }),
+          cfg({ id: "cb", featureKey: b, mode: "other", updatedAt: AFTER }),
+        ],
+        overrides: [],
+      },
+      T_SNAPSHOT,
+      NOW,
+    );
+    expect(plan.configs.unchanged).toEqual([a]);
+    expect(plan.configs.keptNewer).toEqual([b]);
+    expect(holdConfigEntry(plan, a, "CARRIER_IN_TRANSIT")).toBe(plan);
+    expect(holdConfigEntry(plan, b, "CARRIER_IN_TRANSIT")).toBe(plan);
+    expect(holdConfigEntry(plan, "not_a_key", "CARRIER_IN_TRANSIT")).toBe(plan);
+    const held = holdConfigEntry(plan, c, "CARRIER_IN_TRANSIT");
+    expect(held.configs.unchanged).toEqual([a]);
+    expect(held.configs.keptNewer).toEqual([b]);
+    expect(held.configs.create).toEqual([]);
+  });
+
+  it("names the delivery-method key the registry actually has", () => {
+    expect(FEATURE_REGISTRY.some((f) => f.key === FULFILMENT_MODEL_KEY && f.config)).toBe(true);
+  });
+});
+
+describe("fleetHeldAfterRestore (BO-13)", () => {
+  const fleetKey = "order_delivery";
+  const emptyPlan = () =>
+    planRestore(
+      { version: 1, configs: [], overrides: [] },
+      { configs: [], overrides: [] },
+      T_SNAPSHOT,
+      NOW,
+    );
+  const grantEntry = {
+    featureKey: fleetKey,
+    effect: "GRANT" as const,
+    kind: "COMP",
+    reason: "x",
+    expiresAt: null,
+    createdById: null,
+  };
+
+  it("is true when an active add-on row holds a fleet key, false with none", () => {
+    expect(
+      fleetHeldAfterRestore(emptyPlan(), { overrides: [], activeAddonKeys: [fleetKey] }, NOW),
+    ).toBe(true);
+    expect(
+      fleetHeldAfterRestore(emptyPlan(), { overrides: [], activeAddonKeys: ["other"] }, NOW),
+    ).toBe(false);
+  });
+
+  it("counts the restore's OWN override create: a restored GRANT holds the fleet", () => {
+    const plan = planRestore(
+      { version: 1, configs: [], overrides: [grantEntry] },
+      { configs: [], overrides: [] },
+      T_SNAPSHOT,
+      NOW,
+    );
+    expect(plan.overrides.create).toHaveLength(1);
+    expect(fleetHeldAfterRestore(plan, { overrides: [], activeAddonKeys: [] }, NOW)).toBe(true);
+  });
+
+  it("an active DENY removes an add-on row; a revoked or expired one does not", () => {
+    expect(
+      fleetHeldAfterRestore(
+        emptyPlan(),
+        { overrides: [ovr({ featureKey: fleetKey, effect: "DENY" })], activeAddonKeys: [fleetKey] },
+        NOW,
+      ),
+    ).toBe(false);
+    expect(
+      fleetHeldAfterRestore(
+        emptyPlan(),
+        {
+          overrides: [ovr({ featureKey: fleetKey, effect: "DENY", revokedAt: BEFORE })],
+          activeAddonKeys: [fleetKey],
+        },
+        NOW,
+      ),
+    ).toBe(true);
   });
 });

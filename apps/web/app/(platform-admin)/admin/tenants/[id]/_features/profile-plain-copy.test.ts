@@ -11,7 +11,7 @@ describe("SA-1: profile plain copy", () => {
     }
   });
 
-  it("maps the four profiles to their plain names", () => {
+  it("maps the profiles to their plain names", () => {
     const names = Object.fromEntries(
       BUSINESS_PROFILE_KEYS.map((k) => [k, profilePlainCopy(k, "x", "y").name]),
     );
@@ -21,6 +21,9 @@ describe("SA-1: profile plain copy", () => {
       in_store_retailer: "POS only: counter sales",
       in_store_shipping_retailer: "POS + shipping",
       delivery_pos: "Delivery + POS",
+      // BO-04: deliberate edit - the two new presets
+      delivery_shipping: "Delivery + shipping",
+      delivery_shipping_pos: "Everything",
     });
   });
 

@@ -20,6 +20,9 @@ const SKIP_REASON_LABELS: Record<ConfigSnapshotSkipReason, string> = {
   MODE_NOT_OFFERED: "Mode no longer offered",
   EXPIRED: "Grant has expired",
   PLAN_NOT_ALLOWED: "Current plan does not include it",
+  // BO-13 compile-only labels (P-WEB owns the final wording): the row is held, the snapshot stays restorable.
+  CARRIER_IN_TRANSIT: "Orders are with the carrier",
+  FULFILMENT_MODE_NEEDS_FLEET: "Own delivery needs a fleet module",
 };
 
 const KIND_LABELS = { config: "Setting", override: "Grant/deny" } as const;
