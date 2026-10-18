@@ -26,10 +26,10 @@ import { FeatureOverrideService } from "./feature-override.service";
 import { FeatureConfigService } from "./feature-config.service";
 import { FeaturePreviewService } from "./feature-preview.service";
 import { FLEET_KEYS, heldAddonKeys, readFulfilmentInputs } from "./fulfilment-capability";
-import { isOpensAsChoosable } from "@routeflow/types";
 import {
   capabilitiesFromInputs,
   capabilityAvailability,
+  isOpensAsChoosable,
   presetTicks,
   ticksToProfileDef,
 } from "./business-capabilities";

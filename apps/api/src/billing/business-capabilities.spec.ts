@@ -253,7 +253,18 @@ describe("ticksToProfileDef", () => {
 });
 
 describe("PC-L contract C1/C2: the opens-as rule and capability availability come from the server", () => {
-  it("C1: the shared opens-as rule is Shipping + Counter without Delivery, and capabilitiesFromInputs uses it", () => {
+  it("C1: the API's opens-as rule equals the shared one over every combination", () => {
+    const shared = jest.requireActual("@routeflow/types").isOpensAsChoosable;
+    const local = jest.requireActual("./business-capabilities").isOpensAsChoosable;
+    for (const delivery of [false, true])
+      for (const shipping of [false, true])
+        for (const counter of [false, true])
+          expect(local({ delivery, shipping, counter })).toBe(
+            shared({ delivery, shipping, counter }),
+          );
+  });
+
+  it("C1: the shared opens-as rule is Shipping + Counter without Delivery", () => {
     const { isOpensAsChoosable } = jest.requireActual("@routeflow/types");
     expect(isOpensAsChoosable({ delivery: false, shipping: true, counter: true })).toBe(true);
     expect(isOpensAsChoosable({ delivery: true, shipping: true, counter: true })).toBe(false);
