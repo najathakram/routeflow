@@ -25,7 +25,12 @@ import { useToast } from "@routeflow/ui/web";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
-import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
+import {
+  useProducts,
+  useProductCategories,
+  useUpdateProduct,
+  useBulkDeleteProducts,
+} from "@/lib/api/products";
 import { applyLadderChange, ladderChangeNote, unitWords, type TierField } from "@routeflow/pricing";
 import { productTierLabel } from "@/lib/tier-one-label";
 import { useTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
@@ -1078,8 +1083,8 @@ export default function ProductsPage() {
     limit: pageSize, // 0 = all
   });
 
-  // Separate unfiltered query just to populate the category dropdown — always fetches all
-  const { data: allProductsForCategories } = useProducts({ limit: 0 });
+  // Category dropdown: the tenant's distinct categories from their own endpoint (not the whole catalog).
+  const { data: tenantCategories } = useProductCategories();
 
   const productList: ApiProduct[] = result?.data ?? [];
   const meta = result?.meta;
@@ -1087,13 +1092,10 @@ export default function ProductsPage() {
   useClampPage(setPage, page, meta?.totalPages);
   const totalItems = meta?.total ?? 0;
 
-  const categories = Array.from(
-    new Set(
-      (allProductsForCategories?.data ?? productList)
-        .map((p: ApiProduct) => p.category)
-        .filter(Boolean),
-    ),
-  ) as string[];
+  const categories = (tenantCategories ??
+    Array.from(
+      new Set(productList.map((p: ApiProduct) => p.category).filter(Boolean)),
+    )) as string[];
 
   const existingUnits = Array.from(
     new Set(productList.map((p) => p.unit).filter(Boolean)),
