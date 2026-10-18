@@ -597,8 +597,9 @@ export class SubscriptionMutationService {
         }
       }
 
-      // BO-13: the add-on rows this checkout activates are written AFTER the hook (the `desiredNow` loop below);
-      // the restore needs their keys, or a re-upgrade re-buying a fleet add-on would hold `delivery`.
+      // BO-13: the add-on rows this checkout activates are written AFTER the hook (the `desiredNow` loop below),
+      // so the restore's fleet check is told about them and judges the end state. No fleet module is sold
+      // through checkout today, so this is future-proofing, not a live path.
       await this.planTransition.onPlanChange(
         tx,
         { ...transition, pendingAddonKeys: [...desiredNow.keys()] },

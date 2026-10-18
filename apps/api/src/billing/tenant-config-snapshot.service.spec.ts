@@ -890,7 +890,7 @@ describe("TenantConfigSnapshotService — held fulfilment_model (BO-13)", () => 
   });
 
   // M1: the restore runs inside a checkout BEFORE the same transaction activates the add-on rows it buys.
-  it("M1: a re-upgrade re-buying a fleet add-on in the SAME checkout restores `delivery` (pendingAddonKeys count as held)", async () => {
+  it("M1: add-on keys the same transaction will activate count as held, so `delivery` restores (future-proofing: no fleet module is self-service today)", async () => {
     const t = fakeTx({ configs: [fmRow("ship")] }); // no TenantAddon row yet: the checkout activates it after the hook
     await seedSnapshot(t, [fmRow("delivery")]);
 
