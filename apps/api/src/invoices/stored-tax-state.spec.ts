@@ -114,6 +114,26 @@ describe("assertTaxStateRecomputable", () => {
     expect(v.stale).toBe(false);
   });
 
+  it("an exempt customer's invoice that still carries a levy snapshot is stale when the caller refuses it (and is never re-stamped)", () => {
+    const v = taxStateOf({
+      ...base,
+      isTaxExempt: true,
+      refuseExemptLevy: true,
+      invoice: { subtotal: 100, taxAmount: 0 },
+      storedLines: [{ subtotal: 100, taxRate: 0, categoryTaxAmount: 5 }],
+    });
+    expect(v).toMatchObject({ stale: true, restampRate: null });
+    // the items edit zeroes the snapshot itself, so it does not ask for that rule
+    expect(
+      taxStateOf({
+        ...base,
+        isTaxExempt: true,
+        invoice: { subtotal: 100, taxAmount: 0 },
+        storedLines: [{ subtotal: 100, taxRate: 0, categoryTaxAmount: 5 }],
+      }).stale,
+    ).toBe(false);
+  });
+
   it("returns the discount and shipping total from the same formula (header-only reads it)", () => {
     const v = assertTaxStateRecomputable({
       ...base,
@@ -232,6 +252,8 @@ describe("no sumInvoiceTotals* over stored rows outside the guard's callers", ()
     "invoices.service.ts":
       "create() / duplicate sum the lines they BUILD; update() sums the edited lines after guardItemsEditTaxState",
     "manual-invoice-context.ts": "foldCategoryTax: the levy of lines being built",
+    "price-adjustment-ledger.ts":
+      "totalsFromLines: the re-priced lines' totals with the exemption, behind priceAdjustmentTaxState",
     "partial-price-follow.ts":
       "re-prices a draft at the order-derived rate; it never reuses a stored rate",
   };

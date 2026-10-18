@@ -5814,7 +5814,7 @@ export class InvoicesService {
       // B662: item writes, invoice totals and the regulated-ledger sync commit or fail TOGETHER.
       await this.prisma.tenantTransaction(async (tx: any) => {
         const live = await lockInvoiceForPriceAdjustment(tx, inv); // Invoice FIRST, then its rows
-        const { restampRate } = priceAdjustmentTaxState(live); // SA-814 R5-2 (409 if unverifiable)
+        const { restampRate } = priceAdjustmentTaxState(live, isTaxExempt); // SA-814 R5-2 (409 if unverifiable)
         const { categoriesById, unitsPerBoxByProduct } = await loadPriceAdjustmentReference(
           tx,
           live.items,
@@ -5829,7 +5829,7 @@ export class InvoicesService {
           invoiceStatus: live.status,
           warn: (m) => this.logger.warn(m),
         });
-        assertAdjustedTotalsSane(live, itemUpdates); // B1031: totals stay sane, before any write
+        assertAdjustedTotalsSane(live, itemUpdates, isTaxExempt); // B1031: totals stay sane, before any write
         if (restampRate != null) {
           await tx.invoiceItem.updateMany({
             where: { invoiceId: inv.id, taxRate: 0, AND: [notNsfLineWhere] }, // #2243: NSF stays 0
@@ -5843,6 +5843,7 @@ export class InvoicesService {
           itemUpdates,
           auditLine,
           tx,
+          isTaxExempt,
           recomputeStatus: (p, t, d, st) => statusFromPayments(p, t, d, st, tz, "NOT_PAID"),
           ledger: this.ledger,
           resync: (...a) => this.resyncInvoiceLedger(...a),

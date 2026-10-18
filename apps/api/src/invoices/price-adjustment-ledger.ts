@@ -14,6 +14,7 @@ import {
   assertInvoiceTotalsSane,
   assertNoNegativeLineSubtotal,
   storedInvoiceTotals,
+  sumInvoiceTotalsStrict,
 } from "../common/money-invariants.util";
 import type { PriceAdjustmentOverpaidInvoice } from "@routeflow/types";
 import { isNsfLine } from "./nsf-line";
@@ -267,21 +268,24 @@ export function buildPriceAdjustmentUpdates(args: {
 }
 
 /**
- * SA-814 R5-2: the stored-tax guard for a price adjustment (`stored-tax-state.ts`), shared by the tx and the bulk
- * pre-flight. The recompute below is `Σ subtotal x taxRate`, so lines whose stored rates cannot reproduce the
- * stored tax would be silently re-taxed. A VERIFIED B294 flat rate comes back as `restampRate` (the tx stamps it
- * on the rate-0 goods lines before totalling); an unverifiable one is 409 INVOICE_TAX_STATE_STALE, nothing
- * written. The exemption is NOT passed: `totalsFromLines` ignores it, so the check mirrors what it would write.
+ * SA-814 R5-2 / SA-814c: the stored-tax guard for a price adjustment (`stored-tax-state.ts`), shared by the tx and
+ * the bulk pre-flight. The recompute below is the ONE totals builder over the stored rates, so lines whose
+ * rates cannot reproduce the stored tax would be silently re-taxed. A VERIFIED B294 flat rate comes back as
+ * `restampRate` (the tx stamps it on the rate-0 goods lines before totalling); an unverifiable one is 409
+ * INVOICE_TAX_STATE_STALE, nothing written. It judges with the SAME exemption the recompute applies: an exempt
+ * customer's expected regular tax is 0 (rated lines or not), and an exempt invoice that still carries a levy
+ * snapshot stays stale (the header-only rule).
  */
-export function priceAdjustmentTaxState(inv: {
-  subtotal?: unknown;
-  taxAmount?: unknown;
-  items: any[];
-}): TaxStateVerdict {
+export function priceAdjustmentTaxState(
+  inv: { subtotal?: unknown; taxAmount?: unknown; items: any[] },
+  isTaxExempt: boolean,
+): TaxStateVerdict {
   return assertTaxStateRecomputable({
     invoice: inv,
     storedLines: inv.items,
     canRestamp: true,
+    isTaxExempt,
+    refuseExemptLevy: true,
     message: TAX_STATE_STALE_MESSAGES.price,
   });
 }
@@ -295,25 +299,24 @@ type InvoiceTotalsFacts = {
 };
 
 /**
- * THE totals arithmetic of a re-priced invoice, in one place: round the line sums, `taxAmount =
- * round(round(Σ subtotal x taxRate) + round(Σ categoryTaxAmount))`, `total = round(subtotal - discount +
- * shippingFee + taxAmount)`. The pre-flight projection (`projectedTotals`) and the tx write
- * (`commitPriceAdjustment`) BOTH call it, so the figure judged before a write is the figure the write stores
- * (B1058; the projected == written db case pins it).
+ * THE totals of a re-priced invoice: the ONE invoice totals builder (`sumInvoiceTotalsStrict`, B1043) over the
+ * lines, with the customer's exemption (SA-814c: an exempt customer owes $0 regular tax and $0 levy, as at
+ * creation). The pre-flight projection (`projectedTotals`) and the tx write (`commitPriceAdjustment`) BOTH call
+ * it, so the figure judged before a write is the figure the write stores (B1058; the projected == written db
+ * case pins it).
  */
 export function totalsFromLines(
   lines: ReadonlyArray<{ subtotal?: unknown; taxRate?: unknown; categoryTaxAmount?: unknown }>,
   invoice: { discount?: unknown; shippingFee?: unknown },
+  isTaxExempt: boolean,
 ): { subtotal: number; taxAmount: number; total: number; discount: number } {
-  const subtotal = roundMoney(lines.reduce((s, li) => s + Number(li.subtotal), 0));
-  const regularTax = roundMoney(
-    lines.reduce((s, li) => s + Number(li.subtotal) * Number(li.taxRate ?? 0), 0),
-  );
-  const categoryTax = roundMoney(lines.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0));
-  const taxAmount = roundMoney(regularTax + categoryTax);
   const discount = Number(invoice.discount ?? 0);
-  const total = roundMoney(subtotal - discount + Number(invoice.shippingFee ?? 0) + taxAmount);
-  return { subtotal, taxAmount, total, discount };
+  const t = sumInvoiceTotalsStrict(lines as any[], {
+    discount,
+    shipping: Number(invoice.shippingFee ?? 0),
+    isTaxExempt,
+  });
+  return { subtotal: t.subtotal, taxAmount: t.tax, total: t.total, discount };
 }
 
 /**
@@ -325,6 +328,7 @@ export function totalsFromLines(
 function projectedTotals(
   inv: InvoiceTotalsFacts,
   updates: ReadonlyArray<{ id: string; data: Record<string, any> }>,
+  isTaxExempt: boolean,
   flatRate?: number,
 ): { discount: number; subtotal: number; total: number } {
   const byId = new Map(updates.map((u) => [u.id, u.data]));
@@ -334,7 +338,7 @@ function projectedTotals(
       ? { ...line, taxRate: flatRate }
       : line;
   });
-  return totalsFromLines(lines, inv);
+  return totalsFromLines(lines, inv, isTaxExempt);
 }
 
 /**
@@ -346,8 +350,9 @@ function projectedTotals(
 export function assertAdjustedTotalsSane(
   inv: InvoiceTotalsFacts,
   updates: ReadonlyArray<{ id: string; data: Record<string, any> }>,
+  isTaxExempt: boolean,
 ): void {
-  const after = projectedTotals(inv, updates);
+  const after = projectedTotals(inv, updates, isTaxExempt);
   // SA-651 NOT-WORSE: judged against the invoice's STORED totals, so a legacy invoice that is already
   // insane still takes a re-price that does not make it worse (a price raise), never refusing every one.
   tagMoneyInvariant(() => assertInvoiceTotalsSane(after, storedInvoiceTotals(inv)));
@@ -469,9 +474,9 @@ export async function preflightBulkPriceAdjustment(
         invoiceStatus: inv.status ?? undefined,
         ...reference,
       });
-      assertAdjustedTotalsSane(inv, updates);
-      const { restampRate } = priceAdjustmentTaxState(inv); // SA-814 R5-2: refuses before any write
-      const newTotal = projectedTotals(inv, updates, restampRate ?? undefined).total;
+      assertAdjustedTotalsSane(inv, updates, isTaxExempt);
+      const { restampRate } = priceAdjustmentTaxState(inv, isTaxExempt); // SA-814 R5-2: refuses before any write
+      const newTotal = projectedTotals(inv, updates, isTaxExempt, restampRate ?? undefined).total;
       projected.set(inv.id, newTotal);
       const entry = overpaidEntry(inv, sumConfirmed(inv.payments), newTotal);
       if (entry) overpaid.push(entry);
@@ -727,13 +732,15 @@ export async function commitPriceAdjustment(args: {
   itemUpdates: Array<{ id: string; data: Record<string, any> }>;
   auditLine: string;
   tx: any;
+  /** SA-814c: the customer's exemption, applied by the totals exactly as at creation. */
+  isTaxExempt: boolean;
   recomputeStatus: (paid: number, total: number, dueDate: Date | null, status: any) => any;
   ledger: Pick<RegulatedLedgerService, "correctSaleForPriceChange">;
   resync: (invoiceId: string, orderId: string | null, items: any[], db: any) => Promise<void>;
 }): Promise<void> {
-  const { inv, itemUpdates, auditLine, tx, recomputeStatus } = args;
+  const { inv, itemUpdates, auditLine, tx, recomputeStatus, isTaxExempt } = args;
   const updatedItems: any[] = await tx.invoiceItem.findMany({ where: { invoiceId: inv.id } });
-  const { subtotal, taxAmount, total } = totalsFromLines(updatedItems, inv);
+  const { subtotal, taxAmount, total } = totalsFromLines(updatedItems, inv, isTaxExempt);
   const existingInternal = inv.internalNotes ?? "";
   const confirmedPaid = sumConfirmed(inv.payments);
   assertNotOverpaidByPriceChange(confirmedPaid, total, inv); // B1051: before ANY invoice or ledger write

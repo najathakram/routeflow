@@ -203,13 +203,12 @@ export function planHeaderOnlyTotals(
     storedLines: storedRows,
     canRestamp: false,
     isTaxExempt,
+    refuseExemptLevy: true,
     discount,
     shipping: shippingFee,
     message: TAX_STATE_STALE_MESSAGES.header,
   }).totals;
-  const exemptWithLevy =
-    isTaxExempt && storedRows.some((r) => differs(r.categoryTaxAmount ?? 0, 0));
-  if (exemptWithLevy || differs(t.subtotal, invoice.subtotal)) {
+  if (differs(t.subtotal, invoice.subtotal)) {
     throw staleTaxStateError(TAX_STATE_STALE_MESSAGES.header);
   }
   return { discount, shippingFee, total: t.total, subtotal: t.subtotal };

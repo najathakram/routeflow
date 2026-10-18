@@ -488,19 +488,27 @@ describe("bulk re-price: the overpay judgment is a PRE-FLIGHT check (B1058)", ()
   describe("totalsFromLines: the ONE totals arithmetic (pre-flight projection and tx write)", () => {
     it("(x) rounds the sums and the tax once: 83.70 at 5% + an 8.37 levy is 96.26", () => {
       expect(
-        totalsFromLines([{ subtotal: 83.7, taxRate: 0.05, categoryTaxAmount: 8.37 }], {
-          discount: 0,
-          shippingFee: 0,
-        }),
+        totalsFromLines(
+          [{ subtotal: 83.7, taxRate: 0.05, categoryTaxAmount: 8.37 }],
+          {
+            discount: 0,
+            shippingFee: 0,
+          },
+          false,
+        ),
       ).toEqual({ subtotal: 83.7, taxAmount: 12.56, total: 96.26, discount: 0 });
     });
 
     it("(y) a discount and a shipping fee enter the total, not the tax", () => {
       expect(
-        totalsFromLines([{ subtotal: 100, taxRate: 0.1, categoryTaxAmount: 0 }], {
-          discount: 5,
-          shippingFee: 2.5,
-        }),
+        totalsFromLines(
+          [{ subtotal: 100, taxRate: 0.1, categoryTaxAmount: 0 }],
+          {
+            discount: 5,
+            shippingFee: 2.5,
+          },
+          false,
+        ),
       ).toEqual({ subtotal: 100, taxAmount: 10, total: 107.5, discount: 5 });
     });
   });

@@ -73,17 +73,27 @@ export interface TaxStateArgs {
   canRestamp: boolean;
   /** The customer's exemption, ONLY where the caller's recompute honours it (items edit, header-only). */
   isTaxExempt?: boolean;
+  /**
+   * An EXEMPT customer's invoice that still carries a levy snapshot is stale even when the stored tax is 0
+   * (header-only and price adjustment: they cannot clean it). The items edit zeroes it, so it passes false.
+   */
+  refuseExemptLevy?: boolean;
   discount?: number;
   shipping?: number;
 }
 
 /** The verdict, without throwing: callers that must weigh the user's own rate change use this. */
 export function taxStateOf(args: TaxStateArgs): TaxStateVerdict {
-  const { invoice, storedLines, canRestamp, isTaxExempt, discount, shipping } = args;
+  const { invoice, storedLines, canRestamp, isTaxExempt, refuseExemptLevy, discount, shipping } =
+    args;
   const opts: SumInvoiceTotalsOptions = { discount, shipping, isTaxExempt };
   const totals = sumInvoiceTotalsStrict(storedLines, opts);
-  const stale = differsBeyondHalfCent(totals.tax, invoice.taxAmount);
-  if (!stale || !canRestamp) return { totals, stale, restampRate: null };
+  const exemptWithLevy =
+    !!refuseExemptLevy &&
+    !!isTaxExempt &&
+    storedLines.some((l) => differsBeyondHalfCent(l.categoryTaxAmount, 0));
+  const stale = exemptWithLevy || differsBeyondHalfCent(totals.tax, invoice.taxAmount);
+  if (!stale || !canRestamp || isTaxExempt) return { totals, stale, restampRate: null };
   const inferred = inferredGoodsFlatRate({
     subtotal: invoice.subtotal,
     taxAmount: invoice.taxAmount,
@@ -138,7 +148,8 @@ export function guardItemsEditTaxState(args: {
   if (verdict.restampRate == null) throw staleTaxStateError(TAX_STATE_STALE_MESSAGES.edit);
   for (const l of editLines) {
     const row = l.rowId ? locked.storedRows.find((r) => r.id === l.rowId) : undefined;
-    if (row && Number(l.data.taxRate ?? 0) === 0 && !isNsfLine(row)) {
+    const storedZero = row && Number(row.taxRate ?? 0) === 0;
+    if (storedZero && Number(l.data.taxRate ?? 0) === 0 && !isNsfLine(row)) {
       l.data.taxRate = verdict.restampRate;
     }
   }
