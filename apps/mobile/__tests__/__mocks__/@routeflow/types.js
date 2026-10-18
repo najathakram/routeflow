@@ -78,6 +78,9 @@ module.exports = {
     "CREDIT_CARD",
     "ZELLE",
   ],
+  // Hand copy of packages/types/api/error-codes.ts PLAN_GATE_FLAG_KEYS; pinned equal by
+  // apps/api/src/common/api-error-codes-parity.spec.ts (which `require`s THIS file).
+  PLAN_GATE_FLAG_KEYS: { METER_CUSTOMERS: "meter.customers" },
   API_ERROR_CODES: {
     ADDON_GATE: "ADDON_GATE",
     MAILBOX_CONNECT_SECRET_MISMATCH: "mailbox_connect_secret_mismatch",
