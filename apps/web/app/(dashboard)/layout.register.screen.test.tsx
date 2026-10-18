@@ -23,6 +23,7 @@ let mockPath = "/orders";
 let mockRole = "OPERATOR";
 jest.mock("next/navigation", () => ({
   usePathname: () => mockPath,
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: mockPush, replace: mockReplace, prefetch: jest.fn() }),
 }));
 let mockGate: Record<string, unknown> = {

@@ -96,6 +96,27 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(genericToastCopy({ code: "ECONNABORTED", request: {} })).toMatch(/couldn't confirm/);
   });
 
+  it.each([
+    [
+      API_ERROR_CODES.UNIT_ARCHIVED,
+      "That unit is archived. Restore it in Settings > Units, or choose another unit.",
+    ],
+    [
+      API_ERROR_CODES.UNIT_SIZE_IN_USE,
+      "Orders or invoices already use that unit at a different size, so its size can't change. Add a new unit instead.",
+    ],
+  ])("%s shows its fixed sentence, never the raw 409 text", (code, copy) => {
+    expect(genericToastCopy(err(409, { code, message: "raw server text" }))).toBe(copy);
+  });
+
+  it("UNITS_RENAME_IN_PROGRESS is neutral (a product save OR a rename can be the blocker) and says to retry (never the raw 409 text)", () => {
+    expect(
+      genericToastCopy(
+        err(409, { code: API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS, message: "raw" }),
+      ),
+    ).toBe("Another change is in progress. Try again in a moment.");
+  });
+
   it("SA-733r5: the catch-up refusals show fixed copy, never the server message", () => {
     for (const code of [
       API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP,
@@ -134,10 +155,36 @@ describe("genericToastCopy: codes users rely on", () => {
     );
   });
 
+  it("PAYMENT_NOT_DUE (row 542: pay refused, nothing is due) is fixed copy", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.PAYMENT_NOT_DUE, message: "raw server text" }),
+    );
+    expect(copy).toBe("Nothing is due right now.");
+  });
+
+  it("PAYMENT_TERMS_CHANGED (row 542c: the banner's terms no longer hold) is one fixed plain sentence", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.PAYMENT_TERMS_CHANGED, message: "raw server text" }),
+    );
+    expect(copy).toBe("The amount changed. We've refreshed it, please check and try again.");
+    expect(copy).not.toMatch(/[–—]/);
+  });
+
   it("PRODUCT_CHAIN_UNREADABLE (H2: a reparent refused on an unreadable family chain) is fixed copy", () => {
     const copy = genericToastCopy(err(409, { code: API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE }));
     expect(copy).toBe("This product's family chain can't be read.");
     expect(copy).not.toContain(RAW);
+  });
+
+  // SA-812a G-1: the units_prices_v2 fail-closed 503. Without a mapped code a 503 reads as the generic "our side" copy.
+  it("CUSTOMER_PRICES_UNAVAILABLE (503) says nothing was saved and to retry, never the server message", () => {
+    const e = err(503, { code: API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE });
+    expect(genericToastCopy(e)).toBe(
+      "Customer prices couldn't be loaded. Nothing was saved. Try again in a moment.",
+    );
+    expect(codedToastCopy(e)).toBe(genericToastCopy(e));
+    expect(genericToastCopy(e)).not.toContain(RAW);
+    expect(genericToastCopy(e)).not.toMatch(/[–—]/);
   });
 
   it("ORDER_LINE_CHANGED is mapped through the shared constant", () => {
@@ -146,9 +193,9 @@ describe("genericToastCopy: codes users rely on", () => {
     );
   });
 
-  it("ORDER_LINE_DELIVERED_LOCKED (B1234) is fixed copy through the shared constant, never the server message, no dash", () => {
+  it("LINE_ALREADY_DELIVERED (B1234, staff item save) is fixed copy through the shared constant, never the server message, no dash", () => {
     const copy = genericToastCopy(
-      err(409, { code: API_ERROR_CODES.ORDER_LINE_DELIVERED_LOCKED, message: "raw server text" }),
+      err(409, { code: API_ERROR_CODES.LINE_ALREADY_DELIVERED, message: "raw server text" }),
     );
     expect(copy).toMatch(/delivered line can't be changed or removed.*Nothing was saved/);
     expect(copy).not.toContain("raw server text");
@@ -178,6 +225,8 @@ describe("genericToastCopy: codes users rely on", () => {
     ["CREDIT_NOTE_VOID_NOT_EDITABLE", /is void/],
     ["CREDIT_NOTE_OVER_HEADROOM", /more than the source invoice still allows/],
     ["UNIT_AWARE_LINE", /sold by a unit/],
+    // SA-804 (1) / B1232: FIFO and LIFO costing are retired.
+    ["COSTING_METHOD_RETIRED", /^FIFO and LIFO costing are retired. Pick average cost/],
     ["ORDER_CHANGED_DURING_EDIT", /changed while you were editing/],
     ["DUPLICATE_LINE_ID", /^A line appears twice\. Refresh the page and try again\.$/],
     ["ORDER_BILLING_CHANGED", /billing changed/],
@@ -222,6 +271,38 @@ describe("genericToastCopy: codes users rely on", () => {
         err(400, { message: "Cannot duplicate an order-linked invoice. Also: " + RAW }),
       ),
     ).toBe("Some details aren't valid. Check what you entered and try again.");
+  });
+
+  it("O1: the 1-piece naming refusal (uncoded 400) says what to do, with the tenant's piece name, not 'Some details aren't valid'", () => {
+    const one = (label: string) => `A 1-piece unit is always named "${label}".`;
+    expect(genericToastCopy(err(400, { message: one("Piece") }))).toBe(
+      "A 1-piece unit is always called Piece. Rename it to Piece, or give it more than one piece.",
+    );
+    expect(codedToastCopy(err(400, { message: one("Each") }))).toBe(
+      "A 1-piece unit is always called Each. Rename it to Each, or give it more than one piece.",
+    );
+    // a near-miss, or a label that is not a plain short name, is never echoed
+    expect(genericToastCopy(err(400, { message: one("<b>x</b>") }))).toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
+    expect(genericToastCopy(err(400, { message: one("Piece") + " " + RAW }))).toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
+  });
+
+  it("O1: a base name with accents or non-Latin letters keeps the specific copy", () => {
+    const one = (label: string) => `A 1-piece unit is always named "${label}".`;
+    expect(genericToastCopy(err(400, { message: one("Pièce") }))).toBe(
+      "A 1-piece unit is always called Pièce. Rename it to Pièce, or give it more than one piece.",
+    );
+    expect(genericToastCopy(err(400, { message: one("Stück") }))).toBe(
+      "A 1-piece unit is always called Stück. Rename it to Stück, or give it more than one piece.",
+    );
+    expect(genericToastCopy(err(400, { message: one("件") }))).toMatch(/always called 件\./);
+    // markup and control characters are still never echoed
+    expect(genericToastCopy(err(400, { message: one("Pièce<b>") }))).toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
   });
 
   describe("B986: coded refusals that tell the user what to fix (never less actionable than the server sentence)", () => {
@@ -376,6 +457,7 @@ describe("genericToastCopy: codes users rely on", () => {
         /total below what is already paid or credited.*change the lines or discount/,
       ],
       ["FAMILY_NOT_PRICEABLE", /family can't be priced or promoted.*variants/],
+      ["VARIANT_NAME_PREFIX_ONLY", /can't be just the product name.*what makes it different/],
       // SA-770: the overdue list refuses past its id cap (422) and says how to narrow it.
       ["OVERDUE_FILTER_TOO_BROAD", /Too many invoices are overdue.*customer/],
       ["REMINDER_NO_BALANCE_DUE", /no balance due.*nothing to remind/],
@@ -540,7 +622,7 @@ describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODE
     "INVOICE_CHANGED_CONCURRENTLY",
     "INVOICE_TAX_STATE_STALE",
     "INVOICE_TOTAL_BELOW_PAID",
-    "ORDER_LINE_DELIVERED_LOCKED",
+    "LINE_ALREADY_DELIVERED",
   ];
   it.each(REGISTERED)("%s is a computed [API_ERROR_CODES.X] key", (code) => {
     expect(src).toContain(`[API_ERROR_CODES.${code}]:`);

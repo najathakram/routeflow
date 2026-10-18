@@ -77,7 +77,7 @@ export function PwaInstallPrompt({
   // Chrome/Android install banner
   if (deferredPrompt) {
     return (
-      <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm">
+      <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm [body[data-edit-bar]_&]:hidden">
         <div className="flex items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 shadow-modal">
           <img src={logoSrc} alt="" className="h-9 w-9 shrink-0 rounded-lg" />
           <div className="flex-1 min-w-0">
@@ -108,7 +108,7 @@ export function PwaInstallPrompt({
   // iOS tip
   if (isIos) {
     return (
-      <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm">
+      <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm [body[data-edit-bar]_&]:hidden">
         <div className="flex items-start gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 shadow-modal">
           <img src={logoSrc} alt="" className="h-9 w-9 shrink-0 rounded-lg" />
           <div className="flex-1 min-w-0">

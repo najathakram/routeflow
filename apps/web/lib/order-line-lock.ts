@@ -1,6 +1,6 @@
 /**
  * B1234 (owner ruling 2026-10-03, D-O2-a): on a PARTIALLY_DELIVERED order a line that has been delivered
- * (deliveredQty > 0) is locked. The server refuses any edit of it (409 ORDER_LINE_DELIVERED_LOCKED); this is
+ * (deliveredQty > 0) is locked. The server refuses any edit of it (409 LINE_ALREADY_DELIVERED); this is
  * the screen's mirror of the SAME predicate (apps/api/src/orders/delivered-line-lock.ts), so the edit builder
  * never offers a control the API will refuse. Pure; every other status returns "not locked".
  */

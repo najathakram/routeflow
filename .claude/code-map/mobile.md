@@ -39,6 +39,8 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 | [mobile/landing-2026-09-29-late.md](mobile/landing-2026-09-29-late.md) | Landing 2026-09-29 late (mobile): iOS scan-tray price modal sequencing (B901) |
 | [mobile/landing-2026-10-12-r52.md](mobile/landing-2026-10-12-r52.md) | Landing 2026-10-12 Release 5.2 (mobile): settlement from server total, open-status helper, levy apart, paid-at-sale |
 | [mobile/landing-2026-10-16-bk.md](mobile/landing-2026-10-16-bk.md) | Landing 2026-10-16 (mobile): buyer qty-split copy, fulfilment caps, stock-count batches |
+| [mobile/landing-2026-10-16-bk2.md](mobile/landing-2026-10-16-bk2.md) | Landing 2026-10-16 (2nd, mobile): set-cost hint, mock codes |
+| [mobile/landing-2026-10-17-units-v2-3.md](mobile/landing-2026-10-17-units-v2-3.md) | Landing 2026-10-17 units-v2-3 (mobile): S19b price layer + gate, product edit pack (SA-797) |
 | [mobile/landing-2026-10-12-r51-r42.md](mobile/landing-2026-10-12-r51-r42.md) | Landing 2026-10-12 Release 5.1 + 4.2 (mobile): paused-seller Place Order block, POS mode merged (hand-over sheet, balances) |
 | [mobile/landing-2026-10-12-macbook.md](mobile/landing-2026-10-12-macbook.md) | Landing 2026-10-12 MacBook lane (pushed): mobile POS mode, hand-over sheet, server-owned balance |
 | [mobile/landing-2026-10-11-r4.md](mobile/landing-2026-10-11-r4.md) | Landing 2026-10-11 Release 4 (mobile): invoice revision marks, order-edit overpay refusal, overdue by balance |

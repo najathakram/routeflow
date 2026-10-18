@@ -15,6 +15,7 @@ import { useAuth } from "@/lib/auth-context";
 import { formatMoney } from "@/lib/format";
 import { BillingExportButton } from "./BillingExportButton";
 import { BillingStatusCard } from "./BillingStatusCard";
+import { PaidReturnNotice } from "./PaidReturnNotice";
 import { ADDON_QTY_MAX, AddonQuantityStepper } from "./AddonQuantityStepper";
 import { meterLabel } from "@/lib/billing-meter-label";
 import { ownsBillingBanner } from "@/lib/subscription-banner-state";
@@ -552,6 +553,9 @@ export default function BillingSettingsPage() {
 
       {/* SA-733r6 (B4): Pay $X primary at the top while an invoice is owed, the autopay / expiring-card line, and the
           one-time "all set". While an invoice is owed the old read-only banner (and its "Choose a plan") steps aside. */}
+      <React.Suspense fallback={null}>
+        <PaidReturnNotice />
+      </React.Suspense>
       <BillingStatusCard
         sub={s}
         userRole={user?.role}

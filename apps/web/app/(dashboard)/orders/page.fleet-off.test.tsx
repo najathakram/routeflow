@@ -68,10 +68,11 @@ describe("Orders list — SHIP mode wording", () => {
     renderWithProviders(<OrdersPage />);
 
     expect(screen.queryAllByText("Out for Delivery")).toHaveLength(0);
-    // saved-view chip + row badge (table and card list) + the filter option
+    // saved-view pill + row badge (table and card list). O4: the status dropdown is gone, so the
+    // pill is the one status filter and carries the SHIP-mode word.
     expect(screen.getAllByText("Shipped").length).toBeGreaterThanOrEqual(3);
-    const option = screen.getByRole("option", { name: "Shipped" }) as HTMLOptionElement;
-    expect(option.value).toBe("OUT_FOR_DELIVERY");
+    expect(screen.getByRole("button", { name: "Shipped" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Shipped" })).toBeNull();
   });
 
   it("not ship mode (today's UI, unchanged): Out for Delivery everywhere", () => {
@@ -80,7 +81,8 @@ describe("Orders list — SHIP mode wording", () => {
 
     expect(screen.queryAllByText("Shipped")).toHaveLength(0);
     expect(screen.getAllByText("Out for Delivery").length).toBeGreaterThanOrEqual(3);
-    expect(screen.getByRole("option", { name: "Out for Delivery" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Out for Delivery" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Out for Delivery" })).toBeNull();
   });
 });
 

@@ -84,6 +84,17 @@ export default defineConfig({
       },
     },
 
+    // ── Backoffice web cards (BO-01 …): super-admin, approved test tenants only ──
+    {
+      name: "bo-web",
+      testMatch: /bo-web-.*\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "super-admin.json"),
+      },
+    },
+
     // ── Operator tests ─────────────────────────────────────────────────────────
     {
       name: "operator",
@@ -1059,6 +1070,17 @@ export default defineConfig({
           {
             name: "counter-pos-stack",
             testMatch: /72-counter-pos-stack\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          // Units v2 (grid / stock-off / family / blank-tiers money): needs a stack built WITH the feature and `flag.units_prices_v2`
+          // served to the test tenant; each spec fails (never skips) without it. Local lane only, like 71-73.
+          {
+            name: "units-v2",
+            testMatch: /(units-v2-|k11-).*\.spec\.ts/,
             dependencies: ["setup"],
             use: {
               ...devices["Desktop Chrome"],

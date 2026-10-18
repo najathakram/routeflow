@@ -188,7 +188,7 @@ describe("the refusal", () => {
     } catch (e: any) {
       expect(e).toBeInstanceOf(ConflictException);
       expect(e.getStatus()).toBe(409);
-      expect(e.getResponse()).toMatchObject({ code: "ORDER_LINE_DELIVERED_LOCKED" });
+      expect(e.getResponse()).toMatchObject({ code: "LINE_ALREADY_DELIVERED" });
       expect(JSON.stringify(e.getResponse())).not.toMatch(/[–—]/);
     }
   });

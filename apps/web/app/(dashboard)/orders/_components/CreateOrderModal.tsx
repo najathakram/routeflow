@@ -37,8 +37,7 @@ import {
   newLineQtyForLevel,
 } from "./add-line-merge";
 import {
-  isSpecialTier,
-  getTierPrice,
+  customerLinePrice,
   computeLineSubtotal,
   pendingScanDecision,
   undoPendingTap,
@@ -59,10 +58,17 @@ import { LineItemRow } from "@/components/LineItemRow";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import {
   applyLineUnit,
+  customerLineSpecial,
+  isLayerManualLine,
+  repriceLineFromLayer,
+  masterLayerFrom,
+  type LayerFrom,
   sameProductUnit,
   unitLabelPayload,
   type PackBase,
 } from "@/lib/order-line-unit";
+import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
+import { PRICE_LAYER_FAILED_COPY, PRICE_LAYER_PENDING_COPY } from "@/components/PriceLayerNotice";
 import {
   applyUnitToLines,
   isPendingDefaultUnit,
@@ -194,6 +200,10 @@ interface LineItem extends DerivedBaseMarker {
   sellBy?: "case" | "unit";
   /** units_v1: the non-pack unit this line sells by (`undefined` = the pack); see LineItemRowItem. */
   unitLabel?: string;
+  /** S19b: a price the SYSTEM pre-filled from last-given history; the customer layer replaces it once ready. */
+  systemPrefill?: boolean;
+  /** S19b: set while the customer layer prices this line; the pre-layer values to restore if its row goes away. */
+  layerFrom?: LayerFrom;
   /** #2784 UI-only: a NEW line from the picker tap / a shared-code scan starts on the default selling unit. */
   startOnDefaultUnit?: boolean;
   /** #2865 case c UI-only: the PENDING TAP COUNT (N default-start taps before the ladder loaded = N of the default unit). */
@@ -317,7 +327,9 @@ export function CreateOrderModal({
     return map;
   }, [customerPricesData]);
 
-  // Product search state
+  // S19b (SA-811a, SA-813): flag on, the customer's price layer prices every line through customerLinePrice and a pending
+  // or failed read leaves prices UNCONFIRMED (Create/Save wait). Flag off: no request, `layerOf` is undefined, master's chain.
+  const priceLayer = useCustomerPriceLayer(selectedCustomer?.id);
   const [productSearch, setProductSearch] = React.useState("");
   const [debouncedProductSearch, setDebouncedProductSearch] = React.useState("");
   const [lineItems, setLineItems] = React.useState<LineItem[]>([]);
@@ -636,6 +648,11 @@ export function CreateOrderModal({
   // is still the auto-derived tier price move; an operator's one-time price, an upsell, or a
   // history-prefilled override stands, as do unlisted lines and lines added before this snapshot
   // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched.
+  // S19b: the layer's content for the cart's products, so new layer data (not just "ready") re-runs the effect.
+  const layerSig = priceLayer.enabled
+    ? `${priceLayer.ready}|` +
+      lineItems.map((li) => JSON.stringify(priceLayer.layerOf(li.productId) ?? null)).join("|")
+    : "";
   React.useEffect(() => {
     if (!scanV2) return;
     setLineItems((prev) => {
@@ -643,12 +660,19 @@ export function CreateOrderModal({
       const next = prev.map((li) => {
         // a unit line is re-priced by its own picker from the product's ladder, not the pack's tiers
         if (li.isUnlisted || !li.tierPrices || li.unitLabel) return li;
-        if (li.priceType === "DISCOUNTED" || li.priceType === "MANUAL") return li;
+        // an operator's MANUAL / DISCOUNTED price always carries a one-time price; a MANUAL line without one is the layer's
+        // above-list price (the system's), so it re-prices with the customer
+        if (li.priceType === "DISCOUNTED") return li;
         if (li.discountedPrice != null) return li;
         const tier = cpMap.get(li.productId) ?? selectedCustomer?.pricingTier ?? 1;
-        const tierPrice = getTierPrice(li.tierPrices, tier);
-        const priceType = isSpecialTier(tier) ? ("SPECIAL" as const) : ("STANDARD" as const);
-        const specialPrice = isSpecialTier(tier) ? tierPrice : undefined;
+        const lp = customerLinePrice({
+          product: li.tierPrices as unknown as Record<string, unknown>,
+          tier,
+          layer: priceLayer.layerOf(li.productId),
+        });
+        const tierPrice = lp.price;
+        const priceType = lp.priceType;
+        const specialPrice = customerLineSpecial(lp);
         if (
           li.unitPrice === tierPrice &&
           li.priceType === priceType &&
@@ -661,7 +685,7 @@ export function CreateOrderModal({
       });
       return changed ? next : prev;
     });
-  }, [scanV2, selectedCustomer?.pricingTier, cpMap]);
+  }, [scanV2, selectedCustomer?.pricingTier, cpMap, layerSig]);
 
   // ── Derived totals ────────────────────────────────────────────────────────
 
@@ -789,18 +813,24 @@ export function CreateOrderModal({
     const customerTier = selectedCustomer?.pricingTier ?? 1;
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
-    const tierPrice = getTierPrice(product, effectiveTier);
-    const priceType = isSpecialTier(effectiveTier) ? ("SPECIAL" as const) : ("STANDARD" as const);
+    // S19b: the customer's layer price (flag on) or master's tier price (no layer): getTierPrice lives inside the helper.
+    const linePrice = customerLinePrice({
+      product,
+      tier: effectiveTier,
+      layer: priceLayer.layerOf(product.id),
+    });
+    const tierPrice = linePrice.price;
+    const priceType = linePrice.priceType;
     // Pre-fill from customer's last-given price for this product (only when below
     // the effective tier price, and only when this isn't already a SPECIAL price
     // — SPECIAL prices are permanent, the discount is already in tierPrice).
+    // R3 (SA-811a): a price from the customer's layer is that same permanent price, so last-given is skipped for it too.
     const histEntry = priceHistory?.[product.id as string];
-    const hasHistDiscount =
-      priceType !== "SPECIAL" && histEntry != null && histEntry.lastPrice < tierPrice;
+    const permanentPrice = priceType === "SPECIAL" || linePrice.layered;
+    const hasHistDiscount = !permanentPrice && histEntry != null && histEntry.lastPrice < tierPrice;
     // Carry forward a remembered UPSELL too (a saved price ABOVE list). It pre-fills
     // as a MANUAL override, mirroring the operator's last agreed above-list price.
-    const hasHistUpsell =
-      priceType !== "SPECIAL" && histEntry != null && histEntry.lastPrice > listPrice;
+    const hasHistUpsell = !permanentPrice && histEntry != null && histEntry.lastPrice > listPrice;
     const hasHistOverride = hasHistDiscount || hasHistUpsell;
     const orderedUnit =
       opts?.ordered?.unit && opts.ordered.unit.kind !== "pack" ? opts.ordered.unit : undefined;
@@ -812,9 +842,24 @@ export function CreateOrderModal({
       // just the variant name in `product.name` (PR #44).
       productName: displayProductName(product),
       unit: product.unit ?? "each",
-      listPrice,
-      specialPrice: isSpecialTier(effectiveTier) ? tierPrice : undefined,
+      listPrice: linePrice.layered ? (linePrice.listPrice ?? listPrice) : listPrice,
+      specialPrice: customerLineSpecial(linePrice),
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
+      // a price the system pre-filled from history: the layer replaces it if one turns out to price this line (review 1)
+      systemPrefill: hasHistOverride && priceLayer.enabled ? true : undefined,
+      // the pre-layer (master) values, restored if the layer's row goes away
+      layerFrom: linePrice.layered
+        ? masterLayerFrom(
+            {
+              pricePerUnit: product.pricePerUnit,
+              priceTier2: product.priceTier2,
+              priceTier3: product.priceTier3,
+              priceTier4: product.priceTier4,
+              priceTier5: product.priceTier5,
+            },
+            effectiveTier,
+          )
+        : undefined,
       unitPrice: hasHistOverride ? histEntry!.lastPrice : tierPrice,
       priceType: hasHistUpsell
         ? ("MANUAL" as const)
@@ -840,7 +885,10 @@ export function CreateOrderModal({
     // price for the customer's tier today (applyLineUnit drops any one-time price, as a manual switch does).
     const newLine: LineItem = orderedUnit
       ? {
-          ...applyLineUnit(baseLine, orderedUnit, { tier: effectiveTier }),
+          ...applyLineUnit(baseLine, orderedUnit, {
+            tier: effectiveTier,
+            layer: priceLayer.layerOf(product.id),
+          }),
           qty: opts!.ordered!.qty.qty,
         }
       : baseLine;
@@ -1120,6 +1168,36 @@ export function CreateOrderModal({
   const tierForProduct = (productId: string) =>
     cpMap.get(productId) ?? selectedCustomer?.pricingTier ?? 1;
 
+  // S19b (SA-811a R1): once the customer's layer has loaded, every auto-priced line (pack or unit, however it was added or
+  // switched) takes the layer price. Idempotent (a settled line returns itself), so running it after every commit is safe;
+  // flag off or no layer for a product = the line is untouched.
+  React.useEffect(() => {
+    if (!priceLayer.enabled || !priceLayer.ready) return;
+    setLineItems((prev) => {
+      let changed = false;
+      const next = prev.map((li) => {
+        if (li.isUnlisted || !li.productId) return li;
+        const r = repriceLineFromLayer(li, {
+          tier: tierForProduct(li.productId),
+          // the server omits a product whose typed row is gone: [] (ready, no row) restores master's number
+          layer: priceLayer.layerOf(li.productId) ?? [],
+        });
+        if (r !== li) changed = true;
+        return r;
+      });
+      return changed ? next : prev;
+    });
+  });
+
+  // SA-813 M1/M3: flag on and the layer pending, failed, or missing a line's product (an incomplete response): the prices
+  // on screen are UNCONFIRMED, so Create / Save as draft / Confirm wait. Flag off: never blocked.
+  const priceLayerUnconfirmed =
+    priceLayer.enabled &&
+    (!priceLayer.ready ||
+      lineItems.some(
+        (li) => !li.isUnlisted && !!li.productId && !priceLayer.lineReady(li.productId),
+      ));
+
   // "Usually buys" chips + "Order again": the customer's top products and last orders. Both add through
   // addLineItem, so every line is priced today (see use-order-suggestion-actions).
   const { data: orderSuggestions, isError: orderSuggestionsError } = useOrderSuggestions(
@@ -1140,9 +1218,10 @@ export function CreateOrderModal({
   const setLineUnit = (tempId: string, option: UnitOption, refresh: boolean) =>
     setLineItems((prev) => {
       const target = prev.find((li) => li.tempId === tempId);
-      return target
-        ? applyUnitToLines(prev, tempId, option, refresh, tierForProduct(target.productId))
-        : prev;
+      if (!target) return prev;
+      const tier = tierForProduct(target.productId);
+      const layer = priceLayer.layerOf(target.productId);
+      return applyUnitToLines(prev, tempId, option, refresh, tier, layer);
     });
   // SA-626c: a flagged line holds its default unit from the moment it is added, not only once its row mounts.
   const { user: authUser } = useAuth();
@@ -1174,6 +1253,7 @@ export function CreateOrderModal({
           return {
             ...li,
             discountedPrice: undefined,
+            systemPrefill: undefined,
             overrideReason: undefined,
             unitPrice: revertPrice,
             priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
@@ -1184,7 +1264,7 @@ export function CreateOrderModal({
         // of the special / list price is no override; below list DISCOUNTED, at/above MANUAL (an
         // upsell: the base is hidden from the customer server-side, shown green to the operator).
         const next = applyTypedPrice(li, value);
-        const consumed = { ...next, startOnDefaultUnit: false };
+        const consumed = { ...next, startOnDefaultUnit: false, systemPrefill: undefined };
         return consumed.discountedPrice == null
           ? { ...consumed, overrideReason: undefined }
           : consumed;
@@ -1194,7 +1274,9 @@ export function CreateOrderModal({
 
   const setOverrideReason = (tempId: string, reason: string) =>
     setLineItems((prev) =>
-      prev.map((li) => (li.tempId === tempId ? { ...li, overrideReason: reason } : li)),
+      prev.map((li) =>
+        li.tempId === tempId ? { ...li, overrideReason: reason, systemPrefill: undefined } : li,
+      ),
     );
 
   // ── Submit ────────────────────────────────────────────────────────────────
@@ -1462,7 +1544,7 @@ export function CreateOrderModal({
    * (or no choice, if the customer has no active order).
    */
   const submitOrder = (data: FormValues, options: SubmitOptions = {}) => {
-    if (fulfilmentPending) return;
+    if (fulfilmentPending || priceLayerUnconfirmed) return;
     // SA-626c: any line still waiting for its default unit is resolved FIRST (never sent as the pack/case by default);
     // nothing pending = the synchronous path, unchanged.
     if (!lineItems.some(isPendingDefaultUnit)) return doSubmitOrder(data, options, lineItems);
@@ -1816,8 +1898,9 @@ export function CreateOrderModal({
       pendingUnit={pendingUnitOf(li)}
       unitSlot={
         <OrderLineUnitPicker
-          line={li}
+          line={{ ...li, layerManual: isLayerManualLine(li, priceLayer.layerOf(li.productId)) }}
           tier={tierForProduct(li.productId)}
+          layer={priceLayer.layerOf(li.productId)}
           startOnDefaultUnit={li.startOnDefaultUnit}
           onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
         />
@@ -1936,18 +2019,38 @@ export function CreateOrderModal({
           {/* Three-tier hierarchy: ghost (dismiss) < secondary (alt save) <
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
-          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:order-2 sm:gap-3">
             {/* Row 344: the footer actions are 44 px tap targets below sm (they were 34 px at 390). */}
             <Button variant="ghost" type="button" className="max-sm:h-11" onClick={handleDismiss}>
               Cancel
             </Button>
             <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
+            {priceLayer.enabled && priceLayer.failed ? (
+              <p
+                role="alert"
+                className="basis-full text-right text-xs text-red-700"
+                data-testid="order-price-layer-failed"
+              >
+                Couldn&apos;t load this customer&apos;s prices.{" "}
+                <button type="button" className="underline" onClick={priceLayer.refetch}>
+                  Retry
+                </button>
+              </p>
+            ) : priceLayerUnconfirmed ? (
+              <p
+                role="status"
+                className="basis-full text-right text-xs text-slate-600"
+                data-testid="order-price-layer-pending"
+              >
+                Checking this customer&apos;s prices…
+              </p>
+            ) : null}
             <WriteButton
               variant="secondary"
               type="button"
               className="max-sm:h-11"
               loading={createOrder.isPending}
-              disabled={createOrder.isPending || fulfilmentPending}
+              disabled={createOrder.isPending || fulfilmentPending || priceLayerUnconfirmed}
               onClick={onSaveDraft}
             >
               Save as draft
@@ -1959,7 +2062,10 @@ export function CreateOrderModal({
                 className="max-sm:h-11"
                 loading={createOrder.isPending}
                 disabled={
-                  createOrder.isPending || fulfilmentPending || lineItems.some(isPendingDefaultUnit)
+                  createOrder.isPending ||
+                  fulfilmentPending ||
+                  priceLayerUnconfirmed ||
+                  lineItems.some(isPendingDefaultUnit)
                 }
                 onClick={() => {
                   posFinishRef.current = "confirm";
@@ -1979,13 +2085,30 @@ export function CreateOrderModal({
               loading={createOrder.isPending}
               // #2865 case d (SA-632): no order is created while ANY line is still waiting on its default unit
               disabled={
-                createOrder.isPending || fulfilmentPending || lineItems.some(isPendingDefaultUnit)
+                createOrder.isPending ||
+                fulfilmentPending ||
+                priceLayerUnconfirmed ||
+                lineItems.some(isPendingDefaultUnit)
               }
               aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
             >
               {posMode ? POS_COPY.confirmAndInvoice : "Create Order"}
             </WriteButton>
           </div>
+          {/* O3 (P01/P02): the total used to sit at the foot of the scrolling body, hidden behind
+              this sticky footer at the moment of "Create Order". It is now pinned HERE. DOM-last so
+              the col-reverse stack puts it on top of the buttons under `sm`; `sm:order-1` seats it
+              between Minimize and the actions on the single row. min-w-0 + tabular-nums, no fixed
+              width: a five-figure total wraps instead of clipping. */}
+          {lineItems.length > 0 && (
+            <div
+              data-testid="create-order-footer-total"
+              className="flex min-w-0 items-baseline justify-between gap-2 tabular-nums text-navy sm:order-1 sm:justify-end"
+            >
+              <span className="text-sm text-navy/70">Total</span>
+              <span className="min-w-0 break-all text-base font-semibold">${total.toFixed(2)}</span>
+            </div>
+          )}
         </div>
       }
     >
@@ -2738,12 +2861,30 @@ export function CreateOrderModal({
         footer={
           mergePrompt ? (
             <div className="flex w-full flex-col gap-2">
+              {priceLayerUnconfirmed ? (
+                <p
+                  role="status"
+                  className="text-xs text-slate-600"
+                  data-testid="merge-price-layer-wait"
+                >
+                  {priceLayer.failed ? PRICE_LAYER_FAILED_COPY : PRICE_LAYER_PENDING_COPY} The order
+                  can be created once this customer&apos;s prices are confirmed.
+                  {priceLayer.failed ? (
+                    <>
+                      {" "}
+                      <button type="button" className="underline" onClick={priceLayer.refetch}>
+                        Retry
+                      </button>
+                    </>
+                  ) : null}
+                </p>
+              ) : null}
               {/* Merging routes through the existing order, which keeps its own
                   orderDate — the backdate would be dropped, so it is not offered. */}
               <Button
                 type="button"
                 variant={orderDate ? "secondary" : "primary"}
-                disabled={!!orderDate}
+                disabled={!!orderDate || priceLayerUnconfirmed}
                 loading={createOrder.isPending}
                 onClick={() => {
                   if (pendingFormValuesRef.current)
@@ -2760,6 +2901,7 @@ export function CreateOrderModal({
               <Button
                 type="button"
                 variant={orderDate ? "primary" : "secondary"}
+                disabled={priceLayerUnconfirmed}
                 loading={createOrder.isPending}
                 onClick={() => {
                   if (pendingFormValuesRef.current)

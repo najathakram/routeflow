@@ -6,7 +6,7 @@ import { join, relative } from "path";
  * function under apps/api/src that UPDATES or DELETES an existing OrderItem is listed below by
  * `file::function` and is one of:
  *   - "guarded": the function calls `assertDeliveredLinesUntouched(` (delivered-line-lock.ts), the ONE guard
- *     that refuses (409 ORDER_LINE_DELIVERED_LOCKED) a change to a delivered line of a PARTIALLY_DELIVERED order;
+ *     that refuses (409 LINE_ALREADY_DELIVERED) a change to a delivered line of a PARTIALLY_DELIVERED order;
  *   - "status-gated": the writer cannot reach a PARTIALLY_DELIVERED order, and `gate` is a pattern that must
  *     still appear in `gateFile` (default: the writer's own file), so the claim is checkable;
  *   - "via-guarded": a helper whose ONLY callers (outside its own file) are the listed guarded / status-gated

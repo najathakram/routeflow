@@ -92,7 +92,7 @@ function entryTouchesLine(entry: DeliveredLockEntry, held: DeliveredLockLine): b
 }
 
 /**
- * The B1234 guard. Throws 409 ORDER_LINE_DELIVERED_LOCKED, before any write, when `order.status` is
+ * The B1234 guard. Throws 409 LINE_ALREADY_DELIVERED, before any write, when `order.status` is
  * PARTIALLY_DELIVERED and the edit would touch a delivered line in `held`:
  *  - a per-line (merge) payload naming a delivered line with a quantity / price / unit change, a
  *    substitution, a CANCEL or a DELETE;
@@ -124,7 +124,7 @@ export function assertDeliveredLinesUntouched(
 
 function deliveredLineLocked(): ConflictException {
   return new ConflictException({
-    code: API_ERROR_CODES.ORDER_LINE_DELIVERED_LOCKED,
+    code: API_ERROR_CODES.LINE_ALREADY_DELIVERED,
     message: DELIVERED_LINE_LOCKED_MESSAGE,
   });
 }

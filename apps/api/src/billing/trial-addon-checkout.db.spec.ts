@@ -122,7 +122,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       product: {
         id: `prod_${id}`,
         object: "product",
-        name: o.sku ? `RouteFlow add-on — ${o.sku}` : "RouteFlow Starter — monthly",
+        name: o.sku ? `RouteFlow add-on — ${o.sku}` : "RouteFlow Starter",
         metadata: o.sku ? { addonSku: o.sku } : {},
       },
     },

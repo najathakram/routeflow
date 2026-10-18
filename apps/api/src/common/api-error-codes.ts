@@ -30,6 +30,16 @@ export const API_ERROR_CODES = {
   CODE_TAKEN: "CODE_TAKEN",
   PRODUCT_CODE_IN_USE: "PRODUCT_CODE_IN_USE",
   NAME_TAKEN: "NAME_TAKEN",
+  UNIT_NAME_TAKEN: "UNIT_NAME_TAKEN",
+  UNIT_RENAME_COLLISION: "UNIT_RENAME_COLLISION",
+  UNITS_RENAME_IN_PROGRESS: "UNITS_RENAME_IN_PROGRESS",
+  UNIT_ARCHIVED: "UNIT_ARCHIVED",
+  TENANT_UNIT_LIMIT: "TENANT_UNIT_LIMIT",
+  UNIT_SIZE_IN_USE: "UNIT_SIZE_IN_USE",
+  PRODUCT_PACK_STALE: "PRODUCT_PACK_STALE",
+  PRODUCT_PACK_PRECONDITION_REQUIRED: "PRODUCT_PACK_PRECONDITION_REQUIRED",
+  /** 400 from product create / update, the family grid and the stock split: a variant name that is only its parent's name plus the separator ("Acme - "); there is no label to store. Nothing was written. */
+  VARIANT_NAME_PREFIX_ONLY: "VARIANT_NAME_PREFIX_ONLY",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
   /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */
@@ -153,8 +163,6 @@ export const API_ERROR_CODES = {
   INVALID_RESOLUTION_FOR_TYPE: "INVALID_RESOLUTION_FOR_TYPE",
   LINE_PACK_UNDERIVABLE: "LINE_PACK_UNDERIVABLE",
   LINE_ALREADY_DELIVERED: "LINE_ALREADY_DELIVERED",
-  // B1234: a delivered line of a PARTIALLY_DELIVERED order cannot be edited or removed (409, nothing written).
-  ORDER_LINE_DELIVERED_LOCKED: "ORDER_LINE_DELIVERED_LOCKED",
   ORDER_BELOW_RETURN_CREDIT: "ORDER_BELOW_RETURN_CREDIT",
   CREDIT_LIMIT_EXCEEDED: "CREDIT_LIMIT_EXCEEDED",
   MERGE_CHOICE_REQUIRED: "MERGE_CHOICE_REQUIRED",
@@ -187,6 +195,7 @@ export const API_ERROR_CODES = {
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
   INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
+  STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
   ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
   INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
   EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",
@@ -231,6 +240,8 @@ export const API_ERROR_CODES = {
   STRIPE_NOT_CONFIGURED: "STRIPE_NOT_CONFIGURED",
   STRIPE_ACCOUNT_MISMATCH: "STRIPE_ACCOUNT_MISMATCH",
   STRIPE_SUBSCRIPTION_OWNER_MISMATCH: "STRIPE_SUBSCRIPTION_OWNER_MISMATCH",
+  PAYMENT_NOT_DUE: "PAYMENT_NOT_DUE",
+  PAYMENT_TERMS_CHANGED: "PAYMENT_TERMS_CHANGED",
   CATCHUP_SESSION_OPEN: "CATCHUP_SESSION_OPEN",
   CATCHUP_PENDING: "CATCHUP_PENDING",
   CATCHUP_NOT_ELIGIBLE: "CATCHUP_NOT_ELIGIBLE",
@@ -551,6 +562,34 @@ export const API_ERROR_CODES = {
   IMPERSONATION_NOT_ALLOWED: "IMPERSONATION_NOT_ALLOWED",
   SELF_DEACTIVATION_REFUSED: "SELF_DEACTIVATION_REFUSED",
   LAST_TENANT_ADMIN: "LAST_TENANT_ADMIN",
+  /**
+   * 409 from the tier-rules setting (any tier discount above 0%) and from every order-unit switch (product, tier,
+   * customer, "Apply to existing products"): they stay off until every writer of the pack price columns uses the one
+   * write path (SA-795 h). Fixed body; nothing was written.
+   */
+  PRICING_RULES_NOT_READY: "PRICING_RULES_NOT_READY",
+  /**
+   * 400 from POST/PATCH /products and PATCH /settings/margin: the request tried to SET the costing method FIFO or LIFO,
+   * which are retired (a stored FIFO/LIFO is costed as average cost). Use AVCO, STANDARD or LAST_COST. Fixed body;
+   * nothing was written (SA-804 (1), B1232).
+   */
+  COSTING_METHOD_RETIRED: "COSTING_METHOD_RETIRED",
+  /**
+   * 409 from POST /products/:productId/prices and POST /prices/undo (units v2): the product's priceRevision, its price state
+   * (SA-796 R-1 value compare-and-set) or a customer cell's expected price changed since the grid was read. Body carries
+   * `revision`. Nothing was written; reload the grid.
+   */
+  LADDER_REVISION_STALE: "LADDER_REVISION_STALE",
+  /** 400 from POST /products/:productId/prices: the pricing core refused a value (zero/junk, the anchor's Retail cleared); body carries `problems`. */
+  PRICE_EDIT_INVALID: "PRICE_EDIT_INVALID",
+  /** 409 from POST /products/:productId/prices/undo: that audit row is not a price save of this product, or it was already undone. */
+  PRICE_UNDO_UNAVAILABLE: "PRICE_UNDO_UNAVAILABLE",
+  /**
+   * 503 from every server-priced order path (buyer checkout, standing orders, returns, order edits) when the customer has
+   * typed unit prices but the units_prices_v2 flag could not be read (the override or plan lookup failed). Retryable: nothing
+   * was written, so the caller never gets the tier price instead of the customer's typed price.
+   */
+  CUSTOMER_PRICES_UNAVAILABLE: "CUSTOMER_PRICES_UNAVAILABLE",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

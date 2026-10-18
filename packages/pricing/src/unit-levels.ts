@@ -25,7 +25,7 @@ export interface ResolveUnitPriceLevel {
  * again"). NULL, 0, NaN and negatives are all "derive". Coerces Decimal/string so an operator's
  * typed price can never silently round to 0.00.
  */
-function explicitPrice(v: Numeric | null | undefined): number | null {
+export function explicitPrice(v: Numeric | null | undefined): number | null {
   if (v == null) return null;
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -118,7 +118,16 @@ export class UnknownUnitError extends Error {
   }
 }
 
-const norm = (s: string) => s.trim().toLowerCase();
+/**
+ * The comparison key of a unit / pack label: NFC-normalise, THEN trim, THEN case-fold. The ONE
+ * implementation for every label match on the ladder (a sale-line label against the pack word, a level
+ * row, Piece), so "Cafe"+U+0301 and U+00E9 are one word. Pricing may only import @routeflow/types for
+ * types (no-runtime-types-import.spec), so the helper lives here; `packages/types` keeps a literal copy
+ * for the web, pinned equal to this by `apps/api/src/units/piece-words-parity.spec.ts`, and the API
+ * imports this one directly. ASCII labels key exactly as the old `trim().toLowerCase()` did.
+ */
+export const unitNameKey = (s: string): string => s.normalize("NFC").trim().toLowerCase();
+const norm = unitNameKey;
 const noLevel = {
   price: null,
   priceTier2: null,
@@ -127,7 +136,7 @@ const noLevel = {
   priceTier5: null,
 };
 
-function packFactorOf(product: LadderProduct): number {
+export function packFactorOf(product: LadderProduct): number {
   const upb = Math.trunc(Number(product.unitsPerBox ?? 0));
   return upb > 1 ? upb : 1;
 }
@@ -143,7 +152,7 @@ export function packLabelOf(product: Pick<LadderProduct, "packLabel" | "unit">):
 }
 
 /** Does `label` name the pack? By `packLabel` OR the legacy unit text (either spelling sells the pack). */
-function namesPack(product: LadderProduct, label: string): boolean {
+export function namesPack(product: LadderProduct, label: string): boolean {
   const l = norm(label);
   return (
     l === norm(packLabelOf(product)) || (!!(product.unit ?? "").trim() && l === norm(product.unit!))
@@ -151,7 +160,7 @@ function namesPack(product: LadderProduct, label: string): boolean {
 }
 
 /** Does `label` name the base? The tenant's base label OR legacy "Piece". */
-function namesBase(product: LadderProduct, label: string): boolean {
+export function namesBase(product: LadderProduct, label: string): boolean {
   const l = norm(label);
   return l === norm(baseLabelOf(product)) || l === norm(PIECE_LABEL);
 }

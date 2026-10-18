@@ -56,7 +56,12 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(true) } },
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+        {
+          provide: EntitlementsService,
+          useValue: {
+            hasFlag: jest.fn(async (_t: string, k: string) => k !== "flag.units_prices_v2"),
+          },
+        },
         { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
         { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
@@ -102,7 +107,7 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
     prisma.product.update.mockResolvedValue({ ...self, isActive: false } as any);
     holderLookup(self);
 
-    await service.update("prod-1", { isActive: false } as any);
+    await service.update("prod-1", { isActive: false } as any, { packPrecondition: "internal" });
 
     const order = prisma.product.update.mock.calls.map(([a]: any) =>
       a.data.retiredSku === "S1" ? "release" : a.data.isActive === false ? "flip" : "other",
@@ -152,7 +157,7 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
       fn({ ...prisma, $executeRaw: lockSpy, $queryRaw: jest.fn().mockResolvedValue([]) }),
     );
 
-    await service.update("prod-1", { sku: "A1" } as any);
+    await service.update("prod-1", { sku: "A1" } as any, { packPrecondition: "internal" });
 
     const keys = events.map((e) => e.slice("lock:".length));
     // The first batch is the maximal ascending prefix (one sorted lockBarcodeCodes call)...
@@ -170,7 +175,7 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
     prisma.product.update.mockResolvedValue({ ...self, isActive: true, sku: "S1" } as any);
     holderLookup(self);
 
-    await service.update("prod-1", { isActive: true } as any);
+    await service.update("prod-1", { isActive: true } as any, { packPrecondition: "internal" });
 
     const restore = prisma.product.update.mock.calls.find(([a]: any) => a.data.sku === "S1");
     expect(restore?.[0]).toMatchObject({ data: { sku: "S1", retiredSku: null } });
@@ -182,7 +187,7 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
     prisma.product.update.mockResolvedValue({ ...self, pricePerUnit: 9 } as any);
     holderLookup(self);
 
-    await service.update("prod-1", { pricePerUnit: 9 } as any);
+    await service.update("prod-1", { pricePerUnit: 9 } as any, { packPrecondition: "internal" });
 
     expect(prisma.product.update).toHaveBeenCalledTimes(1);
   });
@@ -249,7 +254,9 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
       return Promise.resolve(null);
     });
 
-    await expect(service.update("prod-1", { isActive: true } as any)).rejects.toMatchObject({
+    await expect(
+      service.update("prod-1", { isActive: true } as any, { packPrecondition: "internal" }),
+    ).rejects.toMatchObject({
       response: { code: "NAME_TAKEN", productId: "holder" },
     });
     expect(prisma.product.update).not.toHaveBeenCalled();
@@ -270,10 +277,14 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
     const self = { ...BASE, isActive: true, sku: "S1" };
     prisma.product.findUnique.mockResolvedValue(self as any);
     await expect(
-      service.update("prod-1", { isActive: true, deactivateHolderIds: ["x"] } as any),
+      service.update("prod-1", { isActive: true, deactivateHolderIds: ["x"] } as any, {
+        packPrecondition: "internal",
+      }),
     ).rejects.toMatchObject({ status: 400 });
     await expect(
-      service.update("prod-1", { deactivateHolderIds: ["x"] } as any),
+      service.update("prod-1", { deactivateHolderIds: ["x"] } as any, {
+        packPrecondition: "internal",
+      }),
     ).rejects.toMatchObject({ status: 400 });
     expect(prisma.product.update).not.toHaveBeenCalled();
   });
@@ -289,7 +300,9 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
     prisma.productBarcode.findMany.mockResolvedValue([]);
     // No active holder exists, so the exact set is EMPTY: a non-empty request is refused (HOLDERS_CHANGED, holders []).
     await expect(
-      service.update("prod-1", { isActive: true, deactivateHolderIds: ["nobody"] } as any),
+      service.update("prod-1", { isActive: true, deactivateHolderIds: ["nobody"] } as any, {
+        packPrecondition: "internal",
+      }),
     ).rejects.toMatchObject({ response: { code: "HOLDERS_CHANGED" } });
     for (const [args] of prisma.product.update.mock.calls as any[]) {
       expect(args.data).not.toHaveProperty("deactivateHolderIds");

@@ -31,12 +31,15 @@ function build(
     /** Active TenantAddon rows; `paid` = a Stripe item or a positive price, else a comped row. */
     addons?: (string | { key: string; paid: boolean; manual?: boolean; comp?: boolean })[];
     modes?: Record<string, string>;
+    /** Open SHIP orders already handed to the carrier (shippedAt set). */
+    inTransit?: number;
   } = {},
 ) {
   const addonRows = (opts.addons ?? []).map((a) =>
     typeof a === "string" ? { key: a, paid: true, manual: false } : { manual: false, ...a },
   );
   const prisma = {
+    order: { count: jest.fn().mockResolvedValue(opts.inTransit ?? 0) },
     tenant: {
       findUnique: jest.fn().mockResolvedValue(opts.tenant === undefined ? { id: T } : opts.tenant),
     },
@@ -440,5 +443,44 @@ describe("SA SHOULD — a MANUAL-pay add-on", () => {
     expect(res.summary[0]).toBe(
       "Ad hoc order delivery will be switched off; remove it from their manual invoice",
     );
+  });
+});
+
+describe("Item 8 — a profile that moves the billing moment refuses while carrier orders are in transit", () => {
+  it("unset → ship with an order with the carrier: 409 FULFILMENT_CARRIER_IN_TRANSIT, the Settings guard's own", async () => {
+    const { svc, prisma, featurePreview } = build({ inTransit: 2 });
+    await expect(svc.preview(T, "shipping_wholesaler")).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: "FULFILMENT_CARRIER_IN_TRANSIT",
+        count: 2,
+        message:
+          "Orders are with the carrier right now. Change the delivery method once they are delivered.",
+      },
+    });
+    await expect(svc.plan(T, "shipping_wholesaler")).rejects.toMatchObject({ status: 409 });
+    expect(prisma.order.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        tenantId: T,
+        fulfillPath: "SHIP",
+        shippedAt: { not: null },
+      }),
+    });
+    expect(featurePreview.preview).not.toHaveBeenCalled();
+  });
+
+  it("guard row: no order in transit — the profile previews and plans as today", async () => {
+    const { svc } = build({ inTransit: 0 });
+    const res = await svc.preview(T, "shipping_wholesaler");
+    expect(res.plan.modes).toEqual([{ key: "fulfilment_model", from: "unset", to: "ship" }]);
+  });
+
+  it("a profile that keeps the billing moment never counts (ship → ship is no change)", async () => {
+    const { svc, prisma } = build({
+      inTransit: 3,
+      modes: { fulfilment_model: "ship", counter_sales: "unset" },
+    });
+    await svc.preview(T, "shipping_wholesaler");
+    expect(prisma.order.count).not.toHaveBeenCalled();
   });
 });

@@ -85,6 +85,13 @@ describe("useScanCodeHandler", () => {
     expect(first.addLineItem).not.toHaveBeenCalled();
   });
 
+  it("B993: a refused add (units still loading) resolves to exactly { kind: 'refused' }, no message field", async () => {
+    mockResolve.mockResolvedValue({ notFound: false, archived: false, product });
+    const d = deps({ addLineItem: jest.fn().mockReturnValue({ created: false, refused: true }) });
+    const { result } = renderHook(() => useScanCodeHandler(d));
+    await expect(result.current.current("012345678905")).resolves.toEqual({ kind: "refused" });
+  });
+
   it("does not touch addLineItem while the hook is called — only when a code is scanned (thunk deferral)", () => {
     const addLineItem = jest.fn();
     renderHook(() => useScanCodeHandler(deps({ addLineItem })));

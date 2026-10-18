@@ -57,7 +57,12 @@ describe("ProductsService recipe guards", () => {
         { provide: StorageService, useValue: { presignedUrls: jest.fn().mockResolvedValue([]) } },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+        {
+          provide: EntitlementsService,
+          useValue: {
+            hasFlag: jest.fn(async (_t: string, k: string) => k !== "flag.units_prices_v2"),
+          },
+        },
         entitlementAuthorityFromEntitlements,
         // #2185: the reorder gate's deny body reads admin overrides.
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
@@ -78,7 +83,7 @@ describe("ProductsService recipe guards", () => {
     for (const state of ["DRAFT", "ACTIVE"] as const) {
       recipeInState(state);
       const err = await service
-        .update("prod-1", { trackedCategoryId: null } as any)
+        .update("prod-1", { trackedCategoryId: null } as any, { packPrecondition: "internal" })
         .catch((e) => e);
       expect(err).toBeInstanceOf(ConflictException);
       expect(err.getResponse()).toMatchObject({ code: "RECIPE_CATEGORY_LOCKED" });
@@ -88,7 +93,9 @@ describe("ProductsService recipe guards", () => {
 
   it("4: the lock asks about the product as recipe product, family and component, never RETIRED", async () => {
     recipeInState("RETIRED");
-    await service.update("prod-1", { trackedCategoryId: null } as any);
+    await service.update("prod-1", { trackedCategoryId: null } as any, {
+      packPrecondition: "internal",
+    });
     const where = prisma.recipe.findFirst.mock.calls[0][0].where;
     expect(where.status).toEqual({ in: ["DRAFT", "ACTIVE"] });
     expect(JSON.stringify(where.OR)).toContain("productId");
@@ -99,13 +106,15 @@ describe("ProductsService recipe guards", () => {
   it("4: a product only in RETIRED recipes may change category (200)", async () => {
     recipeInState("RETIRED");
     await expect(
-      service.update("prod-1", { trackedCategoryId: null } as any),
+      service.update("prod-1", { trackedCategoryId: null } as any, {
+        packPrecondition: "internal",
+      }),
     ).resolves.toBeDefined();
     expect(prisma.product.update).toHaveBeenCalled();
   });
 
   it("4: an edit that leaves the category alone never consults the recipes", async () => {
-    await service.update("prod-1", { description: "x" } as any);
+    await service.update("prod-1", { description: "x" } as any, { packPrecondition: "internal" });
     expect(prisma.recipe.findFirst).not.toHaveBeenCalled();
   });
 

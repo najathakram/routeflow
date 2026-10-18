@@ -22,6 +22,10 @@ jest.mock("@/lib/api/products", () => ({
   ...jest.requireActual("@/lib/api/products"),
   useProducts: () => ({ data: { data: [] } }),
 }));
+// A stand-in so the unit control's presence is observable without the units_v1 query layer.
+jest.mock("@/components/OrderLineUnitPicker", () => ({
+  OrderLineUnitPicker: () => <div data-testid="unit-picker" />,
+}));
 jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn().mockResolvedValue({ data: {} }) },
 }));
@@ -82,6 +86,36 @@ describe("order edit builder: delivered lines are locked (B1234)", () => {
     expect(c.queryByTitle("Delete item")).toBeNull();
     expect(c.queryByText(/unit price/i)).toBeNull(); // PriceEditRow
     expect(c.getByText(/delivered\. this line can't be changed or removed/i)).toBeTruthy();
+  });
+
+  it("a locked line has no unit picker; the undelivered line keeps it", () => {
+    renderRows(new Set(["li-del"]));
+    expect(within(card("Delivered Widget")).queryByTestId("unit-picker")).toBeNull();
+    expect(within(card("Open Widget")).getByTestId("unit-picker")).toBeTruthy();
+  });
+
+  it("a locked classic boxed line has no cases / loose-pieces inputs either (master's boxed control)", () => {
+    const boxed = (over: Partial<EditItemState>) =>
+      line({ unitsPerBox: 12, unit: "case", boxSplit: true, qty: 26, ...over });
+    renderWithProviders(
+      <EditableLineItems
+        items={[
+          boxed({ id: "li-del", productName: "Delivered Widget" }),
+          boxed({ id: "li-open", productId: "p-2", productName: "Open Widget" }),
+        ]}
+        onChange={() => {}}
+        onAdd={() => {}}
+        onDelete={() => {}}
+        canEditPrice
+        tierPriceFor={() => 10}
+        isSpecialTierFor={() => false}
+        tierForProductId={() => 1}
+        pricingReady
+        lockedLineIds={new Set(["li-del"])}
+      />,
+    );
+    expect(within(card("Delivered Widget")).queryAllByRole("spinbutton")).toHaveLength(0);
+    expect(within(card("Open Widget")).queryAllByRole("spinbutton").length).toBeGreaterThan(0);
   });
 
   it("a locked line still takes a note", () => {

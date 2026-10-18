@@ -5,13 +5,16 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
+import { customerPricing } from "../orders/units-prices-v2";
 import { resolveFulfilPath } from "../orders/fulfil-path-resolver";
 import { syncOrderLineCompositions } from "../orders/order-composition";
 import { orderTotalsOf } from "../orders/order-totals";
@@ -33,7 +36,7 @@ import {
   computeLineSubtotal,
   roundMoney,
 } from "@routeflow/pricing";
-import type { CategoryTaxType } from "@routeflow/pricing";
+import type { CategoryTaxType, CustomerLayerPrice } from "@routeflow/pricing";
 import type { BuyerReorderSkippedLine } from "@routeflow/types";
 import { taxRateFractionFrom } from "../common/tax-rate";
 import { decrementStockForSale } from "../orders/order-stock";
@@ -60,6 +63,37 @@ import {
   lockTemplateThenFindReplay,
   replayCutoff,
 } from "./generate-replay";
+
+/** A due template as the 06:00 cron loads it (its items and the customer's name for operator notices). */
+interface DueTemplate {
+  id: string;
+  customerId: string;
+  name: string;
+  isActive?: boolean;
+  createdByRole?: string | null;
+  itemsEditedByRole?: string | null;
+  items: Array<{
+    id?: string;
+    productId: string;
+    qty: number;
+    notes?: string | null;
+    suspendedAt?: Date | null;
+  }>;
+  customer?: { businessName?: string | null } | null;
+}
+
+/** How long the 06:00 cron waits before its one re-attempt of a template held for a failed customer-prices read. */
+const CUSTOMER_PRICES_RETRY_BACKOFF_MS = 5_000;
+
+/** The coded 503 loadUnitsPricesV2 throws when a typed-price customer's flag read failed (nothing was written). */
+function isCustomerPricesUnavailable(err: unknown): boolean {
+  if (!(err instanceof ServiceUnavailableException)) return false;
+  const body = err.getResponse();
+  return (
+    typeof body === "object" &&
+    (body as { code?: unknown }).code === API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE
+  );
+}
 
 /** F-05 (SA-247): the LEAST privileged author of a template — STAFF only when creator AND last items-editor are staff. */
 function leastPrivilegedAuthor(t: {
@@ -586,6 +620,11 @@ export class OrderTemplatesService {
     return this.generateOrder(templateId, isStaffRole, allowOversell);
   }
 
+  /** The backoff seam of the cron's one retry (a spec replaces it, so no test waits on a real timer). */
+  private pause(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   @LeaderCron("0 6 * * *", "order-templates.generateDailyOrders")
   async generateDailyOrders() {
     const today = new Date();
@@ -605,13 +644,79 @@ export class OrderTemplatesService {
     let totalSkipped = 0;
     let totalSuppressed = 0;
 
+    const heldForPrices: Array<{
+      tenantId: string;
+      template: DueTemplate;
+      ban: { count: number; names: string } | null;
+    }> = [];
+    // One unattended attempt for one template. "held" = the coded customer-prices 503 (the caller re-attempts it once);
+    // any other failure is logged and counts as nothing (as before). `retry` (the second attempt) carries the first
+    // attempt's ban note and tells createOrderFromTemplate its pre-pricing side effects already ran.
+    const attemptOne = async (
+      tenantId: string,
+      template: DueTemplate,
+      retry: { ban: { count: number; names: string } | null } | null,
+    ): Promise<{
+      outcome: "created" | "skipped" | "held" | "failed";
+      ban: { count: number; names: string } | null;
+    }> => {
+      // F-05: the ban notice is sent AFTER the attempt, whatever its outcome (the suspension already
+      // committed, so a throw past it must not lose the one notice for good).
+      const ctx: {
+        ban: { count: number; names: string } | null;
+        placed?: boolean;
+        replayed?: boolean;
+        retry?: boolean;
+      } = { ban: retry?.ban ?? null, retry: retry != null };
+      let held = false;
+      try {
+        // Unattended cron run — same warn-and-oversell posture as an operator.
+        // B1054: the unlocked check above cannot see a manual "Generate now" that is still in
+        // flight, so the run also passes the start of today (UTC) as `replaySince`: the order
+        // transaction then takes the template's row lock first and re-reads, exactly like the
+        // manual path, and a twin that committed meanwhile is answered instead of doubled.
+        const order = await this.createOrderFromTemplate(
+          template,
+          true,
+          true,
+          ctx,
+          undefined,
+          startOfUtcDay(today),
+        );
+        // null = all lines were license-gated + skipped → nothing created.
+        // ctx.replayed = a concurrent manual run placed today's order first → nothing created here.
+        return { outcome: order && !ctx.replayed ? "created" : "skipped", ban: null };
+      } catch (err) {
+        const pricesDown = isCustomerPricesUnavailable(err);
+        // Only the FIRST attempt hands a held template to the retry; the second one gives up.
+        held = pricesDown && retry == null;
+        this.logger.error(
+          `[tenant:${tenantId}] Failed to generate order for template ${template.id} (${template.name})` +
+            (held ? " (customer prices unavailable; will retry once)" : ""),
+          err instanceof Error ? err.stack : String(err),
+        );
+        return { outcome: pricesDown ? "held" : "failed", ban: ctx.ban };
+      } finally {
+        // A replay means today's order exists (a manual run placed it; that path sends no ban
+        // notice), so the customer is told it went ahead, not that it was held. A first attempt
+        // that is being retried says nothing yet: the retry's outcome decides the ONE notice
+        // ("ordered" if it places the order, "held" if it does not), never a "held" followed by "ordered".
+        if (ctx.ban && !held)
+          await this.notifyBanSkipped(
+            template,
+            ctx.ban,
+            ctx.placed || ctx.replayed ? "ordered" : "held",
+          );
+      }
+    };
+
     for (const tenant of activeTenants) {
       await this.tenantCtx.run(tenant.id, async () => {
         const templates = await this.prisma.forTenant().orderTemplate.findMany({
           // REG-B131: a removed (soft-deleted) customer's standing orders stop firing. Stateless on
           // purpose: restoreCustomer() clears deletedAt and the template resumes with no other write.
           where: { isActive: true, daysOfWeek: { has: dayOfWeek }, customer: { deletedAt: null } },
-          include: { items: true },
+          include: { items: true, customer: { select: { businessName: true } } },
         });
 
         // REG-B131: a template the filter above dropped enters neither counter, so a tenant whose only
@@ -647,48 +752,33 @@ export class OrderTemplatesService {
             continue;
           }
 
-          // F-05: the ban notice is sent AFTER the attempt, whatever its outcome (the suspension already
-          // committed, so a throw past it must not lose the one notice for good).
-          const ctx: {
-            ban: { count: number; names: string } | null;
-            placed?: boolean;
-            replayed?: boolean;
-          } = { ban: null };
-          try {
-            // Unattended cron run — same warn-and-oversell posture as an operator.
-            // B1054: the unlocked check above cannot see a manual "Generate now" that is still in
-            // flight, so the run also passes the start of today (UTC) as `replaySince`: the order
-            // transaction then takes the template's row lock first and re-reads, exactly like the
-            // manual path, and a twin that committed meanwhile is answered instead of doubled.
-            const order = await this.createOrderFromTemplate(
-              template,
-              true,
-              true,
-              ctx,
-              undefined,
-              startOfUtcDay(today),
-            );
-            // null = all lines were license-gated + skipped → nothing created.
-            // ctx.replayed = a concurrent manual run placed today's order first → nothing created here.
-            if (order && !ctx.replayed) totalCreated++;
-            else totalSkipped++;
-          } catch (err) {
-            this.logger.error(
-              `[tenant:${tenant.id}] Failed to generate order for template ${template.id} (${template.name})`,
-              err instanceof Error ? err.stack : String(err),
-            );
-          } finally {
-            // A replay means today's order exists (a manual run placed it; that path sends no ban
-            // notice), so the customer is told it went ahead, not that it was held.
-            if (ctx.ban)
-              await this.notifyBanSkipped(
-                template,
-                ctx.ban,
-                ctx.placed || ctx.replayed ? "ordered" : "held",
-              );
-          }
+          const r = await attemptOne(tenant.id, template, null);
+          if (r.outcome === "created") totalCreated++;
+          else if (r.outcome === "skipped") totalSkipped++;
+          else if (r.outcome === "held")
+            heldForPrices.push({ tenantId: tenant.id, template, ban: r.ban });
         }
       });
+    }
+
+    // SA-812a G-1: a template whose customer prices could not be loaded was NOT priced at the tier and nothing was
+    // written. After EVERY tenant has run, wait ONCE (a wide outage costs one backoff, not one per tenant) and re-attempt
+    // each held template once, in its own tenant scope. One still failing is announced to that tenant's operators so the
+    // day's order is not lost silently. The retry must not repeat the side effects the first attempt already had
+    // (see `retry` on the ctx and the carried ban note), so the buyer gets exactly one notice.
+    if (heldForPrices.length > 0) {
+      await this.pause(CUSTOMER_PRICES_RETRY_BACKOFF_MS);
+      for (const held of heldForPrices) {
+        await this.tenantCtx.run(held.tenantId, async () => {
+          const r = await attemptOne(held.tenantId, held.template, { ban: held.ban });
+          if (r.outcome === "created") totalCreated++;
+          else if (r.outcome === "skipped") totalSkipped++;
+          else if (r.outcome === "held") {
+            totalSkipped++;
+            await this.notifyStandingOrderHeldForPrices(held.template);
+          }
+        });
+      }
     }
 
     this.logger.log(
@@ -719,6 +809,11 @@ export class OrderTemplatesService {
       ban: { count: number; names: string } | null;
       placed?: boolean;
       replayed?: boolean;
+      /**
+       * The cron's ONE re-attempt after a customer-prices 503: the first attempt already suspended + audited the banned
+       * lines and told the buyer about regulated skips, so none of that is repeated (`ctx.ban` is carried in).
+       */
+      retry?: boolean;
       /** A buyer's manual run: the lines left out because a selling restriction hides them from this buyer. */
       restricted?: BuyerReorderSkippedLine[];
     },
@@ -816,7 +911,8 @@ export class OrderTemplatesService {
           : [],
       );
       if (banned.size > 0) {
-        await this.suspendBannedLines(template, banned, verdict.reasons);
+        // the retry only re-derives WHICH lines are banned: they are already suspended and audited
+        if (!ctx?.retry) await this.suspendBannedLines(template, banned, verdict.reasons);
         banNote = {
           count: banned.size,
           names: [...new Set(verdict.reasons.map((r) => r.productName).filter(Boolean))].join(", "),
@@ -918,7 +1014,7 @@ export class OrderTemplatesService {
     const unavailableNote =
       inactiveCount > 0 ? ` (${inactiveCount} item(s) skipped — no longer available)` : "";
 
-    if (skippedCount > 0) {
+    if (skippedCount > 0 && !ctx?.retry) {
       await this.notifySkippedRegulatedLines(template, blocked, skippedCount).catch(() => {});
     }
     // Every line was a license-gated category the customer isn't verified for —
@@ -936,14 +1032,22 @@ export class OrderTemplatesService {
       where: { id: template.customerId },
       select: { pricingTier: true, isTaxExempt: true },
     });
-    const defaultTier = customerRecord?.pricingTier ?? 1;
     // RF-079 / RF-4: an exempt customer owes $0 of BOTH taxes on the standing order, as on its invoice.
     const isTaxExempt = customerRecord?.isTaxExempt === true;
     const customerPrices = await this.prisma.forTenant().customerPrice.findMany({
       where: { customerId: template.customerId, productId: { in: productIds } },
     });
     // An MSRP-only CustomerPrice row has pricingTier null — `??` below falls through it.
-    const cpTier = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
+    // S19: tier maps + (flag.units_prices_v2 only) the customer's typed pack prices; flag off = master's values.
+    const svc = { prisma: this.prisma, entitlements: this.ordersService.entitlements };
+    const pc = await customerPricing(
+      svc,
+      template.customerId,
+      productIds,
+      customerRecord,
+      customerPrices,
+    );
+    const { defaultTier, cpMap: cpTier } = pc;
     const activePromos = await this.ordersService.loadActivePromotions(UserRole.CUSTOMER);
     const priceHistory = await this.ordersService.getCustomerPriceHistory(template.customerId);
 
@@ -962,6 +1066,7 @@ export class OrderTemplatesService {
       // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
       // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
       const qtyPieces = upb > 1 ? item.qty * upb : item.qty;
+      const layer = pc.layer(product);
       const resolved = this.ordersService.resolveBuyerLinePrice(
         product,
         tierForProduct,
@@ -970,6 +1075,8 @@ export class OrderTemplatesService {
         qtyUnits,
         priceHistory[item.productId]?.lastPrice ?? null,
         { boxes: null, pieces: null, unitsPerBox: upb },
+        // S19: the 8th argument exists only when the pack is in the customer layer (flag off: master's 7 arguments).
+        ...((layer ? [layer] : []) as [CustomerLayerPrice] | []),
       );
       // BUY_N_GET_M subtracts whole free selling units BEFORE pricing (exact, never a
       // rounded net unit price); every other line reduces to unitPrice × qty, rounded.
@@ -1207,6 +1314,25 @@ export class OrderTemplatesService {
       );
     }
     return merged ?? created;
+  }
+
+  /**
+   * SA-812a G-1: the cron re-attempted a standing order once and the customer's prices still could not be loaded, so it
+   * was NOT placed (never priced at the tier instead). Tell the operators, with what to do. Best-effort: never fails a run.
+   */
+  private async notifyStandingOrderHeldForPrices(template: {
+    name: string;
+    customer?: { businessName?: string | null } | null;
+  }): Promise<void> {
+    const who = template.customer?.businessName ? ` for ${template.customer.businessName}` : "";
+    try {
+      await this.notifyOperators(
+        `Standing order "${template.name}"${who} was held and not placed: the customer's prices could not be loaded. ` +
+          `Nothing was ordered or charged. Open the template and use "Generate now" to place it.`,
+      );
+    } catch {
+      /* best-effort */
+    }
   }
 
   /**

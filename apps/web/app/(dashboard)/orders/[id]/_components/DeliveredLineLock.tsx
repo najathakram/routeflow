@@ -5,7 +5,7 @@ import { DELIVERED_LINE_LOCK_HINT } from "@/lib/order-line-lock";
 /**
  * B1234 (D-O2-a): what the edit builder shows in place of the controls of a DELIVERED line on a
  * PARTIALLY_DELIVERED order. The quantity is read-only text; the hint says why. The server refuses
- * any edit of such a line (409 ORDER_LINE_DELIVERED_LOCKED), so no editing control is rendered.
+ * any edit of such a line (409 LINE_ALREADY_DELIVERED), so no editing control is rendered.
  */
 export function DeliveredLockedQty({ qty }: { qty: number }) {
   return (

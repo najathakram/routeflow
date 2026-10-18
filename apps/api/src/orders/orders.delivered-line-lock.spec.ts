@@ -1,7 +1,7 @@
 /**
  * B1234 (owner ruling 2026-10-03, D-O2-a / SA-648, "T3 lock delivered lines"): on a PARTIALLY_DELIVERED
  * order a line that has been delivered (deliveredQty > 0) is LOCKED. No entry point may change its
- * quantity, price or unit, substitute it, strike it off or delete it: 409 ORDER_LINE_DELIVERED_LOCKED,
+ * quantity, price or unit, substitute it, strike it off or delete it: 409 LINE_ALREADY_DELIVERED,
  * nothing written. The undelivered lines of the same order, a note on a delivered line, a brand-new line,
  * and every OTHER order status behave exactly as before.
  *
@@ -39,7 +39,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { UserRole } from "@prisma/client";
 
-const LOCKED = { response: { code: "ORDER_LINE_DELIVERED_LOCKED" }, status: 409 };
+const LOCKED = { response: { code: "LINE_ALREADY_DELIVERED" }, status: 409 };
 
 const operator = {
   sub: "user-op",
@@ -87,6 +87,7 @@ const orderWith = (status: string, lineItems: any[]) => ({
 describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (updateOrderItems)", () => {
   let service: OrdersService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let invoices: Record<string, jest.Mock>;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -155,6 +156,7 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
       ],
     }).compile();
     service = module.get<OrdersService>(OrdersService);
+    invoices = module.get(InvoicesService) as any;
 
     prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
     prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
@@ -190,10 +192,21 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
     expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
     expect(prisma.orderItem.create).not.toHaveBeenCalled();
     expect(prisma.order.update).not.toHaveBeenCalled();
+    // stock: no product-stock write and no movement
+    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(prisma.product.updateMany).not.toHaveBeenCalled();
+    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    expect(prisma.stockMovement.createMany).not.toHaveBeenCalled();
+  };
+  /** A refusal that fired BEFORE the transaction: the invoices were never touched either. */
+  const invoicesUntouched = () => {
+    expect(invoices.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
+    expect(invoices.resyncOrderInvoicesForEdit).not.toHaveBeenCalled();
+    expect(invoices.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
   };
 
   describe("(1) a delivered line cannot be edited", () => {
-    it("a qty edit is 409 ORDER_LINE_DELIVERED_LOCKED and nothing is written", async () => {
+    it("a qty edit is 409 LINE_ALREADY_DELIVERED and nothing is written", async () => {
       seed("PARTIALLY_DELIVERED", [DELIVERED_LINE, OPEN_LINE]);
       await expect(
         service.updateOrderItems(
@@ -203,6 +216,7 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
         ),
       ).rejects.toMatchObject(LOCKED);
       nothingWritten();
+      invoicesUntouched();
     });
 
     it("a price edit is 409", async () => {
@@ -215,6 +229,33 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
         ),
       ).rejects.toMatchObject(LOCKED);
       nothingWritten();
+      invoicesUntouched();
+    });
+
+    it("a unit change (unitLabel) on the delivered line is 409", async () => {
+      seed("PARTIALLY_DELIVERED", [DELIVERED_LINE, OPEN_LINE]);
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ id: "li-del", action: "UPDATE", qty: 5, unitLabel: "Case" }] } as any,
+          operator,
+        ),
+      ).rejects.toMatchObject(LOCKED);
+      nothingWritten();
+      invoicesUntouched();
+    });
+
+    it("a qty cut from 3-delivered-of-5 (the stated case): 5 to 2 is 409", async () => {
+      seed("PARTIALLY_DELIVERED", [{ ...DELIVERED_LINE, deliveredQty: 3 }, OPEN_LINE]);
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ id: "li-del", action: "UPDATE", qty: 2 }] } as any,
+          operator,
+        ),
+      ).rejects.toMatchObject(LOCKED);
+      nothingWritten();
+      invoicesUntouched();
     });
 
     it("a substitution of the line is 409", async () => {
@@ -227,6 +268,7 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
         ),
       ).rejects.toMatchObject(LOCKED);
       nothingWritten();
+      invoicesUntouched();
     });
   });
 
@@ -237,6 +279,7 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
         service.updateOrderItems("ord-1", { items: [{ id: "li-del", action }] } as any, operator),
       ).rejects.toMatchObject(LOCKED);
       nothingWritten();
+      invoicesUntouched();
     });
 
     it("a driver's per-line CANCEL of a delivered line is 409 too (every role)", async () => {
@@ -256,18 +299,20 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
         ),
       ).rejects.toMatchObject(LOCKED);
       nothingWritten();
+      invoicesUntouched();
     });
 
-    it("a replace-all that would delete and re-create a delivered line is 409", async () => {
+    it.each([
+      ["re-creating the delivered line", [{ productId: "prod-1", qty: 5 }]],
+      ["omitting the delivered line", [{ productId: "prod-2", qty: 5 }]],
+      ["with an empty list", []],
+    ])("a replace-all %s is 409 (replace modes fail closed)", async (_n, items) => {
       seed("PARTIALLY_DELIVERED", [DELIVERED_LINE, OPEN_LINE]);
       await expect(
-        service.updateOrderItems(
-          "ord-1",
-          { replaceAll: true, items: [{ productId: "prod-1", qty: 5 }] } as any,
-          operator,
-        ),
+        service.updateOrderItems("ord-1", { replaceAll: true, items } as any, operator),
       ).rejects.toMatchObject(LOCKED);
       nothingWritten();
+      invoicesUntouched();
     });
   });
 
@@ -314,6 +359,21 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
       );
     });
 
+    it("a note-only change on the delivered line (no qty at all) is allowed", async () => {
+      seed("PARTIALLY_DELIVERED", [DELIVERED_LINE, OPEN_LINE]);
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-del", action: "UPDATE", notes: "gate code 4412" }] } as any,
+        operator,
+      );
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-del" },
+          data: expect.objectContaining({ notes: "gate code 4412" }),
+        }),
+      );
+    });
+
     it("a brand-new line can still be added", async () => {
       seed("PARTIALLY_DELIVERED", [DELIVERED_LINE, OPEN_LINE]);
       prisma.orderItem.create.mockResolvedValue({ id: "li-new" });
@@ -347,6 +407,28 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
   });
 
   describe("(5) the lock is judged on the Order-locked read, not only the snapshot", () => {
+    // Snapshot: li-open undelivered. Locked read: delivered 3 of 5. The pre-tx call passes; only the in-tx call can refuse.
+    it.each([
+      ["a qty cut", { id: "li-open", action: "UPDATE", qty: 2 }],
+      ["a DELETE", { id: "li-open", action: "DELETE" }],
+      ["a CANCEL", { id: "li-open", action: "CANCEL" }],
+      ["a substitution", { id: "li-open", substituteProductId: "prod-1" }],
+      ["a unit change", { id: "li-open", action: "UPDATE", qty: 5, unitLabel: "Case" }],
+    ])(
+      "stale snapshot, locked row delivered: %s is refused on the locked read",
+      async (_n, entry) => {
+        seed(
+          "PARTIALLY_DELIVERED",
+          [DELIVERED_LINE, OPEN_LINE],
+          [DELIVERED_LINE, { ...OPEN_LINE, deliveredQty: 3 }],
+        );
+        await expect(
+          service.updateOrderItems("ord-1", { items: [entry] } as any, operator),
+        ).rejects.toMatchObject(LOCKED);
+        nothingWritten();
+      },
+    );
+
     it("a line another writer delivered while this edit waited on the lock is refused, nothing written", async () => {
       // Snapshot: nothing delivered. Locked read: li-open now has deliveredQty 2.
       seed(

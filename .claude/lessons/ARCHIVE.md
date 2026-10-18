@@ -61,6 +61,27 @@
   the hot path, history in a changelog.**
 - **Guard:** code-map CHANGELOG convention; this register's own caps.
 
+### L-284 · 2026-10-08 · process · lanes report events only, review depth follows risk, and a bug in a file you are changing rides in its own commit
+
+- **Symptom:** recorded by the 2026-10-08 operating review as an operating-model rule; the incident detail is in the lead's notes.
+- **Root cause:** coordination messages cost more than the work they describe, review effort is only worth spending where the risk is, and a bug fixed inside a commit about something else cannot be reviewed or reverted on its own.
+- **Lesson:** **Lanes report EVENTS only (pushed <sha> / blocked <why> / done / needs ruling), never status or load pings. Review depth follows risk: Opus for money, tenant security, concurrency and migrations; Sonnet for UI and docs; non-money nits go to a follow-up row, not a re-review loop. A bug found in a file you are already changing rides along in its OWN commit on the same branch, with a red-first test.**
+- **Guard:** the lane rules and the `pre-merge-review` skill.
+
+### L-281 · 2026-10-08 · process · on a shared host never `git stash` in a lane session and never kill processes by name
+
+- **Symptom:** recorded by the 2026-10-08 operating review as a standing hazard of several sessions sharing one machine; the incident detail is in the lead's notes.
+- **Root cause:** a stash is repo-wide and invisible in any working tree, so a `pop` in the wrong worktree restores or loses another lane's work. A name or pattern match (`pkill`, grep-and-kill) on a shared host cannot tell your jobs from another lane's, so it kills theirs.
+- **Lesson:** **In a builder or worktree session never use `git stash`: commit a WIP commit instead. Never kill by name or pattern: kill only the PID tree you started.**
+- **Guard:** the standing lane rules in the start prompt; no script yet.
+
+### L-273 · 2026-10-07 · process · a pre-push log piped through `tail` hides the real failure
+
+- **Symptom:** a builder diagnosed a warning near the end of a pre-push log as the failure and chased it.
+- **Root cause:** the log was piped through `tail`, so the failing test's output had scrolled out of view and only trailing warnings showed.
+- **Lesson:** **Save the full pre-push or verify log to a file and grep it for `FAIL` and `Tests:` before diagnosing; never judge a failure from the tail of a piped log.**
+- **Guard:** run verify as `... > log 2>&1` and read `grep -n "FAIL\|Tests:" log` first.
+
 ## tooling
 
 ### L-067 · 2026-09-04 · tooling · #597
@@ -188,6 +209,13 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Guard:** `campaign-check` refuses the missing-report case (the refusal itself); CI verify on
   the PR head is the merge gate for the no-hook case; P-BUILD step 1 and P-CLOUD-0 step 7 carry
   the routine. Candidate: `scripts/worktree-audit.mjs` flags a worktree without `.husky/_`.
+
+### L-275 · 2026-10-07 · tooling · local stack image tags are shared across worktrees
+
+- **Symptom:** a proof run used an api image another worktree had built, and its result was reported as the branch's own.
+- **Root cause:** `routeflow-api:local` and `routeflow-web:local` are single tags for the whole machine; whichever build finished last owns them, and two concurrent builds overwrite each other.
+- **Lesson:** **Never run two stack builds at once, and read an image's `org.routeflow.sha` label (`docker image inspect`) before claiming whose it is or that a proof ran on your sha.**
+- **Guard:** none automatic; cf. [[L-272]] and the Mac slot rule.
 
 ## testing
 
@@ -3999,3 +4027,26 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** `{ col: { not: X } }`, `{ notIn: [...] }` and `NOT: {...}` compile to `col <> X` / `NOT IN`, which SQL's three-valued logic evaluates to UNKNOWN for a NULL column, so NULL rows are excluded. The author's mental model of "all but X" includes the rows that have no value at all.
 - **Lesson:** **A negative filter (`not`, `notIn`, `NOT`) on a nullable column never matches NULL. Spell the NULL arm (`OR: [{ col: null }, { col: { not: X } }]`) and prove the filter with a fixture row whose column is NULL, in a real-database spec when the where-builder is shared.** Cf. [[L-238]].
 - **Guard:** each fix carries a spec with a NULL-column row (the product list where-builder, the bulk assign). No repo-wide scan yet: propose an AST scan that flags `not` / `notIn` / `NOT` on a nullable Prisma column without an adjacent `null` arm.
+
+## Archived 2026-10-16 — least-cited, spec-guarded; headroom for L-310..L-312 (bookkeeping for #3497, units-v2-2 and fixes-2)
+
+### L-308 · 2026-10-16 · testing · a bounded input buffer reports what it drops, and a repeat rule is proved with the real inter-scan timing of each source
+
+- **Symptom:** 20 repeat scans of one item added only 14 or 15 on the New order screen, on both the phone camera and a desktop wedge scanner (row 536).
+- **Root cause:** repeat suppression waited for a steady hold tuned for camera jitter, a two-deep pending buffer discarded overflow silently, and wedge reads interleaved with async lookups; tests used instant, evenly spaced scans that never showed the loss.
+- **Lesson:** **A bounded queue returns a `dropped` signal the screen must show, never a silent discard. Tune repeat rules per screen (opt-in, absence-based for a deliberate-repeat screen), run per-item async work through one serial FIFO, and take-and-clear the input atomically. Prove it with a deferred-resolve test: scan 1 in flight, half of scan 2, resolve, finish.**
+- **Guard:** `scan-pending-buffer.spec.ts`, `scan-engine.continuous.spec.ts`, the `useScanCodeHandler` and `CreateOrderModal` deferred-resolve tests.
+
+### L-307 · 2026-10-16 · domain · two fields that describe one quantity are stored as one and derived; the customer-facing server path refuses a contradictory pair
+
+- **Symptom:** the buyer cart's quantity and its case/piece split drifted apart, so the cart showed one price while the server billed another (row 531).
+- **Root cause:** quantity and split were both client state, each edited by its own control, and the server accepted whatever pair arrived; saved carts and pack-size changes re-created the drift.
+- **Lesson:** **Keep ONE source (quantity in pieces), derive the split through the shared pricing helper on every change, rebuild saved state quantity-first and flag what was rebuilt, and have the server refuse a contradictory pair on the customer-facing path with a coded 400 before any key, lock or write. Staff paths only warn until a census of existing rows says enforcing is safe.** Cf. [[L-222]].
+- **Guard:** `qty-split-consistency.spec.ts` and its DB spec, `buyer-cart-line.test.ts`, the read-only `report-buyer-split-mismatch.mjs` census.
+
+### L-283 · 2026-10-08 · process · cap work in flight per machine, and run the 2-minute fail-fast guards before the 7-minute verify push
+
+- **Symptom:** recorded by the 2026-10-08 operating review as an operating-model rule; the incident detail is in the lead's notes.
+- **Root cause:** work in flight beyond what one machine can finish competes with new work, and one deterministic failure found only inside the ~7 minute verify push costs a full verify.
+- **Lesson:** **Cap work in flight per machine: at most 2 PRs in review and at most 1 local-only branch; finish and push in-flight work before starting new feature work. Before a verify push run the ~2 minute fail-fast guards: size ratchets, pins, campaign-check freshness after any master merge, bare-cron, and check-types on the changed workspaces.**
+- **Guard:** the lane rules; the pre-push gates themselves.
