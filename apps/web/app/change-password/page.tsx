@@ -6,16 +6,18 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter } from "next/navigation";
 import { PasswordInput, Button } from "@routeflow/ui/web";
-import { AuthShell } from "@/components/auth";
+import { AuthShell, PasswordChecklist } from "@/components/auth";
 import { useAuth } from "@/lib/auth-context";
 import { changePassword } from "@/lib/auth";
+import { newPasswordSchema, passwordErrorMessage } from "@/lib/password-policy";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
 const schema = z
   .object({
     currentPassword: z.string().min(1, "Current password is required"),
-    newPassword: z.string().min(8, "New password must be at least 8 characters"),
+    // Mirrors the server policy (ChangePasswordDto); it used to check only the length.
+    newPassword: newPasswordSchema,
     confirmPassword: z.string().min(1, "Please confirm your new password"),
   })
   .refine((d) => d.newPassword === d.confirmPassword, {
@@ -42,8 +44,11 @@ export default function ChangePasswordPage() {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({ resolver: zodResolver(schema) });
+  const newPassword = watch("newPassword") ?? "";
+  const checklistId = React.useId();
 
   const onSubmit = async (data: FormValues) => {
     setApiError(null);
@@ -52,10 +57,7 @@ export default function ChangePasswordPage() {
       // Full navigation so AuthProvider reinitialises with the new token
       window.location.href = "/dashboard";
     } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        "Failed to change password.";
-      setApiError(typeof msg === "string" ? msg : "Failed to change password.");
+      setApiError(passwordErrorMessage(err, data.newPassword));
     }
   };
 
@@ -82,8 +84,10 @@ export default function ChangePasswordPage() {
           label="New password"
           autoComplete="new-password"
           register={register("newPassword")}
+          aria-describedby={checklistId}
           error={errors.newPassword?.message}
         />
+        <PasswordChecklist value={newPassword} id={checklistId} />
         <PasswordInput
           label="Confirm new password"
           autoComplete="new-password"

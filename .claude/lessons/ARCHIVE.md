@@ -210,6 +210,13 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   the PR head is the merge gate for the no-hook case; P-BUILD step 1 and P-CLOUD-0 step 7 carry
   the routine. Candidate: `scripts/worktree-audit.mjs` flags a worktree without `.husky/_`.
 
+### L-275 · 2026-10-07 · tooling · local stack image tags are shared across worktrees
+
+- **Symptom:** a proof run used an api image another worktree had built, and its result was reported as the branch's own.
+- **Root cause:** `routeflow-api:local` and `routeflow-web:local` are single tags for the whole machine; whichever build finished last owns them, and two concurrent builds overwrite each other.
+- **Lesson:** **Never run two stack builds at once, and read an image's `org.routeflow.sha` label (`docker image inspect`) before claiming whose it is or that a proof ran on your sha.**
+- **Guard:** none automatic; cf. [[L-272]] and the Mac slot rule.
+
 ## testing
 
 ### L-014 · 2026-08-31 · testing · #562

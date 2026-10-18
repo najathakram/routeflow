@@ -62,6 +62,10 @@ import { productTierLabel, tierOneLabel } from "@/lib/tier-one-label";
 import { unitsLabel } from "@/lib/stock-label";
 import { stockCountLabel } from "../_components/product-status";
 import { PiecesPerBoxValue } from "./PiecesPerBoxValue";
+import { MoneyFigure } from "./MoneyFigure";
+import { FamilyPriceSection } from "./FamilyPriceSection";
+import { FamilySalesCards } from "./FamilySalesCards";
+import { ProductMerchandising } from "./ProductMerchandising";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { DecimalInput } from "@/components/MoneyInput";
@@ -99,11 +103,19 @@ import { ProductLabelsCard } from "./ProductLabelsCard";
 import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ProductPricingV2 } from "./ProductPricingV2";
+import { PriceWindowHost, ProductPricingRegion } from "./PriceWindowHost";
+import { DetailsPriceLine } from "./PriceFigures";
+import { unitStructureGoverned } from "./units-v2/structure/unit-structure";
 import { ProductJumpLinks } from "./units-v2/nav/ProductJumpLinks";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
-import { editTierPatch, editTierPatchMoves } from "@/lib/product-tier-patch";
+import {
+  cascadeTiers,
+  detailsPriceMoves,
+  detailsPricePatch,
+  type PriceDraftKey,
+} from "@/lib/product-tier-patch";
 import { keptLabelsNote } from "@/lib/kept-labels-copy";
 import { isStaffRole } from "@/lib/default-unit-line";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -174,58 +186,6 @@ function regUomLabel(
     if (match) return match.label;
   }
   return code;
-}
-
-// ─── Merchandising flag toggle (P5-01) ──────────────────────────────────────────
-
-function MerchFlagToggle({
-  label,
-  description,
-  active,
-  disabled,
-  onToggle,
-}: {
-  label: string;
-  description: string;
-  active: boolean;
-  disabled?: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={active}
-      disabled={disabled}
-      onClick={onToggle}
-      className={cn(
-        "flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors disabled:opacity-50",
-        active
-          ? "border-brand-300 bg-brand-50"
-          : "border-surface-border bg-white hover:bg-surface-raised",
-      )}
-    >
-      <span className="min-w-0">
-        <span className={cn("block text-sm font-medium", active ? "text-brand-700" : "text-navy")}>
-          {label}
-        </span>
-        <span className="block text-[11px] text-navy/60">{description}</span>
-      </span>
-      <span
-        className={cn(
-          "relative inline-flex h-5 w-9 flex-none items-center rounded-full transition-colors",
-          active ? "bg-brand-500" : "bg-navy/20",
-        )}
-      >
-        <span
-          className={cn(
-            "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
-            active ? "translate-x-4" : "translate-x-0.5",
-          )}
-        />
-      </span>
-    </button>
-  );
 }
 
 // ─── Inline number field ──────────────────────────────────────────────────────
@@ -353,6 +313,10 @@ export default function ProductDetailPage() {
   // The pack the form opened with: a save sends `unit` only if the operator changed it, and then sends this
   // pack back as the expected values (SA-797), so a Settings > Units rename made meanwhile is a 409, not lost.
   const packWhenEditStartedRef = React.useRef<ProductPackAtOpen | undefined>(undefined);
+  // The price strings the Details form was SEEDED with: a price is sent only when the draft differs (a dirty field).
+  const pricesWhenEditStartedRef = React.useRef<Record<PriceDraftKey, string> | undefined>(
+    undefined,
+  );
 
   // Regulated type picker (edit mode). The Category field below renders the
   // structured SubcategoryCombobox in place of the free-text combobox once a
@@ -411,6 +375,10 @@ export default function ProductDetailPage() {
     priceTier4: "",
     priceTier5: "",
   });
+  // The price strings the variant modal opened with: a variant price is sent only when changed against these.
+  const variantPricesWhenOpenedRef = React.useRef<Record<PriceDraftKey, string> | undefined>(
+    undefined,
+  );
   const variantSkuRef = React.useRef<HTMLInputElement>(null);
   const variantUnitSkuRef = React.useRef<HTMLInputElement>(null);
 
@@ -496,6 +464,10 @@ export default function ProductDetailPage() {
   const currentStock = Number(product.currentStock ?? 0);
   const stockStatus = getStockStatus(currentStock, product.isActive, product.kind);
   const v2Family = v2 && product.kind === "FAMILY";
+  // K11-20c: on a product whose prices the window can edit (not a family, recipe or variant), Details shows its
+  // prices read-only and the Details save carries none: the price window (S9) is the only price writer.
+  const pricesInWindow = v2 && !unitStructureGoverned(product);
+  const isFamily = product.kind === "FAMILY";
 
   // MSRP — display-only, never money math. Warn (non-blocking) when it undercuts
   // the wholesale price expressed per PIECE (pricePerUnit / unitsPerBox), which is
@@ -524,17 +496,21 @@ export default function ProductDetailPage() {
       unitsPerBox: product.unitsPerBox ?? null,
       packTenantUnitId: product.packTenantUnitId,
     };
+    const seededPrices: Record<PriceDraftKey, string> = {
+      pricePerUnit: String(priceNumber),
+      priceTier2: String(parseFloat(String(product.priceTier2 ?? priceNumber))),
+      priceTier3: String(parseFloat(String(product.priceTier3 ?? priceNumber))),
+      priceTier4: String(parseFloat(String(product.priceTier4 ?? priceNumber))),
+      priceTier5: String(parseFloat(String(product.priceTier5 ?? priceNumber))),
+    };
+    pricesWhenEditStartedRef.current = seededPrices;
     setEditDraft({
       name: product.name,
       sku: product.sku ?? "",
       barcode: product.barcode ?? "",
       unitSku: product.unitSku ?? "",
       unit: product.unit,
-      pricePerUnit: String(priceNumber),
-      priceTier2: String(parseFloat(String(product.priceTier2 ?? priceNumber))),
-      priceTier3: String(parseFloat(String(product.priceTier3 ?? priceNumber))),
-      priceTier4: String(parseFloat(String(product.priceTier4 ?? priceNumber))),
-      priceTier5: String(parseFloat(String(product.priceTier5 ?? priceNumber))),
+      ...seededPrices,
       msrp: product.msrp != null ? String(parseFloat(String(product.msrp))) : "",
       category: product.category ?? "",
       description: product.description ?? "",
@@ -598,10 +574,6 @@ export default function ProductDetailPage() {
     // parentProductId: "" for every standalone product, which @IsUUID rejects,
     // so saving from this form (tier prices included) silently 400'd.
     // Invalid/blank price fields are omitted (leave unchanged), never "".
-    const asDecimal = (v: unknown): string | undefined => {
-      const n = parseFloat(String(v ?? ""));
-      return Number.isFinite(n) && n >= 0 ? String(n) : undefined;
-    };
     const unitToSend = packWordToSend(draft.unit, packWhenEditStartedRef.current?.unit);
     const unitsPerBoxToSend = draft.unitsPerBox?.trim() ? parseInt(draft.unitsPerBox, 10) : null;
     updateProduct.mutate(
@@ -623,9 +595,12 @@ export default function ProductDetailPage() {
         // null-clears semantics.
         category: draft.trackedCategoryId ? undefined : draft.category?.trim() || null,
         description: draft.description?.trim() || null,
-        pricePerUnit: asDecimal(draft.pricePerUnit),
-        // Untouched tiers move with a list change exactly like the products list (applyLadderChange, audit 2026-10-14).
-        ...editTierPatch(product, draft),
+        // Only a price the operator changed is sent: a price save elsewhere on the page moves prices outside this
+        // form, so the snapshot it opened with must never be written back. Untouched tiers move with a list change exactly like
+        // the products list (applyLadderChange, audit 2026-10-14).
+        ...(pricesInWindow
+          ? {}
+          : { ...detailsPricePatch(product, draft, pricesWhenEditStartedRef.current) }),
         unitsPerBox: unitsPerBoxToSend,
         // Regulated tags: value to set, null to clear (server auto-nulls the
         // category when the type is cleared).
@@ -787,7 +762,7 @@ export default function ProductDetailPage() {
     if (variant) {
       const vp = parseFloat(String(variant.pricePerUnit));
       setEditingVariant(variant);
-      setVariantForm({
+      const form = {
         variantName: variant.variantName ?? "",
         sku: variant.sku ?? "",
         unitSku: variant.unitSku ?? "",
@@ -797,7 +772,15 @@ export default function ProductDetailPage() {
         priceTier3: String(parseFloat(String((variant as any).priceTier3 ?? vp))),
         priceTier4: String(parseFloat(String((variant as any).priceTier4 ?? vp))),
         priceTier5: String(parseFloat(String((variant as any).priceTier5 ?? vp))),
-      });
+      };
+      variantPricesWhenOpenedRef.current = {
+        pricePerUnit: form.price,
+        priceTier2: form.priceTier2,
+        priceTier3: form.priceTier3,
+        priceTier4: form.priceTier4,
+        priceTier5: form.priceTier5,
+      };
+      setVariantForm(form);
     } else {
       setEditingVariant(null);
       setVariantForm({
@@ -836,8 +819,9 @@ export default function ProductDetailPage() {
         priceTier4: variantForm.priceTier4 || variantForm.price,
         priceTier5: variantForm.priceTier5 || variantForm.price,
       };
-      const vMoved = ladderChangeNote(editTierPatchMoves(editingVariant as any, vDraft), (n) =>
-        productTierLabel(tierLabels, n),
+      const vMoved = ladderChangeNote(
+        detailsPriceMoves(editingVariant as any, vDraft, variantPricesWhenOpenedRef.current),
+        (n) => productTierLabel(tierLabels, n),
       );
       updateProduct.mutate(
         {
@@ -845,9 +829,9 @@ export default function ProductDetailPage() {
           variantName: variantForm.variantName,
           sku: variantForm.sku || undefined,
           unitSku: variantForm.unitSku || undefined,
-          pricePerUnit: vList,
-          // Untouched tiers move with the variant's list change, the same rule as the products list (audit 2026-10-14).
-          ...editTierPatch(editingVariant as any, vDraft),
+          // Only a price the operator changed is sent (never the variant row the parent's cache embeds); untouched
+          // tiers move with the variant's list change by the products list's rule (audit 2026-10-14).
+          ...detailsPricePatch(editingVariant as any, vDraft, variantPricesWhenOpenedRef.current),
         },
         {
           onSuccess: () => {
@@ -1099,13 +1083,179 @@ export default function ProductDetailPage() {
     const pu = perUnitPrice(v, activeUnitsPerBox);
     return pu != null ? (
       <p className="mt-0.5 text-[11px] text-navy/50">
-        ≈ ${pu.toFixed(2)} / {UW.base.short.one}
+        ≈ <MoneyFigure value={pu} /> / {UW.base.short.one}
       </p>
     ) : null;
   };
 
+  // Price each (Tier 1) and Pricing Tiers. A family renders both inside FamilyPriceSection (K11-25); every
+  // other product keeps them where they always were.
+  const priceEachRow = (
+    <InfoRow
+      label={priceRowLabel(
+        isEditing ? (editDraft.unit as string) : product.unit,
+        tierOneLabel(tierLabels),
+      )}
+      value={
+        isEditing ? (
+          <>
+            <EditableNumber
+              value={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
+              onChange={(v) => setEditDraft((d) => ({ ...d, pricePerUnit: String(v) }))}
+            />
+            {perUnitHint(parseFloat(String(editDraft.pricePerUnit ?? priceNumber)))}
+          </>
+        ) : (
+          <>
+            <MoneyFigure value={priceNumber} className="font-mono" />
+            {perUnitHint(priceNumber)}
+          </>
+        )
+      }
+    />
+  );
+  const tiersBlock = (
+    <div className={isFamily ? "mt-4" : "mt-5 border-t border-surface-border pt-4"}>
+      <div className="flex items-center justify-between mb-2.5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+          Pricing Tiers
+        </p>
+        {isEditing && (
+          <button
+            type="button"
+            onClick={() => {
+              const t1 = editDraft.pricePerUnit as string;
+              setEditDraft((d) => ({
+                ...d,
+                priceTier2: t1,
+                priceTier3: t1,
+                priceTier4: t1,
+                priceTier5: t1,
+              }));
+            }}
+            className="text-xs text-brand-600 hover:underline"
+          >
+            Set all to {tierOneLabel(tierLabels)}
+          </button>
+        )}
+      </div>
+      {isEditing &&
+        (() => {
+          // Names the tiers a save would move with the list (#3470 review: never a fixed string).
+          const note = ladderChangeNote(
+            detailsPriceMoves(
+              product,
+              editDraft as Record<string, string>,
+              pricesWhenEditStartedRef.current,
+            ),
+            (n) => productTierLabel(tierLabels, n),
+          );
+          return note ? (
+            <p className="mb-2 text-xs text-navy/70" data-testid="tiers-move-note">
+              {note.replace(/\.$/, "")} when you save.
+            </p>
+          ) : null;
+        })()}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+        {(
+          [
+            [productTierLabel(tierLabels, 2), "priceTier2", product.priceTier2],
+            [productTierLabel(tierLabels, 3), "priceTier3", product.priceTier3],
+            [productTierLabel(tierLabels, 4), "priceTier4", product.priceTier4],
+            [productTierLabel(tierLabels, 5), "priceTier5", product.priceTier5],
+          ] as [string, string, any][]
+        ).map(([label, field, productVal], idx) => {
+          const prevFields = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4"];
+          const prevField = prevFields[idx];
+          const curVal = isEditing
+            ? parseFloat(String(editDraft[field] ?? parseFloat(String(productVal ?? priceNumber))))
+            : parseFloat(String(productVal ?? priceNumber));
+          const prevVal = isEditing
+            ? parseFloat(String(editDraft[prevField] ?? priceNumber))
+            : parseFloat(
+                String(idx === 0 ? priceNumber : ((product as any)[prevField] ?? priceNumber)),
+              );
+          const warn = isEditing && curVal > prevVal;
+          const inheritsList = !(Number(productVal) > 0);
+          return (
+            <div key={field}>
+              <p className={cn("mb-1 text-xs", warn ? "text-warning font-medium" : "text-navy/70")}>
+                {label}
+                {warn ? " ⚠" : ""}
+              </p>
+              {isEditing ? (
+                <>
+                  <EditableNumber
+                    value={curVal}
+                    onChange={(v) => setEditDraft((d) => ({ ...d, [field]: String(v) }))}
+                    onCommit={(v, atFocus) => {
+                      // P0 2026-10-14: lower tiers move only by applyLadderChange (tracking, 0 or above
+                      // the new price), never a blind copy-down, and the move is named on screen. The
+                      // OLD side is the field's own focus-time value (SA MUST: no staleable copy).
+                      const moved = applyLadderChange(
+                        field as TierField,
+                        atFocus ?? productVal,
+                        v,
+                        cascadeTiers(
+                          product,
+                          editDraft as Record<string, string>,
+                          pricesWhenEditStartedRef.current,
+                        ),
+                      );
+                      setEditDraft((d) => ({ ...d, ...moved }));
+                      setLadderNote(
+                        ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n)),
+                      );
+                    }}
+                  />
+                  {perUnitHint(curVal)}
+                </>
+              ) : (
+                <>
+                  <p className="font-mono text-sm font-medium tabular-nums text-navy">
+                    <MoneyFigure value={inheritsList ? priceNumber : Number(productVal)} />
+                    {inheritsList && (
+                      <span className="ml-1 rounded bg-surface-raised px-1 py-0.5 text-[9px] text-navy/50">
+                        list
+                      </span>
+                    )}
+                  </p>
+                  {perUnitHint(inheritsList ? priceNumber : Number(productVal))}
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {isEditing && ladderNote && (
+        <p role="status" data-testid="ladder-note" className="mt-2 text-xs text-navy/70">
+          {ladderNote}
+        </p>
+      )}
+      {isEditing &&
+        (() => {
+          const t1 = parseFloat(String(editDraft.pricePerUnit ?? priceNumber));
+          const t2 = parseFloat(String(editDraft.priceTier2 ?? (product as any).priceTier2 ?? t1));
+          const t3 = parseFloat(String(editDraft.priceTier3 ?? (product as any).priceTier3 ?? t1));
+          const t4 = parseFloat(String(editDraft.priceTier4 ?? (product as any).priceTier4 ?? t1));
+          const t5 = parseFloat(String(editDraft.priceTier5 ?? (product as any).priceTier5 ?? t1));
+          const hasViolation = t2 > t1 || t3 > t2 || t4 > t3 || t5 > t4;
+          return hasViolation ? (
+            <p className="mt-1.5 text-xs text-warning">
+              Higher tier prices should be ≤ the tier above (volume discounts are lower).
+            </p>
+          ) : null;
+        })()}
+      {isEditing && (
+        <p className="mt-1.5 text-xs text-navy/50">
+          A tier left blank or at 0 follows the list price.
+        </p>
+      )}
+    </div>
+  );
+
   return (
-    <>
+    <PriceWindowHost product={product} enabled={pricesInWindow}>
       {/* Crop-before-upload modal — intercepts every file selection */}
       {cropState && (
         <CropModal
@@ -1221,11 +1371,504 @@ export default function ProductDetailPage() {
         </div>
 
         {v2 && product.kind !== "FAMILY" ? <ProductJumpLinks /> : null}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 lg:grid-rows-[auto_1fr] lg:gap-y-5">
+          {/* DOM order is the phone reading order and the tab order: Details, then Image and stock, then the rest.
+              The columns are placed at lg with grid lines, not order-* classes (K11-23). */}
+          <div className="space-y-5 lg:col-span-2 lg:col-start-2 lg:row-start-1">
+            {/* Product details */}
+            <div
+              ref={detailsCardRef}
+              data-testid="product-details-card"
+              className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card"
+            >
+              {/* max-sm:py-2: with the 44 px Edit and More controls the phone header is 61 px (K11-22: <= 64) */}
+              <div
+                data-testid="product-details-header"
+                className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5 max-sm:py-2"
+              >
+                <h3
+                  data-testid="product-details-heading"
+                  tabIndex={-1}
+                  className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70 outline-none"
+                >
+                  Details
+                </h3>
+                <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+                  {isEditing ? (
+                    <>
+                      <EditActionButtons
+                        className="max-md:hidden"
+                        onCancel={cancelEdit}
+                        onSave={saveEdit}
+                        saving={updateProduct.isPending}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <EditButton onClick={startEdit} />
+                      <ProductHeaderControls
+                        product={product}
+                        reactivateFlow={reactivateFlow}
+                        hasTobaccoAddon={hasTobaccoAddon}
+                        isTobacco={!!(product as any).isTobacco}
+                        tobaccoLoading={updateProduct.isPending}
+                        onToggleTobacco={() =>
+                          updateProduct.mutate({
+                            id: id,
+                            isTobacco: !(product as any).isTobacco,
+                          } as any)
+                        }
+                        onMakeVariant={openMakeVariantModal}
+                        onRequestDelete={() => setShowDeleteConfirm(true)}
+                        deleteOpen={showDeleteConfirm}
+                      />
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="p-5">
+                {/* Edit-mode name field — view mode shows the name in the page header */}
+                {isEditing && (
+                  <div className="mb-4">
+                    {(() => {
+                      const editParent = (editDraft.parentProductId as string)
+                        ? allProducts.find((p: any) => p.id === editDraft.parentProductId)
+                        : null;
+                      const previewName =
+                        editParent && (editDraft.variantName as string)?.trim()
+                          ? `${(editParent as any).name} - ${(editDraft.variantName as string).trim()}`
+                          : null;
+                      return editParent ? (
+                        <div>
+                          <p className="w-full rounded border border-surface-border bg-surface-raised px-2 py-1 text-lg font-bold text-navy/70 select-none">
+                            {previewName ?? (
+                              <span className="text-navy/30 italic text-sm font-normal">
+                                auto-composed from parent + flavor
+                              </span>
+                            )}
+                          </p>
+                          <p className="mt-0.5 text-xs text-navy/70 italic">
+                            Name auto-composed from parent + flavor
+                          </p>
+                        </div>
+                      ) : (
+                        <input
+                          aria-label="Product name"
+                          value={(editDraft.name as string) ?? ""}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
+                          className="w-full rounded border border-surface-border px-2 py-1 text-lg font-bold text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* The regulated type/category banner that used to sit here moved into
+                    the Regulatory reporting card below, so regulated info lives in
+                    exactly one place instead of straddling two. */}
+
+                {/* Tobacco compliance banner */}
+                {(product as any).isTobacco && (
+                  <div className="mb-4 flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-4 py-2">
+                    <p className="text-sm text-amber-900">
+                      <span className="font-semibold">Tobacco product</span> — purchases and sales
+                      are tracked separately for monthly tax reports.
+                    </p>
+                    {/* The standalone /tobacco surface retired into the Regulated Items hub
+                        (2026-08-24 consolidation) — link straight at this product's own
+                        regulated section, falling back to the hub when it has none. */}
+                    <Link
+                      href={
+                        product.trackedCategory
+                          ? `/compliance/${product.trackedCategory.id}`
+                          : "/compliance"
+                      }
+                      className="text-xs font-medium text-amber-800 underline"
+                    >
+                      Regulated Items →
+                    </Link>
+                  </div>
+                )}
+
+                {/* Parent link banner for variants */}
+                {product.parentProductId && product.parent && (
+                  <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 mb-4">
+                    <p className="text-sm text-blue-700">
+                      This is a variant of{" "}
+                      <Link
+                        href={`/products/${product.parentProductId}`}
+                        className="font-medium underline"
+                      >
+                        {product.parent.name}
+                      </Link>
+                    </p>
+                    {isStaff && (
+                      <button
+                        onClick={handleUnlinkFromParent}
+                        className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                      >
+                        Unlink
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+                  <InfoRow
+                    label={`SKU (${UW.pack.lower} code)`}
+                    value={
+                      isEditing ? (
+                        <input
+                          value={(editDraft.sku as string) ?? ""}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, sku: e.target.value }))}
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      ) : (
+                        (product.sku ?? <span className="text-navy/30">—</span>)
+                      )
+                    }
+                  />
+                  <InfoRow
+                    label="Barcode"
+                    value={
+                      isEditing ? (
+                        <input
+                          value={(editDraft.barcode as string) ?? ""}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, barcode: e.target.value }))}
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      ) : (
+                        (product.barcode ?? <span className="text-navy/30">—</span>)
+                      )
+                    }
+                  />
+                  <InfoRow
+                    label="Unit code"
+                    value={
+                      isEditing ? (
+                        <input
+                          value={(editDraft.unitSku as string) ?? ""}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, unitSku: e.target.value }))}
+                          placeholder={`Same as ${UW.pack.lower} code`}
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      ) : (
+                        (product.unitSku ?? (
+                          <span className="text-navy/30">— (same as {UW.pack.lower} code)</span>
+                        ))
+                      )
+                    }
+                  />
+                  <InfoRow
+                    label="Category"
+                    value={
+                      isEditing ? (
+                        (editDraft.trackedCategoryId as string) ? (
+                          <SubcategoryCombobox
+                            sectionId={(editDraft.trackedCategoryId as string) || null}
+                            value={(editDraft.trackedSubcategoryId as string) ?? ""}
+                            onChange={(id) =>
+                              setEditDraft((d) => ({ ...d, trackedSubcategoryId: id }))
+                            }
+                            className="px-2 py-1"
+                          />
+                        ) : (
+                          <CategoryCombobox
+                            value={(editDraft.category as string) ?? ""}
+                            onChange={(v) => setEditDraft((d) => ({ ...d, category: v }))}
+                            placeholder="Select or type a category"
+                            className="px-2 py-1"
+                          />
+                        )
+                      ) : (
+                        product.category
+                      )
+                    }
+                  />
+                  {/* Regulated type, item type and the regulatory units of measure
+                      deliberately do NOT live in this grid — they are filing
+                      vocabulary, not catalog fields, and sitting next to the plain
+                      "Unit of Measure"/"Units per case" inputs made the two easy to
+                      confuse. They render in the Regulatory reporting card below. */}
+                  <InfoRow
+                    label="Unit of Measure"
+                    value={
+                      isEditing ? (
+                        <>
+                          <input
+                            list="edit-unit-options"
+                            value={(editDraft.unit as string) ?? ""}
+                            onChange={(e) => setEditDraft((d) => ({ ...d, unit: e.target.value }))}
+                            placeholder="Select or type a unit"
+                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          />
+                          <datalist id="edit-unit-options">
+                            {catalogUnits.map((u) => (
+                              <option key={u} value={u} />
+                            ))}
+                          </datalist>
+                        </>
+                      ) : (
+                        product.unit
+                      )
+                    }
+                  />
+                  <InfoRow
+                    label={`${UW.base.other} per ${UW.pack.lower}`}
+                    value={
+                      isEditing ? (
+                        <DecimalInput
+                          decimals={0}
+                          min={0}
+                          value={
+                            (editDraft.unitsPerBox as string)?.trim()
+                              ? parseFloat(editDraft.unitsPerBox as string)
+                              : null
+                          }
+                          onChange={(v) =>
+                            setEditDraft((d) => ({ ...d, unitsPerBox: v == null ? "" : String(v) }))
+                          }
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      ) : (
+                        <PiecesPerBoxValue unitsPerBox={product.unitsPerBox} />
+                      )
+                    }
+                  />
+                  {!isFamily && !pricesInWindow && priceEachRow}
+                  {/* Variant of — edit only; view mode shows the parent in the header line and the banner */}
+                  {isEditing && (
+                    <InfoRow
+                      label="Variant of"
+                      value={
+                        <select
+                          value={(editDraft.parentProductId as string) ?? ""}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({
+                              ...d,
+                              parentProductId: e.target.value,
+                              variantName: e.target.value ? (d.variantName as string) : "",
+                            }))
+                          }
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        >
+                          <option value="">None (standalone product)</option>
+                          {variantOfCandidates.map((p: any) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                              {p.sku ? ` — ${p.sku}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      }
+                    />
+                  )}
+                  {/* Flavor / variety: a variant's own name, or the label of a product that has variants */}
+                  {isEditing &&
+                    ((editDraft.parentProductId as string) ||
+                      (!product.parentProductId && (product.variants?.length ?? 0) > 0)) && (
+                      <InfoRow
+                        label="Flavor / variety"
+                        value={
+                          <div>
+                            <input
+                              id={VARIANT_NAME_INPUT_ID}
+                              aria-label="Flavor / variety"
+                              value={(editDraft.variantName as string) ?? ""}
+                              onChange={(e) =>
+                                setEditDraft((d) => ({ ...d, variantName: e.target.value }))
+                              }
+                              placeholder="e.g. Large, Strawberry, Red…"
+                              className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                            />
+                            {(editDraft.variantName as string)?.trim() &&
+                              (() => {
+                                const p = allProducts.find(
+                                  (x: any) => x.id === editDraft.parentProductId,
+                                ) as any;
+                                return p ? (
+                                  <p className="mt-1 text-xs text-navy/70 italic">
+                                    Name will be: &ldquo;{p.name} -{" "}
+                                    {(editDraft.variantName as string).trim()}&rdquo;
+                                  </p>
+                                ) : null;
+                              })()}
+                          </div>
+                        }
+                      />
+                    )}
+                </div>
+
+                {/* Pack-size prompt — suggested from the name/unit while the
+                    pack-size field itself is unset. Never guesses: it only
+                    pre-fills for HIGH/MEDIUM confidence, states the conflict
+                    and leaves the input empty for AMBIGUOUS, and renders
+                    nothing at all for a piece-priced unit. */}
+                {isEditing &&
+                  (() => {
+                    const editParent = (editDraft.parentProductId as string)
+                      ? allProducts.find((p: any) => p.id === editDraft.parentProductId)
+                      : null;
+                    // A variant's own stored `name` is just the flavour (e.g.
+                    // "Strawberry") — a count that lives in the PARENT's name
+                    // (e.g. "Acme Widgets 24ct") would never reach the parser
+                    // from the bare name alone. Compose the same
+                    // parent + flavor string the name-field preview above
+                    // shows so a parent-borne count is still offered — the
+                    // AMBIGUOUS refusal below still fires untouched if the
+                    // two names disagree on the count.
+                    const trimmedVariantName = ((editDraft.variantName as string) ?? "").trim();
+                    const classifyName = editParent
+                      ? trimmedVariantName
+                        ? `${(editParent as any).name} - ${trimmedVariantName}`
+                        : (editParent as any).name
+                      : ((editDraft.name as string) ?? product.name);
+                    return (
+                      <PackSizePrompt
+                        className="mt-3"
+                        name={classifyName}
+                        unit={(editDraft.unit as string) ?? product.unit}
+                        unitSku={(editDraft.unitSku as string) ?? product.unitSku}
+                        unitPrice={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
+                        unitsPerBox={editDraft.unitsPerBox as string}
+                        // Existing product: warn that a pack size re-denominates
+                        // the stored on-hand and cost rather than converting them.
+                        currentStock={Number(product.currentStock ?? 0)}
+                        onAccept={(value) =>
+                          setEditDraft((d) => ({ ...d, unitsPerBox: String(value) }))
+                        }
+                      />
+                    );
+                  })()}
+
+                {isFamily ? (
+                  <FamilyPriceSection price={wholesaleListPrice} isEditing={isEditing}>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+                      {priceEachRow}
+                    </div>
+                    {tiersBlock}
+                  </FamilyPriceSection>
+                ) : pricesInWindow ? (
+                  <DetailsPriceLine
+                    productId={product.id}
+                    isEditing={isEditing}
+                    anchor={() => detailsCardRef.current}
+                    fallback={() =>
+                      detailsCardRef.current?.querySelector<HTMLElement>(
+                        '[data-testid="product-details-heading"]',
+                      )
+                    }
+                  />
+                ) : (
+                  tiersBlock
+                )}
+
+                {/* MSRP — suggested retail, per PIECE (even for boxed products).
+                    Display-only: never feeds pricing/tax/margin math. Flag-gated
+                    (flag.msrp) on write; the warning below is advisory only. */}
+                <div className="mt-5 border-t border-surface-border pt-4">
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                    MSRP (Suggested Retail)
+                  </p>
+                  {isEditing ? (
+                    hasMsrpAddon ? (
+                      <>
+                        <DecimalInput
+                          min={0}
+                          value={
+                            (editDraft.msrp as string)?.trim()
+                              ? parseFloat(editDraft.msrp as string)
+                              : null
+                          }
+                          onChange={(v) =>
+                            setEditDraft((d) => ({ ...d, msrp: v == null ? "" : String(v) }))
+                          }
+                          className="w-32 rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                        <p className="mt-1 text-xs text-navy/50">
+                          per {UW.base.lower} — even for boxed products
+                        </p>
+                        {!(editDraft.msrp as string)?.trim() && (
+                          <p className="mt-1 text-xs text-navy/50">
+                            Shown on new invoices once set — existing invoices keep their original
+                            snapshot.
+                          </p>
+                        )}
+                        {msrpBelowWholesale && (
+                          <p className="mt-1 text-xs text-warning">
+                            Below wholesale price (<MoneyFigure value={wholesalePerPiece} />/
+                            {UW.base.short.one})
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-xs italic text-navy/50">Requires the MSRP add-on.</p>
+                    )
+                  ) : msrpNumber != null ? (
+                    <>
+                      <p className="font-mono text-sm font-medium tabular-nums text-navy">
+                        <MoneyFigure value={msrpNumber} />
+                        <span className="ml-1 text-[10px] text-navy/50">/{UW.base.short.one}</span>
+                      </p>
+                      {msrpBelowWholesale && (
+                        <p className="mt-1 text-xs text-warning">
+                          Below wholesale price (<MoneyFigure value={wholesalePerPiece} />/
+                          {UW.base.short.one})
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm text-navy/30">—</p>
+                  )}
+                </div>
+
+                <div className="mt-5 border-t border-surface-border pt-4">
+                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                    Description
+                  </p>
+                  {isEditing ? (
+                    <textarea
+                      value={(editDraft.description as string) ?? ""}
+                      onChange={(e) => setEditDraft((d) => ({ ...d, description: e.target.value }))}
+                      rows={3}
+                      className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  ) : (
+                    <p className="text-sm text-navy/80">{product.description}</p>
+                  )}
+                </div>
+
+                {/* Buyer merchandising flags (P5-01): last in Details, so the price comes first (K11-23) */}
+                {isStaff && (
+                  <ProductMerchandising
+                    product={product as any}
+                    isEditing={isEditing}
+                    pending={updateProduct.isPending}
+                    onToggle={(flag, next) =>
+                      updateProduct.mutate({ id: id, [flag]: next } as any, {
+                        onSuccess: () =>
+                          toast({ title: "Merchandising updated", variant: "success" }),
+                        onError: () => toast({ title: "Failed to update", variant: "error" }),
+                      })
+                    }
+                  />
+                )}
+              </div>
+            </div>
+            {product.kind === "FAMILY" && (
+              <FamilyVariantsEditor familyId={product.id} variants={product.variants ?? []} />
+            )}
+          </div>
           {/* ── Left: image gallery + stock card ── */}
-          <div className="space-y-4">
+          <div
+            data-region-covers
+            className="space-y-4 lg:col-start-1 lg:row-start-1 lg:row-span-2 lg:[&[inert]]:opacity-40 motion-safe:lg:transition-opacity motion-safe:lg:duration-200"
+          >
             {/* ── Image gallery ── */}
-            <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+            <div
+              data-testid="product-image-card"
+              className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card"
+            >
               <div className="border-b border-surface-border px-4 py-3">
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                   Image
@@ -1482,690 +2125,7 @@ export default function ProductDetailPage() {
             )}
           </div>
 
-          {/* ── Right: details + chart ── */}
-          <div className="space-y-5 lg:col-span-2">
-            {/* Product details */}
-            <div
-              ref={detailsCardRef}
-              className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5">
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                  Details
-                </h3>
-                <div className="flex max-w-full flex-wrap items-center justify-end gap-2 max-sm:w-full max-sm:justify-start">
-                  {isEditing ? (
-                    <>
-                      <EditActionButtons
-                        className="max-md:hidden"
-                        onCancel={cancelEdit}
-                        onSave={saveEdit}
-                        saving={updateProduct.isPending}
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <div className="max-sm:basis-full">
-                        <EditButton onClick={startEdit} />
-                      </div>
-                      <ProductHeaderControls
-                        product={product}
-                        reactivateFlow={reactivateFlow}
-                        hasTobaccoAddon={hasTobaccoAddon}
-                        isTobacco={!!(product as any).isTobacco}
-                        tobaccoLoading={updateProduct.isPending}
-                        onToggleTobacco={() =>
-                          updateProduct.mutate({
-                            id: id,
-                            isTobacco: !(product as any).isTobacco,
-                          } as any)
-                        }
-                        onMakeVariant={openMakeVariantModal}
-                        onRequestDelete={() => setShowDeleteConfirm(true)}
-                      />
-                    </>
-                  )}
-                </div>
-              </div>
-              <div className="p-5">
-                {/* Edit-mode name field — view mode shows the name in the page header */}
-                {isEditing && (
-                  <div className="mb-4">
-                    {(() => {
-                      const editParent = (editDraft.parentProductId as string)
-                        ? allProducts.find((p: any) => p.id === editDraft.parentProductId)
-                        : null;
-                      const previewName =
-                        editParent && (editDraft.variantName as string)?.trim()
-                          ? `${(editParent as any).name} - ${(editDraft.variantName as string).trim()}`
-                          : null;
-                      return editParent ? (
-                        <div>
-                          <p className="w-full rounded border border-surface-border bg-surface-raised px-2 py-1 text-lg font-bold text-navy/70 select-none">
-                            {previewName ?? (
-                              <span className="text-navy/30 italic text-sm font-normal">
-                                auto-composed from parent + flavor
-                              </span>
-                            )}
-                          </p>
-                          <p className="mt-0.5 text-xs text-navy/70 italic">
-                            Name auto-composed from parent + flavor
-                          </p>
-                        </div>
-                      ) : (
-                        <input
-                          value={(editDraft.name as string) ?? ""}
-                          onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
-                          className="w-full rounded border border-surface-border px-2 py-1 text-lg font-bold text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        />
-                      );
-                    })()}
-                  </div>
-                )}
-
-                {/* The regulated type/category banner that used to sit here moved into
-                    the Regulatory reporting card below, so regulated info lives in
-                    exactly one place instead of straddling two. */}
-
-                {/* Tobacco compliance banner */}
-                {(product as any).isTobacco && (
-                  <div className="mb-4 flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-4 py-2">
-                    <p className="text-sm text-amber-900">
-                      <span className="font-semibold">Tobacco product</span> — purchases and sales
-                      are tracked separately for monthly tax reports.
-                    </p>
-                    {/* The standalone /tobacco surface retired into the Regulated Items hub
-                        (2026-08-24 consolidation) — link straight at this product's own
-                        regulated section, falling back to the hub when it has none. */}
-                    <Link
-                      href={
-                        product.trackedCategory
-                          ? `/compliance/${product.trackedCategory.id}`
-                          : "/compliance"
-                      }
-                      className="text-xs font-medium text-amber-800 underline"
-                    >
-                      Regulated Items →
-                    </Link>
-                  </div>
-                )}
-
-                {/* Buyer merchandising flags (P5-01) */}
-                {isStaff && (
-                  <div className="mb-4 rounded-lg border border-surface-border bg-white p-4">
-                    <div className="mb-2.5 flex items-center gap-2">
-                      <Star className="h-4 w-4 text-brand-500" />
-                      <h3 className="text-sm font-semibold text-navy">Buyer merchandising</h3>
-                    </div>
-                    {isEditing && (
-                      <p className="mb-2 text-xs font-medium text-navy/60">
-                        These switches apply immediately, without Save.
-                      </p>
-                    )}
-                    <p className="mb-3 text-xs text-navy/60">
-                      Highlight this product on the buyer catalogue with badges and smart
-                      collections. These are display flags only — they don&apos;t change price.
-                    </p>
-                    <div className="grid gap-2 sm:grid-cols-3">
-                      <MerchFlagToggle
-                        label="Featured"
-                        description="Pin to the featured shelf"
-                        active={!!(product as any).isFeatured}
-                        disabled={updateProduct.isPending}
-                        onToggle={() =>
-                          updateProduct.mutate(
-                            { id: id, isFeatured: !(product as any).isFeatured } as any,
-                            {
-                              onSuccess: () =>
-                                toast({ title: "Merchandising updated", variant: "success" }),
-                              onError: () => toast({ title: "Failed to update", variant: "error" }),
-                            },
-                          )
-                        }
-                      />
-                      <MerchFlagToggle
-                        label="New"
-                        description={'Show a "New" badge'}
-                        active={!!(product as any).isNew}
-                        disabled={updateProduct.isPending}
-                        onToggle={() =>
-                          updateProduct.mutate({ id: id, isNew: !(product as any).isNew } as any, {
-                            onSuccess: () =>
-                              toast({ title: "Merchandising updated", variant: "success" }),
-                            onError: () => toast({ title: "Failed to update", variant: "error" }),
-                          })
-                        }
-                      />
-                      <MerchFlagToggle
-                        label="Deal"
-                        description={'Show a "Deal" badge'}
-                        active={!!(product as any).isDeal}
-                        disabled={updateProduct.isPending}
-                        onToggle={() =>
-                          updateProduct.mutate(
-                            { id: id, isDeal: !(product as any).isDeal } as any,
-                            {
-                              onSuccess: () =>
-                                toast({ title: "Merchandising updated", variant: "success" }),
-                              onError: () => toast({ title: "Failed to update", variant: "error" }),
-                            },
-                          )
-                        }
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Parent link banner for variants */}
-                {product.parentProductId && product.parent && (
-                  <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 mb-4">
-                    <p className="text-sm text-blue-700">
-                      This is a variant of{" "}
-                      <Link
-                        href={`/products/${product.parentProductId}`}
-                        className="font-medium underline"
-                      >
-                        {product.parent.name}
-                      </Link>
-                    </p>
-                    {isStaff && (
-                      <button
-                        onClick={handleUnlinkFromParent}
-                        className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
-                      >
-                        Unlink
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
-                  <InfoRow
-                    label={`SKU (${UW.pack.lower} code)`}
-                    value={
-                      isEditing ? (
-                        <input
-                          value={(editDraft.sku as string) ?? ""}
-                          onChange={(e) => setEditDraft((d) => ({ ...d, sku: e.target.value }))}
-                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        />
-                      ) : (
-                        (product.sku ?? <span className="text-navy/30">—</span>)
-                      )
-                    }
-                  />
-                  <InfoRow
-                    label="Barcode"
-                    value={
-                      isEditing ? (
-                        <input
-                          value={(editDraft.barcode as string) ?? ""}
-                          onChange={(e) => setEditDraft((d) => ({ ...d, barcode: e.target.value }))}
-                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        />
-                      ) : (
-                        (product.barcode ?? <span className="text-navy/30">—</span>)
-                      )
-                    }
-                  />
-                  <InfoRow
-                    label="Unit code"
-                    value={
-                      isEditing ? (
-                        <input
-                          value={(editDraft.unitSku as string) ?? ""}
-                          onChange={(e) => setEditDraft((d) => ({ ...d, unitSku: e.target.value }))}
-                          placeholder={`Same as ${UW.pack.lower} code`}
-                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        />
-                      ) : (
-                        (product.unitSku ?? (
-                          <span className="text-navy/30">— (same as {UW.pack.lower} code)</span>
-                        ))
-                      )
-                    }
-                  />
-                  <InfoRow
-                    label="Category"
-                    value={
-                      isEditing ? (
-                        (editDraft.trackedCategoryId as string) ? (
-                          <SubcategoryCombobox
-                            sectionId={(editDraft.trackedCategoryId as string) || null}
-                            value={(editDraft.trackedSubcategoryId as string) ?? ""}
-                            onChange={(id) =>
-                              setEditDraft((d) => ({ ...d, trackedSubcategoryId: id }))
-                            }
-                            className="px-2 py-1"
-                          />
-                        ) : (
-                          <CategoryCombobox
-                            value={(editDraft.category as string) ?? ""}
-                            onChange={(v) => setEditDraft((d) => ({ ...d, category: v }))}
-                            placeholder="Select or type a category"
-                            className="px-2 py-1"
-                          />
-                        )
-                      ) : (
-                        product.category
-                      )
-                    }
-                  />
-                  {/* Regulated type, item type and the regulatory units of measure
-                      deliberately do NOT live in this grid — they are filing
-                      vocabulary, not catalog fields, and sitting next to the plain
-                      "Unit of Measure"/"Units per case" inputs made the two easy to
-                      confuse. They render in the Regulatory reporting card below. */}
-                  <InfoRow
-                    label="Unit of Measure"
-                    value={
-                      isEditing ? (
-                        <>
-                          <input
-                            list="edit-unit-options"
-                            value={(editDraft.unit as string) ?? ""}
-                            onChange={(e) => setEditDraft((d) => ({ ...d, unit: e.target.value }))}
-                            placeholder="Select or type a unit"
-                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                          />
-                          <datalist id="edit-unit-options">
-                            {catalogUnits.map((u) => (
-                              <option key={u} value={u} />
-                            ))}
-                          </datalist>
-                        </>
-                      ) : (
-                        product.unit
-                      )
-                    }
-                  />
-                  <InfoRow
-                    label={`${UW.base.other} per ${UW.pack.lower}`}
-                    value={
-                      isEditing ? (
-                        <DecimalInput
-                          decimals={0}
-                          min={0}
-                          value={
-                            (editDraft.unitsPerBox as string)?.trim()
-                              ? parseFloat(editDraft.unitsPerBox as string)
-                              : null
-                          }
-                          onChange={(v) =>
-                            setEditDraft((d) => ({ ...d, unitsPerBox: v == null ? "" : String(v) }))
-                          }
-                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        />
-                      ) : (
-                        <PiecesPerBoxValue unitsPerBox={product.unitsPerBox} />
-                      )
-                    }
-                  />
-                  <InfoRow
-                    label={priceRowLabel(
-                      isEditing ? (editDraft.unit as string) : product.unit,
-                      tierOneLabel(tierLabels),
-                    )}
-                    value={
-                      isEditing ? (
-                        <>
-                          <EditableNumber
-                            value={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
-                            onChange={(v) =>
-                              setEditDraft((d) => ({ ...d, pricePerUnit: String(v) }))
-                            }
-                          />
-                          {perUnitHint(parseFloat(String(editDraft.pricePerUnit ?? priceNumber)))}
-                        </>
-                      ) : (
-                        <>
-                          <span className="font-mono tabular-nums">${priceNumber.toFixed(2)}</span>
-                          {perUnitHint(priceNumber)}
-                        </>
-                      )
-                    }
-                  />
-                  {/* Variant of — edit only; view mode shows the parent in the header line and the banner */}
-                  {isEditing && (
-                    <InfoRow
-                      label="Variant of"
-                      value={
-                        <select
-                          value={(editDraft.parentProductId as string) ?? ""}
-                          onChange={(e) =>
-                            setEditDraft((d) => ({
-                              ...d,
-                              parentProductId: e.target.value,
-                              variantName: e.target.value ? (d.variantName as string) : "",
-                            }))
-                          }
-                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        >
-                          <option value="">None (standalone product)</option>
-                          {variantOfCandidates.map((p: any) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                              {p.sku ? ` — ${p.sku}` : ""}
-                            </option>
-                          ))}
-                        </select>
-                      }
-                    />
-                  )}
-                  {/* Flavor / variety: a variant's own name, or the label of a product that has variants */}
-                  {isEditing &&
-                    ((editDraft.parentProductId as string) ||
-                      (!product.parentProductId && (product.variants?.length ?? 0) > 0)) && (
-                      <InfoRow
-                        label="Flavor / variety"
-                        value={
-                          <div>
-                            <input
-                              id={VARIANT_NAME_INPUT_ID}
-                              aria-label="Flavor / variety"
-                              value={(editDraft.variantName as string) ?? ""}
-                              onChange={(e) =>
-                                setEditDraft((d) => ({ ...d, variantName: e.target.value }))
-                              }
-                              placeholder="e.g. Large, Strawberry, Red…"
-                              className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                            />
-                            {(editDraft.variantName as string)?.trim() &&
-                              (() => {
-                                const p = allProducts.find(
-                                  (x: any) => x.id === editDraft.parentProductId,
-                                ) as any;
-                                return p ? (
-                                  <p className="mt-1 text-xs text-navy/70 italic">
-                                    Name will be: &ldquo;{p.name} -{" "}
-                                    {(editDraft.variantName as string).trim()}&rdquo;
-                                  </p>
-                                ) : null;
-                              })()}
-                          </div>
-                        }
-                      />
-                    )}
-                </div>
-
-                {/* Pack-size prompt — suggested from the name/unit while the
-                    pack-size field itself is unset. Never guesses: it only
-                    pre-fills for HIGH/MEDIUM confidence, states the conflict
-                    and leaves the input empty for AMBIGUOUS, and renders
-                    nothing at all for a piece-priced unit. */}
-                {isEditing &&
-                  (() => {
-                    const editParent = (editDraft.parentProductId as string)
-                      ? allProducts.find((p: any) => p.id === editDraft.parentProductId)
-                      : null;
-                    // A variant's own stored `name` is just the flavour (e.g.
-                    // "Strawberry") — a count that lives in the PARENT's name
-                    // (e.g. "Acme Widgets 24ct") would never reach the parser
-                    // from the bare name alone. Compose the same
-                    // parent + flavor string the name-field preview above
-                    // shows so a parent-borne count is still offered — the
-                    // AMBIGUOUS refusal below still fires untouched if the
-                    // two names disagree on the count.
-                    const trimmedVariantName = ((editDraft.variantName as string) ?? "").trim();
-                    const classifyName = editParent
-                      ? trimmedVariantName
-                        ? `${(editParent as any).name} - ${trimmedVariantName}`
-                        : (editParent as any).name
-                      : ((editDraft.name as string) ?? product.name);
-                    return (
-                      <PackSizePrompt
-                        className="mt-3"
-                        name={classifyName}
-                        unit={(editDraft.unit as string) ?? product.unit}
-                        unitSku={(editDraft.unitSku as string) ?? product.unitSku}
-                        unitPrice={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
-                        unitsPerBox={editDraft.unitsPerBox as string}
-                        // Existing product: warn that a pack size re-denominates
-                        // the stored on-hand and cost rather than converting them.
-                        currentStock={Number(product.currentStock ?? 0)}
-                        onAccept={(value) =>
-                          setEditDraft((d) => ({ ...d, unitsPerBox: String(value) }))
-                        }
-                      />
-                    );
-                  })()}
-
-                {/* Tier Prices */}
-                <div className="mt-5 border-t border-surface-border pt-4">
-                  <div className="flex items-center justify-between mb-2.5">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                      Pricing Tiers
-                    </p>
-                    {isEditing && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const t1 = editDraft.pricePerUnit as string;
-                          setEditDraft((d) => ({
-                            ...d,
-                            priceTier2: t1,
-                            priceTier3: t1,
-                            priceTier4: t1,
-                            priceTier5: t1,
-                          }));
-                        }}
-                        className="text-xs text-brand-600 hover:underline"
-                      >
-                        Set all to {tierOneLabel(tierLabels)}
-                      </button>
-                    )}
-                  </div>
-                  {isEditing &&
-                    (() => {
-                      // Names the tiers a save would move with the list (#3470 review: never a fixed string).
-                      const note = ladderChangeNote(
-                        editTierPatchMoves(product, editDraft as Record<string, string>),
-                        (n) => productTierLabel(tierLabels, n),
-                      );
-                      return note ? (
-                        <p className="mb-2 text-xs text-navy/70" data-testid="tiers-move-note">
-                          {note.replace(/\.$/, "")} when you save.
-                        </p>
-                      ) : null;
-                    })()}
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                    {(
-                      [
-                        [productTierLabel(tierLabels, 2), "priceTier2", product.priceTier2],
-                        [productTierLabel(tierLabels, 3), "priceTier3", product.priceTier3],
-                        [productTierLabel(tierLabels, 4), "priceTier4", product.priceTier4],
-                        [productTierLabel(tierLabels, 5), "priceTier5", product.priceTier5],
-                      ] as [string, string, any][]
-                    ).map(([label, field, productVal], idx) => {
-                      const prevFields = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4"];
-                      const prevField = prevFields[idx];
-                      const curVal = isEditing
-                        ? parseFloat(
-                            String(
-                              editDraft[field] ?? parseFloat(String(productVal ?? priceNumber)),
-                            ),
-                          )
-                        : parseFloat(String(productVal ?? priceNumber));
-                      const prevVal = isEditing
-                        ? parseFloat(String(editDraft[prevField] ?? priceNumber))
-                        : parseFloat(
-                            String(
-                              idx === 0
-                                ? priceNumber
-                                : ((product as any)[prevField] ?? priceNumber),
-                            ),
-                          );
-                      const warn = isEditing && curVal > prevVal;
-                      const inheritsList = !(Number(productVal) > 0);
-                      return (
-                        <div key={field}>
-                          <p
-                            className={cn(
-                              "mb-1 text-xs",
-                              warn ? "text-warning font-medium" : "text-navy/70",
-                            )}
-                          >
-                            {label}
-                            {warn ? " ⚠" : ""}
-                          </p>
-                          {isEditing ? (
-                            <>
-                              <EditableNumber
-                                value={curVal}
-                                onChange={(v) =>
-                                  setEditDraft((d) => ({ ...d, [field]: String(v) }))
-                                }
-                                onCommit={(v, atFocus) => {
-                                  // P0 2026-10-14: lower tiers move only by applyLadderChange (tracking, 0 or above
-                                  // the new price), never a blind copy-down, and the move is named on screen. The
-                                  // OLD side is the field's own focus-time value (SA MUST: no staleable copy).
-                                  const moved = applyLadderChange(
-                                    field as TierField,
-                                    atFocus ?? productVal,
-                                    v,
-                                    editDraft as Record<string, string>,
-                                  );
-                                  setEditDraft((d) => ({ ...d, ...moved }));
-                                  setLadderNote(
-                                    ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n)),
-                                  );
-                                }}
-                              />
-                              {perUnitHint(curVal)}
-                            </>
-                          ) : (
-                            <>
-                              <p className="font-mono text-sm font-medium tabular-nums text-navy">
-                                ${(inheritsList ? priceNumber : Number(productVal)).toFixed(2)}
-                                {inheritsList && (
-                                  <span className="ml-1 rounded bg-surface-raised px-1 py-0.5 text-[9px] text-navy/50">
-                                    list
-                                  </span>
-                                )}
-                              </p>
-                              {perUnitHint(inheritsList ? priceNumber : Number(productVal))}
-                            </>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {isEditing && ladderNote && (
-                    <p
-                      role="status"
-                      data-testid="ladder-note"
-                      className="mt-2 text-xs text-navy/70"
-                    >
-                      {ladderNote}
-                    </p>
-                  )}
-                  {isEditing &&
-                    (() => {
-                      const t1 = parseFloat(String(editDraft.pricePerUnit ?? priceNumber));
-                      const t2 = parseFloat(
-                        String(editDraft.priceTier2 ?? (product as any).priceTier2 ?? t1),
-                      );
-                      const t3 = parseFloat(
-                        String(editDraft.priceTier3 ?? (product as any).priceTier3 ?? t1),
-                      );
-                      const t4 = parseFloat(
-                        String(editDraft.priceTier4 ?? (product as any).priceTier4 ?? t1),
-                      );
-                      const t5 = parseFloat(
-                        String(editDraft.priceTier5 ?? (product as any).priceTier5 ?? t1),
-                      );
-                      const hasViolation = t2 > t1 || t3 > t2 || t4 > t3 || t5 > t4;
-                      return hasViolation ? (
-                        <p className="mt-1.5 text-xs text-warning">
-                          Higher tier prices should be ≤ the tier above (volume discounts are
-                          lower).
-                        </p>
-                      ) : null;
-                    })()}
-                  {isEditing && (
-                    <p className="mt-1.5 text-xs text-navy/50">
-                      A tier left blank or at 0 follows the list price.
-                    </p>
-                  )}
-                </div>
-
-                {/* MSRP — suggested retail, per PIECE (even for boxed products).
-                    Display-only: never feeds pricing/tax/margin math. Flag-gated
-                    (flag.msrp) on write; the warning below is advisory only. */}
-                <div className="mt-5 border-t border-surface-border pt-4">
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                    MSRP (Suggested Retail)
-                  </p>
-                  {isEditing ? (
-                    hasMsrpAddon ? (
-                      <>
-                        <DecimalInput
-                          min={0}
-                          value={
-                            (editDraft.msrp as string)?.trim()
-                              ? parseFloat(editDraft.msrp as string)
-                              : null
-                          }
-                          onChange={(v) =>
-                            setEditDraft((d) => ({ ...d, msrp: v == null ? "" : String(v) }))
-                          }
-                          className="w-32 rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        />
-                        <p className="mt-1 text-xs text-navy/50">
-                          per {UW.base.lower} — even for boxed products
-                        </p>
-                        {!(editDraft.msrp as string)?.trim() && (
-                          <p className="mt-1 text-xs text-navy/50">
-                            Shown on new invoices once set — existing invoices keep their original
-                            snapshot.
-                          </p>
-                        )}
-                        {msrpBelowWholesale && (
-                          <p className="mt-1 text-xs text-warning">
-                            Below wholesale price (${wholesalePerPiece.toFixed(2)}/
-                            {UW.base.short.one})
-                          </p>
-                        )}
-                      </>
-                    ) : (
-                      <p className="text-xs italic text-navy/50">Requires the MSRP add-on.</p>
-                    )
-                  ) : msrpNumber != null ? (
-                    <>
-                      <p className="font-mono text-sm font-medium tabular-nums text-navy">
-                        ${msrpNumber.toFixed(2)}
-                        <span className="ml-1 text-[10px] text-navy/50">/{UW.base.short.one}</span>
-                      </p>
-                      {msrpBelowWholesale && (
-                        <p className="mt-1 text-xs text-warning">
-                          Below wholesale price (${wholesalePerPiece.toFixed(2)}/{UW.base.short.one}
-                          )
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <p className="text-sm text-navy/30">—</p>
-                  )}
-                </div>
-
-                <div className="mt-5 border-t border-surface-border pt-4">
-                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                    Description
-                  </p>
-                  {isEditing ? (
-                    <textarea
-                      value={(editDraft.description as string) ?? ""}
-                      onChange={(e) => setEditDraft((d) => ({ ...d, description: e.target.value }))}
-                      rows={3}
-                      className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                  ) : (
-                    <p className="text-sm text-navy/80">{product.description}</p>
-                  )}
-                </div>
-              </div>
-            </div>
-
+          <div className="space-y-5 lg:col-span-2 lg:col-start-2 lg:row-start-2">
             {/* ── Regulatory reporting ──────────────────────────────────────────
                 Filing vocabulary only (regulated type + the codes a report files
                 under), kept in its own card so it can't be mistaken for the
@@ -2374,25 +2334,30 @@ export default function ProductDetailPage() {
 
             <ProductLabelsCard productId={product.id} />
             <ProductPortalVisibilityCard product={product} />
-            {v2 && product.kind !== "FAMILY" ? <ProductPricingV2 product={product} /> : null}
+            {v2 && product.kind !== "FAMILY" ? (
+              <ProductPricingRegion>
+                <ProductPricingV2 product={product} />
+              </ProductPricingRegion>
+            ) : null}
             {!v2Family && <ProductUnitsCard product={product} hideAddForm={v2} />}
 
             {/* Sales demand — real data from invoiced sales. In its own file (unlike
                 CostHistoryCard below) because it owns range/metric state and five
                 render states; this file is already ~2.7k lines. */}
-            <DemandCard productId={product.id} unitsPerBox={product.unitsPerBox} />
-
-            {/* Sales — per-buyer invoiced-sale history (PR-B): who bought this,
-                when, and at what price, with min/avg/max price summary chips. */}
-            <SalesHistoryCard productId={product.id} hideCreateOrder={v2Family} />
+            {isFamily ? (
+              <FamilySalesCards productId={product.id} unitsPerBox={product.unitsPerBox} />
+            ) : (
+              <>
+                <DemandCard productId={product.id} unitsPerBox={product.unitsPerBox} />
+                {/* Sales — per-buyer invoiced-sale history (PR-B): who bought this,
+                    when, and at what price, with min/avg/max price summary chips. */}
+                <SalesHistoryCard productId={product.id} />
+              </>
+            )}
             <ProductInsightsExport productId={product.id} sku={product.sku ?? product.id} />
 
             {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}
             <CostHistoryCard productId={product.id} />
-
-            {product.kind === "FAMILY" && (
-              <FamilyVariantsEditor familyId={product.id} variants={product.variants ?? []} />
-            )}
 
             {/* Variants section — only for non-variant (parent) products */}
             {!product.parentProductId && product.kind !== "FAMILY" && (
@@ -2463,10 +2428,10 @@ export default function ProductDetailPage() {
                             {product.sku || <span className="text-navy/30">&mdash;</span>}
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                            ${priceNumber.toFixed(2)}
+                            <MoneyFigure value={priceNumber} />
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                            ${getTierPrice(product, 2).toFixed(2)}
+                            <MoneyFigure value={getTierPrice(product, 2)} />
                           </td>
                           <td className="px-3 py-2.5">
                             <Badge
@@ -2506,10 +2471,10 @@ export default function ProductDetailPage() {
                               {variant.sku || <span className="text-navy/30">&mdash;</span>}
                             </td>
                             <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                              ${parseFloat(String(variant.pricePerUnit)).toFixed(2)}
+                              <MoneyFigure value={variant.pricePerUnit} />
                             </td>
                             <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                              ${getTierPrice(variant, 2).toFixed(2)}
+                              <MoneyFigure value={getTierPrice(variant, 2)} />
                             </td>
                             <td className="px-3 py-2.5">
                               <Badge
@@ -2861,9 +2826,7 @@ export default function ProductDetailPage() {
                       <span className="font-medium text-navy">{p.name}</span>
                       {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
                     </div>
-                    <span className="text-xs text-navy/70">
-                      ${parseFloat(String(p.pricePerUnit)).toFixed(2)}
-                    </span>
+                    <MoneyFigure value={p.pricePerUnit} className="text-xs text-navy/70" />
                   </button>
                 ))
               )}
@@ -2924,6 +2887,6 @@ export default function ProductDetailPage() {
           )}
         </div>
       </Modal>
-    </>
+    </PriceWindowHost>
   );
 }

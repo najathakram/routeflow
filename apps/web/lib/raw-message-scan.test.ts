@@ -26,6 +26,7 @@ const PERMANENT_EXPECTED: Record<string, number> = {
   "lib/e2e-setup-guard.ts": 2,
   "lib/generic-toast-copy.ts": 1,
   "lib/hooks/useRealtimeUpdates.ts": 1,
+  "lib/password-policy.ts": 1,
   "lib/reason-copy.ts": 1,
 };
 

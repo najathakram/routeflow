@@ -216,7 +216,7 @@ describe("S19: a door ADD_ITEM change request prices the new line from the custo
         },
         {
           provide: EntitlementsService,
-          useValue: { hasFlag: hasFlagMock },
+          useValue: { hasFlag: hasFlagMock, hasFlagStrict: hasFlagMock },
         },
         // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
         {

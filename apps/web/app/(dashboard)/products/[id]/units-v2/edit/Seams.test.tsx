@@ -462,7 +462,7 @@ describe("K8 seams", () => {
       expect(mockSaveReset).toHaveBeenCalledTimes(1);
       expect(spy).toHaveBeenCalledWith({ queryKey: priceGridKey("p1") });
       expect(screen.queryByRole("button", { name: "Reload prices" })).toBeNull();
-      expect(caseInput()).toBe("14.5");
+      expect(caseInput()).toBe("14.50");
       await user.click(screen.getByTestId(T.ebSave));
       expect(mockSave.mock.calls[0][0]).toMatchObject({
         expectedRevision: 9,
@@ -532,7 +532,7 @@ describe("K8 seams", () => {
       expect(mockSave).toHaveBeenCalledTimes(2);
       expect(mockSave.mock.calls[1][0]).toMatchObject(body);
       expect(screen.getByRole("button", { name: "Reload prices" })).toBeTruthy();
-      expect(caseInput()).toBe("14.5");
+      expect(caseInput()).toBe("14.50");
     });
   });
 

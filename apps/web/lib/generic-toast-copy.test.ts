@@ -176,6 +176,17 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(copy).not.toContain(RAW);
   });
 
+  // SA-812a G-1: the units_prices_v2 fail-closed 503. Without a mapped code a 503 reads as the generic "our side" copy.
+  it("CUSTOMER_PRICES_UNAVAILABLE (503) says nothing was saved and to retry, never the server message", () => {
+    const e = err(503, { code: API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE });
+    expect(genericToastCopy(e)).toBe(
+      "Customer prices couldn't be loaded. Nothing was saved. Try again in a moment.",
+    );
+    expect(codedToastCopy(e)).toBe(genericToastCopy(e));
+    expect(genericToastCopy(e)).not.toContain(RAW);
+    expect(genericToastCopy(e)).not.toMatch(/[–—]/);
+  });
+
   it("ORDER_LINE_CHANGED is mapped through the shared constant", () => {
     expect(genericToastCopy(err(409, { code: API_ERROR_CODES.ORDER_LINE_CHANGED }))).toMatch(
       /changed while it was being billed/,
@@ -251,6 +262,38 @@ describe("genericToastCopy: codes users rely on", () => {
         err(400, { message: "Cannot duplicate an order-linked invoice. Also: " + RAW }),
       ),
     ).toBe("Some details aren't valid. Check what you entered and try again.");
+  });
+
+  it("O1: the 1-piece naming refusal (uncoded 400) says what to do, with the tenant's piece name, not 'Some details aren't valid'", () => {
+    const one = (label: string) => `A 1-piece unit is always named "${label}".`;
+    expect(genericToastCopy(err(400, { message: one("Piece") }))).toBe(
+      "A 1-piece unit is always called Piece. Rename it to Piece, or give it more than one piece.",
+    );
+    expect(codedToastCopy(err(400, { message: one("Each") }))).toBe(
+      "A 1-piece unit is always called Each. Rename it to Each, or give it more than one piece.",
+    );
+    // a near-miss, or a label that is not a plain short name, is never echoed
+    expect(genericToastCopy(err(400, { message: one("<b>x</b>") }))).toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
+    expect(genericToastCopy(err(400, { message: one("Piece") + " " + RAW }))).toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
+  });
+
+  it("O1: a base name with accents or non-Latin letters keeps the specific copy", () => {
+    const one = (label: string) => `A 1-piece unit is always named "${label}".`;
+    expect(genericToastCopy(err(400, { message: one("Pièce") }))).toBe(
+      "A 1-piece unit is always called Pièce. Rename it to Pièce, or give it more than one piece.",
+    );
+    expect(genericToastCopy(err(400, { message: one("Stück") }))).toBe(
+      "A 1-piece unit is always called Stück. Rename it to Stück, or give it more than one piece.",
+    );
+    expect(genericToastCopy(err(400, { message: one("件") }))).toMatch(/always called 件\./);
+    // markup and control characters are still never echoed
+    expect(genericToastCopy(err(400, { message: one("Pièce<b>") }))).toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
   });
 
   describe("B986: coded refusals that tell the user what to fix (never less actionable than the server sentence)", () => {

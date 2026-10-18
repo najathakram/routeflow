@@ -1,6 +1,9 @@
 /**
- * The ONE place that decides the public web base (the dashboard origin) for every link the API hands to a person or to
- * Stripe: Checkout success and cancel URLs, billing-portal returns, verification and welcome emails.
+ * The shared decision for the public web base (the dashboard origin) behind the links the API hands to Stripe and to the
+ * billing and buyer flows: Checkout success and cancel URLs, billing-portal returns, the catch-up payment session, the
+ * buyer-merge verification link, and the billing notification emails. Other readers of WEB_URL (auth, tenants, customers,
+ * email) still read the env var directly; the boot check below exports the resolved base into it and refuses a missing
+ * or loopback value in production, so they cannot fall back to localhost there either.
  *
  * Why it exists: billing used `process.env.FRONTEND_URL ?? "http://localhost:3001"` while the rest of the app read
  * WEB_URL. Production had only WEB_URL, so a live tenant who paid through Checkout was sent to localhost. A silent

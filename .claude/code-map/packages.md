@@ -626,3 +626,7 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 - `packages/types`: `api/products.ts` `ProductPackAtOpen`, `ExpectedPackPayload` (`expectedUnit`, `expectedUnitsPerBox`, `expectedTenantUnitId?`; SA-797).
 - `api/error-codes.ts` `API_ERROR_CODES` gains `UNIT_NAME_TAKEN`, `UNIT_RENAME_COLLISION` (body `reason`), `UNITS_RENAME_IN_PROGRESS`, `UNIT_ARCHIVED`, `TENANT_UNIT_LIMIT`, `UNIT_SIZE_IN_USE`, `PRODUCT_PACK_STALE`, `PRODUCT_PACK_PRECONDITION_REQUIRED` (all 409).
 - `packages/ui/src/web/Modal.tsx`: new `anchor?: "center" | "top"` prop (default "center"; "top" pins the dialog 4vh from the top and fades in with no zoom or slide, for long forms whose rows change height); entry/exit animations are skipped under `prefers-reduced-motion`.
+
+## fixes-4 (2026-10-18, #3511)
+
+- `packages/types/api/error-codes.ts` `API_ERROR_CODES` gains `CUSTOMER_PRICES_UNAVAILABLE` (503: a typed-price customer's flag read failed; retryable, nothing written).

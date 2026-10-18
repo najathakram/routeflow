@@ -435,3 +435,46 @@ export function planPriceChange(
     view: applied.view,
   };
 }
+
+/** K11-17: the Set price an Auto price follows (P3, P4), so the preview can say why a price moved the wrong way. */
+export interface MoveReason {
+  kind: "follows-set";
+  ref: UnitRef;
+  tier: PriceTier;
+  label: string;
+  /** The Set price, which did not move. */
+  value: number;
+}
+
+/**
+ * Why an Auto cell moved the way it did: the typed price it is worked out from that stayed where it was while another
+ * price it follows moved (P4: a unit's Tier N is its own Retail x the tier anchor's Tier N / Retail, so a Set Retail
+ * that does not move keeps the cell from rising with the anchor's Retail). `view` is the ladder BEFORE the change and
+ * `changes` the plan's changes (a source that is among them moved too, so it is no reason). Null when the cell is not an
+ * Auto cell of this view, `change.from` is not its price here, or no unmoved Set price is behind it.
+ */
+export function explainMove(
+  view: LadderView,
+  rules: TierRules,
+  change: CellChange,
+  changes: readonly CellChange[] = [],
+): MoveReason | null {
+  const row = view.rows.find((r) => r.ref === change.ref);
+  if (!row || change.tier === 1) return null;
+  if (priceSource(row, change.tier) !== "auto") return null;
+  if (ladderPrice(view, change.ref, change.tier, rules) !== change.from) return null;
+  const k = rowOf(view, view.tierAnchors[change.tier] ?? view.anchor);
+  if (k.ref === row.ref) return null; // the tier anchor follows its own Retail (P2): nothing typed behind it
+  const moved = new Set(changes.map(cellKey));
+  const sources: [typeof row, PriceTier][] = [
+    [row, 1],
+    [k, change.tier],
+  ];
+  for (const [r, tier] of sources) {
+    const value = r.set[tier - 1];
+    if (value != null && !moved.has(cellKey({ ref: r.ref, tier }))) {
+      return { kind: "follows-set", ref: r.ref, tier, label: r.label, value };
+    }
+  }
+  return null;
+}

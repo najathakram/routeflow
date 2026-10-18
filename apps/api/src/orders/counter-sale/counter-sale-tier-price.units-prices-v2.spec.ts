@@ -33,7 +33,10 @@ function harness(opts: { typed?: boolean; flag?: boolean }) {
     },
     productUnit: { findMany: jest.fn().mockResolvedValue([]) },
   };
-  const svc = { prisma: { getTenantId: () => "t1" }, entitlements: { hasFlag } };
+  const svc = {
+    prisma: { getTenantId: () => "t1" },
+    entitlements: { hasFlag, hasFlagStrict: hasFlag },
+  };
   return { db: db as never, svc, hasFlag };
 }
 

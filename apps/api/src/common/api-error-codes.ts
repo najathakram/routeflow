@@ -589,6 +589,12 @@ export const API_ERROR_CODES = {
    * (BO-04): at least one of Delivery, Shipping or Counter is needed. Fixed body; nothing was written.
    */
   BUSINESS_CAPABILITIES_EMPTY: "BUSINESS_CAPABILITIES_EMPTY",
+  /**
+   * 503 from every server-priced order path (buyer checkout, standing orders, returns, order edits) when the customer has
+   * typed unit prices but the units_prices_v2 flag could not be read (the override or plan lookup failed). Retryable: nothing
+   * was written, so the caller never gets the tier price instead of the customer's typed price.
+   */
+  CUSTOMER_PRICES_UNAVAILABLE: "CUSTOMER_PRICES_UNAVAILABLE",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

@@ -1,5 +1,6 @@
 import { fromCents } from "@routeflow/pricing";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
+import { webBaseUrl } from "../config/web-base-url";
 export { escapeHtml };
 // N3 (2026-09-16): billing-lifecycle email templates to the tenant admin — trial ending,
 // downgrade scheduled/applied, upgrade confirmed, cancelled, suspended.
@@ -68,19 +69,21 @@ function ctaButtonHtml(url: string, label: string): string {
   </td></tr></table>`;
 }
 
-// Fix round (finding 5): WEB_URL is the repo-wide convention for a user-facing link
-// (payment-requests.service.ts, stripe-connect.controller.ts) — FRONTEND_URL is not in
-// .env.example and is only used by a few older billing.service.ts call sites. Falls back to
-// the real production domain, not localhost, so a misconfigured env never ships a dead link.
-function webBaseUrl(): string {
-  return (process.env.WEB_URL ?? process.env.FRONTEND_URL ?? "https://www.routeflow.info").replace(
-    /\/$/,
-    "",
-  );
+// The base comes from the shared helper (config/web-base-url.ts: WEB_URL, then FRONTEND_URL). An email must never carry
+// a dead link, so when neither is set (or the helper refuses the value) it falls back to the real production domain,
+// not localhost.
+function emailWebBase(): string {
+  const configured = `${process.env.WEB_URL ?? process.env.FRONTEND_URL ?? ""}`.trim();
+  if (!configured) return "https://www.routeflow.info";
+  try {
+    return webBaseUrl();
+  } catch {
+    return "https://www.routeflow.info";
+  }
 }
 
 export function billingSettingsUrl(): string {
-  return `${webBaseUrl()}/settings/billing`;
+  return `${emailWebBase()}/settings/billing`;
 }
 
 export interface BillingEmailTemplate {

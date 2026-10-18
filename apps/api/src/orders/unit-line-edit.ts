@@ -140,6 +140,42 @@ export async function loadOperatorTiers(
 }
 
 /**
+ * SA-812a G-1: the edit's customer-prices read, run EARLY and its answer thrown away. The real read happens inside the edit
+ * transaction, but `revertLinkedInvoicesForOrderEdit` commits on its own connection BEFORE that transaction opens. So if the
+ * flag read is going to fail (the coded 503 CUSTOMER_PRICES_UNAVAILABLE), it must fail here, before any commit, or a SENT
+ * invoice's mirror would stay reverted to DRAFT with nothing left to re-sync it. Same ids and same customer as the in-tx
+ * read (payload products, substitutes, and the products of the existing lines the payload names). Only roles that price
+ * from the customer's tier (staff, buyer) read anything; a driver edit keeps list pricing and reads nothing.
+ */
+export async function preflightCustomerPrices(
+  svc: Parameters<typeof customerPricing>[0],
+  order: { customerId?: string | null },
+  dto: {
+    items?: ReadonlyArray<{
+      id?: string | null;
+      productId?: string | null;
+      substituteProductId?: string | null;
+    }>;
+  },
+  user: { role?: string } | undefined,
+  ctx: Pick<UnitEditContext, "existingById">,
+): Promise<void> {
+  const role = user?.role;
+  if (role !== "OPERATOR" && role !== "TENANT_ADMIN" && role !== "CUSTOMER") return;
+  const productIds = [
+    ...new Set(
+      (dto.items ?? []).flatMap((i) => [
+        i.productId,
+        i.substituteProductId,
+        i.id ? ctx.existingById.get(i.id)?.productId : null,
+      ]),
+    ),
+  ].filter((id): id is string => !!id);
+  if (productIds.length === 0) return;
+  await customerPricing(svc, order.customerId, productIds, null, []);
+}
+
+/**
  * SA-728 / units P0b: an OLD client names the base ("Piece" / the tenant's base label) for a DERIVED
  * base unit. Rewrites that dto item IN PLACE into the pack line's pieces (no unitLabel, boxes/pieces
  * via normalizeBoxesPieces, no echoed per-piece price) so computeLineSubtotal prorates it. Reads the

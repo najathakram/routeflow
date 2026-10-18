@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
-import type { ProductUnitLevel } from "@routeflow/types";
+import type { ProductPriceGridDto, ProductUnitLevel } from "@routeflow/types";
 import { resolveUnitPrice, unitWords, type LadderProduct } from "@routeflow/pricing";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, Skeleton, useToast } from "@routeflow/ui/web";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DecimalInput } from "@/components/MoneyInput";
@@ -20,6 +21,11 @@ import {
 import { cascadePatch, proposeCascade, type CascadeProposal } from "@/lib/unit-cascade";
 import { unitNotListedNotice } from "@/lib/api/tenant-units";
 import { usePriceGrid } from "@/lib/api/usePriceGrid";
+import { PriceFigure, TIERS, packRowOf, rowForUnit } from "./PriceFigures";
+import { usePriceWindowOpener } from "./PriceWindowHost";
+import { PriceSaveStatus } from "./ProductPricingV2";
+import { BTN } from "./units-v2/edit/PriceEditBar";
+import { usePriceDraftOptional } from "./units-v2/edit/PriceDraftProvider";
 import {
   shellHasUnitControls,
   shellRemovesUnit,
@@ -53,6 +59,18 @@ const FIELD =
   "h-10 w-full rounded-md border border-surface-border bg-white px-2.5 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20";
 const LABEL = "mb-1 block text-[11px] font-medium uppercase tracking-wide text-navy/60";
 
+/** F18: the last default change's message, and the single write that undoes it (null once it has been undone). */
+type DefaultNote = {
+  text: string;
+  /** The unit that should be the default while this message is true (null: the pack, i.e. none). */
+  expectedDefaultId: string | null;
+  undo: {
+    body: { id: string; isDefaultSelling: boolean };
+    restoredName: string;
+    restoredId: string | null;
+  } | null;
+};
+
 type Draft = {
   label: string;
   factor: number | null;
@@ -65,6 +83,41 @@ const draftOf = (u: ProductUnitLevel): Draft => ({
   prices: [u.price, u.priceTier2, u.priceTier3, u.priceTier4, u.priceTier5].map(num),
 });
 
+const DEFAULT_RADIO = "default-selling-unit";
+const DEFAULT_HINT_ID = "units-default-hint";
+const DEFAULT_HINT = "Use arrow keys to move, Space to make it the default.";
+
+/**
+ * F18: a default-order-unit radio saves the moment it is chosen, so the keys must not choose by accident. Arrow keys only
+ * MOVE focus through the group (natively they also select, which would write on every press); Space (a click) and Enter
+ * commit. `commit` is a no-op for the radio that is already the default.
+ */
+function radioKeys(commit: () => void) {
+  return (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commit();
+      return;
+    }
+    const step =
+      e.key === "ArrowDown" || e.key === "ArrowRight"
+        ? 1
+        : e.key === "ArrowUp" || e.key === "ArrowLeft"
+          ? -1
+          : 0;
+    if (!step) return;
+    e.preventDefault();
+    const group = Array.from(
+      (e.currentTarget.closest("[data-units-card]") ?? document).querySelectorAll<HTMLInputElement>(
+        `input[type="radio"][name="${DEFAULT_RADIO}"]`,
+      ),
+    );
+    const at = group.indexOf(e.currentTarget);
+    if (at < 0 || group.length < 2) return;
+    group[(at + step + group.length) % group.length].focus();
+  };
+}
+
 function UnitRow({
   unit,
   product,
@@ -75,6 +128,7 @@ function UnitRow({
   onDelete,
   onMakeDefault,
   hideRemove,
+  figures,
 }: {
   unit: ProductUnitLevel;
   product: UnitsCardProduct;
@@ -86,6 +140,17 @@ function UnitRow({
   onMakeDefault: (unit: ProductUnitLevel) => void;
   /** K10d: the v2 shell has its own Remove under this unit's name, so there is one Remove per unit. */
   hideRemove?: boolean;
+  /**
+   * K11-20c: the v2 page. Prices are read-only figures from the served grid (buttons to the floating window) and this row
+   * writes Name and factor only. `grid` is the served grid; `card` is the element the window hangs off.
+   */
+  figures?: {
+    grid: ProductPriceGridDto | undefined;
+    /** The grid query failed with nothing cached: figures show the stored prices as read-only text. */
+    errored: boolean;
+    card: () => HTMLElement | null;
+    heading: () => HTMLElement | null;
+  };
 }) {
   const [draft, setDraft] = React.useState<Draft>(() => draftOf(unit));
   const base = draftOf(unit);
@@ -96,7 +161,18 @@ function UnitRow({
   const dirty =
     draft.label !== base.label ||
     draft.factor !== base.factor ||
-    draft.prices.some((p, i) => p !== base.prices[i]);
+    (!figures && draft.prices.some((p, i) => p !== base.prices[i]));
+  const gridRow = figures ? rowForUnit(figures.grid, unit) : undefined;
+  const figure = (t: (typeof TIERS)[number]) =>
+    figures ? (
+      <PriceFigure
+        row={gridRow}
+        tier={t}
+        anchor={figures.card}
+        fallback={figures.heading}
+        plainValue={figures.errored ? base.prices[t - 1] : undefined}
+      />
+    ) : null;
   const w = unitWords();
   const valid = draft.label.trim() !== "" && draft.factor != null && draft.factor >= 1;
   // What tier `t` would price at if THIS field were left blank: the row as currently drafted,
@@ -159,22 +235,28 @@ function UnitRow({
           <label className={LABEL} htmlFor={`${idp}-price`}>
             Price
           </label>
-          <DecimalInput
-            id={`${idp}-price`}
-            aria-label={`${unit.label} price`}
-            className={FIELD}
-            value={draft.prices[0]}
-            placeholder={derived(1) != null ? fmt(derived(1) as number) : ""}
-            onChange={(v) =>
-              setDraft({ ...draft, prices: draft.prices.map((p, i) => (i ? p : v)) })
-            }
-          />
+          {figures ? (
+            <div id={`${idp}-price`}>{figure(1)}</div>
+          ) : (
+            <DecimalInput
+              id={`${idp}-price`}
+              aria-label={`${unit.label} price`}
+              className={FIELD}
+              value={draft.prices[0]}
+              placeholder={derived(1) != null ? fmt(derived(1) as number) : ""}
+              onChange={(v) =>
+                setDraft({ ...draft, prices: draft.prices.map((p, i) => (i ? p : v)) })
+              }
+            />
+          )}
         </div>
       </div>
-      <p className="mt-1.5 text-[11px] text-navy/50">
-        A grey figure is worked out automatically from the {w.pack.lower} price. Type a price to set
-        it yourself, or clear it to go back to automatic.
-      </p>
+      {!figures && (
+        <p className="mt-1.5 text-[11px] text-navy/50">
+          A grey figure is worked out automatically from the {w.pack.lower} price. Type a price to
+          set it yourself, or clear it to go back to automatic.
+        </p>
+      )}
       <details className="mt-2">
         <summary className="cursor-pointer text-xs font-medium text-brand-600">Tier prices</summary>
         <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -183,16 +265,23 @@ function UnitRow({
               <label className={LABEL} htmlFor={`${idp}-t${t}`}>
                 {productTierLabel(tierNames, t)}
               </label>
-              <DecimalInput
-                id={`${idp}-t${t}`}
-                aria-label={`${unit.label} ${productTierLabel(tierNames, t)} price`}
-                className={FIELD}
-                value={draft.prices[t - 1]}
-                placeholder={derived(t) != null ? fmt(derived(t) as number) : ""}
-                onChange={(v) =>
-                  setDraft({ ...draft, prices: draft.prices.map((p, i) => (i === t - 1 ? v : p)) })
-                }
-              />
+              {figures ? (
+                <div id={`${idp}-t${t}`}>{figure(t as (typeof TIERS)[number])}</div>
+              ) : (
+                <DecimalInput
+                  id={`${idp}-t${t}`}
+                  aria-label={`${unit.label} ${productTierLabel(tierNames, t)} price`}
+                  className={FIELD}
+                  value={draft.prices[t - 1]}
+                  placeholder={derived(t) != null ? fmt(derived(t) as number) : ""}
+                  onChange={(v) =>
+                    setDraft({
+                      ...draft,
+                      prices: draft.prices.map((p, i) => (i === t - 1 ? v : p)),
+                    })
+                  }
+                />
+              )}
             </div>
           ))}
         </div>
@@ -201,10 +290,14 @@ function UnitRow({
         <label className="flex items-center gap-2 text-sm text-navy">
           <input
             type="radio"
-            name="default-selling-unit"
+            name={DEFAULT_RADIO}
+            aria-describedby={DEFAULT_HINT_ID}
             checked={unit.isDefaultSelling}
             onChange={() => onMakeDefault(unit)}
-            disabled={busy}
+            onKeyDown={radioKeys(() => {
+              if (!unit.isDefaultSelling) onMakeDefault(unit);
+            })}
+            aria-disabled={busy || undefined}
           />
           Default order unit
         </label>
@@ -256,11 +349,68 @@ export function ProductUnitsCard({
   const [price, setPrice] = React.useState<number | null>(null);
   const [proposals, setProposals] = React.useState<CascadeProposal[]>([]);
   const [removing, setRemoving] = React.useState<ProductUnitLevel | null>(null);
+  const queryClient = useQueryClient();
+  // F18: what the last default change said, and the one write that takes it back. No timer: it stays until the next write,
+  // Dismiss, or leaving the page (WCAG 2.2.1), so a keyboard or screen-reader user is never raced.
+  const [defaultNote, setDefaultNote] = React.useState<DefaultNote | null>(null);
+  const cardRef = React.useRef<HTMLDivElement>(null);
+  const headingRef = React.useRef<HTMLHeadingElement>(null);
+  // K11-20c: under the v2 page's price host, prices are figures that open the floating window (the card writes none).
+  const opener = usePriceWindowOpener();
+  const pageDraft = usePriceDraftOptional();
+  const ownWrite = React.useRef(false);
+  // After Dismiss, Undo or a committed change the CHECKED default radio takes focus (never another radio: one Space press
+  // on it would flip the default). It is the pack radio when the pack is the default, so that one is never natively
+  // disabled. Focus moves only if it is already on the page's body or inside this card, so a late write never steals it
+  // from somewhere else; a plain click commit (focus not in the card) only scrolls. Scrolling never moves focus.
+  const [refocus, setRefocus] = React.useState({ n: 0, needInside: false });
+  React.useEffect(() => {
+    if (refocus.n === 0) return;
+    const card = cardRef.current;
+    const checked = card?.querySelector<HTMLInputElement>(
+      `input[type="radio"][name="${DEFAULT_RADIO}"]:checked`,
+    );
+    if (!card || !checked) return;
+    const active = document.activeElement;
+    const inside = active != null && active !== document.body && card.contains(active);
+    const free = active == null || active === document.body;
+    if (inside || (free && !refocus.needInside)) checked.focus();
+    checked.scrollIntoView?.({ block: "nearest" });
+  }, [refocus]);
+
+  // The default that changed under us (another tab, a write that is not a mutation here) makes the message untrue: drop it.
+  // Keyed on the default's id alone, so our own write (whose refetch lands on the id the message names) keeps it.
+  const currentDefaultId = (list.data ?? []).find((u) => u.isDefaultSelling)?.id ?? null;
+  const defaultNoteRef = React.useRef(defaultNote);
+  defaultNoteRef.current = defaultNote;
+  React.useEffect(() => {
+    const n = defaultNoteRef.current;
+    if (n && currentDefaultId !== n.expectedDefaultId) setDefaultNote(null);
+  }, [currentDefaultId]);
 
   // K10d: the same grid the v2 shell reads. Until it has rows the shell has no Add / Remove, so the old ones stay.
   const shellOwns = hideAddForm && !unitStructureGoverned(product);
   const gridQuery = usePriceGrid(product.id, enabled && shellOwns);
   const grid = gridQuery.data;
+  const figures = shellOwns && opener != null;
+  const figureCtx = figures
+    ? {
+        grid,
+        errored: gridQuery.isError && !grid,
+        card: () => cardRef.current,
+        heading: () => headingRef.current,
+      }
+    : undefined;
+  const anyEditable = !!grid?.rows?.some((r) => r.editable);
+  // Any write that is not this card's own default change makes the Undo stale: the unit writes below, the v2 shell's Add /
+  // Remove and anything else on the page all pass through the mutation cache, so one listener covers them all.
+  React.useEffect(
+    () =>
+      queryClient.getMutationCache().subscribe((event) => {
+        if (event.type === "added" && !ownWrite.current) setDefaultNote(null);
+      }),
+    [queryClient],
+  );
   if (!enabled) return null;
   const addInShell = shellOwns && shellHasUnitControls(grid);
   const units = list.data ?? [];
@@ -275,29 +425,86 @@ export function ProductUnitsCard({
     if (notice) toast({ title: notice, variant: "info" });
   };
 
+  const packName = product.unit || unitWords().pack.one;
+  /** Run one of the card's default writes without it counting as "another write". */
+  const writeDefault = (body: { id: string; isDefaultSelling: boolean }, onSuccess: () => void) => {
+    ownWrite.current = true;
+    try {
+      update.mutate(body, { onSuccess });
+    } finally {
+      ownWrite.current = false;
+    }
+  };
+
+  /** F18: make `target` the default order unit (null = the pack row), and say so with an inline Undo. */
+  const changeDefault = (target: ProductUnitLevel | null) => {
+    if (busy) return;
+    const prev = units.find((u) => u.isDefaultSelling) ?? null;
+    if (target ? target.isDefaultSelling : prev == null) return;
+    const body = target
+      ? { id: target.id, isDefaultSelling: true }
+      : { id: (prev as ProductUnitLevel).id, isDefaultSelling: false };
+    const undo = prev
+      ? { id: prev.id, isDefaultSelling: true }
+      : { id: (target as ProductUnitLevel).id, isDefaultSelling: false };
+    const restoredName = prev ? prev.label : packName;
+    writeDefault(body, () => {
+      setDefaultNote({
+        text: `${target ? target.label : packName} is now the default order unit.`,
+        expectedDefaultId: target ? target.id : null,
+        undo: { body: undo, restoredName, restoredId: prev ? prev.id : null },
+      });
+      setRefocus((r) => ({ n: r.n + 1, needInside: true }));
+    });
+  };
+
+  const undoDefault = () => {
+    const undo = defaultNote?.undo;
+    if (!undo) return;
+    writeDefault(undo.body, () => {
+      setDefaultNote({
+        text: `${undo.restoredName} is the default order unit again.`,
+        expectedDefaultId: undo.restoredId,
+        undo: null,
+      });
+      setRefocus((r) => ({ n: r.n + 1, needInside: false }));
+    });
+  };
+
+  const dismissDefaultNote = () => {
+    setDefaultNote(null);
+    setRefocus((r) => ({ n: r.n + 1, needInside: false }));
+  };
+
   const save = (unit: ProductUnitLevel, d: Draft) => {
+    setDefaultNote(null);
     const oldPrices = draftOf(unit).prices;
     const newPrices = d.prices.map(priceOrNull);
+    // Only a price the operator changed is sent (a draft price that still equals the value the row was seeded with is
+    // left out): a v2 price save moves prices outside this card, so the row's snapshot is never written back.
+    const dirtyPrice = (i: number) => !figures && d.prices[i] !== oldPrices[i];
     const body = {
       id: unit.id,
       label: d.label.trim(),
       factorToBase: d.factor ?? unit.factorToBase,
-      price: newPrices[0],
-      priceTier2: newPrices[1],
-      priceTier3: newPrices[2],
-      priceTier4: newPrices[3],
-      priceTier5: newPrices[4],
+      ...(dirtyPrice(0) ? { price: newPrices[0] } : {}),
+      ...(dirtyPrice(1) ? { priceTier2: newPrices[1] } : {}),
+      ...(dirtyPrice(2) ? { priceTier3: newPrices[2] } : {}),
+      ...(dirtyPrice(3) ? { priceTier4: newPrices[3] } : {}),
+      ...(dirtyPrice(4) ? { priceTier5: newPrices[4] } : {}),
     };
     update.mutate(body, {
       // EVERY tier cascades, each independently (a tier-2 edit offers tier 2 to the others).
       onSuccess: (saved) => {
         notListed(saved);
-        setProposals(proposeCascade(units, unit.id, oldPrices, newPrices));
+        // No price moved from this card in v2, so there is nothing to offer to the other units.
+        if (!figures) setProposals(proposeCascade(units, unit.id, oldPrices, newPrices));
       },
     });
   };
 
   const applyCascade = async () => {
+    setDefaultNote(null);
     const todo = proposals;
     setProposals([]);
     const results = await Promise.allSettled(
@@ -317,8 +524,14 @@ export function ProductUnitsCard({
 
   const add = () => {
     if (!name.trim() || !factor) return;
+    setDefaultNote(null);
     create.mutate(
-      { label: name.trim(), factorToBase: factor, price: priceOrNull(price) },
+      {
+        label: name.trim(),
+        factorToBase: factor,
+        // v2: prices are written only through the price window (S9), never by creating a unit.
+        ...(figures ? {} : { price: priceOrNull(price) }),
+      },
       {
         onSuccess: (saved) => {
           notListed(saved);
@@ -335,40 +548,111 @@ export function ProductUnitsCard({
   const noneDefault = !units.some((u) => u.isDefaultSelling);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-      <div className="border-b border-surface-border px-5 py-3.5">
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-          Units &amp; prices
-        </h3>
+    <div
+      ref={cardRef}
+      data-units-card
+      className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card"
+    >
+      <div data-testid="units-card-header" className="border-b border-surface-border px-5 py-3.5">
+        <div className="flex items-center justify-between gap-3">
+          <h3
+            ref={headingRef}
+            tabIndex={-1}
+            className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70 outline-none"
+          >
+            Units &amp; prices
+          </h3>
+          {figures && opener && anyEditable && (
+            <button
+              type="button"
+              className={BTN}
+              onClick={(e) =>
+                opener.open({
+                  origin: e.currentTarget,
+                  anchor: cardRef.current,
+                  fallback: () => headingRef.current,
+                })
+              }
+            >
+              Edit prices
+            </button>
+          )}
+        </div>
+        {figures && pageDraft && <PriceSaveStatus productId={product.id} surface="window" />}
       </div>
       <div className="space-y-3 p-5">
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-sm">
           <span className="text-navy">
             <span className="font-medium">{product.unit || w.pack.one}</span>{" "}
             <span className="text-navy/60">
-              · {packPieces} {w.baseFor(packPieces)} · the {w.pack.lower} (edit its price above)
+              · {packPieces} {w.baseFor(packPieces)} ·{" "}
+              {figures ? <>the {w.pack.lower}</> : <>the {w.pack.lower} (edit its price above)</>}
             </span>
           </span>
           <span className="flex items-center gap-4">
-            <span className="font-mono tabular-nums text-navy">
-              {fmt(Number(product.pricePerUnit) || 0)}
-            </span>
+            {figures ? (
+              <PriceFigure
+                row={packRowOf(grid)}
+                tier={1}
+                anchor={() => cardRef.current}
+                fallback={() => headingRef.current}
+                plainValue={gridQuery.isError && !grid ? product.pricePerUnit : undefined}
+              />
+            ) : (
+              <span className="font-mono tabular-nums text-navy">
+                {fmt(Number(product.pricePerUnit) || 0)}
+              </span>
+            )}
             <label className="flex items-center gap-2 text-navy">
               <input
                 type="radio"
-                name="default-selling-unit"
+                name={DEFAULT_RADIO}
+                aria-describedby={DEFAULT_HINT_ID}
                 checked={noneDefault}
-                disabled={busy || noneDefault}
+                // Never natively disabled: a disabled radio drops focus the moment it becomes the checked default, so a
+                // screen-reader user would hear nothing. aria-disabled keeps it focusable; activating it does nothing.
+                aria-disabled={busy || noneDefault || undefined}
                 onChange={() => {
-                  const current = units.find((u) => u.isDefaultSelling);
-                  if (current) {
-                    update.mutate({ id: current.id, isDefaultSelling: false });
-                  }
+                  if (!busy && !noneDefault) changeDefault(null);
                 }}
+                onKeyDown={radioKeys(() => {
+                  if (!busy && !noneDefault) changeDefault(null);
+                })}
               />
               Default order unit
             </label>
           </span>
+        </div>
+
+        {/* F18: always mounted, so the text it receives is announced. Undo and Dismiss sit beside it, not inside it. */}
+        <p id={DEFAULT_HINT_ID} className="sr-only">
+          {DEFAULT_HINT}
+        </p>
+        <div
+          className={
+            defaultNote
+              ? "flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-surface-raised px-3 py-2 text-sm text-navy"
+              : "sr-only"
+          }
+        >
+          <p role="status" data-testid="units-default-note">
+            {defaultNote?.text ?? ""}
+          </p>
+          {defaultNote?.undo && (
+            <Button size="sm" variant="secondary" onClick={undoDefault} disabled={busy}>
+              Undo
+            </Button>
+          )}
+          {defaultNote && (
+            <button
+              type="button"
+              className="inline-flex min-h-11 items-center px-1 text-xs font-medium text-brand-600 underline"
+              aria-label="Dismiss the default order unit message"
+              onClick={dismissDefaultNote}
+            >
+              Dismiss
+            </button>
+          )}
         </div>
 
         {list.isLoading ? (
@@ -404,7 +688,8 @@ export function ProductUnitsCard({
                 onSave={save}
                 onDelete={setRemoving}
                 hideRemove={shellOwns && !gridQuery.isError && shellRemovesUnit(grid, u.id)}
-                onMakeDefault={(x) => update.mutate({ id: x.id, isDefaultSelling: true })}
+                figures={figureCtx}
+                onMakeDefault={changeDefault}
               />
             ))}
           </ul>
@@ -444,17 +729,19 @@ export function ProductUnitsCard({
                 onChange={setFactor}
               />
             </div>
-            <div>
-              <label className={LABEL} htmlFor="new-unit-price">
-                Price (optional)
-              </label>
-              <DecimalInput
-                id="new-unit-price"
-                className={FIELD}
-                value={price}
-                onChange={setPrice}
-              />
-            </div>
+            {!figures && (
+              <div>
+                <label className={LABEL} htmlFor="new-unit-price">
+                  Price (optional)
+                </label>
+                <DecimalInput
+                  id="new-unit-price"
+                  className={FIELD}
+                  value={price}
+                  onChange={setPrice}
+                />
+              </div>
+            )}
             <Button type="submit" disabled={busy || !name.trim() || !factor}>
               Add unit
             </Button>
@@ -471,6 +758,7 @@ export function ProductUnitsCard({
         loading={remove.isPending}
         onConfirm={() => {
           if (!removing) return;
+          setDefaultNote(null);
           remove.mutate(removing.id, {
             onSuccess: () => setRemoving(null),
             onError: () => setRemoving(null),

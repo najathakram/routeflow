@@ -9,15 +9,23 @@ import { ChangePrices, useChangePrices } from "./units-v2/change-prices/ChangePr
 import { PriceSaveStatusLine } from "./units-v2/confirm/SaveStatusLine";
 import { usePriceUndo } from "./units-v2/confirm/usePriceUndo";
 import { EditablePricesGrid } from "./units-v2/edit/EditablePricesGrid";
-import { PriceDraftProvider } from "./units-v2/edit/PriceDraftProvider";
+import { PriceDraftProvider, usePriceDraftOptional } from "./units-v2/edit/PriceDraftProvider";
 import { PriceEditBar } from "./units-v2/edit/PriceEditBar";
-import { usePriceDraft, type PriceDraftHooks } from "./units-v2/edit/usePriceDraft";
+import {
+  usePriceDraft,
+  type EditSurface,
+  type PriceDraftHooks,
+} from "./units-v2/edit/usePriceDraft";
 import { UnitRowRemove, UnitStructureControls } from "./units-v2/structure/UnitStructure";
 import { useUnitStructureAllowed } from "./units-v2/structure/unit-structure";
 
 /**
  * Shell for the units v2 pricing surface (rendered by the page behind `flag.units_prices_v2`, so
  * everything new lives here and flag off renders nothing of it). One shared draft per product.
+ *
+ * K11-20: when the page mounts a PriceDraftProvider above this (so the floating price window shares the draft) this
+ * section uses it; otherwise it creates its own. `onSaved` / `onEdit` belong to the provider that owns the draft, so with
+ * an outer provider they are that provider's.
  */
 export function ProductPricingV2({
   product,
@@ -30,11 +38,31 @@ export function ProductPricingV2({
     parentProductId?: string | null;
   };
 } & PriceDraftHooks) {
+  const outer = usePriceDraftOptional();
+  const section = <PricingSection product={product} />;
+  return outer ? (
+    section
+  ) : (
+    <PriceDraftProvider productId={product.id} onSaved={onSaved} onEdit={onEdit}>
+      {section}
+    </PriceDraftProvider>
+  );
+}
+
+function PricingSection({
+  product,
+}: {
+  product: UnitsCardProduct & {
+    msrp?: number | string | null;
+    kind?: string | null;
+    parentProductId?: string | null;
+  };
+}) {
   const cp = useChangePrices();
   // K10d: Add a unit / Remove / Reset to Auto, only where the unit ladder can be edited.
   const structure = useUnitStructureAllowed(product);
   return (
-    <PriceDraftProvider productId={product.id} onSaved={onSaved} onEdit={onEdit}>
+    <>
       <EditablePricesGrid
         product={product}
         onOpenChangePrices={cp.enabled ? cp.toggle : undefined}
@@ -48,20 +76,32 @@ export function ProductPricingV2({
             : undefined
         }
       />
-      <SaveStatus productId={product.id} />
+      <PriceSaveStatus productId={product.id} surface="inline" />
       <CustomerPriceView productId={product.id} />
-      <PriceEditBar />
-    </PriceDraftProvider>
+      <PriceEditBar changePricesOpen={cp.open} />
+    </>
   );
 }
 
-/** V07: the one Undo. `current` is the SERVED grid query (the cache a save and a refetch write), not a draft snapshot. */
-function SaveStatus({ productId }: { productId: string }) {
+/**
+ * V07: the one Undo. `current` is the SERVED grid query (the cache a save and a refetch write), not a draft snapshot.
+ * K11-20: shows only a save made in `surface` (the section's own line is "inline"; whoever hosts the floating window
+ * renders "window" where the save should be reported), so one save never has two lines or two Undos. Only the inline line
+ * stays mounted while idle: the page keeps one live region (K11-20c).
+ */
+export function PriceSaveStatus({
+  productId,
+  surface,
+}: {
+  productId: string;
+  surface: EditSurface;
+}) {
   const draft = usePriceDraft();
+  const lastSave = draft.lastSave?.surface === surface ? draft.lastSave : null;
   const served = usePriceGrid(productId).data;
   const undoPrices = useUndoPrices(productId);
   const undo = usePriceUndo({
-    lastSave: draft.lastSave,
+    lastSave,
     current: served ?? null,
     mutate: undoPrices.mutateAsync,
     conflictRow: draft.conflictRow,
@@ -69,7 +109,9 @@ function SaveStatus({ productId }: { productId: string }) {
   });
   return (
     <PriceSaveStatusLine
-      lastSave={draft.lastSave}
+      id={surface === "inline" ? "units-msg" : `units-msg-${surface}`}
+      idleUnmounted={surface !== "inline"}
+      lastSave={lastSave}
       dirty={draft.dirty}
       undo={undo}
       onUndone={draft.markUndone}

@@ -61,17 +61,18 @@ describe("ProductCreateModal (web-2 #5)", () => {
     await userEvent.type(screen.getByLabelText("Barcode"), "0123456789012");
     await userEvent.type(screen.getByLabelText(/^Unit \*/), "box");
     await userEvent.type(screen.getByLabelText("Price per box *"), "12");
-    fireEvent.click(screen.getByRole("button", { name: "Create Product" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create product" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     expect(mutateAsync.mock.calls[0][0]).toEqual(
       expect.objectContaining({ barcode: "0123456789012" }),
     );
   });
 
-  it("does not close on Escape or an outside click; the X still closes", async () => {
+  it("does not close on an outside click or on Escape once something is typed; the X still closes", async () => {
     const onClose = jest.fn();
     renderWithProviders(<ProductCreateModal isOpen onClose={onClose} onCreated={jest.fn()} />);
     await new Promise((r) => setTimeout(r, 20)); // Radix arms outside-click on a timer
+    await userEvent.type(screen.getByLabelText("Name *"), "Cola"); // K11-26: a pristine form closes on Escape
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     fireEvent.pointerDown(document.body);
     expect(onClose).not.toHaveBeenCalled();
@@ -82,7 +83,7 @@ describe("ProductCreateModal (web-2 #5)", () => {
   it("pins Create in the shared Modal footer slot (header and footer stay put)", () => {
     open();
     const dialog = screen.getByRole("dialog");
-    const create = within(dialog).getByRole("button", { name: "Create Product" });
+    const create = within(dialog).getByRole("button", { name: "Create product" });
     const scrollBody = dialog.querySelector(".overflow-y-auto");
     expect(scrollBody).not.toBeNull();
     // footer is a sibling of the scrolling body, never inside it
@@ -107,7 +108,7 @@ describe("ProductCreateModal (web-2 #5)", () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     expect(container).toBeTruthy();
     fireEvent.change(input, { target: { files: [file] } });
-    fireEvent.click(screen.getByRole("button", { name: "Create Product" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create product" }));
     expect(
       await screen.findByText("Product created, but its photos didn't upload"),
     ).toBeInTheDocument();
@@ -173,7 +174,7 @@ describe("ProductCreateModal price-as-quantity hint (V09)", () => {
   it("does not block saving", async () => {
     await fill("box", "12", "12");
     await userEvent.type(screen.getByLabelText("Name *"), "Cola");
-    fireEvent.click(screen.getByRole("button", { name: "Create Product" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create product" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
   });
 });

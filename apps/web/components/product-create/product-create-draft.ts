@@ -23,6 +23,8 @@ export const EMPTY_DRAFT_FORM = {
   costingMethod: "AVCO",
   standardCost: "",
   unitsPerBox: "",
+  /** K11-28: the optional price of one piece when a cased product is created (units v2 only). */
+  pricePerPiece: "",
   parentProductId: "",
   variantName: "",
   trackedCategoryId: "",

@@ -21,7 +21,12 @@ jest.mock("../notifications/notifications.service", () => ({
 
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  ServiceUnavailableException,
+} from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
 
@@ -171,7 +176,7 @@ const liveCategory = {
 describe("OrdersService.updateOrderItems — billing reads typed customer unit prices (S19)", () => {
   let service: OrdersService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let entitlements: { hasFlag: jest.Mock };
+  let entitlements: { hasFlag: jest.Mock; hasFlagStrict: jest.Mock };
   let invoicesService: { revertLinkedInvoicesForOrderEdit: jest.Mock };
 
   beforeEach(async () => {
@@ -281,7 +286,13 @@ describe("OrdersService.updateOrderItems — billing reads typed customer unit p
             removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
         },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+        {
+          provide: EntitlementsService,
+          useValue: (() => {
+            const flagRead = jest.fn().mockResolvedValue(true);
+            return { hasFlag: flagRead, hasFlagStrict: flagRead };
+          })(),
+        },
         {
           provide: RegulatedLedgerService,
           useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
@@ -401,6 +412,27 @@ describe("OrdersService.updateOrderItems — billing reads typed customer unit p
     await addPack();
     expect(written()[0]).toMatchObject({ unitPrice: 10 });
     expect(entitlements.hasFlag).not.toHaveBeenCalledWith(expect.anything(), V2);
+  });
+
+  // SA-812a G-1 (SHOULD-1): revertLinkedInvoicesForOrderEdit commits on its own connection. The customer-prices read must
+  // therefore fail BEFORE it, or a 503 would leave a SENT invoice's mirror reverted to DRAFT with nothing left to re-sync it.
+  it("G-1: typed rows + a failed flag read is the coded 503, and the linked-invoice revert never ran", async () => {
+    entitlements.hasFlag.mockRejectedValue(new Error("entitlements down"));
+    typed(["pack", 8]);
+    const err = await addPack().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect((err as ServiceUnavailableException).getResponse()).toMatchObject({
+      code: API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE,
+    });
+    expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
+    expect(prisma.orderItem.create).not.toHaveBeenCalled();
+  });
+
+  it("G-1 control: the same edit with a readable flag does run the revert (the assertion above is not vacuous)", async () => {
+    flagV2(true);
+    typed(["pack", 8]);
+    await addPack();
+    expect(invoicesService.revertLinkedInvoicesForOrderEdit).toHaveBeenCalledWith("ord-1");
   });
 
   it("A-7: an old client's derived Piece on a staff edit bills as the pack's pieces at the LAYER pack price", async () => {

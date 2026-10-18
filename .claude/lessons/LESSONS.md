@@ -173,6 +173,7 @@
 - **Lesson:** **After landing two PRs that touch the same constructor, signature or shared type in one window, run `npm run check-types -w apps/api` (and the touched specs) on the COMBINED master before the next land; never infer the combination from each PR's own green. Cf. [[L-228]], [[L-247]].**
 - **Guard:** none automatic yet; the landing script is to run `npm run check-types -w apps/api` on the post-merge tree before the next merge (to be added).
 - **Recurrence (2026-10-17, units-v2-3):** a merge that makes a parameter REQUIRED must re-run every spec and call site that passes it on the merged tree, not only the files the PR touched; run the full check-types ratchet plus the specs that import the changed function before the train is cut.
+- **Recurrence (2026-10-18, fixes-4):** members that each passed alone broke combined: one member's component began calling `useSearchParams` while another's page test mocked `next/navigation` without it (a mock misses a new hook call), and a third's picker output grew past what a Linux pipe flushes. Run the FULL web and api suites on the combined train tree, not only each member's own set.
 
 ### L-267 · 2026-10-06 · process · a "retry with the same key" path excludes every state an office action ended, and "final" is derived only from terminal facts (#3211 counter-sale review)
 
@@ -197,6 +198,13 @@
 - **Recurrence (2026-10-08):** the age-filter rule also covers cleanup scripts: a cleanup script must age-filter (keep anything recent) before it deletes.
 
 ## tooling
+
+### L-316 · 2026-10-18 · tooling · a script whose stdout can be piped ends by setting process.exitCode, never process.exit()
+
+- **Symptom:** `db-lane-script.spec.ts` case 16 failed only on Linux CI (the fixes-4 train): the FULL listing was cut off after 173 of about 307 spec lines with no final `DB-LANE FULL (ratio ...)` line. It passed on Windows.
+- **Root cause:** `scripts/db-lane.mjs` ended with `process.exit(main())`. A Windows pipe writes synchronously; a Linux pipe is asynchronous, so exiting right after `console.log` killed the child with output still buffered. The test's own ratio logic was fine.
+- **Lesson:** **A script whose stdout may be piped (a CLI a spec or another script spawns) sets `process.exitCode = main()` and lets the event loop drain; `process.exit()` right after printing truncates large output on Linux. Prove such a script with an output larger than a 64 KB pipe buffer; a Windows run cannot show the failure.**
+- **Guard:** `db-lane-script.spec.ts` case 12b (a 1,700-spec FULL listing must end with its summary line); it can only fail on Linux CI.
 
 ### L-309 · 2026-10-16 · tooling · a worktree git calls clean can still hold gitignored valuables; check `git status --ignored` before removing it
 
@@ -343,13 +351,6 @@
 - **Lesson:** **After each local proof run, prune dangling images and trim the VM disk; never let the VM fill mid-build. Check VM free space before a rebuild, not host free space.**
 - **Guard:** none automated; a pre-build free-space check in the local runbook is the proposal.
 - **Recurrence (2026-10-08):** a deps-only `db:up` left for a one-off DB diagnostic kept the fixed-name postgres and redis containers, which blocked the next `local:up` and cost an 8.5 minute failed build. Run `db:down` in the same step that ran `db:up`.
-
-### L-275 · 2026-10-07 · tooling · local stack image tags are shared across worktrees
-
-- **Symptom:** a proof run used an api image another worktree had built, and its result was reported as the branch's own.
-- **Root cause:** `routeflow-api:local` and `routeflow-web:local` are single tags for the whole machine; whichever build finished last owns them, and two concurrent builds overwrite each other.
-- **Lesson:** **Never run two stack builds at once, and read an image's `org.routeflow.sha` label (`docker image inspect`) before claiming whose it is or that a proof ran on your sha.**
-- **Guard:** none automatic; cf. [[L-272]] and the Mac slot rule.
 
 ## testing
 

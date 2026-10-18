@@ -291,3 +291,109 @@ describe("AddUnitPanel onOpen (K10d)", () => {
     expect(onOpen).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("AddUnitPanel: the missing 1-piece unit (F07)", () => {
+  const name = () => screen.getByTestId("units-v2-add-name") as HTMLInputElement;
+  const count = () => screen.getByTestId("units-v2-add-n") as HTMLInputElement;
+  const submit = () => screen.getByTestId("units-v2-add-submit");
+
+  it("pieceMissing: Contains 1 of the base unit submits, as the base name with factor 1, whatever else was typed", async () => {
+    setup({ pieceMissing: true });
+    await userEvent.click(opener());
+    await userEvent.type(name(), "Single");
+    await userEvent.type(count(), "1");
+    expect(submit()).toBeEnabled();
+    await userEvent.click(submit());
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0][0]).toEqual({ label: "Piece", factorToBase: 1 });
+  });
+
+  it("pieceMissing: at Contains 1 the name locks to the base name (read-only, with a hint); a bigger count frees it again", async () => {
+    setup({ pieceMissing: true });
+    await userEvent.click(opener());
+    await userEvent.type(name(), "Single");
+    await userEvent.type(count(), "1");
+    expect(name()).toHaveValue("Piece");
+    expect(name()).toHaveAttribute("readonly");
+    const hint = screen.getByTestId("units-v2-add-name-hint");
+    expect(hint).toHaveTextContent('A 1-piece unit is always called "Piece".');
+    expect(name()).toHaveAccessibleDescription(hint.textContent ?? "");
+    await userEvent.clear(count());
+    await userEvent.type(count(), "12");
+    expect(name()).toHaveValue("Single");
+    expect(name()).not.toHaveAttribute("readonly");
+    expect(screen.queryByTestId("units-v2-add-name-hint")).toBeNull();
+  });
+
+  it("pieceMissing: a count of 1 of any bigger unit is still refused (only 1 of the base unit is the Piece)", async () => {
+    setup({ pieceMissing: true });
+    await userEvent.click(opener());
+    await userEvent.type(name(), "Single");
+    await userEvent.type(count(), "1");
+    await userEvent.selectOptions(screen.getByTestId("units-v2-add-of"), "Pack");
+    expect(submit()).toBeDisabled();
+  });
+
+  it("pieceMissing: Contains 0 and 1.5 are still refused", async () => {
+    setup({ pieceMissing: true });
+    await userEvent.click(opener());
+    await userEvent.type(name(), "Single");
+    await userEvent.type(count(), "0");
+    expect(submit()).toBeDisabled();
+    await userEvent.clear(count());
+    await userEvent.type(count(), "1.5");
+    expect(submit()).toBeDisabled();
+  });
+
+  it("a Piece that already exists: Contains 1 is not offered (min 2, submit stays off, name stays free)", async () => {
+    setup();
+    await userEvent.click(opener());
+    await userEvent.type(name(), "Single");
+    await userEvent.type(count(), "1");
+    expect(count()).toHaveAttribute("min", "2");
+    expect(submit()).toBeDisabled();
+    expect(name()).toHaveValue("Single");
+    expect(name()).not.toHaveAttribute("readonly");
+  });
+
+  it("prefillPiece: opens with Contains 1 and the base name, ready to add", async () => {
+    setup({ pieceMissing: true, prefillPiece: true });
+    await userEvent.click(opener());
+    expect(count()).toHaveValue(1);
+    expect(name()).toHaveValue("Piece");
+    expect(submit()).toBeEnabled();
+    await userEvent.click(submit());
+    expect(mutate.mock.calls[0][0]).toEqual({ label: "Piece", factorToBase: 1 });
+  });
+
+  it("prefillPiece alone does nothing when the Piece already exists", async () => {
+    setup({ prefillPiece: true });
+    await userEvent.click(opener());
+    expect(count()).toHaveValue(null);
+    expect(name()).toHaveValue("");
+  });
+
+  it("a tenant's own base name is the locked name", async () => {
+    setup({ pieceMissing: true, baseLabel: "Each" });
+    await userEvent.click(opener());
+    await userEvent.type(count(), "1");
+    expect(name()).toHaveValue("Each");
+    await userEvent.click(submit());
+    expect(mutate.mock.calls[0][0]).toEqual({ label: "Each", factorToBase: 1 });
+  });
+
+  it("O1: if the server still refuses the name, the panel shows the specific copy, not 'Some details aren't valid'", async () => {
+    mutate.mockImplementation((_body, opts) =>
+      opts.onError?.({
+        response: { status: 400, data: { message: 'A 1-piece unit is always named "Piece".' } },
+      }),
+    );
+    setup({ pieceMissing: true });
+    await userEvent.click(opener());
+    await userEvent.type(count(), "1");
+    await userEvent.click(submit());
+    expect(screen.getByTestId("units-v2-add-err")).toHaveTextContent(
+      "A 1-piece unit is always called Piece. Rename it to Piece, or give it more than one piece.",
+    );
+  });
+});
