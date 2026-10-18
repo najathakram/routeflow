@@ -23,8 +23,20 @@ const T0 = new Date("2026-09-10T12:00:00.000Z");
 const NOW = new Date("2026-09-20T00:00:00.000Z");
 
 /** Minimal in-memory tx: just the four delegates the service touches. */
-function fakeTx(seed: { configs?: any[]; overrides?: any[]; snapshots?: any[] } = {}) {
+function fakeTx(
+  seed: {
+    configs?: any[];
+    overrides?: any[];
+    snapshots?: any[];
+    /** BO-13: carrier orders in flight (what `order.count` answers). */
+    inTransit?: number;
+    /** BO-13: active TenantAddon keys. */
+    addons?: string[];
+  } = {},
+) {
   const state = {
+    inTransit: seed.inTransit ?? 0,
+    addons: [...(seed.addons ?? [])],
     configs: [...(seed.configs ?? [])],
     overrides: [...(seed.overrides ?? [])],
     snapshots: [...(seed.snapshots ?? [])],
@@ -32,6 +44,10 @@ function fakeTx(seed: { configs?: any[]; overrides?: any[]; snapshots?: any[] } 
   };
   const id = (p: string) => `${p}${++state.seq}`;
   const tx = {
+    order: { count: jest.fn(async () => state.inTransit) },
+    tenantAddon: {
+      findMany: jest.fn(async () => state.addons.map((addonKey) => ({ addonKey }))),
+    },
     tenantFeatureConfig: {
       findMany: async () => state.configs.map((r) => ({ ...r })),
       create: async ({ data }: any) => {
@@ -726,5 +742,258 @@ describe("TenantConfigSnapshotService — ages in list() and previewRestore()", 
     const rows = await svc.list(tx, TENANT);
 
     expect(rows[0].ageDays).toBe(3);
+  });
+});
+
+// ─── BO-13: the restore never crosses the billing moment under a shipment, nor writes own delivery
+// to an account with no fleet. The held row is skipped; the rest of the restore proceeds; the
+// snapshot stays CLAIMABLE (not stamped, older ones not superseded) so Restore Now can finish it.
+describe("TenantConfigSnapshotService — held fulfilment_model (BO-13)", () => {
+  const svc = new TenantConfigSnapshotService();
+  const FM = "fulfilment_model";
+  const FLEET = "order_delivery";
+  const fmRow = (mode: string, over: any = {}) =>
+    cfgRow({ id: "c-fm", featureKey: FM, mode, settings: null, ...over });
+
+  /** A DOWNGRADE snapshot of `rows` (+ overrides), seeded into `target`'s store. */
+  async function seedSnapshot(
+    target: ReturnType<typeof fakeTx>,
+    rows: any[],
+    overrides: any[] = [],
+    at: Date = T0,
+    planKey: string = HIGH,
+  ) {
+    const src = fakeTx({ configs: rows, overrides });
+    await svc.snapshot(src.tx, TENANT, planKey, "DOWNGRADE", undefined, at);
+    src.state.snapshots[0].id = `snap-${target.state.snapshots.length + 1}`;
+    target.state.snapshots.push(...src.state.snapshots);
+    return src.state.snapshots[0].id as string;
+  }
+
+  it("CARRIER_IN_TRANSIT: stored delivery, snapshot ship, 2 orders with the carrier -> the row is not written, the rest is, held reports the count, the snapshot is NOT stamped", async () => {
+    const t = fakeTx({
+      configs: [fmRow("delivery"), cfgRow({ settings: { stale: 1 } })],
+      inTransit: 2,
+    });
+    const id = await seedSnapshot(t, [fmRow("ship"), cfgRow()]);
+
+    const res = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW);
+
+    expect(res!.held).toEqual([
+      { featureKey: FM, from: "delivery", to: "ship", reason: "CARRIER_IN_TRANSIT", count: 2 },
+    ]);
+    expect(t.state.configs.find((c) => c.featureKey === FM)!.mode).toBe("delivery");
+    expect(t.state.configs.find((c) => c.featureKey === CONFIG_KEY)!.settings).toEqual({ x: 1 });
+    expect(res!.report).toMatchObject({ restored: 1, skipped: 1 });
+    expect(t.state.snapshots[0].restoredAt).toBeNull();
+    expect(t.state.snapshots[0].restoredToPlanKey).toBeNull();
+    expect(res!.supersededSnapshots).toBe(0);
+  });
+
+  it("a held snapshot supersedes NO older snapshot (it is still claimable, the older ones wait behind it)", async () => {
+    const t = fakeTx({ configs: [fmRow("delivery")], inTransit: 1 });
+    const older = await seedSnapshot(t, [cfgRow()], [], new Date("2026-09-05T00:00:00.000Z"));
+    const newer = await seedSnapshot(t, [fmRow("ship")]);
+
+    const res = await svc.restoreSnapshot(t.tx, TENANT, newer, HIGH, NOW);
+
+    expect(res!.supersededSnapshots).toBe(0);
+    expect(t.state.snapshots.find((s) => s.id === older)!.restoredAt).toBeNull();
+    expect(t.state.snapshots.find((s) => s.id === newer)!.restoredAt).toBeNull();
+  });
+
+  it("no crossing, no query: ship -> both keeps the billing moment, so order.count is never called and the row is written", async () => {
+    const t = fakeTx({ configs: [fmRow("ship")], inTransit: 5 });
+    const id = await seedSnapshot(t, [fmRow("both")]);
+    // both needs a fleet; this test is about the in-transit query only
+    t.state.addons.push(FLEET);
+
+    const res = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW);
+
+    expect(t.tx.order.count).not.toHaveBeenCalled();
+    expect(res!.held).toEqual([]);
+    expect(t.state.configs[0].mode).toBe("both");
+    expect(t.state.snapshots[0].restoredAt).toEqual(NOW);
+  });
+
+  it("a crossing delivery -> both IS checked (both ships): in-transit orders hold it", async () => {
+    const t = fakeTx({ configs: [fmRow("delivery")], inTransit: 1, addons: [FLEET] });
+    const id = await seedSnapshot(t, [fmRow("both")]);
+    const res = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW);
+    expect(res!.held).toMatchObject([
+      { from: "delivery", to: "both", reason: "CARRIER_IN_TRANSIT", count: 1 },
+    ]);
+  });
+
+  it("a CREATE (no stored row) is judged from the registry fallback: unset -> ship is a crossing", async () => {
+    const t = fakeTx({ inTransit: 3 });
+    const id = await seedSnapshot(t, [fmRow("ship")]);
+    // `unset` is not a shipping mode, ship is: crosses
+    const res = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW);
+    expect(res!.held).toMatchObject([
+      { from: "unset", to: "ship", reason: "CARRIER_IN_TRANSIT", count: 3 },
+    ]);
+    expect(t.state.configs).toHaveLength(0);
+  });
+
+  it("zero orders in transit: the row is written and the snapshot is stamped as before", async () => {
+    const t = fakeTx({ configs: [fmRow("delivery")], inTransit: 0 });
+    const id = await seedSnapshot(t, [fmRow("ship")]);
+    const res = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW);
+    expect(res!.held).toEqual([]);
+    expect(t.state.configs[0].mode).toBe("ship");
+    expect(t.state.snapshots[0].restoredAt).toEqual(NOW);
+  });
+
+  it("FULFILMENT_MODE_NEEDS_FLEET: snapshot `delivery` on an account with no fleet -> the row is skipped and reported, the rest is written", async () => {
+    const t = fakeTx({ configs: [fmRow("ship"), cfgRow({ settings: { stale: 1 } })] });
+    const id = await seedSnapshot(t, [fmRow("delivery"), cfgRow()]);
+
+    const res = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW);
+
+    expect(res!.held).toEqual([
+      { featureKey: FM, from: "ship", to: "delivery", reason: "FULFILMENT_MODE_NEEDS_FLEET" },
+    ]);
+    expect(t.state.configs.find((c) => c.featureKey === FM)!.mode).toBe("ship");
+    expect(t.state.configs.find((c) => c.featureKey === CONFIG_KEY)!.settings).toEqual({ x: 1 });
+    expect(res!.report).toMatchObject({ restored: 1, skipped: 1 });
+    expect(t.state.snapshots[0].restoredAt).toBeNull();
+  });
+
+  it("the fleet check sees the restore's OWN override plan: a restored GRANT of a fleet key lets `delivery` through", async () => {
+    const t = fakeTx({ configs: [fmRow("ship")] });
+    const id = await seedSnapshot(
+      t,
+      [fmRow("delivery")],
+      [ovrRow({ featureKey: FLEET, id: "o-fleet" })],
+    );
+    const res = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW);
+    expect(res!.held).toEqual([]);
+    expect(t.state.configs[0].mode).toBe("delivery");
+    expect(t.state.overrides.map((o) => o.featureKey)).toContain(FLEET);
+  });
+
+  it("an active fleet add-on row lets `delivery` through; a live DENY override takes it away again", async () => {
+    const held = fakeTx({ configs: [fmRow("ship")], addons: [FLEET] });
+    const id1 = await seedSnapshot(held, [fmRow("delivery")]);
+    expect((await svc.restoreSnapshot(held.tx, TENANT, id1, HIGH, NOW))!.held).toEqual([]);
+
+    const denied = fakeTx({
+      configs: [fmRow("ship")],
+      addons: [FLEET],
+      overrides: [ovrRow({ featureKey: FLEET, effect: "DENY" })],
+    });
+    const id2 = await seedSnapshot(denied, [fmRow("delivery")]);
+    expect((await svc.restoreSnapshot(denied.tx, TENANT, id2, HIGH, NOW))!.held).toMatchObject([
+      { reason: "FULFILMENT_MODE_NEEDS_FLEET" },
+    ]);
+  });
+
+  it("a non-fleet mode never queries the add-ons (ship/pickup/unset need no fleet)", async () => {
+    const t = fakeTx({ configs: [fmRow("ship")] });
+    const id = await seedSnapshot(t, [fmRow("pickup")]);
+    await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW);
+    expect(t.tx.tenantAddon.findMany).not.toHaveBeenCalled();
+  });
+
+  it("in transit wins over needs-fleet: one row, one reason", async () => {
+    const t = fakeTx({ configs: [fmRow("ship")], inTransit: 1 });
+    const id = await seedSnapshot(t, [fmRow("delivery")]); // ship -> delivery crosses AND has no fleet
+    const res = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW);
+    expect(res!.held).toHaveLength(1);
+    expect(res!.held[0].reason).toBe("CARRIER_IN_TRANSIT");
+  });
+
+  it("previewRestore lists the held row as skipped with its reason and writes nothing (preview == apply)", async () => {
+    const t = fakeTx({ configs: [fmRow("delivery")], inTransit: 2 });
+    const id = await seedSnapshot(t, [fmRow("ship"), cfgRow()]);
+
+    const pre = await svc.previewRestore(t.tx, TENANT, id, NOW);
+
+    expect(pre!.plan!.configs.skipped).toEqual([{ featureKey: FM, reason: "CARRIER_IN_TRANSIT" }]);
+    expect(pre!.plan!.configs.update.map((u) => u.entry.featureKey)).not.toContain(FM);
+    expect(t.state.configs.find((c) => c.featureKey === FM)!.mode).toBe("delivery");
+    expect(t.state.snapshots[0].restoredAt).toBeNull();
+  });
+
+  describe("a held snapshot stays CLAIMABLE (Q4) and cannot loop or double-apply harmfully", () => {
+    it("Restore Now again after the orders are delivered applies the held row, leaves the rest unchanged, THEN stamps and supersedes", async () => {
+      const t = fakeTx({
+        configs: [fmRow("delivery"), cfgRow({ settings: { stale: 1 } })],
+        inTransit: 2,
+      });
+      const older = await seedSnapshot(t, [cfgRow()], [], new Date("2026-09-05T00:00:00.000Z"));
+      const id = await seedSnapshot(t, [fmRow("ship"), cfgRow()]);
+
+      const first = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW);
+      expect(first!.held).toHaveLength(1);
+
+      t.state.inTransit = 0; // delivered
+      const second = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW);
+
+      expect(second!.held).toEqual([]);
+      // the already-restored row is NOT re-written: the first run made it match -> unchanged
+      expect(second!.report).toEqual({ restored: 1, skipped: 0, keptNewer: 0, unchanged: 1 });
+      expect(t.state.configs.find((c) => c.featureKey === FM)!.mode).toBe("ship");
+      expect(t.state.snapshots.find((s) => s.id === id)).toMatchObject({
+        restoredAt: NOW,
+        restoredToPlanKey: HIGH,
+      });
+      expect(t.state.snapshots.find((s) => s.id === older)!.restoredToPlanKey).toBe("SUPERSEDED");
+      // and a third call finds it consumed
+      expect(await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW)).toBeNull();
+    });
+
+    it("an automatic re-upgrade re-picks the held snapshot each time: the restored rows are unchanged (no growth, no loop), the held row stays held", async () => {
+      const t = fakeTx({
+        configs: [fmRow("delivery"), cfgRow({ settings: { stale: 1 } })],
+        inTransit: 2,
+      });
+      await seedSnapshot(t, [fmRow("ship"), cfgRow()]);
+
+      const first = await svc.restoreLatest(t.tx, TENANT, HIGH, NOW);
+      const afterFirst = JSON.stringify(t.state.configs);
+      const second = await svc.restoreLatest(t.tx, TENANT, HIGH, NOW);
+
+      expect(first!.report).toMatchObject({ restored: 1, skipped: 1 });
+      expect(second!.report).toEqual({ restored: 0, skipped: 1, keptNewer: 0, unchanged: 1 });
+      expect(second!.held).toHaveLength(1);
+      expect(JSON.stringify(t.state.configs)).toBe(afterFirst);
+      expect(t.state.snapshots[0].restoredAt).toBeNull();
+    });
+
+    it("a later change by the tenant wins: if fulfilment_model was edited after the downgrade the row is keptNewer, not held, and the snapshot completes", async () => {
+      const t = fakeTx({
+        configs: [fmRow("pickup", { updatedAt: new Date("2026-09-15T00:00:00.000Z") })],
+        inTransit: 2,
+      });
+      await seedSnapshot(t, [fmRow("ship")]);
+      const res = await svc.restoreLatest(t.tx, TENANT, HIGH, NOW);
+      expect(res!.held).toEqual([]);
+      expect(res!.report.keptNewer).toBe(1);
+      expect(t.state.snapshots[0].restoredAt).toEqual(NOW);
+    });
+
+    it("the claim still serialises two runs: a held run takes the row lock via the conditional touch, and loses to an already-stamped snapshot", async () => {
+      const t = fakeTx({ configs: [fmRow("delivery")], inTransit: 2 });
+      const id = await seedSnapshot(t, [fmRow("ship"), cfgRow()]);
+      const claim = jest.spyOn(t.tx.tenantFeatureConfigSnapshot, "updateMany");
+
+      await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW);
+      expect(claim).toHaveBeenCalledWith({
+        where: { id, tenantId: TENANT, restoredAt: null },
+        data: { restoredToPlanKey: null },
+      });
+
+      // another run stamped it between our read and our claim: the touch matches 0 rows -> null, no writes
+      const writes = JSON.stringify(t.state.configs);
+      (t.tx.tenantFeatureConfigSnapshot as any).findFirst = async () => ({
+        ...t.state.snapshots[0],
+        restoredAt: null,
+      });
+      t.state.snapshots[0].restoredAt = NOW;
+      expect(await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW)).toBeNull();
+      expect(JSON.stringify(t.state.configs)).toBe(writes);
+    });
   });
 });
