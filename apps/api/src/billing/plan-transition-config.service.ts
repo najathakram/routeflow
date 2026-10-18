@@ -34,8 +34,11 @@ export interface PlanTransition {
   actor?: SnapshotActor;
   /**
    * BO-13: add-on keys the caller's transaction activates AFTER `onPlanChange` (a checkout's purchased
-   * add-ons). The restore runs first, so without these a re-upgrade that re-buys a fleet module in the same
-   * checkout would read as "no fleet" and hold `delivery`. Only `restoreLatest` reads them.
+   * add-ons), so the restore's fleet check judges the transaction's END state. No self-service SKU is a
+   * fleet module today (Routes and Order delivery are not sold through checkout), so this cannot change a
+   * fleet answer yet: it keeps the check correct if one ever is. They are SKU codes compared with add-on
+   * keys; a bridged pair (a SKU code that differs from its add-on key) would need mapping first. Only
+   * `restoreLatest` reads them.
    */
   pendingAddonKeys?: readonly string[];
 }

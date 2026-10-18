@@ -2,6 +2,7 @@
 // `GET/POST /platform-admin/tenants/:id/config-snapshots…`. Dates arrive as ISO strings. The API
 // side is `TenantConfigSnapshotAdminService` (apps/api/src/billing) — keep these in step with it.
 import type { SnapshotReasonValue } from "./enums";
+import type { API_ERROR_CODES } from "./error-codes";
 
 /** `GET …/config-snapshots` — one row per snapshot, newest first. */
 export interface ConfigSnapshotListItem {
@@ -33,7 +34,7 @@ export type ConfigSnapshotSkipReason =
   /** BO-13: the delivery method is held — orders are with the carrier, so changing the billing moment now would bill them twice or never. */
   | "CARRIER_IN_TRANSIT"
   /** BO-13: the delivery method is held — own delivery (`delivery`/`both`) needs Routes or Order delivery, and the account has neither. */
-  | "FULFILMENT_MODE_NEEDS_FLEET";
+  | typeof API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET;
 
 /** A `fulfilment_model` row the restore HELD back (it is also in `skipped`): the snapshot stays restorable. */
 export interface ConfigSnapshotHeld {
@@ -42,7 +43,10 @@ export interface ConfigSnapshotHeld {
   from: string;
   /** The mode the snapshot would have written. */
   to: string;
-  reason: Extract<ConfigSnapshotSkipReason, "CARRIER_IN_TRANSIT" | "FULFILMENT_MODE_NEEDS_FLEET">;
+  reason: Extract<
+    ConfigSnapshotSkipReason,
+    "CARRIER_IN_TRANSIT" | typeof API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET
+  >;
   /** Orders with the carrier (CARRIER_IN_TRANSIT only). */
   count?: number;
 }

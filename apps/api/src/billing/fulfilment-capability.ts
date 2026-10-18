@@ -87,7 +87,9 @@ export async function heldAddonKeys(
 /**
  * The pure core of {@link heldAddonKeys}: add-on rows with overrides absolute (GRANT adds, DENY removes; only
  * RequireAddon-gated keys). Shared with the snapshot restore's end-state fleet check
- * (`fleetHeldAfterRestore`) so the two can never disagree on what "held" means.
+ * (`fleetHeldAfterRestore`) so they apply overrides the same way. Not covered: `heldAddonKeys` reads rows
+ * through `getActiveAddons` (which adds defaultGranted keys) while the restore reads raw rows, so a fleet
+ * key that became `defaultGranted: true` would need the restore to add it too.
  */
 export function applyAddonOverrides(
   active: Iterable<string>,

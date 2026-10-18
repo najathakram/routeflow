@@ -1,13 +1,16 @@
 import { BadRequestException } from "@nestjs/common";
-import type {
-  BusinessCapabilities,
-  BusinessCapabilitiesRequest,
-  BusinessCapabilityTicks,
-  BusinessProfileKey,
+import {
+  isOpensAsChoosable,
+  type BusinessCapabilities,
+  type BusinessCapabilitiesRequest,
+  type BusinessCapabilityTicks,
+  type BusinessProfileKey,
+  type CapabilityAvailability,
 } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { BUSINESS_PROFILES, wants, type BusinessProfileDef } from "./business-profiles";
 import { FLEET_KEYS, capabilityFromInputs, type FulfilmentInputs } from "./fulfilment-capability";
+import { FEATURE_REGISTRY } from "./feature-registry";
 
 /**
  * BO-03: the capability ticks a platform admin sees for one tenant, read back from the server.
@@ -42,10 +45,11 @@ export function capabilitiesFromInputs(
   return {
     configured,
     ...ticks,
-    opensAsChoosable: ticks.shipping && ticks.counter && !ticks.delivery,
+    opensAsChoosable: isOpensAsChoosable(ticks),
     counterCapability: cap.counter,
     fleetHeld: cap.fleet,
     matchedPreset: configured ? matchPreset(ticks, cap.fleet) : null,
+    unavailable: capabilityAvailability(),
   };
 }
 
@@ -145,4 +149,29 @@ export function matchPreset(
     );
   });
   return (hit?.key as BusinessProfileKey | undefined) ?? null;
+}
+
+/** Each capability's own mode: delivery and shipping are fulfilment_model modes; the counter is pickup. */
+const CAPABILITY_MODES: { capability: keyof CapabilityAvailability; key: string; mode: string }[] =
+  [
+    { capability: "delivery", key: "fulfilment_model", mode: "delivery" },
+    { capability: "shipping", key: "fulfilment_model", mode: "ship" },
+    { capability: "counter", key: "fulfilment_model", mode: "pickup" },
+  ];
+
+const registryOffers = (key: string, mode: string): boolean =>
+  FEATURE_REGISTRY.find((f) => f.key === key)?.config?.modes[mode]?.available === true;
+
+/**
+ * PC-L C2: the capabilities that cannot be ticked, with a reason. Read from the registry's own `available` flag
+ * (the same one `unavailableModes` uses), so it is plan-independent today: every mode is offered on every plan and
+ * profile grants are free comps. `unavailable(key, mode)` is the test seam; production passes nothing.
+ */
+export function capabilityAvailability(
+  unavailable: (key: string, mode: string) => boolean = (k, m) => !registryOffers(k, m),
+): CapabilityAvailability {
+  const out: CapabilityAvailability = {};
+  for (const c of CAPABILITY_MODES)
+    if (unavailable(c.key, c.mode)) out[c.capability] = "Not available yet";
+  return out;
 }

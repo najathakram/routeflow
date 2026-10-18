@@ -162,9 +162,20 @@ describe("GET tenants/:id/business-capabilities", () => {
     });
   });
 
+  it("PC-L C2: the read carries `unavailable` (empty while every capability is available)", async () => {
+    const c = build({ modes: { fulfilment_model: "ship" } });
+    expect((await c.getBusinessCapabilities(T)).unavailable).toEqual({});
+  });
+
   it("404s for a missing tenant", async () => {
     const c = build({ tenantExists: false });
     await expect(c.getBusinessCapabilities(T)).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe("PC-L C2: GET business-profiles carries tenant-less capability availability", () => {
+  it("lists `availability` (empty today) beside the profiles, for the create form", () => {
+    expect(build({}).listBusinessProfiles().availability).toEqual({});
   });
 });
 

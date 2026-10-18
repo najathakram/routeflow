@@ -53,6 +53,19 @@ export interface BusinessCapabilityTicks {
 }
 
 /**
+ * The ONE "who opens new staff orders" rule: Shipping + Counter without Delivery is the only combination where
+ * staff may pick Order or Counter. Shared so the web never re-derives it for unsaved ticks (PC-L C1).
+ */
+export function isOpensAsChoosable(
+  t: Pick<BusinessCapabilityTicks, "delivery" | "shipping" | "counter">,
+): boolean {
+  return t.shipping && t.counter && !t.delivery;
+}
+
+/** A capability the registry does not offer yet, with the reason to show (PC-L C2). Empty = all available. */
+export type CapabilityAvailability = Partial<Record<"delivery" | "shipping" | "counter", string>>;
+
+/**
  * `GET /platform-admin/tenants/:id/business-capabilities` (BO-03): the checkboxes, read back from the server.
  * `configured: false` (a legacy `unset` tenant) means every tick is false: nothing is shown ticked until confirmed.
  */
@@ -66,10 +79,19 @@ export interface BusinessCapabilities extends BusinessCapabilityTicks {
   fleetHeld: boolean;
   /** The preset whose ticks match exactly, else null (also null when not configured). */
   matchedPreset: BusinessProfileKey | null;
+  /** Capabilities that cannot be ticked, with the reason (PC-L C2). Registry-wide today: plan-independent.
+   *  Optional for older servers; this server always sends it. */
+  unavailable?: CapabilityAvailability;
 }
 
 export interface BusinessProfileListResponse {
   profiles: BusinessProfileSummary[];
+  /**
+   * Tenant-less capability availability, for the create-tenant form (no tenant exists yet) as well as the tenant
+   * page (PC-L C2). Availability is registry-wide and plan-independent today (comps are free on every plan).
+   * Optional for older servers.
+   */
+  availability?: CapabilityAvailability;
 }
 
 /** What applying a profile would do to ONE tenant, key by key. */
@@ -229,6 +251,9 @@ export interface BusinessCapabilitiesPreviewResponse extends FeaturePreviewRespo
   capabilities: BusinessCapabilityTicks;
   /** The preset whose ticks equal `capabilities`, else null (a "custom" combination). */
   preset: BusinessProfileKey | null;
+  /** The opens-as answer for THESE (unsaved) ticks: `capabilities.opensAs` and whether staff may choose (C1). */
+  opensAs: BusinessCapabilityTicks["opensAs"];
+  opensAsChoosable: boolean;
   plan: BusinessProfilePlan;
   summary: string[];
   changes: string[];

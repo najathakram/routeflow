@@ -26,7 +26,13 @@ import { FeatureOverrideService } from "./feature-override.service";
 import { FeatureConfigService } from "./feature-config.service";
 import { FeaturePreviewService } from "./feature-preview.service";
 import { FLEET_KEYS, heldAddonKeys, readFulfilmentInputs } from "./fulfilment-capability";
-import { capabilitiesFromInputs, presetTicks, ticksToProfileDef } from "./business-capabilities";
+import { isOpensAsChoosable } from "@routeflow/types";
+import {
+  capabilitiesFromInputs,
+  capabilityAvailability,
+  presetTicks,
+  ticksToProfileDef,
+} from "./business-capabilities";
 import { addonCodeOf, findAddonRow } from "./addon-row";
 import {
   BUSINESS_PROFILES,
@@ -112,7 +118,10 @@ export class BusinessProfileService {
   ) {}
 
   list(): BusinessProfileListResponse {
-    return { profiles: BUSINESS_PROFILES.map(toBusinessProfileSummary) };
+    return {
+      profiles: BUSINESS_PROFILES.map(toBusinessProfileSummary),
+      availability: capabilityAvailability(),
+    };
   }
 
   /**
@@ -331,6 +340,8 @@ export class BusinessProfileService {
       ...response,
       capabilities: resolved.capabilities,
       preset: resolved.preset,
+      opensAs: resolved.capabilities.opensAs,
+      opensAsChoosable: isOpensAsChoosable(resolved.capabilities),
       plan: resolved.plan,
       summary: resolved.summary,
       changes: describeBusinessProfileSections(resolved.plan).changes,

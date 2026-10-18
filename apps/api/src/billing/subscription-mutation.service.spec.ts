@@ -1094,8 +1094,8 @@ describe("SubscriptionMutationService.subscribe — A2b plan-transition hook", (
   });
 
   // BO-13 M1: the restore runs BEFORE the checkout's add-on loop activates the rows, so the hook is told
-  // which add-on keys this same transaction will activate (a re-upgrade re-buying Routes must not read
-  // as "no fleet").
+  // which add-on keys this same transaction will activate, so its fleet check sees the end state (no fleet
+  // module is sold through checkout today; this pins the pass-through).
   it("BO-13: tells the hook which add-on keys this checkout will activate (pendingAddonKeys)", async () => {
     const { svc, planTransition } = make({
       sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
