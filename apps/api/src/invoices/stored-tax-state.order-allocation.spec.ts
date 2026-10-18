@@ -50,7 +50,7 @@ describe("the order-allocation tolerance", () => {
     const CASES_PER_SHAPE = 40;
 
     it.each(RATES.flatMap((rate) => [2, 3, 4].map((n) => [rate, n] as const)))(
-      "%s tax, %s-way split (%s deterministic cases)",
+      "%s tax, %s-way split (deterministic cases)",
       (rate, n) => {
         const rand = prng(Math.round(rate * 100_000) * 10 + n);
         for (let c = 0; c < CASES_PER_SHAPE; c++) {

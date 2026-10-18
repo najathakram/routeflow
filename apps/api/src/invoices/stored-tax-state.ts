@@ -155,7 +155,7 @@ export function taxStateOf(args: TaxStateArgs): TaxStateVerdict {
   const exemptWithLevy =
     !!refuseExemptLevy &&
     !!isTaxExempt &&
-    storedLines.some((l) => differsBeyond(l.categoryTaxAmount, 0, 0));
+    storedLines.some((l) => toCents(l.categoryTaxAmount) !== 0);
   const toleranceCents =
     orderSiblingCount == null
       ? 0
