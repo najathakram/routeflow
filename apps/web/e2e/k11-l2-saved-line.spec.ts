@@ -53,14 +53,15 @@ async function inViewport(page: Page, testId: string) {
 }
 
 /**
- * The distance from the pricing section's top to the first element after the section (document order, outside it).
- * Section-relative, so it does not depend on scroll. K11-16 (MM's proof): the settled line used to add its own height
+ * The distance from the pricing region's top (`units-v2-region`, the section's stable ancestor: the page has no <section>)
+ * to the first element after it (document order, outside it). Region-relative, so it does not depend on scroll. K11-16 (MM's proof): the settled line used to add its own height
  * here (+45.5 px at every width) because the fixed line took no space while pinned.
  */
 async function belowOffset(page: Page): Promise<number> {
   return page.getByTestId(ID.line).evaluate((line) => {
-    const section = line.closest("section");
-    if (!section) throw new Error("the saved line is not inside a <section>");
+    const section = line.closest('[data-testid="units-v2-region"]');
+    if (!section)
+      throw new Error("the saved line is not inside the pricing region (units-v2-region)");
     let n: Element | null = section;
     while (n && !n.nextElementSibling) n = n.parentElement;
     const below = n?.nextElementSibling;
