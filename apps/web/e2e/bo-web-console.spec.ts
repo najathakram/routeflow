@@ -183,6 +183,40 @@ async function mockTenantShell(page: Page) {
   await page.route(/\/platform-admin\/business-profiles(\?.*)?$/, (route) =>
     fulfillJson(route, { profiles: [] }),
   );
+  // BO-05: the Setup tab's "What this business does" card reads these. A tenant nobody set up keeps the console
+  // specs unchanged; a write is answered with a 500 so a real one can never succeed from here.
+  await page.route(
+    new RegExp(`/platform-admin/tenants/${TENANT_ID}/business-capabilities$`),
+    (route) =>
+      route.request().method() === "POST"
+        ? fulfillJson(route, { message: "blocked by the spec" }, 500)
+        : fulfillJson(route, {
+            configured: false,
+            delivery: false,
+            doorPayments: false,
+            shipping: false,
+            counter: false,
+            opensAs: "order",
+            opensAsChoosable: false,
+            counterCapability: "off",
+            fleetHeld: false,
+            matchedPreset: null,
+          }),
+  );
+  await page.route(
+    new RegExp(`/platform-admin/tenants/${TENANT_ID}/business-capabilities/preview$`),
+    (route) =>
+      fulfillJson(route, {
+        plan: { overrides: [], comps: [], modes: [], billing: [] },
+        summary: [],
+        changes: [],
+        planFingerprint: "f".repeat(64),
+        before: [],
+        after: [],
+        changed: [],
+        blocked: null,
+      }),
+  );
 }
 
 async function gotoConsole(page: Page) {

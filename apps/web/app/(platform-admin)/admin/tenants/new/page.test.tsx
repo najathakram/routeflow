@@ -392,6 +392,37 @@ describe("create-tenant capabilities", () => {
     expect(screen.queryByTestId("profile-applied-summary")).toBeNull();
   });
 
+  // The old picker's "Custom: I'll choose the features myself" meant: no profile, the plan's defaults, features
+  // chosen later. Nothing ticked is exactly that, and manual ticking replaces choosing a profile, so no path is lost.
+  it("Custom parity: a preset pick can be cleared by hand, and nothing ticked creates an unset tenant like the old Custom", async () => {
+    (superAdminClient.post as jest.Mock).mockResolvedValueOnce({
+      data: { id: "t1", slug: "acme" },
+    });
+    render(<AdminCreateTenantPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Start from…" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delivery + counter" }));
+    expect(screen.getByRole("checkbox", { name: "Sells at the counter" })).toBeChecked();
+    // clear every box by hand: back to the plan's defaults
+    for (const name of ["Delivers on own trucks", "Ships by carrier", "Sells at the counter"]) {
+      const box = screen.getByRole("checkbox", { name });
+      if ((box as HTMLInputElement).checked) fireEvent.click(box);
+    }
+    expect(
+      screen.getByText(
+        "Nothing ticked: the account starts with the plan's defaults. You can set this later in Setup.",
+      ),
+    ).toBeVisible();
+    fillForm();
+    await submit();
+    expect(await screen.findByText("Tenant created successfully!")).toBeInTheDocument();
+    // exactly the create, nothing else: no preview, no apply, no profile result line
+    expect(superAdminClient.post as jest.Mock).toHaveBeenCalledTimes(1);
+    expect(mockPreviewProfile).not.toHaveBeenCalled();
+    expect(mockApplyProfile).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("profile-applied")).toBeNull();
+    expect(screen.queryByTestId("profile-apply-failed")).toBeNull();
+  });
+
   it("without ticks: creates the tenant with no capabilities field and applies nothing", async () => {
     (superAdminClient.post as jest.Mock).mockResolvedValueOnce({
       data: { id: "t1", slug: "acme" },
