@@ -74,7 +74,7 @@ for (const vp of VIEWPORTS) {
   test.describe(`K11-16 saved line @ ${vp.name}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
 
-    for (const how of ["Save button", "Ctrl+S"] as const) {
+    for (const how of ["Save button", "Save button (native click)", "Ctrl+S"] as const) {
       test(`${how}: the saved line is on screen within 1 s with no scroll, Undo works, it settles after 5 s`, async ({
         page,
         context,
@@ -92,7 +92,21 @@ for (const vp of VIEWPORTS) {
           const b = (await page.getByTestId(ID.save).boundingBox())!;
           await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
           await page.mouse.move(0, 0);
+        } else if (how === "Save button (native click)") {
+          // K11-16: locator.click() scrolls Save into view natively, as focus or scrollIntoView can. That scroll used to
+          // move the shell's overflow-hidden right column by the header's 64 px at 1440 (header off screen, line 64 px
+          // short). The column now refuses any scroll, so this path must be as flush as the settled click.
+          await page.getByTestId(ID.save).click();
+          await page.mouse.move(0, 0);
         } else await page.keyboard.press("Control+s");
+
+        // The shell's right column never keeps a scroll (K11-16), so the header stays on screen.
+        expect(
+          await page.evaluate(
+            () => document.getElementById("main-content")?.parentElement?.scrollTop,
+          ),
+          "the shell's right column is not scrolled",
+        ).toBe(0);
 
         // Within 1 s, without scrolling, and pinned: the line is the one live region saying Saved.
         await expect(line).toContainText("Saved", { timeout: 1000 });

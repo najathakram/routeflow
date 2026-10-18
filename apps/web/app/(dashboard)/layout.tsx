@@ -71,6 +71,7 @@ import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
 import { matchPlanGatedRoute, planFlagVisible } from "@/lib/plan-gated-nav";
 import { SkipToContentLink } from "@/components/SkipToContentLink";
+import { useNoShellScroll } from "@/lib/use-no-shell-scroll";
 import { RouteGuard } from "./_components/gates/RouteGuard";
 import { activeLeafHref } from "./_components/nav-active";
 
@@ -1177,6 +1178,9 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
   // Below lg the static rail is hidden and replaced by an off-canvas drawer.
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
+  // K11-16: the right column is overflow-hidden; a native click/focus scroll must never move it.
+  const shellColumnRef = React.useRef<HTMLDivElement>(null);
+  useNoShellScroll(shellColumnRef);
 
   // Close the mobile drawer whenever the route changes.
   React.useEffect(() => {
@@ -1354,7 +1358,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       {/* Right column — `relative` so the draft dock anchors to the bottom-left of
           the content area (right of the rail), not over the sidebar's collapse
           control; below lg the rail is a drawer so it becomes the viewport corner. */}
-      <div className="relative flex flex-1 flex-col overflow-hidden">
+      <div ref={shellColumnRef} className="relative flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
         {subscriptionStatus ? (
           // useSearchParams() (the ?paid=1 return) needs a Suspense boundary for the static prerender
