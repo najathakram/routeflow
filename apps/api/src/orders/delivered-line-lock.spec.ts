@@ -5,6 +5,7 @@ import {
   deliveredLockApplies,
   isDeliveredLine,
   reduceDeliveredLineEntries,
+  type DeliveredLockEntry,
   type DeliveredLockLine,
 } from "./delivered-line-lock";
 
@@ -155,10 +156,11 @@ describe("assertDeliveredLinesUntouched: every other status is untouched", () =>
   it.each(["DRAFT", "PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"])(
     "%s: no refusal for any payload",
     (status) => {
-      for (const items of [
+      const payloads: DeliveredLockEntry[][] = [
         [{ id: "d", action: "DELETE" }],
         [{ id: "d", action: "UPDATE", qty: 1, unitPrice: 1 }],
-      ])
+      ];
+      for (const items of payloads)
         expect(() =>
           assertDeliveredLinesUntouched({ status }, [DELIVERED], { items }, staff, true),
         ).not.toThrow();
