@@ -126,7 +126,7 @@ const sameRate = (a: unknown, b: unknown): boolean =>
  *   - a verified inferred rate is stamped on the kept rate-0 goods lines (in `editLines`, before they are
  *     totalled; `inPlacePatch` writes it);
  *   - otherwise 409 INVOICE_TAX_STATE_STALE, nothing written.
- * Not a silent drop (proceeds, nothing stamped): a consistent stored state, no stored line kept (a full
+ * Not a silent drop (proceeds, nothing stamped): an exempt customer, a consistent stored state, no stored line kept (a full
  * rewrite), or a kept line whose payload rate differs from the stored one (the user set it).
  */
 export function guardItemsEditTaxState(args: {
@@ -136,6 +136,9 @@ export function guardItemsEditTaxState(args: {
   editLines: ReadonlyArray<{ rowId: string | null; data: Record<string, any> }>;
 }): void {
   const { locked, items, matches, editLines } = args;
+  // An exempt customer: the edit's recompute is deterministic ($0 regular tax, levy snapshots zeroed by the
+  // caller), the same as master, so a draft whose customer became exempt re-saves and sheds its tax.
+  if (locked.isTaxExempt) return;
   const verdict = taxStateOf({
     invoice: locked.invoice,
     storedLines: locked.storedRows,

@@ -103,7 +103,7 @@ describe("#2656 the three goods-rate call sites agree with @routeflow/pricing", 
     expect(guard).toMatch(/\binferredGoodsFlatRate,\n[\s\S]*?\} from "@routeflow\/pricing";/);
     // The locked invoice's lines go through it: applyPriceAdjustment's tx and the bulk pre-flight.
     const svc = readFileSync(path.join(dir, "invoices.service.ts"), "utf8");
-    expect(svc).toMatch(/priceAdjustmentTaxState\(live\)/);
+    expect(svc).toMatch(/priceAdjustmentTaxState\(live,/);
     const ledger = readFileSync(path.join(dir, "price-adjustment-ledger.ts"), "utf8");
     expect(ledger).toMatch(/storedLines: inv\.items/);
   });

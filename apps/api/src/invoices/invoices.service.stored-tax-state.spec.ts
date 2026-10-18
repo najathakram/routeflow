@@ -233,6 +233,28 @@ describe("SA-814 R5-2 — one recompute guard for stored tax state", () => {
       expect(invoiceWrite()).toMatchObject({ subtotal: 95, taxAmount: 0, total: 95 });
     });
 
+    it("(i) a DRAFT whose customer became exempt re-saves and zeroes the tax it was taxed at creation (not a 409)", async () => {
+      withInvoice({ status: InvoiceStatus.DRAFT, ...VERIFIED }, [line("li-1", 100, 0.075)]);
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: true });
+
+      await service.update("inv-1", { items: [payloadLine("li-1", 95, 0.075)] });
+
+      expect(invoiceWrite()).toMatchObject({ subtotal: 95, taxAmount: 0, total: 95 });
+    });
+
+    it("(j) an ISSUED invoice taxed at creation whose customer later went exempt is 409 on a price adjust (a credit-note decision)", async () => {
+      withInvoice(VERIFIED, [line("li-1", 100, 0.075)]);
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: true });
+
+      await expect(
+        service.applyPriceAdjustment("inv-1", {
+          items: [{ itemId: "li-1", newUnitPrice: 95 }],
+          scope: "SINGLE",
+        }),
+      ).rejects.toMatchObject(STALE);
+      nothingWritten();
+    });
+
     it("(h2) an exempt invoice that still carries a levy snapshot stays stale: 409, nothing written", async () => {
       withInvoice(EXEMPT, [{ ...line("li-1", 100, 0), categoryTaxAmount: 5 }]);
       prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: true });

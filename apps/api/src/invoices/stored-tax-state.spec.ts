@@ -177,6 +177,18 @@ describe("guardItemsEditTaxState (the DRAFT items edit)", () => {
     expect(lines[0].data.taxRate).toBe(0.075);
   });
 
+  it("an exempt customer's draft proceeds even when its stored tax was charged at creation", () => {
+    const r = row("a", 100, 0.075);
+    expect(() =>
+      guardItemsEditTaxState({
+        locked: lockedOf({ subtotal: 100, taxAmount: 7.5 }, [r], true),
+        items: [{ taxRate: 0.075 }],
+        matches: [{ row: r }],
+        editLines: [edited(r)],
+      }),
+    ).not.toThrow();
+  });
+
   it("the web re-send of a stored rate 0 on an unverifiable invoice is a 409", () => {
     const r = row("a", 10000, 0);
     expect(() =>
@@ -271,10 +283,22 @@ describe("no sumInvoiceTotals* over stored rows outside the guard's callers", ()
   const text = (f: string) => sources.find((s) => s.file === f)!.text;
 
   it("price adjustment (tx and bulk pre-flight), the items edit and the header-only path all call the guard", () => {
-    expect(text("invoices.service.ts")).toMatch(/priceAdjustmentTaxState\(live\)/);
-    expect(text("price-adjustment-ledger.ts")).toMatch(/priceAdjustmentTaxState\(inv\)/);
+    expect(text("invoices.service.ts")).toMatch(/priceAdjustmentTaxState\(live,/);
+    expect(text("price-adjustment-ledger.ts")).toMatch(/priceAdjustmentTaxState\(inv,/);
     expect(text("invoices.service.ts")).toMatch(/guardItemsEditTaxState\(\{/);
     expect(text("locked-invoice-edit.ts")).toMatch(/assertTaxStateRecomputable\(\{/);
+  });
+
+  it("invoices.service.ts runs exactly 3 totals sums: create(), duplicate (both on lines they build) and update() AFTER its guard", () => {
+    const svc = text("invoices.service.ts");
+    const calls = [...svc.matchAll(/\bsumInvoiceTotalsStrict\(/g)].map((m) => m.index!);
+    expect(calls).toHaveLength(3);
+    // the middle one is update()'s edited-lines sum: it must come after guardItemsEditTaxState({
+    const guardAt = svc.indexOf("guardItemsEditTaxState({");
+    expect(guardAt).toBeGreaterThan(0);
+    expect(calls[0]).toBeLessThan(guardAt);
+    expect(calls[1]).toBeGreaterThan(guardAt);
+    expect(calls[2]).toBeGreaterThan(calls[1]);
   });
 
   it("totalsFromLines (Σ subtotal x stored rate) is only ever called inside the price-adjustment module", () => {
