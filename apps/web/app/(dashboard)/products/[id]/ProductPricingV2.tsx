@@ -86,7 +86,8 @@ function PricingSection({
 /**
  * V07: the one Undo. `current` is the SERVED grid query (the cache a save and a refetch write), not a draft snapshot.
  * K11-20: shows only a save made in `surface` (the section's own line is "inline"; whoever hosts the floating window
- * renders "window" where the save should be reported), so one save never has two lines or two Undos.
+ * renders "window" where the save should be reported), so one save never has two lines or two Undos. Only the inline line
+ * stays mounted while idle: the page keeps one live region (K11-20c).
  */
 export function PriceSaveStatus({
   productId,
@@ -109,6 +110,7 @@ export function PriceSaveStatus({
   return (
     <PriceSaveStatusLine
       id={surface === "inline" ? "units-msg" : `units-msg-${surface}`}
+      idleUnmounted={surface !== "inline"}
       lastSave={lastSave}
       dirty={draft.dirty}
       undo={undo}

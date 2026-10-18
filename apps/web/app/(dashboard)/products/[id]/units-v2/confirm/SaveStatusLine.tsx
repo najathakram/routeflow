@@ -191,6 +191,7 @@ export function PriceSaveStatusLine({
   undo,
   onUndone,
   id = "units-msg",
+  idleUnmounted = false,
 }: {
   lastSave: LastSave | null;
   dirty?: boolean;
@@ -198,6 +199,8 @@ export function PriceSaveStatusLine({
   /** Called once an Undo succeeded, so the draft can forget its `lastSave` (K3's `markUndone`). */
   onUndone?: () => void;
   id?: string;
+  /** K11-20c: render no node while idle, so a second surface's line never adds a second live region to the page. */
+  idleUnmounted?: boolean;
 }) {
   const [state, dispatch] = React.useReducer(reduce, IDLE);
   const lineRef = React.useRef<HTMLDivElement>(null);
@@ -311,6 +314,7 @@ export function PriceSaveStatusLine({
 
   const hasUndo = phase === "saved" || previewing || phase === "error";
   const previewId = `${id}-preview`;
+  if (idleUnmounted && phase === "idle") return null;
   return (
     <>
       <div

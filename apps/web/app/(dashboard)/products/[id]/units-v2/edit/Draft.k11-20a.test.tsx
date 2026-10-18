@@ -220,12 +220,12 @@ describe("K11-20a: a save knows its surface, and each status line shows only its
     expect(within(line("window")).getByRole("button", { name: "Undo" })).toBeTruthy();
   });
 
-  it("an inline save records 'inline' and the window line stays empty", () => {
+  it("an inline save records 'inline' and the window line stays unmounted", () => {
     mountStatus();
     saveOnce("inline");
     expect(draft.lastSave?.surface).toBe("inline");
     expect(line("inline").textContent).toContain("Saved");
-    expect(line("window").textContent).toBe("");
+    expect(document.getElementById("units-msg-window")).toBeNull(); // K11-20c: an idle window line mounts no node
   });
 
   it("the next edit in either surface clears the saved line", () => {
@@ -236,7 +236,7 @@ describe("K11-20a: a save knows its surface, and each status line shows only its
       draft.startEditing(undefined, "inline");
     });
     expect(draft.lastSave).toBeNull();
-    expect(line("window").textContent).toBe("");
+    expect(document.getElementById("units-msg-window")).toBeNull(); // K11-20c: an idle window line mounts no node
   });
 
   it("the onSaved hook is told which surface saved", () => {
