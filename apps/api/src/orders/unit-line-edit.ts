@@ -29,6 +29,7 @@ import { writeLineUpdate } from "./order-line-removal";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import type { OrdersService } from "./orders.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { linesPriceAtCustomerTier } from "./driver-line-price";
 
 /**
  * units_v1 (A1) — everything `updateOrderItems` needs to touch a unit-aware line, kept out of
@@ -212,7 +213,8 @@ export async function normalizeDerivedBaseItems(
   };
   const candidates = (dto.items ?? []).filter(named);
   if (candidates.length === 0) return;
-  const atCustomerTier = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  // B1036: the one "who gets the customer's price" predicate (a driver cannot name a unit, so this is staff in practice).
+  const atCustomerTier = linesPriceAtCustomerTier(user);
   let defaultTier = 1;
   const overrides = new Map<string, number | null>();
   if (atCustomerTier && order.customerId) {

@@ -188,16 +188,22 @@ export function priceReplacedLine(a: {
   stamp?: KeptOverride["stamp"];
 } {
   const driverEdit = !a.isBuyerEdit && isDriverCaller(a.user);
-  const driverFreeUnits = (own: HeldPriceLine) =>
-    rescaleBogoFreeUnits({
+  const driverFreeUnits = (own: HeldPriceLine) => {
+    const storedFreeUnits = Number(own.promoFreeUnits ?? 0);
+    const oldUnits = own.boxes != null ? Number(own.boxes) : Number(own.qty);
+    // A full-list re-send re-lists lines nobody touched: an unchanged quantity keeps its stored free units,
+    // as the diff path leaves an untouched line alone (a live rule must not re-bill it).
+    if (a.qtyUnits === oldUnits) return Math.max(0, storedFreeUnits);
+    return rescaleBogoFreeUnits({
       promos: a.bogoPromos ?? [],
       productId: a.product.id,
       category: a.product.category,
       unitPrice: Number(own.unitPrice),
-      storedFreeUnits: Number(own.promoFreeUnits ?? 0),
-      oldUnits: own.boxes != null ? Number(own.boxes) : Number(own.qty),
+      storedFreeUnits,
+      oldUnits,
       newUnits: a.qtyUnits,
     });
+  };
   const kept =
     a.isBuyerEdit || driverEdit
       ? keptOverrideFor(

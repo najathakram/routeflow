@@ -637,6 +637,46 @@ describe("OrdersService.updateOrderItems — driver lines resolve the customer's
       await edit("driver", [{ id: "li-1", action: "UPDATE", qty: 12 }]);
       expect(updated().subtotal).toBe(viaReplace);
     });
+
+    it("K7: an untouched kept line keeps its stored free units when a different BUY_N_GET_M rule is live now", async () => {
+      const bogo = (minQty: number) => [
+        {
+          id: `pr-bogo-${minQty}`,
+          type: "BUY_N_GET_M",
+          value: 1,
+          minQty,
+          scope: "ALL",
+          category: null,
+          productIds: [],
+        },
+      ];
+      // 8 x $10 sold with 1 free under a rule that has ended; buy-3-get-1 is live now. A re-derive would
+      // give 2 free and bill $60: a free-unit gain on a line the driver did not touch.
+      prime(
+        [line({ qty: 8, unitPrice: 10, subtotal: 70, priceType: "PROMO", promoFreeUnits: 1 })],
+        2,
+      );
+      promotionsService.activeForCatalog.mockResolvedValue(bogo(3));
+      await replaceAll([{ productId: "prod-1", qty: 8 }]);
+      expect(createdFor("prod-1")).toMatchObject({
+        unitPrice: 10,
+        promoFreeUnits: 1,
+        subtotal: 70,
+      });
+      // The reverse: buy-10-get-1 is live now, so a re-derive would drop the free unit and bill $60 for $50.
+      clearWrites();
+      prime(
+        [line({ qty: 6, unitPrice: 10, subtotal: 50, priceType: "PROMO", promoFreeUnits: 1 })],
+        2,
+      );
+      promotionsService.activeForCatalog.mockResolvedValue(bogo(10));
+      await replaceAll([{ productId: "prod-1", qty: 6 }]);
+      expect(createdFor("prod-1")).toMatchObject({
+        unitPrice: 10,
+        promoFreeUnits: 1,
+        subtotal: 50,
+      });
+    });
   });
 
   describe("customer-typed unit prices (flag.units_prices_v2) reach a driver exactly as they reach staff", () => {
