@@ -1756,7 +1756,7 @@ export default function ProductDetailPage() {
                     </div>
                     {tiersBlock}
                   </FamilyPriceSection>
-                ) : pricesInWindow ? null /* K12 P06: the v2 grid owns the prices; no Pricing Tiers row here */ : (
+                ) : pricesInWindow ? null /* K12 P06: the prices grid owns prices, no tiers row */ : (
                   tiersBlock
                 )}
 
