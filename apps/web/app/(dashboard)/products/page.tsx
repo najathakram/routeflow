@@ -1293,7 +1293,8 @@ export default function ProductsPage() {
       )}
 
       {/* Create product modal — creation, its toast, and list refresh are all
-          owned by ProductCreateModal itself now; nothing extra to do here. */}
+          owned by ProductCreateModal itself. K12 F07: the list then opens the
+          product just made (the toast survives the navigation). */}
       {showCreate && (
         <ProductCreateModal
           isOpen
@@ -1301,7 +1302,7 @@ export default function ProductsPage() {
             setShowCreate(false);
             setNewVariantParentId(undefined);
           }}
-          onCreated={() => {}}
+          onCreated={(created) => router.push(`/products/${created.id}`)}
           units={existingUnits}
           defaultParentId={newVariantParentId}
         />
