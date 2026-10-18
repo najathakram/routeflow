@@ -46,7 +46,6 @@ import {
 import { computeDepositFields } from "./deposit-fields";
 import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-read";
 import { withComponentViews } from "../orders/component-view";
-import { QTY_EPSILON } from "../orders/merge-idempotency";
 import {
   HANDOVER_SOLD_BY_SELECT,
   seesHandOverStamp,
@@ -196,7 +195,8 @@ import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates
 import { lockRowsNoWait } from "../common/db-locks";
 import { counterPay, type CounterPayOpts } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { UNVOID_REFUSAL_COPY, type UnvoidRefusalReason } from "./unvoid-billing-refusal";
+import { planInvoicedQtyAdjustment } from "./unvoid-billing-claim";
+import { UNVOID_REFUSAL_COPY } from "./unvoid-billing-refusal";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
@@ -4068,92 +4068,21 @@ export class InvoicesService {
     });
     if (items.length === 0) return;
 
-    // Precise path: adjust the exact source order line by this invoice line's qty.
-    const byOrderItem = new Map<string, number>();
-    // Legacy path: invoice lines with no provenance, aggregated by product.
-    const byProduct = new Map<string, number>();
-    for (const it of items) {
-      if (it.orderItemId) {
-        byOrderItem.set(it.orderItemId, (byOrderItem.get(it.orderItemId) ?? 0) + Number(it.qty));
-      } else if (it.productId) {
-        byProduct.set(it.productId, (byProduct.get(it.productId) ?? 0) + Number(it.qty));
-      }
-    }
-    if (byOrderItem.size === 0 && byProduct.size === 0) return;
-
     const orderItems = await tx.orderItem.findMany({
       where: { orderId },
       select: { id: true, productId: true, status: true, qty: true, invoicedQty: true },
     });
-
-    // Resolve every invoice line to its order line FIRST, so a refusal below happens before any write.
-    const claims = new Map<string, { oi: any; qty: number; cancelledTarget: boolean }>();
-    const claim = (oi: any, qty: number, cancelledTarget = false) => {
-      const prior = claims.get(oi.id);
-      claims.set(oi.id, {
-        oi,
-        qty: (prior?.qty ?? 0) + qty,
-        cancelledTarget: (prior?.cancelledTarget ?? false) || cancelledTarget,
+    // Pure plan (unvoid-billing-claim.ts): a refusal happens before any write.
+    const plan = planInvoicedQtyAdjustment(items, orderItems, direction);
+    if ("refusal" in plan) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.ORDER_BILLING_CHANGED,
+        reason: plan.refusal,
+        message: UNVOID_REFUSAL_COPY[plan.refusal],
       });
-    };
-    // SA-814: a line with NO matching order line at all (the order line was hard-deleted, orderItemId SetNull,
-    // and the product is not on the order) is skipped on release (-1) but refused on re-claim (+1). Free-form
-    // lines (no orderItemId AND no productId) never enter either map: no order linkage by design.
-    let unmatchedLines = 0;
-    for (const [orderItemId, qty] of byOrderItem) {
-      const target = orderItems.find((oi: any) => oi.id === orderItemId);
-      if (target) claim(target, qty, target.status === "CANCELLED");
-      else unmatchedLines += 1;
     }
-    for (const [productId, qty] of byProduct) {
-      // #1185 round 5, item 3: never pick a CANCELLED line as the fallback target.
-      // Legacy productId fallback: duplicate products on the order claim the whole product total on the FIRST
-      // live line (fails closed on a re-claim: that line runs out of free qty).
-      const live = orderItems.find(
-        (oi: any) => oi.productId === productId && oi.status !== "CANCELLED",
-      );
-      if (live) claim(live, qty);
-      else if (direction === 1) {
-        // B299: the goods only exist on a cancelled line - nothing live to re-claim them on.
-        const cancelled = orderItems.find((oi: any) => oi.productId === productId);
-        if (cancelled) claim(cancelled, qty, true);
-        // SA-814f: an unlinked product line with no order line at all is skipped like a free-form line.
-        // Accepted residual: void -> hard-delete the uninvoiced order line -> unvoid is a mismatch, not a double bill.
-      }
-    }
-
-    if (direction === 1) {
-      // B299 / SA-814 R4-5: a re-claim is never clamped. Under the caller's locks every line must still
-      // have `qty - invoicedQty >= delta` on a non-CANCELLED order line; otherwise another invoice bills
-      // these goods now and restoring this one would double-bill them. No write has happened yet.
-      // SA-814d: `reason` tells the two apart. A is VOID and its qty was released, so `invoicedQty > 0` on
-      // the line means OTHER invoices bill it (OTHER_INVOICE, which wins across lines); otherwise the line
-      // just holds less than A bills (LINE_REDUCED; an unmatched or cancelled line holds 0).
-      let refusal: UnvoidRefusalReason | null = unmatchedLines > 0 ? "LINE_REDUCED" : null;
-      for (const { oi, qty, cancelledTarget } of claims.values()) {
-        const free = Number(oi.qty ?? 0) - Number(oi.invoicedQty ?? 0);
-        if (cancelledTarget || free < qty - QTY_EPSILON) {
-          if (Number(oi.invoicedQty ?? 0) > QTY_EPSILON) refusal = "OTHER_INVOICE";
-          else refusal ??= "LINE_REDUCED";
-        }
-      }
-      if (refusal) {
-        throw new ConflictException({
-          code: API_ERROR_CODES.ORDER_BILLING_CHANGED,
-          reason: refusal,
-          message: UNVOID_REFUSAL_COPY[refusal],
-        });
-      }
-    }
-
-    for (const { oi, qty } of claims.values()) {
-      // Void direction: clamp into [0, line qty] (never negative, never more than the line has). The
-      // re-claim direction was verified above, so its sum is already within the line.
-      const next = Math.min(
-        Number(oi.qty ?? 0),
-        Math.max(0, Number(oi.invoicedQty ?? 0) + direction * qty),
-      );
-      await tx.orderItem.update({ where: { id: oi.id }, data: { invoicedQty: next } });
+    for (const { id, invoicedQty } of plan.writes) {
+      await tx.orderItem.update({ where: { id }, data: { invoicedQty } });
     }
   }
 

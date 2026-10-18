@@ -3157,33 +3157,6 @@ describe("InvoicesService", () => {
     });
   });
 
-  // B299 / SA-814 R4-5: the clamp into [0, line qty] belongs to the VOID direction only; the re-claim
-  // direction refuses instead (invoices.unvoid-billing-claim-b299.spec.ts).
-  describe("adjustInvoicedQtyForInvoice void direction (-1) is clamped into [0, line qty]", () => {
-    const release = async (line: { qty: number; invoicedQty: number }, invoiceQty: number) => {
-      prisma.invoiceItem.findMany.mockResolvedValue([
-        { productId: "p1", qty: invoiceQty, orderItemId: "oi-1" },
-      ]);
-      prisma.orderItem.findMany.mockResolvedValue([{ id: "oi-1", productId: "p1", ...line }]);
-      prisma.orderItem.update.mockResolvedValue({});
-      await (service as any).adjustInvoicedQtyForInvoice(prisma, "inv-1", "ord-1", -1);
-    };
-    const written = () => prisma.orderItem.update.mock.calls[0][0].data.invoicedQty;
-
-    it("releases the invoice qty", async () => {
-      await release({ qty: 10, invoicedQty: 10 }, 4);
-      expect(written()).toBe(6);
-    });
-    it("never goes below zero", async () => {
-      await release({ qty: 10, invoicedQty: 2 }, 4);
-      expect(written()).toBe(0);
-    });
-    it("never exceeds the line qty (a line cut below what is invoiced)", async () => {
-      await release({ qty: 5, invoicedQty: 20 }, 4);
-      expect(written()).toBe(5);
-    });
-  });
-
   // F03 (T-B84 / R6 / REG-B84): voidInvoiceInTx has no atomic claim — a double-click
   // or a retried request lets two concurrent voids both "succeed" and both release
   // invoicedQty. R6's fix is `updateMany({ where: { id, status: { not: VOID } } })`,

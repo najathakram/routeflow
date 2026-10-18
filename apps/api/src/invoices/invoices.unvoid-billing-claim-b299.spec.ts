@@ -303,3 +303,40 @@ describe("B299: unvoid re-claims invoicedQty only when the quantity is still fre
     });
   });
 });
+
+// Relocated from invoices.service.spec.ts: the void direction (-1) keeps its clamp into [0, line qty].
+describe("adjustInvoicedQtyForInvoice void direction (-1) is clamped into [0, line qty]", () => {
+  let service: InvoicesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    service = await buildSplitInvoicesService(InvoicesService, prisma, {
+      writeSaleEntries: jest.fn(),
+      reverseInvoiceEntries: jest.fn(),
+    });
+  });
+
+  const release = async (line: { qty: number; invoicedQty: number }, invoiceQty: number) => {
+    prisma.invoiceItem.findMany.mockResolvedValue([
+      { productId: "p1", qty: invoiceQty, orderItemId: "oi-1" },
+    ]);
+    prisma.orderItem.findMany.mockResolvedValue([{ id: "oi-1", productId: "p1", ...line }]);
+    prisma.orderItem.update.mockResolvedValue({});
+    await (service as any).adjustInvoicedQtyForInvoice(prisma, "inv-1", "ord-1", -1);
+  };
+  const written = () => prisma.orderItem.update.mock.calls[0][0].data.invoicedQty;
+
+  it("releases the invoice qty", async () => {
+    await release({ qty: 10, invoicedQty: 10 }, 4);
+    expect(written()).toBe(6);
+  });
+  it("never goes below zero", async () => {
+    await release({ qty: 10, invoicedQty: 2 }, 4);
+    expect(written()).toBe(0);
+  });
+  it("never exceeds the line qty (a line cut below what is invoiced)", async () => {
+    await release({ qty: 5, invoicedQty: 20 }, 4);
+    expect(written()).toBe(5);
+  });
+});
