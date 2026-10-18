@@ -30,9 +30,12 @@ describe("products/[id]/page.tsx — batch A1 wiring", () => {
   });
 
   it("P-17: the merch switches say they apply immediately while editing", () => {
-    expect(src).toMatch(
+    // K11-23: the card moved to ProductMerchandising.tsx (the end of the Details body)
+    const merch = fs.readFileSync(path.join(__dirname, "ProductMerchandising.tsx"), "utf8");
+    expect(merch).toMatch(
       /isEditing && \(\s*<p className="[^"]*">\s*These switches apply immediately, without Save\./,
     );
+    expect(src).toMatch(/<ProductMerchandising/);
   });
 
   it("J3 reverted: the Move left / Move right reorder controls stay (the only reorder path); on-image arrows stay", () => {
@@ -50,7 +53,8 @@ describe("products/[id]/page.tsx — batch A1 wiring", () => {
     expect(src).toMatch(/object-contain max-lg:!\[object-position:50%_50%\] lg:object-cover/);
   });
 
-  it("D1: the Details actions container left-aligns full-width below sm, stays justify-end from sm", () => {
-    expect(src).toContain("justify-end gap-2 max-sm:w-full max-sm:justify-start");
+  it("D1 (K11-22): the Details actions container no longer forces its own row below sm; Edit and the More menu share the header's row", () => {
+    expect(src).toContain("justify-end gap-2");
+    expect(src).not.toContain("max-sm:w-full max-sm:justify-start");
   });
 });
