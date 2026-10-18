@@ -282,7 +282,10 @@ describeDb("B299: unvoid re-claims invoicedQty only when the quantity is still f
     await billB(s, 96);
     await expect(unvoidA(s)()).rejects.toMatchObject({
       status: 409,
-      response: expect.objectContaining({ code: "ORDER_BILLING_CHANGED" }),
+      response: expect.objectContaining({
+        code: "ORDER_BILLING_CHANGED",
+        reason: "OTHER_INVOICE",
+      }),
     });
     // master: A flips to DRAFT and the clamp keeps invoicedQty at 96 = both invoices live for the same goods
     expect(await readBack(s)).toEqual({ status: "VOID", invoicedQty: 96 });
@@ -292,7 +295,10 @@ describeDb("B299: unvoid re-claims invoicedQty only when the quantity is still f
     const s = await seedVoidA();
     await billB(s, 60);
     await expect(unvoidA(s)()).rejects.toMatchObject({
-      response: expect.objectContaining({ code: "ORDER_BILLING_CHANGED" }),
+      response: expect.objectContaining({
+        code: "ORDER_BILLING_CHANGED",
+        reason: "OTHER_INVOICE",
+      }),
     });
     expect(await readBack(s)).toEqual({ status: "VOID", invoicedQty: 60 });
   });
@@ -306,8 +312,55 @@ describeDb("B299: unvoid re-claims invoicedQty only when the quantity is still f
   it("(c) a CANCELLED target order line is refused; A stays VOID", async () => {
     const s = await seedVoidA("CANCELLED");
     await expect(unvoidA(s)()).rejects.toMatchObject({
-      response: expect.objectContaining({ code: "ORDER_BILLING_CHANGED" }),
+      response: expect.objectContaining({
+        code: "ORDER_BILLING_CHANGED",
+        reason: "LINE_REDUCED",
+      }),
     });
     expect(await readBack(s)).toEqual({ status: "VOID", invoicedQty: 0 });
+  });
+
+  it("SA-814d: nothing else bills the line but the order line was cut below A's qty -> 409 LINE_REDUCED", async () => {
+    const s = await seedVoidA();
+    await prisma.orderItem.update({ where: { id: s.orderItemId }, data: { qty: 50 } });
+    await expect(unvoidA(s)()).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({
+        code: "ORDER_BILLING_CHANGED",
+        reason: "LINE_REDUCED",
+        message:
+          "The order line now holds less than this invoice bills. Raise the order line, or create a new invoice from the order.",
+      }),
+    });
+    expect(await readBack(s)).toEqual({ status: "VOID", invoicedQty: 0 });
+  });
+
+  it("SA-814: A's order line was hard-deleted (orderItemId SetNull, product not on the order) -> 409 LINE_REDUCED; A stays VOID", async () => {
+    const s = await seedVoidA();
+    await prisma.orderItem.delete({ where: { id: s.orderItemId } });
+    await expect(unvoidA(s)()).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({
+        code: "ORDER_BILLING_CHANGED",
+        reason: "LINE_REDUCED",
+      }),
+    });
+    expect((await prisma.invoice.findUnique({ where: { id: s.invoiceAId } }))!.status).toBe("VOID");
+  });
+
+  it("SA-814 control: a free-form line (no productId, no orderItemId) beside a matched line is NOT refused", async () => {
+    const s = await seedVoidA();
+    await prisma.invoiceItem.create({
+      data: {
+        tenantId: s.tenantId,
+        invoiceId: s.invoiceAId,
+        description: "Delivery surcharge",
+        qty: 1,
+        unitPrice: 5,
+        subtotal: 5,
+      } as any,
+    });
+    await unvoidA(s)();
+    expect(await readBack(s)).toEqual({ status: "DRAFT", invoicedQty: 96 });
   });
 });
