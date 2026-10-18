@@ -134,7 +134,7 @@ describe("SA-814 R5-2 — one recompute guard for stored tax state", () => {
     prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
     prisma.invoiceItem.update.mockImplementation(async ({ where, data }: any) =>
       Object.assign(
-        rows.find((r) => r.id === where.id),
+        rows.find((r) => r.id === where.id)!,
         data,
       ),
     );

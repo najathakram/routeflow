@@ -205,7 +205,7 @@ export function guardItemsEditTaxState(args: {
     orderInvoiceCount?: number | null;
   };
   items: ReadonlyArray<{ taxRate?: number | null }>;
-  matches: ReadonlyArray<{ row: { taxRate?: unknown } | null }>;
+  matches: ReadonlyArray<{ row: Record<string, any> | null }>;
   editLines: ReadonlyArray<{ rowId: string | null; data: Record<string, any> }>;
 }): void {
   const { locked, items, matches, editLines } = args;
