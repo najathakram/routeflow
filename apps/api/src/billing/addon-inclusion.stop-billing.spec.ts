@@ -8,7 +8,13 @@
  * Unit lane (mocked transaction); the DB-backed twin is in plan-change-addon-retirement.db.spec.ts.
  */
 import { ConflictException } from "@nestjs/common";
-import { NO_STRIPE_PUSH, stopBillingIncludedAddonsTx, type PlanChangeCtx } from "./addon-inclusion";
+import {
+  NO_LIVE_SUBSCRIPTION,
+  NO_STRIPE_PUSH,
+  noPushCtx,
+  stopBillingIncludedAddonsTx,
+  type PlanChangeCtx,
+} from "./addon-inclusion";
 import { PLAN_CHANGE_ADDONS_CHANGED } from "./plan-change-stripe";
 
 const SKUS = [
@@ -89,5 +95,17 @@ describe("stopBillingIncludedAddonsTx - a Stripe item is never orphaned", () => 
     const { tx, run } = make([row({ isComp: true })]);
     await run(NO_STRIPE_PUSH);
     expect(tx.tenantAddon.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("NO_LIVE_SUBSCRIPTION (no subscription can hold the item): a stale pointer clears", async () => {
+    const { tx, run } = make([row()]);
+    await run(NO_LIVE_SUBSCRIPTION);
+    expect(tx.tenantAddon.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("noPushCtx: a stored Stripe subscription stays strict, none means stale pointers", () => {
+    expect(noPushCtx("sub_1")).toBe(NO_STRIPE_PUSH);
+    expect(noPushCtx(null)).toBe(NO_LIVE_SUBSCRIPTION);
+    expect(noPushCtx(undefined)).toBe(NO_LIVE_SUBSCRIPTION);
   });
 });

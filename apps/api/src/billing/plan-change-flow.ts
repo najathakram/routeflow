@@ -12,7 +12,7 @@ import type { BillingEventService } from "./billing-event.service";
 import {
   addonsEnteringInclusion,
   stopBillingIncludedAddonsTx,
-  NO_STRIPE_PUSH,
+  noPushCtx,
   type AddonRowLike,
   type AddonSkuDef,
   type PlanChangeCtx,
@@ -123,9 +123,11 @@ export async function beginStripeFirstPlanChange(
           })
         : Promise.resolve([]);
   if (!a.stripeSubId || !deps.stripe) {
+    // No stored subscription: every item pointer is stale. A stored one without a Stripe client stays strict.
+    const noPush = noPushCtx(a.stripeSubId);
     return {
-      ctx: NO_STRIPE_PUSH,
-      stopBillingIncludedAddons: stopWith(NO_STRIPE_PUSH),
+      ctx: noPush,
+      stopBillingIncludedAddons: stopWith(noPush),
       settle: (write) => write,
     };
   }

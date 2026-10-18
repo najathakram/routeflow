@@ -238,12 +238,32 @@ export interface PlanChangeCtx {
   idempotencyKey?: string;
   /** The live Stripe subscription was read though nothing was sent (a price that did not change). */
   live?: boolean;
+  /**
+   * The tenant has no Stripe subscription that could hold an add-on item (none stored, or a new checkout's
+   * subscription replaces it): an item pointer on a row is STALE, so clearing it orphans nothing.
+   */
+  noLiveSubscription?: boolean;
   /** The proration behaviour actually SENT (`none` on a trialing / past_due / unpaid subscription). */
   proration?: PlanChangeProration;
 }
 
-/** No Stripe push happened (no subscription, Stripe off, a terminal subscription): nothing to prove. */
+/**
+ * Nothing was sent to Stripe and the tenant MAY hold a live subscription (Stripe off, the caller never pushed):
+ * no item is settled, so a billed row that still owns a Stripe item is refused (409), never cleared - clearing
+ * the pointer while the item keeps billing loses the only handle to it.
+ */
 export const NO_STRIPE_PUSH: PlanChangeCtx = { pushed: false, settledItemIds: new Set() };
+
+/** The tenant has no live Stripe subscription: every item pointer on its rows is stale and may be cleared. */
+export const NO_LIVE_SUBSCRIPTION: PlanChangeCtx = {
+  pushed: false,
+  settledItemIds: new Set(),
+  noLiveSubscription: true,
+};
+
+/** The context for a caller that never pushes: strict unless the tenant stores no Stripe subscription at all. */
+export const noPushCtx = (stripeSubId: string | null | undefined): PlanChangeCtx =>
+  stripeSubId ? NO_STRIPE_PUSH : NO_LIVE_SUBSCRIPTION;
 
 /**
  * Whether the owner invoices this tenant by hand (no Stripe subscription it is billed through, `externalPayment`
@@ -286,9 +306,11 @@ export interface StopBillingArgs {
  * already held - the house order is Tenant, then TenantAddon rows, then the ledger). The row stays ACTIVE
  * (access is the row; billing state - price and Stripe item - is a separate field): `priceSnapshot` goes to 0 and
  * the item pointer clears. Re-reads the rows under a row lock, so a row a concurrent disable already switched off
- * books nothing twice. A row that still owns a Stripe item the push did NOT settle (an add-on enabled after the
- * push read Stripe) throws a 409: the whole plan change - and, via the caller's compensation, the Stripe push -
- * is undone, never half-applied. Returns the rows touched.
+ * books nothing twice. A non-comp row that still owns a Stripe item the context did NOT settle (an add-on enabled
+ * after the push read Stripe, or a caller that pushed nothing at all) throws a 409: the whole plan change - and,
+ * via the caller's compensation, the Stripe push - is undone, never half-applied. The pointer is never cleared
+ * without the item having been removed in Stripe, unless the context says no live subscription can hold it
+ * ({@link NO_LIVE_SUBSCRIPTION}). Returns the rows touched.
  */
 export async function stopBillingIncludedAddonsTx(
   tx: Prisma.TransactionClient,
@@ -305,7 +327,7 @@ export async function stopBillingIncludedAddonsTx(
   );
   for (const row of due) {
     const billedItem = !row.isComp && row.stripeItemId ? row.stripeItemId : null;
-    if (billedItem && (a.ctx.pushed || a.ctx.live) && !a.ctx.settledItemIds.has(billedItem)) {
+    if (billedItem && !a.ctx.noLiveSubscription && !a.ctx.settledItemIds.has(billedItem)) {
       throw planChangeAddonsChanged();
     }
     await tx.tenantAddon.update({

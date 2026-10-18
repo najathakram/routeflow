@@ -88,7 +88,7 @@ import { writeAdminNotice } from "./manual-invoice-notice";
 import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./price-lock";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { retryOnTxConflict } from "../common/tx-retry";
-import { NO_STRIPE_PUSH, stopBillingIncludedAddonsTx } from "./addon-inclusion";
+import { NO_LIVE_SUBSCRIPTION, stopBillingIncludedAddonsTx } from "./addon-inclusion";
 import { withCheckoutPolicy } from "./checkout-session-params";
 import { webBaseUrl } from "../config/web-base-url";
 import {
@@ -2447,7 +2447,9 @@ export class BillingService {
       toPlanKey,
       toPlanName: inclusion.planNameOf(toPlanKey),
       addonSkus: inclusion.addonSkus,
-      ctx: NO_STRIPE_PUSH,
+      // The checkout's NEW subscription replaces the stored one (adoptCheckoutAddons swaps stale pointers after):
+      // a pointer on a row is on a dead subscription's item, and refusing here would fail a PAID checkout.
+      ctx: NO_LIVE_SUBSCRIPTION,
       manualPay: false,
       tenantLabel: "",
       actorId: null,

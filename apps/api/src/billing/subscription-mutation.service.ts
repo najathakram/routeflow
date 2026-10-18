@@ -72,7 +72,7 @@ import {
   billLeavingAddonsAfterCommit,
   inclusionOf,
   manualPayContext,
-  NO_STRIPE_PUSH,
+  noPushCtx,
   readActiveRows,
   readEnteringInclusion,
   repriceAddonsLeavingInclusionTx,
@@ -634,7 +634,9 @@ export class SubscriptionMutationService {
         toPlanKey: input.planKey,
         toPlanName: def.name,
         addonSkus: version.addonSkus,
-        ctx: NO_STRIPE_PUSH,
+        // subscribe() pushes nothing: a stored Stripe subscription may still hold a billed add-on item, which
+        // the helper then refuses (409) rather than orphan.
+        ctx: noPushCtx(lockedSub?.stripeSubId),
         manualPay: addonMode === "MANUAL",
         tenantLabel: tenantLabelForNotice,
         actorId,
