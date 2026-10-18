@@ -486,3 +486,84 @@ describe("computeAnchoredPlacement", () => {
     ).toEqual({ left: 200, top: 212 });
   });
 });
+
+describe("FloatingPanel sheet body clears the pinned footer", () => {
+  type RoCallback = (entries: unknown[]) => void;
+  const instances: { cb: RoCallback; observed: Element[]; disconnect: jest.Mock }[] = [];
+  let footerHeight = 0;
+  const realRo = (window as { ResizeObserver?: unknown }).ResizeObserver;
+  const realOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+
+  beforeEach(() => {
+    instances.length = 0;
+    footerHeight = 72;
+    class MockResizeObserver {
+      private rec: (typeof instances)[number];
+      constructor(cb: RoCallback) {
+        this.rec = { cb, observed: [], disconnect: jest.fn() };
+        instances.push(this.rec);
+      }
+      observe = (el: Element) => {
+        this.rec.observed.push(el);
+      };
+      unobserve = () => undefined;
+      disconnect = () => this.rec.disconnect();
+    }
+    (window as { ResizeObserver?: unknown }).ResizeObserver = MockResizeObserver;
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get() {
+        return this.hasAttribute("data-floating-panel-footer") ? footerHeight : 0;
+      },
+    });
+  });
+
+  afterEach(() => {
+    (window as { ResizeObserver?: unknown }).ResizeObserver = realRo;
+    if (realOffsetHeight)
+      Object.defineProperty(HTMLElement.prototype, "offsetHeight", realOffsetHeight);
+    else delete (HTMLElement.prototype as { offsetHeight?: unknown }).offsetHeight;
+  });
+
+  const bodyVar = () =>
+    document
+      .querySelector<HTMLElement>("[data-floating-panel-body]")!
+      .style.getPropertyValue("--fp-footer-h");
+  const footerRo = () =>
+    instances.find((i) => i.observed.some((el) => el.hasAttribute("data-floating-panel-footer")));
+
+  it("sets --fp-footer-h to the footer's height after mount and follows the observer", () => {
+    installMatchMedia({ wide: false });
+    render(<Harness variant="sheet" />);
+    expect(bodyVar()).toBe("72px");
+
+    footerHeight = 130; // safe-area inset, discard prompt or an error row grew the footer
+    act(() => footerRo()!.cb([]));
+    expect(bodyVar()).toBe("130px");
+  });
+
+  it("the sheet body's bottom padding references the variable", () => {
+    installMatchMedia({ wide: false });
+    render(<Harness variant="sheet" />);
+    const body = document.querySelector<HTMLElement>("[data-floating-panel-body]")!;
+    expect(body.className).toContain("var(--fp-footer-h");
+  });
+
+  it("the anchored variant sets no variable and keeps the plain body padding", () => {
+    installMatchMedia({});
+    render(<Harness variant="anchored" />);
+    const body = document.querySelector<HTMLElement>("[data-floating-panel-body]")!;
+    expect(bodyVar()).toBe("");
+    expect(body.className).not.toContain("--fp-footer-h");
+    expect(footerRo()).toBeUndefined();
+  });
+
+  it("unmount disconnects the observer", () => {
+    installMatchMedia({ wide: false });
+    const { unmount } = render(<Harness variant="sheet" />);
+    const ro = footerRo()!;
+    expect(ro.disconnect).not.toHaveBeenCalled();
+    unmount();
+    expect(ro.disconnect).toHaveBeenCalled();
+  });
+});
