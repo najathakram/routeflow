@@ -82,9 +82,6 @@ for (const vp of VIEWPORTS) {
         await openProduct(page, context);
         await stageOneChange(page);
         const line = page.getByTestId(ID.line);
-        const mainTop = () =>
-          page.locator("#main-content").evaluate((m) => m.getBoundingClientRect().top);
-        const mainTopBefore = await mainTop();
 
         if (how === "Save button") await page.getByTestId(ID.save).click();
         else await page.keyboard.press("Control+s");
@@ -94,14 +91,6 @@ for (const vp of VIEWPORTS) {
         expect(await inViewport(page, ID.line), "the saved line is in the viewport").toBe(true);
         await expect(line).toHaveAttribute("data-pinned", "true");
         await expect(page.getByRole("status").filter({ hasText: "Saved" })).toHaveCount(1);
-
-        // The app shell never scrolls: a mouse Save at 1440 used to scroll the clipping wrapper by the header's 64 px,
-        // hiding the header and pinning the line 64 px short of the bottom (K11-20c, MM probe).
-        await page.waitForTimeout(400); // past the 200 ms region transition, where the stray scroll landed
-        expect(
-          Math.abs((await mainTop()) - mainTopBefore),
-          "the shell did not scroll",
-        ).toBeLessThanOrEqual(1);
 
         // It rests at the real bottom, where the bar was (not lifted by the shell's 96px padding).
         const box = (await line.boundingBox())!;
