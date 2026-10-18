@@ -2032,11 +2032,11 @@ export default function ProductDetailPage() {
                       {/* Operator-only controls for the active image */}
                       {isStaff && !selectMode && (
                         <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-border pt-2">
-                          {/* Move left / right */}
+                          {/* Move earlier / later */}
                           <button
                             onClick={() => handleMoveImage(safeIdx, safeIdx - 1)}
                             disabled={safeIdx === 0 || updateProduct.isPending}
-                            title="Move left"
+                            title="Move earlier"
                             className={cn(
                               TAP_TARGET,
                               "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
@@ -2047,7 +2047,7 @@ export default function ProductDetailPage() {
                           <button
                             onClick={() => handleMoveImage(safeIdx, safeIdx + 1)}
                             disabled={safeIdx === images.length - 1 || updateProduct.isPending}
-                            title="Move right"
+                            title="Move later"
                             className={cn(
                               TAP_TARGET,
                               "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
