@@ -1,4 +1,5 @@
 import * as crypto from "crypto";
+import { webBaseUrl } from "./web-base-url";
 
 /**
  * F5-001: resolve the storage-URL HMAC signing secret WITHOUT reusing JWT_SECRET
@@ -150,7 +151,7 @@ export const configuration = (): AppConfig => ({
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? "30d",
   },
   urls: {
-    web: process.env.WEB_URL ?? "http://localhost:3001",
+    web: webBaseUrl(),
     mobileWeb: process.env.MOBILE_WEB_URL ?? "https://routeflowmobile-production.up.railway.app",
   },
   redis: {

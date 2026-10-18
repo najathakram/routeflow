@@ -751,6 +751,12 @@ export default function SuppliersPage() {
     }
   };
 
+  // `limit: 0` (fetch-all) is deliberate and stays: this directory is suppliers, not the product
+  // catalog, so the set is small. It also feeds three whole-set readouts that no per-page read can
+  // reproduce: the header "outstanding" total, the "Total outstanding across all suppliers"
+  // footer, and Select all. There is no server aggregate for payables (GET /suppliers returns rows
+  // only, and the API is out of scope here), so paging would silently understate the total.
+  // Revisit together with a payables-total endpoint (board note: suppliers fetch-all).
   const {
     data: result,
     isLoading,

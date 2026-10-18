@@ -42,7 +42,9 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
   const notifications = { sendToCustomer: jest.fn(), sendToUser: jest.fn() };
   const audit = { log: jest.fn() };
   const authGuard = { checkAuthorized: jest.fn() };
+  const entitlements = { hasFlagStrict: jest.fn() };
   const ordersService = {
+    entitlements,
     mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
     loadActivePromotions: jest.fn(),
     getCustomerPriceHistory: jest.fn(),
@@ -68,6 +70,10 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
   const block = {
     outcome: "BLOCK",
     reasons: [{ productId: "p-banned", productName: "Banned Cola", ruleId: "rule-1" }],
+  };
+  /** The customer has a typed unit price, so the units_prices_v2 flag is consulted (and can fail). */
+  const typedPrice = (rows: object[]) => {
+    (prisma.forTenant() as any).customerUnitPrice = { findMany: jest.fn().mockResolvedValue(rows) };
   };
   /** The unattended 06:00 run, through the real cron entry (its caller sends the ban notice). */
   const run = async (t: object) => {
@@ -118,6 +124,24 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
   });
 
   describe("manual run", () => {
+    it.each([
+      ["PICKUP", "PICKUP"],
+      ["SHIP", "DELIVERY"],
+      ["ROUTE", "DELIVERY"],
+    ])(
+      "L8: a standing order whose resolved path is %s is judged as %s (pickup: the store's state)",
+      async (path, kind) => {
+        prisma.customer.findFirst.mockResolvedValue({ fulfillPath: path });
+        restrictions.assertLinesSellable.mockRejectedValue(
+          new ConflictException({ code: "SELLING_RESTRICTED", blockedLines: [] }),
+        );
+        await expect(service.generateOrder("t1")).rejects.toBeDefined();
+        expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+          expect.objectContaining({ fulfilmentKind: kind }),
+        );
+      },
+    );
+
     it("is refused with the 409 as STAFF (BUYER_PORTAL for a buyer), nothing written", async () => {
       restrictions.assertLinesSellable.mockRejectedValue(
         new ConflictException({ code: "SELLING_RESTRICTED", message: "banned", blockedLines: [] }),
@@ -131,6 +155,7 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
         customerId: "c1",
         lines: [{ productId: "p-banned" }, { productId: "p-ok" }],
         channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
       });
       expect(restrictions.assertLinesSellable).toHaveBeenNthCalledWith(
         2,
@@ -161,6 +186,61 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
       expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
       expect(notifications.sendToCustomer.mock.calls[0][2]).toContain("Banned Cola");
       expect(notifications.sendToUser).toHaveBeenCalledTimes(1);
+    });
+
+    // SA-812a G-1: the cron re-attempts a template whose customer prices could not be loaded. The retry re-enters
+    // createOrderFromTemplate, whose pre-pricing steps suspend + audit the banned lines and notify. It must not repeat them.
+    it("G-1: a ban + a customer-prices 503, then the retry: ONE suspension audit row and ONE buyer notice (ordered)", async () => {
+      restrictions.checkLinesSellable.mockResolvedValue(block);
+      jest.spyOn(service as any, "pause").mockResolvedValue(undefined);
+      typedPrice([{ productId: "p-ok", unitRef: "pack", price: "3" }]);
+      entitlements.hasFlagStrict
+        .mockRejectedValueOnce(new Error("entitlements down"))
+        .mockResolvedValue(false);
+      await run(template());
+      expect(entitlements.hasFlagStrict).toHaveBeenCalledTimes(2); // the attempt and exactly one retry
+      expect(prisma.order.create).toHaveBeenCalledTimes(1);
+      expect(prisma.orderTemplateItem.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+      expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
+      expect(notifications.sendToCustomer.mock.calls[0][2]).toContain("went ahead");
+      expect(notifications.sendToCustomer.mock.calls[0][2]).not.toContain("was not sent");
+    });
+
+    it("G-1: a ban + a customer-prices 503 twice: still ONE audit row and ONE buyer notice (held), operators told", async () => {
+      restrictions.checkLinesSellable.mockResolvedValue(block);
+      jest.spyOn(service as any, "pause").mockResolvedValue(undefined);
+      typedPrice([{ productId: "p-ok", unitRef: "pack", price: "3" }]);
+      entitlements.hasFlagStrict.mockRejectedValue(new Error("entitlements down"));
+      await run(template());
+      expect(prisma.order.create).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+      expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
+      expect(notifications.sendToCustomer.mock.calls[0][2]).toContain("was not sent this time");
+      // ban notice (1) + the "held, use Generate now" notice (1), to the one operator
+      const bodies = notifications.sendToUser.mock.calls.map((c) => c[1].body as string);
+      expect(bodies.some((b) => b.includes("Generate now"))).toBe(true);
+    });
+
+    it("G-1: a regulated skip + a customer-prices 503, then the retry: the skip is announced ONCE", async () => {
+      jest.spyOn(service as any, "pause").mockResolvedValue(undefined);
+      authGuard.checkAuthorized.mockResolvedValue({
+        blocked: [{ trackedCategoryId: "cat-r", categoryName: "Tobacco" }],
+      });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p-banned", pricePerUnit: 10, trackedCategoryId: "cat-r" },
+        { id: "p-ok", pricePerUnit: 5, trackedCategoryId: null },
+      ]);
+      typedPrice([{ productId: "p-ok", unitRef: "pack", price: "3" }]);
+      entitlements.hasFlagStrict
+        .mockRejectedValueOnce(new Error("entitlements down"))
+        .mockResolvedValue(false);
+      await run(template());
+      expect(prisma.order.create).toHaveBeenCalledTimes(1);
+      const regulated = notifications.sendToCustomer.mock.calls.filter((c) =>
+        /Regulated items skipped/.test(c[1]),
+      );
+      expect(regulated).toHaveLength(1);
     });
 
     it("an all-banned template orders nothing, says 'not sent' (never 'went ahead'), and deactivates it", async () => {

@@ -22,6 +22,23 @@ describe("handleMutationError (#1965)", () => {
     });
   });
 
+  it("542c: a 409 PAYMENT_TERMS_CHANGED from the pay click toasts the fixed refreshed-amount sentence", () => {
+    const { toast, router } = setup();
+    handleMutationError(
+      {
+        message: "Request failed",
+        response: { status: 409, data: { code: "PAYMENT_TERMS_CHANGED" } },
+      },
+      { meta: undefined },
+      toast,
+      router,
+    );
+    expect(toast).toHaveBeenCalledWith({
+      title: "The amount changed. We've refreshed it, please check and try again.",
+      variant: "error",
+    });
+  });
+
   it("shows NOTHING when the mutation opts out with meta.localErrorToast", () => {
     const { toast, router } = setup();
     handleMutationError(

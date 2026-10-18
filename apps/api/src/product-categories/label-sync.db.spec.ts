@@ -105,14 +105,16 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
 
     const ta = await prisma.tenant.create({ data: { slug: slugA, name: `Label sync ${slugA}` } });
     const tb = await prisma.tenant.create({ data: { slug: slugB, name: `Label sync ${slugB}` } });
-    const mk = (tenantId: string, name: string, archivedAt: Date | null = null) =>
-      prisma.productCategory.create({ data: { tenantId, name, archivedAt } });
+    const mk = (tenantId: string, name: string, archivedAt: Date | null = null, createdAt?: Date) =>
+      prisma.productCategory.create({ data: { tenantId, name, archivedAt, createdAt } });
     A = {
       id: ta.id,
       snacks: (await mk(ta.id, "Snacks")).id,
       archived: (await mk(ta.id, "Frozen", new Date())).id,
-      dupUpper: (await mk(ta.id, "Dup")).id,
-      dupLower: (await mk(ta.id, "dup")).id,
+      // Pinned, not left to the clock: two creates back to back can tie on createdAt, and the
+      // writer's tie-break (id asc) is a random uuid. "Dup" is the oldest by construction.
+      dupUpper: (await mk(ta.id, "Dup", null, new Date("2026-01-01T00:00:00Z"))).id,
+      dupLower: (await mk(ta.id, "dup", null, new Date("2026-01-01T00:00:01Z"))).id,
     };
     B = { id: tb.id };
   }, 120_000);
@@ -374,20 +376,35 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
       );
       expect(await membershipsOf(p.id)).toHaveLength(0);
 
-      await inA(() => products.update(p.id, { category: "Snacks" } as any, { actorId: actor.id }));
+      await inA(() =>
+        products.update(p.id, { category: "Snacks" } as any, {
+          packPrecondition: "internal",
+          actorId: actor.id,
+        }),
+      );
       expect((await membershipsOf(p.id)).map((r) => r.categoryId)).toEqual([A.snacks]);
 
       // (c) text changes away from the label: the membership stays.
-      await inA(() => products.update(p.id, { category: "Gadgets" } as any));
+      await inA(() =>
+        products.update(p.id, { category: "Gadgets" } as any, { packPrecondition: "internal" }),
+      );
       expect((await membershipsOf(p.id)).map((r) => r.categoryId)).toEqual([A.snacks]);
 
       // An operator removes the membership; saving the SAME text again must not bring it back.
       await prisma.productCategoryLabel.deleteMany({ where: { productId: p.id } });
-      await inA(() => products.update(p.id, { category: "Gadgets", description: "again" } as any));
+      await inA(() =>
+        products.update(p.id, { category: "Gadgets", description: "again" } as any, {
+          packPrecondition: "internal",
+        }),
+      );
       expect(await membershipsOf(p.id)).toHaveLength(0);
 
       // A price-only edit never touches labels.
-      await inA(() => products.update(p.id, { description: "price only" } as any));
+      await inA(() =>
+        products.update(p.id, { description: "price only" } as any, {
+          packPrecondition: "internal",
+        }),
+      );
       expect(await membershipsOf(p.id)).toHaveLength(0);
     });
 
@@ -515,7 +532,12 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
       );
       expect((await membershipsOf(p.id)).map((r) => r.categoryId)).toEqual([A.snacks]);
       await removeOnPurpose(p.id, A.snacks);
-      await inA(() => products.update(p.id, { category: " snacks" } as any, { actorId: actor.id }));
+      await inA(() =>
+        products.update(p.id, { category: " snacks" } as any, {
+          packPrecondition: "internal",
+          actorId: actor.id,
+        }),
+      );
       expect(await membershipsOf(p.id)).toHaveLength(0);
     });
 

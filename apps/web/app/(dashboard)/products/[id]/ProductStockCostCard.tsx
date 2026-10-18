@@ -12,11 +12,13 @@ export function ProductStockCostCard({
   stockStatus,
   currentStock,
   onSetCost,
+  pricesV2,
 }: {
   product: any;
   stockStatus: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
   currentStock: number;
   onSetCost: () => void;
+  pricesV2?: boolean;
 }) {
   // J9: on a generic with variants, On hand IS its own not-yet-split stock (no second row).
   const isSplitParent = !product.parentProductId && (product.variants?.length ?? 0) > 0;
@@ -35,34 +37,40 @@ export function ProductStockCostCard({
         </button>
       </div>
       <div className="px-4">
-        <div className="flex items-center justify-between gap-3 border-b border-surface-border py-3 text-sm">
-          <span
-            className="min-w-0 text-navy/70"
-            title={
-              isSplitParent ? "Stock on this generic not yet attributed to a variant" : undefined
-            }
-          >
-            On hand
-            {isSplitParent && (
-              <span className="block text-xs text-navy/50">Not yet split to variants</span>
-            )}
-          </span>
-          <span className="shrink-0 whitespace-nowrap text-right font-mono font-medium tabular-nums text-navy">
-            {unitsLabel(currentStock, product.unitsPerBox, product.unit)}
-          </span>
-        </div>
-        <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
-          <span className="text-navy/70">Waitlist</span>
-          <span
-            className={
-              (product.stockAlertCount ?? 0) > 0
-                ? "font-mono font-medium tabular-nums text-amber-700"
-                : "font-mono font-medium tabular-nums text-navy/50"
-            }
-          >
-            {product.stockAlertCount ?? 0} waiting for restock
-          </span>
-        </div>
+        {pricesV2 !== true && (
+          <>
+            <div className="flex items-center justify-between gap-3 border-b border-surface-border py-3 text-sm">
+              <span
+                className="min-w-0 text-navy/70"
+                title={
+                  isSplitParent
+                    ? "Stock on this generic not yet attributed to a variant"
+                    : undefined
+                }
+              >
+                On hand
+                {isSplitParent && (
+                  <span className="block text-xs text-navy/50">Not yet split to variants</span>
+                )}
+              </span>
+              <span className="shrink-0 whitespace-nowrap text-right font-mono font-medium tabular-nums text-navy">
+                {unitsLabel(currentStock, product.unitsPerBox, product.unit)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
+              <span className="text-navy/70">Waitlist</span>
+              <span
+                className={
+                  (product.stockAlertCount ?? 0) > 0
+                    ? "font-mono font-medium tabular-nums text-amber-700"
+                    : "font-mono font-medium tabular-nums text-navy/50"
+                }
+              >
+                {product.stockAlertCount ?? 0} waiting for restock
+              </span>
+            </div>
+          </>
+        )}
         <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
           <span className="text-navy/70">Avg cost</span>
           {product.averageCost != null ? (

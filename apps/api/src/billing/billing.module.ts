@@ -10,6 +10,8 @@ import { BillingWebhookController } from "./billing-webhook.controller";
 import { PlanCatalogController } from "./plan-catalog.controller";
 import { PlanAdminController } from "./plan-admin.controller";
 import { SettingsBillingController } from "./settings-billing.controller";
+import { PaymentDueController } from "./payment-due.controller";
+import { PaymentDueService } from "./payment-due.service";
 import { ProrationService } from "./proration.service";
 import { TenantConfigSnapshotService } from "./tenant-config-snapshot.service";
 import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
@@ -46,6 +48,7 @@ import { AutoLockAdminService } from "./auto-lock-admin.service";
     PlanCatalogController,
     PlanAdminController,
     SettingsBillingController,
+    PaymentDueController,
   ],
   providers: [
     StripeService,
@@ -67,6 +70,8 @@ import { AutoLockAdminService } from "./auto-lock-admin.service";
     CatchupClaimService,
     // SA-733 D7: plan + open the October catch-up checkout (platform-admin CatchupAdminController).
     CatchupCheckoutService,
+    // The tenant's own "payment due" read + self-serve pay over the catch-up planner (PaymentDueController).
+    PaymentDueService,
     // SA-733r7 PR-B3: dunning (clock stamp, hourly pause sweep, invoice.paid resume, pause_collection reconciler).
     DunningService,
     // SA-775 (row 381): the rollout pause on AUTOMATIC locks - the switch, and the super-admin preview over it.

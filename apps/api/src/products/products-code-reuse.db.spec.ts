@@ -119,7 +119,9 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
   it("deactivate releases sku/barcode/unitSku and the level rows; a NEW product then reuses them", async () => {
     const tenantId = await seedTenant("reuse");
     const a = await mk(tenantId, "Alpha", { sku: "SKU-A", barcode: "100100", unitSku: "UNIT-A" });
-    await inTenant(tenantId, () => service.update(a.id, { isActive: false } as any));
+    await inTenant(tenantId, () =>
+      service.update(a.id, { isActive: false } as any, { packPrecondition: "internal" }),
+    );
     const released = await fresh(a.id);
     expect(released).toMatchObject({
       sku: null,
@@ -204,13 +206,21 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
   it("RACE: two concurrent REACTIVATIONS of products that both retired the same code -> exactly one wins, the loser keeps its retired value (no orphan), 409 names the winner", async () => {
     const tenantId = await seedTenant("race-reactivate");
     const a = await mk(tenantId, "Re A", { sku: "RR-1" });
-    await inTenant(tenantId, () => service.update(a.id, { isActive: false } as any));
+    await inTenant(tenantId, () =>
+      service.update(a.id, { isActive: false } as any, { packPrecondition: "internal" }),
+    );
     const b = await mk(tenantId, "Re B", { sku: "RR-1" });
-    await inTenant(tenantId, () => service.update(b.id, { isActive: false } as any));
+    await inTenant(tenantId, () =>
+      service.update(b.id, { isActive: false } as any, { packPrecondition: "internal" }),
+    );
 
     const results = await Promise.allSettled([
-      inTenant(tenantId, () => service.update(a.id, { isActive: true } as any)),
-      inTenant(tenantId, () => service.update(b.id, { isActive: true } as any)),
+      inTenant(tenantId, () =>
+        service.update(a.id, { isActive: true } as any, { packPrecondition: "internal" }),
+      ),
+      inTenant(tenantId, () =>
+        service.update(b.id, { isActive: true } as any, { packPrecondition: "internal" }),
+      ),
     ]);
     const ok = results.filter((r) => r.status === "fulfilled");
     const bad = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
@@ -231,12 +241,16 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
   it("RACE: an assign (update sku) and a create racing for one released code -> exactly one wins, no orphaned retired* value", async () => {
     const tenantId = await seedTenant("race-assign");
     const old = await mk(tenantId, "Gone", { sku: "AS-1" });
-    await inTenant(tenantId, () => service.update(old.id, { isActive: false } as any));
+    await inTenant(tenantId, () =>
+      service.update(old.id, { isActive: false } as any, { packPrecondition: "internal" }),
+    );
     const other = await mk(tenantId, "Other", { sku: "AS-2" });
 
     const results = await Promise.allSettled([
       mk(tenantId, "Newly Created", { sku: "AS-1" }),
-      inTenant(tenantId, () => service.update(other.id, { sku: "AS-1" } as any)),
+      inTenant(tenantId, () =>
+        service.update(other.id, { sku: "AS-1" } as any, { packPrecondition: "internal" }),
+      ),
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(await prisma.product.count({ where: { tenantId, sku: "AS-1" } })).toBe(1);
@@ -247,8 +261,12 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
   it("reactivate restores every retired code that is still free, and the level rows come back", async () => {
     const tenantId = await seedTenant("restore");
     const a = await mk(tenantId, "Restorable", { sku: "RS-1", barcode: "300300", unitsPerBox: 12 });
-    await inTenant(tenantId, () => service.update(a.id, { isActive: false } as any));
-    await inTenant(tenantId, () => service.update(a.id, { isActive: true } as any));
+    await inTenant(tenantId, () =>
+      service.update(a.id, { isActive: false } as any, { packPrecondition: "internal" }),
+    );
+    await inTenant(tenantId, () =>
+      service.update(a.id, { isActive: true } as any, { packPrecondition: "internal" }),
+    );
     expect(await fresh(a.id)).toMatchObject({
       sku: "RS-1",
       barcode: "300300",
@@ -263,10 +281,12 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
   it("reactivate against an ACTIVE holder of the code is a 409 naming it, and nothing is restored", async () => {
     const tenantId = await seedTenant("reactivate-409");
     const a = await mk(tenantId, "Was Here", { sku: "R4-1" });
-    await inTenant(tenantId, () => service.update(a.id, { isActive: false } as any));
+    await inTenant(tenantId, () =>
+      service.update(a.id, { isActive: false } as any, { packPrecondition: "internal" }),
+    );
     const holder = await mk(tenantId, "Took It", { sku: "R4-1" });
     const err = await inTenant(tenantId, () =>
-      service.update(a.id, { isActive: true } as any),
+      service.update(a.id, { isActive: true } as any, { packPrecondition: "internal" }),
     ).catch((e) => e);
     expect(err.getResponse()).toMatchObject({ code: "CODE_TAKEN", productId: holder.id });
     expect(await fresh(a.id)).toMatchObject({ isActive: false, sku: null, retiredSku: "R4-1" });
@@ -275,11 +295,13 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
   it("NAME: an inactive product does not block a name; an ACTIVE same-name holder blocks reactivation (409 NAME_TAKEN); concurrent creates of one name -> one wins", async () => {
     const tenantId = await seedTenant("names");
     const a = await mk(tenantId, "Samename");
-    await inTenant(tenantId, () => service.update(a.id, { isActive: false } as any));
+    await inTenant(tenantId, () =>
+      service.update(a.id, { isActive: false } as any, { packPrecondition: "internal" }),
+    );
     const b = await mk(tenantId, "samename");
     expect(b.id).toBeDefined();
     const err = await inTenant(tenantId, () =>
-      service.update(a.id, { isActive: true } as any),
+      service.update(a.id, { isActive: true } as any, { packPrecondition: "internal" }),
     ).catch((e) => e);
     expect(err.getResponse()).toMatchObject({ code: "NAME_TAKEN", productId: b.id });
 
@@ -295,13 +317,17 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
   it("DOOR: PATCH {isActive:true, deactivateHolderIds:[holder]} deactivates exactly the blocking holder and reactivates, in one tx, with an audit row", async () => {
     const tenantId = await seedTenant("door");
     const a = await mk(tenantId, "Door A", { sku: "DR-1" });
-    await inTenant(tenantId, () => service.update(a.id, { isActive: false } as any));
+    await inTenant(tenantId, () =>
+      service.update(a.id, { isActive: false } as any, { packPrecondition: "internal" }),
+    );
     const holder = await mk(tenantId, "Door Holder", { sku: "DR-1" });
     const bystander = await mk(tenantId, "Bystander", { sku: "DR-9" });
 
     // The wrong set is refused and nothing moves.
     const bad = await inTenant(tenantId, () =>
-      service.update(a.id, { isActive: true, deactivateHolderIds: [bystander.id] } as any),
+      service.update(a.id, { isActive: true, deactivateHolderIds: [bystander.id] } as any, {
+        packPrecondition: "internal",
+      }),
     ).catch((e) => e);
     expect(bad.getResponse()).toMatchObject({
       code: "CODE_TAKEN",
@@ -313,7 +339,9 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
 
     // The exact set succeeds: holder off (codes released), A on with its sku back.
     await inTenant(tenantId, () =>
-      service.update(a.id, { isActive: true, deactivateHolderIds: [holder.id] } as any),
+      service.update(a.id, { isActive: true, deactivateHolderIds: [holder.id] } as any, {
+        packPrecondition: "internal",
+      }),
     );
     expect(await fresh(holder.id)).toMatchObject({
       isActive: false,
@@ -331,17 +359,25 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
   it("DOOR RACE: two products that both retired one code are reactivated at once, each naming the other as holder -> exactly one ends active, none lost", async () => {
     const tenantId = await seedTenant("door-race");
     const a = await mk(tenantId, "Race A", { sku: "DRR-1" });
-    await inTenant(tenantId, () => service.update(a.id, { isActive: false } as any));
+    await inTenant(tenantId, () =>
+      service.update(a.id, { isActive: false } as any, { packPrecondition: "internal" }),
+    );
     const b = await mk(tenantId, "Race B", { sku: "DRR-1" });
-    await inTenant(tenantId, () => service.update(b.id, { isActive: false } as any));
+    await inTenant(tenantId, () =>
+      service.update(b.id, { isActive: false } as any, { packPrecondition: "internal" }),
+    );
     const c = await mk(tenantId, "Race C", { sku: "DRR-1" }); // the active holder both contend with
 
     const results = await Promise.allSettled([
       inTenant(tenantId, () =>
-        service.update(a.id, { isActive: true, deactivateHolderIds: [c.id] } as any),
+        service.update(a.id, { isActive: true, deactivateHolderIds: [c.id] } as any, {
+          packPrecondition: "internal",
+        }),
       ),
       inTenant(tenantId, () =>
-        service.update(b.id, { isActive: true, deactivateHolderIds: [c.id] } as any),
+        service.update(b.id, { isActive: true, deactivateHolderIds: [c.id] } as any, {
+          packPrecondition: "internal",
+        }),
       ),
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
@@ -390,16 +426,25 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
       // eslint-disable-next-line no-await-in-loop
       const p1 = await mk(tenantId, `LA P1 ${i}`, { sku: x });
       // eslint-disable-next-line no-await-in-loop
-      await inTenant(tenantId, () => service.update(p1.id, { isActive: false } as any));
+      await inTenant(tenantId, () =>
+        service.update(p1.id, { isActive: false } as any, { packPrecondition: "internal" }),
+      );
       // eslint-disable-next-line no-await-in-loop
       const p2 = await mk(tenantId, `LA P2 ${i}`, { sku: x, barcode: y });
       // eslint-disable-next-line no-await-in-loop
       const results = await barrier(
         () =>
           inTenant(tenantId, () =>
-            service.update(p1.id, { isActive: true, deactivateHolderIds: [p2.id] } as any),
+            service.update(p1.id, { isActive: true, deactivateHolderIds: [p2.id] } as any, {
+              packPrecondition: "internal",
+            }),
           ),
-        () => inTenant(tenantId, () => service.update(p2.id, { pricePerUnit: "2.00" } as any)),
+        () =>
+          inTenant(tenantId, () =>
+            service.update(p2.id, { pricePerUnit: "2.00" } as any, {
+              packPrecondition: "internal",
+            }),
+          ),
       );
       noServerErrors(results);
     }
@@ -413,14 +458,18 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
       // eslint-disable-next-line no-await-in-loop
       const p1 = await mk(tenantId, `LB P1 ${i}`, { sku: x });
       // eslint-disable-next-line no-await-in-loop
-      await inTenant(tenantId, () => service.update(p1.id, { isActive: false } as any));
+      await inTenant(tenantId, () =>
+        service.update(p1.id, { isActive: false } as any, { packPrecondition: "internal" }),
+      );
       // eslint-disable-next-line no-await-in-loop
       const p2 = await mk(tenantId, `LB P2 ${i}`, { sku: x, barcode: y });
       // eslint-disable-next-line no-await-in-loop
       const results = await barrier(
         () =>
           inTenant(tenantId, () =>
-            service.update(p1.id, { isActive: true, deactivateHolderIds: [p2.id] } as any),
+            service.update(p1.id, { isActive: true, deactivateHolderIds: [p2.id] } as any, {
+              packPrecondition: "internal",
+            }),
           ),
         () => inTenant(tenantId, () => service.remove(p2.id)),
       );
@@ -436,22 +485,30 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
       // eslint-disable-next-line no-await-in-loop
       const p1 = await mk(tenantId, `LC P1 ${i}`, { sku: x });
       // eslint-disable-next-line no-await-in-loop
-      await inTenant(tenantId, () => service.update(p1.id, { isActive: false } as any));
+      await inTenant(tenantId, () =>
+        service.update(p1.id, { isActive: false } as any, { packPrecondition: "internal" }),
+      );
       // eslint-disable-next-line no-await-in-loop
       const p4 = await mk(tenantId, `LC P4 ${i}`, { barcode: y });
       // eslint-disable-next-line no-await-in-loop
-      await inTenant(tenantId, () => service.update(p4.id, { isActive: false } as any));
+      await inTenant(tenantId, () =>
+        service.update(p4.id, { isActive: false } as any, { packPrecondition: "internal" }),
+      );
       // eslint-disable-next-line no-await-in-loop
       const p2 = await mk(tenantId, `LC P2 ${i}`, { sku: x, barcode: y });
       // eslint-disable-next-line no-await-in-loop
       const results = await barrier(
         () =>
           inTenant(tenantId, () =>
-            service.update(p1.id, { isActive: true, deactivateHolderIds: [p2.id] } as any),
+            service.update(p1.id, { isActive: true, deactivateHolderIds: [p2.id] } as any, {
+              packPrecondition: "internal",
+            }),
           ),
         () =>
           inTenant(tenantId, () =>
-            service.update(p4.id, { isActive: true, deactivateHolderIds: [p2.id] } as any),
+            service.update(p4.id, { isActive: true, deactivateHolderIds: [p2.id] } as any, {
+              packPrecondition: "internal",
+            }),
           ),
       );
       noServerErrors(results);
@@ -468,7 +525,10 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
       const p3 = await mk(tenantId, `LD P3 ${i}`, { barcode: z });
       // eslint-disable-next-line no-await-in-loop
       const results = await barrier(
-        () => inTenant(tenantId, () => service.update(p3.id, { sku: a } as any)),
+        () =>
+          inTenant(tenantId, () =>
+            service.update(p3.id, { sku: a } as any, { packPrecondition: "internal" }),
+          ),
         () => mk(tenantId, `LD New ${i}`, { sku: a, barcode: z }),
       );
       noServerErrors(results);

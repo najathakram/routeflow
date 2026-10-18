@@ -625,6 +625,9 @@ describe("RegulatedLedgerService", () => {
       unitBasisQty: 3,
       netSales: 30,
       categoryTax: 6,
+      // #2052 (SA-609): a snapshot-less ratio-1 row is judged on its WRITE time; these fixtures
+      // model rows written after B661, which would have expanded a boxed line.
+      createdAt: new Date("2026-10-01T00:00:00Z"),
       ...over,
     });
 
@@ -1715,6 +1718,7 @@ describe("RegulatedLedgerService", () => {
     it("(e) a non-boxed product (no line snapshot, live pack 1) with qty 7 == unitBasisQty 7 → NOT parked", async () => {
       const sale = {
         id: "s-e",
+        createdAt: new Date("2026-10-01T00:00:00Z"), // #2052: written after B661
         entryType: "SALE",
         tenantId: "t1",
         trackedCategoryId: "cat-A",
@@ -1835,6 +1839,7 @@ describe("RegulatedLedgerService", () => {
     it("productPackNow: an explicit null (product found, unitsPerBox null) is NOT boxed → reverses normally, never parks", async () => {
       const sale = {
         id: "s-null",
+        createdAt: new Date("2026-10-01T00:00:00Z"), // #2052: written after B661
         entryType: "SALE",
         tenantId: "t1",
         trackedCategoryId: "cat-A",
@@ -3029,6 +3034,7 @@ describe("RegulatedLedgerService", () => {
           entryType: corrected.entryType,
           qty: corrected.qty,
           unitBasisQty: corrected.unitBasisQty,
+          writtenAt: corrected.createdAt ?? null,
         },
         { boxes: null, pieces: null, unitLabel: null, unitsPerBox: 12 },
         corrections().map((c) => ({ qty: c.qty, unitBasisQty: c.unitBasisQty })),

@@ -16,6 +16,11 @@ export interface StaffPricedLine {
   priceType: PriceType;
   unitPrice: number;
   originalPrice: number | null;
+  /**
+   * SA-811a R2: the customer's own price ABOVE the unit's list, echoed back by staff. It is stored as the sticky upsell's twin
+   * (MANUAL, original = list, upsell-redacted) but is NOT a staff override: no attribution, no reason.
+   */
+  layerManual?: true;
 }
 
 function decideOrRefuse(input: {
@@ -25,6 +30,8 @@ function decideOrRefuse(input: {
   isSpecialTier: boolean;
   hasReason: boolean;
   productName?: string | null;
+  /** S19, flag.units_prices_v2 only: the baseline is a customer-layer price above the unit's list (SA-811a R2). */
+  aboveList?: boolean;
 }): StaffPricedLine {
   const d = decideStaffOverride(input);
   if ("refused" in d) {
@@ -32,12 +39,15 @@ function decideOrRefuse(input: {
       `A reason is required to change ${input.productName ?? "this line"} — it's this customer's special price`,
     );
   }
-  return d;
+  // the ONE shared step: an echoed above-list customer price is SPECIAL by the rule, MANUAL by R2
+  return input.aboveList && d.priceType === "SPECIAL"
+    ? { ...d, priceType: PriceType.MANUAL, layerManual: true }
+    : d;
 }
 
 /** True for a genuine override (DISCOUNTED / MANUAL) — drives override attribution. */
-export const isOverride = (d: Pick<StaffPricedLine, "priceType">) =>
-  d.priceType === "DISCOUNTED" || d.priceType === "MANUAL";
+export const isOverride = (d: Pick<StaffPricedLine, "priceType" | "layerManual">) =>
+  !d.layerManual && (d.priceType === "DISCOUNTED" || d.priceType === "MANUAL");
 
 /**
  * (B) existing-line edit. `null` = the line is untouched (no price sent, or within ½¢ of stored).
@@ -55,6 +65,7 @@ export function decideEditedLinePrice(input: {
   hasReason: boolean;
   isUnlisted: boolean;
   productName?: string | null;
+  aboveList?: boolean;
 }): StaffPricedLine | null {
   const { overridePrice, storedPrice } = input;
   if (overridePrice === null || withinStaffOverrideTolerance(overridePrice, storedPrice))
@@ -82,6 +93,7 @@ export function decideAddedLinePrice(input: {
   isSpecialTier: boolean;
   hasReason: boolean;
   productName?: string | null;
+  aboveList?: boolean;
 }): StaffPricedLine {
   return decideOrRefuse({ ...input, baselinePrice: input.tierPrice });
 }
@@ -101,6 +113,7 @@ export function decideReplaceAllLinePrice(input: {
   /** The staff create-merge's brand-new lines were never reason-checked. */
   skipReasonGuard: boolean;
   productName?: string | null;
+  aboveList?: boolean;
 }): StaffPricedLine & { repriced: boolean; restored?: true } {
   const { existing, overridePrice } = input;
   if (existing && withinStaffOverrideTolerance(overridePrice, existing.unitPrice)) {
@@ -120,6 +133,7 @@ export function decideReplaceAllLinePrice(input: {
     isSpecialTier: input.isSpecialTier,
     hasReason: input.hasReason || input.skipReasonGuard,
     productName: input.productName,
+    aboveList: input.aboveList,
   });
   return restore ? { ...d, repriced: false, restored: true } : { ...d, repriced: isOverride(d) };
 }

@@ -246,6 +246,30 @@ describe("CreateOrderModal - price history button (real onTapPrice configuration
     expect(mockApiGet).toHaveBeenCalledWith("/customers/c1/products/prod-1/price-history");
   });
 
+  it("the batched price-summary request is made only while the modal is open", async () => {
+    mockApiGet.mockImplementation((url: string) =>
+      url.includes("/price-summary")
+        ? Promise.resolve({ data: {} })
+        : Promise.resolve({ data: { taxRate: 0 } }),
+    );
+    const summaryCalls = () =>
+      mockApiGet.mock.calls.filter((c) => String(c[0]).includes("/price-summary")).length;
+    const { rerender, queryClient } = renderWithProviders(
+      <CreateOrderModal isOpen onClose={jest.fn()} />,
+    );
+    capturedOnScan!("111");
+    await screen.findByText("Widget");
+    await pickCustomer("Acme Foods");
+    await waitFor(() => expect(summaryCalls()).toBe(1));
+
+    // closed (state is kept until the next open): nothing may refetch the summary behind the scenes
+    rerender(<CreateOrderModal isOpen={false} onClose={jest.fn()} />);
+    mockApiGet.mockClear();
+    await queryClient.invalidateQueries({ queryKey: ["customers"] });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(summaryCalls()).toBe(0);
+  });
+
   it("Use this price sets the line price through the normal path (a one-time Discounted price)", async () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     capturedOnScan!("111");

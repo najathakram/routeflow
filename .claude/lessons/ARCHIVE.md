@@ -61,6 +61,27 @@
   the hot path, history in a changelog.**
 - **Guard:** code-map CHANGELOG convention; this register's own caps.
 
+### L-284 · 2026-10-08 · process · lanes report events only, review depth follows risk, and a bug in a file you are changing rides in its own commit
+
+- **Symptom:** recorded by the 2026-10-08 operating review as an operating-model rule; the incident detail is in the lead's notes.
+- **Root cause:** coordination messages cost more than the work they describe, review effort is only worth spending where the risk is, and a bug fixed inside a commit about something else cannot be reviewed or reverted on its own.
+- **Lesson:** **Lanes report EVENTS only (pushed <sha> / blocked <why> / done / needs ruling), never status or load pings. Review depth follows risk: Opus for money, tenant security, concurrency and migrations; Sonnet for UI and docs; non-money nits go to a follow-up row, not a re-review loop. A bug found in a file you are already changing rides along in its OWN commit on the same branch, with a red-first test.**
+- **Guard:** the lane rules and the `pre-merge-review` skill.
+
+### L-281 · 2026-10-08 · process · on a shared host never `git stash` in a lane session and never kill processes by name
+
+- **Symptom:** recorded by the 2026-10-08 operating review as a standing hazard of several sessions sharing one machine; the incident detail is in the lead's notes.
+- **Root cause:** a stash is repo-wide and invisible in any working tree, so a `pop` in the wrong worktree restores or loses another lane's work. A name or pattern match (`pkill`, grep-and-kill) on a shared host cannot tell your jobs from another lane's, so it kills theirs.
+- **Lesson:** **In a builder or worktree session never use `git stash`: commit a WIP commit instead. Never kill by name or pattern: kill only the PID tree you started.**
+- **Guard:** the standing lane rules in the start prompt; no script yet.
+
+### L-273 · 2026-10-07 · process · a pre-push log piped through `tail` hides the real failure
+
+- **Symptom:** a builder diagnosed a warning near the end of a pre-push log as the failure and chased it.
+- **Root cause:** the log was piped through `tail`, so the failing test's output had scrolled out of view and only trailing warnings showed.
+- **Lesson:** **Save the full pre-push or verify log to a file and grep it for `FAIL` and `Tests:` before diagnosing; never judge a failure from the tail of a piped log.**
+- **Guard:** run verify as `... > log 2>&1` and read `grep -n "FAIL\|Tests:" log` first.
+
 ## tooling
 
 ### L-067 · 2026-09-04 · tooling · #597
@@ -188,6 +209,13 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Guard:** `campaign-check` refuses the missing-report case (the refusal itself); CI verify on
   the PR head is the merge gate for the no-hook case; P-BUILD step 1 and P-CLOUD-0 step 7 carry
   the routine. Candidate: `scripts/worktree-audit.mjs` flags a worktree without `.husky/_`.
+
+### L-275 · 2026-10-07 · tooling · local stack image tags are shared across worktrees
+
+- **Symptom:** a proof run used an api image another worktree had built, and its result was reported as the branch's own.
+- **Root cause:** `routeflow-api:local` and `routeflow-web:local` are single tags for the whole machine; whichever build finished last owns them, and two concurrent builds overwrite each other.
+- **Lesson:** **Never run two stack builds at once, and read an image's `org.routeflow.sha` label (`docker image inspect`) before claiming whose it is or that a proof ran on your sha.**
+- **Guard:** none automatic; cf. [[L-272]] and the Mac slot rule.
 
 ## testing
 
@@ -3975,3 +4003,50 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **Before a client chains status PATCHes, read the server transition table for each edge. A step the server refuses on repeat is not idempotent: on a 400/409, re-read the resource and continue only if it already sits at the target (or beyond), and skip any patch the re-read makes a no-op.**
 - **Guard:** web `usePosFinish` re-reads through `promotedAlready` and its spec covers refused PENDING and already-CONFIRMED. Cf. [[L-267]].
   (Archived 2026-10-12 whole and verbatim to make room at cap: L-299: guarded by web `usePosFinish`'s `promotedAlready` re-read and its spec; no citation outside the register.)
+
+## Archived 2026-10-16 — least-cited, spec-guarded; headroom for L-307..L-309 (bookkeeping for #3471 #3474 and the worktree lesson)
+
+### L-303 · 2026-10-12 · tooling · a rule the API, web and mobile must all run belongs in @routeflow/pricing, never @routeflow/types
+
+- **Symptom:** a shared display rule (the paid-at-sale predicate) was first written into `packages/types`; the api-runtime-imports guard went red because the compiled API cannot value-import that package.
+- **Root cause:** `@routeflow/types` is source-only (TS the API never builds), and web and mobile import it freely, so a rule written there looks shared until the API's runtime import audit runs. The same trap archived as L-261 earlier.
+- **Lesson:** **Before placing shared runtime logic, ask who executes it. If the API does, it goes in `@routeflow/pricing` (the one compiled workspace package the API may value-import, with scanning); types keeps only constants and types.** Web/mobile re-export a thin wrapper to keep their import paths.
+- **Guard:** `api-runtime-imports` spec ("never value-imports @routeflow/types from a compiled source file") and the exact-package list spec; the pricing package's own spec pins the rule (row 401).
+
+### L-296 · 2026-10-11 · testing · a pin that hard-codes a ruling's literal text or list goes stale, and fails only on the merge with a moved master
+
+- **Symptom:** a spec asserting "only these 2 routes", "the report re-send is blocked" or "exactly these N files write tenant status" was green on its own branch and red after the merge with a master that held a later ruling or a new legitimate writer.
+- **Root cause:** the pin copied the wording of the ruling it was written under instead of encoding the invariant, so every later ruling or writer made it lie. A branch's own green cannot see master's changes.
+- **Lesson:** **Pin the invariant structurally: one named constant, assertions derived from it, and an allow-list that carries a reason per entry plus a stale-entry guard (an entry that no longer matches fails). When a ruling changes, change the constant and its pin in the same diff, and replay the merged tip before landing. Cf. [[L-264]].**
+- **Guard:** `SNAPSHOT_READERS` in `coupon-state.spec.ts` and `PACKAGE_ALLOWLIST` in `api-error-codes-parity.spec.ts` (reason per entry, stale-entry check, total pinned); the replay of the merged tip.
+- **Recurrence (2026-10-12, R5.2 train):** the read-only copy rewrite (SA-776) on one train member staled the returns, counter-sale, park and save-error specs and a 390 px counter selector that sibling members had written against the old per-name line; each member was green on its own branch and the collisions only appeared when the MERGED tree's web and api suites ran (a train-only collision). Run the merged tree's full unit suites before the train PR, never each member's own green (cf. [[L-271]], [[L-297]]).
+
+### L-302 · 2026-10-12 · domain · a negative Prisma filter on a nullable column never matches NULL: write the NULL arm and prove it with a NULL row
+
+- **Symptom:** "everything except category X" (the tracked-category bulk assign, and the product list's `product-list-where.ts` where-builder) silently dropped every product with no category; a second instance of the class after the first fix.
+- **Root cause:** `{ col: { not: X } }`, `{ notIn: [...] }` and `NOT: {...}` compile to `col <> X` / `NOT IN`, which SQL's three-valued logic evaluates to UNKNOWN for a NULL column, so NULL rows are excluded. The author's mental model of "all but X" includes the rows that have no value at all.
+- **Lesson:** **A negative filter (`not`, `notIn`, `NOT`) on a nullable column never matches NULL. Spell the NULL arm (`OR: [{ col: null }, { col: { not: X } }]`) and prove the filter with a fixture row whose column is NULL, in a real-database spec when the where-builder is shared.** Cf. [[L-238]].
+- **Guard:** each fix carries a spec with a NULL-column row (the product list where-builder, the bulk assign). No repo-wide scan yet: propose an AST scan that flags `not` / `notIn` / `NOT` on a nullable Prisma column without an adjacent `null` arm.
+
+## Archived 2026-10-16 — least-cited, spec-guarded; headroom for L-310..L-312 (bookkeeping for #3497, units-v2-2 and fixes-2)
+
+### L-308 · 2026-10-16 · testing · a bounded input buffer reports what it drops, and a repeat rule is proved with the real inter-scan timing of each source
+
+- **Symptom:** 20 repeat scans of one item added only 14 or 15 on the New order screen, on both the phone camera and a desktop wedge scanner (row 536).
+- **Root cause:** repeat suppression waited for a steady hold tuned for camera jitter, a two-deep pending buffer discarded overflow silently, and wedge reads interleaved with async lookups; tests used instant, evenly spaced scans that never showed the loss.
+- **Lesson:** **A bounded queue returns a `dropped` signal the screen must show, never a silent discard. Tune repeat rules per screen (opt-in, absence-based for a deliberate-repeat screen), run per-item async work through one serial FIFO, and take-and-clear the input atomically. Prove it with a deferred-resolve test: scan 1 in flight, half of scan 2, resolve, finish.**
+- **Guard:** `scan-pending-buffer.spec.ts`, `scan-engine.continuous.spec.ts`, the `useScanCodeHandler` and `CreateOrderModal` deferred-resolve tests.
+
+### L-307 · 2026-10-16 · domain · two fields that describe one quantity are stored as one and derived; the customer-facing server path refuses a contradictory pair
+
+- **Symptom:** the buyer cart's quantity and its case/piece split drifted apart, so the cart showed one price while the server billed another (row 531).
+- **Root cause:** quantity and split were both client state, each edited by its own control, and the server accepted whatever pair arrived; saved carts and pack-size changes re-created the drift.
+- **Lesson:** **Keep ONE source (quantity in pieces), derive the split through the shared pricing helper on every change, rebuild saved state quantity-first and flag what was rebuilt, and have the server refuse a contradictory pair on the customer-facing path with a coded 400 before any key, lock or write. Staff paths only warn until a census of existing rows says enforcing is safe.** Cf. [[L-222]].
+- **Guard:** `qty-split-consistency.spec.ts` and its DB spec, `buyer-cart-line.test.ts`, the read-only `report-buyer-split-mismatch.mjs` census.
+
+### L-283 · 2026-10-08 · process · cap work in flight per machine, and run the 2-minute fail-fast guards before the 7-minute verify push
+
+- **Symptom:** recorded by the 2026-10-08 operating review as an operating-model rule; the incident detail is in the lead's notes.
+- **Root cause:** work in flight beyond what one machine can finish competes with new work, and one deterministic failure found only inside the ~7 minute verify push costs a full verify.
+- **Lesson:** **Cap work in flight per machine: at most 2 PRs in review and at most 1 local-only branch; finish and push in-flight work before starting new feature work. Before a verify push run the ~2 minute fail-fast guards: size ratchets, pins, campaign-check freshness after any master merge, bare-cron, and check-types on the changed workspaces.**
+- **Guard:** the lane rules; the pre-push gates themselves.

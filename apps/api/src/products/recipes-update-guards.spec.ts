@@ -111,7 +111,12 @@ async function build(
       { provide: StorageService, useValue: { presignedUrls: jest.fn().mockResolvedValue([]) } },
       { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
       { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-      { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+      {
+        provide: EntitlementsService,
+        useValue: {
+          hasFlag: jest.fn(async (_t: string, k: string) => k !== "flag.units_prices_v2"),
+        },
+      },
       entitlementAuthorityFromEntitlements,
       // #2185: the reorder gate's deny body reads admin overrides.
       { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
@@ -141,7 +146,9 @@ describe("re-parenting a recipe component (I2)", () => {
     "moving a component out of its family (to none) while the recipe is %s -> 409 RECIPE_FAMILY_LOCKED",
     async (status) => {
       const { service, prisma } = await build(base, [recipeOf({ status })]);
-      const err = await service.update("prod-1", { parentProductId: null } as any).catch((e) => e);
+      const err = await service
+        .update("prod-1", { parentProductId: null } as any, { packPrecondition: "internal" })
+        .catch((e) => e);
       expect(err).toBeInstanceOf(ConflictException);
       expect(bodyOf(err)).toMatchObject({ code: "RECIPE_FAMILY_LOCKED" });
       expect(prisma.product.update).not.toHaveBeenCalled();
@@ -150,20 +157,26 @@ describe("re-parenting a recipe component (I2)", () => {
 
   it("moving a component to ANOTHER family is refused too", async () => {
     const { service, prisma } = await build(base, [recipeOf()]);
-    const err = await service.update("prod-1", { parentProductId: "fam2" } as any).catch((e) => e);
+    const err = await service
+      .update("prod-1", { parentProductId: "fam2" } as any, { packPrecondition: "internal" })
+      .catch((e) => e);
     expect(bodyOf(err)).toMatchObject({ code: "RECIPE_FAMILY_LOCKED" });
     expect(prisma.product.update).not.toHaveBeenCalled();
   });
 
   it("a component that only sits in a RETIRED recipe may be re-parented", async () => {
     const { service, prisma } = await build(base, [recipeOf({ status: "RETIRED" })]);
-    await expect(service.update("prod-1", { parentProductId: null } as any)).resolves.toBeDefined();
+    await expect(
+      service.update("prod-1", { parentProductId: null } as any, { packPrecondition: "internal" }),
+    ).resolves.toBeDefined();
     expect(prisma.product.update).toHaveBeenCalled();
   });
 
   it("a re-parent that names the CURRENT parent is an echo, not a change", async () => {
     const { service, events } = await build(base, [recipeOf()]);
-    await service.update("prod-1", { parentProductId: "fam" } as any);
+    await service.update("prod-1", { parentProductId: "fam" } as any, {
+      packPrecondition: "internal",
+    });
     expect(events.filter((e) => e.includes("recipe."))).toEqual([]);
   });
 });
@@ -174,7 +187,9 @@ describe("adopting a recipe product or a family with a recipe into a family (Q1)
 
   it("the recipe product cannot be given a parent -> 409 RECIPE_INVALID RECIPE_PRODUCT_HAS_PARENT", async () => {
     const { service, prisma } = await build(recipeProduct, [recipeOf({ status: "RETIRED" })]);
-    const err = await service.update("rp", { parentProductId: "fam-x" } as any).catch((e) => e);
+    const err = await service
+      .update("rp", { parentProductId: "fam-x" } as any, { packPrecondition: "internal" })
+      .catch((e) => e);
     expect(err).toBeInstanceOf(ConflictException);
     expect(bodyOf(err)).toMatchObject({
       code: "RECIPE_INVALID",
@@ -194,7 +209,9 @@ describe("adopting a recipe product or a family with a recipe into a family (Q1)
       if (values[0] === "rp" && recipes.length === 0) recipes.push(recipeOf({ status: "ACTIVE" }));
       return out;
     });
-    const err = await service.update("rp", { parentProductId: "fam-x" } as any).catch((e) => e);
+    const err = await service
+      .update("rp", { parentProductId: "fam-x" } as any, { packPrecondition: "internal" })
+      .catch((e) => e);
     expect(bodyOf(err)).toMatchObject({
       code: "RECIPE_INVALID",
       reason: "RECIPE_PRODUCT_HAS_PARENT",
@@ -207,14 +224,18 @@ describe("adopting a recipe product or a family with a recipe into a family (Q1)
 
   it("a family with an open recipe cannot become a variant -> 409 RECIPE_INVALID FAMILY_IS_VARIANT", async () => {
     const { service, prisma } = await build(family, [recipeOf({ status: "ACTIVE" })]);
-    const err = await service.update("fam", { parentProductId: "fam-x" } as any).catch((e) => e);
+    const err = await service
+      .update("fam", { parentProductId: "fam-x" } as any, { packPrecondition: "internal" })
+      .catch((e) => e);
     expect(bodyOf(err)).toMatchObject({ code: "RECIPE_INVALID", reason: "FAMILY_IS_VARIANT" });
     expect(prisma.product.update).not.toHaveBeenCalled();
   });
 
   it("a family whose recipes are all RETIRED may be adopted", async () => {
     const { service } = await build(family, [recipeOf({ status: "RETIRED" })]);
-    await expect(service.update("fam", { parentProductId: "fam-x" } as any)).resolves.toBeDefined();
+    await expect(
+      service.update("fam", { parentProductId: "fam-x" } as any, { packPrecondition: "internal" }),
+    ).resolves.toBeDefined();
   });
 });
 
@@ -224,31 +245,39 @@ describe("unitsPerBox on the family and the recipe product (Q10)", () => {
 
   it("a family box-size change with an open recipe -> 409 RECIPE_FAMILY_LOCKED", async () => {
     const { service, prisma } = await build(family, [recipeOf()]);
-    const err = await service.update("fam", { unitsPerBox: 24 } as any).catch((e) => e);
+    const err = await service
+      .update("fam", { unitsPerBox: 24 } as any, { packPrecondition: "internal" })
+      .catch((e) => e);
     expect(bodyOf(err)).toMatchObject({ code: "RECIPE_FAMILY_LOCKED" });
     expect(prisma.product.update).not.toHaveBeenCalled();
   });
 
   it("a recipe product box-size change with an open recipe -> 409 RECIPE_FAMILY_LOCKED", async () => {
     const { service } = await build(recipeProduct, [recipeOf({ status: "ACTIVE" })]);
-    const err = await service.update("rp", { unitsPerBox: 6 } as any).catch((e) => e);
+    const err = await service
+      .update("rp", { unitsPerBox: 6 } as any, { packPrecondition: "internal" })
+      .catch((e) => e);
     expect(bodyOf(err)).toMatchObject({ code: "RECIPE_FAMILY_LOCKED" });
   });
 
   it("a COMPONENT's own box size is not part of the recipe's shape: allowed", async () => {
     const { service, prisma } = await build(base, [recipeOf()]);
-    await expect(service.update("prod-1", { unitsPerBox: 6 } as any)).resolves.toBeDefined();
+    await expect(
+      service.update("prod-1", { unitsPerBox: 6 } as any, { packPrecondition: "internal" }),
+    ).resolves.toBeDefined();
     expect(prisma.product.update).toHaveBeenCalled();
   });
 
   it("with only RETIRED recipes the family box size may change", async () => {
     const { service } = await build(family, [recipeOf({ status: "RETIRED" })]);
-    await expect(service.update("fam", { unitsPerBox: 24 } as any)).resolves.toBeDefined();
+    await expect(
+      service.update("fam", { unitsPerBox: 24 } as any, { packPrecondition: "internal" }),
+    ).resolves.toBeDefined();
   });
 
   it("an echo of the current box size never consults the recipes", async () => {
     const { service, events } = await build(family, [recipeOf()]);
-    await service.update("fam", { unitsPerBox: 12 } as any);
+    await service.update("fam", { unitsPerBox: 12 } as any, { packPrecondition: "internal" });
     expect(events.filter((e) => e.includes("recipe."))).toEqual([]);
   });
 });
@@ -256,7 +285,9 @@ describe("unitsPerBox on the family and the recipe product (Q10)", () => {
 describe("house lock order and in-tx checks (SA-584 B2 c)", () => {
   it("a component re-parent locks the family row, then its own row, THEN asks the recipes — through tx", async () => {
     const { service, events } = await build(base, [recipeOf()]);
-    await service.update("prod-1", { parentProductId: null } as any).catch(() => undefined);
+    await service
+      .update("prod-1", { parentProductId: null } as any, { packPrecondition: "internal" })
+      .catch(() => undefined);
     const own = events.indexOf("lock:update:prod-1");
     expect(events.indexOf("lock:update:fam")).toBeGreaterThanOrEqual(0);
     expect(events.indexOf("lock:update:fam")).toBeLessThan(own);
@@ -269,14 +300,18 @@ describe("house lock order and in-tx checks (SA-584 B2 c)", () => {
   it("a recipe product's edit locks ITS FAMILY (from the recipe) before its own row", async () => {
     const recipeProduct = { ...base, id: "rp", parentProductId: null, kind: "RECIPE" };
     const { service, events } = await build(recipeProduct, [recipeOf({ status: "ACTIVE" })]);
-    await service.update("rp", { unitsPerBox: 6 } as any).catch(() => undefined);
+    await service
+      .update("rp", { unitsPerBox: 6 } as any, { packPrecondition: "internal" })
+      .catch(() => undefined);
     expect(events.indexOf("lock:update:fam")).toBeGreaterThanOrEqual(0);
     expect(events.indexOf("lock:update:fam")).toBeLessThan(events.indexOf("lock:update:rp"));
   });
 
   it("the category lock (I6) also runs in the tx after the own-row lock", async () => {
     const { service, events } = await build(base, [recipeOf()]);
-    const err = await service.update("prod-1", { trackedCategoryId: null } as any).catch((e) => e);
+    const err = await service
+      .update("prod-1", { trackedCategoryId: null } as any, { packPrecondition: "internal" })
+      .catch((e) => e);
     expect(bodyOf(err)).toMatchObject({ code: "RECIPE_CATEGORY_LOCKED" });
     expect(events.indexOf("lock:update:prod-1")).toBeGreaterThanOrEqual(0);
     const firstAsk = events.findIndex((e) => e.includes("recipe."));
@@ -286,7 +321,7 @@ describe("house lock order and in-tx checks (SA-584 B2 c)", () => {
 
   it("an unrelated edit takes no extra lock and asks nothing", async () => {
     const { service, events } = await build(base, [recipeOf()]);
-    await service.update("prod-1", { description: "x" } as any);
+    await service.update("prod-1", { description: "x" } as any, { packPrecondition: "internal" });
     expect(events.filter((e) => e.startsWith("lock:") || e.includes("recipe."))).toEqual([]);
   });
 
@@ -299,7 +334,9 @@ describe("house lock order and in-tx checks (SA-584 B2 c)", () => {
         return fn(tx);
       }),
     );
-    const err = await service.update("prod-1", { parentProductId: null } as any).catch((e) => e);
+    const err = await service
+      .update("prod-1", { parentProductId: null } as any, { packPrecondition: "internal" })
+      .catch((e) => e);
     expect(err).toBeInstanceOf(ConflictException);
     expect(prisma.product.update).not.toHaveBeenCalled();
   });
@@ -321,7 +358,9 @@ describe("family-price.ts paths behind the guard (mode on, lead fold item 4)", (
       [recipeOf({ status: "ACTIVE" })],
       "on",
     );
-    const err = await service.update("rp", { parentProductId: "fam-x" } as any).catch((e) => e);
+    const err = await service
+      .update("rp", { parentProductId: "fam-x" } as any, { packPrecondition: "internal" })
+      .catch((e) => e);
     expect(bodyOf(err)).toMatchObject({
       code: "RECIPE_INVALID",
       reason: "RECIPE_PRODUCT_HAS_PARENT",
@@ -333,7 +372,9 @@ describe("family-price.ts paths behind the guard (mode on, lead fold item 4)", (
   it("adopting a family that has a recipe is refused before the adoption branch too", async () => {
     const family = { ...base, ...priced, id: "fam", parentProductId: null };
     const { service, prisma, tx } = await build(family, [recipeOf({ status: "DRAFT" })], "on");
-    const err = await service.update("fam", { parentProductId: "fam-x" } as any).catch((e) => e);
+    const err = await service
+      .update("fam", { parentProductId: "fam-x" } as any, { packPrecondition: "internal" })
+      .catch((e) => e);
     expect(bodyOf(err)).toMatchObject({ code: "RECIPE_INVALID", reason: "FAMILY_IS_VARIANT" });
     expect(tx.product.update).not.toHaveBeenCalled();
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
@@ -342,7 +383,9 @@ describe("family-price.ts paths behind the guard (mode on, lead fold item 4)", (
   it("a component re-parent is refused by the guard before the family price branch runs", async () => {
     const component = { ...base, ...priced };
     const { service, tx } = await build(component, [recipeOf()], "on");
-    const err = await service.update("prod-1", { parentProductId: "fam2" } as any).catch((e) => e);
+    const err = await service
+      .update("prod-1", { parentProductId: "fam2" } as any, { packPrecondition: "internal" })
+      .catch((e) => e);
     expect(bodyOf(err)).toMatchObject({ code: "RECIPE_FAMILY_LOCKED" });
     expect(tx.product.update).not.toHaveBeenCalled();
   });
@@ -350,7 +393,7 @@ describe("family-price.ts paths behind the guard (mode on, lead fold item 4)", (
   it("a price edit of a recipe product takes the family lock BEFORE its own write (family -> recipe product)", async () => {
     const recipeProduct = { ...base, ...priced, id: "rp", parentProductId: null, kind: "RECIPE" };
     const { service, events } = await build(recipeProduct, [recipeOf({ status: "ACTIVE" })], "on");
-    await service.update("rp", { pricePerUnit: "10.00" } as any);
+    await service.update("rp", { pricePerUnit: "10.00" } as any, { packPrecondition: "internal" });
     const family = events.indexOf("lock:update:fam");
     expect(family).toBeGreaterThanOrEqual(0);
     expect(family).toBeLessThan(events.indexOf("write:product:rp"));

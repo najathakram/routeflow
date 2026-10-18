@@ -17,6 +17,7 @@ let mockPath = "/orders";
 let mockRole = "OPERATOR";
 jest.mock("next/navigation", () => ({
   usePathname: () => mockPath,
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: mockPush, replace: jest.fn(), prefetch: jest.fn() }),
 }));
 let mockCounter = "optional";

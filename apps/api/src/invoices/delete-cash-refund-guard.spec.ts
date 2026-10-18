@@ -4,7 +4,8 @@
  * #3331 made voidInvoice and the order cancel refuse (409) when a recorded cash refund is sourced from the sale. The two DELETE
  * paths never called that guard: cash sale -> inline cash refund -> remove the payment -> delete the invoice (or the order)
  * removes the sale while the refund is already paid. deleteInvoice now asks the invoice guard right after its Order/Invoice
- * locks; deleteOrder asks the order guard first thing in its transaction. Both refuse BEFORE any write.
+ * locks; deleteOrder asks the order guard right after its Order row lock (B284: the lock and the status read
+ * come first, both write-free; the stock unwind runs AFTER the guard). Both refuse BEFORE any write.
  */
 import { ConflictException } from "@nestjs/common";
 import { OrderStatus } from "@prisma/client";
@@ -96,6 +97,11 @@ describe("deleteOrder: refuses a cash-refunded order before any write", () => {
 
   const harness = (cashRefund: { id: string } | null) => {
     const tx: any = {
+      $queryRaw: jest.fn().mockResolvedValue([]), // B284: lockDeleteLines' Order FOR UPDATE
+      order: { findUnique: jest.fn().mockResolvedValue({ status: OrderStatus.CONFIRMED }) },
+      orderItem: {
+        findMany: jest.fn().mockResolvedValue([{ id: "li-1", productId: "p-1", qty: 3 }]),
+      },
       invoiceItem: { findMany: jest.fn().mockResolvedValue([{ id: "line-1" }]) },
       return: { findFirst: jest.fn().mockResolvedValue(cashRefund) },
       invoicePayment: { deleteMany: jest.fn() },
@@ -128,6 +134,7 @@ describe("deleteOrder: refuses a cash-refunded order before any write", () => {
       invoicesService: { releaseWalletPaymentsInTx: jest.fn() },
       ledger: { reverseInvoiceEntries: jest.fn() },
       commissionEngine: { removeInvoiceCommission: jest.fn() },
+      settleStockForEdit: jest.fn(),
     };
     return { self, tx };
   };
@@ -142,6 +149,7 @@ describe("deleteOrder: refuses a cash-refunded order before any write", () => {
       code: API_ERROR_CODES.ORDER_HAS_CASH_REFUND,
       message: ORDER_HAS_CASH_REFUND_MESSAGE,
     });
+    expect(self.settleStockForEdit).not.toHaveBeenCalled(); // B284: the refusal precedes the stock credit
     expect(self.creditNotes.releaseOrderCreditsInTx).not.toHaveBeenCalled();
     expect(self.invoicesService.releaseWalletPaymentsInTx).not.toHaveBeenCalled();
     expect(self.ledger.reverseInvoiceEntries).not.toHaveBeenCalled();

@@ -66,6 +66,14 @@ describe("buildUnitOptions", () => {
     expect(opts.find((o) => o.value === "Piece")?.price).toBe(9.99);
   });
 
+  it("shadows a row that is the NFD spelling of the pack word (one word, as the server's ladder sees it)", () => {
+    const opts = buildUnitOptions({ ...product, unit: "Caf\u00e9" }, [
+      level({ label: "Cafe\u0301", factorToBase: 12 }),
+      CASE,
+    ]);
+    expect(opts.map((o) => o.value)).toEqual(["", "Case", "Piece"]);
+  });
+
   it("a ladder whose ONLY row is the explicit Piece still offers it (the canonical singles-at-a-premium setup)", () => {
     const opts = buildUnitOptions(product, [
       level({ label: "Piece", factorToBase: 1, price: "2.00" }),

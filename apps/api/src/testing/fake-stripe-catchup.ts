@@ -92,6 +92,16 @@ export function fakeStripeCatchup(
       if (!s) throw Object.assign(new Error("No such session"), { code: "resource_missing" });
       return s;
     }),
+    /** Stripe expires an OPEN session only; any other status rejects (the real API's "not in an open state"). */
+    expireCheckoutSession: jest.fn(async (id: string) => {
+      calls.push(`expireCheckoutSession:${id}`);
+      const s = sessions[id];
+      if (!s) throw Object.assign(new Error("No such session"), { code: "resource_missing" });
+      if (s.status !== "open") throw new Error("This Checkout Session is not in an open state.");
+      s.status = "expired";
+      s.url = null;
+      return s;
+    }),
     getSubscription: jest.fn(async (id: string) => {
       const s = subs[id];
       if (!s) throw Object.assign(new Error("No such subscription"), { code: "resource_missing" });
@@ -137,7 +147,16 @@ export function fakeStripeCatchup(
           create: jest.fn(async (params: any, opts?: any) => {
             calls.push("sessions.create");
             const id = `cs_catchup${++seq}`;
-            sessions[id] = { id, status: "open", metadata: params.metadata, params, opts };
+            // like Stripe's own Session object, the return URLs are top-level fields
+            sessions[id] = {
+              id,
+              status: "open",
+              metadata: params.metadata,
+              success_url: params.success_url,
+              cancel_url: params.cancel_url,
+              params,
+              opts,
+            };
             return { id, url: `https://pay.test/${id}` };
           }),
         },

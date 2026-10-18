@@ -33,7 +33,7 @@ const report = (over: Record<string, unknown> = {}, stub: Record<string, unknown
     stub: {
       from: "2026-11-11T04:08:24.000Z",
       to: "2026-12-01T12:00:00.000Z",
-      label: "Subscription — Nov 11 to Nov 30, 2026",
+      label: "Nov 11 to Nov 30, 2026 subscription",
       lines: [{ kind: "PLAN", code: "PLAN", cents: 6776 }],
       totalCents: 6776,
       belowStripeMinimum: false,

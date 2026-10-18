@@ -9,6 +9,7 @@ export const PRODUCT_SAVE_FALLBACK = "Couldn't save. Try again.";
  *  - FAMILY_PRICE_AUTHORITY (409): the family owns the variant's price (mixed_packs mode).
  *  - TEXT_CELL_FORMULA_LEAD (400): an unsafe name / category (starts with = + - @ or a tab/line break).
  *  - FAMILY_ROWS_CONFLICT (409) / FAMILY_NOT_FOUND (404): the family rows changed under the form.
+ *  - PRODUCT_PACK_STALE (409): the pack the form opened with moved meanwhile (SA-797, e.g. a unit rename).
  */
 export function productSaveErrorCopy(err: unknown): string {
   const unsafe = safeTextErrorCopy(err);
@@ -22,6 +23,8 @@ export function productSaveErrorCopy(err: unknown): string {
       return "Some of those products changed. Reload and try again.";
     case API_ERROR_CODES.VARIANT_PARENT_INACTIVE:
       return "Turn the family back on first, then reactivate this variant.";
+    case API_ERROR_CODES.PRODUCT_PACK_STALE:
+      return "This product changed since you opened it. Reload to see the latest.";
     default:
       return PRODUCT_SAVE_FALLBACK;
   }

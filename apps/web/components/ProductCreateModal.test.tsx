@@ -61,17 +61,18 @@ describe("ProductCreateModal (web-2 #5)", () => {
     await userEvent.type(screen.getByLabelText("Barcode"), "0123456789012");
     await userEvent.type(screen.getByLabelText(/^Unit \*/), "box");
     await userEvent.type(screen.getByLabelText("Price per box *"), "12");
-    fireEvent.click(screen.getByRole("button", { name: "Create Product" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create product" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     expect(mutateAsync.mock.calls[0][0]).toEqual(
       expect.objectContaining({ barcode: "0123456789012" }),
     );
   });
 
-  it("does not close on Escape or an outside click; the X still closes", async () => {
+  it("does not close on an outside click or on Escape once something is typed; the X still closes", async () => {
     const onClose = jest.fn();
     renderWithProviders(<ProductCreateModal isOpen onClose={onClose} onCreated={jest.fn()} />);
     await new Promise((r) => setTimeout(r, 20)); // Radix arms outside-click on a timer
+    await userEvent.type(screen.getByLabelText("Name *"), "Cola"); // K11-26: a pristine form closes on Escape
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     fireEvent.pointerDown(document.body);
     expect(onClose).not.toHaveBeenCalled();
@@ -82,7 +83,7 @@ describe("ProductCreateModal (web-2 #5)", () => {
   it("pins Create in the shared Modal footer slot (header and footer stay put)", () => {
     open();
     const dialog = screen.getByRole("dialog");
-    const create = within(dialog).getByRole("button", { name: "Create Product" });
+    const create = within(dialog).getByRole("button", { name: "Create product" });
     const scrollBody = dialog.querySelector(".overflow-y-auto");
     expect(scrollBody).not.toBeNull();
     // footer is a sibling of the scrolling body, never inside it
@@ -107,11 +108,86 @@ describe("ProductCreateModal (web-2 #5)", () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     expect(container).toBeTruthy();
     fireEvent.change(input, { target: { files: [file] } });
-    fireEvent.click(screen.getByRole("button", { name: "Create Product" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create product" }));
     expect(
       await screen.findByText("Product created, but its photos didn't upload"),
     ).toBeInTheDocument();
     expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ id: "p1" }));
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe("ProductCreateModal costing picker (SA-804 (1) / B1232)", () => {
+  it("offers AVCO, Last Cost and Standard Cost only: FIFO and LIFO are retired", () => {
+    open();
+    const select = screen
+      .getAllByRole("combobox")
+      .find((el) => within(el).queryByRole("option", { name: /^AVCO/ })) as HTMLElement;
+    expect(select).toBeTruthy();
+    const values = within(select)
+      .getAllByRole("option")
+      .map((o) => (o as HTMLOptionElement).value);
+    expect(values).toEqual(["AVCO", "LAST_COST", "STANDARD"]);
+    expect(values).not.toContain("FIFO");
+    expect(values).not.toContain("LIFO");
+  });
+});
+
+describe("ProductCreateModal price-as-quantity hint (V09)", () => {
+  async function fill(unit: string, unitsPerBox: string, price: string) {
+    open();
+    await userEvent.type(screen.getByLabelText(/^Unit \*/), unit);
+    if (unitsPerBox) await userEvent.type(screen.getByLabelText("Units per box"), unitsPerBox);
+    await userEvent.type(screen.getByLabelText(/^Price per /), price);
+  }
+
+  it("asks when the price equals the box count", async () => {
+    await fill("box", "12", "12");
+    const hint = document.getElementById("price-qty-hint");
+    expect(hint).not.toBeNull();
+    expect(hint).toHaveAttribute("aria-live", "polite");
+    expect(hint).toHaveTextContent("A box holds 12. Is $12.00 the price for the whole box?");
+    expect(screen.getByLabelText("Price per box *")).toHaveAttribute(
+      "aria-describedby",
+      expect.stringContaining("price-qty-hint"),
+    );
+  });
+
+  it("does not show for 12.50", async () => {
+    await fill("box", "12", "12.50");
+    expect(document.getElementById("price-qty-hint")).toBeEmptyDOMElement();
+    expect(screen.getByLabelText("Price per box *")).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("does not show when units per box is 1", async () => {
+    await fill("box", "1", "1");
+    expect(document.getElementById("price-qty-hint")).toBeEmptyDOMElement();
+  });
+
+  it("keeps the live region mounted but empty until it applies", async () => {
+    await fill("box", "", "12");
+    const hint = document.getElementById("price-qty-hint");
+    expect(hint).not.toBeNull();
+    expect(hint).toBeEmptyDOMElement();
+  });
+
+  it("does not block saving", async () => {
+    await fill("box", "12", "12");
+    await userEvent.type(screen.getByLabelText("Name *"), "Cola");
+    fireEvent.click(screen.getByRole("button", { name: "Create product" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+  });
+});
+
+describe("ProductCreateModal unit field fast typing (V01)", () => {
+  it("typing 'Can' quickly lands whole in the unit field and nowhere else", async () => {
+    open();
+    const unit = screen.getByLabelText(/^Unit \*/) as HTMLInputElement;
+    await userEvent.type(unit, "Can");
+    expect(unit).toHaveValue("Can");
+    for (const label of ["Name *", "Barcode", "Unit code", "SKU (box code)"]) {
+      expect(screen.getByLabelText(label)).toHaveValue("");
+    }
+    expect(screen.queryByText(/new unit/i)).toBeNull();
   });
 });
