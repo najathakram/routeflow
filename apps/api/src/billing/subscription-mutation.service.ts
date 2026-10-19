@@ -26,6 +26,8 @@ import {
   addonRowWhere,
   billableAddonWhere,
   findAddonRow,
+  isPricedBillableCandidate,
+  isStripeBillableAddonRow,
   keepsTrialAddons,
 } from "./addon-row";
 
@@ -2251,28 +2253,36 @@ export class SubscriptionMutationService {
           (r) => addonSkuCode(r) === sku && Number(r.quantity) >= 1 && unbilledOnThisSub(r),
         ),
     );
-    // (c): active self-serve rows nothing bills on THIS subscription (no item, or a stale one) and this
-    // checkout had no line for. SA-787 M4: also an admin-only row an admin PRICED (> 0): the cancellation lock now
-    // leaves it ON (it used to switch it off), so the card checkout that brings the tenant back must bill it through
-    // `billUnbilledRow`; skipping it would leave a priced, active row that nothing bills while the reactivation
-    // crossing books its price. A $0 admin-only row (a trial grant, a plan-included one) stays unbilled, and seat
-    // plumbing is never an add-on item.
+    // (c): active rows nothing bills on THIS subscription (no item, or a stale one) and this checkout had no line for.
+    // A self-serve row is billed at its catalog price (a trial's is still $0 here). An ADMIN-ONLY row is billed only
+    // when {@link isStripeBillableAddonRow} accepts it (SA-815d: priced above zero AND equal to its billing catalog
+    // price; active, not a comp, not seat plumbing) - the cancellation lock leaves such a row ON, so this is the
+    // checkout that brings it back to a bill. An admin-priced row that does NOT match (a catalog-$0 SKU, a custom
+    // price above or below the catalog) is skipped untouched - no item, no snapshot rewrite - and one platform
+    // notice per row asks for its billing to be set up at the agreed price. A $0 admin-only row stays unbilled.
+    let catalogSkus: Map<string, { name: string; monthlyPrice: unknown }> | null = null;
     for (const row of active) {
       const code = addonSkuCode(row);
-      const adminPriced =
-        code != null &&
-        !isSelfServiceAddon(code) &&
-        code !== "SEAT_EXTRA" &&
-        Number(row.priceSnapshot ?? 0) > 0;
-      if (
-        unbilledOnThisSub(row) &&
-        code &&
-        (isSelfServiceAddon(code) || adminPriced) &&
-        !bySku.has(code) &&
-        !missing.includes(code)
-      ) {
+      if (!(unbilledOnThisSub(row) && code && !bySku.has(code) && !missing.includes(code)))
+        continue;
+      if (isSelfServiceAddon(code)) {
         bySku.set(code, []);
+        continue;
       }
+      if (!isPricedBillableCandidate(row)) continue;
+      catalogSkus ??= new Map(
+        (await this.catalog.getPublishedCatalog()).addonSkus.map((s) => [s.sku, s]),
+      );
+      const def = catalogSkus.get(code);
+      if (isStripeBillableAddonRow(row, def?.monthlyPrice)) bySku.set(code, []);
+      else
+        await this.noteAddonPricedNotBilled(
+          tenantId,
+          row.id,
+          code,
+          def?.name ?? code,
+          row.priceSnapshot,
+        );
     }
     if (bySku.size === 0 && missing.length === 0) return;
 
@@ -2812,7 +2822,7 @@ export class SubscriptionMutationService {
   private async billUnbilledRow(
     tenantId: string,
     sku: string,
-    row: { id: string; quantity: number },
+    row: { id: string; quantity: number; priceSnapshot?: unknown },
     subId: string,
     expectedItemId: string | null,
     ctx: { sessionId?: string | null; source?: "checkout" | "plan_change" },
@@ -2826,7 +2836,17 @@ export class SubscriptionMutationService {
     const skuDef =
       (o.skuDef as PlanVersionWithCatalog["addonSkus"][number] | undefined) ??
       (await this.catalog.getPublishedCatalog()).addonSkus.find((s) => s.sku === sku);
-    if (!skuDef) return false;
+    if (!skuDef) {
+      // N1: the catalog no longer lists the SKU. A row with a stored price above zero has been booked at that
+      // price by the reactivation crossing while nothing can bill it: say so, never drop out silently.
+      this.logger.error(
+        `Add-on "${sku}" tenant ${tenantId}: the published catalog has no such SKU - not billed`,
+      );
+      if (Number(row.priceSnapshot ?? 0) > 0) {
+        await this.noteAddonPricedNotBilled(tenantId, row.id, sku, sku, row.priceSnapshot);
+      }
+      return false;
+    }
     const included = await this.planIncludedRefusal(tenantId, skuDef);
     if (included) {
       // B1102: background path, no user to refuse — never bill it, say so, never throw the billing.
@@ -2926,6 +2946,31 @@ export class SubscriptionMutationService {
     const verdict = inclusionOf(skuDef, planKey);
     if (verdict.kind === "CATALOG_INVALID") return addonCatalogInvalid(verdict.sku, verdict.value);
     return verdict.kind === "INCLUDED" ? addonIncludedRefusal(skuDef.name) : null;
+  }
+
+  /**
+   * SA-815d: an add-on row an admin priced above zero that no card item bills (the catalog prices its SKU at $0 or
+   * not at all, or the row carries a custom price): logged, and ONE platform notice per row (a redelivery writes
+   * none). Nothing is created, rewritten or booked. Best-effort: never throws.
+   */
+  private async noteAddonPricedNotBilled(
+    tenantId: string,
+    rowId: string,
+    sku: string,
+    name: string,
+    priceSnapshot: unknown,
+  ): Promise<void> {
+    const price = `$${roundMoney(Number(priceSnapshot ?? 0)).toFixed(2)}`;
+    this.logger.error(
+      `Add-on "${sku}" tenant ${tenantId}: priced at ${price} but no card item bills it (not at the catalog price) - skipped, not billed`,
+    );
+    await this.raiseAdminAlertOnce(
+      tenantId,
+      AdminAuditAction.ADDON_PRICED_NOT_BILLED,
+      `${AdminAuditAction.ADDON_PRICED_NOT_BILLED}:${rowId}`,
+      `${name} is priced at ${price} for this workspace but has no card billing. Set up its billing at the agreed price.`,
+      { sku, rowId, priceSnapshot: Number(priceSnapshot ?? 0) },
+    );
   }
 
   /**

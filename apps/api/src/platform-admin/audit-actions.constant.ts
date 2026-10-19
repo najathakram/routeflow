@@ -76,6 +76,8 @@ export const AdminAuditAction = {
   ADDON_MANUAL_INVOICE_STOP: "ADDON_MANUAL_INVOICE_STOP",
   /** B1102: a catalog add-on's includedAtPlan names no plan; a background path skipped billing it (meta: sku, value). */
   ADDON_CATALOG_INVALID: "ADDON_NOT_BILLED_CATALOG_INVALID",
+  /** SA-815d: an add-on row an admin priced above zero that no card item bills (catalog $0 / unlisted / custom price); meta: sku, rowId, priceSnapshot. */
+  ADDON_PRICED_NOT_BILLED: "ADDON_PRICED_NOT_BILLED",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
   TENANT_CLASS_CHANGED: "TENANT_CLASS_CHANGED",
   FEATURE_OVERRIDE_SET: "FEATURE_OVERRIDE_SET",
@@ -154,6 +156,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",
   ADDON_NOT_BILLED_CATALOG_INVALID: "Add-on not billed (catalog setting invalid)",
+  ADDON_PRICED_NOT_BILLED: "Add-on priced but not billed by card (set up its billing)",
   IMPERSONATION_STARTED: "Impersonation started",
   TENANT_CLASS_CHANGED: "Class changed",
   FEATURE_OVERRIDE_SET: "Feature override set",
