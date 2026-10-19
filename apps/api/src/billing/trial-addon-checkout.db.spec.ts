@@ -601,6 +601,9 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     // A's crossing prices the base AND the already-adopted add-ons at their stored (actual) snapshots,
     // once; A's own adoption finds both items set and does nothing
     expect(await r.ledger()).toEqual([
+      // SA-788: B's adoption wrote its two records first (delta 0); A's crossing books the one MRR event
+      audit("CUSTOMER_PACK_100"),
+      audit("FORECASTING"),
       { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99 + 100 + 19, sku: undefined },
     ]);
     expect(await r.ledgerSum()).toBe(218);

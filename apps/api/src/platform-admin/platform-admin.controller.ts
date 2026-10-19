@@ -23,7 +23,12 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { PlatformAdminService } from "./platform-admin.service";
 import { PlatformConfigService } from "./platform-config.service";
 import { BillingService } from "../billing/billing.service";
-import { AddonService } from "../billing/addon.service";
+import {
+  ADMIN_DISABLE_SOURCE,
+  AddonService,
+  PROFILE_APPLY_SOURCE,
+  type AddonDisableSource,
+} from "../billing/addon.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
@@ -445,12 +450,10 @@ export class PlatformAdminController {
     @Param("id") id: string,
     @Body() dto: DisableAddonDto,
     @CurrentUser() admin: JwtPayload,
-    /** SA-822: set only by a business-profile apply, so the add-on change record names its true source. */
-    source?: "profile.apply",
+    /** SA-788 A3: who is asking decides the record's source; this route is the direct admin disable. */
+    source: AddonDisableSource = ADMIN_DISABLE_SOURCE,
   ) {
-    const result = source
-      ? await this.addonService.disableAddon(id, dto.addonKey, admin.sub, source)
-      : await this.addonService.disableAddon(id, dto.addonKey, admin.sub);
+    const result = await this.addonService.disableAddon(id, dto.addonKey, admin.sub, source);
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_DISABLED, {
       addonKey: dto.addonKey,
     });
@@ -903,7 +906,7 @@ export class PlatformAdminController {
           id,
           { addonKey: b.featureKey } as DisableAddonDto,
           admin,
-          "profile.apply",
+          PROFILE_APPLY_SOURCE,
         );
       } catch {
         throw billingFailed();

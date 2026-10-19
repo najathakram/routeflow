@@ -1113,3 +1113,21 @@ describe("item 8 — the apply keeps the Settings in-transit guard", () => {
     expect(t.state().modes.fulfilment_model).toBe("ship");
   });
 });
+
+describe("SA-788 A3 / SA-822: the CALLER decides the source of a disable record, and the actor rides on both", () => {
+  it("the direct admin route passes admin.disable with the acting super-admin's id", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"] });
+    await t.controller.disableAddon(T, { addonKey: "recurring_routes" } as any, admin);
+    expect(t.addonService.disableAddon.mock.calls).toEqual([
+      [T, "recurring_routes", "admin-1", "admin.disable"],
+    ]);
+  });
+
+  it("a business-profile apply passes profile.apply with the same actor", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"] });
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    expect(t.addonService.disableAddon.mock.calls).toEqual([
+      [T, "recurring_routes", "admin-1", "profile.apply"],
+    ]);
+  });
+});

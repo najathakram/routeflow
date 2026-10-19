@@ -2005,7 +2005,7 @@ export class SubscriptionMutationService {
 
     // F3 (#3129 sandbox checklist): an add-on the tenant's plan already bundles is never sold
     // again. Refused before the lock and before ANY Stripe call, row write or ledger event.
-    const included = await this.planIncludedRefusal(tenantId, skuDef);
+    const included = await this.planIncludedRefusal(tenantId, skuDef, version);
     if (included) throw refusalException(included);
 
     // FINDING-3 (round 3 review): same family and the same SKU-keyed shape as the admin path in
@@ -2085,7 +2085,7 @@ export class SubscriptionMutationService {
     const version = await this.catalog.getPublishedCatalog();
     const skuDef = version.addonSkus.find((s) => s.sku === sku);
     if (!skuDef) return null;
-    const included = await this.planIncludedRefusal(tenantId, skuDef);
+    const included = await this.planIncludedRefusal(tenantId, skuDef, version);
     if (included) return included;
     // SA-693: an ACTIVE comp is the platform's to manage, so the preview shows the same refusal the enable
     // call throws (and therefore no charge line), never a price for something that would not be billed.
@@ -2161,7 +2161,7 @@ export class SubscriptionMutationService {
         continue;
       }
       // A plan-bundled SKU is never sold again: no line, nothing to announce.
-      const included = await this.planIncludedRefusal(tenantId, def);
+      const included = await this.planIncludedRefusal(tenantId, def, version);
       if (included) {
         if (included.reason !== "CATALOG_INVALID") continue;
         // B1102: an unparseable includedAtPlan fails closed — a user's checkout is refused (409); the quiet
@@ -2942,22 +2942,39 @@ export class SubscriptionMutationService {
    * The "already in your plan" refusal: the SKU's `includedAtPlan` (the plan at and above which the
    * catalog bundles it free, the same rule the choose-plan quote prices with) is at or below the
    * tenant's CURRENT plan. The plan resolves as everywhere else here: the subscription's planKey,
-   * else the legacy `Tenant.plan` enum. Only SKUs that have a bundling plan cost a read.
+   * else the legacy `Tenant.plan` enum.
+   *
+   * SA-815a: "included" is judged by the tenant's OWN catalog version (`inclusionCatalogFor`: subscription pin, else
+   * tenant pin, else published), not by the `skuDef` the caller read from the published catalog. A SKU the pinned
+   * version predates falls back to the caller's definition (as the entitlement resolver does). `published` is the
+   * published version the caller already holds (reused when it is the resolved one); an UNPINNED tenant reads
+   * nothing extra, because the caller's definition IS its version's.
    */
   private async planIncludedRefusal(
     tenantId: string,
     skuDef: { sku: string; name: string; includedAtPlan?: string | null },
+    published?: PlanVersionWithCatalog | null,
   ): Promise<AddonRefusal | null> {
-    if (skuDef.includedAtPlan == null) return null;
     const [sub, tenant] = await Promise.all([
-      this.prisma.tenantSubscription.findUnique({ where: { tenantId }, select: { planKey: true } }),
-      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { plan: true } }),
+      this.prisma.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: { planKey: true, planVersionId: true },
+      }),
+      this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { plan: true, planVersionId: true },
+      }),
     ]);
+    const pinned = resolvePlanVersionId(sub, tenant)
+      ? await inclusionCatalogFor(this.catalog, sub, tenant, published)
+      : null;
+    const def = pinned?.addonSkus.find((k) => k.sku === skuDef.sku) ?? skuDef;
+    if (def.includedAtPlan == null) return null;
     const planKey = this.resolveFromPlanKey(sub?.planKey, tenant?.plan);
     // B1102: one parser. A key no plan answers to FAILS CLOSED (reason CATALOG_INVALID), never "not included".
-    const verdict = inclusionOf(skuDef, planKey);
+    const verdict = inclusionOf(def, planKey);
     if (verdict.kind === "CATALOG_INVALID") return addonCatalogInvalid(verdict.sku, verdict.value);
-    return verdict.kind === "INCLUDED" ? addonIncludedRefusal(skuDef.name) : null;
+    return verdict.kind === "INCLUDED" ? addonIncludedRefusal(def.name) : null;
   }
 
   /**

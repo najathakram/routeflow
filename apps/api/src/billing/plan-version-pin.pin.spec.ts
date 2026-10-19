@@ -166,13 +166,13 @@ export const CATALOG_READS: Readonly<Record<string, string>> = {
   "billing/subscription-mutation.service.ts#downgrade.getPublishedCatalog":
     "TARGET: the scheduled plan's price",
   "billing/subscription-mutation.service.ts#enableAddon.getPublishedCatalog":
-    "LIST: existence + price of a self-serve SKU. OPEN (flagged to SA): its included-at-plan refusal still reads the published SKU (planIncludedRefusal); not in SA-815's six",
+    "LIST: existence + price of a self-serve SKU. the included-at-plan refusal reads the tenant's pinned SKU (planIncludedRefusal -> inclusionCatalogFor)",
   "billing/subscription-mutation.service.ts#addonEnableRefusal.getPublishedCatalog":
-    "LIST: as enableAddon. OPEN (flagged to SA): the included-at-plan refusal reads the published SKU",
+    "LIST: as enableAddon. the included-at-plan refusal reads the tenant's pinned SKU (planIncludedRefusal)",
   "billing/subscription-mutation.service.ts#checkoutAddonLines.getPublishedCatalog":
-    "LIST: price of each add-on line. OPEN (flagged to SA): planIncludedRefusal reads the published SKU",
+    "LIST: price of each add-on line. the included-at-plan refusal reads the tenant's pinned SKU (planIncludedRefusal)",
   "billing/subscription-mutation.service.ts#billUnbilledRow.getPublishedCatalog":
-    "LIST: price of the row. OPEN (flagged to SA): planIncludedRefusal reads the published SKU",
+    "LIST: price of the row. the included-at-plan refusal reads the tenant's pinned SKU (planIncludedRefusal)",
   "billing/subscription-mutation.service.ts#disableAddonLocked.getPublishedCatalog":
     "LIST: the SKU's display name for a STOP notice",
   "billing/subscription.service.ts#getSubscription.getVersionForTenant":
@@ -193,6 +193,13 @@ describe("SA-815a P2 - every catalog read is inventoried; none is an unreviewed 
 
   it("the inventory is exactly the catalog reads in billing and platform-admin (a new read is a conscious edit)", () => {
     expect(sites()).toEqual(Object.keys(CATALOG_READS));
+  });
+
+  it("no inventory entry is left OPEN: every published-catalog read is a TARGET, LIST, FLAGS, PIN or RESOLVER read", () => {
+    expect(Object.entries(CATALOG_READS).filter(([, why]) => /OPEN/.test(why))).toEqual([]);
+    expect(
+      Object.values(CATALOG_READS).every((why) => /^(TARGET|LIST|FLAGS|PIN|RESOLVER):/.test(why)),
+    ).toBe(true);
   });
 
   it("the six SA-815 sites read no catalog directly: checkout-completed, admin updatePlan, manual activation", () => {
@@ -230,6 +237,7 @@ describe("SA-815a P3 - the named sites read through the resolver", () => {
         "billing/billing-cron.service.ts#applyScheduledDowngrades",
         "billing/subscription-mutation.service.ts#inclusionCatalog",
         "billing/subscription-mutation.service.ts#pinnedVersionOf",
+        "billing/subscription-mutation.service.ts#planIncludedRefusal",
         "billing/subscription-mutation.service.ts#planChangePreview",
         "platform-admin/platform-admin.service.ts#activateManualSubscription",
         "platform-admin/platform-admin.service.ts#updatePlanLocked",

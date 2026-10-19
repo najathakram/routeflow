@@ -131,3 +131,113 @@ describe("EntitlementsService.resolve reads the plan version through the resolve
     expect((await svc.resolve("t1")).planVersionId).toBe("v11");
   });
 });
+
+/**
+ * SA-815b / SA ruling: the entitlement switch is a NO-OP on the three reconciled production-shaped tenants. For each,
+ * the version AND the feature set resolved through the resolver equal what the pre-switch read (the tenant's own pin
+ * alone) gave. "Before" is the same service on the same tenant with the subscription's pin withheld, which is exactly
+ * what the old `getVersionForTenant(tenant.planVersionId)` saw.
+ */
+describe("EntitlementsService: the three reconciled tenant shapes resolve exactly as before the switch", () => {
+  const plan = (planKey: string, flags: string[], seats: number | null) => ({
+    planKey,
+    name: planKey,
+    seatsIncluded: seats,
+    routesConcurrent: null,
+    scansIncluded: null,
+    msgsIncluded: null,
+    customersIncluded: null,
+    featureFlags: flags,
+  });
+  // v11 is PUBLISHED (no LITE definition); v7 is SUPERSEDED and DIFFERENT, so a wrong pick shows in the flags
+  const v11 = {
+    id: "v11",
+    status: "PUBLISHED",
+    definitions: [
+      plan("STARTER", ["addon.ocr"], 1),
+      plan("ENTERPRISE", ["flag.api_sso", "addon.regulated_items", "addon.ocr"], null),
+    ],
+    addonSkus: [],
+  };
+  const v7 = {
+    id: "v7",
+    status: "SUPERSEDED",
+    definitions: [plan("STARTER", [], 1), plan("ENTERPRISE", ["flag.api_sso"], 50)],
+    addonSkus: [],
+  };
+  const versions: Record<string, any> = { v11, v7 };
+
+  function resolve(o: {
+    planKey: string;
+    plan: string;
+    tenantPin: string | null;
+    subPin: string | null;
+  }) {
+    const prisma = {
+      tenant: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "t1",
+          status: "ACTIVE",
+          plan: o.plan,
+          planVersionId: o.tenantPin,
+          trialEndsAt: null,
+          subscription: { planKey: o.planKey, planVersionId: o.subPin },
+          addons: [],
+        }),
+      },
+    } as any;
+    const catalog = {
+      getVersionForTenant: jest.fn(async (id: string | null) => versions[id ?? "v11"]),
+      getPublishedVersion: jest.fn(async () => v11),
+    } as any;
+    const svc = new EntitlementsService(prisma, catalog, {
+      get: jest.fn().mockResolvedValue(null),
+    } as any);
+    return svc.resolve("t1");
+  }
+  const sameAsBefore = async (o: Parameters<typeof resolve>[0]) => {
+    const after = await resolve(o);
+    // the pre-switch read: the tenant's own pin only
+    const before = await resolve({ ...o, subPin: null });
+    expect(after.planVersionId).toBe(before.planVersionId);
+    expect(after.planKey).toBe(before.planKey);
+    expect([...after.flags].sort()).toEqual([...before.flags].sort());
+    expect(after.caps).toEqual(before.caps);
+    expect(after.addons).toEqual(before.addons);
+    return after;
+  };
+
+  it("#1 no tenant pin, subscription pin v11 (the mirrored shape): v11 and the same flags", async () => {
+    const e = await sameAsBefore({
+      planKey: "STARTER",
+      plan: "STARTER",
+      tenantPin: null,
+      subPin: "v11",
+    });
+    expect(e.planVersionId).toBe("v11");
+    expect(e.flags).toEqual(["addon.ocr"]);
+  });
+
+  it("#2 a SUPERSEDED-then-reconciled tenant (both pins v11): v11 and the same flags - and NOT v7's", async () => {
+    const e = await sameAsBefore({
+      planKey: "ENTERPRISE",
+      plan: "ENTERPRISE",
+      tenantPin: "v11",
+      subPin: "v11",
+    });
+    expect(e.planVersionId).toBe("v11");
+    expect([...e.flags].sort()).toEqual(["addon.ocr", "addon.regulated_items", "flag.api_sso"]);
+    expect(e.caps.seats).toBeNull(); // v7 would have said 50
+  });
+
+  it("#3 a LITE tenant whose plan v11 does not define: unchanged (the STARTER fallback, planKey reported as the fallback)", async () => {
+    const e = await sameAsBefore({
+      planKey: "LITE",
+      plan: "STARTER",
+      tenantPin: null,
+      subPin: "v11",
+    });
+    expect(e.planVersionId).toBe("v11");
+    expect(e.planKey).toBe("STARTER");
+  });
+});

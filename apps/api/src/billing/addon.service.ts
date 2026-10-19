@@ -92,6 +92,11 @@ export const UncompBilling = {
 } as const;
 export type UncompBillingMode = (typeof UncompBilling)[keyof typeof UncompBilling];
 
+/** The two callers of `disableAddon`, each with its own source in the closed `AddonChangeSource` list (SA-788 A3). */
+export const ADMIN_DISABLE_SOURCE = "admin.disable" as const;
+export const PROFILE_APPLY_SOURCE = "profile.apply" as const;
+export type AddonDisableSource = typeof ADMIN_DISABLE_SOURCE | typeof PROFILE_APPLY_SOURCE;
+
 @Injectable()
 export class AddonService {
   private readonly logger = new Logger(AddonService.name);
@@ -799,8 +804,9 @@ export class AddonService {
     tenantId: string,
     addonKey: string,
     actorId?: string,
-    // SA-822: a business-profile apply that switches an add-on off says so (the closed source list's `profile.apply`)
-    source: "admin.disable" | "profile.apply" = "admin.disable",
+    // SA-788 A3 / SA-822: the CALLER decides the record's source: the direct admin route passes ADMIN_DISABLE_SOURCE,
+    // a business-profile apply passes PROFILE_APPLY_SOURCE (both are in the closed source list).
+    source: AddonDisableSource = ADMIN_DISABLE_SOURCE,
   ) {
     // Owner ruling 2026-09-28 / SA-540: a default-granted key is held with NO row, so disabling a
     // row would report success and remove nothing. Only a DENY override removes it — say so.
@@ -873,7 +879,7 @@ export class AddonService {
         actor: {
           kind: "PLATFORM_ADMIN",
           id: actorId ?? null,
-          source: source === "profile.apply" ? "profile.apply" : "admin.disable",
+          source: source === PROFILE_APPLY_SOURCE ? "profile.apply" : "admin.disable",
         },
       });
       // B865 / SA-277 FIX-6: the event's sku is the CANONICAL code (bridges a legacy addonKey
