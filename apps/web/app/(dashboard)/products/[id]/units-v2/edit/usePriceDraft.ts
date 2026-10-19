@@ -429,10 +429,11 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
 
   // Row 614: set synchronously before the request, so two clicks (or Ctrl+S) in one tick send one POST.
   const savingRef = React.useRef(false);
-  // Released on the first commit that shows no save running (covers a mutation that never settles its callbacks).
+  // Released when the save settles (onSettled) or reports an error; never on a plain render, so a render between
+  // the click and isPending flipping cannot reopen the gate.
   React.useEffect(() => {
-    if (!save.isPending) savingRef.current = false;
-  });
+    if (save.error) savingRef.current = false;
+  }, [save.error]);
   const doSave = () => {
     const req = toRequest();
     if (savingRef.current || !canSave || !req) return;
