@@ -43,6 +43,13 @@ const NO_CHANGES = {
 type Mode = PriceChange["mode"];
 
 /** Waits for the grid: the draft has no ladder view until it loads. */
+/** "9 prices will change, 1 goes down." The falling count is said here so a row that falls is no surprise (K12 F03). */
+function changeSummary(total: number, against: number, direction: "raise" | "lower"): string {
+  const base = `${total} price${total === 1 ? "" : "s"} will change`;
+  if (against === 0) return `${base}.`;
+  return `${base}, ${against} ${against === 1 ? "goes" : "go"} ${direction === "raise" ? "down" : "up"}.`;
+}
+
 export function ChangePricesPanel({
   onClose,
   onApplied,
@@ -327,7 +334,11 @@ function ChangePricesForm({
                 </table>
               </div>
               <p className="mt-2 text-xs text-ink-500">
-                {plan.changes.length} price{plan.changes.length === 1 ? "" : "s"} will change.
+                {changeSummary(
+                  plan.changes.length,
+                  plan.changes.filter((c) => movesAgainst(direction, c)).length,
+                  direction,
+                )}
               </p>
             </>
           )
