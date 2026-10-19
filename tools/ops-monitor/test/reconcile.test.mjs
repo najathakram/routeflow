@@ -671,3 +671,35 @@ test("H3 lane-silent uses the lane's activity (commits, handoffs), not just the 
   const fallback = run({ state: mkState([], { lanes }) });
   assert.ok(find(fallback, "lane-silent:pc-lane"));
 });
+
+test("register-duplicate-rows: an error alarm names the repeated ids; none for a clean register", () => {
+  const a = find(
+    run({ register: { duplicateIds: ["614", "620"], rowIds: ["614", "620", "700"] } }),
+    "register-duplicate-rows:register",
+  );
+  assert.equal(a.severity, "error");
+  assert.equal(
+    a.message,
+    "The register has duplicate row ids (614, 620); the monitor ignores register changes until it is repaired",
+  );
+  assert.equal(a.source, "register");
+  assert.deepEqual(run({ register: { duplicateIds: [], rowIds: ["614"] } }), []);
+  assert.deepEqual(run({ register: { duplicateIds: [], rowIds: null } }), []);
+});
+
+test("register-id-collision: only for a non-legacy monitor item sharing a register row number", () => {
+  const state = mkState([
+    item("R2", { type: "release" }), // a lane's own item: a real collision
+    item("614", { source: "owner-queue" }), // legacy numeric squatter: sync renames it, no alarm
+    item("700", { source: "register", registerFields: { title: "x" } }), // the register's own row
+  ]);
+  const alarms = run({
+    state,
+    register: { duplicateIds: [], rowIds: ["R2", "614", "700", "800"] },
+  });
+  const a = find(alarms, "register-id-collision:R2");
+  assert.equal(a.severity, "error");
+  assert.equal(a.message, "Register row R2 and a monitor item share the number; nothing merged");
+  assert.equal(a.item, "R2");
+  assert.equal(alarms.filter((x) => x.kind === "register-id-collision").length, 1);
+});

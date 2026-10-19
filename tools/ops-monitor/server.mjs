@@ -598,14 +598,30 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     if (shouldRunRegisterSync(opts)) {
       const { runSync } = await import("./lib/sync.mjs");
       const { loadBugIds } = await import("./lib/store.mjs");
+      let lastRegisterNote = "";
       stopRegisterSync = startRegisterSync({
-        run: async () =>
-          runSync({
+        run: async () => {
+          const res = await runSync({
             dir: specs,
             home: cfg.opsHome(env),
             env,
             bugIds: await loadBugIds(repoRoot),
-          }),
+          });
+          // A refused register (duplicate row ids) or refused rows (id collisions): log once per change.
+          const note = [
+            res?.refused ? `register refused: ${res.refused}` : null,
+            res?.collisions?.length
+              ? `register rows refused (id shared with a monitor item): ${res.collisions.join(", ")}`
+              : null,
+          ]
+            .filter(Boolean)
+            .join("; ");
+          if (note !== lastRegisterNote) {
+            lastRegisterNote = note;
+            if (note) console.error(`[ops-monitor] ${note}`);
+          }
+          return res;
+        },
         onDone: (res) => {
           console.error(`[ops-monitor] register sync appended ${res.appended} event(s)`);
           collector.runOnce("specs").catch(() => {});

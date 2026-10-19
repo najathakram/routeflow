@@ -1437,3 +1437,56 @@ test("A2 specs source returns the extras beside events and config; an extras fai
   assert.deepEqual(bad.c.sources.specs.data.events, [{ id: "e1" }]);
   assert.match(bad.c.sources.specs.data.extrasErrors.join(" "), /disk/);
 });
+
+import { writeFileSync as writeRegisterFile } from "node:fs";
+
+test("readSpecsExtras: counts duplicate register row ids and lists the row ids; a missing register is not an error", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "a2-specs-reg-"));
+  try {
+    mkdirSync(join(dir, "register"));
+    const head =
+      "| ID | Title | Type | Priority | Status | Lane | Train | Gate | ETA | Links | Updated |\n" +
+      "|---|---|---|---|---|---|---|---|---|---|---|\n";
+    const row = (id) => `| ${id} | Acme row ${id} | fix | P2 | planned | - | - | - | - | - | x |\n`;
+    writeRegisterFile(
+      join(dir, "register", "WORK-REGISTER.md"),
+      head + row(500) + row(501) + row(500) + row(500),
+    );
+    const exec = async () => ({ code: 0, stdout: "", stderr: "" });
+    const x = await COL.readSpecsExtras({ dir, exec });
+    assert.deepEqual(x.registerDuplicateIds, ["500"]);
+    assert.deepEqual(x.registerRowIds, ["500", "501", "500", "500"]);
+    const none = mkdtempSync(join(tmpdir(), "a2-specs-noreg-"));
+    try {
+      const y = await COL.readSpecsExtras({ dir: none, exec });
+      assert.deepEqual(y.registerDuplicateIds, []);
+      assert.equal(y.registerRowIds, null);
+      assert.ok(!y.errors.some((e) => /register/.test(e)), y.errors.join(";"));
+    } finally {
+      rmSync(none, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("specs source carries the register duplicate ids and row ids from the extras", async () => {
+  const deps = {
+    store: {
+      ensureClone: async () => {},
+      syncSpecs: async () => {},
+      readAllEvents: async () => [],
+    },
+    config: { specsRemote: () => "remote" },
+    loadConfig: () => ({ lanes: [] }),
+    specsExtras: async () => ({
+      registerDuplicateIds: ["500"],
+      registerRowIds: ["500", "500"],
+      errors: [],
+    }),
+  };
+  const { c } = mk({ deps });
+  await c.runOnce("specs");
+  assert.deepEqual(c.sources.specs.data.registerDuplicateIds, ["500"]);
+  assert.deepEqual(c.sources.specs.data.registerRowIds, ["500", "500"]);
+});

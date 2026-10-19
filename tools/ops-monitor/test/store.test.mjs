@@ -226,20 +226,20 @@ test(
           // Machine B grabs the same next id and pushes first.
           const r = await appendEvents([newItem("m-b", null, "Item from B")], optsB());
           assert.equal(r.pushed, true);
-          assert.equal(r.events[0].item, "1");
+          assert.equal(r.events[0].item, "W-1");
         },
       }),
     );
     assert.equal(res.pushed, true);
     assert.ok(res.attempts >= 2);
-    assert.equal(res.events[0].item, "2");
+    assert.equal(res.events[0].item, "W-2");
     assert.ok(res.warnings.some((w) => /re-allocated/i.test(w)));
     await syncSpecs(B);
     for (const dir of [A, B]) {
       const s = stateOf(dir);
       assert.equal(s.anomalies.length, 0, JSON.stringify(s.anomalies));
-      assert.equal(s.items.get("1").title, "Item from B");
-      assert.equal(s.items.get("2").title, "Item from A");
+      assert.equal(s.items.get("W-1").title, "Item from B");
+      assert.equal(s.items.get("W-2").title, "Item from A");
     }
     assert.equal(git(A, "status", "--porcelain").trim(), "");
   },
@@ -278,23 +278,23 @@ test(
 );
 
 test("(4) a claim held by another lane is refused unless steal", { timeout: 240000 }, async () => {
-  await appendEvents([ev("m-a", "claim", "1", {}, { lane: "lane-x" })], optsA());
+  await appendEvents([ev("m-a", "claim", "W-1", {}, { lane: "lane-x" })], optsA());
   await syncSpecs(B);
   await assert.rejects(
-    appendEvents([ev("m-b", "claim", "1", {}, { lane: "lane-y" })], optsB()),
+    appendEvents([ev("m-b", "claim", "W-1", {}, { lane: "lane-y" })], optsB()),
     (e) =>
       e.refused === true &&
       e.errors.some((m) => /held by lane-x since .*; pass --steal to take it/.test(m)),
   );
   const r = await appendEvents(
-    [ev("m-b", "claim", "1", { steal: true }, { lane: "lane-y" })],
+    [ev("m-b", "claim", "W-1", { steal: true }, { lane: "lane-y" })],
     optsB(),
   );
   assert.equal(r.pushed, true);
   await syncSpecs(A);
-  assert.equal(stateOf(A).items.get("1").claimedBy, "lane-y");
+  assert.equal(stateOf(A).items.get("W-1").claimedBy, "lane-y");
   // Re-claim by the holder is fine.
-  await appendEvents([ev("m-b", "claim", "1", {}, { lane: "lane-y" })], optsB());
+  await appendEvents([ev("m-b", "claim", "W-1", {}, { lane: "lane-y" })], optsB());
 });
 
 test(
@@ -377,7 +377,7 @@ test(
     );
     assert.deepEqual(
       ok.events.map((e) => e.item),
-      ["3", "4"],
+      ["W-3", "W-4"],
     );
   },
 );
@@ -445,6 +445,43 @@ test(
     const s = stateOf(A);
     assert.equal(s.items.get("900").train, "R1");
     assert.deepEqual(s.items.get("R1").members, ["900", "777"]); // 777 does not exist: not checked
+  },
+);
+
+test("validateAgainstState: item.rename refuses an unknown item, a taken id, itself and a bug id", () => {
+  const s = fold([newItem("m", "5", "Five"), newItem("m", "6", "Six")]);
+  const v = (e) => validateAgainstState(e, s, { bugIds: new Set() });
+  assert.deepEqual(v(ev("m", "item.rename", "5", { to: "W-5" })), []);
+  assert.match(v(ev("m", "item.rename", "404", { to: "W-5" }))[0], /unknown item/);
+  assert.match(v(ev("m", "item.rename", "5", { to: "6" }))[0], /already exists/);
+  assert.match(v(ev("m", "item.rename", "5", { to: "5" }))[0], /already/);
+  assert.match(v(ev("m", "item.rename", "5", { to: "B77" }))[0], /bug/i);
+});
+
+test(
+  "a rename and the new item that takes the freed id go in one batch; refs follow the renamed item",
+  { timeout: 240000 },
+  async () => {
+    const r = await appendEvents(
+      [
+        ev("m-a", "item.rename", "900", { to: "W-900" }),
+        newItem("m-a", "900", "Register row", { source: "register" }),
+      ],
+      optsA(),
+    );
+    assert.deepEqual(
+      r.events.map((e) => `${e.kind} ${e.item}`),
+      ["item.rename 900", "item.new 900"],
+    );
+    const s = stateOf(A);
+    assert.equal(s.anomalies.length, 0, JSON.stringify(s.anomalies));
+    assert.equal(s.items.get("W-900").title, "Member");
+    assert.equal(s.items.get("900").title, "Register row");
+    assert.deepEqual(s.items.get("R1").members, ["W-900", "777"]);
+    await assert.rejects(
+      appendEvents([ev("m-a", "item.rename", "W-900", { to: "900" })], optsA()),
+      /already exists/,
+    );
   },
 );
 
@@ -567,13 +604,13 @@ test(
       home: p.homeA,
     });
     assert.equal(ra.pushed, false);
-    assert.equal(ra.events[0].item, "1");
+    assert.equal(ra.events[0].item, "W-1");
     const rb = await appendEvents([newItem("m-b", null, "Other item")], {
       dir: p.B,
       home: p.homeB,
     });
     assert.equal(rb.pushed, true);
-    assert.equal(rb.events[0].item, "1");
+    assert.equal(rb.events[0].item, "W-1");
     git(p.A, "remote", "set-url", "origin", p.remote);
     const sync = await syncSpecs(p.A);
     assert.equal(sync.ok, true, sync.error);
@@ -582,8 +619,8 @@ test(
     git(p.dir, "clone", "--quiet", p.remote, check);
     const s = stateOf(check);
     assert.equal(s.anomalies.length, 0, JSON.stringify(s.anomalies));
-    assert.equal(s.items.get("1")?.title, "Other item");
-    assert.equal(s.items.get("2")?.title, "Offline item");
+    assert.equal(s.items.get("W-1")?.title, "Other item");
+    assert.equal(s.items.get("W-2")?.title, "Offline item");
     assert.equal(git(p.A, "status", "--porcelain").trim(), "");
     assert.equal(git(p.A, "rev-list", "--count", "@{u}..HEAD").trim(), "0");
   },

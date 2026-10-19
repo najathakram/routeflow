@@ -723,6 +723,10 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
     bugs: hasRegistry ? bugs : undefined,
     bugIds,
     laneActivity,
+    register: {
+      duplicateIds: specsData?.registerDuplicateIds ?? [],
+      rowIds: specsData?.registerRowIds ?? null,
+    },
   });
 
   return {

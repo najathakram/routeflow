@@ -17,6 +17,7 @@ monitor brief, and the lead gets a "since you last looked" line on each prompt.
                   --problem "<what is wrong, as a customer says it>" --impact "<who it hurts, what it
                   costs>" [--solution "<how we fix it>"] [--priority P1] [--train R3] [--parent <id>]
                   [--eta 10-21]       (problem + impact are REQUIRED for P0/P1 bug/feature/incident)
+                  New items get ids W-1, W-2, ...; plain numbers belong to the register.
 - Plain words:    write problem/impact/solution for the OWNER (business terms, no codes). Editing
                   them on a drafted item confirms the draft.
 - Rulings / owner answers / notes: rf event ruling --ref SA-816 --summary "…" [<id>] ·

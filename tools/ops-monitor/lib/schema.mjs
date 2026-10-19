@@ -146,6 +146,11 @@ export const KINDS = {
     },
   },
   note: { needsItem: "optional", data: { text: [str(1000), true] } },
+  // Moves an item to a free id (the monitor's own items yield plain numbers to the register).
+  "item.rename": {
+    needsItem: "required",
+    data: { to: [(v) => typeof v === "string" && ITEM_ID_RE.test(v), true] },
+  },
   link: { needsItem: "required", data: null }, // data = links object, at least one entry
   push: {
     needsItem: "optional",

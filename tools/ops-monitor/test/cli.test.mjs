@@ -84,7 +84,7 @@ test("item new -> claim -> next -> status -> ls --json, with refusals (exit 1)",
     "Acme loses time on every order",
   );
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /created item 1\b/);
+  assert.match(r.stdout, /created item W-1\b/);
   // P1 feature without the business story is a usage error (exit 2)
   const noStory = await rf(
     "item",
@@ -114,21 +114,21 @@ test("item new -> claim -> next -> status -> ls --json, with refusals (exit 1)",
   const created = JSON.parse(r.stdout);
   assert.equal(created.ok, true);
   assert.equal(created.pushed, true);
-  assert.equal(created.events[0].item, "2");
+  assert.equal(created.events[0].item, "W-2");
   assert.equal(created.events[0].machine, "testbox");
 
   r = await rf("next", "--lane", "pc-lane", "--json");
   assert.equal(r.code, 0, r.stderr);
   let nx = JSON.parse(r.stdout);
-  assert.equal(nx.item.id, "1");
-  assert.equal(nx.runnersUp[0].id, "2");
+  assert.equal(nx.item.id, "W-1");
+  assert.equal(nx.runnersUp[0].id, "W-2");
   assert.match(nx.item.reason, /^P1 · assigned to pc-lane/);
 
-  r = await rf("claim", "1", "--lane", "pc-lane", "--branch", "feat/1-acme");
+  r = await rf("claim", "W-1", "--lane", "pc-lane", "--branch", "feat/1-acme");
   assert.equal(r.code, 0, r.stderr);
 
   // Held by pc-lane: another lane is refused (exit 1) unless --steal.
-  r = await rf("claim", "1", "--lane", "macmini");
+  r = await rf("claim", "W-1", "--lane", "macmini");
   assert.equal(r.code, 1);
   assert.match(r.stderr, /held by pc-lane since .*--steal/);
 
@@ -141,10 +141,10 @@ test("item new -> claim -> next -> status -> ls --json, with refusals (exit 1)",
   r = await rf("next", "--lane", "pc-lane", "--claim", "--json");
   assert.equal(r.code, 0, r.stderr);
   nx = JSON.parse(r.stdout);
-  assert.equal(nx.item.id, "2");
+  assert.equal(nx.item.id, "W-2");
   assert.equal(nx.claimed, true);
 
-  r = await rf("status", "1", "building", "--note", "go");
+  r = await rf("status", "W-1", "building", "--note", "go");
   assert.equal(r.code, 0, r.stderr);
 
   r = await rf("ls", "--json", "--open");
@@ -152,9 +152,9 @@ test("item new -> claim -> next -> status -> ls --json, with refusals (exit 1)",
   const rows = JSON.parse(r.stdout);
   assert.deepEqual(
     rows.map((i) => i.id),
-    ["1", "2"],
+    ["W-1", "W-2"],
   );
-  const one = rows.find((i) => i.id === "1");
+  const one = rows.find((i) => i.id === "W-1");
   assert.equal(one.status, "building");
   assert.equal(one.claimedBy, "pc-lane");
   assert.deepEqual(one.links.branches, ["feat/1-acme"]);
@@ -168,7 +168,7 @@ test("item new -> claim -> next -> status -> ls --json, with refusals (exit 1)",
   assert.equal(r.code, 0);
   assert.match(r.stdout, /nothing to pick/);
 
-  r = await rf("item", "show", "1", "--json");
+  r = await rf("item", "show", "W-1", "--json");
   assert.equal(JSON.parse(r.stdout).title, "Acme order screen");
   r = await rf("item", "show", "404");
   assert.equal(r.code, 1);
@@ -225,7 +225,7 @@ test("rf sync --dry plans, rf sync appends once, a second rf sync appends nothin
     "owner-queue,N1",
   );
   assert.equal(r.code, 0, r.stderr);
-  const decisionId = /created item (\d+)/.exec(r.stdout)[1];
+  const decisionId = /created item (W-\d+)/.exec(r.stdout)[1];
 
   r = await rf("sync", "--dry", "--json");
   assert.equal(r.code, 0, r.stderr);
@@ -369,12 +369,12 @@ test(
 );
 
 test("a story-field edit sends summaryDraft:false", T, async () => {
-  let r = await rf("item", "edit", "1", "--problem", "Orders are slow", "--json");
+  let r = await rf("item", "edit", "W-1", "--problem", "Orders are slow", "--json");
   assert.equal(r.code, 0, r.stderr);
   const sent = JSON.parse(r.stdout).events[0].data.fields;
   assert.equal(sent.problem, "Orders are slow");
   assert.equal(sent.summaryDraft, false);
-  r = await rf("item", "edit", "1", "--priority", "P1", "--json");
+  r = await rf("item", "edit", "W-1", "--priority", "P1", "--json");
   assert.equal(JSON.parse(r.stdout).events[0].data.fields.summaryDraft, undefined);
 });
 
@@ -420,6 +420,7 @@ test(
         });
       let r = await run("item", "new", "--title", "Acme generated item", "--type", "feature");
       assert.equal(r.code, 0, r.stderr);
+      assert.match(r.stdout, /created item [0-9]+:/); // generated mode keeps numeric ids
       const check = join(dir, "check");
       git(dir, "clone", "--quiet", remote, check);
       const reg = readFileSync(join(check, "register", "WORK-REGISTER.md"), "utf8").replace(

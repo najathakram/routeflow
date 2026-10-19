@@ -1130,3 +1130,21 @@ test("H3: bugsFixedByNote lists bugs closed by an ALREADY FIXED note, newest PR 
   // a snapshot with no such notes carries an empty list
   assert.deepEqual(a2().bugsFixedByNote, []);
 });
+
+test("register duplicate ids and id collisions from the specs source become alarms", () => {
+  const s = build({
+    specs: okSource(30, {
+      events: events(),
+      config: DEFAULT_CONFIG,
+      registerDuplicateIds: ["614"],
+      registerRowIds: ["614", "614"],
+    }),
+  });
+  const a = s.alarms.find((x) => x.id === "register-duplicate-rows:register");
+  assert.equal(a.severity, "error");
+  assert.match(a.message, /duplicate row ids \(614\)/);
+  assert.equal(
+    build().alarms.some((x) => x.kind === "register-duplicate-rows"),
+    false,
+  );
+});

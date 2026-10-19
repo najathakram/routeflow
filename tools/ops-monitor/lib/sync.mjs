@@ -33,6 +33,55 @@ const norm = (s) =>
     .replace(/\s+/g, " ")
     .trim();
 
+/** True when the register (not the monitor) created the item: its register-sourced fields exist. */
+export function isRegisterOwned(it) {
+  return it?.source === "register" || Object.keys(it?.registerFields ?? {}).length > 0;
+}
+
+/**
+ * The legacy collision case: a monitor item that squats on a plain register number, namely one the
+ * one-time backfill created, or a numeric-id item that was never register-sourced (a pre-W- `rf item
+ * new`). Such an item yields its number (sync renames it). Any other item sharing a register row's
+ * id is a real collision that sync refuses.
+ */
+export function isLegacyMonitorItem(it) {
+  if (!it || isRegisterOwned(it)) return false;
+  const creator = (it.history ?? []).find((h) => h.kind === "item.new")?.actor;
+  return creator === BACKFILL_ACTOR || /^\d+$/.test(it.id);
+}
+
+/** The alias a legacy monitor item moves to, free among `taken`: OQ-<key>, BOARD-<id> or W-<id>. */
+export function aliasFor(it, taken) {
+  const tags = it.tags ?? [];
+  if (tags.includes("owner-queue")) {
+    const key = (tags.find((t) => t !== "owner-queue") ?? "").replace(/[^A-Za-z0-9.]/g, "");
+    if (key) {
+      let base = `OQ-${key.slice(0, 20)}`;
+      if (!taken.has(base)) return base;
+      for (let n = 2; ; n++) {
+        const suffix = `.${n}`;
+        base = `OQ-${key.slice(0, 20 - suffix.length)}${suffix}`;
+        if (!taken.has(base)) return base;
+      }
+    }
+  }
+  const prefix = tags.includes("problem") || tags.includes("owner-ask") ? "BOARD" : "W";
+  let alias = `${prefix}-${it.id}`;
+  for (let n = 2; taken.has(alias); n++) alias = `${prefix}-${it.id}.${n}`;
+  return alias;
+}
+
+/** Register row ids that appear more than once, in first-seen order. */
+export function duplicateRowIds(ids) {
+  const seen = new Set();
+  const dup = [];
+  for (const id of ids) {
+    if (seen.has(id) && !dup.includes(id)) dup.push(id);
+    seen.add(id);
+  }
+  return dup;
+}
+
 /** "human" (default) or "generated". */
 export function registerModeOf(config) {
   return config?.registerMode === "generated" ? "generated" : "human";
@@ -140,6 +189,9 @@ export function planSync({
     dropped: 0,
     skipped: [],
     invalid: [],
+    renamed: [],
+    collisions: [],
+    refused: null,
   };
   const emit = (kind, item, data) => {
     const tsMs = now + events.length;
@@ -168,7 +220,14 @@ export function planSync({
     [...state.items.values()].filter((i) => i.type === "release").map((i) => i.id),
   );
   const known = new Set(state.items.keys());
-  const { drafts } = parseRegisterReport(registerMd ?? "", config);
+  const { drafts: allDrafts } = parseRegisterReport(registerMd ?? "", config);
+  // A register with duplicate row ids is a corrupted snapshot: ingest none of it (the owner queue
+  // still syncs) and say so, rather than create phantom rows from whichever copy came first.
+  const dupes = duplicateRowIds(allDrafts.map((d) => d.id));
+  if (dupes.length) summary.refused = `duplicate register row ids: ${dupes.join(", ")}`;
+  const drafts = dupes.length ? [] : allDrafts;
+  const renamed = new Map(); // old id -> alias, for the later passes of this same batch
+  const idNow = (id) => renamed.get(id) ?? id;
   for (const draft of drafts) {
     const id = draft.id;
     if (BUG_ID_RE.test(id)) {
@@ -180,7 +239,20 @@ export function planSync({
     // still carries it. The same filter runs on every pass, so the diff stays stable.
     if (fields.train && !releases.has(fields.train)) delete fields.train;
     const it = state.items.get(id);
-    if (!it) {
+    if (it && !isRegisterOwned(it)) {
+      if (!isLegacyMonitorItem(it)) {
+        // Some other item holds this number: merge nothing, raise the collision alarm.
+        summary.collisions.push(id);
+        summary.skipped.push({ item: id, reason: "id collision with a monitor item" });
+        continue;
+      }
+      const alias = aliasFor(it, known);
+      if (!emit("item.rename", id, { to: alias })) continue;
+      renamed.set(id, alias);
+      summary.renamed.push({ from: id, to: alias });
+      known.add(alias);
+      known.delete(id);
+      if (releases.delete(id)) releases.add(alias);
       if (emit("item.new", id, fields)) {
         summary.registerNew++;
         known.add(id);
@@ -188,9 +260,12 @@ export function planSync({
       }
       continue;
     }
-    const owned = it.source === "register" || Object.keys(it.registerFields ?? {}).length > 0;
-    if (!owned) {
-      summary.skipped.push({ item: id, reason: "not a register item" });
+    if (!it) {
+      if (emit("item.new", id, fields)) {
+        summary.registerNew++;
+        known.add(id);
+        if (fields.type === "release") releases.add(id);
+      }
       continue;
     }
     const last = it.registerFields ?? {};
@@ -221,7 +296,7 @@ export function planSync({
         answer: clip(`${word} → ${row.decisionFile ?? "-"}`, 600),
       };
       if (row.recommended) data.recommended = clip(row.recommended, 600);
-      if (emit("owner-decision", it.id, data)) {
+      if (emit("owner-decision", idNow(it.id), data)) {
         answeredNow.add(it.id);
         summary.answered++;
       }
@@ -239,10 +314,11 @@ export function planSync({
     const history = it.history ?? [];
     if (history.find((h) => h.kind === "item.new")?.actor !== BACKFILL_ACTOR) continue;
     if (history.some((h) => h.kind === "status" && h.status === "dropped")) continue;
-    if (emit("status", it.id, { status: "dropped", note: BOARD_DROP_NOTE })) summary.dropped++;
+    if (emit("status", idNow(it.id), { status: "dropped", note: BOARD_DROP_NOTE }))
+      summary.dropped++;
   }
 
-  return { events, summary };
+  return { events, summary, refused: summary.refused, collisions: summary.collisions };
 }
 
 /** Pure: the events only (see planSync). */
@@ -297,6 +373,8 @@ export async function runSync({
     ran: true,
     events: out.events,
     summary: out.summary,
+    refused: out.refused,
+    collisions: out.collisions,
     appended: 0,
     pushed: false,
     warnings: [],

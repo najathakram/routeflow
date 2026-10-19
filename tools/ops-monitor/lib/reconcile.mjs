@@ -3,6 +3,7 @@
 import { DONE_STATUSES } from "./schema.mjs";
 import { itemIdsFromBranch, parseEta } from "./ids.mjs";
 import { DOMAINS, areaDomain } from "./areas.mjs";
+import { isLegacyMonitorItem, isRegisterOwned } from "./sync.mjs";
 
 const SEV_ORDER = { error: 0, warn: 1, info: 2 };
 const HOUR = 3600_000;
@@ -130,6 +131,8 @@ export function isBugOpen(b) {
  *  - bugs: the registry's open bugs { id, severity, state, ledgerState?, pending, filedAt (ms |
  *    ISO | null = older than the git-log window), items? (register items naming it), fix ("none" |
  *    "branch" | "pr-open" | "in-release" | "merged" | "deployed", or { state, ... }) }
+ *  - register: { duplicateIds: row ids the register repeats, rowIds: every register row id | null }
+ *    (collector.readSpecsExtras); raises register-duplicate-rows and register-id-collision.
  *  - bugIds: every B-id the registry knows (open, closed and pending); enables bug-no-registry.
  */
 export function reconcile({
@@ -142,6 +145,7 @@ export function reconcile({
   bugs,
   bugIds,
   laneActivity,
+  register,
 }) {
   const alarms = [];
   const th = {
@@ -448,6 +452,30 @@ export function reconcile({
         source: name,
       });
     }
+  }
+
+  // register-duplicate-rows: the hand-kept register repeats a row id, so sync ignores the register.
+  const dupIds = register?.duplicateIds ?? [];
+  if (dupIds.length) {
+    add({
+      kind: "register-duplicate-rows",
+      severity: "error",
+      message: `The register has duplicate row ids (${dupIds.join(", ")}); the monitor ignores register changes until it is repaired`,
+      source: "register",
+    });
+  }
+
+  // register-id-collision: a register row shares its number with an item sync will not move (not
+  // the legacy case that sync renames), so the row is refused and nothing is merged.
+  for (const id of new Set(register?.rowIds ?? [])) {
+    const it = state.items.get(id);
+    if (!it || it.overlay || isRegisterOwned(it) || isLegacyMonitorItem(it)) continue;
+    add({
+      kind: "register-id-collision",
+      severity: "error",
+      message: `Register row ${id} and a monitor item share the number; nothing merged`,
+      item: id,
+    });
   }
 
   // anomaly (claim conflicts are reported once, by claim-conflict, only while live)

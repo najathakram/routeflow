@@ -18,7 +18,7 @@ import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { BUG_ID_RE, validateEvent } from "./schema.mjs";
 import { fold } from "./fold.mjs";
-import { nextItemId, utcDate } from "./ids.mjs";
+import { allocateItemId, utcDate } from "./ids.mjs";
 import { REPO_ROOT, loadConfig, opsHome, specsDir } from "./config.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -505,6 +505,14 @@ export function validateAgainstState(ev, state, { bugIds = new Set() } = {}) {
     if (!known(ev.item)) errors.push(`unknown item ${ev.item}`);
     else {
       if (ev.kind === "item.edit") checkRefs(ev.data.fields ?? {}, ev.item);
+      if (ev.kind === "item.rename") {
+        const to = ev.data?.to;
+        if (to === ev.item) errors.push(`item ${ev.item} is already ${to}`);
+        else if (BUG_ID_RE.test(to))
+          errors.push(`cannot rename to ${to}: registry bug ids come from the registry`);
+        else if (known(to))
+          errors.push(`cannot rename ${ev.item} to ${to}: item ${to} already exists`);
+      }
       if (ev.kind === "claim") {
         const held = state.items.get(ev.item)?.claimedBy;
         if (held && held !== ev.lane && !ev.data.steal) {
@@ -642,7 +650,7 @@ export async function reconcileUnpushed(dir, { bugIds = new Set() } = {}) {
       continue;
     }
     if (ev.kind === "item.new" && state.items.has(ev.item)) {
-      const next = nextItemId(state);
+      const next = allocateItemId(state, { generated: isGeneratedMode(dir) });
       out.changes.set(ev.item, next);
       ev.item = next;
       touched = true;
@@ -726,12 +734,13 @@ async function doAppend(events, { dir, push, retries, bugIds, _beforePush, after
 
   const current = readAllEvents(dir);
   let state = fold(current);
+  const generated = isGeneratedMode(dir);
   const accepted = [];
   const errors = [];
   for (const input of events) {
     const ev = structuredClone(input);
     if (ev.kind === "item.new" && (ev.item === null || ev.item === undefined))
-      ev.item = nextItemId(state);
+      ev.item = allocateItemId(state, { generated });
     const errs = [...validateEvent(ev).errors, ...validateAgainstState(ev, state, { bugIds })];
     if (errs.length) {
       errors.push(...errs.map((m) => `${ev.kind}${ev.item ? ` ${ev.item}` : ""}: ${m}`));
@@ -819,7 +828,7 @@ async function doAppend(events, { dir, push, retries, bugIds, _beforePush, after
 
 /**
  * Validates, writes, commits and (by default) pushes events to the specs clone, under the lock.
- * An item.new with a null `item` gets the next free numeric id. Throws RefusedError (all-or-nothing)
+ * An item.new with a null `item` gets the next free id: `W-<n>` in human register mode, numeric max+1 in generated mode. Throws RefusedError (all-or-nothing)
  * when any event fails validation.
  */
 export async function appendEvents(

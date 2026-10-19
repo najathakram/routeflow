@@ -18,6 +18,24 @@ export function nextItemId(state) {
   return String(max + 1);
 }
 
+/** Next monitor-owned id `W-<n>`: n = 1 + the highest existing W- number ("W-1" when none). */
+export function nextWorkId(state) {
+  let max = 0;
+  for (const id of state.items.keys()) {
+    const m = /^W-(\d+)$/.exec(id);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `W-${max + 1}`;
+}
+
+/**
+ * The id a new item gets when none is given: `W-<n>` in human register mode (plain numbers belong
+ * to the hand-kept register), the numeric max+1 in generated mode.
+ */
+export function allocateItemId(state, { generated = false } = {}) {
+  return generated ? nextItemId(state) : nextWorkId(state);
+}
+
 /** UTC calendar date `YYYY-MM-DD` of an epoch-ms time. */
 export function utcDate(ms) {
   return new Date(ms).toISOString().slice(0, 10);

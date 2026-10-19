@@ -181,6 +181,31 @@ export function fold(events, { bugs = new Map() } = {}) {
     }
   };
 
+  /**
+   * Moves an item to a free id: its own id, every other item's parent / train / members / related
+   * refs, and the recorded pushes, PR events, rulings, notes and decisions. The Map keeps its
+   * order. Lane claims are rebuilt from claimedBy after the loop, so they follow by themselves.
+   */
+  const renameItem = (from, to) => {
+    const entries = [...state.items.entries()];
+    state.items.clear();
+    for (const [id, it] of entries) {
+      if (id === from) {
+        it.id = to;
+        state.items.set(to, it);
+      } else state.items.set(id, it);
+    }
+    const swap = (id) => (id === from ? to : id);
+    for (const it of state.items.values()) {
+      if (it.parent === from) it.parent = to;
+      if (it.train === from) it.train = to;
+      it.members = it.members.map(swap);
+      it.related = it.related.map(swap);
+    }
+    for (const list of [state.pushes, state.prEvents, state.rulings, state.notes, state.decisions])
+      for (const rec of list) if (rec.item === from) rec.item = to;
+  };
+
   const findByBranch = (branch) => {
     if (!branch) return null;
     for (const it of state.items.values()) if (it.links.branches.includes(branch)) return it;
@@ -206,6 +231,28 @@ export function fold(events, { bugs = new Map() } = {}) {
           if (isRegisterFields(d)) recordRegisterFields(it, d);
           state.items.set(ev.item, it);
           touched = true;
+        }
+        break;
+      }
+      case "item.rename": {
+        const from = ev.item;
+        const to = d.to;
+        const cur = state.items.get(from);
+        if (!cur) {
+          anomaly("unknown-item", ev.id, from, `item.rename references unknown item ${from}`, ts);
+        } else if (state.items.has(to)) {
+          anomaly(
+            "rename-conflict",
+            ev.id,
+            from,
+            `item.rename ${from} -> ${to}: ${to} already exists`,
+            ts,
+          );
+        } else {
+          renameItem(from, to);
+          cur.history.push({ ts, kind: ev.kind, actor: ev.actor, to });
+          if (cur.history.length > HISTORY_CAP)
+            cur.history.splice(0, cur.history.length - HISTORY_CAP);
         }
         break;
       }

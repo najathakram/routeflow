@@ -427,3 +427,52 @@ test("an unparseable line is dated noon UTC of its file name so it can age out",
   assert.equal(inv[0].ts, Date.UTC(2026, 9, 18, 12, 0, 0));
   assert.equal(inv[1].ts, null, "no date in the name: stays undated");
 });
+
+// ---------------------------------------------------------------------------------------------
+// item.rename
+
+test("item.rename moves the item, every ref and the claim, and frees the old id", () => {
+  const s = fold([
+    newItem("614", { title: "Squatter", tags: ["owner-queue"] }, { min: 0 }),
+    newItem("700", { title: "Child", parent: "614", related: ["614"] }, { min: 1 }),
+    newItem("701", { title: "Group", members: ["614", "700"] }, { min: 2 }),
+    newItem("R1", { title: "Train", type: "release" }, { min: 3 }),
+    ev("claim", "614", { branch: "feat/614-x" }, { min: 4, lane: "pc-lane" }),
+    ev("note", "614", { text: "history stays" }, { min: 5 }),
+    ev("item.rename", "614", { to: "OQ-N1" }, { min: 6 }),
+    // the register row now takes the freed number; events after the rename name the NEW holder
+    newItem("614", { title: "Register row", source: "register" }, { min: 7 }),
+    ev("status", "614", { status: "building" }, { min: 8 }),
+  ]);
+  assert.equal(s.anomalies.length, 0, JSON.stringify(s.anomalies));
+  const moved = s.items.get("OQ-N1");
+  assert.equal(moved.id, "OQ-N1");
+  assert.equal(moved.title, "Squatter");
+  assert.equal(moved.status, "planned"); // the later status hit the register row, not the moved item
+  assert.equal(moved.claimedBy, "pc-lane");
+  assert.deepEqual(
+    moved.history.map((h) => h.kind),
+    ["item.new", "claim", "note", "item.rename"],
+  );
+  assert.equal(s.items.get("614").title, "Register row");
+  assert.equal(s.items.get("614").status, "building");
+  assert.equal(s.items.get("700").parent, "OQ-N1");
+  assert.deepEqual(s.items.get("700").related, ["OQ-N1"]);
+  assert.deepEqual(s.items.get("701").members, ["OQ-N1", "700"]);
+  assert.deepEqual(s.items.get("OQ-N1").children, ["700"]);
+  assert.deepEqual(s.items.get("614").children, []);
+  assert.deepEqual(s.lanes.get("pc-lane").claims, ["OQ-N1"]);
+  assert.equal(s.notes[0].item, "OQ-N1");
+});
+
+test("item.rename to an id that exists is a rename-conflict anomaly and moves nothing", () => {
+  const s = fold([
+    newItem("5", {}, { min: 0 }),
+    newItem("6", {}, { min: 1 }),
+    ev("item.rename", "5", { to: "6" }, { min: 2 }),
+    ev("item.rename", "99", { to: "W-1" }, { min: 3 }),
+  ]);
+  assert.deepEqual([...s.items.keys()], ["5", "6"]);
+  assert.deepEqual(s.anomalies.map((a) => a.kind).sort(), ["rename-conflict", "unknown-item"]);
+  assert.equal(s.anomalies.find((a) => a.kind === "rename-conflict").item, "5");
+});

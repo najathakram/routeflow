@@ -179,12 +179,14 @@ test("syncEvents: an unknown train is left out, still idempotent", () => {
   assert.deepEqual(run([...baseEvents(), ...out.events], md).events, []);
 });
 
-test("syncEvents leaves alone items the register never owned, and registry bug ids", () => {
-  const cli = mk("item.new", "301", { title: "Typed by hand", type: "feature" });
-  const md = register(row(301, { title: "Same id, register text" }), row("B1234"));
-  const out = run([...baseEvents(), cli], md);
+test("syncEvents skips registry bug ids and never merges into an item the register never owned", () => {
+  // R2 is a lane's own release item; the register has a row with the same id: refused, not merged.
+  const lane = mk("item.new", "R2", { title: "Lane's own train", type: "release" });
+  const md = register(row("R2", { title: "Same id, register text" }), row("B1234"));
+  const out = run([...baseEvents(), lane], md);
   assert.deepEqual(out.events, []);
   assert.equal(out.summary.skipped.length >= 1, true);
+  assert.deepEqual(out.collisions, ["R2"]);
 });
 
 test("syncEvents never drops a register row item, even one that vanished from the register", () => {
@@ -554,4 +556,140 @@ test("startRegisterSync: first run after the delay, then every interval; errors 
   assert.deepEqual(done.length, 1); // a pass that appended nothing does not notify
   stop();
   assert.equal(t.live(), 0);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Register numbers belong to the register (lead 10-19)
+
+const applyAll = (events, more) => {
+  const st = fold([...events, ...more]);
+  assert.deepEqual(st.anomalies, [], JSON.stringify(st.anomalies));
+  return st;
+};
+
+test("syncEvents: legacy monitor items squatting on register numbers are renamed, then the row is created; idempotent", () => {
+  const oqA = mk(
+    "item.new",
+    "614",
+    { title: "Say no?", type: "decision", tags: ["owner-queue", "N1"], source: "owner-queue" },
+    BACKFILL,
+  );
+  const oqB = mk(
+    "item.new",
+    "615",
+    {
+      title: "Say no again?",
+      type: "decision",
+      tags: ["owner-queue", "N1"],
+      source: "owner-queue",
+    },
+    BACKFILL,
+  );
+  const board = mk(
+    "item.new",
+    "616",
+    { title: "Board problem", type: "chore", tags: ["problem"] },
+    BACKFILL,
+  );
+  const cli = mk(
+    "item.new",
+    "651",
+    { title: "Monitor's own item", type: "feature" },
+    { actor: "lead" },
+  );
+  const events = [...baseEvents(), oqA, oqB, board, cli];
+  const md = register(row(614), row(615), row(616), row(651), row(652));
+  const out = run(events, md);
+  const kinds = out.events.map((e) => `${e.kind} ${e.item}${e.data.to ? `>${e.data.to}` : ""}`);
+  assert.deepEqual(kinds, [
+    "item.rename 614>OQ-N1",
+    "item.new 614",
+    "item.rename 615>OQ-N1.2",
+    "item.new 615",
+    "item.rename 616>BOARD-616",
+    "item.new 616",
+    "item.rename 651>W-651",
+    "item.new 651",
+    "item.new 652",
+    "status BOARD-616", // the board drop follows the item to its alias, never the register row
+  ]);
+  assert.deepEqual(out.collisions, []);
+  const st = applyAll(events, out.events);
+  assert.equal(st.items.get("OQ-N1").title, "Say no?");
+  assert.equal(st.items.get("OQ-N1.2").title, "Say no again?");
+  assert.equal(st.items.get("BOARD-616").status, "dropped");
+  assert.equal(st.items.get("W-651").title, "Monitor's own item");
+  for (const id of ["614", "615", "616", "651", "652"]) {
+    assert.equal(st.items.get(id).source, "register", id);
+    assert.equal(st.items.get(id).status, "planned", id);
+  }
+  // the second pass has nothing to do
+  assert.deepEqual(run([...events, ...out.events], md).events, []);
+});
+
+test("syncEvents: an answered owner-queue row answers the renamed item, not the register row", () => {
+  const oq = mk(
+    "item.new",
+    "614",
+    { title: "Say no?", type: "decision", tags: ["owner-queue", "N1"], source: "owner-queue" },
+    BACKFILL,
+  );
+  const queue = oq_N1_answered();
+  const out = run([...baseEvents(), oq], register(row(614)), queue);
+  const decision = out.events.find((e) => e.kind === "owner-decision");
+  assert.equal(decision.item, "OQ-N1");
+});
+function oq_N1_answered() {
+  return oq("| N1 · ANSWERED | Say no? | - | yes | because |");
+}
+
+test("syncEvents: a register row sharing its number with a non-legacy monitor item is refused and reported", () => {
+  const lane = mk(
+    "item.new",
+    "R2",
+    { title: "Lane's own train", type: "release", priority: "P1" },
+    { lane: "pc-lane" },
+  );
+  const md = register(
+    row("R2", { title: "Register text", prio: "P3", status: "building" }),
+    row(700),
+  );
+  const events = [...baseEvents(), lane];
+  const out = run(events, md);
+  assert.deepEqual(out.collisions, ["R2"]);
+  assert.deepEqual(
+    out.events.map((e) => `${e.kind} ${e.item}`),
+    ["item.new 700"],
+  ); // other rows still sync
+  const st = applyAll(events, out.events);
+  const r2 = st.items.get("R2");
+  assert.equal(r2.title, "Lane's own train");
+  assert.equal(r2.priority, "P1");
+  assert.equal(r2.status, "planned"); // the register row said building: nothing merged
+  assert.equal(r2.source, null);
+  assert.deepEqual(r2.registerFields, {});
+  // still refused (and still silent) on the next pass
+  const again = run([...events, ...out.events], md);
+  assert.deepEqual(again.events, []);
+  assert.deepEqual(again.collisions, ["R2"]);
+});
+
+test("syncEvents: duplicate register row ids refuse the whole register but still sync the owner queue", () => {
+  const oqItem = mk(
+    "item.new",
+    "W-1",
+    { title: "Say no?", type: "decision", tags: ["owner-queue", "N1"], source: "owner-queue" },
+    BACKFILL,
+  );
+  const md = register(row(500), row(501), row(500, { title: "Phantom copy" }));
+  const out = run([...baseEvents(), oqItem], md, oq_N1_answered());
+  assert.equal(out.refused, "duplicate register row ids: 500");
+  assert.equal(out.summary.refused, out.refused);
+  assert.deepEqual(
+    out.events.map((e) => e.kind),
+    ["owner-decision"],
+  );
+  assert.equal(out.summary.registerNew, 0);
+  // a clean register is not refused
+  assert.equal(run(baseEvents(), register(row(500), row(501))).refused, null);
 });

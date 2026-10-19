@@ -124,3 +124,13 @@ test("refPrs: a register-cited PR number list is a valid item field", () => {
       JSON.stringify(bad).slice(0, 30),
     );
 });
+
+test("item.rename: needs an item and a valid data.to, nothing else", () => {
+  assert.equal(validateEvent(ev("item.rename", "614", { to: "OQ-N1" })).ok, true);
+  assert.equal(validateEvent(ev("item.rename", "614", { to: "W-12" })).ok, true);
+  assert.equal(validateEvent(ev("item.rename", null, { to: "W-12" })).ok, false);
+  assert.equal(validateEvent(ev("item.rename", "614", {})).ok, false);
+  assert.equal(validateEvent(ev("item.rename", "614", { to: "not an id" })).ok, false);
+  assert.equal(validateEvent(ev("item.rename", "614", { to: "" })).ok, false);
+  assert.equal(validateEvent(ev("item.rename", "614", { to: "W-1", extra: 1 })).ok, false);
+});

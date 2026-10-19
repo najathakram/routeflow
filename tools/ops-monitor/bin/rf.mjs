@@ -624,7 +624,16 @@ async function cmdSync(flags, env) {
     `${s.registerEdits} edited, ${s.answered} answered, ${s.dropped} board item(s) dropped` +
     (flags.dry
       ? "\n" + res.events.map((e) => `  ${e.kind} ${e.item ?? "-"}`).join("\n")
-      : `; appended ${res.appended}${res.pushed ? " and pushed" : ""}`);
+      : `; appended ${res.appended}${res.pushed ? " and pushed" : ""}`) +
+    (s.renamed?.length
+      ? `\nrenamed ${s.renamed.length} monitor item(s) off register numbers: ${s.renamed
+          .map((r) => `${r.from}->${r.to}`)
+          .join(", ")}`
+      : "") +
+    (res.collisions?.length
+      ? `\nREFUSED register row(s) sharing a number with a monitor item: ${res.collisions.join(", ")}`
+      : "") +
+    (res.refused ? `\nREFUSED the register: ${res.refused}` : "");
   print(
     flags,
     {
@@ -632,6 +641,8 @@ async function cmdSync(flags, env) {
       dry: Boolean(flags.dry),
       events: res.events,
       summary: s,
+      refused: res.refused ?? null,
+      collisions: res.collisions ?? [],
       appended: res.appended,
       pushed: res.pushed,
       warnings: res.warnings,

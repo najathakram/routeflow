@@ -5,6 +5,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileToArea, areaDomain, buildAreaTree, guessDomainFromText } from "./areas.mjs";
 import { GITHUB_REPO } from "./config.mjs";
+import { parseRegisterReport } from "./backfill.mjs";
 import { cloudSyncSpecs, readOnlyExec, redact } from "./cloud.mjs";
 
 export const DEFAULT_INTERVALS = {
@@ -516,6 +517,8 @@ export async function readSpecsExtras({ dir, exec, fs = { readdirSync, readFileS
   let incidents = [];
   let ownerQueueRows = null;
   let laneHandoffs = [];
+  let registerRowIds = null;
+  let registerDuplicateIds = [];
   try {
     const d = join(dir, "incidents");
     const files = fs
@@ -533,6 +536,20 @@ export async function readSpecsExtras({ dir, exec, fs = { readdirSync, readFileS
   } catch (e) {
     errors.push(`owner queue: ${String(e?.message ?? e).slice(0, 120)}`);
   }
+  // The hand-kept register's row ids: a duplicate id marks a corrupted snapshot (sync refuses it),
+  // and the ids let the snapshot spot a row that shares its number with a monitor item. A missing
+  // register file is normal (generated mode, cloud clone) and not an error.
+  try {
+    const md = fs.readFileSync(join(dir, "register", "WORK-REGISTER.md"), "utf8");
+    registerRowIds = parseRegisterReport(md).drafts.map((x) => x.id);
+    const seen = new Set();
+    for (const id of registerRowIds) {
+      if (seen.has(id) && !registerDuplicateIds.includes(id)) registerDuplicateIds.push(id);
+      seen.add(id);
+    }
+  } catch (e) {
+    if (e?.code !== "ENOENT") errors.push(`register: ${String(e?.message ?? e).slice(0, 120)}`);
+  }
   try {
     const r = await exec(
       "git",
@@ -545,7 +562,14 @@ export async function readSpecsExtras({ dir, exec, fs = { readdirSync, readFileS
   } catch (e) {
     errors.push(`lane handoffs: ${String(e?.message ?? e).slice(0, 120)}`);
   }
-  return { incidents, ownerQueueRows, laneHandoffs, errors };
+  return {
+    incidents,
+    ownerQueueRows,
+    laneHandoffs,
+    registerRowIds,
+    registerDuplicateIds,
+    errors,
+  };
 }
 
 /** Ordered `git cat-file --batch` output for `<sha>:<path>` inputs -> [content | null] per input. */
@@ -796,6 +820,8 @@ export function createCollector({
         incidents: extras.incidents ?? [],
         ownerQueueRows: extras.ownerQueueRows ?? null,
         laneHandoffs: extras.laneHandoffs ?? [],
+        registerRowIds: extras.registerRowIds ?? null,
+        registerDuplicateIds: extras.registerDuplicateIds ?? [],
         extrasErrors: extras.errors ?? [],
       };
     },
