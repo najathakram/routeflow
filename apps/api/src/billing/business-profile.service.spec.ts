@@ -506,7 +506,11 @@ describe("Item 8 — a profile that moves the billing moment refuses while carri
 describe("BO-04 — capabilities (ticks) through the one planner", () => {
   it("planCapabilities: the same plan the alias preset gets, with the normalised ticks and the preset it equals", async () => {
     const { svc } = build({ inTransit: 0 });
-    const viaTicks = await svc.planCapabilities(T, { delivery: true, counter: true });
+    const viaTicks = await svc.planCapabilities(T, {
+      delivery: true,
+      doorPayments: true,
+      counter: true,
+    });
     const viaAlias = await svc.plan(T, "delivery_pos");
     expect(viaTicks.plan).toEqual(viaAlias.plan);
     expect(viaTicks.preset).toBe("delivery_pos");
@@ -521,6 +525,51 @@ describe("BO-04 — capabilities (ticks) through the one planner", () => {
     expect(viaAlias.aliasProfile).toBe("delivery_pos");
     expect(viaAlias.preset).toBe("delivery_pos");
     expect(planFingerprint(viaTicks.plan)).toBe(planFingerprint(viaAlias.plan));
+  });
+
+  describe("an omitted doorPayments keeps the tenant's current value (BO-02 review)", () => {
+    const comps = (res: { plan: { comps: { featureKey: string }[] } }) =>
+      res.plan.comps.map((c) => c.featureKey);
+
+    it("a tenant WITHOUT driver_payments stays without it: false, no driver_payments comp or grant", async () => {
+      const { svc } = build({ inTransit: 0 });
+      const res = await svc.planCapabilities(T, { delivery: true });
+      expect(res.capabilities.doorPayments).toBe(false);
+      expect(comps(res)).not.toContain("driver_payments");
+      expect(res.plan.overrides.find((o) => o.featureKey === "driver_payments")?.action).toBe(
+        "skip",
+      );
+    });
+
+    it("a tenant WITH driver_payments keeps it: true, nothing disabled or re-comped", async () => {
+      const { svc } = build({ addons: [{ key: "driver_payments", paid: true }] });
+      const res = await svc.planCapabilities(T, { delivery: true });
+      expect(res.capabilities.doorPayments).toBe(true);
+      expect(res.plan.billing).toEqual([]);
+      expect(comps(res)).not.toContain("driver_payments");
+    });
+
+    it("an active DENY override reads as current false; an active GRANT as current true", async () => {
+      const denied = build({
+        overrides: [overrideRow({ featureKey: "driver_payments", effect: "DENY", id: "o1" })],
+      });
+      const g = await denied.svc.planCapabilities(T, { delivery: true });
+      expect(g.capabilities.doorPayments).toBe(false);
+      const granted = build({
+        overrides: [overrideRow({ featureKey: "driver_payments", effect: "GRANT", id: "o2" })],
+      });
+      const h = await granted.svc.planCapabilities(T, { delivery: true });
+      expect(h.capabilities.doorPayments).toBe(true);
+    });
+
+    it("an EXPLICIT value still wins over the current one, both ways", async () => {
+      const on = await build({}).svc.planCapabilities(T, { delivery: true, doorPayments: true });
+      expect(on.capabilities.doorPayments).toBe(true);
+      const off = await build({
+        addons: [{ key: "driver_payments", paid: true }],
+      }).svc.planCapabilities(T, { delivery: true, doorPayments: false });
+      expect(off.capabilities.doorPayments).toBe(false);
+    });
   });
 
   it("nothing ticked: 400 BUSINESS_CAPABILITIES_EMPTY before any read", async () => {

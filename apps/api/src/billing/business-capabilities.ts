@@ -86,7 +86,10 @@ export function presetTicks(def: BusinessProfileDef): BusinessCapabilityTicks {
  *   D -> delivery | S -> ship | C -> pickup | S+C -> pickup_ship (opens as counter, the D6 default) or ship (opens as order)
  *   D+C -> delivery | D+S -> both | D+S+C -> both          (counter_sales on with C, unset without)
  *
- * `doorPayments` is true by default with Delivery and ignored (false) without it; Delivery with door payments off
+ * `doorPayments` omitted means KEEP CURRENT (`current`, which the tenant-facing caller reads from the tenant's
+ * held `driver_payments`): only an explicit true/false changes it, so an omitted tick can never comp a paid
+ * module. With no `current` (a preset's own ticks, which always carry it) an omitted value is true. It is ignored
+ * (false) without Delivery; Delivery with door payments off
  * keeps the two fleet keys and switches `driver_payments` off through the def's `modules` map. `opensAs` is honoured
  * only for Shipping + Counter without Delivery; everywhere else it is whatever the mode derives. Nothing ticked is a
  * 400 BUSINESS_CAPABILITIES_EMPTY.
@@ -94,7 +97,10 @@ export function presetTicks(def: BusinessProfileDef): BusinessCapabilityTicks {
  * `normalised` is `presetTicks` of the resulting def (what the audit row and the response echo); `preset` is the
  * preset it equals, else null (the def is then keyed "custom"). A tuple equal to a preset returns that preset's own def.
  */
-export function ticksToProfileDef(input: BusinessCapabilitiesRequest): {
+export function ticksToProfileDef(
+  input: BusinessCapabilitiesRequest,
+  current?: { doorPayments: boolean },
+): {
   def: BusinessProfileDef;
   normalised: BusinessCapabilityTicks;
   preset: BusinessProfileKey | null;
@@ -109,7 +115,7 @@ export function ticksToProfileDef(input: BusinessCapabilitiesRequest): {
       message: "Choose at least one of Delivery, Shipping or Counter.",
     });
   }
-  const doorPayments = delivery && input.doorPayments !== false;
+  const doorPayments = delivery && (input.doorPayments ?? current?.doorPayments ?? true);
   const opensAsCounter = input.opensAs !== "order"; // D6 default: Shipping + Counter opens as a Counter sale
   const mode = delivery
     ? shipping

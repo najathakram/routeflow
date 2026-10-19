@@ -138,6 +138,23 @@ describe("ticksToProfileDef", () => {
     expect(normalised.doorPayments).toBe(true);
   });
 
+  it("an omitted doorPayments takes the CURRENT value the caller read; an explicit value beats it", () => {
+    expect(
+      ticksToProfileDef({ delivery: true }, { doorPayments: false }).normalised.doorPayments,
+    ).toBe(false);
+    expect(
+      ticksToProfileDef({ delivery: true }, { doorPayments: true }).normalised.doorPayments,
+    ).toBe(true);
+    expect(
+      ticksToProfileDef({ delivery: true, doorPayments: true }, { doorPayments: false }).normalised
+        .doorPayments,
+    ).toBe(true);
+    expect(
+      ticksToProfileDef({ delivery: true, doorPayments: false }, { doorPayments: true }).normalised
+        .doorPayments,
+    ).toBe(false);
+  });
+
   it("Delivery with doorPayments:false keeps the fleet and switches driver_payments off", () => {
     const { def, normalised, preset } = ticksToProfileDef({ delivery: true, doorPayments: false });
     expect(def.fleet).toBe(true);

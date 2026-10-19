@@ -153,6 +153,13 @@ export class BusinessProfileService {
       });
     }
     const now = Date.now();
+    const doorPayments = await this.heldDoorPayments(tenantId);
+    return capabilitiesFromInputs(inputs, doorPayments ? ["driver_payments"] : []);
+  }
+
+  /** Does the tenant hold `driver_payments` now? An active override is absolute, else the add-on rows. */
+  private async heldDoorPayments(tenantId: string): Promise<boolean> {
+    const now = Date.now();
     const rows = await this.featureOverrides.list(tenantId);
     const override = rows.find(
       (r) =>
@@ -162,8 +169,7 @@ export class BusinessProfileService {
         !(r.expiresAt && r.expiresAt.getTime() <= now),
     );
     const held = await heldAddonKeys(this.addons, this.featureOverrides, tenantId);
-    const doorPayments = override ? override.effect === "GRANT" : held.has("driver_payments");
-    return capabilitiesFromInputs(inputs, doorPayments ? ["driver_payments"] : []);
+    return override ? override.effect === "GRANT" : held.has("driver_payments");
   }
 
   /**
@@ -194,7 +200,12 @@ export class BusinessProfileService {
     tenantId: string,
     request: BusinessCapabilitiesRequest,
   ): Promise<BusinessProfileResolution> {
-    const { def, normalised, preset } = ticksToProfileDef(request);
+    // An omitted doorPayments keeps the tenant's current value (read only when it can matter: Delivery ticked).
+    const current =
+      request.delivery === true && request.doorPayments === undefined
+        ? { doorPayments: await this.heldDoorPayments(tenantId) }
+        : undefined;
+    const { def, normalised, preset } = ticksToProfileDef(request, current);
     return this.planDef(tenantId, def, { capabilities: normalised, preset });
   }
 

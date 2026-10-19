@@ -1172,7 +1172,7 @@ describe("BO-04 business-capabilities routes", () => {
 
   it("preview writes nothing and returns the normalised ticks, the preset, the plan and the fingerprint", async () => {
     const t = fakeTenant({});
-    const res = await preview(t, { delivery: true, counter: true });
+    const res = await preview(t, { delivery: true, doorPayments: true, counter: true });
     expect(res).toMatchObject({
       capabilities: { delivery: true, doorPayments: true, shipping: false, counter: true },
       preset: "delivery_pos",
@@ -1218,7 +1218,11 @@ describe("BO-04 business-capabilities routes", () => {
     const aliasShown = await alias.controller.previewBusinessProfile(T, {
       profile: "delivery_pos",
     });
-    const ticksShown = await preview(ticks, { delivery: true, counter: true });
+    const ticksShown = await preview(ticks, {
+      delivery: true,
+      doorPayments: true,
+      counter: true,
+    });
     expect(ticksShown.plan).toEqual(aliasShown.plan);
     expect(ticksShown.planFingerprint).toBe(aliasShown.planFingerprint);
 
@@ -1227,7 +1231,7 @@ describe("BO-04 business-capabilities routes", () => {
       { profile: "delivery_pos", planFingerprint: aliasShown.planFingerprint } as any,
       admin,
     );
-    await confirm(ticks, { delivery: true, counter: true });
+    await confirm(ticks, { delivery: true, doorPayments: true, counter: true });
     expect(ticks.writes).toEqual(alias.writes);
 
     const [[, , , aliasMeta]] = profileRows(alias) as [[unknown, unknown, unknown, any]];
@@ -1245,6 +1249,17 @@ describe("BO-04 business-capabilities routes", () => {
     expect(aliasMeta.plan).toEqual(ticksMeta.plan);
     expect(aliasMeta.profile).toBe("delivery_pos"); // alias calls keep `profile`
     expect(ticksMeta).not.toHaveProperty("profile"); // ticks calls do not
+  });
+
+  it("an omitted doorPayments on a tenant without driver_payments comps only the two fleet keys (keep current, BO-02 review)", async () => {
+    const t = fakeTenant({});
+    const res = await confirm(t, { delivery: true });
+    expect(res.preset).toBeNull();
+    expect(t.writes).toEqual([
+      "comp recurring_routes",
+      "comp order_delivery",
+      "mode fulfilment_model=delivery",
+    ]);
   });
 
   it("a combination no preset names is `custom`: preset null in the audit row, the reason names it", async () => {
