@@ -240,6 +240,7 @@ describe("(b) deliveries[] are the quantities: stamped from evidence rows, then 
         carrier: null,
         user: { sub: "u", role: "OPERATOR", tenantId: "t" },
         notes: "CANCEL",
+        skipDeliveryStateCheck: true, // this case pins the unwind's clamp; the in-lock guard refuses this cancel first
       } as never),
     );
     const credits = prisma.product.update.mock.calls.map(

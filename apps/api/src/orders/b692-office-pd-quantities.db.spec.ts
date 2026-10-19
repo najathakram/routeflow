@@ -26,6 +26,8 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { cancelImpact } from "./order-cancel-impact";
+import { cancelOrderInTx, lockDeleteLines } from "./order-cancel-tx";
+import { CANCELLABLE_FROM } from "./order-status-transitions";
 import { updateStatusWithShipMarker } from "./order-ship-state";
 import { buildStatusUpdateData } from "./order-status-claim";
 
@@ -270,6 +272,52 @@ describeDb("B692 — the office PARTIALLY_DELIVERED quantities on real Postgres"
     expect(await statusOf(orderId)).toBe("OUT_FOR_DELIVERY");
     expect(await dq(lineIds[0])).toBe(6);
     expect((await impactOf(orderId)).canCancel).toBe(false);
+  });
+
+  it("(f) SA-814h: a stop delivers between the pre-check and the lock: the cancel is 409 and moves nothing", async () => {
+    const { orderId, lineIds } = await seed({ status: "CONFIRMED", lines: [{ qty: 10 }] });
+    expect((await impactOf(orderId)).canCancel).toBe(true); // the advisory pre-check passes
+    // the route stop completes after the pre-check: PD with 6 delivered (the cancel's CAS set still allows PD)
+    await raw.orderItem.update({ where: { id: lineIds[0] }, data: { deliveredQty: 6 } });
+    await raw.order.update({ where: { id: orderId }, data: { status: "PARTIALLY_DELIVERED" } });
+    const settle = jest.fn();
+    const voidInvoice = jest.fn();
+    await expect(
+      tenantCtx.run(tenantId, () =>
+        prisma.tenantTransaction((tx) =>
+          cancelOrderInTx(
+            {
+              settleStockForEdit: settle,
+              creditNotes: { releaseOrderCreditsInTx: jest.fn() },
+              invoices: { releaseWalletPaymentsInTx: jest.fn(), voidInvoiceInTx: voidInvoice },
+            } as never,
+            tx,
+            { id: orderId },
+            {
+              fromStatuses: CANCELLABLE_FROM,
+              statusUpdateData: { status: "CANCELLED" },
+              carrier: null,
+              user: { sub: userId, role: "OPERATOR" } as never,
+              notes: "CANCEL",
+            },
+          ),
+        ),
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(settle).not.toHaveBeenCalled(); // no restock
+    expect(voidInvoice).not.toHaveBeenCalled(); // no void
+    expect(await statusOf(orderId)).toBe("PARTIALLY_DELIVERED");
+    expect(await dq(lineIds[0])).toBe(6);
+  });
+
+  it("(g) SA-814h: a hard delete of a legacy delivered row is 409 under the lock", async () => {
+    const { orderId } = await seed({ status: "DELIVERED", lines: [{ qty: 10 }] });
+    await expect(
+      tenantCtx.run(tenantId, () => prisma.tenantTransaction((tx) => lockDeleteLines(tx, orderId))),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: "ORDER_DELIVERY_QUANTITIES_MISSING" },
+    });
   });
 
   it("(d) control: a manual DELIVERED still stamps qty and writes no evidence row", async () => {

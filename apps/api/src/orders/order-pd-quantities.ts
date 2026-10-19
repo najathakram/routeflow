@@ -75,11 +75,13 @@ export async function cancelBlockedByMissingQuantities(
   return deliveryQuantitiesMissing(db, order.id);
 }
 
-/** The cancel refusal for a legacy delivered row (409, before any write). */
-export function throwDeliveryQuantitiesMissing(): never {
+/** The refusal for a legacy delivered row (409, before any write); `action` words the message (cancel / delete). */
+export function throwDeliveryQuantitiesMissing(
+  action: "cancelling" | "deleting" = "cancelling",
+): never {
   throw new ConflictException({
     code: API_ERROR_CODES.ORDER_DELIVERY_QUANTITIES_MISSING,
-    message: DELIVERY_QUANTITIES_MISSING_MESSAGE,
+    message: DELIVERY_QUANTITIES_MISSING_MESSAGE.replace("cancelling", action),
   });
 }
 

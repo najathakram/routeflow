@@ -47,6 +47,15 @@ export function cancelBlockers(
   return blockers;
 }
 
+/** B56 (REG-B56): the refusal for delivered goods (the text assertCancellableOrThrow always used; shared with the in-lock re-check). */
+export function deliveredUnitsBlockedMessage(deliveredUnits: number) {
+  return (
+    `This order has delivered items (${deliveredUnits} unit(s) already delivered). ` +
+    `Cancelling would erase revenue for goods the customer already has. Record a return for ` +
+    `the delivered goods, or edit the order down to the undelivered items instead.`
+  );
+}
+
 /** The refusal for external money on the order (the text assertCancellableOrThrow always used). */
 export function cancelBlockedMessage(blockers: Array<{ invoiceNumber: string; amount: number }>) {
   const detail = blockers
