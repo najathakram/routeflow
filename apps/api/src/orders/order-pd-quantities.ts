@@ -39,8 +39,13 @@ export interface OfficeDeliveryLine {
 }
 
 export const PD_NEEDS_QUANTITIES_MESSAGE = "Record what was delivered for each line first.";
-export const DELIVERY_QUANTITIES_MISSING_MESSAGE =
-  "Delivery quantities are missing; set them before cancelling.";
+/** Which refusal is being worded: a copy edit to one key can never silently break another (no string swap). */
+export type DeliveryQuantitiesAction = "cancel" | "delete" | "leavePd";
+export const DELIVERY_QUANTITIES_MISSING_MESSAGES: Record<DeliveryQuantitiesAction, string> = {
+  cancel: "Delivery quantities are missing; set them before cancelling.",
+  delete: "Delivery quantities are missing; set them before deleting.",
+  leavePd: "Delivery quantities are missing; set them before cancelling.",
+};
 
 /** The statuses whose goods have (at least partly) left: where a missing quantity is a data gap, not "undelivered". */
 export const DELIVERED_STATUSES: readonly OrderStatus[] = [
@@ -75,13 +80,11 @@ export async function cancelBlockedByMissingQuantities(
   return deliveryQuantitiesMissing(db, order.id);
 }
 
-/** The refusal for a legacy delivered row (409, before any write); `action` words the message (cancel / delete). */
-export function throwDeliveryQuantitiesMissing(
-  action: "cancelling" | "deleting" = "cancelling",
-): never {
+/** The refusal for a legacy delivered row (409, before any write); `action` keys the message copy. */
+export function throwDeliveryQuantitiesMissing(action: DeliveryQuantitiesAction = "cancel"): never {
   throw new ConflictException({
     code: API_ERROR_CODES.ORDER_DELIVERY_QUANTITIES_MISSING,
-    message: DELIVERY_QUANTITIES_MISSING_MESSAGE.replace("cancelling", action),
+    message: DELIVERY_QUANTITIES_MISSING_MESSAGES[action],
   });
 }
 
@@ -173,5 +176,5 @@ export async function leavePartialDeliveryInTx(
   deliveries: readonly OfficeDeliveryLine[] | undefined,
 ): Promise<void> {
   if (deliveries && deliveries.length > 0) await writeOfficeDeliveries(tx, orderId, deliveries);
-  if (await deliveryQuantitiesMissing(tx, orderId)) throwDeliveryQuantitiesMissing();
+  if (await deliveryQuantitiesMissing(tx, orderId)) throwDeliveryQuantitiesMissing("leavePd");
 }

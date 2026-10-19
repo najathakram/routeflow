@@ -65,9 +65,9 @@ export interface CancelOrderTxOptions {
 export async function assertCancelDeliveryStateUnderLock(
   tx: any,
   order: { id: string; status?: OrderStatus },
-  opts: { refuseDeliveredUnits?: boolean; action?: "cancelling" | "deleting" } = {},
+  opts: { refuseDeliveredUnits?: boolean; action?: "cancel" | "delete" } = {},
 ): Promise<void> {
-  const { refuseDeliveredUnits = true, action = "cancelling" } = opts;
+  const { refuseDeliveredUnits = true, action = "cancel" } = opts;
   if (refuseDeliveredUnits) {
     const lines: Array<{ deliveredQty: unknown }> = await tx.orderItem.findMany({
       where: { orderId: order.id, status: { not: "CANCELLED" } },
@@ -188,7 +188,7 @@ export async function lockDeleteLines(tx: any, id: string) {
   await assertCancelDeliveryStateUnderLock(
     tx,
     { id, status },
-    { refuseDeliveredUnits: false, action: "deleting" },
+    { refuseDeliveredUnits: false, action: "delete" },
   );
   if (status === OrderStatus.DRAFT || !CANCELLABLE_FROM.includes(status)) return null;
   const lines = await tx.orderItem.findMany({

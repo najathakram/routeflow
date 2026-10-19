@@ -109,6 +109,7 @@ export async function updateStatusWithShipMarker(
         return row;
       });
     }
+    // Depends on shipStateMarker(PARTIALLY_DELIVERED -> OUT_FOR_DELIVERY) being null (pinned in b692-office-pd-quantities.spec.ts).
     if (order.status === OrderStatus.PARTIALLY_DELIVERED && to === OrderStatus.OUT_FOR_DELIVERY) {
       // B692: "Back out for delivery" on a legacy PD row (no quantities) is refused in the SAME tx as the status.
       return prisma.tenantTransaction(async (tx) => {

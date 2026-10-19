@@ -1,7 +1,12 @@
 import { OrderStatus } from "@prisma/client";
 import { makeStampDb } from "../common/testing/delivered-stamp-fake-db";
 import { cancelImpact } from "./order-cancel-impact";
-import { updateStatusWithShipMarker } from "./order-ship-state";
+import { shipStateMarker, updateStatusWithShipMarker } from "./order-ship-state";
+import {
+  DELIVERY_QUANTITIES_MISSING_MESSAGES,
+  throwDeliveryQuantitiesMissing,
+} from "./order-pd-quantities";
+import { FulfillPath } from "@prisma/client";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { buildOrdersService, operatorPayload } from "./testing/orders-service-harness";
 
@@ -420,5 +425,35 @@ describe("(e) a legacy PARTIALLY_DELIVERED cannot step back to OUT_FOR_DELIVERY 
     });
     await stepBack(evidenced);
     expect(evidenced.committed.order.status).toBe("OUT_FOR_DELIVERY");
+  });
+});
+
+describe("B692 keyed delivery-quantity copy and the PD-exit guard", () => {
+  it("pins each key's text and wires the throw to its key", () => {
+    expect(DELIVERY_QUANTITIES_MISSING_MESSAGES).toEqual({
+      cancel: "Delivery quantities are missing; set them before cancelling.",
+      delete: "Delivery quantities are missing; set them before deleting.",
+      leavePd: "Delivery quantities are missing; set them before cancelling.",
+    });
+    for (const k of ["cancel", "delete", "leavePd"] as const) {
+      expect(() => throwDeliveryQuantitiesMissing(k)).toThrow(
+        expect.objectContaining({
+          response: expect.objectContaining({
+            code: "ORDER_DELIVERY_QUANTITIES_MISSING",
+            message: DELIVERY_QUANTITIES_MISSING_MESSAGES[k],
+          }),
+        }),
+      );
+    }
+  });
+
+  it("shipStateMarker is null for PARTIALLY_DELIVERED -> OUT_FOR_DELIVERY (the PD-exit guard depends on it)", () => {
+    expect(
+      shipStateMarker(
+        FulfillPath.SHIP,
+        OrderStatus.PARTIALLY_DELIVERED,
+        OrderStatus.OUT_FOR_DELIVERY,
+      ),
+    ).toBeNull();
   });
 });
