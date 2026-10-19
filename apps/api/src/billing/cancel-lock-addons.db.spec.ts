@@ -48,6 +48,10 @@ import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { MrrService } from "./mrr.service";
 import { PlatformAdminService } from "../platform-admin/platform-admin.service";
 import { dropPublishedCatalog, ensurePublishedCatalog } from "../testing/ensure-published-catalog";
+import {
+  buildCheckoutHarness,
+  CATCHUP_PREPAID_METADATA,
+} from "../testing/checkout-completed-harness";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -316,29 +320,42 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     expect((await delta(t, BILLING_EVENTS.ADDON_ENABLED)).sort((x, y) => x - y)).toEqual([25, 39]);
   }, 60_000);
 
-  it("M4: lock -> checkout adoption on a NEW subscription: (a) is adopted onto its item, (b) is billed through one catalog-priced item, (c) and (d) are never billed", async () => {
+  it("M4: lock -> a paid catch-up checkout on a NEW subscription (onCheckoutCompleted): (a) is adopted onto its item, (b) is billed through one catalog-priced item, (c) and (d) are never billed, everything is booked once", async () => {
     const t = await fixture("m4");
     await lock(t);
+    // The locked manual-pay tenant comes back through a catch-up card checkout: that is the path that turns manual
+    // invoicing off in the apply transaction (isCatchupSession), so the add-on mode read at adoption is STRIPE.
+    await prisma.tenantSubscription.update({
+      where: { tenantId: t },
+      data: { stripeCustomerId: "cus_m4" },
+    });
+    const addonItem = (id: string, sku: string, cents: number) => ({
+      id,
+      quantity: 1,
+      metadata: { tenantId: t, sku },
+      price: {
+        unit_amount: cents,
+        product: { name: `RouteFlow add-on - ${sku}`, metadata: { addonSku: sku } },
+      },
+    });
     const items: any[] = [
       {
         id: "si_base_new",
         quantity: 1,
+        current_period_start: Math.floor((Date.now() - DAY) / 1000),
+        current_period_end: Math.floor((Date.now() + 29 * DAY) / 1000),
         price: { unit_amount: 24900, product: { name: "Growth" } },
       },
-      {
-        id: "si_a_new",
-        quantity: 1,
-        metadata: { tenantId: t, sku: "FORECASTING" },
-        price: {
-          unit_amount: price.FORECASTING * 100,
-          product: {
-            name: "RouteFlow add-on - FORECASTING",
-            metadata: { addonSku: "FORECASTING" },
-          },
-        },
-      },
+      addonItem("si_a_new", "FORECASTING", price.FORECASTING * 100),
     ];
     let created = 0;
+    const subscription = () => ({
+      id: "sub_new",
+      status: "active",
+      customer: "cus_m4",
+      metadata: {},
+      items: { data: items.map((i) => ({ ...i })) },
+    });
     const stripe: any = {
       isConfigured: true,
       client: {
@@ -346,11 +363,11 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
         subscriptionItems: {
           list: jest.fn(async () => ({ data: items.map((i) => ({ ...i })) })),
           create: jest.fn(async (args: any) => {
-            const item = {
-              id: `si_created_${++created}`,
-              quantity: args.quantity,
-              metadata: args.metadata,
-            };
+            const item = addonItem(
+              `si_created_${++created}`,
+              args.metadata.sku,
+              args.price_data.unit_amount,
+            );
             items.push(item);
             return item;
           }),
@@ -358,40 +375,23 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
           del: jest.fn(),
         },
       },
-      getSubscription: jest.fn(async (id: string) => ({
-        id,
-        status: "active",
-        customer: "cus_x",
-        items: { data: items.map((i) => ({ ...i })) },
-      })),
+      getSubscription: jest.fn(async () => subscription()),
       retrieveSubscriptionWithDiscounts: jest
         .fn()
         .mockResolvedValue({ id: "sub_new", discounts: [] }),
       previewNextInvoice: jest.fn().mockResolvedValue(null),
     };
-    await prisma.tenantSubscription.update({
-      where: { tenantId: t },
-      data: { stripeSubId: "sub_new" },
-    });
-    const m = new SubscriptionMutationService(
-      prisma as any,
-      catalog,
-      new ProrationService(prisma as any, catalog),
-      { getSubscription: jest.fn().mockResolvedValue(undefined) } as any,
-      noop,
-      events,
-      noop,
-      stripe,
-      { notifyUpgradeConfirmed: jest.fn() } as any,
-      {
-        isEnabled: () => Promise.resolve(false),
-        prepare: () => Promise.resolve({ enabled: false, planAllows: null }),
-        onPlanChange: () => Promise.resolve({ action: "none" }),
-        transactionOptions: () => undefined,
-        invalidateCaches: () => undefined,
-      } as any,
-    );
-    await m.adoptCheckoutAddons(t, { id: "sub_new", items: { data: items } } as any, {} as any);
+    const harness = buildCheckoutHarness({ prisma, catalog, stripe, events, monthly: 249 });
+    const session = {
+      id: `cs_m4_${run}`,
+      customer: "cus_m4",
+      subscription: "sub_new",
+      payment_status: "paid",
+      created: Math.floor(Date.now() / 1000),
+      metadata: { tenantId: t, planKey: "GROWTH", ...CATCHUP_PREPAID_METADATA },
+    };
+
+    await harness.complete(session);
 
     const r = await rows(t);
     expect(r.a.stripeItemId).toBe("si_a_new");
@@ -400,30 +400,39 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     expect(stripe.client.subscriptionItems.create).toHaveBeenCalledTimes(1);
     expect([r.c.stripeItemId, r.d.stripeItemId]).toEqual([null, null]);
     expect(r.e.active).toBe(false);
+    // Booked once: the reactivation crossing re-adds the run-rate the lock removed (base 249 + a 25 + b 39) and the
+    // adoption's stored -> actual deltas are 0, so the net MRR is back to 0 and the crossing exists exactly once.
+    expect(await delta(t, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toEqual([313]);
+    expect(await netMrr(t)).toBe(0);
+
+    // A redelivery of the same paid session changes nothing: no second item, nothing more booked.
+    const eventsAfter = await prisma.billingEvent.count({ where: { tenantId: t } });
+    await harness.complete(session);
+    expect(stripe.client.subscriptionItems.create).toHaveBeenCalledTimes(1);
+    expect(await prisma.billingEvent.count({ where: { tenantId: t } })).toBe(eventsAfter);
+    expect(await netMrr(t)).toBe(0);
   }, 60_000);
 
-  it("M5: lock -> subscribe() naming (a): (b)-(d) stay on, (a) is booked in full once, (e) stays off", async () => {
+  it("M5: lock -> subscribe() naming (a): (b)-(d) stay on, (a) is switched on and booked in full once, (e) stays off", async () => {
     const t = await fixture("m5");
     await lock(t);
-    // READ_ONLY(subscription_cancelled) + B58: subscribe() may refuse a same-plan pick from here. The builder
-    // records which in the PR body; the add-on assertions below hold whenever the call is allowed through.
-    const attempt = await mutations
-      .subscribe(t, {
-        planKey: "GROWTH",
-        cycle: "MONTHLY",
-        addons: [{ sku: "FORECASTING", quantity: 1 }],
-      })
-      .then(
-        () => "ok" as const,
-        (e: Error) => `refused: ${e.message}`,
-      );
+    // READ_ONLY is not ACTIVE, so B58 (b58-guard.ts: only an ACTIVE same-cycle pick is refused) lets this through:
+    // one outcome, pinned. A refusal here is a regression, not a branch.
+    await mutations.subscribe(t, {
+      planKey: "GROWTH",
+      cycle: "MONTHLY",
+      addons: [{ sku: "FORECASTING", quantity: 1 }],
+    });
+
     const r = await rows(t);
-    expect([r.b.active, r.c.active, r.d.active]).toEqual([true, true, true]);
+    expect([r.a.active, r.b.active, r.c.active, r.d.active]).toEqual([true, true, true, true]);
     expect(r.e.active).toBe(false);
-    if (attempt === "ok") {
-      expect(r.a.active).toBe(true);
-      expect(await delta(t, BILLING_EVENTS.ADDON_ENABLED)).toContain(25);
-    }
+    // (a) at its FULL catalog amount, once; (b) is the kept admin-only row, booked once at its stored price.
+    expect(Number(r.a.priceSnapshot)).toBe(price.FORECASTING);
+    expect((await delta(t, BILLING_EVENTS.ADDON_ENABLED)).sort((x, y) => x - y)).toEqual([
+      price.FORECASTING,
+      price.REGULATED_ITEMS,
+    ]);
   }, 60_000);
 
   it("M6: while locked, the regulated gate still answers (the add-on row is on) and the filing cron's predicate still matches the tenant", async () => {
