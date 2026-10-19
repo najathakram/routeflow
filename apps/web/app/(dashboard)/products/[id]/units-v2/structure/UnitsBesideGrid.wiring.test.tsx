@@ -9,7 +9,12 @@ jest.mock("./unit-structure", () => ({
   useUnitStructureAllowed: () => mockStructure,
 }));
 jest.mock("../edit/EditablePricesGrid", () => ({
-  EditablePricesGrid: (p: { unitControls?: React.ReactNode }) => <div>{p.unitControls}</div>,
+  EditablePricesGrid: (p: { unitControls?: React.ReactNode }) => (
+    <div data-testid="stub-grid">
+      {p.unitControls}
+      <table />
+    </div>
+  ),
 }));
 jest.mock("./UnitStructure", () => ({
   UnitStructureControls: () => <div data-testid="stub-controls" />,
@@ -17,6 +22,7 @@ jest.mock("./UnitStructure", () => ({
 }));
 jest.mock("./UnitsBesideGrid", () => ({
   UnitsBesideGrid: () => <div data-testid="stub-beside" />,
+  UnitDetailsEditor: () => <div data-testid="stub-details" />,
 }));
 jest.mock("../customer/CustomerPriceView", () => ({ CustomerPriceView: () => null }));
 jest.mock("../change-prices/ChangePrices", () => ({
@@ -59,5 +65,20 @@ describe("ProductPricingV2 wiring: units beside the grid", () => {
     render(<ProductPricingV2 product={product} />);
     expect(screen.queryByTestId("stub-controls")).toBeNull();
     expect(screen.queryByTestId("stub-beside")).toBeNull();
+  });
+
+  it("K13: the edit-mode Name / Contains editor sits after the grid, never in its unit controls slot", () => {
+    mockStructure = true;
+    render(<ProductPricingV2 product={product} />);
+    const grid = screen.getByTestId("stub-grid");
+    const details = screen.getByTestId("stub-details");
+    expect(grid).not.toContainElement(details);
+    expect(grid.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("K13: the Name / Contains editor is absent where the ladder cannot be edited", () => {
+    mockStructure = false;
+    render(<ProductPricingV2 product={product} />);
+    expect(screen.queryByTestId("stub-details")).toBeNull();
   });
 });

@@ -13,7 +13,7 @@ import { useDefaultOrderUnit } from "./useDefaultOrderUnit";
 
 /**
  * The live controls the legacy Units & prices card used to carry, relocated next to the v2 grid so that card can be
- * read-only: the default order unit (a select, always visible) and each unit's Name and Contains (grid edit mode only).
+ * read-only: the default order unit (a select, always visible) and each unit's Name and Contains (UnitDetailsEditor, grid edit mode only, below the grid).
  * Both write straight to the unit API, so both wait for Save or Discard while the price draft is dirty (same reason
  * as Remove). The smallest unit (contains 1) is not renamed or resized, as on the old card.
  */
@@ -31,8 +31,6 @@ export function UnitsBesideGrid({ product }: { product: { id: string; unit?: str
   const hintId = React.useId();
   const selectId = React.useId();
   const blocked = draft.dirty;
-  const editing = draft.editingIn === "inline";
-  const editable = units.filter((u) => u.factorToBase !== 1);
   if (units.length === 0) return null;
   const current = units.find((u) => u.isDefaultSelling)?.id ?? "";
 
@@ -80,21 +78,41 @@ export function UnitsBesideGrid({ product }: { product: { id: string; unit?: str
           </div>
         )}
       </div>
-      {editing && editable.length > 0 && (
-        <ul className="space-y-2" data-testid="units-v2-beside-rows">
-          {editable.map((u) => (
-            <UnitNameRow
-              key={u.id}
-              productId={product.id}
-              unit={u}
-              blocked={blocked}
-              hintId={hintId}
-            />
-          ))}
-        </ul>
-      )}
       {blocked && (
         <p id={hintId} className="text-xs text-navy/70" data-testid="units-v2-beside-hint">
+          {DIRTY_HINT}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * K13: each unit's Name and Contains, rendered BELOW the grid (after it, before the Save bar) while it is in edit
+ * mode, so entering edit never pushes the grid's rows (or the focused first price box) down under the Save bar.
+ */
+export function UnitDetailsEditor({ product }: { product: { id: string } }) {
+  const draft = usePriceDraft();
+  const list = useProductUnits(product.id, true);
+  const hintId = React.useId();
+  const blocked = draft.dirty;
+  const editable = (list.data ?? []).filter((u) => u.factorToBase !== 1);
+  if (draft.editingIn !== "inline" || editable.length === 0) return null;
+  return (
+    <div data-testid="units-v2-details" className="mt-3 space-y-3">
+      <ul className="space-y-2" data-testid="units-v2-beside-rows">
+        {editable.map((u) => (
+          <UnitNameRow
+            key={u.id}
+            productId={product.id}
+            unit={u}
+            blocked={blocked}
+            hintId={hintId}
+          />
+        ))}
+      </ul>
+      {blocked && (
+        <p id={hintId} className="text-xs text-navy/70" data-testid="units-v2-details-hint">
           {DIRTY_HINT}
         </p>
       )}
