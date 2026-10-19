@@ -1,5 +1,5 @@
-import { GUARDS_METADATA } from "@nestjs/common/constants";
-import { BadRequestException } from "@nestjs/common";
+import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
+import { BadRequestException, RequestMethod } from "@nestjs/common";
 import { PlatformAdminController } from "./platform-admin.controller";
 import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -42,8 +42,11 @@ describe("PlatformAdminController — app links", () => {
       JwtAuthGuard,
       SuperAdminGuard,
     ]);
-    expect(typeof PlatformAdminController.prototype.getAppLinks).toBe("function");
-    expect(typeof PlatformAdminController.prototype.updateAppLinks).toBe("function");
+    const proto = PlatformAdminController.prototype;
+    expect(Reflect.getMetadata(PATH_METADATA, proto.getAppLinks)).toBe("app-links");
+    expect(Reflect.getMetadata(METHOD_METADATA, proto.getAppLinks)).toBe(RequestMethod.GET);
+    expect(Reflect.getMetadata(PATH_METADATA, proto.updateAppLinks)).toBe("app-links");
+    expect(Reflect.getMetadata(METHOD_METADATA, proto.updateAppLinks)).toBe(RequestMethod.PUT);
 
     const { controller, svc, platformConfig } = build();
     const patch = { androidApkUrl: "https://example.test/app.apk" };

@@ -68,12 +68,10 @@ export function MobileAppLinksCard() {
       )?.response?.data;
       const known = FIELDS.find((f) => f.field === body?.field);
       if (body?.code === API_ERROR_CODES.APP_LINK_URL_INVALID && known) {
-        setFieldError({
-          field: known.field,
-          message: body.message ?? "Enter a full https:// link.",
-        });
+        // Fixed copy, never the server's text (#1965).
+        setFieldError({ field: known.field, message: "Enter a full https:// link." });
       } else {
-        setError(body?.message ?? "Failed to save the links");
+        setError("Couldn't save the links. Try again.");
       }
     } finally {
       setSaving(false);
@@ -113,6 +111,7 @@ export function MobileAppLinksCard() {
                 </label>
                 <input
                   id={`app-link-${field}`}
+                  aria-label={label}
                   type="url"
                   inputMode="url"
                   value={draft[field]}

@@ -84,6 +84,8 @@ describe("PlatformConfigService — app links", () => {
       "javascript:alert(1)",
       "https://",
       `https://example.test/${"a".repeat(2048)}`,
+      ["https://example.test/a"] as unknown as string,
+      42 as unknown as string,
     ];
     for (const value of bad) {
       const err = await service
@@ -109,7 +111,16 @@ describe("API literal copy of the app-links contract", () => {
     const local = require("./app-links");
     expect(local.APP_LINK_KEYS).toEqual(shared.APP_LINK_KEYS);
     expect(local.APP_LINK_MAX_LENGTH).toBe(shared.APP_LINK_MAX_LENGTH);
-    for (const v of ["https://a.test/x", "http://a.test", "https://", "", "x", null]) {
+    for (const v of [
+      "https://a.test/x",
+      "http://a.test",
+      "https://",
+      "",
+      "x",
+      null,
+      "javascript:alert(1)",
+      `https://a.test/${"a".repeat(2049)}`,
+    ]) {
       expect(local.isValidAppLinkUrl(v)).toBe(shared.isValidAppLinkUrl(v));
     }
   });

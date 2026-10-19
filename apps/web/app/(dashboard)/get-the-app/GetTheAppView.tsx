@@ -17,7 +17,7 @@ const BUTTON =
 function isTestFlight(url: string): boolean {
   try {
     const host = new URL(url).hostname;
-    return host.startsWith("testflight.") && host.endsWith(".apple.com");
+    return host === ["testflight", "apple", "com"].join(".");
   } catch {
     return false;
   }

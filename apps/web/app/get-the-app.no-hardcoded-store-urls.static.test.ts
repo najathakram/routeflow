@@ -20,9 +20,9 @@ const TEST_FILE = /\.(test|spec)\.(ts|tsx)$/;
 
 // Built from parts so this file does not contain the literals it forbids.
 const FORBIDDEN: Array<{ name: string; re: RegExp }> = [
-  { name: "play.google.com", re: new RegExp(["play", "google", "com"].join("\.")) },
-  { name: "apps.apple.com", re: new RegExp(["apps", "apple", "com"].join("\.")) },
-  { name: "testflight.apple.com", re: new RegExp(["testflight", "apple", "com"].join("\.")) },
+  { name: "play.google.com", re: new RegExp(["play", "google", "com"].join("\\.")) },
+  { name: "apps.apple.com", re: new RegExp(["apps", "apple", "com"].join("\\.")) },
+  { name: "testflight.apple.com", re: new RegExp(["testflight", "apple", "com"].join("\\.")) },
   { name: '.apk"', re: /\.apk["'`]/ },
 ];
 

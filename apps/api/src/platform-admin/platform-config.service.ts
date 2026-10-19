@@ -288,8 +288,9 @@ export class PlatformConfigService {
     for (const field of APP_LINK_FIELDS) {
       const raw = patch[field];
       if (raw === undefined) continue;
-      const value = raw === null ? "" : String(raw).trim();
-      if (value !== "" && !isValidAppLinkUrl(value)) {
+      // A non-string (number, array, object) is refused, never coerced into a URL.
+      const value = raw === null ? "" : typeof raw === "string" ? raw.trim() : null;
+      if (value === null || (value !== "" && !isValidAppLinkUrl(value))) {
         throw new BadRequestException({
           statusCode: 400,
           code: API_ERROR_CODES.APP_LINK_URL_INVALID,

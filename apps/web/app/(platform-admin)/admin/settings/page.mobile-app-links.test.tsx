@@ -85,7 +85,7 @@ describe("admin settings: Mobile app links card", () => {
     });
     await user.type(screen.getByLabelText("Google Play link"), "http://example.test/play");
     await user.click(screen.getByRole("button", { name: "Save links" }));
-    const alert = await screen.findByText("Enter a full https:// link (up to 2048 characters).");
+    const alert = await screen.findByText("Enter a full https:// link.");
     const play = screen.getByLabelText("Google Play link");
     expect(play).toHaveAttribute("aria-invalid", "true");
     expect(play.getAttribute("aria-describedby")).toBe(alert.id);
