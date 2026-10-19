@@ -2261,6 +2261,9 @@ export class SubscriptionMutationService {
     // price above or below the catalog) is skipped untouched - no item, no snapshot rewrite - and one platform
     // notice per row asks for its billing to be set up at the agreed price. A $0 admin-only row stays unbilled.
     let catalogSkus: Map<string, { name: string; monthlyPrice: unknown }> | null = null;
+    // The admin-only row this loop ACCEPTED per SKU: adoptCheckoutSku bills exactly that row (never a re-selection
+    // by SKU, which could pick an older row of the same family the predicate rejected).
+    const acceptedRowOf = new Map<string, string>();
     for (const row of active) {
       const code = addonSkuCode(row);
       if (!(unbilledOnThisSub(row) && code && !bySku.has(code) && !missing.includes(code)))
@@ -2274,15 +2277,10 @@ export class SubscriptionMutationService {
         (await this.catalog.getPublishedCatalog()).addonSkus.map((s) => [s.sku, s]),
       );
       const def = catalogSkus.get(code);
-      if (isStripeBillableAddonRow(row, def?.monthlyPrice)) bySku.set(code, []);
-      else
-        await this.noteAddonPricedNotBilled(
-          tenantId,
-          row.id,
-          code,
-          def?.name ?? code,
-          row.priceSnapshot,
-        );
+      if (isStripeBillableAddonRow(row, def?.monthlyPrice)) {
+        bySku.set(code, []);
+        acceptedRowOf.set(code, row.id);
+      } else await this.noteAddonPricedNotBilled(tenantId, row.id, code, def?.name ?? code, subId);
     }
     if (bySku.size === 0 && missing.length === 0) return;
 
@@ -2301,6 +2299,7 @@ export class SubscriptionMutationService {
             currentItemIds,
             ctx,
             state,
+            acceptedRowOf.get(sku),
           ),
         );
         changed = changed || adopted;
@@ -2422,6 +2421,8 @@ export class SubscriptionMutationService {
     currentItemIds: ReadonlySet<string>,
     ctx: { sessionId?: string | null },
     state: { superseded: boolean; mode?: AddonBilling },
+    /** An ADMIN-ONLY SKU: the one row the (c) loop accepted. Billed as itself, re-judged under the lock. */
+    acceptedRowId?: string,
   ): Promise<boolean> {
     // Under this SKU's add-on lock: is this subscription still the one the tenant stores? A newer one may have
     // replaced it since the caller looked (A applied, sub_A paused, B applied — or B committing between the
@@ -2443,10 +2444,27 @@ export class SubscriptionMutationService {
     }
     // SA-693: only a BILLABLE row (never a comp) can own an item. A SKU whose only rows are comps has
     // no row here, so a checkout item for it is an orphan (deleted), and no item is ever created for it.
-    const row = await this.prisma.tenantAddon.findFirst({
-      where: billableAddonWhere(addonRowWhere(tenantId, sku)),
-      orderBy: [{ active: "desc" }, { createdAt: "asc" }],
-    });
+    const rowWhere = acceptedRowId ? { id: acceptedRowId, tenantId } : addonRowWhere(tenantId, sku);
+    const rowOrder = [{ active: "desc" as const }, { createdAt: "asc" as const }];
+    // A redelivery: when this SKU has items on the subscription, the row that already OWNS one of them is the
+    // row in question - never an older row of the same SKU family, which would be handed the same item.
+    const owner =
+      !acceptedRowId && items.length > 0 && currentItemIds.size > 0
+        ? await this.prisma.tenantAddon.findFirst({
+            where: billableAddonWhere({
+              ...rowWhere,
+              active: true,
+              stripeItemId: { in: [...currentItemIds] },
+            }),
+            orderBy: rowOrder,
+          })
+        : null;
+    const row =
+      owner ??
+      (await this.prisma.tenantAddon.findFirst({
+        where: billableAddonWhere(rowWhere),
+        orderBy: rowOrder,
+      }));
     // A pointer that is not on the current subscription is STALE: the row is as good as unbilled, and every
     // write below swaps it by compare-and-swap on that very value (`pointer`). `currentItemIds` is only the
     // snapshot this delivery took BEFORE it got the lock — a racing delivery may have created the item and
@@ -2474,7 +2492,15 @@ export class SubscriptionMutationService {
     }
     if (items.length === 0) {
       return row?.active && (!pointer || stale)
-        ? this.billUnbilledRow(tenantId, sku, row, subId, pointer, ctx)
+        ? this.billUnbilledRow(
+            tenantId,
+            sku,
+            row,
+            subId,
+            pointer,
+            ctx,
+            acceptedRowId ? { adminOnly: true } : {},
+          )
         : false;
     }
     if (!row?.active) {
@@ -2675,6 +2701,8 @@ export class SubscriptionMutationService {
     expectedItemId: string | null,
     subId: string,
     ctx: { sessionId?: string | null; source?: "checkout" | "plan_change" },
+    /** The price the caller judged the row at (when it judged one): a different stored price loses the claim. */
+    expectedPriceSnapshot?: unknown,
   ): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
       await lockTenantForLedger(tx, tenantId);
@@ -2691,7 +2719,10 @@ export class SubscriptionMutationService {
         !current?.active ||
         (current.stripeItemId ?? null) !== expectedItemId ||
         current.isComp ||
-        current.quantity !== rowQuantity
+        current.quantity !== rowQuantity ||
+        (expectedPriceSnapshot !== undefined &&
+          toCents(Number(current.priceSnapshot ?? 0)) !==
+            toCents(Number(expectedPriceSnapshot ?? 0)))
       ) {
         return false;
       }
@@ -2701,6 +2732,7 @@ export class SubscriptionMutationService {
           active: true,
           stripeItemId: expectedItemId,
           quantity: rowQuantity,
+          priceSnapshot: current.priceSnapshot,
         }),
         data: { stripeItemId: itemId, priceSnapshot: price },
       });
@@ -2822,11 +2854,24 @@ export class SubscriptionMutationService {
   private async billUnbilledRow(
     tenantId: string,
     sku: string,
-    row: { id: string; quantity: number; priceSnapshot?: unknown },
+    row: {
+      id: string;
+      quantity: number;
+      priceSnapshot?: unknown;
+      addonKey?: string;
+      sku?: string | null;
+      active?: boolean | null;
+      isComp?: boolean | null;
+    },
     subId: string,
     expectedItemId: string | null,
     ctx: { sessionId?: string | null; source?: "checkout" | "plan_change" },
     o: {
+      /**
+       * SA-815d: an ADMIN-ONLY row. {@link isStripeBillableAddonRow} is re-applied HERE, under the add-on lock, to
+       * the row actually being billed: a mismatch takes the skip path (no item, no rewrite, the idempotent notice).
+       */
+      adminOnly?: boolean;
       /** SA-786: priced from the TARGET version's SKU instead of the published one. */
       skuDef?: AddonSkuDef;
       prorationBehavior?: LeavingBillOpts["prorationBehavior"];
@@ -2843,9 +2888,18 @@ export class SubscriptionMutationService {
         `Add-on "${sku}" tenant ${tenantId}: the published catalog has no such SKU - not billed`,
       );
       if (Number(row.priceSnapshot ?? 0) > 0) {
-        await this.noteAddonPricedNotBilled(tenantId, row.id, sku, sku, row.priceSnapshot);
+        await this.noteAddonPricedNotBilled(tenantId, row.id, sku, sku, subId);
       }
       return false;
+    }
+    if (o.adminOnly) {
+      const judged = { addonKey: "", ...row };
+      if (!isStripeBillableAddonRow(judged, skuDef.monthlyPrice)) {
+        if (isPricedBillableCandidate(judged)) {
+          await this.noteAddonPricedNotBilled(tenantId, row.id, sku, skuDef.name, subId);
+        }
+        return false;
+      }
     }
     const included = await this.planIncludedRefusal(tenantId, skuDef);
     if (included) {
@@ -2904,6 +2958,8 @@ export class SubscriptionMutationService {
         expectedItemId,
         subId,
         ctx,
+        // The price the row was JUDGED at: a re-price after the judgement loses the compare-and-swap.
+        row.priceSnapshot,
       );
     } catch (err) {
       // MUST-2: the item THIS call created is removed STRICTLY — a failed removal fails the webhook,
@@ -2951,26 +3007,52 @@ export class SubscriptionMutationService {
   /**
    * SA-815d: an add-on row an admin priced above zero that no card item bills (the catalog prices its SKU at $0 or
    * not at all, or the row carries a custom price): logged, and ONE platform notice per row (a redelivery writes
-   * none). Nothing is created, rewritten or booked. Best-effort: never throws.
+   * none). Nothing is created, rewritten or booked. The notice reads the row's CURRENT price at send time (it never
+   * shows a price the row no longer has) and is skipped when the row is no longer an active priced billable row, or
+   * when `subId` is no longer the subscription the tenant stores (a replaced checkout has nothing to say).
+   * Best-effort: never throws.
    */
   private async noteAddonPricedNotBilled(
     tenantId: string,
     rowId: string,
     sku: string,
     name: string,
-    priceSnapshot: unknown,
+    subId: string | null,
   ): Promise<void> {
-    const price = `$${roundMoney(Number(priceSnapshot ?? 0)).toFixed(2)}`;
-    this.logger.error(
-      `Add-on "${sku}" tenant ${tenantId}: priced at ${price} but no card item bills it (not at the catalog price) - skipped, not billed`,
-    );
-    await this.raiseAdminAlertOnce(
-      tenantId,
-      AdminAuditAction.ADDON_PRICED_NOT_BILLED,
-      `${AdminAuditAction.ADDON_PRICED_NOT_BILLED}:${rowId}`,
-      `${name} is priced at ${price} for this workspace but has no card billing. Set up its billing at the agreed price.`,
-      { sku, rowId, priceSnapshot: Number(priceSnapshot ?? 0) },
-    );
+    try {
+      const [cur, stored] = await Promise.all([
+        this.prisma.tenantAddon.findUnique({
+          where: { id: rowId },
+          select: { active: true, isComp: true, priceSnapshot: true },
+        }),
+        this.prisma.tenantSubscription.findUnique({
+          where: { tenantId },
+          select: { stripeSubId: true },
+        }),
+      ]);
+      if ((stored?.stripeSubId ?? null) !== subId) {
+        this.logger.warn(
+          `Add-on "${sku}" tenant ${tenantId}: subscription ${subId} is no longer the stored one - no priced-not-billed notice`,
+        );
+        return;
+      }
+      if (!cur?.active || cur.isComp || !(Number(cur.priceSnapshot ?? 0) > 0)) return;
+      const price = `$${roundMoney(Number(cur.priceSnapshot)).toFixed(2)}`;
+      this.logger.error(
+        `Add-on "${sku}" tenant ${tenantId}: priced at ${price} but no card item bills it (not at the catalog price) - skipped, not billed`,
+      );
+      await this.raiseAdminAlertOnce(
+        tenantId,
+        AdminAuditAction.ADDON_PRICED_NOT_BILLED,
+        `${AdminAuditAction.ADDON_PRICED_NOT_BILLED}:${rowId}`,
+        `${name} is priced at ${price} for this workspace but has no card billing. Set up its billing at the agreed price.`,
+        { sku, rowId, priceSnapshot: Number(cur.priceSnapshot) },
+      );
+    } catch (err) {
+      this.logger.error(
+        `Add-on "${sku}" tenant ${tenantId}: the priced-not-billed notice could not be written: ${(err as Error).message}`,
+      );
+    }
   }
 
   /**

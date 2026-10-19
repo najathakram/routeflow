@@ -103,4 +103,37 @@ describe("SA-815c the checkout adoption bills through ONE predicate (pin)", () =
       expect(codeOnly(read(f))).not.toMatch(/isStripeBillableAddonRow/);
     }
   });
+
+  it("structural: across the whole api source, ONLY adoptCheckoutAddons and billUnbilledRow call it (never the claim, the booking or any ledger writer)", () => {
+    const SRC = path.join(__dirname, "..");
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (/\.ts$/.test(e.name) && !/\.(spec|test)\.ts$/.test(e.name)) files.push(full);
+      }
+    };
+    walk(SRC);
+    expect(files.length).toBeGreaterThan(500); // the scan really saw the source tree
+    const callers: string[] = [];
+    for (const f of files) {
+      const code = codeOnly(fs.readFileSync(f, "utf8"));
+      // a CALL expression: not the import, not the definition (`export function name(`)
+      const re = /(?<!function\s)(?<!\.)\bisStripeBillableAddonRow\s*\(/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(code))) {
+        const before = code.slice(0, m.index);
+        const members = [
+          ...before.matchAll(/\n {2}(?:private |public |protected )?(?:async )?(\w+)\(/g),
+        ];
+        const owner = members.length ? members[members.length - 1][1] : "<module>";
+        callers.push(`${path.relative(SRC, f).split(path.sep).join("/")}#${owner}`);
+      }
+    }
+    expect(callers.sort()).toEqual([
+      "billing/subscription-mutation.service.ts#adoptCheckoutAddons",
+      "billing/subscription-mutation.service.ts#billUnbilledRow",
+    ]);
+  });
 });

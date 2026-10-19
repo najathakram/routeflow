@@ -119,7 +119,9 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
       isEnabled: () => Promise.resolve(false),
       prepare: () => Promise.resolve({ enabled: false, planAllows: null }),
       onPlanChange: () => Promise.resolve({ action: "none" }),
-      transactionOptions: () => undefined,
+      // activateManualSubscription's interactive transaction reads `transactionOptions(prepared)`; under load the
+      // default 5 s Prisma budget flaked M3, so the spec asks for the same widened budget the hook-on path uses.
+      transactionOptions: () => ({ timeout: 30_000, maxWait: 30_000 }),
       invalidateCaches: () => undefined,
     };
     cron = new BillingCronService(
@@ -394,7 +396,11 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
             return item;
           }),
           update: jest.fn(),
-          del: jest.fn(),
+          del: jest.fn(async (id: string) => {
+            const at = items.findIndex((i) => i.id === id);
+            if (at >= 0) items.splice(at, 1); // a deleted item is gone from Stripe's list
+            return { id };
+          }),
         },
       },
       getSubscription: jest.fn(async () => subscription()),
@@ -730,5 +736,125 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     expect(enabled).toEqual([price.FORECASTING, price.REGULATED_ITEMS]);
     // ... and the run-rate the lock removed (-313) is back exactly once: the net is 0, never +39 over.
     expect(await netMrr(t)).toBe(0);
+  }, 60_000);
+
+  // ─── SA-815d MUST-1: the predicate is enforced on the row ACTUALLY billed, not only at the (c) read ─────────────
+  const AGED = () => new Date(Date.now() - 40 * DAY);
+
+  it.each([
+    ["a custom $29 row", 29],
+    ["a $0 row", 0],
+  ])(
+    "O1: (c) accepts the $39 at-catalog row while an OLDER row of the same SKU family is %s -> only the accepted row gets the item; the older row is untouched; booked once",
+    async (_label, oldPrice) => {
+      const p = price.REGULATED_ITEMS;
+      const { t, harness, session, stripe } = await lockedWith(`o1-${oldPrice}`, [
+        {
+          addonKey: "tobacco_dealer",
+          sku: null,
+          over: { priceSnapshot: oldPrice, createdAt: AGED() },
+        },
+        { addonKey: "REGULATED_ITEMS", sku: "REGULATED_ITEMS", over: { priceSnapshot: p } },
+      ]);
+
+      await harness.complete(session);
+
+      const all = await prisma.tenantAddon.findMany({ where: { tenantId: t } });
+      const older = all.find((r) => r.addonKey === "tobacco_dealer")!;
+      const accepted = all.find((r) => r.addonKey === "REGULATED_ITEMS")!;
+      expect(stripe.client.subscriptionItems.create).toHaveBeenCalledTimes(1);
+      expect(accepted.stripeItemId).toMatch(/^si_created_/);
+      expect(Number(accepted.priceSnapshot)).toBe(p);
+      expect([older.stripeItemId, Number(older.priceSnapshot)]).toEqual([null, oldPrice]);
+      // the crossing books both stored prices once; the adoption's stored -> actual delta on the accepted row is 0
+      expect(await delta(t, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toEqual([base + oldPrice + p]);
+      expect(await delta(t, BILLING_EVENTS.ADDON_ENABLED)).toEqual([]);
+      expect(await netMrr(t)).toBe(0);
+      expect(await noticesOf(t)).toHaveLength(oldPrice > 0 ? 1 : 0);
+
+      const eventsAfter = await prisma.billingEvent.count({ where: { tenantId: t } });
+      await harness.complete(session);
+      expect(stripe.client.subscriptionItems.create).toHaveBeenCalledTimes(1);
+      expect(await prisma.billingEvent.count({ where: { tenantId: t } })).toBe(eventsAfter);
+    },
+    60_000,
+  );
+
+  it("O2: an admin re-prices the row between the (c) read and the claim -> no item at the stale price (the created item is deleted, the webhook fails); the retry bills nothing and raises the notice", async () => {
+    const p = price.REGULATED_ITEMS;
+    const { t, harness, session, stripe } = await lockedWith("o2", [
+      { addonKey: "tobacco_dealer", sku: null, over: { priceSnapshot: p } },
+    ]);
+    const create = stripe.client.subscriptionItems.create;
+    const real = create.getMockImplementation()!;
+    create.mockImplementationOnce(async (args: any) => {
+      // after the item exists, before the claim
+      await prisma.tenantAddon.updateMany({ where: { tenantId: t }, data: { priceSnapshot: 29 } });
+      return real(args);
+    });
+
+    await expect(harness.complete(session)).rejects.toBeDefined();
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(stripe.client.subscriptionItems.del).toHaveBeenCalledTimes(1);
+    expect(stripe.client.subscriptionItems.del.mock.calls[0][0]).toMatch(/^si_created_o2_/);
+    let r = await onlyRow(t);
+    expect([r.stripeItemId, Number(r.priceSnapshot)]).toEqual([null, 29]); // no rewrite to the catalog price
+    expect(await delta(t, BILLING_EVENTS.ADDON_ENABLED)).toEqual([]);
+
+    await harness.complete(session); // the retry: a mismatch now
+    r = await onlyRow(t);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect([r.stripeItemId, Number(r.priceSnapshot)]).toEqual([null, 29]);
+    const notices = await noticesOf(t);
+    expect(notices).toHaveLength(1);
+    expect((notices[0].meta as any).message).toBe(MISMATCH_COPY(names.REGULATED_ITEMS, "$29.00"));
+  }, 60_000);
+
+  it("O3: the notice copy re-reads the row's CURRENT price at send time", async () => {
+    const { t } = await lockedWith("o3", [
+      { addonKey: "tobacco_dealer", sku: null, over: { priceSnapshot: 15 } },
+    ]);
+    const r = await onlyRow(t);
+    await prisma.tenantAddon.update({ where: { id: r.id }, data: { priceSnapshot: 22 } });
+
+    await (mutations as any).noteAddonPricedNotBilled(
+      t,
+      r.id,
+      "REGULATED_ITEMS",
+      "Regulated",
+      null,
+    );
+
+    const notices = await noticesOf(t);
+    expect(notices).toHaveLength(1);
+    expect((notices[0].meta as any).message).toBe(MISMATCH_COPY("Regulated", "$22.00"));
+    expect((notices[0].meta as any).priceSnapshot).toBe(22);
+  }, 60_000);
+
+  it("O4: no notice when the checkout's subscription is no longer the tenant's stored one", async () => {
+    const { t } = await lockedWith("o4", [
+      { addonKey: "tobacco_dealer", sku: null, over: { priceSnapshot: 15 } },
+    ]);
+    const r = await onlyRow(t);
+
+    // the tenant stores NO subscription id; the checkout's (sub_gone) was replaced
+    await (mutations as any).noteAddonPricedNotBilled(
+      t,
+      r.id,
+      "REGULATED_ITEMS",
+      "Regulated",
+      "sub_gone",
+    );
+    expect(await noticesOf(t)).toHaveLength(0);
+
+    await (mutations as any).noteAddonPricedNotBilled(
+      t,
+      r.id,
+      "REGULATED_ITEMS",
+      "Regulated",
+      null,
+    );
+    expect(await noticesOf(t)).toHaveLength(1);
   }, 60_000);
 });
