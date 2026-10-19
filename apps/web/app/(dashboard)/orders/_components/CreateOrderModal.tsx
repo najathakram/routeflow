@@ -30,6 +30,12 @@ import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/
 import type { OrderDraftPayload } from "@/lib/drafts";
 import { readDraftSubmitKey } from "@routeflow/types/draft-submit-key";
 import { priceChangedCopy, repriceResumedLines } from "@/lib/order-draft/resume";
+import {
+  fetchCurrentTierPrices,
+  PRICES_NOT_REFRESHED_COPY,
+  productsToRefresh,
+  withFreshTierPrices,
+} from "@/lib/order-draft/fresh-prices";
 import type { DraftPayload } from "@/lib/order-draft/engine";
 import type { LocalDraftRecord } from "@/lib/order-draft/storage";
 import { draftMetaOf, useOrderDraftAutosave } from "./use-order-draft-autosave";
@@ -625,6 +631,7 @@ export function CreateOrderModal({
     hydratedRef.current = null;
     scanConsumedRef.current = false;
     repriceAfterResumeRef.current = false;
+    setPricesNotRefreshed(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, resumeDraftId]);
 
@@ -1540,22 +1547,31 @@ export function CreateOrderModal({
     unsent.dismiss();
   };
 
-  // SA-817 A5: re-price a resumed order for display from the customer's current prices (the read the modal already makes:
-  // the price layer when units_prices_v2 is on, else the customer's tier rows). Overrides survive as typed; the server prices
-  // again at submit, so what is shown is what is billed.
+  // SA-817 A5 / SA-817a: re-price a resumed order for display from TODAY's prices: each product's current tier columns
+  // (the existing GET /products/:id, parallel, capped at 8) plus the customer's price layer / tier rows the modal already
+  // reads. Overrides survive as typed; a failed read never blocks the resume (the lines keep what they had and a notice says so);
+  // the server prices again at submit, so what is shown is what is billed.
   const [conflictBusy, setConflictBusy] = React.useState(false);
+  const [pricesNotRefreshed, setPricesNotRefreshed] = React.useState(false);
   const resumePricesReady = priceLayer.ready && customerPricesData !== undefined;
   React.useEffect(() => {
     if (!repriceAfterResumeRef.current || !selectedCustomer || lineItems.length === 0) return;
     if (!resumePricesReady) return;
     repriceAfterResumeRef.current = false;
-    setLineItems((prev) => {
-      const r = repriceResumedLines(
-        prev,
-        (productId) => cpMap.get(productId) ?? selectedCustomer.pricingTier ?? 1,
-        priceLayer.enabled ? (productId) => priceLayer.layerOf(productId) : undefined,
+    const tierFor = (productId: string) =>
+      cpMap.get(productId) ?? selectedCustomer.pricingTier ?? 1;
+    const layerOf = priceLayer.enabled
+      ? (productId: string) => priceLayer.layerOf(productId)
+      : undefined;
+    void fetchCurrentTierPrices(productsToRefresh(lineItems), (id) =>
+      apiClient.get(`/products/${id}`).then((r) => r.data),
+    ).then((fresh) => {
+      setPricesNotRefreshed(fresh.failed);
+      if (fresh.byProduct.size === 0) return;
+      setLineItems(
+        (prev) =>
+          repriceResumedLines(withFreshTierPrices(prev, fresh.byProduct), tierFor, layerOf).lines,
       );
-      return r.changed ? r.lines : prev;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumePricesReady, selectedCustomer?.id, lineItems.length, repriceTick]);
@@ -2223,6 +2239,16 @@ export function CreateOrderModal({
           {resumeDraftId && draftLoading && !activeDraftId && (
             <div className="rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-700 ring-1 ring-brand-200">
               Loading your parked draft…
+            </div>
+          )}
+
+          {pricesNotRefreshed && (
+            <div
+              role="status"
+              data-testid="prices-not-refreshed"
+              className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700 ring-1 ring-amber-200"
+            >
+              {PRICES_NOT_REFRESHED_COPY}
             </div>
           )}
 
