@@ -162,6 +162,25 @@ describe("F22: the save bar never covers the grid rows", () => {
     expect(m.style.getPropertyValue("scroll-padding-bottom")).toBe("");
   });
 
+  // K13 P10/P11 (K12 P14): content under the sticky bar is padded by the bar's measured height, so the last card (and,
+  // in Change prices, Order unit and the "Prices by unit" heading) scrolls fully clear of it.
+  it("pads the scroller's bottom by the bar's height while the bar is up, and lets go on Cancel", async () => {
+    const m = shell("96px");
+    mount();
+    expect(m.style.paddingBottom).toBe("96px");
+    const user = await edit();
+    expect(m.style.paddingBottom).toBe(`${96 + BAR_HEIGHT}px`);
+    await user.click(screen.getByTestId(T.ebCancel));
+    expect(m.style.paddingBottom).toBe("96px");
+  });
+
+  it("does not move the bar: its bottom still comes from the shell's own padding", async () => {
+    shell("96px");
+    mount();
+    await edit();
+    expect(screen.getByTestId(T.editbar).style.bottom).toBe("-96px");
+  });
+
   it("with no dashboard shell around it the bar sticks at 0 and nothing else is touched", async () => {
     shell();
     mount();

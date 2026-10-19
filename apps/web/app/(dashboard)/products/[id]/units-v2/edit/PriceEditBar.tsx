@@ -41,9 +41,15 @@ function useBarScrollPadding() {
     if (!main || height === 0) return;
     const before = main.style.getPropertyValue("scroll-padding-bottom");
     main.style.setProperty("scroll-padding-bottom", `${height}px`);
+    // K13 P10/P11: the content under the sticky bar is padded by the bar's height, so the last card scrolls clear of it.
+    const padBefore = main.style.getPropertyValue("padding-bottom");
+    const pad = Number(getComputedStyle(main).paddingBottom.replace("px", ""));
+    main.style.setProperty("padding-bottom", `${(Number.isFinite(pad) ? pad : 0) + height}px`);
     return () => {
       if (before) main.style.setProperty("scroll-padding-bottom", before);
       else main.style.removeProperty("scroll-padding-bottom");
+      if (padBefore) main.style.setProperty("padding-bottom", padBefore);
+      else main.style.removeProperty("padding-bottom");
     };
   }, [height]);
   return ref;
