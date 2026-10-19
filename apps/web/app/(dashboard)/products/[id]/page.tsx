@@ -103,9 +103,11 @@ import { ProductLabelsCard } from "./ProductLabelsCard";
 import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ProductPricingV2 } from "./ProductPricingV2";
-import { useUnitStructureAllowed } from "./units-v2/structure/unit-structure";
 import { PriceWindowHost, ProductPricingRegion } from "./PriceWindowHost";
-import { unitStructureGoverned } from "./units-v2/structure/unit-structure";
+import {
+  unitStructureGoverned,
+  useUnitStructureAllowed,
+} from "./units-v2/structure/unit-structure";
 import { ProductJumpLinks } from "./units-v2/nav/ProductJumpLinks";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
