@@ -42,7 +42,7 @@ function walk(dir: string, out: string[] = []): string[] {
 const GUARDED: Record<string, { calls: number; why: string }> = {
   "products/products.service.ts": {
     calls: 2,
-    why: "create() and update() strip dto.name / dto.variantName before the name guard and the uniqueness check; bulkAssignParent, make-variant, link-existing, the web save, the mobile edit and the import create/update all reach one of the two",
+    why: "create() and update() strip dto.name / dto.variantName before the name guard and the uniqueness check; bulkAssignParent (via assignToParent), make-variant, link-existing, the web save, the mobile edit and the import create/update all reach one of the two",
   },
   "products/product-families.service.ts": {
     calls: 3,
@@ -159,15 +159,16 @@ type BlockPin = {
 const BLOCKS: Record<string, BlockPin> = {
   "src/products/products.service.ts": {
     blocks: { "create:create+": 1, "update:update+": 1, "importFromZoho:create": 1 },
-    why: "create() and update() call bareVariantNames first (the web save, mobile edit, make-variant, link-existing, bulkAssignParent and every importer reach them); importFromZoho creates a standalone product (no parentProductId, no variantName)",
+    why: "create() and update() call bareVariantNames first (the web save, mobile edit, make-variant, link-existing, assignToParent (bulkAssignParent) and every importer reach them); importFromZoho creates a standalone product (no parentProductId, no variantName)",
   },
   "src/products/product-families.service.ts": {
     blocks: {
-      "createFamily:create+": 2,
+      "createFamily:create+": 1,
+      "createFamilyContainer:create": 1,
       "updateVariants:create+": 1,
       "updateVariants:update+": 1,
     },
-    why: "the family row and its variants (createFamily), added and renamed rows (updateVariants): bareRowNames runs before each function builds its rows",
+    why: "the grid's variants (createFamily; its own variants are covered by product.family_created and write no family_assigned row), added and renamed rows (updateVariants): bareRowNames runs before each function builds its rows. createFamilyContainer is the ONE FAMILY writer: a bare container name, parentProductId null, never a variant label; its callers ran assertSafeProductNames and reserveFamilyName",
   },
   "src/inventory/inventory.service.ts": {
     blocks: {

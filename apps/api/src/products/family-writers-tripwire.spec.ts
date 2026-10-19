@@ -160,3 +160,70 @@ describe("FAMILY never on a sellable line or in stock: a structural tripwire (WS
     expect(callers).toEqual(Object.keys(GUARDED).sort());
   });
 });
+
+/**
+ * SA-823 (PR-1) class pins: ONE family creator, ONE reparent path with its audit writers, units v2 untouched.
+ * `files` is comment-stripped, so prose can neither satisfy nor trip a pin.
+ */
+const srcOf = (rel: string): string => files.find((x) => x.rel === rel)!.src;
+/** A method body: from its `async name(` to the next sibling method (or end of file). */
+const methodBody = (src: string, name: string): string => {
+  const start = src.indexOf(`async ${name}(`);
+  expect(start).toBeGreaterThan(-1);
+  const rest = src.slice(start + 1);
+  const next = rest.search(/\n {2}(?:private |public |protected )?(?:async |get |static )/);
+  return next === -1 ? rest : rest.slice(0, next);
+};
+
+describe("SA-823: one family creator, one reparent path, units v2 untouched", () => {
+  it('T10: only createFamilyContainer writes kind: "FAMILY" in src', () => {
+    const FAMILY_KIND = /\bkind\s*:\s*(?:"FAMILY"|ProductKind\.FAMILY)/;
+    const writers = files.filter((f) => FAMILY_KIND.test(f.src)).map((f) => f.rel);
+    expect(writers).toEqual(["products/product-families.service.ts"]);
+    const svc = srcOf("products/product-families.service.ts");
+    expect(methodBody(svc, "createFamilyContainer")).toMatch(FAMILY_KIND);
+    expect(methodBody(svc, "createFamily")).not.toMatch(FAMILY_KIND);
+    expect(methodBody(svc, "createFamily")).toMatch(/this\.createFamilyContainer\(/);
+  });
+
+  it("T11: product.family_assigned is written only by update()'s reparent block, create()'s own tx and the inventory new-variant row; bulkAssignParent goes through assignToParent", () => {
+    const AUDITED = /PRODUCT_FAMILY_ASSIGNED/;
+    const holders = files
+      .filter((f) => AUDITED.test(f.src))
+      .map((f) => [f.rel, count(/PRODUCT_FAMILY_ASSIGNED/g, f.src)])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    expect(holders).toEqual([
+      ["audit/audit-actions.constant.ts", 1],
+      ["inventory/inventory.service.ts", 1],
+      ["products/products.service.ts", 2],
+    ]);
+    const ps = srcOf("products/products.service.ts");
+    expect(count(AUDITED, methodBody(ps, "update"))).toBe(1);
+    expect(count(AUDITED, methodBody(ps, "create"))).toBe(1);
+    // every writer is a tx write, never a non-tx audit.log
+    expect(ps).not.toMatch(/audit\.log\([^)]*family_assigned/);
+    const bulk = methodBody(ps, "bulkAssignParent");
+    expect(bulk).toMatch(/this\.assignToParent\(/);
+    expect(bulk).not.toMatch(/this\.update\(|\.product\.(?:create|update|upsert|updateMany)\(/);
+    expect(methodBody(ps, "assignToParent")).toMatch(/this\.update\(/);
+    expect(methodBody(ps, "unlinkFromParent")).toMatch(/this\.update\(/);
+  });
+
+  it("T12: no productUnit write in the family service, product-parent.ts or the reparent paths of ProductsService", () => {
+    const UNIT_WRITE =
+      /\bproductUnit\s*\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/;
+    expect(srcOf("products/product-families.service.ts")).not.toMatch(UNIT_WRITE);
+    expect(srcOf("products/product-parent.ts")).not.toMatch(UNIT_WRITE);
+    const ps = srcOf("products/products.service.ts");
+    for (const m of ["assignToParent", "unlinkFromParent", "bulkAssignParent"]) {
+      expect(methodBody(ps, m)).not.toMatch(UNIT_WRITE);
+    }
+    const update = methodBody(ps, "update");
+    const block = update.slice(
+      update.indexOf("fromParentId ="),
+      update.indexOf("family.propagate"),
+    );
+    expect(block.length).toBeGreaterThan(100);
+    expect(block).not.toMatch(UNIT_WRITE);
+  });
+});
