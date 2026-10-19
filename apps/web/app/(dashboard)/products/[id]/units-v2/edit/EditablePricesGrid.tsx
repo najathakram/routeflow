@@ -102,9 +102,28 @@ export function EditablePricesGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
 
+  // K13 F05/F11: a save collapses the editor (order unit, the reserved slot and the bar leave the flow in one commit), and
+  // the page could end up away from the grid. Once that commit is laid out, a grid whose top left the viewport is
+  // scrolled back to the top; one still in view is left alone. Checked again a frame later, after the refetch settles.
+  const savedHere =
+    surface === "inline" && d.lastSave?.surface === "inline" ? d.lastSave.auditId : null;
+  React.useLayoutEffect(() => {
+    if (!savedHere) return undefined;
+    const keep = () => {
+      const el = root.current;
+      if (!el?.isConnected) return;
+      const top = el.getBoundingClientRect().top;
+      if (top < 0 || top > window.innerHeight) el.scrollIntoView?.({ block: "start" });
+    };
+    keep();
+    if (typeof requestAnimationFrame === "undefined") return undefined;
+    const raf = requestAnimationFrame(keep);
+    return () => cancelAnimationFrame(raf);
+  }, [savedHere]);
+
   return (
     <AddUnitIntentProvider>
-      <div ref={root} className="relative">
+      <div ref={root} data-testid="units-v2-grid-root" className="relative">
         {editing && surface === "inline" && <SkipToSave />}
         <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
           {editing && surface === "inline" && (
