@@ -5,7 +5,7 @@ import { fold } from "./fold.mjs";
 import { parseEta } from "./ids.mjs";
 import { pickNext, laneNow } from "./next.mjs";
 import { areaDomain, buildAreaTree, fileToArea, guessDomainFromText } from "./areas.mjs";
-import { fixLinksFor, linkItemFor, reconcile } from "./reconcile.mjs";
+import { fixLinksFor, landedAt, linkItemFor, reconcile } from "./reconcile.mjs";
 import { summarizeChecks } from "./collector.mjs";
 
 export { linkItemFor };
@@ -333,22 +333,23 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
   function fixFor(bug) {
     const n = named.get(bug.id) ?? { open: [], merged: [], branches: [] };
     const filed = toMs(bug.filedAt);
-    const fixOf = (state_, p, branch = p.branch) => ({
+    const fixOf = (state_, p, branch = p.branch, via = null) => ({
       state: state_,
       pr: p.number,
       prUrl: p.url ?? null,
       branch: branch ?? null,
+      ...(via === null ? {} : { via }),
     });
+    // Landed on master: its own merge, or (a merge-commit train) the merge of the train PR whose
+    // head is the member's base (landedAt). _at is that landing time, _via the train PR number.
     const hit = newest(
-      n.merged.filter(
-        (p) =>
-          (!p.base || p.base === "master") &&
-          toMs(p.mergedAt) !== null &&
-          (filed === null || toMs(p.mergedAt) > filed + 10 * 60000),
-      ),
-      "mergedAt",
+      n.merged
+        .map((p) => ({ ...p, ...landedAt(p, mergedRaw) }))
+        .filter((p) => p.at !== null && (filed === null || p.at > filed + 10 * 60000))
+        .map(({ at, via, ...p }) => ({ ...p, _at: at, _via: via })),
+      "_at",
     )[0];
-    if (hit) return fixOf(toMs(hit.mergedAt) <= cut ? "deployed" : "merged", hit);
+    if (hit) return fixOf(hit._at <= cut ? "deployed" : "merged", hit, hit.branch, hit._via);
     const train = newest(
       n.open.filter((p) => /^train\//.test(p.branch ?? "")),
       "updatedAt",
@@ -407,6 +408,29 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
     pendingBugs.push(outBug({ ...p, filedAt: null }, true));
   }
   const bugs = [...registryBugs, ...pendingBugs];
+
+  // Bugs a verified "ALREADY FIXED ... PR #n (sha)" note in the bug record closes while the
+  // registry state still reads open (bugs.mjs has no close verb yet): the proof list for the page.
+  const prUrlFor = (n) => {
+    if (n === null || n === undefined) return null;
+    const all = [...mergedRaw, ...openRaw];
+    const own = all.find((p) => p.number === n && p.url);
+    if (own) return own.url;
+    const any = all.find((p) => /\/pull\/\d+/.test(p.url ?? ""));
+    return any ? any.url.replace(/\/pull\/\d+.*$/, `/pull/${n}`) : null;
+  };
+  const bugsFixedByNote = bugsAll
+    .filter((b) => b.alreadyFixed && b.open === false)
+    .map((b) => ({
+      id: b.id,
+      title: b.title,
+      severity: b.severity,
+      pr: b.alreadyFixed.pr ?? null,
+      prUrl: prUrlFor(b.alreadyFixed.pr ?? null),
+      sha: b.alreadyFixed.sha ?? null,
+    }))
+    .sort((a, b) => (b.pr ?? -1) - (a.pr ?? -1) || compareIds(a.id, b.id))
+    .slice(0, 50);
 
   // ---- items ----
   const items = stateItems.map((it) => {
@@ -686,6 +710,9 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
   const bugIds = hasRegistry
     ? new Set([...bugsAll.map((b) => b.id), ...pendingBugs.map((b) => b.id)])
     : undefined;
+  const laneActivity = new Map(
+    lanes.filter((l) => l.lastActivityAt).map((l) => [l.id, Date.parse(l.lastActivityAt)]),
+  );
   const alarms = reconcile({
     state,
     prs: { open: openRaw, merged: mergedRaw },
@@ -695,6 +722,7 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
     now,
     bugs: hasRegistry ? bugs : undefined,
     bugIds,
+    laneActivity,
   });
 
   return {
@@ -704,6 +732,7 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
     sources: outSources,
     items,
     bugs,
+    bugsFixedByNote,
     trains,
     lanes,
     ownerQueue,

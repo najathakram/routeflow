@@ -156,6 +156,7 @@ test("top-level contract keys and stats", () => {
       "answeredRecently",
       "branches",
       "bugs",
+      "bugsFixedByNote",
       "ci",
       "decisions",
       "generatedAt",
@@ -996,4 +997,136 @@ test("A2: a registry-only snapshot (no extras, no ledger) still builds with safe
   assert.ok(s.bugs.every((b) => b.pending === false && Array.isArray(b.items)));
   assert.equal(s.ci.master.gate, "none");
   assert.deepEqual(s.ci.master.probesFailing, []);
+});
+
+// ---- H3: merge-commit trains, lane activity, ALREADY FIXED proof ----
+function trainGithub() {
+  const g = a2Github();
+  return {
+    ...g,
+    merged: [
+      ...g.merged,
+      {
+        number: 9201,
+        title: "fix B9201 widget total",
+        body: "",
+        branch: "fix/m9201",
+        base: "train/y",
+        mergedAt: "2026-10-19T08:00:00Z",
+        mergeSha: "1".repeat(40),
+        url: "https://github.com/acme-org/widgets/pull/9201",
+      },
+      {
+        number: 9202,
+        title: "Merge train/y",
+        body: "",
+        branch: "train/y",
+        base: "master",
+        mergedAt: "2026-10-19T11:00:00Z",
+        mergeSha: "2".repeat(40),
+        url: "https://github.com/acme-org/widgets/pull/9202",
+      },
+    ],
+  };
+}
+const trainBugs = () => {
+  const all = [...A2_BUGS, bugRow("B9201")];
+  return okSource(120, { bugs: all, open: all.filter((b) => b.open) });
+};
+
+test("H3 train: a bug fixed by a member PR counts as merged at the train PR's merge time", () => {
+  const s = a2({ github: okSource(60, trainGithub()), bugs: trainBugs() });
+  const b = s.bugs.find((x) => x.id === "B9201");
+  assert.equal(b.fix.state, "merged"); // the member merged 08:00, before the 09:10 deploy; the train at 11:00 did not
+  assert.equal(b.fix.pr, 9201);
+  assert.equal(b.fix.via, 9202);
+  assert.equal(b.fix.prUrl, "https://github.com/acme-org/widgets/pull/9201");
+  const a = s.alarms.find((x) => x.id === "bug-fixed-still-open:B9201");
+  assert.ok(a, "the registry still says open: drift fires");
+  assert.equal(a.pr, 9201);
+  // deployed once a deploy after the train merge succeeded
+  const dep = a2({
+    github: okSource(60, trainGithub()),
+    bugs: trainBugs(),
+    railway: okSource(120, {
+      deploys: [
+        {
+          service: "@routeflow/api",
+          status: "SUCCESS",
+          sha: "9".repeat(40),
+          createdAt: "2026-10-19T11:30:00Z",
+        },
+      ],
+    }),
+  });
+  assert.equal(dep.bugs.find((x) => x.id === "B9201").fix.state, "deployed");
+  // the train PR has not merged: the member is not a landed fix
+  const g = trainGithub();
+  const open = a2({
+    github: okSource(60, { ...g, merged: g.merged.filter((p) => p.number !== 9202) }),
+    bugs: trainBugs(),
+  });
+  assert.notEqual(open.bugs.find((x) => x.id === "B9201").fix.state, "merged");
+  assert.equal(
+    open.alarms.find((x) => x.id === "bug-fixed-still-open:B9201"),
+    undefined,
+  );
+});
+
+test("H3: lane-silent counts a lane's commits and handoffs, not only its last event", () => {
+  const s = a2();
+  const lane = s.lanes.find((l) => l.id === "macmini");
+  assert.equal(lane.lastActivitySource, "commit"); // 11:30, the event was 11:00
+  assert.equal(
+    s.alarms.find((a) => a.id === "lane-silent:macmini"),
+    undefined,
+  );
+});
+
+test("H3: bugsFixedByNote lists bugs closed by an ALREADY FIXED note, newest PR first", () => {
+  const note = (id, pr, sha, o = {}) =>
+    bugRow(id, { open: false, state: "queued", alreadyFixed: { pr, sha }, ...o });
+  const rows = [
+    ...A2_BUGS,
+    note("B9301", 700, "abc1234"),
+    note("B9302", 712, null, { sensitive: true, title: "Security hardening item" }),
+    note("B9303", null, "def5678", { severity: "low" }),
+  ];
+  const g = a2Github();
+  const s = a2({
+    bugs: okSource(120, { bugs: rows, open: rows.filter((b) => b.open) }),
+    github: okSource(60, {
+      ...g,
+      merged: [
+        ...g.merged,
+        {
+          number: 712,
+          title: "fix",
+          body: "",
+          branch: "x",
+          base: "master",
+          mergedAt: "2026-10-18T00:00:00Z",
+          url: "https://github.com/acme-org/widgets/pull/712",
+        },
+      ],
+    }),
+  });
+  assert.deepEqual(
+    s.bugsFixedByNote.map((b) => b.id),
+    ["B9302", "B9301", "B9303"],
+  );
+  assert.deepEqual(s.bugsFixedByNote[0], {
+    id: "B9302",
+    title: "Security hardening item",
+    severity: "high",
+    pr: 712,
+    prUrl: "https://github.com/acme-org/widgets/pull/712",
+    sha: null,
+  });
+  assert.equal(s.bugsFixedByNote[1].prUrl, "https://github.com/acme-org/widgets/pull/700"); // derived from a known PR url
+  assert.equal(s.bugsFixedByNote[2].prUrl, null);
+  // open bugs and bugs closed by the ledger alone are not listed
+  assert.ok(!s.bugsFixedByNote.some((b) => b.id === "B9007"));
+  // a snapshot with no such notes carries an empty list
+  assert.deepEqual(a2().bugsFixedByNote, []);
 });

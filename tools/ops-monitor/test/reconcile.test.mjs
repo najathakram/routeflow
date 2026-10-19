@@ -591,3 +591,83 @@ test("bug-unowned-backlog groups masked security bugs on their own, not under Ot
   assert.match(sec.message, /security hardening \(details private\)/);
   assert.deepEqual(find(alarms, "bug-unowned-backlog:high:other").items, ["B903"]);
 });
+
+// ---- H3: merge-commit trains ----
+const memberPr = (number, base, ms, over = {}) => ({
+  number,
+  branch: `fix/m${number}`,
+  title: "fix B9001",
+  base,
+  mergedAt: ago(ms),
+  ...over,
+});
+const trainPr = (number, head, ms) => ({
+  number,
+  branch: head,
+  title: `Merge ${head}`,
+  base: "master",
+  mergedAt: ago(ms),
+});
+
+test("H3 train: a member PR merged into a train that landed on master counts, via the train PR", () => {
+  const bugs = [bug("B9001")];
+  const prs = {
+    open: [],
+    merged: [memberPr(9001, "train/x", 30 * HOUR), trainPr(9002, "train/x", 3 * HOUR)],
+  };
+  const a = find(run({ bugs, prs }), "bug-fixed-still-open:B9001");
+  assert.ok(a, "bug-fixed-still-open fires for a train-landed fix");
+  assert.equal(a.severity, "warn"); // the train merged 3h ago, not the member's 30h
+  assert.equal(a.pr, 9001);
+  assert.match(a.message, /train PR #9002/);
+  // the train has not merged: the member is still in flight
+  const open = {
+    open: [],
+    merged: [memberPr(9001, "train/x", 30 * HOUR)],
+  };
+  assert.equal(find(run({ bugs, prs: open }), "bug-fixed-still-open:B9001"), undefined);
+  // a train branch that merged BEFORE the member PR (a reused name) does not count
+  const reused = {
+    open: [],
+    merged: [memberPr(9001, "train/x", HOUR), trainPr(9002, "train/x", 5 * HOUR)],
+  };
+  assert.equal(find(run({ bugs, prs: reused }), "bug-fixed-still-open:B9001"), undefined);
+});
+
+test("H3 train: status-behind-merge fires for an item whose PR landed through a train", () => {
+  const state = mkState([item("525", { links: { prs: [9001], branches: [], urls: [] } })]);
+  const prs = {
+    open: [],
+    merged: [
+      memberPr(9001, "train/x", 30 * HOUR, { title: "x" }),
+      trainPr(9002, "train/x", 3 * HOUR),
+    ],
+  };
+  const a = find(run({ state, prs }), "status-behind-merge:525");
+  assert.ok(a);
+  assert.equal(a.severity, "warn");
+  assert.match(a.message, /train PR #9002/);
+  // still not landed: nothing fires
+  const none = { open: [], merged: [memberPr(9001, "train/x", 30 * HOUR, { title: "x" })] };
+  assert.equal(find(run({ state, prs: none }), "status-behind-merge:525"), undefined);
+});
+
+test("H3 lane-silent uses the lane's activity (commits, handoffs), not just the last event", () => {
+  const lanes = new Map([
+    [
+      "pc-lane",
+      { id: "pc-lane", lastEventAt: NOW - 5 * HOUR, lastEventKind: "note", claims: ["5"] },
+    ],
+    ["macmini", { id: "macmini", lastEventAt: null, lastEventKind: null, claims: ["6"] }],
+  ]);
+  const laneActivity = new Map([
+    ["pc-lane", NOW - 10 * MIN],
+    ["macmini", NOW - 20 * MIN],
+  ]);
+  const alarms = run({ state: mkState([], { lanes }), laneActivity });
+  assert.equal(find(alarms, "lane-silent:pc-lane"), undefined);
+  assert.equal(find(alarms, "lane-silent:macmini"), undefined);
+  // no activity map: fall back to the last event
+  const fallback = run({ state: mkState([], { lanes }) });
+  assert.ok(find(fallback, "lane-silent:pc-lane"));
+});

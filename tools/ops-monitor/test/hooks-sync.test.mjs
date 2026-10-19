@@ -21,7 +21,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "..", "..", "..");
 const url = (p) => new URL(`file:///${p.replace(/\\/g, "/")}`).href;
 const BRIEF = join(REPO, ".claude", "hooks", "ops-brief.mjs");
-const PLAN = join(REPO, ".claude", "hooks", "ops-post-plan.mjs");
+const HOOKS = process.env.RF_HOOKS_DIR || join(REPO, ".claude", "hooks");
+const PLAN = join(HOOKS, "ops-post-plan.mjs");
 const STOP = join(REPO, ".claude", "hooks", "ops-stop.mjs");
 const LIB = join(REPO, "tools", "ops-monitor", "lib");
 
@@ -372,9 +373,7 @@ test("plan paths: plan files in a routeflow-specs checkout count; events/handoff
   const yes = [
     `${root}\\decisions\\D-2026-10-19-x.md`,
     `${root}\\releases\\R3.md`,
-    `${root}\\priorities\\OWNER-QUEUE.md`,
     `${root}\\briefs\\b1.md`,
-    `${root}\\register\\WORK-REGISTER.md`,
     `${root}\\roadmap\\Q4.md`,
     `${root}\\specs\\k11.md`,
     `${root}\\DASHBOARD.md`,
@@ -398,6 +397,51 @@ test("plan paths: plan files in a routeflow-specs checkout count; events/handoff
   assert.equal(isPlanPath("D:/data/clone/decisions/D-9.md", "D:/data/clone"), true);
   assert.equal(isPlanPath("D:/data/clone/events/a.jsonl", "D:/data/clone"), false);
   assert.equal(specsRelative("D:/data/other/decisions/D-9.md", "D:/data/clone"), null);
+});
+
+test("plan paths: the register files are plan files only in generated register mode", () => {
+  const root = "C:\\Users\\x\\.routeflow\\ops\\routeflow-specs";
+  const files = [`${root}\\register\\WORK-REGISTER.md`, `${root}\\priorities\\OWNER-QUEUE.md`];
+  for (const f of files) {
+    assert.equal(isPlanPath(f, null, "generated"), true, f);
+    assert.equal(isPlanPath(f, null, "human"), false, f);
+    assert.equal(isPlanPath(f, null, null), false, f);
+    assert.equal(isPlanPath(f), false, f);
+  }
+  assert.equal(isPlanPath(`${root}\\decisions\\D-1.md`, null, "human"), true);
+  const edit = { tool_name: "Edit", tool_input: { file_path: files[0] } };
+  assert.deepEqual(planActions(edit, { now: NOW }), []);
+  assert.deepEqual(planActions(edit, { now: NOW, registerMode: "human" }), []);
+  assert.equal(planActions(edit, { now: NOW, registerMode: "generated" }).length, 1);
+});
+
+test("plan hook: reads registerMode from the specs ops/config.json (missing or bad = exclude)", () => {
+  const env = mkEnv();
+  try {
+    const reg = join(env.specs, "register", "WORK-REGISTER.md");
+    const send = (sid) =>
+      run(PLAN, env, {
+        session_id: sid,
+        cwd: env.root,
+        tool_name: "Edit",
+        tool_input: { file_path: reg },
+      });
+    send("s-none");
+    assert.equal(existsSync(turn.actionsFile(env.home, "s-none")), false);
+    mkdirSync(join(env.specs, "ops"), { recursive: true });
+    const cfg = join(env.specs, "ops", "config.json");
+    writeFileSync(cfg, "{bad");
+    send("s-bad");
+    assert.equal(existsSync(turn.actionsFile(env.home, "s-bad")), false);
+    writeFileSync(cfg, JSON.stringify({ registerMode: "human" }));
+    send("s-human");
+    assert.equal(existsSync(turn.actionsFile(env.home, "s-human")), false);
+    writeFileSync(cfg, JSON.stringify({ registerMode: "generated" }));
+    send("s-gen");
+    assert.equal(turn.readActions(turn.actionsFile(env.home, "s-gen")).length, 1);
+  } finally {
+    rmSync(env.root, { recursive: true, force: true });
+  }
 });
 
 test("plan actions: a Write/Edit/MultiEdit of a plan file records plan-change with the path", () => {

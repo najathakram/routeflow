@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 import { BUG_ID_RE, validateEvent } from "./schema.mjs";
 import { fold } from "./fold.mjs";
 import { nextItemId, utcDate } from "./ids.mjs";
-import { REPO_ROOT, opsHome, specsDir } from "./config.mjs";
+import { REPO_ROOT, loadConfig, opsHome, specsDir } from "./config.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -91,7 +91,10 @@ function lockAgeMs(lock) {
  * heartbeat, stale after staleMs without one). Returns a release function that deletes the lock
  * only while owner.json still carries our token; null when `tryOnly` and the lock is busy.
  */
-async function acquireLock(home, { staleMs, waitMs, pollMs, heartbeatMs, tryOnly }) {
+async function acquireLock(
+  home,
+  { staleMs, waitMs, pollMs, heartbeatMs, tryOnly, _beforeReclaim },
+) {
   mkdirSync(home, { recursive: true });
   const lock = join(home, "specs.lock");
   const start = Date.now();
@@ -104,14 +107,27 @@ async function acquireLock(home, { staleMs, waitMs, pollMs, heartbeatMs, tryOnly
       const age = lockAgeMs(lock);
       if (age === null) continue; // vanished between mkdir and stat: retry now
       if (age > staleMs) {
-        // Atomic rename so only one waiter reclaims a stale lock.
+        // Atomic rename so only one waiter reclaims a stale lock. The judgment and the rename are
+        // not one step: if the holder refreshed it, or another waiter reclaimed it and a new
+        // holder took it, in between, the lock we renamed is a live one. Its token tells: when it
+        // differs from the one judged stale, give it back and wait as usual.
+        const judged = readOwner(lock)?.token ?? null;
+        _beforeReclaim?.();
         const trash = `${lock}.stale-${process.pid}-${Date.now()}`;
         try {
           renameSync(lock, trash);
-          rmSync(trash, { recursive: true, force: true });
         } catch {
-          /* someone else reclaimed it */
+          continue; // someone else reclaimed it
         }
+        if ((readOwner(trash)?.token ?? null) !== judged) {
+          try {
+            renameSync(trash, lock);
+          } catch {
+            rmSync(trash, { recursive: true, force: true }); // a newer lock already stands
+          }
+          continue;
+        }
+        rmSync(trash, { recursive: true, force: true });
         continue;
       }
       if (tryOnly) return null;
@@ -153,7 +169,14 @@ async function acquireLock(home, { staleMs, waitMs, pollMs, heartbeatMs, tryOnly
  */
 export async function withSpecsLock(
   fn,
-  { home, staleMs = 120000, waitMs = 30000, pollMs = 100, heartbeatMs = HEARTBEAT_MS } = {},
+  {
+    home,
+    staleMs = 120000,
+    waitMs = 30000,
+    pollMs = 100,
+    heartbeatMs = HEARTBEAT_MS,
+    _beforeReclaim,
+  } = {},
 ) {
   const release = await acquireLock(home ?? opsHome(), {
     staleMs,
@@ -161,6 +184,7 @@ export async function withSpecsLock(
     pollMs,
     heartbeatMs,
     tryOnly: false,
+    _beforeReclaim,
   });
   try {
     return await fn();
@@ -237,15 +261,32 @@ export async function dropViewsTip(dir) {
   return dropped;
 }
 
+/** True when the clone's ops/config.json says `registerMode: "generated"` (a missing file is human). */
+function isGeneratedMode(dir) {
+  return loadConfig(dir).registerMode === "generated";
+}
+
+/**
+ * The views hook for this clone: the caller's `afterCommit`, else (generated register mode) the
+ * register hook, so a caller that passes nothing can never leave a views tip that wedges the
+ * next pull. Undefined in human mode.
+ */
+async function viewsHookFor(dir, afterCommit) {
+  if (afterCommit) return afterCommit;
+  if (!isGeneratedMode(dir)) return undefined;
+  return (await import("./views.mjs")).registerHook();
+}
+
 /**
  * `git pull --rebase` then, when ahead, reconcile the unpushed events against what upstream now
  * holds and `git push`. Never throws; reports { ok, pulled, pushed, error, reconciled }. Callers
- * hold the specs lock. `afterCommit(dir)` (generated register mode) first drops a leftover
- * unpushed views commit and, after the pull, regenerates the views into a fresh views-only commit
- * that rides along with the push.
+ * hold the specs lock. In generated register mode (`afterCommit(dir)` passed, or `registerMode`
+ * read from ops/config.json) it first drops a leftover unpushed views commit and, after the pull,
+ * regenerates the views into a fresh views-only commit that rides along with the push.
  */
-export async function syncSpecs(dir, { bugIds = new Set(), afterCommit } = {}) {
+export async function syncSpecs(dir, { bugIds = new Set(), afterCommit: given } = {}) {
   let error = null;
+  let afterCommit = await viewsHookFor(dir, given);
   if (afterCommit) await dropViewsTip(dir);
   const pull = await git(dir, ["pull", "--rebase", "--quiet"]);
   if (pull.code !== 0) {
@@ -266,6 +307,10 @@ export async function syncSpecs(dir, { bugIds = new Set(), afterCommit } = {}) {
       canPush = false;
       error ??= `reconcile before push failed: ${e.message}`;
     }
+  }
+  if (canPush && pull.code === 0) {
+    // The pull may have switched the clone to generated mode: re-read, so the views follow it.
+    afterCommit ??= await viewsHookFor(dir, given);
   }
   if (canPush && afterCommit && pull.code === 0) {
     try {
@@ -384,8 +429,12 @@ function commitMessage(events) {
   return `ops(${first.machine}): ${first.kind} ${first.item ?? "-"}${more}`;
 }
 
-/** `git commit` with the local-identity fallback. `files` null commits the whole index. */
-export async function runCommit(dir, message, files) {
+/**
+ * `git commit` with the local-identity fallback. `files` null commits the whole index. `run`
+ * (args -> { code, stdout, stderr }) swaps the git runner, for callers that inject their own.
+ */
+export async function runCommit(dir, message, files, { run } = {}) {
+  const gitRun = run ?? ((args) => git(dir, args));
   const commitArgs = [
     "-c",
     "commit.gpgsign=false",
@@ -396,12 +445,12 @@ export async function runCommit(dir, message, files) {
     message,
     ...(files ? ["--", ...files] : []),
   ];
-  let c = await git(dir, commitArgs);
+  let c = await gitRun(commitArgs);
   if (c.code !== 0 && /who you are|empty ident|unable to auto-detect/i.test(c.stderr)) {
     // Tool-owned clone without a git identity: set a local one and retry once.
-    await git(dir, ["config", "user.email", "ops-monitor@localhost"]);
-    await git(dir, ["config", "user.name", "RouteFlow ops monitor"]);
-    c = await git(dir, commitArgs);
+    await gitRun(["config", "user.email", "ops-monitor@localhost"]);
+    await gitRun(["config", "user.name", "RouteFlow ops monitor"]);
+    c = await gitRun(commitArgs);
   }
   if (c.code !== 0) throw new Error(`git commit failed: ${c.stderr.trim() || c.stdout.trim()}`);
 }
@@ -482,6 +531,15 @@ export async function reconcileUnpushed(dir, { bugIds = new Set() } = {}) {
   for (const o of ours) {
     const ev = structuredClone(o.ev);
     let touched = remapRefs(ev, out.changes);
+    if (ev.kind === "item.new" && state.items.has(ev.item) && ev.data?.source === "register") {
+      // A register row: the other machine already created this very row, so ours is a duplicate.
+      out.dropped.push(ev.id);
+      out.refused.push({
+        event: ev,
+        error: `register row ${ev.item} was already created by another machine`,
+      });
+      continue;
+    }
     if (ev.kind === "item.new" && state.items.has(ev.item)) {
       const next = nextItemId(state);
       out.changes.set(ev.item, next);
@@ -665,7 +723,15 @@ export async function appendEvents(
   if (!events || events.length === 0)
     return { events: [], pushed: false, attempts: 0, warnings: [], refused: [] };
   return withSpecsLock(
-    () => doAppend(events, { dir, push, retries, bugIds, _beforePush, afterCommit }),
+    async () =>
+      doAppend(events, {
+        dir,
+        push,
+        retries,
+        bugIds,
+        _beforePush,
+        afterCommit: await viewsHookFor(dir, afterCommit),
+      }),
     { home },
   );
 }

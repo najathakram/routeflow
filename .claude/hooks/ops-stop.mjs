@@ -23,6 +23,7 @@ const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const WINDOW_MS = 5 * 60 * 1000;
 const RF = "node tools/ops-monitor/bin/rf.mjs";
 const TRUNK = new Set(["master", "main"]);
+const LANDING_BRANCH_RE = /^(train|docs\/bookkeeping|chore\/bookkeeping)[/-]/;
 
 // ════════════════════════════════════════════════════════════════════════
 // PURE
@@ -120,6 +121,8 @@ export function evaluateGate({ actions, state, events, machine }) {
       }
       // Direct pushes to trunk have no work item by nature; never demand a link for them.
       if (TRUNK.has(b)) continue;
+      // Routine landing branches (merge trains, bookkeeping PRs) carry no item of their own.
+      if (LANDING_BRANCH_RE.test(b ?? "")) continue;
       const item = rec.item ?? findLinkedItem(state, { branch: b });
       if (!item) {
         missing.push({

@@ -57,6 +57,7 @@ const baseEvents = (...more) => [
   mk("item.new", "R1", { title: "Window 2", type: "release", status: "building" }),
   ...more,
 ];
+const BACKFILL = { actor: "backfill" };
 const regNew = (id, fields = {}) =>
   mk("item.new", id, { title: `Acme row ${id}`, type: "bug", source: "register", ...fields });
 const run = (events, registerMd, ownerQueueMd = "") => {
@@ -258,19 +259,29 @@ test("syncEvents: owner-decision question and answer are capped at 600", () => {
 test("syncEvents: board-sourced items (problem / owner-ask) are dropped once; others untouched", () => {
   const events = [
     ...baseEvents(),
-    mk("item.new", "501", {
-      title: "A board problem",
-      type: "incident",
-      priority: "P0",
-      tags: ["problem"],
-      source: "board",
-    }),
-    mk("item.new", "502", {
-      title: "A board ask",
-      type: "decision",
-      tags: ["owner-ask"],
-      source: "board",
-    }),
+    mk(
+      "item.new",
+      "501",
+      {
+        title: "A board problem",
+        type: "incident",
+        priority: "P0",
+        tags: ["problem"],
+        source: "board",
+      },
+      BACKFILL,
+    ),
+    mk(
+      "item.new",
+      "502",
+      {
+        title: "A board ask",
+        type: "decision",
+        tags: ["owner-ask"],
+        source: "board",
+      },
+      BACKFILL,
+    ),
     mk("item.new", "503", {
       title: "A queue decision",
       type: "decision",
@@ -296,11 +307,66 @@ test("syncEvents: board-sourced items (problem / owner-ask) are dropped once; ot
   assert.deepEqual(run(next, "", "").events, []);
 });
 
+test("syncEvents: only backfill-imported board items are dropped; a lane's own problem/owner-ask item is never touched", () => {
+  const events = [
+    ...baseEvents(),
+    mk(
+      "item.new",
+      "601",
+      { title: "Lane problem", type: "incident", tags: ["problem"] },
+      { lane: "pc-lane" },
+    ),
+    mk(
+      "item.new",
+      "602",
+      { title: "Lane ask", type: "decision", tags: ["owner-ask"] },
+      { actor: "pc-lane" },
+    ),
+    mk(
+      "item.new",
+      "603",
+      { title: "Imported", type: "incident", tags: ["problem"], source: "board" },
+      BACKFILL,
+    ),
+  ];
+  const out = run(events, "", "");
+  assert.deepEqual(
+    out.events.map((e) => [e.kind, e.item]),
+    [["status", "603"]],
+  );
+});
+
+test("syncEvents: a revived board item (status changed after the drop) is not dropped again", () => {
+  const events = [
+    ...baseEvents(),
+    mk(
+      "item.new",
+      "701",
+      { title: "Imported", type: "incident", tags: ["problem"], source: "board" },
+      BACKFILL,
+    ),
+  ];
+  const first = run(events, "", "");
+  assert.equal(first.events.length, 1);
+  const revived = {
+    ...mk("status", "701", { status: "planned" }, { actor: "lead" }),
+    ts: new Date(NOW + 600000 * 50).toISOString(), // after the drop pass
+  };
+  const next = [...events, ...first.events, revived];
+  assert.equal(fold(next).items.get("701").status, "planned");
+  assert.deepEqual(run(next, "", "").events, []);
+});
+
 test("syncEvents with everything at once is idempotent and exports the plain-events form", () => {
   const events = [
     ...baseEvents(),
     dec("401", "Make the legacy card read-only.", ["owner-queue", "N1"]),
-    mk("item.new", "501", { title: "B", type: "incident", tags: ["problem"], source: "board" }),
+    mk(
+      "item.new",
+      "501",
+      { title: "B", type: "incident", tags: ["problem"], source: "board" },
+      BACKFILL,
+    ),
   ];
   const md = register(row(201), row(202, { status: "building" }));
   const q = oq("| N1 · **ANSWERED 10-18** | Make the legacy card read-only. | 1 | Yes. | W. |");

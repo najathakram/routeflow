@@ -475,13 +475,24 @@ export async function writeViews({
       const backfillText = changed.includes("ops/state/backfill.json")
         ? d.readText(backfillPath)
         : null;
-      await d.exec("git", ["add", "--", ...changed], { cwd: specsDir });
-      const c = await d.exec(
-        "git",
-        ["commit", "-m", "ops(views): regenerate generated views", "--", ...changed],
-        { cwd: specsDir },
-      );
-      if (c.code === 0 && push) {
+      const run = (args) => d.exec("git", args, { cwd: specsDir });
+      await run(["add", "--", ...changed]);
+      let committed = true;
+      try {
+        await runCommit(specsDir, `${VIEWS_COMMIT_PREFIX} regenerate generated views`, changed, {
+          run,
+        });
+      } catch (e) {
+        // Leave the tree clean: unstage the view files and restore the tracked ones. backfill.json
+        // is not regenerable and (new) untracked, so it stays on disk for the next run.
+        committed = false;
+        await run(["reset", "-q", "--", ...changed]);
+        const tracked = changed.filter((f) => f !== "ops/state/backfill.json");
+        if (tracked.length) await run(["checkout", "--", ...tracked]);
+        result.retryLater = true;
+        result.skipped = `commit failed: ${e.message}`;
+      }
+      if (committed && push) {
         for (let attempt = 0; attempt < 3 && !result.pushed; attempt++) {
           const r = await d.exec("git", ["push"], { cwd: specsDir });
           if (r.code === 0) {

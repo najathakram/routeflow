@@ -21,6 +21,14 @@ const STORY_FIELDS = ["problem", "impact", "solution"];
 /** True when an item.new / item.edit field set came from the register (hand-kept source). */
 const isRegisterFields = (fields) => fields?.source === "register";
 
+/** Noon UTC of the date in `events/<machine>/<YYYY-MM-DD>.jsonl`; null when the name has none. */
+function fileNoonUtc(file) {
+  const m = /(\d{4})-(\d{2})-(\d{2})\.jsonl$/.exec(String(file ?? ""));
+  if (!m) return null;
+  const ms = Date.UTC(+m[1], +m[2] - 1, +m[3], 12, 0, 0);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 /** Splits register-sourced links: PR numbers are refs (background), the rest are real links. */
 function splitRegisterLinks(links) {
   if (!links) return { links: null, refPrs: [] };
@@ -110,6 +118,7 @@ export function fold(events, { bugs = new Map() } = {}) {
         null,
         null,
         `unparseable line ${ev.file ?? "?"}:${ev.line ?? "?"}: ${String(ev.raw ?? "").slice(0, 80)}`,
+        fileNoonUtc(ev.file),
       );
       continue;
     }
@@ -351,15 +360,13 @@ export function fold(events, { bugs = new Map() } = {}) {
           it = resolve(ev.item, ev);
           if (!it) break;
         } else {
-          it = findByBranch(d.branch);
-          if (!it) {
-            for (const cand of state.items.values()) {
-              if (cand.links.prs.includes(d.number)) {
-                it = cand;
-                break;
-              }
+          for (const cand of state.items.values()) {
+            if (cand.links.prs.includes(d.number)) {
+              it = cand;
+              break;
             }
           }
+          if (!it) it = findByBranch(d.branch);
         }
         if (it) mergeLinks(it.links, { prs: [d.number] });
         if (it?.claimedBy) touchLane({ lane: it.claimedBy, kind: ev.kind }, ts);

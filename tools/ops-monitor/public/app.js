@@ -358,14 +358,16 @@
           el("code", { text: short(m.sha) }),
         ),
         pill(gateInfo(m).label, gateInfo(m).kind),
-        m.probesFailing?.length
-          ? pill(
-              plural(m.probesFailing.length, "probe") + " failing",
-              "warn",
-              m.probesFailing.join(", "),
-            )
-          : null,
       );
+      // (DOM append(null) would print the word "null", so only append a real node.)
+      if (m.probesFailing?.length)
+        meta.append(
+          pill(
+            plural(m.probesFailing.length, "probe") + " failing",
+            "warn",
+            m.probesFailing.join(", "),
+          ),
+        );
     } else meta.append(el("span", { class: "muted", text: "master unknown" }));
     const vis = snap.ci?.visibility;
     meta.append(
@@ -1355,6 +1357,7 @@
       : el("code", { text: "#" + b.fix.pr });
   };
   const PENDING_TEXT = "Filed, not on master yet";
+  const viaText = (f) => (f.via ? " (landed through train PR #" + f.via + ")" : "");
   function fixSentence(b) {
     const f = b.fix ?? {};
     const pr = f.pr ? "PR #" + f.pr : "The PR";
@@ -1372,10 +1375,10 @@
         );
         break;
       case "merged":
-        lines.push(pr + " is merged; it has not been deployed yet.");
+        lines.push(pr + " is merged" + viaText(f) + "; it has not been deployed yet.");
         break;
       case "deployed":
-        lines.push(pr + " is merged and deployed.");
+        lines.push(pr + " is merged" + viaText(f) + " and deployed.");
         break;
       default:
         lines.push("No fix yet: no branch and no pull request.");
@@ -1401,11 +1404,60 @@
     };
   }
 
+  // Bugs whose record carries a verified "ALREADY FIXED ... PR #n" note: fixed on master, but the
+  // registry close is owed (scripts/campaign/bugs.mjs has no close verb yet; register row 642).
+  function fixedByNoteList() {
+    const list = snap.bugsFixedByNote ?? [];
+    if (!list.length) return null;
+    const d = el("details", { class: "tech answered" });
+    d.append(el("summary", { text: `Fixed, registry close owed (${list.length})` }));
+    d.append(
+      el("div", {
+        class: "muted",
+        text: "These bug records say ALREADY FIXED on master, but the registry still shows them open. bugs.mjs has no close verb yet (register row 642), so the close is owed.",
+      }),
+    );
+    for (const b of list) {
+      const url = safeUrl(b.prUrl);
+      d.append(
+        el(
+          "div",
+          { class: "bugrow" },
+          el(
+            "div",
+            { class: "bugmain" },
+            el("code", { text: b.id }),
+            el("span", { class: "grow", text: b.title }),
+          ),
+          el(
+            "div",
+            { class: "bugmeta" },
+            sevPill(b.severity),
+            b.pr
+              ? url
+                ? el("a", {
+                    href: url,
+                    target: "_blank",
+                    rel: "noopener noreferrer",
+                    text: "#" + b.pr,
+                  })
+                : el("code", { text: "#" + b.pr })
+              : el("span", { class: "muted", text: "PR unknown" }),
+            b.sha ? el("code", { text: short(b.sha) }) : null,
+          ),
+        ),
+      );
+    }
+    return d;
+  }
+
   function renderBugs() {
     const body = clear(panels.bugs.body);
     const bugs = snap.bugs ?? [];
     if (!bugs.length) {
       body.append(el("div", { class: "empty", text: "No open bugs." }));
+      const only = fixedByNoteList();
+      if (only) body.append(only);
       return;
     }
     const labels = new Map((snap.map?.domains ?? []).map((d) => [d.id, d.label]));
@@ -1570,6 +1622,8 @@
         );
       }
     }
+    const owed = fixedByNoteList();
+    if (owed) body.append(owed);
   }
 
   // ---------- PRs & branches ----------

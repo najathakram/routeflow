@@ -1235,6 +1235,16 @@
       "release": null
     }
   ],
+  "bugsFixedByNote": [
+    {
+      "id": "B9301",
+      "title": "Acme widget total is wrong on B9301",
+      "severity": "high",
+      "pr": 712,
+      "prUrl": "https://github.com/acme-org/widgets/pull/712",
+      "sha": "abc1234"
+    }
+  ],
   "trains": [
     {
       "id": "R1",

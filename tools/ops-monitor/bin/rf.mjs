@@ -28,7 +28,7 @@ import { newEventId } from "../lib/ids.mjs";
 import { fold } from "../lib/fold.mjs";
 import { laneNow, rankCandidates } from "../lib/next.mjs";
 import { registerModeOf, runSync } from "../lib/sync.mjs";
-import { laneForCwd, setLane } from "../lib/lanes-local.mjs";
+import { checkoutRoot, laneForCwd, setLane } from "../lib/lanes-local.mjs";
 import { lastEventId, renderBrief, renderSince, splitAtMarker } from "../lib/brief.mjs";
 import { registerHook } from "../lib/views.mjs";
 import {
@@ -527,7 +527,10 @@ async function cmdWhoami(flags, env) {
       cwd: process.cwd(),
       timeoutMs: 15000,
     });
-    const root = top.code === 0 && top.stdout.trim() ? top.stdout.trim() : process.cwd();
+    const root =
+      top.code === 0 && top.stdout.trim()
+        ? top.stdout.trim()
+        : (checkoutRoot(process.cwd()) ?? process.cwd());
     setLane(ctx.home, root, lane);
   }
   const info = {

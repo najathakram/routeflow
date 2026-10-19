@@ -400,3 +400,30 @@ test("a human story edit clears summaryDraft; the draft import and an explicit v
   ]);
   assert.equal(plain.items.get("15").summaryDraft, false); // non-story edits leave it alone
 });
+
+test("a pr event goes to the item that already owns the PR number before the branch lookup", () => {
+  const s = fold([
+    newItem("700", { links: { prs: [4001] } }, { min: 0 }),
+    newItem("701", {}, { min: 0 }),
+    ev("claim", "701", { branch: "feat/other" }, { min: 1 }),
+    // gh merge of PR 4001 run from a checkout on feat/other: the number decides, not the branch.
+    ev("pr", null, { number: 4001, action: "merge", branch: "feat/other" }, { min: 2 }),
+    // a number nobody owns still falls back to the branch.
+    ev("pr", null, { number: 4002, action: "create", branch: "feat/other" }, { min: 3 }),
+  ]);
+  assert.equal(s.prEvents[0].item, "700");
+  assert.deepEqual(s.items.get("700").links.prs, [4001]);
+  assert.deepEqual(s.items.get("701").links.prs, [4002]);
+  assert.equal(s.prEvents[1].item, "701");
+});
+
+test("an unparseable line is dated noon UTC of its file name so it can age out", () => {
+  const s = fold([
+    newItem("5"),
+    { __invalid: true, raw: "{oops", file: "events/box/2026-10-18.jsonl", line: 2 },
+    { __invalid: true, raw: "{oops", file: "weird/name.jsonl", line: 1 },
+  ]);
+  const inv = s.anomalies.filter((a) => a.kind === "invalid-event");
+  assert.equal(inv[0].ts, Date.UTC(2026, 9, 18, 12, 0, 0));
+  assert.equal(inv[1].ts, null, "no date in the name: stays undated");
+});

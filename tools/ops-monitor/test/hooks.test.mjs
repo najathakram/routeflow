@@ -15,13 +15,21 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "..", "..", "..");
-const POST = join(REPO, ".claude", "hooks", "ops-post-push.mjs");
-const STOP = join(REPO, ".claude", "hooks", "ops-stop.mjs");
+// RF_HOOKS_DIR lets a reviewer point the pure-function tests at another copy of the hooks.
+const HOOKS = process.env.RF_HOOKS_DIR || join(REPO, ".claude", "hooks");
+const POST = join(HOOKS, "ops-post-push.mjs");
+const STOP = join(HOOKS, "ops-stop.mjs");
 const RF = join(REPO, "tools", "ops-monitor", "bin", "rf.mjs");
 
-const { detectOpsActions, branchFromRefspec, splitCommand, tokenize } = await import(
-  pathToUrl(POST)
-);
+const postMod = await import(pathToUrl(POST));
+const {
+  detectOpsActions,
+  branchFromRefspec,
+  splitCommand,
+  tokenize,
+  mergedFromView,
+  confirmMerge,
+} = postMod;
 const { evaluateGate, nextBlockState, missingHash } = await import(pathToUrl(STOP));
 const { actionsFile, appendAction, readActions, archiveActions, sanitizeSessionId } = await import(
   pathToUrl(join(REPO, "tools", "ops-monitor", "lib", "turn-actions.mjs"))
@@ -31,7 +39,12 @@ function pathToUrl(p) {
   return new URL(`file:///${p.replace(/\\/g, "/")}`).href;
 }
 const detect = (cmd, res = {}) => detectOpsActions(cmd, res);
-const MERGED_3515 = { stderr: "✓ Squashed and merged pull request #3515 (feat: x)\n" };
+// Real gh shapes: on a TTY "✓ Squashed and merged pull request owner/repo#N (title)"; WITHOUT a
+// TTY (every Claude Bash call) gh prints nothing at all on success.
+const MERGED_3515 = {
+  stderr: "✓ Squashed and merged pull request najathakram/routeflow#3515 (feat: x)\n",
+};
+const SILENT = { stdout: "", stderr: "" };
 
 // ── detectOpsActions ────────────────────────────────────────────────────────
 test("detect: git push -u origin feat/x", () => {
@@ -75,29 +88,138 @@ test("detect: interrupted, delete, dry-run and tag pushes are not actions", () =
   assert.deepEqual(detect("git push origin refs/tags/v1"), []);
 });
 
-test("detect: gh pr merge 3515 --merge needs the success line", () => {
+test("detect: a TTY success line is the fast path (owner/repo#N)", () => {
   assert.deepEqual(detect("gh pr merge 3515 --merge", MERGED_3515), [
-    { kind: "pr", action: "merge", number: 3515 },
+    { kind: "pr", action: "merge", number: 3515, named: true },
   ]);
-  assert.deepEqual(detect("gh pr merge 3515 --merge"), []);
-  assert.deepEqual(
-    detect("gh pr merge 3515 --merge", { stderr: "X Pull request is not mergeable" }),
-    [],
-  );
-  assert.deepEqual(
-    detect("gh pr merge 3515 --auto", {
-      stderr: "✓ Pull request #3515 will be automatically merged",
-    }),
-    [],
-  );
-});
-
-test("detect: merge number comes from the success line first", () => {
   assert.deepEqual(detect("gh pr merge --squash", MERGED_3515), [
     { kind: "pr", action: "merge", number: 3515 },
   ]);
   assert.deepEqual(detect("gh pr merge 99", { stdout: "Merged pull request #3516" }), [
-    { kind: "pr", action: "merge", number: 3516 },
+    { kind: "pr", action: "merge", number: 3516, named: true },
+  ]);
+});
+
+test("detect: no-TTY gh merge (empty output) is a candidate to verify", () => {
+  const cand = { kind: "pr", action: "merge", number: 3515, verify: true, named: true };
+  assert.deepEqual(detect("gh pr merge 3515 --squash", SILENT), [cand]);
+  assert.deepEqual(detect("gh pr merge 3515 --squash"), [cand]);
+  assert.deepEqual(
+    detect("gh pr merge https://github.com/najathakram/routeflow/pull/77 --merge", SILENT),
+    [{ kind: "pr", action: "merge", number: 77, verify: true, named: true }],
+  );
+  // no number or URL argument: the current branch's PR, number unknown until verified
+  assert.deepEqual(detect("gh pr merge --squash --delete-branch", SILENT), [
+    { kind: "pr", action: "merge", number: null, verify: true },
+  ]);
+  // a flag value is never a PR number
+  assert.equal(detect('gh pr merge --subject 5 --body "x" 3515', SILENT)[0].number, 3515);
+});
+
+test("detect: failed, auto and interrupted merges are not candidates", () => {
+  for (const stderr of [
+    "X Pull request #3515 is not mergeable: the merge commit cannot be cleanly created",
+    "GraphQL: Pull request is not mergeable",
+    "HTTP 405: Merge conflict",
+    "error: no such flag",
+    "failed to merge",
+    "✓ Pull request najathakram/routeflow#3515 will be automatically merged when all requirements are met",
+  ])
+    assert.deepEqual(detect("gh pr merge 3515 --merge", { stderr }), [], stderr);
+  assert.deepEqual(detect("gh pr merge 3515 --auto --squash", SILENT), []);
+  assert.deepEqual(detect("gh pr merge 3515", { interrupted: true }), []);
+});
+
+test("mergedFromView: only a MERGED pr view counts", () => {
+  const v = (o) =>
+    JSON.stringify({
+      number: 5,
+      state: "MERGED",
+      mergedAt: "2026-10-19T10:00:00Z",
+      headRefName: "feat/x",
+      ...o,
+    });
+  assert.deepEqual(mergedFromView(v({})), {
+    number: 5,
+    branch: "feat/x",
+    mergedAt: Date.parse("2026-10-19T10:00:00Z"),
+  });
+  assert.equal(mergedFromView(v({ state: "OPEN" })), null);
+  assert.equal(mergedFromView(v({ state: "CLOSED" })), null);
+  assert.equal(mergedFromView("not json"), null);
+  assert.equal(mergedFromView(""), null);
+  assert.equal(mergedFromView(v({ number: "5" })), null);
+});
+
+test("confirmMerge: records the pr event and action only for a fresh MERGED view", () => {
+  const T = Date.parse("2026-10-19T10:01:00Z");
+  const go = (view, job = {}) => {
+    const got = { appended: [], recorded: [] };
+    const r = confirmMerge(
+      { ts: T, number: 5, named: true, cwd: "x", file: "f", ...job },
+      {
+        view: () => view,
+        append: (f, e) => got.appended.push([f, e]),
+        record: (a) => got.recorded.push(a),
+      },
+    );
+    return { r, ...got };
+  };
+  const merged = (o = {}) =>
+    JSON.stringify({
+      number: 5,
+      state: "MERGED",
+      mergedAt: "2026-10-19T10:00:30Z",
+      headRefName: "feat/x",
+      ...o,
+    });
+  const ok = go(merged());
+  assert.deepEqual(ok.appended, [
+    ["f", { ts: T, kind: "pr", action: "merge", number: 5, branch: null }],
+  ]);
+  assert.deepEqual(ok.recorded, [["event", "pr", "--number", "5", "--action", "merge", "--quiet"]]);
+  // no PR named: the branch is the viewed PR's head, and the number is the confirmed one
+  const cur = go(merged({ number: 9 }), { number: null, named: false });
+  assert.deepEqual(cur.recorded, [
+    ["event", "pr", "--number", "9", "--action", "merge", "--branch", "feat/x", "--quiet"],
+  ]);
+  assert.equal(cur.appended[0][1].number, 9);
+  for (const view of [merged({ state: "OPEN", mergedAt: null }), "", "{"]) {
+    const none = go(view);
+    assert.equal(none.r, null);
+    assert.deepEqual(none.appended, []);
+    assert.deepEqual(none.recorded, []);
+  }
+  // already merged long ago: a mistaken re-merge records nothing
+  assert.equal(go(merged({ mergedAt: "2026-10-18T10:00:00Z" })).r, null);
+});
+
+test("detect: a named PR is flagged so the hook never adds the current branch", () => {
+  const ready = { stderr: '✓ Pull request #12 is marked as "ready for review"' };
+  assert.equal(detect("gh pr ready 12", ready)[0].named, true);
+  const [noArg] = detect("gh pr ready", ready);
+  assert.equal(noArg.number, 12);
+  assert.equal(noArg.named, undefined);
+  const [create] = detect('gh pr create --title "x"', {
+    stdout: "https://github.com/najathakram/routeflow/pull/4001\n",
+  });
+  assert.equal(create.named, undefined);
+});
+
+test("detect: pushes that name no single branch record nothing", () => {
+  for (const c of [
+    "git push --tags",
+    "git push origin --tags",
+    "git push --all origin",
+    "git push --mirror origin",
+    "git push --prune origin 'refs/heads/*:refs/heads/*'",
+    "git push --follow-tags",
+    "git push origin tag v1.2",
+    "git push origin refs/tags/v1.2",
+  ])
+    assert.deepEqual(detect(c), [], c);
+  assert.deepEqual(detect("git push --follow-tags origin feat/x"), [
+    { kind: "push", remote: "origin", refspec: "feat/x" },
   ]);
 });
 
@@ -112,16 +234,17 @@ test("detect: failed gh call and other repos are not actions", () => {
   assert.deepEqual(detect("gh pr create", { stderr: "GraphQL: Resource not accessible" }), []);
   assert.deepEqual(detect("gh pr create --title x"), []);
   assert.deepEqual(detect("gh pr merge 5 --repo acme/other", MERGED_3515), []);
+  assert.deepEqual(detect("gh pr merge 5 --repo acme/other", SILENT), []);
   assert.deepEqual(detect("gh pr view 5"), []);
 });
 
 test("detect: ready / close need a PR reference and no error line", () => {
   assert.deepEqual(
     detect("gh pr ready 12", { stderr: '✓ Pull request #12 is marked as "ready for review"' }),
-    [{ kind: "pr", action: "ready", number: 12 }],
+    [{ kind: "pr", action: "ready", number: 12, named: true }],
   );
   assert.deepEqual(detect("gh pr close 12", { stderr: "✓ Closed pull request #12 (x)" }), [
-    { kind: "pr", action: "close", number: 12 },
+    { kind: "pr", action: "close", number: 12, named: true },
   ]);
   assert.deepEqual(
     detect("gh pr close 12", { stderr: "GraphQL: Could not resolve to a PullRequest #12" }),
@@ -133,7 +256,10 @@ test("detect: ready / close need a PR reference and no error line", () => {
 
 test("detect: a heredoc body never counts as a command", () => {
   const cmd = "cat <<'EOF'\ngh pr merge 3513\ngit push origin feat/x\nEOF\ngit status";
-  assert.deepEqual(detect(cmd, { stderr: "✓ Squashed and merged pull request #3513 (x)" }), []);
+  assert.deepEqual(
+    detect(cmd, { stderr: "✓ Squashed and merged pull request acme/x#3513 (x)" }),
+    [],
+  );
   assert.deepEqual(
     splitCommand(cmd).map((x) => x.trim()),
     ["cat <<'EOF'", "git status"],
@@ -241,6 +367,27 @@ test("gate: push to master needs no item link", () => {
   const state = stateWith({ pushes: [{ ts: T0, branch: "master", sha: SHA, item: null }] });
   const a = { ts: T0, kind: "push", branch: "master", sha: SHA };
   assert.equal(evaluateGate({ actions: [a], state, now: T0 }).ok, true);
+});
+
+test("gate: merge-train and bookkeeping branches need no item link; others still do", () => {
+  const rec = (branch) =>
+    evaluateGate({
+      actions: [{ ts: T0, kind: "push", branch, sha: SHA }],
+      state: stateWith({ pushes: [{ ts: T0, branch, sha: SHA, item: null }] }),
+      now: T0,
+    }).ok;
+  for (const b of ["train/product-k11", "train-r3", "docs/bookkeeping-3513", "chore/bookkeeping/x"])
+    assert.equal(rec(b), true, b);
+  for (const b of ["feat/x", "trains/x", "docs/guide", "training/x"])
+    assert.equal(rec(b), false, b);
+  // an unrecorded push on a train branch is still missing
+  const miss = evaluateGate({
+    actions: [{ ts: T0, kind: "push", branch: "train/x", sha: SHA }],
+    state: stateWith(),
+    now: T0,
+  });
+  assert.equal(miss.ok, false);
+  assert.equal(miss.missing[0].why, "push not recorded");
 });
 
 test("gate: PR create needs a linked item", () => {
@@ -599,14 +746,89 @@ test("post-push hook: background calls record nothing", rfOnly, () => {
 test("post-push hook: gh merge/create are recorded only with success output", rfOnly, () => {
   const env = mkEnv();
   const repo = tempRepo(RF_URL);
-  run(POST, env, postIn("sess-m0", repo, "gh pr merge 3515 --squash"));
+  const failed = { stderr: "X Pull request #3515 is not mergeable" };
+  run(POST, env, postIn("sess-m0", repo, "gh pr merge 3515 --squash", failed));
   assert.equal(existsSync(actionsFile(env.home, "sess-m0")), false);
   run(POST, env, postIn("sess-m1", repo, "gh pr merge 3515 --squash", MERGED_3515));
   const [a] = readActions(actionsFile(env.home, "sess-m1"));
   assert.equal(a.kind, "pr");
   assert.equal(a.action, "merge");
   assert.equal(a.number, 3515);
+  assert.equal(a.branch, null, "a merge that named its PR never carries the checkout branch");
   const url = { stdout: "https://github.com/najathakram/routeflow/pull/4001\n" };
   run(POST, env, postIn("sess-c1", repo, 'gh pr create --title "x"', url));
   assert.equal(readActions(actionsFile(env.home, "sess-c1"))[0].number, 4001);
 });
+
+// A stand-in gh (RF_OPS_GH): prints the JSON of a PR view, or fails when GH_FAIL is set.
+function fakeGh(dir, view) {
+  const f = join(dir, "fake-gh.mjs");
+  writeFileSync(
+    f,
+    `if (process.env.GH_FAIL) process.exit(1);
+console.log(JSON.stringify(${JSON.stringify(view)}));`,
+  );
+  return f;
+}
+async function waitFor(fn, ms = 15000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (fn()) return true;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return fn();
+}
+
+test(
+  "post-push hook: a silent (no-TTY) merge is confirmed by the detached recorder",
+  rfOnly,
+  async () => {
+    const env = mkEnv();
+    const repo = tempRepo(RF_URL);
+    const file = actionsFile(env.home, "sess-conf");
+    const gh = fakeGh(env.root, {
+      number: 3515,
+      state: "MERGED",
+      mergedAt: new Date().toISOString(),
+      headRefName: "feat/hook-test",
+    });
+    const r = run(POST, env, postIn("sess-conf", repo, "gh pr merge 3515 --squash", SILENT), {
+      RF_OPS_GH: gh,
+    });
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout + r.stderr, "");
+    assert.ok(await waitFor(() => existsSync(file)), "the confirmed merge is appended later");
+    const [a] = readActions(file);
+    assert.equal(a.action, "merge");
+    assert.equal(a.number, 3515);
+    assert.equal(a.branch, null, "a named PR never gets the checkout's branch");
+  },
+);
+
+test(
+  "post-push hook: an unmerged or unverifiable silent merge records nothing",
+  rfOnly,
+  async () => {
+    const env = mkEnv();
+    const repo = tempRepo(RF_URL);
+    const open = fakeGh(env.root, {
+      number: 3515,
+      state: "OPEN",
+      mergedAt: null,
+      headRefName: "x",
+    });
+    run(POST, env, postIn("sess-open", repo, "gh pr merge 3515 --auto", SILENT), {
+      RF_OPS_GH: open,
+    });
+    run(POST, env, postIn("sess-open2", repo, "gh pr merge 3515 --squash", SILENT), {
+      RF_OPS_GH: open,
+    });
+    run(POST, env, postIn("sess-fail", repo, "gh pr merge 3515 --squash", SILENT), {
+      RF_OPS_GH: open,
+      GH_FAIL: "1",
+    });
+    await new Promise((r) => setTimeout(r, 2500));
+    for (const sid of ["sess-open", "sess-open2", "sess-fail"])
+      assert.equal(existsSync(actionsFile(env.home, sid)), false, sid);
+  },
+);

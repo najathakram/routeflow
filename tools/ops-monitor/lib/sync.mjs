@@ -18,6 +18,7 @@ import { fold } from "./fold.mjs";
 import { validateEvent } from "./schema.mjs";
 
 export const SYNC_ACTOR = "register-sync";
+const BACKFILL_ACTOR = "backfill";
 export const BOARD_DROP_NOTE = "board snapshot is a generated view, not a source (lead 10-19)";
 const ANSWERED_WORDS = new Set(["ANSWERED", "DONE", "STANDING YES", "DEFAULT IN EFFECT"]);
 const QUEUE_STATUS_RE = /\b(ANSWERED|DONE|STANDING YES|DEFAULT IN EFFECT|BOOKED|OPEN|CHECK)\b/;
@@ -228,10 +229,16 @@ export function planSync({
   }
 
   // ---- board-sourced items ----
+  // Only what the backfill imported from the board snapshot (actor `backfill`, tag problem or
+  // owner-ask), and only once: a lane's own item with those tags, or an item a human revived after
+  // the drop, is never touched.
   for (const it of state.items.values()) {
     if (it.status === "dropped") continue;
     const tags = it.tags ?? [];
     if (!tags.includes("problem") && !tags.includes("owner-ask")) continue;
+    const history = it.history ?? [];
+    if (history.find((h) => h.kind === "item.new")?.actor !== BACKFILL_ACTOR) continue;
+    if (history.some((h) => h.kind === "status" && h.status === "dropped")) continue;
     if (emit("status", it.id, { status: "dropped", note: BOARD_DROP_NOTE })) summary.dropped++;
   }
 

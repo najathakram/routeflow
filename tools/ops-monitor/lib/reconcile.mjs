@@ -77,6 +77,27 @@ export function linkItemFor({ number = null, branch = null, title = "", body = "
   return ids.find((id) => state.items.has(id)) ?? ids[0] ?? null;
 }
 
+/**
+ * When a merged PR reached master. A PR based on master merged at its own mergedAt. RouteFlow lands
+ * work through merge-commit trains: a member PR targets `train/<x>` and the train PR (head
+ * `train/<x>`, base master) merges later, so a member whose base is a merged master PR's head
+ * branch counts as merged at THAT PR's mergedAt (the earliest train PR merged at or after the
+ * member). Returns { at (ms | null), via (train PR number | null) }; at is null while the base is
+ * not master and no such train PR has merged.
+ */
+export function landedAt(p, merged) {
+  const own = toMs(p?.mergedAt);
+  if (!p?.base || p.base === "master") return { at: own, via: null };
+  let hit = null;
+  for (const t of merged ?? []) {
+    if (t === p || t.branch !== p.base || (t.base && t.base !== "master")) continue;
+    const at = toMs(t.mergedAt);
+    if (at === null || (own !== null && at < own)) continue;
+    if (!hit || at < hit.at) hit = { at, via: t.number };
+  }
+  return hit ?? { at: null, via: null };
+}
+
 const CLOSED_BUG_STATES = new Set([
   "done",
   "proven",
@@ -101,6 +122,8 @@ export function isBugOpen(b) {
 }
 
 /**
+ * laneActivity: Map<lane id, ms>, the lane's newest event, commit or handoff (lane-silent falls back
+ * to the lane's last event).
  * Inputs beyond state/prs/branches/sources (all shapes built by the collector/snapshot):
  *  - prs.open / prs.merged: { number, title, branch, body?, mergedAt?, base? }
  *  - branches: { branch, date, item? }
@@ -109,7 +132,17 @@ export function isBugOpen(b) {
  *    "branch" | "pr-open" | "in-release" | "merged" | "deployed", or { state, ... }) }
  *  - bugIds: every B-id the registry knows (open, closed and pending); enables bug-no-registry.
  */
-export function reconcile({ state, prs, branches, sources, config, now, bugs, bugIds }) {
+export function reconcile({
+  state,
+  prs,
+  branches,
+  sources,
+  config,
+  now,
+  bugs,
+  bugIds,
+  laneActivity,
+}) {
   const alarms = [];
   const th = {
     laneSilentMin: 30,
@@ -154,18 +187,23 @@ export function reconcile({ state, prs, branches, sources, config, now, bugs, bu
     let hit = null;
     for (const n of nums) {
       const p = mergedByNumber.get(n);
-      if (!p || (p.base && p.base !== "master")) continue;
-      if (!hit || (toMs(p.mergedAt) ?? 0) > (toMs(hit.mergedAt) ?? 0)) hit = p;
+      if (!p) continue;
+      const l = landedAt(p, merged);
+      if (l.at === null) continue;
+      if (!hit || l.at > hit.at) hit = { p, at: l.at, via: l.via };
     }
-    const at = hit ? toMs(hit.mergedAt) : null;
-    if (!hit || at === null || now - at <= 2 * HOUR) continue;
+    if (!hit || now - hit.at <= 2 * HOUR) continue;
+    const at = hit.at;
     add({
       kind: "status-behind-merge",
       severity: now - at >= 24 * HOUR ? "error" : "warn",
-      message: `PR #${hit.number} merged ${ago(now - at)} ago but item is ${it.status}`,
+      message:
+        hit.via === null
+          ? `PR #${hit.p.number} merged ${ago(now - at)} ago but item is ${it.status}`
+          : `PR #${hit.p.number} landed ${ago(now - at)} ago via train PR #${hit.via} but item is ${it.status}`,
       suggest: `rf status ${it.id} shipping`,
       item: it.id,
-      pr: hit.number,
+      pr: hit.p.number,
     });
   }
 
@@ -227,12 +265,15 @@ export function reconcile({ state, prs, branches, sources, config, now, bugs, bu
   // Bug alarms. A bug is "named" by a PR/branch via fixLinksFor (B-id anywhere).
   const openBugs = (bugs ?? []).filter((b) => !b.pending && isBugOpen(b));
   const bugKnown = new Set((bugs ?? []).map((b) => b.id));
+  // Merged PRs naming a bug, with their landing time on master (a train member lands when its
+  // train PR merges: landedAt). `mergedAt` is that landing time in ms; `via` the train PR number.
   const mergedNaming = (id) =>
     merged
-      .filter((p) => !p.base || p.base === "master")
       .filter((p) => fixLinksFor(p, knownIds).includes(id))
-      .filter((p) => toMs(p.mergedAt) !== null)
-      .sort((a, b) => toMs(b.mergedAt) - toMs(a.mergedAt));
+      .map((p) => ({ p, ...landedAt(p, merged) }))
+      .filter((x) => x.at !== null)
+      .map((x) => ({ ...x.p, mergedAt: x.at, via: x.via }))
+      .sort((a, b) => b.mergedAt - a.mergedAt);
 
   // bug-fixed-still-open: a PR merged to master names an open bug (after the bug was filed).
   for (const b of openBugs) {
@@ -246,7 +287,11 @@ export function reconcile({ state, prs, branches, sources, config, now, bugs, bu
     add({
       kind: "bug-fixed-still-open",
       severity: now - at >= 24 * HOUR ? "error" : "warn",
-      message: `PR #${hit.number} merged ${ago(now - at)} ago names ${b.id} but the registry still says ${regState}`,
+      message: `PR #${hit.number} ${
+        hit.via
+          ? `landed ${ago(now - at)} ago via train PR #${hit.via}`
+          : `merged ${ago(now - at)} ago`
+      } names ${b.id} but the registry still says ${regState}`,
       suggest: `close ${b.id} in the bug registry (PR #${hit.number})`,
       item: b.id,
       pr: hit.number,
@@ -358,7 +403,9 @@ export function reconcile({ state, prs, branches, sources, config, now, bugs, bu
   // lane-silent
   for (const lane of state.lanes.values()) {
     if (!lane.claims || lane.claims.length < 1) continue;
-    const silentMs = lane.lastEventAt === null ? Infinity : now - lane.lastEventAt;
+    // The lane's activity (events, commits on its branches, handoffs) when the snapshot knows it.
+    const last = laneActivity?.get(lane.id) ?? lane.lastEventAt ?? null;
+    const silentMs = last === null ? Infinity : now - last;
     if (silentMs > th.laneSilentMin * 60000) {
       add({
         kind: "lane-silent",

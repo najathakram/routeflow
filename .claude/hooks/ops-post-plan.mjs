@@ -27,6 +27,7 @@ const PLAN_DIRS = new Set([
   "specs",
 ]);
 const EXCLUDED_DIRS = new Set(["events", "handoff", "log", "ops"]);
+const HUMAN_MODE_RECORD_FILES = new Set(["register/work-register.md", "priorities/owner-queue.md"]);
 const SPECS_MARKERS = ["/rf-specs-handoff/", "/routeflow-specs/"];
 const ASSIGN_RE = /\b(job|task|take|assign|start|build|fix|next|priority|queue)\b/i;
 const WORK_REF_RE = /\b(B\d{2,5}|R[1-9]|rows?\s+#?\d{2,4}|item\s+#?\d{2,4})\b/i;
@@ -55,11 +56,16 @@ export function specsRelative(file, specsRoot = null) {
   return null;
 }
 
-/** True when `file` is a plan file (see the header). */
-export function isPlanPath(file, specsRoot = null) {
+/**
+ * True when `file` is a plan file (see the header). The two register files are plan files only
+ * in generated mode: in human mode a hand edit of them IS the record (the register sync turns it
+ * into events), so `registerMode` other than "generated" (or unknown) excludes them.
+ */
+export function isPlanPath(file, specsRoot = null, registerMode = null) {
   if (typeof file !== "string" || !file) return false;
   const rel = specsRelative(file, specsRoot);
   if (!rel) return false;
+  if (registerMode !== "generated" && HUMAN_MODE_RECORD_FILES.has(rel.toLowerCase())) return false;
   if (rel.toLowerCase() === "dashboard.md") return true;
   const top = rel.split("/")[0].toLowerCase();
   if (EXCLUDED_DIRS.has(top)) return false;
@@ -78,7 +84,10 @@ export function messageText(input) {
  * Turn actions for one PostToolUse payload. `lane` is the calling session's lane (or null);
  * `specsRoot` the ops clone. Pure.
  */
-export function planActions(payload, { lane = null, specsRoot = null, now = Date.now() } = {}) {
+export function planActions(
+  payload,
+  { lane = null, specsRoot = null, now = Date.now(), registerMode = null } = {},
+) {
   const tool = payload?.tool_name;
   const input = payload?.tool_input ?? {};
   if (tool === "Write" || tool === "Edit" || tool === "MultiEdit") {
@@ -86,7 +95,9 @@ export function planActions(payload, { lane = null, specsRoot = null, now = Date
     if (typeof raw !== "string" || !raw) return [];
     const base = payload.cwd ?? process.cwd();
     const file = isAbsolute(raw) || /^[A-Za-z]:[\\/]/.test(raw) ? raw : resolve(base, raw);
-    return isPlanPath(file, specsRoot) ? [{ ts: now, kind: "plan-change", path: slash(file) }] : [];
+    return isPlanPath(file, specsRoot, registerMode)
+      ? [{ ts: now, kind: "plan-change", path: slash(file) }]
+      : [];
   }
   if (tool === "SendMessage") {
     if (lane !== "lead") return [];
@@ -105,6 +116,16 @@ export function planActions(payload, { lane = null, specsRoot = null, now = Date
 // ════════════════════════════════════════════════════════════════════════
 
 const lib = (name) => pathToFileURL(join(ROOT, "tools", "ops-monitor", "lib", name)).href;
+
+/** specs ops/config.json registerMode; null on any failure (fail open = exclude the register files). */
+function readRegisterMode(dir) {
+  try {
+    const raw = JSON.parse(readFileSync(join(dir, "ops", "config.json"), "utf8"));
+    return typeof raw?.registerMode === "string" ? raw.registerMode : null;
+  } catch {
+    return null;
+  }
+}
 
 async function main() {
   if (process.env.RF_OPS_GATE === "off" || process.env.CI) return;
@@ -126,7 +147,12 @@ async function main() {
     payload.tool_name === "SendMessage"
       ? laneForCwd(payload.cwd ?? process.cwd(), process.env, { home })
       : null;
-  const actions = planActions(payload, { lane, specsRoot: specsDir() });
+  const root = specsDir();
+  const actions = planActions(payload, {
+    lane,
+    specsRoot: root,
+    registerMode: readRegisterMode(root),
+  });
   if (actions.length === 0) return;
   const file = actionsFile(home, payload.session_id);
   for (const a of actions) appendAction(file, a);

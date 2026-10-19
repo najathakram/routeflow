@@ -25,7 +25,30 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const REPO_URL_RE = /najathakram\/routeflow(\.git)?\/?$/i;
 const PR_VERBS = ["create", "ready", "merge", "close", "edit"];
-const MERGED_RE = /(?:Squashed and merged|Merged|Rebased and merged) pull request #?(\d+)/i;
+// Fast path only: on a TTY gh prints "✓ Squashed and merged pull request owner/repo#N (title)";
+// without a TTY (every Claude Bash call) it prints NOTHING on success, so a merge without that
+// line is a candidate the detached recorder confirms with `gh pr view`.
+const MERGED_RE =
+  /(?:Squashed and merged|Merged|Rebased and merged) pull request (?:[\w.-]+\/[\w.-]+)?#(\d+)/i;
+const MERGE_ERROR_RE = /^(GraphQL|HTTP \d{3}|error|failed|X )/im;
+const MERGE_NOT_DONE_RE = /not mergeable|auto-merge|automatically merged/i;
+// `gh pr merge` flags whose next word is a value, never a PR number.
+const VALUE_FLAGS = new Set([
+  "-b",
+  "--body",
+  "-t",
+  "--subject",
+  "-F",
+  "--body-file",
+  "-R",
+  "--repo",
+  "-A",
+  "--author-email",
+  "--match-head-commit",
+]);
+const FRESH_MERGE_MS = 10 * 60 * 1000;
+// `git push` flags that name no single branch: nothing to record.
+const PUSH_NO_BRANCH_FLAGS = new Set(["--tags", "--all", "--mirror", "--prune"]);
 const PR_URL_RE = /github\.com\/najathakram\/routeflow\/pull\/(\d+)/;
 const PR_ERROR_RE = /^(GraphQL|HTTP \d{3}|error|failed|no pull requests? found)/im;
 
@@ -185,42 +208,61 @@ function normalizeGit(tokens) {
 
 function pushAction(args, dir) {
   const positional = [];
+  let followTags = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--delete" || a === "-d" || a === "--dry-run" || a === "-n") return null;
+    if (PUSH_NO_BRANCH_FLAGS.has(a)) return null;
+    if (a === "--follow-tags") followTags = true;
     if (a === "-o" || a === "--push-option" || a === "--repo" || a === "--receive-pack") i++;
     else if (!a.startsWith("-")) positional.push(a);
   }
   const refspec = positional[1] ?? null;
   if (refspec && (refspec.startsWith(":") || refspec.includes("refs/tags/"))) return null;
+  if (refspec === "tag") return null; // `git push origin tag v1`
+  if (followTags && !refspec) return null; // tags-only push: no named branch
   const action = { kind: "push", remote: positional[0] ?? null, refspec };
   if (dir) action.dir = dir;
   return action;
 }
 
-/** The PR number a gh call really acted on, or null when its output does not show success. */
-function prNumber(verb, args, stdout, text) {
-  const fromArg = () => {
-    for (const a of args) {
-      if (/^\d+$/.test(a)) return Number(a);
-      const u = /\/pull\/(\d+)/.exec(a);
-      if (u) return Number(u[1]);
+/** First numeric word (or /pull/N URL) among a gh command's arguments, skipping flag values. */
+function prArgNumber(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (VALUE_FLAGS.has(a)) {
+      i++;
+      continue;
     }
-    return null;
-  };
+    if (/^\d+$/.test(a)) return Number(a);
+    const u = /\/pull\/(\d+)/.exec(a);
+    if (u) return Number(u[1]);
+  }
+  return null;
+}
+
+/**
+ * The PR number a gh call really acted on, or null when its output does not show success.
+ * `merge` may return { candidate: true, number|null }: no TTY, so gh printed nothing and the
+ * detached recorder must confirm the merge with `gh pr view`.
+ */
+function prNumber(verb, args, stdout, text) {
   if (verb === "merge") {
     const m = MERGED_RE.exec(text);
-    return m ? Number(m[1]) : null;
+    if (m) return { number: Number(m[1]) };
+    if (args.some((a) => a === "--auto" || a === "--disable-auto")) return null;
+    if (MERGE_ERROR_RE.test(text) || MERGE_NOT_DONE_RE.test(text)) return null;
+    return { number: prArgNumber(args), candidate: true };
   }
   if (verb === "create") {
     const m = PR_URL_RE.exec(stdout);
-    return m ? Number(m[1]) : null;
+    return m ? { number: Number(m[1]) } : null;
   }
   // ready / close / edit: a PR reference in the output and no error line.
   if (PR_ERROR_RE.test(text)) return null;
   const ref = /#(\d+)/.exec(text) ?? PR_URL_RE.exec(text);
   if (!ref) return null;
-  return fromArg() ?? Number(ref[1]);
+  return { number: prArgNumber(args) ?? Number(ref[1]) };
 }
 
 function prAction(tokens, stdout, text) {
@@ -234,8 +276,13 @@ function prAction(tokens, stdout, text) {
     else if (args[k].startsWith("--repo=")) repo = args[k].slice(7);
     if (repo && !/najathakram\/routeflow$/i.test(repo)) return null;
   }
-  const number = prNumber(verb, args, stdout, text);
-  return number === null ? null : { kind: "pr", action: verb, number };
+  const n = prNumber(verb, args, stdout, text);
+  if (n === null) return null;
+  const a = { kind: "pr", action: verb, number: n.number };
+  if (n.candidate) a.verify = true;
+  // The command named its PR (number or URL): the current branch says nothing about it.
+  if (verb !== "create" && prArgNumber(args) !== null) a.named = true;
+  return a;
 }
 
 /**
@@ -273,6 +320,25 @@ export function branchFromRefspec(refspec) {
 export function sourceFromRefspec(refspec) {
   const src = refspec ? refspec.replace(/^\+/, "").split(":")[0] : "";
   return src || "HEAD";
+}
+
+/**
+ * { number, branch, mergedAt } when `gh pr view --json number,state,mergedAt,headRefName` output shows
+ * a MERGED PR, else null (open, closed, garbled: fail open = record nothing).
+ */
+export function mergedFromView(text) {
+  try {
+    const v = JSON.parse(String(text));
+    if (v?.state !== "MERGED" || !Number.isInteger(v.number)) return null;
+    const mergedAt = Date.parse(v.mergedAt);
+    return {
+      number: v.number,
+      branch: typeof v.headRefName === "string" ? v.headRefName : null,
+      mergedAt: Number.isNaN(mergedAt) ? null : mergedAt,
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -315,6 +381,43 @@ function verifiedPush(cwd, remote, refspec) {
   return { branch, sha: pushed };
 }
 
+/** `gh pr view` JSON text ("" on any failure). RF_OPS_GH may name a .mjs/.js stand-in (tests). */
+function ghView(cwd, number) {
+  const gh = process.env.RF_OPS_GH || "gh";
+  const script = /.(?:mjs|js)$/.test(gh);
+  const args = ["pr", "view", ...(number == null ? [] : [String(number)])];
+  args.push("--json", "number,state,mergedAt,headRefName");
+  try {
+    return execFileSync(script ? process.execPath : gh, script ? [gh, ...args] : args, {
+      cwd,
+      encoding: "utf8",
+      timeout: 20000,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Detached half of a merge candidate: confirm with `gh pr view` (the PR number, or the current
+ * branch when the command named none) and record only a MERGED PR. job = { ts, number, named,
+ * cwd, file }. `deps` is injectable for tests.
+ */
+export function confirmMerge(job, deps = { view: ghView, append: null, record: null }) {
+  const m = mergedFromView(deps.view(job.cwd, job.number ?? null));
+  if (!m) return null;
+  // An already-merged PR re-merged by mistake merged nothing now: only a fresh merge counts.
+  if (m.mergedAt !== null && job.ts - m.mergedAt > FRESH_MERGE_MS) return null;
+  const branch = job.named || !m.branch || ["master", "main"].includes(m.branch) ? null : m.branch;
+  deps.append?.(job.file, { ts: job.ts, kind: "pr", action: "merge", number: m.number, branch });
+  const args = ["event", "pr", "--number", String(m.number), "--action", "merge"];
+  if (branch) args.push("--branch", branch);
+  deps.record?.([...args, "--quiet"]);
+  return { number: m.number, branch };
+}
+
 function spawnRecorder(args, env) {
   try {
     const rf = join(ROOT, "tools", "ops-monitor", "bin", "rf.mjs");
@@ -333,7 +436,33 @@ function spawnRecorder(args, env) {
 
 const lib = (name) => pathToFileURL(join(ROOT, "tools", "ops-monitor", "lib", name)).href;
 
+async function runConfirm(raw) {
+  if (process.env.RF_OPS_GATE === "off" || process.env.CI) return;
+  const job = JSON.parse(raw);
+  const { appendAction } = await import(lib("turn-actions.mjs"));
+  const env = { ...process.env, RF_ACTOR: job.actor };
+  confirmMerge(job, {
+    view: ghView,
+    append: (file, entry) => appendAction(file, entry),
+    record: (args) => spawnRecorder(args, env),
+  });
+}
+
+function spawnConfirm(job) {
+  try {
+    const child = spawn(
+      process.execPath,
+      [fileURLToPath(import.meta.url), "--confirm-merge", JSON.stringify(job)],
+      { detached: true, stdio: "ignore", windowsHide: true, env: process.env },
+    );
+    child.unref();
+  } catch {
+    // best effort
+  }
+}
+
 async function main() {
+  if (process.argv[2] === "--confirm-merge") return runConfirm(process.argv[3] ?? "{}");
   let payload;
   try {
     payload = JSON.parse(readFileSync(0, "utf8") || "{}");
@@ -368,9 +497,20 @@ async function main() {
       appendAction(file, { ts, kind: "push", branch: v.branch, sha: v.sha });
       const args = ["event", "push", "--branch", v.branch, "--sha", v.sha];
       spawnRecorder([...args, "--repo", "najathakram/routeflow", "--quiet"], env);
+    } else if (a.verify) {
+      // No TTY: gh printed nothing. The detached recorder confirms before anything is recorded.
+      spawnConfirm({
+        ts,
+        number: a.number,
+        named: a.named === true,
+        cwd,
+        file,
+        actor: env.RF_ACTOR,
+      });
     } else {
-      // After a merge the checkout may already be back on master; that names no PR branch.
-      const head = git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
+      // After a merge the checkout may already be back on master; that names no PR branch. A
+      // command that named its PR (number/URL) says nothing about the current branch either.
+      const head = a.named ? "" : git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
       const branch = head && !["HEAD", "master", "main"].includes(head) ? head : null;
       appendAction(file, { ts, kind: "pr", action: a.action, number: a.number, branch });
       const args = ["event", "pr", "--number", String(a.number), "--action", a.action];

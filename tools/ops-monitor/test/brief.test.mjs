@@ -411,21 +411,31 @@ function tmp(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
-test("lanes-local: RF_LANE wins, then the longest path-prefix match, else null", () => {
+test("lanes-local: RF_LANE wins, then the own-checkout-root match, else null", () => {
   const home = tmp("rf-lanes-");
   try {
     const root = join(home, "work", "routeflow");
+    mkdirSync(join(root, ".git"), { recursive: true });
+    mkdirSync(join(root, "apps", "web"), { recursive: true });
+    const wt1 = join(root, ".claude", "worktrees", "wt1");
+    const wt2 = join(root, ".claude", "worktrees", "wt2");
+    for (const w of [wt1, wt2]) {
+      mkdirSync(join(w, "apps"), { recursive: true });
+      writeFileSync(join(w, ".git"), "gitdir: elsewhere\n");
+    }
     setLane(home, root, "lead");
-    setLane(home, join(root, ".claude", "worktrees", "wt1"), "macmini");
+    setLane(home, wt1, "macmini");
     assert.deepEqual(Object.values(readLanes(home)).sort(), ["lead", "macmini"]);
     const at = (p, env = {}) => laneForCwd(p, env, { home });
     assert.equal(at(root), "lead");
     assert.equal(at(join(root, "apps", "web")), "lead", "a sub-directory inherits");
+    assert.equal(at(join(wt1, "apps")), "macmini", "a worktree sub-directory uses its own root");
     assert.equal(
-      at(join(root, ".claude", "worktrees", "wt1", "apps")),
-      "macmini",
-      "longest prefix wins",
+      at(wt2),
+      null,
+      "an unregistered nested worktree (own .git) never inherits the parent checkout's lane",
     );
+    assert.equal(at(join(wt2, "apps")), null);
     assert.equal(
       at(`${root}-sibling`),
       null,
@@ -438,6 +448,18 @@ test("lanes-local: RF_LANE wins, then the longest path-prefix match, else null",
       "macbook",
     );
     assert.equal(laneForCwd(root, { RF_LANE: "nonsense" }, { home, config: DEFAULT_CONFIG }), null);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("lanes-local: with no .git up the tree the old prefix rule still applies", () => {
+  const home = tmp("rf-lanes-nogit-");
+  try {
+    const root = join(home, "plain");
+    mkdirSync(join(root, "sub"), { recursive: true });
+    setLane(home, root, "lead");
+    assert.equal(laneForCwd(join(root, "sub"), {}, { home }), "lead");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

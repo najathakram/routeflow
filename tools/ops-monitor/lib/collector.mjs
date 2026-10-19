@@ -298,7 +298,24 @@ export function parseBugFrontMatter(text) {
     files: (kv.files ?? "").split(/\s+/).filter(Boolean),
     location: kv.location ?? "",
     closed: kv.closed ?? "",
+    alreadyFixed: parseAlreadyFixed(lines.slice(i >= 0 ? i + 1 : 0)),
   };
+}
+
+/**
+ * An "ALREADY FIXED on master by PR #693 (692bdf8, …)" note in a bug record's body (uppercase,
+ * at the start of a line or list item): bugs.mjs has no close verb yet, so the bookkeeping lane
+ * records a verified fix this way while the state still reads uncampaigned (lead 10-19). Returns
+ * { pr, sha } (either may be null) or null.
+ */
+export function parseAlreadyFixed(lines) {
+  for (const line of lines) {
+    if (!/^\s*(?:[-*]\s+)?(?:\*\*)?ALREADY FIXED\b/.test(line)) continue;
+    const pr = /#(\d{2,6})\b/.exec(line);
+    const sha = /\b([0-9a-f]{7,40})\b/.exec(line.replace(/#\d+/g, ""));
+    return { pr: pr ? Number(pr[1]) : null, sha: sha ? sha[1] : null };
+  }
+  return null;
 }
 
 const firstWord = (s) =>
@@ -312,6 +329,9 @@ const firstWord = (s) =>
  * bug has a ledger row: a `regressed` row reopens a bug whose file says done/closed.
  */
 export function isOpenBug(b) {
+  // A regressed/reopened ledger row always means open, whatever notes say.
+  if (/reopen|regress/i.test(String(b.ledgerState ?? ""))) return true;
+  if (b.alreadyFixed) return false;
   if (b.ledgerState && String(b.ledgerState).trim())
     return !CLOSED_STATES.has(firstWord(b.ledgerState));
   if (b.closed && String(b.closed).trim()) return false;
@@ -1012,6 +1032,8 @@ export function createCollector({
           batch: led?.batch ?? null,
           tier: led?.tier ?? null,
           filedAt: filed[b.id] ?? null,
+          // The proof shown on the bug card when an ALREADY FIXED note closes it.
+          alreadyFixed: b.alreadyFixed ?? null,
         };
       });
       return {

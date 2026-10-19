@@ -830,3 +830,102 @@ test(
     assert.equal(git(p.A, "rev-list", "--count", "@{u}..HEAD").trim(), "0");
   },
 );
+
+// --- H4: plain syncSpecs in generated mode, register-sourced collisions, stale-lock race -------
+
+test(
+  "generated mode: a plain syncSpecs (no afterCommit) drops a leftover views tip and lands cleanly",
+  { timeout: 900000 },
+  async () => {
+    const p = mkPair("gen-plain-sync");
+    const hook = registerHook();
+    mkdirSync(join(p.A, "ops"), { recursive: true });
+    writeFileSync(join(p.A, "ops", "config.json"), JSON.stringify({ registerMode: "generated" }));
+    git(p.A, "add", "ops/config.json");
+    git(p.A, "commit", "--quiet", "-m", "config");
+    git(p.A, "push", "--quiet");
+    git(p.B, "pull", "--quiet", "--rebase");
+    await appendEvents([newItem("m-a", null, "From machine A")], {
+      dir: p.A,
+      home: p.homeA,
+      push: false,
+      afterCommit: hook,
+    });
+    assert.match(subjects(p.A, "@{u}..HEAD")[0], /^ops\(views\):/, "A holds a leftover views tip");
+    await appendEvents([newItem("m-b", null, "From machine B")], {
+      dir: p.B,
+      home: p.homeB,
+      afterCommit: hook,
+    });
+    const sync = await syncSpecs(p.A); // the collector / rf sync call shape: no afterCommit
+    assert.equal(sync.ok, true, sync.error);
+    assert.equal(sync.pushed, true);
+    assert.equal(git(p.A, "status", "--porcelain").trim(), "");
+    const check = join(p.dir, "check");
+    git(p.dir, "clone", "--quiet", p.remote, check);
+    const state = stateOf(check);
+    assert.equal(state.items.size, 2);
+    assert.equal(
+      readFileSync(join(check, "register", "WORK-REGISTER.md"), "utf8").replace(/\r\n/g, "\n"),
+      renderGeneratedRegister(state, { itemFileExists: () => false }),
+    );
+  },
+);
+
+test(
+  "a register-sourced item.new whose id another machine already created is dropped, not renumbered",
+  { timeout: 600000 },
+  async () => {
+    const p = mkPair("rec-register-dup");
+    git(p.A, "remote", "set-url", "origin", join(tmp, "nowhere.git"));
+    await appendEvents([newItem("m-a", "300", "Register row", { source: "register" })], {
+      dir: p.A,
+      home: p.homeA,
+    });
+    await appendEvents([newItem("m-b", "300", "Register row", { source: "register" })], {
+      dir: p.B,
+      home: p.homeB,
+    });
+    git(p.A, "remote", "set-url", "origin", p.remote);
+    const sync = await syncSpecs(p.A);
+    assert.equal(sync.ok, true, sync.error);
+    assert.equal(sync.reconciled.changes.size, 0, "no renumbering");
+    assert.equal(sync.reconciled.dropped.length, 1);
+    const state = stateOf(p.A);
+    assert.deepEqual([...state.items.keys()], ["300"]);
+    assert.equal(git(p.A, "rev-list", "--count", "@{u}..HEAD").trim(), "0");
+  },
+);
+
+test(
+  "a stale lock whose holder refreshed it before the rename is given back, not reclaimed",
+  { timeout: 240000 },
+  async () => {
+    const home = join(tmp, "lock-home-race");
+    const lock = join(home, "specs.lock");
+    const owner = join(lock, "owner.json");
+    mkdirSync(lock, { recursive: true });
+    writeFileSync(owner, JSON.stringify({ token: "T-old", pid: 1, host: "x", at: "x" }));
+    ageLock(lock);
+    let ran = false;
+    await assert.rejects(
+      withSpecsLock(
+        async () => {
+          ran = true;
+        },
+        {
+          home,
+          waitMs: 300,
+          pollMs: 50,
+          _beforeReclaim: () =>
+            // a new holder takes over right after the waiter judged the lock stale
+            writeFileSync(owner, JSON.stringify({ token: "T-new", pid: 2, host: "x", at: "x" })),
+        },
+      ),
+      /lock/i,
+    );
+    assert.equal(ran, false);
+    assert.equal(JSON.parse(readFileSync(owner, "utf8")).token, "T-new");
+    rmSync(lock, { recursive: true, force: true });
+  },
+);

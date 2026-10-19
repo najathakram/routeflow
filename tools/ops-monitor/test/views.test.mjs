@@ -410,7 +410,7 @@ test("writeViews writes register, dashboard, board json, commits and pushes", as
   assert.ok(
     git.some((g) => /^add .*register\/WORK-REGISTER\.md/.test(g) && /DASHBOARD\.md/.test(g)),
   );
-  assert.ok(git.some((g) => /^commit -m ops\(views\)/.test(g)));
+  assert.ok(git.some((g) => /commit .*-m ops\(views\)/.test(g)));
   assert.ok(git.some((g) => g === "push"));
   // second run with same snapshot: nothing changes, no commit
   const env2 = fakeEnv(Object.fromEntries(env.fs));
@@ -428,7 +428,7 @@ test("writeViews writes register, dashboard, board json, commits and pushes", as
   });
   assert.equal(r2.registerWritten, false);
   assert.deepEqual(r2.dashboardReplaced, []);
-  assert.equal(env2.calls.filter((c) => c[1] === "commit").length, 0);
+  assert.equal(env2.calls.filter((c) => c.includes("commit")).length, 0);
   assert.equal(r2.pushed, false);
 });
 
@@ -503,8 +503,61 @@ test("writeViews writes no view file while unpushed commits exist (views never s
   assert.equal(r.retryLater, true);
   assert.equal(r.pushed, false);
   assert.equal(env.writes.filter((w) => w.startsWith("/specs/")).length, 0);
-  assert.equal(env.calls.filter((c) => c[1] === "commit").length, 0);
+  assert.equal(env.calls.filter((c) => c.includes("commit")).length, 0);
   assert.equal(env.fs.get("/specs/DASHBOARD.md"), dash);
+});
+test("writeViews commits through the identity fallback and cleans the tree when the commit fails", async () => {
+  const dash = readFileSync(join(FIX, "dashboard.md"), "utf8");
+  const NL = String.fromCharCode(10);
+  // (a) no git identity: the helper sets a local one and retries once
+  const envA = fakeEnv({ "/specs/DASHBOARD.md": dash });
+  let commits = 0;
+  envA.deps.exec = async (cmd, args) => {
+    envA.calls.push([cmd, ...args]);
+    if (args[0] === "status") return { code: 0, stdout: ` M DASHBOARD.md${NL}`, stderr: "" };
+    if (args.includes("commit") && commits++ === 0)
+      return { code: 128, stdout: "", stderr: "fatal: unable to auto-detect email address" };
+    return { code: 0, stdout: "", stderr: "" };
+  };
+  const ra = await writeViews({
+    specsDir: "/specs",
+    boardDir: "/board",
+    snapshot: snapshot(),
+    push: false,
+    deps: envA.deps,
+  });
+  const gitA = envA.calls.filter((c) => c[0] === "git").map((c) => c.slice(1).join(" "));
+  assert.ok(gitA.includes("config user.email ops-monitor@localhost"), gitA.join(NL));
+  assert.equal(gitA.filter((g) => /commit .*-m ops\(views\)/.test(g)).length, 2);
+  assert.equal(ra.retryLater, false);
+
+  // (b) the commit fails for good: unstage and restore the view files
+  const envB = fakeEnv({ "/specs/DASHBOARD.md": dash });
+  envB.deps.exec = async (cmd, args) => {
+    envB.calls.push([cmd, ...args]);
+    if (args[0] === "status") return { code: 0, stdout: ` M DASHBOARD.md${NL}`, stderr: "" };
+    if (args.includes("commit")) return { code: 1, stdout: "", stderr: "fatal: cannot lock ref" };
+    return { code: 0, stdout: "", stderr: "" };
+  };
+  const rb = await writeViews({
+    specsDir: "/specs",
+    boardDir: "/board",
+    snapshot: snapshot(),
+    push: true,
+    deps: envB.deps,
+  });
+  const gitB = envB.calls.filter((c) => c[0] === "git").map((c) => c.slice(1).join(" "));
+  assert.ok(
+    gitB.some((g) => g.startsWith("reset -q -- DASHBOARD.md")),
+    gitB.join(NL),
+  );
+  assert.ok(
+    gitB.some((g) => g.startsWith("checkout -- DASHBOARD.md")),
+    gitB.join(NL),
+  );
+  assert.ok(!gitB.includes("push"), "nothing is pushed after a failed commit");
+  assert.equal(rb.retryLater, true);
+  assert.equal(rb.pushed, false);
 });
 
 // --- generated register mode (events -> register, no snapshot needed) ---------------------------
