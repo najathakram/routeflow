@@ -191,10 +191,17 @@ export interface ProductSalesHistory {
 /** One open order line of a product: what is still to be billed. Backed by
  *  `GET /products/:id/open-orders`. "Open" = `OPEN_ORDER_STATUSES` (PENDING, CONFIRMED,
  *  OUT_FOR_DELIVERY); counter sales and cancelled lines are excluded. No money fields. */
+/** The statuses that count as an open, still-to-bill order (mirrors the api's OPEN_ORDER_STATUSES). */
+export type OpenOrderStatusValue = Extract<
+  OrderStatusValue,
+  "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY"
+>;
+
 export interface ProductOpenOrderLine {
   orderId: string;
   orderNumber: string | null;
-  status: OrderStatusValue;
+  /** Only the open statuses reach this card (the api's OPEN_ORDER_STATUSES, credit-exposure.ts). */
+  status: OpenOrderStatusValue;
   /** ISO business date of the order (`orderDate ?? createdAt`). */
   orderDate: string;
   customerId: string;

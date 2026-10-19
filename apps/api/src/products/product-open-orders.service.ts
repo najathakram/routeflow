@@ -1,6 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
-import type { OrderStatusValue, ProductOpenOrderLine, ProductOpenOrders } from "@routeflow/types";
+import type {
+  OpenOrderStatusValue,
+  ProductOpenOrderLine,
+  ProductOpenOrders,
+} from "@routeflow/types";
 import { roundQty } from "../common/invoiced-sales";
 import { OPEN_ORDER_STATUSES } from "../invoices/credit-exposure";
 import { openOrderLinesWithOrderCount } from "../orders/open-order-lines";
@@ -11,7 +15,8 @@ export const OPEN_ORDERS_MAX_LIMIT = 500;
 
 /** `?limit=` for the open-orders card: clamped 1-500, default 200 (same rule as product-sales). */
 export function clampOpenOrdersLimit(raw: unknown): number {
-  const parsed = raw != null && String(raw).trim() !== "" ? Number(raw) : NaN;
+  const text = typeof raw === "string" ? raw.trim() : typeof raw === "number" ? String(raw) : "";
+  const parsed = text !== "" ? Number(text) : NaN;
   return Number.isFinite(parsed)
     ? Math.min(OPEN_ORDERS_MAX_LIMIT, Math.max(1, Math.trunc(parsed)))
     : OPEN_ORDERS_DEFAULT_LIMIT;
@@ -52,7 +57,7 @@ export class ProductOpenOrdersService {
       return {
         orderId: l.orderId,
         orderNumber: l.orderNumber,
-        status: l.status as OrderStatusValue,
+        status: l.status as OpenOrderStatusValue,
         orderDate: l.orderDate.toISOString(),
         customerId: l.customerId,
         customerName: l.customerName,

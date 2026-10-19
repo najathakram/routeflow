@@ -45,6 +45,7 @@ import { PlanFlagGuard } from "../billing/plan-flag.guard";
 
 import { ProductsController } from "../products/products.controller";
 import { ProductsExportService } from "../products/products-export.service";
+import { ProductOpenOrdersService } from "../products/product-open-orders.service";
 import { ProductsService } from "../products/products.service";
 import { CustomersController } from "../customers/customers.controller";
 import { CustomersService } from "../customers/customers.service";
@@ -147,6 +148,7 @@ describe("POST /products/:id/images", () => {
   beforeAll(async () => {
     app = await bootstrap(ProductsController, [
       { provide: ProductsExportService, useValue: {} },
+      { provide: ProductOpenOrdersService, useValue: {} },
       {
         provide: ProductsService,
         useValue: {
