@@ -167,7 +167,11 @@ const VIEWPORTS = [
   { label: "390", width: 390, height: 844 },
 ];
 
-/** True when `inner`'s box sits inside the visible box of `<main>` (the page's scroller). */
+/**
+ * True when `inner`'s box sits inside the visible box of `<main>` (the page's scroller). The landing
+ * scroll is smooth (useFocusTarget `land`), so a one-shot read right after the click can still see the
+ * card below the fold: assert it with `expect.poll(...)` (landsInMain), never a bare `expect(await ...)`.
+ */
 async function insideMain(page: Page, selector: string): Promise<boolean> {
   return page.evaluate((sel) => {
     const el = document.querySelector(sel);
@@ -179,9 +183,15 @@ async function insideMain(page: Page, selector: string): Promise<boolean> {
   }, selector);
 }
 
+/** Retrying form of insideMain: waits for the smooth landing scroll to finish. */
+function landsInMain(page: Page, selector: string) {
+  return expect.poll(() => insideMain(page, selector), { timeout: 5_000 });
+}
+
 for (const vp of VIEWPORTS) {
   test.describe(`Backoffice readiness card, ${vp.label}px`, () => {
-    test.use({ viewport: { width: vp.width, height: vp.height } });
+    // Instant landing scroll (useFocusTarget honours reduced motion): no smooth-scroll timing in the checks.
+    test.use({ viewport: { width: vp.width, height: vp.height }, reducedMotion: "reduce" });
 
     test("a business that has not chosen shows one neutral line: no amber, a tall-enough Choose link", async ({
       page,
@@ -214,7 +224,7 @@ for (const vp of VIEWPORTS) {
       const target = page.locator('[data-focus-target="capabilities"]');
       await expect(target).toHaveCount(1);
       await expect(target).toBeFocused();
-      expect(await insideMain(page, '[data-focus-target="capabilities"]')).toBe(true);
+      await landsInMain(page, '[data-focus-target="capabilities"]').toBe(true);
       // the one-shot param is gone, the tab stays
       await expect(page).not.toHaveURL(/focus=/);
       await expect(page).toHaveURL(/tab=setup/);
@@ -230,7 +240,7 @@ for (const vp of VIEWPORTS) {
       await page.getByRole("link", { name: /^Create admin for/ }).click();
       const card = page.locator("#admin-account");
       await expect(card).toBeFocused();
-      expect(await insideMain(page, "#admin-account")).toBe(true);
+      await landsInMain(page, "#admin-account").toBe(true);
       await expect(page).not.toHaveURL(/focus=/);
       // same page, same document: the marker set before the click survived
       expect(
@@ -242,7 +252,10 @@ for (const vp of VIEWPORTS) {
       page,
     }) => {
       await gotoOverview(page, { caps: CAPS_COUNTER, hasAdmin: true });
-      await expect(page.getByText("Ready to take a sale", { exact: true })).toBeVisible();
+      // The line is "<aria-hidden check> Ready to take a sale" in one <p>: Playwright's text match covers
+      // the whole element (jest's findByText sees only the text node), so match the end, not exact.
+      // The `$` also keeps the "Ready to take a sale?" heading out.
+      await expect(page.getByText(/Ready to take a sale$/)).toBeVisible();
       await expect(page.getByText("Not ready")).toHaveCount(0);
     });
 

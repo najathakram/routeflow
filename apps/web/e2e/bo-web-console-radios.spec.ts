@@ -231,8 +231,12 @@ for (const vp of VIEWPORTS) {
     }) => {
       const writes = await gotoConsole(page);
       const row = page.locator("#feature-fulfilment_model");
-      await row.getByRole("radio", { name: "Delivery and shipping" }).check();
+      // The radio is controlled by the SAVED mode (FeatureConsole ModeRadios `checked`), so a click
+      // opens the preview drawer and leaves "Ship by carrier" selected until Apply. check() would
+      // fail ("did not change its state") by design.
+      await row.getByRole("radio", { name: "Delivery and shipping" }).click();
       await expect(page.getByRole("heading", { name: "Preview mode change" })).toBeVisible();
+      await expect(row.getByRole("radio", { name: "Ship by carrier" })).toBeChecked();
       await page.getByRole("button", { name: "Cancel" }).click();
       await expect(page.getByRole("heading", { name: "Preview mode change" })).toHaveCount(0);
       expect(writes).toEqual([]);
