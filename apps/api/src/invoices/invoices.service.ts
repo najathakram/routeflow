@@ -3060,7 +3060,9 @@ export class InvoicesService {
 
     // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
     // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
-    if (dto.items || dto.discount !== undefined || dto.shippingFee !== undefined) {
+    // Row 603: a null figure is ABSENT (intakeMoney keeps the stored value), so it triggers neither rewrite path.
+    const figureSent = dto.discount != null || dto.shippingFee != null;
+    if (dto.items || figureSent) {
       await unitAware.assertInvoiceRewriteAllowed(this.prisma.forTenant(), inv);
     }
 
@@ -3236,7 +3238,7 @@ export class InvoicesService {
     }
 
     // RF-012 / B1043: a discount or shippingFee change re-prices the total from the stored lines.
-    const needsRecalc = dto.discount !== undefined || dto.shippingFee !== undefined;
+    const needsRecalc = figureSent;
     const headerData = {
       ...(due.dueDate && { dueDate: due.dueDate }),
       ...(issueDate && { issueDate }),
