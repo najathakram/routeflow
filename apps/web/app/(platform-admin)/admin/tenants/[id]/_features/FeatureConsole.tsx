@@ -116,12 +116,13 @@ export interface FeatureConsoleProps {
 }
 
 /** "Set override": a quiet link-button, no fill, so the only filled indigo buttons on the page are
- *  real primaries (BO-09). 44 px tall below md, 24 px from md up. */
+ *  real primaries (BO-09). 44 px tall below md (important: the .surface-admin 40 px button floor
+ *  outranks a plain min-h), 24 px from md up. */
 const QUIET_ACTION =
-  "inline-flex min-h-11 items-center rounded px-2 py-1 text-xs font-semibold text-indigo-300 hover:text-indigo-200 hover:underline md:min-h-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-800";
+  "inline-flex !min-h-11 items-center rounded px-2 py-1 text-xs font-semibold text-indigo-300 hover:text-indigo-200 hover:underline md:!min-h-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-800";
 /** "Turn on as add-on": an outlined secondary, no fill (BO-09). */
 const OUTLINED_ACTION =
-  "inline-flex min-h-11 items-center rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-200 ring-1 ring-slate-500 hover:bg-slate-700 md:min-h-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-800";
+  "inline-flex !min-h-11 items-center rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-200 ring-1 ring-slate-500 hover:bg-slate-700 md:!min-h-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-800";
 
 /** The dark-gate note, shown in the Details panel (BO-12). */
 const DARK_NOTE =

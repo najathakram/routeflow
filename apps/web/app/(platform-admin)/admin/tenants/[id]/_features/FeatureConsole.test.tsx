@@ -615,6 +615,19 @@ describe("SA-1: plain names on the console's controls", () => {
     );
   });
 
+  it("'Set override' and 'Turn on as add-on' are 44 px targets below md: the important min-h beats the .surface-admin 40 px button floor", async () => {
+    await renderConsole();
+    const row = document.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
+    for (const btn of [
+      within(row).getByRole("button", { name: /^Set override/ }),
+      within(row).getByRole("button", { name: /Turn on .* as an add-on/ }),
+    ]) {
+      expect(btn).toHaveClass("!min-h-11");
+      expect(btn).toHaveClass("md:!min-h-0");
+      expect(btn).not.toHaveClass("min-h-11");
+    }
+  });
+
   it("'Enable as add-on' is now 'Turn on as add-on' and still opens the same confirm", async () => {
     await renderConsole();
     const row = document.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
@@ -734,8 +747,9 @@ describe("BO-09: Set override stops shouting and leaves rows where it does nothi
       "focus-visible:ring-indigo-400",
       "focus-visible:ring-offset-2",
       "focus-visible:ring-offset-slate-800",
-      "min-h-11",
-      "md:min-h-0",
+      // Important: the .surface-admin 40 px button floor outranks a plain min-h (R1 proof, 390 px).
+      "!min-h-11",
+      "md:!min-h-0",
     ]) {
       expect(btn).toHaveClass(cls);
     }
