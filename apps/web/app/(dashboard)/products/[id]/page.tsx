@@ -1266,6 +1266,22 @@ export default function ProductDetailPage() {
     </div>
   );
 
+  // Buyer merchandising (P5-01): last in Details so the price comes first (K11-23); on a family it follows the
+  // variants instead, so they are not a scroll down on a phone (K12 F17).
+  const merchandising = isStaff ? (
+    <ProductMerchandising
+      product={product as any}
+      isEditing={isEditing}
+      pending={updateProduct.isPending}
+      onToggle={(flag, next) =>
+        updateProduct.mutate({ id: id, [flag]: next } as any, {
+          onSuccess: () => toast({ title: "Merchandising updated", variant: "success" }),
+          onError: () => toast({ title: "Failed to update", variant: "error" }),
+        })
+      }
+    />
+  ) : null;
+
   return (
     <PriceWindowHost product={product} enabled={pricesInWindow}>
       {/* Crop-before-upload modal — intercepts every file selection */}
@@ -1841,27 +1857,13 @@ export default function ProductDetailPage() {
                     <p className="text-sm text-navy/80">{product.description}</p>
                   )}
                 </div>
-
-                {/* Buyer merchandising flags (P5-01): last in Details, so the price comes first (K11-23) */}
-                {isStaff && (
-                  <ProductMerchandising
-                    product={product as any}
-                    isEditing={isEditing}
-                    pending={updateProduct.isPending}
-                    onToggle={(flag, next) =>
-                      updateProduct.mutate({ id: id, [flag]: next } as any, {
-                        onSuccess: () =>
-                          toast({ title: "Merchandising updated", variant: "success" }),
-                        onError: () => toast({ title: "Failed to update", variant: "error" }),
-                      })
-                    }
-                  />
-                )}
+                {!isFamily && merchandising}
               </div>
             </div>
             {product.kind === "FAMILY" && (
               <FamilyVariantsEditor familyId={product.id} variants={product.variants ?? []} />
             )}
+            {isFamily && merchandising}
           </div>
           {/* ── Left: image gallery + stock card ── */}
           <div

@@ -70,7 +70,7 @@ describe("family page with units v2 on: parity", () => {
       "const pricesInWindow = v2 && !unitStructureGoverned(product);",
       '{v2 ? null : stockStatus === "OUT_OF_STOCK" ? (',
       "<ProductHeaderLine product={product} currentStock={currentStock} pricesV2={v2} />",
-      '{v2 && product.kind !== "FAMILY" ? <ProductJumpLinks /> : null}',
+      '{v2 && product.kind !== "FAMILY" ? <ProductJumpLinks reserveSpace /> : null}',
       "pricesV2={v2}",
       '{v2 && product.kind !== "FAMILY" ? (',
       // K10d: the v2 flag drops the old Units card's always-open Add form (the shell's Add a unit replaces it)

@@ -157,6 +157,24 @@ describe("K11-25: Variants directly under Details", () => {
     expect(follows(image, screen.getByTestId("labels-card"))).toBe(true);
   });
 
+  it("K12 F17: Buyer merchandising sits after the variants, outside the Details card", () => {
+    const details = show();
+    const variants = screen.getByTestId("family-variants");
+    const merch = screen.getByRole("heading", { name: "Buyer merchandising" });
+    expect(details.contains(merch)).toBe(false);
+    expect(follows(variants, merch)).toBe(true);
+    const image = screen.getByRole("heading", { name: "Image" }).closest("div.overflow-hidden")!;
+    expect(follows(merch, image)).toBe(true);
+  });
+
+  it("K12 F17: a standalone product keeps Buyer merchandising inside Details", () => {
+    current = { ...BASE_PRODUCT, variants: [] };
+    const details = show();
+    expect(details.contains(screen.getByRole("heading", { name: "Buyer merchandising" }))).toBe(
+      true,
+    );
+  });
+
   it("the same order holds with the units v2 flag off, and nothing is missing", () => {
     flagOn = false;
     const details = show();
