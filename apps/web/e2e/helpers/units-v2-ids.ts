@@ -35,4 +35,5 @@ export const UNITS_V2_PREFIX = {
   row: "units-v2-row-",
   card: "units-v2-card-",
   cell: "units-v2-cell-",
+  code: "units-v2-code-",
 } as const;
