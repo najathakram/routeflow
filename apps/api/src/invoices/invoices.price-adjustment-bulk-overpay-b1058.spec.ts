@@ -339,6 +339,48 @@ describe("bulk re-price: the overpay judgment is a PRE-FLIGHT check (B1058)", ()
       expect(String(warn.mock.calls[0][0])).toEqual(expect.stringContaining("inv-2"));
     });
 
+    it("(m) SA-816d: a NaN sibling on target #3's order refuses the WHOLE batch (400 MONEY_INVARIANT) before #1 or #2 commit", async () => {
+      const targets = [
+        invoiceOf(1, []),
+        invoiceOf(2, []),
+        invoiceOf(3, [], { orderId: "order-3" }),
+      ];
+      arrange(targets);
+      // the preflight's reads: the other invoices of order-3 (one carries a stored NaN levy) and the order's lines
+      prisma.invoice.findMany.mockImplementation(async (args: any) =>
+        args?.where?.orderId
+          ? [
+              {
+                id: "inv-sib",
+                orderId: "order-3",
+                items: [
+                  {
+                    id: "sib-1",
+                    orderItemId: "oi-1",
+                    productId: "p-1",
+                    qty: 1,
+                    unitPrice: 10,
+                    subtotal: 10,
+                    unitsPerBox: null,
+                    categoryTaxAmount: "NaN",
+                  },
+                ],
+              },
+            ]
+          : targets,
+      );
+      prisma.order.findUnique.mockResolvedValue({
+        id: "order-3",
+        lineItems: [{ id: "oi-1", productId: "p-1", status: "PENDING" }],
+      });
+      const recompute = jest.spyOn(service, "recomputeOrderFromInvoices");
+      const err = await caught(run());
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.MONEY_INVARIANT });
+      noWrites();
+      expect(recompute).not.toHaveBeenCalled();
+    });
+
     it("(l) a ONE-invoice batch whose own order re-sync throws is still PARTIAL (applied [1], skipped [])", async () => {
       arrange([invoiceOf(1, [], { orderId: "order-1" })]);
       jest.spyOn(service, "recomputeOrderFromInvoices").mockRejectedValue(new Error("boom"));
@@ -353,7 +395,7 @@ describe("bulk re-price: the overpay judgment is a PRE-FLIGHT check (B1058)", ()
       );
     });
 
-    it("(l2) SA-816: the order re-sync refusing a NaN sibling (400 MONEY_INVARIANT) after the commit is still PARTIAL with syncFailed, never the raw 400", async () => {
+    it("(l2) SA-816: a MONEY_INVARIANT refusal from the order re-sync AFTER the commit (only a race reaches it now, see (m)) is still PARTIAL with syncFailed, never the raw 400", async () => {
       arrange(orderLinked());
       jest.spyOn(service, "recomputeOrderFromInvoices").mockRejectedValue(
         new BadRequestException({

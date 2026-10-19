@@ -20,6 +20,7 @@ import {
 } from "../common/money-invariants.util";
 import type { PriceAdjustmentOverpaidInvoice } from "@routeflow/types";
 import { isNsfLine } from "./nsf-line";
+import { preflightOrderSiblings } from "./order-backsync-preflight";
 import {
   assertTaxStateRecomputable,
   countOrderInvoices,
@@ -478,6 +479,11 @@ export async function preflightBulkPriceAdjustment(
   /** SA-814e: non-VOID invoices per order (`countOrdersInvoices`), the guard's allocation tolerance. */
   orderInvoiceCounts?: ReadonlyMap<string, number>,
 ): Promise<ReadonlyMap<string, number>> {
+  // SA-816d: each target commits in its own transaction, so a stored non-finite amount on a LATER target's order
+  // would refuse after the earlier ones had committed. Judge every target's order (each target invoice as stored,
+  // deduped by order) before any write; only a race can now reach the post-commit refusal.
+  const orderIds = new Set(plans.map((p) => p.inv.orderId).filter((id): id is string => !!id));
+  for (const orderId of orderIds) await preflightOrderSiblings(db, orderId, null);
   const overpaid: PriceAdjustmentOverpaidInvoice[] = [];
   const projected = new Map<string, number>();
   for (const { inv, localMap } of plans) {
