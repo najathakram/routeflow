@@ -172,7 +172,7 @@ export const CATALOG_READS: Readonly<Record<string, string>> = {
   "billing/subscription-mutation.service.ts#checkoutAddonLines.getPublishedCatalog":
     "LIST: price of each add-on line. the included-at-plan refusal reads the tenant's pinned SKU (planIncludedRefusal)",
   "billing/subscription-mutation.service.ts#billUnbilledRow.getPublishedCatalog":
-    "LIST: price of the row. the included-at-plan refusal reads the tenant's pinned SKU (planIncludedRefusal)",
+    "LIST: price of a self-serve / plan-change row. an ADMIN-ONLY row is judged AND billed on addonPricingCatalog (inclusionCatalogFor); the included-at-plan refusal reads the pinned SKU (planIncludedRefusal)",
   "billing/subscription-mutation.service.ts#disableAddonLocked.getPublishedCatalog":
     "LIST: the SKU's display name for a STOP notice",
   "billing/subscription.service.ts#getSubscription.getVersionForTenant":
@@ -235,6 +235,7 @@ describe("SA-815a P3 - the named sites read through the resolver", () => {
         "billing/addon.service.ts#inclusionContextOf",
         "billing/addon.service.ts#uncompAddon",
         "billing/billing-cron.service.ts#applyScheduledDowngrades",
+        "billing/subscription-mutation.service.ts#addonPricingCatalog",
         "billing/subscription-mutation.service.ts#inclusionCatalog",
         "billing/subscription-mutation.service.ts#pinnedVersionOf",
         "billing/subscription-mutation.service.ts#planIncludedRefusal",

@@ -1216,6 +1216,22 @@ export class SubscriptionMutationService {
     };
   }
 
+  /**
+   * SA-815a / G1a: the catalog an ADMIN-ONLY row's price is judged AND billed on - the tenant's own pinned version
+   * (subscription pin, else tenant pin, else published). The checkout's (c) loop resolves it once and hands the same
+   * version to the billing under the lock, so a pinned tenant is never judged on one version and billed on another.
+   */
+  private async addonPricingCatalog(tenantId: string): Promise<PlanVersionWithCatalog> {
+    const [sub, tenant] = await Promise.all([
+      this.prisma.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: { planVersionId: true },
+      }),
+      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { planVersionId: true } }),
+    ]);
+    return inclusionCatalogFor(this.catalog, sub, tenant);
+  }
+
   /** The version a tenant is pinned to, or `published` when it is the same (no extra read). */
   private pinnedVersionOf(
     sub: { planVersionId?: string | null } | null | undefined,
@@ -2335,7 +2351,9 @@ export class SubscriptionMutationService {
     // checkout that brings it back to a bill. An admin-priced row that does NOT match (a catalog-$0 SKU, a custom
     // price above or below the catalog) is skipped untouched - no item, no snapshot rewrite - and one platform
     // notice per row asks for its billing to be set up at the agreed price. A $0 admin-only row stays unbilled.
-    let catalogSkus: Map<string, { name: string; monthlyPrice: unknown }> | null = null;
+    // SA-815a: resolved ONCE per checkout, from the tenant's pin; the same version prices the judge here and the
+    // re-judge + bill under the SKU's lock (adoptCheckoutSku -> billUnbilledRow).
+    let pricing: PlanVersionWithCatalog | null = null;
     // The admin-only row this loop ACCEPTED per SKU: adoptCheckoutSku bills exactly that row (never a re-selection
     // by SKU, which could pick an older row of the same family the predicate rejected).
     const acceptedRowOf = new Map<string, string>();
@@ -2349,10 +2367,8 @@ export class SubscriptionMutationService {
         continue;
       }
       if (!isPricedBillableCandidate(row)) continue;
-      catalogSkus ??= new Map(
-        (await this.catalog.getPublishedCatalog()).addonSkus.map((s) => [s.sku, s]),
-      );
-      const def = catalogSkus.get(code);
+      pricing ??= await this.addonPricingCatalog(tenantId);
+      const def = pricing.addonSkus.find((s) => s.sku === code);
       if (isStripeBillableAddonRow(row, def?.monthlyPrice)) {
         bySku.set(code, []);
         acceptedRowOf.set(code, row.id);
@@ -2371,7 +2387,11 @@ export class SubscriptionMutationService {
     let changed = false;
     let firstError: Error | null = null;
     // Set (and logged once) by the first SKU that finds the tenant no longer stores this subscription.
-    const state: { superseded: boolean; mode?: AddonBilling } = { superseded: false };
+    const state: {
+      superseded: boolean;
+      mode?: AddonBilling;
+      pricing?: PlanVersionWithCatalog;
+    } = { superseded: false, pricing: pricing ?? undefined };
     for (const sku of [...bySku.keys()].sort()) {
       try {
         const adopted = await this.runUnderAddonLock(tenantId, sku, () =>
@@ -2504,7 +2524,7 @@ export class SubscriptionMutationService {
     subId: string,
     currentItemIds: ReadonlySet<string>,
     ctx: { sessionId?: string | null },
-    state: { superseded: boolean; mode?: AddonBilling },
+    state: { superseded: boolean; mode?: AddonBilling; pricing?: PlanVersionWithCatalog },
     /** An ADMIN-ONLY SKU: the one row the (c) loop accepted. Billed as itself, re-judged under the lock. */
     acceptedRowId?: string,
   ): Promise<boolean> {
@@ -2583,7 +2603,7 @@ export class SubscriptionMutationService {
             subId,
             pointer,
             ctx,
-            acceptedRowId ? { adminOnly: true } : {},
+            acceptedRowId ? { adminOnly: true, pricing: state.pricing } : {},
           )
         : false;
     }
@@ -2958,20 +2978,28 @@ export class SubscriptionMutationService {
        * the row actually being billed: a mismatch takes the skip path (no item, no rewrite, the idempotent notice).
        */
       adminOnly?: boolean;
+      /**
+       * An ADMIN-ONLY row's price catalog: the version the (c) loop judged it on (the tenant's pinned one). It is
+       * re-resolved from the same pin when absent. The row is judged AND billed at this version's SKU price.
+       */
+      pricing?: PlanVersionWithCatalog;
       /** SA-786: priced from the TARGET version's SKU instead of the published one. */
       skuDef?: AddonSkuDef;
       prorationBehavior?: LeavingBillOpts["prorationBehavior"];
       prorationDate?: Date;
     } = {},
   ): Promise<boolean> {
-    const skuDef =
-      (o.skuDef as PlanVersionWithCatalog["addonSkus"][number] | undefined) ??
-      (await this.catalog.getPublishedCatalog()).addonSkus.find((s) => s.sku === sku);
+    const skuDef = o.adminOnly
+      ? (o.pricing ?? (await this.addonPricingCatalog(tenantId))).addonSkus.find(
+          (s) => s.sku === sku,
+        )
+      : ((o.skuDef as PlanVersionWithCatalog["addonSkus"][number] | undefined) ??
+        (await this.catalog.getPublishedCatalog()).addonSkus.find((s) => s.sku === sku));
     if (!skuDef) {
       // N1: the catalog no longer lists the SKU. A row with a stored price above zero has been booked at that
       // price by the reactivation crossing while nothing can bill it: say so, never drop out silently.
       this.logger.error(
-        `Add-on "${sku}" tenant ${tenantId}: the published catalog has no such SKU - not billed`,
+        `Add-on "${sku}" tenant ${tenantId}: the tenant's catalog has no such SKU - not billed`,
       );
       if (Number(row.priceSnapshot ?? 0) > 0) {
         await this.noteAddonPricedNotBilled(tenantId, row.id, sku, sku, subId);

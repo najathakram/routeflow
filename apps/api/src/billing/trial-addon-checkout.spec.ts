@@ -3908,6 +3908,46 @@ describe("SA-815d / N1: a priced row nothing can bill raises ONE platform notice
       "MSRP on invoices is priced at $15.00 for this workspace but has no card billing. Set up its billing at the agreed price.",
     );
   });
+
+  // SA-815a / G1a: the tenant (pin "v1") sits on a SUPERSEDED version where MSRP is $12; the published catalog says
+  // $20. The judge (the (c) loop) and the re-judge + bill (under the SKU's lock) read the SAME pinned version.
+  const pinMsrpAt12 = (h: ReturnType<typeof make>) => {
+    const catalog = (h.mutations as any).catalog;
+    catalog.getVersionForTenant.mockImplementation(async (id: string | null) =>
+      id === "v1"
+        ? {
+            id: "v1",
+            status: "SUPERSEDED",
+            definitions: [],
+            addonSkus: [{ sku: "MSRP", name: "MSRP on invoices", monthlyPrice: 12 }],
+          }
+        : catalog.getPublishedCatalog(),
+    );
+  };
+
+  it("pinned to a superseded version: an admin row priced at the PINNED $12 is billed at $12 (judged and billed on one version)", async () => {
+    const h = make({ rows: [addonRow("MSRP", { priceSnapshot: 12 })], items: [baseItem()] });
+    pinMsrpAt12(h);
+    await h.completed();
+    const creates = h.client.subscriptionItems.create.mock.calls;
+    expect(creates).toHaveLength(1);
+    expect(creates[0][0].price_data.unit_amount).toBe(1200);
+    expect(h.rows[0].priceSnapshot).toBe(12);
+    expect(noticeCalls(h)).toHaveLength(0);
+  });
+
+  it("pinned to a superseded version: a row priced at the PUBLISHED $20 is a mismatch - skipped untouched, one notice", async () => {
+    const h = make({ rows: [addonRow("MSRP", { priceSnapshot: 20 })], items: [baseItem()] });
+    pinMsrpAt12(h);
+    await h.completed();
+    expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(h.rows[0].priceSnapshot).toBe(20);
+    const calls = noticeCalls(h);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0].data.meta.message).toBe(
+      "MSRP on invoices is priced at $20.00 for this workspace but has no card billing. Set up its billing at the agreed price.",
+    );
+  });
 });
 
 describe("SA-693 comps: a platform grant (TenantAddon.isComp) is never billed at checkout and never blocks it", () => {

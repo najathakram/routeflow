@@ -47,7 +47,6 @@ import { TobaccoReportService } from "../tobacco/tobacco-report.service";
 import { AddonGuard } from "./addon.guard";
 import { AddonService } from "./addon.service";
 import { EntitlementsService } from "./entitlements.service";
-import { listenOnLoopback } from "../common/testing/listen-loopback";
 import { FeatureOverrideService } from "./feature-override.service";
 import { BillingEventService } from "./billing-event.service";
 import { ProrationService } from "./proration.service";
