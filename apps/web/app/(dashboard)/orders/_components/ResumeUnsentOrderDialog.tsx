@@ -10,8 +10,8 @@ import type { LocalDraftRecord } from "@/lib/order-draft/storage";
 import type { SaleDraft } from "@/lib/api/drafts";
 
 /**
- * SA-817 (A) 3: "Resume your unsent order?" The newest unsent copy is offered; Resume fills the builder from it, "Start a new
- * order" leaves it on the device (nothing is deleted), "Discard" deletes it for good (only on purpose).
+ * SA-817 (A) 3: "Resume your unsent order?" The newest unsent copy is offered; Resume fills the builder from it,
+ * "Not now" leaves it on the device (nothing is deleted), "Discard" deletes it for good (only on purpose).
  */
 export function ResumeUnsentOrderDialog({
   candidates,
@@ -51,7 +51,7 @@ export function ResumeUnsentOrderDialog({
             Discard
           </Button>
           <Button variant="secondary" className={DIALOG_FOOTER_BUTTON} onClick={onDismiss}>
-            Start a new order
+            Not now
           </Button>
           <Button className={DIALOG_FOOTER_BUTTON} onClick={() => onResume(record)}>
             Resume

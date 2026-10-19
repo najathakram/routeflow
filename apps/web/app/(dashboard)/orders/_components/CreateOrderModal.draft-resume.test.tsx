@@ -255,7 +255,7 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
     expect(screen.queryByText("Resume your unsent order?")).not.toBeInTheDocument();
   });
 
-  it("A1: 'Start a new order' leaves the copy on the device (nothing is deleted)", async () => {
+  it("A1: 'Not now' leaves the copy on the device (nothing is deleted)", async () => {
     const first = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pickCustomerAndScan();
     await waitForLocalCopy();
@@ -263,7 +263,7 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
 
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await screen.findByText("Resume your unsent order?");
-    fireEvent.click(screen.getByRole("button", { name: "Start a new order" }));
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
     await waitFor(() =>
       expect(screen.queryByText("Resume your unsent order?")).not.toBeInTheDocument(),
     );

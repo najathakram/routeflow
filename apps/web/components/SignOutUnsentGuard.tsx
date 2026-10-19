@@ -21,6 +21,11 @@ export function useGuardedSignOut(
   const [unsent, setUnsent] = React.useState<number | null>(null);
 
   const requestSignOut = React.useCallback(() => {
+    // No identity means no local copies can belong to this user: nothing to ask about, sign out at once.
+    if (!user?.tenantId || !user?.id) {
+      signOut();
+      return;
+    }
     void countUnsentOrders(getDraftMirrorStorage(), user?.tenantId, user?.id).then((n) => {
       if (signOutDecision("explicit", n).ask) setUnsent(n);
       else signOut();
