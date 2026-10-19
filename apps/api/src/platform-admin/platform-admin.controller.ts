@@ -925,6 +925,7 @@ export class PlatformAdminController {
       await this.addonService.enableAddon(id, featureKey, undefined, undefined, {
         comp: true,
         lockHeld: true,
+        source: PROFILE_APPLY_SOURCE,
         actorId: admin.sub,
         reason: compReason,
       });

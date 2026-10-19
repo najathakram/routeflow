@@ -164,8 +164,12 @@ export async function upsertAddonRowTx(
   },
 ) {
   const where = { tenantId_addonKey: { tenantId: a.tenantId, addonKey: a.addonKey } };
-  const before = (await tx.tenantAddon.findUnique({ where })) as Snapshot | null;
-  if (before) await lockRow(tx, before.id);
+  let before = (await tx.tenantAddon.findUnique({ where })) as Snapshot | null;
+  if (before) {
+    await lockRow(tx, before.id);
+    // The `before` the record diffs against is the one read UNDER the lock (the first read may be stale).
+    before = (await tx.tenantAddon.findUnique({ where })) as Snapshot | null;
+  }
   const row = await tx.tenantAddon.upsert({ where, create: a.create, update: a.update });
   await record(tx, events, before, row as unknown as Snapshot, a.actor, before == null);
   return row;
@@ -199,7 +203,12 @@ export async function updateAddonRowsTx(
     (await tx.tenantAddon.findMany({ where: a.where })) as unknown as Snapshot[]
   ).filter((r) => lockedIds.has(r.id));
   if (before.length === 0) return { count: 0 };
-  const { count } = await tx.tenantAddon.updateMany({ where: a.where, data: a.data });
+  // Limited to the rows locked and recorded above: a row that starts matching after the read is never written
+  // without a record.
+  const { count } = await tx.tenantAddon.updateMany({
+    where: { AND: [a.where, { id: { in: before.map((b) => b.id) } }] },
+    data: a.data,
+  });
   if (count === 0) return { count: 0 };
   const after = (await tx.tenantAddon.findMany({
     where: { id: { in: before.map((b) => b.id) } },

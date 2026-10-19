@@ -18,7 +18,7 @@ import {
   planKeyFromEnum,
 } from "./plan-catalog.constants";
 import { inclusionOf } from "./addon-inclusion";
-import { inclusionCatalogFor } from "./plan-version-pin";
+import { inclusionCatalogFor, pricedAddonSku } from "./plan-version-pin";
 import { updateAddonRowTx, upsertAddonRowTx, type AddonChangeSource } from "./tenant-addon-writer";
 import { addonCatalogInvalidException } from "./addon-catalog-invalid";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
@@ -62,6 +62,11 @@ export interface EnableAddonOptions {
    * billed enable always takes its own lock.
    */
   lockHeld?: boolean;
+  /**
+   * SA-788 A3: the CALLER names the record's source when it is not the plain admin route (a business-profile apply
+   * passes `profile.apply`, whether the add-on it enables is a comp or not). Absent = decided by `comp` / `uncomp`.
+   */
+  source?: typeof PROFILE_APPLY_SOURCE;
   /** SA-769: who and why, for the log line only. The audit row is the caller's (ADDON_COMPED). */
   actorId?: string;
   reason?: string;
@@ -373,7 +378,10 @@ export class AddonService {
                 tenant,
                 published,
               );
-              const inclusionDef = pinned.addonSkus.find((s) => s.sku === sku) ?? skuDef;
+              // SA-815e: the row's price is the SKU of the same pinned version (the published one when it lacks it)
+              const inclusionDef =
+                (await pricedAddonSku(this.catalog, pinned, sku, published)) ?? skuDef;
+              skuDef = inclusionDef;
               const verdict =
                 inclusionDef.includedAtPlan != null
                   ? inclusionOf(inclusionDef, planKey)
@@ -495,13 +503,12 @@ export class AddonService {
               actor: {
                 kind: "PLATFORM_ADMIN",
                 id: opts?.actorId ?? null,
-                source: (callerHoldsLock
-                  ? "profile.apply"
-                  : comp
+                source: (opts?.source ??
+                  (comp
                     ? "admin.comp"
                     : uncomp
                       ? "admin.uncomp"
-                      : "admin.enable") satisfies AddonChangeSource,
+                      : "admin.enable")) satisfies AddonChangeSource,
               },
               create: {
                 tenantId,
@@ -661,10 +668,11 @@ export class AddonService {
     const published = await this.catalog.getPublishedCatalog();
     const catalogSku = published.addonSkus.find((k) => k.sku === lockSku) ?? null;
     let includedHere = false;
-    // SA-815a: inclusion is judged by the tenant's own pinned catalog (sub pin, else tenant pin, else published); a
-    // SKU the pinned version predates falls back to the published definition. The price below stays the published one.
+    // SA-815a / SA-815e: inclusion AND the price below are the tenant's own pinned catalog (sub pin, else tenant pin,
+    // else published); a SKU the pinned version predates falls back to the published definition.
     const pinnedCatalog = await inclusionCatalogFor(this.catalog, sub, tenant, published);
-    const inclusionSku = pinnedCatalog.addonSkus.find((k) => k.sku === lockSku) ?? catalogSku;
+    const inclusionSku =
+      (await pricedAddonSku(this.catalog, pinnedCatalog, lockSku, published)) ?? catalogSku;
     if (inclusionSku?.includedAtPlan != null) {
       const verdict = inclusionOf(
         inclusionSku,
@@ -679,7 +687,7 @@ export class AddonService {
     // the owner now invoices it by hand, exactly like a self-serve enable there. Priced at the catalog
     // price and booked, with the same ADDON_MANUAL_INVOICE_DUE notice; without a catalog SKU it stays flag-only.
     const manual = !includedHere && !sub?.stripeSubId && sub?.externalPayment === true;
-    const manualSkuDef = manual ? catalogSku : null;
+    const manualSkuDef = manual ? inclusionSku : null;
     if (!includedHere && sub?.stripeSubId) {
       // Without a configured Stripe the billed enable would write an ACTIVE, unbilled, non-comp row at 0
       // on a tenant that has a subscription: the exact silent state this method must never create.

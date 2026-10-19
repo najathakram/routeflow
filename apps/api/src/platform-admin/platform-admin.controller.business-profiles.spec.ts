@@ -472,7 +472,7 @@ describe("POST business-profile (confirm) — through the existing audited write
       "recurring_routes",
       undefined,
       undefined,
-      expect.objectContaining({ comp: true, lockHeld: true }),
+      expect.objectContaining({ comp: true, lockHeld: true, source: "profile.apply" }),
     );
     expect(t.state().modes.fulfilment_model).toBe("delivery");
     // every comp went through the controller's own audited path (ADDON_COMPED, reason names the profile)

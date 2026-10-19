@@ -67,7 +67,7 @@ beforeEach(() => {
   mockWithAdvisoryLock.mockClear();
 });
 
-function published(skus: string[], includedAtPlan: Record<string, string> = {}) {
+function published(skus: string[], includedAtPlan: Record<string, string> = {}, price = 10) {
   return {
     definitions: [
       { planKey: "GROWTH", name: "Growth", monthlyPrice: 249 },
@@ -76,7 +76,7 @@ function published(skus: string[], includedAtPlan: Record<string, string> = {}) 
     addonSkus: skus.map((sku) => ({
       sku,
       name: sku,
-      monthlyPrice: 10,
+      monthlyPrice: price,
       ...(includedAtPlan[sku] ? { includedAtPlan: includedAtPlan[sku] } : {}),
     })),
   };
@@ -104,6 +104,8 @@ interface Opts {
   /** SA-815a: the version the subscription is pinned to, and that pinned catalog's `includedAtPlan` per SKU. */
   pinnedVersionId?: string;
   pinnedIncludedAtPlan?: Record<string, string>;
+  /** SA-815e: the pinned catalog's add-on price (the published one stays $10). */
+  pinnedPrice?: number;
 }
 
 function make(opts: Opts = {}) {
@@ -146,6 +148,7 @@ function make(opts: Opts = {}) {
       ...published(
         opts.publishedSkus ?? [],
         id && id === opts.pinnedVersionId ? opts.pinnedIncludedAtPlan : opts.includedAtPlan,
+        id && id === opts.pinnedVersionId ? (opts.pinnedPrice ?? 10) : 10,
       ),
     })),
   } as any;
@@ -198,6 +201,23 @@ describe("AddonService.enableAddon", () => {
     // REG-B509: the resolver cache backing the Feature Console needs its own invalidation —
     // entitlements.invalidate() alone leaves it stale for up to 30s.
     expect(featureResolver.invalidate).toHaveBeenCalledWith("t1");
+  });
+
+  // Opus review of 60bedd24b (NIT): the CALLER names the record's source, like a disable - a profile apply that
+  // enables a NON-comp add-on still records profile.apply.
+  it("a caller-named source rides the record: a non-comp enable from a profile apply records profile.apply with the actor", async () => {
+    const { svc, events } = make({ publishedSkus: ["MSRP"] });
+
+    await svc.enableAddon("t1", "msrp", undefined, undefined, {
+      source: "profile.apply",
+      actorId: "admin-1",
+    });
+
+    const rec = events.emit.mock.calls.find((c: any[]) => c[1] === "addon.state_changed");
+    expect(rec[2]).toMatchObject({
+      source: "profile.apply",
+      actor: { kind: "PLATFORM_ADMIN", id: "admin-1" },
+    });
   });
 
   it("allows an unbridged legacy key (developer_mode) unchanged, and still invalidates", async () => {
@@ -467,6 +487,22 @@ describe("AddonService.enableAddon - an included add-on is never billed on top (
     });
     await svc.enableAddon("t1", "REGULATED_ITEMS", "price_x");
     expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("SA-815e: an admin enable at the catalog writes the row at the PINNED version's price ($12), not the published ($10)", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "si_9" });
+    const { svc, prisma } = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+      subscription: atScale({ planKey: "GROWTH", planVersionId: "v_old" }),
+      publishedSkus: ["REGULATED_ITEMS"],
+      pinnedVersionId: "v_old",
+      pinnedIncludedAtPlan: {},
+      pinnedPrice: 12,
+    });
+    await svc.enableAddon("t1", "REGULATED_ITEMS", "price_x");
+    expect(prisma.tenantAddon.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ priceSnapshot: 12 }) }),
+    );
   });
 
   it("WITHOUT a price at SCALE it proceeds: the row is written at $0 and nothing is booked", async () => {

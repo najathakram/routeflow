@@ -96,8 +96,9 @@ function make(
           ? (data.cancelAddons ?? [])
           : (data.heldAddons ?? data.cancelAddons ?? []),
       ),
+      // the writer limits its updateMany to the rows it locked: AND: [guard, { id: { in } }]
       updateMany: jest.fn(async ({ where }: any = {}) => ({
-        count: where?.id ? 1 : (data.cancelAddons?.length ?? 0),
+        count: (where?.AND?.[0] ?? where)?.id ? 1 : (data.cancelAddons?.length ?? 0),
       })),
     },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
@@ -1008,7 +1009,12 @@ describe("BillingCronService", () => {
 
       expect(tx.tenantAddon.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ id: "ta_reg", isComp: false, stripeItemId: null }),
+          // limited to the locked rows by the writer: AND: [guard, { id: { in } }]
+          where: {
+            AND: expect.arrayContaining([
+              expect.objectContaining({ id: "ta_reg", isComp: false, stripeItemId: null }),
+            ]),
+          },
           data: { priceSnapshot: 39 },
         }),
       );
@@ -1433,7 +1439,13 @@ describe("BillingCronService", () => {
     // it, so only the dead pointers clear; `active`, the price, `isComp` and the quantity are never written.
     expect(tx.tenantAddon.updateMany).toHaveBeenCalledTimes(1);
     expect(tx.tenantAddon.updateMany).toHaveBeenCalledWith({
-      where: { tenantId: "t1", active: true, stripeItemId: { not: null } },
+      // the guard, limited to the rows the writer locked and recorded
+      where: {
+        AND: [
+          { tenantId: "t1", active: true, stripeItemId: { not: null } },
+          { id: { in: expect.any(Array) } },
+        ],
+      },
       data: { stripeItemId: null },
     });
     for (const call of tx.tenantAddon.updateMany.mock.calls) {

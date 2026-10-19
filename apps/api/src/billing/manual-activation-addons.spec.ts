@@ -68,12 +68,14 @@ function make(
       findMany: jest.fn(async ({ where }: any) => rows.filter((r) => matchesWhere(r, where))),
       updateMany: jest.fn(async ({ where, data }: any) => {
         if (opts.casLost) return { count: 0 };
-        const r = rows.find((x) => x.id === where.id);
+        // the writer limits its updateMany to the rows it locked: AND: [guard, { id: { in } }]
+        const guard = where.AND ? where.AND[0] : where;
+        const r = rows.find((x) => x.id === guard.id);
         if (
           !r ||
           !r.active ||
           r.stripeItemId !== null ||
-          (where.isComp === false && r.isComp) ||
+          (guard.isComp === false && r.isComp) ||
           Number(r.priceSnapshot ?? 0) !== 0
         ) {
           return { count: 0 };
@@ -325,12 +327,17 @@ describe("priceUnbilledAddonsOnActivation", () => {
     const h = make([row("CUSTOMER_PACK_100")]);
     await h.price();
     expect(h.tx.tenantAddon.updateMany.mock.calls[0][0].where).toEqual({
-      id: h.rows[0].id,
-      tenantId: "t1",
-      active: true,
-      stripeItemId: null,
-      isComp: false,
-      OR: [{ priceSnapshot: null }, { priceSnapshot: 0 }],
+      AND: [
+        {
+          id: h.rows[0].id,
+          tenantId: "t1",
+          active: true,
+          stripeItemId: null,
+          isComp: false,
+          OR: [{ priceSnapshot: null }, { priceSnapshot: 0 }],
+        },
+        { id: { in: [h.rows[0].id] } }, // limited to the rows the writer locked and recorded
+      ],
     });
   });
 

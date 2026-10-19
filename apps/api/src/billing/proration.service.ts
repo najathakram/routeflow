@@ -13,6 +13,7 @@ import {
 } from "./billing-math";
 import { addonCatalogInvalidException } from "./addon-catalog-invalid";
 import { isAddonIncludedAtPlan, resolveIncludedAtPlan } from "./plan-catalog.constants";
+import { addonSkuFor } from "./plan-version-pin";
 
 export interface QuoteRequest {
   planKey: string;
@@ -148,8 +149,17 @@ export class ProrationService {
 
     const sub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
-      select: { cycle: true, periodStart: true, periodEnd: true },
+      select: {
+        cycle: true,
+        periodStart: true,
+        periodEnd: true,
+        planVersionId: true,
+        tenant: { select: { planVersionId: true } },
+      },
     });
+    // SA-815e: quoted at the SKU of the tenant's own pinned version - the version the enable writes the row at
+    // and the checkout bills it at (the published one when that version lacks the SKU).
+    const priced = (await addonSkuFor(this.catalog, skuCode, sub, sub?.tenant, version)) ?? sku;
     const now = new Date();
 
     // Add-ons are MONTHLY-priced, so the proration window is always ~one month:
@@ -177,13 +187,13 @@ export class ProrationService {
     const MS_PER_DAY = 24 * 60 * 60 * 1000;
     const msInWindow = windowEnd.getTime() - windowStart.getTime();
     const msRemaining = Math.max(0, Math.min(msInWindow, windowEnd.getTime() - now.getTime()));
-    const monthly = Number(sku.monthlyPrice);
+    const monthly = Number(priced.monthlyPrice);
     // A 90/180-day manual row (cycle MONTHLY since B863) covers 3/6 monthly charges (SA-383).
     const windowCharge = monthly * periodMonths(windowStart, windowEnd);
 
     return {
-      sku: sku.sku,
-      name: sku.name,
+      sku: priced.sku,
+      name: priced.name,
       monthly: roundMoney(monthly),
       proratedToday: prorateDaily(windowCharge, msRemaining / MS_PER_DAY, msInWindow / MS_PER_DAY),
       daysRemaining: Math.round(msRemaining / MS_PER_DAY),

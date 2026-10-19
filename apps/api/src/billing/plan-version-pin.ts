@@ -64,3 +64,49 @@ export async function inclusionCatalogFor(
   if (published && (!id || published.id === id)) return published;
   return catalog.getVersionForTenant(id);
 }
+
+export type CatalogAddonSku = PlanVersionWithCatalog["addonSkus"][number];
+
+/**
+ * SA-815e - THE rule for an add-on's definition AND price on a tenant: the SKU as its OWN pinned version lists it,
+ * else (the pinned version predates the SKU) the published one. `pinned` is the tenant's resolved catalog
+ * ({@link inclusionCatalogFor}); `published` is reused when the caller holds it (no extra read). Every write or quote of
+ * an add-on's catalog price (enable, un-comp, the preview, the checkout) goes through this, so a row is written, quoted and
+ * billed at ONE version's price. Plan-change paths price the TARGET version and do not use it; an admin's TYPED price is
+ * never replaced by it.
+ */
+export async function pricedAddonSku(
+  catalog: Pick<PlanCatalogService, "getPublishedCatalog">,
+  pinned: Pick<PlanVersionWithCatalog, "addonSkus">,
+  sku: string,
+  published?: Pick<PlanVersionWithCatalog, "addonSkus"> | null,
+): Promise<CatalogAddonSku | null> {
+  const own = pinned.addonSkus.find((s) => s.sku === sku);
+  if (own) return own;
+  const fallback = published ?? (await catalog.getPublishedCatalog());
+  return fallback.addonSkus.find((s) => s.sku === sku) ?? null;
+}
+
+/** {@link pricedAddonSku} for a tenant named by its two pin rows (resolved through {@link inclusionCatalogFor}). */
+export async function addonSkuFor(
+  catalog: Pick<PlanCatalogService, "getVersionForTenant" | "getPublishedCatalog">,
+  sku: string,
+  sub?: { planVersionId?: string | null } | null,
+  tenant?: { planVersionId?: string | null } | null,
+  published?: PlanVersionWithCatalog | null,
+): Promise<CatalogAddonSku | null> {
+  const pinned = await inclusionCatalogFor(catalog, sub, tenant, published);
+  return pricedAddonSku(catalog, pinned, sku, published);
+}
+
+/** The monthly catalog price of `sku` for this tenant ({@link pricedAddonSku}), or null when no version lists it. */
+export async function addonPriceFor(
+  catalog: Pick<PlanCatalogService, "getVersionForTenant" | "getPublishedCatalog">,
+  sku: string,
+  sub?: { planVersionId?: string | null } | null,
+  tenant?: { planVersionId?: string | null } | null,
+  published?: PlanVersionWithCatalog | null,
+): Promise<number | null> {
+  const def = await addonSkuFor(catalog, sku, sub, tenant, published);
+  return def ? Number(def.monthlyPrice) : null;
+}

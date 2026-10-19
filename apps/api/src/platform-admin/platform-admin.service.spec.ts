@@ -2329,7 +2329,12 @@ describe("PlatformAdminService — audit provenance", () => {
 
         expect((prisma as any).tenantAddon.updateMany).toHaveBeenCalledWith(
           expect.objectContaining({
-            where: expect.objectContaining({ id: "ta_fc", stripeItemId: null, isComp: false }),
+            // limited to the locked rows by the writer: AND: [guard, { id: { in } }]
+            where: {
+              AND: expect.arrayContaining([
+                expect.objectContaining({ id: "ta_fc", stripeItemId: null, isComp: false }),
+              ]),
+            },
             data: { priceSnapshot: 25 },
           }),
         );

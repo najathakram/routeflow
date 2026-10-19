@@ -229,6 +229,9 @@ function make(opts: Opts = {}) {
     for (const [k, v] of Object.entries(where ?? {})) {
       if (k === "OR") {
         if (!(v as any[]).some((w) => matches(r, w))) return false;
+      } else if (k === "AND") {
+        // the writer limits its updateMany to the rows it locked: AND: [guard, { id: { in } }]
+        if (!([] as any[]).concat(v).every((w) => matches(r, w))) return false;
       } else if (v && typeof v === "object" && !(v instanceof Date)) {
         const c = v as any;
         if ("in" in c && !c.in.includes(r[k])) return false;
@@ -3934,6 +3937,53 @@ describe("SA-815d / N1: a priced row nothing can bill raises ONE platform notice
     expect(creates[0][0].price_data.unit_amount).toBe(1200);
     expect(h.rows[0].priceSnapshot).toBe(12);
     expect(noticeCalls(h)).toHaveLength(0);
+  });
+
+  // SA-815e: ONE rule - every add-on price (enable, un-comp, preview, checkout) is the SKU of the tenant's own pinned
+  // version. A self-serve row, an admin-only row and a catalog-default row written at the pinned $12 are all billed at
+  // $12 by the checkout, none is a mismatch.
+  const pinAllAt12 = (h: ReturnType<typeof make>) => {
+    const catalog = (h.mutations as any).catalog;
+    catalog.getVersionForTenant.mockImplementation(async (id: string | null) =>
+      id === "v1"
+        ? {
+            id: "v1",
+            status: "SUPERSEDED",
+            definitions: [],
+            addonSkus: ["CUSTOMER_PACK_100", "FORECASTING", "MSRP"].map((sku) => ({
+              sku,
+              name: sku,
+              monthlyPrice: 12,
+            })),
+          }
+        : catalog.getPublishedCatalog(),
+    );
+  };
+
+  it("SA-815e: pinned $12 / published (50, 19, 20): the checkout bills a self-serve row, a FORECASTING row and an admin row each at $12, with no mismatch notice", async () => {
+    const h = make({
+      rows: [
+        addonRow("CUSTOMER_PACK_100", { priceSnapshot: 12 }),
+        addonRow("FORECASTING", { priceSnapshot: 12 }),
+        addonRow("MSRP", { priceSnapshot: 12 }),
+      ],
+      items: [baseItem()],
+    });
+    pinAllAt12(h);
+    await h.completed();
+    const creates = h.client.subscriptionItems.create.mock.calls;
+    expect(creates).toHaveLength(3);
+    expect(creates.map((c: any[]) => c[0].price_data.unit_amount)).toEqual([1200, 1200, 1200]);
+    expect(h.rows.map((r: any) => r.priceSnapshot)).toEqual([12, 12, 12]);
+    expect(noticeCalls(h)).toHaveLength(0);
+  });
+
+  it("SA-815e: the checkout LINE of a self-serve row is priced at the pinned $12, not the published $50", async () => {
+    const h = make({ rows: [addonRow("CUSTOMER_PACK_100", { priceSnapshot: 12 })], items: [] });
+    pinAllAt12(h);
+    const { lineItems } = await h.mutations.checkoutAddonLines("t1", "month");
+    expect(lineItems).toHaveLength(1);
+    expect((lineItems[0] as any).price_data.unit_amount).toBe(1200);
   });
 
   it("pinned to a superseded version: a row priced at the PUBLISHED $20 is a mismatch - skipped untouched, one notice", async () => {

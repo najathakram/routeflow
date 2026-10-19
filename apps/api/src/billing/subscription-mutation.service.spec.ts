@@ -1796,6 +1796,26 @@ describe("SubscriptionMutationService.enableAddon/disableAddon — B865 ledger g
     expect(deltas).toEqual([]);
   });
 
+  it("SA-815e: a self-serve enable writes the row at the PINNED version's price ($12), not the published ($20)", async () => {
+    const published = catalog();
+    published.addonSkus = published.addonSkus.map((s) =>
+      s.sku === "CUSTOMER_PACK_100" ? { ...s, monthlyPrice: 20 } : s,
+    );
+    const { svc, tx } = make({
+      tenantStatus: "TRIAL",
+      txTenantStatus: "TRIAL",
+      sub: { ...BILLED_SUB, planVersionId: "v-old" },
+      catalog: published,
+      pinnedCatalog: { ...catalog(), id: "v-old" }, // CUSTOMER_PACK_100 $12
+    });
+
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "admin");
+
+    expect(tx.tenantAddon.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ priceSnapshot: 12 }) }),
+    );
+  });
+
   it("REG-B865-SELF disable books −stored snapshot, not −catalog", async () => {
     const { svc, events } = make({
       addonRow: {

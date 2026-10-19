@@ -60,6 +60,8 @@ function make(
      */
     pinnedVersionId?: string;
     pinnedIncludedAtPlan?: string;
+    /** SA-815e: the pinned catalog's REGULATED_ITEMS price (the published one stays $10). */
+    pinnedPrice?: number;
   } = {},
 ) {
   const store = fakeTenantAddonStore(opts.rows as any);
@@ -89,14 +91,14 @@ function make(
   } as any;
   const stripe = { isConfigured: true, client: { subscriptionItems: { create, del } } } as any;
   const entitlements = { invalidate: jest.fn() } as any;
-  const catalogOf = (id: string, includedAtPlan?: string) => ({
+  const catalogOf = (id: string, includedAtPlan?: string, price = 10) => ({
     id,
     definitions: [{ planKey: "SCALE", name: "Scale", monthlyPrice: 499 }],
     addonSkus: [
       {
         sku: "REGULATED_ITEMS",
         name: "Regulated",
-        monthlyPrice: 10,
+        monthlyPrice: price,
         ...(includedAtPlan ? { includedAtPlan } : {}),
       },
     ],
@@ -107,7 +109,7 @@ function make(
       .fn()
       .mockImplementation(async (id: string | null) =>
         id && id === opts.pinnedVersionId
-          ? catalogOf(id, opts.pinnedIncludedAtPlan)
+          ? catalogOf(id, opts.pinnedIncludedAtPlan, opts.pinnedPrice ?? 10)
           : catalogOf("v_pub", opts.includedAtPlan),
       ),
   } as any;
@@ -295,6 +297,17 @@ describe("SA-693 admin uncomp", () => {
       expect.anything(),
       expect.objectContaining({ amountDelta: 30 }),
     );
+  });
+
+  it("SA-815e: a manual-invoice un-comp prices the row at the PINNED version ($12), not the published ($10)", async () => {
+    const { svc, store } = make({
+      externalPayment: true,
+      rows: [compRow()],
+      pinnedVersionId: "v_old",
+      pinnedPrice: 12,
+    });
+    await svc.uncompAddon("t1", "REGULATED_ITEMS");
+    expect(store.rows[0]).toMatchObject({ isComp: false, priceSnapshot: 12 });
   });
 
   it("the result says how it was billed: STRIPE / MANUAL / UNBILLED", async () => {

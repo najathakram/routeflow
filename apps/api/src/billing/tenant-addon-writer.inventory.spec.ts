@@ -45,10 +45,9 @@ const SITES: Record<string, string[]> = {
     "billing/manual-activation-addons.ts#priceUnbilledAddonsOnActivation",
   ],
   "lock.cancel_clear_item": ["billing/billing-cron.service.ts#applyScheduledCancellations"],
-  "profile.apply": [
-    "billing/addon.service.ts#enableAddon",
-    "billing/addon.service.ts#disableAddon",
-  ],
+  // enable AND disable are named by the CALLER (platform-admin.controller, via PROFILE_APPLY_SOURCE); the one
+  // literal in the service is the disable's record actor
+  "profile.apply": ["billing/addon.service.ts#disableAddon"],
 };
 
 function sourceSites(): Map<string, Set<string>> {
@@ -354,6 +353,45 @@ describe("SA-788 (a) contract: one addon.state_changed per change, always, never
       actor: actor("tenant.disable", "TENANT_USER"),
     });
     expect(h.tx.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  // Opus review of 60bedd24b, SHOULD 1: the write is limited to the rows that were locked and recorded.
+  it("updateMany only touches the LOCKED rows: a row that starts matching after the read is never written without a record", async () => {
+    const h = harness([{ priceSnapshot: 5 }]);
+    // while r1 is being locked, a concurrent transaction commits a SECOND row that also matches the guard
+    h.tx.$queryRaw.mockImplementationOnce(async () => {
+      h.rows.push({ ...h.rows[0], id: "r-late", addonKey: "LATE", sku: "LATE" });
+      return [];
+    });
+    const res = await updateAddonRowsTx(h.tx, h.events, {
+      where: { tenantId: "t1", active: true },
+      data: { priceSnapshot: 9 },
+      actor: actor("manual_activation.price"),
+    });
+    expect(res.count).toBe(1);
+    expect(h.rows.find((r) => r.id === "r1")!.priceSnapshot).toBe(9);
+    expect(h.rows.find((r) => r.id === "r-late")!.priceSnapshot).toBe(5); // untouched
+    expect(h.records()).toHaveLength(1);
+    expect(h.records()[0][2].rowId).toBe("r1");
+  });
+
+  // SHOULD 2: the `before` a record diffs against is read UNDER the lock.
+  it("upsert records the change against the row as it is UNDER the lock, not as first read", async () => {
+    const h = harness([{ priceSnapshot: 5 }]);
+    // a concurrent transaction moves the price 5 -> 7 while the row is being locked
+    h.tx.$queryRaw.mockImplementationOnce(async () => {
+      h.rows[0].priceSnapshot = 7;
+      return [];
+    });
+    await upsertAddonRowTx(h.tx, h.events, {
+      tenantId: "t1",
+      addonKey: "REGULATED_ITEMS",
+      create: { tenantId: "t1", addonKey: "REGULATED_ITEMS", sku: "REGULATED_ITEMS" },
+      update: { priceSnapshot: 9 },
+      actor: actor("admin.enable"),
+    });
+    expect(h.records()).toHaveLength(1);
+    expect(h.records()[0][2].changes.priceSnapshot).toEqual([7, 9]); // not [5, 9]
   });
 
   it("addonChanges compares a Decimal-like price as a number and ignores equal values", () => {

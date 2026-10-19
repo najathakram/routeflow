@@ -121,9 +121,9 @@ export const CATALOG_READS: Readonly<Record<string, string>> = {
   "billing/addon-inclusion.ts#targetVersionFor.getPublishedVersion":
     "TARGET: the version a scheduled move re-pins to when the pinned one lacks the plan",
   "billing/addon.service.ts#enableAddon.getPublishedCatalog":
-    "LIST: existence + price of the SKU; the inclusion verdict reads the pinned catalog (inclusionContextOf)",
+    "LIST: existence of the SKU (and the fallback); the row's price and the inclusion verdict are the pinned catalog's (inclusionContextOf, pricedAddonSku)",
   "billing/addon.service.ts#uncompAddon.getPublishedCatalog":
-    "LIST: the catalog price a manual un-comp is invoiced at; the inclusion verdict reads inclusionCatalogFor",
+    "LIST: existence of the SKU (and the fallback); the manual-invoice price and the inclusion verdict are the pinned catalog's (inclusionCatalogFor, pricedAddonSku)",
   "billing/entitlements.service.ts#compute.getVersionForTenant":
     "RESOLVER: the version id is resolvePlanVersionId(sub, tenant)",
   "billing/entitlements.service.ts#compute.getPublishedVersion":
@@ -140,11 +140,13 @@ export const CATALOG_READS: Readonly<Record<string, string>> = {
     "PIN: whether a plan allows a transition, on the transition's own target version id",
   "billing/plan-version-pin.ts#inclusionCatalogFor.getVersionForTenant":
     "RESOLVER: the one place a pinned id becomes a catalog",
+  "billing/plan-version-pin.ts#pricedAddonSku.getPublishedCatalog":
+    "LIST: the fallback of the one price rule - a SKU the pinned version predates is priced at the published one",
   "billing/platform-pricing.service.ts#resolve.getVersionForTenant":
     "PIN: price resolution; its version id is resolvePlanVersionId(sub, tenant)",
   "billing/proration.service.ts#quote.getPublishedCatalog": "TARGET: the quoted plan's price",
   "billing/proration.service.ts#prorationPreview.getPublishedCatalog":
-    "TARGET: the previewed plan's price",
+    "LIST: existence of the add-on SKU; the quoted price is the pinned version's (addonSkuFor)",
   "billing/scheduled-price-change.ts#isDowngradePricePushed.getVersionForTenant":
     "PIN: the scheduled downgrade's PRICE, from the subscription's own pin (no add-on inclusion)",
   "billing/scheduled-price-change.ts#isDowngradePricePushed.getPublishedVersion":
@@ -161,18 +163,18 @@ export const CATALOG_READS: Readonly<Record<string, string>> = {
     "TARGET: the plan the pick lands on; the plan LEFT is judged by pinnedVersionOf",
   "billing/subscription-mutation.service.ts#planChangePreview.getPublishedCatalog":
     "TARGET: the previewed plan; the plan LEFT is judged by pinnedVersionOf",
+  "billing/subscription-mutation.service.ts#pinnedSkuOf.getPublishedCatalog":
+    "LIST: existence + the fallback of a self-serve row's SKU; its price and inclusion are the pinned catalog's (judgeAddon -> pricedAddonSku)",
   "billing/subscription-mutation.service.ts#upgradeLocked.getPublishedCatalog":
     "TARGET: the plan the upgrade lands on; the plan LEFT is judged by pinnedVersionOf",
   "billing/subscription-mutation.service.ts#downgrade.getPublishedCatalog":
     "TARGET: the scheduled plan's price",
   "billing/subscription-mutation.service.ts#enableAddon.getPublishedCatalog":
-    "LIST: existence + price of a self-serve SKU. the included-at-plan refusal reads the tenant's pinned SKU (planIncludedRefusal -> inclusionCatalogFor)",
+    "LIST: existence of a self-serve SKU (and the fallback). the row's price and the included-at-plan refusal are the tenant's pinned SKU (judgeAddon)",
   "billing/subscription-mutation.service.ts#addonEnableRefusal.getPublishedCatalog":
-    "LIST: as enableAddon. the included-at-plan refusal reads the tenant's pinned SKU (planIncludedRefusal)",
+    "LIST: as enableAddon. the included-at-plan refusal reads the tenant's pinned SKU (judgeAddon)",
   "billing/subscription-mutation.service.ts#checkoutAddonLines.getPublishedCatalog":
-    "LIST: price of each add-on line. the included-at-plan refusal reads the tenant's pinned SKU (planIncludedRefusal)",
-  "billing/subscription-mutation.service.ts#billUnbilledRow.getPublishedCatalog":
-    "LIST: price of a self-serve / plan-change row. an ADMIN-ONLY row is judged AND billed on addonPricingCatalog (inclusionCatalogFor); the included-at-plan refusal reads the pinned SKU (planIncludedRefusal)",
+    "LIST: existence of each add-on line's SKU. its price and the refusal are the tenant's pinned SKU (judgeAddon)",
   "billing/subscription-mutation.service.ts#disableAddonLocked.getPublishedCatalog":
     "LIST: the SKU's display name for a STOP notice",
   "billing/subscription.service.ts#getSubscription.getVersionForTenant":
@@ -237,11 +239,31 @@ describe("SA-815a P3 - the named sites read through the resolver", () => {
         "billing/billing-cron.service.ts#applyScheduledDowngrades",
         "billing/subscription-mutation.service.ts#addonPricingCatalog",
         "billing/subscription-mutation.service.ts#inclusionCatalog",
+        "billing/subscription-mutation.service.ts#judgeAddon",
         "billing/subscription-mutation.service.ts#pinnedVersionOf",
-        "billing/subscription-mutation.service.ts#planIncludedRefusal",
         "billing/subscription-mutation.service.ts#planChangePreview",
         "platform-admin/platform-admin.service.ts#activateManualSubscription",
         "platform-admin/platform-admin.service.ts#updatePlanLocked",
+      ].sort(),
+    );
+  });
+
+  it("SA-815e: every add-on PRICE the app writes, quotes or bills is read through the one rule (pricedAddonSku / addonSkuFor)", () => {
+    // enable (admin + self-serve), un-comp, the preview, the checkout lines + (c) loop + unbilled-row billing.
+    // Plan-change paths (quote, subscribe, the scheduled downgrade) price the TARGET version and are not here.
+    // (the definitions in plan-version-pin.ts are not callers)
+    expect(
+      callers(/\b(pricedAddonSku|addonSkuFor|addonPriceFor)\s*\(/).filter(
+        (s) => !s.startsWith("billing/plan-version-pin.ts"),
+      ),
+    ).toEqual(
+      [
+        "billing/addon.service.ts#enableAddon",
+        "billing/addon.service.ts#uncompAddon",
+        "billing/proration.service.ts#prorationPreview",
+        "billing/subscription-mutation.service.ts#adoptCheckoutAddons",
+        "billing/subscription-mutation.service.ts#billUnbilledRow",
+        "billing/subscription-mutation.service.ts#judgeAddon",
       ].sort(),
     );
   });
