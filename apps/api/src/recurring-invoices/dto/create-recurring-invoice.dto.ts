@@ -14,6 +14,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { RecurringFrequency } from "@prisma/client";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 export class RecurringInvoiceItemDto {
   @IsString() description: string;
@@ -25,8 +26,8 @@ export class RecurringInvoiceItemDto {
    */
   @IsNumber() @Min(0.001) qty: number;
   @IsNumber() @Min(0) unitPrice: number;
-  @IsOptional() @IsNumber() @Min(0) discount?: number;
-  @IsOptional() @IsNumber() @Min(0) taxRate?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) discount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) taxRate?: number;
 }
 
 export class CreateRecurringInvoiceDto {
@@ -37,8 +38,8 @@ export class CreateRecurringInvoiceDto {
   @IsOptional() @IsBoolean() autoSend?: boolean;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsString() terms?: string;
-  @IsOptional() @IsNumber() @Min(0) discount?: number;
-  @IsOptional() @IsNumber() @Min(0) shippingFee?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) discount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) shippingFee?: number;
   @IsDateString() nextRunAt: string;
   @IsArray()
   @ArrayMinSize(1)

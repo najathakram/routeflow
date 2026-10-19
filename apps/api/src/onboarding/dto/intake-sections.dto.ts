@@ -22,6 +22,7 @@ import {
 import type { IntakeSectionKey } from "@prisma/client";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { IsTenantTimeZone } from "../../common/is-tenant-time-zone.validator";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /**
  * One class-validator DTO per IntakeSectionKey (#2159 S2) — playbook Appendix A, sections B–H.
@@ -100,7 +101,11 @@ class LicenceDto {
 }
 
 export class IntakeTaxComplianceDto {
-  @IsOptional() @IsNumber({ maxDecimalPlaces: 4 }) @Min(0) @Max(30) salesTaxRatePercent?: number;
+  @IsOptionalNotNull()
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  @Max(30)
+  salesTaxRatePercent?: number;
   @IsOptional()
   @Matches(/^\d{2}-?\d{7}$/, { message: "federalEin must look like 12-3456789" })
   federalEin?: string;
@@ -129,7 +134,7 @@ export class IntakeInvoicingDto {
   @IsOptional() @IsString() @MaxLength(S) paymentTermsOther?: string;
   @IsOptional() @IsString() @MaxLength(L) invoiceFooterText?: string;
   @IsBoolean() takesDeposits!: boolean;
-  @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(100) depositPercent?: number;
+  @IsOptionalNotNull() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(100) depositPercent?: number;
   @IsArray()
   @ArrayMaxSize(6)
   @IsIn(["cash", "check", "ach", "card", "zelle", "other"], { each: true })

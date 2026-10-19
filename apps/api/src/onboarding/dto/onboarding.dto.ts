@@ -16,6 +16,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { DemoBookingStatus, OnboardingCaseStatus, OnboardingStage } from "@prisma/client";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 // Values come from the generated Prisma enums: `@routeflow/types` ships TypeScript source and is
 // TYPE-ONLY at API runtime (the compiled API cannot load it). The shared mirrors are pinned
 // set-equal to these by enum-parity.spec.ts.
@@ -34,7 +35,7 @@ export class OnboardingDealTermsDto {
   addonSkus?: string[];
   @IsOptional() @IsIn(["month", "year"]) interval?: "month" | "year";
   /** Integer cents — never a float dollar amount. */
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) setupFeeCents?: number;
+  @IsOptionalNotNull() @Type(() => Number) @IsInt() @Min(0) setupFeeCents?: number;
   @IsOptional() @IsString() @MaxLength(2000) note?: string;
 }
 

@@ -9,6 +9,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { VendorBillItemDto } from "./create-vendor-bill.dto";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /**
  * PATCH /vendor-bills/:id body. F4-003: types the previously untyped `@Body()
@@ -26,7 +27,7 @@ export class UpdateVendorBillDto {
   /** The supplier's own invoice number; stored normalized and used for dedup. */
   @IsOptional() @IsString() supplierInvoiceNumber?: string;
   /** Sales tax as printed. Omit to keep the stored tax; totalOwed refolds it. */
-  @IsOptional() @IsNumber() @Min(0) taxAmount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) taxAmount?: number;
 
   @IsOptional()
   @IsArray()
