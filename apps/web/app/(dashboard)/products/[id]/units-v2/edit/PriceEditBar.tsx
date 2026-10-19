@@ -54,9 +54,14 @@ const FINISH_FIRST = "Finish Change prices first.";
 const SAVE_PAUSED = "Save is paused while Change prices is open.";
 
 /** K11-15: right after Change prices Apply the bar says what is staged; any later edit is the plain count. */
-const countLine = (count: number, lead: string | null) =>
+// K12 F05: the Auto prices that follow are named, so this count and the panel's "N prices will change" add up.
+const countLine = (count: number, lead: string | null, follows = 0) =>
   lead
-    ? `${lead}: ${count} price${count === 1 ? "" : "s"} ready. Save to keep ${count === 1 ? "it" : "them"}.`
+    ? `${lead}: ${count} price${count === 1 ? "" : "s"} ready${
+        follows > 0
+          ? `, and ${follows} Auto price${follows === 1 ? "" : "s"} follow${follows === 1 ? "s" : ""}`
+          : ""
+      }. Save to keep ${count === 1 ? "it" : "them"}.`
     : `${count} unsaved`;
 
 /**
@@ -169,7 +174,9 @@ export function PriceEditBar({
             // K11-18: the wider "Finish Change prices first." link would squeeze this onto two lines at phone width
             // (+4 px of bar height); beside the open panel it is stale anyway, so below sm it is read, not shown.
             <span className={changePricesOpen ? "max-sm:sr-only" : undefined}>
-              {d.count === 0 ? "Nothing changed yet" : countLine(d.count, d.appliedLead)}
+              {d.count === 0
+                ? "Nothing changed yet"
+                : countLine(d.count, d.appliedLead, d.appliedFollows)}
             </span>
           )}
           {told && changePricesOpen && <span className="sr-only">{SAVE_PAUSED}</span>}

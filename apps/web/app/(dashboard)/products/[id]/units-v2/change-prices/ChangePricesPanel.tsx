@@ -135,6 +135,7 @@ function ChangePricesForm({
       folded.plan,
       (cs) => planPriceChange(view, { ...form, value }, rules, tierName, { customers: cs }),
       lead,
+      folded.plan.followers.length,
     );
     if (folded.customerTicked) draft.setOfferTicked(0, true);
     folded.customerKeeps.forEach((m) => draft.keepCustomer(m));
