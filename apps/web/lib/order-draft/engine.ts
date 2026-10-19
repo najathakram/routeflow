@@ -112,9 +112,10 @@ export interface OrderDraftEngine {
   /** Bind to an existing server draft (a resume) without writing anything. */
   hydrate(h: EngineHydration): void;
   /**
-   * Settle a 409 by keeping BOTH versions: nothing is lost (A2). `keepKey` (Keep this one, when this device's submit key may
-   * already have been used by a submit) keeps this version ON the same draft with its original key, and parks the OTHER device's
-   * version as the new draft instead, so the key that may already own an order is never moved or re-minted.
+   * Settle a 409 by keeping BOTH versions: nothing is lost (A2). `keepKey` (when this device's submit key may already have been
+   * used by a submit) holds for BOTH choices: this version stays ON the original draft with its original key, and the OTHER
+   * device's version is parked as the new draft (and, for "open the other", opened), so the key that may already own an order is
+   * never moved or re-minted.
    */
   resolveConflict(
     choice: ConflictChoice,
@@ -359,10 +360,11 @@ export function createOrderDraftEngine(deps: OrderDraftEngineDeps): OrderDraftEn
     async resolveConflict(choice, opts) {
       if (!conflict) throw new Error("There is no conflict to resolve.");
       const { mine, current } = conflict;
-      if (choice === "keep-mine" && opts?.keepKey) {
-        // This device's submit key may already own an order (a submit whose outcome is unknown): it stays on THIS draft with
-        // this version. The other device's version is parked as its own new draft with its own fresh key, then ours is written
-        // over the draft, checked against THEIR updatedAt. Nothing is lost.
+      if (opts?.keepKey) {
+        // This device's submit key may already own an order (a submit whose outcome is unknown): it stays on THIS device's version
+        // ON the original draft, whichever version the user chooses to look at. The other device's version is parked as its own
+        // new draft with its own fresh key, then ours is written over the original draft, checked against THEIR updatedAt.
+        // Nothing is lost.
         const theirs = withDraftSubmitKey(current.payload, deps.mintKey()) as DraftPayload;
         const parked = await Promise.resolve(
           deps.createDraft({
@@ -374,8 +376,9 @@ export function createOrderDraftEngine(deps: OrderDraftEngineDeps): OrderDraftEn
           }),
         );
         if (!parked?.id) throw new Error("The draft was not created.");
+        let row: DraftRowResult | undefined | void;
         try {
-          const row = await Promise.resolve(
+          row = await Promise.resolve(
             deps.updateDraft({
               id: current.id,
               payload: mine,
@@ -383,14 +386,6 @@ export function createOrderDraftEngine(deps: OrderDraftEngineDeps): OrderDraftEn
               ...latestMeta,
             }),
           );
-          conflict = null;
-          adopt(row);
-          syncedHash = payloadHash(mine);
-          lastSaved = snapshotOf(mine, latestMeta);
-          latestPayload = mine;
-          setDraftId(current.id);
-          mirror(mine, latestMeta);
-          return { choice, draftId: current.id, payload: mine, parkedDraftId: parked.id };
         } catch (err) {
           const again = deps.parseConflict(err);
           if (again) {
@@ -399,6 +394,35 @@ export function createOrderDraftEngine(deps: OrderDraftEngineDeps): OrderDraftEn
           }
           throw err;
         }
+        conflict = null;
+        if (choice === "keep-mine") {
+          adopt(row);
+          syncedHash = payloadHash(mine);
+          lastSaved = snapshotOf(mine, latestMeta);
+          latestPayload = mine;
+          setDraftId(current.id);
+          mirror(mine, latestMeta);
+          return { choice, draftId: current.id, payload: mine, parkedDraftId: parked.id };
+        }
+        // open-other: this device's version is safe on the original draft (with its key); the editor opens the other device's
+        // version, which now lives in the new draft.
+        draftId = parked.id;
+        serverUpdatedAt = parked.updatedAt ?? null;
+        syncedHash = payloadHash(theirs);
+        lastSaved = null;
+        idListener?.(draftId);
+        return {
+          choice,
+          current: {
+            id: parked.id,
+            updatedAt: parked.updatedAt ?? "",
+            payload: theirs,
+            customerId: current.customerId,
+            customerName: current.customerName,
+            title: current.title,
+          },
+          parkedDraftId: current.id,
+        };
       }
       // Both versions survive: this device's copy becomes its OWN server draft with its OWN submit key (the original key
       // belongs to the draft the other device changed, and the server refuses a key that is on another draft).
