@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { addonBillingModeOf, inclusionOf, usd, type AddonSkuDef } from "./addon-inclusion";
 import { writeAdminNotice } from "./manual-invoice-notice";
 import { PlanCatalogService } from "./plan-catalog.service";
+import { inclusionCatalogFor, resolvePlanVersionId } from "./plan-version-pin";
 import {
   BILLING_EVENTS,
   addonSkuCode,
@@ -49,6 +50,8 @@ export interface InvariantTenant {
   name: string | null;
   status: string;
   plan: string | null;
+  /** The tenant-side pin: the mirror `resolvePlanVersionId` falls back to when the subscription has none. */
+  planVersionId?: string | null;
   subscription: {
     planKey?: string | null;
     planVersionId?: string | null;
@@ -254,6 +257,7 @@ export class AddonInvariantJob {
           name: true,
           status: true,
           plan: true,
+          planVersionId: true,
           subscription: {
             select: {
               planKey: true,
@@ -293,7 +297,7 @@ export class AddonInvariantJob {
         if (p?.rowId) latest.set(p.rowId, p.actor?.kind ?? null);
       }
       for (const t of tenants) {
-        const v = t.subscription?.planVersionId ?? "";
+        const v = resolvePlanVersionId(t.subscription, t) ?? "";
         if (!skuCache.has(v)) skuCache.set(v, await this.skusFor(v));
       }
 
@@ -303,7 +307,7 @@ export class AddonInvariantJob {
         tenants,
         rowsOf: (id) => byTenant.get(id) ?? [],
         latestActorKind: (rowId) => (latest.has(rowId) ? latest.get(rowId) : undefined),
-        skusOf: (t) => skuCache.get(t.subscription?.planVersionId ?? "") ?? null,
+        skusOf: (t) => skuCache.get(resolvePlanVersionId(t.subscription, t) ?? "") ?? null,
         planKeyOf: (t) =>
           normalizePlanKey(t.subscription?.planKey) ?? (t.plan ? planKeyFromEnum(t.plan) : null),
         modeOf: (t) => addonBillingModeOf(this.stripe.isConfigured, t.subscription),
@@ -329,9 +333,8 @@ export class AddonInvariantJob {
 
   private async skusFor(planVersionId: string): Promise<readonly AddonSkuDef[] | null> {
     try {
-      const v = planVersionId
-        ? await this.catalog.getVersionForTenant(planVersionId)
-        : await this.catalog.getPublishedCatalog();
+      // SA-815a: the ONE resolver (an empty id = unpinned = the published version).
+      const v = await inclusionCatalogFor(this.catalog, { planVersionId: planVersionId || null });
       return v.addonSkus;
     } catch (err) {
       this.logger.error(`addon invariant: catalog unresolved (${(err as Error).message})`);

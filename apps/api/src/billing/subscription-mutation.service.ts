@@ -85,6 +85,7 @@ import {
 } from "./addon-inclusion";
 import { addonCatalogInvalid } from "./addon-catalog-invalid";
 import { updateAddonRowTx, updateAddonRowsTx, upsertAddonRowTx } from "./tenant-addon-writer";
+import { inclusionCatalogFor, pinPlanVersionTx } from "./plan-version-pin";
 import { dunningZone } from "./dunning-zone";
 import { formatInZone } from "./subscription-billing-extras";
 import { stripeSubscriptionPeriod } from "./stripe-period";
@@ -503,6 +504,7 @@ export class SubscriptionMutationService {
             name: true,
             slug: true,
             readOnlyReason: true,
+            planVersionId: true,
           },
         }),
         tx.tenantSubscription.findUnique({
@@ -512,6 +514,7 @@ export class SubscriptionMutationService {
           // ledger nets against.
           select: {
             planKey: true,
+            planVersionId: true,
             cycle: true,
             periodEnd: true,
             priceOverrideMonthly: true,
@@ -629,9 +632,13 @@ export class SubscriptionMutationService {
       const adjustedPrice = new Map<string, number>();
       tenantLabelForNotice = lockedTenant.name ?? lockedTenant.slug ?? tenantId;
       const addonMode = this.addonModeOf(lockedSub);
+      // SA-815 / SA-815a: the plan being LEFT is judged by the tenant's own pinned catalog, as read under the lock
+      // (sub pin, else tenant pin, else published); the target side is the published version the pick lands on.
+      const fromVersion = await this.pinnedVersionOf(lockedSub, lockedTenant, version);
       for (const r of await stopBillingIncludedAddonsTx(tx, this.events, {
         tenantId,
         fromPlanKey: lockedFromKey,
+        fromAddonSkus: fromVersion.addonSkus,
         toPlanKey: input.planKey,
         toPlanName: def.name,
         addonSkus: version.addonSkus,
@@ -648,7 +655,7 @@ export class SubscriptionMutationService {
       const leaving = await repriceAddonsLeavingInclusionTx(tx, this.events, {
         tenantId,
         fromPlanKey: lockedFromKey,
-        fromAddonSkus: version.addonSkus,
+        fromAddonSkus: fromVersion.addonSkus,
         toPlanKey: input.planKey,
         toPlanName: def.name,
         toAddonSkus: version.addonSkus,
@@ -675,7 +682,6 @@ export class SubscriptionMutationService {
         where: { tenantId },
         create: {
           tenantId,
-          planVersionId: version.id,
           planKey: input.planKey,
           currentPlan: planKeyToEnum(input.planKey),
           cycle: input.cycle,
@@ -685,7 +691,6 @@ export class SubscriptionMutationService {
           trialConvertedAt: wasTrial ? now : null,
         },
         update: {
-          planVersionId: version.id,
           planKey: input.planKey,
           currentPlan: planKeyToEnum(input.planKey),
           cycle: input.cycle,
@@ -701,9 +706,15 @@ export class SubscriptionMutationService {
       // The ONE path to ACTIVE (SA-733r2 N5): it nulls the stale "trial_cancelled"/"trial_expired" reason (RO-1 ships
       // it to the client) and clears the dunning clock + pause in this tx.
       const toActive = await transitionToActiveTx(tx, tenantId, {
-        data: { planVersionId: version.id, plan: planKeyToEnum(input.planKey) },
+        data: { plan: planKeyToEnum(input.planKey) },
       });
       exitBox.exit = toActive.exit;
+      // SA-815a (G1c-1): both pins through the ONE writer, once the subscription row exists.
+      await pinPlanVersionTx(tx, tenantId, version.id, {
+        kind: "TENANT_USER",
+        id: actorId ?? null,
+        source: "subscribe",
+      });
       for (const [code, qty] of desiredNow) {
         const meta = skuByCode.get(code)!;
         // #2188 / SA-385: re-activate the tenant's row for this SKU IN PLACE — including one
@@ -893,7 +904,7 @@ export class SubscriptionMutationService {
     const [tenant, priorSub] = await Promise.all([
       this.prisma.tenant.findUnique({
         where: { id: tenantId },
-        select: { status: true, plan: true },
+        select: { status: true, plan: true, planVersionId: true },
       }),
       this.prisma.tenantSubscription.findUnique({
         where: { tenantId },
@@ -1045,7 +1056,7 @@ export class SubscriptionMutationService {
         await readEnteringInclusion(
           this.prisma,
           tenantId,
-          (await this.pinnedVersionOf(priorSub.planVersionId, version)).addonSkus,
+          (await this.pinnedVersionOf(priorSub, tenant, version)).addonSkus,
           fromKey,
           version.addonSkus,
           toKey,
@@ -1081,7 +1092,7 @@ export class SubscriptionMutationService {
     // PINNED `planVersionId` via `getVersionForTenant` (grandfathering), never the published one,
     // which for a tenant pinned to an older version quotes a different seat cap than the sweep
     // enforces. So the warning fires exactly when the sweep would, with that version's numbers.
-    const downgradeVersion = await this.catalog.getVersionForTenant(priorSub.planVersionId);
+    const downgradeVersion = await inclusionCatalogFor(this.catalog, priorSub, tenant);
     const targetDef = findPlanDefinition(downgradeVersion.definitions, toKey);
     const seatsIncluded = targetDef?.seatsIncluded ?? null;
     // downgrade() writes `cancelAtPeriodEnd: false` — the same silent revocation the UPGRADE
@@ -1135,28 +1146,37 @@ export class SubscriptionMutationService {
   }
 
   /**
-   * SA-787 C3: the published catalog's add-on SKUs and plan names, for the checkout-completed handler's inclusion
-   * step (BillingService holds no catalog of its own).
+   * SA-787 C3: the tenant's catalog add-on SKUs and plan names (SA-815a: its pinned version, else the published one),
+   * for the checkout-completed handler's inclusion step (BillingService holds no catalog of its own).
    */
-  async inclusionCatalog(): Promise<{
+  async inclusionCatalog(tenantId: string): Promise<{
     addonSkus: readonly AddonSkuDef[];
     planNameOf(planKey: string): string;
   }> {
-    const published = await this.catalog.getPublishedCatalog();
+    // SA-815a: the tenant's own pinned catalog (sub pin, else tenant pin, else published) - a checkout does not
+    // re-pin, so both sides of the move are judged by the version the tenant sits on.
+    const [sub, tenant] = await Promise.all([
+      this.prisma.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: { planVersionId: true },
+      }),
+      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { planVersionId: true } }),
+    ]);
+    const pinned = await inclusionCatalogFor(this.catalog, sub, tenant);
     return {
-      addonSkus: published.addonSkus,
+      addonSkus: pinned.addonSkus,
       planNameOf: (planKey) =>
-        findPlanDefinition(published.definitions ?? [], planKey)?.name ?? planKey,
+        findPlanDefinition(pinned.definitions ?? [], planKey)?.name ?? planKey,
     };
   }
 
   /** The version a tenant is pinned to, or `published` when it is the same (no extra read). */
-  private async pinnedVersionOf(
-    planVersionId: string | null | undefined,
+  private pinnedVersionOf(
+    sub: { planVersionId?: string | null } | null | undefined,
+    tenant: { planVersionId?: string | null } | null | undefined,
     published: PlanVersionWithCatalog,
   ): Promise<PlanVersionWithCatalog> {
-    if (!planVersionId || planVersionId === published.id) return published;
-    return this.catalog.getVersionForTenant(planVersionId);
+    return inclusionCatalogFor(this.catalog, sub, tenant, published);
   }
 
   /**
@@ -1253,7 +1273,7 @@ export class SubscriptionMutationService {
       this.prisma.tenantSubscription.findUnique({ where: { tenantId } }),
       this.prisma.tenant.findUnique({
         where: { id: tenantId },
-        select: { plan: true, status: true, deletedAt: true },
+        select: { plan: true, status: true, deletedAt: true, planVersionId: true },
       }),
     ]);
     // #2583 / SA-513: a deleted tenant is refused before the transaction.
@@ -1329,7 +1349,7 @@ export class SubscriptionMutationService {
         proration: "create_prorations",
         stopBillingAddons: true,
         fromPlanKey: fromKey,
-        fromVersion: await this.pinnedVersionOf(sub.planVersionId, version),
+        fromVersion: await this.pinnedVersionOf(sub, tenant, version),
         actorId,
       }),
     );
@@ -1387,7 +1407,6 @@ export class SubscriptionMutationService {
         data: {
           planKey,
           currentPlan: planKeyToEnum(planKey),
-          planVersionId: version.id,
           basePriceSnapshot: override ?? def.monthlyPrice, // SA-444a: what the tenant pays
           // Committing a plan change disarms every OTHER pending transition — the same fields
           // subscribe() clears. Leaving a downgrade armed would silently drop the tenant back
@@ -1405,7 +1424,13 @@ export class SubscriptionMutationService {
       }
       await tx.tenant.update({
         where: { id: tenantId },
-        data: { plan: planKeyToEnum(planKey), planVersionId: version.id },
+        data: { plan: planKeyToEnum(planKey) },
+      });
+      // SA-815a (G1c-1): both pins through the ONE writer (the lost-race guard above already threw).
+      await pinPlanVersionTx(tx, tenantId, version.id, {
+        kind: "TENANT_USER",
+        id: actorId ?? null,
+        source: "upgrade",
       });
       await this.events.emit(
         tenantId,

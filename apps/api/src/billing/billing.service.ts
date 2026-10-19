@@ -2163,7 +2163,9 @@ export class BillingService {
     // includes stops billing and stays on; one it stops including is billed by the adoption step (billUnbilledRow
     // already bills a $0 row whose SKU the new plan does not include).
     const inclusion =
-      planKeyForCheckout && !alreadyLinked ? await this.mutations.inclusionCatalog?.() : undefined;
+      planKeyForCheckout && !alreadyLinked
+        ? await this.mutations.inclusionCatalog?.(tenantId)
+        : undefined;
 
     const upsertArgs = {
       where: { tenantId },

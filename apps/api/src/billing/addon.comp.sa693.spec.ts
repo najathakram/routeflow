@@ -54,6 +54,12 @@ function make(
     /** SA-786: the catalog's `includedAtPlan` for REGULATED_ITEMS and the plan the tenant is on. */
     includedAtPlan?: string;
     planKey?: string;
+    /**
+     * SA-815a: the version the subscription is PINNED to, and what that pinned catalog says about REGULATED_ITEMS
+     * (the published catalog above keeps `includedAtPlan`). Unset = the pin is the published version.
+     */
+    pinnedVersionId?: string;
+    pinnedIncludedAtPlan?: string;
   } = {},
 ) {
   const store = fakeTenantAddonStore(opts.rows as any);
@@ -73,6 +79,7 @@ function make(
               stripeSubId: opts.stripeSubId ?? null,
               externalPayment: opts.externalPayment ?? false,
               planKey: opts.planKey ?? null,
+              planVersionId: opts.pinnedVersionId ?? null,
             },
       ),
     },
@@ -82,18 +89,27 @@ function make(
   } as any;
   const stripe = { isConfigured: true, client: { subscriptionItems: { create, del } } } as any;
   const entitlements = { invalidate: jest.fn() } as any;
+  const catalogOf = (id: string, includedAtPlan?: string) => ({
+    id,
+    definitions: [{ planKey: "SCALE", name: "Scale", monthlyPrice: 499 }],
+    addonSkus: [
+      {
+        sku: "REGULATED_ITEMS",
+        name: "Regulated",
+        monthlyPrice: 10,
+        ...(includedAtPlan ? { includedAtPlan } : {}),
+      },
+    ],
+  });
   const catalog = {
-    getPublishedCatalog: jest.fn().mockResolvedValue({
-      definitions: [{ planKey: "SCALE", name: "Scale", monthlyPrice: 499 }],
-      addonSkus: [
-        {
-          sku: "REGULATED_ITEMS",
-          name: "Regulated",
-          monthlyPrice: 10,
-          ...(opts.includedAtPlan ? { includedAtPlan: opts.includedAtPlan } : {}),
-        },
-      ],
-    }),
+    getPublishedCatalog: jest.fn().mockResolvedValue(catalogOf("v_pub", opts.includedAtPlan)),
+    getVersionForTenant: jest
+      .fn()
+      .mockImplementation(async (id: string | null) =>
+        id && id === opts.pinnedVersionId
+          ? catalogOf(id, opts.pinnedIncludedAtPlan)
+          : catalogOf("v_pub", opts.includedAtPlan),
+      ),
   } as any;
   const featureResolver = { invalidate: jest.fn() } as any;
   const authority = { assertFeatureRequiresMet: jest.fn().mockResolvedValue(undefined) } as any;
@@ -365,6 +381,40 @@ describe("SA-693 admin uncomp", () => {
     expect(mrrEmits(events)).toHaveLength(0);
   });
 
+  // SA-815a (un-comp, SA-815 site 5): inclusion is judged by the tenant's PINNED catalog, not the published one.
+  it("SA-815a: a tenant pinned to a version that INCLUDES the SKU is not priced on un-comp, though the published catalog no longer includes it", async () => {
+    const { svc, store, audit, events } = make({
+      externalPayment: true,
+      planKey: "SCALE",
+      pinnedVersionId: "v_old",
+      pinnedIncludedAtPlan: "SCALE",
+      // published: not included at SCALE (no includedAtPlan)
+      rows: [compRow()],
+    });
+
+    const res = await svc.uncompAddon("t1", "REGULATED_ITEMS");
+
+    expect(store.rows[0]).toMatchObject({ active: true, isComp: false, priceSnapshot: 0 });
+    expect(audit.create).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
+    expect(res.billing).toBe("UNBILLED");
+  });
+
+  it("SA-815a control: a tenant pinned to a version that does NOT include it is still priced (published includes it, pin wins)", async () => {
+    const { svc, store, audit } = make({
+      externalPayment: true,
+      planKey: "SCALE",
+      includedAtPlan: "SCALE", // published includes it ...
+      pinnedVersionId: "v_old", // ... the pinned version does not
+      rows: [compRow()],
+    });
+
+    await svc.uncompAddon("t1", "REGULATED_ITEMS");
+
+    expect(store.rows[0]).toMatchObject({ isComp: false, priceSnapshot: 10 });
+    expect(audit.create).toHaveBeenCalledTimes(1);
+  });
+
   it("R12 control: below the including plan the manual tenant is still priced and announced", async () => {
     const { svc, store, audit } = make({
       externalPayment: true,
@@ -546,5 +596,37 @@ describe("SA-769: switching a profile comp OFF is a plain disable with no Stripe
     expect(del).not.toHaveBeenCalled();
     expect(mrrEmits(events)).toHaveLength(0);
     expect(store.rows[0]).toMatchObject({ active: false });
+  });
+});
+
+describe("SA-822: a business-profile apply that turns an add-on off records WHO and from WHERE", () => {
+  const stateChanged = (events: any) =>
+    events.emit.mock.calls.filter((c: any[]) => c[1] === "addon.state_changed");
+
+  it("records ONE addon.state_changed with the acting super-admin and the profile.apply source", async () => {
+    const { svc, events } = make({ rows: [compRow()] });
+
+    await svc.disableAddon("t1", "REGULATED_ITEMS", "admin-1", "profile.apply");
+
+    const records = stateChanged(events);
+    expect(records).toHaveLength(1);
+    expect(records[0][2]).toMatchObject({
+      source: "profile.apply",
+      actor: { kind: "PLATFORM_ADMIN", id: "admin-1" },
+      changes: { active: [true, false] },
+    });
+    expect(records[0][3]).toMatchObject({ actorId: "admin-1" });
+  });
+
+  it("a plain admin disable keeps its own source (admin.disable)", async () => {
+    const { svc, events } = make({ rows: [compRow()] });
+
+    await svc.disableAddon("t1", "REGULATED_ITEMS", "admin-1");
+
+    expect(stateChanged(events)).toHaveLength(1);
+    expect(stateChanged(events)[0][2]).toMatchObject({
+      source: "admin.disable",
+      actor: { kind: "PLATFORM_ADMIN", id: "admin-1" },
+    });
   });
 });

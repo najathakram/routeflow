@@ -445,8 +445,12 @@ export class PlatformAdminController {
     @Param("id") id: string,
     @Body() dto: DisableAddonDto,
     @CurrentUser() admin: JwtPayload,
+    /** SA-822: set only by a business-profile apply, so the add-on change record names its true source. */
+    source?: "profile.apply",
   ) {
-    const result = await this.addonService.disableAddon(id, dto.addonKey, admin.sub);
+    const result = source
+      ? await this.addonService.disableAddon(id, dto.addonKey, admin.sub, source)
+      : await this.addonService.disableAddon(id, dto.addonKey, admin.sub);
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_DISABLED, {
       addonKey: dto.addonKey,
     });
@@ -895,7 +899,12 @@ export class PlatformAdminController {
     for (const b of resolved.plan.billing) {
       current = { step: "billing", key: b.featureKey };
       try {
-        await this.disableAddon(id, { addonKey: b.featureKey } as DisableAddonDto, admin);
+        await this.disableAddon(
+          id,
+          { addonKey: b.featureKey } as DisableAddonDto,
+          admin,
+          "profile.apply",
+        );
       } catch {
         throw billingFailed();
       }

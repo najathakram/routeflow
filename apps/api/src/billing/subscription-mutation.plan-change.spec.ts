@@ -163,13 +163,15 @@ function make(o: Opts = {}) {
       findUnique: jest.fn(async () => ({ couponFull: false })),
       // The optimistic guard: lands only while the stored plan is still the one the attempt read.
       updateMany: jest.fn(async ({ where, data }: any) => {
-        if (where.planKey !== db.sub.planKey) return { count: 0 };
+        // the pin writer's write (SA-815a) has no planKey guard: it follows the committed plan write
+        if (where.planKey !== undefined && where.planKey !== db.sub.planKey) return { count: 0 };
         Object.assign(db.sub, data);
         return { count: 1 };
       }),
     },
     tenant: {
       update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }), // SA-815a: the pin writer's tenant mirror
       findUnique: jest
         .fn()
         .mockResolvedValue({ status: "ACTIVE", class: "PRODUCTION", deletedAt: null }),

@@ -244,6 +244,7 @@ describeDb(
             manualPay: false,
             tenantLabel: "",
             actorId: "admin-b1103",
+            actorKind: "PLATFORM_ADMIN",
           }),
         ),
       ).rejects.toThrow("Add-ons changed concurrently");

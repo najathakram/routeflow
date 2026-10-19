@@ -542,7 +542,14 @@ function make(opts: Opts = {}) {
   } as any;
   const mutations = new SubscriptionMutationService(
     prisma,
-    { getPublishedCatalog: jest.fn().mockResolvedValue(CATALOG) } as any,
+    (() => {
+      const getPublishedCatalog = jest.fn().mockResolvedValue(CATALOG);
+      // SA-815a: an UNPINNED tenant's inclusion catalog is `getVersionForTenant(null)` = the published one
+      return {
+        getPublishedCatalog,
+        getVersionForTenant: jest.fn(() => getPublishedCatalog()),
+      } as any;
+    })(),
     {} as any,
     { getSubscription: jest.fn().mockResolvedValue({}) } as any,
     entitlements,

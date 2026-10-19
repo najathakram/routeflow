@@ -67,6 +67,8 @@ function make(
     },
     tenant: {
       update: jest.fn().mockResolvedValue({}),
+      // SA-815a: the one pin writer mirrors the subscription's pin onto the tenant.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findUnique: jest.fn().mockResolvedValue({
         status: "ACTIVE",
         class: "PRODUCTION",
@@ -511,7 +513,7 @@ describe("BillingCronService", () => {
     expect(order).toEqual(["onPlanChange", "tenant-lock", "plan-write"]);
   });
 
-  it("flag OFF: the sweep issues exactly its old query (no tenant.plan join) and never touches the hook", async () => {
+  it("flag OFF: the sweep issues its old query (no tenant.plan join; only the pin rides along) and never touches the hook", async () => {
     const { svc, prisma, planTransition } = make({
       downgrades: [
         {
@@ -530,7 +532,8 @@ describe("BillingCronService", () => {
     const call = prisma.tenantSubscription.findMany.mock.calls.find(
       (c: any[]) => c[0].where.downgradeEffectiveAt,
     )!;
-    expect(call[0].select).not.toHaveProperty("tenant");
+    // flag OFF: no `plan` join; only the tenant's pin (the resolver's fallback, SA-815a) rides along
+    expect(call[0].select.tenant).toEqual({ select: { planVersionId: true } });
     expect(planTransition.prepare).not.toHaveBeenCalled();
     expect(planTransition.onPlanChange).not.toHaveBeenCalled();
   });
@@ -543,7 +546,7 @@ describe("BillingCronService", () => {
     const call = prisma.tenantSubscription.findMany.mock.calls.find(
       (c: any[]) => c[0].where.downgradeEffectiveAt,
     )!;
-    expect(call[0].select.tenant).toEqual({ select: { plan: true } });
+    expect(call[0].select.tenant).toEqual({ select: { planVersionId: true, plan: true } });
   });
 
   it("A2b: a NULL stored planKey resolves the plan being left from tenant.plan, never skips the snapshot", async () => {
@@ -1329,8 +1332,16 @@ describe("BillingCronService", () => {
 
     expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
       planKey: "LITE",
-      planVersionId: "v12",
       basePriceSnapshot: 99,
+    });
+    // SA-815a: the re-pin goes through the ONE pin writer, so BOTH pins move to the version that defines LITE
+    expect(tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
+      where: { tenantId: "t1" },
+      data: { planVersionId: "v12" },
+    });
+    expect(tx.tenant.updateMany).toHaveBeenCalledWith({
+      where: { id: "t1" },
+      data: { planVersionId: "v12" },
     });
     expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(-150); // 99 − 249
   });

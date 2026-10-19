@@ -101,6 +101,9 @@ interface Opts {
    *  `isPayingRow` shape). Defaults to a paying (ACTIVE/PRODUCTION) row so the pre-existing
    *  priced-enable pins (T8/T9/T15, B342) keep booking unless a test overrides it. */
   tenantRow?: any;
+  /** SA-815a: the version the subscription is pinned to, and that pinned catalog's `includedAtPlan` per SKU. */
+  pinnedVersionId?: string;
+  pinnedIncludedAtPlan?: Record<string, string>;
 }
 
 function make(opts: Opts = {}) {
@@ -137,6 +140,14 @@ function make(opts: Opts = {}) {
     getPublishedCatalog: jest
       .fn()
       .mockResolvedValue(published(opts.publishedSkus ?? [], opts.includedAtPlan)),
+    // SA-815a: a pinned version answers with ITS OWN includedAtPlan; anything else is the published catalog
+    getVersionForTenant: jest.fn().mockImplementation(async (id: string | null) => ({
+      id: id ?? "v_pub",
+      ...published(
+        opts.publishedSkus ?? [],
+        id && id === opts.pinnedVersionId ? opts.pinnedIncludedAtPlan : opts.includedAtPlan,
+      ),
+    })),
   } as any;
   const featureResolver = { invalidate: jest.fn() } as any;
   const authority = {
@@ -420,6 +431,42 @@ describe("AddonService.enableAddon - an included add-on is never billed on top (
     expect(create).not.toHaveBeenCalled();
     expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
     expect(mrrEmits(events)).toHaveLength(0);
+  });
+
+  // SA-815a (enable-with-price, SA-815 site 6): inclusion is judged by the tenant's PINNED catalog.
+  it("SA-815a: a tenant pinned to a version that INCLUDES the SKU at SCALE is refused a priced enable, though the published catalog no longer includes it", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "si_9" });
+    const { svc, prisma, events } = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+      subscription: atScale({ planVersionId: "v_old" }),
+      publishedSkus: ["REGULATED_ITEMS"], // published: NOT included at any plan
+      pinnedVersionId: "v_old",
+      pinnedIncludedAtPlan: includedAtScale, // pinned: included at SCALE
+    });
+
+    const err: any = await svc
+      .enableAddon("t1", "REGULATED_ITEMS", "price_x")
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: "ADDON_INCLUDED_IN_PLAN" });
+    expect(create).not.toHaveBeenCalled();
+    expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
+  });
+
+  it("SA-815a control: a tenant pinned to a version that does NOT include it is billed, though the published catalog includes it", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "si_9" });
+    const { svc } = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+      subscription: atScale({ planVersionId: "v_old" }),
+      publishedSkus: ["REGULATED_ITEMS"],
+      includedAtPlan: includedAtScale, // published includes it ...
+      pinnedVersionId: "v_old", // ... the pinned version does not
+      pinnedIncludedAtPlan: {},
+    });
+    await svc.enableAddon("t1", "REGULATED_ITEMS", "price_x");
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it("WITHOUT a price at SCALE it proceeds: the row is written at $0 and nothing is booked", async () => {

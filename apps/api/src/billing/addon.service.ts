@@ -18,6 +18,7 @@ import {
   planKeyFromEnum,
 } from "./plan-catalog.constants";
 import { inclusionOf } from "./addon-inclusion";
+import { inclusionCatalogFor } from "./plan-version-pin";
 import { updateAddonRowTx, upsertAddonRowTx, type AddonChangeSource } from "./tenant-addon-writer";
 import { addonCatalogInvalidException } from "./addon-catalog-invalid";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
@@ -277,7 +278,7 @@ export class AddonService {
     // outside the lock.
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true, slug: true, plan: true },
+      select: { id: true, slug: true, plan: true, planVersionId: true },
     });
     if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
 
@@ -359,15 +360,25 @@ export class AddonService {
             // SA-786 S7 (owner ruling 2026-10-15): at a plan that INCLUDES the SKU the add-on is free once enabled, so a
             // Stripe item on top would book a charge the plan already covers. Refused BEFORE any Stripe call or row
             // write; without a price the enable proceeds below at $0. An unparseable includedAtPlan fails closed.
-            if (stripePriceId && skuDef?.includedAtPlan != null) {
-              const planKey = await this.currentPlanKeyOf(tenantId, tenant.plan);
-              const verdict = inclusionOf(skuDef, planKey);
+            if (stripePriceId && skuDef) {
+              // SA-815a: judged by the tenant's own pinned catalog (sub pin, else tenant pin, else published). A SKU the
+              // pinned version predates falls back to the published definition (as the entitlement resolver does).
+              const { planKey, pinned } = await this.inclusionContextOf(
+                tenantId,
+                tenant,
+                published,
+              );
+              const inclusionDef = pinned.addonSkus.find((s) => s.sku === sku) ?? skuDef;
+              const verdict =
+                inclusionDef.includedAtPlan != null
+                  ? inclusionOf(inclusionDef, planKey)
+                  : ({ kind: "NOT_INCLUDED" } as const);
               if (verdict.kind === "CATALOG_INVALID") {
                 throw addonCatalogInvalidException(verdict.sku, verdict.value);
               }
               if (verdict.kind === "INCLUDED") {
                 const planName =
-                  published.definitions.find((d) => d.planKey === planKey)?.name ?? planKey;
+                  pinned.definitions.find((d) => d.planKey === planKey)?.name ?? planKey;
                 throw new ConflictException({
                   code: API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN,
                   message: `This add-on is included in ${planName}. Enable it without a price.`,
@@ -576,6 +587,24 @@ export class AddonService {
    * The plan the tenant is on, resolved as everywhere in billing: the subscription's `planKey`, else the legacy
    * `Tenant.plan` enum. Null when neither is known (then no add-on is "included").
    */
+  /**
+   * SA-815a: what an inclusion judgment on this tenant needs - the plan it is on and the catalog it is pinned to
+   * (sub pin, else tenant pin, else published; `published` is reused when it is the resolved one).
+   */
+  private async inclusionContextOf(
+    tenantId: string,
+    tenant: { plan?: string | null; planVersionId?: string | null },
+    published: PlanVersionWithCatalog,
+  ): Promise<{ planKey: string | null; pinned: PlanVersionWithCatalog }> {
+    const sub = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: { planKey: true, planVersionId: true },
+    });
+    const planKey =
+      normalizePlanKey(sub?.planKey) ?? (tenant.plan ? planKeyFromEnum(tenant.plan) : null);
+    return { planKey, pinned: await inclusionCatalogFor(this.catalog, sub, tenant, published) };
+  }
+
   private async currentPlanKeyOf(
     tenantId: string,
     tenantPlan?: string | null,
@@ -607,7 +636,7 @@ export class AddonService {
   async uncompAddon(tenantId: string, addonKey: string, stripePriceId?: string, actorId?: string) {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true, slug: true, name: true },
+      select: { id: true, slug: true, name: true, planVersionId: true },
     });
     if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
 
@@ -627,9 +656,13 @@ export class AddonService {
     const published = await this.catalog.getPublishedCatalog();
     const catalogSku = published.addonSkus.find((k) => k.sku === lockSku) ?? null;
     let includedHere = false;
-    if (catalogSku?.includedAtPlan != null) {
+    // SA-815a: inclusion is judged by the tenant's own pinned catalog (sub pin, else tenant pin, else published); a
+    // SKU the pinned version predates falls back to the published definition. The price below stays the published one.
+    const pinnedCatalog = await inclusionCatalogFor(this.catalog, sub, tenant, published);
+    const inclusionSku = pinnedCatalog.addonSkus.find((k) => k.sku === lockSku) ?? catalogSku;
+    if (inclusionSku?.includedAtPlan != null) {
       const verdict = inclusionOf(
-        catalogSku,
+        inclusionSku,
         normalizePlanKey(sub?.planKey) ?? (await this.currentPlanKeyOf(tenantId)),
       );
       if (verdict.kind === "CATALOG_INVALID") {
@@ -762,7 +795,13 @@ export class AddonService {
    * other than "already deleted" refuses the call so we never keep billing for
    * an add-on the tenant no longer has.
    */
-  async disableAddon(tenantId: string, addonKey: string, actorId?: string) {
+  async disableAddon(
+    tenantId: string,
+    addonKey: string,
+    actorId?: string,
+    // SA-822: a business-profile apply that switches an add-on off says so (the closed source list's `profile.apply`)
+    source: "admin.disable" | "profile.apply" = "admin.disable",
+  ) {
     // Owner ruling 2026-09-28 / SA-540: a default-granted key is held with NO row, so disabling a
     // row would report success and remove nothing. Only a DENY override removes it — say so.
     if (DEFAULT_GRANTED_ADDON_FEATURES.some((f) => f.key === addonKey)) {
@@ -831,7 +870,11 @@ export class AddonService {
       const row = await updateAddonRowTx(tx, this.events, {
         id: current.id,
         data: { active: false, stripeItemId: null },
-        actor: { kind: "PLATFORM_ADMIN", id: actorId ?? null, source: "admin.disable" },
+        actor: {
+          kind: "PLATFORM_ADMIN",
+          id: actorId ?? null,
+          source: source === "profile.apply" ? "profile.apply" : "admin.disable",
+        },
       });
       // B865 / SA-277 FIX-6: the event's sku is the CANONICAL code (bridges a legacy addonKey
       // the same way subscription-mutation.service.ts's self-serve disable does), falling back

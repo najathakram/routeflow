@@ -1484,13 +1484,14 @@ describe("SubscriptionMutationService.upgrade", () => {
     });
     const realUpdateMany = tx.tenantSubscription.updateMany.getMockImplementation();
     tx.tenantSubscription.updateMany.mockImplementation(async (...a: any[]) => {
-      order.push("guard");
+      // the compare-and-set carries a planKey guard; the pin writer's write (SA-815a) follows it
+      order.push(a[0]?.where?.planKey !== undefined ? "guard" : "pin");
       return realUpdateMany ? realUpdateMany(...a) : { count: 1 };
     });
 
     await svc.upgrade("t1", "BUSINESS", "admin");
 
-    expect(order).toEqual(["onPlanChange", "guard"]);
+    expect(order).toEqual(["onPlanChange", "guard", "pin"]);
   });
 
   it("A2b: after the transaction COMMITS the hook's caches are invalidated (subscribe and upgrade), never before", async () => {

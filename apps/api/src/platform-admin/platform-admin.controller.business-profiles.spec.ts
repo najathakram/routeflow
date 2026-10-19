@@ -677,8 +677,8 @@ describe("OWNER RULING (money, tier 1): switching OFF a module the tenant PAYS f
     });
     await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
     expect(t.addonService.disableAddon.mock.calls).toEqual([
-      [T, "order_delivery", "admin-1"],
-      [T, "recurring_routes", "admin-1"],
+      [T, "order_delivery", "admin-1", "profile.apply"], // SA-822: the record names its true source
+      [T, "recurring_routes", "admin-1", "profile.apply"],
     ]);
     expect(t.writes).toEqual([
       "disable order_delivery",
@@ -701,7 +701,9 @@ describe("OWNER RULING (money, tier 1): switching OFF a module the tenant PAYS f
   it("SA-769: a comp add-on row (isComp) is switched off by the add-on disable - it has no Stripe item, so no billing is stopped - and needs no DENY override", async () => {
     const t = fakeTenant({ comped: ["recurring_routes"] });
     await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
-    expect(t.addonService.disableAddon.mock.calls).toEqual([[T, "recurring_routes", "admin-1"]]);
+    expect(t.addonService.disableAddon.mock.calls).toEqual([
+      [T, "recurring_routes", "admin-1", "profile.apply"],
+    ]);
     expect(t.writes).toEqual(["disable recurring_routes", "mode fulfilment_model=ship"]);
     expect(t.featureOverrides.create).not.toHaveBeenCalled();
   });

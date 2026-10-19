@@ -68,6 +68,7 @@ function make(rows: Record<string, unknown>[]) {
       manualPay: false,
       tenantLabel: "",
       actorId: "u1",
+      actorKind: "PLATFORM_ADMIN",
     });
   return { tx, events, run };
 }

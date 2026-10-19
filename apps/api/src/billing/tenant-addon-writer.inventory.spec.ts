@@ -45,7 +45,10 @@ const SITES: Record<string, string[]> = {
     "billing/manual-activation-addons.ts#priceUnbilledAddonsOnActivation",
   ],
   "lock.cancel_clear_item": ["billing/billing-cron.service.ts#applyScheduledCancellations"],
-  "profile.apply": ["billing/addon.service.ts#enableAddon"],
+  "profile.apply": [
+    "billing/addon.service.ts#enableAddon",
+    "billing/addon.service.ts#disableAddon",
+  ],
 };
 
 function sourceSites(): Map<string, Set<string>> {
