@@ -63,6 +63,7 @@ import {
 import { usePageTitle } from "@/lib/page-title-context";
 import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
 import { PriceLayerNotice } from "@/components/PriceLayerNotice";
+import { ReviewFlagNotice } from "@/components/ReviewFlagNotice";
 import { useAuth } from "@/lib/auth-context";
 import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/portal-approvals";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
@@ -3814,6 +3815,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                           {ap.reference ? ` \u00b7 ${ap.reference}` : ""} \u00b7{" "}
                           {new Date(ap.createdAt).toLocaleDateString()}
                         </p>
+                        <ReviewFlagNotice notes={ap.notes} role={user?.role} compact />
                       </li>
                     ))}
                   </ul>
