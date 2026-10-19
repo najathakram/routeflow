@@ -66,7 +66,8 @@ function PricingSection({
     <>
       {/* K12 F02: the "Units and prices" jump lands here, on the row that starts with Change prices / Edit,
           not on the grid title below it. */}
-      <div data-units-jump-anchor="">
+      {/* The jump focuses this row's wrapper: name it by the grid title so focus is announced. */}
+      <div data-units-jump-anchor="" role="group" aria-labelledby="units-v2-grid-title">
         <EditablePricesGrid
           product={product}
           onOpenChangePrices={cp.enabled ? cp.toggle : undefined}
