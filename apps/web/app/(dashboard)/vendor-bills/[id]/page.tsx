@@ -22,6 +22,7 @@ import {
 import { Button, Card, Modal, cn, TAP_TARGET, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { editItemsField } from "@/lib/vendor-bill-edit-items";
 import {
   useVendorBill,
   useReceiveVendorBill,
@@ -981,7 +982,8 @@ export default function VendorBillDetailPage() {
         billDate: editBillDate || undefined,
         dueDate: editDueDate || undefined,
         notes: editNotes.trim() || undefined,
-        items,
+        // B292: a header-only bill with no added line leaves `items` out (an empty list is refused).
+        ...editItemsField(items, (bill.items ?? []).length),
       },
       {
         onSuccess: () => {
