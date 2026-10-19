@@ -554,112 +554,38 @@ export class PaymentRequestsService {
         decidedAt: new Date(),
       },
     });
-    if (claimed.count === 0) {
-      // A previous approval may have recorded the money and then failed to write the
-      // paymentGroupId link: that request stays APPROVED (never reopened). Re-approving it
-      // converges on the recorded payment instead of reporting a dead end or recording twice.
-      if (request.status === "APPROVED" && !request.paymentGroupId) {
-        const recorded = await this.findRecordedCashPayment(requestId);
-        if (recorded) {
-          await this.linkApprovedPayment(requestId, recorded.paymentGroupId, []);
-          return { approved: true, ...recorded };
-        }
-      }
-      throw new BadRequestException("Request already decided");
-    }
+    if (claimed.count === 0) throw new BadRequestException("Request already decided");
 
-    let outcome: { paymentGroupId: string | null; excess: number };
-    let paymentIds: string[] = [];
     try {
-      // Never record twice: the money for this request may already be on the ledger.
-      const existing = await this.findRecordedCashPayment(requestId);
-      if (existing) {
-        outcome = existing;
-      } else {
-        const { allocations } = await this.buildOldestFirstAllocation(
-          request.customerId,
-          Number(request.amount),
-        );
-        const buyerNotes = [
-          request.note ? `Buyer declared: ${request.note}` : "Buyer-declared cash payment",
-          request.reference ? `Ref: ${request.reference}` : null,
-        ]
-          .filter(Boolean)
-          .join(" · ");
-        const result = await this.invoices.recordStandalonePayment(
-          {
-            customerId: request.customerId,
-            totalAmount: Number(request.amount),
-            method: "CASH",
-            // Request-scoped reference: the probe above keys on it. The buyer's own
-            // free-text reference moves into the notes (the request row still carries it).
-            reference: this.cashRequestReference(requestId),
-            notes: buyerNotes,
-            allocations,
-            // Allocation computed outside the tx row locks — a stale preview must
-            // roll back rather than overpay (carried from the #397 hardening).
-          } as any,
-          { assertAllocationsWithinBalance: true },
-        );
-        outcome = { paymentGroupId: result.paymentGroupId, excess: result.excess };
-        paymentIds = ((result as any).payments ?? []).map((p: { id: string }) => p.id);
-      }
+      const { allocations } = await this.buildOldestFirstAllocation(
+        request.customerId,
+        Number(request.amount),
+      );
+      const result = await this.invoices.recordStandalonePayment(
+        {
+          customerId: request.customerId,
+          totalAmount: Number(request.amount),
+          method: "CASH",
+          reference: request.reference ?? undefined,
+          notes: request.note ? `Buyer declared: ${request.note}` : "Buyer-declared cash payment",
+          allocations,
+          // Allocation computed outside the tx row locks — a stale preview must
+          // roll back rather than overpay (carried from the #397 hardening).
+        } as any,
+        { assertAllocationsWithinBalance: true },
+      );
+      await this.prisma.buyerPaymentRequest.update({
+        where: { id: requestId },
+        data: { paymentGroupId: result.paymentGroupId },
+      });
+      return { approved: true, paymentGroupId: result.paymentGroupId, excess: result.excess };
     } catch (err) {
-      // Nothing was recorded (the money write failed or rolled back) — reopen the
-      // request so the approval can be retried.
+      // Money write failed — reopen the request so the approval can be retried.
       await this.prisma.buyerPaymentRequest.update({
         where: { id: requestId },
         data: { status: "PENDING", decidedById: null, decidedByName: null, decidedAt: null },
       });
       throw err;
-    }
-
-    // The money has committed: from here the request is never reopened.
-    await this.linkApprovedPayment(requestId, outcome.paymentGroupId, paymentIds);
-    return { approved: true, ...outcome };
-  }
-
-  /** Request-scoped payment reference: what the cash approval stamps on the payment it records. */
-  private cashRequestReference(requestId: string) {
-    return `cash-request:${requestId}`;
-  }
-
-  /** The payment (or on-account credit) already recorded for a cash request, if any. */
-  private async findRecordedCashPayment(
-    requestId: string,
-  ): Promise<{ paymentGroupId: string | null; excess: number } | null> {
-    const ref = this.cashRequestReference(requestId);
-    const existing = await this.findRecordedPayment(ref);
-    if (!existing) return null;
-    const advances = await this.prisma.forTenant().advancePayment.findMany({
-      where: { reference: ref },
-      select: { amount: true },
-    });
-    const excess = roundMoney((advances ?? []).reduce((s, a) => s + Number(a.amount), 0));
-    return { paymentGroupId: existing.paymentGroupId, excess };
-  }
-
-  /**
-   * Best-effort link of the recorded payment onto its request. The payment has already
-   * committed, so a failure here must NEVER reopen the request (a second Approve would
-   * credit the customer twice): log loudly and leave it APPROVED.
-   */
-  private async linkApprovedPayment(
-    requestId: string,
-    paymentGroupId: string | null,
-    paymentIds: string[],
-  ) {
-    try {
-      await this.prisma.buyerPaymentRequest.update({
-        where: { id: requestId },
-        data: { paymentGroupId },
-      });
-    } catch (err) {
-      this.logger.error(
-        `CRITICAL: cash payment request ${requestId} was recorded (paymentGroupId ${paymentGroupId}, ` +
-          `payments [${paymentIds.join(",")}]) but linking it failed; the request stays APPROVED ` +
-          `and must not be re-recorded: ${(err as Error)?.message ?? err}`,
-      );
     }
   }
 
