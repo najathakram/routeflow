@@ -482,14 +482,9 @@ export default function EditInvoiceScreen() {
             );
             return;
           }
-          alertInfo(
-            "Couldn't save",
-            taxStateStaleCopy(e) ??
-              safeTextErrorCopy(e) ??
-              e?.response?.data?.message ??
-              e?.message ??
-              "Try again.",
-          );
+          const fallback =
+            safeTextErrorCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.";
+          alertInfo("Couldn't save", taxStateStaleCopy(e) ?? fallback);
         },
       },
     );
