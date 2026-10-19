@@ -19,19 +19,19 @@ const POST = join(REPO, ".claude", "hooks", "ops-post-push.mjs");
 const STOP = join(REPO, ".claude", "hooks", "ops-stop.mjs");
 const RF = join(REPO, "tools", "ops-monitor", "bin", "rf.mjs");
 
-const { detectOpsActions, branchFromRefspec } = await import(pathToUrl(POST));
+const { detectOpsActions, branchFromRefspec, splitCommand, tokenize } = await import(
+  pathToUrl(POST)
+);
 const { evaluateGate, nextBlockState, missingHash } = await import(pathToUrl(STOP));
 const { actionsFile, appendAction, readActions, archiveActions, sanitizeSessionId } = await import(
   pathToUrl(join(REPO, "tools", "ops-monitor", "lib", "turn-actions.mjs"))
-);
-const { commandSegments } = await import(
-  pathToUrl(join(REPO, "scripts", "work", "claude-hook.mjs"))
 );
 
 function pathToUrl(p) {
   return new URL(`file:///${p.replace(/\\/g, "/")}`).href;
 }
-const detect = (cmd, res = {}) => detectOpsActions(cmd, res, commandSegments);
+const detect = (cmd, res = {}) => detectOpsActions(cmd, res);
+const MERGED_3515 = { stderr: "✓ Squashed and merged pull request #3515 (feat: x)\n" };
 
 // ── detectOpsActions ────────────────────────────────────────────────────────
 test("detect: git push -u origin feat/x", () => {
@@ -67,16 +67,6 @@ test("detect: chained git add . && git push", () => {
   assert.equal(out[0].refspec, "feat/y");
 });
 
-test("detect: rejected / fatal / up-to-date pushes are not actions", () => {
-  assert.deepEqual(
-    detect("git push origin x", { stderr: " ! [rejected] x -> x (fetch first)" }),
-    [],
-  );
-  assert.deepEqual(detect("git push origin x", { stderr: "fatal: unable to access" }), []);
-  assert.deepEqual(detect("git push origin x", { stderr: "error: failed to push some refs" }), []);
-  assert.deepEqual(detect("git push origin x", { stderr: "Everything up-to-date" }), []);
-});
-
 test("detect: interrupted, delete, dry-run and tag pushes are not actions", () => {
   assert.deepEqual(detect("git push origin x", { interrupted: true }), []);
   assert.deepEqual(detect("git push origin --delete x"), []);
@@ -85,9 +75,29 @@ test("detect: interrupted, delete, dry-run and tag pushes are not actions", () =
   assert.deepEqual(detect("git push origin refs/tags/v1"), []);
 });
 
-test("detect: gh pr merge 3515 --merge", () => {
-  assert.deepEqual(detect("gh pr merge 3515 --merge"), [
+test("detect: gh pr merge 3515 --merge needs the success line", () => {
+  assert.deepEqual(detect("gh pr merge 3515 --merge", MERGED_3515), [
     { kind: "pr", action: "merge", number: 3515 },
+  ]);
+  assert.deepEqual(detect("gh pr merge 3515 --merge"), []);
+  assert.deepEqual(
+    detect("gh pr merge 3515 --merge", { stderr: "X Pull request is not mergeable" }),
+    [],
+  );
+  assert.deepEqual(
+    detect("gh pr merge 3515 --auto", {
+      stderr: "✓ Pull request #3515 will be automatically merged",
+    }),
+    [],
+  );
+});
+
+test("detect: merge number comes from the success line first", () => {
+  assert.deepEqual(detect("gh pr merge --squash", MERGED_3515), [
+    { kind: "pr", action: "merge", number: 3515 },
+  ]);
+  assert.deepEqual(detect("gh pr merge 99", { stdout: "Merged pull request #3516" }), [
+    { kind: "pr", action: "merge", number: 3516 },
   ]);
 });
 
@@ -100,8 +110,69 @@ test("detect: gh pr create takes the number from the URL in stdout", () => {
 
 test("detect: failed gh call and other repos are not actions", () => {
   assert.deepEqual(detect("gh pr create", { stderr: "GraphQL: Resource not accessible" }), []);
-  assert.deepEqual(detect("gh pr merge 5 --repo acme/other"), []);
+  assert.deepEqual(detect("gh pr create --title x"), []);
+  assert.deepEqual(detect("gh pr merge 5 --repo acme/other", MERGED_3515), []);
   assert.deepEqual(detect("gh pr view 5"), []);
+});
+
+test("detect: ready / close need a PR reference and no error line", () => {
+  assert.deepEqual(
+    detect("gh pr ready 12", { stderr: '✓ Pull request #12 is marked as "ready for review"' }),
+    [{ kind: "pr", action: "ready", number: 12 }],
+  );
+  assert.deepEqual(detect("gh pr close 12", { stderr: "✓ Closed pull request #12 (x)" }), [
+    { kind: "pr", action: "close", number: 12 },
+  ]);
+  assert.deepEqual(
+    detect("gh pr close 12", { stderr: "GraphQL: Could not resolve to a PullRequest #12" }),
+    [],
+  );
+  assert.deepEqual(detect("gh pr close 12", { stderr: "no pull requests found for branch x" }), []);
+  assert.deepEqual(detect("gh pr ready 12"), []);
+});
+
+test("detect: a heredoc body never counts as a command", () => {
+  const cmd = "cat <<'EOF'\ngh pr merge 3513\ngit push origin feat/x\nEOF\ngit status";
+  assert.deepEqual(detect(cmd, { stderr: "✓ Squashed and merged pull request #3513 (x)" }), []);
+  assert.deepEqual(
+    splitCommand(cmd).map((x) => x.trim()),
+    ["cat <<'EOF'", "git status"],
+  );
+  const dash = "cat <<-EOF\n\tgit push origin x\n\tEOF\ngit push origin y";
+  assert.deepEqual(detect(dash), [{ kind: "push", remote: "origin", refspec: "y" }]);
+});
+
+test("detect: separators inside quotes and substitutions do not split or run", () => {
+  assert.deepEqual(detect('echo "git push"'), []);
+  assert.deepEqual(detect('echo "ok; git push origin x" > log'), []);
+  assert.deepEqual(detect("echo 'a && git push origin x'"), []);
+  assert.deepEqual(detect("echo $(git push origin x)"), []);
+  assert.deepEqual(detect("echo `git push origin x`"), []);
+  assert.deepEqual(splitCommand('a "b | c" && d || e; f | g\nh'), [
+    'a "b | c" ',
+    " d ",
+    " e",
+    " f ",
+    " g",
+    "h",
+  ]);
+});
+
+test("detect: env assignments with quoted values and redirections are dropped", () => {
+  assert.deepEqual(
+    detect('SKIP_VERIFY=1 SKIP_VERIFY_REASON="docs only" git push origin feat/x 2>&1 | tail -5'),
+    [{ kind: "push", remote: "origin", refspec: "feat/x" }],
+  );
+  assert.deepEqual(detect("A='x y' git push origin feat/x > out.txt"), [
+    { kind: "push", remote: "origin", refspec: "feat/x" },
+  ]);
+  assert.deepEqual(tokenize('git push origin x 2>&1 &>log < in "a>b"'), [
+    "git",
+    "push",
+    "origin",
+    "x",
+    "a>b",
+  ]);
 });
 
 // ── evaluateGate ────────────────────────────────────────────────────────────
@@ -296,6 +367,7 @@ function run(script, env, stdin, extra = {}) {
       RF_OPS_RETRY_MS: "10",
       CI: "",
       RF_SPECS_REMOTE: join(tmpdir(), "rf-no-such-remote.git"),
+      RF_SPECS_REMOTE: join(tmpdir(), "rf-no-such-remote.git"),
       RF_OPS_GATE: "",
       ...extra,
     },
@@ -440,20 +512,101 @@ test("post-push hook: a non-routeflow remote writes no actions file", () => {
   assert.equal(existsSync(actionsFile(env.home, "sess-specs")), false);
 });
 
-test(
-  "post-push hook: a routeflow push is recorded (needs bin/rf.mjs)",
-  { skip: !existsSync(RF) },
-  () => {
-    const env = mkEnv();
-    const repo = tempRepo("git@github.com:najathakram/routeflow.git");
-    const r = run(POST, env, postIn("sess-rf", repo, "git push -u origin feat/hook-test"), {
-      RF_ACTOR: "",
-    });
-    assert.equal(r.status, 0);
-    const acts = readActions(actionsFile(env.home, "sess-rf"));
-    assert.equal(acts.length, 1);
-    assert.equal(acts[0].kind, "push");
-    assert.equal(acts[0].branch, "feat/hook-test");
-    assert.match(acts[0].sha, /^[0-9a-f]{40}$/);
-  },
-);
+const gitIn = (dir, ...a) =>
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...a], {
+    cwd: dir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+/** Points the tracking ref at HEAD, as a successful push would. */
+const trackHead = (dir, branch = "feat/hook-test") =>
+  gitIn(dir, "update-ref", `refs/remotes/origin/${branch}`, "HEAD");
+const RF_URL = "git@github.com:najathakram/routeflow.git";
+const rfOnly = { skip: !existsSync(RF) };
+
+test("post-push hook: a routeflow push is recorded when the tracking ref matches", rfOnly, () => {
+  const env = mkEnv();
+  const repo = tempRepo(RF_URL);
+  trackHead(repo);
+  const r = run(POST, env, postIn("sess-rf", repo, "git push -u origin feat/hook-test"), {
+    RF_ACTOR: "",
+  });
+  assert.equal(r.status, 0);
+  const acts = readActions(actionsFile(env.home, "sess-rf"));
+  assert.equal(acts.length, 1);
+  assert.equal(acts[0].kind, "push");
+  assert.equal(acts[0].branch, "feat/hook-test");
+  assert.equal(acts[0].sha, gitIn(repo, "rev-parse", "HEAD"));
+});
+
+test("post-push hook: a push whose sha is not on the tracking ref records nothing", rfOnly, () => {
+  const env = mkEnv();
+  const repo = tempRepo(RF_URL);
+  trackHead(repo); // tracking ref stays at the first commit
+  gitIn(repo, "commit", "-q", "--allow-empty", "-m", "second"); // HEAD moved on: push was rejected
+  const r = run(POST, env, postIn("sess-mismatch", repo, "git push origin feat/hook-test"), {
+    RF_ACTOR: "",
+  });
+  assert.equal(r.status, 0);
+  assert.equal(existsSync(actionsFile(env.home, "sess-mismatch")), false);
+  const noRef = tempRepo(RF_URL); // no tracking ref at all: the push never happened
+  run(POST, env, postIn("sess-noref", noRef, "git push origin feat/hook-test"));
+  assert.equal(existsSync(actionsFile(env.home, "sess-noref")), false);
+});
+
+test("post-push hook: refspec source and a HEAD push resolve the pushed sha", rfOnly, () => {
+  const env = mkEnv();
+  const repo = tempRepo(RF_URL);
+  const first = gitIn(repo, "rev-parse", "HEAD");
+  gitIn(repo, "update-ref", "refs/remotes/origin/other", first);
+  gitIn(repo, "commit", "-q", "--allow-empty", "-m", "second");
+  run(POST, env, postIn("sess-src", repo, "git push origin feat/hook-test~1:other"));
+  const acts = readActions(actionsFile(env.home, "sess-src"));
+  assert.equal(acts.length, 1);
+  assert.equal(acts[0].branch, "other");
+  assert.equal(acts[0].sha, first);
+  trackHead(repo);
+  run(POST, env, postIn("sess-bare", repo, "git push origin HEAD"));
+  assert.equal(readActions(actionsFile(env.home, "sess-bare"))[0].branch, "feat/hook-test");
+});
+
+test("post-push hook: quoted env assignment and pipe parse as a push", rfOnly, () => {
+  const env = mkEnv();
+  const repo = tempRepo(RF_URL);
+  trackHead(repo);
+  const cmd =
+    'SKIP_VERIFY=1 SKIP_VERIFY_REASON="docs only" git push origin feat/hook-test 2>&1 | tail -5';
+  run(POST, env, postIn("sess-env", repo, cmd));
+  assert.equal(readActions(actionsFile(env.home, "sess-env")).length, 1);
+});
+
+test("post-push hook: background calls record nothing", rfOnly, () => {
+  const env = mkEnv();
+  const repo = tempRepo(RF_URL);
+  trackHead(repo);
+  const input = JSON.stringify({
+    session_id: "sess-bg",
+    cwd: repo,
+    tool_input: { command: "git push origin feat/hook-test", run_in_background: true },
+    tool_response: {},
+  });
+  assert.equal(run(POST, env, input).status, 0);
+  assert.equal(existsSync(actionsFile(env.home, "sess-bg")), false);
+  run(POST, env, postIn("sess-fg", repo, "git push origin feat/hook-test"));
+  assert.equal(existsSync(actionsFile(env.home, "sess-fg")), true);
+});
+
+test("post-push hook: gh merge/create are recorded only with success output", rfOnly, () => {
+  const env = mkEnv();
+  const repo = tempRepo(RF_URL);
+  run(POST, env, postIn("sess-m0", repo, "gh pr merge 3515 --squash"));
+  assert.equal(existsSync(actionsFile(env.home, "sess-m0")), false);
+  run(POST, env, postIn("sess-m1", repo, "gh pr merge 3515 --squash", MERGED_3515));
+  const [a] = readActions(actionsFile(env.home, "sess-m1"));
+  assert.equal(a.kind, "pr");
+  assert.equal(a.action, "merge");
+  assert.equal(a.number, 3515);
+  const url = { stdout: "https://github.com/najathakram/routeflow/pull/4001\n" };
+  run(POST, env, postIn("sess-c1", repo, 'gh pr create --title "x"', url));
+  assert.equal(readActions(actionsFile(env.home, "sess-c1"))[0].number, 4001);
+});

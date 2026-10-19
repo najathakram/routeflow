@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { newEventId, nextItemId, utcDate, itemIdFromBranch, parseEta } from "../lib/ids.mjs";
+import {
+  newEventId,
+  nextItemId,
+  utcDate,
+  itemIdFromBranch,
+  itemIdsFromBranch,
+  parseEta,
+} from "../lib/ids.mjs";
 import { EVENT_ID_RE } from "../lib/schema.mjs";
 
 test("newEventId shape and determinism", () => {
@@ -55,4 +62,59 @@ test("parseEta", () => {
   assert.equal(parseEta("02-31", now), null);
   assert.equal(parseEta("13-01", now), null);
   assert.equal(parseEta("10-19 ~25:00Z", now), null);
+});
+
+test("parseEta: durations are not dates; a defaulted year in the past rolls over", () => {
+  const now = Date.UTC(2026, 9, 18, 12, 0, 0);
+  assert.equal(parseEta("1-2 days", now), null);
+  assert.equal(parseEta("3-4 h", now), null);
+  assert.equal(parseEta("10-19 plus 1-2 days", now), null); // not the whole string: free text
+  const dec = Date.UTC(2026, 11, 20, 12, 0, 0);
+  assert.equal(parseEta("01-05", dec), Date.UTC(2027, 0, 5, 23, 59, 59));
+  assert.equal(parseEta("12-01", dec), Date.UTC(2026, 11, 1, 23, 59, 59)); // recent past stays
+});
+
+test("itemIdFromBranch: a date-stamped branch is not an item id", () => {
+  const known = new Set(["2026", "525"]);
+  assert.equal(itemIdFromBranch("feat/2026-10-19-x", known), null);
+  assert.equal(itemIdFromBranch("feat/525-x", known), "525");
+});
+
+test("parseEta: only a real date or range is an ETA; free text is null", () => {
+  const now = Date.UTC(2026, 9, 18, 12, 0, 0);
+  for (const text of [
+    "unscheduled (slipped past 10-17)",
+    "plan 10-16",
+    "after census",
+    "Phase 3",
+    "after R1 (10-19)",
+    "10-19 maybe",
+    "10-19 to someday",
+    "",
+  ])
+    assert.equal(parseEta(text, now), null, text);
+});
+
+test("parseEta: accepted shapes, a range uses its END date", () => {
+  const now = Date.UTC(2026, 9, 18, 12, 0, 0);
+  assert.equal(parseEta("10-19 to 10-21", now), Date.UTC(2026, 9, 21, 23, 59, 59));
+  assert.equal(parseEta("10-19 - 10-21", now), Date.UTC(2026, 9, 21, 23, 59, 59));
+  assert.equal(parseEta("10-19 – 10-21", now), Date.UTC(2026, 9, 21, 23, 59, 59));
+  assert.equal(parseEta("10-19 — 10-21 ~06:30Z", now), Date.UTC(2026, 9, 21, 6, 30, 0));
+  assert.equal(parseEta("~10-19", now), Date.UTC(2026, 9, 19, 23, 59, 59));
+  assert.equal(parseEta("  ~ 10-19 ~ 04:00Z (evening)  ", now), Date.UTC(2026, 9, 19, 4, 0, 0));
+  assert.equal(parseEta("10-19 (about)", now), Date.UTC(2026, 9, 19, 23, 59, 59));
+  const wide = parseEta("2026-10-19 ~04:00Z to 2026-10-22", now);
+  assert.equal(wide, Date.UTC(2026, 9, 22, 23, 59, 59));
+  assert.equal(parseEta("2026-12-30 to 01-02", now), Date.UTC(2027, 0, 2, 23, 59, 59));
+  assert.equal(parseEta("10-19 to 02-31", now), null);
+});
+
+test("itemIdsFromBranch lists every id in token order", () => {
+  const known = new Set(["525", "556"]);
+  assert.deepEqual(itemIdsFromBranch("fix/b12-and-525-with-b13", known), ["B12", "525", "B13"]);
+  assert.deepEqual(itemIdsFromBranch("fix/b12-b12", known), ["B12"]);
+  assert.deepEqual(itemIdsFromBranch("feat/2026-10-19-x", new Set(["2026"])), []);
+  assert.deepEqual(itemIdsFromBranch(null, known), []);
+  assert.equal(itemIdFromBranch("fix/b12-and-525", known), "B12");
 });

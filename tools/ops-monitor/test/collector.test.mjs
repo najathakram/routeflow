@@ -45,6 +45,7 @@ test("parsePrGraphql: 3 open (failure, draft) and 3 merged, master, visibility",
   assert.deepEqual(r.merged[0], {
     number: 3513,
     title: "Merge train/product-k11",
+    body: "",
     branch: "train/product-k11",
     mergedAt: "2026-10-19T09:00:00Z",
     mergeSha: "a".repeat(40),
@@ -58,6 +59,7 @@ test("parsePrGraphql: 3 open (failure, draft) and 3 merged, master, visibility",
     date: "2026-10-19T09:00:05Z",
     headline: "Merge train/product-k11 (#3513)",
     checks: "SUCCESS",
+    runs: [],
   });
   assert.deepEqual(parsePrGraphql({}), {
     visibility: null,
@@ -441,7 +443,12 @@ test("specs: ensureClone, syncSpecs, readAllEvents, loadConfig via injected deps
     ["sync", "/specs"],
     ["read", "/specs"],
   ]);
-  assert.deepEqual(c.sources.specs.data, { events: [{ id: "e1" }], config: { dir: "/specs" } });
+  assert.deepEqual(c.sources.specs.data.events, [{ id: "e1" }]);
+  assert.deepEqual(c.sources.specs.data.config, { dir: "/specs" });
+  // the extras ride along; "/specs" does not exist here, so each piece reports its error
+  assert.deepEqual(c.sources.specs.data.incidents, []);
+  assert.equal(c.sources.specs.data.ownerQueueRows, null);
+  assert.ok(c.sources.specs.data.extrasErrors.length >= 2);
   const bad = mk({
     deps: {
       ...deps,
@@ -456,6 +463,38 @@ test("specs: ensureClone, syncSpecs, readAllEvents, loadConfig via injected deps
   await bad.c.runOnce("specs");
   assert.equal(bad.c.sources.specs.ok, false);
   assert.equal(bad.c.sources.specs.error, "offline");
+});
+
+test("specs: the sync runs under tryWithSpecsLock; when the lock is busy it is skipped and events are still read", async () => {
+  const seen = [];
+  const mkDeps = (busy) => ({
+    store: {
+      tryWithSpecsLock: async (fn) => {
+        seen.push(busy ? "lock-busy" : "lock-free");
+        if (busy) return { ran: false };
+        return { ran: true, value: await fn() };
+      },
+      ensureClone: async (o) => seen.push(["clone", o.dir]),
+      syncSpecs: async (d) => seen.push(["sync", d]),
+      readAllEvents: async (d) => (seen.push(["read", d]), [{ id: "e1" }]),
+    },
+    config: { specsRemote: () => "remote" },
+    loadConfig: (d) => ({ dir: d }),
+  });
+  const busy = mk({ deps: mkDeps(true) });
+  await busy.c.runOnce("specs");
+  assert.deepEqual(seen, ["lock-busy", ["read", "/specs"]]);
+  assert.equal(busy.c.sources.specs.ok, true, busy.c.sources.specs.error);
+  assert.deepEqual(busy.c.sources.specs.data.events, [{ id: "e1" }]);
+  seen.length = 0;
+  const free = mk({ deps: mkDeps(false) });
+  await free.c.runOnce("specs");
+  assert.deepEqual(seen, [
+    "lock-free",
+    ["clone", "/specs"],
+    ["sync", "/specs"],
+    ["read", "/specs"],
+  ]);
 });
 
 test("start/stop: timers run each source once immediately and stop cleanly", async () => {
@@ -867,4 +906,534 @@ test("cloud collector exec is guarded: a write would throw before reaching exec"
   await assert.rejects(() => c.guardedExec("git", ["commit", "-m", "x"], {}), /read-only/);
   await assert.rejects(() => c.guardedExec("git", ["rebase", "origin/main"], {}), /read-only/);
   assert.equal(calls.length, 0);
+});
+
+// =====================================================================================
+// Accuracy round, package A2. Fixtures are a2-* (acme placeholders shaped like real data).
+// New exports are read through the COL namespace so each test fails on its own.
+// =====================================================================================
+import * as COL from "../lib/collector.mjs";
+import { mkdtempSync, mkdirSync, cpSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+
+const A2 = JSON.parse(read("a2-graphql.json"));
+const bugFile = (id) => readFileSync(join(FIX, "a2-bugs", `${id}.md`), "utf8");
+const ledgerFile = (f) => readFileSync(join(FIX, "a2-ledger", f), "utf8");
+const EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
+
+test("A2 GraphQL: asks for PR bodies and check contexts (CheckRun + StatusContext) for open PRs and master", () => {
+  assert.match(COL.GRAPHQL_QUERY, /body/);
+  assert.match(COL.GRAPHQL_QUERY, /contexts\(first: 50\)/);
+  assert.match(COL.GRAPHQL_QUERY, /\.\.\. on CheckRun \{ name conclusion status \}/);
+  assert.match(COL.GRAPHQL_QUERY, /\.\.\. on StatusContext \{ context state \}/);
+  // master and the open PRs both carry contexts
+  assert.equal((COL.GRAPHQL_QUERY.match(/contexts\(first: 50\)/g) ?? []).length, 2);
+});
+
+test("A2 parsePrGraphql: bodies (truncated to 4000, null -> empty) and per-name check runs", () => {
+  const r = COL.parsePrGraphql(A2);
+  assert.equal(r.open[0].body, "Fixes B9001\n\nAlso closes row 700.");
+  assert.equal(r.open[2].body, "");
+  assert.equal(r.open[3].body.length, 4000);
+  assert.equal(r.merged[0].body, "Fixes B9004");
+  assert.equal(r.merged[0].base, "master");
+  // one run per name: a skipped duplicate never hides the real result
+  assert.deepEqual(r.master.runs, [
+    { name: "Verify", state: "success" },
+    { name: "E2E gate (freshness)", state: "success" },
+    { name: "E2E (Playwright)", state: "pending" },
+    { name: "Replay migrations on a fresh database", state: "skipped" },
+    { name: "ci/lint", state: "failure" },
+  ]);
+  assert.deepEqual(r.open[0].runs, [
+    { name: "Verify", state: "skipped" },
+    { name: "E2E gate (freshness)", state: "skipped" },
+    { name: "Replay migrations on a fresh database", state: "failure" },
+    { name: "CodeQL", state: "success" },
+  ]);
+  assert.deepEqual(
+    r.open[1].runs.map((x) => x.state),
+    ["success", "pending", "failure", "pending"],
+  );
+  assert.deepEqual(r.open[2].runs, []); // no rollup at all
+  assert.equal(r.master.checks, "PENDING"); // the rollup state is still carried
+});
+
+test("A2 classifyCheck: default gates are /verify/i and /e2e/i; config.ciGates replaces them", () => {
+  assert.equal(COL.classifyCheck("Verify"), "gate");
+  assert.equal(COL.classifyCheck("E2E (Playwright)", {}), "gate");
+  assert.equal(COL.classifyCheck("E2E gate (freshness)", {}), "gate");
+  assert.equal(COL.classifyCheck("Replay migrations on a fresh database", {}), "probe");
+  assert.equal(COL.classifyCheck("CodeQL", {}), "probe");
+  assert.equal(
+    COL.classifyCheck("Replay migrations on a fresh database", { ciGates: ["replay"] }),
+    "gate",
+  );
+  assert.equal(COL.classifyCheck("Verify", { ciGates: ["/replay/i"] }), "probe");
+  assert.equal(COL.classifyCheck("Verify", { ciGates: ["(bad"] }), "probe"); // bad pattern ignored
+});
+
+test("A2 summarizeChecks: gate vs probes, never 'checks fail' for a probe-only failure", () => {
+  const r = COL.parsePrGraphql(A2);
+  // master: Verify success, E2E gate success, Playwright pending -> gate pending; lint probe failing
+  assert.deepEqual(COL.summarizeChecks(r.master.runs, {}), {
+    gate: "pending",
+    probesFailing: ["ci/lint"],
+    runs: [
+      { name: "Verify", kind: "gate", state: "success" },
+      { name: "E2E gate (freshness)", kind: "gate", state: "success" },
+      { name: "E2E (Playwright)", kind: "gate", state: "pending" },
+      { name: "Replay migrations on a fresh database", kind: "probe", state: "skipped" },
+      { name: "ci/lint", kind: "probe", state: "failure" },
+    ],
+  });
+  // PR 9001 (private repo): the gate runs were skipped, one probe failed -> gate skipped, probe named
+  const pr1 = COL.summarizeChecks(r.open[0].runs, {});
+  assert.equal(pr1.gate, "skipped");
+  assert.deepEqual(pr1.probesFailing, ["Replay migrations on a fresh database"]);
+  // a probe-only failure does NOT fail the gate
+  assert.equal(
+    COL.summarizeChecks([
+      { name: "Verify", state: "success" },
+      { name: "x", state: "failure" },
+    ]).gate,
+    "success",
+  );
+  // a failing gate fails it
+  assert.equal(
+    COL.summarizeChecks([
+      { name: "Verify", state: "failure" },
+      { name: "E2E", state: "success" },
+    ]).gate,
+    "failure",
+  );
+  assert.equal(COL.summarizeChecks([]).gate, "none");
+  assert.equal(COL.summarizeChecks([{ name: "only-a-probe", state: "success" }]).gate, "none");
+  // custom gates
+  assert.equal(
+    COL.summarizeChecks([{ name: "ci/lint", state: "failure" }], { ciGates: ["lint"] }).gate,
+    "failure",
+  );
+});
+
+test("A2 check states: CheckRun status/conclusion and StatusContext state map to success|failure|pending|skipped|cancelled", () => {
+  const n = COL.normalizeContext;
+  const cr = (status, conclusion) => ({ __typename: "CheckRun", name: "a", status, conclusion });
+  assert.deepEqual(n(cr("COMPLETED", "SUCCESS")), { name: "a", state: "success" });
+  assert.equal(n(cr("COMPLETED", "NEUTRAL")).state, "success");
+  assert.equal(n(cr("COMPLETED", "SKIPPED")).state, "skipped");
+  assert.equal(n(cr("COMPLETED", "CANCELLED")).state, "cancelled");
+  for (const c of ["FAILURE", "TIMED_OUT", "STARTUP_FAILURE"])
+    assert.equal(n(cr("COMPLETED", c)).state, "failure", c);
+  for (const s of ["IN_PROGRESS", "QUEUED", "WAITING", "PENDING", "REQUESTED"])
+    assert.equal(n(cr(s, null)).state, "pending", s);
+  assert.equal(
+    n({ __typename: "StatusContext", context: "ci/x", state: "SUCCESS" }).state,
+    "success",
+  );
+  assert.equal(
+    n({ __typename: "StatusContext", context: "ci/x", state: "ERROR" }).state,
+    "failure",
+  );
+  assert.equal(
+    n({ __typename: "StatusContext", context: "ci/x", state: "EXPECTED" }).state,
+    "pending",
+  );
+  assert.equal(n(null), null);
+  assert.equal(n({ __typename: "CheckRun" }), null); // no name
+});
+
+test("A2 isOpenBug: the ledger state wins over the front matter; proven states are closed", () => {
+  // regressed in the ledger although the front matter was closed -> open again
+  assert.equal(
+    COL.isOpenBug({ closed: "2026-10-01", state: "done", ledgerState: "regressed" }),
+    true,
+  );
+  // front matter says queued, the ledger says done -> closed
+  assert.equal(COL.isOpenBug({ closed: "", state: "queued", ledgerState: "done" }), false);
+  for (const s of ["proven", "proven-pending-deploy", "verified", "live"])
+    assert.equal(COL.isOpenBug({ closed: "", state: "queued", ledgerState: s }), false, s);
+  assert.equal(COL.isOpenBug({ closed: "", state: "uncampaigned" }), true);
+  assert.equal(COL.isOpenBug({ closed: "", state: "queued", ledgerState: "queued" }), true);
+});
+
+test("A2 parseLedgerFiles: latest row per id wins by file order; blank and bad lines skipped", () => {
+  const rows = COL.parseLedgerFiles([
+    { path: ".claude/campaign/status/F02.jsonl", text: ledgerFile("F02.jsonl") },
+    { path: ".claude/campaign/status/F01.jsonl", text: ledgerFile("F01.jsonl") + "not json\n" },
+    {
+      path: ".claude/campaign/status/F10.jsonl",
+      text: JSON.stringify({ id: "B9006", state: "done", batch: "F10" }) + "\n",
+    },
+  ]);
+  assert.equal(rows.get("B9001").state, "proven"); // F02 after F01
+  assert.equal(rows.get("B9001").batch, "F02");
+  assert.equal(rows.get("B9005").state, "regressed");
+  assert.equal(rows.get("B9006").state, "done"); // F10 sorts after F02 numerically
+  assert.equal(rows.size, 4);
+});
+
+test("A2 git-log parsers: filedAt takes the oldest add per bug; lane handoffs the newest per file", () => {
+  const filed = COL.parseBugFiledAt(read("a2-gitlog-bugs.txt"));
+  assert.deepEqual(Object.keys(filed).sort(), ["B9002", "B9003", "B9004"]);
+  assert.equal(filed.B9002, "2026-10-10T12:00:00.000Z"); // added twice: the first filing
+  assert.equal(filed.B9003, "2026-10-18T17:00:00.000Z");
+  assert.equal(filed.B9004, "2026-10-15T13:30:00.000Z");
+  const ho = COL.parseHandoffLog(read("a2-gitlog-handoff.txt"));
+  assert.deepEqual(
+    ho.map((h) => [h.file, h.at]),
+    [
+      ["ops-monitor-owner-secret-steps.md", "2026-10-19T05:13:27.000Z"],
+      ["macmini-lane-2026-10-18.md", "2026-10-19T05:12:27.000Z"],
+      ["macmini-inventory-2026-10-19.md", "2026-10-19T04:36:24.000Z"],
+      ["pc-lane-2026-10-18.md", "2026-10-19T02:23:42.000Z"],
+    ],
+  );
+});
+
+// ---------- bugs source: ledger + filedAt ----------
+
+function a2BugExec({ logOut, calls = [] } = {}) {
+  const ids = ["B9001", "B9002", "B9003", "B9004", "B9005", "B9006", "B9007"];
+  const bugSha = Object.fromEntries(ids.map((id, i) => [id, `b${i + 1}`.repeat(20)]));
+  const ledgerNames = ["F00.jsonl", "F01.jsonl", "F02.jsonl"];
+  const ledgerSha = {
+    "F00.jsonl": EMPTY_BLOB,
+    "F01.jsonl": "f1".repeat(20),
+    "F02.jsonl": "f2".repeat(20),
+  };
+  const blobs = new Map();
+  for (const id of ids) blobs.set(bugSha[id], bugFile(id));
+  for (const f of ledgerNames) blobs.set(ledgerSha[f], ledgerFile(f));
+  const exec = async (cmd, args, opts) => {
+    const line = `${cmd} ${args.join(" ")}`;
+    calls.push({ line, args, opts });
+    if (line.startsWith("git rev-parse origin/master:.claude/campaign/bugs"))
+      return { code: 0, stdout: "bugtree1\nledgertree1\n", stderr: "" };
+    if (line === "git ls-tree origin/master .claude/campaign/bugs/")
+      return {
+        code: 0,
+        stdout: ids
+          .map((id) => `100644 blob ${bugSha[id]}\t.claude/campaign/bugs/${id}.md`)
+          .join("\n"),
+        stderr: "",
+      };
+    if (line === "git ls-tree origin/master .claude/campaign/status/")
+      return {
+        code: 0,
+        stdout: ledgerNames
+          .map((f) => `100644 blob ${ledgerSha[f]}\t.claude/campaign/status/${f}`)
+          .join("\n"),
+        stderr: "",
+      };
+    if (line === "git cat-file --batch") {
+      const want = String(opts.input).split("\n").filter(Boolean);
+      const out = want.map(
+        (sha) => `${sha} blob ${Buffer.byteLength(blobs.get(sha))}\n${blobs.get(sha)}\n`,
+      );
+      return { code: 0, stdout: out.join(""), stderr: "" };
+    }
+    if (line.startsWith("git log "))
+      return logOut === null
+        ? { code: 128, stdout: "", stderr: "bad" }
+        : { code: 0, stdout: logOut ?? read("a2-gitlog-bugs.txt"), stderr: "" };
+    return { code: 1, stdout: "", stderr: `unexpected: ${line}` };
+  };
+  return { exec, calls };
+}
+
+test("A2 bugs source: ledger rows (latest per id), ledgerState wins, filedAt from ONE git log, one cat-file", async () => {
+  const { exec, calls } = a2BugExec();
+  const c = createCollector({
+    repoRoot: "/repo",
+    specsDir: "/specs",
+    exec,
+    now: () => NOW,
+    env: {},
+  });
+  await c.runOnce("bugs");
+  assert.equal(c.sources.bugs.ok, true, c.sources.bugs.error);
+  const d = c.sources.bugs.data;
+  const by = Object.fromEntries(d.bugs.map((b) => [b.id, b]));
+  assert.equal(by.B9001.ledgerState, "proven"); // F02 row beats F01; closed
+  assert.equal(by.B9001.open, false);
+  assert.equal(by.B9005.state, "done"); // front matter closed ...
+  assert.equal(by.B9005.ledgerState, "regressed"); // ... the ledger reopens it
+  assert.equal(by.B9005.open, true);
+  assert.equal(by.B9003.ledgerState, null); // no ledger row: front matter decides
+  assert.equal(by.B9003.open, true);
+  assert.equal(by.B9007.open, false);
+  assert.equal(by.B9002.open, false); // ledger: done
+  assert.deepEqual(
+    d.open.map((b) => b.id),
+    ["B9003", "B9004", "B9005", "B9006"],
+  );
+  assert.equal(by.B9006.batch, "F02");
+  assert.equal(by.B9002.filedAt, "2026-10-10T12:00:00.000Z");
+  assert.equal(by.B9004.filedAt, "2026-10-15T13:30:00.000Z");
+  assert.equal(by.B9006.filedAt, null); // older than the 30-day window
+  const logs = calls.filter((x) => x.line.startsWith("git log "));
+  assert.equal(logs.length, 1);
+  assert.equal(
+    logs[0].line,
+    "git log --since=30.days --diff-filter=A --format=%cI --name-only origin/master -- .claude/campaign/bugs",
+  );
+  assert.equal(calls.filter((x) => x.line === "git cat-file --batch").length, 1);
+  // the ledger tree is part of the cache key: unchanged trees -> only the rev-parse
+  const before = calls.length;
+  await c.runOnce("bugs");
+  assert.equal(calls.length, before + 1);
+});
+
+test("A2 bugs source: a failing git log keeps the bugs and reports filedAtError (no silent drop)", async () => {
+  const { exec } = a2BugExec({ logOut: null });
+  const c = createCollector({
+    repoRoot: "/repo",
+    specsDir: "/specs",
+    exec,
+    now: () => NOW,
+    env: {},
+  });
+  await c.runOnce("bugs");
+  assert.equal(c.sources.bugs.ok, true);
+  assert.match(c.sources.bugs.data.filedAtError, /git log/);
+  assert.equal(c.sources.bugs.data.bugs.find((b) => b.id === "B9004").filedAt, null);
+});
+
+// ---------- branches source: pending registry ----------
+
+test("A2 branches: bug files ADDED on unmerged branches are read via git cat-file (sha:path), masked, cached, capped at 50", async () => {
+  const calls = [];
+  const sha1 = "1".repeat(40);
+  const sha2 = "2".repeat(40);
+  const exec = async (cmd, args, opts) => {
+    const line = `${cmd} ${args.join(" ")}`;
+    calls.push({ line, args, opts });
+    if (line.startsWith("git fetch")) return { code: 0, stdout: "", stderr: "" };
+    if (line.startsWith("git for-each-ref"))
+      return {
+        code: 0,
+        stdout: `origin/feat/acme-intake\t${sha1}\t2026-10-19T10:00:00+00:00\norigin/feat/acme-other\t${sha2}\t2026-10-19T09:00:00+00:00`,
+        stderr: "",
+      };
+    if (line.startsWith("git diff"))
+      return {
+        code: 0,
+        stdout: args[2].endsWith(sha1)
+          ? "apps/api/src/x.ts\n.claude/campaign/bugs/B9100.md\n.claude/campaign/bugs/B9101.md\n.claude/campaign/bugs/notes.txt\n"
+          : "apps/web/y.tsx\n",
+        stderr: "",
+      };
+    if (line === "git cat-file --batch") {
+      const specs = String(opts.input).split("\n").filter(Boolean);
+      const out = specs.map((s) => {
+        const id = /(B\d+)\.md$/.exec(s)[1];
+        const t = bugFile(id);
+        return `${"9".repeat(40)} blob ${Buffer.byteLength(t)}\n${t}\n`;
+      });
+      return { code: 0, stdout: out.join(""), stderr: "" };
+    }
+    return { code: 1, stdout: "", stderr: `unexpected: ${line}` };
+  };
+  const c = createCollector({
+    repoRoot: "/repo",
+    specsDir: "/specs",
+    exec,
+    now: () => NOW,
+    env: {},
+  });
+  await c.runOnce("branches");
+  assert.equal(c.sources.branches.ok, true, c.sources.branches.error);
+  const cat = calls.filter((x) => x.line === "git cat-file --batch");
+  assert.equal(cat.length, 1);
+  assert.equal(
+    cat[0].opts.input,
+    `${sha1}:.claude/campaign/bugs/B9100.md\n${sha1}:.claude/campaign/bugs/B9101.md\n`,
+  );
+  const p = c.sources.branches.data.pendingBugs;
+  assert.deepEqual(
+    p.map((b) => [b.id, b.branch, b.sensitive]),
+    [
+      ["B9100", "feat/acme-intake", false],
+      ["B9101", "feat/acme-intake", true],
+    ],
+  );
+  assert.equal(p[0].title, "Acme pending widget bug");
+  assert.equal(p[0].severity, "high");
+  assert.equal(p[0].open, true);
+  const dump = JSON.stringify(c.sources.branches.data);
+  assert.ok(
+    !dump.includes("secret detail must not leak"),
+    "sensitive title never leaves the collector",
+  );
+  await c.runOnce("branches");
+  assert.equal(
+    calls.filter((x) => x.line === "git cat-file --batch").length,
+    1,
+    "cached by sha:path",
+  );
+});
+
+test("A2 branches: at most 50 pending bug files are read per run", async () => {
+  const sha = "3".repeat(40);
+  let asked = 0;
+  const files = Array.from({ length: 70 }, (_, i) => `.claude/campaign/bugs/B${9200 + i}.md`);
+  const exec = async (cmd, args, opts) => {
+    const line = `${cmd} ${args.join(" ")}`;
+    if (line.startsWith("git fetch")) return { code: 0, stdout: "", stderr: "" };
+    if (line.startsWith("git for-each-ref"))
+      return {
+        code: 0,
+        stdout: `origin/feat/acme-bulk\t${sha}\t2026-10-19T10:00:00+00:00`,
+        stderr: "",
+      };
+    if (line.startsWith("git diff")) return { code: 0, stdout: files.join("\n"), stderr: "" };
+    if (line === "git cat-file --batch") {
+      const specs = String(opts.input).split("\n").filter(Boolean);
+      asked = specs.length;
+      return { code: 0, stdout: specs.map((s) => `${s} missing\n`).join(""), stderr: "" };
+    }
+    return { code: 1, stdout: "", stderr: "x" };
+  };
+  const c = createCollector({
+    repoRoot: "/repo",
+    specsDir: "/specs",
+    exec,
+    now: () => NOW,
+    env: {},
+  });
+  await c.runOnce("branches");
+  assert.equal(asked, 50);
+  assert.deepEqual(c.sources.branches.data.pendingBugs, []);
+});
+
+// ---------- specs extras: incidents, owner queue rows, lane handoff times ----------
+
+test("A2 parseIncidents: title from '# ', Status word (default open), derived INC-MMDDx ids, README skipped", () => {
+  const dir = join(FIX, "a2-incidents");
+  const files = readdirSync(dir).map((f) => ({
+    file: f,
+    text: readFileSync(join(dir, f), "utf8"),
+  }));
+  const inc = COL.parseIncidents(files);
+  assert.deepEqual(
+    inc.map((i) => [i.id, i.status, i.date]),
+    [
+      ["INC-1015a", "open", "2026-10-15"],
+      ["INC-1015b", "closed", "2026-10-15"],
+      ["INC-1015c", "mitigated", "2026-10-15"],
+      ["INC-1016a", "open", "2026-10-16"], // no Status line: open
+      ["INC-1017a", "open", "2026-10-17"], // "suspected" is not a known word: open
+    ],
+  );
+  assert.equal(inc[0].title, "Acme catch-up billing stuck, awaiting the in-app Pay (2026-10-15)");
+  assert.equal(inc[2].file, "2026-10-15-acme-tier-bug.md");
+});
+
+test("A2 parseOwnerQueueRows: key, status word, decision file, as-of date; only 'Recommended' tables", () => {
+  const rows = COL.parseOwnerQueueRows(read("a2-owner-queue.md"));
+  const by = Object.fromEntries(rows.map((r) => [r.key, r]));
+  assert.deepEqual(
+    Object.keys(by).sort(),
+    ["1", "2", "3", "4", "5", "6", "7", "N1", "N2", "N3", "N4"].sort(),
+  );
+  assert.deepEqual(by.N1, {
+    key: "N1",
+    statusWord: "ANSWERED",
+    decisionFile: "D-2026-10-18-acme-say-no-sitting.md",
+    asOf: "10-18",
+  });
+  assert.equal(by.N2.statusWord, "DEFAULT IN EFFECT");
+  assert.equal(by.N2.decisionFile, null);
+  assert.equal(by.N3.statusWord, null); // "SAFE TIER APPROVED" is not a status word
+  assert.equal(by.N3.decisionFile, "D-2026-10-19-acme-safe-tier.md");
+  assert.equal(by.N4.statusWord, "OPEN");
+  assert.equal(by["1"].statusWord, "ANSWERED");
+  assert.equal(by["1"].decisionFile, null); // "STATUS 10-15 block" is not a decision file
+  assert.equal(by["2"].statusWord, "DONE");
+  assert.equal(by["3"].statusWord, "STANDING YES");
+  assert.equal(by["4"].statusWord, "BOOKED");
+  assert.equal(by["4"].decisionFile, "D-2026-10-18-acme-say-no-sitting.md");
+  assert.equal(by["5"].statusWord, "CHECK");
+  assert.equal(by["7"].statusWord, null);
+  assert.equal(by["7"].decisionFile, null);
+  // the step table (no Recommended column) contributes nothing
+  assert.equal(rows.length, 11);
+});
+
+test("A2 readSpecsExtras: reads incidents/ and priorities/OWNER-QUEUE.md, ONE git log for handoff times", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "a2-specs-"));
+  try {
+    cpSync(join(FIX, "a2-incidents"), join(dir, "incidents"), { recursive: true });
+    mkdirSync(join(dir, "priorities"));
+    cpSync(join(FIX, "a2-owner-queue.md"), join(dir, "priorities", "OWNER-QUEUE.md"));
+    const calls = [];
+    const exec = async (cmd, args, opts) => {
+      calls.push({ line: `${cmd} ${args.join(" ")}`, cwd: opts?.cwd });
+      return { code: 0, stdout: read("a2-gitlog-handoff.txt"), stderr: "" };
+    };
+    const x = await COL.readSpecsExtras({ dir, exec });
+    assert.equal(x.incidents.length, 5);
+    assert.equal(x.ownerQueueRows.length, 11);
+    assert.equal(x.laneHandoffs.length, 4);
+    assert.deepEqual(x.errors, []);
+    assert.equal(calls.length, 1);
+    assert.equal(
+      calls[0].line,
+      "git log --since=7.days --format=%x00%cI --name-only -- handoff/lanes",
+    );
+    assert.equal(calls[0].cwd, dir);
+    // missing files are reported, never thrown
+    const empty = mkdtempSync(join(tmpdir(), "a2-specs-empty-"));
+    try {
+      const y = await COL.readSpecsExtras({
+        dir: empty,
+        exec: async () => ({ code: 128, stdout: "", stderr: "no" }),
+      });
+      assert.deepEqual(y.incidents, []);
+      assert.equal(y.ownerQueueRows, null);
+      assert.deepEqual(y.laneHandoffs, []);
+      assert.ok(y.errors.length >= 2);
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("A2 specs source returns the extras beside events and config; an extras failure never fails the source", async () => {
+  const deps = {
+    store: {
+      ensureClone: async () => {},
+      syncSpecs: async () => {},
+      readAllEvents: async () => [{ id: "e1" }],
+    },
+    config: { specsRemote: () => "remote" },
+    loadConfig: () => ({ lanes: [] }),
+    specsExtras: async () => ({
+      incidents: [{ id: "INC-1015a" }],
+      ownerQueueRows: [{ key: "N1" }],
+      laneHandoffs: [{ file: "pc-lane-x.md", at: "2026-10-19T00:00:00.000Z" }],
+      errors: [],
+    }),
+  };
+  const { c } = mk({ deps });
+  await c.runOnce("specs");
+  assert.equal(c.sources.specs.ok, true, c.sources.specs.error);
+  assert.deepEqual(c.sources.specs.data.incidents, [{ id: "INC-1015a" }]);
+  assert.deepEqual(c.sources.specs.data.ownerQueueRows, [{ key: "N1" }]);
+  assert.equal(c.sources.specs.data.laneHandoffs.length, 1);
+  const bad = mk({
+    deps: {
+      ...deps,
+      specsExtras: async () => {
+        throw new Error("disk");
+      },
+    },
+  });
+  await bad.c.runOnce("specs");
+  assert.equal(bad.c.sources.specs.ok, true);
+  assert.deepEqual(bad.c.sources.specs.data.events, [{ id: "e1" }]);
+  assert.match(bad.c.sources.specs.data.extrasErrors.join(" "), /disk/);
 });

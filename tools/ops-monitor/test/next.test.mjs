@@ -115,3 +115,14 @@ test("laneNow", () => {
   ]);
   assert.deepEqual(laneNow(s, "a").sort(), ["1", "4", "5"]);
 });
+
+test("free-text ETAs rank as no ETA (after dated ones), never as a date", () => {
+  const s = fold([
+    mk("20", { lane: "pc-lane", priority: "P1", eta: "unscheduled (slipped past 10-17)" }),
+    mk("21", { lane: "pc-lane", priority: "P1", eta: "10-19 to 10-21" }),
+    mk("22", { lane: "pc-lane", priority: "P1", eta: "plan 10-16" }),
+    mk("23", { lane: "pc-lane", priority: "P1", eta: "10-22" }),
+  ]);
+  const r = rankCandidates(s, "pc-lane", config, { now: NOW });
+  assert.deepEqual(ids(r), ["21", "23", "20", "22"]);
+});

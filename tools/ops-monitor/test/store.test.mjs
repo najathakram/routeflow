@@ -22,8 +22,10 @@ import {
   appendEvents,
   validateAgainstState,
 } from "../lib/store.mjs";
+import * as storeNs from "../lib/store.mjs";
 import { fold } from "../lib/fold.mjs";
 import { newEventId } from "../lib/ids.mjs";
+import { writeViews } from "../lib/views.mjs";
 
 const git = (cwd, ...args) =>
   execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -442,5 +444,389 @@ test(
     const s = stateOf(A);
     assert.equal(s.items.get("900").train, "R1");
     assert.deepEqual(s.items.get("R1").members, ["900", "777"]); // 777 does not exist: not checked
+  },
+);
+
+// --- F2: lock ownership, reconcile before push, views never under events ----------------------
+
+const until = async (cond, ms = 5000) => {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > ms) throw new Error("timed out waiting for condition");
+    await new Promise((r) => setTimeout(r, 20));
+  }
+};
+const ageLock = (lock, ms = 300000) => {
+  const old = new Date(Date.now() - ms);
+  for (const p of [join(lock, "owner.json"), lock]) {
+    try {
+      utimesSync(p, old, old);
+    } catch {
+      /* no owner.json on the old implementation */
+    }
+  }
+};
+
+test(
+  "lock release only deletes the lock dir when the owner token is still ours",
+  { timeout: 240000 },
+  async () => {
+    const home = join(tmp, "lock-home3");
+    const lock = join(home, "specs.lock");
+    let freeA;
+    let freeB;
+    let bRunning = false;
+    const holdA = new Promise((r) => (freeA = r));
+    const holdB = new Promise((r) => (freeB = r));
+    const pA = withSpecsLock(async () => holdA, { home, heartbeatMs: 3600000 });
+    await until(() => existsSync(lock));
+    ageLock(lock); // A looks dead: no heartbeat for 5 minutes
+    const pB = withSpecsLock(
+      async () => {
+        bRunning = true;
+        await holdB;
+      },
+      { home, staleMs: 120000, heartbeatMs: 3600000 },
+    );
+    await until(() => bRunning);
+    freeA(); // the old holder finishes late
+    await pA;
+    assert.ok(existsSync(lock), "A's release must not delete B's lock");
+    const owner = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
+    assert.equal(typeof owner.token, "string");
+    assert.equal(owner.pid, process.pid);
+    freeB();
+    await pB;
+    assert.equal(existsSync(lock), false);
+  },
+);
+
+test(
+  "tryWithSpecsLock runs when free, returns ran:false at once when busy; heartbeat keeps it fresh",
+  { timeout: 240000 },
+  async () => {
+    const home = join(tmp, "lock-home4");
+    const free = await storeNs.tryWithSpecsLock(async () => 42, { home });
+    assert.deepEqual(free, { ran: true, value: 42 });
+    assert.equal(existsSync(join(home, "specs.lock")), false);
+    let release;
+    const hold = new Promise((r) => (release = r));
+    const holder = withSpecsLock(async () => hold, { home, heartbeatMs: 40 });
+    await until(() => existsSync(join(home, "specs.lock", "owner.json")));
+    await new Promise((r) => setTimeout(r, 400)); // 10 heartbeats; staleMs 250 would expire it
+    let ran = false;
+    const t0 = Date.now();
+    const busy = await storeNs.tryWithSpecsLock(
+      async () => {
+        ran = true;
+      },
+      { home, staleMs: 250 },
+    );
+    assert.deepEqual(busy, { ran: false });
+    assert.equal(ran, false);
+    assert.ok(Date.now() - t0 < 2000, "no waiting when busy");
+    release();
+    await holder;
+  },
+);
+
+function mkPair(name) {
+  const dir = join(tmp, name);
+  mkdirSync(dir, { recursive: true });
+  const rem = join(dir, "remote.git");
+  git(dir, "init", "--bare", "--quiet", "--initial-branch=main", rem);
+  const seed = join(dir, "seed");
+  git(dir, "clone", "--quiet", rem, seed);
+  git(seed, "config", "user.name", "Seed");
+  git(seed, "config", "user.email", "seed@example.com");
+  writeFileSync(join(seed, "README.md"), "specs\n");
+  git(seed, "add", "README.md");
+  git(seed, "commit", "--quiet", "-m", "init");
+  git(seed, "push", "--quiet", "-u", "origin", "main");
+  const out = { remote: rem, A: join(dir, "a"), B: join(dir, "b") };
+  for (const k of ["A", "B"]) {
+    git(dir, "clone", "--quiet", rem, out[k]);
+    git(out[k], "config", "user.name", `Machine ${k}`);
+    git(out[k], "config", "user.email", `${k}@example.com`);
+  }
+  out.homeA = join(dir, "home-a");
+  out.homeB = join(dir, "home-b");
+  out.dir = dir;
+  return out;
+}
+
+test(
+  "offline item.new whose id another machine took is renumbered by syncSpecs before it pushes",
+  { timeout: 600000 },
+  async () => {
+    const p = mkPair("rec-collide");
+    git(p.A, "remote", "set-url", "origin", join(tmp, "nowhere.git"));
+    const ra = await appendEvents([newItem("m-a", null, "Offline item")], {
+      dir: p.A,
+      home: p.homeA,
+    });
+    assert.equal(ra.pushed, false);
+    assert.equal(ra.events[0].item, "1");
+    const rb = await appendEvents([newItem("m-b", null, "Other item")], {
+      dir: p.B,
+      home: p.homeB,
+    });
+    assert.equal(rb.pushed, true);
+    assert.equal(rb.events[0].item, "1");
+    git(p.A, "remote", "set-url", "origin", p.remote);
+    const sync = await syncSpecs(p.A);
+    assert.equal(sync.ok, true, sync.error);
+    assert.equal(sync.pushed, true);
+    const check = join(p.dir, "check");
+    git(p.dir, "clone", "--quiet", p.remote, check);
+    const s = stateOf(check);
+    assert.equal(s.anomalies.length, 0, JSON.stringify(s.anomalies));
+    assert.equal(s.items.get("1")?.title, "Other item");
+    assert.equal(s.items.get("2")?.title, "Offline item");
+    assert.equal(git(p.A, "status", "--porcelain").trim(), "");
+    assert.equal(git(p.A, "rev-list", "--count", "@{u}..HEAD").trim(), "0");
+  },
+);
+
+test(
+  "a claim another lane won while our push was rejected is refused after the rebase",
+  { timeout: 600000 },
+  async () => {
+    const p = mkPair("rec-claim");
+    const oA = { dir: p.A, home: p.homeA };
+    await appendEvents([newItem("m-a", "1", "Contested")], oA);
+    await syncSpecs(p.B);
+    const res = await appendEvents([ev("m-b", "claim", "1", {}, { lane: "lane-y" })], {
+      dir: p.B,
+      home: p.homeB,
+      _beforePush: async () => {
+        const r = await appendEvents([ev("m-a", "claim", "1", {}, { lane: "lane-x" })], oA);
+        assert.equal(r.pushed, true);
+      },
+    });
+    assert.equal(res.refused.length, 1, JSON.stringify(res));
+    assert.match(res.refused[0].error, /held by lane-x/);
+    assert.equal(res.events.length, 0);
+    const claims = readAllEvents(p.B).filter((e) => e.kind === "claim");
+    assert.deepEqual(
+      claims.map((c) => c.lane),
+      ["lane-x"],
+    );
+    await syncSpecs(p.A);
+    for (const d of [p.A, p.B]) assert.equal(stateOf(d).items.get("1").claimedBy, "lane-x");
+    assert.equal(git(p.B, "status", "--porcelain").trim(), "");
+    assert.equal(git(p.B, "rev-list", "--count", "@{u}..HEAD").trim(), "0");
+  },
+);
+
+test(
+  "writeViews whose push loses to a conflicting views commit aborts, resets to upstream, and event appends still push",
+  { timeout: 600000 },
+  async () => {
+    const p = mkPair("views-conflict");
+    const vitem = (id, title) => ({
+      id,
+      title,
+      type: "feature",
+      priority: "P2",
+      status: "planned",
+      lane: null,
+      train: null,
+      trainLabel: null,
+      gate: null,
+      eta: null,
+      links: { prs: [], branches: [], urls: [] },
+      claimedBy: null,
+      blocked: null,
+      updatedAt: "2026-10-18T10:00:00.000Z",
+    });
+    const snap = (title) => ({
+      generatedAt: "2026-10-19T04:00:00.000Z",
+      machine: "pc",
+      sources: {},
+      items: [vitem("1", title)],
+    });
+    const depsFor = (home, extraSync) => ({
+      withLock: (fn) => withSpecsLock(fn, { home }),
+      syncSpecs: async (d) => {
+        const r = await syncSpecs(d);
+        if (extraSync) await extraSync();
+        return r;
+      },
+      exec,
+    });
+    let raced = false;
+    const rA = await writeViews({
+      registerMode: "views",
+      specsDir: p.A,
+      boardDir: join(p.dir, "board-a"),
+      snapshot: snap("From machine A"),
+      deps: depsFor(p.homeA, async () => {
+        if (raced) return;
+        raced = true;
+        const rB = await writeViews({
+          registerMode: "views",
+          specsDir: p.B,
+          boardDir: join(p.dir, "board-b"),
+          snapshot: snap("From machine B"),
+          deps: depsFor(p.homeB),
+        });
+        assert.equal(rB.pushed, true);
+      }),
+    });
+    assert.equal(rA.pushed, false);
+    assert.equal(rA.retryLater, true);
+    const gitDir = join(p.A, ".git");
+    assert.equal(existsSync(join(gitDir, "rebase-merge")), false, "rebase left in progress");
+    assert.equal(existsSync(join(gitDir, "rebase-apply")), false, "rebase left in progress");
+    assert.equal(git(p.A, "rev-parse", "HEAD").trim(), git(p.A, "rev-parse", "@{u}").trim());
+    assert.equal(git(p.A, "status", "--porcelain").trim(), "");
+    assert.match(readFileSync(join(p.A, "register", "WORK-REGISTER.md"), "utf8"), /From machine B/);
+    const r = await appendEvents([ev("m-a", "note", null, { text: "after views" })], {
+      dir: p.A,
+      home: p.homeA,
+    });
+    assert.equal(r.pushed, true);
+  },
+);
+
+// --- A3: generated register mode (events commit + a disposable views-only commit) ---------------
+
+import { registerHook, renderGeneratedRegister } from "../lib/views.mjs";
+import { dropViewsTip } from "../lib/store.mjs";
+
+const subjects = (dir, range) => git(dir, "log", "--format=%s", range).split("\n").filter(Boolean);
+const filesOf = (dir, rev) =>
+  git(dir, "show", "--name-only", "--format=", rev).split("\n").filter(Boolean);
+
+test(
+  "generated mode, two machines append concurrently: both land and the remote register is render(fold(all events))",
+  { timeout: 900000 },
+  async () => {
+    const p = mkPair("gen-two-machines");
+    const hook = registerHook();
+    let bReady;
+    let aDone;
+    const bCommitted = new Promise((r) => (bReady = r));
+    const aPushed = new Promise((r) => (aDone = r));
+    const [ra, rb] = await Promise.all([
+      appendEvents([newItem("m-a", null, "Item from machine A")], {
+        dir: p.A,
+        home: p.homeA,
+        afterCommit: hook,
+        _beforePush: async () => {
+          await bCommitted; // both machines have committed before either pushes
+        },
+      }).then((r) => {
+        aDone();
+        return r;
+      }),
+      appendEvents([newItem("m-b", null, "Item from machine B")], {
+        dir: p.B,
+        home: p.homeB,
+        afterCommit: hook,
+        _beforePush: async () => {
+          bReady();
+          await aPushed; // A pushes first, so B's push is rejected
+        },
+      }),
+    ]);
+    assert.equal(ra.pushed, true);
+    assert.equal(rb.pushed, true);
+    assert.ok(rb.attempts >= 2, `B must have been rejected once (attempts ${rb.attempts})`);
+
+    const check = join(p.dir, "check");
+    git(p.dir, "clone", "--quiet", p.remote, check);
+    const state = stateOf(check);
+    assert.equal(state.anomalies.length, 0, JSON.stringify(state.anomalies));
+    assert.equal(state.items.size, 2);
+    assert.deepEqual([...state.items.values()].map((i) => i.title).sort(), [
+      "Item from machine A",
+      "Item from machine B",
+    ]);
+    const onRemote = readFileSync(join(check, "register", "WORK-REGISTER.md"), "utf8").replace(
+      /\r\n/g,
+      "\n",
+    );
+    assert.equal(onRemote, renderGeneratedRegister(state, { itemFileExists: () => false }));
+    assert.match(onRemote, /Item from machine A/);
+    assert.match(onRemote, /Item from machine B/);
+    // The tip is a views-only commit, the commit under it is B's events.
+    const subs = subjects(check, "HEAD");
+    assert.match(subs[0], /^ops\(views\):/);
+    assert.match(subs[1], /^ops\(m-b\): item\.new/);
+    assert.deepEqual(filesOf(check, "HEAD"), ["register/WORK-REGISTER.md"]);
+    for (const d of [p.A, p.B]) {
+      assert.equal(git(d, "status", "--porcelain").trim(), "");
+    }
+  },
+);
+
+test(
+  "dropViewsTip drops only our unpushed views-only tip, never events and never over a dirty tree",
+  { timeout: 600000 },
+  async () => {
+    const p = mkPair("drop-tip");
+    const hook = registerHook();
+    // events commit + views commit, kept local (no push)
+    await appendEvents([newItem("m-a", null, "Local only")], {
+      dir: p.A,
+      home: p.homeA,
+      push: false,
+      afterCommit: hook,
+    });
+    assert.match(subjects(p.A, "@{u}..HEAD")[0], /^ops\(views\):/);
+    writeFileSync(join(p.A, "stray.txt"), "dirty\n");
+    git(p.A, "add", "stray.txt");
+    assert.equal(await dropViewsTip(p.A), false, "dirty tree: nothing dropped");
+    git(p.A, "reset", "--quiet", "--hard", "HEAD");
+    assert.equal(await dropViewsTip(p.A), true);
+    assert.deepEqual(
+      subjects(p.A, "@{u}..HEAD").map((s) => s.replace(/\(.*$/, "")),
+      ["ops"],
+    );
+    assert.match(subjects(p.A, "@{u}..HEAD")[0], /^ops\(m-a\): item\.new/);
+    assert.equal(await dropViewsTip(p.A), false, "an events commit is never dropped");
+    // the dropped views commit took its register text with it
+    assert.doesNotMatch(
+      readFileSync(join(p.A, "register", "WORK-REGISTER.md"), "utf8"),
+      /Local only/,
+    );
+  },
+);
+
+test(
+  "generated mode offline: events + views stay local, then syncSpecs pushes events and a fresh register",
+  { timeout: 900000 },
+  async () => {
+    const p = mkPair("gen-offline");
+    const hook = registerHook();
+    git(p.A, "remote", "set-url", "origin", join(tmp, "nowhere.git"));
+    const ra = await appendEvents([newItem("m-a", null, "Made offline")], {
+      dir: p.A,
+      home: p.homeA,
+      afterCommit: hook,
+    });
+    assert.equal(ra.pushed, false);
+    const rb = await appendEvents([newItem("m-b", null, "Made online")], {
+      dir: p.B,
+      home: p.homeB,
+      afterCommit: hook,
+    });
+    assert.equal(rb.pushed, true);
+    git(p.A, "remote", "set-url", "origin", p.remote);
+    const sync = await syncSpecs(p.A, { afterCommit: hook });
+    assert.equal(sync.ok, true, sync.error);
+    assert.equal(sync.pushed, true);
+    const check = join(p.dir, "check");
+    git(p.dir, "clone", "--quiet", p.remote, check);
+    const state = stateOf(check);
+    assert.equal(state.anomalies.length, 0, JSON.stringify(state.anomalies));
+    assert.equal(state.items.size, 2);
+    assert.equal(
+      readFileSync(join(check, "register", "WORK-REGISTER.md"), "utf8").replace(/\r\n/g, "\n"),
+      renderGeneratedRegister(state, { itemFileExists: () => false }),
+    );
+    assert.equal(git(p.A, "rev-list", "--count", "@{u}..HEAD").trim(), "0");
   },
 );

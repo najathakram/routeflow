@@ -1,6 +1,7 @@
 // IO for the ops monitor: child processes, the tool-owned routeflow-specs clone, the lock, and
 // appending events (one commit per call, push with rebase retry, item-id collision repair).
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
@@ -10,8 +11,10 @@ import {
   renameSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
+import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { BUG_ID_RE, validateEvent } from "./schema.mjs";
 import { fold } from "./fold.mjs";
@@ -61,17 +64,36 @@ export function exec(cmd, args = [], { cwd, timeoutMs = 60000, env, input } = {}
 const git = (dir, args, opts = {}) =>
   exec("git", args, { ...opts, cwd: dir, env: { GIT_TERMINAL_PROMPT: "0", ...(opts.env ?? {}) } });
 
+const HEARTBEAT_MS = 15000;
+
+function readOwner(lock) {
+  try {
+    return JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/** Milliseconds since the holder last proved it is alive (owner.json mtime, else the dir's). */
+function lockAgeMs(lock) {
+  for (const p of [join(lock, "owner.json"), lock]) {
+    try {
+      return Date.now() - statSync(p).mtimeMs;
+    } catch {
+      /* try the next one */
+    }
+  }
+  return null; // vanished
+}
+
 /**
- * Runs `fn` while holding <home>/specs.lock (a mkdir lock, stale after staleMs). The lock dir is
- * removed in a finally, whatever fn does.
+ * Takes <home>/specs.lock (a mkdir lock owned via owner.json {token,pid,host,at}, kept alive by a
+ * heartbeat, stale after staleMs without one). Returns a release function that deletes the lock
+ * only while owner.json still carries our token; null when `tryOnly` and the lock is busy.
  */
-export async function withSpecsLock(
-  fn,
-  { home, staleMs = 120000, waitMs = 30000, pollMs = 100 } = {},
-) {
-  const h = home ?? opsHome();
-  mkdirSync(h, { recursive: true });
-  const lock = join(h, "specs.lock");
+async function acquireLock(home, { staleMs, waitMs, pollMs, heartbeatMs, tryOnly }) {
+  mkdirSync(home, { recursive: true });
+  const lock = join(home, "specs.lock");
   const start = Date.now();
   for (;;) {
     try {
@@ -79,12 +101,8 @@ export async function withSpecsLock(
       break;
     } catch (e) {
       if (!["EEXIST", "EPERM", "EACCES"].includes(e.code)) throw e;
-      let age = 0;
-      try {
-        age = Date.now() - statSync(lock).mtimeMs;
-      } catch {
-        continue; // vanished between mkdir and stat: retry now
-      }
+      const age = lockAgeMs(lock);
+      if (age === null) continue; // vanished between mkdir and stat: retry now
       if (age > staleMs) {
         // Atomic rename so only one waiter reclaims a stale lock.
         const trash = `${lock}.stale-${process.pid}-${Date.now()}`;
@@ -96,15 +114,78 @@ export async function withSpecsLock(
         }
         continue;
       }
+      if (tryOnly) return null;
       if (Date.now() - start > waitMs)
         throw new Error(`could not acquire specs lock ${lock} within ${waitMs} ms`);
       await sleep(pollMs);
     }
   }
+  const token = randomUUID();
+  const ownerPath = join(lock, "owner.json");
+  try {
+    writeFileSync(
+      ownerPath,
+      JSON.stringify({ token, pid: process.pid, host: hostname(), at: new Date().toISOString() }),
+    );
+  } catch (e) {
+    rmSync(lock, { recursive: true, force: true });
+    throw e;
+  }
+  const beat = setInterval(() => {
+    try {
+      if (readOwner(lock)?.token !== token) return clearInterval(beat); // no longer ours
+      const now = new Date();
+      utimesSync(ownerPath, now, now);
+    } catch {
+      /* the next beat retries */
+    }
+  }, heartbeatMs);
+  beat.unref?.();
+  return () => {
+    clearInterval(beat);
+    if (readOwner(lock)?.token === token) rmSync(lock, { recursive: true, force: true });
+  };
+}
+
+/**
+ * Runs `fn` while holding <home>/specs.lock. The lock is released in a finally, whatever fn does,
+ * and only if it is still ours (a late release never deletes a newer holder's lock).
+ */
+export async function withSpecsLock(
+  fn,
+  { home, staleMs = 120000, waitMs = 30000, pollMs = 100, heartbeatMs = HEARTBEAT_MS } = {},
+) {
+  const release = await acquireLock(home ?? opsHome(), {
+    staleMs,
+    waitMs,
+    pollMs,
+    heartbeatMs,
+    tryOnly: false,
+  });
   try {
     return await fn();
   } finally {
-    rmSync(lock, { recursive: true, force: true });
+    release();
+  }
+}
+
+/** Like withSpecsLock but never waits: `{ ran: false }` at once when busy, else `{ ran: true, value }`. */
+export async function tryWithSpecsLock(
+  fn,
+  { home, staleMs = 120000, heartbeatMs = HEARTBEAT_MS } = {},
+) {
+  const release = await acquireLock(home ?? opsHome(), {
+    staleMs,
+    waitMs: 0,
+    pollMs: 0,
+    heartbeatMs,
+    tryOnly: true,
+  });
+  if (!release) return { ran: false };
+  try {
+    return { ran: true, value: await fn() };
+  } finally {
+    release();
   }
 }
 
@@ -124,22 +205,81 @@ async function abortRebase(dir) {
   }
 }
 
-/** `git pull --rebase` then `git push` when ahead. Never throws; reports { ok, pulled, pushed, error }. */
-export async function syncSpecs(dir) {
+/** Subject prefix of the disposable commit that holds only regenerated view files. */
+export const VIEWS_COMMIT_PREFIX = "ops(views):";
+// View files a generated-mode views commit may hold. backfill.json is deliberately absent: it is
+// not regenerable, so a commit carrying it is never dropped.
+const DROPPABLE_VIEW_PATHS = new Set(["register/WORK-REGISTER.md", "DASHBOARD.md"]);
+
+/**
+ * Drops the unpushed tip commits that hold only regenerated view files (subject `ops(views): …`),
+ * so event commits can be rebased or rewritten without them. Only on an otherwise clean tree;
+ * never drops an events commit. Returns true when at least one commit was dropped. Callers hold
+ * the specs lock.
+ */
+export async function dropViewsTip(dir) {
+  let dropped = false;
+  for (let i = 0; i < 5; i++) {
+    const ahead = await git(dir, ["rev-list", "--count", "@{u}..HEAD"]);
+    if (ahead.code !== 0 || Number(ahead.stdout.trim()) === 0) break;
+    const subject = await git(dir, ["log", "-1", "--format=%s"]);
+    if (subject.code !== 0 || !subject.stdout.startsWith(VIEWS_COMMIT_PREFIX)) break;
+    const files = await git(dir, ["diff", "--name-only", "HEAD~1", "HEAD"]);
+    const names = files.stdout.split(/\r?\n/).filter(Boolean);
+    if (files.code !== 0 || names.length === 0 || !names.every((f) => DROPPABLE_VIEW_PATHS.has(f)))
+      break;
+    const clean = await git(dir, ["status", "--porcelain", "--untracked-files=no"]);
+    if (clean.code !== 0 || clean.stdout.trim()) break;
+    const reset = await git(dir, ["reset", "--hard", "--quiet", "HEAD~1"]);
+    if (reset.code !== 0) break;
+    dropped = true;
+  }
+  return dropped;
+}
+
+/**
+ * `git pull --rebase` then, when ahead, reconcile the unpushed events against what upstream now
+ * holds and `git push`. Never throws; reports { ok, pulled, pushed, error, reconciled }. Callers
+ * hold the specs lock. `afterCommit(dir)` (generated register mode) first drops a leftover
+ * unpushed views commit and, after the pull, regenerates the views into a fresh views-only commit
+ * that rides along with the push.
+ */
+export async function syncSpecs(dir, { bugIds = new Set(), afterCommit } = {}) {
   let error = null;
+  if (afterCommit) await dropViewsTip(dir);
   const pull = await git(dir, ["pull", "--rebase", "--quiet"]);
   if (pull.code !== 0) {
     await abortRebase(dir);
     error = pull.stderr.trim() || `git pull exited ${pull.code}`;
   }
   let pushed = false;
-  const ahead = await git(dir, ["rev-list", "--count", "@{u}..HEAD"]);
-  if (ahead.code === 0 && Number(ahead.stdout.trim()) > 0) {
+  let reconciled = null;
+  const aheadCount = async () => {
+    const r = await git(dir, ["rev-list", "--count", "@{u}..HEAD"]);
+    return r.code === 0 ? Number(r.stdout.trim()) : 0;
+  };
+  let canPush = true;
+  if (pull.code === 0 && (await aheadCount()) > 0) {
+    try {
+      reconciled = await reconcileUnpushed(dir, { bugIds });
+    } catch (e) {
+      canPush = false;
+      error ??= `reconcile before push failed: ${e.message}`;
+    }
+  }
+  if (canPush && afterCommit && pull.code === 0) {
+    try {
+      await afterCommit(dir);
+    } catch (e) {
+      error ??= `views regeneration failed: ${e.message}`;
+    }
+  }
+  if (canPush && (await aheadCount()) > 0) {
     const p = await git(dir, ["push", "--quiet"]);
     pushed = p.code === 0;
     if (!pushed && !error) error = p.stderr.trim() || `git push exited ${p.code}`;
   }
-  return { ok: error === null, pulled: pull.code === 0, pushed, error };
+  return { ok: error === null, pulled: pull.code === 0, pushed, error, reconciled };
 }
 
 /** Every events/<machine>/*.jsonl line; unparseable lines come back as `{ __invalid: true, … }`. */
@@ -244,9 +384,8 @@ function commitMessage(events) {
   return `ops(${first.machine}): ${first.kind} ${first.item ?? "-"}${more}`;
 }
 
-async function commitFiles(dir, events, files) {
-  const add = await git(dir, ["add", "--", ...files]);
-  if (add.code !== 0) throw new Error(`git add failed: ${add.stderr.trim()}`);
+/** `git commit` with the local-identity fallback. `files` null commits the whole index. */
+export async function runCommit(dir, message, files) {
   const commitArgs = [
     "-c",
     "commit.gpgsign=false",
@@ -254,9 +393,8 @@ async function commitFiles(dir, events, files) {
     "--quiet",
     "--no-verify",
     "-m",
-    commitMessage(events),
-    "--",
-    ...files,
+    message,
+    ...(files ? ["--", ...files] : []),
   ];
   let c = await git(dir, commitArgs);
   if (c.code !== 0 && /who you are|empty ident|unable to auto-detect/i.test(c.stderr)) {
@@ -268,37 +406,151 @@ async function commitFiles(dir, events, files) {
   if (c.code !== 0) throw new Error(`git commit failed: ${c.stderr.trim() || c.stdout.trim()}`);
 }
 
+async function commitFiles(dir, events, files) {
+  const add = await git(dir, ["add", "--", ...files]);
+  if (add.code !== 0) throw new Error(`git add failed: ${add.stderr.trim()}`);
+  await runCommit(dir, commitMessage(events), files);
+}
+
 const REJECTED_RE =
   /\[rejected\]|non-fast-forward|fetch first|stale info|remote contains work|cannot lock ref|failed to update ref|remote rejected/i;
 
-/** Re-allocates item.new ids that another machine took while we were rebasing. Returns the changes. */
-function repairCollisions(dir, accepted) {
-  const mine = new Set(accepted.map((e) => e.id));
-  const others = readAllEvents(dir).filter((e) => !e.__invalid && !mine.has(e.id));
-  const taken = new Set(others.filter((e) => e.kind === "item.new").map((e) => e.item));
-  const changes = new Map(); // old id -> new id
-  const resolved = [];
-  for (const ev of accepted) {
-    if (ev.kind === "item.new" && taken.has(ev.item) && !changes.has(ev.item)) {
-      const next = nextItemId(
-        fold([
-          ...others,
-          ...resolved,
-          ...accepted.filter((a) => a.kind === "item.new" && !taken.has(a.item)),
-        ]),
-      );
-      changes.set(ev.item, next);
-      taken.add(next);
-    }
-    resolved.push(ev);
+const REF_FIELDS = ["parent", "train"];
+
+/** Applies an id renumbering to one event's item and parent/train references. True when changed. */
+function remapRefs(ev, remap) {
+  let touched = false;
+  if (typeof ev.item === "string" && remap.has(ev.item)) {
+    ev.item = remap.get(ev.item);
+    touched = true;
   }
-  return changes;
+  const fields =
+    ev.kind === "item.edit" ? ev.data?.fields : ev.kind === "item.new" ? ev.data : null;
+  if (fields) {
+    for (const k of REF_FIELDS) {
+      if (typeof fields[k] === "string" && remap.has(fields[k])) {
+        fields[k] = remap.get(fields[k]);
+        touched = true;
+      }
+    }
+  }
+  return touched;
 }
 
-async function doAppend(events, { dir, push, retries, bugIds, _beforePush }) {
+/** The events added by our unpushed commits (`@{u}...HEAD`), in ts order. */
+async function unpushedEvents(dir) {
+  const d = await git(dir, ["diff", "--unified=0", "--no-color", "@{u}...HEAD", "--", "events"]);
+  if (d.code !== 0) throw new Error(`git diff @{u}...HEAD failed: ${d.stderr.trim()}`);
+  const ours = [];
+  let file = null;
+  for (const line of d.stdout.split(/\r?\n/)) {
+    const m = /^\+\+\+ b\/(.+)$/.exec(line);
+    if (m) {
+      file = m[1];
+    } else if (file && line.startsWith("+") && !line.startsWith("+++")) {
+      try {
+        const ev = JSON.parse(line.slice(1));
+        if (ev && typeof ev === "object" && !Array.isArray(ev) && typeof ev.id === "string")
+          ours.push({ ev, file });
+      } catch {
+        /* an invalid line is the fold's problem, not ours */
+      }
+    }
+  }
+  return ours
+    .map((o, i) => ({ ...o, i }))
+    .sort((a, b) => (Date.parse(a.ev.ts) || 0) - (Date.parse(b.ev.ts) || 0) || a.i - b.i);
+}
+
+/**
+ * Pre-push integrity pass over EVERY unpushed commit (not just the latest append): re-validates
+ * our unpushed events against the working tree minus those events (which, right after a
+ * `pull --rebase`, is exactly upstream). An item.new whose id another machine took is renumbered
+ * (and same-batch references follow); a claim another lane now holds is dropped. Because nothing
+ * is pushed yet, a rewrite is `reset --soft @{u}` plus one re-commit. Callers hold the specs lock.
+ * Returns { rewrote, changes: Map old->new, edited: Map eventId->event, dropped: [eventId],
+ * refused: [{ event, error }] }.
+ */
+export async function reconcileUnpushed(dir, { bugIds = new Set() } = {}) {
+  const out = { rewrote: false, changes: new Map(), edited: new Map(), dropped: [], refused: [] };
+  const ours = await unpushedEvents(dir);
+  if (ours.length === 0) return out;
+  const ourIds = new Set(ours.map((o) => o.ev.id));
+  const others = readAllEvents(dir).filter((e) => !e.__invalid && !ourIds.has(e.id));
+  let state = fold(others);
+  const kept = [];
+  for (const o of ours) {
+    const ev = structuredClone(o.ev);
+    let touched = remapRefs(ev, out.changes);
+    if (ev.kind === "item.new" && state.items.has(ev.item)) {
+      const next = nextItemId(state);
+      out.changes.set(ev.item, next);
+      ev.item = next;
+      touched = true;
+    }
+    const held = validateAgainstState(ev, state, { bugIds }).filter((m) => /is held by/.test(m));
+    if (ev.kind === "claim" && held.length) {
+      out.dropped.push(ev.id);
+      out.refused.push({ event: ev, error: held.join("; ") });
+      continue;
+    }
+    if (touched) out.edited.set(ev.id, ev);
+    kept.push(ev);
+    state = fold([...others, ...kept]);
+  }
+  if (out.edited.size === 0 && out.dropped.length === 0) return out;
+
+  const reset = await git(dir, ["reset", "--soft", "@{u}"]);
+  if (reset.code !== 0)
+    throw new Error(`could not rewind to repair events: ${reset.stderr.trim()}`);
+  const dropIds = new Set(out.dropped);
+  const files = [...new Set(ours.map((o) => o.file))];
+  for (const f of files) {
+    const abs = join(dir, f);
+    if (!existsSync(abs)) continue;
+    const next = [];
+    for (const line of readFileSync(abs, "utf8").split("\n")) {
+      if (line.trim()) {
+        let id = null;
+        try {
+          id = JSON.parse(line)?.id ?? null;
+        } catch {
+          /* keep unparseable lines as they are */
+        }
+        if (id !== null && dropIds.has(id)) continue;
+        if (id !== null && out.edited.has(id)) {
+          next.push(JSON.stringify(out.edited.get(id)));
+          continue;
+        }
+      }
+      next.push(line);
+    }
+    const text = next.join("\n");
+    if (text.trim() === "") rmSync(abs, { force: true });
+    else writeFileSync(abs, text);
+  }
+  const add = await git(dir, ["add", "-A", "--", ...files]);
+  if (add.code !== 0) throw new Error(`git add failed: ${add.stderr.trim()}`);
+  const staged = await git(dir, ["diff", "--cached", "--quiet"]);
+  if (staged.code !== 0)
+    await runCommit(dir, commitMessage(kept.length ? kept : ours.map((o) => o.ev)), null);
+  out.rewrote = true;
+  return out;
+}
+
+function noteReconciled(rec, warnings) {
+  for (const [from, to] of rec.changes)
+    warnings.push(`item id ${from} was taken by another machine; re-allocated to ${to}`);
+  for (const r of rec.refused)
+    warnings.push(`dropped ${r.event.kind} ${r.event.item ?? "-"} (${r.event.id}): ${r.error}`);
+}
+
+async function doAppend(events, { dir, push, retries, bugIds, _beforePush, afterCommit }) {
   const warnings = [];
-  const sync = await syncSpecs(dir);
+  const refused = []; // our events dropped after the rebase: another lane holds the claim
+  const sync = await syncSpecs(dir, { bugIds, afterCommit });
   if (!sync.ok) warnings.push(`sync: ${sync.error}`);
+  if (sync.reconciled?.rewrote) noteReconciled(sync.reconciled, warnings);
 
   const current = readAllEvents(dir);
   let state = fold(current);
@@ -334,6 +586,16 @@ async function doAppend(events, { dir, push, retries, bugIds, _beforePush }) {
     appendFileSync(abs, prefix + text);
   }
   await commitFiles(dir, accepted, [...files.keys()]);
+  // Generated register mode: the views go into a SECOND, views-only commit above the events.
+  const regenerate = async () => {
+    if (!afterCommit) return;
+    try {
+      await afterCommit(dir);
+    } catch (e) {
+      warnings.push(`views regeneration failed (events kept): ${e.message}`);
+    }
+  };
+  await regenerate();
 
   let pushed = false;
   let attempts = 0;
@@ -350,48 +612,37 @@ async function doAppend(events, { dir, push, retries, bugIds, _beforePush }) {
         break;
       }
       await sleep(50 + Math.floor(Math.random() * 250));
+      // A rejected push with a views-only commit on top: drop it (disposable, regenerated below)
+      // so the events replay on their own. Only an otherwise clean tree is touched.
+      if (afterCommit) await dropViewsTip(dir);
       const pl = await git(dir, ["pull", "--rebase", "--quiet"]);
       if (pl.code !== 0) {
         await abortRebase(dir);
         throw new Error(`pull --rebase failed after a rejected push: ${pl.stderr.trim()}`);
       }
-      const changes = repairCollisions(dir, accepted);
-      if (changes.size > 0) {
-        const reset = await git(dir, ["reset", "--soft", "HEAD~1"]);
-        if (reset.code !== 0)
-          throw new Error(`could not rewind to re-allocate ids: ${reset.stderr.trim()}`);
-        for (const ev of accepted) {
-          if (changes.has(ev.item)) ev.item = changes.get(ev.item);
-          const d = ev.kind === "item.edit" ? ev.data.fields : ev.data;
-          if (["item.new", "item.edit"].includes(ev.kind) && changes.has(d.parent))
-            d.parent = changes.get(d.parent);
-        }
-        const byId = new Map(accepted.map((e) => [e.id, e]));
-        for (const f of files.keys()) {
-          const abs = join(dir, f);
-          const out = readFileSync(abs, "utf8")
-            .split("\n")
-            .map((line) => {
-              if (!line.trim()) return line;
-              try {
-                const parsed = JSON.parse(line);
-                return byId.has(parsed.id) ? JSON.stringify(byId.get(parsed.id)) : line;
-              } catch {
-                return line;
-              }
-            })
-            .join("\n");
-          writeFileSync(abs, out);
-        }
-        await commitFiles(dir, accepted, [...files.keys()]);
-        for (const [from, to] of changes)
-          warnings.push(`item id ${from} was taken by another machine; re-allocated to ${to}`);
+      let rec;
+      try {
+        rec = await reconcileUnpushed(dir, { bugIds });
+      } catch (e) {
+        warnings.push(`push skipped (kept local): ${e.message}`);
+        break;
       }
+      if (rec.rewrote) {
+        noteReconciled(rec, warnings);
+        for (let i = accepted.length - 1; i >= 0; i--) {
+          const ev = accepted[i];
+          if (rec.edited.has(ev.id)) accepted[i] = rec.edited.get(ev.id);
+          if (rec.dropped.includes(ev.id)) accepted.splice(i, 1);
+        }
+        const mine = new Set(events.map((e) => e.id));
+        for (const r of rec.refused) if (mine.has(r.event.id)) refused.push(r);
+      }
+      await regenerate();
     }
     if (!pushed && attempts > retries)
       warnings.push(`push still rejected after ${retries} attempts (kept local)`);
   }
-  return { events: accepted, pushed, attempts: Math.min(attempts, retries), warnings };
+  return { events: accepted, pushed, attempts: Math.min(attempts, retries), warnings, refused };
 }
 
 /**
@@ -401,11 +652,20 @@ async function doAppend(events, { dir, push, retries, bugIds, _beforePush }) {
  */
 export async function appendEvents(
   events,
-  { dir = specsDir(), push = true, retries = 5, home, bugIds = new Set(), _beforePush } = {},
+  {
+    dir = specsDir(),
+    push = true,
+    retries = 5,
+    home,
+    bugIds = new Set(),
+    _beforePush,
+    afterCommit,
+  } = {},
 ) {
   if (!events || events.length === 0)
-    return { events: [], pushed: false, attempts: 0, warnings: [] };
-  return withSpecsLock(() => doAppend(events, { dir, push, retries, bugIds, _beforePush }), {
-    home,
-  });
+    return { events: [], pushed: false, attempts: 0, warnings: [], refused: [] };
+  return withSpecsLock(
+    () => doAppend(events, { dir, push, retries, bugIds, _beforePush, afterCommit }),
+    { home },
+  );
 }

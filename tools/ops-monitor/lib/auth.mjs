@@ -114,11 +114,54 @@ export function createRateLimiter({ max = 10, windowMs = 900000 } = {}) {
   };
 }
 
-/** First hop of x-forwarded-for, else the socket address. */
-export function clientIp(req) {
+/**
+ * Failure-only limiter: blocked() reads, fail() counts one failed attempt, reset() forgets a key
+ * (a success). Fixed window; the bucket map is capped and evicts the oldest entries first.
+ */
+export function createFailureLimiter({ max = 10, windowMs = 900000, maxBuckets = 5000 } = {}) {
+  const buckets = new Map(); // insertion order = oldest first
+  const live = (key, now) => {
+    const b = buckets.get(key);
+    if (b && now - b.start >= windowMs) {
+      buckets.delete(key);
+      return undefined;
+    }
+    return b;
+  };
+  return {
+    blocked(key, now = Date.now()) {
+      const b = live(key, now);
+      return Boolean(b) && b.count >= max;
+    },
+    fail(key, now = Date.now()) {
+      let b = live(key, now);
+      if (!b) {
+        b = { start: now, count: 0 };
+        buckets.set(key, b);
+        while (buckets.size > maxBuckets) buckets.delete(buckets.keys().next().value);
+      }
+      b.count += 1;
+    },
+    reset(key) {
+      buckets.delete(key);
+    },
+    size: () => buckets.size,
+  };
+}
+
+/**
+ * Client key for rate limiting. Behind the cloud proxy: x-real-ip when present, else the LAST
+ * x-forwarded-for hop (the one the proxy appended; earlier hops are client-supplied). Locally the
+ * headers are never trusted: the socket address.
+ */
+export function clientIp(req, { cloud = false } = {}) {
+  const socket = req.socket?.remoteAddress || "unknown";
+  if (!cloud) return socket;
+  const real = req.headers?.["x-real-ip"];
+  if (typeof real === "string" && real.trim()) return real.trim();
   const fwd = req.headers?.["x-forwarded-for"];
-  const first = typeof fwd === "string" ? fwd.split(",")[0].trim() : "";
-  return first || req.socket?.remoteAddress || "unknown";
+  const last = typeof fwd === "string" ? fwd.split(",").at(-1).trim() : "";
+  return last || socket;
 }
 
 // ── IO ───────────────────────────────────────────────────────────────────────

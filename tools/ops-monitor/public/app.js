@@ -56,13 +56,15 @@
     review: "In review",
     ready: "Ready to ship",
     shipping: "Shipping",
-    live: "Live",
-    verified: "Verified",
+    live: "Fixed",
+    verified: "Fixed",
     parked: "Parked",
     dropped: "Dropped",
   };
   const PRIO_WORD = { P0: "Urgent", P1: "High", P2: "Normal", P3: "Low" };
   const statusWord = (s) => STATUS_WORD[s] ?? String(s ?? "");
+  // The owner-facing word for an item: the server's label (Answered/Booked for decisions) wins.
+  const itemStatus = (it) => it?.statusLabel ?? statusWord(it?.status);
   const prioWord = (p) => PRIO_WORD[p] ?? String(p ?? "");
   const MONTHS = [
     "Jan",
@@ -78,17 +80,25 @@
     "Nov",
     "Dec",
   ];
-  function etaWords(eta) {
-    if (!eta) return null;
-    const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T]~?(\d{1,2}):(\d{2}))?/.exec(String(eta));
-    const mon = m ? MONTHS[Number(m[2]) - 1] : null;
-    if (!m || !mon) return String(eta);
-    let s = `about ${mon} ${Number(m[3])}`;
-    if (m[4] !== undefined) {
-      const h = Number(m[4]);
-      s += ", " + (h < 12 ? "morning" : h < 17 ? "afternoon" : "evening");
-    }
-    return s;
+  // A real date arrives as etaAt (ISO); show it in the viewer's local zone, with a relative age.
+  // Anything else is free text and is shown exactly as written.
+  function etaWords(eta, etaAt) {
+    const at = etaAt ? new Date(etaAt) : null;
+    if (!at || Number.isNaN(at.getTime())) return eta ? String(eta) : null;
+    const h = at.getHours();
+    const part = h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
+    const diff = at.getTime() - now();
+    const rel = sinceWords(Math.abs(diff));
+    const relText =
+      rel === "moments ago" ? "now" : diff > 0 ? "in " + rel.replace(" ago", "") : rel;
+    return `about ${MONTHS[at.getMonth()]} ${at.getDate()}, ${part} (${relText})`;
+  }
+  // "Oct 19, 14:05" in the viewer's local zone.
+  function localStamp(iso) {
+    const d = iso ? new Date(iso) : null;
+    if (!d || Number.isNaN(d.getTime())) return iso ?? "";
+    const p = (n) => String(n).padStart(2, "0");
+    return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${p(d.getHours())}:${p(d.getMinutes())}`;
   }
   function sinceWords(ms) {
     if (ms === null || ms === undefined || Number.isNaN(ms)) return null;
@@ -151,6 +161,24 @@
         : c
           ? "checks " + String(c).toLowerCase()
           : "no checks";
+  // Master: the gate (verify / e2e) is judged apart from the probes (everything else).
+  function gateInfo(m) {
+    const priv = snap?.ci?.visibility === "PRIVATE";
+    switch (m?.gate) {
+      case "success":
+        return { label: "gate passes", kind: "ok" };
+      case "failure":
+        return { label: "gate fails", kind: "err" };
+      case "pending":
+        return { label: "gate running", kind: "warn" };
+      case "skipped":
+        return { label: priv ? "gate skipped (private)" : "gate skipped", kind: "info" };
+      case "none":
+        return { label: "no gate runs", kind: "info" };
+      default:
+        return { label: checkLabel(m?.checks), kind: checkKind(m?.checks) };
+    }
+  }
   const sevKind = (s) => (s === "error" ? "err" : s === "warn" ? "warn" : "info");
   const sevLabel = (s) => (s === "error" ? "ERROR" : s === "warn" ? "WARN" : "INFO");
   // Severity never relies on colour alone: a label plus a distinct shape.
@@ -166,7 +194,9 @@
     type: "",
     showAll: false,
     bugSel: null,
+    bugFix: "",
   };
+  let authEnabled = null; // last known; null until a snapshot carries it
   const openNodes = new Set();
   const panels = {};
 
@@ -290,6 +320,16 @@
     for (const i of snap.items) if (i.area && !i.area.startsWith("domain:")) add(i.id, [i.area]);
     return m;
   }
+  const SOURCE_WORD = {
+    event: "recorded",
+    recorded: "recorded",
+    commit: "pushed",
+    push: "pushed",
+    pushed: "pushed",
+    handoff: "handoff note",
+    "handoff note": "handoff note",
+  };
+  const trainEta = (t) => etaWords(t.eta, t.etaAt ?? byId().get(t.id)?.etaAt);
   const trainNum = (id) => Number((/^R(\d+)/.exec(id) ?? [])[1] ?? 99);
 
   function sourceState(name) {
@@ -317,7 +357,14 @@
           el("span", { class: "muted", text: "master " }),
           el("code", { text: short(m.sha) }),
         ),
-        pill(checkLabel(m.checks), checkKind(m.checks)),
+        pill(gateInfo(m).label, gateInfo(m).kind),
+        m.probesFailing?.length
+          ? pill(
+              plural(m.probesFailing.length, "probe") + " failing",
+              "warn",
+              m.probesFailing.join(", "),
+            )
+          : null,
       );
     } else meta.append(el("span", { class: "muted", text: "master unknown" }));
     const vis = snap.ci?.visibility;
@@ -422,7 +469,7 @@
       bandEntry(
         i.id,
         problemLine(i),
-        [prioWord(i.priority), statusWord(i.status), i.blocked ? "Blocked" : null]
+        [prioWord(i.priority), itemStatus(i), i.blocked ? "Blocked" : null]
           .filter(Boolean)
           .join(" \u00B7 "),
         i.impact ? firstSentence(i.impact) : null,
@@ -441,7 +488,7 @@
             : t.title);
         const members = (t.members ?? []).map((id) => items.get(id)).filter(Boolean);
         const done = members.filter((m) => m.status === "live" || m.status === "verified").length;
-        const when = etaWords(t.eta);
+        const when = trainEta(t);
         return bandEntry(
           t.id,
           desc,
@@ -457,16 +504,18 @@
       });
 
     // 3. Waiting on you: each question with the team's recommended answer.
-    const askEntries = (snap.ownerQueue ?? []).map((o) => {
-      const it = items.get(o.id);
-      const rec = recommended(o.gate ?? it?.gate);
-      return bandEntry(
-        o.id,
-        it?.ownerAsk ?? it?.problem ?? o.title,
-        rec ? `Recommended: ${rec}` : (o.gate ?? null),
-        o.eta ? `Needed ${etaWords(o.eta)}` : null,
-      );
-    });
+    const askEntries = (snap.ownerQueue ?? [])
+      .filter((o) => o.state !== "booked")
+      .map((o) => {
+        const it = items.get(o.id);
+        const rec = recommended(o.gate ?? it?.gate);
+        return bandEntry(
+          o.id,
+          it?.ownerAsk ?? it?.problem ?? o.title,
+          rec ? `Recommended: ${rec}` : (o.gate ?? null),
+          o.eta || it?.etaAt ? `Needed ${etaWords(o.eta ?? it?.eta, it?.etaAt)}` : null,
+        );
+      });
 
     box.append(
       el(
@@ -538,6 +587,9 @@
     }
     const gen = Date.parse(snap.generatedAt);
     document.getElementById("updated").textContent = `updated ${ago(now() - gen)}`;
+    for (const t of document.querySelectorAll("[data-sw]")) {
+      t.textContent = sinceWords(now() - Date.parse(t.getAttribute("data-sw")));
+    }
     for (const t of document.querySelectorAll("[data-at]")) {
       t.textContent = agoIso(t.getAttribute("data-at"));
     }
@@ -575,6 +627,23 @@
   }
 
   // ---------- panels ----------
+  function alarmDrill(ids) {
+    const d = el("details", { class: "drill" }, el("summary", { text: `Show ${ids.length}` }));
+    const ul = el("ul", { class: "drill-list" });
+    for (const id of ids) {
+      const b = (snap.bugs ?? []).find((x) => x.id === id);
+      const btn = el("button", {
+        type: "button",
+        class: "linklike",
+        text: b ? `${id} · ${b.title}` : id,
+      });
+      btn.addEventListener("click", (e) => openItem(id, e.currentTarget));
+      ul.append(el("li", {}, btn));
+    }
+    d.append(ul);
+    return d;
+  }
+
   function renderAlarms() {
     const body = clear(panels.alarms.body);
     const items = byId();
@@ -594,6 +663,8 @@
             a.suggest
               ? el("div", { class: "cmd" }, el("code", { text: a.suggest }), copyButton(a.suggest))
               : null,
+            // Aggregated alarms (e.g. unowned bug backlog by severity x area) carry the ids.
+            Array.isArray(a.items) && a.items.length ? alarmDrill(a.items) : null,
           ),
         );
       }
@@ -615,7 +686,7 @@
             { class: "msg" },
             it ? openerBtn(id, problemLine(it)) : el("code", { text: id }),
             " ",
-            it ? pill(statusWord(it.status), "") : null,
+            it ? pill(itemStatus(it), "") : null,
           ),
         ),
       );
@@ -633,10 +704,57 @@
           { class: "ci-row" },
           el("strong", { text: "master" }),
           el("code", { text: short(m.sha) }),
-          pill(checkLabel(m.checks), checkKind(m.checks)),
+          pill(gateInfo(m).label, gateInfo(m).kind),
           el("span", { class: "grow muted", text: m.headline }),
         ),
       );
+      if (m.gate !== undefined) {
+        const failing = m.probesFailing ?? [];
+        body.append(
+          el(
+            "div",
+            { class: "ci-row" },
+            el("strong", { text: "probes" }),
+            failing.length
+              ? pill(plural(failing.length, "probe") + " failing", "warn")
+              : pill("none failing", "ok"),
+            failing.length
+              ? el("span", { class: "grow", text: failing.join(", ") })
+              : el("span", { class: "grow" }),
+          ),
+        );
+        if ((m.runs ?? []).length) {
+          const kindOf = (r) =>
+            r.state === "success"
+              ? "ok"
+              : r.state === "failure"
+                ? "err"
+                : r.state === "skipped"
+                  ? "info"
+                  : "warn";
+          body.append(
+            el(
+              "details",
+              { class: "tech" },
+              el("summary", { text: `All checks (${m.runs.length})` }),
+              m.runs.map((r) =>
+                el(
+                  "div",
+                  { class: "ci-row" },
+                  el("span", { class: "grow", text: r.name }),
+                  el("span", { class: "muted", text: r.kind === "gate" ? "gate" : "probe" }),
+                  pill(
+                    r.state === "skipped" && snap.ci?.visibility === "PRIVATE"
+                      ? "skipped (private)"
+                      : r.state,
+                    kindOf(r),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+      }
     } else body.append(el("div", { class: "empty", text: "No master info yet." }));
     body.append(
       el(
@@ -791,7 +909,7 @@
           items.get(id) ?? { id, title: "(not in item list)", status: "planned", missing: true },
       );
       const done = members.filter((m) => m.status === "live" || m.status === "verified").length;
-      const when = etaWords(t.eta);
+      const when = trainEta(t);
       const box = el("div", { class: "train" });
       box.append(
         el(
@@ -847,7 +965,7 @@
         for (const m of here) {
           const sub = [
             prioWord(m.priority),
-            statusWord(m.status),
+            itemStatus(m),
             m.lane ? laneName(m.lane).replace(/^the /, "") : null,
             m.blocked ? "Blocked" : null,
           ]
@@ -880,7 +998,9 @@
     const body = clear(panels.lanes.body);
     const items = byId();
     for (const l of snap.lanes ?? []) {
-      const silent = l.lastEventAt ? Math.round((now() - Date.parse(l.lastEventAt)) / 60000) : null;
+      const actAt = l.lastActivityAt ?? l.lastEventAt;
+      const actSrc = SOURCE_WORD[l.lastActivitySource] ?? l.lastActivitySource ?? "recorded";
+      const silent = actAt ? Math.round((now() - Date.parse(actAt)) / 60000) : null;
       const isSilent = (l.now?.length ?? 0) > 0 && silent !== null && silent > SILENT_MIN;
       const box = el("div", { class: "lane" });
       box.append(
@@ -891,9 +1011,11 @@
           l.machine ? el("span", { class: "muted", text: l.machine }) : null,
           el(
             "span",
-            { class: "muted" },
-            "last event ",
-            el("span", { "data-at": l.lastEventAt, text: agoIso(l.lastEventAt) }),
+            { class: "muted", title: actAt ? localStamp(actAt) : "No activity seen" },
+            actAt ? `${actSrc} ` : "no activity seen",
+            actAt
+              ? el("span", { "data-sw": actAt, text: sinceWords(now() - Date.parse(actAt)) })
+              : null,
           ),
           isSilent ? pill(`SILENT ${silent}m`, "warn", "Holds work but has been quiet") : null,
         ),
@@ -926,44 +1048,84 @@
   function renderOwner() {
     const body = clear(panels.owner.body);
     const q = snap.ownerQueue ?? [];
+    const items = byId();
+    const ordered = [
+      ...q.filter((o) => o.state !== "booked"),
+      ...q.filter((o) => o.state === "booked"),
+    ];
     if (!q.length)
       body.append(el("div", { class: "empty", text: "Nothing waiting on the owner." }));
-    for (const o of q) {
+    for (const o of ordered) {
+      const it = items.get(o.id);
+      const booked = o.state === "booked";
+      const needed = o.eta || it?.etaAt ? etaWords(o.eta ?? it?.eta, it?.etaAt) : null;
       body.append(
         el(
           "div",
           { class: "alarm" },
-          pill("Your call", "info"),
+          pill(booked ? "Booked" : "Your call", booked ? "ok" : "info"),
           el(
             "div",
             { class: "msg" },
-            openerBtn(o.id, byId().get(o.id)?.ownerAsk ?? o.title),
+            openerBtn(o.id, it?.ownerAsk ?? o.title),
             o.gate ? el("div", { class: "muted", text: o.gate }) : null,
-            o.eta ? el("div", { class: "muted", text: `Needed ${etaWords(o.eta)}` }) : null,
+            needed ? el("div", { class: "muted", text: `Needed ${needed}` }) : null,
           ),
         ),
       );
     }
+    const done = snap.answeredRecently;
+    if (Array.isArray(done)) {
+      if (done.length) {
+        const d = el("details", { class: "tech answered" });
+        d.append(el("summary", { text: `Answered recently (${done.length})` }));
+        for (const a of done) {
+          d.append(
+            el(
+              "div",
+              { class: "ci-row" },
+              el(
+                "span",
+                { class: "grow" },
+                items.get(a.id) ? openerBtn(a.id, a.title ?? a.id) : (a.title ?? a.id),
+                a.answer ? el("div", { class: "muted", text: `Answer: ${a.answer}` }) : null,
+              ),
+              a.answeredAt
+                ? el("span", {
+                    class: "muted",
+                    "data-at": a.answeredAt,
+                    text: agoIso(a.answeredAt),
+                  })
+                : null,
+            ),
+          );
+        }
+        body.append(d);
+      }
+      return;
+    }
     const dec = (snap.decisions ?? []).slice(-5).reverse();
     if (dec.length) {
-      body.append(el("div", { class: "subhead", text: "Recent decisions" }));
-      for (const d of dec) {
-        body.append(
+      const d = el("details", { class: "tech answered" });
+      d.append(el("summary", { text: `Answered recently (${dec.length})` }));
+      for (const x of dec) {
+        d.append(
           el(
             "div",
             { class: "ci-row" },
             el(
               "span",
               { class: "grow" },
-              el("strong", { text: d.item ?? "-" }),
+              el("strong", { text: x.item ?? "-" }),
               " ",
-              d.question,
-              el("div", { class: "muted", text: `Answer: ${d.answer}` }),
+              x.question,
+              el("div", { class: "muted", text: `Answer: ${x.answer}` }),
             ),
-            el("span", { class: "muted", "data-at": d.ts, text: agoIso(d.ts) }),
+            el("span", { class: "muted", "data-at": x.ts, text: agoIso(x.ts) }),
           ),
         );
       }
+      body.append(d);
     }
   }
 
@@ -1100,7 +1262,7 @@
           i.priority === "P0" ? "err" : i.priority === "P1" ? "warn" : "",
           i.priority,
         ),
-        pill(statusWord(i.status), DONE.has(i.status) ? "ok" : "", i.status),
+        pill(itemStatus(i), DONE.has(i.status) ? "ok" : "", i.status),
         i.type !== "feature" ? el("span", { class: "muted", text: i.type }) : null,
         i.blocked ? pill("BLOCKED", "err", `Blocked by ${i.blocked.by}`) : null,
         i.claimedBy
@@ -1108,7 +1270,9 @@
           : i.lane
             ? el("span", { class: "muted", text: laneName(i.lane).replace(/^the /, "") })
             : null,
-        i.eta ? el("span", { class: "muted", text: `ETA ${i.eta}` }) : null,
+        i.eta || i.etaAt
+          ? el("span", { class: "muted", text: `ETA ${etaWords(i.eta, i.etaAt)}` })
+          : null,
         ...(i.links?.prs ?? []).map((n) => pill(`#${n}`, "info")),
       );
       const head = [
@@ -1165,6 +1329,78 @@
   }
 
   // ---------- bugs ----------
+  const FIX_STATES = [
+    ["none", "No PR"],
+    ["branch", "Branch"],
+    ["pr-open", "PR open"],
+    ["in-release", "In release"],
+    ["merged", "Merged"],
+    ["deployed", "Deployed"],
+  ];
+  const fixState = (b) => b.fix?.state ?? "none";
+  const fixLabel = (b) => FIX_STATES.find(([k]) => k === fixState(b))?.[1] ?? fixState(b);
+  const fixKind = (b) => {
+    const s = fixState(b);
+    if (s === "merged" || s === "deployed") return "ok";
+    if (s === "none") return b.severity === "critical" || b.severity === "high" ? "warn" : "";
+    return "info";
+  };
+  const sevPill = (s) => pill(s, s === "critical" ? "err" : s === "high" ? "warn" : "");
+  const fixChip = (b) => pill(fixLabel(b), fixKind(b));
+  const prLink = (b) => {
+    if (!b.fix?.pr) return null;
+    const url = safeUrl(b.fix.prUrl);
+    return url
+      ? el("a", { href: url, target: "_blank", rel: "noopener noreferrer", text: "#" + b.fix.pr })
+      : el("code", { text: "#" + b.fix.pr });
+  };
+  const PENDING_TEXT = "Filed, not on master yet";
+  function fixSentence(b) {
+    const f = b.fix ?? {};
+    const pr = f.pr ? "PR #" + f.pr : "The PR";
+    const lines = [];
+    switch (fixState(b)) {
+      case "branch":
+        lines.push("A fix is in progress on branch " + (f.branch ?? "(unknown)") + "; no PR yet.");
+        break;
+      case "pr-open":
+        lines.push(pr + " is open with a fix.");
+        break;
+      case "in-release":
+        lines.push(
+          pr + " is in release " + (b.release ?? f.branch ?? "(unknown)") + ", not on master yet.",
+        );
+        break;
+      case "merged":
+        lines.push(pr + " is merged; it has not been deployed yet.");
+        break;
+      case "deployed":
+        lines.push(pr + " is merged and deployed.");
+        break;
+      default:
+        lines.push("No fix yet: no branch and no pull request.");
+    }
+    if (b.pending) lines.push("The bug was filed on a branch and is not on master yet.");
+    return lines.join(" ");
+  }
+  // A bug the register has no item for still opens the item card.
+  function bugAsItem(b) {
+    const pr = { critical: "P0", high: "P1", medium: "P2", low: "P3" };
+    return {
+      id: b.id,
+      type: "bug",
+      title: b.title,
+      priority: pr[b.severity] ?? "P2",
+      status: b.ledgerState ?? b.state,
+      statusLabel: b.ledgerState ?? b.state,
+      area: b.area,
+      domain: b.domain,
+      links: { prs: [], branches: [], urls: [] },
+      tags: [],
+      _bug: true,
+    };
+  }
+
   function renderBugs() {
     const body = clear(panels.bugs.body);
     const bugs = snap.bugs ?? [];
@@ -1173,6 +1409,32 @@
       return;
     }
     const labels = new Map((snap.map?.domains ?? []).map((d) => [d.id, d.label]));
+    const fixBar = el("div", {
+      class: "fixbar",
+      role: "group",
+      "aria-label": "Filter by fix state",
+    });
+    for (const [k, label] of FIX_STATES) {
+      const n = bugs.filter((b) => fixState(b) === k).length;
+      fixBar.append(
+        el("button", {
+          type: "button",
+          class: "fixchip",
+          "aria-pressed": view.bugFix === k ? "true" : "false",
+          text: label + " " + n,
+          onclick: () => {
+            view.bugFix = view.bugFix === k ? "" : k;
+            renderBugs();
+          },
+        }),
+      );
+    }
+    const pendingN = bugs.filter((b) => b.pending).length;
+    if (pendingN)
+      fixBar.append(
+        el("span", { class: "pill info", text: pendingN + " filed, not on master yet" }),
+      );
+    body.append(fixBar);
     const dom = new Map();
     for (const b of bugs) {
       const dk = b.domain ?? "";
@@ -1258,20 +1520,52 @@
     }
     table.append(tb);
     body.append(el("div", { class: "scroll" }, table));
-    if (view.bugSel) {
+    if (view.bugSel || view.bugFix) {
       const sel = view.bugSel;
-      const set = new Set(sel.list);
-      body.append(el("div", { class: "subhead", text: `${sel.sev} bugs in ${sel.label}` }));
-      for (const b of bugs.filter((x) => set.has(x.id))) {
-        const bi = byId().get(b.id);
+      const set = sel ? new Set(sel.list) : null;
+      const fixW = FIX_STATES.find(([k]) => k === view.bugFix)?.[1];
+      const head = [
+        sel ? sel.sev + " bugs in " + sel.label : "All bugs",
+        fixW ? "fix state: " + fixW : null,
+      ]
+        .filter(Boolean)
+        .join(" \u00B7 ");
+      const list = bugs.filter(
+        (x) => (!set || set.has(x.id)) && (!view.bugFix || fixState(x) === view.bugFix),
+      );
+      body.append(el("div", { class: "subhead", text: head + " (" + list.length + ")" }));
+      if (!list.length) body.append(el("div", { class: "empty", text: "None." }));
+      for (const b of list) {
+        const links = (b.items ?? []).filter((id) => id !== b.id);
         body.append(
           el(
             "div",
-            { class: "ci-row" },
-            bi ? openerBtn(b.id, b.id, "idbtn") : el("code", { text: b.id }),
-            el("span", { class: "grow", text: b.title }),
-            pill(b.state, ""),
-            b.area ? el("span", { class: "muted", text: b.area }) : null,
+            { class: "bugrow" },
+            el(
+              "div",
+              { class: "bugmain" },
+              openerBtn(b.id, b.id, "idbtn"),
+              el("span", { class: "grow", text: b.title }),
+            ),
+            el(
+              "div",
+              { class: "bugmeta" },
+              sevPill(b.severity),
+              fixChip(b),
+              prLink(b),
+              b.pending ? pill(PENDING_TEXT, "info") : null,
+              b.area ? el("span", { class: "muted", text: b.area }) : null,
+              links.length
+                ? el(
+                    "span",
+                    { class: "muted" },
+                    "register: ",
+                    links.map((id) =>
+                      byId().get(id) ? openerBtn(id, id, "idbtn") : el("code", { text: id }),
+                    ),
+                  )
+                : null,
+            ),
           ),
         );
       }
@@ -1430,7 +1724,7 @@
       const t = (snap.trains ?? []).find((x) => x.id === it.id);
       const members = (t?.members ?? []).map((id) => byId().get(id)).filter(Boolean);
       const d = members.filter((m) => m.status === "live" || m.status === "verified").length;
-      parts.push(`${statusWord(it.status)}. ${d} of ${members.length} items done.`);
+      parts.push(`${itemStatus(it)}. ${d} of ${members.length} items done.`);
     } else {
       switch (it.status) {
         case "idea":
@@ -1486,11 +1780,11 @@
     }
     if (!done && !gone && it.type !== "release") {
       const t = it.train ? (snap.trains ?? []).find((x) => x.id === it.train) : null;
-      const when = etaWords(it.eta ?? t?.eta);
+      const when = it.eta || it.etaAt ? etaWords(it.eta, it.etaAt) : t ? trainEta(t) : null;
       if (it.train) parts.push(`Ships with release ${it.train}${when ? `, target ${when}` : ""}.`);
       else if (when) parts.push(`Target ${when}.`);
     } else if (it.type === "release" && !done && !gone) {
-      const when = etaWords(it.eta);
+      const when = etaWords(it.eta, it.etaAt);
       if (when) parts.push(`Target ${when}.`);
     }
     // Pull requests, in words.
@@ -1533,7 +1827,7 @@
     row("Id", code(it.id));
     row("Type", it.type);
     row("Priority", `${prioWord(it.priority)} (${it.priority})`);
-    row("Status", `${statusWord(it.status)} (${it.status})`);
+    row("Status", `${itemStatus(it)} (${it.status})`);
     row("Gate", it.gate);
     row("Lane", it.lane);
     row(
@@ -1588,8 +1882,8 @@
           )
         : null,
     );
-    row("Created", it.createdAt);
-    row("Updated", it.updatedAt);
+    row("Created", localStamp(it.createdAt));
+    row("Updated", localStamp(it.updatedAt));
     const hist =
       Array.isArray(it.history) && it.history.length
         ? el(
@@ -1598,7 +1892,9 @@
             it.history.map((h) =>
               el("li", {
                 class: "mono",
-                text: [h.ts, h.kind, h.status, h.lane, h.actor].filter(Boolean).join("  "),
+                text: [localStamp(h.ts), h.kind, h.status, h.lane, h.actor]
+                  .filter(Boolean)
+                  .join("  "),
               }),
             ),
           )
@@ -1617,9 +1913,11 @@
   }
 
   function renderSheet(id) {
-    const it = byId().get(id);
+    const bug = (snap.bugs ?? []).find((b) => b.id === id) ?? null;
+    const it = byId().get(id) ?? (bug ? bugAsItem(bug) : null);
     const sig = JSON.stringify([
       it,
+      bug,
       snap.prs?.open?.filter((p) => (it?.links?.prs ?? []).includes(p.number)),
       snap.ownerQueue?.some((o) => o.id === id),
       (snap.lanes ?? []).map((l) => l.title),
@@ -1639,7 +1937,7 @@
       return;
     }
     const written = Boolean(it.problem || it.impact || it.solution);
-    const jargon = it.problem && JARGON.test(it.title);
+    const jargon = !it._bug && it.problem && JARGON.test(it.title);
     const head = jargon ? firstSentence(it.problem) : it.title;
     sheetBody.append(
       ...[
@@ -1648,12 +1946,18 @@
         el(
           "div",
           { class: "sheet-tags" },
-          pill(
-            prioWord(it.priority),
-            it.priority === "P0" ? "err" : it.priority === "P1" ? "warn" : "",
-            it.priority,
-          ),
-          pill(statusWord(it.status), DONE.has(it.status) ? "ok" : "", it.status),
+          bug
+            ? null
+            : pill(
+                prioWord(it.priority),
+                it.priority === "P0" ? "err" : it.priority === "P1" ? "warn" : "",
+                it.priority,
+              ),
+          bug && it._bug ? null : pill(itemStatus(it), DONE.has(it.status) ? "ok" : "", it.status),
+          bug ? sevPill(bug.severity) : null,
+          bug ? fixChip(bug) : null,
+          bug?.area ? pill(bug.area, "") : null,
+          bug?.pending ? pill(PENDING_TEXT, "info") : null,
           it.blocked ? pill("Blocked", "err") : null,
           it.summaryDraft ? pill("Draft summary", "info") : null,
         ),
@@ -1665,7 +1969,8 @@
           : null,
       ].filter(Boolean),
     );
-    if (!written) sheetBody.append(section("What's wrong", unwritten()));
+    if (it._bug) sheetBody.append(section("What's wrong", para(it.title)));
+    else if (!written) sheetBody.append(section("What's wrong", unwritten()));
     else {
       sheetBody.append(
         section("What's wrong", it.problem ? para(it.problem) : unwritten()),
@@ -1673,7 +1978,32 @@
         section("How we're solving it", it.solution ? para(it.solution) : unwritten()),
       );
     }
-    sheetBody.append(section("Where it is now", para(sentenceWhere(it))));
+    if (bug) {
+      const pl = prLink(bug);
+      const links = (bug.items ?? []).filter((x) => x !== id);
+      sheetBody.append(
+        section(
+          "Where it is now",
+          el(
+            "div",
+            null,
+            para(fixSentence(bug)),
+            pl ? el("p", null, "Pull request ", pl) : null,
+            links.length
+              ? el(
+                  "p",
+                  { class: "muted" },
+                  "Register items: ",
+                  links.map((x) =>
+                    byId().get(x) ? openerBtn(x, x, "idbtn") : el("code", { text: x }),
+                  ),
+                )
+              : null,
+            it._bug ? null : para(sentenceWhere(it)),
+          ),
+        ),
+      );
+    } else sheetBody.append(section("Where it is now", para(sentenceWhere(it))));
     if (it.ownerAsk) {
       const rec = recommended(it.gate);
       sheetBody.append(
@@ -1689,7 +2019,7 @@
         ),
       );
     }
-    sheetBody.append(teamDetails(it));
+    if (!it._bug) sheetBody.append(teamDetails(it));
     sheetBody.scrollTop = top;
   }
 
@@ -1817,6 +2147,8 @@
       if (Number.isFinite(gen) && Math.abs(gen - Date.now()) > 5 * 60000) skew = gen - Date.now();
       skewSet = true;
     }
+    if (typeof next.authEnabled === "boolean") authEnabled = next.authEnabled;
+    document.querySelector(".logout")?.toggleAttribute("hidden", authEnabled !== true);
     snap = next;
     renderAll();
     if (!hashHandled) {
@@ -1851,7 +2183,23 @@
     poll();
     pollTimer = setInterval(poll, 30000);
   }
+  // The first snapshot over HTTP carries authEnabled; SSE frames may not, so ask once up front.
+  async function prime() {
+    try {
+      const r = await fetch("/api/snapshot", { cache: "no-store" });
+      if (r.status === 401) return toLogin();
+      const j = await r.json();
+      if (typeof j.authEnabled === "boolean") {
+        authEnabled = j.authEnabled;
+        document.querySelector(".logout")?.toggleAttribute("hidden", authEnabled !== true);
+      }
+      if (!snap) apply(j);
+    } catch {
+      /* the stream or the poller will report the problem */
+    }
+  }
   function connect() {
+    prime();
     if (typeof EventSource === "undefined") return startPolling();
     const es = new EventSource("/sse");
     es.addEventListener("snapshot", (ev) => {

@@ -6,6 +6,7 @@ import {
   SESSION_MAX_AGE_S,
   clearCookie,
   clientIp,
+  createFailureLimiter,
   createRateLimiter,
   hashPassword,
   hashPasswordCli,
@@ -104,21 +105,46 @@ test("rate limiter: 11th attempt blocked, other keys unaffected, window resets",
   assert.equal(defaults.hit("k", NOW), false);
 });
 
-test("clientIp: first x-forwarded-for hop, else the socket address", () => {
+test("clientIp: cloud uses x-real-ip, else the LAST x-forwarded-for hop; local uses the socket", () => {
   const fwd = {
-    headers: { "x-forwarded-for": "9.9.9.9, 10.0.0.1" },
+    headers: { "x-forwarded-for": "6.6.6.6, 9.9.9.9" },
     socket: { remoteAddress: "::1" },
   };
-  assert.equal(clientIp(fwd), "9.9.9.9");
+  assert.equal(clientIp(fwd, { cloud: true }), "9.9.9.9", "spoofed first hop is ignored");
   assert.equal(
-    clientIp({ headers: {}, socket: { remoteAddress: "::ffff:127.0.0.1" } }),
+    clientIp({ ...fwd, headers: { ...fwd.headers, "x-real-ip": "5.5.5.5" } }, { cloud: true }),
+    "5.5.5.5",
+  );
+  assert.equal(clientIp(fwd), "::1", "local: headers never trusted");
+  assert.equal(
+    clientIp({ headers: {}, socket: { remoteAddress: "::ffff:127.0.0.1" } }, { cloud: true }),
     "::ffff:127.0.0.1",
   );
   assert.equal(
-    clientIp({ headers: { "x-forwarded-for": "" }, socket: { remoteAddress: "7.7.7.7" } }),
+    clientIp(
+      { headers: { "x-forwarded-for": "" }, socket: { remoteAddress: "7.7.7.7" } },
+      { cloud: true },
+    ),
     "7.7.7.7",
   );
   assert.equal(clientIp({ headers: {}, socket: {} }), "unknown");
+});
+
+test("createFailureLimiter: blocks after max failures, success resets, window expires, map is capped", () => {
+  const rl = createFailureLimiter({ max: 3, windowMs: 1000, maxBuckets: 5 });
+  for (let i = 0; i < 3; i++) {
+    assert.equal(rl.blocked("a", NOW), false);
+    rl.fail("a", NOW);
+  }
+  assert.equal(rl.blocked("a", NOW), true);
+  assert.equal(rl.blocked("b", NOW), false, "other keys unaffected");
+  rl.reset("a");
+  assert.equal(rl.blocked("a", NOW), false);
+  for (let i = 0; i < 3; i++) rl.fail("a", NOW);
+  assert.equal(rl.blocked("a", NOW + 1000), false, "window elapsed");
+  for (let i = 0; i < 20; i++) rl.fail(`k${i}`, NOW);
+  assert.ok(rl.size() <= 5, `size ${rl.size()}`);
+  assert.equal(rl.blocked("k19", NOW), false);
 });
 
 test("hashPasswordCli: reads stdin, prints only the hash, rejects short passwords", async () => {

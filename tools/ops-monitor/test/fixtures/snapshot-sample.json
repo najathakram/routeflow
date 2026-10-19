@@ -86,7 +86,10 @@
       "problem": "Product editing is slow and error-prone for back-office staff, and a few product screens still load the whole catalog.",
       "impact": "Staff re-key prices, and big catalogs make pickers feel frozen.",
       "solution": "Ship inline price editing, box/piece rollover, lighter pickers and the tenant settings search together as one release.",
-      "summaryDraft": true
+      "summaryDraft": true,
+      "statusLabel": "Being built",
+      "etaAt": "2026-10-19T18:00:00.000Z",
+      "refPrs": []
     },
     {
       "id": "R2",
@@ -122,7 +125,10 @@
       "problem": "Shops with a counter cannot ring up a walk-in sale and take payment on one screen.",
       "impact": "Counter customers still need a separate order and invoice, which slows the queue.",
       "solution": "Add the walk-in flow, pay on the same screen, and a faster order editor.",
-      "summaryDraft": true
+      "summaryDraft": true,
+      "statusLabel": "Planned",
+      "etaAt": "2026-10-21T23:59:00.000Z",
+      "refPrs": []
     },
     {
       "id": "R3",
@@ -157,7 +163,10 @@
       "domain": "billing",
       "problem": "Subscriptions are not yet billed automatically from the first of the month.",
       "impact": "Invoices for new businesses are made by hand and can be late or wrong.",
-      "solution": "Prorate the first invoice, charge in advance, and move unpaid accounts to read-only after a 7-day grace period."
+      "solution": "Prorate the first invoice, charge in advance, and move unpaid accounts to read-only after a 7-day grace period.",
+      "statusLabel": "Being specified",
+      "etaAt": "2026-10-24T23:59:00.000Z",
+      "refPrs": []
     },
     {
       "id": "R4",
@@ -189,7 +198,10 @@
       "createdAt": "2026-10-16T00:40:00.000Z",
       "updatedAt": "2026-10-19T11:30:00.000Z",
       "overlay": false,
-      "domain": "delivery"
+      "domain": "delivery",
+      "statusLabel": "Idea",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "520",
@@ -224,7 +236,10 @@
       "domain": "catalog",
       "problem": "Changing a product price means opening a separate form and saving, one field at a time.",
       "impact": "Staff lose minutes on every price update, and typos slip in when many prices change at once.",
-      "solution": "Let staff edit prices directly in the product table, with one shared editor so every screen behaves the same."
+      "solution": "Let staff edit prices directly in the product table, with one shared editor so every screen behaves the same.",
+      "statusLabel": "Being built",
+      "etaAt": null,
+      "refPrs": [3402, 3498]
     },
     {
       "id": "520.1",
@@ -259,7 +274,10 @@
       "domain": "catalog",
       "problem": "Price editing has two different editors that behave differently.",
       "impact": "People get surprising results depending on where they edit, which erodes trust in the numbers.",
-      "solution": "Make the floating editor the single price editor and remove the old one. It is in review now."
+      "solution": "Make the floating editor the single price editor and remove the old one. It is in review now.",
+      "statusLabel": "In review",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "520.2",
@@ -291,7 +309,10 @@
       "createdAt": "2026-10-16T00:40:00.000Z",
       "updatedAt": "2026-10-19T11:30:00.000Z",
       "overlay": false,
-      "domain": "catalog"
+      "domain": "catalog",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "521",
@@ -327,7 +348,10 @@
       "problem": "Editing boxes and pieces together can leave a line with 12 pieces instead of 1 box and 0 pieces.",
       "impact": "Customers can be charged the wrong amount on boxed products.",
       "solution": "Roll pieces over into boxes automatically whenever a quantity is edited, using the shared money rules.",
-      "summaryDraft": true
+      "summaryDraft": true,
+      "statusLabel": "Ready to ship",
+      "etaAt": null,
+      "refPrs": [3401]
     },
     {
       "id": "522",
@@ -362,7 +386,10 @@
       "domain": "catalog",
       "problem": "The inventory picker downloaded the whole product catalog each time it opened.",
       "impact": "Large businesses waited several seconds before they could pick a product.",
-      "solution": "Load only the products being searched. This is live now."
+      "solution": "Load only the products being searched. This is live now.",
+      "statusLabel": "Fixed",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "525",
@@ -397,7 +424,10 @@
       "domain": "platform",
       "problem": "Finding a setting in the back office means clicking through every tab.",
       "impact": "New businesses struggle to set themselves up and ask support for help.",
-      "solution": "Add a search box that jumps straight to the setting."
+      "solution": "Add a search box that jumps straight to the setting.",
+      "statusLabel": "Shipping",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "530",
@@ -434,7 +464,10 @@
       "impact": "Counter sales are slow and customers walk away from long lines.",
       "solution": "Let staff sell to a generic walk-in customer and add details later if needed.",
       "ownerAsk": "Please confirm how cash totals should be rounded (see the question about cash rounding).",
-      "summaryDraft": true
+      "summaryDraft": true,
+      "statusLabel": "Being specified",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "530.1",
@@ -473,7 +506,10 @@
       "domain": "orders",
       "problem": "After a counter sale the cashier has to leave the order and open the invoice to take payment.",
       "impact": "Extra steps at the till; some sales are left unpaid by mistake.",
-      "solution": "Show the payment buttons on the same screen as the order."
+      "solution": "Show the payment buttons on the same screen as the order.",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "531",
@@ -485,7 +521,7 @@
       "train": "R2",
       "area": "web:orders",
       "parent": null,
-      "eta": null,
+      "eta": "unscheduled (slipped past 10-17)",
       "gate": null,
       "trainLabel": null,
       "source": "events",
@@ -508,7 +544,10 @@
       "domain": "orders",
       "problem": "The order screen is crowded, and editing a line is easy to get wrong.",
       "impact": "Orders contain mistakes that need correcting later.",
-      "solution": "Redesign line editing so quantity, price and units are clear and checked as you type."
+      "solution": "Redesign line editing so quantity, price and units are clear and checked as you type.",
+      "statusLabel": "Being built",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "532",
@@ -540,7 +579,10 @@
       "createdAt": "2026-10-16T00:40:00.000Z",
       "updatedAt": "2026-10-19T11:30:00.000Z",
       "overlay": false,
-      "domain": "orders"
+      "domain": "orders",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "540",
@@ -576,7 +618,10 @@
       "problem": "A new business that starts mid-month gets a full month invoice.",
       "impact": "Customers complain about being overcharged, and we refund by hand.",
       "solution": "Charge only for the days left in the first month.",
-      "summaryDraft": true
+      "summaryDraft": true,
+      "statusLabel": "Being specified",
+      "etaAt": "2026-10-20T23:59:00.000Z",
+      "refPrs": [3377]
     },
     {
       "id": "541",
@@ -608,7 +653,10 @@
       "createdAt": "2026-10-16T00:40:00.000Z",
       "updatedAt": "2026-10-19T11:30:00.000Z",
       "overlay": false,
-      "domain": "billing"
+      "domain": "billing",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "550",
@@ -620,7 +668,7 @@
       "train": "R4",
       "area": "mobile:driver",
       "parent": null,
-      "eta": null,
+      "eta": "after census",
       "gate": null,
       "trainLabel": null,
       "source": "events",
@@ -640,7 +688,10 @@
       "createdAt": "2026-10-16T00:40:00.000Z",
       "updatedAt": "2026-10-19T11:30:00.000Z",
       "overlay": false,
-      "domain": "delivery"
+      "domain": "delivery",
+      "statusLabel": "Idea",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "560",
@@ -675,7 +726,10 @@
       "domain": "tooling",
       "problem": "Nobody can see one accurate picture of what is being built, what is stuck and what is next.",
       "impact": "The owner and the lanes spend time asking each other, and work gets dropped.",
-      "solution": "This ops monitor: a live board built from the registers, pull requests and deploys."
+      "solution": "This ops monitor: a live board built from the registers, pull requests and deploys.",
+      "statusLabel": "Being built",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "560.1",
@@ -707,7 +761,10 @@
       "createdAt": "2026-10-16T00:40:00.000Z",
       "updatedAt": "2026-10-19T11:30:00.000Z",
       "overlay": false,
-      "domain": "tooling"
+      "domain": "tooling",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "570",
@@ -742,7 +799,10 @@
       "domain": "finance",
       "problem": "Retailer accounts cannot get a statement of what they owe.",
       "impact": "Customers call to ask for balances, which takes staff time.",
-      "solution": "Add a statement export per account."
+      "solution": "Add a statement export per account.",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "571",
@@ -774,7 +834,10 @@
       "createdAt": "2026-10-16T00:40:00.000Z",
       "updatedAt": "2026-10-19T11:30:00.000Z",
       "overlay": false,
-      "domain": "finance"
+      "domain": "finance",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "580",
@@ -810,7 +873,10 @@
       "problem": "Counter sales in cash need a rule for rounding to the nearest coin.",
       "impact": "Until it is decided, the pay-on-same-screen work cannot finish and totals may differ by a few cents.",
       "solution": "Pick one rule and apply it everywhere. The team recommends rounding to the nearest 5 cents.",
-      "ownerAsk": "Choose the cash rounding rule."
+      "ownerAsk": "Choose the cash rounding rule.",
+      "statusLabel": "Planned",
+      "etaAt": "2026-10-20T23:59:00.000Z",
+      "refPrs": []
     },
     {
       "id": "581",
@@ -846,7 +912,10 @@
       "problem": "Database changes for the next release can only go to production with your approval.",
       "impact": "The release cannot go live until the change is applied.",
       "solution": "Approve a short sitting where the team applies it with a fresh backup.",
-      "ownerAsk": "Approve the migration sitting at 17:30Z."
+      "ownerAsk": "Approve the migration sitting at 17:30Z.",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "590",
@@ -881,7 +950,10 @@
       "domain": "platform",
       "problem": "Sign-in attempts spiked on the staging probe and the login limiter started refusing real users.",
       "impact": "Staff at test businesses were locked out of signing in for several minutes.",
-      "solution": "Raise the limit for the probe address and add an alert so we see it before users do."
+      "solution": "Raise the limit for the probe address and add an alert so we see it before users do.",
+      "statusLabel": "Being built",
+      "etaAt": null,
+      "refPrs": []
     },
     {
       "id": "B1201",
@@ -916,7 +988,49 @@
       "domain": "catalog",
       "problem": "After editing a unit price, the old price still shows until the page is refreshed.",
       "impact": "Staff think the change did not save and enter it twice.",
-      "solution": "Refresh the displayed price from the saved value right after each edit."
+      "solution": "Refresh the displayed price from the saved value right after each edit.",
+      "statusLabel": "Being built",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "582",
+      "title": "Owner: allow card-only plan pick at signup",
+      "type": "decision",
+      "priority": "P1",
+      "status": "planned",
+      "lane": "owner",
+      "train": null,
+      "area": null,
+      "parent": null,
+      "eta": null,
+      "gate": "Recommended: keep bank debits",
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "platform",
+      "problem": "Plan pick could be card-only.",
+      "impact": "The release cannot go live until the change is applied.",
+      "solution": "Approve a short sitting where the team applies it with a fresh backup.",
+      "ownerAsk": "Allow card-only plan pick at signup?",
+      "statusLabel": "Booked",
+      "etaAt": null,
+      "refPrs": []
     }
   ],
   "bugs": [
@@ -927,7 +1041,18 @@
       "state": "open",
       "area": "web:products",
       "domain": "catalog",
-      "sensitive": false
+      "sensitive": false,
+      "fix": {
+        "state": "pr-open",
+        "pr": 3511,
+        "branch": "fix/B1201-stale-price",
+        "prUrl": "https://github.com/acme/app/pull/3511"
+      },
+      "filedAt": "2026-10-18T06:00:00.000Z",
+      "pending": false,
+      "ledgerState": "building",
+      "items": ["520.1"],
+      "release": "R1"
     },
     {
       "id": "B1210",
@@ -936,7 +1061,18 @@
       "state": "open",
       "area": "api:orders",
       "domain": "orders",
-      "sensitive": false
+      "sensitive": false,
+      "fix": {
+        "state": "none",
+        "pr": null,
+        "branch": null,
+        "prUrl": null
+      },
+      "filedAt": "2026-10-19T03:00:00.000Z",
+      "pending": false,
+      "ledgerState": "open",
+      "items": [],
+      "release": null
     },
     {
       "id": "B1211",
@@ -945,7 +1081,18 @@
       "state": "open",
       "area": "web:counter",
       "domain": "orders",
-      "sensitive": false
+      "sensitive": false,
+      "fix": {
+        "state": "branch",
+        "pr": null,
+        "branch": "fix/B1211-receipt-tax",
+        "prUrl": null
+      },
+      "filedAt": "2026-10-18T16:00:00.000Z",
+      "pending": false,
+      "ledgerState": "open",
+      "items": ["531"],
+      "release": null
     },
     {
       "id": "B1215",
@@ -954,7 +1101,18 @@
       "state": "open",
       "area": "api:invoices",
       "domain": "finance",
-      "sensitive": false
+      "sensitive": false,
+      "fix": {
+        "state": "in-release",
+        "pr": 3519,
+        "branch": "train/R1",
+        "prUrl": "https://github.com/acme/app/pull/3519"
+      },
+      "filedAt": "2026-10-17T10:00:00.000Z",
+      "pending": false,
+      "ledgerState": "building",
+      "items": [],
+      "release": "R1"
     },
     {
       "id": "B1218",
@@ -963,7 +1121,18 @@
       "state": "triaged",
       "area": "web:billing",
       "domain": "billing",
-      "sensitive": false
+      "sensitive": false,
+      "fix": {
+        "state": "merged",
+        "pr": 3498,
+        "branch": "fix/B1218-addon-flicker",
+        "prUrl": "https://github.com/acme/app/pull/3498"
+      },
+      "filedAt": "2026-10-15T18:00:00.000Z",
+      "pending": false,
+      "ledgerState": "fixed",
+      "items": ["521"],
+      "release": null
     },
     {
       "id": "B1220",
@@ -972,7 +1141,18 @@
       "state": "open",
       "area": "mobile:driver",
       "domain": "delivery",
-      "sensitive": false
+      "sensitive": false,
+      "fix": {
+        "state": "deployed",
+        "pr": 3490,
+        "branch": "fix/B1220-map-pins",
+        "prUrl": "https://github.com/acme/app/pull/3490"
+      },
+      "filedAt": "2026-10-14T12:00:00.000Z",
+      "pending": false,
+      "ledgerState": "fixed",
+      "items": [],
+      "release": null
     },
     {
       "id": "B1224",
@@ -981,7 +1161,18 @@
       "state": "open",
       "area": "web:inventory",
       "domain": "catalog",
-      "sensitive": false
+      "sensitive": false,
+      "fix": {
+        "state": "none",
+        "pr": null,
+        "branch": null,
+        "prUrl": null
+      },
+      "filedAt": null,
+      "pending": false,
+      "ledgerState": "open",
+      "items": [],
+      "release": null
     },
     {
       "id": "B1230",
@@ -990,7 +1181,18 @@
       "state": "open",
       "area": "web:reports",
       "domain": "finance",
-      "sensitive": false
+      "sensitive": false,
+      "fix": {
+        "state": "none",
+        "pr": null,
+        "branch": null,
+        "prUrl": null
+      },
+      "filedAt": "2026-10-19T10:00:00.000Z",
+      "pending": true,
+      "ledgerState": null,
+      "items": [],
+      "release": null
     },
     {
       "id": "B1233",
@@ -999,7 +1201,18 @@
       "state": "open",
       "area": "api:billing",
       "domain": "billing",
-      "sensitive": false
+      "sensitive": false,
+      "fix": {
+        "state": "none",
+        "pr": null,
+        "branch": null,
+        "prUrl": null
+      },
+      "filedAt": "2026-10-19T07:00:00.000Z",
+      "pending": false,
+      "ledgerState": "open",
+      "items": ["540"],
+      "release": "R3"
     },
     {
       "id": "B1240",
@@ -1008,7 +1221,18 @@
       "state": "open",
       "area": null,
       "domain": null,
-      "sensitive": true
+      "sensitive": true,
+      "fix": {
+        "state": "branch",
+        "pr": null,
+        "branch": "fix/B1240-order-rounding",
+        "prUrl": null
+      },
+      "filedAt": "2026-10-18T10:00:00.000Z",
+      "pending": false,
+      "ledgerState": "open",
+      "items": [],
+      "release": null
     }
   ],
   "trains": [
@@ -1049,7 +1273,9 @@
       "lastEventAt": "2026-10-19T11:56:00.000Z",
       "silentMin": 4,
       "now": ["590"],
-      "next": null
+      "next": null,
+      "lastActivityAt": "2026-10-19T10:00:00.000Z",
+      "lastActivitySource": "pushed"
     },
     {
       "id": "pc-lane",
@@ -1061,8 +1287,10 @@
       "next": {
         "id": "530",
         "title": "Counter sales: walk-in customer flow",
-        "reason": "P1 · R2 · assigned to pc-lane"
-      }
+        "reason": "P1 Â· R2 Â· assigned to pc-lane"
+      },
+      "lastActivityAt": "2026-10-19T11:55:00.000Z",
+      "lastActivitySource": "recorded"
     },
     {
       "id": "macmini",
@@ -1074,8 +1302,10 @@
       "next": {
         "id": "520.2",
         "title": "Tier price column keyboard flow",
-        "reason": "P2 · R1 · assigned to macmini"
-      }
+        "reason": "P2 Â· R1 Â· assigned to macmini"
+      },
+      "lastActivityAt": "2026-10-19T11:20:00.000Z",
+      "lastActivitySource": "handoff note"
     },
     {
       "id": "macbook",
@@ -1087,8 +1317,10 @@
       "next": {
         "id": "540",
         "title": "Billing: prorate first invoice",
-        "reason": "P1 · R3 · assigned to macbook"
-      }
+        "reason": "P1 Â· R3 Â· assigned to macbook"
+      },
+      "lastActivityAt": "2026-10-18T08:00:00.000Z",
+      "lastActivitySource": "pushed"
     }
   ],
   "ownerQueue": [
@@ -1097,14 +1329,24 @@
       "title": "Owner: choose cash rounding rule for counter sales",
       "gate": "Recommended: round to nearest 5 cents",
       "eta": "2026-10-20",
-      "status": "planned"
+      "status": "planned",
+      "state": "open"
     },
     {
       "id": "581",
       "title": "Owner: approve prod migration sitting",
       "gate": "Recommended: approve at 17:30Z",
       "eta": null,
-      "status": "planned"
+      "status": "planned",
+      "state": "open"
+    },
+    {
+      "id": "582",
+      "title": "Owner: allow card-only plan pick at signup",
+      "gate": "Recommended: keep bank debits",
+      "eta": null,
+      "status": "planned",
+      "state": "booked"
     }
   ],
   "decisions": [
@@ -1213,7 +1455,31 @@
       "sha": "513a1b2c3d4e5f60718293a4b5c6d7e8f9012345",
       "date": "2026-10-19T09:00:00.000Z",
       "headline": "Merge train/product-k11 (#3513)",
-      "checks": "SUCCESS"
+      "checks": "FAILURE",
+      "gate": "success",
+      "probesFailing": ["e2e-routeflow-regression"],
+      "runs": [
+        {
+          "name": "verify",
+          "kind": "gate",
+          "state": "success"
+        },
+        {
+          "name": "e2e-money",
+          "kind": "gate",
+          "state": "success"
+        },
+        {
+          "name": "e2e-routeflow-regression",
+          "kind": "probe",
+          "state": "failure"
+        },
+        {
+          "name": "lint-migrations",
+          "kind": "probe",
+          "state": "success"
+        }
+      ]
     },
     "visibility": "PRIVATE",
     "deploys": [
@@ -1940,5 +2206,20 @@
     "items": 25,
     "openBugs": 10,
     "anomalies": 1
-  }
+  },
+  "answeredRecently": [
+    {
+      "id": "583",
+      "title": "Owner: tenants see backorder markers",
+      "answer": "ANSWERED, see D-0412",
+      "answeredAt": "2026-10-19T09:00:00.000Z"
+    },
+    {
+      "id": "584",
+      "title": "Owner: pilot price is $100",
+      "answer": "STANDING YES",
+      "answeredAt": "2026-10-18T06:00:00.000Z"
+    }
+  ],
+  "authEnabled": false
 }

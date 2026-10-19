@@ -36,7 +36,7 @@ function splitRow(line) {
 }
 
 /** All pipe tables in a markdown text: [{ header: string[], rows: [{ cells, line }] }]. */
-function tables(md) {
+export function tables(md) {
   const lines = String(md).split(/\r?\n/);
   const out = [];
   let cur = null;
@@ -183,7 +183,16 @@ export function trainMembers(text, knownIds = null) {
   return out;
 }
 
-/** Every table with a "Recommended answer" header -> [{ key, title, register, recommended, why }]. */
+// Owner-queue status words (the first one found in the first cell wins).
+const QUEUE_STATUS_RE = /\b(ANSWERED|DONE|STANDING YES|DEFAULT IN EFFECT|BOOKED|OPEN|CHECK)\b/;
+const DECISION_FILE_RE = /\bD-\d{4}-\d{2}-\d{2}-[A-Za-z0-9._-]*?\.md\b/;
+
+/**
+ * Every table with a "Recommended answer" header ->
+ * [{ key, title, register, recommended, why, statusWord, decisionFile }]. The first cell of a real
+ * row reads `N1 · **ANSWERED 10-18 → D-….md**`: `key` is its leading token, `statusWord` the first
+ * status word in it (null when none) and `decisionFile` the first `D-….md` anywhere in the row.
+ */
 export function parseOwnerQueue(md) {
   const out = [];
   for (const t of tables(md)) {
@@ -192,9 +201,12 @@ export function parseOwnerQueue(md) {
     const keyCol = cols.has("#") ? cols.get("#") : 0;
     for (const row of t.rows) {
       const c = row.cells;
-      const key = plain(c[keyCol] ?? "");
+      const first = plain(c[keyCol] ?? "");
+      const key = (/^\S+/.exec(first) ?? [""])[0];
       const title = plain(c[cols.get("item")] ?? "");
       if (!key || !title) continue;
+      const statusWord = QUEUE_STATUS_RE.exec(first)?.[1] ?? null;
+      const decisionFile = DECISION_FILE_RE.exec(c.join(" "))?.[0] ?? null;
       const regCell = cols.has("register") ? plain(c[cols.get("register")] ?? "") : "";
       const register = [];
       for (const m of regCell.matchAll(/\d+/g)) if (!register.includes(m[0])) register.push(m[0]);
@@ -204,6 +216,8 @@ export function parseOwnerQueue(md) {
         register,
         recommended: plain(c[cols.get("recommended answer")] ?? ""),
         why: cols.has("why") ? plain(c[cols.get("why")] ?? "") : "",
+        statusWord,
+        decisionFile,
       });
     }
   }
@@ -359,36 +373,8 @@ export function buildBackfillEvents(
       }),
     );
   }
-  for (const o of board.owner) {
-    const eta = plain(s(o?.when));
-    draft(
-      plain(s(o?.ask)),
-      compact({
-        type: "decision",
-        lane: "owner",
-        priority: "P1",
-        status: "planned",
-        gate: recGate(plain(s(o?.recommended))),
-        eta: eta ? clip(eta, 80) : undefined,
-        tags: ["owner-ask"],
-        source: "board",
-      }),
-    );
-  }
-  for (const pr of board.problems) {
-    const fix = plain(s(pr?.fix));
-    draft(
-      plain(s(pr?.problem)),
-      compact({
-        type: "incident",
-        priority: "P0",
-        status: "building",
-        gate: fix ? clip(fix, 400) : undefined,
-        tags: ["problem"],
-        source: "board",
-      }),
-    );
-  }
+  // The board state.json (owner asks, problems) is a generated view, never a source (lead 10-19):
+  // problems come from P0/P1 register rows and incidents, owner asks from the owner queue.
   return events;
 }
 

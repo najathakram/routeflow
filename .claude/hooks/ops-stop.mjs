@@ -3,7 +3,9 @@
  * Stop gate for the ops monitor. The PostToolUse recorder (ops-post-push.mjs) logs every
  * `git push` / `gh pr ...` of this session's turn; this gate blocks the turn from closing
  * (exit 2) when such an action has no matching event in routeflow-specs, or the pushed
- * branch / PR is not linked to a work item, or a merged PR's item has no status event.
+ * branch / PR is not linked to a work item, or a merged PR's item has no status event. The
+ * plan recorder (ops-post-plan.mjs) adds plan-change / assign actions: a plan file edited or work
+ * assigned in the turn needs some human event on this machine in the same turn.
  *
  * FAIL OPEN (this runs at the end of EVERY session once merged; a false block is expensive):
  * any exception, missing/garbled stdin, no actions file, missing ops clone, unreadable events,
@@ -52,14 +54,53 @@ function findLinkedItem(state, { number, branch }) {
   return null;
 }
 
+const PLAN_KINDS = new Set(["plan-change", "assign"]);
+const PLAN_FIX =
+  `${RF} item new --title "..." --type feature  /  ${RF} item edit <id> --lane <lane> --train R3 --eta ...  /  ` +
+  `${RF} event owner-decision --question "..." --answer "..."  /  ${RF} event note --text "..."`;
+
+/**
+ * A plan change or an assignment needs at least one human event (any kind except push / pr, not
+ * the register-sync robot) on THIS machine at or after the earliest such action minus a minute.
+ * Returns one missing entry covering every such action, or null (also when `events` is unknown).
+ */
+function planChangeMissing(actions, events, machine) {
+  const plan = actions.filter((a) => PLAN_KINDS.has(a.kind));
+  if (plan.length === 0 || !Array.isArray(events)) return null;
+  const since = Math.min(...plan.map((a) => toMs(a.ts) ?? 0)) - 60_000;
+  const recorded = events.some(
+    (e) =>
+      e &&
+      !e.__invalid &&
+      !["push", "pr"].includes(e.kind) &&
+      e.actor !== "register-sync" &&
+      (machine == null || e.machine === machine) &&
+      (toMs(e.ts) ?? -1) >= since,
+  );
+  if (recorded) return null;
+  const what = [
+    ...new Set(plan.map((a) => (a.kind === "assign" ? `assignment to ${a.to}` : a.path))),
+  ];
+  const shown = what.slice(0, 3).join(", ") + (what.length > 3 ? `, +${what.length - 3} more` : "");
+  return {
+    action: plan[0],
+    why: `you changed a plan or assigned work (${shown}) but recorded nothing on the monitor`,
+    fix: PLAN_FIX,
+  };
+}
+
 /**
  * Which of this turn's actions lack a matching event. `actions` = turn-actions entries
- * ({ts (ms or ISO), kind:'push'|'pr', ...}); `state` = fold() output. `now` is accepted for
- * contract compatibility but no rule needs it.
+ * ({ts (ms or ISO), kind:'push'|'pr'|'plan-change'|'assign', ...}); `state` = fold() output;
+ * `events` = the raw event log and `machine` = this machine's id (both needed only for the
+ * plan-change / assign rule, which fails open without `events`). `now` is accepted for contract
+ * compatibility but no rule needs it.
  * Returns { ok: true } or { ok: false, missing: [{ action, why, fix }] }.
  */
-export function evaluateGate({ actions, state }) {
+export function evaluateGate({ actions, state, events, machine }) {
   const missing = [];
+  const planMissing = planChangeMissing(actions ?? [], events, machine);
+  if (planMissing) missing.push(planMissing);
   for (const action of actions ?? []) {
     const ats = toMs(action.ts) ?? 0;
     if (action.kind === "push") {
@@ -156,7 +197,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function loadState(specsDir) {
   const { readAllEvents } = await import(lib("store.mjs"));
   const { fold } = await import(lib("fold.mjs"));
-  return fold(readAllEvents(specsDir));
+  const events = readAllEvents(specsDir);
+  return { state: fold(events), events };
 }
 
 async function main() {
@@ -177,7 +219,10 @@ async function main() {
   const dir = specsDir();
   if (!existsSync(join(dir, "events"))) return 0; // no ops clone (CI, cloud): nothing to check
 
-  let verdict = evaluateGate({ actions, state: await loadState(dir) });
+  const { loadConfig, machineId } = await import(lib("config.mjs"));
+  const machine = machineId(loadConfig(dir), process.env);
+  const judge = async () => evaluateGate({ actions, machine, ...(await loadState(dir)) });
+  let verdict = await judge();
   // The detached recorder may still be pulling/committing the push event (a few seconds on a busy
   // host): re-read up to 15 x 1 s before blocking.
   const retryEnv = Number(process.env.RF_OPS_RETRY_MS);
@@ -185,7 +230,7 @@ async function main() {
   for (let i = 0; i < 15 && !verdict.ok; i++) {
     if (!verdict.missing.some((m) => m.why === "push not recorded")) break;
     await sleep(retryMs);
-    verdict = evaluateGate({ actions, state: await loadState(dir) });
+    verdict = await judge();
   }
   if (verdict.ok) {
     archiveActions(file);

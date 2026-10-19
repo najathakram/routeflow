@@ -1715,3 +1715,104 @@ progress::-moz-progress-bar {
 .nav {
   position: relative;
 }
+
+/* ---------- accuracy round (A4): gate vs probes, bug rows, fix-state chips ---------- */
+.logout[hidden] {
+  display: none;
+}
+.fixbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.fixchip {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  min-height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.fixchip[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+.pbody .tech {
+  margin-top: 10px;
+}
+.bugrow {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.bugrow:last-child {
+  border-bottom: 0;
+}
+.bugmain {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.bugmain .grow {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.bugmeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+details.answered {
+  margin-top: 10px;
+}
+.sec .idbtn + .idbtn,
+.bugmeta .idbtn {
+  margin-right: 6px;
+}
+
+/* Drill-down list on aggregated alarms (unowned bug backlog by severity x area). */
+.alarm .drill {
+  grid-column: 1 / -1;
+  margin-top: 0.25rem;
+}
+.alarm .drill > summary {
+  cursor: pointer;
+  color: var(--accent, currentColor);
+  font-size: 0.875rem;
+}
+.drill-list {
+  list-style: none;
+  margin: 0.375rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+  max-height: 16rem;
+  overflow: auto;
+}
+.linklike {
+  background: none;
+  border: 0;
+  padding: 0.125rem 0;
+  font: inherit;
+  font-size: 0.875rem;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.linklike:focus-visible {
+  outline: 2px solid var(--accent, currentColor);
+  outline-offset: 2px;
+}

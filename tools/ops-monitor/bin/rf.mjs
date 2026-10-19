@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // rf: the ops-monitor CLI. Human facts are typed once here and become events in routeflow-specs.
 // Exit codes: 0 ok, 1 refused (validation) or error, 2 usage, 3 committed but not pushed.
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   REPO_ROOT,
@@ -26,6 +27,10 @@ import {
 import { newEventId } from "../lib/ids.mjs";
 import { fold } from "../lib/fold.mjs";
 import { laneNow, rankCandidates } from "../lib/next.mjs";
+import { registerModeOf, runSync } from "../lib/sync.mjs";
+import { laneForCwd, setLane } from "../lib/lanes-local.mjs";
+import { lastEventId, renderBrief, renderSince, splitAtMarker } from "../lib/brief.mjs";
+import { registerHook } from "../lib/views.mjs";
 import {
   appendEvents,
   ensureClone,
@@ -33,6 +38,7 @@ import {
   loadBugIds,
   readAllEvents,
   syncSpecs,
+  tryWithSpecsLock,
   withSpecsLock,
 } from "../lib/store.mjs";
 
@@ -48,6 +54,7 @@ const BOOLEAN_FLAGS = new Set([
   "help",
   "no-sync",
   "quiet",
+  "refresh",
 ]);
 const MULTI_FLAGS = new Set(["pr", "branch", "url"]);
 
@@ -91,7 +98,11 @@ const USAGE = `usage: rf <command> [args]
            [--owner-ask "what we need from the owner"]   (P0/P1 bug/feature/incident: --problem + --impact required)
   item edit <id> [--title ..] [--priority ..] ...   item show <id> [--json]
   ls [--lane L] [--train R] [--status S] [--type T] [--open] [--json]
-  whoami [--machine M]   backfill [--dry]   views [--dry] [--no-push]   doctor   hash-password
+  sync [--dry] [--no-push]                         turn changed register / owner-queue rows into events
+  audit [--json] [--snapshot FILE]                 the accuracy counts (items, alarms, problems, queue, PRs, bugs)
+  bug file <args...>                               files a bug via scripts/campaign/bugs.mjs (lead, coordinator only)
+  brief [--lane L] [--since <eventId|iso>] [--refresh] [--json]   what the monitor says, in plain words
+  whoami [--machine M] [--lane L]   backfill [--dry]   views [--dry] [--no-push]   doctor   hash-password
 global: --json  --no-push  --no-sync  --quiet (no stdout on success)`;
 
 const NULLABLE = [
@@ -118,7 +129,8 @@ async function prepare(ctx, flags, { sync }) {
     async () => {
       await ensureClone({ dir: ctx.dir, remote: ctx.remote });
       if (sync && !flags["no-sync"] && !ctx.env.RF_NO_SYNC) {
-        const r = await syncSpecs(ctx.dir);
+        const generated = registerModeOf(loadConfig(ctx.dir)) === "generated";
+        const r = await syncSpecs(ctx.dir, generated ? { afterCommit: registerHook() } : {});
         if (!r.ok) process.stderr.write(`warning: sync failed (using local clone): ${r.error}\n`);
       }
     },
@@ -128,9 +140,16 @@ async function prepare(ctx, flags, { sync }) {
   return { ...ctx, config, machine: machineId(config, ctx.env) };
 }
 
+/** No --lane: RF_LANE, else the lane recorded for this directory (rf whoami --lane), else null. */
+function defaultLane(config, env) {
+  return (
+    laneId(undefined, config, env) ?? laneForCwd(process.cwd(), env, { config, home: opsHome(env) })
+  );
+}
+
 function resolveLane(raw, c, { required = false } = {}) {
   let lane;
-  if (raw === undefined) lane = laneId(undefined, c.config, c.env);
+  if (raw === undefined) lane = defaultLane(c.config, c.env);
   else {
     if (typeof raw !== "string") throw new UsageError("--lane needs a value");
     lane = normalizeLane(raw, c.config);
@@ -212,7 +231,14 @@ async function submit(c, flags, events) {
   const push = !flags["no-push"];
   let res;
   try {
-    res = await appendEvents(events, { dir: c.dir, home: c.home, push, bugIds });
+    res = await appendEvents(events, {
+      dir: c.dir,
+      home: c.home,
+      push,
+      bugIds,
+      // Generated register mode: the register follows every event batch in a views-only commit.
+      afterCommit: registerModeOf(c.config) === "generated" ? registerHook() : undefined,
+    });
   } catch (e) {
     if (e.refused) {
       if (flags.json)
@@ -223,6 +249,16 @@ async function submit(c, flags, events) {
     throw e;
   }
   if (!flags.quiet) for (const w of res.warnings) process.stderr.write(`warning: ${w}\n`);
+  if (res.refused?.length) {
+    // Another lane won the claim while our push was rejected; the line never pushed.
+    const errors = res.refused.map((r) => r.error);
+    if (flags.json)
+      process.stdout.write(
+        JSON.stringify({ ok: false, errors, events: res.events }, null, 2) + "\n",
+      );
+    else process.stderr.write(`refused: ${errors.join("\n         ")}\n`);
+    return { code: 1 };
+  }
   const code = push && !res.pushed ? 3 : 0;
   if (code === 3)
     process.stderr.write(
@@ -394,7 +430,7 @@ async function cmdItem(positional, flags, env) {
     }
     if (flags.id !== undefined && (flags.id === true || !flags.id))
       throw new UsageError("--id needs a value");
-    const lane = laneId(undefined, c.config, c.env);
+    const lane = defaultLane(c.config, c.env);
     return writeCmd(
       c,
       flags,
@@ -409,7 +445,10 @@ async function cmdItem(positional, flags, env) {
     const fields = itemFields(flags, c);
     if (Object.keys(fields).length === 0)
       throw new UsageError("rf item edit needs at least one field flag");
-    const lane = laneId(undefined, c.config, c.env);
+    // A human edit of the story confirms it (clears the "draft" mark the summary import set).
+    if (["problem", "impact", "solution"].some((k) => fields[k] !== undefined))
+      fields.summaryDraft = false;
+    const lane = defaultLane(c.config, c.env);
     return writeCmd(c, flags, [makeEvent(c, "item.edit", id, { fields }, lane)]);
   }
   if (sub === "show") {
@@ -480,9 +519,20 @@ async function cmdWhoami(flags, env) {
     writeFileSync(join(ctx.home, "machine"), String(flags.machine).trim() + "\n");
   }
   const config = loadConfig(ctx.dir);
+  if (flags.lane !== undefined) {
+    const lane = typeof flags.lane === "string" ? normalizeLane(flags.lane, config) : null;
+    if (!lane) throw new UsageError(`unknown lane "${flags.lane}"`);
+    // Record the checkout ROOT (git toplevel), so sub-folders of the checkout inherit the lane.
+    const top = await exec("git", ["rev-parse", "--show-toplevel"], {
+      cwd: process.cwd(),
+      timeoutMs: 15000,
+    });
+    const root = top.code === 0 && top.stdout.trim() ? top.stdout.trim() : process.cwd();
+    setLane(ctx.home, root, lane);
+  }
   const info = {
     machine: machineId(config, env),
-    lane: laneId(undefined, config, env),
+    lane: defaultLane(config, env),
     specsDir: ctx.dir,
     clone: existsSync(join(ctx.dir, ".git")) ? "present" : "missing",
   };
@@ -544,9 +594,266 @@ async function cmdViews(flags, env) {
     snapshot,
     push: !flags["no-push"],
     dry: !!flags.dry,
+    registerMode: registerModeOf(c.config),
   });
   process.stdout.write(JSON.stringify(res, null, 2) + "\n");
   return 0;
+}
+
+async function cmdSync(flags, env) {
+  const c = await prepare(ctxFor(env), flags, { sync: false });
+  const bugIds = await loadBugIds(env.RF_REPO_ROOT || REPO_ROOT);
+  const res = await runSync({
+    dir: c.dir,
+    home: c.home,
+    env,
+    dry: Boolean(flags.dry),
+    push: !flags["no-push"],
+    bugIds,
+  });
+  if (!res.ran) {
+    print(flags, { ran: false, reason: res.reason }, `sync skipped (${res.reason})`);
+    return 0;
+  }
+  const s = res.summary;
+  const text =
+    `sync${flags.dry ? " (dry)" : ""}: ${res.events.length} event(s): ${s.registerNew} new row(s), ` +
+    `${s.registerEdits} edited, ${s.answered} answered, ${s.dropped} board item(s) dropped` +
+    (flags.dry
+      ? "\n" + res.events.map((e) => `  ${e.kind} ${e.item ?? "-"}`).join("\n")
+      : `; appended ${res.appended}${res.pushed ? " and pushed" : ""}`);
+  print(
+    flags,
+    {
+      ran: true,
+      dry: Boolean(flags.dry),
+      events: res.events,
+      summary: s,
+      appended: res.appended,
+      pushed: res.pushed,
+      warnings: res.warnings,
+      pullError: res.pullError,
+    },
+    text,
+  );
+  if (!flags.quiet) for (const w of res.warnings) process.stderr.write(`warning: ${w}\n`);
+  return res.appended > 0 && !res.pushed && !flags["no-push"] ? 3 : 0;
+}
+
+const tally = (list, keyOf) => {
+  const out = {};
+  for (const x of list) {
+    const k = keyOf(x) ?? "unknown";
+    out[k] = (out[k] ?? 0) + 1;
+  }
+  return out;
+};
+
+/** The accuracy counts from a snapshot object (the monitor's last view). */
+export function auditFromSnapshot(snap) {
+  const q = snap.ownerQueue ?? [];
+  const prs = snap.prs ?? {};
+  return {
+    source: "snapshot",
+    at: snap.generatedAt ?? null,
+    items: {
+      total: (snap.items ?? []).length,
+      byStatus: tally(snap.items ?? [], (i) => i.status),
+    },
+    alarms: { total: (snap.alarms ?? []).length, byKind: tally(snap.alarms ?? [], (a) => a.kind) },
+    problems: (snap.problems ?? []).length,
+    ownerQueue: {
+      open: q.filter((o) => (o.state ?? "open") === "open").length,
+      booked: q.filter((o) => o.state === "booked").length,
+      answered: (snap.answeredRecently ?? []).length,
+    },
+    untrackedPrs: {
+      open: (prs.open ?? []).filter((p) => !p.item).length,
+      merged: (prs.merged ?? []).filter((p) => !p.item).length,
+    },
+    bugs: { total: (snap.bugs ?? []).length, byFix: tally(snap.bugs ?? [], (b) => b.fix) },
+  };
+}
+
+/** The same counts from the events alone (no PRs, alarms or bugs: those need the collector). */
+export function auditFromState(state) {
+  const items = [...state.items.values()];
+  const queue = items.filter((i) => i.tags?.includes("owner-queue") && i.status !== "dropped");
+  const answered = queue.filter((i) => i.answeredAt).length;
+  return {
+    source: "events",
+    at: state.lastEventAt ? new Date(state.lastEventAt).toISOString() : null,
+    items: { total: items.length, byStatus: tally(items, (i) => i.status) },
+    alarms: null,
+    problems: items.filter(
+      (i) =>
+        ["P0", "P1"].includes(i.priority) &&
+        !DONE_STATUSES.includes(i.status) &&
+        !["release", "decision"].includes(i.type) &&
+        !i.tags?.includes("problem") &&
+        !i.tags?.includes("owner-ask"),
+    ).length,
+    ownerQueue: { open: queue.length - answered, booked: 0, answered },
+    untrackedPrs: null,
+    bugs: null,
+  };
+}
+
+function printAudit(a) {
+  const lines = [`audit (${a.source}${a.at ? `, ${a.at}` : ""})`];
+  const kv = (o) =>
+    Object.entries(o)
+      .sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
+      .map(([k, n]) => `${k} ${n}`)
+      .join(", ") || "none";
+  lines.push(`items by status (${a.items.total}): ${kv(a.items.byStatus)}`);
+  lines.push(
+    a.alarms
+      ? `alarms by kind (${a.alarms.total}): ${kv(a.alarms.byKind)}`
+      : "alarms by kind: n/a (events only)",
+  );
+  lines.push(`problems: ${a.problems}`);
+  lines.push(
+    `owner queue: ${a.ownerQueue.open} open, ${a.ownerQueue.booked} booked, ${a.ownerQueue.answered} answered`,
+  );
+  lines.push(
+    a.untrackedPrs
+      ? `untracked PRs: ${a.untrackedPrs.open} open, ${a.untrackedPrs.merged} merged`
+      : "untracked PRs: n/a (events only)",
+  );
+  lines.push(
+    a.bugs
+      ? `bugs by fix state (${a.bugs.total}): ${kv(a.bugs.byFix)}`
+      : "bugs by fix state: n/a (events only)",
+  );
+  return lines.join("\n");
+}
+
+async function cmdAudit(flags, env) {
+  const ctx = ctxFor(env);
+  const explicit = typeof flags.snapshot === "string" ? resolve(flags.snapshot) : null;
+  const last = join(ctx.home, "last-snapshot.json");
+  let snap = null;
+  for (const file of [explicit, existsSync(last) ? last : null]) {
+    if (!file) continue;
+    try {
+      snap = JSON.parse(readFileSync(file, "utf8"));
+      break;
+    } catch (e) {
+      if (file === explicit) throw new Error(`cannot read snapshot ${file}: ${e.message}`);
+    }
+  }
+  let audit;
+  if (snap) audit = auditFromSnapshot(snap);
+  else {
+    const c = await prepare(ctx, flags, { sync: true });
+    audit = auditFromState(stateOf(c));
+  }
+  process.stdout.write(
+    flags.json ? JSON.stringify(audit, null, 2) + "\n" : printAudit(audit) + "\n",
+  );
+  return 0;
+}
+
+/** Plain-words brief + "since" line from the local clone and the last monitor snapshot. */
+async function cmdBrief(flags, env) {
+  const ctx = ctxFor(env);
+  if (flags.refresh) {
+    // Pull the clone for next time; skipped when a lane is writing (the lock is busy).
+    try {
+      await tryWithSpecsLock(
+        async () => {
+          await ensureClone({ dir: ctx.dir, remote: ctx.remote });
+          await syncSpecs(ctx.dir);
+        },
+        { home: ctx.home },
+      );
+    } catch (e) {
+      if (!flags.quiet) process.stderr.write(`warning: refresh failed: ${e?.message ?? e}\n`);
+    }
+  }
+  if (flags.quiet) return 0;
+  if (!existsSync(join(ctx.dir, "events"))) {
+    throw new Error(`no ops clone at ${ctx.dir} (run: rf doctor)`);
+  }
+  const config = loadConfig(ctx.dir);
+  const lane =
+    flags.lane !== undefined ? resolveLane(flags.lane, { config, env }) : defaultLane(config, env);
+  const events = readAllEvents(ctx.dir);
+  const state = fold(events);
+  let snapshot = null;
+  try {
+    snapshot = JSON.parse(readFileSync(join(ctx.home, "last-snapshot.json"), "utf8"));
+  } catch {
+    // no live monitor data here
+  }
+  const now = Date.now();
+  const utcOffsetMin = -new Date(now).getTimezoneOffset();
+  const text = renderBrief(state, { lane, now, snapshot, config, utcOffsetMin });
+  let since = "";
+  if (typeof flags.since === "string") {
+    const marker = /^\d{4}-\d\d-\d\d/.test(flags.since)
+      ? { ts: Date.parse(flags.since) }
+      : { lastEventId: flags.since };
+    if (marker.ts !== undefined && !Number.isFinite(marker.ts))
+      throw new UsageError(`--since needs an event id or an ISO time, got "${flags.since}"`);
+    const { before, sorted } = splitAtMarker(events, marker);
+    since = renderSince(fold(before), fold(sorted), { lane, nowMs: now, utcOffsetMin });
+    if (marker.lastEventId && !sorted.some((e) => e.id === marker.lastEventId))
+      throw new UsageError(`--since: no event with id ${marker.lastEventId}`);
+  }
+  if (flags.json) {
+    const out = {
+      lane,
+      text,
+      since,
+      lastEventId: lastEventId(events),
+      snapshot: snapshot !== null,
+    };
+    process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${since ? `${since}\n` : ""}${text}\n`);
+  }
+  return 0;
+}
+
+const BUG_MINTER_LANES = new Set(["lead", "coordinator"]);
+
+/**
+ * `rf bug file …`: a thin wrapper over `node scripts/campaign/bugs.mjs file …` in the routeflow
+ * checkout, args passed through unchanged. Only the lanes lead and coordinator may run it (one
+ * minter, so two lanes can never file the same bug number).
+ */
+async function cmdBug(rest, env) {
+  if (rest[0] !== "file")
+    throw new UsageError("rf bug file <args passed to scripts/campaign/bugs.mjs>");
+  const config = loadConfig(specsDir(env));
+  const raw = String(env.RF_LANE ?? "")
+    .trim()
+    .toLowerCase();
+  const lane = raw ? laneId(undefined, config, env) : defaultLane(config, env);
+  if (!BUG_MINTER_LANES.has(lane) && !BUG_MINTER_LANES.has(raw)) {
+    process.stderr.write(
+      "refused: rf bug file is limited to the lanes lead and coordinator (one minter: a single lane " +
+        "mints bug numbers so two lanes can never file the same one). " +
+        `Your lane is ${lane ?? (raw || "not set (RF_LANE)")}. Ask the lead to file it.\n`,
+    );
+    return 1;
+  }
+  const repo = env.RF_REPO_ROOT || REPO_ROOT;
+  const script = join(repo, "scripts", "campaign", "bugs.mjs");
+  if (!existsSync(script)) {
+    process.stderr.write(`error: ${script} not found\n`);
+    return 1;
+  }
+  return new Promise((done) => {
+    const child = spawn(process.execPath, [script, ...rest], { cwd: repo, stdio: "inherit", env });
+    child.on("error", (e) => {
+      process.stderr.write(`error: ${e.message}\n`);
+      done(1);
+    });
+    child.on("close", (code) => done(code ?? 1));
+  });
 }
 
 async function cmdDoctor(flags, env) {
@@ -595,6 +902,8 @@ async function cmdDoctor(flags, env) {
 export async function main(argv, env = process.env) {
   let code = 0;
   try {
+    // `rf bug file …` hands its args to bugs.mjs untouched, so they bypass rf's own flag parser.
+    if (argv[0] === "bug") return await cmdBug(argv.slice(1), env);
     const { positional, flags } = parseArgs(argv);
     const cmd = positional.shift();
     if (!cmd || cmd === "help" || flags.help) {
@@ -633,6 +942,15 @@ export async function main(argv, env = process.env) {
         break;
       case "views":
         code = await cmdViews(flags, env);
+        break;
+      case "sync":
+        code = await cmdSync(flags, env);
+        break;
+      case "audit":
+        code = await cmdAudit(flags, env);
+        break;
+      case "brief":
+        code = await cmdBrief(flags, env);
         break;
       case "doctor":
         code = await cmdDoctor(flags, env);

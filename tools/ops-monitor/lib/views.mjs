@@ -7,6 +7,8 @@ import { dirname, join } from "node:path";
 
 import { DONE_STATUSES, PRIORITIES } from "./schema.mjs";
 import { GITHUB_REPO } from "./config.mjs";
+import { fold } from "./fold.mjs";
+import { VIEWS_COMMIT_PREFIX, exec as gitExec, readAllEvents, runCommit } from "./store.mjs";
 
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 const HEADER_RE = /^<!-- ops:generated register v1 sha256=([0-9a-f]{64}) -->\n/;
@@ -70,7 +72,9 @@ export function renderRegister(snapshot, { itemFileExists = () => false } = {}) 
   for (const r of rows) {
     const links = [];
     if (itemFileExists(r.id)) links.push(`[item](items/${r.id}.md)`);
-    for (const n of r.links?.prs ?? []) {
+    // The item's own PRs first, then the PRs the register merely cites (background refs).
+    const own = r.links?.prs ?? [];
+    for (const n of [...own, ...(r.refPrs ?? []).filter((x) => !own.includes(x))]) {
       links.push(
         `[#${n}](https://github.com/${GITHUB_REPO}/pull/${n})${merged.has(n) ? " merged" : ""}`,
       );
@@ -112,6 +116,67 @@ export function registerWritePolicy(currentText, { backfillSha256 = null } = {})
     return { allowed: true, reason: "unchanged since backfill" };
   }
   return { allowed: false, reason: "hand-edited since last generation" };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Generated register mode (registerMode "generated"): the register is a pure function of the
+// events, regenerated into a disposable views-only commit after every event batch.
+
+const iso = (ms) =>
+  typeof ms === "number" && Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+
+/** State (fold output) -> the snapshot shape renderRegister reads. Registry-bug overlays are not rows. */
+export function stateToSnapshot(state) {
+  const items = [];
+  for (const it of state.items.values()) {
+    if (it.overlay) continue;
+    const { history: _history, ...rest } = it;
+    items.push({
+      ...rest,
+      blocked: it.blocked ? { ...it.blocked, at: iso(it.blocked.at) } : null,
+      createdAt: iso(it.createdAt),
+      updatedAt: iso(it.updatedAt),
+      claimedAt: iso(it.claimedAt),
+    });
+  }
+  return { items, prs: { open: [], merged: [] } };
+}
+
+/** The register text for a state: render(fold(all events)). */
+export function renderGeneratedRegister(state, { itemFileExists = () => false } = {}) {
+  return renderRegister(stateToSnapshot(state), { itemFileExists });
+}
+
+/**
+ * The `afterCommit` hook of generated mode: regenerates register/WORK-REGISTER.md from the events
+ * in the specs clone and commits it alone (`ops(views): …`). A register with a generated header
+ * that was hand-edited since is left alone (reported as `refused`); a plain hand-kept register is
+ * replaced (that is the switch to generated mode). Callers hold the specs lock.
+ */
+export function registerHook() {
+  return async (dir) => {
+    const state = fold(readAllEvents(dir));
+    const rel = "register/WORK-REGISTER.md";
+    const path = join(dir, "register", "WORK-REGISTER.md");
+    const current = existsSync(path) ? readFileSync(path, "utf8") : null;
+    const next = renderGeneratedRegister(state, {
+      itemFileExists: (id) => existsSync(join(dir, "register", "items", `${id}.md`)),
+    });
+    // A Windows checkout may hold CRLF; git stores LF, so compare on LF.
+    if (current !== null && current.split("\r\n").join("\n") === next) return { committed: false };
+    if (current !== null && /^<!-- ops:generated register v1 /.test(current)) {
+      const policy = registerWritePolicy(current);
+      if (!policy.allowed) return { committed: false, refused: policy.reason };
+    }
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, next);
+    const add = await gitExec("git", ["add", "--", rel], { cwd: dir });
+    if (add.code !== 0) throw new Error(`git add failed: ${add.stderr.trim()}`);
+    const staged = await gitExec("git", ["diff", "--cached", "--quiet", "--", rel], { cwd: dir });
+    if (staged.code === 0) return { committed: false }; // identical after line-ending normalization
+    await runCommit(dir, `${VIEWS_COMMIT_PREFIX} regenerate register`, [rel]);
+    return { committed: true };
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -313,8 +378,11 @@ const BOARD_FILES = ["register", "trains", "lanes", "owner", "problems"];
 
 /**
  * Writes the generated views. Under the specs lock: register (only when the write policy allows
- * it), DASHBOARD marker sections, one commit of the changed view paths, push with a rebase retry.
+ * it), DASHBOARD marker sections, one commit of the changed view paths, pushed at once. Only on
+ * a tree with no unpushed commits; a push that cannot land is rolled back to upstream
+ * (`retryLater`), never left under events.
  * Board JSON goes to `<boardDir>/out/*.json` (no git). `dry` computes and writes nothing.
+ * `registerMode: "generated"` leaves the register to the event-driven writer (`registerHook`).
  */
 export async function writeViews({
   specsDir,
@@ -322,6 +390,7 @@ export async function writeViews({
   snapshot,
   push = true,
   dry = false,
+  registerMode = "human",
   deps = {},
 }) {
   const d = await resolveDeps(deps);
@@ -331,14 +400,26 @@ export async function writeViews({
     dashboardReplaced: [],
     boardWritten: [],
     pushed: false,
+    retryLater: false,
+    skipped: null,
   };
   const p = (...parts) => join(specsDir, ...parts);
 
   const work = async () => {
-    if (!dry) await d.syncSpecs(specsDir);
+    if (!dry) {
+      await d.syncSpecs(specsDir);
+      // A views commit never sits under unpushed events (a rebase of it could not be repaired
+      // without touching them): write views only on a tree with nothing unpushed.
+      const ahead = await d.exec("git", ["rev-list", "--count", "@{u}..HEAD"], { cwd: specsDir });
+      if (ahead.code !== 0 || Number(ahead.stdout.trim()) > 0) {
+        result.retryLater = true;
+        result.skipped = ahead.code !== 0 ? "no upstream to compare with" : "unpushed commits";
+        return;
+      }
+    }
     const changed = [];
 
-    // Register
+    // Register (in generated mode the event-driven writer owns it; this one never touches it)
     const regPath = p("register", "WORK-REGISTER.md");
     const current = d.readText(regPath);
     let backfillSha256 = null;
@@ -349,9 +430,16 @@ export async function writeViews({
     } catch {
       backfillSha256 = null;
     }
-    const policy = registerWritePolicy(current, { backfillSha256 });
+    // The register is never written here: in "human" mode the lead owns the file (lead ruling
+    // 10-19: generation stays OFF until review + accuracy proof + merge); in "generated" mode the
+    // event-driven registerHook owns it. Only the explicit legacy mode "views" lets writeViews
+    // regenerate it, and then only behind the hand-edit policy.
+    const policy =
+      registerMode === "views"
+        ? registerWritePolicy(current, { backfillSha256 })
+        : { allowed: false, reason: null };
     if (!policy.allowed) {
-      result.refused = policy.reason;
+      result.refused = policy.reason; // null in generated mode: nothing to report
     } else {
       const next = renderRegister(snapshot, {
         itemFileExists: (id) => d.exists(p("register", "items", `${id}.md`)),
@@ -383,6 +471,10 @@ export async function writeViews({
       if (st.stdout.trim()) changed.push("ops/state/backfill.json");
     }
     if (changed.length) {
+      const backfillPath = p("ops", "state", "backfill.json");
+      const backfillText = changed.includes("ops/state/backfill.json")
+        ? d.readText(backfillPath)
+        : null;
       await d.exec("git", ["add", "--", ...changed], { cwd: specsDir });
       const c = await d.exec(
         "git",
@@ -392,8 +484,23 @@ export async function writeViews({
       if (c.code === 0 && push) {
         for (let attempt = 0; attempt < 3 && !result.pushed; attempt++) {
           const r = await d.exec("git", ["push"], { cwd: specsDir });
-          if (r.code === 0) result.pushed = true;
-          else await d.exec("git", ["pull", "--rebase", "--quiet"], { cwd: specsDir });
+          if (r.code === 0) {
+            result.pushed = true;
+            break;
+          }
+          const pl = await d.exec("git", ["pull", "--rebase", "--quiet"], { cwd: specsDir });
+          if (pl.code !== 0) {
+            await d.exec("git", ["rebase", "--abort"], { cwd: specsDir });
+            break;
+          }
+        }
+        if (!result.pushed) {
+          // The commit holds only view files, regenerated next run: drop it rather than leave a
+          // commit that could block event appends or pull --rebase.
+          await d.exec("git", ["reset", "--hard", "--quiet", "@{u}"], { cwd: specsDir });
+          if (backfillText !== null && backfillText !== undefined)
+            d.writeText(backfillPath, backfillText); // not regenerable: keep it for the next run
+          result.retryLater = true;
         }
       }
     }

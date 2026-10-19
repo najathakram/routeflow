@@ -128,7 +128,7 @@ test("parsePlanTrains reads the Trains table only", () => {
     ["R1", "R2", "R3"],
   );
   assert.equal(trains[0].title, "window 2: back office + widget fixes");
-  assert.equal(trains[1].title, "billing guards (live harm)");
+  assert.equal(trains[1].title, "widget guards");
   assert.match(trains[0].membersText, /rows 101\/102/);
   assert.equal(trains[0].lanes, "MB push; PC-L BO fixes");
   assert.equal(trains[0].gates, "MB single verified push; Opus review");
@@ -164,6 +164,25 @@ test("parseOwnerQueue: only tables with a Recommended answer header", () => {
   assert.deepEqual(q[3].register, ["104", "105", "106"]);
 });
 
+test("parseOwnerQueue: real rows put status word and decision file in the first cell", () => {
+  const md = [
+    "## S",
+    "",
+    "| # | Item | Register | Recommended answer | Why |",
+    "|---|---|---|---|---|",
+    "| N1 · **ANSWERED 10-18 → D-2026-10-18-acme-say-no.md** | Legacy card read-only. | 568, 569 | Yes. | W. |",
+    "| 11 · **BOOKED: merged into the R5 sitting** | Migration sitting. | 510 | Yes. | W. |",
+  ].join("\n");
+  const q = parseOwnerQueue(md);
+  assert.deepEqual(
+    q.map((r) => [r.key, r.statusWord, r.decisionFile]),
+    [
+      ["N1", "ANSWERED", "D-2026-10-18-acme-say-no.md"],
+      ["11", "BOOKED", null],
+    ],
+  );
+});
+
 test("parseBoardState accepts text or object and defaults arrays", () => {
   const b = parseBoardState(read("board-state.json"));
   assert.equal(b.trains.length, 4);
@@ -186,14 +205,14 @@ test("buildBackfillEvents: order, validity and ids", () => {
   assert.deepEqual(ids.slice(0, 4), ["R1", "R2", "R3", "R4"]);
   assert.deepEqual(ids.slice(4, 12), ["101", "102", "103", "104", "105", "106", "107", "108"]);
   const rest = evs.slice(12);
-  // owner queue (4) + board owner asks (2 minus 1 duplicate) + problems (2)
+  // owner queue (4) only: the board snapshot is a generated view, never an input (lead 10-19)
   assert.deepEqual(
     rest.map((e) => e.item),
-    ["109", "110", "111", "112", "113", "114", "115"],
+    ["109", "110", "111", "112"],
   );
   assert.deepEqual(
     rest.map((e) => e.data.type),
-    ["decision", "decision", "decision", "decision", "decision", "incident", "incident"],
+    ["decision", "decision", "decision", "decision"],
   );
   const ts = evs.map((e) => Date.parse(e.ts));
   for (let i = 1; i < ts.length; i++) assert.ok(ts[i] > ts[i - 1]);
@@ -229,7 +248,7 @@ test("buildBackfillEvents: trains (status map, members, eta, gate)", () => {
   assert.equal(planOnly[0].data.eta, "10-18 ~23:30Z");
 });
 
-test("buildBackfillEvents: owner decisions, board asks, problems", () => {
+test("buildBackfillEvents: owner decisions only; board asks and problems are never imported", () => {
   const evs = build();
   const byItem = Object.fromEntries(evs.map((e) => [e.item, e.data]));
   const n1 = byItem["109"];
@@ -239,19 +258,15 @@ test("buildBackfillEvents: owner decisions, board asks, problems", () => {
   assert.equal(n1.gate, "Recommended: Yes.");
   assert.deepEqual(n1.related, ["101", "107"]);
   assert.deepEqual(n1.tags, ["owner-queue", "N1"]);
-  const ask = byItem["113"];
-  assert.equal(ask.title, "R5 migration sitting");
-  assert.equal(ask.eta, "2026-10-20 ~18:00Z");
-  assert.deepEqual(ask.tags, ["owner-ask"]);
-  assert.match(ask.gate, /^Recommended: Booked/);
+  assert.equal(
+    evs.filter((e) => e.data.tags?.includes("owner-ask") || e.data.tags?.includes("problem"))
+      .length,
+    0,
+  );
+  assert.equal(evs.filter((e) => e.data.type === "incident").length, 0);
+  assert.equal(evs.filter((e) => e.data.source === "board" && e.data.type !== "release").length, 0);
   const autoConfirm = evs.filter((e) => /Auto-confirm of staff orders/.test(e.data.title));
   assert.equal(autoConfirm.length, 1);
-  const p = byItem["114"];
-  assert.equal(p.type, "incident");
-  assert.equal(p.priority, "P0");
-  assert.equal(p.status, "building");
-  assert.equal(p.gate, "R2 (G1a/G1b)");
-  assert.deepEqual(p.tags, ["problem"]);
 });
 
 test("buildBackfillEvents: skips register rows already in state and continues ids past them", () => {
@@ -276,8 +291,8 @@ test("buildBackfillEvents is idempotent (ids for register rows, titles for owner
   const state = emptyState();
   for (const e of first) state.items.set(e.item, { id: e.item, title: e.data.title });
   assert.deepEqual(build(state), []);
-  const evs = build(emptyState([["500", "  r5 MIGRATION   sitting "]]));
-  assert.ok(!evs.some((e) => e.data.title === "R5 migration sitting"));
+  const evs = build(emptyState([["500", "  hide the DETAILS   tiers row. "]]));
+  assert.ok(!evs.some((e) => e.data.title === "Hide the Details tiers row."));
 });
 
 test("runBackfill dry run uses injected readers and appenders", async () => {
@@ -315,18 +330,18 @@ test("runBackfill dry run uses injected readers and appenders", async () => {
   assert.deepEqual(dry.counts, {
     trains: 4,
     register: 8,
-    owner: 5,
-    problems: 2,
-    events: 19,
+    owner: 4,
+    problems: 0,
+    events: 16,
     failedRows: 2,
   });
   const real = await runBackfill({ specsDir: "/specs", boardDir: "/board", dry: false, deps });
-  assert.equal(appended.length, 19);
+  assert.equal(appended.length, 16);
   assert.equal(real.pushed, true);
   assert.equal(written.length, 1);
   const rec = JSON.parse(written[0][1]);
   assert.match(written[0][0].replace(/\\/g, "/"), /\/specs\/ops\/state\/backfill\.json$/);
   assert.match(rec.registerSha256, /^[0-9a-f]{64}$/);
-  assert.equal(rec.counts.events, 19);
+  assert.equal(rec.counts.events, 16);
   assert.equal(rec.at, new Date(NOW).toISOString());
 });

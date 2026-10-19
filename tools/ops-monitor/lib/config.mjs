@@ -59,6 +59,7 @@ export const DEFAULT_CONFIG = {
       areas: ["domain:billing", "domain:finance"],
     },
     { id: "ops-monitor", title: "RouteFlow Ops Monitor", machine: "pc", areas: ["domain:tooling"] },
+    { id: "coordinator", title: "RouteFlow Coordinator", machine: "pc", areas: [] },
     { id: "owner", title: "Owner", machine: null, areas: [] },
   ],
   // Lower-cased free text (register "Lane" column, --lane values) → lane id. Longest match wins.

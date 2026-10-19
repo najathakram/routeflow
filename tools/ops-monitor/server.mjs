@@ -5,6 +5,7 @@
 // /app.css and /hooks/github needs a valid session. The collector, snapshot builder and views
 // writer are imported dynamically inside main() so this module (and its tests) load without them.
 import { createHash } from "node:crypto";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import http from "node:http";
 import { networkInterfaces } from "node:os";
@@ -15,7 +16,7 @@ import {
   SESSION_MAX_AGE_S,
   clearCookie,
   clientIp,
-  createRateLimiter,
+  createFailureLimiter,
   parseCookies,
   sessionCookie,
   signSession,
@@ -68,9 +69,10 @@ export function createMonitorServer({
   cloud = false,
 }) {
   const now = auth?.now ?? Date.now;
-  // Per client IP, plus a coarse global cap in case the forwarded-for hop is spoofed.
-  const limiter = auth?.rateLimiter ?? createRateLimiter({ max: 10, windowMs: 900000 });
-  const globalLimiter = auth?.globalLimiter ?? createRateLimiter({ max: 60, windowMs: 900000 });
+  // Failures only: 10 per client IP per 15 min, plus a coarse global cap of 300 in case the
+  // client key is spoofed. A success resets that client's bucket.
+  const limiter = auth?.rateLimiter ?? createFailureLimiter({ max: 10, windowMs: 900000 });
+  const globalLimiter = auth?.globalLimiter ?? createFailureLimiter({ max: 300, windowMs: 900000 });
 
   const isHttps = (req) =>
     cloud ||
@@ -129,13 +131,18 @@ export function createMonitorServer({
     const { tooLarge, body } = await readBody(req, LOGIN_BODY_MAX);
     if (tooLarge) return text(res, 413, "request too large", { connection: "close" });
     const t = now();
-    const ip = clientIp(req);
-    // Both limiters are charged for every attempt; a blocked attempt never reaches scrypt.
-    const perIp = limiter.hit(ip, t);
-    const overall = globalLimiter.hit("*", t);
-    if (!perIp || !overall) return redirect(res, 303, "/login?e=2");
+    const ip = clientIp(req, { cloud });
+    // A blocked client never reaches scrypt; only failures are counted.
+    if (limiter.blocked(ip, t) || globalLimiter.blocked("*", t)) {
+      return redirect(res, 303, "/login?e=2");
+    }
     const password = new URLSearchParams(body.toString("utf8")).get("password") ?? "";
-    if (!verifyPassword(password, auth.passwordHash)) return redirect(res, 303, "/login?e=1");
+    if (!verifyPassword(password, auth.passwordHash)) {
+      limiter.fail(ip, t);
+      globalLimiter.fail("*", t);
+      return redirect(res, 303, "/login?e=1");
+    }
+    limiter.reset(ip);
     const token = signSession({ exp: t + SESSION_MAX_AGE_S * 1000 }, auth.sessionSecret);
     return redirect(res, 303, "/", {
       "set-cookie": sessionCookie(token, { secure: isHttps(req) }),
@@ -235,7 +242,13 @@ export function createMonitorServer({
         return send(res, 200, type, body);
       }
       if (path === "/api/snapshot") {
-        return send(res, 200, "application/json; charset=utf-8", JSON.stringify(getSnapshot()));
+        // authEnabled lets the page hide "Log out" when there is no login (local, no hash).
+        return send(
+          res,
+          200,
+          "application/json; charset=utf-8",
+          JSON.stringify({ ...getSnapshot(), authEnabled: Boolean(auth) }),
+        );
       }
       if (path === "/api/health") {
         // Public: liveness and per-source ok flags only, never errors or data.
@@ -281,14 +294,15 @@ function handleSse(req, res, { getSnapshot, subscribe }) {
 }
 
 /**
- * Parses argv (without node + script) into listen options. Loopback unless --lan. `--cloud` (or
+ * Parses argv (without node + script) into listen options. Loopback unless --lan. The views
+ * writer is OFF unless `--views` (exactly one machine, the PC monitor, runs it). `--cloud` (or
  * RF_CLOUD=1) binds 0.0.0.0:$PORT and hard-disables the views writer: the cloud never writes git.
  */
 export function resolveListenOptions(argv = [], env = process.env) {
   const opts = {
     host: "127.0.0.1",
     port: DEFAULT_PORT,
-    views: true,
+    views: false,
     once: false,
     fixture: null,
     cloud: env.RF_CLOUD === "1" || env.RF_CLOUD === "true",
@@ -302,6 +316,7 @@ export function resolveListenOptions(argv = [], env = process.env) {
     };
     if (a === "--lan") opts.host = "0.0.0.0";
     else if (a === "--cloud") opts.cloud = true;
+    else if (a === "--views") opts.views = true;
     else if (a === "--no-views") opts.views = false;
     else if (a === "--once") opts.once = true;
     else if (a === "--port" || a.startsWith("--port=")) {
@@ -337,6 +352,67 @@ function lanUrls(port) {
     }
   }
   return out;
+}
+
+const REGISTER_SYNC_MS = 300_000;
+const REGISTER_SYNC_FIRST_MS = 60_000;
+
+/**
+ * The register sync (hand-kept register + owner queue rows -> events) runs only on the single
+ * local views writer (`--views`), never in cloud, in a one-shot run or with a fixture.
+ */
+export function shouldRunRegisterSync(opts) {
+  return Boolean(opts.views && !opts.cloud && !opts.once && !opts.fixture);
+}
+
+/**
+ * Runs `run()` after `firstDelayMs`, then every `intervalMs` (never overlapping). `onDone` gets
+ * the result of each pass that appended events; errors are logged and the schedule goes on.
+ * Returns a stop function. `schedule`/`cancel` are injectable for tests.
+ */
+export function startRegisterSync({
+  run,
+  onDone = () => {},
+  log = () => {},
+  firstDelayMs = REGISTER_SYNC_FIRST_MS,
+  intervalMs = REGISTER_SYNC_MS,
+  schedule = (fn, ms) => {
+    const t = setTimeout(fn, ms);
+    t.unref?.();
+    return t;
+  },
+  cancel = clearTimeout,
+}) {
+  let handle = null;
+  let stopped = false;
+  const tick = async () => {
+    handle = null;
+    try {
+      const res = await run();
+      if (res?.appended > 0) onDone(res);
+    } catch (err) {
+      log(`register sync failed: ${err?.message ?? err}`);
+    }
+    if (!stopped) handle = schedule(tick, intervalMs);
+  };
+  handle = schedule(tick, firstDelayMs);
+  return () => {
+    stopped = true;
+    if (handle !== null) cancel(handle);
+  };
+}
+
+/** Writes the last snapshot atomically (`rf audit` reads it). Never throws. */
+export function writeLastSnapshot(home, snap) {
+  try {
+    mkdirSync(home, { recursive: true });
+    const file = join(home, "last-snapshot.json");
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(snap));
+    renameSync(tmp, file);
+  } catch {
+    /* audit falls back to the events */
+  }
 }
 
 // Hash ignores fields that tick with the clock so we only broadcast real changes.
@@ -408,6 +484,8 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     }
     let refused = null;
     let viewsTimer = null;
+    let snapTimer = null;
+    let stopRegisterSync = () => {};
     let lastViewsHash = null;
     let collector = null;
     const rebuild = () => {
@@ -437,6 +515,14 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       }
       return snap;
     };
+    const persistSnapshot = () => {
+      if (opts.cloud || opts.once || snapTimer) return;
+      snapTimer = setTimeout(() => {
+        snapTimer = null;
+        writeLastSnapshot(cfg.opsHome(env), snapshot);
+      }, 30_000);
+      snapTimer.unref?.();
+    };
     const scheduleViews = (snap) => {
       // The cloud service never writes git, whatever the flags say.
       if (opts.cloud || !opts.views || opts.once) return;
@@ -453,6 +539,8 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
             snapshot: cur,
             push: true,
             dry: false,
+            registerMode:
+              cfg.loadConfig(specs).registerMode === "generated" ? "generated" : "human",
           });
           const was = refused;
           refused = r?.refused ?? null;
@@ -475,6 +563,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
         try {
           publish(rebuild());
           scheduleViews(snapshot);
+          persistSnapshot();
         } catch (err) {
           console.error(`[ops-monitor] snapshot failed: ${err?.message ?? err}`);
         }
@@ -506,9 +595,29 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       console.error("[ops-monitor] GITHUB_WEBHOOK_SECRET not set: webhooks off, polling only");
     }
     collector.start();
+    if (shouldRunRegisterSync(opts)) {
+      const { runSync } = await import("./lib/sync.mjs");
+      const { loadBugIds } = await import("./lib/store.mjs");
+      stopRegisterSync = startRegisterSync({
+        run: async () =>
+          runSync({
+            dir: specs,
+            home: cfg.opsHome(env),
+            env,
+            bugIds: await loadBugIds(repoRoot),
+          }),
+        onDone: (res) => {
+          console.error(`[ops-monitor] register sync appended ${res.appended} event(s)`);
+          collector.runOnce("specs").catch(() => {});
+        },
+        log: (m) => console.error(`[ops-monitor] ${m}`),
+      });
+    }
     stopCollector = () => {
       collector.stop();
+      stopRegisterSync();
       if (viewsTimer) clearTimeout(viewsTimer);
+      if (snapTimer) clearTimeout(snapTimer);
     };
   }
 

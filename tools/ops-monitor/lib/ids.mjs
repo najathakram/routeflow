@@ -24,41 +24,72 @@ export function utcDate(ms) {
 }
 
 /**
- * Item id carried in a branch name: tokens split on / _ . -; the first `b<digits>` token
- * (returned uppercased, known or not) or the first 3-5 digit token that is a known item id.
+ * Every item id carried in a branch name, in token order: tokens split on / _ . -; each
+ * `b<digits>` token (uppercased, known or not) and each 3-5 digit token that is a known item id.
+ * 4-digit 2020-2039 tokens are years in date-stamped branch names, never item ids.
  */
-export function itemIdFromBranch(branch, knownIds = new Set()) {
-  if (typeof branch !== "string") return null;
+export function itemIdsFromBranch(branch, knownIds = new Set()) {
+  if (typeof branch !== "string") return [];
+  const out = [];
   for (const tok of branch.split(/[/_.-]/)) {
-    if (/^b\d{1,5}$/i.test(tok)) return tok.toUpperCase();
-    if (/^\d{3,5}$/.test(tok) && knownIds.has(tok)) return tok;
+    let id = null;
+    if (/^b\d{1,5}$/i.test(tok)) id = tok.toUpperCase();
+    else if (/^20[23]\d$/.test(tok)) continue;
+    else if (/^\d{3,5}$/.test(tok) && knownIds.has(tok)) id = tok;
+    if (id && !out.includes(id)) out.push(id);
   }
-  return null;
+  return out;
 }
 
+/** The first item id carried in a branch name (see itemIdsFromBranch), else null. */
+export function itemIdFromBranch(branch, knownIds = new Set()) {
+  return itemIdsFromBranch(branch, knownIds)[0] ?? null;
+}
+
+const DATE = String.raw`(?:(\d{4})-)?(\d{1,2})-(\d{1,2})`;
+const TIME = String.raw`(?:\s*~?\s*(\d{1,2}):(\d{2})\s*Z)?`;
+// The WHOLE trimmed string must be a date or a date range, with an optional "~HH:MMZ" after each
+// date and an optional trailing parenthetical. Anything else ("plan 10-16", "after census",
+// "Phase 3", "unscheduled (slipped past 10-17)") is free text, not an ETA.
+const ETA_RE = new RegExp(
+  `^~?\\s*${DATE}${TIME}(?:\\s*(?:to|-|–|—)\\s*${DATE}${TIME})?(?:\\s*\\([^)]*\\))?$`,
+  "i",
+);
+
 /**
- * Parses a free-text ETA ("10-19 ~04:00Z", "10-19 to 10-21", "2026-10-20 ~18:00Z", "after census")
- * into epoch ms: the LAST date-like token wins; year defaults to now's UTC year; the time is a
- * `~HH:MMZ` right after that token, else end of day 23:59:59Z. No date → null.
+ * Parses an ETA ("10-19 ~04:00Z", "10-19 to 10-21", "2026-10-20 ~18:00Z", "~10-19 (evening)")
+ * into epoch ms. Only a real date or range counts (ETA_RE); a range uses its END date. The year
+ * defaults to now's UTC year (a defaulted date more than ~6 months past means next year); the
+ * time is the `~HH:MMZ` after the date used, else end of day 23:59:59Z. Free text -> null.
  */
 export function parseEta(text, now = Date.now()) {
   if (typeof text !== "string") return null;
-  const re =
-    /(?<![A-Za-z0-9-])(?:(\d{4})-)?(\d{1,2})-(\d{1,2})(?!\d)(\s*~?\s*(\d{1,2}):(\d{2})\s*Z)?/g;
-  let m;
-  let last = null;
-  while ((m = re.exec(text)) !== null) last = m;
-  if (!last) return null;
-  const year = last[1] ? Number(last[1]) : new Date(now).getUTCFullYear();
-  const month = Number(last[2]);
-  const day = Number(last[3]);
+  const m = ETA_RE.exec(text.trim());
+  if (!m) return null;
+  const [, y1, mo1, d1, h1, mi1, y2, mo2, d2, h2, mi2] = m;
+  const range = mo2 !== undefined;
+  const month = Number(range ? mo2 : mo1);
+  const day = Number(range ? d2 : d1);
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  const hasTime = last[4] !== undefined;
-  const h = hasTime ? Number(last[5]) : 23;
-  const min = hasTime ? Number(last[6]) : 59;
+  if (range && (Number(mo1) < 1 || Number(mo1) > 12 || Number(d1) < 1 || Number(d1) > 31))
+    return null;
+  const hh = range ? h2 : h1;
+  const mm = range ? mi2 : mi1;
+  const hasTime = hh !== undefined;
+  const h = hasTime ? Number(hh) : 23;
+  const min = hasTime ? Number(mm) : 59;
   const s = hasTime ? 0 : 59;
   if (h > 23 || min > 59) return null;
-  const ms = Date.UTC(year, month - 1, day, h, min, s);
+  const explicit = (range ? y2 : y1) ?? (range ? y1 : undefined);
+  let year = explicit ? Number(explicit) : new Date(now).getUTCFullYear();
+  // "2026-12-30 to 01-02": an end date without a year that lands before the start is next year.
+  if (range && !y2 && y1 && month * 100 + day < Number(mo1) * 100 + Number(d1)) year += 1;
+  let ms = Date.UTC(year, month - 1, day, h, min, s);
+  // A defaulted year that lands more than ~6 months in the past means next year ("01-05" on 12-20).
+  if (!y1 && !y2 && ms < now - 183 * 86400_000) {
+    year += 1;
+    ms = Date.UTC(year, month - 1, day, h, min, s);
+  }
   // Reject rollovers like 02-31.
   if (new Date(ms).getUTCDate() !== day) return null;
   return ms;

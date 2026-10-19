@@ -275,3 +275,128 @@ test("children, parent unknown, lanes, machines, history cap", () => {
   assert.equal(s.eventCount, evs.length);
   assert.equal(s.items.get("1").updatedAt, T0 + 69 * 60000);
 });
+
+test("push and pr events touch the lane that claims the linked item", () => {
+  const s = fold([
+    newItem("5", {}, { min: 0 }),
+    ev("claim", "5", { branch: "feat/5-x" }, { min: 1, lane: "a" }),
+    ev(
+      "push",
+      "5",
+      { branch: "feat/5-x", sha: "abc1234", repo: "routeflow" },
+      { min: 30, lane: "b" },
+    ),
+    ev("pr", "5", { number: 7, action: "create" }, { min: 45, lane: "c" }),
+  ]);
+  assert.equal(s.lanes.get("a").lastEventAt, T0 + 45 * 60000);
+});
+
+test("claim conflict clears when the holder or the loser releases", () => {
+  const base = [
+    newItem("5", {}, { min: 0 }),
+    ev("claim", "5", {}, { min: 1, lane: "a" }),
+    ev("claim", "5", {}, { min: 2, lane: "b" }),
+  ];
+  assert.deepEqual(fold(base).items.get("5").claimConflict, ["a", "b"]);
+  const byLoser = fold([...base, ev("release", "5", {}, { min: 3, lane: "b" })]);
+  assert.equal(byLoser.items.get("5").claimConflict, null);
+  assert.equal(byLoser.items.get("5").claimedBy, "a");
+  const byHolder = fold([...base, ev("release", "5", {}, { min: 3, lane: "a" })]);
+  assert.equal(byHolder.items.get("5").claimConflict, null);
+});
+
+test("anomalies carry the event time", () => {
+  const s = fold([ev("status", "999", { status: "live" }, { min: 5 })]);
+  assert.equal(s.anomalies[0].ts, T0 + 5 * 60000);
+});
+
+test("register-sourced PR numbers are refs, never fix links", () => {
+  const s = fold([
+    newItem(
+      "525",
+      {
+        source: "register",
+        gate: "B1 live (#3466); verify the rest",
+        links: { prs: [3466], branches: ["feat/525-x"], urls: [] },
+      },
+      { min: 0 },
+    ),
+    ev("item.edit", "525", { fields: { source: "register", links: { prs: [3202] } } }, { min: 1 }),
+  ]);
+  const it = s.items.get("525");
+  assert.deepEqual(it.links.prs, []);
+  assert.deepEqual(it.links.branches, ["feat/525-x"]);
+  assert.deepEqual(it.refPrs.sort(), [3202, 3466]);
+});
+
+test("a PR linked by a non-register event is a fix link, not a ref", () => {
+  const s = fold([
+    newItem("525", { source: "register", links: { prs: [3466], branches: [], urls: [] } }),
+    ev("link", "525", { prs: [3500] }),
+    ev("item.edit", "525", { fields: { links: { prs: [3501] } } }),
+    ev("pr", "525", { number: 3502, action: "create" }),
+  ]);
+  const it = s.items.get("525");
+  assert.deepEqual(it.links.prs.sort(), [3500, 3501, 3502]);
+  assert.deepEqual(it.refPrs, [3466]);
+  assert.deepEqual(fold([newItem("6")]).items.get("6").refPrs, []);
+});
+
+test("registerFields keeps the last register-sourced values for the sync diff", () => {
+  const s = fold([
+    newItem(
+      "7",
+      { source: "register", priority: "P1", status: "planned", eta: "10-25" },
+      { min: 0 },
+    ),
+    ev("item.edit", "7", { fields: { source: "register", status: "building" } }, { min: 1 }),
+    ev("item.edit", "7", { fields: { priority: "P0" } }, { min: 2 }), // a human edit: not register
+  ]);
+  const it = s.items.get("7");
+  assert.equal(it.registerFields.status, "building");
+  assert.equal(it.registerFields.eta, "10-25");
+  assert.equal(it.registerFields.priority, "P1");
+  assert.equal(it.registerFields.source, undefined);
+  assert.equal(it.priority, "P0");
+  assert.deepEqual(fold([newItem("8")]).items.get("8").registerFields, {});
+});
+
+test("owner-decision on an item records answeredAt; a decision item becomes verified", () => {
+  const s = fold([
+    newItem("OQ-N1", { type: "decision", status: "planned" }, { min: 0 }),
+    newItem("9", { type: "feature", status: "planned" }, { min: 0 }),
+    ev("owner-decision", "OQ-N1", { question: "q?", answer: "yes" }, { min: 5 }),
+    ev("owner-decision", "9", { question: "q?", answer: "yes" }, { min: 6 }),
+  ]);
+  const d = s.items.get("OQ-N1");
+  assert.equal(d.answeredAt, T0 + 5 * 60000);
+  assert.equal(d.status, "verified");
+  const f = s.items.get("9");
+  assert.equal(f.answeredAt, T0 + 6 * 60000);
+  assert.equal(f.status, "planned");
+  assert.equal(fold([newItem("10")]).items.get("10").answeredAt, null);
+});
+
+test("a human story edit clears summaryDraft; the draft import and an explicit value do not", () => {
+  const draft = { problem: "p", impact: "i", summaryDraft: true };
+  const s = fold([
+    newItem("11", draft, { min: 0 }),
+    newItem("12", draft, { min: 0 }),
+    newItem("13", draft, { min: 0 }),
+    newItem("14", draft, { min: 0 }),
+    ev("item.edit", "11", { fields: { solution: "fix it" } }, { min: 1 }),
+    ev("item.edit", "12", { fields: { solution: "x", source: "summary-draft" } }, { min: 1 }),
+    ev("item.edit", "13", { fields: { solution: "x" } }, { min: 1, actor: "summary-draft" }),
+    ev("item.edit", "14", { fields: { solution: "x", summaryDraft: true } }, { min: 1 }),
+  ]);
+  assert.equal(s.items.get("11").summaryDraft, false);
+  assert.equal(s.items.get("11").solution, "fix it");
+  assert.equal(s.items.get("12").summaryDraft, true);
+  assert.equal(s.items.get("13").summaryDraft, true);
+  assert.equal(s.items.get("14").summaryDraft, true);
+  const plain = fold([
+    newItem("15", {}, { min: 0 }),
+    ev("item.edit", "15", { fields: { title: "renamed" } }, { min: 1 }),
+  ]);
+  assert.equal(plain.items.get("15").summaryDraft, false); // non-story edits leave it alone
+});

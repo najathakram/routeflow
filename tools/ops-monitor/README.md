@@ -27,9 +27,13 @@ shows how fresh its sources are.
 ```bash
 npm run ops:monitor            # http://127.0.0.1:4317 (localhost only)
 npm run ops:monitor -- --lan   # also on the LAN (read-only; the page shows private work titles)
+npm run ops:monitor -- --views # also write the generated views (WORK-REGISTER.md, board JSON) to git
 node tools/ops-monitor/server.mjs --once   # one collection pass, one-line summary, exit
-npm run ops:test               # node --test tools/ops-monitor/test/
+npm run ops:test               # node tools/ops-monitor/test/run-all.mjs
 ```
+
+Views are off by default (never in cloud). Exactly one machine, the PC monitor, runs with
+`--views` as the single writer; every other monitor stays read-only. `rf views` stays manual.
 
 The monitor is an always-on process on the PC (owner approved; no scheduled task). Start it in a
 terminal tab and leave it. It needs `git`, `gh` (authenticated) and, optionally, `railway`.

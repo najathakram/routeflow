@@ -83,6 +83,20 @@ test("checkCloudEnv: cloud refuses to start without hash or session secret", () 
   assert.doesNotMatch(JSON.stringify(none), /a{20}/);
 });
 
+test("checkCloudEnv: the session secret must be 64+ hex or 43+ base64url characters", () => {
+  const base = { OPS_PASSWORD_HASH: hashPassword("a good password") };
+  const run = (s) => checkCloudEnv({ ...base, OPS_SESSION_SECRET: s }, { cloud: true });
+  assert.equal(run("x".repeat(40)).ok, false, "40 chars");
+  assert.equal(run("g".repeat(42)).ok, false, "42 base64url chars");
+  assert.equal(run("a".repeat(32) + "!".repeat(40)).ok, false, "not hex, not base64url");
+  assert.equal(run("g".repeat(43)).ok, true, "43 base64url chars");
+  assert.equal(run("a".repeat(64)).ok, true, "64 hex");
+  assert.equal(run("Ab_-".repeat(11)).ok, true, "44 base64url");
+  const bad = run("short-secret-value");
+  assert.ok(bad.errors.some((e) => /64 hex/.test(e) && /43 base64url/.test(e)));
+  assert.doesNotMatch(JSON.stringify(bad), /short-secret-value/, "never echoes the value");
+});
+
 test("cloudBoot: requires GITHUB_TOKEN", async () => {
   const { exec } = recorder();
   await assert.rejects(() => cloudBoot({ env: { RF_OPS_HOME: tmpdir() }, exec }), /GITHUB_TOKEN/);

@@ -8,11 +8,11 @@ Master `abc1234`. Rules: one train per public window.
 
 ## Trains
 
-| Train                                       | Members                                                                                                 | Lanes                  | Gates                                 | ETA (window)  |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------- | ------------- |
-| **R1 window 2: back office + widget fixes** | fix/acme-bo-api (BO-03) · feat/acme-bo-web 37266348d · rows 101/102, row 103 · B1036 · riders a6247ee7e | MB push; PC-L BO fixes | MB single verified push; Opus review  | 10-18 ~23:30Z |
-| **R2 billing guards (live harm)**           | G1a a40de03bb (SA-786) · rows 105, 999 · B1234                                                          | PC-L                   | rebase on master; DB specs; Opus high | 10-19 ~04:00Z |
-| **R3 product page finish**                  | K13 first; B6 is not an id                                                                              | MM, PC-L               | K13 on the R1 image                   | 10-19 ~16:00Z |
+| Train                                       | Members                                                                                               | Lanes                  | Gates                                 | ETA (window)  |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------- | ------------- |
+| **R1 window 2: back office + widget fixes** | fix/acme-bo-api (BO-03) · feat/acme-bo-web bbbb2222 · rows 101/102, row 103 · B1036 · riders cccc3333 | MB push; PC-L BO fixes | MB single verified push; Opus review  | 10-18 ~23:30Z |
+| **R2 widget guards**                        | G1a aaaa1111 (SA-100) · rows 105, 999 · B1234                                                         | PC-L                   | rebase on master; DB specs; Opus high | 10-19 ~04:00Z |
+| **R3 product page finish**                  | K13 first; B6 is not an id                                                                            | MM, PC-L               | K13 on the R1 image                   | 10-19 ~16:00Z |
 
 ## After R3
 

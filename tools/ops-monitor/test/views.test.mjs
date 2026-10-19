@@ -369,6 +369,7 @@ test("writeViews dry run writes nothing", async () => {
   const dash = readFileSync(join(FIX, "dashboard.md"), "utf8");
   const env = fakeEnv({ "/specs/DASHBOARD.md": dash });
   const r = await writeViews({
+    registerMode: "views",
     specsDir: "/specs",
     boardDir: "/board",
     snapshot: snapshot(),
@@ -388,6 +389,7 @@ test("writeViews writes register, dashboard, board json, commits and pushes", as
   const dash = readFileSync(join(FIX, "dashboard.md"), "utf8");
   const env = fakeEnv({ "/specs/DASHBOARD.md": dash, "/specs/register/items/12.md": "x" });
   const r = await writeViews({
+    registerMode: "views",
     specsDir: "/specs",
     boardDir: "/board",
     snapshot: snapshot(),
@@ -436,6 +438,7 @@ test("writeViews refuses a hand-edited register but still writes dashboard and b
   const edited = gen.replace("| P1 | building |", "| P0 | building |");
   const env = fakeEnv({ "/specs/DASHBOARD.md": dash, "/specs/register/WORK-REGISTER.md": edited });
   const r = await writeViews({
+    registerMode: "views",
     specsDir: "/specs",
     boardDir: "/board",
     snapshot: snapshot(),
@@ -449,4 +452,161 @@ test("writeViews refuses a hand-edited register but still writes dashboard and b
   assert.deepEqual(r.dashboardReplaced, ["now", "blocked", "owner"]);
   assert.equal(r.boardWritten.length, 5);
   assert.equal(r.pushed, false);
+});
+
+test("writeViews with a push that cannot land aborts the rebase and resets to upstream", async () => {
+  const dash = readFileSync(join(FIX, "dashboard.md"), "utf8");
+  const env = fakeEnv({ "/specs/DASHBOARD.md": dash });
+  env.deps.exec = async (cmd, args) => {
+    env.calls.push([cmd, ...args]);
+    if (args[0] === "status") return { code: 0, stdout: " M DASHBOARD.md\n", stderr: "" };
+    if (args[0] === "push") return { code: 1, stdout: "", stderr: "! [rejected] (fetch first)" };
+    if (args[0] === "pull") return { code: 1, stdout: "", stderr: "CONFLICT (add/add)" };
+    return { code: 0, stdout: "", stderr: "" };
+  };
+  const r = await writeViews({
+    specsDir: "/specs",
+    boardDir: "/board",
+    snapshot: snapshot(),
+    push: true,
+    dry: false,
+    deps: env.deps,
+  });
+  const git = env.calls.filter((c) => c[0] === "git").map((c) => c.slice(1).join(" "));
+  assert.equal(r.pushed, false);
+  assert.equal(r.retryLater, true);
+  assert.equal(git.filter((g) => g === "push").length, 1, "no push retry after a failed rebase");
+  const abort = git.indexOf("rebase --abort");
+  const reset = git.indexOf("reset --hard --quiet @{u}");
+  assert.ok(abort >= 0, "rebase aborted");
+  assert.ok(reset > abort, "then reset to upstream");
+  assert.equal(r.boardWritten.length, 5, "board json is machine-local and still written");
+});
+
+test("writeViews writes no view file while unpushed commits exist (views never sit under events)", async () => {
+  const dash = readFileSync(join(FIX, "dashboard.md"), "utf8");
+  const env = fakeEnv({ "/specs/DASHBOARD.md": dash });
+  env.deps.exec = async (cmd, args) => {
+    env.calls.push([cmd, ...args]);
+    if (args[0] === "rev-list") return { code: 0, stdout: "2\n", stderr: "" };
+    return { code: 0, stdout: "", stderr: "" };
+  };
+  const r = await writeViews({
+    specsDir: "/specs",
+    boardDir: "/board",
+    snapshot: snapshot(),
+    push: true,
+    dry: false,
+    deps: env.deps,
+  });
+  assert.equal(r.skipped, "unpushed commits");
+  assert.equal(r.retryLater, true);
+  assert.equal(r.pushed, false);
+  assert.equal(env.writes.filter((w) => w.startsWith("/specs/")).length, 0);
+  assert.equal(env.calls.filter((c) => c[1] === "commit").length, 0);
+  assert.equal(env.fs.get("/specs/DASHBOARD.md"), dash);
+});
+
+// --- generated register mode (events -> register, no snapshot needed) ---------------------------
+
+import { fold } from "../lib/fold.mjs";
+import { newEventId } from "../lib/ids.mjs";
+import { renderGeneratedRegister, stateToSnapshot } from "../lib/views.mjs";
+
+let evn = 0;
+const gev = (kind, itemId, data, lane = null) => {
+  const at = Date.UTC(2026, 9, 19, 4, 0, 0) + evn++ * 1000;
+  return {
+    v: 1,
+    id: newEventId("pc", at, () => 0.5),
+    ts: new Date(at).toISOString(),
+    machine: "pc",
+    actor: "tester",
+    lane,
+    kind,
+    item: itemId,
+    data,
+  };
+};
+
+test("renderRegister shows register-cited PRs (refPrs) after the item's own PRs", () => {
+  const snap = snapshot();
+  snap.items = [
+    item("12", {
+      priority: "P1",
+      links: { prs: [4001], branches: [], urls: [] },
+      refPrs: [3467, 3470],
+    }),
+  ];
+  snap.prs = { open: [], merged: [{ number: 4001 }, { number: 3467 }] };
+  const md = renderRegister(snap, { itemFileExists: () => false });
+  assert.match(
+    md,
+    /\[#4001\]\(https:\/\/github\.com\/[^)]+\/pull\/4001\) merged \[#3467\]\([^)]+\) merged \[#3470\]\([^)]+\) \|/,
+  );
+});
+
+test("renderGeneratedRegister: a pure function of the fold, equal to the snapshot render", () => {
+  const events = [
+    gev("item.new", "R1", { title: "Window 2", type: "release" }),
+    gev("item.new", "12", {
+      title: "Acme order total",
+      type: "bug",
+      priority: "P1",
+      train: "R1",
+      trainLabel: "R1 window 2",
+      source: "register",
+      links: { prs: [3467] },
+    }),
+    gev("item.new", "9", { title: "Acme outage", type: "incident", priority: "P0" }),
+    gev("item.new", "14", { title: "Done thing", type: "chore", status: "verified" }),
+    gev("claim", "12", {}, "pc-lane"),
+  ];
+  const state = fold(events);
+  const md = renderGeneratedRegister(state, { itemFileExists: (id) => id === "12" });
+  assert.match(md, /^<!-- ops:generated register v1 sha256=[0-9a-f]{64} -->\n/);
+  const rows = md.split("\n").filter((l) => /^\| \d+ \|/.test(l));
+  assert.deepEqual(
+    rows.map((r) => r.split(" | ")[0]),
+    ["| 9", "| 12"],
+  ); // priority order; the release and the verified item are not rows
+  assert.match(rows[1], /\[item\]\(items\/12\.md\) \[#3467\]/);
+  assert.match(rows[1], /\| 2026-10-19 \|$/);
+  assert.equal(md, renderGeneratedRegister(fold(events), { itemFileExists: (id) => id === "12" }));
+  assert.equal(md, renderRegister(stateToSnapshot(state), { itemFileExists: (id) => id === "12" }));
+});
+
+test("writeViews in generated register mode leaves the register to the event-driven writer", async () => {
+  const dash = readFileSync(join(FIX, "dashboard.md"), "utf8");
+  const env = fakeEnv({ "/specs/DASHBOARD.md": dash });
+  const r = await writeViews({
+    specsDir: "/specs",
+    boardDir: "/board",
+    snapshot: snapshot(),
+    registerMode: "generated",
+    push: true,
+    dry: false,
+    deps: env.deps,
+  });
+  assert.equal(r.registerWritten, false);
+  assert.equal(r.refused, null);
+  assert.ok(!env.writes.some((w) => w.endsWith("WORK-REGISTER.md")));
+  assert.deepEqual(r.dashboardReplaced, ["now", "blocked", "owner"]);
+});
+
+test("writeViews never writes the register in human (default) or generated mode", async () => {
+  for (const registerMode of [undefined, "human", "generated"]) {
+    const env = fakeEnv({ "/specs/register/WORK-REGISTER.md": "hand-kept register" });
+    const r = await writeViews({
+      ...(registerMode ? { registerMode } : {}),
+      specsDir: "/specs",
+      boardDir: "/board",
+      snapshot: snapshot(),
+      push: false,
+      deps: env.deps,
+    });
+    assert.equal(r.registerWritten, false, String(registerMode));
+    assert.ok(!env.writes.some((w) => /WORK-REGISTER/.test(w)), String(registerMode));
+    assert.equal(env.fs.get("/specs/register/WORK-REGISTER.md"), "hand-kept register");
+  }
 });

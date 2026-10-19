@@ -23,7 +23,7 @@
     "ops:rf": "node tools/ops-monitor/bin/rf.mjs",
     "ops:backfill": "node tools/ops-monitor/bin/rf.mjs backfill",
     "ops:views": "node tools/ops-monitor/bin/rf.mjs views",
-    "ops:test": "node --test --test-concurrency=1 \"tools/ops-monitor/test/*.test.mjs\"",
+    "ops:test": "node tools/ops-monitor/test/run-all.mjs",
     "smoke": "node scripts/smoke.mjs",
     "post-deploy-check": "node scripts/post-deploy-check.mjs",
     "release-health": "node scripts/release-health.mjs",

@@ -72,6 +72,8 @@ const ITEM_FIELDS = {
     v.length <= 50 &&
     v.every((t) => typeof t === "string" && ITEM_ID_RE.test(t)),
   links: (v) => isLinks(v, false),
+  // PR numbers the register merely cites as background (never a fix link, never alarmed on).
+  refPrs: (v) => Array.isArray(v) && v.length <= 50 && v.every((n) => Number.isInteger(n) && n > 0),
   // Business view (owner 2026-10-19): plain-language story of the item, in the owner's terms.
   problem: (v) => v === null || (typeof v === "string" && v.length <= 800), // what's wrong
   impact: (v) => v === null || (typeof v === "string" && v.length <= 800), // what it's causing

@@ -6,7 +6,12 @@ import { dirname, join, resolve } from "node:path";
 import { GITHUB_REPO, opsHome, specsDir, specsRemote } from "./config.mjs";
 import { isWellFormedHash } from "./auth.mjs";
 
-const SECRET_MIN_CHARS = 32;
+const SECRET_RULE =
+  "at least 64 hex characters (32 random bytes) or at least 43 base64url characters";
+
+/** 32+ random bytes: 64+ hex chars, or 43+ base64url chars. */
+export const isStrongSecret = (s) =>
+  typeof s === "string" && (/^[0-9a-fA-F]{64,}$/.test(s) || /^[A-Za-z0-9_-]{43,}$/.test(s));
 
 /** Strips anything that looks like a credential. `secrets` are literal values to blank as well. */
 export function redact(text, secrets = []) {
@@ -44,9 +49,9 @@ export function checkCloudEnv(env = process.env, { cloud = false } = {}) {
     );
   }
   if ((cloud || hash) && !secret) {
-    errors.push("OPS_SESSION_SECRET is not set (at least 32 random bytes, hex).");
-  } else if (secret && secret.length < SECRET_MIN_CHARS) {
-    errors.push(`OPS_SESSION_SECRET is too short (need at least ${SECRET_MIN_CHARS} characters).`);
+    errors.push(`OPS_SESSION_SECRET is not set (${SECRET_RULE}).`);
+  } else if (secret && !isStrongSecret(secret)) {
+    errors.push(`OPS_SESSION_SECRET is too weak (need ${SECRET_RULE}).`);
   }
   return { ok: errors.length === 0, errors };
 }

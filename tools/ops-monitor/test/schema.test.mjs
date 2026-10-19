@@ -112,3 +112,15 @@ test("constants and id patterns", () => {
   assert.ok(BUG_ID_RE.test("B1"));
   assert.ok(!BUG_ID_RE.test("R1"));
 });
+
+test("refPrs: a register-cited PR number list is a valid item field", () => {
+  const ok = ev("item.edit", "525", { fields: { refPrs: [3202, 3466], source: "register" } });
+  assert.deepEqual(validateEvent(ok).errors, []);
+  assert.deepEqual(validateItemFields({ title: "t", type: "bug", refPrs: [] }, { full: true }), []);
+  for (const bad of [[0], [-1], [1.5], ["3202"], "3202", null, new Array(51).fill(5)])
+    assert.deepEqual(
+      validateItemFields({ refPrs: bad }, { full: false }),
+      ['invalid item field "refPrs"'],
+      JSON.stringify(bad).slice(0, 30),
+    );
+});

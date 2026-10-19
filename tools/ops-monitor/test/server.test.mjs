@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { hashPassword, signSession } from "../lib/auth.mjs";
+import { createFailureLimiter, hashPassword, signSession } from "../lib/auth.mjs";
 import { createMonitorServer, resolveListenOptions } from "../server.mjs";
 
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
@@ -152,11 +152,13 @@ test("resolveListenOptions defaults to loopback", () => {
   assert.deepEqual(resolveListenOptions([], {}), {
     host: "127.0.0.1",
     port: 4317,
-    views: true,
+    views: false,
     once: false,
     fixture: null,
     cloud: false,
   });
+  assert.equal(resolveListenOptions(["--views"], {}).views, true, "--views turns the writer on");
+  assert.equal(resolveListenOptions(["--views", "--no-views"], {}).views, false);
   const o = resolveListenOptions(["--lan", "--port", "5000", "--no-views", "--once"], {});
   assert.equal(o.host, "0.0.0.0");
   assert.equal(o.port, 5000);
@@ -335,15 +337,98 @@ test("login: 11th attempt is blocked (even with the right password), then the wi
   });
 });
 
-test("login: attempts are keyed by the first x-forwarded-for hop", async () => {
-  await withServer(authHarness(), async (port) => {
+test("login (cloud): attempts are keyed by the LAST x-forwarded-for hop, not a spoofed first one", async () => {
+  await withServer(authHarness({ cloud: true }), async (port) => {
+    // The attacker rotates the client-supplied first hop; the proxy-appended last hop is fixed.
     for (let i = 0; i < 10; i++)
-      await login(port, "wrong-pass", { "x-forwarded-for": "9.9.9.9, 10.0.0.1" });
-    const blocked = await login(port, PASSWORD, { "x-forwarded-for": "9.9.9.9" });
+      await login(port, "wrong-pass", { "x-forwarded-for": `1.1.1.${i}, 9.9.9.9` });
+    const blocked = await login(port, PASSWORD, { "x-forwarded-for": "2.2.2.2, 9.9.9.9" });
     assert.equal(blocked.headers.location, "/login?e=2");
-    const other = await login(port, PASSWORD, { "x-forwarded-for": "8.8.8.8" });
+    const other = await login(port, PASSWORD, { "x-forwarded-for": "9.9.9.9, 8.8.8.8" });
     assert.equal(other.headers.location, "/");
   });
+});
+
+test("login (cloud): x-real-ip wins over x-forwarded-for", async () => {
+  await withServer(authHarness({ cloud: true }), async (port) => {
+    const hdr = (n) => ({ "x-real-ip": "7.7.7.7", "x-forwarded-for": `3.3.3.${n}, 4.4.4.${n}` });
+    for (let i = 0; i < 10; i++) await login(port, "wrong-pass", hdr(i));
+    assert.equal((await login(port, PASSWORD, hdr(99))).headers.location, "/login?e=2");
+  });
+});
+
+test("login (local): forwarded headers are ignored, the socket address keys the limiter", async () => {
+  await withServer(authHarness(), async (port) => {
+    for (let i = 0; i < 10; i++)
+      await login(port, "wrong-pass", {
+        "x-forwarded-for": `1.1.1.${i}`,
+        "x-real-ip": `5.5.5.${i}`,
+      });
+    const blocked = await login(port, PASSWORD, { "x-forwarded-for": "8.8.8.8" });
+    assert.equal(blocked.headers.location, "/login?e=2");
+  });
+});
+
+test("login: a success resets that client's failures", async () => {
+  await withServer(authHarness(), async (port) => {
+    for (let i = 0; i < 9; i++) await login(port, "wrong-pass");
+    assert.equal((await login(port)).headers.location, "/");
+    for (let i = 0; i < 9; i++)
+      assert.equal((await login(port, "wrong-pass")).headers.location, "/login?e=1");
+    assert.equal((await login(port)).headers.location, "/", "still under the cap after the reset");
+  });
+});
+
+test("login: the global cap counts failures only", async () => {
+  const globalLimiter = createFailureLimiter({ max: 3, windowMs: 900000 });
+  await withServer(authHarness({ cloud: true, auth: { globalLimiter } }), async (port) => {
+    // Many successes from different clients never count.
+    for (let i = 0; i < 6; i++) {
+      const r = await login(port, PASSWORD, { "x-real-ip": `10.0.0.${i}` });
+      assert.equal(r.headers.location, "/", `success ${i}`);
+    }
+    for (let i = 0; i < 3; i++) await login(port, "wrong-pass", { "x-real-ip": `10.0.1.${i}` });
+    const blocked = await login(port, PASSWORD, { "x-real-ip": "10.0.2.1" });
+    assert.equal(blocked.headers.location, "/login?e=2");
+  });
+});
+
+test("/api/snapshot carries authEnabled (true with a login, false without)", async () => {
+  await withServer(authHarness(), async (port) => {
+    const ok = await login(port);
+    const r = await call(port, "/api/snapshot", { headers: { cookie: cookieOf(ok) } });
+    assert.equal(JSON.parse(r.body).authEnabled, true);
+  });
+  const h = harness();
+  const port = await listen(h.server);
+  try {
+    const s = await request(port, "/api/snapshot");
+    assert.equal(JSON.parse(s.body).authEnabled, false);
+  } finally {
+    h.server.close();
+    h.server.closeAllConnections?.();
+  }
+});
+
+test("run-all.mjs exits non-zero when a test fails, zero when they pass", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rf-runall-"));
+  const runner = join(dirname(fileURLToPath(import.meta.url)), "run-all.mjs");
+  const run = () =>
+    spawnSync(process.execPath, [runner], {
+      // A parent `node --test` run sets NODE_TEST_CONTEXT, which would make the child exit 0.
+      env: { ...process.env, NODE_TEST_CONTEXT: undefined, OPS_TEST_DIR: dir },
+      encoding: "utf8",
+    });
+  writeFileSync(
+    join(dir, "good.test.mjs"),
+    'import { test } from "node:test"; test("ok", () => {});\n',
+  );
+  assert.equal(run().status, 0);
+  writeFileSync(
+    join(dir, "bad.test.mjs"),
+    'import { test } from "node:test"; import assert from "node:assert"; test("no", () => assert.equal(1, 2));\n',
+  );
+  assert.notEqual(run().status, 0);
 });
 
 test("login: body over 4 KB is refused; cross-origin POST is refused", async () => {
@@ -574,4 +659,13 @@ test("cloud boot refuses to start without OPS_PASSWORD_HASH or OPS_SESSION_SECRE
   });
   assert.equal(d.code, 1);
   assert.match(d.out, /OPS_SESSION_SECRET/);
+  // a short secret is refused, and its value is never printed
+  const e = await runServer(["--port", "0", "--once"], {
+    RF_OPS_HOME: home,
+    OPS_PASSWORD_HASH: HASH,
+    OPS_SESSION_SECRET: "tooshort-secret-xyz",
+  });
+  assert.equal(e.code, 1);
+  assert.match(e.out, /OPS_SESSION_SECRET/);
+  assert.doesNotMatch(e.out, /tooshort-secret-xyz/);
 });

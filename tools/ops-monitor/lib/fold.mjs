@@ -16,9 +16,31 @@ function mergeLinks(into, add) {
   into.urls = uniq([...into.urls, ...(add.urls ?? [])]);
 }
 
+const STORY_FIELDS = ["problem", "impact", "solution"];
+
+/** True when an item.new / item.edit field set came from the register (hand-kept source). */
+const isRegisterFields = (fields) => fields?.source === "register";
+
+/** Splits register-sourced links: PR numbers are refs (background), the rest are real links. */
+function splitRegisterLinks(links) {
+  if (!links) return { links: null, refPrs: [] };
+  const { prs = [], ...rest } = links;
+  return { links: rest, refPrs: prs };
+}
+
+/** Remembers the last register-sourced field values (raw, minus `source`) for the sync diff. */
+function recordRegisterFields(it, fields) {
+  for (const [k, v] of Object.entries(fields)) {
+    if (k === "source") continue;
+    it.registerFields[k] = structuredClone(v);
+  }
+}
+
 function newItem(id, fields, ts) {
   const links = emptyLinks();
-  mergeLinks(links, fields.links);
+  const register = isRegisterFields(fields);
+  const split = register ? splitRegisterLinks(fields.links) : { links: fields.links, refPrs: [] };
+  mergeLinks(links, split.links);
   return {
     id,
     title: fields.title ?? id,
@@ -37,6 +59,14 @@ function newItem(id, fields, ts) {
     members: [...(fields.members ?? [])],
     related: [...(fields.related ?? [])],
     links,
+    refPrs: uniq([...split.refPrs, ...(fields.refPrs ?? [])]),
+    registerFields: {},
+    problem: fields.problem ?? null,
+    impact: fields.impact ?? null,
+    solution: fields.solution ?? null,
+    ownerAsk: fields.ownerAsk ?? null,
+    summaryDraft: fields.summaryDraft ?? false,
+    answeredAt: null,
     children: [],
     claimedBy: null,
     claimedAt: null,
@@ -63,8 +93,14 @@ export function fold(events, { bugs = new Map() } = {}) {
     lastEventAt: null,
     machines: {},
   };
-  const anomaly = (kind, eventId, item, detail) =>
-    state.anomalies.push({ kind, eventId: eventId ?? null, item: item ?? null, detail });
+  const anomaly = (kind, eventId, item, detail, ts = null) =>
+    state.anomalies.push({
+      kind,
+      eventId: eventId ?? null,
+      item: item ?? null,
+      detail,
+      ts: Number.isFinite(ts) ? ts : null,
+    });
 
   const valid = [];
   for (const ev of events) {
@@ -79,7 +115,7 @@ export function fold(events, { bugs = new Map() } = {}) {
     }
     const r = validateEvent(ev);
     if (!r.ok) {
-      anomaly("invalid-event", ev?.id, ev?.item, r.errors.join("; "));
+      anomaly("invalid-event", ev?.id, ev?.item, r.errors.join("; "), Date.parse(ev?.ts));
       continue;
     }
     valid.push(ev);
@@ -117,7 +153,13 @@ export function fold(events, { bugs = new Map() } = {}) {
       state.items.set(id, it);
       return it;
     }
-    anomaly("unknown-item", ev.id, id, `${ev.kind} references unknown item ${id}`);
+    anomaly(
+      "unknown-item",
+      ev.id,
+      id,
+      `${ev.kind} references unknown item ${id}`,
+      Date.parse(ev.ts),
+    );
     return null;
   };
 
@@ -149,9 +191,10 @@ export function fold(events, { bugs = new Map() } = {}) {
     switch (ev.kind) {
       case "item.new": {
         if (state.items.has(ev.item)) {
-          anomaly("duplicate-item", ev.id, ev.item, `item.new for existing item ${ev.item}`);
+          anomaly("duplicate-item", ev.id, ev.item, `item.new for existing item ${ev.item}`, ts);
         } else {
           it = newItem(ev.item, d, ts);
+          if (isRegisterFields(d)) recordRegisterFields(it, d);
           state.items.set(ev.item, it);
           touched = true;
         }
@@ -160,12 +203,26 @@ export function fold(events, { bugs = new Map() } = {}) {
       case "item.edit": {
         it = resolve(ev.item, ev);
         if (!it) break;
+        const register = isRegisterFields(d.fields);
         for (const [k, v] of Object.entries(d.fields)) {
-          if (k === "links") mergeLinks(it.links, v);
+          if (k === "links" && register) {
+            const split = splitRegisterLinks(v);
+            mergeLinks(it.links, split.links);
+            it.refPrs = uniq([...it.refPrs, ...split.refPrs]);
+          } else if (k === "links") mergeLinks(it.links, v);
           else if (k === "status") setStatus(it, v);
           else if (Array.isArray(v)) it[k] = [...v];
           else it[k] = v;
         }
+        if (register) recordRegisterFields(it, d.fields);
+        // A human edit of the story confirms it; the draft import (source or actor) does not.
+        if (
+          d.fields.summaryDraft === undefined &&
+          STORY_FIELDS.some((k) => d.fields[k] !== undefined) &&
+          d.fields.source !== "summary-draft" &&
+          ev.actor !== "summary-draft"
+        )
+          it.summaryDraft = false;
         touched = true;
         break;
       }
@@ -179,6 +236,7 @@ export function fold(events, { bugs = new Map() } = {}) {
             ev.id,
             ev.item,
             `${ev.lane} claimed ${ev.item} held by ${it.claimedBy}`,
+            ts,
           );
         } else {
           it.claimedBy = ev.lane;
@@ -196,6 +254,8 @@ export function fold(events, { bugs = new Map() } = {}) {
           it.claimedBy = null;
           it.claimedAt = null;
           it.claimConflict = null;
+        } else if (it.claimConflict && it.claimConflict[1] === ev.lane) {
+          it.claimConflict = null; // the loser backed off
         }
         touched = true;
         break;
@@ -246,6 +306,10 @@ export function fold(events, { bugs = new Map() } = {}) {
           recommended: d.recommended ?? null,
           actor: ev.actor,
         });
+        if (it) {
+          it.answeredAt = ts;
+          if (it.type === "decision") setStatus(it, "verified");
+        }
         touched = !!it;
         break;
       }
@@ -268,6 +332,7 @@ export function fold(events, { bugs = new Map() } = {}) {
           }
         }
         if (it) mergeLinks(it.links, { branches: [d.branch] });
+        if (it?.claimedBy) touchLane({ lane: it.claimedBy, kind: ev.kind }, ts);
         state.pushes.push({
           ts,
           branch: d.branch,
@@ -297,6 +362,7 @@ export function fold(events, { bugs = new Map() } = {}) {
           }
         }
         if (it) mergeLinks(it.links, { prs: [d.number] });
+        if (it?.claimedBy) touchLane({ lane: it.claimedBy, kind: ev.kind }, ts);
         state.prEvents.push({
           ts,
           number: d.number,
