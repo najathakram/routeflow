@@ -329,6 +329,45 @@ describe("genericToastCopy: codes users rely on", () => {
       );
     });
 
+    it("row 648: the vendor bill refusals say what happened and what to do", () => {
+      expect(genericToastCopy(err(400, { code: API_ERROR_CODES.BILL_NOT_EDITABLE }))).toBe(
+        "Only draft bills can be edited. Revert the bill to draft first.",
+      );
+      expect(genericToastCopy(err(400, { code: API_ERROR_CODES.BILL_PO_SUPPLIER_LOCKED }))).toBe(
+        "This bill is linked to a purchase order, so its supplier can't be changed.",
+      );
+      expect(genericToastCopy(err(400, { code: API_ERROR_CODES.BILL_NEVER_RECEIVED }))).toBe(
+        "This bill was never received, so there is no stock or cost to revert. Its payments keep it out of draft.",
+      );
+      expect(genericToastCopy(err(400, { code: API_ERROR_CODES.BILL_NEEDS_A_LINE }))).toBe(
+        "A bill needs at least one line. Void or delete it instead.",
+      );
+    });
+
+    it("row 648: RECEIVE_EXCEEDS_OUTSTANDING names the product and both quantities from structured fields", () => {
+      expect(
+        genericToastCopy(
+          err(400, {
+            code: API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING,
+            productName: "Widget 24pk",
+            requested: "5",
+            outstanding: "2.5",
+          }),
+        ),
+      ).toBe("Can't receive 5 of Widget 24pk: only 2.5 still outstanding.");
+      // Never the server message, and a malformed field falls back to the numberless line.
+      const fallback = genericToastCopy(
+        err(400, {
+          code: API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING,
+          productName: "Widget",
+          requested: "<b>5</b>",
+          outstanding: "2",
+        }),
+      );
+      expect(fallback).toBe("You can't receive more than is still outstanding on a line.");
+      expect(fallback).not.toContain(RAW);
+    });
+
     it("PACK_SIZE_UNKNOWN keeps the 'confirm as loose pieces' option", () => {
       expect(genericToastCopy(err(409, { code: API_ERROR_CODES.PACK_SIZE_UNKNOWN }))).toBe(
         "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",

@@ -1000,16 +1000,20 @@ export class VendorBillsService {
     });
     if (!bill) throw new NotFoundException("Bill not found");
     if (bill.status !== "DRAFT") {
-      throw new BadRequestException("Only DRAFT bills can be edited. Revert to draft first.");
+      throw new BadRequestException({
+        code: API_ERROR_CODES.BILL_NOT_EDITABLE,
+        message: "Only DRAFT bills can be edited. Revert to draft first.",
+      });
     }
     if (
       bill.purchaseOrderId &&
       dto.supplierId !== undefined &&
       dto.supplierId !== bill.supplierId
     ) {
-      throw new BadRequestException(
-        "This bill is linked to a purchase order — its supplier can't be changed.",
-      );
+      throw new BadRequestException({
+        code: API_ERROR_CODES.BILL_PO_SUPPLIER_LOCKED,
+        message: "This bill is linked to a purchase order — its supplier can't be changed.",
+      });
     }
 
     if (Array.isArray(dto.items)) await this.assertLineProductsInCatalog(dto.items);
@@ -1232,9 +1236,15 @@ export class VendorBillsService {
         const receiveQty = new Prisma.Decimal(String(req.qty));
         const remaining = remainingOf(item);
         if (receiveQty.gt(remaining)) {
-          throw new BadRequestException(
-            `"${item.description}": receiving ${receiveQty.toString()} exceeds the ${remaining.toString()} still outstanding.`,
-          );
+          // Structured fields so a client builds its own sentence (product + quantities) without
+          // parsing the message.
+          throw new BadRequestException({
+            code: API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING,
+            message: `"${item.description}": receiving ${receiveQty.toString()} exceeds the ${remaining.toString()} still outstanding.`,
+            productName: item.product?.name ?? item.description,
+            requested: receiveQty.toString(),
+            outstanding: remaining.toString(),
+          });
         }
         return { item, receiveQty };
       });
@@ -1542,9 +1552,11 @@ export class VendorBillsService {
     // overwrites status). Reversing a receipt that never happened would drain
     // real stock and corrupt the average — the receipt marker is receivedDate.
     if (bill.receivedDate == null) {
-      throw new BadRequestException(
-        "This bill was never received — there is no stock or cost to revert. Its payments keep it out of DRAFT.",
-      );
+      throw new BadRequestException({
+        code: API_ERROR_CODES.BILL_NEVER_RECEIVED,
+        message:
+          "This bill was never received — there is no stock or cost to revert. Its payments keep it out of DRAFT.",
+      });
     }
 
     // Guard (e): a PO-linked bill never posted stock (receive skips it), so

@@ -158,6 +158,13 @@ const CODE_COPY: Record<string, string> = {
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
   // B292: an edit that would clear every line is refused; the bill is voided or deleted instead.
   [API_ERROR_CODES.BILL_NEEDS_A_LINE]: "A bill needs at least one line. Void or delete it instead.",
+  // Row 648: vendor bill refusals the page used to explain by rendering the server message.
+  [API_ERROR_CODES.BILL_NOT_EDITABLE]:
+    "Only draft bills can be edited. Revert the bill to draft first.",
+  [API_ERROR_CODES.BILL_PO_SUPPLIER_LOCKED]:
+    "This bill is linked to a purchase order, so its supplier can't be changed.",
+  [API_ERROR_CODES.BILL_NEVER_RECEIVED]:
+    "This bill was never received, so there is no stock or cost to revert. Its payments keep it out of draft.",
   INVOICE_HAS_UNSPENT_CREDIT:
     "This invoice has unspent credit. Release or use it first, then try again.",
   [API_ERROR_CODES.INVOICE_HAS_CASH_REFUND]:
@@ -296,6 +303,19 @@ function unlinkedCopy(data: Record<string, unknown>): string {
     : "Some bill lines aren't linked to a product, so they won't update inventory or costs. Link them, or confirm to receive the bill anyway.";
 }
 
+/** A decimal quantity as the API prints it ("3", "2.5"); anything else is not shown. */
+const QTY_TEXT = /^\d{1,9}(\.\d{1,4})?$/;
+
+/** Row 648: receiving more than a line has outstanding. Product and quantities come from STRUCTURED fields, never the message. */
+function receiveExceedsCopy(data: Record<string, unknown>): string {
+  const name = typeof data.productName === "string" ? data.productName.trim().slice(0, 80) : "";
+  const requested = typeof data.requested === "string" && QTY_TEXT.test(data.requested);
+  const outstanding = typeof data.outstanding === "string" && QTY_TEXT.test(data.outstanding);
+  return name && requested && outstanding
+    ? `Can't receive ${data.requested} of ${name}: only ${data.outstanding} still outstanding.`
+    : "You can't receive more than is still outstanding on a line.";
+}
+
 /** The closed duplicate-name 409s ("A category named "X" already exists."): the noun is matched, the typed name is never shown. */
 const DUPLICATE_NAME =
   /^A (category|subcategory|product) named ".*" already exists(?: in this section)?\.?$/;
@@ -386,6 +406,7 @@ export function codedToastCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT) return allocationsCopy(data);
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
+  if (code === API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING) return receiveExceedsCopy(data);
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);
   if (code === API_ERROR_CODES.ACTIVATION_PERIOD_ALREADY_ENDED) return activationEndedCopy(err);
