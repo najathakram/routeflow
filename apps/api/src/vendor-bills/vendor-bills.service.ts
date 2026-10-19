@@ -2001,7 +2001,7 @@ export class VendorBillsService {
     // line's shape (two partial receipt lots, an edited bill date, a legacy qty denomination) is left
     // alone, as before, but no longer silently: it is recorded for review. It stays OUT of `left`, the
     // zero-by-id repair list, because a manual lot sharing the number looks exactly the same.
-    const unmatched: BillLotGroup[] = [];
+    const strays: BillLotGroup[] = [];
     for (const [productId, { name }] of shortfalls) {
       const taken = new Set(lots.map((l) => l.id));
       for (const g of left) for (const id of g.lotIds) taken.add(id);
@@ -2010,7 +2010,7 @@ export class VendorBillsService {
           []) as typeof lots
       ).filter((l) => !(l.notes ?? "").includes("(bill reversed;") && !taken.has(l.id));
       if (rest.length > 0) {
-        unmatched.push({
+        strays.push({
           productId,
           name,
           lotIds: rest.map((l) => l.id),
@@ -2035,7 +2035,7 @@ export class VendorBillsService {
         });
       }
     }
-    return { left, unmatched };
+    return { left, unmatched: strays };
   }
 
   async voidBill(id: string, performedById?: string) {
