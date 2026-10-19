@@ -4,8 +4,7 @@
  * accepts it) is falsy, so it became `null`: the quote (and the capture that prices through the same
  * engine) credited the customer NO levy. It is refused now (400 MONEY_INVARIANT) instead.
  *
- * Master (static read, not run): `quote()` resolved with `categoryTax` 0 on the matched chunk and a
- * total of 10.
+ * Recorded on 3665fb22c: `quote()` resolved with `categoryTax` 0 on the matched chunk and a total of 10.
  */
 import { Test } from "@nestjs/testing";
 import { BadRequestException } from "@nestjs/common";

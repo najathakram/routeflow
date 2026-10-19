@@ -4,8 +4,7 @@
  * 'NaN', NUMERIC accepts it) made that product NaN, and `roundMoney(NaN)` is 0: a silent $0 levy refund.
  * The stored value is now refused (400 MONEY_INVARIANT) BEFORE a number is reserved or a note is written.
  *
- * Master (static read, not run): the create below succeeded and `creditNoteItem.createMany` received
- * `categoryTax: 0`.
+ * Recorded on 3665fb22c: the create below succeeded and `creditNoteItem.createMany` received `categoryTax: 0`.
  */
 import { Test } from "@nestjs/testing";
 import { Prisma } from "@prisma/client";
@@ -97,8 +96,9 @@ describe("CreditNotesService: a stored non-finite levy is refused, not refunded 
     const itemsData = prisma.creditNoteItem.createMany.mock.calls[0][0].data;
     expect(itemsData[0]).toMatchObject({ trackedCategoryId: "cat-A", amount: 30, categoryTax: 6 });
   });
-  // SA-816c. Master (static read): a NaN line subtotal or qty made every headroom comparison false
-  // (`prior + amt > NaN + 0.001`), so the over-credit check was SKIPPED and the note was written.
+  // SA-816c. Recorded on 3665fb22c: a NaN line subtotal or qty made every headroom comparison false
+  // (`prior + amt > NaN + 0.001`), so the over-credit check was SKIPPED and the note was written (a NaN subtotal
+  // gave an item row qty 0; a NaN qty wrote qty NaN).
   describe.each(["subtotal", "qty"])("a stored non-finite line %s", (column) => {
     it.each([
       ["the string 'NaN'", "NaN"],

@@ -7,8 +7,8 @@
  * the stored value through `finiteStoredMoney` (money-invariants.util.ts) and answers 400 MONEY_INVARIANT.
  * The credit-note and inline-return sites have their own specs next to their services.
  *
- * Each red test records what master did with the stored NaN. "(static read)" = derived by reading the
- * code, not by running this spec on master.
+ * Each red test records what master did with the stored NaN, as RECORDED by running these cases on
+ * 3665fb22c (the base of this branch): the value the site produced instead of a refusal.
  */
 import { BadRequestException } from "@nestjs/common";
 import { InvoiceStatus, Prisma } from "@prisma/client";
@@ -80,7 +80,7 @@ describe("SA-816 (d)2: a stored non-finite levy is refused, not zeroed or copied
     ];
 
     it.each(STORED_NAN)(
-      "refuses %s (master: Σ levy became NaN, then roundMoney zeroed it at the order write; static read)",
+      "refuses %s (recorded on 3665fb22c: aggregate categoryTax = NaN, no throw; roundMoney then wrote 0 at the order write)",
       (_label, nan) => {
         expectMoneyInvariant(caught(() => aggregateInvoiceLines(orderLines, invoicesWith(nan))));
       },
@@ -110,7 +110,8 @@ describe("SA-816 (d)2: a stored non-finite levy is refused, not zeroed or copied
     const aggregate = (over: Record<string, unknown>) =>
       aggregateInvoiceLines(orderLines, [{ items: [{ ...base, ...over }] }]);
 
-    // master (static read): unitPrice and qty carried NaN into the order write; subtotal's NaN became 0 at roundMoney.
+    // recorded on 3665fb22c: the aggregate carried NaN for unitPrice, qty and subtotal alike, no throw (roundMoney then
+    // wrote 0 for the subtotal; unitPrice and qty went to the order write as NaN).
     describe.each(["unitPrice", "qty", "subtotal"])("%s", (column) => {
       it.each(STORED_NAN)("refuses %s", (_label, nan) => {
         expectMoneyInvariant(caught(() => aggregate({ [column]: nan })));
@@ -148,8 +149,8 @@ describe("SA-816 (d)2: a stored non-finite levy is refused, not zeroed or copied
       ...over,
     });
 
-    // master (static read): a NaN unit price read as "changed", a NaN subtotal as roundMoney 0 (also "changed"),
-    // so the line was rewritten from a NaN aggregate instead of refusing.
+    // recorded on 3665fb22c: orderLineUnchanged returned false for a NaN unit price and for a NaN subtotal (read as
+    // "changed"), so the line was rewritten from a NaN aggregate instead of refusing.
     it("refuses a NaN unit price and a NaN subtotal", () => {
       expectMoneyInvariant(
         caught(() => orderLineUnchanged(existing, shape, agg({ unitPrice: NaN }))),
@@ -186,7 +187,7 @@ describe("SA-816 (d)2: a stored non-finite levy is refused, not zeroed or copied
       freeUnits: 0,
     });
 
-    it("refuses a NaN levy sum (master: roundMoney(NaN) = 0 equalled the stored 0, so the line read 'unchanged'; static read)", () => {
+    it("refuses a NaN levy sum (recorded on 3665fb22c: returned true, the NaN levy read as 0 = the stored 0, so the write was skipped)", () => {
       expectMoneyInvariant(caught(() => orderLineUnchanged(existing, shape, agg(NaN))));
     });
 
@@ -217,14 +218,14 @@ describe("SA-816 (d)2: a stored non-finite levy is refused, not zeroed or copied
     });
 
     it.each(STORED_NAN)(
-      "refuses %s on a line with qty > 0 (master: the prorated roundMoney(NaN) wrote 0; static read)",
+      "refuses %s on a line with qty > 0 (recorded on 3665fb22c: categoryTaxAmount 0, the prorated roundMoney(NaN))",
       (_label, nan) => {
         expectMoneyInvariant(caught(() => build(orderLine(10, nan), 10)));
       },
     );
 
     it.each(STORED_NAN)(
-      "refuses %s on a line with qty <= 0 (master: `=== 0` is false for NaN, so NaN was copied verbatim; static read)",
+      "refuses %s on a line with qty <= 0 (recorded on 3665fb22c: categoryTaxAmount NaN, `=== 0` is false for NaN so it was copied verbatim)",
       (_label, nan) => {
         expectMoneyInvariant(caught(() => build(orderLine(0, nan), 3)));
       },
@@ -280,7 +281,7 @@ describe("SA-816 (d)2: a stored non-finite levy is refused, not zeroed or copied
       } as any);
 
     it.each(STORED_NAN)(
-      "refuses %s (master: the untouched row carried NaN into the rewrite data verbatim; static read)",
+      "refuses %s (recorded on 3665fb22c: data.categoryTaxAmount NaN; likewise unitPrice, discount, qty and subtotal NaN)",
       (_label, nan) => {
         expectMoneyInvariant(caught(() => plan([row(nan)])));
       },
@@ -300,7 +301,7 @@ describe("SA-816 (d)2: a stored non-finite levy is refused, not zeroed or copied
     });
 
     it.each(STORED_NAN)(
-      "refuses %s (master: the merge fold re-created the line with NaN; static read)",
+      "refuses %s (recorded on 3665fb22c: categoryTaxAmount NaN on the re-created line)",
       (_label, nan) => {
         expectMoneyInvariant(caught(() => carriedCategory(own(nan), "p-1")));
       },
@@ -325,7 +326,7 @@ describe("SA-816 (d)2: a stored non-finite levy is refused, not zeroed or copied
     ];
 
     it.each(STORED_NAN)(
-      "refuses %s (master: a SALE row would have been booked with categoryTax NaN; static read)",
+      "refuses %s (recorded on 3665fb22c: ledger line categoryTax NaN; a NaN subtotal gave netSales NaN)",
       (_label, nan) => {
         expectMoneyInvariant(caught(() => toSaleLedgerLines(items(nan), new Map())));
       },
@@ -366,7 +367,7 @@ describe("SA-816 (d)2: a stored non-finite levy is refused, not zeroed or copied
     };
 
     it.each(STORED_NAN)(
-      "refuses %s and books no correction row (master: correctSaleForPriceChange got categoryTax NaN; static read)",
+      "refuses %s and books no correction row (recorded on 3665fb22c: correctSaleForPriceChange got categoryTax NaN; qty NaN and netSales NaN likewise)",
       async (_label, nan) => {
         const { call, correctSaleForPriceChange } = run(nan);
         expectMoneyInvariant(await caughtAsync(call));
@@ -386,8 +387,8 @@ describe("SA-816 (d)2: a stored non-finite levy is refused, not zeroed or copied
   });
 
   describe("sibling stored columns (SA-816c)", () => {
-    // Master (static read): each of these was read with a bare Number(...): NaN reached the ledger line, or was
-    // carried verbatim into the edit rewrite.
+    // Recorded on 3665fb22c: each of these was read with a bare Number(...): NaN reached the ledger line (netSales,
+    // qty) or was carried verbatim into the edit rewrite (unitPrice, discount, qty, subtotal).
     it.each(STORED_NAN)("toSaleLedgerLines refuses a non-finite subtotal: %s", (_label, nan) => {
       expectMoneyInvariant(
         caught(() =>

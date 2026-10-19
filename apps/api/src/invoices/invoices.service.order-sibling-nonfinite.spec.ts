@@ -34,8 +34,9 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
  * order was out of step. The look-ahead (`preflightOrderSiblings`, the same guarded aggregation) now runs
  * before the first write of each edit flow, so the refusal leaves NOTHING written on A.
  *
- * Master (static read, not run): each call below resolved after writing A (items update, header update,
- * item updates) and the post-commit order sync then threw MONEY_INVARIANT.
+ * Recorded on 3665fb22c (no preflight, no aggregation guard): each call below went past the invoice write and
+ * failed only in the post-commit order sync (here 503 LOCK_UNAVAILABLE from the mocked advisory lock, which the
+ * sync takes first); with a real lock it would reach the aggregation and refuse AFTER A had committed.
  */
 describe("SA-816: a NaN sibling invoice refuses an order-linked edit before anything is written", () => {
   let service: InvoicesService;
@@ -270,8 +271,8 @@ describe("SA-816: a NaN sibling invoice refuses an order-linked edit before anyt
   });
 
   describe("the edited invoice's OWN stored rows persist, so the header and SINGLE flows judge them too", () => {
-    // Master (static read): planHeaderOnlyTotals reads only subtotal / rate / levy and an un-repriced line keeps its
-    // stored unit price, so A committed with a NaN unit price and the post-commit back-sync then answered 400.
+    // Recorded on 3665fb22c: planHeaderOnlyTotals reads only subtotal / rate / levy and an un-repriced line keeps its
+    // stored unit price, so A committed with a NaN unit price and only the post-commit back-sync could object.
     describe.each(SIBLING_NAN)(
       "A has an un-repriced line whose unit price is %s",
       (_label, nan) => {
