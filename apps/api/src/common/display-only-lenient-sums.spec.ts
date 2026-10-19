@@ -90,7 +90,7 @@ describe("SA-816 (d)2: the lenient pricing helpers stay display-only on the API"
    * react-pdf's StyleSheet.create (a stylesheet, not a row) and a type annotation.
    */
   const WRITE = /\bdata\s*:|\.(create|createMany|update|updateMany|upsert)\s*\(|\$executeRaw/;
-  const NOT_A_WRITE = [/StyleSheet\.create\(/g, /data: Record<string, any>;/g];
+  const NOT_A_WRITE = [/StyleSheet\.create\(/g, /\bdata: Record<string, any>/g];
   /** Lenient callers that are NOT pure display, each with the reason its output cannot reach a bad write. */
   const LENIENT_BUT_GUARDED: Record<string, string> = {
     "invoices/stored-tax-state.ts":

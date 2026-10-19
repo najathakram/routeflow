@@ -197,8 +197,9 @@ describe("SA-816 (d)2: a stored non-finite levy is refused, not zeroed or copied
   });
 
   describe("order line -> invoice line (invoices.service.ts buildInvoiceItemData, :927-932)", () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const service = new InvoicesService(...(Array(15).fill(undefined) as any[]));
+    // a bare instance: buildInvoiceItemData is pure, no collaborator is read
+    const Bare = InvoicesService as unknown as new (...deps: unknown[]) => InvoicesService;
+    const service = new Bare(...Array<unknown>(15).fill(undefined));
     const build = (li: object, billQty: number) =>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (service as any).buildInvoiceItemData(li, billQty, "test-tenant");
