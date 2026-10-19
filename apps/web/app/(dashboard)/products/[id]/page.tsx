@@ -1659,7 +1659,7 @@ export default function ProductDetailPage() {
                           className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
                       ) : (
-                        <PiecesPerBoxValue unitsPerBox={product.unitsPerBox} />
+                        <PiecesPerBoxValue unitsPerBox={product.unitsPerBox} isFamily={isFamily} />
                       )
                     }
                   />
