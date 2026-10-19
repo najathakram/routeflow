@@ -40,6 +40,7 @@ import {
   foldDraft,
   offerId,
   parseKey,
+  splitKeeps,
   staleKeepMoves,
   staleOfferEntries,
   type CellProblem,
@@ -267,10 +268,14 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const conflicts = fold?.conflicts ?? [];
   const bakedTitles = fold?.bakedTitles ?? [];
   const patched = new Set(patches.map((p) => cellKey(p.ref, p.tier)));
-  const sendKeeps = keeps.filter((k) => !patched.has(cellKey(k.ref, k.tier)));
-  const count = patches.length + sendKeeps.length + customerMoves.length;
+  const unpatchedKeeps = keeps.filter((k) => !patched.has(cellKey(k.ref, k.tier)));
+  // Row 622: a Keep the saved ladder does not show cannot be validated as a Keep; it goes as the patch it amounts to.
+  const { keeps: sendKeeps, asPatches: keepPatches } = served
+    ? splitKeeps(served, rules, unpatchedKeeps)
+    : { keeps: unpatchedKeeps, asPatches: [] };
+  const count = patches.length + unpatchedKeeps.length + customerMoves.length;
   const dirty = count > 0 || problems.length > 0 || conflicts.length > 0;
-  const sig = JSON.stringify([patches, customerMoves, sendKeeps]);
+  const sig = JSON.stringify([patches, customerMoves, unpatchedKeeps]);
   React.useEffect(() => {
     if (applied && applied.sig === null)
       setApplied({ leads: applied.leads, follows: applied.follows, sig });
@@ -365,7 +370,11 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       : {
           expectedRevision: grid.revision,
           expectedPriceState: grid.priceState,
-          patches: patches.map((p) => ({ ref: p.ref, tier: p.tier, to: p.to })),
+          patches: [...patches, ...keepPatches].map((p) => ({
+            ref: p.ref,
+            tier: p.tier,
+            to: p.to,
+          })),
           keeps: sendKeeps.map((k) => ({ ref: k.ref, tier: k.tier, value: k.value })),
           customerMoves,
         };

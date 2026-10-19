@@ -45,7 +45,9 @@ for (const vp of VIEWPORTS) {
       await panel.locator("#ch-apply").click();
 
       const text = page.getByTestId(ID.ebText);
-      await expect(text).toContainText(/raised 5%: \d+ prices? ready\. Save to keep (it|them)\./);
+      await expect(text).toContainText(
+        /raised 5%: \d+ prices? ready(, and \d+ Auto prices? follows?)?\. Save to keep (it|them)\./,
+      );
       await expect(text).toBeInViewport();
       const box = await text.boundingBox();
       const lineHeight = await text.evaluate((el) =>
