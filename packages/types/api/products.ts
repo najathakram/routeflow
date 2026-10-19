@@ -1,6 +1,12 @@
 // ─── Products / inventory / stock-count (wave E / imp-10b) ─────────────────────
 
-import type { BarcodeOrigin, BarcodeSymbology, PackagingLevel, RecipeStatus } from "./enums";
+import type {
+  BarcodeOrigin,
+  BarcodeSymbology,
+  OrderStatusValue,
+  PackagingLevel,
+  RecipeStatus,
+} from "./enums";
 import type { API_ERROR_CODES } from "./error-codes";
 
 /** #2717 M1: a product barcode as the product read model returns it. `origin: "LEGACY"` = synthesized from the legacy
@@ -180,6 +186,44 @@ export interface ProductSalesHistory {
   productId: string;
   lines: ProductSaleLine[];
   summary: ProductSalesSummary;
+}
+
+/** One open order line of a product: what is still to be billed. Backed by
+ *  `GET /products/:id/open-orders`. "Open" = `OPEN_ORDER_STATUSES` (PENDING, CONFIRMED,
+ *  OUT_FOR_DELIVERY); counter sales and cancelled lines are excluded. No money fields. */
+export interface ProductOpenOrderLine {
+  orderId: string;
+  orderNumber: string | null;
+  status: OrderStatusValue;
+  /** ISO business date of the order (`orderDate ?? createdAt`). */
+  orderDate: string;
+  customerId: string;
+  customerName: string;
+  /** Ordered qty, base units (pieces). */
+  qty: number;
+  /** Still to bill: `qty` minus the qty on ISSUED invoices. Always > 0. */
+  remainingQty: number;
+  /** `remainingQty` split by the line's own `unitsPerBox` snapshot; null when not boxed. */
+  boxes: number | null;
+  pieces: number | null;
+  unitsPerBox: number | null;
+  unitLabel: string | null;
+}
+
+export interface ProductOpenOrders {
+  productId: string;
+  /** Newest order first, at most `limit` lines. */
+  lines: ProductOpenOrderLine[];
+  summary: {
+    /** Distinct open orders in `lines`. */
+    orders: number;
+    /** Distinct customers in `lines`. */
+    customers: number;
+    /** Σ remainingQty, base units. */
+    totalQty: number;
+  };
+  /** True when more lines existed than `limit`. */
+  truncated: boolean;
 }
 
 // ─── Multi-level units (2026-09-19) ─────────────────────────────────────────────

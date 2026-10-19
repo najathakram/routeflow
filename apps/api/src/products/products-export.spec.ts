@@ -661,7 +661,7 @@ describe("ProductsController.exportCsv — route contract", () => {
         })(),
       }),
     };
-    const ctl = new ProductsController({} as any, exporter as any);
+    const ctl = new ProductsController({} as any, exporter as any, {} as any);
     const res: any = {
       headers: {} as Record<string, string>,
       body: "",

@@ -62,6 +62,8 @@ const MOVED_NAMES = [
   "PaymentListParams",
   "PaymentListResponse",
   "PriorScanSummary",
+  "ProductOpenOrderLine",
+  "ProductOpenOrders",
   "ProductSaleLine",
   "ProductSalesHistory",
   "ProductSalesSummary",

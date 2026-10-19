@@ -14,6 +14,7 @@ import { ProductUnitsService } from "./product-units.service";
 import { RecipesController } from "./recipes.controller";
 import { RecipesService } from "./recipes.service";
 import { ProductsExportService } from "./products-export.service";
+import { ProductOpenOrdersService } from "./product-open-orders.service";
 import { SalesFactsModule } from "../sales-facts/sales-facts.module";
 import { AuthModule } from "../auth/auth.module";
 import { StorageModule } from "../storage/storage.module";
@@ -48,6 +49,7 @@ import { GatewaysModule } from "../gateways/gateways.module";
     ProductCustomerPricesService,
     RecipesService,
     ProductsExportService,
+    ProductOpenOrdersService,
   ],
   exports: [ProductsService],
 })
