@@ -73,10 +73,18 @@ describe("order-submit-key re-seeded from the draft (A6)", () => {
     expect(getOrderSubmitKey("cust-1")).toBe(first);
   });
 
-  it("a draft that predates the field leaves the slot alone (the next autosave writes the slot's key into it)", () => {
-    const slot = getOrderSubmitKey("cust-1");
-    expect(seedOrderSubmitKeyFromDraft("cust-1", { lineItems: [] })).toBeNull();
-    expect(getOrderSubmitKey("cust-1")).toBe(slot);
+  it("Opus MUST 3: a resumed draft with NO _submitKey gets a FRESH key - never the customer slot's key, which may belong to another draft", () => {
+    const slot = getOrderSubmitKey("cust-1"); // another draft of cust-1 holds this one
+    const fresh = seedOrderSubmitKeyFromDraft("cust-1", { lineItems: [] });
+    expect(fresh).not.toBe(slot);
+    expect(isDraftSubmitKey(fresh)).toBe(true);
+    expect(getOrderSubmitKey("cust-1")).toBe(fresh); // and the screen's next read sends it
+  });
+
+  it("Opus MUST 3: two key-less drafts of the same customer do not share a key", () => {
+    const a = seedOrderSubmitKeyFromDraft("cust-1", { lineItems: [] });
+    const b = seedOrderSubmitKeyFromDraft("cust-1", { lineItems: [] });
+    expect(a).not.toBe(b);
   });
 
   it("seeding is per customer: another customer's slot is untouched", () => {
@@ -128,5 +136,14 @@ describe("the stale comment (SA-817 fact pack)", () => {
     expect(text).not.toMatch(/offline[- ]queue replay/i);
     expect(text).toMatch(/PROCESS MEMORY/);
     expect(text).toMatch(/_submitKey/);
+  });
+});
+
+describe("the stale NewOrderScreen comments (coordinator)", () => {
+  it("no longer says offline draft writes are queued (they are online-only, refused with isOnlineRequired)", () => {
+    const text = src("components", "NewOrderScreen.tsx");
+    expect(text).not.toMatch(/api-client queues that write/);
+    expect(text).not.toMatch(/rejected draft write \(offline queue/);
+    expect(text).toMatch(/ONLINE-ONLY/);
   });
 });
