@@ -202,7 +202,10 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
         </div>
       )}
 
-      {canWrite && (
+      {canWrite && !categoriesFailed && addable.length === 0 && (
+        <p className="mt-3 text-sm text-navy/60">No more labels to add.</p>
+      )}
+      {canWrite && (categoriesFailed || addable.length > 0) && (
         <div className="mt-3 flex items-center gap-2">
           <select
             aria-label="Add a label"
@@ -213,11 +216,7 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
             className="h-9 min-w-0 flex-1 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
             <option value="">
-              {categoriesFailed
-                ? "Couldn't load labels to add"
-                : addable.length === 0
-                  ? "No more labels to add"
-                  : "Add a label…"}
+              {categoriesFailed ? "Couldn't load labels to add" : "Add a label…"}
             </option>
             {addable.map((c) => (
               <option key={c.id} value={c.id} disabled={locked(c.id)}>
