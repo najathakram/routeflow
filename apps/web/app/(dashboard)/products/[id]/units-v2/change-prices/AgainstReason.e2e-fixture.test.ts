@@ -61,6 +61,6 @@ describe("E2E-FIX-UNITS: the staging the spec uses makes a row fall on a Raise",
         also: false,
         tierName,
       }),
-    ).toMatch(/^Follows .+, which you set\./);
+    ).toMatch(/^Goes (down|up): it follows .+, which you set/);
   });
 });
