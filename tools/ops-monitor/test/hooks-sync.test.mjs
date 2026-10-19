@@ -568,6 +568,66 @@ test("plan hook: records to the turn-actions file; events/ edits and non-lead me
   }
 });
 
+test("plan hook: a Write/Edit outside a specs checkout (or a chatty SendMessage) imports no ops-monitor module", () => {
+  const env = mkEnv();
+  try {
+    const preload = join(env.root, "log-imports.mjs");
+    const log = join(env.root, "imports.log");
+    writeFileSync(
+      preload,
+      [
+        'import { registerHooks } from "node:module";',
+        'import { appendFileSync } from "node:fs";',
+        "registerHooks({ resolve(spec, ctx, next) {",
+        '  appendFileSync(process.env.IMPORT_LOG, spec + "|");',
+        "  return next(spec, ctx);",
+        "} });",
+      ].join(" "),
+    );
+    const runLogged = (payload) => {
+      writeFileSync(log, "");
+      const r = spawnSync(process.execPath, ["--import", url(preload), PLAN], {
+        input: JSON.stringify(payload),
+        encoding: "utf8",
+        cwd: REPO,
+        timeout: 60000,
+        env: {
+          ...process.env,
+          IMPORT_LOG: log,
+          RF_OPS_HOME: env.home,
+          RF_SPECS_DIR: env.specs,
+          RF_MACHINE: "testbox",
+          CI: "",
+          RF_OPS_GATE: "",
+          RF_LANE: "",
+        },
+      });
+      assert.equal(r.status, 0, r.stderr);
+      return readFileSync(log, "utf8");
+    };
+    const libLoads = (txt) => txt.split("|").filter((l) => /ops-monitor[\\/]lib/.test(l));
+    for (const payload of [
+      { tool_name: "Write", tool_input: { file_path: join(env.root, "src", "app.ts") } },
+      { tool_name: "Edit", tool_input: { file_path: "relative/notes.md" } },
+      { tool_name: "SendMessage", tool_input: { to: "macmini", message: "thanks, all good" } },
+    ]) {
+      const txt = runLogged({ session_id: "s-cheap", cwd: env.root, ...payload });
+      assert.deepEqual(libLoads(txt), [], payload.tool_name);
+    }
+    // a specs path still loads the libs and records
+    const txt = runLogged({
+      session_id: "s-cheap2",
+      cwd: env.root,
+      tool_name: "Write",
+      tool_input: { file_path: join(env.specs, "decisions", "D-2.md") },
+    });
+    assert.ok(libLoads(txt).length > 0);
+    assert.equal(turn.readActions(turn.actionsFile(env.home, "s-cheap2")).length, 1);
+  } finally {
+    rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
 // ── gate ────────────────────────────────────────────────────────────────────
 const T0 = Date.parse("2026-10-19T10:00:00Z");
 const emptyState = { items: new Map(), pushes: [], prEvents: [] };

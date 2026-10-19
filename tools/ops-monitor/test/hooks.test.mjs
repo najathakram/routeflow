@@ -532,12 +532,13 @@ test("gate: recorded and linked push is ok", () => {
   assert.deepEqual(evaluateGate({ actions: [pushAct], state, now: T0 }), { ok: true });
 });
 
-test("gate: unrecorded push is missing with the record fix", () => {
+test("gate: unrecorded push is a monitor-side warning with the record fix, never missing", () => {
   const r = evaluateGate({ actions: [pushAct], state: stateWith(), now: T0 });
-  assert.equal(r.ok, false);
-  assert.equal(r.missing[0].why, "push not recorded");
+  assert.equal(r.ok, true);
+  assert.equal(r.missing, undefined);
+  assert.equal(r.warnings[0].why, "push not recorded");
   assert.match(
-    r.missing[0].fix,
+    r.warnings[0].fix,
     /event push --branch feat\/x --sha a{40} --repo najathakram\/routeflow/,
   );
 });
@@ -551,7 +552,8 @@ test("gate: same branch within 5 minutes counts as recorded; older does not", ()
   const old = stateWith({
     pushes: [{ ts: T0 - 6 * 60000, branch: "feat/x", sha: "b".repeat(40), item: "525" }],
   });
-  assert.equal(evaluateGate({ actions: [pushAct], state: old, now: T0 }).ok, false);
+  // too old to match: a monitor-side warning, not a block
+  assert.equal(evaluateGate({ actions: [pushAct], state: old, now: T0 }).warnings?.length, 1);
 });
 
 test("gate: recorded push without an item is missing with the link fix", () => {
@@ -593,15 +595,63 @@ test("gate: merge-train and bookkeeping branches need no item link; others still
     state: stateWith(),
     now: T0,
   });
-  assert.equal(miss.ok, false);
-  assert.equal(miss.missing[0].why, "push not recorded");
+  // an unrecorded push on a train branch is only a monitor-side warning
+  assert.equal(miss.ok, true);
+  assert.equal(miss.warnings[0].why, "push not recorded");
+});
+
+test("gate: a recorded push on an unlinked branch still blocks; the warning never feeds the loop-guard hash", () => {
+  const mixed = evaluateGate({
+    actions: [
+      { ts: T0, kind: "push", branch: "feat/a", sha: SHA },
+      { ts: T0, kind: "push", branch: "feat/b", sha: "b".repeat(40) },
+    ],
+    state: stateWith({ pushes: [{ ts: T0, branch: "feat/b", sha: "b".repeat(40), item: null }] }),
+    now: T0,
+  });
+  assert.equal(mixed.ok, false);
+  assert.deepEqual(
+    mixed.missing.map((m) => m.why),
+    ["branch feat/b is not linked to an item"],
+  );
+  assert.equal(mixed.warnings.length, 1);
+  const warnOnly = evaluateGate({ actions: [pushAct], state: stateWith(), now: T0 });
+  assert.equal(warnOnly.missing, undefined); // nothing reaches missingHash
+});
+
+test("gate: a PR create/ready with no pr event is a warning; recorded-but-unlinked still blocks", () => {
+  for (const action of ["create", "ready"]) {
+    const act = { ts: T0, kind: "pr", action, number: 3601, branch: "feat/x" };
+    const none = evaluateGate({ actions: [act], state: stateWith(), now: T0 });
+    assert.equal(none.ok, true, action);
+    assert.equal(none.warnings[0].why, "PR not recorded");
+    const seen = evaluateGate({
+      actions: [act],
+      state: stateWith({
+        prEvents: [{ ts: T0, number: 3601, action, branch: "feat/x", item: null }],
+      }),
+      now: T0,
+    });
+    assert.equal(seen.ok, false, action);
+    assert.match(seen.missing[0].why, /PR #3601 is not linked to an item/);
+  }
 });
 
 test("gate: PR create needs a linked item", () => {
   const act = { ts: T0, kind: "pr", action: "create", number: 3600, branch: "feat/x" };
   const bad = evaluateGate({ actions: [act], state: stateWith(), now: T0 });
-  assert.equal(bad.ok, false);
-  assert.match(bad.missing[0].fix, /event link <id> --pr 3600/);
+  // no pr event recorded at all: monitor-side warning, not a block
+  assert.equal(bad.ok, true);
+  assert.equal(bad.warnings[0].why, "PR not recorded");
+  const unlinked = evaluateGate({
+    actions: [act],
+    state: stateWith({
+      prEvents: [{ ts: T0, number: 3600, action: "create", branch: "feat/x", item: null }],
+    }),
+    now: T0,
+  });
+  assert.equal(unlinked.ok, false);
+  assert.match(unlinked.missing[0].fix, /event link <id> --pr 3600/);
   const good = stateWith({
     items: [{ id: "9", links: { prs: [3600], branches: [], urls: [] } }],
   });
@@ -876,6 +926,85 @@ test("stop hook: a pending line alone never blocks (stale or unmatched)", () => 
   const old = actionsFile(env.home, "sess-pend-old");
   appendAction(old, { kind: "pr-pending", ts: Date.now() - 60_000, number: 1 });
   assert.equal(run(STOP, env, stopIn("sess-pend-old")).status, 0);
+});
+
+test("stop hook: an unrecorded push warns, logs an incident and exits 0 (never blocks)", () => {
+  const env = mkEnv();
+  writeEvents(env, [
+    ev("item.new", "525", { title: "Acme thing", type: "feature" }, "2026-01-01T09:00:00Z"),
+  ]);
+  const sid = "sess-unrec";
+  const file = actionsFile(env.home, sid);
+  appendAction(file, { ts: Date.now(), kind: "push", branch: "feat/x", sha: SHA });
+  const r = run(STOP, env, stopIn(sid));
+  assert.equal(r.status, 0);
+  assert.match(r.stderr, /ops monitor: push of feat\/x not recorded yet \(monitor-side\)/);
+  assert.doesNotMatch(r.stderr, /Ops gate:/);
+  const lines = readFileSync(join(env.home, "hook-incidents.jsonl"), "utf8").trim().split("\n");
+  assert.equal(lines.length, 1);
+  const inc = JSON.parse(lines[0]);
+  assert.equal(inc.kind, "push-not-recorded");
+  assert.equal(inc.branch, "feat/x");
+  assert.equal(inc.sha, SHA);
+  assert.equal(inc.session, sid);
+  assert.ok(Number.isFinite(Date.parse(inc.ts)));
+  assert.equal(existsSync(file), false); // archived: the turn closed
+  assert.equal(existsSync(`${file}.blocks`), false);
+});
+
+test("stop hook: a recorded push on an unlinked branch still blocks; a merge with no status still blocks", () => {
+  const env = mkEnv();
+  const t = Date.now();
+  const iso = (ms) => new Date(ms).toISOString().replace(/.d+Z$/, "Z");
+  writeEvents(env, [
+    ev("item.new", "525", { title: "Acme thing", type: "feature" }, "2026-01-01T09:00:00Z"),
+    ev("push", null, { branch: "feat/zzz", sha: SHA, repo: "najathakram/routeflow" }, iso(t)),
+  ]);
+  const file = actionsFile(env.home, "sess-unlinked");
+  appendAction(file, { ts: t, kind: "push", branch: "feat/zzz", sha: SHA });
+  const r = run(STOP, env, stopIn("sess-unlinked"));
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /branch feat\/zzz is not linked to an item/);
+
+  const env2 = mkEnv();
+  writeEvents(env2, [
+    ev("item.new", "525", { title: "Acme thing", type: "feature" }, "2026-01-01T09:00:00Z"),
+    ev("link", "525", { prs: [3515] }, "2026-01-01T09:01:00Z"),
+  ]);
+  appendAction(actionsFile(env2.home, "sess-merge"), {
+    ts: t,
+    kind: "pr",
+    action: "merge",
+    number: 3515,
+    branch: null,
+  });
+  const m = run(STOP, env2, stopIn("sess-merge"));
+  assert.equal(m.status, 2);
+  assert.match(m.stderr, /merged but item 525 has no status event/);
+});
+
+test("stop hook: a missed push does not count toward the 3-block loop guard", () => {
+  const env = mkEnv();
+  const t = Date.now();
+  const iso = (ms) => new Date(ms).toISOString().replace(/.d+Z$/, "Z");
+  writeEvents(env, [
+    ev("item.new", "525", { title: "Acme thing", type: "feature" }, "2026-01-01T09:00:00Z"),
+    ev("push", null, { branch: "feat/zzz", sha: SHA, repo: "najathakram/routeflow" }, iso(t)),
+  ]);
+  const file = actionsFile(env.home, "sess-guard");
+  appendAction(file, { ts: t, kind: "push", branch: "feat/zzz", sha: SHA });
+  appendAction(file, { ts: t, kind: "push", branch: "feat/gone", sha: "c".repeat(40) });
+  const r = run(STOP, env, stopIn("sess-guard"));
+  assert.equal(r.status, 2);
+  assert.doesNotMatch(r.stderr, /not recorded/);
+  const blocks = JSON.parse(readFileSync(`${file}.blocks`, "utf8"));
+  const expected = missingHash([
+    {
+      action: { kind: "push", branch: "feat/zzz" },
+      why: "branch feat/zzz is not linked to an item",
+    },
+  ]);
+  assert.equal(blocks.hash, expected);
 });
 
 test("stop hook: met action archives the actions file and exits 0", () => {

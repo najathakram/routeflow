@@ -13,6 +13,7 @@
  * Never blocks, never prints. FAIL OPEN: any error, CI or RF_OPS_GATE=off -> exit 0.
  */
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -127,6 +128,28 @@ function readRegisterMode(dir) {
   }
 }
 
+/**
+ * Cheap pre-filter run BEFORE any dynamic import: a Write/Edit/MultiEdit must touch a path inside a
+ * specs checkout (marker segment, or under the configured specs dir), a SendMessage must read like
+ * an assignment (the lead-lane check itself needs lanes-local, loaded only after this passes).
+ */
+export function cheapCandidate(payload, env = process.env) {
+  const tool = payload?.tool_name;
+  const input = payload?.tool_input ?? {};
+  if (tool === "SendMessage") {
+    const text = messageText(input);
+    return ASSIGN_RE.test(text) && WORK_REF_RE.test(text);
+  }
+  const raw = input.file_path;
+  if (typeof raw !== "string" || !raw) return false;
+  const base = payload.cwd ?? process.cwd();
+  const file = isAbsolute(raw) || /^[A-Za-z]:[\\/]/.test(raw) ? raw : resolve(base, raw);
+  // Same default as lib/config.mjs specsDir(), without importing it.
+  const home = env.RF_OPS_HOME ? resolve(env.RF_OPS_HOME) : join(homedir(), ".routeflow", "ops");
+  const root = env.RF_SPECS_DIR ? resolve(env.RF_SPECS_DIR) : join(home, "routeflow-specs");
+  return specsRelative(file, root) !== null;
+}
+
 async function main() {
   if (process.env.RF_OPS_GATE === "off" || process.env.CI) return;
   let payload;
@@ -137,6 +160,7 @@ async function main() {
   }
   if (!payload || typeof payload !== "object" || !payload.session_id) return;
   if (!["Write", "Edit", "MultiEdit", "SendMessage"].includes(payload.tool_name)) return;
+  if (!cheapCandidate(payload)) return; // most Write/Edit calls end here, before any import
   if (!existsSync(join(ROOT, "tools", "ops-monitor", "bin", "rf.mjs"))) return;
 
   const { opsHome, specsDir } = await import(lib("config.mjs"));

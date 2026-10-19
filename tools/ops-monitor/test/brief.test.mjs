@@ -8,7 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { fold } from "../lib/fold.mjs";
-import { DEFAULT_CONFIG } from "../lib/config.mjs";
+import { DEFAULT_CONFIG, loadConfig } from "../lib/config.mjs";
 import {
   ageWords,
   etaWords,
@@ -615,5 +615,65 @@ test("cli: claim without --lane takes the lane recorded for the directory", () =
     assert.equal(claim.lane, "pc-lane");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── client-name masking ─────────────────────────────────────────────────────
+test("brief: clientNames (acme placeholders) are masked in every line, incident titles included", () => {
+  const events = [
+    mk("800", {
+      type: "incident",
+      priority: "P0",
+      status: "building",
+      title: "acme-foods: add-ons off",
+    }),
+    mk("801", {
+      type: "feature",
+      priority: "P1",
+      status: "planned",
+      title: "Reprice for Acme Foods and ACME-FOODS2",
+      lane: "pc-lane",
+    }),
+  ];
+  const config = { ...DEFAULT_CONFIG, clientNames: ["acme-foods", "Acme Foods"] };
+  const text = renderBrief(stateOf(events), { lane: "pc-lane", now: NOW, config });
+  assert.match(text, /- a live business: add-ons off \[800\]/);
+  assert.match(text, /Reprice for a live business and ACME-FOODS2/); // whole word only
+  assert.doesNotMatch(text, /acme-foods: /i);
+  assert.doesNotMatch(text, /Acme Foods/);
+  // no list / empty list / default config: nothing is masked
+  for (const c of [DEFAULT_CONFIG, { ...DEFAULT_CONFIG, clientNames: [] }, null, {}]) {
+    const plain = renderBrief(stateOf(events), { lane: "pc-lane", now: NOW, config: c });
+    assert.match(plain, /acme-foods: add-ons off \[800\]/);
+    assert.doesNotMatch(plain, /a live business/);
+  }
+});
+
+test("since: clientNames are masked in the since line too; regex characters in a name are literal", () => {
+  const before = [
+    mk("R9", { type: "release", status: "planned", title: "acme.co (pilot)", eta: "10-25" }),
+  ];
+  const after = [
+    ...before,
+    E("item.edit", "R9", { fields: { eta: "10-26" } }, "2026-10-19T12:02:00Z"),
+  ];
+  const config = { ...DEFAULT_CONFIG, clientNames: ["acme.co (pilot)"] };
+  const masked = renderSince(stateOf(before), stateOf(after), { nowMs: NOW, config });
+  const plain = renderSince(stateOf(before), stateOf(after), { nowMs: NOW });
+  assert.match(plain, /acme\.co \(pilot\)/);
+  assert.match(masked, /a live business ETA moved/);
+  assert.doesNotMatch(masked, /acme/);
+});
+
+test("config: DEFAULT_CONFIG.clientNames is an empty list and loadConfig reads the specs list", () => {
+  assert.deepEqual(DEFAULT_CONFIG.clientNames, []);
+  const dir = mkdtempSync(join(tmpdir(), "rf-cn-"));
+  try {
+    mkdirSync(join(dir, "ops"), { recursive: true });
+    writeFileSync(join(dir, "ops", "config.json"), JSON.stringify({ clientNames: ["acme-foods"] }));
+    assert.deepEqual(loadConfig(dir).clientNames, ["acme-foods"]);
+    assert.deepEqual(loadConfig(join(dir, "none")).clientNames, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

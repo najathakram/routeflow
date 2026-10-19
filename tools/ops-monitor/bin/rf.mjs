@@ -812,7 +812,7 @@ async function cmdBrief(flags, env) {
     if (marker.ts !== undefined && !Number.isFinite(marker.ts))
       throw new UsageError(`--since needs an event id or an ISO time, got "${flags.since}"`);
     const { before, sorted } = splitAtMarker(events, marker);
-    since = renderSince(fold(before), fold(sorted), { lane, nowMs: now, utcOffsetMin });
+    since = renderSince(fold(before), fold(sorted), { lane, nowMs: now, utcOffsetMin, config });
     if (marker.lastEventId && !sorted.some((e) => e.id === marker.lastEventId))
       throw new UsageError(`--since: no event with id ${marker.lastEventId}`);
   }

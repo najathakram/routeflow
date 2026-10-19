@@ -31,6 +31,20 @@ const one = (s) =>
     .replace(/\s+/g, " ")
     .trim();
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
+
+/**
+ * Masks every word or phrase in `config.clientNames` (case-insensitive, whole word) as
+ * "a live business". Empty / missing / non-string entries -> text unchanged.
+ */
+export function maskClientNames(text, config) {
+  const names = (Array.isArray(config?.clientNames) ? config.clientNames : [])
+    .filter((n) => typeof n === "string" && n.trim())
+    .map((n) => n.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .sort((a, b) => b.length - a.length);
+  if (names.length === 0) return text;
+  const re = new RegExp(`(?<![A-Za-z0-9])(?:${names.join("|")})(?![A-Za-z0-9])`, "gi");
+  return text.replace(re, "a live business");
+}
 const isDone = (it) => DONE_STATUSES.includes(it.status);
 const plural = (n, one_, many) => `${n} ${n === 1 ? one_ : many}`;
 
@@ -282,7 +296,7 @@ export function renderBrief(
     out.push(`${s.title}${count}:`, ...s.lines);
   }
   out.push(...footer);
-  return out.slice(0, maxLines).join("\n");
+  return maskClientNames(out.slice(0, maxLines).join("\n"), config);
 }
 
 // Display order (differs from trim priority: shipping reads before the owner's list).
@@ -301,7 +315,7 @@ const ids4 = (ids) =>
 export function renderSince(
   before,
   now,
-  { lane = null, nowMs = Date.now(), utcOffsetMin = 0 } = {},
+  { lane = null, nowMs = Date.now(), utcOffsetMin = 0, config = null } = {},
 ) {
   const done = [];
   const created = [];
@@ -364,7 +378,7 @@ export function renderSince(
     }).length;
     if (mine > 0) line += ` (${mine} in your lane)`;
   }
-  return `${line}.`;
+  return maskClientNames(`${line}.`, config);
 }
 
 // ── last-seen bookkeeping ───────────────────────────────────────────────────

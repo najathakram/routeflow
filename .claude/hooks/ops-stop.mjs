@@ -7,6 +7,10 @@
  * plan recorder (ops-post-plan.mjs) adds plan-change / assign actions: a plan file edited or work
  * assigned in the turn needs some human event on this machine in the same turn.
  *
+ * Recording a push / PR is the MONITOR's job (the detached recorder), so a miss there is a monitor
+ * failure, not the person's: it becomes a stderr WARNING plus a local incident line, never a block.
+ * Blocking is only for person-owned duties (item links, merge status, plan changes, assignments).
+ *
  * FAIL OPEN (this runs at the end of EVERY session once merged; a false block is expensive):
  * any exception, missing/garbled stdin, no actions file, missing ops clone, unreadable events,
  * RF_OPS_GATE=off -> exit 0. The same block repeated 3 times in a row is allowed through
@@ -14,7 +18,7 @@
  *
  * Every export above the "── IO" marker is pure and tested directly.
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -56,6 +60,8 @@ function findLinkedItem(state, { number, branch }) {
   return null;
 }
 
+const NOT_RECORDED_PUSH = "push not recorded";
+const NOT_RECORDED_PR = "PR not recorded";
 const PLAN_KINDS = new Set(["plan-change", "assign"]);
 const PLAN_FIX =
   `${RF} item new --title "..." --type feature  /  ${RF} item edit <id> --lane <lane> --train R3 --eta ...  /  ` +
@@ -97,10 +103,12 @@ function planChangeMissing(actions, events, machine) {
  * `events` = the raw event log and `machine` = this machine's id (both needed only for the
  * plan-change / assign rule, which fails open without `events`). `now` is accepted for contract
  * compatibility but no rule needs it.
- * Returns { ok: true } or { ok: false, missing: [{ action, why, fix }] }.
+ * Returns { ok: true } or { ok: false, missing: [{ action, why, fix }] }; either carries
+ * `warnings` (same shape: monitor-side misses that never block) when there are any.
  */
 export function evaluateGate({ actions, state, events, machine }) {
   const missing = [];
+  const warnings = [];
   const planMissing = planChangeMissing(actions ?? [], events, machine);
   if (planMissing) missing.push(planMissing);
   for (const action of actions ?? []) {
@@ -113,9 +121,10 @@ export function evaluateGate({ actions, state, events, machine }) {
           (p.branch === b && p.ts >= ats - WINDOW_MS),
       );
       if (!rec) {
-        missing.push({
+        // Monitor-side miss (recorder crashed, specs lock held, slow pull, clone mid-rebase): warn only.
+        warnings.push({
           action,
-          why: "push not recorded",
+          why: NOT_RECORDED_PUSH,
           fix: `${RF} event push --branch ${b} --sha ${action.sha} --repo najathakram/routeflow`,
         });
         continue;
@@ -139,6 +148,18 @@ export function evaluateGate({ actions, state, events, machine }) {
       if (action.action === "create" || action.action === "ready") {
         if (number == null && !branch) continue; // nothing to look up: fail open
         if (!findLinkedItem(state, { number, branch })) {
+          const seen = (state.prEvents ?? []).some((e) =>
+            number != null ? e.number === number : e.branch === branch,
+          );
+          if (!seen) {
+            // No `pr` event at all: the recorder missed it (monitor-side), not the person.
+            warnings.push({
+              action,
+              why: NOT_RECORDED_PR,
+              fix: `${RF} event pr --number ${number ?? "<n>"} --action ${action.action}`,
+            });
+            continue;
+          }
           missing.push({
             action,
             why: `PR ${number != null ? `#${number}` : `on ${branch}`} is not linked to an item`,
@@ -170,7 +191,9 @@ export function evaluateGate({ actions, state, events, machine }) {
       }
     }
   }
-  return missing.length === 0 ? { ok: true } : { ok: false, missing };
+  const out = missing.length === 0 ? { ok: true } : { ok: false, missing };
+  if (warnings.length > 0) out.warnings = warnings;
+  return out;
 }
 
 /**
@@ -227,6 +250,37 @@ async function loadState(specsDir) {
   return { state: fold(events), events };
 }
 
+/**
+ * Monitor-side misses (a push / PR the recorder did not log): one stderr WARNING each and one
+ * local incident line in <opsHome>/hook-incidents.jsonl. Never throws, never blocks.
+ */
+function reportMonitorMisses(warnings, home, session) {
+  for (const w of warnings ?? []) {
+    try {
+      const a = w.action;
+      const isPr = w.why === NOT_RECORDED_PR;
+      const what = isPr
+        ? `PR ${a.number != null ? `#${a.number}` : `on ${a.branch}`}`
+        : `push of ${a.branch}`;
+      process.stderr.write(
+        `ops monitor: ${what} not recorded yet (monitor-side); it will be picked up by the next sync or run \`${w.fix}\`\n`,
+      );
+      mkdirSync(home, { recursive: true });
+      const line = {
+        ts: new Date().toISOString(),
+        kind: isPr ? "pr-not-recorded" : "push-not-recorded",
+        branch: a.branch ?? null,
+        sha: a.sha ?? null,
+        session: session ?? null,
+      };
+      if (a.number != null) line.number = a.number;
+      appendFileSync(join(home, "hook-incidents.jsonl"), `${JSON.stringify(line)}\n`);
+    } catch {
+      // never throw
+    }
+  }
+}
+
 async function main() {
   if (process.env.RF_OPS_GATE === "off") return 0;
   let payload;
@@ -259,12 +313,16 @@ async function main() {
   const retryMs = Number.isFinite(retryEnv) && retryEnv >= 0 ? retryEnv : 1000;
   for (let i = 0; i < 30; i++) {
     const waitPush =
-      i < 15 && !verdict.ok && verdict.missing.some((m) => m.why === "push not recorded");
+      i < 15 &&
+      (verdict.warnings ?? []).some(
+        (m) => m.why === NOT_RECORDED_PUSH || m.why === NOT_RECORDED_PR,
+      );
     if (!waitPush && !pendingMergeOpen(actions, Date.now())) break;
     await sleep(retryMs);
     verdict = await judge();
   }
   if (verdict.ok) {
+    reportMonitorMisses(verdict.warnings, opsHome(), payload.session_id);
     archiveActions(file);
     return 0;
   }
@@ -282,6 +340,7 @@ async function main() {
       `Ops gate: allowing the turn to close after ${record.count} identical blocks. ` +
         `Still unrecorded:\n${verdict.missing.map((m) => `- ${m.why} → ${m.fix}`).join("\n")}\n`,
     );
+    reportMonitorMisses(verdict.warnings, opsHome(), payload.session_id);
     archiveActions(file);
     return 0;
   }

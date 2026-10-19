@@ -124,6 +124,7 @@ export function briefFor(payload, env, now, deps) {
     if (before.length !== sorted.length) {
       const line = brief.renderSince(fold(before), fold(sorted), {
         lane,
+        config, // client names are masked in the since-line too
         nowMs: now,
         utcOffsetMin: -new Date(now).getTimezoneOffset(),
       });
