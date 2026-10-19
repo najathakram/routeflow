@@ -722,7 +722,7 @@ describe("PaymentRequestsService", () => {
       expect(mockInvoices.recordStandalonePayment).not.toHaveBeenCalled();
     });
 
-    it("refuses a request that has already been decided", async () => {
+    it("refuses a request that has already been decided, before any money is written", async () => {
       buyerPaymentRequest.findFirst.mockResolvedValue({
         id: "req-cash",
         tenantId: "tenant-1",
@@ -731,35 +731,113 @@ describe("PaymentRequestsService", () => {
         status: "APPROVED",
         amount: 40,
       });
-      buyerPaymentRequest.updateMany.mockResolvedValue({ count: 0 }); // already claimed
 
       await expect(service.approve("req-cash", decidedBy)).rejects.toThrow(BadRequestException);
       await expect(service.approve("req-cash", decidedBy)).rejects.toThrow(
         "Request already decided",
       );
       expect(mockInvoices.recordStandalonePayment).not.toHaveBeenCalled();
+      expect(buyerPaymentRequest.updateMany).not.toHaveBeenCalled();
     });
 
-    it("scopes its claim to the current tenant (a cross-tenant id can never win the claim)", async () => {
-      buyerPaymentRequest.findFirst.mockResolvedValue({
+    describe("row 615 — the claim and the link commit inside the payment transaction", () => {
+      const pending = {
         id: "req-cash",
         tenantId: "tenant-1",
         customerId: "cust-1",
         kind: "CASH",
         status: "PENDING",
-        amount: 40,
+        amount: 300,
+        reference: "receipt 7",
+        note: null,
+      };
+
+      /** The `tx` the payment transaction hands the hook: only the request model matters here. */
+      function fakeTx(count: number) {
+        return { buyerPaymentRequest: { updateMany: jest.fn().mockResolvedValue({ count }) } };
+      }
+
+      beforeEach(() => {
+        buyerPaymentRequest.findFirst.mockResolvedValue(pending);
+        prisma.invoice.findMany.mockResolvedValue([]);
+        mockInvoices.recordStandalonePayment.mockResolvedValue({
+          paymentGroupId: "pg-1",
+          excess: 0,
+        });
       });
-      buyerPaymentRequest.updateMany.mockResolvedValue({ count: 1 });
-      prisma.invoice.findMany.mockResolvedValue([]);
-      mockInvoices.recordStandalonePayment.mockResolvedValue({ paymentGroupId: "pg-1", excess: 0 });
 
-      await service.approve("req-cash", decidedBy);
+      it("makes NO write to the request outside the payment transaction (no pre-claim)", async () => {
+        await service.approve("req-cash", decidedBy);
 
-      expect(buyerPaymentRequest.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
+        // Master claimed PENDING -> APPROVED up front, in its own write; a crash before the money
+        // committed left an APPROVED request with no payment. The only write is the in-tx hook.
+        expect(buyerPaymentRequest.updateMany).not.toHaveBeenCalled();
+        expect(buyerPaymentRequest.update).not.toHaveBeenCalled();
+      });
+
+      it("hands recordStandalonePayment an inTx hook and keeps the buyer's reference as entered", async () => {
+        await service.approve("req-cash", decidedBy);
+
+        const [dto, opts] = mockInvoices.recordStandalonePayment.mock.calls[0];
+        expect(dto.reference).toBe("receipt 7");
+        expect(dto.method).toBe("CASH");
+        expect(opts).toEqual({
+          assertAllocationsWithinBalance: true,
+          inTx: expect.any(Function),
+        });
+      });
+
+      it("the hook claims PENDING -> APPROVED and writes the link in ONE tenant-scoped compare-and-set", async () => {
+        await service.approve("req-cash", decidedBy);
+        const { inTx } = mockInvoices.recordStandalonePayment.mock.calls[0][1];
+        const tx = fakeTx(1);
+
+        await inTx(tx, { payments: [], paymentGroupId: "pg-1", excess: 0 });
+
+        expect(tx.buyerPaymentRequest.updateMany).toHaveBeenCalledTimes(1);
+        expect(tx.buyerPaymentRequest.updateMany).toHaveBeenCalledWith({
           where: { id: "req-cash", tenantId: "tenant-1", status: "PENDING" },
-        }),
-      );
+          data: {
+            status: "APPROVED",
+            decidedById: "user-1",
+            decidedByName: "operator",
+            decidedAt: expect.any(Date),
+            paymentGroupId: "pg-1",
+          },
+        });
+      });
+
+      it("the hook throws 'already decided' when the compare-and-set loses, which rolls the money back", async () => {
+        await service.approve("req-cash", decidedBy);
+        const { inTx } = mockInvoices.recordStandalonePayment.mock.calls[0][1];
+
+        await expect(
+          inTx(fakeTx(0), { payments: [], paymentGroupId: "pg-1", excess: 0 }),
+        ).rejects.toThrow("Request already decided");
+      });
+
+      it("never reopens the request when the payment transaction throws (retry credits once)", async () => {
+        mockInvoices.recordStandalonePayment.mockRejectedValue(new Error("link write failed"));
+
+        await expect(service.approve("req-cash", decidedBy)).rejects.toThrow("link write failed");
+
+        // Master's catch wrote status PENDING back after the money had committed: 300 became 600.
+        expect(buyerPaymentRequest.update).not.toHaveBeenCalled();
+        expect(buyerPaymentRequest.updateMany).not.toHaveBeenCalled();
+      });
+
+      it("a loser whose stale allocation conflicts reports 'already decided' once the winner committed", async () => {
+        mockInvoices.recordStandalonePayment.mockRejectedValue(
+          new Error("changed while preparing"),
+        );
+        buyerPaymentRequest.findFirst
+          .mockResolvedValueOnce(pending)
+          .mockResolvedValueOnce({ ...pending, status: "APPROVED" });
+
+        await expect(service.approve("req-cash", decidedBy)).rejects.toThrow(
+          "Request already decided",
+        );
+      });
     });
   });
 

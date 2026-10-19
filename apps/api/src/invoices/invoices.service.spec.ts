@@ -6413,6 +6413,84 @@ describe("InvoicesService", () => {
       }
     });
 
+    describe("SA-818 / row 615 — recordStandalonePayment's optional inTx hook", () => {
+      const dto = () =>
+        ({
+          customerId: "cust-1",
+          totalAmount: 150,
+          method: "CASH",
+          reference: "receipt 7",
+          allocations: [{ invoiceId: "inv-1", amount: 100 }],
+        }) as any;
+
+      beforeEach(() => {
+        prisma.paymentCounter.upsert.mockResolvedValue({ id: "test-tenant", next: 3 });
+        prisma.invoice.findFirst.mockResolvedValue({
+          id: "inv-1",
+          status: InvoiceStatus.SENT,
+          total: 100,
+          dueDate: null,
+          payments: [],
+        });
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+        prisma.invoicePayment.create.mockImplementation(async ({ data }: any) => ({
+          id: "pay-1",
+          ...data,
+        }));
+      });
+
+      it("(e) a call with no hook writes the same rows, with the buyer's reference as entered", async () => {
+        const plain = await service.recordStandalonePayment(dto());
+        const plainRows = prisma.invoicePayment.create.mock.calls.map(([a]: any) => a.data);
+        const plainAdvance = prisma.advancePayment.create.mock.calls.map(([a]: any) => a.data);
+        prisma.invoicePayment.create.mockClear();
+        prisma.advancePayment.create.mockClear();
+
+        const hooked = await service.recordStandalonePayment(dto(), {
+          inTx: async () => undefined,
+        });
+        const hookedRows = prisma.invoicePayment.create.mock.calls.map(([a]: any) => a.data);
+        const hookedAdvance = prisma.advancePayment.create.mock.calls.map(([a]: any) => a.data);
+
+        const strip = (rows: any[]) =>
+          rows.map(({ paymentGroupId: _g, paidAt: _p, ...rest }: any) => rest);
+        expect(strip(hookedRows)).toEqual(strip(plainRows));
+        expect(strip(hookedAdvance.map((a) => ({ ...a, receivedAt: 0 })))).toEqual(
+          strip(plainAdvance.map((a) => ({ ...a, receivedAt: 0 }))),
+        );
+        expect(plainRows[0].reference).toBe("receipt 7");
+        expect(plainAdvance[0].amount).toBe(50);
+        expect(Object.keys(plain).sort()).toEqual(["excess", "paymentGroupId", "payments"]);
+        expect(Object.keys(hooked).sort()).toEqual(["excess", "paymentGroupId", "payments"]);
+        expect(plain.excess).toBe(50);
+      });
+
+      it("runs the hook inside the transaction, after the payment rows and the excess advance, with the result", async () => {
+        const inTx = jest.fn().mockResolvedValue(undefined);
+
+        const result = await service.recordStandalonePayment(dto(), { inTx });
+
+        expect(inTx).toHaveBeenCalledTimes(1);
+        const [txArg, resArg] = inTx.mock.calls[0];
+        expect(txArg).toBeDefined();
+        expect(resArg).toBe(result);
+        expect(resArg.paymentGroupId).toEqual(expect.any(String));
+        const hookAt = inTx.mock.invocationCallOrder[0];
+        expect(prisma.invoicePayment.create.mock.invocationCallOrder[0]).toBeLessThan(hookAt);
+        expect(prisma.advancePayment.create.mock.invocationCallOrder[0]).toBeLessThan(hookAt);
+      });
+
+      it("a hook that throws rejects the call with its error (the transaction rolls back)", async () => {
+        await expect(
+          service.recordStandalonePayment(dto(), {
+            inTx: async () => {
+              throw new Error("claim lost");
+            },
+          }),
+        ).rejects.toThrow("claim lost");
+      });
+    });
+
     it("REG-B311 a concurrent office payment can no longer overpay the invoice past its live balance", async () => {
       // Stateful stand-in for the invoice row: `paid` only grows once a payment actually
       // commits, so a caller that re-reads it AFTER the row lock is released sees the truth.
