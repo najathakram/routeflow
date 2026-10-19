@@ -44,7 +44,13 @@ export const ROW_RULE = "[&>*]:border-b [&>*]:border-line-strong";
 export const CONTAINS_MIN_WIDTH = "(min-width: 1024px)";
 /** True when the Contains column fits (and always where matchMedia is absent, e.g. jsdom). */
 export function useContainsColumn(): boolean {
-  const [wide, setWide] = React.useState(true);
+  // Read the query in the initializer: starting wide and flipping after paint would shift the grid on load at 768.
+  // The grid renders only on the client after its data loads, so this never differs from a server render.
+  const [wide, setWide] = React.useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia(CONTAINS_MIN_WIDTH).matches
+      : true,
+  );
   React.useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
     const mq = window.matchMedia(CONTAINS_MIN_WIDTH);
