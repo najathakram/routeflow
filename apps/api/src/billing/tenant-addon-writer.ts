@@ -172,10 +172,12 @@ export async function upsertAddonRowTx(
 }
 
 /**
- * A multi-row write: the rows the `where` matches are read (their `before` state) and locked `FOR UPDATE`, then ONE
- * `updateMany` with the SAME `where` writes them (so a guard such as `stripeItemId: null` or `isComp: false` still
- * loses a race instead of overwriting), and each row that was written gets its own record from a re-read. A tenant
- * holds a handful of rows. Returns how many rows the write changed.
+ * A multi-row write: the rows the `where` matches are locked `FOR UPDATE`, then RE-READ under the lock with the same
+ * `where` (a row a concurrent transaction changed between the first read and the lock no longer matches the guard and
+ * is dropped, never recorded: SA-815 B5, a phantom record would blame this actor for another transaction's change and
+ * corrupt the invariant job's evidence). ONE `updateMany` over exactly those locked ids, with the SAME `where`, writes
+ * them, and each written row gets its own record from a re-read. A tenant holds a handful of rows. Returns how many
+ * rows the write changed.
  */
 export async function updateAddonRowsTx(
   tx: Prisma.TransactionClient,
@@ -186,10 +188,19 @@ export async function updateAddonRowsTx(
     actor: AddonActor;
   },
 ): Promise<{ count: number }> {
-  const before = (await tx.tenantAddon.findMany({ where: a.where })) as unknown as Snapshot[];
+  const candidates = (await tx.tenantAddon.findMany({ where: a.where })) as unknown as Snapshot[];
+  if (candidates.length === 0) return { count: 0 };
+  for (const c of candidates) await lockRow(tx, c.id);
+  // Under the lock nothing can change these rows, so the re-read is the exact `before` and the write below touches
+  // exactly this set.
+  const before = (await tx.tenantAddon.findMany({
+    where: { AND: [a.where, { id: { in: candidates.map((c) => c.id) } }] },
+  })) as unknown as Snapshot[];
   if (before.length === 0) return { count: 0 };
-  for (const b of before) await lockRow(tx, b.id);
-  const { count } = await tx.tenantAddon.updateMany({ where: a.where, data: a.data });
+  const { count } = await tx.tenantAddon.updateMany({
+    where: { AND: [a.where, { id: { in: before.map((b) => b.id) } }] },
+    data: a.data,
+  });
   if (count === 0) return { count: 0 };
   const after = (await tx.tenantAddon.findMany({
     where: { id: { in: before.map((b) => b.id) } },

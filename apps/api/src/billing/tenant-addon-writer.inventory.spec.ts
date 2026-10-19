@@ -118,13 +118,16 @@ function harness(seed: Partial<Row>[] = []) {
     stripePriceId: null,
     ...r,
   }));
-  const match = (r: Row, w: any = {}) =>
+  // SA-815 B5: `AND` is honoured (the writer re-reads under the lock with `AND: [where, { id: { in } }]`).
+  const match = (r: Row, w: any = {}): boolean =>
     Object.entries(w).every(([k, v]) =>
-      k === "OR" || k === "AND"
+      k === "OR"
         ? true
-        : v && typeof v === "object" && "in" in (v as object)
-          ? (v as { in: unknown[] }).in.includes((r as any)[k])
-          : (r as any)[k] === v,
+        : k === "AND"
+          ? ([] as any[]).concat(v as any).every((x) => match(r, x))
+          : v && typeof v === "object" && "in" in (v as object)
+            ? (v as { in: unknown[] }).in.includes((r as any)[k])
+            : (r as any)[k] === v,
     );
   const tx: any = {
     $queryRaw: jest.fn().mockResolvedValue([]),
