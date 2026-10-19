@@ -593,10 +593,16 @@ export class PaymentRequestsService {
     } catch (err) {
       // A concurrent winner changes the invoices under this loser's preview, so it can fail on the
       // balance guard before reaching the claim: report the real reason once the row is decided.
-      const now = await this.prisma.buyerPaymentRequest.findFirst({
-        where: { id: requestId, tenantId },
-        select: { status: true },
-      });
+      // If the re-read itself fails, fall through so the original error is not hidden.
+      let now: { status: string } | null = null;
+      try {
+        now = await this.prisma.buyerPaymentRequest.findFirst({
+          where: { id: requestId, tenantId },
+          select: { status: true },
+        });
+      } catch {
+        now = null;
+      }
       if (now && now.status !== "PENDING") throw new BadRequestException("Request already decided");
       throw err;
     }

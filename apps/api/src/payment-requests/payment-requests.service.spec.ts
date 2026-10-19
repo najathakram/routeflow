@@ -838,6 +838,15 @@ describe("PaymentRequestsService", () => {
           "Request already decided",
         );
       });
+
+      it("keeps the ORIGINAL error when the decided-status re-read itself fails", async () => {
+        mockInvoices.recordStandalonePayment.mockRejectedValue(new Error("link write failed"));
+        buyerPaymentRequest.findFirst
+          .mockResolvedValueOnce(pending)
+          .mockRejectedValueOnce(new Error("connection lost"));
+
+        await expect(service.approve("req-cash", decidedBy)).rejects.toThrow("link write failed");
+      });
     });
   });
 
