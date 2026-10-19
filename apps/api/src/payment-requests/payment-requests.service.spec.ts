@@ -763,6 +763,111 @@ describe("PaymentRequestsService", () => {
     });
   });
 
+  // ─── approve(): committed-then-link-fails must never credit twice ─────────────
+
+  describe("approve — never records a cash payment twice", () => {
+    const decidedBy = { id: "user-1", username: "operator" };
+    const cashRequest = (over: Record<string, unknown> = {}) => ({
+      id: "req-cash",
+      tenantId: "tenant-1",
+      customerId: "cust-1",
+      kind: "CASH",
+      status: "PENDING",
+      amount: 300,
+      reference: "receipt 7",
+      note: null,
+      paymentGroupId: null,
+      ...over,
+    });
+
+    it("keeps the request APPROVED when the link write fails after the payment committed", async () => {
+      // Stateful request row: the claim flips PENDING -> APPROVED; a reopen flips it back.
+      let status = "PENDING";
+      buyerPaymentRequest.findFirst.mockImplementation(async () => cashRequest({ status }));
+      buyerPaymentRequest.updateMany.mockImplementation(async ({ where }: any) => {
+        if (where.status === status) {
+          status = "APPROVED";
+          return { count: 1 };
+        }
+        return { count: 0 };
+      });
+      buyerPaymentRequest.update.mockImplementation(async ({ data }: any) => {
+        if (data.status === "PENDING") status = "PENDING";
+        if ("paymentGroupId" in data) throw new Error("link write failed");
+        return {};
+      });
+      prisma.invoice.findMany.mockResolvedValue([]);
+      mockInvoices.recordStandalonePayment.mockResolvedValue({
+        paymentGroupId: "pg-1",
+        excess: 300,
+        payments: [],
+      });
+      // Once recordStandalonePayment has run, the ledger holds the request-scoped payment.
+      mockInvoices.recordStandalonePayment.mockImplementation(async () => {
+        prisma.advancePayment.findFirst.mockResolvedValue({ id: "adv-1" });
+        prisma.advancePayment.findMany.mockResolvedValue([{ amount: 300 }]);
+        return { paymentGroupId: "pg-1", excess: 300, payments: [] };
+      });
+
+      // First Approve: the money commits, then the link write throws.
+      const first = await service.approve("req-cash", decidedBy).catch((e: unknown) => e);
+      expect(status).toBe("APPROVED"); // never reopened to PENDING
+
+      // Operator clicks Approve again: converges on the recorded payment, no second credit.
+      await service.approve("req-cash", decidedBy).catch(() => undefined);
+      expect(mockInvoices.recordStandalonePayment).toHaveBeenCalledTimes(1);
+
+      // The caller still sees the approval succeed (the money is on the ledger).
+      expect(first).toEqual(expect.objectContaining({ approved: true }));
+    });
+
+    it("returns the payment already recorded for the request without recording again", async () => {
+      buyerPaymentRequest.findFirst.mockResolvedValue(cashRequest());
+      buyerPaymentRequest.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoicePayment.findFirst.mockResolvedValue({ paymentGroupId: "pg-9" });
+
+      const out = await service.approve("req-cash", decidedBy);
+
+      expect(out).toEqual({ approved: true, paymentGroupId: "pg-9", excess: 0 });
+      expect(prisma.invoicePayment.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { reference: "cash-request:req-cash" } }),
+      );
+      expect(mockInvoices.recordStandalonePayment).not.toHaveBeenCalled();
+      expect(buyerPaymentRequest.update).toHaveBeenCalledWith({
+        where: { id: "req-cash" },
+        data: { paymentGroupId: "pg-9" },
+      });
+    });
+
+    it("stamps the request-scoped reference on the payment it records", async () => {
+      buyerPaymentRequest.findFirst.mockResolvedValue(cashRequest());
+      buyerPaymentRequest.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoice.findMany.mockResolvedValue([]);
+      mockInvoices.recordStandalonePayment.mockResolvedValue({ paymentGroupId: "pg-1", excess: 0 });
+
+      await service.approve("req-cash", decidedBy);
+
+      expect(mockInvoices.recordStandalonePayment).toHaveBeenCalledWith(
+        expect.objectContaining({ reference: "cash-request:req-cash" }),
+        expect.anything(),
+      );
+    });
+
+    it("still reopens the request when the money write itself fails (nothing committed)", async () => {
+      buyerPaymentRequest.findFirst.mockResolvedValue(cashRequest());
+      buyerPaymentRequest.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoice.findMany.mockResolvedValue([]);
+      mockInvoices.recordStandalonePayment.mockRejectedValue(new Error("tx rolled back"));
+
+      await expect(service.approve("req-cash", decidedBy)).rejects.toThrow("tx rolled back");
+
+      expect(buyerPaymentRequest.update).toHaveBeenCalledWith({
+        where: { id: "req-cash" },
+        data: { status: "PENDING", decidedById: null, decidedByName: null, decidedAt: null },
+      });
+    });
+  });
+
   // ─── cancelOwn (invariants 5, 6) ─────────────────────────────────────────────
   //
   // cancelOwn must never write money — settlement is reachable exclusively
