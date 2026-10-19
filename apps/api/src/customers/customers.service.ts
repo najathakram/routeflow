@@ -1086,12 +1086,17 @@ export class CustomersService {
   async applyAdvancePaymentToInvoice(
     advancePaymentId: string,
     dto: { invoiceId: string; amount?: number },
+    /** The route's customer id (`:id`): the advance must belong to this customer (B808). */
+    routeCustomerId: string,
   ) {
     const apStub = await this.prisma.forTenant().advancePayment.findUnique({
       where: { id: advancePaymentId },
       select: { customerId: true },
     });
-    if (!apStub) throw new NotFoundException("Advance payment not found");
+    // B808: an advance under another customer is the same 404 as a missing advance.
+    if (!apStub || apStub.customerId !== routeCustomerId) {
+      throw new NotFoundException("Advance payment not found");
+    }
 
     try {
       const lock = await withAdvisoryLock(
@@ -1153,6 +1158,13 @@ export class CustomersService {
         include: { payments: true },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
+      // B808: the invoice must belong to the advance's own customer (checked before any write).
+      if (inv.customerId !== ap.customerId) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.ADVANCE_CUSTOMER_MISMATCH,
+          message: "An advance payment can only be applied to an invoice of the same customer.",
+        });
+      }
       if (inv.status === "DRAFT" || CREDIT_NOT_APPLICABLE.includes(inv.status)) {
         throw new BadRequestException(
           `Cannot apply advance payment to invoice with status ${inv.status}`,

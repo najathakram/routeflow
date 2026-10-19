@@ -939,6 +939,8 @@ export function useRevertInvoiceToDraft() {
 export function useUnvoidInvoice() {
   const qc = useQueryClient();
   return useMutation<any, Error, string>({
+    // SA-814: the invoice page toasts every unvoid refusal itself (copy from the body's `reason`): no second, global one.
+    meta: { localErrorToast: true },
     mutationFn: (id) => apiClient.post(`/invoices/${id}/unvoid`).then((r) => r.data),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });

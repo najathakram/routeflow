@@ -1000,8 +1000,7 @@ export class VendorBillsService {
           sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
         0,
       );
-      const tax =
-        dto.taxAmount !== undefined ? Number(dto.taxAmount) || 0 : Number(bill.taxAmount ?? 0);
+      const tax = dto.taxAmount != null ? Number(dto.taxAmount) || 0 : Number(bill.taxAmount ?? 0);
       totalOwed = roundMoney(itemsTotal + tax);
 
       // B451 gap 4: same guard as create() — a negative qty/unitCost line

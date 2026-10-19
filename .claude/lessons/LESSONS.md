@@ -430,6 +430,7 @@
 - **Root cause:** check and write were separate steps, not one atomic compare-and-set under the row lock.
 - **Lesson:** **Read the guard value after taking the lock, compare, and write the new value in that same transaction. A guard stamped after commit is a log, not a guard.**
 - **Guard:** none automatic; DB specs that race two callers against one row. Cf. [[L-239]].
+- **Recurrence 2026-10-18 (B1234):** the delivered-line lock ran on the locked rows but decided whether it applied from the order status read before the lock, so a delivery landing in between skipped it. Applicability is guard state too: read it under the lock. Unit + DB stale-read cases now pin it.
 
 ### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
 
