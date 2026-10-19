@@ -93,6 +93,24 @@ describe("ProductJumpLinks (V19)", () => {
     expect(link("h-units")).toHaveAttribute("href", "#units-v2-grid-title");
   });
 
+  it("Units and prices lands on the actions row above the grid title (K12 F02)", () => {
+    render(
+      <div>
+        <ProductJumpLinks />
+        <h1 id="h-product">Cola</h1>
+        <div data-testid="actions-anchor" data-units-jump-anchor="">
+          <button type="button">Change prices</button>
+          <h2 id="units-v2-grid-title">Prices</h2>
+        </div>
+      </div>,
+    );
+    const anchor = screen.getByTestId("actions-anchor");
+    expect(link("h-units")).toHaveAttribute("href", "#h-units");
+    expect(anchor).toHaveAttribute("id", "h-units");
+    expect(anchor).toHaveAttribute("data-jump-target");
+    expect(document.getElementById("units-v2-grid-title")).not.toHaveAttribute("data-jump-target");
+  });
+
   it("Product targets the product h1 and never stamps the dashboard header h1 before it", () => {
     const { unmount } = render(
       <div>

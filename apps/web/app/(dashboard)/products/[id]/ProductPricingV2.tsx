@@ -64,26 +64,30 @@ function PricingSection({
   const structure = useUnitStructureAllowed(product);
   return (
     <>
-      <EditablePricesGrid
-        product={product}
-        onOpenChangePrices={cp.enabled ? cp.toggle : undefined}
-        changePricesOpen={cp.open}
-        changePricesRef={cp.opener}
-        panel={<ChangePrices open={cp.open} onClose={cp.close} openerRef={cp.opener} />}
-        unitControls={
-          structure ? (
-            <>
-              <UnitStructureControls productId={product.id} />
-              <UnitsBesideGrid product={product} />
-            </>
-          ) : undefined
-        }
-        rowAction={
-          structure
-            ? (row, layout) => <UnitRowRemove productId={product.id} row={row} layout={layout} />
-            : undefined
-        }
-      />
+      {/* K12 F02: the "Units and prices" jump lands here, on the row that starts with Change prices / Edit,
+          not on the grid title below it. */}
+      <div data-units-jump-anchor="">
+        <EditablePricesGrid
+          product={product}
+          onOpenChangePrices={cp.enabled ? cp.toggle : undefined}
+          changePricesOpen={cp.open}
+          changePricesRef={cp.opener}
+          panel={<ChangePrices open={cp.open} onClose={cp.close} openerRef={cp.opener} />}
+          unitControls={
+            structure ? (
+              <>
+                <UnitStructureControls productId={product.id} />
+                <UnitsBesideGrid product={product} />
+              </>
+            ) : undefined
+          }
+          rowAction={
+            structure
+              ? (row, layout) => <UnitRowRemove productId={product.id} row={row} layout={layout} />
+              : undefined
+          }
+        />
+      </div>
       <PriceSaveStatus productId={product.id} surface="inline" />
       <CustomerPriceView productId={product.id} />
       <PriceEditBar changePricesOpen={cp.open} />

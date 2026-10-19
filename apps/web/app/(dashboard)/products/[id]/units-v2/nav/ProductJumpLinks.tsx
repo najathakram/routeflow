@@ -17,7 +17,12 @@ import * as React from "react";
  */
 const SECTIONS: { id: string; label: string; short: string; fallback?: string }[] = [
   { id: "h-product", label: "Product", short: "Product" },
-  { id: "h-units", label: "Units and prices", short: "Prices", fallback: "#units-v2-grid-title" },
+  {
+    id: "h-units",
+    label: "Units and prices",
+    short: "Prices",
+    fallback: "[data-units-jump-anchor], #units-v2-grid-title",
+  },
   { id: "h-exc", label: "Customers and tiers", short: "Tiers" },
   { id: "h-cust", label: "Customer view", short: "Customer" },
   { id: "h-sales", label: "Sales", short: "Sales" },
