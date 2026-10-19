@@ -11,6 +11,8 @@ import {
   TxnStatus,
   PaymentStatus,
   CreditNoteStatus,
+  PaymentMethod,
+  VendorBillStatus,
 } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import {
@@ -1145,7 +1147,15 @@ export class BookkeepingService implements OnModuleInit {
         orderBy: { date: "asc" },
       }),
       this.prisma.forTenant().billPayment.findMany({
-        where: { paidAt: { gte: fromDate, lte: toDate } },
+        // B288 sibling: cash out is money that left the bank. A supplier-credit draw
+        // (CREDIT_NOTE, prepaid money already counted when the credit was paid) is not cash out,
+        // matching the invoice side's RECEIVED_METHOD_FILTER, and a VOID bill's payments are not
+        // either.
+        where: {
+          paidAt: { gte: fromDate, lte: toDate },
+          method: { not: PaymentMethod.CREDIT_NOTE },
+          vendorBill: { status: { not: VendorBillStatus.VOID } },
+        },
         orderBy: { paidAt: "asc" },
       }),
     ]);
