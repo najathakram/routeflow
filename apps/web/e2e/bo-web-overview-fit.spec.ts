@@ -5,29 +5,21 @@
  * `main.scrollWidth` is 559 at 390 because the grid's implicit column grows to the audit table's
  * min-content. Jest pins the structure (page.test.tsx, "BO-08"); this spec proves the layout.
  *
- * Needs: PLAYWRIGHT_BASE_URL (required, no default) and super admin credentials via the
- * "super-admin" project's storage state. Approved test tenants only: slug `test` or `qa-*`
+ * Needs: PLAYWRIGHT_BASE_URL (baseURL) and super admin credentials (PLAYWRIGHT_SA_*; a fresh
+ * session is signed in per test). Approved test tenants only: slug `test` or `qa-*`
  * (override with BO_TENANT_SLUG).
  */
 
 import { test, expect, type Page } from "@playwright/test";
 import { HAS_SUPER_ADMIN_CREDS } from "./helpers/constants";
 import { freshSuperAdminSession } from "./helpers/auth";
+import { gotoTestTenant } from "./helpers/tenants";
 
 test.skip(!HAS_SUPER_ADMIN_CREDS, "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set");
 
 test.beforeEach(async ({ page }) => {
   if (HAS_SUPER_ADMIN_CREDS) await freshSuperAdminSession(page);
 });
-
-/** The base URL comes from the environment only. Throws when unset: there is no default URL. */
-function requireBaseUrl(): string {
-  const url = process.env.PLAYWRIGHT_BASE_URL;
-  if (!url) {
-    throw new Error("PLAYWRIGHT_BASE_URL is not set. Point it at the local stack under test.");
-  }
-  return url.replace(/\/$/, "");
-}
 
 /** Only approved test tenants (CLAUDE.md "Test tenants"): `test` or a throwaway `qa-*` slug. */
 function approvedTenantSlug(): string {
@@ -39,12 +31,8 @@ function approvedTenantSlug(): string {
 }
 
 async function openTenant(page: Page, tab: "overview" | "billing") {
-  const base = requireBaseUrl();
-  await page.goto(`${base}/admin/tenants`);
-  await page.getByText(approvedTenantSlug(), { exact: true }).first().click();
-  await page.waitForURL(/\/admin\/tenants\/[^/?]+/);
-  const id = new URL(page.url()).pathname.split("/")[3];
-  await page.goto(`${base}/admin/tenants/${id}?tab=${tab}`);
+  // By slug through the API: the tenants list paginates, so `test` is not always on page 1.
+  await gotoTestTenant(page, tab, approvedTenantSlug());
   await expect(page.locator("main h2").first()).toBeVisible({ timeout: 15_000 });
 }
 

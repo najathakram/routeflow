@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { freshSuperAdminSession } from "./helpers/auth";
+import { testTenantId } from "./helpers/tenants";
 
 /**
  * BO-01: an admin page ends where its content ends. The console's sr-only spans are absolute; with no
@@ -15,18 +16,6 @@ const WIDTHS = [
 test.beforeEach(async ({ page }) => {
   await freshSuperAdminSession(page);
 });
-
-async function testTenantId(page: Page): Promise<string> {
-  await page.goto("/admin/tenants");
-  const link = page
-    .locator('a[href^="/admin/tenants/"]')
-    .filter({ hasText: /^test$/ })
-    .first();
-  const href = await link.getAttribute("href");
-  const id = href?.split("/")[3]?.split("?")[0];
-  expect(id, "the approved test tenant is listed").toBeTruthy();
-  return id!;
-}
 
 async function expectEndsAtContent(page: Page, mainScrolls: boolean) {
   await page.waitForLoadState("networkidle");
