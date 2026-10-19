@@ -16,6 +16,20 @@ describe("SkipToContentLink", () => {
     expect(window.location.hash).toBe("");
   });
 
+  it("K12 F10: lands on the page's search field when the main region has one", () => {
+    render(
+      <div>
+        <SkipToContentLink />
+        <main id="main-content" tabIndex={-1}>
+          <button type="button">Filter</button>
+          <input type="search" aria-label="Find" />
+        </main>
+      </div>,
+    );
+    screen.getByText("Skip to content").click();
+    expect(document.activeElement).toBe(screen.getByLabelText("Find"));
+  });
+
   it("does not throw when the main region is absent", () => {
     render(<SkipToContentLink />);
     expect(() => screen.getByText("Skip to content").click()).not.toThrow();
