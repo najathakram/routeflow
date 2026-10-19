@@ -439,59 +439,60 @@ describe("SA-816 (d)2: a stored non-finite levy is refused, not zeroed or copied
       });
     });
 
-    describe.each(["unitPrice", "discount"])("invoice edit plan: a non-finite %s", (column) => {
-      const stored = (bad: unknown) =>
-        ({
+    describe.each(["unitPrice", "discount", "qty", "subtotal"])(
+      "invoice edit plan: a non-finite %s",
+      (column) => {
+        const stored = (bad: unknown) =>
+          ({
+            id: "row-1",
+            invoiceId: "inv-1",
+            productId: null,
+            description: "Freight",
+            qty: 1,
+            unitPrice: 25,
+            discount: 0,
+            taxRate: 0,
+            subtotal: 25,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: null,
+            promoFreeUnits: null,
+            notes: null,
+            orderItemId: null,
+            trackedCategoryId: null,
+            trackedSubcategoryId: null,
+            categoryTaxAmount: 0,
+            [column]: bad,
+          }) as unknown as StoredEditRow;
+        // the payload re-sends the stored figures, so the row reads as untouched when its own value is finite
+        const item = {
           id: "row-1",
-          invoiceId: "inv-1",
-          productId: null,
           description: "Freight",
           qty: 1,
           unitPrice: 25,
           discount: 0,
           taxRate: 0,
-          subtotal: 25,
-          boxes: null,
-          pieces: null,
-          unitsPerBox: null,
-          promoFreeUnits: null,
-          notes: null,
-          orderItemId: null,
-          trackedCategoryId: null,
-          trackedSubcategoryId: null,
-          categoryTaxAmount: 0,
-          [column]: bad,
-        }) as unknown as StoredEditRow;
-      // the payload re-sends the stored figures, so the row reads as untouched when its own value is finite
-      const item = {
-        id: "row-1",
-        description: "Freight",
-        qty: 1,
-        unitPrice: 25,
-        discount: 0,
-        taxRate: 0,
-      };
-      const plan = (row: StoredEditRow) =>
-        buildEditedLines({
-          items: [item],
-          stored: [row],
-          matches: [{ row, untouched: true, productChanged: false }],
-          productMap: new Map(),
-          categoryMap: new Map(),
-          clampFreeUnits: (free: number | undefined) => free ?? 0,
-          warn: () => undefined,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } as any);
+        };
+        const plan = (row: StoredEditRow) =>
+          buildEditedLines({
+            items: [item],
+            stored: [row],
+            matches: [{ row, untouched: true, productChanged: false }],
+            productMap: new Map(),
+            categoryMap: new Map(),
+            clampFreeUnits: (free: number | undefined) => free ?? 0,
+            warn: () => undefined,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          } as any);
 
-      it.each(STORED_NAN)("is refused on an untouched row: %s", (_label, nan) => {
-        expectMoneyInvariant(caught(() => plan(stored(nan))));
-      });
+        it.each(STORED_NAN)("is refused on an untouched row: %s", (_label, nan) => {
+          expectMoneyInvariant(caught(() => plan(stored(nan))));
+        });
 
-      it("control: a finite value is carried as before", () => {
-        expect(plan(stored(column === "unitPrice" ? "25.00" : "1.5"))[0].data[column]).toBe(
-          column === "unitPrice" ? 25 : 1.5,
-        );
-      });
-    });
+        it("control: a finite value is carried as before", () => {
+          expect(plan(stored("1.5"))[0].data[column]).toBe(1.5);
+        });
+      },
+    );
   });
 });

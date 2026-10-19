@@ -121,11 +121,18 @@ describe("SA-816: a NaN sibling invoice refuses an order-linked edit before anyt
     discount: 0,
     taxRate,
     categoryTaxAmount: 0,
+    orderItemId: "oi-0", // billed from order line oi-0, so the back-sync aggregation sees the line
   });
 
   /** Invoice A on order ord-1 (a consistent $100 at 7.5%), plus the order and its sibling invoice B. */
-  const withOrderAndSibling = (status: InvoiceStatus, siblingLevy: unknown) => {
+  const withOrderAndSibling = (
+    status: InvoiceStatus,
+    siblingLevy: unknown,
+    /** an extra line on A that the edit does not re-price: $0 so the totals hold, its unit price is the NaN */
+    ownLine: Record<string, unknown> | null = null,
+  ) => {
     rows = [line("li-1", 100, 0.075)];
+    if (ownLine) rows.push({ ...line("li-2", 0, 0.075), orderItemId: "oi-00", ...ownLine });
     prisma.invoice.findUnique.mockResolvedValue({
       id: "inv-1",
       orderId: "ord-1",
@@ -157,9 +164,15 @@ describe("SA-816: a NaN sibling invoice refuses an order-linked edit before anyt
     // the preflight's reads: the order with its lines, and the OTHER non-void invoices
     prisma.order.findUnique.mockResolvedValue({
       id: "ord-1",
-      lineItems: [{ id: "oi-1", productId: "p-1", status: "PENDING" }],
+      lineItems: [
+        { id: "oi-0", productId: "p-0", status: "PENDING" },
+        { id: "oi-00", productId: "p-00", status: "PENDING" },
+        { id: "oi-1", productId: "p-1", status: "PENDING" },
+      ],
     });
-    prisma.invoice.findMany.mockResolvedValue([
+    // honours the preflight's `id: { not: edited }` filter, like the database does
+    const everyInvoice = [
+      { id: "inv-1", orderId: "ord-1", items: rows.map((r) => ({ ...r })) },
       {
         id: "inv-2",
         orderId: "ord-1",
@@ -176,7 +189,10 @@ describe("SA-816: a NaN sibling invoice refuses an order-linked edit before anyt
           },
         ],
       },
-    ]);
+    ];
+    prisma.invoice.findMany.mockImplementation(async (args: any) =>
+      everyInvoice.filter((i) => !args?.where?.id?.not || i.id !== args.where.id.not),
+    );
   };
 
   const nothingWritten = () => {
@@ -253,14 +269,58 @@ describe("SA-816: a NaN sibling invoice refuses an order-linked edit before anyt
     });
   });
 
-  it("A's own stored values are not the preflight's business: the edited invoice is excluded from the read", async () => {
-    withOrderAndSibling(InvoiceStatus.DRAFT, 0);
-    jest.spyOn(service, "recomputeOrderFromInvoices").mockResolvedValue(null as any);
-    await service.update("inv-1", { discount: 5 });
-    expect(prisma.invoice.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ id: { not: "inv-1" } }),
-      }),
+  describe("the edited invoice's OWN stored rows persist, so the header and SINGLE flows judge them too", () => {
+    // Master (static read): planHeaderOnlyTotals reads only subtotal / rate / levy and an un-repriced line keeps its
+    // stored unit price, so A committed with a NaN unit price and the post-commit back-sync then answered 400.
+    describe.each(SIBLING_NAN)(
+      "A has an un-repriced line whose unit price is %s",
+      (_label, nan) => {
+        it("header discount PATCH: 400 MONEY_INVARIANT and nothing written", async () => {
+          withOrderAndSibling(InvoiceStatus.DRAFT, 0, { unitPrice: nan });
+          await expect(service.update("inv-1", { discount: 5 })).rejects.toMatchObject(MONEY);
+          nothingWritten();
+        });
+
+        it("SINGLE price adjustment of another line: 400 MONEY_INVARIANT and nothing written", async () => {
+          withOrderAndSibling(InvoiceStatus.SENT, 0, { unitPrice: nan });
+          await expect(
+            service.applyPriceAdjustment("inv-1", {
+              items: [{ itemId: "li-1", newUnitPrice: 95 }],
+              scope: "SINGLE",
+            }),
+          ).rejects.toMatchObject(MONEY);
+          nothingWritten();
+        });
+      },
     );
+
+    it("A's own qty is judged the same way (header PATCH)", async () => {
+      withOrderAndSibling(InvoiceStatus.DRAFT, 0, { qty: "NaN" });
+      await expect(service.update("inv-1", { discount: 5 })).rejects.toMatchObject(MONEY);
+      nothingWritten();
+    });
+
+    it("the header and SINGLE flows read EVERY non-void invoice of the order (no edited-invoice exclusion)", async () => {
+      withOrderAndSibling(InvoiceStatus.DRAFT, 0);
+      jest.spyOn(service, "recomputeOrderFromInvoices").mockResolvedValue(null as any);
+      await service.update("inv-1", { discount: 5 });
+      expect(prisma.invoice.findMany.mock.calls[0][0].where.id).toBeUndefined();
+      prisma.invoice.findMany.mockClear();
+      withOrderAndSibling(InvoiceStatus.SENT, 0);
+      await service.applyPriceAdjustment("inv-1", {
+        items: [{ itemId: "li-1", newUnitPrice: 95 }],
+        scope: "SINGLE",
+      });
+      expect(prisma.invoice.findMany.mock.calls[0][0].where.id).toBeUndefined();
+    });
+
+    it("the DRAFT items flow excludes A (its surviving columns are guarded when its lines are built)", async () => {
+      withOrderAndSibling(InvoiceStatus.DRAFT, 0);
+      jest.spyOn(service, "recomputeOrderFromInvoices").mockResolvedValue(null as any);
+      await service.update("inv-1", {
+        items: [{ id: "li-1", description: "Widget", qty: 1, unitPrice: 95, taxRate: 0.075 }],
+      });
+      expect(prisma.invoice.findMany.mock.calls[0][0].where.id).toEqual({ not: "inv-1" });
+    });
   });
 });

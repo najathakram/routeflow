@@ -3097,7 +3097,8 @@ export class InvoicesService {
         const locked = await loadLockedInvoiceForEdit(tx, id, dto.expectedUpdatedAt, warnNoToken);
         assertStillDraft(locked.invoice); // r87: DRAFT re-checked under the lock
         assertSameOrderLink(locked.invoice, inv); // the pre-read order is the one we locked
-        await preflightOrderSiblings(tx, inv.orderId, id); // SA-816: a NaN sibling refuses BEFORE any write
+        // SA-816: a NaN sibling refuses BEFORE any write; A's own surviving columns are guarded in buildEditedLines.
+        await preflightOrderSiblings(tx, inv.orderId, id);
         // SA-674b / SA-689 a: with the carrier, the shipment invoice keeps its lines and quantities. Read
         // UNDER the row locks (an order shipped since the pre-reads is refused), never before the tx.
         const carrierLocked = await invoiceOrderWithCarrier(
@@ -3269,7 +3270,7 @@ export class InvoicesService {
           const locked = await loadLockedInvoiceForEdit(tx, id, dto.expectedUpdatedAt, warnNoToken);
           assertStillDraft(locked.invoice); // r87
           assertSameOrderLink(locked.invoice, inv);
-          await preflightOrderSiblings(tx, inv.orderId, id); // SA-816: before any write
+          await preflightOrderSiblings(tx, inv.orderId, null); // SA-816: A's stored rows persist, so judge A too
           const { subtotal, ...totals } = planHeaderOnlyTotals(locked, dto);
           assertInvoiceTotalsSane(
             { discount: totals.discount, subtotal, total: totals.total },
@@ -5838,8 +5839,9 @@ export class InvoicesService {
     };
 
     if (dto.scope === "SINGLE") {
-      // SA-816: a NaN sibling on the order refuses BEFORE any write (the post-commit order sync would otherwise 400 after the save).
-      await preflightOrderSiblings(this.prisma.forTenant(), (invoice as any).orderId, id);
+      // SA-816: a NaN on the order's invoices (A included, its un-repriced lines persist) refuses BEFORE any write.
+      // Read without the lock (before the price-adjust tx): the in-tx order sync stays the backstop.
+      await preflightOrderSiblings(this.prisma.forTenant(), (invoice as any).orderId, null);
       await applyToInvoice(invoice, priceMap);
     } else {
       // ALL_CUSTOMER_SINCE: find all invoices for the same customer on or after sinceDate
