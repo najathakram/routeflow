@@ -742,7 +742,12 @@ test("settings.json: the old trackers are retired, the ops hooks are appended, t
       (g.hooks ?? []).map((h) => ({ matcher: g.matcher ?? null, command: h.command })),
     );
   const start_ = cmds("SessionStart").map((c) => c.command);
-  assert.ok(!start_.some((c) => c.includes("plane-triage")), "plane triage brief retired");
+  // The Plane triage brief stays until the lead retires Plane (scripts/campaign/plane-docs.self-test
+  // T14 pins it); only the old GitHub-Project trigger hook is retired here.
+  assert.ok(
+    start_.some((c) => c.includes("plane-triage")),
+    "plane triage brief kept (pinned by T14)",
+  );
   assert.ok(start_.includes("node scripts/check-git-hooks.mjs --warn"), "git-hooks warning kept");
   assert.ok(start_.includes("node .claude/hooks/ops-brief.mjs"), "ops brief on SessionStart");
   assert.deepEqual(cmds("UserPromptSubmit"), [

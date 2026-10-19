@@ -27,7 +27,10 @@
   "hooks": {
     "SessionStart": [
       {
-        "hooks": [{ "type": "command", "command": "node scripts/check-git-hooks.mjs --warn" }]
+        "hooks": [
+          { "type": "command", "command": "node scripts/campaign/plane-triage.mjs --brief" },
+          { "type": "command", "command": "node scripts/check-git-hooks.mjs --warn" }
+        ]
       },
       {
         "hooks": [{ "type": "command", "command": "node .claude/hooks/ops-brief.mjs" }]
