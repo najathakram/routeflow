@@ -17,6 +17,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
 import { TENANT_SLUG } from "./helpers/constants";
+import { UNITS_V2_IDS } from "./helpers/units-v2-ids";
 import { requireUnitsV2Flag } from "./helpers/units-v2-support";
 import {
   BASE,
@@ -60,10 +61,11 @@ async function expectTwoColumns(page: Page) {
 }
 
 async function expectPhoneOrder(page: Page, flagOff: boolean) {
-  // flag OFF: the old "Price per ..." row. flag ON (K11-20c): the read-only Details price line replaced it.
+  // flag OFF: the old "Price per ..." row. flag ON: the Details price line is gone (R3 say-no 2), so the prices grid is the price home.
+  if (!flagOff) await expect(page.getByTestId("details-price-line")).toHaveCount(0);
   const label = flagOff
     ? page.getByText(/^Price per /).first()
-    : page.getByTestId("details-price-line");
+    : page.getByTestId(UNITS_V2_IDS.grid);
   const top = (await label.boundingBox())!.y;
   expect(top, "the price label is on the first screen").toBeLessThan(viewportHeight(page));
   const d = (await card(page, "Details").boundingBox())!;
