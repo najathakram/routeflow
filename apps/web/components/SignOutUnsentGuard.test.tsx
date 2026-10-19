@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
@@ -100,10 +102,6 @@ describe("sign-out with unsent work (SA-817 A8)", () => {
   });
 
   it("A8: a session expiry keeps the local copy - auth.ts and the cross-tab handler never touch the draft mirror", () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const fs = require("fs") as typeof import("fs");
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const path = require("path") as typeof import("path");
     for (const file of ["../lib/auth.ts", "../lib/auth-context.tsx"]) {
       const src = fs.readFileSync(path.join(__dirname, file), "utf8");
       expect(src).not.toMatch(/order-draft/);
