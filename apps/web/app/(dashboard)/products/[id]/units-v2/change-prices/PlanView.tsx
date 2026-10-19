@@ -187,7 +187,8 @@ export function PlanView({
       )}
       {hasAlso && (
         <div data-testid={T.alsoUpdate} className="mt-3">
-          <p className={SECTION_LABEL}>Also update:</p>
+          {/* K12 P16: not drawn over an "Also ..." offer; still the group's name for a screen reader. */}
+          <p className="sr-only">Also update:</p>
           {customersTruncated && (
             <p data-testid={T.customersTruncated} className="mt-1 text-xs text-ink-500">
               {TRUNCATED_NOTE}
