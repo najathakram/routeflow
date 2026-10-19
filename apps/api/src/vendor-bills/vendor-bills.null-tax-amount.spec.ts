@@ -171,6 +171,17 @@ describe("VendorBillsService.update — a null taxAmount keeps the stored tax (r
     expect(taxWritten()).toBe(8);
   });
 
+  it("NIT: the rebuilt total goes through the money invariants like an items edit (negative -> 400)", async () => {
+    prisma.vendorBill.findUnique.mockResolvedValue({
+      ...legacy,
+      items: [{ id: "i1", qtyReceived: null, qty: 1, unitCost: -50 }],
+    });
+    const err = await service.update("bill-1", { taxAmount: 8 }).catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse().code).toBe("MONEY_INVARIANT");
+    expect(prisma.vendorBill.update).not.toHaveBeenCalled();
+  });
+
   it("NIT: with no lines to rebuild from, the tax-only edit is a coded 409 and nothing is written", async () => {
     prisma.vendorBill.findUnique.mockResolvedValue({ ...legacy, items: [] });
     const err = await service.update("bill-1", { taxAmount: 8 }).catch((e) => e);

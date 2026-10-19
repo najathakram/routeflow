@@ -1054,6 +1054,7 @@ export class VendorBillsService {
           0,
         );
         totalOwed = roundMoney(lines + newTax);
+        assertMoneyInvariantsOrThrow({ subtotal: lines, tax: newTax, total: totalOwed });
       } else {
         // No lines to rebuild from and no recorded tax: what the total already holds can't be known.
         throw new ConflictException({
