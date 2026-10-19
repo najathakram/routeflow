@@ -427,9 +427,16 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     void qc.invalidateQueries({ queryKey: productCustomerPricesKey(productId) });
   };
 
+  // Row 614: set synchronously before the request, so two clicks (or Ctrl+S) in one tick send one POST.
+  const savingRef = React.useRef(false);
+  // Released on the first commit that shows no save running (covers a mutation that never settles its callbacks).
+  React.useEffect(() => {
+    if (!save.isPending) savingRef.current = false;
+  });
   const doSave = () => {
     const req = toRequest();
-    if (!canSave || !req) return;
+    if (savingRef.current || !canSave || !req) return;
+    savingRef.current = true;
     // Where this save was made, read before the success resets the draft.
     const surface = surfaceRef.current ?? "inline";
     save.mutate(req, {
@@ -445,6 +452,9 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
         hooksRef.current.onSaved?.(saved);
         setUndoStale(false);
         reset();
+      },
+      onSettled: () => {
+        savingRef.current = false;
       },
     });
   };
