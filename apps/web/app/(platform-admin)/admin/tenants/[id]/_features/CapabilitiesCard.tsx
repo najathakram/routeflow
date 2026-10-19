@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { API_ERROR_CODES } from "@routeflow/types";
 import {
   applyBusinessCapabilities,
   fetchBusinessCapabilities,
@@ -52,7 +53,7 @@ function plural(n: number, one: string, many: string): string {
 }
 
 function blockedCopy(b: NonNullable<BusinessCapabilitiesPreviewResponse["blocked"]>): string {
-  return b.code === "FULFILMENT_CARRIER_IN_TRANSIT"
+  return b.code === API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT
     ? CARRIER_COPY
     : "This needs a feature turned on first.";
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { PLAN_KEYS } from "@routeflow/types";
+import { API_ERROR_CODES, PLAN_KEYS } from "@routeflow/types";
 import { planLabel } from "../../../../_components/AdminBadge";
 import {
   fetchEntitlementsMode,
@@ -307,9 +307,9 @@ export function FeatureConsole({
       const code = (err as { response?: { data?: { code?: unknown } } } | null)?.response?.data
         ?.code;
       setPreviewError(
-        code === "FULFILMENT_MODE_NEEDS_FLEET"
+        code === API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET
           ? "This business has no delivery fleet, so Delivery and shipping can't be turned on yet."
-          : code === "FULFILMENT_CARRIER_IN_TRANSIT"
+          : code === API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT
             ? "A carrier shipment is still in transit. Change the mode once it is delivered."
             : "Could not apply that change. Try again.",
       );

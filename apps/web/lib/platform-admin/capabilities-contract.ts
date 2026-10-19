@@ -3,6 +3,7 @@
 // BO-05 builds against the BO-03 / BO-04 contract before the MacBook lane's branch is on origin. Every type and
 // client function below is a copy of that contract; when it lands, delete this file and point the imports at
 // `@routeflow/types` and `@/lib/platform-admin/business-profiles` (one edit per importer).
+import { API_ERROR_CODES } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import type {
   BusinessProfileApplyResponse,
@@ -74,8 +75,8 @@ export interface ConfirmBusinessCapabilitiesRequest extends BusinessCapabilities
 
 /** Why Apply must stay off even though the plan itself is fine. */
 export type CapabilitiesBlocked =
-  | { code: "FULFILMENT_CARRIER_IN_TRANSIT"; count: number }
-  | { code: "FEATURE_REQUIRES_UNMET"; key: string; missing: string[] };
+  | { code: typeof API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT; count: number }
+  | { code: typeof API_ERROR_CODES.FEATURE_REQUIRES_UNMET; key: string; missing: string[] };
 
 /** The same plan sections as the business-profile preview, plus `blocked`. */
 export type BusinessCapabilitiesPreviewResponse = Omit<
@@ -96,9 +97,9 @@ export type BusinessCapabilitiesApplyResponse = Omit<BusinessProfileApplyRespons
   preset?: CapabilityPresetKey | null;
 };
 
-/** New API error codes (BO-04); not in the shared enum until that branch lands. */
+/** BO-04 API error codes, taken from the shared enum. */
 export const CAPABILITIES_ERROR_CODES = {
-  BUSINESS_CAPABILITIES_EMPTY: "BUSINESS_CAPABILITIES_EMPTY",
+  BUSINESS_CAPABILITIES_EMPTY: API_ERROR_CODES.BUSINESS_CAPABILITIES_EMPTY,
 } as const;
 
 /** `GET /platform-admin/business-profiles` with the BO-03 `ticks` and the two new presets. */
