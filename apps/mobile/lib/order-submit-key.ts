@@ -1,13 +1,21 @@
+import { readDraftSubmitKey } from "@routeflow/types/draft-submit-key";
+
 /**
- * Client-generated Idempotency-Key for POST /orders (F30 · R8, REG-B196).
+ * Client-generated Idempotency-Key for POST /orders (F30 · R8, REG-B196; persisted per draft, SA-817 A4).
  *
  * One key PER CUSTOMER cart session (B215/R3): minted lazily on first read for that customer and
- * reused across every retry/replay of the SAME cart (a tapped-twice submit, a timed-out request
- * the operator retries, an offline-queue replay) so the server's tenant-scoped unique constraint
- * on `Order.idempotencyKey` can collapse duplicates into a single order — replay returns the
- * original order instead of creating a sibling (apps/api/src/orders). This converts the queue's
- * at-least-once replay semantics into effectively-once, closing B196's duplicate-order leg even
- * when a queue bug re-sends the same cart twice.
+ * reused across every retry of the SAME cart (a tapped-twice submit, a timed-out request the operator
+ * retries) so the server's tenant-scoped unique constraint on `Order.idempotencyKey` can collapse
+ * duplicates into a single order — replay returns the original order instead of creating a sibling
+ * (apps/api/src/orders). That converts at-least-once delivery into effectively-once.
+ *
+ * WHERE THE KEY LIVES (SA-817 A4). This module's map is PROCESS MEMORY ONLY: an app kill, a reload or a
+ * restart empties it, and nothing here reaches disk or the server. The durable copy is the bound draft's
+ * `payload._submitKey` (`@routeflow/types/draft-submit-key`; the screen writes it with every autosave, the
+ * server `SaleDraft` keeps it verbatim). A RESUMED draft therefore re-seeds this map from its payload
+ * (`seedOrderSubmitKeyFromDraft`) BEFORE the screen first reads a key, so a resubmit after a kill replays
+ * the key the first attempt used. A cart with no bound draft has no durable key: a kill ends it. There is
+ * no offline order queue on this screen to replay from (the legacy native queue dead-letters every 4xx).
  *
  * Keys are held in a `customerId -> key` map rather than one module singleton, because the
  * server's replay identity is CUSTOMER-SCOPED: carrying one customer's key onto another's cart
@@ -26,7 +34,7 @@
  *      that owned it is finished with)
  *
  * A failed submit (timeout, 4xx, network drop) must NOT clear that customer's key — that cart is
- * still live, and a retry/replay needs the SAME key so server-side idempotency can catch it
+ * still live, and a retry needs the SAME key so server-side idempotency can catch it
  * instead of minting a sibling duplicate order.
  *
  * Pure module, no RN dependency — imported today by NewOrderScreen's submit wiring, and usable
@@ -103,4 +111,25 @@ export function resetOrderSubmitKey(customerId: string | null | undefined): void
  */
 export function clearAllOrderSubmitKeys(): void {
   keysByCustomer.clear();
+}
+
+/**
+ * Put a key into a customer's slot (a resumed draft's persisted key). Replaces whatever the slot held: the draft's key is the
+ * one the first attempt may already have used.
+ */
+export function adoptOrderSubmitKey(customerId: string | null | undefined, key: string): void {
+  keysByCustomer.set(slot(customerId), key);
+}
+
+/**
+ * Re-seed a customer's slot from a resumed draft's `payload._submitKey` (SA-817 A4). Returns the key adopted, or null when the
+ * draft predates the field (the slot is left alone, and the next autosave writes whatever key the slot holds into the draft).
+ */
+export function seedOrderSubmitKeyFromDraft(
+  customerId: string | null | undefined,
+  payload: unknown,
+): string | null {
+  const key = readDraftSubmitKey(payload);
+  if (key) adoptOrderSubmitKey(customerId, key);
+  return key;
 }
