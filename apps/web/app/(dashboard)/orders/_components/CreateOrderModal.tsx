@@ -27,7 +27,15 @@ import {
 } from "@/lib/api/orders";
 import { usePriceSummary } from "@/lib/api/price-history";
 import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/api/drafts";
-import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
+import type { OrderDraftPayload } from "@/lib/drafts";
+import { readDraftSubmitKey } from "@routeflow/types/draft-submit-key";
+import { priceChangedCopy, repriceResumedLines } from "@/lib/order-draft/resume";
+import type { DraftPayload } from "@/lib/order-draft/engine";
+import type { LocalDraftRecord } from "@/lib/order-draft/storage";
+import { draftMetaOf, useOrderDraftAutosave } from "./use-order-draft-autosave";
+import { useUnsentOrderResume } from "./use-unsent-order-resume";
+import { ResumeUnsentOrderDialog } from "./ResumeUnsentOrderDialog";
+import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
 import { orderCreatedToast } from "./order-created-toast";
 import {
@@ -202,6 +210,8 @@ interface LineItem extends DerivedBaseMarker {
   unitLabel?: string;
   /** S19b: a price the SYSTEM pre-filled from last-given history; the customer layer replaces it once ready. */
   systemPrefill?: boolean;
+  /** SA-817 A5: the price this line carried when the order was parked, set when a resume found today's price different. */
+  priceChangedFrom?: number;
   /** S19b: set while the customer layer prices this line; the pre-layer values to restore if its row goes away. */
   layerFrom?: LayerFrom;
   /** #2784 UI-only: a NEW line from the picker tap / a shared-code scan starts on the default selling unit. */
@@ -277,7 +287,9 @@ export function CreateOrderModal({
   const posFinish = usePosFinish();
   // Which POS finishing action the operator pressed ("Confirm and invoice" vs "Confirm only"); survives the merge prompt.
   const posFinishRef = React.useRef<"invoice" | "confirm">("invoice");
-  const submitKey = useCreateOrderSubmitKey(isOpen); // BUG-A: latch + Idempotency-Key per attempt
+  // SA-817 A: the key rides with the draft (payload._submitKey); a re-mint bumps `keyTick` so the draft carries the new one.
+  const [keyTick, setKeyTick] = React.useState(0);
+  const submitKey = useCreateOrderSubmitKey(isOpen, () => setKeyTick((t) => t + 1)); // BUG-A: latch + Idempotency-Key per attempt
   // An unknown outcome (timeout / 5xx) may still have written the order. Closing mints a fresh key on
   // reopen (accepted residual risk), so tell the operator to check before re-entering it.
   React.useEffect(() => {
@@ -303,7 +315,9 @@ export function CreateOrderModal({
   const [activeDraftId, setActiveDraftId] = React.useState<string | null>(null);
   const hydratedRef = React.useRef<string | null>(null);
   const scanConsumedRef = React.useRef(false);
-  const lastSavedRef = React.useRef<string>("");
+  // SA-817 A5: a resume re-prices once the customer's prices have been read (display only; the server prices at submit).
+  const repriceAfterResumeRef = React.useRef(false);
+  const [repriceTick, setRepriceTick] = React.useState(0);
 
   // Fetch default tax rate from settings
   const { data: settings } = useQuery<{ taxRate?: number }>({
@@ -610,7 +624,7 @@ export function CreateOrderModal({
     setActiveDraftId(null);
     hydratedRef.current = null;
     scanConsumedRef.current = false;
-    lastSavedRef.current = "";
+    repriceAfterResumeRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, resumeDraftId]);
 
@@ -1342,36 +1356,37 @@ export function CreateOrderModal({
   );
   const draftPayloadJson = JSON.stringify(draftPayload);
 
-  const buildDraftDto = React.useCallback(
-    (payload: OrderDraftPayload) => ({
-      kind: "ORDER" as const,
-      customerId: payload.customer?.id ?? null,
-      customerName: payload.customer?.businessName ?? null,
-      title: payload.customer ? `Order, ${payload.customer.businessName}` : "Order draft",
-      payload: payload as unknown as Record<string, unknown>,
-      device: draftDeviceLabel(),
-    }),
-    [],
-  );
-
   // Nothing worth parking until a customer is picked or a line is added.
   const canMinimize = !!selectedCustomer || lineItems.length > 0;
-  const savingDraft = createDraft.isPending || updateDraft.isPending;
+  // SA-817 A2: a server draft (and the local mirror) from the FIRST parkable change (customer + at least one line), not only on
+  // Minimize. The submit key rides in the payload; the engine mirrors mobile's autosave rules (900 ms, single-flight create).
+  const draftParkable = !!selectedCustomer && lineItems.length > 0;
+  const draftMeta = React.useMemo(() => draftMetaOf(draftPayload), [draftPayload]);
+  const autosave = useOrderDraftAutosave({
+    isOpen,
+    resumeDraftId,
+    enabled: isOpen && (!resumeDraftId || activeDraftId === resumeDraftId),
+    parkable: draftParkable,
+    payload: draftPayload as unknown as Record<string, unknown>,
+    payloadJson: draftPayloadJson,
+    meta: draftMeta,
+    user,
+    submitKey,
+    keyTick,
+    createDraft: (dto) => createDraft.mutateAsync(dto as never),
+    updateDraft: (dto) => updateDraft.mutateAsync(dto as never),
+  });
+  // Only an EXPLICIT park (Minimize / dismiss) disables the buttons; a background autosave never does.
+  const [savingDraft, setSavingDraft] = React.useState(false);
 
-  // Park the current builder state into the local Draft (the dock). Returns whether
-  // the save succeeded. Reuses the bound draft when resuming, else creates a new one.
+  // Park the current builder state into the draft (the dock): save it now, creating the row if autosave has not yet.
+  // Returns whether the save succeeded.
   const parkDraft = async (): Promise<boolean> => {
-    const dto = buildDraftDto(draftPayload);
+    setSavingDraft(true);
     try {
-      if (activeDraftId) {
-        await updateDraft.mutateAsync({ id: activeDraftId, ...dto });
-      } else {
-        await createDraft.mutateAsync(dto);
-      }
-      lastSavedRef.current = draftPayloadJson;
-      return true;
-    } catch {
-      return false;
+      return await autosave.flush({ force: true });
+    } finally {
+      setSavingDraft(false);
     }
   };
 
@@ -1454,12 +1469,10 @@ export function CreateOrderModal({
     }
   };
 
-  // Hydrate the builder from a resumed draft (once per open).
-  React.useEffect(() => {
-    if (!isOpen || !resumeDraftId || !loadedDraft) return;
-    if (hydratedRef.current === loadedDraft.id) return;
-    hydratedRef.current = loadedDraft.id;
-    const p = (loadedDraft.payload ?? {}) as unknown as DraftPayloadWithFulfillPath;
+  // Fill the builder from a draft payload (a docked server draft, a local copy, or the other device's version after a conflict).
+  // Returns the payload exactly as the builder will re-serialize it, so the engine's baseline matches and hydrating itself writes nothing.
+  const hydrateFromPayload = (p: DraftPayloadWithFulfillPath): DraftPayload => {
+    const pick = staffFulfilment.pickForm(p.fulfillPath);
     setSelectedCustomer(p.customer ?? null);
     setLineItems(Array.isArray(p.lineItems) ? p.lineItems : []);
     setOrderDiscount(p.orderDiscount ?? "");
@@ -1473,15 +1486,15 @@ export function CreateOrderModal({
     // the customer's own default (that only seeds a FRESH selection; see the
     // picker's onClick). Order matters: this reset() must run after
     // setSelectedCustomer above so a resumed SHIP order stays SHIP.
-    reset({
-      notes: p.notes ?? "",
-      urgent: !!p.urgent,
-      fulfillPath: staffFulfilment.pickForm(p.fulfillPath),
-    });
-    setActiveDraftId(loadedDraft.id);
-    // Seed the autosave baseline so hydration itself never triggers a write. Key
-    // order must match `draftPayload` — the comparison is on the JSON string.
-    lastSavedRef.current = JSON.stringify({
+    reset({ notes: p.notes ?? "", urgent: !!p.urgent, fulfillPath: pick });
+    // SA-817 A6: the draft's own submit key is the order's key (a resubmit after a reload replays it). A draft without one keeps
+    // the key this session minted, and the next autosave writes it into the draft.
+    const savedKey = readDraftSubmitKey(p);
+    if (savedKey) submitKey.adopt(savedKey);
+    // SA-817 A5: today's prices are read once the customer's price read lands (see the effect below).
+    repriceAfterResumeRef.current = true;
+    setRepriceTick((t) => t + 1);
+    return {
       customer: p.customer ?? null,
       lineItems: Array.isArray(p.lineItems) ? p.lineItems : [],
       orderDiscount: p.orderDiscount ?? "",
@@ -1492,29 +1505,91 @@ export function CreateOrderModal({
       urgent: !!p.urgent,
       floorAcked: p.floorAcked ?? [],
       commissionRatePct: p.commissionRatePct ?? null,
-      fulfillPath: staffFulfilment.pickForm(p.fulfillPath),
-    });
+      fulfillPath: pick,
+      _submitKey: savedKey ?? submitKey.peek(),
+    } as unknown as DraftPayload;
+  };
+
+  // Hydrate the builder from a resumed draft (once per open).
+  React.useEffect(() => {
+    if (!isOpen || !resumeDraftId || !loadedDraft) return;
+    if (hydratedRef.current === loadedDraft.id) return;
+    hydratedRef.current = loadedDraft.id;
+    const normalized = hydrateFromPayload(
+      (loadedDraft.payload ?? {}) as unknown as DraftPayloadWithFulfillPath,
+    );
+    setActiveDraftId(loadedDraft.id);
+    autosave.hydrateFromServer(loadedDraft, normalized);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, resumeDraftId, loadedDraft]);
 
-  // Autosave per change while bound to a draft (debounced so keystrokes stay cheap
-  // and survive navigation / device loss). Skips when nothing changed.
+  // The bound server draft (created by autosave on the first parkable change) is the modal's active draft.
   React.useEffect(() => {
-    if (!isOpen || !activeDraftId) return;
-    if (draftPayloadJson === lastSavedRef.current) return;
-    const t = setTimeout(() => {
-      updateDraft.mutate(
-        { id: activeDraftId, ...buildDraftDto(draftPayload) },
-        {
-          onSuccess: () => {
-            lastSavedRef.current = draftPayloadJson;
-          },
-        },
+    if (autosave.draftId) setActiveDraftId(autosave.draftId);
+  }, [autosave.draftId]);
+
+  // SA-817 A3: "Resume your unsent order?" - a local copy the server lacks (or is behind on) is offered on a FRESH open.
+  const unsent = useUnsentOrderResume({
+    active: isOpen && !resumeDraftId,
+    mirror: autosave.mirror,
+  });
+  const resumeLocalCopy = (record: LocalDraftRecord) => {
+    const normalized = hydrateFromPayload(record.payload as unknown as DraftPayloadWithFulfillPath);
+    autosave.hydrateFromLocal(record, normalized);
+    if (record.serverDraftId) setActiveDraftId(record.serverDraftId);
+    unsent.dismiss();
+  };
+
+  // SA-817 A5: re-price a resumed order for display from the customer's current prices (the read the modal already makes:
+  // the price layer when units_prices_v2 is on, else the customer's tier rows). Overrides survive as typed; the server prices
+  // again at submit, so what is shown is what is billed.
+  const [conflictBusy, setConflictBusy] = React.useState(false);
+  const resumePricesReady = priceLayer.ready && customerPricesData !== undefined;
+  React.useEffect(() => {
+    if (!repriceAfterResumeRef.current || !selectedCustomer || lineItems.length === 0) return;
+    if (!resumePricesReady) return;
+    repriceAfterResumeRef.current = false;
+    setLineItems((prev) => {
+      const r = repriceResumedLines(
+        prev,
+        (productId) => cpMap.get(productId) ?? selectedCustomer.pricingTier ?? 1,
+        priceLayer.enabled ? (productId) => priceLayer.layerOf(productId) : undefined,
       );
-    }, 900);
-    return () => clearTimeout(t);
+      return r.changed ? r.lines : prev;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, activeDraftId, draftPayloadJson]);
+  }, [resumePricesReady, selectedCustomer?.id, lineItems.length, repriceTick]);
+
+  // SA-817 A4: another device changed the draft after our last sync. Keep BOTH; the choice only picks which one is shown.
+  const settleConflict = async (choice: "keep-mine" | "open-other") => {
+    setConflictBusy(true);
+    try {
+      const res = await autosave.resolveConflict(choice);
+      if (res.choice === "keep-mine") {
+        const key = readDraftSubmitKey(res.payload);
+        if (key) submitKey.adopt(key);
+        setActiveDraftId(res.draftId);
+        toast({
+          title: "Kept your version. The other one is still in your drafts.",
+          variant: "success",
+        });
+      } else {
+        const normalized = hydrateFromPayload(
+          res.current.payload as unknown as DraftPayloadWithFulfillPath,
+        );
+        setActiveDraftId(res.current.id);
+        autosave.hydrateFromServer(res.current, normalized);
+        toast({
+          title: "Opened the other version. Yours is saved in your drafts.",
+          variant: "success",
+        });
+      }
+    } catch {
+      toast({ title: "Couldn't settle the two versions. Try again.", variant: "error" });
+    } finally {
+      setConflictBusy(false);
+    }
+  };
 
   // Scan-to-draft / scan-to-new: add the incoming barcode once the builder is
   // ready — a fresh open adds immediately; a resumed draft waits until it has
@@ -1702,7 +1777,10 @@ export function CreateOrderModal({
             toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
           }
           // The parked draft has become a real order — clear it from the dock.
-          if (activeDraftId) deleteDraft.mutate(activeDraftId);
+          // SA-817: the order exists - stop autosave, drop the local copy, delete the bound server draft (once a create in flight lands).
+          void autosave.finish().then((boundId) => {
+            if (boundId) deleteDraft.mutate(boundId);
+          });
           setMergePrompt(null);
           pendingFormValuesRef.current = null;
           pendingAsDraftRef.current = false;
@@ -1897,13 +1975,20 @@ export function CreateOrderModal({
       onRemove={() => removeLineItem(li.tempId)}
       pendingUnit={pendingUnitOf(li)}
       unitSlot={
-        <OrderLineUnitPicker
-          line={{ ...li, layerManual: isLayerManualLine(li, priceLayer.layerOf(li.productId)) }}
-          tier={tierForProduct(li.productId)}
-          layer={priceLayer.layerOf(li.productId)}
-          startOnDefaultUnit={li.startOnDefaultUnit}
-          onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
-        />
+        <>
+          <OrderLineUnitPicker
+            line={{ ...li, layerManual: isLayerManualLine(li, priceLayer.layerOf(li.productId)) }}
+            tier={tierForProduct(li.productId)}
+            layer={priceLayer.layerOf(li.productId)}
+            startOnDefaultUnit={li.startOnDefaultUnit}
+            onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
+          />
+          {li.priceChangedFrom != null && li.priceChangedFrom !== li.unitPrice && (
+            <p data-testid="price-changed-note" className="mt-1 text-xs font-medium text-amber-700">
+              {priceChangedCopy(li.priceChangedFrom, li.unitPrice)}
+            </p>
+          )}
+        </>
       }
     />
   );
@@ -2956,6 +3041,19 @@ export function CreateOrderModal({
         />
       )}
       {editingLine && renderPriceEditor(editingLine, () => setEditingLineId(null))}
+      {/* SA-817 A3: a local copy the server lacks is offered on a fresh open. */}
+      <ResumeUnsentOrderDialog
+        candidates={unsent.candidates}
+        onResume={resumeLocalCopy}
+        onDismiss={unsent.dismiss}
+        onDiscard={unsent.discard}
+      />
+      {/* SA-817 A4: the draft changed on another device after our last sync. */}
+      <DraftConflictDialog
+        open={!!autosave.conflict}
+        busy={conflictBusy}
+        onChoose={(choice) => void settleConflict(choice)}
+      />
     </Modal>
   );
 

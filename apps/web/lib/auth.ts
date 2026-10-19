@@ -19,6 +19,8 @@ export interface AuthUser {
   isAdmin?: boolean;
   canActAsDriver?: boolean;
   tenantSlug?: string | null;
+  /** From the JWT (`tenantId`): the tenant segment of the local order-draft mirror key (SA-817). */
+  tenantId?: string | null;
 }
 
 export interface AuthResponse {
@@ -60,6 +62,7 @@ export function getStoredUser(): AuthUser | null {
     isAdmin: (payload.isAdmin as boolean) ?? false,
     canActAsDriver: (payload.canActAsDriver as boolean) ?? false,
     tenantSlug: (payload.tenantSlug as string) ?? (imp && !imp.expired ? imp.slug : null),
+    tenantId: (payload.tenantId as string | null | undefined) ?? null,
   };
 }
 
