@@ -1536,9 +1536,12 @@ export function CreateOrderModal({
   }, [autosave.draftId]);
 
   // SA-817 A3: "Resume your unsent order?" - a local copy the server lacks (or is behind on) is offered on a FRESH open.
+  // A docked draft (resumeDraftId) is also checked: a local copy bound to THAT draft that is newer than the server's is offered, so
+  // opening the draft from the dock never orphans work that only reached this device.
   const unsent = useUnsentOrderResume({
-    active: isOpen && !resumeDraftId,
+    active: isOpen,
     mirror: autosave.mirror,
+    onlyFor: resumeDraftId ?? null,
   });
   const resumeLocalCopy = (record: LocalDraftRecord) => {
     const normalized = hydrateFromPayload(record.payload as unknown as DraftPayloadWithFulfillPath);
@@ -1799,103 +1802,107 @@ export function CreateOrderModal({
     const attemptKey = submitKey.begin(JSON.stringify(cartForKey));
     if (attemptKey === null) return false;
     lastSubmitRef.current = { data, options };
-    createOrder.mutate(
-      { ...payload, idempotencyKey: attemptKey },
-      {
-        onSuccess: (created: any) => {
-          submitKey.settle("success");
-          if (posMode && !asDraft && created?.id) {
-            // A merge returns the target order; its status (else the prompt's) says if it is still a DRAFT.
-            finishPosOrder(
-              created,
-              posFinishRef.current,
-              onViewOrder,
-              mergeChoice === "merge" ? { fromStatus: mergePrompt?.status } : undefined,
-            );
-          } else {
-            toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
-          }
-          // The parked draft has become a real order — clear it from the dock.
-          // SA-817: the order exists - stop autosave, drop the local copy, delete the bound server draft (once a create in flight lands).
-          void autosave.finish().then((boundId) => {
-            if (boundId) deleteDraft.mutate(boundId);
-          });
-          setMergePrompt(null);
-          pendingFormValuesRef.current = null;
-          pendingAsDraftRef.current = false;
-          returnSave.onSuccess();
-          onClose();
-          // B1201: a lost-response replay of a create whose credits were never applied (read-only hint).
-          if (created?.creditsPending && created?.id) {
-            toast({ title: CREDITS_PENDING_COPY, variant: "warning" });
-            onViewOrder?.(created.id);
-          }
-        },
-        onError: (err: any) => {
-          // SA-715: the key already made an order: open it, never resubmit. Checked FIRST so no
-          // key-conflict code can fall through to the refused / re-mint branch.
-          const pendingOrderId = creditsPendingOrderId(err); // B1201: saved, credits not applied
-          const heldOrderId = idempotencyConflictOrderId(err) ?? pendingOrderId;
-          submitKey.settle(
-            heldOrderId
-              ? "conflict"
-              : isUnknownOutcome(err)
-                ? "unknown"
-                : isSameAttemptRefusal(err)
-                  ? "same-attempt"
-                  : "refused",
-          );
-          if (heldOrderId) {
-            toast(
-              pendingOrderId
-                ? { title: CREDITS_PENDING_COPY, variant: "warning" }
-                : {
-                    title: "Your earlier submit went through. Opening that order.",
-                    variant: "success",
-                  },
-            );
-            // The order EXISTS: the bound draft is finished with (no zombie draft left to resubmit).
+    // SA-817 A6: the key is DURABLE before it is sent - the local copy (with `_submitKey`) is written and the server copy saved
+    // (short budget, never gating the order) before the POST, so a lost response followed by a reload can replay the same key.
+    void autosave.durableBeforeSubmit().then(() =>
+      createOrder.mutate(
+        { ...payload, idempotencyKey: attemptKey },
+        {
+          onSuccess: (created: any) => {
+            submitKey.settle("success");
+            if (posMode && !asDraft && created?.id) {
+              // A merge returns the target order; its status (else the prompt's) says if it is still a DRAFT.
+              finishPosOrder(
+                created,
+                posFinishRef.current,
+                onViewOrder,
+                mergeChoice === "merge" ? { fromStatus: mergePrompt?.status } : undefined,
+              );
+            } else {
+              toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
+            }
+            // The parked draft has become a real order — clear it from the dock.
+            // SA-817: the order exists - stop autosave, drop the local copy, delete the bound server draft (once a create in flight lands).
             void autosave.finish().then((boundId) => {
               if (boundId) deleteDraft.mutate(boundId);
             });
+            setMergePrompt(null);
+            pendingFormValuesRef.current = null;
+            pendingAsDraftRef.current = false;
+            returnSave.onSuccess();
             onClose();
-            onViewOrder?.(heldOrderId);
-            return;
-          }
-          // Belt-and-braces: if our pre-check missed an active order (race) the API
-          // returns 409 with code MERGE_CHOICE_REQUIRED. Surface the modal from that.
-          const body = err?.response?.data;
-          if (
-            err?.response?.status === 409 &&
-            body?.code === API_ERROR_CODES.MERGE_CHOICE_REQUIRED &&
-            body?.activeOrder
-          ) {
-            pendingFormValuesRef.current = data;
-            pendingAsDraftRef.current = !!asDraft;
-            setMergePrompt(body.activeOrder as ActiveOrderSummary);
-            return;
-          }
-          const restricted = parseSellingRestricted(err);
-          if (restricted) {
-            setRestrictedBlock(restricted);
-            return;
-          }
-          // A regulated line needs a verified license (or a §8 override / removal).
-          const blocked = parseRegulatedAuthError(err);
-          if (blocked && blocked.length > 0) {
-            licenseRetryRef.current = { data, options };
-            setLicenseBlock(blocked);
-            return;
-          }
-          // #2406: none of the precondition flows above matched (each re-submits the SAME
-          // attempt and must keep the returnKey) — an inline-return-carrying save refused
-          // for any other 4xx reason mints a fresh one and surfaces the message near the
-          // Returns section. The modal itself stays open (no onClose() on this path already).
-          if (inlineReturn) returnSave.onError(err, false);
+            // B1201: a lost-response replay of a create whose credits were never applied (read-only hint).
+            if (created?.creditsPending && created?.id) {
+              toast({ title: CREDITS_PENDING_COPY, variant: "warning" });
+              onViewOrder?.(created.id);
+            }
+          },
+          onError: (err: any) => {
+            // SA-715: the key already made an order: open it, never resubmit. Checked FIRST so no
+            // key-conflict code can fall through to the refused / re-mint branch.
+            const pendingOrderId = creditsPendingOrderId(err); // B1201: saved, credits not applied
+            const heldOrderId = idempotencyConflictOrderId(err) ?? pendingOrderId;
+            submitKey.settle(
+              heldOrderId
+                ? "conflict"
+                : isUnknownOutcome(err)
+                  ? "unknown"
+                  : isSameAttemptRefusal(err)
+                    ? "same-attempt"
+                    : "refused",
+            );
+            if (heldOrderId) {
+              toast(
+                pendingOrderId
+                  ? { title: CREDITS_PENDING_COPY, variant: "warning" }
+                  : {
+                      title: "Your earlier submit went through. Opening that order.",
+                      variant: "success",
+                    },
+              );
+              // The order EXISTS: the bound draft is finished with (no zombie draft left to resubmit).
+              void autosave.finish().then((boundId) => {
+                if (boundId) deleteDraft.mutate(boundId);
+              });
+              onClose();
+              onViewOrder?.(heldOrderId);
+              return;
+            }
+            // Belt-and-braces: if our pre-check missed an active order (race) the API
+            // returns 409 with code MERGE_CHOICE_REQUIRED. Surface the modal from that.
+            const body = err?.response?.data;
+            if (
+              err?.response?.status === 409 &&
+              body?.code === API_ERROR_CODES.MERGE_CHOICE_REQUIRED &&
+              body?.activeOrder
+            ) {
+              pendingFormValuesRef.current = data;
+              pendingAsDraftRef.current = !!asDraft;
+              setMergePrompt(body.activeOrder as ActiveOrderSummary);
+              return;
+            }
+            const restricted = parseSellingRestricted(err);
+            if (restricted) {
+              setRestrictedBlock(restricted);
+              return;
+            }
+            // A regulated line needs a verified license (or a §8 override / removal).
+            const blocked = parseRegulatedAuthError(err);
+            if (blocked && blocked.length > 0) {
+              licenseRetryRef.current = { data, options };
+              setLicenseBlock(blocked);
+              return;
+            }
+            // #2406: none of the precondition flows above matched (each re-submits the SAME
+            // attempt and must keep the returnKey) — an inline-return-carrying save refused
+            // for any other 4xx reason mints a fresh one and surfaces the message near the
+            // Returns section. The modal itself stays open (no onClose() on this path already).
+            if (inlineReturn) returnSave.onError(err, false);
+          },
+          // SA-817a: a replay triggered by a draft conflict is over, whatever its outcome.
+          onSettled: () => setReplay((r) => (r === "running" ? "done" : r)),
         },
-        // SA-817a: a replay triggered by a draft conflict is over, whatever its outcome.
-        onSettled: () => setReplay((r) => (r === "running" ? "done" : r)),
-      },
+      ),
     );
     return true;
   };

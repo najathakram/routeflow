@@ -32,7 +32,6 @@ import { mintSubmitKey } from "./use-create-order-submit-key";
 export interface OrderDraftIdentity {
   id?: string | null;
   tenantId?: string | null;
-  tenantSlug?: string | null;
 }
 
 type Mutate<I, O> = (input: I) => Promise<O>;
@@ -59,6 +58,9 @@ export interface UseOrderDraftAutosaveArgs {
     DraftRowResult | undefined | void
   >;
 }
+
+/** How long a submit waits for the server copy of the draft before sending anyway. */
+export const SUBMIT_FLUSH_BUDGET_MS = 1500;
 
 /** 409 DRAFT_CHANGED -> the server's version carried in the body; anything else -> null. */
 export function parseDraftChanged(err: unknown): ServerDraftSnapshot | null {
@@ -94,7 +96,8 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
   argsRef.current = args;
 
   const userId = user?.id ?? null;
-  const tenantId = user?.tenantId ?? user?.tenantSlug ?? null;
+  // tenantId only: the same segment the sign-out guard counts, so a copy is never hidden from one and shown to the other.
+  const tenantId = user?.tenantId ?? null;
   const mirror = React.useMemo<DraftMirror | null>(
     () =>
       tenantId && userId
@@ -106,6 +109,8 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
   const mirrorRef = React.useRef(mirror);
   mirrorRef.current = mirror;
   const localIdRef = React.useRef<string>(mintSubmitKey());
+  // A hydrate binds an existing draft without re-keying the local copy it came from.
+  const keepLocalIdRef = React.useRef(false);
   const [draftId, setDraftId] = React.useState<string | null>(null);
   const [conflict, setConflict] = React.useState<DraftConflict | null>(null);
   const [version, setVersion] = React.useState(0);
@@ -128,7 +133,19 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
         // The local copy already holds the state and the next change (or the browser coming back online) retries.
       },
     });
-    engine.onDraftIdChange(setDraftId);
+    engine.onDraftIdChange((id) => {
+      setDraftId(id);
+      // Once a server draft is bound the local copy is keyed by ITS id, so a docked-draft resume finds the newer local copy.
+      if (id && !keepLocalIdRef.current && localIdRef.current !== id) {
+        const old = localIdRef.current;
+        localIdRef.current = id;
+        // the new key's first write is queued right after the bind (same tick): drop the old key once it has landed
+        queueMicrotask(() => {
+          const m = mirrorRef.current;
+          if (m) void m.flush().then(() => m.remove(old));
+        });
+      }
+    });
     return engine;
   }, []);
 
@@ -181,16 +198,22 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
 
   /** Bind to the server draft the builder was just filled from. `normalized` is the payload exactly as the builder re-serializes it. */
   const hydrateFromServer = React.useCallback(
-    (draft: { id: string; updatedAt: string }, normalized: DraftPayload) => {
+    (draft: { id: string; updatedAt: string; payload?: unknown }, normalized: DraftPayload) => {
       localIdRef.current = draft.id;
+      // A draft that predates the submit key (or never had one written) does NOT yet hold the key the builder is about to use:
+      // the server holds its payload as stored, the first save PATCHes the key in, and the local copy survives until then.
+      const serverHasKey =
+        readDraftSubmitKey(draft.payload) !== null || draft.payload === undefined;
+      keepLocalIdRef.current = true;
       engineRef.current?.hydrate({
         draftId: draft.id,
         updatedAt: draft.updatedAt,
-        syncedHash: payloadHash(normalized),
+        syncedHash: serverHasKey ? payloadHash(normalized) : payloadHash(draft.payload),
         payload: normalized,
         meta: draftMetaOf(normalized as { customer?: { id: string; businessName: string } | null }),
-        inSync: true,
+        inSync: serverHasKey,
       });
+      keepLocalIdRef.current = false;
     },
     [],
   );
@@ -199,6 +222,7 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
   const hydrateFromLocal = React.useCallback(
     (record: LocalDraftRecord, normalized: DraftPayload) => {
       localIdRef.current = record.localId;
+      keepLocalIdRef.current = true;
       engineRef.current?.hydrate({
         draftId: record.serverDraftId,
         updatedAt: record.serverUpdatedAt,
@@ -207,6 +231,7 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
         meta: draftMetaOf(normalized as { customer?: { id: string; businessName: string } | null }),
         inSync: false,
       });
+      keepLocalIdRef.current = false;
     },
     [],
   );
@@ -219,6 +244,22 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
       return false;
     }
   }, []);
+
+  /**
+   * Before a submit POST: the local copy (with the submit key) is written, and the server copy is saved within a short budget, so
+   * the key is durable before it is sent. Never gates the order: a failed or slow draft write is ignored.
+   */
+  const durableBeforeSubmit = React.useCallback(async (): Promise<void> => {
+    try {
+      await mirrorRef.current?.flush();
+    } catch {
+      /* the order must still go */
+    }
+    await Promise.race([
+      flush({ force: true }),
+      new Promise<void>((resolve) => setTimeout(resolve, SUBMIT_FLUSH_BUDGET_MS)),
+    ]);
+  }, [flush]);
 
   /**
    * The order exists (or the draft was discarded on purpose): stop writing and drop the local copy. Resolves with the bound
@@ -236,7 +277,6 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
     async (choice: ConflictChoice, opts?: { keepKey?: boolean }): Promise<ConflictResolution> => {
       const resolution = await engineRef.current!.resolveConflict(choice, opts);
       setConflict(null);
-      if (resolution.choice === "open-other") void mirror?.remove(localIdRef.current);
       return resolution;
     },
     [mirror],
@@ -249,6 +289,7 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
     mirror,
     localId: () => localIdRef.current,
     flush,
+    durableBeforeSubmit,
     finish,
     hydrateFromServer,
     hydrateFromLocal,

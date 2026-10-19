@@ -19,8 +19,10 @@ export function useUnsentOrderResume(opts: {
   /** The modal is open on a FRESH order (not resuming a docked draft). */
   active: boolean;
   mirror: DraftMirror | null;
+  /** Resuming a docked server draft: offer only the local copy bound to THAT draft (null = a fresh open: offer any). */
+  onlyFor?: string | null;
 }) {
-  const { active, mirror } = opts;
+  const { active, mirror, onlyFor = null } = opts;
   const [candidates, setCandidates] = React.useState<ResumeCandidate[]>([]);
 
   React.useEffect(() => {
@@ -42,7 +44,12 @@ export function useUnsentOrderResume(opts: {
         }
         const scan = findResumable(records, server);
         for (const gone of scan.obsolete) void mirror.remove(gone.localId);
-        if (!cancelled) setCandidates(scan.resumable);
+        const offered = onlyFor
+          ? scan.resumable.filter(
+              (c) => c.record.serverDraftId === onlyFor || c.record.localId === onlyFor,
+            )
+          : scan.resumable;
+        if (!cancelled) setCandidates(offered);
       } catch {
         // an unreadable local store offers nothing and breaks nothing
       }
@@ -50,7 +57,7 @@ export function useUnsentOrderResume(opts: {
     return () => {
       cancelled = true;
     };
-  }, [active, mirror]);
+  }, [active, mirror, onlyFor]);
 
   return {
     candidates,
