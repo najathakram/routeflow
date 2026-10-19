@@ -22,7 +22,6 @@ import {
 import type { IntakeSectionKey } from "@prisma/client";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { IsTenantTimeZone } from "../../common/is-tenant-time-zone.validator";
-import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /**
  * One class-validator DTO per IntakeSectionKey (#2159 S2) — playbook Appendix A, sections B–H.
@@ -101,7 +100,8 @@ class LicenceDto {
 }
 
 export class IntakeTaxComplianceDto {
-  @IsOptionalNotNull()
+  // No in-repo caller; an external form may send a blank as null — null = absent (stored as null, never 0).
+  @IsOptional()
   @IsNumber({ maxDecimalPlaces: 4 })
   @Min(0)
   @Max(30)
@@ -134,7 +134,8 @@ export class IntakeInvoicingDto {
   @IsOptional() @IsString() @MaxLength(S) paymentTermsOther?: string;
   @IsOptional() @IsString() @MaxLength(L) invoiceFooterText?: string;
   @IsBoolean() takesDeposits!: boolean;
-  @IsOptionalNotNull() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(100) depositPercent?: number;
+  // Null = absent (see salesTaxRatePercent above).
+  @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(100) depositPercent?: number;
   @IsArray()
   @ArrayMaxSize(6)
   @IsIn(["cash", "check", "ach", "card", "zelle", "other"], { each: true })
