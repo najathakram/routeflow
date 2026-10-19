@@ -16,6 +16,10 @@ import { writeLineUpdate } from "./order-line-removal";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import type { OrdersService } from "./orders.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import {
+  REGULATED_PARENT_INCLUDE,
+  withEffectiveAll,
+} from "../products/effective-product-attributes";
 
 /**
  * units_v1 (A1) — everything `updateOrderItems` needs to touch a unit-aware line, kept out of
@@ -87,8 +91,15 @@ export async function prepareUnitEditContext(
     ]),
   ].filter((v): v is string => !!v);
   const db = self.prisma.forTenant();
+  // B2: the rows carry the EFFECTIVE regulated columns (the product's, widened by its family's).
   const products = productIds.length
-    ? await db.product.findMany({ where: { id: { in: productIds } } })
+    ? withEffectiveAll(
+        await db.product.findMany({
+          where: { id: { in: productIds } },
+          include: REGULATED_PARENT_INCLUDE,
+        }),
+        self.prisma.getTenantId(),
+      )
     : [];
   return {
     products: new Map(products.map((p: any) => [p.id, p])),

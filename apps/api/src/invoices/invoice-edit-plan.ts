@@ -32,6 +32,10 @@
 
 import { BadRequestException } from "@nestjs/common";
 import { assertSellableLines } from "../products/sellable-lines";
+import {
+  REGULATED_PARENT_SELECT_FIELDS,
+  withEffectiveAll,
+} from "../products/effective-product-attributes";
 import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware, prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
@@ -595,23 +599,28 @@ export async function loadEditCatalog(
   const productIds = [...new Set(items.filter((i) => i.productId).map((i) => i.productId!))];
   const products: any[] =
     productIds.length > 0
-      ? await db.product.findMany({
-          where: { id: { in: productIds } },
-          select: {
-            id: true,
-            name: true,
-            kind: true,
-            unit: true,
-            unitsPerBox: true,
-            pricePerUnit: true,
-            priceTier2: true,
-            priceTier3: true,
-            priceTier4: true,
-            priceTier5: true,
-            trackedCategoryId: true,
-            trackedSubcategoryId: true,
-          },
-        })
+      ? // B2: the regulated columns are the EFFECTIVE ones (the product's, widened by its family's)
+        withEffectiveAll(
+          await db.product.findMany({
+            where: { id: { in: productIds } },
+            select: {
+              id: true,
+              name: true,
+              kind: true,
+              unit: true,
+              unitsPerBox: true,
+              pricePerUnit: true,
+              priceTier2: true,
+              priceTier3: true,
+              priceTier4: true,
+              priceTier5: true,
+              trackedCategoryId: true,
+              trackedSubcategoryId: true,
+              ...REGULATED_PARENT_SELECT_FIELDS,
+            },
+          }),
+          units?.prisma.getTenantId(),
+        )
       : [];
   assertSellableLines(products); // WS8: PATCH /invoices/:id can never put a FAMILY on a line
   const catIds = [...new Set(products.map((p) => p.trackedCategoryId).filter(Boolean))] as string[];

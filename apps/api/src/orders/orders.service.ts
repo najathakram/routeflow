@@ -10,8 +10,13 @@ import {
   Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
-import { assertBuyerLines, portalGateArgs } from "../buyer/buyer-product-visibility";
+import { assertBuyerLines, loadPortalGateProducts } from "../buyer/buyer-product-visibility";
 import { assertSellableLines } from "../products/sellable-lines";
+import {
+  REGULATED_PARENT_INCLUDE,
+  withEffectiveAll,
+  withEffectiveAttributes,
+} from "../products/effective-product-attributes";
 import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
 import { withAfterCommit } from "../common/after-commit";
@@ -350,7 +355,8 @@ export class OrdersService implements OnApplicationBootstrap {
 
   /** B297 row 340: the trio a new sale of each product takes today (a fold's `foldTarget` input). */
   liveTrioByProduct(productIds: string[]) {
-    return loadLiveTrioByProduct(this.prisma.forTenant() as any, productIds);
+    const db = this.prisma.forTenant() as any;
+    return loadLiveTrioByProduct(db, productIds, this.prisma.getTenantId());
   }
 
   /**
@@ -1593,7 +1599,11 @@ export class OrdersService implements OnApplicationBootstrap {
     const catalogIds = items.map((i) => i.productId).filter(Boolean) as string[];
     const products =
       catalogIds.length > 0
-        ? await this.prisma.forTenant().product.findMany(portalGateArgs(catalogIds))
+        ? await loadPortalGateProducts(
+            this.prisma.forTenant(),
+            this.prisma.getTenantId(),
+            catalogIds,
+          )
         : [];
     assertBuyerLines(user, products, { skip: options.allowArchived }); // buyer 409 before the staff FAMILY 400
 
@@ -2949,19 +2959,9 @@ export class OrdersService implements OnApplicationBootstrap {
     // the incoming products — the same snapshot the created/substituted lines now
     // persist below. orderId is passed so ORDER-scoped §8 overrides apply.
     if (order.status !== "DRAFT") {
-      const pids = (dto.items ?? []).map((i) => i.productId).filter(Boolean) as string[];
-      const products = pids.length
-        ? await this.prisma.forTenant().product.findMany({
-            where: { id: { in: pids } },
-            select: { id: true, trackedCategoryId: true },
-          })
-        : [];
-      const catByProduct = new Map(products.map((p) => [p.id, p.trackedCategoryId]));
       await this.authGuard.assertAuthorizedOrThrow({
         customerId: order.customerId,
-        lines: (dto.items ?? []).map((i) => ({
-          trackedCategoryId: i.productId ? (catByProduct.get(i.productId) ?? null) : null,
-        })),
+        lines: (dto.items ?? []).map((i) => ({ trackedCategoryId: null, productId: i.productId })),
         orderId,
       });
     }
@@ -3089,7 +3089,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
           // Customers send items as { productId, qty } — replace all line items
           const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
-          const products = await tx.product.findMany(portalGateArgs(productIds));
+          const products = await loadPortalGateProducts(tx, this.prisma.getTenantId(), productIds);
           assertBuyerLines(user, products, { held: heldItems }); // the LOCKED held lines (n1)
           const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
           assertSellableLines(products); // WS8
@@ -3376,7 +3376,13 @@ export class OrdersService implements OnApplicationBootstrap {
             // line is refused NO_REDUCE even when nothing changed. Replace-all: the client sends the full list;
             // delete then re-create, honoring per-line price overrides and boxes/pieces splits (BOX proration).
             const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
-            const products = await tx.product.findMany({ where: { id: { in: productIds } } });
+            const products = withEffectiveAll(
+              await tx.product.findMany({
+                where: { id: { in: productIds } },
+                include: REGULATED_PARENT_INCLUDE,
+              }),
+              this.prisma.getTenantId(),
+            ); // B2: effective regulated columns
             const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
             assertSellableLines(products); // WS8
             // B297 (SA-098a): a superset of `uctx.categoryMap` (unit-aware products only) —
@@ -3508,7 +3514,7 @@ export class OrdersService implements OnApplicationBootstrap {
             ];
             const addProducts =
               addProductIds.length > 0
-                ? await tx.product.findMany(portalGateArgs(addProductIds))
+                ? await loadPortalGateProducts(tx, this.prisma.getTenantId(), addProductIds)
                 : [];
             assertBuyerLines(user, addProducts);
             const addProductMap = new Map<string, any>(addProducts.map((p: any) => [p.id, p]));
@@ -3701,9 +3707,13 @@ export class OrdersService implements OnApplicationBootstrap {
               } else if (item.action === "CANCEL") {
                 await writeLineRemoval(tx, orderId, item.id, "strike-off");
               } else if (item.substituteProductId) {
-                const product = await tx.product.findUniqueOrThrow({
-                  where: { id: item.substituteProductId },
-                });
+                const product = withEffectiveAttributes(
+                  await tx.product.findUniqueOrThrow({
+                    where: { id: item.substituteProductId },
+                    include: REGULATED_PARENT_INCLUDE,
+                  }),
+                  this.prisma.getTenantId(),
+                );
                 assertSellableLines([product]); // WS8: a FAMILY is never a substitute line
                 const unitRow = unitRows.get(item);
                 if (unitRow && unitLines.isUnitAware(unitRow)) {
@@ -4646,12 +4656,12 @@ export class OrdersService implements OnApplicationBootstrap {
     if (cr.type === ChangeRequestType.ADD_ITEM) {
       const prod = await this.prisma.forTenant().product.findFirst({
         where: { id: (cr.productId ?? payload.productId) as string },
-        select: { id: true, trackedCategoryId: true },
+        select: { id: true },
       });
       if (!prod) throw new BadRequestException("Product no longer exists");
       await this.authGuard.assertAuthorizedOrThrow({
         customerId: order.customerId,
-        lines: [{ trackedCategoryId: prod.trackedCategoryId ?? null }],
+        lines: [{ trackedCategoryId: null, productId: prod.id }],
         orderId: order.id,
       });
     }
@@ -4918,10 +4928,12 @@ export class OrdersService implements OnApplicationBootstrap {
             };
           }
         } else if (cr.type === ChangeRequestType.ADD_ITEM) {
-          const product = await tx.product.findUnique({
+          const loaded = await tx.product.findUnique({
             where: { id: (cr.productId ?? payload.productId) as string },
+            include: REGULATED_PARENT_INCLUDE,
           });
-          if (!product) throw new BadRequestException("Product no longer exists");
+          if (!loaded) throw new BadRequestException("Product no longer exists");
+          const product = withEffectiveAttributes(loaded, this.prisma.getTenantId()); // B2
           assertSellableLines([product]); // WS8: a door ADD_ITEM never lands a FAMILY line
           // B297 (SA-098a): only reached below when this is a genuinely NEW line —
           // an existing-line quantity bump preserves its stored trio untouched.

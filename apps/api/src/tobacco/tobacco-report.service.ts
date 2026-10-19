@@ -11,6 +11,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { TobaccoReportPdf } from "./tobacco-report-pdf";
 import type { TobaccoReportRow, TobaccoReportTotals } from "./tobacco-report.types";
 import { csvCell } from "../common/csv";
+import { tobaccoProductWhere } from "../products/effective-product-attributes";
 
 const REAL_INVOICE_STATUSES = { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] as any };
 
@@ -24,6 +25,11 @@ export class TobaccoReportService {
     private readonly audit: AuditService,
     private readonly tenantCtx: TenantContextService,
   ) {}
+
+  /** B2: "tobacco" is the EFFECTIVE flag (the product's or its family's), so a variant of a tobacco family counts. */
+  private tobacco() {
+    return tobaccoProductWhere(this.prisma.getTenantId());
+  }
 
   async listReports() {
     return this.prisma.forTenant().tobaccoReport.findMany({
@@ -142,7 +148,7 @@ export class TobaccoReportService {
   ): Promise<{ rows: TobaccoReportRow[]; totals: TobaccoReportTotals }> {
     const [products, purchases, sales, afterMovements] = await Promise.all([
       this.prisma.forTenant().product.findMany({
-        where: { isTobacco: true },
+        where: this.tobacco(),
         orderBy: { name: "asc" },
         select: {
           id: true,
@@ -158,13 +164,13 @@ export class TobaccoReportService {
           type: "PURCHASE",
           // B562: the accounting date — a backdated bill belongs to its own period.
           effectiveAt: { gte: periodStart, lte: periodEnd },
-          product: { isTobacco: true },
+          product: this.tobacco(),
         },
         select: { productId: true, quantity: true, unitCost: true },
       }),
       this.prisma.forTenant().invoiceItem.findMany({
         where: {
-          product: { isTobacco: true },
+          product: this.tobacco(),
           invoice: {
             issueDate: { gte: periodStart, lte: periodEnd },
             status: REAL_INVOICE_STATUSES,
@@ -175,7 +181,7 @@ export class TobaccoReportService {
       // Movements AFTER the period: ending stock = currentStock − Σ(after).
       // Works because SALE quantities are stored negative, PURCHASE positive.
       this.prisma.forTenant().stockMovement.findMany({
-        where: { effectiveAt: { gt: periodEnd }, product: { isTobacco: true } },
+        where: { effectiveAt: { gt: periodEnd }, product: this.tobacco() },
         select: { productId: true, quantity: true },
       }),
     ]);

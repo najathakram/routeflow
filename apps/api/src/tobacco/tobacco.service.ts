@@ -6,6 +6,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { TOBACCO_EXCLUDE_KEY } from "../analytics/analytics.service";
 import { TobaccoRangeDto } from "./dto/tobacco-range.dto";
 import { UpdateTobaccoSettingsDto } from "./dto/update-tobacco-settings.dto";
+import { tobaccoProductWhere } from "../products/effective-product-attributes";
 
 /** Sales that count for tobacco reporting — mirrors analytics revenue rules. */
 const REAL_INVOICE_STATUSES = { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] as any };
@@ -17,6 +18,11 @@ export class TobaccoService {
     private readonly systemConfig: SystemConfigService,
     private readonly audit: AuditService,
   ) {}
+
+  /** B2: "tobacco" is the EFFECTIVE flag (the product's or its family's), so a variant of a tobacco family counts. */
+  private tobacco() {
+    return tobaccoProductWhere(this.prisma.getTenantId());
+  }
 
   private rangeOf(dto: TobaccoRangeDto) {
     const from = dto.from ? new Date(dto.from) : new Date(new Date().getFullYear(), 0, 1);
@@ -75,7 +81,7 @@ export class TobaccoService {
 
   async getInventory() {
     const products = await this.prisma.forTenant().product.findMany({
-      where: { isTobacco: true },
+      where: this.tobacco(),
       orderBy: { name: "asc" },
       select: {
         id: true,
@@ -111,7 +117,7 @@ export class TobaccoService {
         type: "PURCHASE",
         // B562: the purchase's accounting date (a backdated bill counts in its own period).
         effectiveAt: { gte: from, lte: to },
-        product: { isTobacco: true },
+        product: this.tobacco(),
       },
       orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
       include: {
@@ -135,7 +141,7 @@ export class TobaccoService {
     const { from, to } = this.rangeOf(dto);
     const items = await this.prisma.forTenant().invoiceItem.findMany({
       where: {
-        product: { isTobacco: true },
+        product: this.tobacco(),
         invoice: { issueDate: { gte: from, lte: to }, status: REAL_INVOICE_STATUSES },
       },
       orderBy: { createdAt: "desc" },
@@ -184,13 +190,13 @@ export class TobaccoService {
           type: "PURCHASE",
           // B562: bucketed by the accounting date, not the insertion time.
           effectiveAt: { gte: from, lte: to },
-          product: { isTobacco: true },
+          product: this.tobacco(),
         },
         select: { effectiveAt: true, quantity: true, unitCost: true },
       }),
       this.prisma.forTenant().invoiceItem.findMany({
         where: {
-          product: { isTobacco: true },
+          product: this.tobacco(),
           invoice: { issueDate: { gte: from, lte: to }, status: REAL_INVOICE_STATUSES },
         },
         select: { subtotal: true, taxRate: true, invoice: { select: { issueDate: true } } },

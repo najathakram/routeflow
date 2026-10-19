@@ -555,7 +555,7 @@ export class ChangeRequestsService {
 
     const product = await this.prisma.forTenant().product.findFirst({
       where: { id: productId },
-      select: { id: true, trackedCategoryId: true },
+      select: { id: true },
     });
     if (!product) throw new BadRequestException("Product no longer exists");
     if (filedSplit) {
@@ -577,7 +577,7 @@ export class ChangeRequestsService {
     // Regulated license guard re-runs on approval (G6).
     await this.authGuard.assertAuthorizedOrThrow({
       customerId: order.customerId,
-      lines: [{ trackedCategoryId: product.trackedCategoryId ?? null }],
+      lines: [{ trackedCategoryId: null, productId: product.id }],
       orderId: order.id,
     });
 

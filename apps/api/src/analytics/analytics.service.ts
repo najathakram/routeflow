@@ -13,6 +13,12 @@ import {
   soldProductIds,
 } from "../common/invoiced-sales";
 import { AddonService } from "../billing/addon.service";
+import {
+  REGULATED_PARENT_SELECT_FIELDS,
+  effectiveOf,
+  notTobaccoProductWhere,
+  type RowWithParent,
+} from "../products/effective-product-attributes";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { ProductInsightsService } from "../sales-facts/product-insights.service";
 import type {
@@ -59,7 +65,7 @@ const TOBACCO_LINE_SELECT = {
     select: {
       subtotal: true,
       taxRate: true,
-      product: { select: { isTobacco: true } },
+      product: { select: { isTobacco: true, ...REGULATED_PARENT_SELECT_FIELDS } },
     },
   },
 } as const;
@@ -88,13 +94,18 @@ export class AnalyticsService {
     return (await this.systemConfig.get(TOBACCO_EXCLUDE_KEY)) === "true";
   }
 
+  /** B2: the "not tobacco" product filter when the exclusion is on: neither the product nor its family is tobacco. */
+  private notTobacco(excludeTobacco: boolean) {
+    return excludeTobacco ? { AND: [notTobaccoProductWhere(this.prisma.getTenantId())] } : {};
+  }
+
   /** Tobacco portion (subtotal + line tax) of an invoice's items, for subtraction. */
   private tobaccoPortion(
-    items: { subtotal: unknown; taxRate: unknown; product: { isTobacco: boolean } | null }[],
+    items: { subtotal: unknown; taxRate: unknown; product: RowWithParent | null }[],
   ): number {
     let portion = 0;
     for (const item of items) {
-      if (item.product?.isTobacco) {
+      if (item.product && effectiveOf(item.product, this.prisma.getTenantId()).isTobacco) {
         portion += Number(item.subtotal) * (1 + Number(item.taxRate));
       }
     }
@@ -425,7 +436,7 @@ export class AnalyticsService {
     const { fromDate, toDate } = this.dateRange(from, to);
     const excludeTobacco = await this.tobaccoExclusionActive();
     const products = await this.prisma.forTenant().product.findMany({
-      where: { isActive: true, ...(excludeTobacco ? { isTobacco: false } : {}) },
+      where: { isActive: true, ...this.notTobacco(excludeTobacco) },
     });
     const lines = await fetchInvoicedSaleLines(this.prisma.forTenant(), {
       from: fromDate,
@@ -473,7 +484,7 @@ export class AnalyticsService {
       where: {
         isActive: true,
         currentStock: { gt: 0 },
-        ...(excludeTobacco ? { isTobacco: false } : {}),
+        ...this.notTobacco(excludeTobacco),
       },
     });
     if (activeProducts.length === 0) return [];
@@ -549,7 +560,7 @@ export class AnalyticsService {
   async getMarginAlerts() {
     const excludeTobacco = await this.tobaccoExclusionActive();
     const products = await this.prisma.forTenant().product.findMany({
-      where: { isActive: true, ...(excludeTobacco ? { isTobacco: false } : {}) },
+      where: { isActive: true, ...this.notTobacco(excludeTobacco) },
     });
     const alerts: { id: string; name: string; price: number; cost: number; marginPct: number }[] =
       [];
@@ -652,11 +663,18 @@ export class AnalyticsService {
     const excludeTobacco = await this.tobaccoExclusionActive();
     const items = await this.prisma.forTenant().orderItem.findMany({
       where: { order: { createdAt: { gte: fromDate, lte: toDate }, status: "DELIVERED" } },
-      include: { product: { select: { category: true, isTobacco: true } } },
+      include: {
+        product: { select: { category: true, isTobacco: true, ...REGULATED_PARENT_SELECT_FIELDS } },
+      },
     });
     const map: Record<string, number> = {};
     for (const i of items) {
-      if (excludeTobacco && i.product?.isTobacco) continue;
+      if (
+        excludeTobacco &&
+        i.product &&
+        effectiveOf(i.product, this.prisma.getTenantId()).isTobacco
+      )
+        continue;
       // Unlisted lines have no product → bucket under Uncategorized.
       const cat = i.product?.category ?? "Uncategorized";
       map[cat] = (map[cat] ?? 0) + Number(i.subtotal);
@@ -692,7 +710,7 @@ export class AnalyticsService {
             qty: true,
             subtotal: true,
             taxRate: true,
-            product: { select: { isTobacco: true } },
+            product: { select: { isTobacco: true, ...REGULATED_PARENT_SELECT_FIELDS } },
           },
         },
       },
@@ -712,7 +730,9 @@ export class AnalyticsService {
         productId: (item.productId ?? null) as string | null,
         qty: Number(item.qty),
         issueDate: inv.issueDate,
-        isTobacco: item.product?.isTobacco ?? false,
+        isTobacco: item.product
+          ? effectiveOf(item.product, this.prisma.getTenantId()).isTobacco
+          : false,
       })),
     );
     const productIds = soldProductIds(cogsLines);

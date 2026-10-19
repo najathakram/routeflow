@@ -1120,16 +1120,16 @@ export class InvoicesService {
     const productIds = remainingItems.map(({ li }: any) => li.productId);
     const judged = await judgeDraftOrderSale(this, tenantId, order, productIds);
 
-    // W6b backstop: re-run the license guard at invoice time. Catches a regulated
-    // line added to the order after its create-time guard (buyer merge) or a license
-    // that EXPIRED between order creation and invoicing. Runs before any invoice row
-    // is written (inside the tx), so a block never half-creates. Category resolves
-    // from the line snapshot or, for this GUARD only, the live product (a license check reads the current state).
+    // W6b backstop: re-run the license guard at invoice time. Catches a regulated line added to the order
+    // after its create-time guard (buyer merge) or a license that EXPIRED between order creation and invoicing.
+    // Runs before any invoice row is written (inside the tx), so a block never half-creates. Category resolves
+    // from the line snapshot or, for this GUARD only, the live product's EFFECTIVE types (B2: family included).
     // orderId is passed so ORDER-scoped §8 overrides apply.
     await this.authGuard.assertAuthorizedOrThrow({
       customerId: order.customerId,
       lines: remainingItems.map(({ li }) => ({
-        trackedCategoryId: li.trackedCategoryId ?? li.product?.trackedCategoryId ?? null,
+        trackedCategoryId: li.trackedCategoryId ?? null,
+        productId: li.productId,
       })),
       orderId: order.id,
     });

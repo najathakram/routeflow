@@ -1,4 +1,5 @@
 import { hasNullTrio } from "@routeflow/pricing";
+import { loadEffectiveAttributes } from "../products/effective-product-attributes";
 
 /**
  * B297 row 340 (SA-734r2 r-note 3, MED-3): the ONE rule a fold uses to decide whether added quantity may be
@@ -50,13 +51,16 @@ export async function loadLiveTrioByProduct(
     trackedCategory: { findMany(args: unknown): Promise<any[]> };
   },
   productIds: string[],
+  tenantId?: string | null,
 ): Promise<Map<string, FoldTrio>> {
   const out = new Map<string, FoldTrio>();
   if (productIds.length === 0) return out;
-  const products = await db.product.findMany({
-    where: { id: { in: productIds } },
-    select: { id: true, trackedCategoryId: true },
-  });
+  // B2: the category a new sale takes is the EFFECTIVE one (the product's, else its family's).
+  const effective = await loadEffectiveAttributes(db, tenantId, productIds);
+  const products = [...effective].map(([id, e]) => ({
+    id,
+    trackedCategoryId: e.trackedCategoryId,
+  }));
   const catIds = [...new Set(products.map((p) => p.trackedCategoryId).filter(Boolean))] as string[];
   const cats = catIds.length
     ? await db.trackedCategory.findMany({ where: { id: { in: catIds } } })

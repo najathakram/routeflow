@@ -48,6 +48,10 @@ import {
   toBuyerView,
 } from "./buyer-template-view";
 import { assertPositiveTemplateQty } from "./template-qty";
+import {
+  REGULATED_PARENT_INCLUDE,
+  withEffectiveAttributes,
+} from "../products/effective-product-attributes";
 import { authorMarkerOf, withAuthor } from "../orders/line-author-channel";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
@@ -807,9 +811,14 @@ export class OrderTemplatesService {
     }
     if (!unattended) template = { ...template, items: live };
     const productIds = template.items.map((i) => i.productId);
-    const products = await this.prisma.forTenant().product.findMany({
-      where: { id: { in: productIds } },
-    });
+    // B2: the regulated columns are the EFFECTIVE ones (the product's, widened by its family's), so a variant
+    // of a regulated family is stamped, taxed and licence-gated like the family.
+    const products = (
+      await this.prisma.forTenant().product.findMany({
+        where: { id: { in: productIds } },
+        include: REGULATED_PARENT_INCLUDE,
+      })
+    ).map((p) => withEffectiveAttributes(p, this.prisma.getTenantId()));
     assertSellableLines(products); // WS8: a FAMILY line would become a SALE StockMovement
     const productMap = new Map(products.map((p) => [p.id, p]));
 

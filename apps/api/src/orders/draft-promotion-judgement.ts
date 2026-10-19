@@ -52,18 +52,12 @@ export async function judgeDraftPromotion(
     select: { productId: true, trackedCategoryId: true, authorChannel: true },
   });
   const pids = items.map((li) => li.productId).filter(Boolean) as string[];
-  const products = pids.length
-    ? await prisma.forTenant().product.findMany({
-        where: { id: { in: pids } },
-        select: { id: true, trackedCategoryId: true },
-      })
-    : [];
-  const catByProduct = new Map(products.map((p) => [p.id, p.trackedCategoryId]));
+  // B2: a line with no snapshot is judged by its product's EFFECTIVE types (the guard resolves them).
   await authGuard.assertAuthorizedOrThrow({
     customerId: order.customerId,
     lines: items.map((li) => ({
-      trackedCategoryId:
-        li.trackedCategoryId ?? (li.productId ? (catByProduct.get(li.productId) ?? null) : null),
+      trackedCategoryId: li.trackedCategoryId,
+      productId: li.productId,
     })),
     orderId: order.id,
   });

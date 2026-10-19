@@ -1,4 +1,8 @@
 import { CostingMethod, CreditNoteStatus, InvoiceStatus } from "@prisma/client";
+import {
+  REGULATED_PARENT_SELECT_FIELDS,
+  effectiveOf,
+} from "../products/effective-product-attributes";
 import { roundMoney } from "@routeflow/pricing";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 
@@ -144,7 +148,7 @@ export async function fetchInvoicedSaleLines(
           productId: true,
           qty: true,
           subtotal: true,
-          product: { select: { name: true, isTobacco: true } },
+          product: { select: { name: true, isTobacco: true, ...REGULATED_PARENT_SELECT_FIELDS } },
         },
       },
     },
@@ -158,7 +162,7 @@ export async function fetchInvoicedSaleLines(
         qty: Number(item.qty),
         subtotal: Number(item.subtotal),
         productName: item.product?.name ?? null,
-        isTobacco: item.product?.isTobacco ?? false,
+        isTobacco: item.product ? effectiveOf(item.product, undefined).isTobacco : false, // B2
         issueDate: inv.issueDate,
         paidAt: inv.paidAt ?? null,
       });

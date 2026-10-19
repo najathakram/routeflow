@@ -2,6 +2,10 @@ import { hiddenFromPortalRestriction } from "../selling-restrictions/selling-res
 import { ForbiddenException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import {
+  REGULATED_PARENT_SELECT,
+  withEffectiveAll,
+} from "../products/effective-product-attributes";
+import {
   isSellableProduct,
   SELLABLE_PARENT_FIELDS,
   sellableProductWhere,
@@ -183,9 +187,31 @@ export const PORTAL_PARENT_SELECT = {
 } as const;
 export const PORTAL_PARENT_INCLUDE = { parent: { select: PORTAL_PARENT_SELECT } } as const;
 
-/** `findMany` args for the products an order names: by id, WITH the parent's `portalVisible` the gate needs. */
+/**
+ * `findMany` args for the products an order names: by id, WITH the parent's `portalVisible` the gate needs, and the
+ * parent's regulated facts (B2: `withEffectiveAttributes` widens a variant's regulated columns by its family's).
+ */
 export const portalGateArgs = (ids: string[]) =>
-  ({ where: { id: { in: ids } }, include: PORTAL_PARENT_INCLUDE }) as const;
+  ({
+    where: { id: { in: ids } },
+    include: { parent: { select: { ...PORTAL_PARENT_SELECT, ...REGULATED_PARENT_SELECT } } },
+  }) as const;
+
+export type PortalGateProduct = Prisma.ProductGetPayload<ReturnType<typeof portalGateArgs>>;
+
+/**
+ * The products an order names, loaded with `portalGateArgs` and carrying their EFFECTIVE regulated columns (B2): the
+ * one loader of the order create/edit paths, so a variant of a regulated family is stamped, taxed and licence-gated
+ * like its family. `db` is `forTenant()` or a transaction client.
+ */
+export async function loadPortalGateProducts(
+  db: { product: { findMany(args: any): Promise<unknown[]> } },
+  tenantId: string | null | undefined,
+  ids: string[],
+): Promise<PortalGateProduct[]> {
+  const rows = (await db.product.findMany(portalGateArgs(ids))) as PortalGateProduct[];
+  return withEffectiveAll(rows, tenantId);
+}
 
 /**
  * The order paths' call: for a BUYER (CUSTOMER) apply `assertBuyerMayOrder` before anything else runs (so the buyer 409

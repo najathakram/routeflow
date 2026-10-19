@@ -1,6 +1,10 @@
 import { roundMoney } from "@routeflow/pricing";
 import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { assertSellableLines } from "../products/sellable-lines";
+import {
+  REGULATED_PARENT_SELECT_FIELDS,
+  withEffectiveAll,
+} from "../products/effective-product-attributes";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
 import type { EntitlementsService } from "../billing/entitlements.service";
 import { prepareUnitLadders } from "../orders/unit-line-build";
@@ -34,23 +38,28 @@ export async function loadManualLineContext(
     trackedCategoryId?: string | null;
   }> =
     productIds.length > 0
-      ? await prisma.forTenant().product.findMany({
-          where: { id: { in: productIds } },
-          select: {
-            id: true,
-            name: true,
-            kind: true,
-            unit: true,
-            unitsPerBox: true,
-            pricePerUnit: true,
-            priceTier2: true,
-            priceTier3: true,
-            priceTier4: true,
-            priceTier5: true,
-            trackedCategoryId: true,
-            trackedSubcategoryId: true,
-          },
-        })
+      ? // B2: the regulated columns are the EFFECTIVE ones (the product's, widened by its family's)
+        withEffectiveAll(
+          await prisma.forTenant().product.findMany({
+            where: { id: { in: productIds } },
+            select: {
+              id: true,
+              name: true,
+              kind: true,
+              unit: true,
+              unitsPerBox: true,
+              pricePerUnit: true,
+              priceTier2: true,
+              priceTier3: true,
+              priceTier4: true,
+              priceTier5: true,
+              trackedCategoryId: true,
+              trackedSubcategoryId: true,
+              ...REGULATED_PARENT_SELECT_FIELDS,
+            },
+          }),
+          prisma.getTenantId(),
+        )
       : [];
   const productMap = new Map<string, any>(products.map((p) => [p.id, p]));
   assertSellableLines(products); // WS8: a FAMILY is never a line

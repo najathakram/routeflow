@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuthorizationOverridesService } from "./authorization-overrides.service";
 import { scopeApplies } from "./authorization-scope";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { loadEffectiveAttributes } from "../products/effective-product-attributes";
 
 export interface BlockedCategory {
   trackedCategoryId: string;
@@ -12,7 +13,12 @@ export interface BlockedCategory {
 
 export interface AuthCheckParams {
   customerId: string;
-  lines: Array<{ trackedCategoryId: string | null }>;
+  /**
+   * `trackedCategoryId` is the category the line was SOLD under (its snapshot). A line without one that names its
+   * `productId` is judged by the product's EFFECTIVE regulated types (B2: the product and its family, fail closed:
+   * a variant of a regulated family is regulated). A line with neither is not regulated.
+   */
+  lines: Array<{ trackedCategoryId: string | null; productId?: string | null }>;
   deliveryCity?: string | null;
   orderId?: string;
 }
@@ -38,8 +44,22 @@ export class AuthorizationGuardService {
   ) {}
 
   async checkAuthorized(params: AuthCheckParams): Promise<{ blocked: BlockedCategory[] }> {
+    const unsnapshotted = params.lines.filter((l) => !l.trackedCategoryId && l.productId);
+    const effective = unsnapshotted.length
+      ? await loadEffectiveAttributes(
+          this.prisma.forTenant(),
+          this.prisma.getTenantId(),
+          unsnapshotted.map((l) => l.productId),
+        )
+      : new Map();
     const categoryIds = [
-      ...new Set(params.lines.map((l) => l.trackedCategoryId).filter(Boolean)),
+      ...new Set(
+        params.lines.flatMap((l) =>
+          l.trackedCategoryId
+            ? [l.trackedCategoryId]
+            : (effective.get(l.productId ?? "")?.trackedCategoryIds ?? []),
+        ),
+      ),
     ] as string[];
     if (categoryIds.length === 0) return { blocked: [] }; // fast path: non-regulated order
 
