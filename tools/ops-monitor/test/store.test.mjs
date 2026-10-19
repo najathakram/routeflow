@@ -975,6 +975,48 @@ test(
 );
 
 test(
+  "a kill mid-replay of dropUnpushedViews (detached HEAD) is healed by the next sync: nothing lost, nothing dropped",
+  { timeout: 600000 },
+  async () => {
+    for (const picked of [false, true]) {
+      const p = mkPair(`drop-crash-${picked}`);
+      await appendEvents([newItem("m-a", null, "First local")], {
+        dir: p.A,
+        home: p.homeA,
+        push: false,
+        afterCommit: registerHook(),
+      });
+      git(p.A, "remote", "set-url", "origin", join(tmp, "nowhere.git"));
+      await appendEvents([newItem("m-a", null, "Second local")], {
+        dir: p.A,
+        home: p.homeA,
+        push: false,
+      });
+      git(p.A, "remote", "set-url", "origin", p.remote);
+      const shas = git(p.A, "rev-list", "--reverse", "@{u}..HEAD").trim().split(/\s+/);
+      assert.equal(shas.length, 3);
+      const tip = git(p.A, "rev-parse", "HEAD").trim();
+      const branch = git(p.A, "symbolic-ref", "--short", "HEAD").trim();
+      // What the replay does up to the kill: detach below the views commit, (maybe) the first pick.
+      git(p.A, "checkout", "--quiet", "--detach", `${shas[1]}~1`);
+      if (picked) git(p.A, "-c", "commit.gpgsign=false", "cherry-pick", "--no-edit", shas[2]);
+      const r = await syncSpecs(p.A);
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(r.pushed, true);
+      assert.equal(git(p.A, "symbolic-ref", "--short", "HEAD").trim(), branch, "re-attached");
+      assert.equal(git(p.A, "rev-parse", branch).trim(), tip, "the branch was never moved");
+      const check = join(p.dir, "check");
+      git(p.dir, "clone", "--quiet", p.remote, check);
+      assert.deepEqual([...stateOf(check).items.values()].map((x) => x.title).sort(), [
+        "First local",
+        "Second local",
+      ]);
+      assert.equal(git(check, "rev-parse", "HEAD").trim(), tip, "every event commit pushed");
+    }
+  },
+);
+
+test(
   "generated mode: a sync push that loses a race leaves no views commit under the next events",
   { timeout: 900000 },
   async () => {

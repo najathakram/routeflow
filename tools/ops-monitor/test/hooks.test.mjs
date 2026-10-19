@@ -91,14 +91,15 @@ test("detect: interrupted, delete, dry-run and tag pushes are not actions", () =
 });
 
 test("detect: a TTY success line is the fast path (owner/repo#N)", () => {
+  // the success line proves the merge, but the PR's head branch still comes from gh pr view
   assert.deepEqual(detect("gh pr merge 3515 --merge", MERGED_3515), [
-    { kind: "pr", action: "merge", number: 3515, named: true },
+    { kind: "pr", action: "merge", number: 3515, named: true, verify: true, trusted: true },
   ]);
   assert.deepEqual(detect("gh pr merge --squash", MERGED_3515), [
-    { kind: "pr", action: "merge", number: 3515 },
+    { kind: "pr", action: "merge", number: 3515, verify: true, trusted: true },
   ]);
   assert.deepEqual(detect("gh pr merge 99", { stdout: "Merged pull request #3516" }), [
-    { kind: "pr", action: "merge", number: 3516, named: true },
+    { kind: "pr", action: "merge", number: 3516, named: true, verify: true, trusted: true },
   ]);
 });
 
@@ -140,6 +141,28 @@ test("detect: only auto and interrupted merges are not candidates; gh pr view is
   );
   assert.deepEqual(detect("gh pr merge 3515 --auto --squash", SILENT), []);
   assert.deepEqual(detect("gh pr merge 3515", { interrupted: true }), []);
+});
+
+test("detect: a branch name is the PR selector for merge and ready", () => {
+  assert.deepEqual(detect("gh pr merge feat/x --squash --delete-branch", SILENT), [
+    { kind: "pr", action: "merge", number: null, verify: true, named: true, selector: "feat/x" },
+  ]);
+  assert.deepEqual(detect('gh pr merge -t "a b" --squash train/r27-1', SILENT), [
+    {
+      kind: "pr",
+      action: "merge",
+      number: null,
+      verify: true,
+      named: true,
+      selector: "train/r27-1",
+    },
+  ]);
+  const ready = { stderr: '✓ Pull request #12 is marked as "ready for review"' };
+  assert.deepEqual(detect("gh pr ready feat/x", ready), [
+    { kind: "pr", action: "ready", number: 12, named: true, verify: true, selector: "feat/x" },
+  ]);
+  // no positional at all: still the unnamed (current branch) form
+  assert.equal(detect("gh pr merge --squash", SILENT)[0].named, undefined);
 });
 
 test("mergedFromView: only a MERGED pr view counts", () => {
@@ -186,8 +209,18 @@ test("confirmMerge: records the pr event and action only for a fresh MERGED view
       ...o,
     });
   const ok = go(merged());
+  // the action carries the merge time (not "now"); the pending marker keeps the job's own ts
   assert.deepEqual(ok.appended, [
-    ["f", { ts: T, kind: "pr", action: "merge", number: 5, branch: "feat/x" }],
+    [
+      "f",
+      {
+        ts: Date.parse("2026-10-19T10:00:30Z"),
+        kind: "pr",
+        action: "merge",
+        number: 5,
+        branch: "feat/x",
+      },
+    ],
     ["f", { ts: T, kind: "pr-pending-done", number: 5 }],
   ]);
   assert.deepEqual(ok.recorded, [
@@ -221,6 +254,137 @@ test("confirmMerge: records the pr event and action only for a fresh MERGED view
   }
   // already merged long ago: a mistaken re-merge records nothing
   assert.equal(go(merged({ mergedAt: "2026-10-18T10:00:00Z" })).r, null);
+  // 6 minutes after the real merge (past the gate's 5 minute window): nothing, gate released
+  const late = go(merged({ mergedAt: new Date(T - 6 * 60_000).toISOString() }));
+  assert.equal(late.r, null);
+  assert.deepEqual(late.appended, [["f", { ts: T, kind: "pr-pending-done", number: 5 }]]);
+  assert.deepEqual(late.recorded, []);
+  // 4 minutes after: still the fresh merge
+  assert.notEqual(go(merged({ mergedAt: new Date(T - 4 * 60_000).toISOString() })).r, null);
+});
+
+test("confirmMerge: a merge the clone already holds records nothing and releases the gate", () => {
+  const T = Date.parse("2026-10-19T10:01:00Z");
+  const view = JSON.stringify({
+    number: 5,
+    state: "MERGED",
+    mergedAt: "2026-10-19T10:00:30Z",
+    headRefName: "feat/x",
+  });
+  const got = { appended: [], recorded: [] };
+  const seen = [];
+  const r = confirmMerge(
+    { ts: T, number: 5, named: true, cwd: "x", file: "f" },
+    {
+      view: () => view,
+      seen: (n) => (seen.push(n), true),
+      append: (f, e) => got.appended.push(e),
+      record: (a) => got.recorded.push(a),
+    },
+  );
+  assert.equal(r, null);
+  assert.deepEqual(seen, [5]);
+  assert.deepEqual(got.appended, [{ ts: T, kind: "pr-pending-done", number: 5 }]);
+  assert.deepEqual(got.recorded, []);
+  // a throwing lookup fails open: the merge is recorded
+  const ok = confirmMerge(
+    { ts: T, number: 5, named: true, cwd: "x", file: "f" },
+    {
+      view: () => view,
+      seen: () => {
+        throw new Error("no clone");
+      },
+      append() {},
+      record: (a) => got.recorded.push(a),
+    },
+  );
+  assert.equal(ok.number, 5);
+  assert.equal(got.recorded.length, 1);
+});
+
+test("confirmMerge: never writes into a later turn once its pending line is gone", () => {
+  const T = Date.parse("2026-10-19T10:01:00Z");
+  const view = JSON.stringify({
+    number: 5,
+    state: "MERGED",
+    mergedAt: "2026-10-19T10:00:30Z",
+    headRefName: "feat/x",
+  });
+  const got = { appended: [], recorded: [] };
+  confirmMerge(
+    { ts: T, number: 5, named: true, cwd: "x", file: "f" },
+    {
+      view: () => view,
+      owns: () => false,
+      append: (f, e) => got.appended.push(e),
+      record: (a) => got.recorded.push(a),
+    },
+  );
+  assert.deepEqual(got.appended, [], "the archived turn's file is left alone");
+  assert.equal(got.recorded.length, 1, "the rf event is still recorded");
+});
+
+test("confirmMerge: named ready records the PR's head branch for OPEN or MERGED", () => {
+  const T = Date.parse("2026-10-19T10:01:00Z");
+  const go = (view, job = {}) => {
+    const got = { appended: [], recorded: [] };
+    const r = confirmMerge(
+      { ts: T, action: "ready", number: 12, named: true, cwd: "x", file: "f", ...job },
+      {
+        view: () => view,
+        append: (f, e) => got.appended.push(e),
+        record: (a) => got.recorded.push(a),
+      },
+    );
+    return { r, ...got };
+  };
+  const v = (o) =>
+    JSON.stringify({
+      number: 12,
+      state: "OPEN",
+      mergedAt: null,
+      headRefName: "train/r27-1",
+      ...o,
+    });
+  const open = go(v({}));
+  assert.deepEqual(open.appended, [
+    { ts: T, kind: "pr", action: "ready", number: 12, branch: "train/r27-1" },
+    { ts: T, kind: "pr-pending-done", number: 12 },
+  ]);
+  assert.deepEqual(open.recorded, [
+    ["event", "pr", "--number", "12", "--action", "ready", "--branch", "train/r27-1", "--quiet"],
+  ]);
+  assert.notEqual(go(v({ state: "MERGED", mergedAt: "2026-10-18T10:00:00Z" })).r, null);
+  const closed = go(v({ state: "CLOSED" }));
+  assert.equal(closed.r, null);
+  assert.deepEqual(closed.appended, [{ ts: T, kind: "pr-pending-done", number: 12 }]);
+});
+
+test("confirmMerge: a trusted TTY merge falls back to a branchless record when gh view fails", () => {
+  const T = Date.parse("2026-10-19T10:01:00Z");
+  const got = { appended: [], recorded: [] };
+  const r = confirmMerge(
+    { ts: T, number: 8, trusted: true, cwd: "x", file: "f" },
+    { view: () => "", append: (f, e) => got.appended.push(e), record: (a) => got.recorded.push(a) },
+  );
+  assert.equal(r.number, 8);
+  assert.deepEqual(got.appended[0], {
+    ts: T,
+    kind: "pr",
+    action: "merge",
+    number: 8,
+    branch: null,
+  });
+  // an OPEN view overrides trust: it is not merged
+  const open = confirmMerge(
+    { ts: T, number: 8, trusted: true, cwd: "x", file: "f" },
+    {
+      view: () => JSON.stringify({ number: 8, state: "OPEN", headRefName: "x" }),
+      append() {},
+      record() {},
+    },
+  );
+  assert.equal(open, null);
 });
 
 test("detect: a named PR is flagged so the hook never adds the current branch", () => {
@@ -284,7 +448,7 @@ test("detect: failed gh call and other repos are not actions", () => {
 test("detect: ready / close need a PR reference and no error line", () => {
   assert.deepEqual(
     detect("gh pr ready 12", { stderr: '✓ Pull request #12 is marked as "ready for review"' }),
-    [{ kind: "pr", action: "ready", number: 12, named: true }],
+    [{ kind: "pr", action: "ready", number: 12, named: true, verify: true }],
   );
   assert.deepEqual(detect("gh pr close 12", { stderr: "✓ Closed pull request #12 (x)" }), [
     { kind: "pr", action: "close", number: 12, named: true },
@@ -867,7 +1031,7 @@ test("post-push hook: background calls record nothing", rfOnly, () => {
   assert.equal(existsSync(actionsFile(env.home, "sess-fg")), true);
 });
 
-test("post-push hook: gh merge/create are recorded only with success output", rfOnly, () => {
+test("post-push hook: gh merge/create are recorded only with success output", rfOnly, async () => {
   const env = mkEnv();
   const repo = tempRepo(RF_URL);
   const failed = { stderr: "X Pull request #3515 is not mergeable" };
@@ -877,12 +1041,21 @@ test("post-push hook: gh merge/create are recorded only with success output", rf
     readActions(actionsFile(env.home, "sess-m0")).some((x) => x.kind === "pr"),
     false,
   );
-  run(POST, env, postIn("sess-m1", repo, "gh pr merge 3515 --squash", MERGED_3515));
-  const [a] = readActions(actionsFile(env.home, "sess-m1"));
-  assert.equal(a.kind, "pr");
+  const gh = fakeGh(env.root, {
+    number: 3515,
+    state: "MERGED",
+    mergedAt: new Date().toISOString(),
+    headRefName: "train/r27-1",
+  });
+  run(POST, env, postIn("sess-m1", repo, "gh pr merge 3515 --squash", MERGED_3515), {
+    RF_OPS_GH: gh,
+  });
+  const file1 = actionsFile(env.home, "sess-m1");
+  assert.ok(await waitFor(() => readActions(file1).some((x) => x.kind === "pr")));
+  const a = readActions(file1).find((x) => x.kind === "pr");
   assert.equal(a.action, "merge");
   assert.equal(a.number, 3515);
-  assert.equal(a.branch, null, "a merge that named its PR never carries the checkout branch");
+  assert.equal(a.branch, "train/r27-1", "the TTY fast path gets the PR's head via the confirmer");
   const url = { stdout: "https://github.com/najathakram/routeflow/pull/4001\n" };
   run(POST, env, postIn("sess-c1", repo, 'gh pr create --title "x"', url));
   assert.equal(readActions(actionsFile(env.home, "sess-c1"))[0].number, 4001);
@@ -896,6 +1069,7 @@ function fakeGh(dir, view) {
     `import { writeFileSync } from "node:fs";
 if (process.env.GH_ARGV_LOG) writeFileSync(process.env.GH_ARGV_LOG, JSON.stringify(process.argv.slice(2)));
 if (process.env.GH_FAIL) process.exit(1);
+if (process.env.GH_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.GH_DELAY_MS)));
 console.log(JSON.stringify(${JSON.stringify(view)}));`,
   );
   return f;
@@ -990,6 +1164,124 @@ test(
       "view",
       "feat/work",
     ]);
+  },
+);
+
+test(
+  "post-push hook: a branch name after gh pr merge is the selector passed to gh pr view",
+  rfOnly,
+  async () => {
+    const env = mkEnv();
+    const repo = tempRepo(RF_URL); // checkout HEAD is feat/hook-test, which must NOT be used
+    const log = join(env.root, "argv-sel.json");
+    const gh = fakeGh(env.root, {
+      number: 3700,
+      state: "MERGED",
+      mergedAt: new Date().toISOString(),
+      headRefName: "train/r27-1",
+    });
+    run(POST, env, postIn("sess-sel", repo, "gh pr merge train/r27-1 --squash", SILENT), {
+      RF_OPS_GH: gh,
+      GH_ARGV_LOG: log,
+    });
+    assert.ok(await waitFor(() => existsSync(log)));
+    assert.deepEqual(JSON.parse(readFileSync(log, "utf8")).slice(0, 3), [
+      "pr",
+      "view",
+      "train/r27-1",
+    ]);
+    const file = actionsFile(env.home, "sess-sel");
+    assert.ok(await waitFor(() => readActions(file).some((x) => x.kind === "pr")));
+    assert.equal(readActions(file).find((x) => x.kind === "pr").branch, "train/r27-1");
+  },
+);
+
+test("post-push hook: a named ready carries the PR's head branch", rfOnly, async () => {
+  const env = mkEnv();
+  const repo = tempRepo(RF_URL);
+  const gh = fakeGh(env.root, {
+    number: 12,
+    state: "OPEN",
+    mergedAt: null,
+    headRefName: "train/r27-2",
+  });
+  const out = { stderr: '✓ Pull request #12 is marked as "ready for review"' };
+  run(POST, env, postIn("sess-rdy", repo, "gh pr ready 12", out), { RF_OPS_GH: gh });
+  const file = actionsFile(env.home, "sess-rdy");
+  assert.ok(await waitFor(() => readActions(file).some((x) => x.kind === "pr")));
+  const a = readActions(file).find((x) => x.kind === "pr");
+  assert.equal(a.action, "ready");
+  assert.equal(a.branch, "train/r27-2");
+  assert.ok(await waitFor(() => readActions(file).some((x) => x.kind === "pr-pending-done")));
+});
+
+test(
+  "post-push hook: a re-run merge past the gate window, or one the clone holds, records nothing",
+  rfOnly,
+  async () => {
+    const env = mkEnv();
+    const repo = tempRepo(RF_URL);
+    const old = fakeGh(env.root, {
+      number: 3515,
+      state: "MERGED",
+      mergedAt: new Date(Date.now() - 6 * 60_000).toISOString(),
+      headRefName: "feat/x",
+    });
+    const r = run(POST, env, postIn("sess-late", repo, "gh pr merge 3515 --squash", SILENT), {
+      RF_OPS_GH: old,
+    });
+    assert.equal(r.status, 0);
+    const file = actionsFile(env.home, "sess-late");
+    assert.ok(await waitFor(() => readActions(file).some((x) => x.kind === "pr-pending-done")));
+    assert.equal(
+      readActions(file).some((x) => x.kind === "pr"),
+      false,
+      "6 minutes after the real merge nothing is recorded, and the gate is released",
+    );
+    // a fresh merge the local clone already holds as a pr event
+    const nowIso = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+    writeEvents(env, [ev("pr", null, { number: 3516, action: "merge", branch: "feat/y" }, nowIso)]);
+    const fresh = fakeGh(env.root, {
+      number: 3516,
+      state: "MERGED",
+      mergedAt: new Date().toISOString(),
+      headRefName: "feat/y",
+    });
+    run(POST, env, postIn("sess-dup", repo, "gh pr merge 3516 --squash", SILENT), {
+      RF_OPS_GH: fresh,
+    });
+    const file2 = actionsFile(env.home, "sess-dup");
+    assert.ok(await waitFor(() => readActions(file2).some((x) => x.kind === "pr-pending-done")));
+    assert.equal(
+      readActions(file2).some((x) => x.kind === "pr"),
+      false,
+      "a merge already in the clone is not recorded twice",
+    );
+  },
+);
+
+test(
+  "post-push hook: a confirmer whose pending line was archived writes nothing",
+  rfOnly,
+  async () => {
+    const env = mkEnv();
+    const repo = tempRepo(RF_URL);
+    const gh = fakeGh(env.root, {
+      number: 3517,
+      state: "MERGED",
+      mergedAt: new Date().toISOString(),
+      headRefName: "feat/z",
+    });
+    const file = actionsFile(env.home, "sess-arch");
+    // a slow gh gives the Stop gate time to archive the turn's file before the confirmer finishes
+    run(POST, env, postIn("sess-arch", repo, "gh pr merge 3517 --squash", SILENT), {
+      RF_OPS_GH: gh,
+      GH_DELAY_MS: "1500",
+    });
+    assert.equal(readActions(file)[0].kind, "pr-pending");
+    archiveActions(file);
+    await new Promise((r) => setTimeout(r, 4000));
+    assert.equal(existsSync(file), false, "no later-turn file is created by the confirmer");
   },
 );
 

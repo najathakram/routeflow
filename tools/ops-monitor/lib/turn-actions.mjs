@@ -45,6 +45,11 @@ export function readActions(file) {
   return out;
 }
 
+/** True while this actions file still holds the `pr-pending` line stamped `ts` (not yet archived). */
+export function ownsPending(file, ts) {
+  return readActions(file).some((a) => a?.kind === "pr-pending" && a.ts === ts);
+}
+
 /** Renames the actions file to `<file>.done-<ms>`, drops its .blocks file, keeps the last 5. */
 export function archiveActions(file, now = Date.now()) {
   try {

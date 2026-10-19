@@ -46,7 +46,8 @@ const VALUE_FLAGS = new Set([
   "--author-email",
   "--match-head-commit",
 ]);
-const FRESH_MERGE_MS = 10 * 60 * 1000;
+// Same as the Stop gate's status window (WINDOW_MS in ops-stop.mjs): the two must agree.
+const FRESH_MERGE_MS = 5 * 60 * 1000;
 // `git push` flags that, with no branch refspec, push no branch: nothing to record.
 const PUSH_NO_BRANCH_FLAGS = new Set(["--tags", "--all", "--mirror", "--prune"]);
 const PR_URL_RE = /github\.com\/najathakram\/routeflow\/pull\/(\d+)/;
@@ -244,6 +245,26 @@ function prArgNumber(args) {
 }
 
 /**
+ * What `gh pr merge|ready` was told to act on: the first non-flag positional. { number } for a
+ * number or /pull/N URL, { branch } for anything else (a branch name, passed verbatim to
+ * `gh pr view`), null when there is none (the current branch's PR).
+ */
+function prSelector(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (VALUE_FLAGS.has(a)) {
+      i++;
+      continue;
+    }
+    if (a.startsWith("-")) continue;
+    if (/^\d+$/.test(a)) return { number: Number(a) };
+    const u = /\/pull\/(\d+)/.exec(a);
+    return u ? { number: Number(u[1]) } : { branch: a };
+  }
+  return null;
+}
+
+/**
  * The PR number a gh call really acted on, or null when its output does not show success.
  * `merge` may return { candidate: true, number|null }: no TTY, so gh printed nothing and the
  * detached recorder must confirm the merge with `gh pr view`.
@@ -251,7 +272,7 @@ function prArgNumber(args) {
 function prNumber(verb, args, stdout, text) {
   if (verb === "merge") {
     const m = MERGED_RE.exec(text);
-    if (m) return { number: Number(m[1]) };
+    if (m) return { number: Number(m[1]), candidate: true, trusted: true };
     if (args.some((a) => a === "--auto" || a === "--disable-auto")) return null;
     if (MERGE_AUTO_RE.test(text)) return null;
     return { number: prArgNumber(args), candidate: true };
@@ -293,13 +314,18 @@ function prAction(tokens, stdout, text) {
   const n = prNumber(verb, args, stdout, text);
   if (n === null) return null;
   const a = { kind: "pr", action: verb, number: n.number };
-  if (n.candidate) a.verify = true;
+  const sel = verb === "merge" || verb === "ready" ? prSelector(args) : null;
+  // A merge awaiting proof, or a PR named to `ready`, is confirmed by `gh pr view` (which also
+  // supplies the PR's head branch) before anything is recorded.
+  if (n.candidate || (verb === "ready" && sel)) a.verify = true;
+  if (n.trusted) a.trusted = true;
+  if (sel?.branch) a.selector = sel.branch;
   if (verb === "create") {
     const head = headArg(args);
     if (head) a.head = head;
   }
   // The command named its PR (number or URL): the current branch says nothing about it.
-  if (verb !== "create" && prArgNumber(args) !== null) a.named = true;
+  if (verb !== "create" && (sel ? true : prArgNumber(args) !== null)) a.named = true;
   return a;
 }
 
@@ -338,6 +364,23 @@ export function branchFromRefspec(refspec) {
 export function sourceFromRefspec(refspec) {
   const src = refspec ? refspec.replace(/^\+/, "").split(":")[0] : "";
   return src || "HEAD";
+}
+
+/** { number, state, branch, mergedAt } from `gh pr view --json ...` output, else null (garbled). */
+export function prFromView(text) {
+  try {
+    const v = JSON.parse(String(text));
+    if (typeof v?.state !== "string" || !Number.isInteger(v.number)) return null;
+    const mergedAt = Date.parse(v.mergedAt);
+    return {
+      number: v.number,
+      state: v.state,
+      branch: typeof v.headRefName === "string" ? v.headRefName : null,
+      mergedAt: Number.isNaN(mergedAt) ? null : mergedAt,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -434,27 +477,62 @@ function ghView(cwd, number) {
 }
 
 /**
- * Detached half of a merge candidate: confirm with `gh pr view` (the PR number, or the current
- * branch when the command named none) and record only a MERGED PR. job = { ts, number, named,
- * cwd, file }. `deps` is injectable for tests.
+ * Detached half of a `gh pr merge|ready` action: confirm with `gh pr view` (the branch selector
+ * the command named, else the PR number, else the current branch) and record only what the PR
+ * really did. job = { ts, action, number, branch, named, trusted, cwd, file }. `deps` is
+ * injectable for tests: view(cwd, selector) -> JSON text, seen(number) -> the clone already holds
+ * a merge event, owns(job) -> the actions file still holds this job's pending line.
  */
 export function confirmMerge(job, deps = { view: ghView, append: null, record: null }) {
-  // A PR number wins; an unnamed merge selects the branch captured before gh switched; else gh
-  // views the current branch.
-  const m = mergedFromView(deps.view(job.cwd, job.number ?? job.branch ?? null));
-  // An already-merged PR re-merged by mistake merged nothing now: only a fresh merge counts.
-  const fresh = m && !(m.mergedAt !== null && job.ts - m.mergedAt > FRESH_MERGE_MS);
-  if (!fresh) {
+  const ready = job.action === "ready";
+  const v = prFromView(deps.view(job.cwd, job.branch ?? job.number ?? null));
+  let m = null;
+  if (ready) {
+    // ready needs no state check beyond OPEN or MERGED (the command itself succeeded)
+    if (v && (v.state === "OPEN" || v.state === "MERGED")) m = v;
+  } else if (v?.state === "MERGED") {
+    m = v;
+  } else if (!v && job.trusted && job.number != null) {
+    // gh printed the success line but `gh pr view` failed: record the merge without a branch.
+    m = { number: job.number, branch: null, mergedAt: null };
+  }
+  // Only a fresh merge counts: a PR re-merged by mistake merged nothing now.
+  if (m && !ready && m.mergedAt !== null && job.ts - m.mergedAt > FRESH_MERGE_MS) m = null;
+  // The turn's actions file may have been archived by the Stop gate while gh was running: then
+  // this confirmer must not start a new file (it would leak into the next turn).
+  let owns = true;
+  try {
+    owns = deps.owns ? deps.owns(job) !== false : true;
+  } catch {
+    owns = true;
+  }
+  const release = (number) => {
+    if (owns) deps.append?.(job.file, { ts: job.ts, kind: "pr-pending-done", number });
+  };
+  if (m && !ready) {
+    // The local clone already holds this merge (a re-run, or another recorder): record nothing.
+    let dup = false;
+    try {
+      dup = deps.seen?.(m.number) === true;
+    } catch {
+      dup = false; // cannot read the clone: fail open, record
+    }
+    if (dup) m = null;
+  }
+  if (!m) {
     // Release the Stop gate's wait; nothing is recorded.
-    deps.append?.(job.file, { ts: job.ts, kind: "pr-pending-done", number: job.number ?? null });
+    release(job.number ?? null);
     return null;
   }
   // The PR's own head branch is kept (`named` only silences the checkout's HEAD, which the
   // synchronous path decides); trunk names no PR branch.
   const branch = !m.branch || ["master", "main"].includes(m.branch) ? null : m.branch;
-  deps.append?.(job.file, { ts: job.ts, kind: "pr", action: "merge", number: m.number, branch });
-  deps.append?.(job.file, { ts: job.ts, kind: "pr-pending-done", number: m.number });
-  const args = ["event", "pr", "--number", String(m.number), "--action", "merge"];
+  const action = ready ? "ready" : "merge";
+  // A merge is stamped with when it happened, not when we got around to confirming it.
+  const ts = !ready && m.mergedAt !== null ? m.mergedAt : job.ts;
+  if (owns) deps.append?.(job.file, { ts, kind: "pr", action, number: m.number, branch });
+  release(m.number);
+  const args = ["event", "pr", "--number", String(m.number), "--action", action];
   if (branch) args.push("--branch", branch);
   deps.record?.([...args, "--quiet"]);
   return { number: m.number, branch };
@@ -483,8 +561,23 @@ async function runConfirm(raw) {
   const job = JSON.parse(raw);
   const { appendAction } = await import(lib("turn-actions.mjs"));
   const env = { ...process.env, RF_ACTOR: job.actor };
+  const { ownsPending } = await import(lib("turn-actions.mjs"));
+  // Has the local clone already recorded this merge? Unreadable clone -> undefined -> record.
+  let seen;
+  try {
+    const { readAllEvents } = await import(lib("store.mjs"));
+    const { specsDir } = await import(lib("config.mjs"));
+    seen = (number) =>
+      readAllEvents(specsDir()).some(
+        (e) => e?.kind === "pr" && e.data?.action === "merge" && e.data?.number === number,
+      );
+  } catch {
+    seen = undefined;
+  }
   confirmMerge(job, {
     view: ghView,
+    seen,
+    owns: (j) => ownsPending(j.file, j.ts),
     append: (file, entry) => appendAction(file, entry),
     record: (args) => spawnRecorder(args, env),
   });
@@ -545,9 +638,13 @@ async function main() {
       appendAction(file, { kind: "pr-pending", ts, number: a.number ?? null });
       spawnConfirm({
         ts,
+        action: a.action,
         number: a.number,
-        branch: a.number == null ? unnamedMergeBranch(cwd) : null,
+        // gh pr view's selector: the branch the command named, else (no PR named at all) the
+        // branch checked out before gh moved the checkout.
+        branch: a.selector ?? (a.number == null ? unnamedMergeBranch(cwd) : null),
         named: a.named === true,
+        trusted: a.trusted === true,
         cwd,
         file,
         actor: env.RF_ACTOR,

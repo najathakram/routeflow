@@ -279,9 +279,17 @@ export async function dropUnpushedViews(dir) {
   if (first < 0) return false;
   const clean = await git(dir, ["status", "--porcelain", "--untracked-files=no"]);
   if (clean.code !== 0 || clean.stdout.trim()) return false;
+  const ref = (await git(dir, ["symbolic-ref", "-q", "HEAD"])).stdout.trim();
+  if (!ref.startsWith("refs/heads/")) return false; // detached: ensureAttached's business, not ours
   const orig = (await git(dir, ["rev-parse", "HEAD"])).stdout.trim();
-  const reset = await git(dir, ["reset", "--hard", "--quiet", `${commits[first].sha}~1`]);
-  if (reset.code !== 0) return false;
+  // Replay on a DETACHED HEAD so the branch keeps every event commit until the whole replay has
+  // succeeded; a kill anywhere before the final compare-and-swap loses nothing (ensureAttached
+  // re-attaches to the untouched branch on the next sync).
+  const detach = await git(dir, ["checkout", "--quiet", "--detach", `${commits[first].sha}~1`]);
+  if (detach.code !== 0) {
+    await restoreBranch(dir, ref);
+    return false;
+  }
   for (const c of commits.slice(first + 1)) {
     if (c.views) continue;
     const pick = await git(dir, [
@@ -294,11 +302,55 @@ export async function dropUnpushedViews(dir) {
     ]);
     if (pick.code !== 0) {
       await git(dir, ["cherry-pick", "--abort"]);
-      await git(dir, ["reset", "--hard", "--quiet", orig]);
+      await restoreBranch(dir, ref);
       return false;
     }
   }
+  const next = (await git(dir, ["rev-parse", "HEAD"])).stdout.trim();
+  // Compare-and-swap the branch (old value = orig), then attach HEAD to it; same commit, so the
+  // tree is untouched.
+  const swap = await git(dir, ["update-ref", ref, next, orig]);
+  if (swap.code !== 0) {
+    await restoreBranch(dir, ref);
+    return false;
+  }
+  await git(dir, ["symbolic-ref", "HEAD", ref]);
   return true;
+}
+
+/** Back onto `ref` (still at its original tip), discarding any half-done replay work. */
+async function restoreBranch(dir, ref) {
+  await git(dir, ["checkout", "--quiet", "-f", ref.slice("refs/heads/".length)]);
+}
+
+/**
+ * Startup self-heal: a kill during dropUnpushedViews' replay leaves HEAD detached while the branch
+ * still holds every event commit. Re-attaches to that branch at its own tip (never moves it); the
+ * detached replay work is abandoned (still in the reflog). Acts only on a detached HEAD with no
+ * rebase in progress, and only when the branch is unambiguous: the single local branch, else the
+ * single one with an upstream. Returns true when it re-attached. Callers hold the specs lock.
+ */
+export async function ensureAttached(dir) {
+  if ((await git(dir, ["symbolic-ref", "-q", "HEAD"])).code === 0) return false;
+  const g = join(dir, ".git");
+  if (existsSync(join(g, "rebase-merge")) || existsSync(join(g, "rebase-apply"))) return false;
+  const refs = await git(dir, [
+    "for-each-ref",
+    "--format=%(refname:short) %(upstream:short)",
+    "refs/heads",
+  ]);
+  if (refs.code !== 0) return false;
+  const rows = refs.stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => l.split(" "));
+  const withUp = rows.filter((r) => r[1]);
+  const pick = rows.length === 1 ? rows[0] : withUp.length === 1 ? withUp[0] : null;
+  if (!pick) return false;
+  if (existsSync(join(g, "CHERRY_PICK_HEAD"))) await git(dir, ["cherry-pick", "--abort"]);
+  const r = await git(dir, ["checkout", "--quiet", "-f", pick[0]]);
+  return r.code === 0;
 }
 
 /** True when the clone's ops/config.json says `registerMode: "generated"` (a missing file is human). */
@@ -326,6 +378,7 @@ async function viewsHookFor(dir, afterCommit) {
  */
 export async function syncSpecs(dir, { bugIds = new Set(), afterCommit: given } = {}) {
   let error = null;
+  await ensureAttached(dir);
   let afterCommit = await viewsHookFor(dir, given);
   if (afterCommit) await dropUnpushedViews(dir);
   const pull = await git(dir, ["pull", "--rebase", "--quiet"]);
