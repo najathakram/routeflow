@@ -287,8 +287,7 @@ function MovePaymentModal({
       }
     >
       <p className="text-sm text-navy/70">
-        The bill's balance goes back up by this amount. The credit is applied to the supplier's next
-        bill.
+        This bill owes that amount again. The credit goes to the next bill from this supplier.
       </p>
     </Modal>
   );
