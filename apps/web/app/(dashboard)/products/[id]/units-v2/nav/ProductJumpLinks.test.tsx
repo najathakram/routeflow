@@ -132,6 +132,14 @@ describe("ProductJumpLinks (V19)", () => {
     expect(screen.queryByTestId("units-v2-jump-placeholder")).toBeNull();
   });
 
+  it("the band runs exactly the content column: no negative margin pulling it past the cards (K13 P05)", () => {
+    render(<Page ids={["h-units", "h-sales"]} />);
+    const cls = nav()!.className;
+    expect(cls).not.toMatch(/(^|\s)-m[xlr]-/);
+    expect(cls).toContain("w-full");
+    expect(cls).toContain("bg-surface");
+  });
+
   it("renders nothing without reserveSpace and no sections", () => {
     render(<ProductJumpLinks />);
     expect(screen.queryByTestId("units-v2-jump-placeholder")).toBeNull();

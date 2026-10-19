@@ -466,7 +466,7 @@ export function ProductJumpLinks({ reserveSpace = false }: { reserveSpace?: bool
       ref={navRef}
       data-testid="units-v2-jump"
       aria-label="On this page"
-      className="sticky top-0 z-10 -mx-1 border-b border-surface-border bg-surface px-1"
+      className="sticky top-0 z-10 w-full border-b border-surface-border bg-surface"
     >
       <style>{SCOPED_CSS}</style>
       <div
