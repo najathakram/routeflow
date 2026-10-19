@@ -2252,13 +2252,22 @@ export class SubscriptionMutationService {
         ),
     );
     // (c): active self-serve rows nothing bills on THIS subscription (no item, or a stale one) and this
-    // checkout had no line for.
+    // checkout had no line for. SA-787 M4: also an admin-only row an admin PRICED (> 0): the cancellation lock now
+    // leaves it ON (it used to switch it off), so the card checkout that brings the tenant back must bill it through
+    // `billUnbilledRow`; skipping it would leave a priced, active row that nothing bills while the reactivation
+    // crossing books its price. A $0 admin-only row (a trial grant, a plan-included one) stays unbilled, and seat
+    // plumbing is never an add-on item.
     for (const row of active) {
       const code = addonSkuCode(row);
+      const adminPriced =
+        code != null &&
+        !isSelfServiceAddon(code) &&
+        code !== "SEAT_EXTRA" &&
+        Number(row.priceSnapshot ?? 0) > 0;
       if (
         unbilledOnThisSub(row) &&
         code &&
-        isSelfServiceAddon(code) &&
+        (isSelfServiceAddon(code) || adminPriced) &&
         !bySku.has(code) &&
         !missing.includes(code)
       ) {
