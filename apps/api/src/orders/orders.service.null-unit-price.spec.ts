@@ -4,7 +4,7 @@
  * `UpdateOrderItemDto.unitPrice` is `@IsOptional() @IsNumber()`: class-validator's IsOptional skips every
  * validator for null, so `{ productId, qty: 2, unitPrice: null }` reaches the service. The three staff
  * pricing sites tested `!== undefined ? Number(x) : null` — and `Number(null)` is 0, so a null became a typed
- * $0 override instead of "no price sent". Master's real outcomes are recorded in each case below.
+ * $0 override instead of "no price sent". Master's outcomes were recorded by running this file on af182eaad and on ac1285b5b (identical at these sites).
  * SIBLING spec: orders.service.spec.ts is at its size-ratchet cap. Harness: orders.service.driver-tier-price.spec.ts.
  */
 // invoice-pdf.service.ts imports @react-pdf/renderer (ESM-only), so mock the module that pulls it in.
@@ -279,7 +279,7 @@ describe("OrdersService.updateOrderItems — a null line price is no override (r
     it("A1: unitPrice null for a tier-2 customer bills the tier price, as if no price were sent", async () => {
       prime([], 2);
       await add("operator", { unitPrice: null });
-      // Master (static read): Number(null) = 0 -> a typed $0 on a SPECIAL-tier line -> 400 "reason required".
+      // Master (recorded): Number(null) = 0 -> BadRequestException "A reason is required to change Tiered Widget".
       expect(created()).toMatchObject({ unitPrice: 8, priceType: "SPECIAL", originalPrice: 10 });
       expect(created().subtotal).toBe(16);
       expect(created().overriddenBy ?? null).toBeNull();
@@ -288,7 +288,7 @@ describe("OrdersService.updateOrderItems — a null line price is no override (r
     it("A2: unitPrice null WITH a reason attached is still the tier price, never a silent $0 DISCOUNTED line", async () => {
       prime([], 2);
       await add("operator", { unitPrice: null, overrideReason: "pls" });
-      // Master (static read): the reason lets the $0 through: DISCOUNTED / unitPrice 0 / subtotal 0.
+      // Master (recorded): the reason lets the $0 through: DISCOUNTED / unitPrice 0 / originalPrice 10 (subtotal 0).
       expect(created()).toMatchObject({ unitPrice: 8, priceType: "SPECIAL", originalPrice: 10 });
       expect(created().subtotal).toBe(16);
       expect(created().overrideReason ?? null).toBeNull();
@@ -298,7 +298,7 @@ describe("OrdersService.updateOrderItems — a null line price is no override (r
     it("A3: unitPrice null for a retail (tier-1) customer bills list / STANDARD, not a $0 DISCOUNTED line", async () => {
       prime([], 1);
       await add("operator", { unitPrice: null });
-      // Master (static read): unitPrice 0 / DISCOUNTED / originalPrice 10 / subtotal 0 - no reason needed at tier 1.
+      // Master (recorded): unitPrice 0 / DISCOUNTED / originalPrice 10 / subtotal 0 - no reason needed at tier 1.
       expect(created()).toMatchObject({
         unitPrice: 10,
         priceType: "STANDARD",
@@ -336,7 +336,7 @@ describe("OrdersService.updateOrderItems — a null line price is no override (r
     it("B1: unitPrice null keeps the stored price and reprices only the qty", async () => {
       prime([line({ unitPrice: 10, subtotal: 30 })], 1);
       await qtyEdit({ unitPrice: null });
-      // Master (static read): the null becomes a typed $0: unitPrice 0 / DISCOUNTED / subtotal 0.
+      // Master (recorded): the null becomes a typed $0: unitPrice 0 / subtotal 0 (DISCOUNTED).
       expect(updated()).toMatchObject({ unitPrice: 10, subtotal: 50 });
       expect(updated().priceType).toBeUndefined();
     });
@@ -344,7 +344,7 @@ describe("OrdersService.updateOrderItems — a null line price is no override (r
     it("B2: unitPrice null on a tier-2 customer's line is not a $0 override (no 400, stored price kept)", async () => {
       prime([line({ unitPrice: 10, subtotal: 30 })], 2);
       await qtyEdit({ unitPrice: null });
-      // Master (static read): $0 on a SPECIAL-tier line with no reason on file -> 400 "reason required".
+      // Master (recorded): BadRequestException "A reason is required to change Tiered Widget" ($0 on a SPECIAL tier).
       expect(updated()).toMatchObject({ unitPrice: 10, subtotal: 50 });
     });
 
@@ -366,7 +366,7 @@ describe("OrdersService.updateOrderItems — a null line price is no override (r
       await edit("operator", [
         { id: "li-1", action: "UPDATE", unitPrice: null, overrideReason: "note" },
       ]);
-      // Master (static read): null !== undefined skipped the reason-only fast path -> the full path ran
+      // Master (recorded): null !== undefined skipped the reason-only fast path -> the full path ran
       // with a typed $0 and wrote unitPrice 0 / subtotal 0.
       expect(updated()).toMatchObject({ overrideReason: "note" });
       expect(updated()).not.toHaveProperty("unitPrice");
@@ -380,7 +380,7 @@ describe("OrdersService.updateOrderItems — a null line price is no override (r
     it("C1: a NEW line with unitPrice null prices at the customer's tier (tier 2 -> $8 SPECIAL)", async () => {
       prime([], 2);
       await replaceAll([{ productId: "prod-1", qty: 2, unitPrice: null }]);
-      // Master (static read): the typed $0 against the tier baseline: refused (SPECIAL tier, no reason) or $0.
+      // Master (recorded): the typed $0 against the tier baseline: BadRequestException "A reason is required to change Tiered Widget".
       expect(created()).toMatchObject({ unitPrice: 8, priceType: "SPECIAL", originalPrice: 10 });
       expect(created().subtotal).toBe(16);
     });
@@ -430,7 +430,7 @@ describe("OrdersService.updateOrderItems — a null line price is no override (r
       prisma.order.update.mockClear();
       await qtyEdit({ shippingFee: null });
       const sent = orderUpdateData();
-      // Master (static read): null !== undefined -> Math.max(0, null) = 0 -> shippingFee: 0 written, total drops the fee.
+      // Master (recorded): null !== undefined -> Math.max(0, null) = 0 -> shippingFee: 0 written, so the stored fee is wiped.
       expect(sent).not.toHaveProperty("shippingFee");
       expect(sent.total).toBe(absent.total);
     });

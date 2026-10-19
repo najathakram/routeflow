@@ -93,7 +93,7 @@ describe("VendorBillsService.update — a null taxAmount keeps the stored tax (r
 
   it("an items edit with taxAmount null totals pre-tax lines + the STORED tax (10 + 4)", async () => {
     await service.update("bill-1", { items, taxAmount: null });
-    // Master (static read): Number(null) = 0 -> totalOwed 10, the stored $4 tax silently dropped.
+    // Master (recorded): Number(null) = 0 -> totalOwed 10, the stored $4 tax silently dropped.
     expect(totalWritten()).toBe(14);
   });
 
@@ -107,7 +107,9 @@ describe("VendorBillsService.update — a null taxAmount keeps the stored tax (r
     expect(totalWritten()).toBe(10);
   });
 
-  it("a typed taxAmount replaces the stored one (control)", async () => {
+  // update() does not persist taxAmount to the column (filed as row 594, not fixed here), so this control pins
+  // only the totalOwed it computes from the typed tax.
+  it("a typed taxAmount replaces the stored one in the total (control)", async () => {
     await service.update("bill-1", { items, taxAmount: 1 });
     expect(totalWritten()).toBe(11);
   });
