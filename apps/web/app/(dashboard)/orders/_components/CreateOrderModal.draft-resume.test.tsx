@@ -608,4 +608,174 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
       expect(keyOf(1)).toBe(k1);
     });
   });
+
+  describe("review SHOULDs and NITs", () => {
+    const serverLine = {
+      tempId: "t1",
+      productId: "p1",
+      productName: "Widget p1",
+      unit: "each",
+      listPrice: 9.99,
+      unitPrice: 9.99,
+      priceType: "STANDARD",
+      qty: 1,
+    };
+    const serverPayload = (extra: Record<string, unknown> = {}) => ({
+      customer: { id: "c1", businessName: "Acme Foods", pricingTier: 1 },
+      lineItems: [serverLine],
+      orderDiscount: "",
+      shippingFee: "",
+      requestedDeliveryDate: "",
+      orderDate: "",
+      notes: "",
+      urgent: false,
+      floorAcked: [],
+      ...extra,
+    });
+
+    async function seedLocal(localId: string, serverDraftId: string | null, payload: unknown) {
+      const { createDraftMirror } = await import("@/lib/order-draft/mirror");
+      const m = createDraftMirror({ storage, tenantId: "t1", userId: "u1" });
+      m.write({
+        localId,
+        serverDraftId,
+        serverUpdatedAt: serverDraftId ? "2026-10-19T10:00:00.000Z" : null,
+        syncedHash: null,
+        customerId: "c1",
+        customerName: "Acme Foods",
+        payload: payload as never,
+      });
+      await m.flush();
+    }
+
+    it("dock resume checks the mirror: a newer local copy bound to THAT draft is offered, and resuming it shows the local lines", async () => {
+      const server = {
+        id: "d1",
+        kind: "ORDER",
+        updatedAt: "2026-10-19T10:00:00.000Z",
+        payload: serverPayload({ _submitKey: "K-SRV" }),
+      };
+      mockLoadedDraft = server;
+      mockServerDrafts = [server];
+      const ahead = serverPayload({
+        _submitKey: "K-SRV",
+        lineItems: [
+          serverLine,
+          { ...serverLine, tempId: "t2", productId: "p2", productName: "Widget p2" },
+        ],
+      });
+      await seedLocal("d1", "d1", ahead);
+      renderWithProviders(<CreateOrderModal isOpen resumeDraftId="d1" onClose={jest.fn()} />);
+      await screen.findByText("Widget p1");
+      expect(await screen.findByText("Resume your unsent order?")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+      expect(await screen.findByText("Widget p2")).toBeInTheDocument();
+    });
+
+    it("dock resume does NOT offer a local copy bound to a different draft", async () => {
+      const server = {
+        id: "d1",
+        kind: "ORDER",
+        updatedAt: "2026-10-19T10:00:00.000Z",
+        payload: serverPayload({ _submitKey: "K-SRV" }),
+      };
+      mockLoadedDraft = server;
+      mockServerDrafts = [server];
+      await seedLocal("other", "d-other", serverPayload({ _submitKey: "K-OTHER" }));
+      renderWithProviders(<CreateOrderModal isOpen resumeDraftId="d1" onClose={jest.fn()} />);
+      await screen.findByText("Widget p1");
+      await flush();
+      expect(screen.queryByText("Resume your unsent order?")).not.toBeInTheDocument();
+    });
+
+    it("the local copy is keyed by the server draft id once one is bound", async () => {
+      mockCreateDraft.mockResolvedValue({ id: "d1", updatedAt: "2026-10-19T10:00:00.000Z" });
+      mockUpdateDraft.mockImplementation(() => NEVER()); // the next edit stays unsynced
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      await pickCustomerAndScan();
+      await waitFor(() => expect(mockCreateDraft).toHaveBeenCalledTimes(1), { timeout: 4000 });
+      mockResolveProductByCode.mockResolvedValue(product("p2"));
+      capturedOnScan!("222");
+      await screen.findByText("Widget p2");
+      await waitFor(
+        async () => expect((await localRecords()).map((r) => r.localId)).toEqual(["d1"]),
+        {
+          timeout: 4000,
+        },
+      );
+    });
+
+    it("A6: the local copy with the key is written BEFORE the order POST (the key is durable before it is sent)", async () => {
+      let seenAtPost: Array<{ payload: Record<string, unknown> }> = [];
+      post.mockImplementation(async () => {
+        seenAtPost = await localRecords();
+        return { data: { id: "o1" } };
+      });
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      await pickCustomerAndScan();
+      fireEvent.click(createBtn()); // straight away: inside the 300 ms mirror debounce and the 900 ms server debounce
+      await waitFor(() => expect(orderPosts()).toHaveLength(1), { timeout: 6000 });
+      expect(seenAtPost).toHaveLength(1);
+      expect(seenAtPost[0].payload._submitKey).toBe(keyOf(0));
+    });
+
+    it("a key-less server draft resumed: the local copy is kept until the server has the key, and the key is PATCHed in", async () => {
+      mockLoadedDraft = {
+        id: "d1",
+        kind: "ORDER",
+        updatedAt: "2026-10-19T10:00:00.000Z",
+        payload: serverPayload(), // no _submitKey
+      };
+      renderWithProviders(<CreateOrderModal isOpen resumeDraftId="d1" onClose={jest.fn()} />);
+      await screen.findByText("Widget p1");
+      await waitFor(async () => expect(await localRecords()).toHaveLength(1), { timeout: 4000 });
+      expect((await localRecords())[0].payload._submitKey).toEqual(expect.any(String));
+      await waitFor(() => expect(mockUpdateDraft).toHaveBeenCalledTimes(1), { timeout: 4000 });
+      expect(mockUpdateDraft.mock.calls[0][0]).toMatchObject({
+        id: "d1",
+        expectedUpdatedAt: "2026-10-19T10:00:00.000Z",
+      });
+      expect(mockUpdateDraft.mock.calls[0][0].payload._submitKey).toEqual(expect.any(String));
+    });
+
+    it("a held-order 409 opens that order AND finishes the bound draft (no zombie draft)", async () => {
+      mockCreateDraft.mockResolvedValue({ id: "d1", updatedAt: "2026-10-19T10:00:00.000Z" });
+      post.mockRejectedValue({
+        response: { status: 409, data: { code: "IDEMPOTENCY_KEY_CONFLICT", orderId: "ord-77" } },
+      });
+      const onViewOrder = jest.fn();
+      renderWithProviders(
+        <CreateOrderModal isOpen onClose={jest.fn()} onViewOrder={onViewOrder} />,
+      );
+      await pickCustomerAndScan();
+      await waitFor(() => expect(mockCreateDraft).toHaveBeenCalledTimes(1), { timeout: 4000 });
+      fireEvent.click(createBtn());
+      await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("ord-77"), { timeout: 6000 });
+      await waitFor(() => expect(mockDeleteDraft).toHaveBeenCalledWith("d1"));
+      expect(await localRecords()).toEqual([]);
+    });
+
+    it("A3: when the browser comes back online the real 'online' listener flushes exactly one PATCH with the latest state", async () => {
+      mockCreateDraft.mockResolvedValue({ id: "d1", updatedAt: "2026-10-19T10:00:00.000Z" });
+      mockUpdateDraft.mockRejectedValue(new Error("Network Error")); // offline
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      await pickCustomerAndScan();
+      await waitFor(() => expect(mockCreateDraft).toHaveBeenCalledTimes(1), { timeout: 4000 });
+      mockResolveProductByCode.mockResolvedValue(product("p2"));
+      capturedOnScan!("222");
+      await screen.findByText("Widget p2");
+      await waitFor(() => expect(mockUpdateDraft).toHaveBeenCalledTimes(1), { timeout: 4000 });
+      await waitFor(async () => expect(await localRecords()).toHaveLength(1)); // the mirror is current
+
+      mockUpdateDraft.mockClear();
+      mockUpdateDraft.mockResolvedValue({ id: "d1", updatedAt: "2026-10-19T10:00:09.000Z" });
+      act(() => {
+        window.dispatchEvent(new Event("online"));
+      });
+      await waitFor(() => expect(mockUpdateDraft).toHaveBeenCalledTimes(1));
+      expect(mockUpdateDraft.mock.calls[0][0].payload.lineItems).toHaveLength(2);
+      expect(mockUpdateDraft.mock.calls[0][0].expectedUpdatedAt).toBe("2026-10-19T10:00:00.000Z");
+      await waitFor(async () => expect(await localRecords()).toEqual([]));
+    });
+  });
 });
