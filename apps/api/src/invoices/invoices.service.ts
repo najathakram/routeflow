@@ -268,6 +268,9 @@ export { addCalendarDays } from "../common/calendar-date";
 // to the canonical export by `check-transitions-parity.spec.ts`. See that file's own doc for the
 // V1-only rule (no `CHECK_TRANSITIONS_V2` here — a later PR owns that).
 
+/** What `recordStandalonePayment` returns, and hands its `opts.inTx` hook (SA-818). */
+export type StandalonePaymentResult = { payments: any[]; paymentGroupId: string; excess: number };
+
 @Injectable()
 export class InvoicesService {
   private readonly logger = new Logger(InvoicesService.name);
@@ -5303,6 +5306,13 @@ export class InvoicesService {
       assertAllocationsWithinBalance?: boolean;
       /** The operator's user id, for the deliberate-overpayment audit row. */
       actor?: string | null;
+      /**
+       * SA-818 (row 615): runs INSIDE this payment transaction, after the payment rows (and any
+       * excess AdvancePayment) are written and before commit. A caller that must decide something
+       * atomically with the money (the cash approval's PENDING -> APPROVED claim + link) does it
+       * here: a throw rolls the money back with it. Absent -> behaviour is unchanged.
+       */
+      inTx?: (tx: any, result: StandalonePaymentResult) => Promise<void>;
     },
   ) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
@@ -5445,7 +5455,13 @@ export class InvoicesService {
           });
         }
 
-        return { payments, paymentGroupId, excess: Math.max(0, excess) };
+        const result: StandalonePaymentResult = {
+          payments,
+          paymentGroupId,
+          excess: Math.max(0, excess),
+        };
+        await opts?.inTx?.(tx, result);
+        return result;
       }),
     );
   }
