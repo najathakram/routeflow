@@ -18,6 +18,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 // Same stand-in as the sibling customers.service specs: a real advisory lock needs a live DB
 // connection, so this keeps only the property the apply path relies on (run the callback).
 jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
   withAdvisoryLock: jest.fn((_opts: any, fn: () => Promise<any>) =>
     fn().then((value) => ({ acquired: true, value })),
   ),
