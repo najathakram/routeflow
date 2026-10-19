@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Loader2, Tag, X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { Button, cn, TAP_TARGET, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { isStaffRole } from "@/lib/default-unit-line";
@@ -96,8 +96,8 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
   return (
     <div className="rounded-xl border border-surface-border bg-white p-4">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="flex items-center gap-2 text-sm font-semibold text-navy">
-          <Tag className="h-4 w-4 text-brand-600" aria-hidden /> Restriction labels
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+          Restriction labels
         </h3>
       </div>
 
