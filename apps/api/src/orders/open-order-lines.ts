@@ -18,6 +18,8 @@ export interface OpenOrderLine {
   qty: number;
   /** Qty already on ISSUED invoices (never `OrderItem.invoicedQty`: a DRAFT invoice bumps it). */
   billedQty: number;
+  /** Qty already delivered (`OrderItem.deliveredQty`); the card reads it for PARTIALLY_DELIVERED orders. */
+  deliveredQty: number;
   /** `qty - billedQty`, always > 0 (billed-out lines are dropped). */
   remainingQty: number;
   /** The line's own sale-time split (raw, not the remainder's). */
@@ -107,6 +109,7 @@ export async function openOrderLinesWithOrderCount(
           unitsPerBox: true,
           unitLabel: true,
           qty: true,
+          deliveredQty: true,
         },
       },
     },
@@ -151,6 +154,7 @@ export async function openOrderLinesWithOrderCount(
         orderItemId: it.id,
         qty: Number(it.qty),
         billedQty,
+        deliveredQty: Number(it.deliveredQty ?? 0),
         remainingQty,
         boxes: it.boxes ?? null,
         pieces: it.pieces ?? null,

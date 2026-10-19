@@ -8,7 +8,11 @@ import { OPEN_ORDER_STATUSES } from "../invoices/credit-exposure";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { ProductsController } from "./products.controller";
-import { ProductOpenOrdersService, clampOpenOrdersLimit } from "./product-open-orders.service";
+import {
+  CARD_OPEN_STATUSES,
+  ProductOpenOrdersService,
+  clampOpenOrdersLimit,
+} from "./product-open-orders.service";
 
 describe("GET /products/:id/open-orders", () => {
   it("is OPERATOR-only (TENANT_ADMIN by hierarchy), not DRIVER, and not under /analytics", () => {
@@ -86,14 +90,53 @@ describe("ProductOpenOrdersService", () => {
     });
   });
 
-  it("reads open statuses, no counter sales, scoped to the tenant", async () => {
+  it("reads open statuses plus PARTIALLY_DELIVERED, no counter sales, scoped to the tenant", async () => {
     await service.getOpenOrders("p1", 200);
     const w = prisma.order.findMany.mock.calls[0][0].where;
     expect(w).toMatchObject({
       tenantId: "test-tenant",
-      status: { in: [...OPEN_ORDER_STATUSES] },
+      status: { in: [...OPEN_ORDER_STATUSES, OrderStatus.PARTIALLY_DELIVERED] },
       counterSale: false,
     });
+    expect(CARD_OPEN_STATUSES).toEqual([
+      OrderStatus.PENDING,
+      OrderStatus.CONFIRMED,
+      OrderStatus.OUT_FOR_DELIVERY,
+      OrderStatus.PARTIALLY_DELIVERED,
+    ]);
+  });
+
+  it("the shared OPEN_ORDER_STATUSES (credit exposure) does not gain PARTIALLY_DELIVERED", () => {
+    expect([...OPEN_ORDER_STATUSES]).toEqual([
+      OrderStatus.PENDING,
+      OrderStatus.CONFIRMED,
+      OrderStatus.OUT_FOR_DELIVERY,
+    ]);
+  });
+
+  it("a partly delivered order shows its undelivered quantity", async () => {
+    prisma.order.findMany.mockResolvedValue([
+      ord("o1", "c1", "Acme Foods", OrderStatus.PARTIALLY_DELIVERED, [
+        ln("l1", 24, { deliveredQty: 10 }),
+      ]),
+      ord("o2", "c2", "Globex Market", OrderStatus.PARTIALLY_DELIVERED, [
+        ln("l2", 12, { deliveredQty: 12 }),
+      ]),
+    ]);
+    const res = await service.getOpenOrders("p1", 200);
+    // fully delivered line drops; the other owes 24 - 10 = 14 (1 box + 2 pcs of 12)
+    expect(res.lines).toHaveLength(1);
+    expect(res.lines[0]).toEqual(
+      expect.objectContaining({
+        orderId: "o1",
+        status: "PARTIALLY_DELIVERED",
+        qty: 24,
+        remainingQty: 14,
+        boxes: 1,
+        pieces: 2,
+      }),
+    );
+    expect(res.summary).toEqual({ orders: 1, customers: 1, totalQty: 14 });
   });
 
   it("summary counts orders, distinct customers and total remaining qty; the row splits the remainder by boxes", async () => {

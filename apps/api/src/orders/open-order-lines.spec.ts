@@ -11,6 +11,7 @@ interface FakeLine {
   productId: string;
   status: string;
   qty: number;
+  deliveredQty?: number;
   boxes?: number | null;
   pieces?: number | null;
   unitsPerBox?: number | null;
@@ -240,5 +241,22 @@ describe("openOrderLinesForProduct", () => {
       excludeOrderId: "o-edit",
     });
     expect(out.map((l) => l.orderId)).toEqual(["o-a"]);
+  });
+
+  it("each row carries the line's deliveredQty (0 when unset), without changing remaining", async () => {
+    const out = await openOrderLinesForProduct(
+      fakeDb([
+        order("o1", {
+          status: OrderStatus.PARTIALLY_DELIVERED,
+          lineItems: [line("o1-l1", 24, { deliveredQty: 10 }), line("o1-l2", 6)],
+        }),
+      ]),
+      { ...base, statuses: [...OPEN_ORDER_STATUSES, OrderStatus.PARTIALLY_DELIVERED] },
+    );
+    expect(out.map((l) => [l.qty, l.deliveredQty, l.remainingQty])).toEqual([
+      [24, 10, 24],
+      [6, 0, 6],
+    ]);
+    expect(orderReads[0].select.lineItems.select.deliveredQty).toBe(true);
   });
 });

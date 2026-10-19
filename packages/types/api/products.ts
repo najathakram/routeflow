@@ -191,10 +191,10 @@ export interface ProductSalesHistory {
 /** One open order line of a product: what is still to be billed. Backed by
  *  `GET /products/:id/open-orders`. "Open" = `OPEN_ORDER_STATUSES` (PENDING, CONFIRMED,
  *  OUT_FOR_DELIVERY); counter sales and cancelled lines are excluded. No money fields. */
-/** The statuses that count as an open, still-to-bill order (mirrors the api's OPEN_ORDER_STATUSES). */
+/** The statuses on the open-orders card: the api's OPEN_ORDER_STATUSES plus PARTIALLY_DELIVERED for this card (owner 2026-10-19). */
 export type OpenOrderStatusValue = Extract<
   OrderStatusValue,
-  "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY"
+  "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "PARTIALLY_DELIVERED"
 >;
 
 export interface ProductOpenOrderLine {
@@ -208,7 +208,7 @@ export interface ProductOpenOrderLine {
   customerName: string;
   /** Ordered qty, base units (pieces). */
   qty: number;
-  /** Still to bill: `qty` minus the qty on ISSUED invoices. Always > 0. */
+  /** Still to come, always > 0: `qty` minus ISSUED-invoice qty; for a PARTIALLY_DELIVERED order, `qty` minus the delivered qty. */
   remainingQty: number;
   /** `remainingQty` split by the line's own `unitsPerBox` snapshot; null when not boxed. */
   boxes: number | null;
