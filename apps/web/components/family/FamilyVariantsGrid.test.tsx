@@ -156,6 +156,39 @@ describe("FamilyVariantsGrid read-only reads like a product list (K11-24)", () =
     expect(screen.getByRole("link", { name: "Vanilla" })).toHaveAttribute("href", "/products/v-2");
   });
 
+  it("K12 F18: the name link stretches over its whole row, so any tap on the row opens it", () => {
+    setup({ readOnly: true, rows: saved() });
+    const link = screen.getByRole("link", { name: "Strawberry" });
+    expect(link).toHaveClass("after:absolute", "after:inset-0");
+    expect(link.closest("tr")).toHaveClass("relative");
+    // the keyboard ring is drawn on the overlay, inside the row
+    expect(link).toHaveClass("focus-visible:after:ring-2", "focus-visible:after:ring-inset");
+  });
+
+  it("K12 A5: read-only hides the SKU, Barcode and Unit code columns when every row is empty", () => {
+    const bare: GridRow[] = [
+      { ...blankRow("a"), id: "v-1", name: "Strawberry", pricePerUnit: "1.25" },
+      { ...blankRow("b"), id: "v-2", name: "Vanilla", pricePerUnit: "1.5", sku: "AW-VAN" },
+    ];
+    setup({ readOnly: true, rows: bare });
+    expect(screen.getByRole("columnheader", { name: "SKU" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Barcode" })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Unit code" })).toBeNull();
+    // one cell fewer per row than the full grid: # + Name, SKU, Pieces/box, Price, Cost
+    expect(within(screen.getAllByRole("row")[1]).getAllByRole("cell")).toHaveLength(6);
+  });
+
+  it("K12 A5: edit mode keeps every code column even when empty", () => {
+    setup({ readOnly: false, rows: [{ ...blankRow("a"), name: "X" }] });
+    expect(screen.getByRole("columnheader", { name: "Barcode" })).toBeInTheDocument();
+  });
+
+  it("K12 P24: a read-only price never wraps or shrinks below its figures", () => {
+    setup({ readOnly: true, rows: saved() });
+    expect(screen.getByRole("columnheader", { name: "Price" })).toHaveClass("whitespace-nowrap");
+    expect(screen.getByText("$1.25").closest("td")).toHaveClass("whitespace-nowrap");
+  });
+
   it("a row with no id (not saved yet) keeps a plain name", () => {
     setup({ readOnly: true, rows: [{ ...blankRow("n"), name: "Unsaved", pricePerUnit: "2" }] });
     expect(screen.getByText("Unsaved")).toBeInTheDocument();
