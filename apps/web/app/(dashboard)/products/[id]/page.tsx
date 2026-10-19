@@ -313,6 +313,8 @@ export default function ProductDetailPage() {
   // The pack the form opened with: a save sends `unit` only if the operator changed it, and then sends this
   // pack back as the expected values (SA-797), so a Settings > Units rename made meanwhile is a 409, not lost.
   const packWhenEditStartedRef = React.useRef<ProductPackAtOpen | undefined>(undefined);
+  /** K12 O1: the pack size typed into the prompt and not yet confirmed there (null when none). */
+  const pendingPackSizeRef = React.useRef<number | null>(null);
   // The price strings the Details form was SEEDED with: a price is sent only when the draft differs (a dirty field).
   const pricesWhenEditStartedRef = React.useRef<Record<PriceDraftKey, string> | undefined>(
     undefined,
@@ -575,7 +577,11 @@ export default function ProductDetailPage() {
     // so saving from this form (tier prices included) silently 400'd.
     // Invalid/blank price fields are omitted (leave unchanged), never "".
     const unitToSend = packWordToSend(draft.unit, packWhenEditStartedRef.current?.unit);
-    const unitsPerBoxToSend = draft.unitsPerBox?.trim() ? parseInt(draft.unitsPerBox, 10) : null;
+    // K12 O1: a count typed into the pack-size prompt but not confirmed there is still the operator's input; the
+    // header Save sends it rather than dropping it behind a "Saved".
+    const unitsPerBoxToSend = draft.unitsPerBox?.trim()
+      ? parseInt(draft.unitsPerBox, 10)
+      : pendingPackSizeRef.current;
     updateProduct.mutate(
       {
         id: id,
@@ -1737,6 +1743,9 @@ export default function ProductDetailPage() {
                         onAccept={(value) =>
                           setEditDraft((d) => ({ ...d, unitsPerBox: String(value) }))
                         }
+                        onPendingChange={(value) => {
+                          pendingPackSizeRef.current = value;
+                        }}
                       />
                     );
                   })()}

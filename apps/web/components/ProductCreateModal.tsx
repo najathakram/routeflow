@@ -245,6 +245,8 @@ export function ProductCreateModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.parentProductId, prefillParent?.id]);
 
+  /** K12 O1: the pack size typed into the prompt and not yet confirmed there (null when none). */
+  const pendingPackSizeRef = React.useRef<number | null>(null);
   const [priceError, setPriceError] = React.useState("");
   const [pieceError, setPieceError] = React.useState("");
   const [isSavingPiece, setIsSavingPiece] = React.useState(false);
@@ -415,7 +417,10 @@ export function ProductCreateModal({
         costingMethod: form.costingMethod || "AVCO",
         standardCost:
           form.costingMethod === "STANDARD" && form.standardCost ? form.standardCost : undefined,
-        unitsPerBox: form.unitsPerBox ? parseInt(form.unitsPerBox, 10) : undefined,
+        // K12 O1: a count typed into the pack-size prompt but not confirmed there is still sent, never dropped.
+        unitsPerBox: form.unitsPerBox
+          ? parseInt(form.unitsPerBox, 10)
+          : (pendingPackSizeRef.current ?? undefined),
         parentProductId: form.parentProductId || undefined,
         variantName: form.variantName || undefined,
         trackedCategoryId: form.trackedCategoryId || undefined,
@@ -1102,6 +1107,9 @@ export function ProductCreateModal({
               unitSku={form.unitSku}
               unitsPerBox={form.unitsPerBox}
               onAccept={(value) => set("unitsPerBox", String(value))}
+              onPendingChange={(value) => {
+                pendingPackSizeRef.current = value;
+              }}
             />
           </div>
         </div>
