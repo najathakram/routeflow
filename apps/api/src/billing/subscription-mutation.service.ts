@@ -189,11 +189,14 @@ const ADDON_ANNUAL_NOT_SUPPORTED =
 const STRICT_PRORATED = { prorate: true, rethrow: true } as const;
 /** The audit reason of a stranded card item removed (or stuck) on the admin-only skip path (G1a). */
 const STRANDED_ITEM_REASON = "stranded after a skipped admin-only bill";
+/** The audit reason of an unheld card item the sweep spared for its age (G1a). */
+const SPARED_ITEM_REASON = "spared: younger than 10 minutes";
 /**
  * G1a: the stranded-item sweep only touches an item Stripe created more than this long ago. The checkout
  * create -> claim path and the plan-change bill both create an item and claim it a moment later; an item younger
- * than this may be mid-claim in a concurrent delivery and must not be removed (the next delivery, or the daily
- * invariant I2, catches a real strand).
+ * than this may be mid-claim in a concurrent delivery and must not be removed. Such an unheld item is never
+ * silent: the tenant is flagged for reconcile and one notice names it (`flagSparedYoungItems`), so a real strand
+ * that no later delivery revisits still reaches a human.
  */
 export const STRANDED_ITEM_MIN_AGE_SECONDS = 600;
 
@@ -3326,7 +3329,8 @@ export class SubscriptionMutationService {
   ): Promise<void> {
     let stranded: string[] = [];
     try {
-      const ids: string[] = [];
+      const ids: string[] = []; // owned and old enough to remove
+      const young: string[] = []; // owned, but too new (or of unreadable age) to remove
       const cutoff = Math.floor(Date.now() / 1000) - STRANDED_ITEM_MIN_AGE_SECONDS;
       let after: string | undefined;
       for (let page = 0; page < 10; page++) {
@@ -3337,27 +3341,26 @@ export class SubscriptionMutationService {
         });
         const data: any[] = list?.data ?? [];
         for (const i of data) {
+          if (!isOwnedAddonItem(i, tenantId, sku)) continue;
           // an item without a readable creation time is spared too (never guess it is old)
-          if (
-            isOwnedAddonItem(i, tenantId, sku) &&
-            typeof i.created === "number" &&
-            i.created < cutoff
-          ) {
-            ids.push(i.id as string);
-          }
+          if (typeof i.created === "number" && i.created < cutoff) ids.push(i.id as string);
+          else young.push(i.id as string);
         }
         if (list?.has_more !== true || data.length === 0) break;
         after = data[data.length - 1].id as string;
       }
-      if (ids.length === 0) return;
+      const owned = [...ids, ...young];
+      if (owned.length === 0) return;
       const held = new Set(
         (
           await this.prisma.tenantAddon.findMany({
-            where: { tenantId, stripeItemId: { in: ids } },
+            where: { tenantId, stripeItemId: { in: owned } },
             select: { stripeItemId: true },
           })
         ).map((r: { stripeItemId: string | null }) => r.stripeItemId),
       );
+      const spared = young.filter((id) => !held.has(id));
+      if (spared.length > 0) await this.flagSparedYoungItems(tenantId, sku, subId, spared);
       stranded = ids.filter((id) => !held.has(id));
       for (const itemId of [...stranded]) {
         await this.deleteOrphanItem(itemId, tenantId, sku, STRICT_PRORATED);
@@ -3372,6 +3375,41 @@ export class SubscriptionMutationService {
       }
     } catch (err) {
       await this.flagStrandedFailure(tenantId, sku, subId, stranded, err);
+    }
+  }
+
+  /**
+   * G1a: owned, unheld card items the sweep spared ONLY because they are younger than
+   * {@link STRANDED_ITEM_MIN_AGE_SECONDS}. They are most likely a concurrent delivery's item, but if one is a real
+   * strand nothing else would ever revisit it, so it is never silent: the tenant is flagged for reconcile and ONE
+   * notice per item (idempotent) names it. Never throws (a redelivery storm is not wanted).
+   */
+  private async flagSparedYoungItems(
+    tenantId: string,
+    sku: string,
+    subId: string,
+    itemIds: readonly string[],
+  ): Promise<void> {
+    this.logger.warn(
+      `Add-on "${sku}" tenant ${tenantId}: unheld card item(s) ${itemIds.join(",")} are younger than ${STRANDED_ITEM_MIN_AGE_SECONDS}s - not removed, flagged for reconcile`,
+    );
+    await markNeedsReconcile(
+      { prisma: this.prisma, logger: this.logger },
+      {
+        tenantId,
+        stripeSubId: subId,
+        local: { youngUnheldAddonItems: [...itemIds], sku },
+        error: SPARED_ITEM_REASON,
+      },
+    );
+    for (const itemId of itemIds) {
+      await this.raiseAdminAlertOnce(
+        tenantId,
+        AdminAuditAction.ADDON_STRANDED_ITEM_SPARED,
+        `${AdminAuditAction.ADDON_STRANDED_ITEM_SPARED}:${itemId}`,
+        `A card item for ${sku} (${itemId}) may be stranded; it was too new to remove safely. Check it in Stripe.`,
+        { sku, itemId, subscriptionId: subId, reason: SPARED_ITEM_REASON },
+      );
     }
   }
 

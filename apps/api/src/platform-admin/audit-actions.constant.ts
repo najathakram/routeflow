@@ -82,6 +82,8 @@ export const AdminAuditAction = {
   ADDON_STRANDED_ITEM_REMOVED: "ADDON_STRANDED_ITEM_REMOVED",
   /** G1a: a stranded Stripe add-on item could not be removed (or the subscription's items could not be read): it may still bill, reconcile by hand; meta: sku, itemIds, reason, subscriptionId. */
   ADDON_STRANDED_ITEM_STUCK: "ADDON_STRANDED_ITEM_STUCK",
+  /** G1a: an unheld card item for an add-on was too new to remove safely (under ten minutes old); the tenant is flagged for reconcile; meta: sku, itemId, reason, subscriptionId. */
+  ADDON_STRANDED_ITEM_SPARED: "ADDON_STRANDED_ITEM_SPARED",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
   TENANT_CLASS_CHANGED: "TENANT_CLASS_CHANGED",
   FEATURE_OVERRIDE_SET: "FEATURE_OVERRIDE_SET",
@@ -163,6 +165,8 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ADDON_PRICED_NOT_BILLED: "Add-on priced but not billed by card (set up its billing)",
   ADDON_STRANDED_ITEM_REMOVED: "Stranded add-on card item removed (customer credited)",
   ADDON_STRANDED_ITEM_STUCK: "Stranded add-on card item not removed (reconcile in Stripe)",
+  ADDON_STRANDED_ITEM_SPARED:
+    "Add-on card item possibly stranded (too new to remove; check in Stripe)",
   IMPERSONATION_STARTED: "Impersonation started",
   TENANT_CLASS_CHANGED: "Class changed",
   FEATURE_OVERRIDE_SET: "Feature override set",

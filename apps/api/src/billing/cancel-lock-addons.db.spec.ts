@@ -1038,23 +1038,48 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     expect(delIds(stripe)).toEqual(["si_orph_p6"]);
     expect(stripe.client.subscriptionItems.create).not.toHaveBeenCalled();
   }, 60_000);
-  it("P7: an unclaimed owned item created just now (a concurrent delivery may be about to claim it) is NOT deleted; no removed/stuck audit", async () => {
+  it("P7: an unheld owned item younger than ten minutes is NOT deleted - but never silent: the tenant is flagged for reconcile and ONE notice names it (a redelivery adds none)", async () => {
     const { t, harness, session, stripe, items } = await lockedWith("p7", [
       { addonKey: "tobacco_dealer", sku: null, over: { priceSnapshot: 29 } },
     ]);
-    items.push(
-      inAppItem("si_now_p7", t, "REGULATED_ITEMS", 0),
-      inAppItem("si_young_p7", t, "REGULATED_ITEMS", 599),
-    );
+    items.push(inAppItem("si_young_p7", t, "REGULATED_ITEMS", 599));
+
+    await harness.complete(session);
+    await harness.complete(session);
+
+    expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+    expect(items.map((i) => i.id)).toContain("si_young_p7");
+    expect(await strandedOf(t, AdminAuditAction.ADDON_STRANDED_ITEM_REMOVED)).toHaveLength(0);
+    expect(await strandedOf(t, AdminAuditAction.ADDON_STRANDED_ITEM_STUCK)).toHaveLength(0);
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: t } });
+    expect(sub.needsReconcile).toBe(true);
+    const spared = await strandedOf(t, AdminAuditAction.ADDON_STRANDED_ITEM_SPARED);
+    expect(spared).toHaveLength(1);
+    expect(spared[0].meta as any).toMatchObject({
+      sku: "REGULATED_ITEMS",
+      itemId: "si_young_p7",
+      reason: "spared: younger than 10 minutes",
+    });
+    expect((spared[0].meta as any).message).toContain("too new to remove safely");
+  }, 60_000);
+
+  it("P7b: a young item that IS held by a row -> no flag, no notice, not deleted", async () => {
+    const { t, harness, session, stripe, items } = await lockedWith("p7b", [
+      { addonKey: "tobacco_dealer", sku: null, over: { priceSnapshot: 29 } },
+      { addonKey: "FORECASTING", sku: "FORECASTING", over: { priceSnapshot: 25 } },
+    ]);
+    await prisma.tenantAddon.updateMany({
+      where: { tenantId: t, addonKey: "FORECASTING" },
+      data: { stripeItemId: "si_held_young_p7b" },
+    });
+    items.push(inAppItem("si_held_young_p7b", t, "REGULATED_ITEMS", 30));
 
     await harness.complete(session);
 
     expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
-    expect(items.map((i) => i.id)).toEqual(expect.arrayContaining(["si_now_p7", "si_young_p7"]));
-    expect(await strandedOf(t, AdminAuditAction.ADDON_STRANDED_ITEM_REMOVED)).toHaveLength(0);
-    expect(await strandedOf(t, AdminAuditAction.ADDON_STRANDED_ITEM_STUCK)).toHaveLength(0);
     const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: t } });
     expect(sub.needsReconcile).toBe(false);
+    expect(await strandedOf(t, AdminAuditAction.ADDON_STRANDED_ITEM_SPARED)).toHaveLength(0);
   }, 60_000);
 
   it("P8: an unclaimed owned item created 11 minutes ago IS deleted (the young one beside it is not)", async () => {
