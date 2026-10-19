@@ -150,6 +150,13 @@ export function PriceEditBar({
     return () => window.removeEventListener("keydown", block, true);
   }, [changePricesOpen, here, setConfirm]);
   if (!here) return null;
+  const longSentence =
+    !confirm &&
+    !changePricesOpen &&
+    d.problems.length === 0 &&
+    d.count > 0 &&
+    !!d.appliedLead &&
+    d.appliedFollows > 0;
   const label = (ref: string) => d.grid?.rows.find((r) => r.ref === ref)?.label ?? ref;
   return (
     <div
@@ -166,7 +173,13 @@ export function PriceEditBar({
       }
     >
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <div data-testid={T.ebText} className="min-w-0 flex-1 text-sm text-navy" aria-live="polite">
+        <div
+          data-testid={T.ebText}
+          // K13 R3: the sentence that also names the Auto followers is ~70 characters; beside Cancel and Save it wrapped to
+          // three lines at phone width. Below sm it takes the whole row (the buttons drop under it) and holds two.
+          className={`min-w-0 flex-1 text-sm text-navy${longSentence ? " max-sm:basis-full" : ""}`}
+          aria-live="polite"
+        >
           {confirm ? (
             <strong>Discard your unsaved changes?</strong>
           ) : d.problems.length > 0 ? (
@@ -254,7 +267,7 @@ export function PriceEditBar({
             </button>
           </div>
         ) : (
-          <div key="actions" className="flex items-center gap-2">
+          <div key="actions" className="ml-auto flex items-center gap-2">
             <button
               ref={cancelRef}
               type="button"
