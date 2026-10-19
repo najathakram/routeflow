@@ -64,6 +64,11 @@ const REGISTRY: Record<string, Entry> = {
     kind: "exempt",
     reason: "SA-763r: writes only OrderItem.deliveredQty, on lines with no delivery evidence",
   },
+  "orders/order-pd-quantities.ts::writeOfficeDeliveries": {
+    kind: "exempt",
+    reason:
+      "B692: writes only OrderItem.deliveredQty (recomputed from the evidence rows it inserts)",
+  },
   "orders/orders.service.ts::reopenOrder": { kind: "exempt", reason: "status only" },
   "orders/recompute-line-category-taxes.ts::recomputeLineCategoryTaxes": {
     kind: "exempt",

@@ -51,6 +51,9 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-10-17-bk3.md](api/landing-2026-10-17-bk3.md) | Landing 2026-10-17 (3rd): B1 bare variant name, B846 bill revert appends, B568 Zoho sync atomic, 542d session terms sig |
 | [api/landing-2026-10-17-units-v2-3.md](api/landing-2026-10-17-units-v2-3.md) | Landing 2026-10-17 units-v2-3: S19 customer price layer, U-1 tenant units module, pack precondition |
 | [api/landing-2026-10-18-fixes-4.md](api/landing-2026-10-18-fixes-4.md) | Landing 2026-10-18 fixes-4: one web base for return URLs, strict customer-price flag read (503), carrier-in-transit guard |
+| [api/b1234-delivered-line-lock.md](api/b1234-delivered-line-lock.md) | B1234: delivered lines locked on a PARTIALLY_DELIVERED order (409 LINE_ALREADY_DELIVERED, binding check under the lock) |
+| [api/b299-unvoid-billing-claim.md](api/b299-unvoid-billing-claim.md) | B299: unvoid re-claims invoicedQty only if the qty is free (409 ORDER_BILLING_CHANGED, no clamp on +1; void keeps its clamp) |
+| [api/b692-office-pd-quantities.md](api/b692-office-pd-quantities.md) | B692 office PARTIALLY_DELIVERED needs per-line quantities (409 ORDER_PD_NEEDS_QUANTITIES); legacy delivered cancel fails closed |
 | [api/landing-2026-10-12-r52.md](api/landing-2026-10-12-r52.md) | Landing 2026-10-12 Release 5.2: order edit revision guard, edit-line pairing, category trio from snapshot, read-only registries |
 | [api/landing-2026-10-12-r51-r42.md](api/landing-2026-10-12-r51-r42.md) | Landing 2026-10-12 Release 5.1 + 4.2: unpaid ACH checkout never activates, failed-payment email dedupe, one till-money classification, hand-over rows and stamp, UTC session pin |
 | [api/landing-2026-10-12-macbook.md](api/landing-2026-10-12-macbook.md) | Landing 2026-10-12 MacBook lane (pushed): delivery_pos business profile |
