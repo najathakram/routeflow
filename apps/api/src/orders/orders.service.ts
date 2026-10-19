@@ -3935,7 +3935,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 if (qty <= 0) continue;
 
                 const existingUnitPrice = Number(li.unitPrice);
-                const overridePrice = item.unitPrice != null ? Number(item.unitPrice) : null;
+                const overridePrice = typedLinePrice(user, item.unitPrice); // a driver's is dropped
                 const tierForProduct =
                   tierCaller && li.productId
                     ? (operatorCpMap.get(li.productId) ?? operatorDefaultTier)

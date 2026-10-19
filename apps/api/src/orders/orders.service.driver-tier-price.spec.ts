@@ -36,6 +36,7 @@ import { ConfigService } from "@nestjs/config";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 import { OrdersService } from "./orders.service";
+import * as editPayload from "./order-edit-payload";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -430,6 +431,20 @@ describe("OrdersService.updateOrderItems — driver lines resolve the customer's
       expect(data.unitPrice).toBe(10); // not the tier-2 $8, and not the driver's $1
       expect(data.subtotal).toBe(50);
       expect(data.priceType).toBeUndefined();
+    });
+
+    it("E3: a driver price reaching the UPDATE branch unstripped is still dropped (typedLinePrice, not classifyEditPayload)", async () => {
+      // SA-814l: the diff UPDATE branch must not rely on classifyEditPayload having stripped the price.
+      const spy = jest.spyOn(editPayload, "classifyEditPayload").mockReturnValue(true);
+      try {
+        prime([line({ unitPrice: 10, subtotal: 30 })], 2);
+        await edit("driver", [{ id: "li-1", action: "UPDATE", qty: 5, unitPrice: 1 }]);
+        const data = updated();
+        expect(data.unitPrice).toBe(10); // a direct read billed the driver's $1
+        expect(data.subtotal).toBe(50);
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it("E2: a driver qty edit of a boxed line keeps the stored box price and prorates (never qty x box price)", async () => {
