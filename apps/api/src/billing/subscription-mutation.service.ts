@@ -18,7 +18,12 @@ import { EntitlementsService } from "./entitlements.service";
 import { BillingEventService } from "./billing-event.service";
 import { StripeService } from "./stripe.service";
 import { isStripeResourceMissing } from "./addon.service";
-import { CheckoutAddonItem, checkoutAddonItems, checkoutAddonLineItem } from "./stripe-addon-items";
+import {
+  CheckoutAddonItem,
+  checkoutAddonItems,
+  checkoutAddonLineItem,
+  isOwnedAddonItem,
+} from "./stripe-addon-items";
 import { emitAddonDelta, lockTenantForLedger, bookAddonsOnCrossing } from "./addon-ledger";
 import {
   addonCodeOf,
@@ -40,6 +45,7 @@ import {
 } from "./manual-invoice-notice";
 import { isPayingRow } from "./mrr.service";
 import { applyCouponStateTx, readCouponStateFromStripe } from "./coupon-state";
+import { markNeedsReconcile } from "./needs-reconcile";
 import { NO_COUPON } from "./coupon-unbilled";
 import { b58GuardRefusal } from "./b58-guard";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
@@ -181,6 +187,8 @@ const ADDON_ANNUAL_NOT_SUPPORTED =
 
 /** Deleting a checkout add-on item nothing owns: credit the unused time, fail the webhook on a Stripe error. */
 const STRICT_PRORATED = { prorate: true, rethrow: true } as const;
+/** The audit reason of a stranded card item removed (or stuck) on the admin-only skip path (G1a). */
+const STRANDED_ITEM_REASON = "stranded after a skipped admin-only bill";
 
 const ADDON_RAISE_UNBILLED_ROW =
   "This add-on isn't billed on your subscription yet (it was set up before online billing, or while a promotion covered it), so its quantity can't be raised here. Please contact support.";
@@ -2264,6 +2272,7 @@ export class SubscriptionMutationService {
     // The admin-only row this loop ACCEPTED per SKU: adoptCheckoutSku bills exactly that row (never a re-selection
     // by SKU, which could pick an older row of the same family the predicate rejected).
     const acceptedRowOf = new Map<string, string>();
+    const mismatched = new Set<string>();
     for (const row of active) {
       const code = addonSkuCode(row);
       if (!(unbilledOnThisSub(row) && code && !bySku.has(code) && !missing.includes(code)))
@@ -2280,7 +2289,15 @@ export class SubscriptionMutationService {
       if (isStripeBillableAddonRow(row, def?.monthlyPrice)) {
         bySku.set(code, []);
         acceptedRowOf.set(code, row.id);
-      } else await this.noteAddonPricedNotBilled(tenantId, row.id, code, def?.name ?? code, subId);
+      } else {
+        await this.noteAddonPricedNotBilled(tenantId, row.id, code, def?.name ?? code, subId);
+        mismatched.add(code);
+      }
+    }
+    // G1a: a SKU whose only candidate row is a mismatch bills nothing here, so an item an earlier delivery left
+    // for it (adopted on a lost claim, or created whose strict delete threw) is removed - under the SKU's lock.
+    for (const code of [...mismatched].sort()) {
+      if (!bySku.has(code)) await this.sweepStrandedUnderLock(tenantId, code, subId);
     }
     if (bySku.size === 0 && missing.length === 0) return;
 
@@ -2898,6 +2915,9 @@ export class SubscriptionMutationService {
         if (isPricedBillableCandidate(judged)) {
           await this.noteAddonPricedNotBilled(tenantId, row.id, sku, skuDef.name, subId);
         }
+        // G1a: an item an earlier delivery adopted (lost claim) or created (strict delete threw) for this SKU
+        // would otherwise keep billing: nothing holds it and this path now bills nothing.
+        await this.removeStrandedAddonItems(tenantId, sku, subId);
         return false;
       }
     }
@@ -3203,9 +3223,7 @@ export class SubscriptionMutationService {
         subscription: stripeSubId,
         limit: 100,
       });
-      const mine = (list?.data ?? []).filter(
-        (i: any) => i?.metadata?.tenantId === tenantId && i?.metadata?.sku === sku,
-      );
+      const mine = (list?.data ?? []).filter((i: any) => isOwnedAddonItem(i, tenantId, sku));
       if (mine.length === 0) return null;
       const referenced = await this.prisma.tenantAddon.findMany({
         where: { tenantId, stripeItemId: { in: mine.map((i: any) => i.id) } },
@@ -3254,6 +3272,114 @@ export class SubscriptionMutationService {
       if (reading.kind === "state") couponFull = reading.state.full;
     }
     return this.addonModeOf({ stripeSubId: subId, externalPayment, couponFull });
+  }
+
+  /**
+   * G1a: the admin-only skip path bills nothing, so an item RouteFlow owns for THIS SKU that no row holds is
+   * stranded: an orphan an earlier delivery adopted (its claim was lost) or created (its strict delete threw)
+   * keeps charging the customer. Called UNDER the add-on lock of `sku`, so no enable is mid-flight. Removes
+   * (strict, prorated: the customer is credited) every item of this tenant and SKU (`isOwnedAddonItem`, the
+   * recognizer `adoptOrphanItem` uses: never the plan item, never another SKU) that NO TenantAddon row of the
+   * tenant, active or not, holds. One audit notice per removed item. A listing or delete failure flags the
+   * tenant (`markNeedsReconcile`) and raises a notice naming the items; it never throws out of the webhook.
+   */
+  private async removeStrandedAddonItems(
+    tenantId: string,
+    sku: string,
+    subId: string,
+  ): Promise<void> {
+    let stranded: string[] = [];
+    try {
+      const ids: string[] = [];
+      let after: string | undefined;
+      for (let page = 0; page < 10; page++) {
+        const list: any = await this.stripe.client.subscriptionItems.list({
+          subscription: subId,
+          limit: 100,
+          ...(after ? { starting_after: after } : {}),
+        });
+        const data: any[] = list?.data ?? [];
+        for (const i of data) if (isOwnedAddonItem(i, tenantId, sku)) ids.push(i.id as string);
+        if (list?.has_more !== true || data.length === 0) break;
+        after = data[data.length - 1].id as string;
+      }
+      if (ids.length === 0) return;
+      const held = new Set(
+        (
+          await this.prisma.tenantAddon.findMany({
+            where: { tenantId, stripeItemId: { in: ids } },
+            select: { stripeItemId: true },
+          })
+        ).map((r: { stripeItemId: string | null }) => r.stripeItemId),
+      );
+      stranded = ids.filter((id) => !held.has(id));
+      for (const itemId of [...stranded]) {
+        await this.deleteOrphanItem(itemId, tenantId, sku, STRICT_PRORATED);
+        stranded = stranded.filter((id) => id !== itemId);
+        await this.raiseAdminAlertOnce(
+          tenantId,
+          AdminAuditAction.ADDON_STRANDED_ITEM_REMOVED,
+          `${AdminAuditAction.ADDON_STRANDED_ITEM_REMOVED}:${itemId}`,
+          `Add-on ${sku} had a card item (${itemId}) that no add-on row held: it was removed and the customer credited.`,
+          { sku, itemId, subscriptionId: subId, reason: STRANDED_ITEM_REASON },
+        );
+      }
+    } catch (err) {
+      await this.flagStrandedFailure(tenantId, sku, subId, stranded, err);
+    }
+  }
+
+  /**
+   * G1a: {@link removeStrandedAddonItems} under the SKU's add-on lock, for a caller that holds none (the (c) loop's
+   * mismatch branch). Does nothing when `subId` is no longer the stored subscription. A lock that cannot be taken
+   * is handled like a failed delete (flag + notice), never thrown.
+   */
+  private async sweepStrandedUnderLock(
+    tenantId: string,
+    sku: string,
+    subId: string,
+  ): Promise<void> {
+    try {
+      await this.runUnderAddonLock(tenantId, sku, async () => {
+        const stored = await this.prisma.tenantSubscription.findUnique({
+          where: { tenantId },
+          select: { stripeSubId: true },
+        });
+        if ((stored?.stripeSubId ?? null) !== subId) return;
+        await this.removeStrandedAddonItems(tenantId, sku, subId);
+      });
+    } catch (err) {
+      await this.flagStrandedFailure(tenantId, sku, subId, [], err);
+    }
+  }
+
+  /** A stranded item that could not be removed (or read): flag the tenant, one notice, never throw. */
+  private async flagStrandedFailure(
+    tenantId: string,
+    sku: string,
+    subId: string,
+    itemIds: readonly string[],
+    err: unknown,
+  ): Promise<void> {
+    this.logger.error(
+      `Add-on "${sku}" tenant ${tenantId}: a stranded Stripe item could not be removed (${itemIds.join(",") || "items unread"}): ${(err as Error).message}`,
+    );
+    await markNeedsReconcile(
+      { prisma: this.prisma, logger: this.logger },
+      {
+        tenantId,
+        stripeSubId: subId,
+        local: { strandedAddonItems: [...itemIds], sku },
+        error: err,
+      },
+    );
+    await this.raiseAdminAlertOnce(
+      tenantId,
+      AdminAuditAction.ADDON_STRANDED_ITEM_STUCK,
+      `${AdminAuditAction.ADDON_STRANDED_ITEM_STUCK}:${tenantId}:${sku}:${itemIds.join(",")}`,
+      `Add-on ${sku} may still bill a card item no add-on row holds (${itemIds.join(", ") || "its items could not be read"}). Remove it in Stripe.`,
+      { sku, itemIds: [...itemIds], subscriptionId: subId, reason: STRANDED_ITEM_REASON },
+    );
   }
 
   /**

@@ -416,7 +416,7 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
       created: Math.floor(Date.now() / 1000),
       metadata: { tenantId: t, planKey: "GROWTH", ...CATCHUP_PREPAID_METADATA },
     };
-    return { harness, session, stripe };
+    return { harness, session, stripe, items };
   }
 
   it("M4: lock -> a paid catch-up checkout on a NEW subscription (onCheckoutCompleted): (a) is adopted onto its item, (b) is billed through one catalog-priced item, (c) and (d) are never billed, everything is booked once", async () => {
@@ -856,5 +856,184 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
       null,
     );
     expect(await noticesOf(t)).toHaveLength(1);
+  }, 60_000);
+  // ─── G1a: a STRANDED card item (no row holds it) is removed on the admin-only skip path ───────────────────────────
+  // An in-app item (metadata {tenantId, sku}, never the checkout's `addonSku` tag) that an earlier delivery adopted
+  // (lost claim) or created (strict delete threw) keeps billing the customer when the retry re-judges the row as a
+  // mismatch and returns. The skip path now removes it (strict, prorated), under the same add-on lock.
+  const inAppItem = (id: string, tenant: string, sku: string) => ({
+    id,
+    quantity: 1,
+    metadata: { tenantId: tenant, sku },
+    price: { unit_amount: 3900 },
+  });
+  const strandedOf = (tenantId: string, action: string) =>
+    prisma.auditLog.findMany({ where: { tenantId, action } });
+  const delIds = (stripe: any) =>
+    stripe.client.subscriptionItems.del.mock.calls.map((c: any[]) => c[0]);
+
+  it("P1: an orphan adopted by a delivery that LOST its claim stays on the subscription; the retry's mismatch skip deletes it (prorated) and bills nothing", async () => {
+    const p = price.REGULATED_ITEMS;
+    const { t, harness, session, stripe, items } = await lockedWith("p1", [
+      { addonKey: "tobacco_dealer", sku: null, over: { priceSnapshot: p } },
+    ]);
+    items.push(inAppItem("si_orph_p1", t, "REGULATED_ITEMS"));
+    const list = stripe.client.subscriptionItems.list;
+    const real = list.getMockImplementation()!;
+    list.mockImplementationOnce(async (args: any) => {
+      // the orphan is listed (and adopted), then an admin re-prices the row: the claim loses its compare-and-swap
+      const out = await real(args);
+      await prisma.tenantAddon.updateMany({ where: { tenantId: t }, data: { priceSnapshot: 29 } });
+      return out;
+    });
+
+    await expect(harness.complete(session)).rejects.toBeDefined(); // first delivery fails, the orphan is left
+    expect(delIds(stripe)).not.toContain("si_orph_p1");
+    expect(items.map((i) => i.id)).toContain("si_orph_p1");
+
+    await harness.complete(session); // the retry: a mismatch now
+
+    expect(delIds(stripe)).toEqual(["si_orph_p1"]);
+    expect(stripe.client.subscriptionItems.del).toHaveBeenCalledWith("si_orph_p1", {
+      proration_behavior: "create_prorations",
+    });
+    expect(stripe.client.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(items.map((i) => i.id)).not.toContain("si_orph_p1");
+    const r = await onlyRow(t);
+    expect([r.stripeItemId, Number(r.priceSnapshot)]).toEqual([null, 29]);
+    expect(await noticesOf(t)).toHaveLength(1);
+    const audit = await strandedOf(t, AdminAuditAction.ADDON_STRANDED_ITEM_REMOVED);
+    expect(audit).toHaveLength(1);
+    expect(audit[0].meta as any).toMatchObject({
+      sku: "REGULATED_ITEMS",
+      itemId: "si_orph_p1",
+      reason: "stranded after a skipped admin-only bill",
+    });
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: t } });
+    expect(sub.needsReconcile).toBe(false);
+  }, 60_000);
+
+  it("P2: an item ANY row of the tenant holds (active or inactive) is never deleted; an unreferenced one beside them is", async () => {
+    const { t, harness, session, stripe, items } = await lockedWith("p2", [
+      { addonKey: "tobacco_dealer", sku: null, over: { priceSnapshot: 29 } }, // a mismatch (catalog is higher)
+      {
+        addonKey: "REGULATED_ITEMS",
+        sku: "REGULATED_ITEMS",
+        over: { active: false, priceSnapshot: 39 },
+      },
+      { addonKey: "FORECASTING", sku: "FORECASTING", over: { priceSnapshot: 25 } },
+    ]);
+    // the lock cleared every pointer of the dead subscription: these two rows hold items of the NEW one
+    await prisma.tenantAddon.updateMany({
+      where: { tenantId: t, addonKey: "REGULATED_ITEMS" },
+      data: { stripeItemId: "si_held_inactive_p2" },
+    });
+    await prisma.tenantAddon.updateMany({
+      where: { tenantId: t, addonKey: "FORECASTING" },
+      data: { stripeItemId: "si_held_active_p2" },
+    });
+    items.push(
+      inAppItem("si_held_inactive_p2", t, "REGULATED_ITEMS"),
+      inAppItem("si_held_active_p2", t, "REGULATED_ITEMS"),
+      inAppItem("si_free_p2", t, "REGULATED_ITEMS"),
+    );
+
+    await harness.complete(session);
+
+    expect(delIds(stripe)).toEqual(["si_free_p2"]);
+    expect(items.map((i) => i.id)).toEqual(
+      expect.arrayContaining(["si_held_inactive_p2", "si_held_active_p2"]),
+    );
+  }, 60_000);
+
+  it("P3: another SKU's item, another tenant's item and the plan item on the same subscription are untouched", async () => {
+    const { t, harness, session, stripe, items } = await lockedWith("p3", [
+      { addonKey: "tobacco_dealer", sku: null, over: { priceSnapshot: 29 } },
+    ]);
+    items.push(
+      inAppItem("si_other_sku_p3", t, "FORECASTING"),
+      inAppItem("si_other_tenant_p3", "00000000-0000-0000-0000-00000000dead", "REGULATED_ITEMS"),
+      inAppItem("si_mine_p3", t, "REGULATED_ITEMS"),
+    );
+
+    await harness.complete(session);
+
+    expect(delIds(stripe)).toEqual(["si_mine_p3"]);
+    expect(items.map((i) => i.id)).toEqual(
+      expect.arrayContaining([`si_base_p3`, "si_other_sku_p3", "si_other_tenant_p3"]),
+    );
+  }, 60_000);
+
+  it("P4: a delete that throws -> the tenant is flagged for reconcile, ONE notice names the item, and the webhook still resolves", async () => {
+    const { t, harness, session, stripe, items } = await lockedWith("p4", [
+      { addonKey: "tobacco_dealer", sku: null, over: { priceSnapshot: 29 } },
+    ]);
+    items.push(inAppItem("si_stuck_p4", t, "REGULATED_ITEMS"));
+    stripe.client.subscriptionItems.del.mockRejectedValue(new Error("stripe is down"));
+
+    await expect(harness.complete(session)).resolves.toBeUndefined();
+    await harness.complete(session); // a redelivery adds no second notice
+
+    expect(items.map((i) => i.id)).toContain("si_stuck_p4");
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: t } });
+    expect(sub.needsReconcile).toBe(true);
+    expect(await strandedOf(t, AdminAuditAction.ADDON_STRANDED_ITEM_REMOVED)).toHaveLength(0);
+    const stuck = await strandedOf(t, AdminAuditAction.ADDON_STRANDED_ITEM_STUCK);
+    expect(stuck).toHaveLength(1);
+    expect(stuck[0].meta as any).toMatchObject({
+      sku: "REGULATED_ITEMS",
+      itemIds: ["si_stuck_p4"],
+    });
+    expect(await noticesOf(t)).toHaveLength(1); // the mismatch notice is unaffected
+  }, 60_000);
+  it("P5: a created item whose strict delete THREW (after a lost claim) is removed by the retry's mismatch skip", async () => {
+    const p = price.REGULATED_ITEMS;
+    const { t, harness, session, stripe, items } = await lockedWith("p5", [
+      { addonKey: "tobacco_dealer", sku: null, over: { priceSnapshot: p } },
+    ]);
+    const create = stripe.client.subscriptionItems.create;
+    create.mockImplementationOnce(async (args: any) => {
+      await prisma.tenantAddon.updateMany({ where: { tenantId: t }, data: { priceSnapshot: 29 } });
+      // an in-app item (metadata only), as the enable path makes it: never the checkout's `addonSku` tag
+      const item = inAppItem("si_created_p5_1", t, args.metadata.sku);
+      items.push(item);
+      return item;
+    });
+    stripe.client.subscriptionItems.del.mockRejectedValueOnce(new Error("stripe is down"));
+
+    await expect(harness.complete(session)).rejects.toBeDefined();
+    const createdId = items.find((i) => String(i.id).startsWith("si_created_p5_"))?.id;
+    expect(createdId).toBeDefined(); // the strict delete failed: the item is still on the subscription
+
+    await harness.complete(session); // the retry: a mismatch now
+
+    expect(stripe.client.subscriptionItems.del).toHaveBeenLastCalledWith(createdId, {
+      proration_behavior: "create_prorations",
+    });
+    expect(items.map((i) => i.id)).not.toContain(createdId);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(await strandedOf(t, AdminAuditAction.ADDON_STRANDED_ITEM_REMOVED)).toHaveLength(1);
+  }, 60_000);
+
+  it("P6: the in-lock skip (a row re-priced AFTER the (c) read) removes the stranded item too", async () => {
+    const { t, harness, stripe, items } = await lockedWith("p6", [
+      { addonKey: "tobacco_dealer", sku: null, over: { priceSnapshot: 29 } },
+    ]);
+    items.push(inAppItem("si_orph_p6", t, "REGULATED_ITEMS"));
+    const row = await onlyRow(t);
+
+    const billed = await (harness.mutations as any).billUnbilledRow(
+      t,
+      "REGULATED_ITEMS",
+      row,
+      "sub_p6",
+      null,
+      { sessionId: "cs_p6" },
+      { adminOnly: true },
+    );
+
+    expect(billed).toBe(false);
+    expect(delIds(stripe)).toEqual(["si_orph_p6"]);
+    expect(stripe.client.subscriptionItems.create).not.toHaveBeenCalled();
   }, 60_000);
 });
