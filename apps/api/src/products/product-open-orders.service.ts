@@ -36,6 +36,7 @@ export class ProductOpenOrdersService {
     if (!product) throw new NotFoundException("Product not found");
 
     // Over-read orders (billed-out lines drop); the cut to `limit` lines is made below.
+    const take = limit * 2;
     const { lines: found, ordersRead } = await openOrderLinesWithOrderCount(db as never, {
       tenantId,
       productId,
@@ -43,7 +44,6 @@ export class ProductOpenOrdersService {
       take,
       excludeCounterSales: true,
     });
-    const take = limit * 2;
     const kept = found.slice(0, limit);
 
     const lines: ProductOpenOrderLine[] = kept.map((l) => {
