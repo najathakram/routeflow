@@ -74,6 +74,12 @@ export function EditablePricesGrid({
   // Every row family-governed (each says `editable: false`): nothing to edit or change here.
   const anyEditable = d.grid?.rows.some((r) => r.editable) ?? true;
   const pendingFocus = d.api.focus;
+  // K13 F05/F12: the audit id of an inline save this render reports (null otherwise).
+  const savedHere =
+    surface === "inline" && d.lastSave?.surface === "inline" ? d.lastSave.auditId : null;
+  const lastSaved = React.useRef<string | null>(null);
+  const justSaved = savedHere !== null && savedHere !== lastSaved.current;
+  lastSaved.current = savedHere;
   React.useEffect(() => {
     if (editing && !was.current) {
       // K11-13: a price the user opened (Enter or a click on it) is the target, recorded by `begin` before this render.
@@ -94,6 +100,7 @@ export function EditablePricesGrid({
     if (
       !editing &&
       was.current &&
+      !justSaved && // K13 F12: after a save the saved line takes the focus (Undo is then the next Tab)
       (!document.activeElement || document.activeElement === document.body)
     ) {
       editBtn.current?.focus({ preventScroll: true });
@@ -105,8 +112,6 @@ export function EditablePricesGrid({
   // K13 F05/F11: a save collapses the editor (order unit, the reserved slot and the bar leave the flow in one commit), and
   // the page could end up away from the grid. Once that commit is laid out, a grid whose top left the viewport is
   // scrolled back to the top; one still in view is left alone. Checked again a frame later, after the refetch settles.
-  const savedHere =
-    surface === "inline" && d.lastSave?.surface === "inline" ? d.lastSave.auditId : null;
   React.useLayoutEffect(() => {
     if (!savedHere) return undefined;
     const keep = () => {

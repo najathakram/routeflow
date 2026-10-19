@@ -321,6 +321,20 @@ export function PriceSaveStatusLine({
     refocusUndo.current = false;
   }, [phase]);
 
+  // K13 F12: a new save puts focus on the line (the Save button just left the page), so Undo is the next Tab stop. Only
+  // when focus has nowhere to be (a user who moved on keeps theirs), and never scrolling: the line is pinned in view.
+  // That focus is not the user "being in" the line, so it does not hold the 5 s pin (a Tab onto Undo does).
+  const autoFocus = React.useRef(false);
+  const savedAudit = phase === "saved" ? state.auditId : null;
+  React.useEffect(() => {
+    if (!savedAudit) return;
+    const a = document.activeElement;
+    if (a && a !== document.body) return;
+    autoFocus.current = true;
+    lineRef.current?.focus({ preventScroll: true });
+    autoFocus.current = false;
+  }, [savedAudit]);
+
   // Row 614: `busy` is state, stale inside one tick; this ref is set synchronously so a double click runs one Undo.
   const running = React.useRef(false);
   const run = async (confirmed: boolean, skip?: UndoSkipCell[]) => {
@@ -391,7 +405,9 @@ export function PriceSaveStatusLine({
           }
           onMouseEnter={() => setHover(true)}
           onMouseLeave={() => setHover(false)}
-          onFocus={() => setFocusIn(true)}
+          onFocus={() => {
+            if (!autoFocus.current) setFocusIn(true);
+          }}
           onBlur={(e) => {
             if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusIn(false);
           }}
