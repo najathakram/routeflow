@@ -58,4 +58,18 @@ describe("create-order submit key, persisted with the draft (SA-817 A6)", () => 
     renderHook(() => useCreateOrderSubmitKey(true, onChange));
     expect(onChange).toHaveBeenCalledWith(expect.any(String));
   });
+
+  it("maybeUsed(): false for a brand-new key, true once a request was sent with it, an attempt ended unknown, or it came from a draft", () => {
+    const { result } = renderHook(() => useCreateOrderSubmitKey(true));
+    expect(result.current.maybeUsed()).toBe(false);
+    result.current.begin("cart-1");
+    expect(result.current.maybeUsed()).toBe(true);
+    result.current.settle("success"); // the order exists; the next cart's key is new
+    expect(result.current.maybeUsed()).toBe(false);
+
+    result.current.adopt("K-FROM-DRAFT");
+    expect(result.current.maybeUsed()).toBe(true);
+    result.current.adopt("K-FORK", { fresh: true });
+    expect(result.current.maybeUsed()).toBe(false);
+  });
 });

@@ -518,4 +518,94 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
       expect(mockUpdateDraft).toHaveBeenCalledTimes(1); // the other device's draft was never overwritten
     });
   });
+
+  describe("A6 under conflict - the key of a submit with an unknown outcome is never dropped", () => {
+    const theirs = {
+      id: "d1",
+      updatedAt: "2026-10-19T10:00:07.000Z",
+      customerId: "c1",
+      customerName: "Acme Foods",
+      title: "Order, Acme Foods",
+      payload: {
+        customer: { id: "c1", businessName: "Acme Foods" },
+        lineItems: [],
+        from: "device-b",
+        _submitKey: "K-ORIGINAL",
+      },
+    };
+    const conflict409 = () => ({
+      response: { status: 409, data: { code: "DRAFT_CHANGED", current: theirs } },
+    });
+
+    async function submitLostThenEdit() {
+      mockCreateDraft.mockResolvedValue({ id: "d1", updatedAt: "2026-10-19T10:00:00.000Z" });
+      renderWithProviders(<CreateOrderModal isOpen onClose={onClose} />);
+      await pickCustomerAndScan();
+      await waitFor(() => expect(mockCreateDraft).toHaveBeenCalledTimes(1), { timeout: 4000 });
+      fireEvent.click(createBtn());
+      await waitFor(() => expect(orderPosts()).toHaveLength(1));
+      await waitFor(() => expect(createBtn()).not.toBeDisabled());
+      // the user keeps editing; the next autosave meets the other device's change
+      mockResolveProductByCode.mockResolvedValue(product("p2"));
+      capturedOnScan!("222");
+      await screen.findByText("Widget p2");
+    }
+    let onClose: jest.Mock;
+    beforeEach(() => {
+      onClose = jest.fn();
+    });
+
+    it("A6: K1 times out (the order may be committed), the draft conflicts: that submit is replayed with the ORIGINAL key first - one order, no dialog", async () => {
+      post
+        .mockRejectedValueOnce(new Error("timeout of 30000ms exceeded"))
+        .mockResolvedValue({ data: { id: "o1" } });
+      mockUpdateDraft.mockRejectedValueOnce(conflict409());
+      await submitLostThenEdit();
+
+      await waitFor(() => expect(orderPosts()).toHaveLength(2), { timeout: 6000 });
+      expect(keyOf(1)).toBe(keyOf(0));
+      await waitFor(() => expect(onClose).toHaveBeenCalled());
+      expect(
+        screen.queryByText(
+          "This order was changed on another device. Keep this one or open the other?",
+        ),
+      ).not.toBeInTheDocument();
+    });
+
+    it("A6: the replay is also lost, so the dialog opens; Keep this one keeps the SAME draft and the SAME key, and the other device's version is parked", async () => {
+      post
+        .mockRejectedValueOnce(new Error("timeout of 30000ms exceeded"))
+        .mockRejectedValueOnce(new Error("timeout of 30000ms exceeded"))
+        .mockResolvedValue({ data: { id: "o1" } });
+      mockUpdateDraft
+        .mockRejectedValueOnce(conflict409())
+        .mockResolvedValue({ id: "d1", updatedAt: "2026-10-19T10:00:09.000Z" });
+      mockCreateDraft.mockResolvedValueOnce({ id: "d1", updatedAt: "2026-10-19T10:00:00.000Z" });
+      await submitLostThenEdit();
+
+      await waitFor(() => expect(orderPosts()).toHaveLength(2), { timeout: 6000 });
+      fireEvent.click(await screen.findByRole("button", { name: "Keep this one" }));
+
+      await waitFor(() => expect(mockCreateDraft).toHaveBeenCalledTimes(2));
+      const k1 = keyOf(0);
+      // the other device's version is parked with a key of its own...
+      const parked = mockCreateDraft.mock.calls[1][0].payload;
+      expect(parked.from).toBe("device-b");
+      expect(parked._submitKey).not.toBe(k1);
+      // ...and ours is written back over the SAME draft, with K1, checked against THEIR updatedAt
+      await waitFor(() => expect(mockUpdateDraft.mock.calls.length).toBeGreaterThanOrEqual(2));
+      expect(mockUpdateDraft.mock.calls[1][0]).toMatchObject({
+        id: "d1",
+        expectedUpdatedAt: theirs.updatedAt,
+      });
+      expect(mockUpdateDraft.mock.calls[1][0].payload._submitKey).toBe(k1);
+
+      // submitting after Keep this one still sends K1: exactly one order
+      await waitFor(() => expect(createBtn()).not.toBeDisabled());
+      fireEvent.click(createBtn());
+      await waitFor(() => expect(orderPosts()).toHaveLength(3));
+      expect(keyOf(2)).toBe(k1);
+      expect(keyOf(1)).toBe(k1);
+    });
+  });
 });
