@@ -241,7 +241,7 @@ export function PriceEditBar({
             <button
               type="button"
               onClick={() => document.getElementById(`change-panel${sfx}`)?.focus()}
-              className="rounded text-sm font-medium text-navy underline underline-offset-2 hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
+              className="rounded text-sm font-medium text-navy hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
             >
               {FINISH_FIRST}
             </button>
