@@ -918,7 +918,7 @@ export default function VendorBillDetailPage() {
         if (gapsToast) toast(gapsToast);
       },
       onError: (err: any) => {
-        // The 409 (e.g. INVENTORY_LEDGER_GAP) says what to do next; "try again" would not help.
+        // A coded refusal (e.g. INVENTORY_LEDGER_GAP) shows fixed copy that says what happened; "try again" would not help.
         setIsVoidOpen(false);
         toast(voidFailureToast(err));
       },

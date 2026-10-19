@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-methods";
 import { API_ERROR_CODES } from "@routeflow/types";
+import { codedToastCopy } from "../generic-toast-copy";
 import type {
   CheckVendorBillDuplicateDto,
   DuplicateVendorBillError,
@@ -351,19 +352,26 @@ export function voidSuccessToast(
   };
 }
 
-/** The error toast for a refused void: the server's 409 says what to do (e.g. a ledger gap). */
+/**
+ * The error toast for a refused void. FIXED copy chosen by the server's `code` (B986: the UI never renders
+ * `response.data.message`). A void's only INVENTORY_LEDGER_GAP is the excess one (SA-808c: the stock records show
+ * more received than the bill; flagged for a repair), named from the structured `name` field.
+ */
 export function voidFailureToast(err: unknown): {
   title: string;
   description: string;
   variant: "error";
 } {
-  const message = (err as { response?: { data?: { message?: unknown } } } | null)?.response?.data
-    ?.message;
-  return {
-    title: "Failed to void bill",
-    description: typeof message === "string" && message ? message : "Please try again.",
-    variant: "error",
-  };
+  const data = (err as { response?: { data?: { code?: unknown; name?: unknown } } } | null)
+    ?.response?.data;
+  let description: string;
+  if (data?.code === API_ERROR_CODES.INVENTORY_LEDGER_GAP) {
+    const who = typeof data.name === "string" && data.name ? data.name : "This product";
+    description = `${who}'s stock records show more received than this bill, so it can't be voided here. We've flagged it for a repair.`;
+  } else {
+    description = codedToastCopy(err) ?? "Please try again.";
+  }
+  return { title: "Failed to void bill", description, variant: "error" };
 }
 
 export function useReceiveVendorBill() {

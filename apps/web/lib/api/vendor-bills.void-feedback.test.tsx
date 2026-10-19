@@ -30,13 +30,19 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 
 beforeEach(() => jest.clearAllMocks());
 
+// The server's own sentence: the toast must NOT render it (B986), it shows fixed copy chosen by the code.
 const GAP_MESSAGE =
   '"Widget" can\'t be voided — its stock records for bill B-1 (7) do not match what the bill says was received (10). Ask an admin to look into this product first.';
+const GAP_COPY =
+  "Widget's stock records show more received than this bill, so it can't be voided here. We've flagged it for a repair.";
 
 describe("void feedback", () => {
-  it("a refused void surfaces the server's 409 message", async () => {
+  it("a refused void shows fixed copy for its code, never the server's message", async () => {
     mockedPost.mockRejectedValue({
-      response: { status: 409, data: { code: "INVENTORY_LEDGER_GAP", message: GAP_MESSAGE } },
+      response: {
+        status: 409,
+        data: { code: "INVENTORY_LEDGER_GAP", message: GAP_MESSAGE, name: "Widget" },
+      },
     });
     const { result } = renderHook(() => useVoidVendorBill(), { wrapper: Wrapper });
     let caught: unknown;
@@ -45,9 +51,15 @@ describe("void feedback", () => {
     });
     expect(voidFailureToast(caught)).toEqual({
       title: "Failed to void bill",
-      description: GAP_MESSAGE,
+      description: GAP_COPY,
       variant: "error",
     });
+    expect(voidFailureToast(caught).description).not.toContain(GAP_MESSAGE);
+  });
+
+  it("an uncoded server message is never rendered either", () => {
+    const err = { response: { status: 400, data: { message: "raw server sentence" } } };
+    expect(voidFailureToast(err).description).not.toContain("raw server sentence");
   });
 
   it("falls back to today's text when the error carries no message", () => {
