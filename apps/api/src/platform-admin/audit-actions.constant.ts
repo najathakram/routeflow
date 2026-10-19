@@ -113,6 +113,8 @@ export const AdminAuditAction = {
   // FEATURE_CONFIG_SET_ACTION / FEATURE_CONFIG_CLEARED_ACTION (pinned by the constant spec).
   FEATURE_CONFIG_SET: "FEATURE_CONFIG_SET",
   FEATURE_CONFIG_CLEARED: "FEATURE_CONFIG_CLEARED",
+  // Mobile app install links (row 559): a super admin changed the global "Get the app" URLs; meta = { previous, next }.
+  APP_LINKS_UPDATED: "APP_LINKS_UPDATED",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -181,6 +183,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   COUNTER_DAY_CLOSE_REOPENED: "Counter day close reopened",
   FEATURE_CONFIG_SET: "Feature setting changed",
   FEATURE_CONFIG_CLEARED: "Feature setting cleared",
+  APP_LINKS_UPDATED: "Mobile app links updated",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */

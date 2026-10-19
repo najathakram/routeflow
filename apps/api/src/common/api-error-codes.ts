@@ -596,6 +596,8 @@ export const API_ERROR_CODES = {
    * was written, so the caller never gets the tier price instead of the customer's typed price.
    */
   CUSTOMER_PRICES_UNAVAILABLE: "CUSTOMER_PRICES_UNAVAILABLE",
+  /** 400 from PUT /platform-admin/app-links: a link is not an https URL with a host; body carries `field`. */
+  APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
