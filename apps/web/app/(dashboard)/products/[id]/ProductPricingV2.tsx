@@ -17,7 +17,7 @@ import {
   type PriceDraftHooks,
 } from "./units-v2/edit/usePriceDraft";
 import { UnitRowRemove, UnitStructureControls } from "./units-v2/structure/UnitStructure";
-import { UnitsBesideGrid } from "./units-v2/structure/UnitsBesideGrid";
+import { UnitDetailsEditor, UnitsBesideGrid } from "./units-v2/structure/UnitsBesideGrid";
 import { useUnitStructureAllowed } from "./units-v2/structure/unit-structure";
 
 /**
@@ -89,6 +89,8 @@ function PricingSection({
           }
         />
       </div>
+      {/* K13: per-unit Name / Contains (edit mode) sit below the grid so entering edit never moves its rows. */}
+      {structure && <UnitDetailsEditor product={product} />}
       {/* K13 P09: the Save bar rests directly under the grid it saves, not below the Customer view block. */}
       <PriceEditBar changePricesOpen={cp.open} />
       <PriceSaveStatus productId={product.id} surface="inline" />

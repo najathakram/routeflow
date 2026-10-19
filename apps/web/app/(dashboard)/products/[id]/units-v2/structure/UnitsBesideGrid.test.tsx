@@ -4,7 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { ToastProvider } from "@routeflow/ui/web";
 import { createTestQueryClient } from "@/test-utils/render";
 import { PriceDraftContext, type PriceDraft } from "../edit/usePriceDraft";
-import { UnitsBesideGrid } from "./UnitsBesideGrid";
+import { UnitDetailsEditor, UnitsBesideGrid } from "./UnitsBesideGrid";
 
 const updateMutate = jest.fn();
 let mockUnits: unknown[] = [];
@@ -28,13 +28,15 @@ const mk = (id: string, label: string, factorToBase: number, isDefaultSelling = 
 const product = { id: "p1", unit: "Box" };
 
 let draft: { dirty: boolean; editingIn: "inline" | "window" | null };
-function renderBeside() {
+function renderBeside(
+  Comp: React.ComponentType<{ product: { id: string; unit?: string | null } }> = UnitsBesideGrid,
+) {
   const d = { ...draft, editing: draft.editingIn !== null } as unknown as PriceDraft;
   return render(
     <QueryClientProvider client={createTestQueryClient()}>
       <ToastProvider>
         <PriceDraftContext.Provider value={d}>
-          <UnitsBesideGrid product={product} />
+          <Comp product={product} />
         </PriceDraftContext.Provider>
       </ToastProvider>
     </QueryClientProvider>,
@@ -99,7 +101,7 @@ describe("UnitsBesideGrid: row 614 a second trigger while one is in flight", () 
 
   it("the per-unit Save sends one mutation however many times it is triggered", () => {
     draft = { dirty: false, editingIn: "inline" };
-    renderBeside();
+    renderBeside(UnitDetailsEditor);
     fireEvent.change(screen.getByLabelText("Case name"), { target: { value: "Carton" } });
     const save = screen.getByRole("button", { name: "Save Case" });
     fireEvent.click(save);
@@ -112,15 +114,23 @@ describe("UnitsBesideGrid: row 614 a second trigger while one is in flight", () 
 });
 
 describe("UnitsBesideGrid: name and contains", () => {
-  it("shows no name or contains fields outside edit mode", () => {
+  it("K13: the beside block never carries Name / Contains, even in edit mode (they sit below the grid)", () => {
+    draft = { dirty: false, editingIn: "inline" };
     renderBeside();
+    expect(screen.getByLabelText("Default order unit")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Case name")).toBeNull();
+    expect(screen.queryByTestId("units-v2-beside-rows")).toBeNull();
+  });
+
+  it("shows no name or contains fields outside edit mode", () => {
+    renderBeside(UnitDetailsEditor);
     expect(screen.queryByLabelText("Case name")).toBeNull();
     expect(screen.queryByLabelText("Pieces per Case")).toBeNull();
   });
 
   it("in edit mode edits every unit but the smallest, and Save sends name + contains only", () => {
     draft = { dirty: false, editingIn: "inline" };
-    renderBeside();
+    renderBeside(UnitDetailsEditor);
     expect(screen.queryByLabelText("Piece name")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Save/ })).toBeNull(); // untouched row: no Save
     fireEvent.change(screen.getByLabelText("Case name"), { target: { value: " Carton " } });
@@ -134,7 +144,7 @@ describe("UnitsBesideGrid: name and contains", () => {
 
   it("refuses an empty name or a blank contains (Save disabled) and Cancel restores", () => {
     draft = { dirty: false, editingIn: "inline" };
-    renderBeside();
+    renderBeside(UnitDetailsEditor);
     fireEvent.change(screen.getByLabelText("Case name"), { target: { value: "  " } });
     expect(screen.getByRole("button", { name: "Save Case" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Case name"), { target: { value: "Case" } });
@@ -147,7 +157,7 @@ describe("UnitsBesideGrid: name and contains", () => {
 
   it("is disabled with the reason while the price draft is dirty", () => {
     draft = { dirty: true, editingIn: "inline" };
-    renderBeside();
+    renderBeside(UnitDetailsEditor);
     expect(screen.getByLabelText("Case name")).toBeDisabled();
     expect(screen.getByLabelText("Pieces per Case")).toBeDisabled();
     expect(screen.getByLabelText("Case name")).toHaveAccessibleDescription(
