@@ -20,6 +20,7 @@ import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-uni
 import { retryCreditTx, retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { finiteStoredMoney } from "../common/money-invariants.util";
 import { autoApplyCandidateWhere, creditAutoApplyOnSend } from "./auto-apply-candidates";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import {
@@ -317,7 +318,11 @@ export class CreditNotesService {
         qty,
         categoryTax: opts.ledgerReversedByReturn
           ? 0
-          : roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
+          : roundMoney(
+              // SA-816: a stored non-finite levy is refused (400), never refunded as $0.
+              finiteStoredMoney(line.categoryTaxAmount, `Invoice line ${line.id} category tax`) *
+                frac,
+            ),
       };
     });
     if (pool) {

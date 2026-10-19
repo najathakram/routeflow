@@ -1,3 +1,4 @@
+import { finiteStoredMoney } from "../common/money-invariants.util";
 import { resolveProductMatches } from "./finalize-order-recompute";
 
 /**
@@ -87,7 +88,11 @@ export function aggregateInvoiceLines(
       prev.packs.add(Number(it.unitsPerBox ?? 0));
       prev.qty += Number(it.qty);
       prev.subtotal += Number(it.subtotal);
-      prev.categoryTax += Number(it.categoryTaxAmount ?? 0);
+      // SA-816: a stored non-finite levy is refused here (400), never summed into a NaN that roundMoney turns into 0.
+      prev.categoryTax += finiteStoredMoney(
+        it.categoryTaxAmount,
+        `Invoice line ${it.id} category tax`,
+      );
       prev.freeUnits += Math.max(0, Math.trunc(Number(it.promoFreeUnits ?? 0) || 0));
       prev.unitPrice = Number(it.unitPrice); // most-recent line wins for display
       prev.sample = it;

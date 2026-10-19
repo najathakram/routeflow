@@ -1,4 +1,5 @@
 import { normalizeBoxesPieces, roundMoney, splitMatchesQty } from "@routeflow/pricing";
+import { finiteStoredMoney } from "../common/money-invariants.util";
 import { assertUnitLineSplit } from "../orders/unit-line-split";
 
 /**
@@ -124,7 +125,11 @@ export function orderLineUnchanged(
     ["unitsPerBox", shape.unitsPerBox],
     ["unitPrice", agg.unitPrice],
     ["subtotal", roundMoney(agg.subtotal)],
-    ["categoryTaxAmount", roundMoney(agg.categoryTax)],
+    // SA-816: a non-finite levy sum must not read as 0 (equal to a stored 0, so the line looked unchanged).
+    [
+      "categoryTaxAmount",
+      roundMoney(finiteStoredMoney(agg.categoryTax, "The order line category tax")),
+    ],
     ["promoFreeUnits", freeUnits > 0 ? freeUnits : null],
     ["invoicedQty", shape.qty],
     ["status", "PENDING"],

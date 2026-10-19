@@ -17,6 +17,7 @@ import {
   assertFiniteInvoiceInput,
   assertInvoiceTotalsSane,
   assertNoNegativeLineSubtotal,
+  finiteStoredMoney,
   storedInvoiceTotals,
   sumInvoiceTotalsStrict,
 } from "../common/money-invariants.util";
@@ -923,8 +924,8 @@ export class InvoicesService {
     // RF-4: prorate the line's snapshotted category tax the SAME telescoping way as
     // the subtotal, so a partial / delivered-basis bill collects only its share and
     // Σ(partials) == the order line's full category tax. A full bill from scratch
-    // (prior 0, billQty = orderQty) copies the stored amount verbatim.
-    const storedCategoryTax = Number(li.categoryTaxAmount ?? 0);
+    // (prior 0, billQty = orderQty) copies the stored amount verbatim. SA-816: non-finite = 400.
+    const storedCategoryTax = finiteStoredMoney(li.categoryTaxAmount, "Order line category tax");
     const categoryTaxAmount =
       storedCategoryTax === 0 || orderQty <= 0
         ? storedCategoryTax

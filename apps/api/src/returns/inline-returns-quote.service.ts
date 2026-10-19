@@ -29,6 +29,7 @@ import { customerPricing } from "../orders/units-prices-v2";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
 import { currentTaxRate } from "../common/tax-rate";
+import { finiteStoredMoney } from "../common/money-invariants.util";
 import { getTierPrice, isWholeCents, packFromOwnSplit } from "@routeflow/pricing";
 import { returnedPiecesByProduct } from "./returns-pieces.util";
 import { DEAD_RETURN_STATUSES } from "./return-statuses";
@@ -783,7 +784,10 @@ export class InlineReturnsQuoteService {
           // §4/§5: the QUOTE's category-tax figure is a pro-rated preview of this
           // snapshot; the actual capped-at-the-ledger-booking credit is computed at
           // capture time (PR-1c), which is the only place a mismatch can be caught.
-          categoryTax: Number(item.categoryTaxAmount) || null,
+          // SA-816: a stored non-finite levy is refused (400), never read as "no levy" (NaN || null).
+          categoryTax:
+            finiteStoredMoney(item.categoryTaxAmount, `Invoice line ${item.id} category tax`) ||
+            null,
           invoiceSubtotal: Number(inv.subtotal),
           invoiceDiscount: Number(inv.discount),
           invoiceTaxAmount: Number(inv.taxAmount),
