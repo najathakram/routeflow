@@ -1570,8 +1570,7 @@ export function CreateOrderModal({
     if (!repriceAfterResumeRef.current || !selectedCustomer || lineItems.length === 0) return;
     if (!resumePricesReady) return;
     repriceAfterResumeRef.current = false;
-    const tierFor = (productId: string) =>
-      cpMap.get(productId) ?? selectedCustomer.pricingTier ?? 1;
+    const tierFor = tierForProduct; // the one tier chain this modal prices with
     const layerOf = priceLayer.enabled
       ? (productId: string) => priceLayer.layerOf(productId)
       : undefined;
