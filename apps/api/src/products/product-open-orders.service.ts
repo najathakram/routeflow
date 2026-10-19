@@ -3,7 +3,7 @@ import { normalizeBoxesPieces } from "@routeflow/pricing";
 import type { OrderStatusValue, ProductOpenOrderLine, ProductOpenOrders } from "@routeflow/types";
 import { roundQty } from "../common/invoiced-sales";
 import { OPEN_ORDER_STATUSES } from "../invoices/credit-exposure";
-import { openOrderLinesForProduct } from "../orders/open-order-lines";
+import { openOrderLinesWithOrderCount } from "../orders/open-order-lines";
 import { PrismaService } from "../prisma/prisma.service";
 
 export const OPEN_ORDERS_DEFAULT_LIMIT = 200;
@@ -36,13 +36,14 @@ export class ProductOpenOrdersService {
     if (!product) throw new NotFoundException("Product not found");
 
     // Over-read orders (billed-out lines drop); the cut to `limit` lines is made below.
-    const found = await openOrderLinesForProduct(db as never, {
+    const { lines: found, ordersRead } = await openOrderLinesWithOrderCount(db as never, {
       tenantId,
       productId,
       statuses: OPEN_ORDER_STATUSES,
-      take: limit * 2,
+      take,
       excludeCounterSales: true,
     });
+    const take = limit * 2;
     const kept = found.slice(0, limit);
 
     const lines: ProductOpenOrderLine[] = kept.map((l) => {
@@ -72,7 +73,8 @@ export class ProductOpenOrdersService {
         customers: new Set(lines.map((l) => l.customerId)).size,
         totalQty: roundQty(lines.reduce((sum, l) => sum + l.remainingQty, 0)),
       },
-      truncated: found.length > limit,
+      // A full order window may hide older open orders even when most lines billed out.
+      truncated: found.length > limit || ordersRead === take,
     };
   }
 }

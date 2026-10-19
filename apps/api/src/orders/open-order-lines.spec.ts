@@ -59,20 +59,27 @@ const order = (id: string, over: Partial<FakeOrder> = {}): FakeOrder => ({
   ...over,
 });
 
+/** The order `findMany` args the helper sent, so a test can pin the exact `orderBy`. */
+const orderReads: any[] = [];
+
 function fakeDb(orders: FakeOrder[], invoices: FakeInvoice[] = []): OpenOrderLinesDb {
   return {
     order: {
       findMany: async (args: any) => {
+        orderReads.push(args);
         const w = args.where;
+        // Order level: ANY line of the product, whatever its status (Prisma `lineItems.some`).
+        const orderHas = (l: FakeLine) => l.productId === w.lineItems.some.productId;
+        // Line level: the nested `lineItems.where` of the select drops CANCELLED lines.
         const wantsLine = (l: FakeLine) =>
-          l.productId === w.lineItems.some.productId && l.status !== "CANCELLED";
+          l.productId === args.select.lineItems.where.productId && l.status !== "CANCELLED";
         let rows = orders.filter(
           (o) =>
             (w.status?.in ? w.status.in.includes(o.status) : true) &&
             (w.counterSale === false ? !o.counterSale : true) &&
             (w.customerId ? o.customerId === w.customerId : true) &&
             (w.id?.not ? o.id !== w.id.not : true) &&
-            o.lineItems.some(wantsLine),
+            o.lineItems.some(orderHas),
         );
         rows = [...rows].sort((a, b) => {
           const at = (a.orderDate ?? a.createdAt).getTime();
@@ -96,6 +103,10 @@ function fakeDb(orders: FakeOrder[], invoices: FakeInvoice[] = []): OpenOrderLin
     },
   };
 }
+
+beforeEach(() => {
+  orderReads.length = 0;
+});
 
 const base = { tenantId: "t1", productId: "p1", statuses: OPEN_ORDER_STATUSES, take: 50 };
 
@@ -194,6 +205,27 @@ describe("openOrderLinesForProduct", () => {
     expect(all[1].orderDate).toEqual(new Date("2026-09-20T00:00:00Z"));
     const capped = await openOrderLinesForProduct(fakeDb(orders), { ...base, take: 2 });
     expect(capped.map((l) => l.orderId)).toEqual(["o-new", "o-backdated"]);
+    // The fake's own sort is a stand-in: pin the exact orderBy the real query sends.
+    expect(orderReads[0].orderBy).toEqual([
+      { orderDate: { sort: "desc", nulls: "last" } },
+      { createdAt: "desc" },
+      { id: "desc" },
+    ]);
+  });
+
+  it("an order whose only line of the product is CANCELLED still counts toward take but returns no line", async () => {
+    const orders = [
+      order("o-new", {
+        createdAt: new Date("2026-10-10T00:00:00Z"),
+        lineItems: [line("gone", 9, { status: "CANCELLED" })],
+      }),
+      order("o-old", { createdAt: new Date("2026-09-01T00:00:00Z") }),
+    ];
+    const out = await openOrderLinesForProduct(fakeDb(orders), { ...base, take: 1 });
+    // take=1 reads only o-new (its CANCELLED line is dropped), so the older live order is not reached
+    expect(out).toEqual([]);
+    expect(orderReads[0].where.lineItems).toEqual({ some: { productId: "p1" } });
+    expect(orderReads[0].select.lineItems.where.status).toEqual({ not: "CANCELLED" });
   });
 
   it("scopes to one customer and drops the excluded order when asked", async () => {

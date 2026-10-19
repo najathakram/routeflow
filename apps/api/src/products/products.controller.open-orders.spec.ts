@@ -3,6 +3,7 @@ import { NotFoundException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { OrderStatus, UserRole } from "@prisma/client";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
+import { ACCRUAL_REVENUE_STATUSES } from "../common/invoiced-sales";
 import { OPEN_ORDER_STATUSES } from "../invoices/credit-exposure";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -107,6 +108,11 @@ describe("ProductOpenOrdersService", () => {
     expect(res.productId).toBe("p1");
     expect(res.summary).toEqual({ orders: 3, customers: 2, totalQty: 24 + 6 + 12 + 24 });
     expect(res.truncated).toBe(false);
+    // billed qty is read through Invoice with an explicit tenant and only ISSUED invoices
+    expect(prisma.invoice.findMany.mock.calls[0][0].where).toMatchObject({
+      tenantId: "test-tenant",
+      status: { notIn: [...ACCRUAL_REVENUE_STATUSES.notIn] },
+    });
     const l1 = res.lines.find((l) => l.qty === 30)!;
     expect(l1).toEqual(
       expect.objectContaining({
@@ -134,5 +140,17 @@ describe("ProductOpenOrdersService", () => {
     expect(res.lines).toHaveLength(2);
     expect(res.truncated).toBe(true);
     expect(res.summary).toEqual({ orders: 2, customers: 1, totalQty: 2 });
+  });
+
+  it("a full order window whose lines are mostly billed out still reports truncated", async () => {
+    // limit 1 -> take 2: both orders are read, one line is billed out, so found.length (1) <= limit
+    prisma.order.findMany.mockResolvedValue([
+      ord("o1", "c1", "Acme Foods", OrderStatus.PENDING, [ln("a", 5)]),
+      ord("o2", "c1", "Acme Foods", OrderStatus.PENDING, [ln("b", 5)]),
+    ]);
+    prisma.invoice.findMany.mockResolvedValue([{ items: [{ orderItemId: "a", qty: 5 }] }]);
+    const res = await service.getOpenOrders("p1", 1);
+    expect(res.lines.map((l) => l.orderId)).toEqual(["o2"]);
+    expect(res.truncated).toBe(true);
   });
 });

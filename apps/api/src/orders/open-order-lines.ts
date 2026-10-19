@@ -62,6 +62,14 @@ export async function openOrderLinesForProduct(
   db: OpenOrderLinesDb,
   q: OpenOrderLinesQuery,
 ): Promise<OpenOrderLine[]> {
+  return (await openOrderLinesWithOrderCount(db, q)).lines;
+}
+
+/** Same read, also reporting how many ORDERS were read (`=== take` means the window was full). */
+export async function openOrderLinesWithOrderCount(
+  db: OpenOrderLinesDb,
+  q: OpenOrderLinesQuery,
+): Promise<{ lines: OpenOrderLine[]; ordersRead: number }> {
   const { tenantId, productId, customerId, statuses, take } = q;
   const orders = await db.order.findMany({
     where: {
@@ -69,7 +77,9 @@ export async function openOrderLinesForProduct(
       ...(customerId ? { customerId } : {}),
       status: { in: statuses },
       ...(q.excludeCounterSales ? { counterSale: false } : {}),
-      lineItems: { some: { productId, status: { not: "CANCELLED" } } },
+      // Order-level: any line of the product, whatever its status (CPH behaviour, 4c6e1c76d);
+      // the CANCELLED cut is made at line level below.
+      lineItems: { some: { productId } },
       ...(q.excludeOrderId ? { id: { not: q.excludeOrderId } } : {}),
     },
     orderBy: [
@@ -151,5 +161,5 @@ export async function openOrderLinesForProduct(
       });
     }
   }
-  return out;
+  return { lines: out, ordersRead: (orders as any[]).length };
 }
