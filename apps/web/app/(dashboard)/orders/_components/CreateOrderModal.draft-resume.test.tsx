@@ -1,5 +1,5 @@
 import * as React from "react";
-import { renderWithProviders, screen, waitFor, act, fireEvent } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, act, fireEvent, cleanup } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 import { createMemoryDraftStorage, setDraftMirrorStorage } from "@/lib/order-draft/storage";
 import { readDraftSubmitKey } from "@routeflow/types/draft-submit-key";
@@ -528,7 +528,18 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
       title: "Order, Acme Foods",
       payload: {
         customer: { id: "c1", businessName: "Acme Foods" },
-        lineItems: [],
+        lineItems: [
+          {
+            tempId: "tx",
+            productId: "px",
+            productName: "Widget from device B",
+            unit: "each",
+            listPrice: 5,
+            unitPrice: 5,
+            priceType: "STANDARD",
+            qty: 1,
+          },
+        ],
         from: "device-b",
         _submitKey: "K-ORIGINAL",
       },
@@ -536,52 +547,69 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
     const conflict409 = () => ({
       response: { status: 409, data: { code: "DRAFT_CHANGED", current: theirs } },
     });
-
-    async function submitLostThenEdit() {
-      mockCreateDraft.mockResolvedValue({ id: "d1", updatedAt: "2026-10-19T10:00:00.000Z" });
-      renderWithProviders(<CreateOrderModal isOpen onClose={onClose} />);
-      await pickCustomerAndScan();
-      await waitFor(() => expect(mockCreateDraft).toHaveBeenCalledTimes(1), { timeout: 4000 });
-      fireEvent.click(createBtn());
-      await waitFor(() => expect(orderPosts()).toHaveLength(1));
-      await waitFor(() => expect(createBtn()).not.toBeDisabled());
-      // the user keeps editing; the next autosave meets the other device's change
-      mockResolveProductByCode.mockResolvedValue(product("p2"));
-      capturedOnScan!("222");
-      await screen.findByText("Widget p2");
-    }
+    const timeout = () => new Error("timeout of 30000ms exceeded");
     let onClose: jest.Mock;
     beforeEach(() => {
       onClose = jest.fn();
     });
 
-    it("A6: K1 times out (the order may be committed), the draft conflicts: that submit is replayed with the ORIGINAL key first - one order, no dialog", async () => {
-      post
-        .mockRejectedValueOnce(new Error("timeout of 30000ms exceeded"))
-        .mockResolvedValue({ data: { id: "o1" } });
-      mockUpdateDraft.mockRejectedValueOnce(conflict409());
-      await submitLostThenEdit();
+    /**
+     * K1 is sent and its outcome is unknown. The cart is still unsynced (the draft PATCHes failed offline), so when the browser
+     * comes back online the PATCH meets the other device's change. `editAfter` changes the cart in between.
+     */
+    async function submitLostThenConflict(editAfter: boolean) {
+      mockCreateDraft.mockResolvedValue({ id: "d1", updatedAt: "2026-10-19T10:00:00.000Z" });
+      mockUpdateDraft.mockRejectedValue(new Error("Network Error"));
+      renderWithProviders(<CreateOrderModal isOpen onClose={onClose} />);
+      await pickCustomerAndScan();
+      await waitFor(() => expect(mockCreateDraft).toHaveBeenCalledTimes(1), { timeout: 4000 });
+      mockResolveProductByCode.mockResolvedValue(product("p2"));
+      capturedOnScan!("222");
+      await screen.findByText("Widget p2");
+      await waitFor(() => expect(mockUpdateDraft).toHaveBeenCalledTimes(1), { timeout: 4000 });
+      fireEvent.click(createBtn());
+      await waitFor(() => expect(orderPosts()).toHaveLength(1), { timeout: 6000 });
+      await waitFor(() => expect(createBtn()).not.toBeDisabled());
+      if (editAfter) {
+        mockResolveProductByCode.mockResolvedValue(product("p3"));
+        capturedOnScan!("333");
+        await screen.findByText("Widget p3");
+      }
+      mockUpdateDraft.mockReset();
+      mockUpdateDraft
+        .mockRejectedValueOnce(conflict409())
+        .mockResolvedValue({ id: "d1", updatedAt: "2026-10-19T10:00:09.000Z" });
+      act(() => {
+        window.dispatchEvent(new Event("online"));
+      });
+    }
+    const conflictCopy =
+      "This order was changed on another device. Keep this one or open the other?";
+
+    it("A6: K1 times out (the order may be committed), the draft conflicts, the cart is the one that was sent: replayed with the ORIGINAL key first - one order, no dialog", async () => {
+      post.mockRejectedValueOnce(timeout()).mockResolvedValue({ data: { id: "o1" } });
+      await submitLostThenConflict(false);
 
       await waitFor(() => expect(orderPosts()).toHaveLength(2), { timeout: 6000 });
       expect(keyOf(1)).toBe(keyOf(0));
       await waitFor(() => expect(onClose).toHaveBeenCalled());
-      expect(
-        screen.queryByText(
-          "This order was changed on another device. Keep this one or open the other?",
-        ),
-      ).not.toBeInTheDocument();
+      expect(screen.queryByText(conflictCopy)).not.toBeInTheDocument();
+    });
+
+    it("A6: the cart CHANGED since the unknown submit: NO replay (K1 may never have reached the server), the dialog opens at once", async () => {
+      post.mockRejectedValueOnce(timeout()).mockResolvedValue({ data: { id: "o1" } });
+      await submitLostThenConflict(true);
+
+      expect(await screen.findByText(conflictCopy, {}, { timeout: 6000 })).toBeInTheDocument();
+      expect(orderPosts()).toHaveLength(1); // nothing was sent for the unconfirmed edit
     });
 
     it("A6: the replay is also lost, so the dialog opens; Keep this one keeps the SAME draft and the SAME key, and the other device's version is parked", async () => {
       post
-        .mockRejectedValueOnce(new Error("timeout of 30000ms exceeded"))
-        .mockRejectedValueOnce(new Error("timeout of 30000ms exceeded"))
+        .mockRejectedValueOnce(timeout())
+        .mockRejectedValueOnce(timeout())
         .mockResolvedValue({ data: { id: "o1" } });
-      mockUpdateDraft
-        .mockRejectedValueOnce(conflict409())
-        .mockResolvedValue({ id: "d1", updatedAt: "2026-10-19T10:00:09.000Z" });
-      mockCreateDraft.mockResolvedValueOnce({ id: "d1", updatedAt: "2026-10-19T10:00:00.000Z" });
-      await submitLostThenEdit();
+      await submitLostThenConflict(false);
 
       await waitFor(() => expect(orderPosts()).toHaveLength(2), { timeout: 6000 });
       fireEvent.click(await screen.findByRole("button", { name: "Keep this one" }));
@@ -603,8 +631,45 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
       // submitting after Keep this one still sends K1: exactly one order
       await waitFor(() => expect(createBtn()).not.toBeDisabled());
       fireEvent.click(createBtn());
-      await waitFor(() => expect(orderPosts()).toHaveLength(3));
+      await waitFor(() => expect(orderPosts()).toHaveLength(3), { timeout: 6000 });
       expect(keyOf(2)).toBe(k1);
+      expect(keyOf(1)).toBe(k1);
+    });
+
+    it("A6: 'Open the other' with a maybe-used K1 mirrors Keep this one: this version stays on the ORIGINAL draft with K1, the other version is parked and opened; submitting this copy later sends K1 (one order)", async () => {
+      post.mockRejectedValueOnce(timeout()).mockResolvedValue({ data: { id: "o1" } });
+      await submitLostThenConflict(true); // cart changed: no replay, dialog at once
+      const k1 = keyOf(0);
+      mockCreateDraft.mockResolvedValueOnce({ id: "d2", updatedAt: "2026-10-19T10:00:11.000Z" });
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Open the other" }, { timeout: 6000 }),
+      );
+
+      // the other device's version is parked as the NEW draft, with a fresh key, and is what the editor now shows
+      await waitFor(() => expect(mockCreateDraft).toHaveBeenCalledTimes(2));
+      const parked = mockCreateDraft.mock.calls[1][0].payload;
+      expect(parked.from).toBe("device-b");
+      expect(parked._submitKey).not.toBe(k1);
+      expect(await screen.findByText("Widget from device B")).toBeInTheDocument();
+      // this device's version was written over the ORIGINAL draft d1 with K1, checked against THEIR updatedAt
+      const written = mockUpdateDraft.mock.calls[1][0];
+      expect(written).toMatchObject({ id: "d1", expectedUpdatedAt: theirs.updatedAt });
+      expect(written.payload._submitKey).toBe(k1);
+      expect(written.payload.lineItems).toHaveLength(3);
+
+      // later: this device's copy is resumed from d1 and submitted - K1 again, so exactly one order
+      cleanup();
+      mockLoadedDraft = {
+        id: "d1",
+        kind: "ORDER",
+        updatedAt: "2026-10-19T10:00:09.000Z",
+        payload: written.payload,
+      };
+      renderWithProviders(<CreateOrderModal isOpen resumeDraftId="d1" onClose={jest.fn()} />);
+      await screen.findByText("Widget p3");
+      fireEvent.click(createBtn());
+      await waitFor(() => expect(orderPosts()).toHaveLength(2), { timeout: 6000 });
       expect(keyOf(1)).toBe(k1);
     });
   });
@@ -776,6 +841,34 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
       expect(mockUpdateDraft.mock.calls[0][0].payload.lineItems).toHaveLength(2);
       expect(mockUpdateDraft.mock.calls[0][0].expectedUpdatedAt).toBe("2026-10-19T10:00:00.000Z");
       await waitFor(async () => expect(await localRecords()).toEqual([]));
+    });
+
+    it("a hung local store (IndexedDB stalls) cannot hold the order back: the POST still goes within the budget", async () => {
+      const hung = createMemoryDraftStorage();
+      setDraftMirrorStorage({
+        ...hung,
+        put: () => new Promise<void>(() => undefined), // never resolves
+        get: hung.get,
+        delete: hung.delete,
+        list: hung.list,
+      });
+      post.mockResolvedValue({ data: { id: "o1" } });
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      await pickCustomerAndScan();
+      fireEvent.click(createBtn());
+      await waitFor(() => expect(orderPosts()).toHaveLength(1), { timeout: 6000 });
+    });
+
+    it("a double click during the durable-save wait sends ONE POST", async () => {
+      // the server draft never answers, so the submit waits out its budget before sending
+      post.mockResolvedValue({ data: { id: "o1" } });
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      await pickCustomerAndScan();
+      fireEvent.click(createBtn());
+      fireEvent.click(createBtn());
+      await waitFor(() => expect(orderPosts()).toHaveLength(1), { timeout: 6000 });
+      await flush();
+      expect(orderPosts()).toHaveLength(1);
     });
   });
 });

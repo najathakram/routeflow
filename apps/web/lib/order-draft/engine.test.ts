@@ -494,6 +494,37 @@ describe("order draft engine (SA-817 A)", () => {
       expect(engine.serverUpdatedAt).toBe(T(8));
     });
 
+    it("keepKey + 'Open the other': this version STILL stays on the original draft with its original key; the other version is parked as the new draft and is what the editor opens", async () => {
+      const { engine, createDraft, updateDraft } = await conflicted();
+      createDraft.mockClear();
+      updateDraft.mockClear();
+      createDraft.mockResolvedValueOnce({ id: "d2", updatedAt: T(7) });
+      updateDraft.mockResolvedValueOnce({ id: "d1", updatedAt: T(8) });
+
+      const res = await engine.resolveConflict("open-other", { keepKey: true });
+
+      // the other device's version is the NEW draft, with a fresh key
+      const parked = (createDraft.mock.calls[0][0] as { payload: DraftPayload }).payload;
+      expect(parked).toMatchObject({ from: "device-b" });
+      expect(readDraftSubmitKey(parked)).toBe("K-NEW");
+      // this device's version was written over the ORIGINAL draft with K-1, checked against THEIR updatedAt
+      expect(updateDraft).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "d1", payload: payload(2), expectedUpdatedAt: T(9) }),
+      );
+      expect(
+        readDraftSubmitKey((updateDraft.mock.calls[0][0] as { payload: DraftPayload }).payload),
+      ).toBe("K-1");
+      // the editor now shows the parked copy of theirs and saves against ITS updatedAt
+      expect(res).toEqual({
+        choice: "open-other",
+        parkedDraftId: "d1",
+        current: expect.objectContaining({ id: "d2", updatedAt: T(7), payload: parked }),
+      });
+      expect(engine.draftId).toBe("d2");
+      expect(engine.serverUpdatedAt).toBe(T(7));
+      expect(engine.conflict).toBeNull();
+    });
+
     it("keepKey: if the other device wrote AGAIN meanwhile, the conflict re-opens (nothing is overwritten)", async () => {
       const { engine, createDraft, updateDraft, onConflict } = await conflicted();
       createDraft.mockResolvedValueOnce({ id: "d2", updatedAt: T(7) });
