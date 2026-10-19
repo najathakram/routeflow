@@ -62,7 +62,7 @@ describe("ConnectChargeReviewService", () => {
       expect.objectContaining({
         where: {
           reference: "pi_1",
-          status: { not: "VOID" },
+          status: "PAID",
           method: { in: ["CREDIT_CARD", "ACH"] },
         },
       }),

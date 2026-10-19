@@ -72,7 +72,7 @@ export class ConnectChargeReviewService {
         id: string;
         invoice: { id: string; invoiceNumber: string; internalNotes: string | null };
       }> = await this.prisma.forTenant().invoicePayment.findMany({
-        where: { reference: paymentIntentId, status: { not: "VOID" }, method: methods },
+        where: { reference: paymentIntentId, status: "PAID", method: methods },
         select: {
           id: true,
           invoice: { select: { id: true, invoiceNumber: true, internalNotes: true } },
