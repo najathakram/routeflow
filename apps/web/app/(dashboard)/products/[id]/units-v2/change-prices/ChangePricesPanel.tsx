@@ -325,7 +325,8 @@ function ChangePricesForm({
         ) : (
           plan.changes.length > 0 && (
             <>
-              <div className="overflow-x-auto">
+              {/* K13 F03: on the page the Save bar owns the bottom edge, so a long preview scrolls in its own capped box. */}
+              <div className={idSuffix ? "overflow-x-auto" : "max-h-[40vh] overflow-auto"}>
                 <table className="w-full min-w-[300px] text-sm">
                   <caption className="sr-only">Old and new prices for every unit and tier</caption>
                   {plan.changes.map((c) => {
