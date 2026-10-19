@@ -861,9 +861,11 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
   // An in-app item (metadata {tenantId, sku}, never the checkout's `addonSku` tag) that an earlier delivery adopted
   // (lost claim) or created (strict delete threw) keeps billing the customer when the retry re-judges the row as a
   // mismatch and returns. The skip path now removes it (strict, prorated), under the same add-on lock.
-  const inAppItem = (id: string, tenant: string, sku: string) => ({
+  /** `ageSeconds`: how long ago Stripe created the item (default: an hour, well past the sweep's age floor). */
+  const inAppItem = (id: string, tenant: string, sku: string, ageSeconds = 3600) => ({
     id,
     quantity: 1,
+    created: Math.floor(Date.now() / 1000) - ageSeconds,
     metadata: { tenantId: tenant, sku },
     price: { unit_amount: 3900 },
   });
@@ -995,7 +997,7 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     create.mockImplementationOnce(async (args: any) => {
       await prisma.tenantAddon.updateMany({ where: { tenantId: t }, data: { priceSnapshot: 29 } });
       // an in-app item (metadata only), as the enable path makes it: never the checkout's `addonSku` tag
-      const item = inAppItem("si_created_p5_1", t, args.metadata.sku);
+      const item = inAppItem("si_created_p5_1", t, args.metadata.sku, 700); // by the retry it is old enough
       items.push(item);
       return item;
     });
@@ -1035,5 +1037,39 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     expect(billed).toBe(false);
     expect(delIds(stripe)).toEqual(["si_orph_p6"]);
     expect(stripe.client.subscriptionItems.create).not.toHaveBeenCalled();
+  }, 60_000);
+  it("P7: an unclaimed owned item created just now (a concurrent delivery may be about to claim it) is NOT deleted; no removed/stuck audit", async () => {
+    const { t, harness, session, stripe, items } = await lockedWith("p7", [
+      { addonKey: "tobacco_dealer", sku: null, over: { priceSnapshot: 29 } },
+    ]);
+    items.push(
+      inAppItem("si_now_p7", t, "REGULATED_ITEMS", 0),
+      inAppItem("si_young_p7", t, "REGULATED_ITEMS", 599),
+    );
+
+    await harness.complete(session);
+
+    expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+    expect(items.map((i) => i.id)).toEqual(expect.arrayContaining(["si_now_p7", "si_young_p7"]));
+    expect(await strandedOf(t, AdminAuditAction.ADDON_STRANDED_ITEM_REMOVED)).toHaveLength(0);
+    expect(await strandedOf(t, AdminAuditAction.ADDON_STRANDED_ITEM_STUCK)).toHaveLength(0);
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: t } });
+    expect(sub.needsReconcile).toBe(false);
+  }, 60_000);
+
+  it("P8: an unclaimed owned item created 11 minutes ago IS deleted (the young one beside it is not)", async () => {
+    const { t, harness, session, stripe, items } = await lockedWith("p8", [
+      { addonKey: "tobacco_dealer", sku: null, over: { priceSnapshot: 29 } },
+    ]);
+    items.push(
+      inAppItem("si_old_p8", t, "REGULATED_ITEMS", 11 * 60),
+      inAppItem("si_now_p8", t, "REGULATED_ITEMS", 0),
+    );
+
+    await harness.complete(session);
+
+    expect(delIds(stripe)).toEqual(["si_old_p8"]);
+    expect(items.map((i) => i.id)).toContain("si_now_p8");
+    expect(await strandedOf(t, AdminAuditAction.ADDON_STRANDED_ITEM_REMOVED)).toHaveLength(1);
   }, 60_000);
 });

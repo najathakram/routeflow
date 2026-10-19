@@ -189,6 +189,39 @@ const ADDON_ANNUAL_NOT_SUPPORTED =
 const STRICT_PRORATED = { prorate: true, rethrow: true } as const;
 /** The audit reason of a stranded card item removed (or stuck) on the admin-only skip path (G1a). */
 const STRANDED_ITEM_REASON = "stranded after a skipped admin-only bill";
+/**
+ * G1a: the stranded-item sweep only touches an item Stripe created more than this long ago. The checkout
+ * create -> claim path and the plan-change bill both create an item and claim it a moment later; an item younger
+ * than this may be mid-claim in a concurrent delivery and must not be removed (the next delivery, or the daily
+ * invariant I2, catches a real strand).
+ */
+export const STRANDED_ITEM_MIN_AGE_SECONDS = 600;
+
+/** SA-786: a row still owed a card item after a plan move: active, non-comp, quantity 1, $0, no item. */
+function isLeavingDue(
+  tenantId: string,
+  cur:
+    | {
+        tenantId: string;
+        active: boolean | null;
+        isComp: boolean | null;
+        stripeItemId: string | null;
+        priceSnapshot: unknown;
+        quantity: number;
+      }
+    | null
+    | undefined,
+): boolean {
+  return !!(
+    cur &&
+    cur.tenantId === tenantId &&
+    cur.active &&
+    !cur.isComp &&
+    cur.stripeItemId == null &&
+    Number(cur.priceSnapshot ?? 0) === 0 &&
+    cur.quantity === 1
+  );
+}
 
 const ADDON_RAISE_UNBILLED_ROW =
   "This add-on isn't billed on your subscription yet (it was set up before online billing, or while a promotion covered it), so its quantity can't be raised here. Please contact support.";
@@ -2800,15 +2833,7 @@ export class SubscriptionMutationService {
     const due: { id: string; code: string; quantity: number }[] = [];
     for (const r of rows) {
       const cur = await this.prisma.tenantAddon.findUnique({ where: { id: r.id } });
-      const eligible =
-        cur &&
-        cur.tenantId === tenantId &&
-        cur.active &&
-        !cur.isComp &&
-        cur.stripeItemId == null &&
-        Number(cur.priceSnapshot ?? 0) === 0 &&
-        cur.quantity === 1;
-      if (eligible) due.push(r);
+      if (isLeavingDue(tenantId, cur)) due.push(r);
       else out.skipped.push(r.code);
     }
     if (due.length === 0) return out;
@@ -2845,15 +2870,24 @@ export class SubscriptionMutationService {
         out.skipped.push(r.code);
         continue;
       }
-      const billed = await this.billUnbilledRow(
-        tenantId,
-        r.code,
-        { id: r.id, quantity: r.quantity },
-        subId,
-        null,
-        { source },
-        { skuDef, prorationBehavior: opts.prorationBehavior, prorationDate: opts.prorationDate },
-      );
+      // G1a: create-and-claim under the SKU's add-on lock, like enable / disable / checkout adoption, so a
+      // stranded-item sweep (which runs under it) never sees this item created but not yet claimed. Lock order:
+      // tenant-price (the callers may hold it) BEFORE addon:<tenant>:<sku>, never the reverse (db-locks.ts).
+      // One row at a time, never nested in another add-on lock. The row is re-judged under the lock: an enable or
+      // a checkout that ran first may already have billed or changed it (then nothing is created).
+      const billed = await this.runUnderAddonLock(tenantId, r.code, async () => {
+        const cur = await this.prisma.tenantAddon.findUnique({ where: { id: r.id } });
+        if (!isLeavingDue(tenantId, cur)) return false;
+        return this.billUnbilledRow(
+          tenantId,
+          r.code,
+          { id: r.id, quantity: r.quantity },
+          subId,
+          null,
+          { source },
+          { skuDef, prorationBehavior: opts.prorationBehavior, prorationDate: opts.prorationDate },
+        );
+      });
       (billed ? out.billed : out.skipped).push(r.code);
     }
     return out;
@@ -3277,7 +3311,9 @@ export class SubscriptionMutationService {
   /**
    * G1a: the admin-only skip path bills nothing, so an item RouteFlow owns for THIS SKU that no row holds is
    * stranded: an orphan an earlier delivery adopted (its claim was lost) or created (its strict delete threw)
-   * keeps charging the customer. Called UNDER the add-on lock of `sku`, so no enable is mid-flight. Removes
+   * keeps charging the customer. Called UNDER the add-on lock of `sku` (the checkout, enable, disable and the
+   * plan-change bill all create-and-claim under it, so none is mid-flight) and only for items older than
+   * {@link STRANDED_ITEM_MIN_AGE_SECONDS} (belt and braces). Removes
    * (strict, prorated: the customer is credited) every item of this tenant and SKU (`isOwnedAddonItem`, the
    * recognizer `adoptOrphanItem` uses: never the plan item, never another SKU) that NO TenantAddon row of the
    * tenant, active or not, holds. One audit notice per removed item. A listing or delete failure flags the
@@ -3291,6 +3327,7 @@ export class SubscriptionMutationService {
     let stranded: string[] = [];
     try {
       const ids: string[] = [];
+      const cutoff = Math.floor(Date.now() / 1000) - STRANDED_ITEM_MIN_AGE_SECONDS;
       let after: string | undefined;
       for (let page = 0; page < 10; page++) {
         const list: any = await this.stripe.client.subscriptionItems.list({
@@ -3299,7 +3336,16 @@ export class SubscriptionMutationService {
           ...(after ? { starting_after: after } : {}),
         });
         const data: any[] = list?.data ?? [];
-        for (const i of data) if (isOwnedAddonItem(i, tenantId, sku)) ids.push(i.id as string);
+        for (const i of data) {
+          // an item without a readable creation time is spared too (never guess it is old)
+          if (
+            isOwnedAddonItem(i, tenantId, sku) &&
+            typeof i.created === "number" &&
+            i.created < cutoff
+          ) {
+            ids.push(i.id as string);
+          }
+        }
         if (list?.has_more !== true || data.length === 0) break;
         after = data[data.length - 1].id as string;
       }
@@ -3373,11 +3419,13 @@ export class SubscriptionMutationService {
         error: err,
       },
     );
+    // No item id to name (the lock or the listing failed): the log and the reconcile flag are the record.
+    if (itemIds.length === 0) return;
     await this.raiseAdminAlertOnce(
       tenantId,
       AdminAuditAction.ADDON_STRANDED_ITEM_STUCK,
       `${AdminAuditAction.ADDON_STRANDED_ITEM_STUCK}:${tenantId}:${sku}:${itemIds.join(",")}`,
-      `Add-on ${sku} may still bill a card item no add-on row holds (${itemIds.join(", ") || "its items could not be read"}). Remove it in Stripe.`,
+      `Add-on ${sku} may still bill a card item no add-on row holds (${itemIds.join(", ")}). Remove it in Stripe.`,
       { sku, itemIds: [...itemIds], subscriptionId: subId, reason: STRANDED_ITEM_REASON },
     );
   }
