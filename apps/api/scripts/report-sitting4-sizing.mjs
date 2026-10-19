@@ -80,13 +80,20 @@ export const C3_SQL = `WITH per AS (
     LEFT JOIN "Tenant" t ON t.id = iv."tenantId"
    WHERE iv.status <> 'VOID'
    GROUP BY iv.id, iv.status, iv."taxAmount", iv."tenantId", t.class, t."deletedAt", cu."isTaxExempt"
+), d AS (
+  -- A numeric NaN in a stored amount sorts above every number, so it passes the >= 0.01 filter and
+  -- would poison the sums: count those invoices apart (nanInvoices) and keep them out of the deltas.
+  SELECT status, prod, c1, ABS(expected - stored) AS delta,
+         (ABS(expected - stored) = 'NaN'::numeric) AS nan
+    FROM per
 )
 SELECT status, COALESCE(prod, false) AS prod, c1,
-       count(*)::text AS invoices,
-       ROUND(SUM(ABS(expected - stored)) * 100)::text AS "sumAbsDeltaCents",
-       ROUND(MAX(ABS(expected - stored)) * 100)::text AS "maxAbsDeltaCents"
-  FROM per
- WHERE ABS(expected - stored) >= 0.01
+       (count(*) FILTER (WHERE NOT nan))::text AS invoices,
+       (count(*) FILTER (WHERE nan))::text AS "nanInvoices",
+       COALESCE(ROUND(SUM(delta) FILTER (WHERE NOT nan) * 100), 0)::text AS "sumAbsDeltaCents",
+       COALESCE(ROUND(MAX(delta) FILTER (WHERE NOT nan) * 100), 0)::text AS "maxAbsDeltaCents"
+  FROM d
+ WHERE delta >= 0.01
  GROUP BY 1, 2, 3`;
 
 /** C4: active recurring items of C1 tenants ($1 ids, $2 their exact percents) stored at round4(exact fraction). */
@@ -153,6 +160,13 @@ export function classifyRates(rows) {
 
 const bucketOf = (prod) => (prod ? "PRODUCTION" : "other");
 
+/** A count column as a number; a non-number (NaN, a missing column) fails loud instead of printing "NaN". */
+function finiteCount(v, what) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw new Error(`${NAME}: ${what} is not a number (${String(v)})`);
+  return n;
+}
+
 /** Fold the grouped query rows into anonymous nested counts. */
 export function summarize({ sizing, rates, c2Rows, c3Rows, c4Rows }) {
   const widen = verdict(sizing.invoiceItem, sizing.recurringInvoiceItem);
@@ -167,13 +181,18 @@ export function summarize({ sizing, rates, c2Rows, c3Rows, c4Rows }) {
     const s = (b[r.status] ??= {
       invoices: 0,
       c1Invoices: 0,
+      nanInvoices: 0,
       sumAbsDeltaCents: 0,
       maxAbsDeltaCents: 0,
     });
-    s.invoices += Number(r.invoices);
-    if (r.c1) s.c1Invoices += Number(r.invoices);
-    s.sumAbsDeltaCents += Number(r.sumAbsDeltaCents);
-    s.maxAbsDeltaCents = Math.max(s.maxAbsDeltaCents, Number(r.maxAbsDeltaCents));
+    s.invoices += finiteCount(r.invoices, "C3 invoices");
+    if (r.c1) s.c1Invoices += finiteCount(r.invoices, "C3 invoices");
+    s.nanInvoices += finiteCount(r.nanInvoices ?? 0, "C3 nanInvoices");
+    s.sumAbsDeltaCents += finiteCount(r.sumAbsDeltaCents, "C3 sumAbsDeltaCents");
+    s.maxAbsDeltaCents = Math.max(
+      s.maxAbsDeltaCents,
+      finiteCount(r.maxAbsDeltaCents, "C3 maxAbsDeltaCents"),
+    );
   }
   const c4 = { PRODUCTION: { items: 0, templates: 0 }, other: { items: 0, templates: 0 } };
   for (const r of c4Rows) {
@@ -250,6 +269,7 @@ export function selfTest() {
         prod: true,
         c1: false,
         invoices: "1",
+        nanInvoices: "2",
         sumAbsDeltaCents: "9",
         maxAbsDeltaCents: "9",
       },
@@ -261,11 +281,37 @@ export function selfTest() {
   eq(s.c2.other.ISSUED, 4, "c2 issued");
   eq(
     s.c3.PRODUCTION.SENT,
-    { invoices: 3, c1Invoices: 2, sumAbsDeltaCents: 16, maxAbsDeltaCents: 9 },
+    { invoices: 3, c1Invoices: 2, nanInvoices: 2, sumAbsDeltaCents: 16, maxAbsDeltaCents: 9 },
     "c3",
   );
   eq(s.c4.PRODUCTION, { items: 5, templates: 2 }, "c4");
   if (/t-a|t-c/.test(JSON.stringify(s))) throw new Error("summary leaked a tenant id");
+  // A non-number delta (Postgres numeric NaN reaching JS) must fail loud, never print "NaNc" / null.
+  let threw = false;
+  try {
+    summarize({
+      sizing: { invoiceItem: "1", recurringInvoiceItem: "0" },
+      rates,
+      c2Rows: [],
+      c3Rows: [
+        {
+          status: "OVERDUE",
+          prod: true,
+          c1: false,
+          invoices: "1",
+          nanInvoices: "0",
+          sumAbsDeltaCents: "NaN",
+          maxAbsDeltaCents: "NaN",
+        },
+      ],
+      c4Rows: [],
+    });
+  } catch {
+    threw = true;
+  }
+  if (!threw) throw new Error("a NaN C3 delta was summarized instead of refused");
+  if (!/FILTER \(WHERE NOT nan\)/.test(C3_SQL))
+    throw new Error("C3 must keep NaN amounts out of the delta sums");
   for (const sql of [SIZING_SQL, RATE_SETTINGS_SQL, C2_SQL, C3_SQL, C4_SQL])
     if (!/^\s*(SELECT|WITH)\b/.test(sql)) throw new Error("a query is not a SELECT");
   return "self-test ok";
@@ -293,7 +339,8 @@ function printText(r) {
     for (const [status, c] of entries)
       console.log(
         `C3 ${b} ${status}: ${c.invoices} invoice(s) (${c.c1Invoices} of C1 tenants), ` +
-          `sum |delta| ${c.sumAbsDeltaCents}c, max ${c.maxAbsDeltaCents}c`,
+          `sum |delta| ${c.sumAbsDeltaCents}c, max ${c.maxAbsDeltaCents}c; ` +
+          `${c.nanInvoices} invoice(s) with a NaN stored amount`,
       );
   }
   for (const b of ["PRODUCTION", "other"]) {
