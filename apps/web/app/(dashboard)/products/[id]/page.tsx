@@ -97,6 +97,7 @@ import { LegacyVariantsActions, variantModalTitle } from "./LegacyVariantsAction
 import { useDeleteProductFlow } from "./useDeleteProductFlow";
 import { DeleteProductConfirm } from "./DeleteProductConfirm";
 import { DemandCard } from "./DemandCard";
+import { OpenOrdersCard } from "./OpenOrdersCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
 import { ProductInsightsExport } from "./ProductInsightsExport";
 import { ProductLabelsCard } from "./ProductLabelsCard";
@@ -2358,6 +2359,11 @@ export default function ProductDetailPage() {
             ) : (
               <>
                 <DemandCard productId={product.id} unitsPerBox={product.unitsPerBox} />
+                {/* Open orders — who has this on an open order and how many are still to be
+                    billed; staff only, directly above the invoiced Sales card. */}
+                {isStaff && (
+                  <OpenOrdersCard productId={product.id} unitsPerBox={product.unitsPerBox} />
+                )}
                 {/* Sales — per-buyer invoiced-sale history (PR-B): who bought this,
                     when, and at what price, with min/avg/max price summary chips. */}
                 <SalesHistoryCard productId={product.id} />

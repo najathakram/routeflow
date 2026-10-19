@@ -20,6 +20,7 @@ const SECTIONS: { id: string; label: string; short: string; fallback?: string }[
   { id: "h-units", label: "Units and prices", short: "Prices", fallback: "#units-v2-grid-title" },
   { id: "h-exc", label: "Customers and tiers", short: "Tiers" },
   { id: "h-cust", label: "Customer view", short: "Customer" },
+  { id: "h-open-orders", label: "Open orders", short: "Open orders" },
   { id: "h-sales", label: "Sales", short: "Sales" },
 ];
 

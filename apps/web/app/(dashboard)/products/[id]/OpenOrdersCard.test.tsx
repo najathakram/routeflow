@@ -97,14 +97,22 @@ describe("OpenOrdersCard", () => {
       summary: { orders: 2, customers: 2, totalQty: 54 },
     });
     render(<OpenOrdersCard productId="p1" unitsPerBox={12} />);
-    const chip = (label: string) => screen.getByText(label).closest("div")!;
+    // "Open orders" is also the card heading; the chip label is the <p>.
+    const chip = (label: string) =>
+      screen
+        .getAllByText(label)
+        .find((el) => el.tagName === "P")!
+        .closest("div")!;
     expect(chip("Open orders")).toHaveTextContent("2");
     expect(chip("Customers")).toHaveTextContent("2");
     expect(chip("Total qty")).toHaveTextContent("4 boxes + 6 pcs");
   });
 
   it("says when only the newest lines are shown", () => {
-    query.data = data([line()], { truncated: true });
+    query.data = data(
+      Array.from({ length: 200 }, (_, i) => line({ orderId: `o${i}` })),
+      { truncated: true },
+    );
     render(<OpenOrdersCard productId="p1" unitsPerBox={12} />);
     expect(screen.getByText("Showing the newest 200")).toBeInTheDocument();
   });
@@ -131,6 +139,6 @@ describe("OpenOrdersCard", () => {
     expect(screen.getByRole("heading", { name: "Open orders" })).toBeInTheDocument();
     expect(screen.queryByText("No open orders")).toBeNull();
     expect(screen.queryByRole("table")).toBeNull();
-    expect(container.querySelector("[class*='animate-pulse'], [data-skeleton]")).not.toBeNull();
+    expect(container.querySelector(".skeleton")).not.toBeNull();
   });
 });
