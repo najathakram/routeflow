@@ -3,7 +3,8 @@
  *
  *   SIZING  `count(*)` of "InvoiceItem" and "RecurringInvoiceItem". Their sum picks the B296 precision folder:
  *           below WIDEN_THRESHOLD (500 000) -> variant 2a (in-place DECIMAL(9,6) widen, a table rewrite);
- *           at or above -> variant 2b (additive "lineTaxRate" columns, expand / contract).
+ *           at or above -> variant 2b (expand / contract; NOT BUILT: 2a was chosen at 9275 rows, so a count
+ *           at or above the threshold now means re-plan with the lead, not a ready folder).
  *   C1      tenants whose `settings.taxRate` (a PERCENT string, parsed like apps/api/src/common/tax-rate.ts
  *           taxRateFractionFrom: parseFloat, non-finite -> 0, clamp 0..100) has MORE THAN 2 decimals, by tenant
  *           class. PRODUCTION = class PRODUCTION and not soft-deleted; other = every other tenant. If C1 is 0 for
@@ -132,7 +133,7 @@ export function verdict(invoiceItem, recurringInvoiceItem) {
     folder:
       total < WIDEN_THRESHOLD
         ? "20261020090200_invoice_tax_rate_widen (in-place DECIMAL(9,6), a table rewrite)"
-        : "20261020090200_invoice_line_tax_rate_expand (additive lineTaxRate, expand / contract)",
+        : "none built: 2b (expand / contract) was dropped when 2a was chosen; re-plan with the lead",
     reasonLine: `-- reason: B296 precision; measured ${total} rows; off-peak`,
   };
 }

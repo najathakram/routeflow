@@ -6,10 +6,9 @@
 --   rewritten (SA-814 §3 ruling 4); old rows keep their 4-dp value.
 -- Renamed from SA-772's 20261015090100 to sort after master's 20261016120000_units_prices_v2_schema (SA-814 §4).
 --
--- 2a vs 2b: THIS folder is variant 2a, valid only when InvoiceItem + RecurringInvoiceItem < 500 000 rows, measured on the
--- day by `apps/api/scripts/report-sitting4-sizing.mjs`. At >= 500 000 rows, remove this folder and drop in variant 2b
--- (`invoice_line_tax_rate_expand`, additive "lineTaxRate" columns) under the SAME folder name slot. Only one of the two
--- may ever be in the migrations folder. BEFORE APPLY: replace <N> in the two reason lines below with the measured count.
+-- 2a CHOSEN: `apps/api/scripts/report-sitting4-sizing.mjs` measured InvoiceItem + RecurringInvoiceItem = 9275 rows on
+-- prod, under SA-772's 500 000-row threshold, so the in-place widen ships and the expand / contract variant (2b) was
+-- dropped from the bundle.
 --
 -- LOCK PROFILE: RUN OFF-PEAK. This is the bundle's ONLY table rewrite: a numeric SCALE change rewrites the table and
 -- rebuilds every index on it. Each ALTER takes ACCESS EXCLUSIVE (blocks READS and writes) on its table until COMMIT:
@@ -29,12 +28,12 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 
 -- AlterTable
--- reason: B296 precision; measured <N> rows; off-peak
+-- reason: B296 precision; measured 9275 rows; off-peak
 -- squawk-ignore changing-column-type
 ALTER TABLE "InvoiceItem" ALTER COLUMN "taxRate" SET DATA TYPE DECIMAL(9,6);
 
 -- AlterTable
--- reason: B296 precision; measured <N> rows; off-peak
+-- reason: B296 precision; measured 9275 rows; off-peak
 -- squawk-ignore changing-column-type
 ALTER TABLE "RecurringInvoiceItem" ALTER COLUMN "taxRate" SET DATA TYPE DECIMAL(9,6);
 

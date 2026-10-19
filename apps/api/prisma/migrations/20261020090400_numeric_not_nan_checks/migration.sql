@@ -4,9 +4,9 @@
 --   'NaN' and node-pg sends a JS NaN as 'NaN', so one bad bind is stored and then poisons every sum. NULL still passes.
 --
 -- GENERATED, never hand-edited: `node apps/api/scripts/generate-not-nan-checks.mjs > <this file>` from the repo root,
--- reading apps/api/prisma/schema. Regenerate it only while this folder is unapplied (e.g. after the 2b variant
--- replaces the B296 folder: two more "lineTaxRate" columns). Once applied it is immutable: a later Decimal column adds
--- its own CHECK in its own folder (src/common/numeric-not-nan-check.spec.ts names every column without one).
+-- reading apps/api/prisma/schema. Regenerate it only while this folder is unapplied (after any schema change in the
+-- bundle). Once applied it is immutable: a later Decimal column adds its own CHECK in its own folder
+-- (src/common/numeric-not-nan-check.spec.ts names every column without one).
 --
 -- NOT VALID: no table scan, and existing rows are NOT checked (SA-816's 101 InvoiceItem.categoryTaxAmount NaN
 -- lines on 4 invoices stay until the R593 repair). Postgres enforces the CHECK on every INSERT and on every UPDATE

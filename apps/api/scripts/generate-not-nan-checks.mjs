@@ -11,9 +11,9 @@
  *   node apps/api/scripts/generate-not-nan-checks.mjs --list   # one "Table.column" per line
  *   node apps/api/scripts/generate-not-nan-checks.mjs --self-test
  *
- * Regenerate the folder ONLY while it is unapplied everywhere but dev DBs (e.g. after the 2b variant swaps the B296
- * folder, which adds two "lineTaxRate" columns). Once applied, the folder is immutable: a later Decimal column adds its
- * own CHECK in its own folder, and src/common/numeric-not-nan-check.spec.ts names any column that has none.
+ * Regenerate the folder ONLY while it is unapplied everywhere but dev DBs (after any schema change in the bundle).
+ * Once applied, the folder is immutable: a later Decimal column adds its own CHECK in its own folder, and
+ * src/common/numeric-not-nan-check.spec.ts names any column that has none.
  *
  * Resolution: `@@map("t")` gives the table, `@map("c")` the column; otherwise the Prisma names. Scalar lists
  * (`Decimal[]`) are skipped (a NUMERIC[] needs a different predicate; there are none today). Constraint names are
@@ -101,9 +101,9 @@ export function renderMigration(cols) {
 --   'NaN' and node-pg sends a JS NaN as 'NaN', so one bad bind is stored and then poisons every sum. NULL still passes.
 --
 -- GENERATED, never hand-edited: \`node apps/api/scripts/generate-not-nan-checks.mjs > <this file>\` from the repo root,
--- reading apps/api/prisma/schema. Regenerate it only while this folder is unapplied (e.g. after the 2b variant
--- replaces the B296 folder: two more "lineTaxRate" columns). Once applied it is immutable: a later Decimal column adds
--- its own CHECK in its own folder (src/common/numeric-not-nan-check.spec.ts names every column without one).
+-- reading apps/api/prisma/schema. Regenerate it only while this folder is unapplied (after any schema change in the
+-- bundle). Once applied it is immutable: a later Decimal column adds its own CHECK in its own folder
+-- (src/common/numeric-not-nan-check.spec.ts names every column without one).
 --
 -- NOT VALID: no table scan, and existing rows are NOT checked (SA-816's 101 InvoiceItem.categoryTaxAmount NaN
 -- lines on 4 invoices stay until the R593 repair). Postgres enforces the CHECK on every INSERT and on every UPDATE
