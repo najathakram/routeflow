@@ -72,7 +72,10 @@ export function coveredColumns(sqls: readonly string[]): Set<string> {
       while ((a = actionRe.exec(body))) {
         if (a[1] !== undefined) byName.set(`${table}\0${a[1]}`, `${table}.${a[2]}`);
         else if (a[3] !== undefined) byName.delete(`${table}\0${a[3]}`);
-        else forget((_k, col) => col === `${table}.${a[4]}`);
+        else {
+          const gone = `${table}.${a[4]}`; // bound outside the closure, so the narrowing of `a` holds
+          forget((_k, col) => col === gone);
+        }
       }
     }
   }
