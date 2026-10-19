@@ -22,6 +22,7 @@ import { BACKING_ORDER_STATUSES } from "../invoices/credit-exposure";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { customerPricing } from "../orders/units-prices-v2";
+import { openOrderLinesForProduct } from "../orders/open-order-lines";
 import { salePackOf } from "../sales-facts/sales-facts.rules";
 
 /** Invoices that were actually issued: DRAFT/VOID are not sales, a WRITTEN_OFF invoice was billed. */
@@ -247,60 +248,16 @@ export class CustomerPriceHistoryService {
           items: { where: { productId }, select: { id: true, ...lineSelect } },
         },
       }),
-      // Orders that can still owe an invoice (open + delivered). Over-read: billed lines are dropped below.
-      db.order.findMany({
-        where: {
-          tenantId,
-          customerId,
-          status: { in: BACKING_ORDER_STATUSES },
-          lineItems: { some: { productId } },
-          ...(ex ? { id: { not: ex } } : {}),
-        },
-        orderBy: [
-          { orderDate: { sort: "desc", nulls: "last" } },
-          { createdAt: "desc" },
-          { id: "desc" },
-        ],
+      // Orders that can still owe an invoice (open + delivered). Over-read: billed lines are dropped by the helper.
+      openOrderLinesForProduct(db, {
+        tenantId,
+        productId,
+        customerId,
+        statuses: BACKING_ORDER_STATUSES,
         take: limit * 2,
-        select: {
-          id: true,
-          orderNumber: true,
-          orderDate: true,
-          createdAt: true,
-          lineItems: {
-            where: { productId, status: { not: "CANCELLED" } },
-            select: { id: true, ...lineSelect },
-          },
-        },
+        excludeOrderId: ex,
       }),
     ]);
-
-    // Billed qty per order line from invoices that were actually issued (a written-off invoice WAS
-    // billed; only DRAFT/VOID are not). OrderItem.invoicedQty is bumped when a DRAFT invoice is
-    // created, so it cannot be used. Read THROUGH Invoice (never top-level invoiceItem.findMany:
-    // lines with a null tenantId would be dropped and the line would show twice).
-    const lineIds = (openOrders as any[]).flatMap((o) => (o.lineItems ?? []).map((l: any) => l.id));
-    const billed = new Map<string, number>();
-    if (lineIds.length > 0) {
-      const billedInvoices = await db.invoice.findMany({
-        where: {
-          tenantId,
-          status: ISSUED_STATUSES,
-          items: { some: { orderItemId: { in: lineIds } } },
-        },
-        select: {
-          items: {
-            where: { orderItemId: { in: lineIds } },
-            select: { orderItemId: true, qty: true },
-          },
-        },
-      });
-      for (const inv of billedInvoices as any[]) {
-        for (const b of inv.items ?? []) {
-          billed.set(b.orderItemId, (billed.get(b.orderItemId) ?? 0) + Number(b.qty));
-        }
-      }
-    }
 
     const productPackNow = product.unitsPerBox == null ? null : Number(product.unitsPerBox);
     const unitName = (product.unit ?? "").trim();
@@ -329,25 +286,20 @@ export class CustomerPriceHistoryService {
       }
     }
 
-    for (const ord of openOrders as any[]) {
-      for (const it of ord.lineItems ?? []) {
-        // Qty on real invoices is already a row above, as INVOICE; show only what is not billed yet.
-        const billedQty = billed.get(it.id) ?? 0;
-        const remainder = roundQty(Number(it.qty) - billedQty);
-        if (!(remainder > 0)) continue;
-        const untouched = billedQty <= 0;
-        candidates.push(
-          build(it, untouched ? Number(it.qty) : remainder, untouched, {
-            at: new Date(ord.orderDate ?? ord.createdAt),
-            tie: `${ord.id}:${it.id}`,
-            source: "OPEN_ORDER",
-            invoiceId: null,
-            invoiceNumber: null,
-            orderId: ord.id,
-            orderNumber: ord.orderNumber ?? "",
-          }),
-        );
-      }
+    for (const it of openOrders) {
+      // Qty on real invoices is already a row above, as INVOICE; show only what is not billed yet.
+      const untouched = it.billedQty <= 0;
+      candidates.push(
+        build(it, untouched ? it.qty : it.remainingQty, untouched, {
+          at: it.orderDate,
+          tie: `${it.orderId}:${it.orderItemId}`,
+          source: "OPEN_ORDER",
+          invoiceId: null,
+          invoiceNumber: null,
+          orderId: it.orderId,
+          orderNumber: it.orderNumber ?? "",
+        }),
+      );
     }
 
     candidates.sort(

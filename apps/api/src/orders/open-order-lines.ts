@@ -1,4 +1,8 @@
 import type { OrderStatus } from "@prisma/client";
+import { ACCRUAL_REVENUE_STATUSES, roundQty } from "../common/invoiced-sales";
+
+/** Invoices that were actually issued: DRAFT/VOID are not sales, a WRITTEN_OFF invoice was billed. */
+const ISSUED_STATUSES = { notIn: [...ACCRUAL_REVENUE_STATUSES.notIn] };
 
 /** One order line of a product that can still owe an invoice, with what is left to bill. */
 export interface OpenOrderLine {
@@ -45,10 +49,107 @@ export interface OpenOrderLinesDb {
   invoice: { findMany(args: any): Promise<any[]> };
 }
 
-/** STUB (test-first): replaced by the real read in the next commit. */
+/**
+ * The ONE read of "open, un-billed order lines of a product" (G4): used by the customer price
+ * history (open orders as pseudo-sales) and by the product page's Open orders card.
+ *
+ * Newest order first (`orderDate ?? createdAt`). Lines on CANCELLED status are skipped. A line's
+ * billed qty is the sum over ISSUED invoices only, read THROUGH Invoice with an explicit tenantId
+ * (never top-level invoiceItem.findMany: lines with a null tenantId would be dropped), and never
+ * `OrderItem.invoicedQty`, which a DRAFT invoice bumps. Fully billed lines drop.
+ */
 export async function openOrderLinesForProduct(
-  _db: OpenOrderLinesDb,
-  _q: OpenOrderLinesQuery,
+  db: OpenOrderLinesDb,
+  q: OpenOrderLinesQuery,
 ): Promise<OpenOrderLine[]> {
-  return [];
+  const { tenantId, productId, customerId, statuses, take } = q;
+  const orders = await db.order.findMany({
+    where: {
+      tenantId,
+      ...(customerId ? { customerId } : {}),
+      status: { in: statuses },
+      ...(q.excludeCounterSales ? { counterSale: false } : {}),
+      lineItems: { some: { productId, status: { not: "CANCELLED" } } },
+      ...(q.excludeOrderId ? { id: { not: q.excludeOrderId } } : {}),
+    },
+    orderBy: [
+      { orderDate: { sort: "desc", nulls: "last" } },
+      { createdAt: "desc" },
+      { id: "desc" },
+    ],
+    take,
+    select: {
+      id: true,
+      orderNumber: true,
+      orderDate: true,
+      createdAt: true,
+      status: true,
+      customerId: true,
+      customer: { select: { id: true, businessName: true } },
+      lineItems: {
+        where: { productId, status: { not: "CANCELLED" } },
+        select: {
+          id: true,
+          unitPrice: true,
+          priceType: true,
+          boxes: true,
+          pieces: true,
+          unitsPerBox: true,
+          unitLabel: true,
+          qty: true,
+        },
+      },
+    },
+  });
+
+  const lineIds = orders.flatMap((o: any) => (o.lineItems ?? []).map((l: any) => l.id));
+  const billed = new Map<string, number>();
+  if (lineIds.length > 0) {
+    const billedInvoices = await db.invoice.findMany({
+      where: {
+        tenantId,
+        status: ISSUED_STATUSES,
+        items: { some: { orderItemId: { in: lineIds } } },
+      },
+      select: {
+        items: {
+          where: { orderItemId: { in: lineIds } },
+          select: { orderItemId: true, qty: true },
+        },
+      },
+    });
+    for (const inv of billedInvoices as any[]) {
+      for (const b of inv.items ?? []) {
+        billed.set(b.orderItemId, (billed.get(b.orderItemId) ?? 0) + Number(b.qty));
+      }
+    }
+  }
+
+  const out: OpenOrderLine[] = [];
+  for (const ord of orders as any[]) {
+    for (const it of ord.lineItems ?? []) {
+      const billedQty = billed.get(it.id) ?? 0;
+      const remainingQty = roundQty(Number(it.qty) - billedQty);
+      if (!(remainingQty > 0)) continue;
+      out.push({
+        orderId: ord.id,
+        orderNumber: ord.orderNumber ?? null,
+        orderDate: new Date(ord.orderDate ?? ord.createdAt),
+        status: ord.status,
+        customerId: ord.customerId ?? ord.customer?.id,
+        customerName: ord.customer?.businessName ?? "",
+        orderItemId: it.id,
+        qty: Number(it.qty),
+        billedQty,
+        remainingQty,
+        boxes: it.boxes ?? null,
+        pieces: it.pieces ?? null,
+        unitsPerBox: it.unitsPerBox ?? null,
+        unitLabel: it.unitLabel ?? null,
+        unitPrice: it.unitPrice,
+        priceType: it.priceType ?? null,
+      });
+    }
+  }
+  return out;
 }
