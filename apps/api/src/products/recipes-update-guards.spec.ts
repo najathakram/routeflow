@@ -185,7 +185,6 @@ describe("re-parenting a recipe component (I2)", () => {
     const { service, events } = await build(base, [recipeOf()]);
     await service.update("prod-1", { parentProductId: "fam" } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     expect(events.filter((e) => e.includes("recipe."))).toEqual([]);
   });
@@ -270,7 +269,6 @@ describe("unitsPerBox on the family and the recipe product (Q10)", () => {
     const err = await service
       .update("fam", { unitsPerBox: 24 } as any, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       })
       .catch((e) => e);
     expect(bodyOf(err)).toMatchObject({ code: "RECIPE_FAMILY_LOCKED" });
@@ -282,7 +280,6 @@ describe("unitsPerBox on the family and the recipe product (Q10)", () => {
     const err = await service
       .update("rp", { unitsPerBox: 6 } as any, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       })
       .catch((e) => e);
     expect(bodyOf(err)).toMatchObject({ code: "RECIPE_FAMILY_LOCKED" });
@@ -293,7 +290,6 @@ describe("unitsPerBox on the family and the recipe product (Q10)", () => {
     await expect(
       service.update("prod-1", { unitsPerBox: 6 } as any, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       }),
     ).resolves.toBeDefined();
     expect(prisma.product.update).toHaveBeenCalled();
@@ -304,7 +300,6 @@ describe("unitsPerBox on the family and the recipe product (Q10)", () => {
     await expect(
       service.update("fam", { unitsPerBox: 24 } as any, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       }),
     ).resolves.toBeDefined();
   });
@@ -313,7 +308,6 @@ describe("unitsPerBox on the family and the recipe product (Q10)", () => {
     const { service, events } = await build(family, [recipeOf()]);
     await service.update("fam", { unitsPerBox: 12 } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     expect(events.filter((e) => e.includes("recipe."))).toEqual([]);
   });
@@ -343,7 +337,6 @@ describe("house lock order and in-tx checks (SA-584 B2 c)", () => {
     await service
       .update("rp", { unitsPerBox: 6 } as any, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       })
       .catch(() => undefined);
     expect(events.indexOf("lock:update:fam")).toBeGreaterThanOrEqual(0);
@@ -355,7 +348,6 @@ describe("house lock order and in-tx checks (SA-584 B2 c)", () => {
     const err = await service
       .update("prod-1", { trackedCategoryId: null } as any, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       })
       .catch((e) => e);
     expect(bodyOf(err)).toMatchObject({ code: "RECIPE_CATEGORY_LOCKED" });
@@ -369,7 +361,6 @@ describe("house lock order and in-tx checks (SA-584 B2 c)", () => {
     const { service, events } = await build(base, [recipeOf()]);
     await service.update("prod-1", { description: "x" } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     expect(events.filter((e) => e.startsWith("lock:") || e.includes("recipe."))).toEqual([]);
   });
@@ -456,7 +447,6 @@ describe("family-price.ts paths behind the guard (mode on, lead fold item 4)", (
     const { service, events } = await build(recipeProduct, [recipeOf({ status: "ACTIVE" })], "on");
     await service.update("rp", { pricePerUnit: "10.00" } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     const family = events.indexOf("lock:update:fam");
     expect(family).toBeGreaterThanOrEqual(0);

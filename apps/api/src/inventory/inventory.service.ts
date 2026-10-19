@@ -599,6 +599,7 @@ export class InventoryService {
     // SA-823 R11: a variant born under the parent is an assignment (fromParentId null), written in this same tx.
     await tx.auditLog.create({
       data: {
+        tenantId: tenantId ?? undefined,
         userId: actorId,
         action: AUDIT_ACTIONS.PRODUCT_FAMILY_ASSIGNED,
         entityType: "Product",

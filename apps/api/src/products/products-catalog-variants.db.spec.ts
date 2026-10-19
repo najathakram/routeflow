@@ -235,7 +235,6 @@ describeDb("families and variants: delete, sellability, barcodes — real Postgr
       const err = await inTenant(tenantId, () =>
         service.update(fam.id, { isActive: false } as never, {
           packPrecondition: "internal",
-          reparentVia: "editor",
         }),
       ).catch((e: unknown) => e);
       expect((err as { getResponse(): unknown }).getResponse()).toMatchObject({
@@ -245,7 +244,6 @@ describeDb("families and variants: delete, sellability, barcodes — real Postgr
       await inTenant(tenantId, () =>
         service.update(fam.id, { isActive: false, confirmCascade: true } as never, {
           packPrecondition: "internal",
-          reparentVia: "editor",
         }),
       );
       const after = await prisma.product.findUniqueOrThrow({
@@ -266,7 +264,6 @@ describeDb("families and variants: delete, sellability, barcodes — real Postgr
       const err = await inTenant(tenantId, () =>
         service.update(v1.id, { isActive: true } as never, {
           packPrecondition: "internal",
-          reparentVia: "editor",
         }),
       ).catch((e: unknown) => e);
       expect((err as { getResponse(): unknown }).getResponse()).toMatchObject({

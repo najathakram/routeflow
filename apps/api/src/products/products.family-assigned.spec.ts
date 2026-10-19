@@ -142,6 +142,7 @@ describe("ProductsService: a parent change writes one product.family_assigned ro
     });
     expect(familyRows()).toEqual([
       {
+        tenantId: TENANT,
         userId: "u1",
         action: "product.family_assigned",
         entityType: "Product",
@@ -250,6 +251,27 @@ describe("ProductsService: a parent change writes one product.family_assigned ro
     expect(committed).toBe(false);
   });
 
+  it("T16 twin: create() under a parent without reparentVia throws a plain Error and writes nothing", async () => {
+    const err = await service
+      .create({
+        name: "Grape",
+        variantName: "Grape",
+        parentProductId: "fam",
+        unit: "each",
+        pricePerUnit: "1",
+      } as never)
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toHaveProperty("getStatus");
+    expect((err as Error).message).toMatch(/reparentVia/);
+    expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    expect(prisma.product.create).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
   it("create() under a parent writes the row in its own create transaction with fromParentId null (via from the caller)", async () => {
     const PARENT = {
       isActive: true,
@@ -293,6 +315,7 @@ describe("ProductsService: a parent change writes one product.family_assigned ro
     );
     expect(familyRows()).toEqual([
       expect.objectContaining({
+        tenantId: TENANT,
         userId: "u3",
         entityId: "new-v",
         meta: {

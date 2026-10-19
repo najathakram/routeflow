@@ -214,11 +214,10 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
         parentProductId: "fam",
         description: "x",
       } as never,
-      { packPrecondition: "internal", reparentVia: "editor" },
+      { packPrecondition: "internal" },
     );
     await service.update("prod-1", { description: "y" } as never, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     expect(keep).not.toHaveBeenCalled();
     expect(echo).not.toHaveProperty("keptLabels");

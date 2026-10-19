@@ -100,7 +100,6 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
 
     await service.update("prod-1", { pricePerUnit: 9.99 } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
 
     expect(gateway.emitProductUpdated).toHaveBeenCalledTimes(1);
@@ -301,7 +300,6 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
     await expect(
       service.update("prod-1", { pricePerUnit: 9.99 } as any, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       }),
     ).resolves.toEqual({
       ...MOCK_PRODUCT,

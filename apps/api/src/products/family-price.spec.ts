@@ -383,12 +383,10 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     const service = await build("off");
     await service.update("var1", { priceTier3: "1.00" } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     expect(written("var1")).toMatchObject({ priceTier3: "1.00" });
     await service.update("fam", { priceTier3: "5.00" } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     expect(prisma.product.updateMany).not.toHaveBeenCalled();
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
@@ -398,7 +396,6 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     const service = await build("absent");
     await service.update("var1", { priceTier3: "1.00" } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     expect(written("var1")).toMatchObject({ priceTier3: "1.00" });
     expect(prisma.product.updateMany).not.toHaveBeenCalled();
@@ -410,7 +407,6 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     const err = await service
       .update("var1", { priceTier3: "1.00" } as any, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       })
       .catch((e) => e);
     expect(err).toBeInstanceOf(ConflictException);
@@ -422,7 +418,6 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     const service = await build("on");
     await service.update("var1", { description: "new copy" } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     expect(written("var1")).toMatchObject({ description: "new copy" });
     expect(prisma.product.updateMany).not.toHaveBeenCalled();
@@ -432,7 +427,6 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     const service = await build("on");
     await service.update("var1", { priceTier3: "9.004", description: "x" } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     const data = written("var1");
     for (const col of FAMILY_PRICE_COLUMNS) expect(data[col]).toBeUndefined();
@@ -448,7 +442,6 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     });
     await service.update("fam", { priceTier3: "8.50" } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     expect(prisma.product.updateMany).toHaveBeenCalled();
     const bulk = gateway.emitProductUpdated.mock.calls.filter((c) => c[1].action === "bulk");
@@ -463,7 +456,6 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     await expect(
       service.update("fam", { priceTier3: "8.50" } as any, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       }),
     ).rejects.toThrow("boom");
     expect(gateway.emitProductUpdated).not.toHaveBeenCalled();
@@ -473,7 +465,6 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     const service = await build("on");
     await service.update("fam", { description: "x" } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     expect(prisma.product.updateMany).not.toHaveBeenCalled();
   });
@@ -485,14 +476,12 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     const err = await service
       .update("rec1", { priceTier3: "1.00" } as any, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       })
       .catch((e) => e);
     expect(err.getResponse()).toMatchObject({ code: "FAMILY_PRICE_AUTHORITY", familyId: "fam" });
     rows.rec1 = { ...rows.rec1, familyPriceOverride: true };
     await service.update("rec1", { priceTier3: "1.00" } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     expect(written("rec1")).toMatchObject({ priceTier3: "1.00" });
   });

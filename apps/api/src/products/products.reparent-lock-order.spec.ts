@@ -252,7 +252,6 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
     const err = await service
       .update("prod-1", { description: "x" } as never, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       })
       .then(
         () => null,

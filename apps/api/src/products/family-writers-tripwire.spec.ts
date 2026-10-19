@@ -198,8 +198,12 @@ describe("SA-823: one family creator, one reparent path, units v2 untouched", ()
       ["products/products.service.ts", 2],
     ]);
     const ps = srcOf("products/products.service.ts");
-    expect(count(AUDITED, methodBody(ps, "update"))).toBe(1);
-    expect(count(AUDITED, methodBody(ps, "create"))).toBe(1);
+    // global so a SECOND write in either body is caught. Exempt by ruling: variants made by the family editor
+    // (createFamily's grid and updateVariants' added rows) are covered by product.family_created /
+    // product.family_variants_updated and write no family_assigned row.
+    const AUDITED_G = /PRODUCT_FAMILY_ASSIGNED/g;
+    expect(count(AUDITED_G, methodBody(ps, "update"))).toBe(1);
+    expect(count(AUDITED_G, methodBody(ps, "create"))).toBe(1);
     // every writer is a tx write, never a non-tx audit.log
     expect(ps).not.toMatch(/audit\.log\([^)]*family_assigned/);
     const bulk = methodBody(ps, "bulkAssignParent");

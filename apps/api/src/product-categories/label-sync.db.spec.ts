@@ -379,7 +379,6 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
       await inA(() =>
         products.update(p.id, { category: "Snacks" } as any, {
           packPrecondition: "internal",
-          reparentVia: "editor",
           actorId: actor.id,
         }),
       );
@@ -389,7 +388,6 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
       await inA(() =>
         products.update(p.id, { category: "Gadgets" } as any, {
           packPrecondition: "internal",
-          reparentVia: "editor",
         }),
       );
       expect((await membershipsOf(p.id)).map((r) => r.categoryId)).toEqual([A.snacks]);
@@ -399,7 +397,6 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
       await inA(() =>
         products.update(p.id, { category: "Gadgets", description: "again" } as any, {
           packPrecondition: "internal",
-          reparentVia: "editor",
         }),
       );
       expect(await membershipsOf(p.id)).toHaveLength(0);
@@ -408,7 +405,6 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
       await inA(() =>
         products.update(p.id, { description: "price only" } as any, {
           packPrecondition: "internal",
-          reparentVia: "editor",
         }),
       );
       expect(await membershipsOf(p.id)).toHaveLength(0);
@@ -541,7 +537,6 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
       await inA(() =>
         products.update(p.id, { category: " snacks" } as any, {
           packPrecondition: "internal",
-          reparentVia: "editor",
           actorId: actor.id,
         }),
       );

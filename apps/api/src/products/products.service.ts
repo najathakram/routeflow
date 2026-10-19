@@ -811,6 +811,12 @@ export class ProductsService {
       reparentVia?: FamilyAssignVia;
     },
   ) {
+    // SA-823 R11: a product born under a parent is audited with its door; refuse before any read or write.
+    if (dto.parentProductId && !options?.reparentVia) {
+      throw new Error(
+        "ProductsService.create with parentProductId requires options.reparentVia (the audit row names its door)",
+      );
+    }
     // B1: a variant stores its BARE label; strip a composed "<parent> - <label>" first, so the guard and the name
     // uniqueness check below judge what will actually be stored.
     await bareVariantNames(this.prisma.forTenant(), dto, dto.parentProductId);
@@ -1074,6 +1080,7 @@ export class ProductsService {
         // SA-823 R11: a product born under a parent is an assignment too (fromParentId null), in this same tx.
         await tx.auditLog.create({
           data: {
+            tenantId,
             userId: options.actorId ?? null,
             action: AUDIT_ACTIONS.PRODUCT_FAMILY_ASSIGNED,
             entityType: "Product",
@@ -1362,6 +1369,12 @@ export class ProductsService {
     const reparenting =
       dto.parentProductId !== undefined &&
       dto.parentProductId !== (existing.parentProductId ?? null);
+    // SA-823 R11: refuse before the transaction (an echo of the current parent is not a change and passes).
+    if (reparenting && !options?.reparentVia) {
+      throw new Error(
+        "ProductsService.update changed parentProductId without options.reparentVia (use assignToParent / unlinkFromParent)",
+      );
+    }
     const txDone = this.prisma.tenantTransaction(async (tx: any) => {
       // units_v1: a pack edit (unit word, size or regulated section) must not invalidate the levels on
       // this product. FIRST in the tx, before any other lock: the tenant units lock (a rename holds it
@@ -1656,13 +1669,9 @@ export class ProductsService {
           })
         ).keptLabels;
         // SA-823 R11: the assignment is audited in THIS transaction (rolls back with the reparent); an echo never gets here.
-        if (!options?.reparentVia) {
-          throw new Error(
-            "ProductsService.update changed parentProductId without options.reparentVia (use assignToParent / unlinkFromParent)",
-          );
-        }
         await tx.auditLog.create({
           data: {
+            tenantId,
             userId: options.actorId ?? null,
             action: AUDIT_ACTIONS.PRODUCT_FAMILY_ASSIGNED,
             entityType: "Product",
@@ -1672,7 +1681,7 @@ export class ProductsService {
               fromParentId,
               toParentId: dto.parentProductId ?? null,
               variantName: row.variantName ?? null,
-              via: options.reparentVia,
+              via: options.reparentVia as FamilyAssignVia, // guarded above: reparenting implies it
             },
           },
         });

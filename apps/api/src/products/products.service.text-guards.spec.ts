@@ -121,13 +121,16 @@ describe("ProductsService name guards (B964-2)", () => {
       for (const extra of [{ trackedSubcategoryId: "sub-1" }, { parentProductId: "parent-1" }]) {
         prisma.tenantTransaction.mockClear();
         await refused(
-          service.create({
-            name: "Cola",
-            unit: "each",
-            pricePerUnit: "1.00",
-            category: "=cmd",
-            ...extra,
-          } as any),
+          service.create(
+            {
+              name: "Cola",
+              unit: "each",
+              pricePerUnit: "1.00",
+              category: "=cmd",
+              ...extra,
+            } as any,
+            { reparentVia: "editor" },
+          ),
           "category",
         );
         expect(prisma.tenantTransaction).not.toHaveBeenCalled();
@@ -151,7 +154,6 @@ describe("ProductsService name guards (B964-2)", () => {
       await refused(
         service.update("prod-1", { category: "@evil" } as any, {
           packPrecondition: "internal",
-          reparentVia: "editor",
         }),
         "category",
       );
@@ -165,7 +167,6 @@ describe("ProductsService name guards (B964-2)", () => {
       await expect(
         service.update("prod-1", { category: "=LEGACY", description: "x" } as any, {
           packPrecondition: "internal",
-          reparentVia: "editor",
         }),
       ).resolves.toBeDefined();
     });
@@ -177,7 +178,6 @@ describe("ProductsService name guards (B964-2)", () => {
       await refused(
         service.update("prod-1", { category: "=evil", isTobacco: true } as any, {
           packPrecondition: "internal",
-          reparentVia: "editor",
         }),
         "category",
       );
@@ -202,7 +202,6 @@ describe("ProductsService name guards (B964-2)", () => {
       await refused(
         service.update("prod-1", { name: "@evil" } as any, {
           packPrecondition: "internal",
-          reparentVia: "editor",
         }),
         "productName",
       );
@@ -214,7 +213,6 @@ describe("ProductsService name guards (B964-2)", () => {
       await refused(
         service.update("prod-1", { variantName: "-2+3" } as any, {
           packPrecondition: "internal",
-          reparentVia: "editor",
         }),
         "variantName",
       );
@@ -228,7 +226,6 @@ describe("ProductsService name guards (B964-2)", () => {
       await expect(
         service.update("prod-1", { name: "=LEGACY", description: "x" } as any, {
           packPrecondition: "internal",
-          reparentVia: "editor",
         }),
       ).resolves.toBeDefined();
       expect(prisma.product.findUnique).toHaveBeenCalledTimes(1); // the ONE read update() already makes

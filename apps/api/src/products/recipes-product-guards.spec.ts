@@ -85,7 +85,6 @@ describe("ProductsService recipe guards", () => {
       const err = await service
         .update("prod-1", { trackedCategoryId: null } as any, {
           packPrecondition: "internal",
-          reparentVia: "editor",
         })
         .catch((e) => e);
       expect(err).toBeInstanceOf(ConflictException);
@@ -98,7 +97,6 @@ describe("ProductsService recipe guards", () => {
     recipeInState("RETIRED");
     await service.update("prod-1", { trackedCategoryId: null } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     const where = prisma.recipe.findFirst.mock.calls[0][0].where;
     expect(where.status).toEqual({ in: ["DRAFT", "ACTIVE"] });
@@ -112,7 +110,6 @@ describe("ProductsService recipe guards", () => {
     await expect(
       service.update("prod-1", { trackedCategoryId: null } as any, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       }),
     ).resolves.toBeDefined();
     expect(prisma.product.update).toHaveBeenCalled();
@@ -121,7 +118,6 @@ describe("ProductsService recipe guards", () => {
   it("4: an edit that leaves the category alone never consults the recipes", async () => {
     await service.update("prod-1", { description: "x" } as any, {
       packPrecondition: "internal",
-      reparentVia: "editor",
     });
     expect(prisma.recipe.findFirst).not.toHaveBeenCalled();
   });

@@ -103,6 +103,7 @@ describe("every reparent entry names its door (SA-823 R11)", () => {
     await (service as any).createVariantRowInTx(tx, parent, "Salt", "off", "u9");
     expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
     expect(tx.auditLog.create.mock.calls[0][0].data).toEqual({
+      tenantId: "t-1",
       userId: "u9",
       action: AUDIT_ACTIONS.PRODUCT_FAMILY_ASSIGNED,
       entityType: "Product",

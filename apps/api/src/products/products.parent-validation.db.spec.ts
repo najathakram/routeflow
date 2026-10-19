@@ -116,6 +116,7 @@ describeDb("B1211 product parent check: real Postgres", () => {
     inTenant(tenantId, () =>
       service.create({ name, unit: "each", pricePerUnit: "1.00", ...extra } as never, {
         actorId: null,
+        reparentVia: "editor",
       }),
     );
   const fresh = (id: string) => prisma.product.findUniqueOrThrow({ where: { id } });
@@ -180,7 +181,6 @@ describeDb("B1211 product parent check: real Postgres", () => {
     await inTenant(t, () =>
       service.update(inactive.id, { isActive: false } as never, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       }),
     );
     const loner = await mk(t, "Loner");

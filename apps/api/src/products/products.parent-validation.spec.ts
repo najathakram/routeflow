@@ -392,7 +392,6 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       seed({});
       await service.update("prod-1", { description: "x" } as never, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       });
       expect(prisma.product.update.mock.calls[0][0].data).not.toHaveProperty("kind");
     });
@@ -430,7 +429,6 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       prisma.product.update.mockResolvedValue({ ...PRODUCT });
       await service.update("prod-1", { parentProductId: "fam", description: "x" } as never, {
         packPrecondition: "internal",
-        reparentVia: "editor",
       });
       expect(prisma.product.update).toHaveBeenCalled();
     });
@@ -463,7 +461,6 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       const body = await refusal(
         service.update("prod-1", { variantName: "Acme - " } as never, {
           packPrecondition: "internal",
-          reparentVia: "editor",
         }),
       );
       expect(body.code).toBe(API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY);
@@ -475,12 +472,15 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       async (name) => {
         seed({ fam: NAMED_FAMILY });
         const body = await refusal(
-          service.create({
-            name,
-            parentProductId: "fam",
-            unit: "each",
-            pricePerUnit: "1.00",
-          } as never),
+          service.create(
+            {
+              name,
+              parentProductId: "fam",
+              unit: "each",
+              pricePerUnit: "1.00",
+            } as never,
+            { reparentVia: "editor" },
+          ),
         );
         expect(body.code).toBe(API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY);
         expect(prisma.product.create).not.toHaveBeenCalled();
