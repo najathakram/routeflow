@@ -104,8 +104,9 @@ for (const vp of VIEWPORTS) {
         await page.waitForTimeout(3_000);
         await expect(toasts(page, `${flavor} added to ${familyName}`)).toHaveCount(1);
         await shot(page, info, "k11-27-add-variant-toast");
-        // K12 F07: Create from the list opens the new product's page.
-        await expect(page).toHaveURL(/\/products\/[0-9a-f-]{36}/);
+        // K13 F18: a variant made from a family row opens the FAMILY page with the new row in view.
+        await expect(page).toHaveURL(/\/products\/[0-9a-f-]{36}\?variant=[0-9a-f-]{36}/);
+        await expect(page.locator("[data-focused-variant='true']")).toBeVisible();
 
         // 2. New product, double-clicked: one product, one toast.
         await page.goto("/products");
