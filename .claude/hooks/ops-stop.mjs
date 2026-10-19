@@ -21,6 +21,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const WINDOW_MS = 5 * 60 * 1000;
+const PENDING_MS = 30 * 1000;
 const RF = "node tools/ops-monitor/bin/rf.mjs";
 const TRUNK = new Set(["master", "main"]);
 const LANDING_BRANCH_RE = /^(train|docs\/bookkeeping|chore\/bookkeeping)[/-]/;
@@ -133,6 +134,8 @@ export function evaluateGate({ actions, state, events, machine }) {
       }
     } else if (action.kind === "pr") {
       const { number = null, branch = null } = action;
+      // Routine landing branches (merge trains, bookkeeping PRs) carry no item and no status.
+      if (LANDING_BRANCH_RE.test(branch ?? "")) continue;
       if (action.action === "create" || action.action === "ready") {
         if (number == null && !branch) continue; // nothing to look up: fail open
         if (!findLinkedItem(state, { number, branch })) {
@@ -168,6 +171,26 @@ export function evaluateGate({ actions, state, events, machine }) {
     }
   }
   return missing.length === 0 ? { ok: true } : { ok: false, missing };
+}
+
+/**
+ * True while a `pr-pending` line (a gh merge awaiting its detached confirmation) younger than
+ * PENDING_MS has no matching `pr-pending-done` line. Advisory only: it makes the Stop gate wait,
+ * it never blocks by itself.
+ */
+export function pendingMergeOpen(actions, now) {
+  const list = actions ?? [];
+  return list.some((p) => {
+    if (p?.kind !== "pr-pending") return false;
+    const ats = toMs(p.ts) ?? 0;
+    if (now - ats > PENDING_MS) return false;
+    return !list.some(
+      (d) =>
+        d?.kind === "pr-pending-done" &&
+        (toMs(d.ts) ?? -1) >= ats &&
+        (p.number == null || d.number === p.number),
+    );
+  });
 }
 
 /** Stable hash of a missing list (loop guard compares consecutive blocks). */
@@ -217,21 +240,27 @@ async function main() {
   const { opsHome, specsDir } = await import(lib("config.mjs"));
   const { actionsFile, readActions, archiveActions } = await import(lib("turn-actions.mjs"));
   const file = actionsFile(opsHome(), payload.session_id);
-  const actions = readActions(file);
+  let actions = readActions(file);
   if (actions.length === 0) return 0;
   const dir = specsDir();
   if (!existsSync(join(dir, "events"))) return 0; // no ops clone (CI, cloud): nothing to check
 
   const { loadConfig, machineId } = await import(lib("config.mjs"));
   const machine = machineId(loadConfig(dir), process.env);
-  const judge = async () => evaluateGate({ actions, machine, ...(await loadState(dir)) });
+  const judge = async () => {
+    actions = readActions(file); // the detached confirmer may have appended since the last look
+    return evaluateGate({ actions, machine, ...(await loadState(dir)) });
+  };
   let verdict = await judge();
   // The detached recorder may still be pulling/committing the push event (a few seconds on a busy
-  // host): re-read up to 15 x 1 s before blocking.
+  // host): re-read up to 15 x 1 s before blocking. A gh merge still awaiting its detached
+  // confirmation (pending < 30 s old, no done line) is waited for the same way, up to 30 x 1 s.
   const retryEnv = Number(process.env.RF_OPS_RETRY_MS);
   const retryMs = Number.isFinite(retryEnv) && retryEnv >= 0 ? retryEnv : 1000;
-  for (let i = 0; i < 15 && !verdict.ok; i++) {
-    if (!verdict.missing.some((m) => m.why === "push not recorded")) break;
+  for (let i = 0; i < 30; i++) {
+    const waitPush =
+      i < 15 && !verdict.ok && verdict.missing.some((m) => m.why === "push not recorded");
+    if (!waitPush && !pendingMergeOpen(actions, Date.now())) break;
     await sleep(retryMs);
     verdict = await judge();
   }

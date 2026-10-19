@@ -30,8 +30,8 @@ const PR_VERBS = ["create", "ready", "merge", "close", "edit"];
 // line is a candidate the detached recorder confirms with `gh pr view`.
 const MERGED_RE =
   /(?:Squashed and merged|Merged|Rebased and merged) pull request (?:[\w.-]+\/[\w.-]+)?#(\d+)/i;
-const MERGE_ERROR_RE = /^(GraphQL|HTTP \d{3}|error|failed|X )/im;
-const MERGE_NOT_DONE_RE = /not mergeable|auto-merge|automatically merged/i;
+// Only auto-merge text rules a merge out up front: for anything else `gh pr view` is the authority.
+const MERGE_AUTO_RE = /auto-merge|automatically merged/i;
 // `gh pr merge` flags whose next word is a value, never a PR number.
 const VALUE_FLAGS = new Set([
   "-b",
@@ -47,7 +47,7 @@ const VALUE_FLAGS = new Set([
   "--match-head-commit",
 ]);
 const FRESH_MERGE_MS = 10 * 60 * 1000;
-// `git push` flags that name no single branch: nothing to record.
+// `git push` flags that, with no branch refspec, push no branch: nothing to record.
 const PUSH_NO_BRANCH_FLAGS = new Set(["--tags", "--all", "--mirror", "--prune"]);
 const PR_URL_RE = /github\.com\/najathakram\/routeflow\/pull\/(\d+)/;
 const PR_ERROR_RE = /^(GraphQL|HTTP \d{3}|error|failed|no pull requests? found)/im;
@@ -208,19 +208,21 @@ function normalizeGit(tokens) {
 
 function pushAction(args, dir) {
   const positional = [];
-  let followTags = false;
+  let noBranch = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--delete" || a === "-d" || a === "--dry-run" || a === "-n") return null;
-    if (PUSH_NO_BRANCH_FLAGS.has(a)) return null;
-    if (a === "--follow-tags") followTags = true;
+    if (PUSH_NO_BRANCH_FLAGS.has(a)) noBranch = true;
     if (a === "-o" || a === "--push-option" || a === "--repo" || a === "--receive-pack") i++;
     else if (!a.startsWith("-")) positional.push(a);
   }
   const refspec = positional[1] ?? null;
   if (refspec && (refspec.startsWith(":") || refspec.includes("refs/tags/"))) return null;
   if (refspec === "tag") return null; // `git push origin tag v1`
-  if (followTags && !refspec) return null; // tags-only push: no named branch
+  if (refspec && refspec.includes("*")) return null; // glob refspec: no single branch
+  // --tags / --all / --mirror / --prune push no named branch; with a branch refspec they are a
+  // normal push of it, and --follow-tags never changes which branch goes up.
+  if (noBranch && !refspec) return null;
   const action = { kind: "push", remote: positional[0] ?? null, refspec };
   if (dir) action.dir = dir;
   return action;
@@ -251,7 +253,7 @@ function prNumber(verb, args, stdout, text) {
     const m = MERGED_RE.exec(text);
     if (m) return { number: Number(m[1]) };
     if (args.some((a) => a === "--auto" || a === "--disable-auto")) return null;
-    if (MERGE_ERROR_RE.test(text) || MERGE_NOT_DONE_RE.test(text)) return null;
+    if (MERGE_AUTO_RE.test(text)) return null;
     return { number: prArgNumber(args), candidate: true };
   }
   if (verb === "create") {
@@ -263,6 +265,18 @@ function prNumber(verb, args, stdout, text) {
   const ref = /#(\d+)/.exec(text) ?? PR_URL_RE.exec(text);
   if (!ref) return null;
   return { number: prArgNumber(args) ?? Number(ref[1]) };
+}
+
+/** Branch named by `--head <b>` / `-H <b>` / `--head=<b>` (an `owner:` prefix dropped), or null. */
+function headArg(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    let v = null;
+    if (a === "--head" || a === "-H") v = args[i + 1];
+    else if (a.startsWith("--head=")) v = a.slice(7);
+    if (typeof v === "string" && v !== "") return v.replace(/^[^:/]+:/, "");
+  }
+  return null;
 }
 
 function prAction(tokens, stdout, text) {
@@ -280,6 +294,10 @@ function prAction(tokens, stdout, text) {
   if (n === null) return null;
   const a = { kind: "pr", action: verb, number: n.number };
   if (n.candidate) a.verify = true;
+  if (verb === "create") {
+    const head = headArg(args);
+    if (head) a.head = head;
+  }
   // The command named its PR (number or URL): the current branch says nothing about it.
   if (verb !== "create" && prArgNumber(args) !== null) a.named = true;
   return a;
@@ -381,6 +399,21 @@ function verifiedPush(cwd, remote, refspec) {
   return { branch, sha: pushed };
 }
 
+/**
+ * The branch an unnamed `gh pr merge` acted on, captured before gh moves the checkout: HEAD, or
+ * the previously checked-out branch when gh (--delete-branch) already switched to master/main.
+ */
+function unnamedMergeBranch(cwd) {
+  const head = git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  const trunk = head === "master" || head === "main";
+  if (head && head !== "HEAD" && !trunk) return head;
+  if (!trunk) return null;
+  const prev = git(cwd, ["rev-parse", "--abbrev-ref", "@{-1}"]);
+  return !prev || prev === "HEAD" || prev === "master" || prev === "main" || prev.startsWith("@")
+    ? null
+    : prev;
+}
+
 /** `gh pr view` JSON text ("" on any failure). RF_OPS_GH may name a .mjs/.js stand-in (tests). */
 function ghView(cwd, number) {
   const gh = process.env.RF_OPS_GH || "gh";
@@ -406,12 +439,21 @@ function ghView(cwd, number) {
  * cwd, file }. `deps` is injectable for tests.
  */
 export function confirmMerge(job, deps = { view: ghView, append: null, record: null }) {
-  const m = mergedFromView(deps.view(job.cwd, job.number ?? null));
-  if (!m) return null;
+  // A PR number wins; an unnamed merge selects the branch captured before gh switched; else gh
+  // views the current branch.
+  const m = mergedFromView(deps.view(job.cwd, job.number ?? job.branch ?? null));
   // An already-merged PR re-merged by mistake merged nothing now: only a fresh merge counts.
-  if (m.mergedAt !== null && job.ts - m.mergedAt > FRESH_MERGE_MS) return null;
-  const branch = job.named || !m.branch || ["master", "main"].includes(m.branch) ? null : m.branch;
+  const fresh = m && !(m.mergedAt !== null && job.ts - m.mergedAt > FRESH_MERGE_MS);
+  if (!fresh) {
+    // Release the Stop gate's wait; nothing is recorded.
+    deps.append?.(job.file, { ts: job.ts, kind: "pr-pending-done", number: job.number ?? null });
+    return null;
+  }
+  // The PR's own head branch is kept (`named` only silences the checkout's HEAD, which the
+  // synchronous path decides); trunk names no PR branch.
+  const branch = !m.branch || ["master", "main"].includes(m.branch) ? null : m.branch;
   deps.append?.(job.file, { ts: job.ts, kind: "pr", action: "merge", number: m.number, branch });
+  deps.append?.(job.file, { ts: job.ts, kind: "pr-pending-done", number: m.number });
   const args = ["event", "pr", "--number", String(m.number), "--action", "merge"];
   if (branch) args.push("--branch", branch);
   deps.record?.([...args, "--quiet"]);
@@ -499,9 +541,12 @@ async function main() {
       spawnRecorder([...args, "--repo", "najathakram/routeflow", "--quiet"], env);
     } else if (a.verify) {
       // No TTY: gh printed nothing. The detached recorder confirms before anything is recorded.
+      // A pending line goes in synchronously so the Stop gate waits for the confirmation.
+      appendAction(file, { kind: "pr-pending", ts, number: a.number ?? null });
       spawnConfirm({
         ts,
         number: a.number,
+        branch: a.number == null ? unnamedMergeBranch(cwd) : null,
         named: a.named === true,
         cwd,
         file,
@@ -510,7 +555,7 @@ async function main() {
     } else {
       // After a merge the checkout may already be back on master; that names no PR branch. A
       // command that named its PR (number/URL) says nothing about the current branch either.
-      const head = a.named ? "" : git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
+      const head = a.head ?? (a.named ? "" : git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]));
       const branch = head && !["HEAD", "master", "main"].includes(head) ? head : null;
       appendAction(file, { ts, kind: "pr", action: a.action, number: a.number, branch });
       const args = ["event", "pr", "--number", String(a.number), "--action", a.action];

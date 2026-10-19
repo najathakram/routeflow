@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  chmodSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -693,7 +694,7 @@ test(
 // --- A3: generated register mode (events commit + a disposable views-only commit) ---------------
 
 import { registerHook, renderGeneratedRegister } from "../lib/views.mjs";
-import { dropViewsTip } from "../lib/store.mjs";
+import { dropUnpushedViews } from "../lib/store.mjs";
 
 const subjects = (dir, range) => git(dir, "log", "--format=%s", range).split("\n").filter(Boolean);
 const filesOf = (dir, rev) =>
@@ -763,7 +764,7 @@ test(
 );
 
 test(
-  "dropViewsTip drops only our unpushed views-only tip, never events and never over a dirty tree",
+  "dropUnpushedViews drops only our unpushed views-only tip, never events and never over a dirty tree",
   { timeout: 600000 },
   async () => {
     const p = mkPair("drop-tip");
@@ -778,15 +779,15 @@ test(
     assert.match(subjects(p.A, "@{u}..HEAD")[0], /^ops\(views\):/);
     writeFileSync(join(p.A, "stray.txt"), "dirty\n");
     git(p.A, "add", "stray.txt");
-    assert.equal(await dropViewsTip(p.A), false, "dirty tree: nothing dropped");
+    assert.equal(await dropUnpushedViews(p.A), false, "dirty tree: nothing dropped");
     git(p.A, "reset", "--quiet", "--hard", "HEAD");
-    assert.equal(await dropViewsTip(p.A), true);
+    assert.equal(await dropUnpushedViews(p.A), true);
     assert.deepEqual(
       subjects(p.A, "@{u}..HEAD").map((s) => s.replace(/\(.*$/, "")),
       ["ops"],
     );
     assert.match(subjects(p.A, "@{u}..HEAD")[0], /^ops\(m-a\): item\.new/);
-    assert.equal(await dropViewsTip(p.A), false, "an events commit is never dropped");
+    assert.equal(await dropUnpushedViews(p.A), false, "an events commit is never dropped");
     // the dropped views commit took its register text with it
     assert.doesNotMatch(
       readFileSync(join(p.A, "register", "WORK-REGISTER.md"), "utf8"),
@@ -926,6 +927,180 @@ test(
     );
     assert.equal(ran, false);
     assert.equal(JSON.parse(readFileSync(owner, "utf8")).token, "T-new");
+    rmSync(lock, { recursive: true, force: true });
+  },
+);
+
+// --- R3: views never buried under events, register-collision ownership, same-holder heartbeat ---
+
+test(
+  "dropUnpushedViews removes a views commit buried under events and keeps the events in order",
+  { timeout: 600000 },
+  async () => {
+    const p = mkPair("drop-buried");
+    const hook = registerHook();
+    await appendEvents([newItem("m-a", null, "First local")], {
+      dir: p.A,
+      home: p.homeA,
+      push: false,
+      afterCommit: hook,
+    });
+    // Human mode (no config), no hook, offline (the sync would push the first two): this event
+    // lands ABOVE the views commit.
+    git(p.A, "remote", "set-url", "origin", join(tmp, "nowhere.git"));
+    await appendEvents([newItem("m-a", null, "Second local")], {
+      dir: p.A,
+      home: p.homeA,
+      push: false,
+    });
+    git(p.A, "remote", "set-url", "origin", p.remote);
+    const before = subjects(p.A, "@{u}..HEAD").reverse();
+    assert.match(before[0], /^ops\(m-a\): item\.new/);
+    assert.match(before[1], /^ops\(views\):/);
+    assert.match(before[2], /^ops\(m-a\): item\.new/);
+    assert.equal(await dropUnpushedViews(p.A), true);
+    const after = subjects(p.A, "@{u}..HEAD").reverse();
+    assert.equal(after.length, 2);
+    assert.ok(
+      after.every((x) => /^ops\(m-a\): item\.new/.test(x)),
+      after.join(" | "),
+    );
+    const s = stateOf(p.A);
+    assert.deepEqual([...s.items.values()].map((i) => i.title).sort(), [
+      "First local",
+      "Second local",
+    ]);
+    assert.equal(git(p.A, "status", "--porcelain").trim(), "");
+  },
+);
+
+test(
+  "generated mode: a sync push that loses a race leaves no views commit under the next events",
+  { timeout: 900000 },
+  async () => {
+    const p = mkPair("gen-buried");
+    const hook = registerHook();
+    mkdirSync(join(p.A, "ops"), { recursive: true });
+    writeFileSync(join(p.A, "ops", "config.json"), JSON.stringify({ registerMode: "generated" }));
+    git(p.A, "add", "ops/config.json");
+    git(p.A, "commit", "--quiet", "-m", "config");
+    git(p.A, "push", "--quiet");
+    git(p.B, "pull", "--quiet", "--rebase");
+    await appendEvents([newItem("m-a", null, "E0 local")], {
+      dir: p.A,
+      home: p.homeA,
+      push: false,
+      afterCommit: hook,
+    });
+    await appendEvents([newItem("m-b", null, "Remote item")], {
+      dir: p.B,
+      home: p.homeB,
+      push: false,
+      afterCommit: hook,
+    });
+    // A's first push is preceded by B pushing: A's sync push (after its pull) is rejected.
+    const fwd = (x) => x.split("\\").join("/");
+    const marker = fwd(join(p.dir, "b-pushed"));
+    const hookFile = join(p.A, ".git", "hooks", "pre-push");
+    mkdirSync(join(p.A, ".git", "hooks"), { recursive: true });
+    writeFileSync(
+      hookFile,
+      [
+        "#!/bin/sh",
+        `if [ ! -f "${marker}" ]; then`,
+        `  : > "${marker}"`,
+        "  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX",
+        `  git -C "${fwd(p.B)}" push --quiet origin HEAD >/dev/null 2>&1`,
+        "fi",
+        "exit 0",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(hookFile, 0o755);
+    const r = await appendEvents([newItem("m-a", null, "E1 after")], {
+      dir: p.A,
+      home: p.homeA,
+      afterCommit: hook,
+    });
+    assert.ok(existsSync(join(p.dir, "b-pushed")), "the racing push happened");
+    assert.equal(r.pushed, true, JSON.stringify(r.warnings));
+    const check = join(p.dir, "check");
+    git(p.dir, "clone", "--quiet", p.remote, check);
+    const state = stateOf(check);
+    assert.equal(state.anomalies.length, 0, JSON.stringify(state.anomalies));
+    assert.deepEqual([...state.items.values()].map((i) => i.title).sort(), [
+      "E0 local",
+      "E1 after",
+      "Remote item",
+    ]);
+    assert.equal(
+      readFileSync(join(check, "register", "WORK-REGISTER.md"), "utf8").replace(/\r\n/g, "\n"),
+      renderGeneratedRegister(state, { itemFileExists: () => false }),
+    );
+    const log = git(check, "log", "--format=%x00%s", "--name-only").split("\0").filter(Boolean);
+    for (const entry of log) {
+      const [subject, ...names] = entry.split(/\r?\n/).filter(Boolean);
+      if (/^ops\((?!views)/.test(subject))
+        assert.ok(!names.some((n) => /WORK-REGISTER/.test(n)), `${subject} holds the register`);
+    }
+  },
+);
+
+test(
+  "a register-sourced item.new colliding with a non-register item is renumbered, not dropped",
+  { timeout: 600000 },
+  async () => {
+    const p = mkPair("rec-register-vs-plain");
+    git(p.A, "remote", "set-url", "origin", join(tmp, "nowhere.git"));
+    await appendEvents([newItem("m-a", "300", "Register row", { source: "register" })], {
+      dir: p.A,
+      home: p.homeA,
+    });
+    await appendEvents([newItem("m-b", "300", "Plain row")], { dir: p.B, home: p.homeB });
+    git(p.A, "remote", "set-url", "origin", p.remote);
+    const sync = await syncSpecs(p.A);
+    assert.equal(sync.ok, true, sync.error);
+    assert.equal(sync.reconciled.dropped.length, 0, "nothing dropped");
+    assert.equal(sync.reconciled.changes.size, 1, "renumbered");
+    const state = stateOf(p.A);
+    assert.deepEqual([...state.items.values()].map((i) => i.title).sort(), [
+      "Plain row",
+      "Register row",
+    ]);
+    assert.equal(git(p.A, "rev-list", "--count", "@{u}..HEAD").trim(), "0");
+  },
+);
+
+test(
+  "a stale lock whose same holder heartbeated before the rename is given back, not reclaimed",
+  { timeout: 240000 },
+  async () => {
+    const home = join(tmp, "lock-home-heartbeat");
+    const lock = join(home, "specs.lock");
+    const owner = join(lock, "owner.json");
+    mkdirSync(lock, { recursive: true });
+    writeFileSync(owner, JSON.stringify({ token: "T-same", pid: 1, host: "x", at: "x" }));
+    ageLock(lock);
+    let ran = false;
+    await assert.rejects(
+      withSpecsLock(
+        async () => {
+          ran = true;
+        },
+        {
+          home,
+          waitMs: 300,
+          pollMs: 50,
+          _beforeReclaim: () => {
+            const now = new Date(); // the same holder's heartbeat lands after the judgment
+            utimesSync(owner, now, now);
+          },
+        },
+      ),
+      /lock/i,
+    );
+    assert.equal(ran, false);
+    assert.equal(JSON.parse(readFileSync(owner, "utf8")).token, "T-same");
     rmSync(lock, { recursive: true, force: true });
   },
 );

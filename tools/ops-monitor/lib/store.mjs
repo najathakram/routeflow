@@ -109,8 +109,9 @@ async function acquireLock(
       if (age > staleMs) {
         // Atomic rename so only one waiter reclaims a stale lock. The judgment and the rename are
         // not one step: if the holder refreshed it, or another waiter reclaimed it and a new
-        // holder took it, in between, the lock we renamed is a live one. Its token tells: when it
-        // differs from the one judged stale, give it back and wait as usual.
+        // holder took it, in between, the lock we renamed is a live one. Two tells: its token
+        // differs from the one judged stale (a new holder), or its owner.json is fresher than
+        // the stale threshold (the same holder heartbeated). Either way give it back and wait.
         const judged = readOwner(lock)?.token ?? null;
         _beforeReclaim?.();
         const trash = `${lock}.stale-${process.pid}-${Date.now()}`;
@@ -119,7 +120,13 @@ async function acquireLock(
         } catch {
           continue; // someone else reclaimed it
         }
-        if ((readOwner(trash)?.token ?? null) !== judged) {
+        let refreshed = false;
+        try {
+          refreshed = Date.now() - statSync(join(trash, "owner.json")).mtimeMs <= staleMs;
+        } catch {
+          /* no owner.json: nothing proves it alive */
+        }
+        if (refreshed || (readOwner(trash)?.token ?? null) !== judged) {
           try {
             renameSync(trash, lock);
           } catch {
@@ -236,29 +243,62 @@ export const VIEWS_COMMIT_PREFIX = "ops(views):";
 const DROPPABLE_VIEW_PATHS = new Set(["register/WORK-REGISTER.md", "DASHBOARD.md"]);
 
 /**
- * Drops the unpushed tip commits that hold only regenerated view files (subject `ops(views): …`),
- * so event commits can be rebased or rewritten without them. Only on an otherwise clean tree;
- * never drops an events commit. Returns true when at least one commit was dropped. Callers hold
- * the specs lock.
+ * Drops EVERY unpushed views-only commit (subject `ops(views): …`, changed files only generated
+ * view paths) from `@{u}..HEAD`, wherever it sits, and keeps the event commits (replayed in
+ * order on the commit below the first dropped one). So a views commit can never end up buried
+ * under events, where a later rebase or soft reset would fold it into them. Only on an otherwise
+ * clean tree; a merge commit in the range, or any failure, leaves the clone as it was. Returns
+ * true when at least one commit was dropped. Callers hold the specs lock.
  */
-export async function dropViewsTip(dir) {
-  let dropped = false;
-  for (let i = 0; i < 5; i++) {
-    const ahead = await git(dir, ["rev-list", "--count", "@{u}..HEAD"]);
-    if (ahead.code !== 0 || Number(ahead.stdout.trim()) === 0) break;
-    const subject = await git(dir, ["log", "-1", "--format=%s"]);
-    if (subject.code !== 0 || !subject.stdout.startsWith(VIEWS_COMMIT_PREFIX)) break;
-    const files = await git(dir, ["diff", "--name-only", "HEAD~1", "HEAD"]);
-    const names = files.stdout.split(/\r?\n/).filter(Boolean);
-    if (files.code !== 0 || names.length === 0 || !names.every((f) => DROPPABLE_VIEW_PATHS.has(f)))
-      break;
-    const clean = await git(dir, ["status", "--porcelain", "--untracked-files=no"]);
-    if (clean.code !== 0 || clean.stdout.trim()) break;
-    const reset = await git(dir, ["reset", "--hard", "--quiet", "HEAD~1"]);
-    if (reset.code !== 0) break;
-    dropped = true;
+export async function dropUnpushedViews(dir) {
+  const log = await git(dir, [
+    "log",
+    "--reverse",
+    "--name-only",
+    "--format=%x01%H %P%x02%s",
+    "@{u}..HEAD",
+  ]);
+  if (log.code !== 0) return false;
+  const commits = [];
+  for (const chunk of log.stdout.split("\x01").filter((c) => c.trim())) {
+    const [head, rest = ""] = chunk.split("\x02");
+    const [sha, ...parents] = head.trim().split(" ");
+    const nl = rest.indexOf("\n");
+    const subject = nl < 0 ? rest : rest.slice(0, nl);
+    const names = (nl < 0 ? "" : rest.slice(nl)).split(/\r?\n/).filter(Boolean);
+    if (parents.length !== 1) return false; // a merge (or a root): not ours to rewrite
+    commits.push({
+      sha,
+      views:
+        subject.startsWith(VIEWS_COMMIT_PREFIX) &&
+        names.length > 0 &&
+        names.every((f) => DROPPABLE_VIEW_PATHS.has(f)),
+    });
   }
-  return dropped;
+  const first = commits.findIndex((c) => c.views);
+  if (first < 0) return false;
+  const clean = await git(dir, ["status", "--porcelain", "--untracked-files=no"]);
+  if (clean.code !== 0 || clean.stdout.trim()) return false;
+  const orig = (await git(dir, ["rev-parse", "HEAD"])).stdout.trim();
+  const reset = await git(dir, ["reset", "--hard", "--quiet", `${commits[first].sha}~1`]);
+  if (reset.code !== 0) return false;
+  for (const c of commits.slice(first + 1)) {
+    if (c.views) continue;
+    const pick = await git(dir, [
+      "-c",
+      "commit.gpgsign=false",
+      "cherry-pick",
+      "--allow-empty",
+      "--no-edit",
+      c.sha,
+    ]);
+    if (pick.code !== 0) {
+      await git(dir, ["cherry-pick", "--abort"]);
+      await git(dir, ["reset", "--hard", "--quiet", orig]);
+      return false;
+    }
+  }
+  return true;
 }
 
 /** True when the clone's ops/config.json says `registerMode: "generated"` (a missing file is human). */
@@ -287,7 +327,7 @@ async function viewsHookFor(dir, afterCommit) {
 export async function syncSpecs(dir, { bugIds = new Set(), afterCommit: given } = {}) {
   let error = null;
   let afterCommit = await viewsHookFor(dir, given);
-  if (afterCommit) await dropViewsTip(dir);
+  if (afterCommit) await dropUnpushedViews(dir);
   const pull = await git(dir, ["pull", "--rebase", "--quiet"]);
   if (pull.code !== 0) {
     await abortRebase(dir);
@@ -323,6 +363,9 @@ export async function syncSpecs(dir, { bugIds = new Set(), afterCommit: given } 
     const p = await git(dir, ["push", "--quiet"]);
     pushed = p.code === 0;
     if (!pushed && !error) error = p.stderr.trim() || `git push exited ${p.code}`;
+    // The views commit above the events is disposable: leave none behind for a later append to
+    // stack events on top of (it would then be buried and folded into them by a rebase/reset).
+    if (!pushed && afterCommit) await dropUnpushedViews(dir);
   }
   return { ok: error === null, pulled: pull.code === 0, pushed, error, reconciled };
 }
@@ -531,8 +574,13 @@ export async function reconcileUnpushed(dir, { bugIds = new Set() } = {}) {
   for (const o of ours) {
     const ev = structuredClone(o.ev);
     let touched = remapRefs(ev, out.changes);
-    if (ev.kind === "item.new" && state.items.has(ev.item) && ev.data?.source === "register") {
+    const existing = ev.kind === "item.new" ? state.items.get(ev.item) : undefined;
+    const registerOwned =
+      existing !== undefined &&
+      (existing.source === "register" || Object.keys(existing.registerFields ?? {}).length > 0);
+    if (registerOwned && ev.data?.source === "register") {
       // A register row: the other machine already created this very row, so ours is a duplicate.
+      // (Only when the existing item is itself register-sourced; any other id clash renumbers.)
       out.dropped.push(ev.id);
       out.refused.push({
         event: ev,
@@ -561,6 +609,19 @@ export async function reconcileUnpushed(dir, { bugIds = new Set() } = {}) {
   const reset = await git(dir, ["reset", "--soft", "@{u}"]);
   if (reset.code !== 0)
     throw new Error(`could not rewind to repair events: ${reset.stderr.trim()}`);
+  if (isGeneratedMode(dir)) {
+    // The soft reset staged every unpushed change, generated views included: restore those from
+    // upstream so the re-committed events commit holds events only (the hook regenerates views).
+    const staged = await git(dir, ["diff", "--cached", "--name-only", "@{u}"]);
+    for (const v of staged.stdout.split(/\r?\n/).filter((x) => DROPPABLE_VIEW_PATHS.has(x))) {
+      const inUp = await git(dir, ["cat-file", "-e", `@{u}:${v}`]);
+      const r =
+        inUp.code === 0
+          ? await git(dir, ["checkout", "@{u}", "--", v])
+          : await git(dir, ["rm", "-q", "-f", "--", v]);
+      if (r.code !== 0) throw new Error(`could not restore ${v}: ${r.stderr.trim()}`);
+    }
+  }
   const dropIds = new Set(out.dropped);
   const files = [...new Set(ours.map((o) => o.file))];
   for (const f of files) {
@@ -672,7 +733,7 @@ async function doAppend(events, { dir, push, retries, bugIds, _beforePush, after
       await sleep(50 + Math.floor(Math.random() * 250));
       // A rejected push with a views-only commit on top: drop it (disposable, regenerated below)
       // so the events replay on their own. Only an otherwise clean tree is touched.
-      if (afterCommit) await dropViewsTip(dir);
+      if (afterCommit) await dropUnpushedViews(dir);
       const pl = await git(dir, ["pull", "--rebase", "--quiet"]);
       if (pl.code !== 0) {
         await abortRebase(dir);

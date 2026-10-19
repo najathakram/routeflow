@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync, execFileSync } from "node:child_process";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -30,7 +30,9 @@ const {
   mergedFromView,
   confirmMerge,
 } = postMod;
-const { evaluateGate, nextBlockState, missingHash } = await import(pathToUrl(STOP));
+const { evaluateGate, nextBlockState, missingHash, pendingMergeOpen } = await import(
+  pathToUrl(STOP)
+);
 const { actionsFile, appendAction, readActions, archiveActions, sanitizeSessionId } = await import(
   pathToUrl(join(REPO, "tools", "ops-monitor", "lib", "turn-actions.mjs"))
 );
@@ -116,16 +118,26 @@ test("detect: no-TTY gh merge (empty output) is a candidate to verify", () => {
   assert.equal(detect('gh pr merge --subject 5 --body "x" 3515', SILENT)[0].number, 3515);
 });
 
-test("detect: failed, auto and interrupted merges are not candidates", () => {
+test("detect: only auto and interrupted merges are not candidates; gh pr view is the authority", () => {
   for (const stderr of [
     "X Pull request #3515 is not mergeable: the merge commit cannot be cleanly created",
     "GraphQL: Pull request is not mergeable",
     "HTTP 405: Merge conflict",
     "error: no such flag",
     "failed to merge",
-    "✓ Pull request najathakram/routeflow#3515 will be automatically merged when all requirements are met",
   ])
-    assert.deepEqual(detect("gh pr merge 3515 --merge", { stderr }), [], stderr);
+    assert.deepEqual(
+      detect("gh pr merge 3515 --merge", { stderr }),
+      [{ kind: "pr", action: "merge", number: 3515, verify: true, named: true }],
+      stderr,
+    );
+  assert.deepEqual(
+    detect("gh pr merge 3515 --merge", {
+      stderr:
+        "✓ Pull request najathakram/routeflow#3515 will be automatically merged when all requirements are met",
+    }),
+    [],
+  );
   assert.deepEqual(detect("gh pr merge 3515 --auto --squash", SILENT), []);
   assert.deepEqual(detect("gh pr merge 3515", { interrupted: true }), []);
 });
@@ -175,9 +187,25 @@ test("confirmMerge: records the pr event and action only for a fresh MERGED view
     });
   const ok = go(merged());
   assert.deepEqual(ok.appended, [
-    ["f", { ts: T, kind: "pr", action: "merge", number: 5, branch: null }],
+    ["f", { ts: T, kind: "pr", action: "merge", number: 5, branch: "feat/x" }],
+    ["f", { ts: T, kind: "pr-pending-done", number: 5 }],
   ]);
-  assert.deepEqual(ok.recorded, [["event", "pr", "--number", "5", "--action", "merge", "--quiet"]]);
+  assert.deepEqual(ok.recorded, [
+    ["event", "pr", "--number", "5", "--action", "merge", "--branch", "feat/x", "--quiet"],
+  ]);
+  // trunk head names no PR branch
+  const trunk = go(merged({ headRefName: "master" }));
+  assert.equal(trunk.appended[0][1].branch, null);
+  assert.deepEqual(trunk.recorded, [
+    ["event", "pr", "--number", "5", "--action", "merge", "--quiet"],
+  ]);
+  // unnamed merge: the branch captured before gh switched is the selector
+  let asked;
+  confirmMerge(
+    { ts: T, number: null, branch: "feat/work", named: false, cwd: "x", file: "f" },
+    { view: (c, sel) => ((asked = sel), merged()), append() {}, record() {} },
+  );
+  assert.equal(asked, "feat/work");
   // no PR named: the branch is the viewed PR's head, and the number is the confirmed one
   const cur = go(merged({ number: 9 }), { number: null, named: false });
   assert.deepEqual(cur.recorded, [
@@ -187,7 +215,8 @@ test("confirmMerge: records the pr event and action only for a fresh MERGED view
   for (const view of [merged({ state: "OPEN", mergedAt: null }), "", "{"]) {
     const none = go(view);
     assert.equal(none.r, null);
-    assert.deepEqual(none.appended, []);
+    // nothing recorded, but the pending marker is released so the Stop gate stops waiting
+    assert.deepEqual(none.appended, [["f", { ts: T, kind: "pr-pending-done", number: 5 }]]);
     assert.deepEqual(none.recorded, []);
   }
   // already merged long ago: a mistaken re-merge records nothing
@@ -206,14 +235,13 @@ test("detect: a named PR is flagged so the hook never adds the current branch", 
   assert.equal(create.named, undefined);
 });
 
-test("detect: pushes that name no single branch record nothing", () => {
+test("detect: pure tag / all / mirror pushes record nothing; --follow-tags is a normal push", () => {
   for (const c of [
     "git push --tags",
     "git push origin --tags",
     "git push --all origin",
     "git push --mirror origin",
     "git push --prune origin 'refs/heads/*:refs/heads/*'",
-    "git push --follow-tags",
     "git push origin tag v1.2",
     "git push origin refs/tags/v1.2",
   ])
@@ -221,6 +249,21 @@ test("detect: pushes that name no single branch record nothing", () => {
   assert.deepEqual(detect("git push --follow-tags origin feat/x"), [
     { kind: "push", remote: "origin", refspec: "feat/x" },
   ]);
+  assert.deepEqual(detect("git push --follow-tags"), [
+    { kind: "push", remote: null, refspec: null },
+  ]);
+  assert.deepEqual(detect("git push origin feat/x --tags"), [
+    { kind: "push", remote: "origin", refspec: "feat/x" },
+  ]);
+});
+
+test("detect: gh pr create carries --head / -H so the gate knows the branch", () => {
+  const url = { stdout: "https://github.com/najathakram/routeflow/pull/4001\n" };
+  assert.deepEqual(detect("gh pr create --head docs/bookkeeping-1 --title x", url), [
+    { kind: "pr", action: "create", number: 4001, head: "docs/bookkeeping-1" },
+  ]);
+  assert.equal(detect("gh pr create -H someone:train/x", url)[0].head, "train/x");
+  assert.equal(detect("gh pr create --head=feat/y", url)[0].head, "feat/y");
 });
 
 test("detect: gh pr create takes the number from the URL in stdout", () => {
@@ -399,6 +442,37 @@ test("gate: PR create needs a linked item", () => {
     items: [{ id: "9", links: { prs: [3600], branches: [], urls: [] } }],
   });
   assert.equal(evaluateGate({ actions: [act], state: good, now: T0 }).ok, true);
+});
+
+test("gate: PRs on landing branches need no item link and no status event", () => {
+  const pr = (action, branch, number = 3700) => ({ ts: T0, kind: "pr", action, number, branch });
+  for (const a of [
+    pr("create", "docs/bookkeeping-1"),
+    pr("ready", "train/x"),
+    pr("merge", "train/x"),
+    pr("merge", "chore/bookkeeping-3513"),
+  ])
+    assert.equal(evaluateGate({ actions: [a], state: stateWith(), now: T0 }).ok, true, a.branch);
+  // a feature branch is still held to the rule
+  assert.equal(
+    evaluateGate({ actions: [pr("merge", "feat/x")], state: stateWith(), now: T0 }).ok,
+    false,
+  );
+});
+
+test("gate: pendingMergeOpen waits only for a fresh, unmatched pending merge", () => {
+  const now = 1_000_000;
+  const p = (o = {}) => ({ kind: "pr-pending", ts: now - 5000, number: 7, ...o });
+  const done = (o = {}) => ({ kind: "pr-pending-done", ts: now - 1000, number: 7, ...o });
+  assert.equal(pendingMergeOpen([p()], now), true);
+  assert.equal(pendingMergeOpen([p(), done()], now), false);
+  assert.equal(pendingMergeOpen([p({ number: null }), done({ number: 9 })], now), false);
+  assert.equal(pendingMergeOpen([p(), done({ number: 8 })], now), true);
+  assert.equal(pendingMergeOpen([p({ ts: now - 31_000 })], now), false, "stale pending ignored");
+  assert.equal(pendingMergeOpen([done()], now), false);
+  assert.equal(pendingMergeOpen([], now), false);
+  // a pending line alone never makes the gate block
+  assert.equal(evaluateGate({ actions: [p()], state: stateWith(), now }).ok, true);
 });
 
 test("gate: PR merge without a status event is missing; with one is ok", () => {
@@ -590,6 +664,56 @@ test("stop hook: unmet action exits 2 with the fix text; third identical block a
   assert.equal(existsSync(file), false);
 });
 
+test("stop hook: a pending merge is waited for, then judged on the confirmed action", async () => {
+  const env = mkEnv();
+  writeEvents(env, [
+    ev("item.new", "525", { title: "Acme thing", type: "feature" }, "2026-01-01T09:00:00Z"),
+  ]);
+  const file = actionsFile(env.home, "sess-pending");
+  const t = Date.now();
+  appendAction(file, { kind: "pr-pending", ts: t, number: 3515 });
+  // the confirmer lands its pr action (an unlinked feature PR) a moment after Stop starts
+  setTimeout(() => {
+    appendAction(file, { ts: t, kind: "pr", action: "merge", number: 3515, branch: "feat/x" });
+    appendAction(file, { ts: t, kind: "pr-pending-done", number: 3515 });
+  }, 400);
+  const r = await new Promise((res) => {
+    const c = spawn(process.execPath, [STOP], {
+      cwd: REPO,
+      env: {
+        ...process.env,
+        RF_OPS_HOME: env.home,
+        RF_SPECS_DIR: env.specs,
+        RF_OPS_RETRY_MS: "300",
+        CI: "",
+        RF_OPS_GATE: "",
+      },
+    });
+    let stderr = "";
+    c.stderr.on("data", (d) => (stderr += d));
+    c.on("close", (status) => res({ status, stderr }));
+    c.stdin.end(stopIn("sess-pending"));
+  });
+  assert.equal(r.status, 2, "the confirmed, unlinked merge is judged instead of slipping away");
+  assert.match(r.stderr, /PR #3515 merged but is not linked to an item/);
+});
+
+test("stop hook: a pending line alone never blocks (stale or unmatched)", () => {
+  const env = mkEnv();
+  writeEvents(env, [
+    ev("item.new", "525", { title: "Acme thing", type: "feature" }, "2026-01-01T09:00:00Z"),
+  ]);
+  const file = actionsFile(env.home, "sess-pend-alone");
+  appendAction(file, { kind: "pr-pending", ts: Date.now(), number: 3515 }); // fresh, never resolved
+  const r = run(STOP, env, stopIn("sess-pend-alone"));
+  assert.equal(r.status, 0);
+  assert.equal(r.stderr, "");
+  assert.equal(existsSync(file), false);
+  const old = actionsFile(env.home, "sess-pend-old");
+  appendAction(old, { kind: "pr-pending", ts: Date.now() - 60_000, number: 1 });
+  assert.equal(run(STOP, env, stopIn("sess-pend-old")).status, 0);
+});
+
 test("stop hook: met action archives the actions file and exits 0", () => {
   const env = mkEnv();
   const t = Date.now();
@@ -748,7 +872,11 @@ test("post-push hook: gh merge/create are recorded only with success output", rf
   const repo = tempRepo(RF_URL);
   const failed = { stderr: "X Pull request #3515 is not mergeable" };
   run(POST, env, postIn("sess-m0", repo, "gh pr merge 3515 --squash", failed));
-  assert.equal(existsSync(actionsFile(env.home, "sess-m0")), false);
+  // a failed merge is only a candidate: gh pr view decides, so no pr action is ever recorded
+  assert.equal(
+    readActions(actionsFile(env.home, "sess-m0")).some((x) => x.kind === "pr"),
+    false,
+  );
   run(POST, env, postIn("sess-m1", repo, "gh pr merge 3515 --squash", MERGED_3515));
   const [a] = readActions(actionsFile(env.home, "sess-m1"));
   assert.equal(a.kind, "pr");
@@ -765,7 +893,9 @@ function fakeGh(dir, view) {
   const f = join(dir, "fake-gh.mjs");
   writeFileSync(
     f,
-    `if (process.env.GH_FAIL) process.exit(1);
+    `import { writeFileSync } from "node:fs";
+if (process.env.GH_ARGV_LOG) writeFileSync(process.env.GH_ARGV_LOG, JSON.stringify(process.argv.slice(2)));
+if (process.env.GH_FAIL) process.exit(1);
 console.log(JSON.stringify(${JSON.stringify(view)}));`,
   );
   return f;
@@ -797,13 +927,79 @@ test(
     });
     assert.equal(r.status, 0);
     assert.equal(r.stdout + r.stderr, "");
-    assert.ok(await waitFor(() => existsSync(file)), "the confirmed merge is appended later");
-    const [a] = readActions(file);
+    assert.ok(
+      await waitFor(() => readActions(file).some((x) => x.kind === "pr")),
+      "the confirmed merge is appended later",
+    );
+    const a = readActions(file).find((x) => x.kind === "pr");
     assert.equal(a.action, "merge");
     assert.equal(a.number, 3515);
-    assert.equal(a.branch, null, "a named PR never gets the checkout's branch");
+    assert.equal(a.branch, "feat/hook-test", "the confirmed PR's own head branch is kept");
   },
 );
+
+test(
+  "post-push hook: a merge candidate leaves a pending line, released by the confirmer",
+  rfOnly,
+  async () => {
+    const env = mkEnv();
+    const repo = tempRepo(RF_URL);
+    const file = actionsFile(env.home, "sess-pend");
+    const gh = fakeGh(env.root, {
+      number: 3515,
+      state: "MERGED",
+      mergedAt: new Date().toISOString(),
+      headRefName: "feat/hook-test",
+    });
+    // the pending line is synchronous, so it is there when the hook returns
+    const r = run(POST, env, postIn("sess-pend", repo, "gh pr merge 3515 --squash", SILENT), {
+      RF_OPS_GH: gh,
+    });
+    assert.equal(r.status, 0);
+    const first = readActions(file)[0];
+    assert.equal(first.kind, "pr-pending");
+    assert.equal(first.number, 3515);
+    assert.ok(await waitFor(() => readActions(file).some((a) => a.kind === "pr-pending-done")));
+    const kinds = readActions(file).map((a) => a.kind);
+    assert.deepEqual(kinds.sort(), ["pr", "pr-pending", "pr-pending-done"]);
+  },
+);
+
+test(
+  "post-push hook: an unnamed merge selects the branch checked out before gh switched",
+  rfOnly,
+  async () => {
+    const env = mkEnv();
+    const repo = tempRepo(RF_URL);
+    gitIn(repo, "checkout", "-q", "-b", "feat/work");
+    gitIn(repo, "checkout", "-q", "-b", "master"); // gh --delete-branch left us on the default
+    const log = join(env.root, "argv.json");
+    const gh = fakeGh(env.root, {
+      number: 3600,
+      state: "MERGED",
+      mergedAt: new Date().toISOString(),
+      headRefName: "feat/work",
+    });
+    run(POST, env, postIn("sess-unn", repo, "gh pr merge --squash --delete-branch", SILENT), {
+      RF_OPS_GH: gh,
+      GH_ARGV_LOG: log,
+    });
+    assert.ok(await waitFor(() => existsSync(log)));
+    assert.deepEqual(JSON.parse(readFileSync(log, "utf8")).slice(0, 3), [
+      "pr",
+      "view",
+      "feat/work",
+    ]);
+  },
+);
+
+test("post-push hook: gh pr create --head on a landing branch records that branch", rfOnly, () => {
+  const env = mkEnv();
+  const repo = tempRepo(RF_URL); // checkout HEAD is feat/hook-test
+  const url = { stdout: "https://github.com/najathakram/routeflow/pull/4002\n" };
+  run(POST, env, postIn("sess-head", repo, "gh pr create --head docs/bookkeeping-9", url));
+  assert.equal(readActions(actionsFile(env.home, "sess-head"))[0].branch, "docs/bookkeeping-9");
+});
 
 test(
   "post-push hook: an unmerged or unverifiable silent merge records nothing",
@@ -828,7 +1024,12 @@ test(
       GH_FAIL: "1",
     });
     await new Promise((r) => setTimeout(r, 2500));
-    for (const sid of ["sess-open", "sess-open2", "sess-fail"])
-      assert.equal(existsSync(actionsFile(env.home, sid)), false, sid);
+    assert.equal(existsSync(actionsFile(env.home, "sess-open")), false, "--auto is no candidate");
+    for (const sid of ["sess-open2", "sess-fail"])
+      assert.equal(
+        readActions(actionsFile(env.home, sid)).some((a) => a.kind === "pr"),
+        false,
+        sid,
+      );
   },
 );
