@@ -137,6 +137,8 @@ export function createOrderDraftEngine(deps: OrderDraftEngineDeps): OrderDraftEn
   let createPromise: Promise<DraftRowResult> | null = null;
   // ONE PATCH in flight at a time (its expectedUpdatedAt is the last ACKed response's); later saves wait, then send the latest.
   let patching: Promise<"done" | "retry" | "gone"> | null = null;
+  // TypeScript narrows `patching` to null after the first check (it is assigned in a closure it cannot see through awaits).
+  const inFlight = () => patching;
   // Hashes of the payloads this device sent. A 409 whose current payload is one of them is our OWN committed write whose
   // response was lost, not another device.
   const sentHashes: string[] = [];
@@ -185,10 +187,11 @@ export function createOrderDraftEngine(deps: OrderDraftEngineDeps): OrderDraftEn
   async function performSave(attempt = 0): Promise<void> {
     if (discarded || !latestEnabled || latestPayload === null) return;
     if (conflict) throw new DraftConflictError();
-    if (patching) {
+    const early = inFlight();
+    if (early) {
       // A PATCH is in flight: its response carries the updatedAt the next one must expect. Wait for it (so a flush really means
       // "saved"), then re-evaluate: the latest state is sent only if it still differs.
-      await patching.catch(() => undefined);
+      await early.catch(() => undefined);
       return performSave(attempt);
     }
     if (snapshotOf(latestPayload, latestMeta) === lastSaved) return; // unchanged-payload skip
@@ -229,9 +232,10 @@ export function createOrderDraftEngine(deps: OrderDraftEngineDeps): OrderDraftEn
     }
     if (discarded) return;
 
-    if (patching) {
+    const started = inFlight();
+    if (started) {
       // a PATCH started while this save waited on the create
-      await patching.catch(() => undefined);
+      await started.catch(() => undefined);
       return performSave(attempt);
     }
 
