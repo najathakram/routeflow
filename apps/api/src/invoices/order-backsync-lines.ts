@@ -123,9 +123,9 @@ export function orderLineUnchanged(
     ["boxes", shape.boxes],
     ["pieces", shape.pieces],
     ["unitsPerBox", shape.unitsPerBox],
-    ["unitPrice", agg.unitPrice],
-    ["subtotal", roundMoney(agg.subtotal)],
-    // SA-816: a non-finite levy sum must not read as 0 (equal to a stored 0, so the line looked unchanged).
+    // SA-816b: a non-finite aggregate must not read as 0 (equal to a stored 0, so the line looked unchanged).
+    ["unitPrice", finiteStoredMoney(agg.unitPrice, "The order line unit price")],
+    ["subtotal", roundMoney(finiteStoredMoney(agg.subtotal, "The order line subtotal"))],
     [
       "categoryTaxAmount",
       roundMoney(finiteStoredMoney(agg.categoryTax, "The order line category tax")),

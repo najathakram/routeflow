@@ -93,6 +93,76 @@ describe("SA-816 (d)2: a stored non-finite levy is refused, not zeroed or copied
     });
   });
 
+  describe("order back-sync aggregate: the other stored money columns (SA-816b)", () => {
+    const orderLines = [{ id: "oi-1", productId: "p-1", status: "PENDING" }];
+    const base = {
+      id: "ii-1",
+      orderItemId: "oi-1",
+      productId: "p-1",
+      qty: 2,
+      unitPrice: 10,
+      subtotal: 20,
+      unitsPerBox: null,
+      categoryTaxAmount: 0,
+    };
+    const aggregate = (over: Record<string, unknown>) =>
+      aggregateInvoiceLines(orderLines, [{ items: [{ ...base, ...over }] }]);
+
+    // master (static read): unitPrice and qty carried NaN into the order write; subtotal's NaN became 0 at roundMoney.
+    describe.each(["unitPrice", "qty", "subtotal"])("%s", (column) => {
+      it.each(STORED_NAN)("refuses %s", (_label, nan) => {
+        expectMoneyInvariant(caught(() => aggregate({ [column]: nan })));
+      });
+    });
+
+    it("control: finite and null values aggregate as before", () => {
+      const agg = [
+        ...aggregate({ unitPrice: "10.50", qty: "2", subtotal: "21.00" }).byTarget.values(),
+      ][0];
+      expect(agg).toMatchObject({ unitPrice: 10.5, qty: 2, subtotal: 21 });
+      expect([...aggregate({ subtotal: null }).byTarget.values()][0].subtotal).toBe(0);
+    });
+  });
+
+  describe("order line comparison: unit price and subtotal (SA-816b)", () => {
+    const existing = {
+      qty: 2,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      unitPrice: 10,
+      subtotal: 20,
+      categoryTaxAmount: 0,
+      promoFreeUnits: null,
+      invoicedQty: 2,
+      status: "PENDING",
+    };
+    const shape = { qty: 2, boxes: null, pieces: null, unitsPerBox: null };
+    const agg = (over: { unitPrice?: number; subtotal?: number }) => ({
+      unitPrice: 10,
+      subtotal: 20,
+      categoryTax: 0,
+      freeUnits: 0,
+      ...over,
+    });
+
+    // master (static read): a NaN unit price read as "changed", a NaN subtotal as roundMoney 0 (also "changed"),
+    // so the line was rewritten from a NaN aggregate instead of refusing.
+    it("refuses a NaN unit price and a NaN subtotal", () => {
+      expectMoneyInvariant(
+        caught(() => orderLineUnchanged(existing, shape, agg({ unitPrice: NaN }))),
+      );
+      expectMoneyInvariant(
+        caught(() => orderLineUnchanged(existing, shape, agg({ subtotal: NaN }))),
+      );
+    });
+
+    it("control: finite values compare as before", () => {
+      expect(orderLineUnchanged(existing, shape, agg({}))).toBe(true);
+      expect(orderLineUnchanged(existing, shape, agg({ unitPrice: 11 }))).toBe(false);
+    });
+  });
+
   describe("order line comparison (order-backsync-lines.ts:127)", () => {
     const existing = {
       qty: 2,

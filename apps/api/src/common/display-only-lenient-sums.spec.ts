@@ -58,19 +58,59 @@ describe("SA-816 (d)2: the lenient pricing helpers stay display-only on the API"
     }
   });
 
-  const DISPLAY_ONLY = [
-    "common/staff-only-fields.ts",
-    "documents/receipt-model.ts",
-    "invoices/invoice-pdf-template.tsx",
-    "orders/counter-sale/counter-sale-readback.ts",
-    "orders/counter-sale/counter-sale-today.ts",
-  ];
+  /** The only API callers of the charge-line helpers, each with why its result never reaches a write. */
+  const DISPLAY_ONLY: Record<string, string> = {
+    "common/staff-only-fields.ts":
+      "shapes the invoice API RESPONSE (a regularTax / charge split); no write in the file",
+    "documents/receipt-model.ts": "builds the receipt RENDER model; no write in the file",
+    "invoices/invoice-pdf-template.tsx": "the invoice PDF render; no Prisma write in the file",
+    "orders/counter-sale/counter-sale-readback.ts":
+      "the counter-sale read-back RESPONSE; no write in the file",
+    "orders/counter-sale/counter-sale-today.ts":
+      "the counter-sale today RESPONSE; no write in the file",
+  };
 
   it("chargeLinesOf / billedChargeLines / invoiceTaxSplit are called only by display files", () => {
     const callers = FILES.filter((f) =>
       /\b(chargeLinesOf|billedChargeLines|invoiceTaxSplit)\s*\(/.test(f.text),
     ).map((f) => f.rel);
-    expect(callers.sort()).toEqual([...DISPLAY_ONLY].sort());
+    expect(callers.sort()).toEqual(Object.keys(DISPLAY_ONLY).sort());
+  });
+
+  it("the other lenient pricing entry points (saleTotals, computeInvoiceTotals, computeInvoiceLineTotal) have no API caller", () => {
+    const callers = FILES.filter((f) =>
+      /\b(saleTotals|computeInvoiceTotals|computeInvoiceLineTotal)\s*\(/.test(f.text),
+    ).map((f) => f.rel);
+    expect(callers).toEqual([]);
+  });
+
+  /**
+   * SA-816b: no write path consumes a lenient output. A file that calls a lenient helper may hold no Prisma write
+   * (`data:` payload or create / update / upsert call). The two shapes the scan must tolerate are named here:
+   * react-pdf's StyleSheet.create (a stylesheet, not a row) and a type annotation.
+   */
+  const WRITE = /\bdata\s*:|\.(create|createMany|update|updateMany|upsert)\s*\(|\$executeRaw/;
+  const NOT_A_WRITE = [/StyleSheet\.create\(/g, /data: Record<string, any>;/g];
+  /** Lenient callers that are NOT pure display, each with the reason its output cannot reach a bad write. */
+  const LENIENT_BUT_GUARDED: Record<string, string> = {
+    "invoices/stored-tax-state.ts":
+      "inferredGoodsFlatRate: its RATE is later stamped on rate-0 lines, but only after sumInvoiceTotalsStrict refused any non-finite stored levy on the same lines (asserted below); the rate is not a levy",
+  };
+
+  it("no file that calls a lenient helper holds a Prisma write, and every such file is listed with a reason", () => {
+    const lenient = FILES.filter((f) =>
+      /\b(chargeLinesOf|billedChargeLines|invoiceTaxSplit|inferredGoodsFlatRate)\s*\(/.test(f.text),
+    );
+    const listed = { ...DISPLAY_ONLY, ...LENIENT_BUT_GUARDED };
+    expect(lenient.map((f) => f.rel).sort()).toEqual(Object.keys(listed).sort());
+    for (const f of lenient) {
+      const stripped = NOT_A_WRITE.reduce((t, re) => t.replace(re, " "), f.text);
+      expect({ file: f.rel, write: WRITE.exec(stripped)?.[0] ?? null }).toEqual({
+        file: f.rel,
+        write: null,
+      });
+      expect(listed[f.rel].length).toBeGreaterThan(20);
+    }
   });
 
   it("inferredGoodsFlatRate is called on the API only from stored-tax-state.ts, behind sumInvoiceTotalsStrict", () => {
