@@ -41,7 +41,12 @@ describe("void feedback", () => {
     mockedPost.mockRejectedValue({
       response: {
         status: 409,
-        data: { code: "INVENTORY_LEDGER_GAP", message: GAP_MESSAGE, name: "Widget" },
+        data: {
+          code: "INVENTORY_LEDGER_GAP",
+          message: GAP_MESSAGE,
+          name: "Widget",
+          ledgerExcess: { posted: "12", received: "10" },
+        },
       },
     });
     const { result } = renderHook(() => useVoidVendorBill(), { wrapper: Wrapper });
@@ -55,6 +60,53 @@ describe("void feedback", () => {
       variant: "error",
     });
     expect(voidFailureToast(caught).description).not.toContain(GAP_MESSAGE);
+  });
+
+  it("a revert-style gap (no ledgerExcess) never gets the excess copy", () => {
+    const err = {
+      response: {
+        status: 409,
+        data: { code: "INVENTORY_LEDGER_GAP", message: GAP_MESSAGE, name: "Widget" },
+      },
+    };
+    expect(voidFailureToast(err).description).not.toBe(GAP_COPY);
+    expect(voidFailureToast(err).description).not.toContain(GAP_MESSAGE);
+  });
+
+  it("S3: a void refused because the date is in a filed period has fixed copy naming the period", () => {
+    const err = {
+      response: {
+        status: 409,
+        data: {
+          code: "STOCK_DATE_IN_FILED_PERIOD",
+          message: "raw server sentence",
+          productId: "p1",
+          period: "September 2026",
+        },
+      },
+    };
+    expect(voidFailureToast(err)).toEqual({
+      title: "Failed to void bill",
+      description:
+        "September 2026 is already filed for a product on this bill, so it can't be voided today. Ask an admin before voiding it.",
+      variant: "error",
+    });
+    expect(
+      voidFailureToast({ response: { data: { code: "STOCK_DATE_IN_FILED_PERIOD" } } }).description,
+    ).toContain("This period is already filed");
+  });
+
+  it("S2: the void mutation opts out of the app-wide error toast (the page toasts once)", async () => {
+    mockedPost.mockRejectedValue(new Error("x"));
+    const qc = createTestQueryClient();
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useVoidVendorBill(), { wrapper });
+    await act(async () => {
+      result.current.mutate("bill-1", { onError: () => undefined });
+    });
+    expect(qc.getMutationCache().getAll()[0]?.meta).toEqual({ localErrorToast: true });
   });
 
   it("an uncoded server message is never rendered either", () => {

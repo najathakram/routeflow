@@ -354,20 +354,30 @@ export function voidSuccessToast(
 
 /**
  * The error toast for a refused void. FIXED copy chosen by the server's `code` (B986: the UI never renders
- * `response.data.message`). A void's only INVENTORY_LEDGER_GAP is the excess one (SA-808c: the stock records show
- * more received than the bill; flagged for a repair), named from the structured `name` field.
+ * `response.data.message`). Two refusals are known: the excess INVENTORY_LEDGER_GAP (SA-808c: the stock records
+ * show more received than the bill; flagged for a repair; keyed on the structured `ledgerExcess` field, since a
+ * revert's shortfall gap shares the code and tells the user to void) and STOCK_DATE_IN_FILED_PERIOD (the void
+ * dates its reversal through documentStockDate; today is in a filed period). Names come from structured fields.
  */
 export function voidFailureToast(err: unknown): {
   title: string;
   description: string;
   variant: "error";
 } {
-  const data = (err as { response?: { data?: { code?: unknown; name?: unknown } } } | null)
-    ?.response?.data;
+  const data = (
+    err as {
+      response?: {
+        data?: { code?: unknown; name?: unknown; period?: unknown; ledgerExcess?: unknown };
+      };
+    } | null
+  )?.response?.data;
   let description: string;
-  if (data?.code === API_ERROR_CODES.INVENTORY_LEDGER_GAP) {
+  if (data?.code === API_ERROR_CODES.INVENTORY_LEDGER_GAP && data.ledgerExcess) {
     const who = typeof data.name === "string" && data.name ? data.name : "This product";
     description = `${who}'s stock records show more received than this bill, so it can't be voided here. We've flagged it for a repair.`;
+  } else if (data?.code === API_ERROR_CODES.STOCK_DATE_IN_FILED_PERIOD) {
+    const period = typeof data.period === "string" && data.period ? data.period : "This period";
+    description = `${period} is already filed for a product on this bill, so it can't be voided today. Ask an admin before voiding it.`;
   } else {
     description = codedToastCopy(err) ?? "Please try again.";
   }
@@ -423,6 +433,8 @@ export function useVoidVendorBill() {
   // gapsDetected is additive (B846 sibling): products whose cost history the void could not replay.
   return useMutation<VendorBill & { gapsDetected?: VendorBillReceiveGap[] }, Error, string>({
     mutationFn: (id) => apiClient.post(`/vendor-bills/${id}/void`).then((r) => r.data),
+    // The bill page toasts a refused void itself (voidFailureToast): one toast, not that plus the app-wide one.
+    meta: { localErrorToast: true },
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
