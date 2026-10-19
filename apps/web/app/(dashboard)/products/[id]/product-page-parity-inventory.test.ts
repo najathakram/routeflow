@@ -18,6 +18,7 @@ const MOUNTED: Array<[tag: string, file: string]> = [
   ["ProductPortalVisibilityCard", "ProductPortalVisibilityCard.tsx"],
   ["ProductUnitsCard", "ProductUnitsCard.tsx"],
   ["DemandCard", "DemandCard.tsx"],
+  ["OpenOrdersCard", "OpenOrdersCard.tsx"],
   ["SalesHistoryCard", "SalesHistoryCard.tsx"],
   ["ProductInsightsExport", "ProductInsightsExport.tsx"],
   ["LegacyVariantsActions", "LegacyVariantsActions.tsx"],

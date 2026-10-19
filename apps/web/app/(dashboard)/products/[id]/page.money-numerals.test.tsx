@@ -67,6 +67,7 @@ for (const m of [
   "./DeleteProductConfirm",
   "./DemandCard",
   "./SalesHistoryCard",
+  "./OpenOrdersCard",
   "./ProductInsightsExport",
   "./ProductLabelsCard",
   "./ProductPortalVisibilityCard",

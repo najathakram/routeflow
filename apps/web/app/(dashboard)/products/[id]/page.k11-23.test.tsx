@@ -1,4 +1,5 @@
 import * as React from "react";
+import { cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import ProductDetailPage from "./page";
@@ -79,6 +80,9 @@ jest.mock("./DemandCard", () => ({ DemandCard: () => <div data-testid="demand-ca
 jest.mock("./SalesHistoryCard", () => ({
   SalesHistoryCard: () => <div data-testid="sales-card" />,
 }));
+jest.mock("./OpenOrdersCard", () => ({
+  OpenOrdersCard: () => <div data-testid="open-orders-card" />,
+}));
 for (const m of [
   "./DeleteProductConfirm",
   "./ProductInsightsExport",
@@ -120,6 +124,18 @@ describe("K11-23: Details first, then Image and stock, then the rest", () => {
     for (const id of ["labels-card", "portal-card", "units-card", "demand-card", "sales-card"]) {
       expect(follows(stock, screen.getByTestId(id))).toBe(true);
     }
+  });
+
+  it("staff see Open orders above Sales; a non-staff role does not", () => {
+    cards();
+    const open = screen.getByTestId("open-orders-card");
+    expect(follows(screen.getByTestId("demand-card"), open)).toBe(true);
+    expect(follows(open, screen.getByTestId("sales-card"))).toBe(true);
+    cleanup();
+    role = "STAFF";
+    cards();
+    expect(screen.queryByTestId("open-orders-card")).toBeNull();
+    expect(screen.getByTestId("sales-card")).toBeInTheDocument();
   });
 
   it("is built from three grid items placed at lg, never from order-* classes or display: contents", () => {

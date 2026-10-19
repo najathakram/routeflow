@@ -191,6 +191,25 @@ describe("ProductJumpLinks (V19)", () => {
     expect(target).toHaveFocus();
   });
 
+  it("Open orders jumps to #h-open-orders and sits before Sales", async () => {
+    render(<Page ids={["h-units", "h-open-orders", "h-sales"]} />);
+    const order = Array.from(screen.getByTestId("units-v2-jump-strip").querySelectorAll("a")).map(
+      (a) => a.getAttribute("data-testid"),
+    );
+    expect(order).toEqual([
+      "units-v2-jump-h-product",
+      "units-v2-jump-h-units",
+      "units-v2-jump-h-open-orders",
+      "units-v2-jump-h-sales",
+    ]);
+    expect(link("h-open-orders")).toHaveTextContent("Open orders");
+    expect(link("h-open-orders")).toHaveAttribute("href", "#h-open-orders");
+    await userEvent.click(link("h-open-orders")!);
+    const target = document.getElementById("h-open-orders")!;
+    expect(target.scrollIntoView).toHaveBeenCalled();
+    expect(target).toHaveFocus();
+  });
+
   it("gives every link a 44px touch target", () => {
     render(<Page ids={["h-units"]} />);
     expect(link("h-units")!.className).toContain("min-h-[44px]");
