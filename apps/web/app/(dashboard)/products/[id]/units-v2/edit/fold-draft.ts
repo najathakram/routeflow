@@ -217,6 +217,9 @@ export function foldDraft(
  * Row 622: the server checks every Keep against the SAVED ladder ("that price is not what it shows now"), but a Keep
  * chosen after an earlier edit pins the price the DRAFT shows. A pin the saved ladder still shows goes as a Keep; any
  * other goes as the patch it amounts to (the cell set at that price), which the server plans like any typed price.
+ * A Keep pins the cell as Set at its current value on both sides (specs PLAN.md P7; packages/pricing/src/price-change.ts
+ * FollowerRow.keep), so sending it as a patch does not change the cell's source. Proof: product-price-write.service.spec.ts
+ * "row 622".
  */
 export function splitKeeps(
   served: LadderView,
