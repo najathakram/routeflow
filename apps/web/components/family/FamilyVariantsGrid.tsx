@@ -122,7 +122,13 @@ export function FamilyVariantsGrid({
           </thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={r.key} className="border-t border-surface-border align-top">
+              <tr
+                key={r.key}
+                className={cn(
+                  "border-t border-surface-border align-top",
+                  readOnly && r.id && "relative hover:bg-surface-raised/60",
+                )}
+              >
                 <td className="px-2 py-2 text-navy/60">{i + 1}</td>
                 {COLUMNS.map((c) => {
                   const msg = cellMessages[`${i}:${c.field}`];
@@ -144,7 +150,7 @@ export function FamilyVariantsGrid({
                           ) : c.field === "name" && r.id ? (
                             <Link
                               href={`/products/${r.id}`}
-                              className="font-medium text-brand-600 underline-offset-2 hover:underline"
+                              className="font-medium text-brand-600 underline-offset-2 after:absolute after:inset-0 hover:underline focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-brand-500"
                             >
                               {r.name}
                             </Link>
