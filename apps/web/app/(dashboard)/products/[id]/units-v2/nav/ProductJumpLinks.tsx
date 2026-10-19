@@ -310,8 +310,11 @@ export function ProductJumpLinks({ reserveSpace = false }: { reserveSpace?: bool
 
       scrollToTarget();
       if (focus) {
-        el.focus({ preventScroll: true });
-        listen(el, "focusout", end);
+        // K12 F15: the Customer view jump lands in its search field, so the next key types a name.
+        const field = hrefId === "h-cust" ? document.getElementById("units-v2-cust-search") : null;
+        const target = field ?? el;
+        target.focus({ preventScroll: true });
+        listen(target, "focusout", end);
       }
       heldRef.current = id;
       setCurrent(id);

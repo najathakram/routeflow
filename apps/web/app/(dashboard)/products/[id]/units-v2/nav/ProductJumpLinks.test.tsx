@@ -384,6 +384,20 @@ describe("ProductJumpLinks: the Customer view entry (K10c, F27)", () => {
     );
     await waitFor(() => expect(link("h-cust")).toBeInTheDocument());
     await userEvent.click(link("h-cust")!);
+    // K12 F15: focus lands in the search field, so the next keystroke types a customer name.
+    expect(screen.getByPlaceholderText("Find a customer by name")).toHaveFocus();
+  });
+
+  it("falls back to the heading when the customer field is not mounted yet", async () => {
+    render(
+      <div>
+        <ProductJumpLinks />
+        <h1 id="h-product">Cola</h1>
+        <h2 id="h-cust">Customer view</h2>
+        <h2 id="h-sales">Sales</h2>
+      </div>,
+    );
+    await userEvent.click(link("h-cust")!);
     expect(screen.getByRole("heading", { name: "Customer view" })).toHaveFocus();
   });
 });
