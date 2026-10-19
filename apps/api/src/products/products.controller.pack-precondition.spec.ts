@@ -12,6 +12,7 @@ describe("PATCH /products/:id is the ONE client pack writer (SA-797a)", () => {
       { unitsPerBox: 6 },
       expect.objectContaining({
         packPrecondition: "client",
+        reparentVia: "editor",
         clientAgent: "RouteFlow/412 CFNetwork",
         actorId: "u1",
       }),

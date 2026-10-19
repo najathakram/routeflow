@@ -2823,6 +2823,7 @@ export class ImportService {
           } else {
             await this.productsService.update(existing.id, changes as any, {
               packPrecondition: "internal",
+              reparentVia: "import",
               suppressEmit: true,
             });
             anyWrite = true;

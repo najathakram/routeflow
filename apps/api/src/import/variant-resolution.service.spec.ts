@@ -59,6 +59,7 @@ describe("VariantResolutionService", () => {
           costingMethod: "AVCO",
           isTobacco: false,
         }),
+        { reparentVia: "import" },
       );
     });
 

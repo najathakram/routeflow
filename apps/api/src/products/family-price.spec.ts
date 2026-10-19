@@ -381,16 +381,25 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
   // 16 — OFF is behaviour-neutral
   it("OFF: a variant tier PATCH writes exactly as today, and a family PATCH leaves variants alone", async () => {
     const service = await build("off");
-    await service.update("var1", { priceTier3: "1.00" } as any, { packPrecondition: "internal" });
+    await service.update("var1", { priceTier3: "1.00" } as any, {
+      packPrecondition: "internal",
+      reparentVia: "editor",
+    });
     expect(written("var1")).toMatchObject({ priceTier3: "1.00" });
-    await service.update("fam", { priceTier3: "5.00" } as any, { packPrecondition: "internal" });
+    await service.update("fam", { priceTier3: "5.00" } as any, {
+      packPrecondition: "internal",
+      reparentVia: "editor",
+    });
     expect(prisma.product.updateMany).not.toHaveBeenCalled();
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
   });
 
   it("no FeatureConfigService wired at all behaves as OFF", async () => {
     const service = await build("absent");
-    await service.update("var1", { priceTier3: "1.00" } as any, { packPrecondition: "internal" });
+    await service.update("var1", { priceTier3: "1.00" } as any, {
+      packPrecondition: "internal",
+      reparentVia: "editor",
+    });
     expect(written("var1")).toMatchObject({ priceTier3: "1.00" });
     expect(prisma.product.updateMany).not.toHaveBeenCalled();
   });
@@ -399,7 +408,10 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
   it("ON: a variant tier PATCH -> 409 FAMILY_PRICE_AUTHORITY {familyId}, nothing written", async () => {
     const service = await build("on");
     const err = await service
-      .update("var1", { priceTier3: "1.00" } as any, { packPrecondition: "internal" })
+      .update("var1", { priceTier3: "1.00" } as any, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      })
       .catch((e) => e);
     expect(err).toBeInstanceOf(ConflictException);
     expect(err.getResponse()).toMatchObject({ code: "FAMILY_PRICE_AUTHORITY", familyId: "fam" });
@@ -410,6 +422,7 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     const service = await build("on");
     await service.update("var1", { description: "new copy" } as any, {
       packPrecondition: "internal",
+      reparentVia: "editor",
     });
     expect(written("var1")).toMatchObject({ description: "new copy" });
     expect(prisma.product.updateMany).not.toHaveBeenCalled();
@@ -419,6 +432,7 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     const service = await build("on");
     await service.update("var1", { priceTier3: "9.004", description: "x" } as any, {
       packPrecondition: "internal",
+      reparentVia: "editor",
     });
     const data = written("var1");
     for (const col of FAMILY_PRICE_COLUMNS) expect(data[col]).toBeUndefined();
@@ -432,7 +446,10 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
       rows[where.id] = { ...rows[where.id], ...data };
       return { ...rows[where.id], barcode: null, imageKeys: [] };
     });
-    await service.update("fam", { priceTier3: "8.50" } as any, { packPrecondition: "internal" });
+    await service.update("fam", { priceTier3: "8.50" } as any, {
+      packPrecondition: "internal",
+      reparentVia: "editor",
+    });
     expect(prisma.product.updateMany).toHaveBeenCalled();
     const bulk = gateway.emitProductUpdated.mock.calls.filter((c) => c[1].action === "bulk");
     expect(bulk).toHaveLength(1);
@@ -444,14 +461,20 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     const service = await build("on");
     prisma.product.update.mockRejectedValue(new Error("boom"));
     await expect(
-      service.update("fam", { priceTier3: "8.50" } as any, { packPrecondition: "internal" }),
+      service.update("fam", { priceTier3: "8.50" } as any, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      }),
     ).rejects.toThrow("boom");
     expect(gateway.emitProductUpdated).not.toHaveBeenCalled();
   });
 
   it("ON: a family PATCH with no price key does not propagate", async () => {
     const service = await build("on");
-    await service.update("fam", { description: "x" } as any, { packPrecondition: "internal" });
+    await service.update("fam", { description: "x" } as any, {
+      packPrecondition: "internal",
+      reparentVia: "editor",
+    });
     expect(prisma.product.updateMany).not.toHaveBeenCalled();
   });
 
@@ -460,16 +483,22 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     const service = await build("on");
     prisma.recipe.findFirst.mockResolvedValue({ familyProductId: "fam" });
     const err = await service
-      .update("rec1", { priceTier3: "1.00" } as any, { packPrecondition: "internal" })
+      .update("rec1", { priceTier3: "1.00" } as any, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      })
       .catch((e) => e);
     expect(err.getResponse()).toMatchObject({ code: "FAMILY_PRICE_AUTHORITY", familyId: "fam" });
     rows.rec1 = { ...rows.rec1, familyPriceOverride: true };
-    await service.update("rec1", { priceTier3: "1.00" } as any, { packPrecondition: "internal" });
+    await service.update("rec1", { priceTier3: "1.00" } as any, {
+      packPrecondition: "internal",
+      reparentVia: "editor",
+    });
     expect(written("rec1")).toMatchObject({ priceTier3: "1.00" });
   });
 
   // 21
-  it("ON: bulkAssignParent adopting a product with other tiers takes the family's five columns and audits once", async () => {
+  it("ON: bulkAssignParent adopting a product with other tiers takes the family's five columns and audits the adopted price AND the assignment", async () => {
     const service = await build("on");
     const result = await service.bulkAssignParent({
       parentProductId: "fam",
@@ -479,21 +508,30 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     const data = written("loose");
     for (const col of FAMILY_PRICE_COLUMNS)
       expect(String(data[col])).toBe(String(FAMILY_PRICES[col]));
-    expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
-    expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
-      entityType: "product",
+    expect(prisma.auditLog.create).toHaveBeenCalledTimes(2);
+    const audited = prisma.auditLog.create.mock.calls.map((c: any[]) => c[0].data);
+    expect(audited.find((d: any) => d.entityType === "product")).toMatchObject({
       entityId: "loose",
+    });
+    expect(audited.find((d: any) => d.action === "product.family_assigned")).toMatchObject({
+      entityId: "loose",
+      meta: { toParentId: "fam", via: "bulk_assign" },
     });
   });
 
-  it("OFF: bulkAssignParent leaves the adopted product's own prices and writes no audit row", async () => {
+  it("OFF: bulkAssignParent leaves the adopted product's own prices, writes no price-adoption row and exactly one product.family_assigned {via: bulk_assign}", async () => {
     const service = await build("off");
     await service.bulkAssignParent({
       parentProductId: "fam",
       assignments: [{ id: "loose", variantName: "Loose" }],
     } as any);
     expect(written("loose").pricePerUnit).toBeUndefined();
-    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
+      action: "product.family_assigned",
+      entityId: "loose",
+      meta: { toParentId: "fam", via: "bulk_assign" },
+    });
   });
 
   // 20 — products.service create

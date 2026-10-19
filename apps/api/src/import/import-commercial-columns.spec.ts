@@ -733,7 +733,7 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       expect(productsService.update.mock.calls[0]).toEqual([
         "prod-null",
         { unitsPerBox: 12 },
-        { packPrecondition: "internal", suppressEmit: true },
+        { packPrecondition: "internal", reparentVia: "import", suppressEmit: true },
       ]);
       expect(result.unchanged).toBe(1);
     });

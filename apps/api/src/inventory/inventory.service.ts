@@ -89,6 +89,8 @@ import {
 } from "./stock-count-commit";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import type { FamilyAssignVia } from "../products/product-parent";
 
 /**
  * Interactive-tx options of a count add / amend (SA-767 r-note 5 SA-3). The product-lock helper bounds its
@@ -554,6 +556,7 @@ export class InventoryService {
     },
     variantName: string,
     familyMode: "on" | "off" = "off",
+    actorId: string | null = null,
   ) {
     // #2717 M2: mode on -> the family's five columns, re-read under its row lock (the `parent` this
     // tx read earlier may predate a family edit); off -> the parent row exactly as before.
@@ -593,6 +596,22 @@ export class InventoryService {
     });
     // The variant copied its parent's category text: add-only label sync, same tx.
     await syncCategoryLabel(tx, { tenantId, productId: created.id, text: created.category });
+    // SA-823 R11: a variant born under the parent is an assignment (fromParentId null), written in this same tx.
+    await tx.auditLog.create({
+      data: {
+        userId: actorId,
+        action: AUDIT_ACTIONS.PRODUCT_FAMILY_ASSIGNED,
+        entityType: "Product",
+        entityId: created.id,
+        meta: {
+          productId: created.id,
+          fromParentId: null,
+          toParentId: parent.id,
+          variantName: created.variantName ?? null,
+          via: "inventory" satisfies FamilyAssignVia,
+        },
+      },
+    });
     return created;
   }
 
@@ -885,7 +904,13 @@ export class InventoryService {
             const qtyDecimal = new Prisma.Decimal(target.qty);
             const variant = target.existing
               ? target.existing
-              : await this.createVariantRowInTx(tx, parent, target.newVariantName!, familyMode);
+              : await this.createVariantRowInTx(
+                  tx,
+                  parent,
+                  target.newVariantName!,
+                  familyMode,
+                  performedById,
+                );
 
             // Cost: unitCostOverride ?? the parent's EFFECTIVE cost. STANDARD-
             // costed variants are valued from their own operator-set cost, so a

@@ -143,6 +143,7 @@ describeDb("B1211 product parent check: real Postgres", () => {
         inTenant(mine, () =>
           service.update(product.id, { parentProductId: foreign.id } as never, {
             packPrecondition: "internal",
+            reparentVia: "editor",
           }),
         ),
       ),
@@ -177,7 +178,10 @@ describeDb("B1211 product parent check: real Postgres", () => {
     const variant = await mk(t, "Variant", { parentProductId: family.id, variantName: "Variant" });
     const inactive = await mk(t, "Retired");
     await inTenant(t, () =>
-      service.update(inactive.id, { isActive: false } as never, { packPrecondition: "internal" }),
+      service.update(inactive.id, { isActive: false } as never, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      }),
     );
     const loner = await mk(t, "Loner");
 
@@ -186,6 +190,7 @@ describeDb("B1211 product parent check: real Postgres", () => {
         inTenant(t, () =>
           service.update(id, { parentProductId: parentId } as never, {
             packPrecondition: "internal",
+            reparentVia: "editor",
           }),
         ),
       );
@@ -211,12 +216,14 @@ describeDb("B1211 product parent check: real Postgres", () => {
     await inTenant(t, () =>
       service.update(other.id, { parentProductId: parent.id } as never, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       }),
     );
     expect(await fresh(other.id)).toMatchObject({ parentProductId: parent.id, kind: "VARIANT" });
     await inTenant(t, () =>
       service.update(other.id, { parentProductId: null } as never, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       }),
     );
     expect(await fresh(other.id)).toMatchObject({ parentProductId: null, kind: "STANDARD" });

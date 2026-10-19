@@ -105,6 +105,7 @@ export class ProductsController {
   @Roles(UserRole.OPERATOR)
   create(@Body() dto: CreateProductDto, @CurrentUser() user: JwtPayload) {
     return this.productsService.create(dto, {
+      reparentVia: "editor",
       actorId: user.sub ?? null,
       actorName: user.username ?? null,
     });
@@ -176,6 +177,7 @@ export class ProductsController {
     // SA-797a: the one "client" writer: a pack field without its expected twin is an echo or a 409.
     return this.productsService.update(id, dto, {
       packPrecondition: "client",
+      reparentVia: "editor",
       clientAgent: userAgent ?? null,
       actorId: user.sub ?? null,
       actorName: user.username ?? null,

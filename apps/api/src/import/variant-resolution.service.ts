@@ -41,25 +41,29 @@ export class VariantResolutionService {
     if (!parent) throw new NotFoundException("Parent product not found");
     const name = (dto.variantName ?? "").trim();
     if (!name) throw new BadRequestException("A variant name is required.");
-    return this.products.create({
-      name,
-      variantName: name,
-      parentProductId: parent.id,
-      sku: dto.sku,
-      unit: parent.unit,
-      pricePerUnit: parent.pricePerUnit.toString(),
-      priceTier2: parent.priceTier2.toString(),
-      priceTier3: parent.priceTier3.toString(),
-      priceTier4: parent.priceTier4.toString(),
-      priceTier5: parent.priceTier5.toString(),
-      // B990: a legacy formula-led parent category is NEUTRALISED (the variant simply carries none), never copied and never a refusal
-      category: parent.category && !isFormulaLedText(parent.category) ? parent.category : undefined,
-      unitsPerBox: parent.unitsPerBox ?? undefined,
-      // SA-804 (1): a variant never inherits a retired method (create() would refuse it); it takes the AVCO it is costed as.
-      costingMethod: effectiveCostingMethod(parent.costingMethod),
-      standardCost: parent.standardCost != null ? parent.standardCost.toString() : undefined,
-      isTobacco: parent.isTobacco,
-    });
+    return this.products.create(
+      {
+        name,
+        variantName: name,
+        parentProductId: parent.id,
+        sku: dto.sku,
+        unit: parent.unit,
+        pricePerUnit: parent.pricePerUnit.toString(),
+        priceTier2: parent.priceTier2.toString(),
+        priceTier3: parent.priceTier3.toString(),
+        priceTier4: parent.priceTier4.toString(),
+        priceTier5: parent.priceTier5.toString(),
+        // B990: a legacy formula-led parent category is NEUTRALISED (the variant simply carries none), never copied and never a refusal
+        category:
+          parent.category && !isFormulaLedText(parent.category) ? parent.category : undefined,
+        unitsPerBox: parent.unitsPerBox ?? undefined,
+        // SA-804 (1): a variant never inherits a retired method (create() would refuse it); it takes the AVCO it is costed as.
+        costingMethod: effectiveCostingMethod(parent.costingMethod),
+        standardCost: parent.standardCost != null ? parent.standardCost.toString() : undefined,
+        isTobacco: parent.isTobacco,
+      },
+      { reparentVia: "import" },
+    );
   }
 
   /**

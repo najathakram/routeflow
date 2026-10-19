@@ -747,7 +747,13 @@ describe("ProductsService", () => {
           variantName: "Strawberry",
           name: "Strawberry",
         },
-        { packPrecondition: "internal", suppressEmit: true, actorId: null, actorName: null },
+        {
+          packPrecondition: "internal",
+          reparentVia: "bulk_assign",
+          suppressEmit: true,
+          actorId: null,
+          actorName: null,
+        },
       );
     });
   });
@@ -808,7 +814,10 @@ describe("ProductsService", () => {
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
       const err: any = await service
-        .update("prod-1", { costingMethod: m } as any, { packPrecondition: "internal" })
+        .update("prod-1", { costingMethod: m } as any, {
+          packPrecondition: "internal",
+          reparentVia: "editor",
+        })
         .catch((e: unknown) => e);
 
       expect(err).toBeInstanceOf(BadRequestException);
@@ -823,6 +832,7 @@ describe("ProductsService", () => {
       await expect(
         service.update("prod-1", { costingMethod: "LIFO" } as any, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.product.update).not.toHaveBeenCalled();
@@ -836,6 +846,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { description: "New text" } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -851,6 +862,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { description: "x", costingMethod: "FIFO" } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       expect(prisma.product.update.mock.calls[0][0].data).not.toHaveProperty("costingMethod");
@@ -864,6 +876,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { costingMethod: "AVCO" } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       expect(prisma.product.update.mock.calls[0][0].data.costingMethod).toBe("AVCO");
@@ -880,6 +893,7 @@ describe("ProductsService", () => {
 
       const result = await service.update("prod-1", { name: "Updated" } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       expect(prisma.product.update).toHaveBeenCalledWith(
@@ -890,7 +904,10 @@ describe("ProductsService", () => {
     it("should throw NotFoundException when product does not exist", async () => {
       prisma.product.findUnique.mockResolvedValue(null);
       await expect(
-        service.update("nonexistent", {} as any, { packPrecondition: "internal" }),
+        service.update("nonexistent", {} as any, {
+          packPrecondition: "internal",
+          reparentVia: "editor",
+        }),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -906,14 +923,20 @@ describe("ProductsService", () => {
 
       it("refuses renaming the pack onto an existing level label (409) and writes nothing", async () => {
         await expect(
-          service.update("prod-1", { unit: "Case" } as any, { packPrecondition: "internal" }),
+          service.update("prod-1", { unit: "Case" } as any, {
+            packPrecondition: "internal",
+            reparentVia: "editor",
+          }),
         ).rejects.toThrow(ConflictException);
         expect(prisma.product.update).not.toHaveBeenCalled();
       });
 
       it("refuses resizing the pack onto an existing level factor (409)", async () => {
         await expect(
-          service.update("prod-1", { unitsPerBox: 288 } as any, { packPrecondition: "internal" }),
+          service.update("prod-1", { unitsPerBox: 288 } as any, {
+            packPrecondition: "internal",
+            reparentVia: "editor",
+          }),
         ).rejects.toThrow(ConflictException);
       });
 
@@ -928,6 +951,7 @@ describe("ProductsService", () => {
         );
         await service.update("prod-1", { unitsPerBox: 12 } as any, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         });
         const locks = lockCalls(exec);
         expect(locks.calls.length).toBeGreaterThan(0);
@@ -954,6 +978,7 @@ describe("ProductsService", () => {
         lockingTx(exec);
         await service.update("prod-1", { unitsPerBox: 12 } as any, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         });
         const locks = lockCalls(exec);
         const [s0, ...v0] = locks.calls[0];
@@ -983,7 +1008,10 @@ describe("ProductsService", () => {
         const exec = jest.fn().mockResolvedValue(0);
         lockingTx(exec);
         await expect(
-          service.update("prod-1", { unit: "Case" } as any, { packPrecondition: "internal" }),
+          service.update("prod-1", { unit: "Case" } as any, {
+            packPrecondition: "internal",
+            reparentVia: "editor",
+          }),
         ).rejects.toThrow(ConflictException);
         expect(lockCalls(exec).calls).toHaveLength(2);
         expect(prisma.product.update).not.toHaveBeenCalled();
@@ -994,6 +1022,7 @@ describe("ProductsService", () => {
         lockingTx(exec);
         await service.update("prod-1", { unit: "Box", unitsPerBox: 24 } as any, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         });
         expect(lockCalls(exec).calls).toHaveLength(2);
         expect(prisma.product.update).toHaveBeenCalled();
@@ -1010,6 +1039,7 @@ describe("ProductsService", () => {
         );
         await service.update("prod-1", { name: "Renamed" } as any, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         });
         const tenantUnitsLocks = lockCalls(exec).calls.filter(
           ([, ...v]) => v[0] === "tenant-units",
@@ -1020,6 +1050,7 @@ describe("ProductsService", () => {
       it("does not even look at the levels for an edit that leaves the pack alone", async () => {
         await service.update("prod-1", { name: "Renamed" } as any, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         });
         expect(prisma.productUnit.findMany).not.toHaveBeenCalled();
       });
@@ -1027,6 +1058,7 @@ describe("ProductsService", () => {
       it("an unrelated pack resize that collides with nothing still goes through", async () => {
         await service.update("prod-1", { unitsPerBox: 12 } as any, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         });
         expect(prisma.product.update).toHaveBeenCalled();
       });
@@ -1054,6 +1086,7 @@ describe("ProductsService", () => {
           lockingTx(jest.fn().mockResolvedValue(0));
           await service.update("prod-1", { unit: "Crate", ...expected } as any, {
             packPrecondition: "internal",
+            reparentVia: "editor",
           });
           expect(prisma.product.update).toHaveBeenCalledTimes(1);
           const data = prisma.product.update.mock.calls[0][0].data;
@@ -1069,6 +1102,7 @@ describe("ProductsService", () => {
           const err = await service
             .update("prod-1", { unit: "Crate", ...expected } as any, {
               packPrecondition: "internal",
+              reparentVia: "editor",
             })
             .catch((e: unknown) => e);
           expect(err).toBeInstanceOf(ConflictException);
@@ -1085,6 +1119,7 @@ describe("ProductsService", () => {
           const err = await service
             .update("prod-1", { unit: "Crate", ...expected } as any, {
               packPrecondition: "internal",
+              reparentVia: "editor",
             })
             .catch((e: unknown) => e);
           expect(staleCode(err)).toBe("PRODUCT_PACK_STALE");
@@ -1098,6 +1133,7 @@ describe("ProductsService", () => {
           const err = await service
             .update("prod-1", { unit: "Crate", ...expected } as any, {
               packPrecondition: "internal",
+              reparentVia: "editor",
             })
             .catch((e: unknown) => e);
           expect(staleCode(err)).toBe("PRODUCT_PACK_STALE");
@@ -1116,6 +1152,7 @@ describe("ProductsService", () => {
           lockingTx(exec);
           await service.update("prod-1", { unit: "Crate", ...expected } as any, {
             packPrecondition: "internal",
+            reparentVia: "editor",
           });
           const locks = lockCalls(exec);
           expect(locks.calls).toHaveLength(2);
@@ -1135,6 +1172,7 @@ describe("ProductsService", () => {
           lockingTx(jest.fn().mockResolvedValue(0));
           await service.update("prod-1", { unit: "Crate" } as any, {
             packPrecondition: "internal",
+            reparentVia: "editor",
           });
           expect(prisma.product.update).toHaveBeenCalledTimes(1);
         });
@@ -1272,6 +1310,7 @@ describe("ProductsService", () => {
             lockingTx(jest.fn().mockResolvedValue(0));
             await service.update("prod-1", { unitsPerBox: 6 } as any, {
               packPrecondition: "internal",
+              reparentVia: "editor",
             });
             expect(prisma.product.update.mock.calls[0][0].data.unitsPerBox).toBe(6);
           });
@@ -1284,7 +1323,10 @@ describe("ProductsService", () => {
       prisma.product.findFirst.mockResolvedValue({ id: "prod-2", sku: "DUP-SKU" });
 
       await expect(
-        service.update("prod-1", { sku: "DUP-SKU" } as any, { packPrecondition: "internal" }),
+        service.update("prod-1", { sku: "DUP-SKU" } as any, {
+          packPrecondition: "internal",
+          reparentVia: "editor",
+        }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -1293,7 +1335,10 @@ describe("ProductsService", () => {
       prisma.product.findFirst.mockResolvedValue({ id: "prod-2" });
 
       await expect(
-        service.update("prod-1", { unitSku: "DUP-UNIT" } as any, { packPrecondition: "internal" }),
+        service.update("prod-1", { unitSku: "DUP-UNIT" } as any, {
+          packPrecondition: "internal",
+          reparentVia: "editor",
+        }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -1308,6 +1353,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { name: "Strawberry Banana" } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       expect(prisma.product.update).toHaveBeenCalledWith(
@@ -1325,7 +1371,10 @@ describe("ProductsService", () => {
       prisma.product.findFirst.mockResolvedValue(null);
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
-      await service.update("prod-1", { name: "Renamed" } as any, { packPrecondition: "internal" });
+      await service.update("prod-1", { name: "Renamed" } as any, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      });
 
       expect(prisma.product.update.mock.calls[0][0].data.variantName).toBeUndefined();
     });
@@ -1376,7 +1425,10 @@ describe("ProductsService", () => {
       prisma.product.findUnique.mockResolvedValue(MOCK_PRODUCT);
       prisma.product.findFirst.mockResolvedValue(null);
 
-      await service.update("prod-1", { isTobacco: false } as any, { packPrecondition: "internal" });
+      await service.update("prod-1", { isTobacco: false } as any, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      });
 
       expect(addonService.hasAddon).not.toHaveBeenCalled();
       expect(prisma.product.update).toHaveBeenCalled();
@@ -1399,7 +1451,10 @@ describe("ProductsService", () => {
       prisma.trackedCategory.findFirst.mockResolvedValue({ id: "tobacco-cat", name: "Tobacco" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
-      await service.update("prod-1", { isTobacco: true } as any, { packPrecondition: "internal" });
+      await service.update("prod-1", { isTobacco: true } as any, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      });
 
       expect(prisma.trackedCategory.findFirst).toHaveBeenCalledWith({
         where: { name: { equals: "Tobacco", mode: "insensitive" } },
@@ -1424,7 +1479,10 @@ describe("ProductsService", () => {
       prisma.trackedCategory.create.mockResolvedValue({ id: "new-tobacco-cat" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
-      await service.update("prod-1", { isTobacco: true } as any, { packPrecondition: "internal" });
+      await service.update("prod-1", { isTobacco: true } as any, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      });
 
       expect(prisma.trackedCategory.create).toHaveBeenCalledWith({
         data: {
@@ -1454,7 +1512,10 @@ describe("ProductsService", () => {
       prisma.trackedCategory.findFirst.mockResolvedValue({ id: "tobacco-cat", name: "Tobacco" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
-      await service.update("prod-1", { isTobacco: false } as any, { packPrecondition: "internal" });
+      await service.update("prod-1", { isTobacco: false } as any, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      });
 
       const data = prisma.product.update.mock.calls[0][0].data;
       expect(data.trackedCategoryId).toBeNull();
@@ -1479,7 +1540,10 @@ describe("ProductsService", () => {
       prisma.trackedCategory.findFirst.mockResolvedValue({ id: "tobacco-cat", name: "Tobacco" });
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
-      await service.update("prod-1", { isTobacco: false } as any, { packPrecondition: "internal" });
+      await service.update("prod-1", { isTobacco: false } as any, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      });
 
       const data = prisma.product.update.mock.calls[0][0].data;
       expect(data.trackedCategoryId).toBeNull();
@@ -1507,7 +1571,10 @@ describe("ProductsService", () => {
       prisma.trackedCategory.findFirst.mockResolvedValue(null); // no Tobacco type yet
 
       await expect(
-        service.update("prod-1", { isTobacco: true } as any, { packPrecondition: "internal" }),
+        service.update("prod-1", { isTobacco: true } as any, {
+          packPrecondition: "internal",
+          reparentVia: "editor",
+        }),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.trackedCategory.create).not.toHaveBeenCalled();
       expect(prisma.product.update).not.toHaveBeenCalled();
@@ -1529,7 +1596,10 @@ describe("ProductsService", () => {
       );
       prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
 
-      await service.update("prod-1", { isTobacco: false } as any, { packPrecondition: "internal" });
+      await service.update("prod-1", { isTobacco: false } as any, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      });
 
       const data = prisma.product.update.mock.calls[0][0].data;
       expect(data.trackedCategoryId).toBeUndefined();
@@ -1550,6 +1620,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { trackedCategoryId: "sec-produce" } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       expect(prisma.trackedCategory.findFirst).toHaveBeenCalledWith({
@@ -1572,6 +1643,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { trackedCategoryId: "tobacco-cat" } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -1589,6 +1661,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { pricePerUnit: "9.99" } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       expect(prisma.trackedCategory.findUnique).not.toHaveBeenCalled();
@@ -1693,6 +1766,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { trackedCategoryId: null } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -1990,6 +2064,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { trackedCategoryId: null } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -2018,6 +2093,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { trackedCategoryId: null, regItemType: "1" } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -2042,6 +2118,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { trackedCategoryId: null } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -2066,7 +2143,10 @@ describe("ProductsService", () => {
       prisma.product.update.mockResolvedValue({ ...MOCK_PRODUCT, name: "Renamed" });
 
       await expect(
-        service.update("prod-1", { name: "Renamed" } as any, { packPrecondition: "internal" }),
+        service.update("prod-1", { name: "Renamed" } as any, {
+          packPrecondition: "internal",
+          reparentVia: "editor",
+        }),
       ).resolves.toBeDefined();
 
       expect(prisma.trackedCategory.findFirst).not.toHaveBeenCalled();
@@ -2091,6 +2171,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { regItemType: "1", regUomUnit: "CP" } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       expect(prisma.trackedCategory.findFirst).toHaveBeenCalledWith(
@@ -2116,7 +2197,10 @@ describe("ProductsService", () => {
       prisma.trackedCategory.findFirst.mockResolvedValue(TX_CATEGORY);
 
       await expect(
-        service.update("prod-1", { regUomUnit: "WO" } as any, { packPrecondition: "internal" }), // Tobacco-only UoM, invalid for item type "1"
+        service.update("prod-1", { regUomUnit: "WO" } as any, {
+          packPrecondition: "internal",
+          reparentVia: "editor",
+        }), // Tobacco-only UoM, invalid for item type "1"
       ).rejects.toThrow(BadRequestException);
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
@@ -2143,6 +2227,7 @@ describe("ProductsService", () => {
       await expect(
         service.update("prod-1", { trackedCategoryId: "sec-generic" } as any, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         }),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.product.update).not.toHaveBeenCalled();
@@ -2174,7 +2259,7 @@ describe("ProductsService", () => {
             regUomCase: null,
             regUomUnit: null,
           } as any,
-          { packPrecondition: "internal" },
+          { packPrecondition: "internal", reparentVia: "editor" },
         ),
       ).resolves.toBeDefined();
 
@@ -2210,7 +2295,7 @@ describe("ProductsService", () => {
             regUomCase: null,
             regUomUnit: "CP",
           } as any,
-          { packPrecondition: "internal" },
+          { packPrecondition: "internal", reparentVia: "editor" },
         ),
       ).resolves.toBeDefined();
 
@@ -2242,6 +2327,7 @@ describe("ProductsService", () => {
       await expect(
         service.update("prod-1", { trackedCategoryId: "sec-generic" } as any, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         }),
       ).resolves.toBeDefined();
 
@@ -2276,7 +2362,7 @@ describe("ProductsService", () => {
             regUomCase: null,
             regUomUnit: null,
           } as any,
-          { packPrecondition: "internal" },
+          { packPrecondition: "internal", reparentVia: "editor" },
         ),
       ).resolves.toBeDefined();
 
@@ -2300,6 +2386,7 @@ describe("ProductsService", () => {
       await expect(
         service.update("prod-1", { trackedCategoryId: null, regItemType: "1" } as any, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         }),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.product.update).not.toHaveBeenCalled();
@@ -2322,6 +2409,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { pricePerUnit: "12" } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -2350,7 +2438,7 @@ describe("ProductsService", () => {
           regUomCase: null,
           regUomUnit: "CP",
         } as any,
-        { packPrecondition: "internal" },
+        { packPrecondition: "internal", reparentVia: "editor" },
       );
 
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -2486,7 +2574,7 @@ describe("ProductsService", () => {
           trackedSubcategoryId: "sub-1",
           category: "Vapes", // must be overridden
         } as any,
-        { packPrecondition: "internal" },
+        { packPrecondition: "internal", reparentVia: "editor" },
       );
 
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -2506,6 +2594,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { trackedSubcategoryId: null } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -2526,6 +2615,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { trackedSubcategoryId: null } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -2548,6 +2638,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { category: "Vapes" } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       const data = prisma.product.update.mock.calls[0][0].data;
@@ -2561,6 +2652,7 @@ describe("ProductsService", () => {
 
       await service.update("prod-1", { category: "Groceries" } as any, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
 
       const data = prisma.product.update.mock.calls[0][0].data;

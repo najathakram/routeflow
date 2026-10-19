@@ -119,12 +119,15 @@ import {
   propagateFamilyPrice,
   readFamilyPriceMode,
 } from "./family-price";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import {
   assertValidParent,
   parentInvalid,
   PRODUCT_PARENT_REASONS,
   tenantSafeParent,
   tenantSafeParentView,
+  type FamilyAssignVia,
+  type ReparentOptions,
 } from "./product-parent";
 import { scanReadInclude } from "./scan-product-view";
 import {
@@ -800,7 +803,13 @@ export class ProductsService {
 
   async create(
     dto: CreateProductDto,
-    options?: { suppressEmit?: boolean; actorId?: string | null; actorName?: string | null },
+    options?: {
+      suppressEmit?: boolean;
+      actorId?: string | null;
+      actorName?: string | null;
+      /** SA-823 R11: which door created this product under a parent; the row is written in the create transaction. */
+      reparentVia?: FamilyAssignVia;
+    },
   ) {
     // B1: a variant stores its BARE label; strip a composed "<parent> - <label>" first, so the guard and the name
     // uniqueness check below judge what will actually be stored.
@@ -1061,6 +1070,24 @@ export class ProductsService {
         text: row.category,
         actor: { id: options?.actorId ?? null, name: options?.actorName ?? null },
       });
+      if (dto.parentProductId && options?.reparentVia) {
+        // SA-823 R11: a product born under a parent is an assignment too (fromParentId null), in this same tx.
+        await tx.auditLog.create({
+          data: {
+            userId: options.actorId ?? null,
+            action: AUDIT_ACTIONS.PRODUCT_FAMILY_ASSIGNED,
+            entityType: "Product",
+            entityId: row.id,
+            meta: {
+              productId: row.id,
+              fromParentId: null,
+              toParentId: dto.parentProductId,
+              variantName: row.variantName ?? null,
+              via: options.reparentVia,
+            },
+          },
+        });
+      }
       return row;
     });
     if (!options?.suppressEmit) this.emitProductChanged(created.id, "created");
@@ -1078,6 +1105,12 @@ export class ProductsService {
       suppressEmit?: boolean;
       actorId?: string | null;
       actorName?: string | null;
+      /**
+       * SA-823 R11: REQUIRED (a plain Error otherwise) when this write changes `parentProductId`, so the audit row
+       * names its door. Reparent callers use assignToParent / unlinkFromParent, which require it; only the PATCH
+       * controller passes it directly.
+       */
+      reparentVia?: FamilyAssignVia;
     },
   ) {
     await this.assertCanFlagTobacco(dto.isTobacco);
@@ -1622,6 +1655,27 @@ export class ProductsService {
             lockedCategoryIds: reparentLocks ?? new Set<string>(),
           })
         ).keptLabels;
+        // SA-823 R11: the assignment is audited in THIS transaction (rolls back with the reparent); an echo never gets here.
+        if (!options?.reparentVia) {
+          throw new Error(
+            "ProductsService.update changed parentProductId without options.reparentVia (use assignToParent / unlinkFromParent)",
+          );
+        }
+        await tx.auditLog.create({
+          data: {
+            userId: options.actorId ?? null,
+            action: AUDIT_ACTIONS.PRODUCT_FAMILY_ASSIGNED,
+            entityType: "Product",
+            entityId: id,
+            meta: {
+              productId: id,
+              fromParentId,
+              toParentId: dto.parentProductId ?? null,
+              variantName: row.variantName ?? null,
+              via: options.reparentVia,
+            },
+          },
+        });
       }
       if (family.propagate) {
         const moved = await propagateFamilyPrice(tx, { tenantId, familyId: id });
@@ -1773,6 +1827,46 @@ export class ProductsService {
   }
 
   /**
+   * SA-823 R11: THE entry that moves an existing product under a parent. A thin wrapper over update() (the only
+   * reparent writer): full validation, label keeping and the `product.family_assigned` audit row all happen there,
+   * in one transaction. Returns update()'s result (with `keptLabels` when the move kept any).
+   */
+  async assignToParent(
+    id: string,
+    parentProductId: string,
+    variantName: string,
+    opts: ReparentOptions,
+  ) {
+    return this.update(
+      id,
+      {
+        parentProductId,
+        variantName,
+        // Variants store JUST the variant name in `name` (PR #44).
+        name: variantName,
+      } as UpdateProductDto,
+      {
+        packPrecondition: "internal", // a family assignment writes no pack field
+        reparentVia: opts.via,
+        suppressEmit: opts.suppressEmit,
+        actorId: opts.actorId ?? null,
+        actorName: opts.actorName ?? null,
+      },
+    );
+  }
+
+  /** SA-823 R11: the entry that makes a variant standalone again (parentProductId null); audited like any parent change. */
+  async unlinkFromParent(id: string, opts: ReparentOptions) {
+    return this.update(id, { parentProductId: null } as UpdateProductDto, {
+      packPrecondition: "internal",
+      reparentVia: opts.via,
+      suppressEmit: opts.suppressEmit,
+      actorId: opts.actorId ?? null,
+      actorName: opts.actorName ?? null,
+    });
+  }
+
+  /**
    * Promote existing standalone products to variants of one parent in a single
    * request (the web's "Group as variants of…" bulk action). Runs SEQUENTIALLY
    * through update() so each row gets the full validation (per-parent name
@@ -1819,16 +1913,12 @@ export class ProductsService {
         // suppressEmit: this loop can reassign N products in one request — emit
         // ONE coalesced event after the loop below, never one per row (the same
         // rule bulkSetMsrp/bulkDelete/importFromZoho already follow).
-        const moved = await this.update(
+        const moved = await this.assignToParent(
           assignment.id,
+          dto.parentProductId,
+          assignment.variantName,
           {
-            parentProductId: dto.parentProductId,
-            variantName: assignment.variantName,
-            // Variants store JUST the variant name in `name` (PR #44).
-            name: assignment.variantName,
-          } as UpdateProductDto,
-          {
-            packPrecondition: "internal", // a family assignment writes no pack field
+            via: "bulk_assign",
             suppressEmit: true,
             actorId: actor?.actorId ?? null,
             actorName: actor?.actorName ?? null,

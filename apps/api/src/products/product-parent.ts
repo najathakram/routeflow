@@ -129,3 +129,17 @@ export function tenantSafeParentView<T extends { tenantId?: string | null }>(
   delete view.tenantId;
   return view as unknown as Omit<T, "tenantId">;
 }
+
+/**
+ * SA-823 R11: which door moved a product under (or out of) a family; recorded as `via` on the
+ * `product.family_assigned` audit row. A fifth source is one union member.
+ */
+export type FamilyAssignVia = "editor" | "bulk_assign" | "import" | "inventory";
+
+/** The narrow options of the reparent entries (assignToParent / unlinkFromParent): `via` is REQUIRED so no caller can omit it. */
+export interface ReparentOptions {
+  via: FamilyAssignVia;
+  actorId?: string | null;
+  actorName?: string | null;
+  suppressEmit?: boolean;
+}

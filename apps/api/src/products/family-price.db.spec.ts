@@ -140,6 +140,7 @@ describeDb("#2717 M2 family price write-through — real Postgres", () => {
           inTenant(tenantId, () =>
             service.update(family.id, { priceTier3: newTier3 } as any, {
               packPrecondition: "internal",
+              reparentVia: "editor",
             }),
           ),
           inTenant(tenantId, () =>
@@ -197,7 +198,10 @@ describeDb("#2717 M2 family price write-through — real Postgres", () => {
       },
     });
     await inTenant(tenantA, () =>
-      service.update(family.id, { priceTier3: "7.25" } as any, { packPrecondition: "internal" }),
+      service.update(family.id, { priceTier3: "7.25" } as any, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      }),
     );
     const after = await prisma.product.findUniqueOrThrow({ where: { id: foreign.id } });
     expect(after.pricePerUnit.toString()).toBe("3");

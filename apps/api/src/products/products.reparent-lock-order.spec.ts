@@ -176,6 +176,7 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
   it("every label lock is taken, in sorted key order, before the first FOR UPDATE row lock and before any write", async () => {
     const out = await service.update("prod-1", { parentProductId: "fam" } as never, {
       packPrecondition: "internal",
+      reparentVia: "editor",
     });
     expect((out as { keptLabels?: string[] }).keptLabels).toEqual(["CA ban", "NY ban"]);
 
@@ -201,7 +202,10 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
   it("a lost label that was NOT pre-locked (a concurrent label write since the read) is the retryable 409, nothing locked out of order", async () => {
     labelRowsAfterPlan = [...labelRows, { productId: "old", categoryId: "wa", mode: "INCLUDE" }];
     const err = await service
-      .update("prod-1", { parentProductId: "fam" } as never, { packPrecondition: "internal" })
+      .update("prod-1", { parentProductId: "fam" } as never, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      })
       .then(
         () => null,
         (e: unknown) => e,
@@ -230,7 +234,10 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
   ])("a %s inside a reparent is the coded, retryable 409, never a 500", async (_n, raw) => {
     prisma.product.update.mockRejectedValue(raw);
     const err = await service
-      .update("prod-1", { parentProductId: "fam" } as never, { packPrecondition: "internal" })
+      .update("prod-1", { parentProductId: "fam" } as never, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      })
       .then(
         () => null,
         (e: unknown) => e,
@@ -243,7 +250,10 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
     const raw = Object.assign(new Error("deadlock detected"), { code: "40P01" });
     prisma.product.update.mockRejectedValue(raw);
     const err = await service
-      .update("prod-1", { description: "x" } as never, { packPrecondition: "internal" })
+      .update("prod-1", { description: "x" } as never, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      })
       .then(
         () => null,
         (e: unknown) => e,
@@ -255,6 +265,7 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
     labelRows = [];
     await service.update("prod-1", { parentProductId: "fam" } as never, {
       packPrecondition: "internal",
+      reparentVia: "editor",
     });
     expect(labelLocks()).toEqual([]);
   });
@@ -272,6 +283,7 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
     );
     const out = await service.update("prod-1", { parentProductId: "fam" } as never, {
       packPrecondition: "internal",
+      reparentVia: "editor",
     });
     expect((out as { keptLabels?: string[] }).keptLabels).toEqual(["CA ban", "NY ban"]);
     expect(events.filter((e) => e.startsWith("write:label:"))).toEqual([
@@ -297,6 +309,7 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
     });
     await service.update("prod-1", { parentProductId: "fam", category: "Snacks" } as never, {
       packPrecondition: "internal",
+      reparentVia: "editor",
     });
     const firstRowLock = firstIndex((e) => e.startsWith("for-update:"));
     expect(labelLocks().slice(0, 3)).toEqual([

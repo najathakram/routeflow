@@ -149,7 +149,10 @@ describe("ProductsService name guards (B964-2)", () => {
     it("update refuses a CHANGED formula-led category and writes nothing", async () => {
       prisma.product.findUnique.mockResolvedValue(stored());
       await refused(
-        service.update("prod-1", { category: "@evil" } as any, { packPrecondition: "internal" }),
+        service.update("prod-1", { category: "@evil" } as any, {
+          packPrecondition: "internal",
+          reparentVia: "editor",
+        }),
         "category",
       );
       expect(prisma.product.update).not.toHaveBeenCalled();
@@ -162,6 +165,7 @@ describe("ProductsService name guards (B964-2)", () => {
       await expect(
         service.update("prod-1", { category: "=LEGACY", description: "x" } as any, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         }),
       ).resolves.toBeDefined();
     });
@@ -173,6 +177,7 @@ describe("ProductsService name guards (B964-2)", () => {
       await refused(
         service.update("prod-1", { category: "=evil", isTobacco: true } as any, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         }),
         "category",
       );
@@ -195,7 +200,10 @@ describe("ProductsService name guards (B964-2)", () => {
     it("refuses a CHANGED formula-led name and writes nothing", async () => {
       prisma.product.findUnique.mockResolvedValue(stored());
       await refused(
-        service.update("prod-1", { name: "@evil" } as any, { packPrecondition: "internal" }),
+        service.update("prod-1", { name: "@evil" } as any, {
+          packPrecondition: "internal",
+          reparentVia: "editor",
+        }),
         "productName",
       );
       expect(prisma.product.update).not.toHaveBeenCalled();
@@ -204,7 +212,10 @@ describe("ProductsService name guards (B964-2)", () => {
     it("refuses a CHANGED formula-led variantName", async () => {
       prisma.product.findUnique.mockResolvedValue(stored({ variantName: "Cherry" }));
       await refused(
-        service.update("prod-1", { variantName: "-2+3" } as any, { packPrecondition: "internal" }),
+        service.update("prod-1", { variantName: "-2+3" } as any, {
+          packPrecondition: "internal",
+          reparentVia: "editor",
+        }),
         "variantName",
       );
       expect(prisma.product.update).not.toHaveBeenCalled();
@@ -217,6 +228,7 @@ describe("ProductsService name guards (B964-2)", () => {
       await expect(
         service.update("prod-1", { name: "=LEGACY", description: "x" } as any, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         }),
       ).resolves.toBeDefined();
       expect(prisma.product.findUnique).toHaveBeenCalledTimes(1); // the ONE read update() already makes
