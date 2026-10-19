@@ -19,7 +19,7 @@ export const BTN =
  * cure as the counter's checkout bar, #3500). The bar's own `bottom` (through the shell's pb-24) is the shared
  * `useShellBottom`, the one rule the pinned saved line uses too.
  */
-function useBarScrollPadding() {
+function useBarScrollPadding(): [(el: HTMLDivElement | null) => void, number] {
   const [height, setHeight] = React.useState(0);
   const observer = React.useRef<ResizeObserver | null>(null);
   // A callback ref: the bar mounts only while editing, so the observer follows the element, and its height is 0 when gone.
@@ -52,7 +52,7 @@ function useBarScrollPadding() {
       else main.style.removeProperty("padding-bottom");
     };
   }, [height]);
-  return ref;
+  return [ref, height];
 }
 
 const FINISH_FIRST = "Finish Change prices first.";
@@ -125,8 +125,9 @@ export function PriceEditBar({
     wasConfirm.current = confirm;
   }, [confirm, askingProp]);
   const [told, setTold] = React.useState(false);
-  const barRef = useBarScrollPadding();
-  const bottom = useShellBottom(d.editing);
+  const [barRef, barHeight] = useBarScrollPadding();
+  // The scroller is padded by the bar's height (P10/P11), so the sticky offset is the shell's padding plus that height.
+  const bottom = useShellBottom(d.editing, barHeight);
   React.useEffect(() => {
     if (!here) setConfirm(false);
   }, [here, setConfirm]);

@@ -18,8 +18,8 @@ jest.mock("./useClearOfShellPadding", () => {
   const actual = jest.requireActual("./useClearOfShellPadding");
   return {
     ...actual,
-    useShellBottom: (active: boolean) => {
-      const real = actual.useShellBottom(active);
+    useShellBottom: (active: boolean, extra = 0) => {
+      const real = actual.useShellBottom(active, extra);
       return mockShellBottom ?? real;
     },
   };
@@ -123,13 +123,15 @@ const edit = async () => {
 };
 
 describe("F22: the save bar never covers the grid rows", () => {
-  it("rests at the real bottom of the scroller, through the shell's padding, not 96px up", async () => {
+  // K13 R3: a sticky element stops at the scroller's padding, and P10/P11 raise that padding by the bar's own height, so
+  // the bar's offset is the shell's padding PLUS that height (else it floated one bar-height up, 62px at the live build).
+  it("rests at the real bottom of the scroller, through the shell's padding and the bar's own, not 96px up", async () => {
     shell("96px");
     mount();
     await edit();
     const bar = screen.getByTestId(T.editbar);
     expect(bar.className).toContain("sticky");
-    expect(bar.style.bottom).toBe("-96px");
+    expect(bar.style.bottom).toBe(`${-(96 + BAR_HEIGHT)}px`);
   });
 
   it("keeps a focused price box clear of the bar: scroll-padding-bottom is the bar's height, and lets go on Cancel", async () => {
@@ -174,11 +176,13 @@ describe("F22: the save bar never covers the grid rows", () => {
     expect(m.style.paddingBottom).toBe("96px");
   });
 
-  it("does not move the bar: its bottom still comes from the shell's own padding", async () => {
-    shell("96px");
+  it("the bar's bottom is the scroller's padding as it now stands: the bar rests at the real bottom", async () => {
+    const m = shell("96px");
     mount();
     await edit();
-    expect(screen.getByTestId(T.editbar).style.bottom).toBe("-96px");
+    const padded = Number(m.style.paddingBottom.replace("px", ""));
+    expect(padded).toBe(96 + BAR_HEIGHT);
+    expect(screen.getByTestId(T.editbar).style.bottom).toBe(`${-padded}px`);
   });
 
   it("with no dashboard shell around it the bar sticks at 0 and nothing else is touched", async () => {
@@ -202,7 +206,7 @@ describe("N2: the bar and the saved line share ONE shell-bottom rule", () => {
     shell("96px");
     let shared = NaN;
     const Probe = () => {
-      shared = useShellBottom(true);
+      shared = useShellBottom(true, BAR_HEIGHT);
       return null;
     };
     rtlRender(
@@ -216,7 +220,7 @@ describe("N2: the bar and the saved line share ONE shell-bottom rule", () => {
       { container: main?.appendChild(document.createElement("div")) },
     );
     await edit();
-    expect(shared).toBe(-96);
+    expect(shared).toBe(-(96 + BAR_HEIGHT));
     expect(screen.getByTestId(T.editbar).style.bottom).toBe(`${shared}px`);
   });
 });
