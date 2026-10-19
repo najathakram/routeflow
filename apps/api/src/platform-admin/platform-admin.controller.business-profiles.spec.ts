@@ -30,6 +30,8 @@ import { BusinessProfileService } from "../billing/business-profile.service";
 import { AdminAuditAction } from "./audit-actions.constant";
 import { FEATURE_REGISTRY } from "../billing/feature-registry";
 import { deriveFulfilmentCapability } from "../billing/fulfilment-capability";
+import * as capabilities from "../billing/business-capabilities";
+import { businessProfileByKey } from "../billing/business-profiles";
 
 const T = "tenant-a";
 const FLEET = ["recurring_routes", "order_delivery"];
@@ -57,6 +59,8 @@ function fakeTenant(start: {
   modes?: Record<string, string>;
   /** Open SHIP orders already with the carrier (item 8). */
   inTransit?: number;
+  /** This replica's 30s mode cache is stale: getState answers these until forgetCachedModes(). */
+  staleCache?: Record<string, string>;
 }) {
   let seq = 0;
   const rows: Row[] = Object.entries(start.overrides ?? {}).map(([featureKey, effect]) => ({
@@ -143,10 +147,14 @@ function fakeTenant(start: {
       return { addonKey: key, active: false };
     }),
   };
+  let stale: Record<string, string> = { ...(start.staleCache ?? {}) };
   const featureConfig = {
+    forgetCachedModes: jest.fn(() => {
+      stale = {};
+    }),
     getState: jest.fn(async (_t: string, key: string) => ({
-      value: modes[key],
-      effective: modes[key],
+      value: stale[key] ?? modes[key],
+      effective: stale[key] ?? modes[key],
       // a stored row is TENANT; a key never written reads its registry default (like the real store)
       source: stored.has(key) ? ("TENANT" as const) : ("REGISTRY_DEFAULT" as const),
       allowed: [] as string[],
@@ -313,9 +321,9 @@ describe("business-profile routes are platform-admin only", () => {
 });
 
 describe("GET business-profiles / POST preview", () => {
-  it("lists the five profiles", () => {
+  it("lists the seven profiles (BO-04: + Delivery + shipping, Everything)", () => {
     const { controller } = fakeTenant({});
-    expect(controller.listBusinessProfiles().profiles).toHaveLength(5);
+    expect(controller.listBusinessProfiles().profiles).toHaveLength(7);
   });
 
   it("preview writes nothing", async () => {
@@ -1109,5 +1117,311 @@ describe("item 8 — the apply keeps the Settings in-transit guard", () => {
     const t = fakeTenant({ addons: ["recurring_routes"] });
     await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
     expect(t.state().modes.fulfilment_model).toBe("ship");
+  });
+});
+
+/**
+ * BO-04: the capability ticks are a second INPUT to the same plan -> blocked -> fingerprint -> apply path.
+ * The two new routes sit on the same SuperAdminGuard'd controller; the preset routes are thin aliases.
+ */
+describe("BO-04 business-capabilities routes", () => {
+  const profileRows = (t: ReturnType<typeof fakeTenant>) =>
+    t.svc.recordAdminAction.mock.calls.filter(
+      (c: unknown[]) => c[2] === AdminAuditAction.BUSINESS_PROFILE_APPLIED,
+    );
+  const preview = (t: ReturnType<typeof fakeTenant>, body: object) =>
+    (t.controller as any).previewBusinessCapabilities(T, body);
+  /** Confirm as the web does it: preview first, send that planFingerprint back. */
+  const confirm = async (t: ReturnType<typeof fakeTenant>, body: object) => {
+    const shown = await preview(t, body);
+    return (t.controller as any).applyBusinessCapabilities(
+      T,
+      { ...body, planFingerprint: shown.planFingerprint },
+      admin,
+    );
+  };
+
+  it("the two routes exist, are POSTs under tenants/:id, and live on the SuperAdminGuard'd controller", () => {
+    const proto = PlatformAdminController.prototype as any;
+    const guards = Reflect.getMetadata(GUARDS_METADATA, PlatformAdminController) as unknown[];
+    expect(guards).toContain(SuperAdminGuard);
+    for (const [fn, path] of [
+      ["previewBusinessCapabilities", "tenants/:id/business-capabilities/preview"],
+      ["applyBusinessCapabilities", "tenants/:id/business-capabilities"],
+    ] as const) {
+      expect(typeof proto[fn]).toBe("function");
+      expect(Reflect.getMetadata("path", proto[fn])).toBe(path);
+      expect(Reflect.getMetadata("method", proto[fn])).toBe(1); // RequestMethod.POST
+    }
+  });
+
+  it("nothing ticked: 400 BUSINESS_CAPABILITIES_EMPTY on preview and confirm, nothing written", async () => {
+    const t = fakeTenant({});
+    await expect(preview(t, {})).rejects.toMatchObject({
+      status: 400,
+      response: expect.objectContaining({ code: "BUSINESS_CAPABILITIES_EMPTY" }),
+    });
+    await expect(
+      (t.controller as any).applyBusinessCapabilities(T, { planFingerprint: "x" }, admin),
+    ).rejects.toMatchObject({
+      status: 400,
+      response: expect.objectContaining({ code: "BUSINESS_CAPABILITIES_EMPTY" }),
+    });
+    expect(t.writes).toEqual([]);
+  });
+
+  it("preview writes nothing and returns the normalised ticks, the preset, the plan and the fingerprint", async () => {
+    const t = fakeTenant({});
+    const res = await preview(t, { delivery: true, counter: true });
+    expect(res).toMatchObject({
+      capabilities: { delivery: true, doorPayments: true, shipping: false, counter: true },
+      preset: "delivery_pos",
+      blocked: null,
+      planFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+    expect(res.plan.modes).toEqual([
+      { key: "fulfilment_model", from: "unset", to: "delivery" },
+      { key: "counter_sales", from: "unset", to: "on" },
+    ]);
+    expect(t.writes).toEqual([]);
+  });
+
+  it("a stale planFingerprint is a 409 PROFILE_PLAN_CHANGED and NOTHING is written", async () => {
+    const t = fakeTenant({});
+    const shown = await preview(t, { shipping: true });
+    t.enablePaid("recurring_routes"); // the account moved after the preview
+    await expect(
+      (t.controller as any).applyBusinessCapabilities(
+        T,
+        { shipping: true, planFingerprint: shown.planFingerprint },
+        admin,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "PROFILE_PLAN_CHANGED" }),
+    });
+    expect(t.writes).toEqual([]);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+  });
+
+  it("a confirm with no fingerprint is a 400 and writes nothing", async () => {
+    const t = fakeTenant({});
+    await expect(
+      (t.controller as any).applyBusinessCapabilities(T, { shipping: true }, admin),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(t.writes).toEqual([]);
+  });
+
+  it("the alias `delivery_pos` and the ticks {delivery, counter} yield the identical plan, fingerprint and audit capabilities", async () => {
+    const alias = fakeTenant({});
+    const ticks = fakeTenant({});
+    const aliasShown = await alias.controller.previewBusinessProfile(T, {
+      profile: "delivery_pos",
+    });
+    const ticksShown = await preview(ticks, { delivery: true, counter: true });
+    expect(ticksShown.plan).toEqual(aliasShown.plan);
+    expect(ticksShown.planFingerprint).toBe(aliasShown.planFingerprint);
+
+    await alias.controller.applyBusinessProfile(
+      T,
+      { profile: "delivery_pos", planFingerprint: aliasShown.planFingerprint } as any,
+      admin,
+    );
+    await confirm(ticks, { delivery: true, counter: true });
+    expect(ticks.writes).toEqual(alias.writes);
+
+    const [[, , , aliasMeta]] = profileRows(alias) as [[unknown, unknown, unknown, any]];
+    const [[, , , ticksMeta]] = profileRows(ticks) as [[unknown, unknown, unknown, any]];
+    expect(aliasMeta.capabilities).toEqual(ticksMeta.capabilities);
+    expect(aliasMeta.capabilities).toEqual({
+      delivery: true,
+      doorPayments: true,
+      shipping: false,
+      counter: true,
+      opensAs: "order",
+    });
+    expect(aliasMeta.preset).toBe("delivery_pos");
+    expect(ticksMeta.preset).toBe("delivery_pos");
+    expect(aliasMeta.plan).toEqual(ticksMeta.plan);
+    expect(aliasMeta.profile).toBe("delivery_pos"); // alias calls keep `profile`
+    expect(ticksMeta).not.toHaveProperty("profile"); // ticks calls do not
+  });
+
+  it("a combination no preset names is `custom`: preset null in the audit row, the reason names it", async () => {
+    const t = fakeTenant({});
+    const res = await confirm(t, { delivery: true, doorPayments: false });
+    expect(res.preset).toBeNull();
+    const [[, , , meta]] = profileRows(t) as [[unknown, unknown, unknown, any]];
+    expect(meta).toMatchObject({
+      preset: null,
+      capabilities: { delivery: true, doorPayments: false },
+      reason: "Business profile: Custom capabilities",
+    });
+    // the two fleet keys are comped; driver_payments is NOT
+    expect(t.writes).toEqual([
+      "comp recurring_routes",
+      "comp order_delivery",
+      "mode fulfilment_model=delivery",
+    ]);
+  });
+
+  it("the counter is always written: Shipping only on a Delivery + counter tenant switches counter_sales off", async () => {
+    const t = fakeTenant({
+      overrides: { recurring_routes: "GRANT", order_delivery: "GRANT", driver_payments: "GRANT" },
+      modes: { fulfilment_model: "delivery", counter_sales: "on" },
+    });
+    await confirm(t, { shipping: true });
+    expect(t.state().modes).toMatchObject({ fulfilment_model: "ship", counter_sales: "unset" });
+    expect(t.writes).toContain("mode counter_sales=unset");
+  });
+
+  it("{delivery, doorPayments:false} on a tenant PAYING driver_payments: the billing stop runs first, then the two fleet comps", async () => {
+    const t = fakeTenant({ addons: ["driver_payments"] });
+    await confirm(t, { delivery: true, doorPayments: false });
+    expect(t.writes).toEqual([
+      "disable driver_payments",
+      "comp recurring_routes",
+      "comp order_delivery",
+      "mode fulfilment_model=delivery",
+    ]);
+    expect(t.addonService.disableAddon).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-applying the same ticks writes nothing but one more audit row", async () => {
+    const t = fakeTenant({});
+    await confirm(t, { delivery: true, shipping: true, counter: true });
+    const writesAfterFirst = [...t.writes];
+    await confirm(t, { delivery: true, shipping: true, counter: true });
+    expect(t.writes).toEqual(writesAfterFirst);
+    expect(profileRows(t)).toHaveLength(2);
+  });
+
+  describe("carrier in transit", () => {
+    it("preview is a 200 with `blocked` and the plan (Confirm is the web's to disable)", async () => {
+      const t = fakeTenant({ addons: ["recurring_routes"], inTransit: 2 });
+      const res = await preview(t, { shipping: true });
+      expect(res.blocked).toEqual({ code: "FULFILMENT_CARRIER_IN_TRANSIT", count: 2 });
+      expect(res.plan.modes).toEqual([{ key: "fulfilment_model", from: "unset", to: "ship" }]);
+      expect(t.writes).toEqual([]);
+    });
+
+    it("confirm: 409 FULFILMENT_CARRIER_IN_TRANSIT before the first billing disable - nothing written or stopped", async () => {
+      const t = fakeTenant({
+        addons: ["recurring_routes", "order_delivery", "driver_payments"],
+        modes: { fulfilment_model: "delivery" },
+        inTransit: 1,
+      });
+      const shown = await preview(t, { shipping: true });
+      expect(shown.plan.billing.length).toBeGreaterThan(0);
+      await expect(
+        (t.controller as any).applyBusinessCapabilities(
+          T,
+          { shipping: true, planFingerprint: shown.planFingerprint },
+          admin,
+        ),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: "FULFILMENT_CARRIER_IN_TRANSIT", count: 1 }),
+      });
+      expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+      expect(t.writes).toEqual([]);
+      expect(profileRows(t)).toEqual([]);
+    });
+
+    it("BO-04 review MUST: a stale cached mode never lets billing stop before the in-transit refusal", async () => {
+      // Another replica moved the tenant to ship; this replica still caches unset, and an order shipped.
+      const t = fakeTenant({
+        addons: ["recurring_routes", "order_delivery", "driver_payments"],
+        modes: { fulfilment_model: "ship" },
+        staleCache: { fulfilment_model: "unset" },
+        inTransit: 1,
+      });
+      await expect(confirm(t, { delivery: true, doorPayments: false })).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: "FULFILMENT_CARRIER_IN_TRANSIT", count: 1 }),
+      });
+      expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+      expect(t.writes).toEqual([]);
+    });
+
+    it("the refusal comes before the fingerprint check (a blocked plan is never 'changed')", async () => {
+      const t = fakeTenant({ addons: ["recurring_routes"], inTransit: 1 });
+      await expect(
+        (t.controller as any).applyBusinessCapabilities(
+          T,
+          { shipping: true, planFingerprint: "f".repeat(64) },
+          admin,
+        ),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: "FULFILMENT_CARRIER_IN_TRANSIT" }),
+      });
+    });
+  });
+
+  describe("a comp the comp path would refuse is `blocked`, never discovered after a billing disable", () => {
+    // Door payments wanted with no fleet key anywhere, on a tenant paying for a fleet key: the apply would
+    // disable the fleet key (billing stops) and THEN be refused when it comps driver_payments. The ticks
+    // cannot produce this def today, so the mapping is stubbed to hand it to the real planner and apply.
+    const oddDef = () => ({
+      ...businessProfileByKey("shipping_wholesaler")!,
+      key: "custom",
+      modules: { driver_payments: true },
+    });
+    let spy: jest.SpyInstance;
+    beforeEach(() => {
+      spy = jest.spyOn(capabilities, "ticksToProfileDef").mockImplementation(() => ({
+        def: oddDef(),
+        normalised: capabilities.presetTicks(oddDef()),
+        preset: null,
+      }));
+    });
+    afterEach(() => spy.mockRestore());
+
+    it("the preview shows `blocked` FEATURE_REQUIRES_UNMET (200) and writes nothing", async () => {
+      const t = fakeTenant({ addons: ["recurring_routes"] });
+      const res = await preview(t, { counter: true });
+      expect(res.plan.billing.map((b: { featureKey: string }) => b.featureKey)).toEqual([
+        "recurring_routes",
+      ]);
+      expect(res.blocked).toEqual({
+        code: "FEATURE_REQUIRES_UNMET",
+        key: "driver_payments",
+        missing: "Recurring routes or Ad hoc order delivery",
+      });
+      expect(t.writes).toEqual([]);
+    });
+
+    it("confirm refuses BEFORE step 1: no disableAddon, no comp, no mode, no audit", async () => {
+      const t = fakeTenant({ addons: ["recurring_routes"] });
+      const shown = await preview(t, { counter: true });
+      await expect(
+        (t.controller as any).applyBusinessCapabilities(
+          T,
+          { counter: true, planFingerprint: shown.planFingerprint },
+          admin,
+        ),
+      ).rejects.toMatchObject({
+        status: 400,
+        response: expect.objectContaining({
+          code: "FEATURE_REQUIRES_UNMET",
+          key: "driver_payments",
+        }),
+      });
+      expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+      expect(t.addonService.enableAddon).not.toHaveBeenCalled();
+      expect(t.writes).toEqual([]);
+      expect(profileRows(t)).toEqual([]);
+    });
+  });
+
+  it("the alias preview keeps the in-transit 409 (the current picker has no `blocked` to show)", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"], inTransit: 1 });
+    await expect(
+      t.controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" }),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "FULFILMENT_CARRIER_IN_TRANSIT" }),
+    });
   });
 });

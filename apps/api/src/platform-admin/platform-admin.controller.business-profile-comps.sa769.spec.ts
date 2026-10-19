@@ -234,6 +234,7 @@ function world(
   };
   const stored = new Set<string>(Object.keys(start.modes ?? {}));
   const featureConfig = {
+    forgetCachedModes: jest.fn(), // BO-04 review: a confirm re-plans from the DB
     getState: jest.fn(async (_t: string, key: string) => ({
       value: modes[key],
       effective: modes[key],

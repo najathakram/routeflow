@@ -2,12 +2,8 @@ import { BUSINESS_PROFILE_KEYS } from "@routeflow/types";
 import { INCLUDED_FREE_COPY, profileBullets, profilePlainCopy } from "./profile-plain-copy";
 import * as setupCopy from "./setup-copy";
 
-/** The five shared profile keys plus the two presets BO-04 adds (not in `@routeflow/types` until that lands). */
-const PRESET_KEYS = [
-  ...BUSINESS_PROFILE_KEYS,
-  "delivery_shipping",
-  "delivery_shipping_pos",
-] as const;
+/** Every profile key the shared contract lists (BO-04 added the last two). */
+const PRESET_KEYS = BUSINESS_PROFILE_KEYS;
 
 describe("SA-1: profile plain copy", () => {
   it("has plain copy for every profile key the contract lists", () => {

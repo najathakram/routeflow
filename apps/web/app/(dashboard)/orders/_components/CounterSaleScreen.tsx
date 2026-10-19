@@ -40,13 +40,16 @@ import {
   useCounterSaleGate,
   useCreateCounterSale,
 } from "@/lib/api/counter-sale";
+import { usePermissionDeniedWatcher } from "@/lib/api/my-permissions";
 import { displayProductName } from "@/lib/product-display";
 import {
   COUNTER_LOOKUP_FAILED_COPY,
   COUNTER_OFFLINE_COPY,
   COUNTER_DISCARD_COPY,
   COUNTER_OUTCOME_UNKNOWN_COPY,
+  COUNTER_NO_ACCESS_COPY,
   COUNTER_SALES_DISABLED_COPY,
+  counterSaleGate,
   isTenderShortCopy,
   paymentProblemCopy,
   cartTotals,
@@ -133,6 +136,7 @@ export function CounterSaleScreen() {
   const readOnlyGate = useReadOnlyGate();
   const router = useRouter();
   const gate = useCounterSaleGate();
+  usePermissionDeniedWatcher();
   // CQ-30: once the capability check has failed, the retry panel stays up for the WHOLE refetch. React Query flips a failed,
   // data-less lookup back to "loading" the moment it refetches; without this the panel gave way to the blank loading
   // placeholder for the length of the request. It leaves only when the lookup settles (the sale UI, or the panel again).
@@ -902,6 +906,16 @@ export function CounterSaleScreen() {
   // The features answer is not in yet: an empty, non-interactive placeholder, with no copy (neither the sale UI nor a false
   // "not turned on").
   if (gate.loading) return <div data-testid="counter-sale-loading" aria-busy="true" />;
+
+  // BO-07: the counter is on for the business but this operator's admin has not turned selling on for their account (read
+  // live; a PERMISSION_DENIED from any till call lands here too). A plain panel, checked before the "off" copy, never a toast.
+  if (gate.mayUseTill === false && counterSaleGate(gate.capability).showButton) {
+    return (
+      <div className="mx-auto max-w-md p-4 text-sm" data-testid="counter-sale-no-access">
+        {COUNTER_NO_ACCESS_COPY}
+      </div>
+    );
+  }
 
   // Missing means dark: loading, error, unknown, a response without the capability, or counter "off" all render NO sale UI
   // (a deep link or a stale tab). Only "optional" / "always" open the screen.
