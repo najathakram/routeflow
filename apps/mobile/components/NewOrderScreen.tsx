@@ -1506,7 +1506,9 @@ function ProductPickView({
   // rejection in a literal empty catch. A 5xx, a 403 addon gate, a 404 on a
   // draft deleted from web — nothing on screen, nothing in the console, and no
   // retry unless a later edit happens to fire one. (A genuine loss of network
-  // is different: api-client queues that write and replays it.)
+  // is different: draft writes are ONLINE-ONLY, so api-client refuses them with
+  // `isOnlineRequired` instead of queueing; the builder state stays the source
+  // of truth and the next save sends the latest payload, B923 ruling 3.)
   const [draftSaveFailed, setDraftSaveFailed] = useState(false);
   // Stable: the autosave engine reads this ONCE, at mount.
   const noteDraftSaveError = useCallback((err: unknown) => {
@@ -1709,7 +1711,7 @@ function ProductPickView({
     setSubmitting(true);
     // Flush BEFORE mutate so a failed create still leaves an up-to-date
     // parked draft behind (nothing about this order is lost) — but NEVER let
-    // it gate the order: a rejected draft write (offline queue, 404 on a draft
+    // it gate the order: a rejected draft write (offline refusal, 404 on a draft
     // discarded from web) would otherwise abort submitOrder before `mutate`,
     // leaving Confirm a dead button with no error shown.
     await flushDraftQuietly();

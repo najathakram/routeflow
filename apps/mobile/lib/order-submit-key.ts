@@ -122,14 +122,17 @@ export function adoptOrderSubmitKey(customerId: string | null | undefined, key: 
 }
 
 /**
- * Re-seed a customer's slot from a resumed draft's `payload._submitKey` (SA-817 A4). Returns the key adopted, or null when the
- * draft predates the field (the slot is left alone, and the next autosave writes whatever key the slot holds into the draft).
+ * Re-seed a customer's slot from a resumed draft's `payload._submitKey` (SA-817 A4) and return the key now in the slot.
+ *
+ * A draft that predates the field has NO key of its own. It must NOT inherit whatever the customer's slot holds: that key may
+ * belong to another draft of the same customer, and two drafts sharing one key look like replays of each other (the server
+ * refuses the second). It gets a FRESH key, which the next autosave writes into the draft.
  */
 export function seedOrderSubmitKeyFromDraft(
   customerId: string | null | undefined,
   payload: unknown,
-): string | null {
-  const key = readDraftSubmitKey(payload);
-  if (key) adoptOrderSubmitKey(customerId, key);
+): string {
+  const key = readDraftSubmitKey(payload) ?? mintCartSessionKey();
+  adoptOrderSubmitKey(customerId, key);
   return key;
 }
