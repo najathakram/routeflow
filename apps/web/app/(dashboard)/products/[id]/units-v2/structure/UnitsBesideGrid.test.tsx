@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ToastProvider } from "@routeflow/ui/web";
 import { createTestQueryClient } from "@/test-utils/render";
@@ -68,6 +68,7 @@ describe("UnitsBesideGrid: default order unit", () => {
       { id: "u-case", isDefaultSelling: true },
       expect.any(Object),
     );
+    act(() => updateMutate.mock.calls[0][1].onSettled());
     fireEvent.change(sel, { target: { value: "" } });
     expect(updateMutate).toHaveBeenLastCalledWith(
       { id: "u-pallet", isDefaultSelling: false },
@@ -81,6 +82,32 @@ describe("UnitsBesideGrid: default order unit", () => {
     const sel = screen.getByLabelText("Default order unit");
     expect(sel).toBeDisabled();
     expect(sel).toHaveAccessibleDescription("Save or discard your price changes first");
+  });
+});
+
+describe("UnitsBesideGrid: row 614 a second trigger while one is in flight", () => {
+  it("the default order unit select ignores a second change until the first settles", () => {
+    renderBeside();
+    const sel = screen.getByLabelText("Default order unit");
+    fireEvent.change(sel, { target: { value: "u-case" } });
+    fireEvent.change(sel, { target: { value: "" } });
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    act(() => updateMutate.mock.calls[0][1].onSettled()); // settled (success or error)
+    fireEvent.change(sel, { target: { value: "" } });
+    expect(updateMutate).toHaveBeenCalledTimes(2);
+  });
+
+  it("the per-unit Save sends one mutation however many times it is triggered", () => {
+    draft = { dirty: false, editingIn: "inline" };
+    renderBeside();
+    fireEvent.change(screen.getByLabelText("Case name"), { target: { value: "Carton" } });
+    const save = screen.getByRole("button", { name: "Save Case" });
+    fireEvent.click(save);
+    fireEvent.click(save);
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    act(() => updateMutate.mock.calls[0][1].onSettled());
+    fireEvent.click(save);
+    expect(updateMutate).toHaveBeenCalledTimes(2);
   });
 });
 

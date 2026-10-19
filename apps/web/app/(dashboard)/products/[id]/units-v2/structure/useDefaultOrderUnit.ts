@@ -31,6 +31,9 @@ export function useDefaultOrderUnit(
   const queryClient = useQueryClient();
   const [note, setNote] = React.useState<DefaultNote | null>(null);
   const ownWrite = React.useRef(false);
+  // Row 614: set synchronously on the trigger, released only when the write settles (success or error); `busy` is
+  // render state and stale inside one tick, so a second trigger in the same tick would otherwise send a second write.
+  const inFlight = React.useRef(false);
   const busy = !!opts.busy || update.isPending;
   const onSettledRef = React.useRef(opts.onSettled);
   onSettledRef.current = opts.onSettled;
@@ -57,9 +60,19 @@ export function useDefaultOrderUnit(
 
   /** Run one of the default writes without it counting as "another write". */
   const writeDefault = (body: { id: string; isDefaultSelling: boolean }, onSuccess: () => void) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     ownWrite.current = true;
     try {
-      update.mutate(body, { onSuccess });
+      update.mutate(body, {
+        onSuccess,
+        onSettled: () => {
+          inFlight.current = false;
+        },
+      });
+    } catch (e) {
+      inFlight.current = false;
+      throw e;
     } finally {
       ownWrite.current = false;
     }

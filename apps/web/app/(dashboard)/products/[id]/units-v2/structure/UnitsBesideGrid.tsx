@@ -117,6 +117,8 @@ function UnitNameRow({
 }) {
   const update = useUpdateProductUnit(productId);
   const { toast } = useToast();
+  // Row 614: `update.isPending` is stale inside one tick; this ref is set on the trigger and released on settle.
+  const saving = React.useRef(false);
   const w = unitWords();
   const base: Draft = { label: unit.label, factor: unit.factorToBase };
   const [draft, setDraft] = React.useState<Draft>(base);
@@ -179,22 +181,32 @@ function UnitNameRow({
               size="sm"
               aria-label={`Save ${unit.label}`}
               disabled={blocked || update.isPending || !valid}
-              onClick={() =>
-                update.mutate(
-                  {
-                    id: unit.id,
-                    label: draft.label.trim(),
-                    factorToBase: draft.factor ?? unit.factorToBase,
-                  },
-                  {
-                    onSuccess: (saved) => {
-                      // SA-810: the level saved, but its name was not added to the full unit list. Say so, once.
-                      const notice = unitNotListedNotice(saved);
-                      if (notice) toast({ title: notice, variant: "info" });
+              onClick={() => {
+                if (saving.current) return;
+                saving.current = true;
+                try {
+                  update.mutate(
+                    {
+                      id: unit.id,
+                      label: draft.label.trim(),
+                      factorToBase: draft.factor ?? unit.factorToBase,
                     },
-                  },
-                )
-              }
+                    {
+                      onSuccess: (saved) => {
+                        // SA-810: the level saved, but its name was not added to the full unit list. Say so, once.
+                        const notice = unitNotListedNotice(saved);
+                        if (notice) toast({ title: notice, variant: "info" });
+                      },
+                      onSettled: () => {
+                        saving.current = false;
+                      },
+                    },
+                  );
+                } catch (e) {
+                  saving.current = false;
+                  throw e;
+                }
+              }}
             >
               Save
             </Button>

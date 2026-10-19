@@ -27,7 +27,10 @@ const setup = (units: ProductUnitLevel[]) =>
 
 beforeEach(() => {
   jest.resetAllMocks();
-  updateMutate.mockImplementation((_b, o) => o?.onSuccess?.({}));
+  updateMutate.mockImplementation((_b, o) => {
+    o?.onSuccess?.({});
+    o?.onSettled?.();
+  });
 });
 
 describe("useDefaultOrderUnit", () => {
