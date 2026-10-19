@@ -30,6 +30,12 @@ import { PurchaseOrderItemDto } from "../inventory/dto/create-purchase-order.dto
 import { VariantAssignmentDto } from "../inventory/dto/variant-assign.dto";
 import { CompleteSetupDto } from "../import/dto/resolution.dto";
 import { CreateProductDto } from "../products/dto/create-product.dto";
+import {
+  IntakeInvoicingDto,
+  IntakeTaxComplianceDto,
+  validateSectionAnswers,
+} from "../onboarding/dto/intake-sections.dto";
+import { OnboardingDealTermsDto } from "../onboarding/dto/onboarding.dto";
 import { CreateSalesAgentDto } from "../sales-agents/sales-agents.controller";
 import { CreateTrackedCategoryDto } from "../tracked-categories/dto/create-tracked-category.dto";
 import { IsOptionalNotNull } from "./validators/optional-not-null";
@@ -88,6 +94,12 @@ export const NULL_ALLOWED_MONEY_FIELDS: Readonly<Record<string, string>> = {
   "UpdateProductUnitDto.priceTier5": "null clears a tier price",
   "UpdatePlanDefinitionDto.monthlyPrice": "null = custom (Enterprise) price (explicit ValidateIf)",
   "UpdatePlanDefinitionDto.annualPrice": "null = auto-fill from monthly (explicit ValidateIf)",
+  // ── onboarding forms (/public/onboarding/sections/save|submit, /platform-admin/onboarding/cases) ──────
+  "IntakeTaxComplianceDto.salesTaxRatePercent":
+    "no in-repo caller; an external form may send blank as null",
+  "IntakeInvoicingDto.depositPercent": "no in-repo caller; an external form may send blank as null",
+  "OnboardingDealTermsDto.setupFeeCents":
+    "no in-repo caller; an external form may send blank as null",
   // ── null is already "absent"/"no override", never $0 ───────────────────────────────────────────────
   "CreateOrderDto.commissionRatePct":
     "parseCommissionRatePct maps null to null = no per-order override (not 0)",
@@ -327,6 +339,36 @@ describe("kept null-tolerant fields behave as documented", () => {
 
   it("customer creditLimit: null still validates (it clears the limit)", async () => {
     expect(await messagesFor(UpdateCustomerDto, { creditLimit: null }, "creditLimit")).toEqual([]);
+  });
+
+  it.each([
+    ["salesTaxRatePercent", IntakeTaxComplianceDto],
+    ["depositPercent", IntakeInvoicingDto],
+    ["setupFeeCents", OnboardingDealTermsDto],
+  ] as const)("onboarding %s: null is accepted (validates) as absent", async (prop, Dto) => {
+    expect(await messagesFor(Dto, { [prop]: null }, prop)).toEqual([]);
+  });
+
+  it("onboarding sections: a null percent is stored as null, never as 0", async () => {
+    const tax = await validateSectionAnswers(
+      "TAX_COMPLIANCE",
+      { salesTaxRatePercent: null },
+      { partial: true },
+    );
+    expect(tax.salesTaxRatePercent).toBeNull();
+    const inv = await validateSectionAnswers(
+      "INVOICING",
+      { depositPercent: null },
+      { partial: true },
+    );
+    expect(inv.depositPercent).toBeNull();
+  });
+
+  it("onboarding deal terms: a null setupFeeCents prices as no setup fee (0), the same as omitted", () => {
+    const dto = plainToInstance(OnboardingDealTermsDto, { setupFeeCents: null });
+    expect(dto.setupFeeCents).toBeNull();
+    // computeSnapshot: `Number.isInteger(d.setupFeeCents) && d.setupFeeCents > 0 ? d.setupFeeCents : 0`
+    expect(Number.isInteger(dto.setupFeeCents) && dto.setupFeeCents! > 0).toBe(false);
   });
 
   it("product decimal strings: null becomes absent before validation, never a value", async () => {
