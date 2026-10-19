@@ -242,6 +242,30 @@ describe("FeatureConsole — tier change preview → confirm → apply (test 3)"
     expect(onChangePlan).toHaveBeenCalledWith("STARTER");
   });
 
+  it("a successful confirm closes the preview drawer (e2e 49 tier-change)", async () => {
+    const onChangePlan = jest.fn().mockResolvedValue(undefined);
+    mockPreview.mockResolvedValueOnce(previewFixture({ planKey: "STARTER" }));
+
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={onChangePlan}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+
+    fireEvent.change(screen.getByLabelText("Tier"), { target: { value: "STARTER" } });
+    fireEvent.click(screen.getByRole("button", { name: "Preview plan change" }));
+    await screen.findByText("Preview plan change", { selector: "h3" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(onChangePlan).toHaveBeenCalledWith("STARTER"));
+    await waitFor(() =>
+      expect(screen.queryByText("Preview plan change", { selector: "h3" })).not.toBeInTheDocument(),
+    );
+  });
+
   it("cancel closes the drawer and calls nothing", async () => {
     const onChangePlan = jest.fn();
     mockPreview.mockResolvedValueOnce(previewFixture({ planKey: "STARTER" }));

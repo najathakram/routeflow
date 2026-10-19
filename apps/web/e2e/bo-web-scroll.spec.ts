@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { freshSuperAdminSession } from "./helpers/auth";
 
 /**
  * BO-01: an admin page ends where its content ends. The console's sr-only spans are absolute; with no
@@ -10,6 +11,10 @@ const WIDTHS = [
   { width: 768, height: 1024 },
   { width: 390, height: 844 },
 ];
+
+test.beforeEach(async ({ page }) => {
+  await freshSuperAdminSession(page);
+});
 
 async function testTenantId(page: Page): Promise<string> {
   await page.goto("/admin/tenants");

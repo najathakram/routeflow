@@ -10,6 +10,7 @@
  * variable can never point this spec at a real site.
  */
 import { test, expect, type Page, type Route } from "@playwright/test";
+import { mockOverviewReads, mockUnmockedBackoffice } from "./helpers/bo-api-mocks";
 
 function baseUrl(): string {
   const value = process.env.PLAYWRIGHT_BASE_URL;
@@ -118,6 +119,10 @@ function fulfillJson(route: Route, body: unknown, status = 200) {
 /** Mocks the tenant shell + console; returns the list of feature-config writes the page made. */
 async function gotoConsole(page: Page) {
   const writes: string[] = [];
+  // Registered first so every route below wins: an unmocked read must never reach the real API (its 401
+  // wipes the fake token and redirects to /admin-login).
+  await mockUnmockedBackoffice(page);
+  await mockOverviewReads(page, TENANT_ID, { fulfilment_model: "ship", counter_sales: "unset" });
   await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}$`), (route) =>
     fulfillJson(route, {
       id: TENANT_ID,
@@ -184,6 +189,8 @@ async function gotoConsole(page: Page) {
   );
   // Any write is recorded and refused: Cancel must leave this list empty.
   await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}/feature-config/`), (route) => {
+    // Reads fall through to mockOverviewReads; only writes are recorded and refused.
+    if (route.request().method() === "GET") return route.fallback();
     if (route.request().method() !== "OPTIONS") writes.push(route.request().method());
     return fulfillJson(route, { message: "unexpected write" }, 500);
   });

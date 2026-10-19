@@ -469,7 +469,11 @@ for (const vp of VIEWPORTS) {
       await page.getByRole("button", { name: "Preview plan change" }).click();
       await expect(page.getByRole("heading", { name: "Preview plan change" })).toBeVisible();
       await expect(page.getByTestId("preview-diff")).toContainText("Recurring routes");
-      // Confirm calls the page's existing plan-change action — no separate write endpoint here.
+      // Confirm calls the page's existing plan-change action (PATCH /plan). Unmocked it 404s, the
+      // confirm rejects and the drawer correctly stays open with its error, so answer it here.
+      await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}/plan$`), (route) =>
+        fulfillJson(route, { ok: true }),
+      );
       await page.getByRole("button", { name: "Confirm" }).click();
       await expect(page.getByRole("heading", { name: "Preview plan change" })).not.toBeVisible();
     });

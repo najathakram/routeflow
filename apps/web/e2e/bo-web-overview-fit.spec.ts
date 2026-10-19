@@ -12,8 +12,13 @@
 
 import { test, expect, type Page } from "@playwright/test";
 import { HAS_SUPER_ADMIN_CREDS } from "./helpers/constants";
+import { freshSuperAdminSession } from "./helpers/auth";
 
 test.skip(!HAS_SUPER_ADMIN_CREDS, "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set");
+
+test.beforeEach(async ({ page }) => {
+  if (HAS_SUPER_ADMIN_CREDS) await freshSuperAdminSession(page);
+});
 
 /** The base URL comes from the environment only. Throws when unset: there is no default URL. */
 function requireBaseUrl(): string {
