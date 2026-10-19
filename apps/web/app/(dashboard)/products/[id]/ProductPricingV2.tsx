@@ -94,9 +94,19 @@ function PricingSection({
       {/* K13 P09: the Save bar rests directly under the grid it saves, not below the Customer view block. */}
       <PriceEditBar changePricesOpen={cp.open} />
       <PriceSaveStatus productId={product.id} surface="inline" />
-      <CustomerPriceView productId={product.id} />
+      <CustomerViewSlot productId={product.id} />
     </>
   );
+}
+
+/**
+ * K13: the Customer view steps aside while prices are edited inline and returns on Save or Cancel. The jump strip is
+ * built from the DOM, so its "Customer view" entry disappears with the section and comes back with it.
+ */
+export function CustomerViewSlot({ productId }: { productId: string }) {
+  const draft = usePriceDraft();
+  if (draft.editingIn === "inline") return null;
+  return <CustomerPriceView productId={productId} />;
 }
 
 /**
