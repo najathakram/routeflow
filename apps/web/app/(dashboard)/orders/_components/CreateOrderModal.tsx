@@ -1552,6 +1552,10 @@ export function CreateOrderModal({
   // reads. Overrides survive as typed; a failed read never blocks the resume (the lines keep what they had and a notice says so);
   // the server prices again at submit, so what is shown is what is billed.
   const [conflictBusy, setConflictBusy] = React.useState(false);
+  // SA-817a: when the draft conflicts and this session has a submit whose outcome is unknown, that submit is replayed FIRST with
+  // its original key (the order may already exist); only then is the user asked which version to keep.
+  const [replay, setReplay] = React.useState<"idle" | "running" | "done">("idle");
+  const lastSubmitRef = React.useRef<{ data: FormValues; options: SubmitOptions } | null>(null);
   const [pricesNotRefreshed, setPricesNotRefreshed] = React.useState(false);
   const resumePricesReady = priceLayer.ready && customerPricesData !== undefined;
   React.useEffect(() => {
@@ -1576,14 +1580,32 @@ export function CreateOrderModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumePricesReady, selectedCustomer?.id, lineItems.length, repriceTick]);
 
+  React.useEffect(() => {
+    if (!autosave.conflict) {
+      if (replay !== "idle") setReplay("idle");
+      return;
+    }
+    if (replay !== "idle") return;
+    const last = lastSubmitRef.current;
+    if (submitKey.hasUnknown() && last) {
+      setReplay("running");
+      if (submitOrder(last.data, last.options) !== true) setReplay("done");
+    } else {
+      setReplay("done");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autosave.conflict, replay]);
+
   // SA-817 A4: another device changed the draft after our last sync. Keep BOTH; the choice only picks which one is shown.
   const settleConflict = async (choice: "keep-mine" | "open-other") => {
     setConflictBusy(true);
     try {
-      const res = await autosave.resolveConflict(choice);
+      // A key that may already own an order (a submit was sent with it, or it came from a resumed draft) is never moved to a
+      // copy: Keep this one then keeps this version on the same draft and parks the other device's version instead.
+      const res = await autosave.resolveConflict(choice, { keepKey: submitKey.maybeUsed() });
       if (res.choice === "keep-mine") {
         const key = readDraftSubmitKey(res.payload);
-        if (key) submitKey.adopt(key);
+        if (key && !res.parkedDraftId) submitKey.adopt(key, { fresh: true });
         setActiveDraftId(res.draftId);
         toast({
           title: "Kept your version. The other one is still in your drafts.",
@@ -1775,7 +1797,8 @@ export function CreateOrderModal({
     // of the cart fingerprint: the merge-prompt round trip re-submits the SAME attempt.
     const { mergeChoice: _mc, idempotencyKey: _ik, ...cartForKey } = payload;
     const attemptKey = submitKey.begin(JSON.stringify(cartForKey));
-    if (attemptKey === null) return;
+    if (attemptKey === null) return false;
+    lastSubmitRef.current = { data, options };
     createOrder.mutate(
       { ...payload, idempotencyKey: attemptKey },
       {
@@ -1831,6 +1854,10 @@ export function CreateOrderModal({
                     variant: "success",
                   },
             );
+            // The order EXISTS: the bound draft is finished with (no zombie draft left to resubmit).
+            void autosave.finish().then((boundId) => {
+              if (boundId) deleteDraft.mutate(boundId);
+            });
             onClose();
             onViewOrder?.(heldOrderId);
             return;
@@ -1866,8 +1893,11 @@ export function CreateOrderModal({
           // Returns section. The modal itself stays open (no onClose() on this path already).
           if (inlineReturn) returnSave.onError(err, false);
         },
+        // SA-817a: a replay triggered by a draft conflict is over, whatever its outcome.
+        onSettled: () => setReplay((r) => (r === "running" ? "done" : r)),
       },
     );
+    return true;
   };
 
   /**
@@ -3076,7 +3106,7 @@ export function CreateOrderModal({
       />
       {/* SA-817 A4: the draft changed on another device after our last sync. */}
       <DraftConflictDialog
-        open={!!autosave.conflict}
+        open={!!autosave.conflict && replay === "done"}
         busy={conflictBusy}
         onChoose={(choice) => void settleConflict(choice)}
       />

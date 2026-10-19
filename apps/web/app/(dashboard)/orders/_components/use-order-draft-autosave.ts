@@ -233,8 +233,8 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
   }, [mirror]);
 
   const resolveConflict = React.useCallback(
-    async (choice: ConflictChoice): Promise<ConflictResolution> => {
-      const resolution = await engineRef.current!.resolveConflict(choice);
+    async (choice: ConflictChoice, opts?: { keepKey?: boolean }): Promise<ConflictResolution> => {
+      const resolution = await engineRef.current!.resolveConflict(choice, opts);
       setConflict(null);
       if (resolution.choice === "open-other") void mirror?.remove(localIdRef.current);
       return resolution;
