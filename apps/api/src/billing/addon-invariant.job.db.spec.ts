@@ -41,7 +41,15 @@ describeDb("SA-788 (b) the daily add-on invariant (real Postgres)", () => {
           { planKey: "GROWTH", name: "Growth", monthlyPrice: 249 },
           { planKey: "SCALE", name: "Scale", monthlyPrice: 499 },
         ],
-        addons: [{ sku: "REGULATED_ITEMS", name: "Regulated items", monthlyPrice: 39 }],
+        addons: [
+          // I3 needs a SKU the SCALE plan bundles; a fresh spec DB has no genesis catalog to say so
+          {
+            sku: "REGULATED_ITEMS",
+            name: "Regulated items",
+            monthlyPrice: 39,
+            includedAtPlan: "SCALE",
+          },
+        ],
       },
       SPEC,
     );

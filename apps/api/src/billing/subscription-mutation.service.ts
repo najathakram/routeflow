@@ -85,7 +85,7 @@ import {
 } from "./addon-inclusion";
 import { addonCatalogInvalid } from "./addon-catalog-invalid";
 import { updateAddonRowTx, updateAddonRowsTx, upsertAddonRowTx } from "./tenant-addon-writer";
-import { inclusionCatalogFor, pinPlanVersionTx } from "./plan-version-pin";
+import { inclusionCatalogFor, pinPlanVersionTx, resolvePlanVersionId } from "./plan-version-pin";
 import { dunningZone } from "./dunning-zone";
 import { formatInZone } from "./subscription-billing-extras";
 import { stripeSubscriptionPeriod } from "./stripe-period";

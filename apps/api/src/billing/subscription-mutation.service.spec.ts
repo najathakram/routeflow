@@ -1927,6 +1927,8 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     const prisma = {
       tenantAddon,
       tenantSubscription: { findUnique: jest.fn().mockResolvedValue(BILLED_SUB) },
+      // SA-815a: the included-in-plan refusal reads the tenant's pin
+      tenant: { findUnique: jest.fn().mockResolvedValue({ plan: "TEAM", planVersionId: null }) },
       $transaction: jest.fn(async (fn: any) =>
         fn({
           tenantAddon,
