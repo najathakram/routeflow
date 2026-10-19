@@ -3850,7 +3850,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   item.qty === undefined &&
                   item.boxes == null &&
                   item.pieces == null &&
-                  item.unitPrice === undefined &&
+                  item.unitPrice == null &&
                   (item.overrideReason !== undefined || item.notes !== undefined);
                 if (isReasonOrNotesOnly) {
                   await tx.orderItem.update({
@@ -3935,7 +3935,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 if (qty <= 0) continue;
 
                 const existingUnitPrice = Number(li.unitPrice);
-                const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+                const overridePrice = item.unitPrice != null ? Number(item.unitPrice) : null;
                 const tierForProduct =
                   tierCaller && li.productId
                     ? (operatorCpMap.get(li.productId) ?? operatorDefaultTier)
@@ -4101,7 +4101,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // silently zeroing shipping (the fee-wipe regression).
         const isStaffFeeEdit =
           (user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN) &&
-          dto.shippingFee !== undefined;
+          dto.shippingFee != null;
         const shippingFee = isStaffFeeEdit
           ? roundMoney(Math.max(0, dto.shippingFee!))
           : roundMoney(Number((order as any).shippingFee ?? 0));

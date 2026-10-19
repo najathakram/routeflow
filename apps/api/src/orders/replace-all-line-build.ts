@@ -190,7 +190,7 @@ export function buildReplaceAllLineData(
   if (qty <= 0) return null;
 
   const catalogPrice = Number(product.pricePerUnit);
-  const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+  const overridePrice = item.unitPrice != null ? Number(item.unitPrice) : null;
   // B60 (REG-B60): a client price that is ABSENT or merely ECHOES this
   // line's pre-edit BOGO snapshot price (tolerance 0.005 — float/decimal
   // round-trip, not an override decision) is not a repricing decision —

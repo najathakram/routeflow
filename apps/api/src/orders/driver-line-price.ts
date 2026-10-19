@@ -34,4 +34,4 @@ export const linesPriceAtCustomerTier = (user: Caller): boolean =>
 export const typedLinePrice = (
   user: Caller,
   sent: number | string | null | undefined,
-): number | null => (isDriverCaller(user) || sent === undefined ? null : Number(sent));
+): number | null => (isDriverCaller(user) || sent == null ? null : Number(sent));
