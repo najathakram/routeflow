@@ -480,6 +480,48 @@ describe("VendorBillsService — supplier payment allocation (WP2)", () => {
       });
     });
 
+    it("B291: bulkDelete takes ONE credit lock over every draw's credit before any per-bill refund", async () => {
+      const events: string[] = [];
+      const lockValues: unknown[][] = [];
+      const real = (prisma.tenantTransaction as jest.Mock).getMockImplementation()!;
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any, ...rest: any[]) =>
+        real(
+          (tx: any) =>
+            fn({
+              ...tx,
+              $executeRaw: jest.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+                if (strings.join("?").includes('"SupplierCredit"')) {
+                  events.push("lock");
+                  lockValues.push(values);
+                }
+                return 0;
+              }),
+            }),
+          ...rest,
+        ),
+      );
+      prisma.vendorBill.findMany.mockResolvedValue([
+        { id: "bill-1", status: "DRAFT", billNumber: "B1" },
+        { id: "bill-2", status: "DRAFT", billNumber: "B2" },
+      ] as any);
+      prisma.billPayment.findMany.mockResolvedValue([
+        { id: "pay-1", amount: D(30), supplierCreditId: "credit-9" },
+        { id: "pay-2", amount: D(10), supplierCreditId: "credit-2" },
+      ] as any);
+      (prisma.supplierCredit as any).findUnique.mockImplementation(async (a: any) => {
+        events.push("read");
+        return { id: a.where.id, amount: D(50), balance: D(0) };
+      });
+
+      await service.bulkDelete(["bill-1", "bill-2"]);
+
+      // One lock, first (the per-bill refunds re-lock the same rows, which is a no-op in Postgres).
+      expect(events[0]).toBe("lock");
+      expect(events.indexOf("lock")).toBeLessThan(events.indexOf("read"));
+      expect(lockValues[0][0]).toBe("test-tenant");
+      expect(lockValues[0][2]).toEqual(["credit-9", "credit-2"]);
+    });
+
     it("restores drawn credit when a DRAFT bill is deleted outright", async () => {
       prisma.vendorBill.findUnique.mockResolvedValue(drawnBill("DRAFT") as any);
       stubDraws();

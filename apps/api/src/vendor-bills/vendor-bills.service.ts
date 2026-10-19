@@ -3038,6 +3038,16 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       const skipped = bills.filter((b) => b.status !== "DRAFT" && b.status !== "VOID");
       if (deletable.length > 0) {
         const deletableIds = deletable.map((b) => b.id);
+        // B291: take ONE sorted lock over every credit any of these bills drew from, BEFORE the
+        // per-bill refunds. Locking per bill takes credits in bill order, which can invert against a
+        // concurrent create that locks the same credits in (receivedAt, id) order (40P01).
+        const allDraws = await tx.billPayment.findMany({
+          where: { vendorBillId: { in: deletableIds }, supplierCreditId: { not: null } },
+          select: { supplierCreditId: true },
+        });
+        await lockSupplierCredits(tx, this.prisma.getTenantId(), {
+          creditIds: (allDraws ?? []).map((d: any) => d.supplierCreditId),
+        });
         // Same reason as delete(): auto-applied credit goes back before the
         // draw rows are destroyed. Already-VOID bills refunded nothing left.
         for (const billId of deletableIds) {
