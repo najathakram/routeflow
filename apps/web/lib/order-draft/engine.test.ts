@@ -328,4 +328,180 @@ describe("order draft engine (SA-817 A)", () => {
       );
     });
   });
+
+  describe("single-flight PATCH (SA-817 review)", () => {
+    const ISO = (n: number) => `2026-10-19T10:00:${String(n).padStart(2, "0")}.000Z`;
+
+    /** A server with real compare-and-set semantics and a slow link. */
+    function fakeServer(opts: { latencyMs: number; loseFirstResponse?: boolean }) {
+      let clock = 0;
+      let updatedAt = ISO(clock);
+      let stored: DraftPayload | null = null;
+      let inFlight = 0;
+      let peak = 0;
+      let lost = !!opts.loseFirstResponse;
+      const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      const createDraft = jest.fn(async (input: { payload: DraftPayload }) => {
+        stored = input.payload;
+        updatedAt = ISO(++clock);
+        return { id: "d1", updatedAt };
+      });
+      const updateDraft = jest.fn(
+        async (input: { payload: DraftPayload; expectedUpdatedAt?: string }) => {
+          inFlight += 1;
+          peak = Math.max(peak, inFlight);
+          try {
+            await wait(opts.latencyMs);
+            if (input.expectedUpdatedAt && input.expectedUpdatedAt !== updatedAt) {
+              throw draftChanged({ id: "d1", updatedAt, payload: stored as never });
+            }
+            stored = input.payload;
+            updatedAt = ISO(++clock);
+            if (lost) {
+              lost = false;
+              throw networkError(); // committed, but the response never arrived
+            }
+            return { id: "d1", updatedAt };
+          } finally {
+            inFlight -= 1;
+          }
+        },
+      );
+      return { createDraft, updateDraft, peak: () => peak, stored: () => stored };
+    }
+
+    function engineOn(server: ReturnType<typeof fakeServer>) {
+      const onConflict = jest.fn();
+      const engine = createOrderDraftEngine({
+        localId: "L1",
+        createDraft: server.createDraft as never,
+        updateDraft: server.updateDraft as never,
+        parseConflict: (err) =>
+          (err as { response?: { data?: { current?: ServerDraftSnapshot } } })?.response?.data
+            ?.current ?? null,
+        mintKey: () => "K-NEW",
+        onConflict,
+      });
+      return { engine, onConflict };
+    }
+
+    it("a slow link (> 900 ms): a timer save overlapping flush({force}) sends ONE PATCH at a time and raises no 409", async () => {
+      const server = fakeServer({ latencyMs: 1500 });
+      const { engine, onConflict } = engineOn(server);
+      engine.update(payload(1), META, true, true);
+      await jest.advanceTimersByTimeAsync(DRAFT_AUTOSAVE_MS);
+      engine.update(payload(2), META, true, true);
+      await jest.advanceTimersByTimeAsync(DRAFT_AUTOSAVE_MS); // PATCH #1 starts and is still in flight
+      await jest.advanceTimersByTimeAsync(100);
+      engine.update(payload(3), META, true, true);
+      const flushed = engine.flush({ force: true }); // Minimize while PATCH #1 is in flight
+      await jest.advanceTimersByTimeAsync(9000);
+      await flushed;
+      expect(server.peak()).toBe(1);
+      expect(onConflict).not.toHaveBeenCalled();
+      expect(engine.conflict).toBeNull();
+      expect(server.stored()).toEqual(payload(3));
+    });
+
+    it("a committed-but-lost PATCH: the next save recognises its own write in the 409, adopts its updatedAt and re-sends - no dialog", async () => {
+      const server = fakeServer({ latencyMs: 10, loseFirstResponse: true });
+      const { engine, onConflict } = engineOn(server);
+      engine.update(payload(1), META, true, true);
+      await jest.advanceTimersByTimeAsync(DRAFT_AUTOSAVE_MS);
+      engine.update(payload(2), META, true, true);
+      await jest.advanceTimersByTimeAsync(DRAFT_AUTOSAVE_MS); // PATCH(p2) commits, its response is lost
+      engine.update(payload(3), META, true, true);
+      await jest.advanceTimersByTimeAsync(DRAFT_AUTOSAVE_MS); // PATCH(p3) -> 409 (our own p2) -> adopt -> PATCH(p3)
+      await jest.advanceTimersByTimeAsync(100);
+      expect(onConflict).not.toHaveBeenCalled();
+      expect(engine.conflict).toBeNull();
+      expect(server.stored()).toEqual(payload(3));
+      expect(server.updateDraft).toHaveBeenCalledTimes(3);
+    });
+
+    it("a committed-but-lost PATCH whose payload is already the latest is simply done", async () => {
+      const server = fakeServer({ latencyMs: 10, loseFirstResponse: true });
+      const { engine, onConflict } = engineOn(server);
+      engine.update(payload(1), META, true, true);
+      await jest.advanceTimersByTimeAsync(DRAFT_AUTOSAVE_MS);
+      engine.update(payload(2), META, true, true);
+      await jest.advanceTimersByTimeAsync(DRAFT_AUTOSAVE_MS);
+      const flushed = engine.flush(); // Minimize while the lost-response PATCH is in flight, then the retry sees our own p2
+      await jest.advanceTimersByTimeAsync(100);
+      await flushed;
+      expect(onConflict).not.toHaveBeenCalled();
+      expect(server.stored()).toEqual(payload(2));
+    });
+
+    it("another device's write is still a conflict (its payload is not one this device sent)", async () => {
+      const server = fakeServer({ latencyMs: 10 });
+      const { engine, onConflict } = engineOn(server);
+      engine.update(payload(1), META, true, true);
+      await jest.advanceTimersByTimeAsync(DRAFT_AUTOSAVE_MS);
+      // device B writes through the same server behind our back
+      const bWrite = server.updateDraft({ payload: payload(7, "K-B") } as never);
+      await jest.advanceTimersByTimeAsync(20);
+      await bWrite;
+      engine.update(payload(2), META, true, true);
+      await jest.advanceTimersByTimeAsync(DRAFT_AUTOSAVE_MS + 50);
+      expect(onConflict).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("Keep this one when this device's submit key may already own an order", () => {
+    const theirs: ServerDraftSnapshot = {
+      id: "d1",
+      updatedAt: T(9),
+      customerId: "c1",
+      customerName: "Acme",
+      title: "Order, Acme",
+      payload: { ...(payload(5, "K-1") as object), from: "device-b" },
+    };
+
+    async function conflicted() {
+      const s = setup();
+      s.engine.update(payload(1), META, true, true);
+      await jest.advanceTimersByTimeAsync(DRAFT_AUTOSAVE_MS);
+      s.updateDraft.mockRejectedValue(draftChanged(theirs));
+      s.engine.update(payload(2), META, true, true);
+      await jest.advanceTimersByTimeAsync(DRAFT_AUTOSAVE_MS);
+      return s;
+    }
+
+    it("keepKey: this version stays on the SAME draft with its ORIGINAL key; the other device's version is parked as a new draft with a new key", async () => {
+      const { engine, createDraft, updateDraft } = await conflicted();
+      createDraft.mockClear();
+      updateDraft.mockClear();
+      createDraft.mockResolvedValueOnce({ id: "d2", updatedAt: T(7) });
+      updateDraft.mockResolvedValueOnce({ id: "d1", updatedAt: T(8) });
+
+      const res = await engine.resolveConflict("keep-mine", { keepKey: true });
+
+      const parked = (createDraft.mock.calls[0][0] as { payload: DraftPayload }).payload;
+      expect(readDraftSubmitKey(parked)).toBe("K-NEW");
+      expect(parked).toMatchObject({ from: "device-b" }); // theirs survives
+      expect(updateDraft).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "d1", payload: payload(2), expectedUpdatedAt: T(9) }),
+      );
+      expect(
+        readDraftSubmitKey((updateDraft.mock.calls[0][0] as { payload: DraftPayload }).payload),
+      ).toBe("K-1");
+      expect(res).toEqual(
+        expect.objectContaining({ choice: "keep-mine", draftId: "d1", parkedDraftId: "d2" }),
+      );
+      expect(engine.draftId).toBe("d1");
+      expect(engine.conflict).toBeNull();
+      expect(engine.serverUpdatedAt).toBe(T(8));
+    });
+
+    it("keepKey: if the other device wrote AGAIN meanwhile, the conflict re-opens (nothing is overwritten)", async () => {
+      const { engine, createDraft, updateDraft, onConflict } = await conflicted();
+      createDraft.mockResolvedValueOnce({ id: "d2", updatedAt: T(7) });
+      const newer = { ...theirs, updatedAt: T(9), payload: { ...theirs.payload, again: true } };
+      updateDraft.mockRejectedValueOnce(draftChanged(newer));
+      await expect(engine.resolveConflict("keep-mine", { keepKey: true })).rejects.toBeDefined();
+      expect(engine.conflict).toEqual({ mine: payload(2), current: newer });
+      expect(onConflict).toHaveBeenCalledTimes(2);
+    });
+  });
 });
