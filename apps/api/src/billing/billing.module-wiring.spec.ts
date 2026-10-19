@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import { Global, Module } from "@nestjs/common";
+import { JwtModule } from "@nestjs/jwt";
 import { ConfigModule } from "@nestjs/config";
 import { Test } from "@nestjs/testing";
 import { PrismaService } from "../prisma/prisma.service";
@@ -8,6 +9,10 @@ import { CommonModule } from "../common/common.module";
 import { TenantModule } from "../tenant/tenant.module";
 import { FeatureConfigModule } from "./feature-config.module";
 import { PlatformAdminModule } from "../platform-admin/platform-admin.module";
+import { PlatformAdminService } from "../platform-admin/platform-admin.service";
+import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import { TenantMirrorService } from "../platform-admin/tenant-mirror.service";
+import { EmailModule } from "../email/email.module";
 import { RfInvoicesAdminService } from "../platform-admin/rf-invoices.service";
 import { BillingModule } from "./billing.module";
 import { BillingService } from "./billing.service";
@@ -109,6 +114,38 @@ describe("BillingModule wiring: the @Optional collaborators are really provided"
     try {
       const svc = moduleRef.get(RfInvoicesAdminService, { strict: false }) as any;
       expect(svc.catchup).toBeInstanceOf(CatchupClaimService);
+    } finally {
+      await moduleRef.close();
+    }
+  });
+
+  it("SA-815 B2: PlatformAdminService.mutations (@Optional) is the REAL SubscriptionMutationService in the built module", async () => {
+    // The same collaborators PlatformAdminModule gives the service, minus its controllers and the async JWT
+    // factory that needs the app config. The injection is @Optional: a missed wiring would silently skip the
+    // admin-path add-on billing (the updatePlan down-move, enable and un-comp pricing).
+    const providers: unknown[] = Reflect.getMetadata("providers", PlatformAdminModule);
+    expect(providers).toContain(PlatformAdminService);
+    @Module({
+      imports: [JwtModule.register({ secret: "wiring-spec" }), EmailModule, BillingModule],
+      providers: [PlatformAdminService, PlatformConfigService, TenantMirrorService],
+    })
+    class AdminServiceWiring {}
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        StubPrismaModule,
+        AuditModule,
+        CommonModule,
+        TenantModule,
+        FeatureConfigModule,
+        AdminServiceWiring,
+      ],
+    }).compile();
+    try {
+      const admin = moduleRef.get(PlatformAdminService, { strict: false }) as any;
+      const mutations = moduleRef.get(SubscriptionMutationService, { strict: false });
+      expect(admin.mutations).toBeInstanceOf(SubscriptionMutationService);
+      expect(admin.mutations).toBe(mutations);
     } finally {
       await moduleRef.close();
     }
