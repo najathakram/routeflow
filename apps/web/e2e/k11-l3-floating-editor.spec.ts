@@ -243,19 +243,19 @@ for (const vp of VIEWPORTS) {
         expect(posts, "exactly one S9 write").toHaveLength(1);
         expect(unitPatchesWithPrice, "no unit PATCH carries a price").toEqual([]);
 
-        // The three places a price shows follow, with no reload.
+        // The two places a price shows follow, with no reload. Under v2 the Details card has no price line.
         const cardFigure = card(page).getByTestId(`price-figure-${was.ref}-1`);
         const grid = page.getByTestId("units-v2-grid");
         const details = page.getByTestId("details-price-line");
         await expect(cardFigure).toContainText(money(next));
         await expect(grid).toContainText(money(next));
-        await expect(details).toContainText(money(next));
+        await expect(details).toHaveCount(0);
         await shot(page, info, "k11-20c-saved");
 
         await line.getByRole("button", { name: /Undo/ }).click();
         await expect(cardFigure).toContainText(money(was.retail));
         await expect(grid).toContainText(money(was.retail));
-        await expect(details).toContainText(money(was.retail));
+        await expect(details).toHaveCount(0);
       });
     });
 
