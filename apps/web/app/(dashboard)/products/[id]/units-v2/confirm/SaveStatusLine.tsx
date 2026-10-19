@@ -206,14 +206,18 @@ const prefersReducedMotion = () =>
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** "3 prices" / "1 price and 2 customer prices", from the inverse's LENGTHS only (no money math). */
-export function savedDetail(undo: LastSave["undo"]): string {
+export function savedDetail(undo: LastSave["undo"], follows = 0): string {
   const n = undo?.patches.length ?? 0;
   const m = undo?.customerMoves.length ?? 0;
   const parts = [
     n ? plural(n, "price", "prices") : "",
     m ? plural(m, "customer price", "customer prices") : "",
   ];
-  return parts.filter(Boolean).join(" and ");
+  const set = parts.filter(Boolean).join(" and ");
+  // K12 F05: the Auto prices that followed Change prices' set prices, in the unit the panel counted.
+  return set && follows > 0
+    ? `${set}; ${follows} Auto price${follows === 1 ? "" : "s"} followed`
+    : set;
 }
 
 /**
@@ -247,7 +251,7 @@ export function PriceSaveStatusLine({
   live.current = state.auditId;
 
   const auditId = lastSave?.auditId ?? null;
-  const detail = savedDetail(lastSave?.undo);
+  const detail = savedDetail(lastSave?.undo, lastSave?.follows);
   React.useEffect(() => {
     if (auditId) dispatch({ type: "saved", auditId, summary: detail });
     else dispatch({ type: "cleared" });
@@ -317,10 +321,27 @@ export function PriceSaveStatusLine({
     refocusUndo.current = false;
   }, [phase]);
 
+  // K13 F12: a new save puts focus on the line (the Save button just left the page), so Undo is the next Tab stop. Only
+  // when focus has nowhere to be (a user who moved on keeps theirs), and never scrolling: the line is pinned in view.
+  // That focus is not the user "being in" the line, so it does not hold the 5 s pin (a Tab onto Undo does).
+  const autoFocus = React.useRef(false);
+  const savedAudit = phase === "saved" ? state.auditId : null;
+  React.useEffect(() => {
+    if (!savedAudit) return;
+    const a = document.activeElement;
+    if (a && a !== document.body) return;
+    autoFocus.current = true;
+    lineRef.current?.focus({ preventScroll: true });
+    autoFocus.current = false;
+  }, [savedAudit]);
+
+  // Row 614: `busy` is state, stale inside one tick; this ref is set synchronously so a double click runs one Undo.
+  const running = React.useRef(false);
   const run = async (confirmed: boolean, skip?: UndoSkipCell[]) => {
     const mine = state.auditId;
-    if (!mine || busy) return;
+    if (!mine || busy || running.current) return;
     if (confirmed && (state.revision === undefined || !state.priceState)) return;
+    running.current = true;
     dispatch({ type: "busy" });
     try {
       const out = await undo(
@@ -353,6 +374,8 @@ export function PriceSaveStatusLine({
       if (live.current !== mine) return;
       refocusUndo.current = true;
       dispatch({ type: "failed" });
+    } finally {
+      running.current = false;
     }
   };
 
@@ -382,7 +405,9 @@ export function PriceSaveStatusLine({
           }
           onMouseEnter={() => setHover(true)}
           onMouseLeave={() => setHover(false)}
-          onFocus={() => setFocusIn(true)}
+          onFocus={() => {
+            if (!autoFocus.current) setFocusIn(true);
+          }}
           onBlur={(e) => {
             if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusIn(false);
           }}

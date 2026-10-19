@@ -41,9 +41,15 @@ function useBarScrollPadding() {
     if (!main || height === 0) return;
     const before = main.style.getPropertyValue("scroll-padding-bottom");
     main.style.setProperty("scroll-padding-bottom", `${height}px`);
+    // K13 P10/P11: the content under the sticky bar is padded by the bar's height, so the last card scrolls clear of it.
+    const padBefore = main.style.getPropertyValue("padding-bottom");
+    const pad = Number(getComputedStyle(main).paddingBottom.replace("px", ""));
+    main.style.setProperty("padding-bottom", `${(Number.isFinite(pad) ? pad : 0) + height}px`);
     return () => {
       if (before) main.style.setProperty("scroll-padding-bottom", before);
       else main.style.removeProperty("scroll-padding-bottom");
+      if (padBefore) main.style.setProperty("padding-bottom", padBefore);
+      else main.style.removeProperty("padding-bottom");
     };
   }, [height]);
   return ref;
@@ -54,9 +60,14 @@ const FINISH_FIRST = "Finish Change prices first.";
 const SAVE_PAUSED = "Save is paused while Change prices is open.";
 
 /** K11-15: right after Change prices Apply the bar says what is staged; any later edit is the plain count. */
-const countLine = (count: number, lead: string | null) =>
+// K12 F05: the Auto prices that follow are named, so this count and the panel's "N prices will change" add up.
+const countLine = (count: number, lead: string | null, follows = 0) =>
   lead
-    ? `${lead}: ${count} price${count === 1 ? "" : "s"} ready. Save to keep ${count === 1 ? "it" : "them"}.`
+    ? `${lead}: ${count} price${count === 1 ? "" : "s"} ready${
+        follows > 0
+          ? `, and ${follows} Auto price${follows === 1 ? "" : "s"} follow${follows === 1 ? "s" : ""}`
+          : ""
+      }. Save to keep ${count === 1 ? "it" : "them"}.`
     : `${count} unsaved`;
 
 /**
@@ -169,7 +180,9 @@ export function PriceEditBar({
             // K11-18: the wider "Finish Change prices first." link would squeeze this onto two lines at phone width
             // (+4 px of bar height); beside the open panel it is stale anyway, so below sm it is read, not shown.
             <span className={changePricesOpen ? "max-sm:sr-only" : undefined}>
-              {d.count === 0 ? "Nothing changed yet" : countLine(d.count, d.appliedLead)}
+              {d.count === 0
+                ? "Nothing changed yet"
+                : countLine(d.count, d.appliedLead, d.appliedFollows)}
             </span>
           )}
           {told && changePricesOpen && <span className="sr-only">{SAVE_PAUSED}</span>}
@@ -234,7 +247,7 @@ export function PriceEditBar({
             <button
               type="button"
               onClick={() => document.getElementById(`change-panel${sfx}`)?.focus()}
-              className="rounded text-sm font-medium text-navy underline underline-offset-2 hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
+              className="rounded text-sm font-medium text-navy hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
             >
               {FINISH_FIRST}
             </button>

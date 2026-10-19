@@ -115,10 +115,29 @@ describe("K11-15: after Apply the bar says what is staged and focus goes to Save
     await user.click(screen.getByRole("button", { name: "Apply" }));
     expect(screen.queryByTestId(P.changePanel)).toBeNull();
     expect(within(screen.getByTestId(T.ebText)).getByText(/Case raised 5%/).textContent).toBe(
-      "Case raised 5%: 1 price ready. Save to keep it.",
+      "Case raised 5%: 1 price ready, and 2 Auto prices follow. Save to keep it.",
     );
     expect(barText()).not.toMatch(/unsaved/);
     expect(document.activeElement).toBe(document.getElementById(T.ebSave));
+  });
+
+  it("K12 F05: the bar names the Auto prices that follow, in the unit the panel counted", async () => {
+    const user = userEvent.setup();
+    mount();
+    await raiseCaseFivePercent(user);
+    const willChange = Number(
+      /(\d+) prices? will change/.exec(
+        screen.getByText(/prices? will change/).textContent ?? "",
+      )![1],
+    );
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    const m =
+      /^Case raised 5%: 1 price ready, and (\d+) Auto prices? follows?\. Save to keep it\./.exec(
+        barText(),
+      );
+    expect(m).not.toBeNull();
+    // Set + Auto = everything the panel said would change.
+    expect(1 + Number(m![1])).toBe(willChange);
   });
 
   it("no render shows staged prices without the sentence (no one-frame unsaved flash)", async () => {
@@ -156,7 +175,9 @@ describe("K11-15: after Apply the bar says what is staged and focus goes to Save
     await user.selectOptions(screen.getByLabelText("By"), "amount");
     await user.type(screen.getByLabelText("Amount"), "0.5");
     await user.click(screen.getByRole("button", { name: "Apply" }));
-    expect(barText()).toMatch(/^Case lowered \$0\.50: \d+ prices? ready\. Save to keep /);
+    expect(barText()).toMatch(
+      /^Case lowered \$0\.50: \d+ prices? ready(?:, and \d+ Auto prices? follows?)?\. Save to keep /,
+    );
   });
 
   it("says prices and 'them' when more than one is staged", async () => {
@@ -165,7 +186,9 @@ describe("K11-15: after Apply the bar says what is staged and focus goes to Save
     await raiseCaseFivePercent(user);
     await user.click(screen.getByRole("checkbox", { name: /Also raise the prices you set/ }));
     await user.click(screen.getByRole("button", { name: "Apply" }));
-    expect(barText()).toMatch(/^Case raised 5%: [2-9] prices ready\. Save to keep them\./);
+    expect(barText()).toMatch(
+      /^Case raised 5%: [2-9] prices ready(?:, and \d+ Auto prices? follows?)?\. Save to keep them\./,
+    );
   });
 
   it("a second Apply on the same draft adds to the sentence", async () => {

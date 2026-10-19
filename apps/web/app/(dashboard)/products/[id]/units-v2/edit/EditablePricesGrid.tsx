@@ -74,6 +74,12 @@ export function EditablePricesGrid({
   // Every row family-governed (each says `editable: false`): nothing to edit or change here.
   const anyEditable = d.grid?.rows.some((r) => r.editable) ?? true;
   const pendingFocus = d.api.focus;
+  // K13 F05/F12: the audit id of an inline save this render reports (null otherwise).
+  const savedHere =
+    surface === "inline" && d.lastSave?.surface === "inline" ? d.lastSave.auditId : null;
+  const lastSaved = React.useRef<string | null>(null);
+  const justSaved = savedHere !== null && savedHere !== lastSaved.current;
+  lastSaved.current = savedHere;
   React.useEffect(() => {
     if (editing && !was.current) {
       // K11-13: a price the user opened (Enter or a click on it) is the target, recorded by `begin` before this render.
@@ -94,6 +100,7 @@ export function EditablePricesGrid({
     if (
       !editing &&
       was.current &&
+      !justSaved && // K13 F12: after a save the saved line takes the focus (Undo is then the next Tab)
       (!document.activeElement || document.activeElement === document.body)
     ) {
       editBtn.current?.focus({ preventScroll: true });
@@ -102,9 +109,26 @@ export function EditablePricesGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
 
+  // K13 F05/F11: a save collapses the editor (order unit, the reserved slot and the bar leave the flow in one commit), and
+  // the page could end up away from the grid. Once that commit is laid out, a grid whose top left the viewport is
+  // scrolled back to the top; one still in view is left alone. Checked again a frame later, after the refetch settles.
+  React.useLayoutEffect(() => {
+    if (!savedHere) return undefined;
+    const keep = () => {
+      const el = root.current;
+      if (!el?.isConnected) return;
+      const top = el.getBoundingClientRect().top;
+      if (top < 0 || top > window.innerHeight) el.scrollIntoView?.({ block: "start" });
+    };
+    keep();
+    if (typeof requestAnimationFrame === "undefined") return undefined;
+    const raf = requestAnimationFrame(keep);
+    return () => cancelAnimationFrame(raf);
+  }, [savedHere]);
+
   return (
     <AddUnitIntentProvider>
-      <div ref={root} className="relative">
+      <div ref={root} data-testid="units-v2-grid-root" className="relative">
         {editing && surface === "inline" && <SkipToSave />}
         <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
           {editing && surface === "inline" && (
@@ -154,7 +178,12 @@ export function EditablePricesGrid({
           addUnitPointers={surface !== "window"}
         />
         {editing && <OrderUnitDraft />}
-        {editing && d.plan && <AlsoUpdatePanel plan={d.plan.plan} />}
+        {/* K12 F13: the panel's slot is held from the first keystroke, so typing a price never shoves the page down. */}
+        {editing && (
+          <div data-testid="also-update-slot" className="min-h-[8rem]">
+            {d.plan && <AlsoUpdatePanel plan={d.plan.plan} />}
+          </div>
+        )}
       </div>
     </AddUnitIntentProvider>
   );
