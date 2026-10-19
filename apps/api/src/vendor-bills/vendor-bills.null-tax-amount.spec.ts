@@ -171,6 +171,19 @@ describe("VendorBillsService.update — a null taxAmount keeps the stored tax (r
     expect(taxWritten()).toBe(8);
   });
 
+  it("SA: the rebuild prices a line exactly as create/update do (unitCost ?? unitPrice, qty || 1)", async () => {
+    // A stored row has no unitPrice column, so this pins the shared rule with a unitPrice-only row.
+    prisma.vendorBill.findUnique.mockResolvedValue({
+      ...legacy,
+      items: [
+        { id: "i1", qtyReceived: null, qty: 2, unitCost: null, unitPrice: 20 },
+        { id: "i2", qtyReceived: null, qty: null, unitCost: 10 },
+      ],
+    });
+    await service.update("bill-1", { taxAmount: 8 });
+    expect(totalWritten()).toBe(58); // 2 x 20 + 1 x 10 + the new 8, not 10 + 8
+  });
+
   it("NIT: the rebuilt total goes through the money invariants like an items edit (negative -> 400)", async () => {
     prisma.vendorBill.findUnique.mockResolvedValue({
       ...legacy,

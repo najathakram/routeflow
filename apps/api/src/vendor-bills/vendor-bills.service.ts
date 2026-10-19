@@ -10,6 +10,7 @@ import {
   UnprocessableEntityException,
 } from "@nestjs/common";
 import { lockBillRows, lockSupplierCredits } from "./bill-locks";
+import { billLinesTotal } from "./bill-lines-total";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -400,11 +401,7 @@ export class VendorBillsService {
     // Calculate totalOwed from line items if provided, otherwise use dto.totalOwed
     let preTaxOwed = dto.totalOwed ?? 0;
     if (dto.items && Array.isArray(dto.items) && dto.items.length > 0) {
-      preTaxOwed = dto.items.reduce(
-        (sum: number, item: any) =>
-          sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
-        0,
-      );
+      preTaxOwed = billLinesTotal(dto.items);
     }
     const billTaxAmount = Number(dto.taxAmount) || 0;
     // Sales tax on the supplier invoice is owed too (the scan flow passes it as
@@ -1029,11 +1026,7 @@ export class VendorBillsService {
     // later total uses the saved value.
     const newTax = dto.taxAmount != null ? roundMoney(Number(dto.taxAmount) || 0) : undefined;
     if (dto.items && Array.isArray(dto.items)) {
-      const itemsTotal = dto.items.reduce(
-        (sum: number, item: any) =>
-          sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
-        0,
-      );
+      const itemsTotal = billLinesTotal(dto.items);
       const tax = newTax ?? Number(bill.taxAmount ?? 0);
       totalOwed = roundMoney(itemsTotal + tax);
 
@@ -1049,10 +1042,7 @@ export class VendorBillsService {
         // A NULL stored tax is "unknown": a legacy bill may already carry its tax inside totalOwed,
         // and adding the new tax to that would count it twice. Rebuild the total from the lines
         // (the same sum an items edit uses), so the tax is replaced, never added.
-        const lines = bill.items.reduce(
-          (sum: number, i: any) => sum + (Number(i.qty) || 1) * Number(i.unitCost ?? 0),
-          0,
-        );
+        const lines = billLinesTotal(bill.items);
         totalOwed = roundMoney(lines + newTax);
         assertMoneyInvariantsOrThrow({ subtotal: lines, tax: newTax, total: totalOwed });
       } else {
