@@ -168,6 +168,8 @@
 //                    add-on the tenant's plan already bundles, `includedAtPlan`). Both are `body.code` of the refusal and also `refusal.code`
 //                    of GET /billing/proration-preview (billing "REFUSED"), so the confirm sheet and the enable call agree. Clients show
 //                    the body's fixed copy or their own, never a Stripe message.
+//   B808 — ADVANCE_CUSTOMER_MISMATCH (customers): the 400 of an advance-payment apply whose invoice belongs to a different
+//                    customer than the advance (value == key); nothing is written.
 //   M11 (stackable add-on quantity) — the enable body's `quantity` is the TARGET total, so a stale page could cut a pack.
 //                    ADDON_QUANTITY_CHANGED (409: `expectedQuantity` no longer matches the stored quantity; nothing was changed, refetch),
 //                    ADDON_QUANTITY_NOT_INCREASED (409: a call carrying `expectedQuantity` is a buy-more and its target is not above it),
@@ -486,6 +488,8 @@ export const API_ERROR_CODES = {
   HANDOFF_ROLE_NOT_ALLOWED: "HANDOFF_ROLE_NOT_ALLOWED",
   REGULATED_AUTH_REQUIRED: "REGULATED_AUTH_REQUIRED",
   WALLET_LOCK_BUSY: "WALLET_LOCK_BUSY",
+  /** An advance payment can only be applied to an invoice of its own customer (customers). 400. */
+  ADVANCE_CUSTOMER_MISMATCH: "ADVANCE_CUSTOMER_MISMATCH",
   PROMOTION_ZERO_PRICE: "PROMOTION_ZERO_PRICE",
   UNEXPLAINED_DIFFS: "UNEXPLAINED_DIFFS",
   INTAKE_ANSWERS_INVALID: "INTAKE_ANSWERS_INVALID",
