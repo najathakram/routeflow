@@ -6,6 +6,8 @@ import { CreateFamilyDto, UpdateFamilyVariantsDto } from "./dto/family.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ProductFamiliesService } from "./product-families.service";
 import { ACTOR, T, makeTx, product, row } from "./product-code-release.fake-tx";
+import * as labelWriter from "../product-categories/label-writer";
+import * as productNameRules from "./product-name-rules";
 
 /**
  * WS8 families API (SA-606): unit cases over the in-memory fake tx. The real-PG races live in product-families.db.spec.ts.
@@ -1096,5 +1098,57 @@ describe("B998: a formula-led VARIANT name's refusal names the offending row (ad
       ),
     );
     expect(JSON.stringify(body)).not.toContain("EVIL");
+  });
+});
+
+describe("SA-823: the one family creator and the family-name reservation", () => {
+  it("T7: createFamilyContainer creates one non-sellable FAMILY (unit each, no sku/barcode/stock, active) in the given tx and syncs its category once", async () => {
+    const { service, tx } = build();
+    const sync = jest.spyOn(labelWriter, "syncCategoryLabel");
+    const before = tx.products.length;
+    const fam = (await service.createFamilyContainer(tx as never, {
+      name: "Soda",
+      category: "Drinks",
+      pricePerUnit: "1.00",
+      description: "Fizzy",
+      standardCost: "0.5000",
+      actorId: ACTOR,
+    })) as { id: string };
+    expect(tx.products).toHaveLength(before + 1);
+    const row = tx.products.find((p) => p.id === fam.id) as Record<string, unknown>;
+    expect(row).toMatchObject({
+      name: "Soda",
+      kind: "FAMILY",
+      unit: "each",
+      parentProductId: null,
+      isActive: true,
+      category: "Drinks",
+      description: "Fizzy",
+    });
+    expect(row.sku ?? null).toBeNull();
+    expect(row.barcode ?? null).toBeNull();
+    expect(row).not.toHaveProperty("currentStock");
+    expect(sync).toHaveBeenCalledTimes(1);
+    expect(sync.mock.calls[0][0]).toBe(tx);
+    expect(sync.mock.calls[0][1]).toMatchObject({ productId: fam.id, text: "Drinks" });
+    sync.mockRestore();
+  });
+
+  it("T9: reserveFamilyName locks the name and refuses a taken root name with the existing code", async () => {
+    const { service, tx } = build({ products: [product({ id: "h1", name: "Soda" })] });
+    const lock = jest.spyOn(productNameRules, "lockProductName");
+    const taken = await service.reserveFamilyName(tx as never, T, "soda");
+    expect(lock).toHaveBeenCalledTimes(1);
+    expect(lock).toHaveBeenCalledWith(tx, T, null, "soda");
+    expect(taken).toEqual([
+      expect.objectContaining({
+        row: "family",
+        field: "name",
+        reason: API_ERROR_CODES.NAME_TAKEN,
+        conflictProductId: "h1",
+      }),
+    ]);
+    expect(await service.reserveFamilyName(tx as never, T, "Juice")).toEqual([]);
+    lock.mockRestore();
   });
 });

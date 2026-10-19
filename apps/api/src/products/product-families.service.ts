@@ -203,6 +203,59 @@ export class ProductFamiliesService {
     return out;
   }
 
+  /**
+   * SA-823: reserve a FAMILY name inside the caller's transaction: the existing root-scope name lock (house order: codes ->
+   * name -> rows) plus the root-name `nameTakenBy` check, returned as conflicts. A WRAPPER over product-name-rules; it adds
+   * no second lock. createFamily and the import both call it before createFamilyContainer.
+   */
+  async reserveFamilyName(
+    tx: CatalogTx,
+    tenantId: string,
+    name: string,
+  ): Promise<FamilyRowConflict[]> {
+    await lockProductName(tx, tenantId, null, name);
+    return nameTakenBy(tx, tenantId, [{ row: "family", name, parentProductId: null }]);
+  }
+
+  /**
+   * SA-823: THE one writer of a FAMILY row (kind FAMILY, unit each, no sku/barcode/stock, parentProductId null, active)
+   * plus its one add-only category-label sync, in the caller's tx. PRECONDITION: the caller holds the family-name lock
+   * and has checked the name is free (reserveFamilyName) and ran assertSafeProductNames; it does not lock codes.
+   */
+  async createFamilyContainer(
+    tx: CatalogTx,
+    input: {
+      name: string;
+      category?: string | null;
+      pricePerUnit: string;
+      description?: string | null;
+      standardCost?: string;
+      actorId?: string | null;
+    },
+  ) {
+    const family = await tx.product.create({
+      data: {
+        name: input.name,
+        unit: "each",
+        pricePerUnit: input.pricePerUnit,
+        ...(input.standardCost !== undefined ? { standardCost: input.standardCost } : {}),
+        category: input.category ?? null,
+        description: input.description ?? null,
+        kind: "FAMILY",
+        parentProductId: null,
+        isActive: true,
+      },
+    });
+    // Add-only label sync from the family's category text (the variants carry none), same tx.
+    await syncCategoryLabel(tx, {
+      productId: family.id,
+      tenantId: this.tenant(),
+      text: family.category,
+      actor: { id: input.actorId ?? null, name: null },
+    });
+    return family;
+  }
+
   /** POST /products/families */
   async createFamily(dto: CreateFamilyDto, actorId: string | null) {
     const tenantId = this.tenant();
@@ -256,7 +309,7 @@ export class ProductFamiliesService {
           tenantId,
           codes.map((c) => c.value),
         );
-        await lockProductName(tx, tenantId, null, familyName);
+        const familyNameConflicts = await this.reserveFamilyName(tx, tenantId, familyName);
         const conflicts: FamilyRowConflict[] = [
           ...familyGridConflicts(
             variantRows.map((v) => ({
@@ -268,9 +321,7 @@ export class ProductFamiliesService {
             })),
           ),
           ...(await codeTakenBy(tx, tenantId, codes)),
-          ...(await nameTakenBy(tx, tenantId, [
-            { row: "family", name: familyName, parentProductId: null },
-          ])),
+          ...familyNameConflicts,
         ];
         if (conflicts.length > 0) throw this.rowsConflict(conflicts);
         // #2860 claim semantics (Opus #2881 B2): a legacy INACTIVE holder still holds its code LIVE; release it (one
@@ -285,25 +336,13 @@ export class ProductFamiliesService {
           });
         }
 
-        const family = await tx.product.create({
-          data: {
-            name: familyName,
-            unit: "each",
-            pricePerUnit: familyPrice,
-            ...(familyCost !== undefined ? { standardCost: cost4(familyCost) } : {}),
-            category: dto.family.category ?? null,
-            description: dto.family.description ?? null,
-            kind: "FAMILY",
-            parentProductId: null,
-            isActive: true,
-          },
-        });
-        // Add-only label sync from the family's category text (the variants carry none), same tx.
-        await syncCategoryLabel(tx, {
-          tenantId,
-          productId: family.id,
-          text: family.category,
-          actor: { id: actorId, name: null },
+        const family = await this.createFamilyContainer(tx, {
+          name: familyName,
+          category: dto.family.category,
+          pricePerUnit: familyPrice,
+          description: dto.family.description,
+          standardCost: familyCost !== undefined ? cost4(familyCost) : undefined,
+          actorId,
         });
         const variants: Array<{ id: string; name: string }> = [];
         for (const v of dto.variants) {
