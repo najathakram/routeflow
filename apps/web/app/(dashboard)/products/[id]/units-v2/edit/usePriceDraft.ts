@@ -155,6 +155,8 @@ export interface PriceDraft {
     revision: number;
     undo: SavePricesResponse["undo"];
     surface: EditSurface;
+    /** K12 F05: Auto prices that followed the Apply this save kept (the saved line names them). */
+    follows?: number;
   } | null;
   undo: () => void;
   /** A strict-undo conflict as a preview row: customer, tier-first unit label, money as shown. Display only. */
@@ -432,7 +434,13 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     const surface = surfaceRef.current ?? "inline";
     save.mutate(req, {
       onSuccess: (res) => {
-        const saved = { auditId: res.auditId, revision: res.revision, undo: res.undo, surface };
+        const saved = {
+          auditId: res.auditId,
+          revision: res.revision,
+          undo: res.undo,
+          surface,
+          ...(appliedFollows > 0 ? { follows: appliedFollows } : {}),
+        };
         setLastSave(saved);
         hooksRef.current.onSaved?.(saved);
         setUndoStale(false);

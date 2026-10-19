@@ -206,14 +206,18 @@ const prefersReducedMotion = () =>
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** "3 prices" / "1 price and 2 customer prices", from the inverse's LENGTHS only (no money math). */
-export function savedDetail(undo: LastSave["undo"]): string {
+export function savedDetail(undo: LastSave["undo"], follows = 0): string {
   const n = undo?.patches.length ?? 0;
   const m = undo?.customerMoves.length ?? 0;
   const parts = [
     n ? plural(n, "price", "prices") : "",
     m ? plural(m, "customer price", "customer prices") : "",
   ];
-  return parts.filter(Boolean).join(" and ");
+  const set = parts.filter(Boolean).join(" and ");
+  // K12 F05: the Auto prices that followed Change prices' set prices, in the unit the panel counted.
+  return set && follows > 0
+    ? `${set}; ${follows} Auto price${follows === 1 ? "" : "s"} followed`
+    : set;
 }
 
 /**
@@ -247,7 +251,7 @@ export function PriceSaveStatusLine({
   live.current = state.auditId;
 
   const auditId = lastSave?.auditId ?? null;
-  const detail = savedDetail(lastSave?.undo);
+  const detail = savedDetail(lastSave?.undo, lastSave?.follows);
   React.useEffect(() => {
     if (auditId) dispatch({ type: "saved", auditId, summary: detail });
     else dispatch({ type: "cleared" });
