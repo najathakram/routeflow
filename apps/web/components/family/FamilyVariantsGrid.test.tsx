@@ -236,3 +236,26 @@ describe("FamilyVariantsGrid read-only reads like a product list (K11-24)", () =
     expect(screen.queryByRole("link", { name: "Strawberry" })).toBeNull();
   });
 });
+
+describe("FamilyVariantsGrid focusId (K13 F18)", () => {
+  const saved = (): GridRow[] =>
+    rows(3).map((r, i) => ({ ...r, id: `v${i + 1}` }) as GridRow);
+
+  it("scrolls the target variant row into view, focuses its link and marks it for a moment", () => {
+    const scroll = jest.fn();
+    Element.prototype.scrollIntoView = scroll;
+    setup({ readOnly: true, rows: saved(), focusId: "v2" });
+    const link = screen.getByRole("link", { name: "V2" });
+    expect(document.activeElement).toBe(link);
+    expect(scroll).toHaveBeenCalled();
+    expect(link.closest("tr")).toHaveAttribute("data-focused-variant", "true");
+    expect(screen.getByRole("link", { name: "V1" }).closest("tr")).not.toHaveAttribute(
+      "data-focused-variant",
+    );
+  });
+
+  it("does nothing when no row matches", () => {
+    setup({ readOnly: true, rows: saved(), focusId: "nope" });
+    expect(document.querySelector("[data-focused-variant]")).toBeNull();
+  });
+});

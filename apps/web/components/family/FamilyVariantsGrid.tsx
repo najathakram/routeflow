@@ -81,6 +81,7 @@ export function FamilyVariantsGrid({
   disabled = false,
   showCostHint = true,
   maxRows = MAX_FAMILY_ROWS,
+  focusId,
 }: {
   rows: GridRow[];
   onChange: (rows: GridRow[]) => void;
@@ -93,7 +94,23 @@ export function FamilyVariantsGrid({
   showCostHint?: boolean;
   /** The create form caps the grid at 200; a saved family's cap is on the REQUEST, not its row count. */
   maxRows?: number;
+  /** K13 F18: a saved variant to bring into view (scroll, focus its link, mark it briefly) on arrival. */
+  focusId?: string;
 }) {
+  const [marked, setMarked] = React.useState<string | null>(focusId ?? null);
+  const tableRef = React.useRef<HTMLTableSectionElement>(null);
+  React.useEffect(() => {
+    if (!focusId) return;
+    const row = Array.from(tableRef.current?.querySelectorAll<HTMLElement>("[data-variant-id]") ?? []).find(
+      (el) => el.dataset.variantId === focusId,
+    );
+    if (!row) return;
+    setMarked(focusId);
+    row.scrollIntoView?.({ block: "center" });
+    row.querySelector<HTMLElement>("a")?.focus({ preventScroll: true });
+    const t = window.setTimeout(() => setMarked(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [focusId, rows.length]);
   const atCap = rows.length >= maxRows;
   // K12: a saved family with no SKU / barcode / unit code on any variant drops those empty columns.
   const columns = readOnly
@@ -125,12 +142,15 @@ export function FamilyVariantsGrid({
               {!readOnly && <th className="w-10 px-2 py-2" aria-label="Remove" />}
             </tr>
           </thead>
-          <tbody>
+          <tbody ref={tableRef}>
             {rows.map((r, i) => (
               <tr
                 key={r.key}
+                data-variant-id={r.id || undefined}
+                data-focused-variant={r.id && r.id === marked ? "true" : undefined}
                 className={cn(
                   "border-t border-surface-border align-top",
+                  r.id && r.id === marked && "bg-brand-500/10 transition-colors",
                   readOnly && r.id && "relative hover:bg-surface-raised/60",
                 )}
               >

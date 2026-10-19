@@ -1304,7 +1304,14 @@ export default function ProductsPage() {
             setShowCreate(false);
             setNewVariantParentId(undefined);
           }}
-          onCreated={(created) => router.push(`/products/${created.id}`)}
+          onCreated={(created) =>
+            // K13 F18: a variant opens its FAMILY with the new row in view; a standalone product opens itself.
+            router.push(
+              created.parentProductId
+                ? `/products/${created.parentProductId}?variant=${created.id}`
+                : `/products/${created.id}`,
+            )
+          }
           units={existingUnits}
           defaultParentId={newVariantParentId}
         />
