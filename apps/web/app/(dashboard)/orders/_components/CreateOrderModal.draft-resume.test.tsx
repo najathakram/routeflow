@@ -63,11 +63,18 @@ jest.mock("@/lib/api/tracked-categories", () => ({ useTrackedCategories: () => (
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => false }));
 
 let mockServerDrafts: unknown[] = [];
+// GET /products/:id - today's tier columns per product; null = the read fails (offline).
+let mockProductNow: Record<string, Record<string, unknown>> | null = {};
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
-    get: jest.fn((url: string) =>
-      Promise.resolve({ data: url === "/drafts" ? mockServerDrafts : { taxRate: 0 } }),
-    ),
+    get: jest.fn((url: string) => {
+      const m = /^\/products\/([^/]+)$/.exec(url);
+      if (m) {
+        const row = mockProductNow?.[m[1]];
+        return row ? Promise.resolve({ data: row }) : Promise.reject(new Error("Network Error"));
+      }
+      return Promise.resolve({ data: url === "/drafts" ? mockServerDrafts : { taxRate: 0 } });
+    }),
     post: jest.fn(),
     patch: jest.fn(),
     delete: jest.fn(),
@@ -163,6 +170,7 @@ beforeEach(() => {
   mockUser = { id: "u1", tenantId: "t1", role: "OPERATOR" };
   mockServerDrafts = [];
   mockLoadedDraft = undefined;
+  mockProductNow = {};
   storage = createMemoryDraftStorage();
   setDraftMirrorStorage(storage);
   mockCreateDraft.mockImplementation(() => NEVER()); // the server is unreachable unless a test says otherwise
@@ -275,7 +283,7 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
           unitPrice: 10,
           priceType: "STANDARD",
           qty: 1,
-          tierPrices: { pricePerUnit: 12 }, // today's price is $12
+          tierPrices: { pricePerUnit: 10 }, // the snapshot parked with the line: STALE
         },
         {
           tempId: "t2",
@@ -288,7 +296,7 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
           overrideReason: "Damaged box",
           priceType: "DISCOUNTED",
           qty: 1,
-          tierPrices: { pricePerUnit: 12 },
+          tierPrices: { pricePerUnit: 10 },
         },
       ],
       orderDiscount: "",
@@ -318,7 +326,11 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
       await m.flush();
     }
 
-    it("A5: parked at $10 with today's price $12 shows $12 and 'Price changed since you started'; a typed override with its reason survives", async () => {
+    it("A5: parked at $10, the product's tier column is now $12 (the snapshot still says $10): shows $12 and 'Price changed since you started'; a typed override with its reason survives", async () => {
+      mockProductNow = {
+        p1: { id: "p1", pricePerUnit: "12" },
+        p2: { id: "p2", pricePerUnit: "12" },
+      };
       await seedParked();
       post.mockResolvedValue({ data: { id: "o1" } });
       renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
@@ -341,7 +353,42 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
       });
     });
 
+    it("A5 offline: the product reads fail - resume still works, the lines stay as parked, and the screen says prices were not refreshed", async () => {
+      mockProductNow = null;
+      await seedParked();
+      post.mockResolvedValue({ data: { id: "o1" } });
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      await screen.findByText("Resume your unsent order?");
+      fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+      await screen.findByText("Widget p1");
+      expect(await screen.findByTestId("prices-not-refreshed")).toHaveTextContent(
+        "Prices not refreshed. They are checked again when you submit.",
+      );
+      expect(screen.queryByTestId("price-changed-note")).not.toBeInTheDocument();
+      // never blocks: the order can still be submitted
+      fireEvent.click(createBtn());
+      await waitFor(() => expect(orderPosts()).toHaveLength(1));
+    });
+
+    it("A5: when every read works there is no 'not refreshed' notice", async () => {
+      mockProductNow = {
+        p1: { id: "p1", pricePerUnit: "10" },
+        p2: { id: "p2", pricePerUnit: "12" },
+      };
+      await seedParked();
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      await screen.findByText("Resume your unsent order?");
+      fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+      await screen.findByText("Widget p1");
+      await flush();
+      expect(screen.queryByTestId("prices-not-refreshed")).not.toBeInTheDocument();
+    });
+
     it("A6: a resumed draft keeps its own submit key", async () => {
+      mockProductNow = {
+        p1: { id: "p1", pricePerUnit: "10" },
+        p2: { id: "p2", pricePerUnit: "12" },
+      };
       await seedParked();
       post.mockResolvedValue({ data: { id: "o1" } });
       renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
