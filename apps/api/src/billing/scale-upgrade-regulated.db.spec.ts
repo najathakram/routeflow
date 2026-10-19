@@ -34,6 +34,7 @@ import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { RegulatedController } from "../regulated/regulated.controller";
@@ -243,6 +244,7 @@ describeDb(
         .compile();
       app = moduleRef.createNestApplication();
       await app.init();
+      await listenOnLoopback(app);
     });
 
     afterAll(async () => {
