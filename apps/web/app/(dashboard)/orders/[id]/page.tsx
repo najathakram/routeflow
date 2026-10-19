@@ -734,8 +734,11 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
       : null,
     unit: li.product?.unit ?? "",
     packUnit: li.product?.unit ?? undefined,
-    packUnitsPerBox:
-      li.product?.unitsPerBox ?? (isUnitLine ? undefined : (li.unitsPerBox ?? undefined)),
+    // Row 620: a legacy boxed line's own sale-time size wins over the live product (a repack after the sale must not
+    // re-denominate a Piece pick). A unit line's snapshot is the picked unit's factor, so it keeps the live pack.
+    packUnitsPerBox: isUnitLine
+      ? (li.product?.unitsPerBox ?? undefined)
+      : (li.unitsPerBox ?? li.product?.unitsPerBox ?? undefined),
     unitLabel: li.unitLabel ?? undefined,
     priceType: li.priceType,
   };
