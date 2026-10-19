@@ -44,22 +44,36 @@ export function numericColumns(models: readonly ModelLike[]): string[] {
 const stripSqlComments = (sql: string) =>
   sql.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
 
-/** "Table.column" covered by a not-NaN CHECK after replaying `sqls` in order. */
+/**
+ * "Table.column" covered by a not-NaN CHECK after replaying `sqls` in order, statement by statement and action by
+ * action: `ADD CONSTRAINT "<n>" CHECK ("<col>" <> 'NaN')` covers; `DROP CONSTRAINT "<n>"`, `DROP [COLUMN] "<col>"`
+ * and `DROP TABLE "<t>"` uncover (a column re-added later needs its CHECK again).
+ */
 export function coveredColumns(sqls: readonly string[]): Set<string> {
   const byName = new Map<string, string>(); // "Table\0constraint" -> "Table.column"
+  const forget = (pred: (key: string, col: string) => boolean) => {
+    for (const [k, v] of [...byName]) if (pred(k, v)) byName.delete(k);
+  };
+  const stmtRe =
+    /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?"([^"]+)"([\s\S]*?);|DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([^;]*);/gi;
+  const actionRe =
+    /ADD\s+CONSTRAINT\s+"([^"]+)"\s+CHECK\s*\(\s*"([^"]+)"\s*<>\s*'NaN'(?:::numeric)?\s*\)|DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"([^"]+)"|DROP\s+(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?"([^"]+)"/gi;
   for (const raw of sqls) {
     const sql = stripSqlComments(raw);
-    const stmtRe = /ALTER\s+TABLE\s+(?:ONLY\s+)?(?:IF\s+EXISTS\s+)?"([^"]+)"([\s\S]*?);/gi;
     let s: RegExpExecArray | null;
     while ((s = stmtRe.exec(sql))) {
+      if (s[3] !== undefined) {
+        const dropped = new Set(Array.from(s[3].matchAll(/"([^"]+)"/g), (m) => m[1]));
+        forget((k) => dropped.has(k.split("\0")[0]));
+        continue;
+      }
       const [, table, body] = s;
-      const addRe =
-        /ADD\s+CONSTRAINT\s+"([^"]+)"\s+CHECK\s*\(\s*"([^"]+)"\s*<>\s*'NaN'(?:::numeric)?\s*\)/gi;
       let a: RegExpExecArray | null;
-      while ((a = addRe.exec(body))) byName.set(`${table}\0${a[1]}`, `${table}.${a[2]}`);
-      const dropRe = /DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"([^"]+)"/gi;
-      let d: RegExpExecArray | null;
-      while ((d = dropRe.exec(body))) byName.delete(`${table}\0${d[1]}`);
+      while ((a = actionRe.exec(body))) {
+        if (a[1] !== undefined) byName.set(`${table}\0${a[1]}`, `${table}.${a[2]}`);
+        else if (a[3] !== undefined) byName.delete(`${table}\0${a[3]}`);
+        else forget((_k, col) => col === `${table}.${a[4]}`);
+      }
     }
   }
   return new Set(byName.values());
@@ -144,6 +158,40 @@ describe("SA-816 (d)1: every NUMERIC column has a CHECK (col <> 'NaN')", () => {
           `ALTER TABLE "thing_table" DROP CONSTRAINT "thing_table_price_not_nan";`,
         ]),
       ).toEqual(["thing_table.price"]);
+    });
+
+    it("a later DROP COLUMN uncovers it, and a re-add needs its CHECK again", () => {
+      const drop = `ALTER TABLE "thing_table" DROP COLUMN "price";`;
+      expect(missingNotNanChecks(fixture, [covers, drop])).toEqual(["thing_table.price"]);
+      expect(
+        missingNotNanChecks(fixture, [
+          covers,
+          drop,
+          `ALTER TABLE "thing_table" ADD COLUMN "price" DECIMAL(10,2);`,
+        ]),
+      ).toEqual(["thing_table.price"]);
+      expect(
+        missingNotNanChecks(fixture, [
+          covers,
+          drop,
+          `ALTER TABLE "thing_table" ADD COLUMN "price" DECIMAL(10,2),
+  ADD CONSTRAINT "thing_table_price_not_nan" CHECK ("price" <> 'NaN'::numeric) NOT VALID;`,
+        ]),
+      ).toEqual([]);
+    });
+
+    it("a later DROP TABLE uncovers every column of that table only", () => {
+      const other = covers.replace(/thing_table"/, 'other"');
+      expect(
+        missingNotNanChecks(fixture, [
+          covers,
+          other,
+          `DROP TABLE IF EXISTS "thing_table" CASCADE;`,
+        ]),
+      ).toEqual(["thing_table.price", "thing_table.rate_col"]);
+      expect(coveredColumns([covers, other, `DROP TABLE "thing_table";`])).toEqual(
+        new Set(["other.price", "other.rate_col"]),
+      );
     });
   });
 });

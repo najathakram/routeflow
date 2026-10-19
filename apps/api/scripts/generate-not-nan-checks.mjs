@@ -61,13 +61,21 @@ export function readSchemaFolder(dir = SCHEMA_DIR) {
     .join("\n");
 }
 
-/** Deterministic constraint name, at most 63 bytes. */
+/**
+ * Deterministic constraint name, at most 63 BYTES (Postgres's NAMEDATALEN - 1, counted in bytes, not characters). Past
+ * that: the longest whole-character prefix that fits, then `_<8-hex sha1 of the full name>_not_nan`.
+ */
 export function constraintName(table, column) {
   const full = `${table}_${column}_not_nan`;
   if (Buffer.byteLength(full) <= MAX_IDENT) return full;
   const hash = createHash("sha1").update(full).digest("hex").slice(0, 8);
-  const keep = MAX_IDENT - "_not_nan".length - hash.length - 1;
-  return `${full.slice(0, keep)}_${hash}_not_nan`;
+  const keep = MAX_IDENT - Buffer.byteLength(`_${hash}_not_nan`);
+  let prefix = "";
+  for (const ch of full) {
+    if (Buffer.byteLength(prefix + ch) > keep) break;
+    prefix += ch;
+  }
+  return `${prefix}_${hash}_not_nan`;
 }
 
 /** Sorted, de-duplicated columns grouped by table: Map<table, column[]>. */
@@ -97,20 +105,32 @@ export function renderMigration(cols) {
 -- replaces the B296 folder: two more "lineTaxRate" columns). Once applied it is immutable: a later Decimal column adds
 -- its own CHECK in its own folder (src/common/numeric-not-nan-check.spec.ts names every column without one).
 --
--- NOT VALID: no table scan, and existing rows are NOT checked (the four InvoiceItem.categoryTaxAmount NaN rows of
--- SA-816 stay until the R593 repair). Postgres enforces the CHECK on every INSERT and on every UPDATE from the moment
--- this commits, so an UPDATE of a row that still holds NaN fails unless the same UPDATE replaces the NaN. VALIDATE is a
--- SEPARATE later folder, per column, after a census reads 0 NaN (SA-816 (d)1).
+-- NOT VALID: no table scan, and existing rows are NOT checked (SA-816's 101 InvoiceItem.categoryTaxAmount NaN
+-- lines on 4 invoices stay until the R593 repair). Postgres enforces the CHECK on every INSERT and on every UPDATE
+-- from the moment this commits, so an UPDATE of a row that still holds NaN fails unless the same UPDATE replaces the
+-- NaN. VALIDATE is a SEPARATE later folder, per column, after a census reads 0 NaN (SA-816 (d)1).
 -- CHECKs are raw SQL (Prisma does not model them), so the schema and the drift gate are unaffected (the T6 precedent,
 -- 20260920220000_t6_tenantid_check_not_valid).
 --
--- LOCK PROFILE: ONE transaction, ONE ALTER TABLE per table (all its CHECKs in one statement). Each ALTER takes a brief
--- ACCESS EXCLUSIVE lock (metadata-only: no scan, no rewrite), and every lock is held until COMMIT, so run it off-peak.
--- \`SET LOCAL lock_timeout = '5s'\` bounds each WAIT; a wait past 5s (or a deadlock with live traffic) rolls the WHOLE
--- file back (nothing half-added; recorded FAILED: recover with
--- \`prisma migrate resolve --rolled-back ${FOLDER}\` from apps/api, then re-run; NEVER \`--applied\`).
+-- LOCK PROFILE: ONE transaction (the T6 precedent), ONE ALTER TABLE per table (all its CHECKs in one statement). Each
+-- ALTER takes a brief ACCESS EXCLUSIVE lock (metadata-only: no scan, no rewrite), and every lock is held until COMMIT.
+-- \`SET LOCAL lock_timeout = '5s'\` bounds each WAIT; a wait past 5s (or a deadlock with live traffic) aborts the
+-- statement and the WHOLE folder rolls back cleanly: no constraint is left half-added and no data is touched. It is
+-- recorded FAILED: recover with
+-- \`prisma migrate resolve --rolled-back ${FOLDER}\` from apps/api, then re-run it;
+-- NEVER \`--applied\`.
 --
--- Rollback (instant, no data touched): ALTER TABLE "<t>" DROP CONSTRAINT "<t>_<col>_not_nan"; per constraint below.
+-- RUNBOOK PRE-STEP (before applying, read-only): run it OFF-PEAK, and first check pg_stat_activity for long-running
+-- or idle-in-transaction sessions (any one holding a lock on these tables makes an ACCESS EXCLUSIVE wait, and every
+-- reader queues behind that wait), e.g.
+--   SELECT pid, state, now() - xact_start AS xact_age, left(query, 60) FROM pg_stat_activity
+--    WHERE datname = current_database() AND pid <> pg_backend_pid()
+--      AND (state = 'idle in transaction' OR now() - xact_start > interval '30 seconds');
+-- and confirm no pg_dump / backup is still running (it holds ACCESS SHARE on every table until it finishes). Apply
+-- only when that returns nothing; otherwise wait (or ask the owner) and re-check.
+--
+-- Rollback (instant, no data touched): ALTER TABLE "<t>" DROP CONSTRAINT "<name>"; for each constraint below. The
+-- name is "<t>_<col>_not_nan", or, past 63 bytes, a prefix + "_<8-hex>_not_nan": copy the exact names from below.
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
@@ -156,6 +176,9 @@ model B {
   if (Buffer.byteLength(long) > MAX_IDENT || !long.endsWith("_not_nan"))
     throw new Error("long name");
   if (long !== constraintName("T".repeat(40), "c".repeat(40))) throw new Error("not deterministic");
+  const wide = constraintName("é".repeat(40), "c"); // 2 bytes per char: truncation counts bytes, never splits a char
+  if (Buffer.byteLength(wide) > MAX_IDENT || !/^é+_[0-9a-f]{8}_not_nan$/.test(wide))
+    throw new Error(`multibyte name: ${wide}`);
   const sql = renderMigration(decimalColumns(schema));
   if (!sql.includes(`ALTER TABLE "A"\n  ADD CONSTRAINT "A_price_not_nan"`)) throw new Error("sql");
   if (!sql.includes(`CHECK ("rate_col" <> 'NaN'::numeric) NOT VALID`)) throw new Error("sql map");
