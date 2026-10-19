@@ -89,9 +89,10 @@ function PricingSection({
           }
         />
       </div>
+      {/* K13 P09: the Save bar rests directly under the grid it saves, not below the Customer view block. */}
+      <PriceEditBar changePricesOpen={cp.open} />
       <PriceSaveStatus productId={product.id} surface="inline" />
       <CustomerPriceView productId={product.id} />
-      <PriceEditBar changePricesOpen={cp.open} />
     </>
   );
 }
