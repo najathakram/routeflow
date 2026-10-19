@@ -7,7 +7,7 @@
  * strict path refuses a non-finite amount with MONEY_INVARIANT; this is the same rule for scripts.
  *
  * `assertFiniteMoney(value, label)` returns `value` unchanged when it is a finite number, or a string / Decimal
- * (anything whose text is a plain finite decimal, which is what pg hands back for NUMERIC) that reads as one.
+ * (a Decimal object, or text that is a plain finite decimal, which is what pg hands back for NUMERIC) that reads as one.
  * It THROWS for NaN, +/-Infinity, undefined, null, '', 'NaN', and anything that is not a number. `null` is
  * refused too: a script that means to write SQL NULL binds a literal NULL and does not call this.
  *
@@ -28,9 +28,15 @@ function readNumber(value) {
   if (typeof value === "bigint") return Number(value);
   let text = null;
   if (typeof value === "string") text = value;
-  // A Decimal (Prisma / decimal.js) or any other object that prints as a number; a plain object prints as
-  // "[object Object]" and fails the pattern below.
-  else if (value !== null && typeof value === "object") text = String(value);
+  // A Decimal (Prisma / decimal.js): the only object accepted, recognised by `toFixed`. An array ([5] prints
+  // as "5"), a plain object and a Date are NOT money and are refused.
+  else if (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof value.toFixed === "function"
+  )
+    text = String(value);
   if (text === null) return NaN;
   const trimmed = text.trim();
   return DECIMAL_TEXT.test(trimmed) ? Number(trimmed) : NaN;

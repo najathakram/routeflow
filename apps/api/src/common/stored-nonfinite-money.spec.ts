@@ -29,6 +29,8 @@ import { carriedCategory } from "../orders/carry-line-category";
 const STORED_NAN: ReadonlyArray<[string, unknown]> = [
   ["the string 'NaN' (a raw pg row)", "NaN"],
   ["Prisma.Decimal('NaN') (a Prisma row)", new Prisma.Decimal("NaN")],
+  ["the string 'Infinity'", "Infinity"],
+  ["Prisma.Decimal('Infinity')", new Prisma.Decimal("Infinity")],
 ];
 
 const caught = (fn: () => unknown): unknown => {

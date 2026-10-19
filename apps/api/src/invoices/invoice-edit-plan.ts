@@ -309,7 +309,10 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
           taxRate: Number(row.taxRate ?? 0),
           subtotal: Number(row.subtotal),
           // SA-816: a stored non-finite levy is refused (400), never carried into the rewrite verbatim.
-          categoryTaxAmount: finiteStoredMoney(row.categoryTaxAmount, "Invoice line category tax"),
+          categoryTaxAmount: finiteStoredMoney(
+            row.categoryTaxAmount,
+            `Invoice line ${row.id} category tax`,
+          ),
           description: sentItem.description ?? row.description,
           notes: sentItem.notes ?? null,
           orderItemId: sentItem.orderItemId ?? row.orderItemId ?? null,

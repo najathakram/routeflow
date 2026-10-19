@@ -19,6 +19,7 @@ import { finiteStoredMoney } from "../common/money-invariants.util";
  * Returns null only when there is no source line, or it is another product (a genuinely new line).
  */
 export interface CarriedCategorySource {
+  id?: string | null;
   productId?: string | null;
   trackedCategoryId?: string | null;
   trackedSubcategoryId?: string | null;
@@ -41,7 +42,10 @@ export function carriedCategory(
       categoryTaxRate: null,
       categoryPriceIncludesTax: null,
       // SA-816: a stored non-finite levy is refused (400), never re-created on the folded line as NaN.
-      categoryTaxAmount: finiteStoredMoney(own.categoryTaxAmount, "Order line category tax"),
+      categoryTaxAmount: finiteStoredMoney(
+        own.categoryTaxAmount,
+        `Order line ${own.id ?? "?"} category tax`,
+      ),
     };
   }
   if (hasNullTrio(own as any)) {

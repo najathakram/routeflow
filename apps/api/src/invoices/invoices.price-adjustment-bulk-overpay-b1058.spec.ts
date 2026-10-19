@@ -352,6 +352,25 @@ describe("bulk re-price: the overpay judgment is a PRE-FLIGHT check (B1058)", ()
         /^1 of 1 invoices were updated; invoice INV-1 was updated, but its follow-up sync \(order totals and commissions\) did not finish/,
       );
     });
+
+    it("(l2) SA-816: the order re-sync refusing a NaN sibling (400 MONEY_INVARIANT) after the commit is still PARTIAL with syncFailed, never the raw 400", async () => {
+      arrange(orderLinked());
+      jest.spyOn(service, "recomputeOrderFromInvoices").mockRejectedValue(
+        new BadRequestException({
+          code: API_ERROR_CODES.MONEY_INVARIANT,
+          message:
+            "Invoice line ii-9 category tax holds a stored amount that is not a valid number.",
+        }),
+      );
+      jest.spyOn(Logger.prototype, "warn").mockImplementation();
+      const err = await caught(run());
+      expect(err).toBeInstanceOf(ConflictException);
+      const body = err.getResponse();
+      expect(body.code).toBe(API_ERROR_CODES.PRICE_ADJUSTMENT_PARTIAL);
+      expect(body.applied).toEqual(["inv-1", "inv-2"]);
+      expect(body.syncFailed).toEqual({ invoiceId: "inv-2", invoiceNumber: "INV-2" });
+      expect(body.skipped).toEqual(["inv-3"]);
+    });
   });
 
   describe("fold 3: a fault rethrown after commits is logged with the applied ids and the failing id", () => {

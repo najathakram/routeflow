@@ -100,6 +100,8 @@ describe("InlineReturnsQuoteService: a stored non-finite levy is refused, not cr
   it.each([
     ["the string 'NaN' (a raw pg row)", "NaN"],
     ["Prisma.Decimal('NaN') (a Prisma row)", new Prisma.Decimal("NaN")],
+    ["the string 'Infinity'", "Infinity"],
+    ["Prisma.Decimal('Infinity')", new Prisma.Decimal("Infinity")],
   ])("refuses %s with MONEY_INVARIANT", async (_label, nan) => {
     sold(nan);
     const err = await quote(1).then(

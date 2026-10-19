@@ -43,7 +43,8 @@ function decimalColumnsOf(schemaText: string): Map<string, Set<string>> {
 }
 
 const INSERT = /INSERT\s+INTO\s+"?(\w+)"?\s*\(([^)]*)\)/gi;
-const UPDATE = /UPDATE\s+"?(\w+)"?\s+SET\s+([\s\S]{0,1200}?)(?:\bWHERE\b|\bRETURNING\b|`|;|$)/gi;
+const UPDATE =
+  /UPDATE\s+"?(\w+)"?(?:\s+(?:AS\s+)?\w+)?\s+SET\s+([\s\S]{0,1200}?)(?:\bWHERE\b|\bRETURNING\b|`|;|$)/gi;
 
 /** `Model.column` for every NUMERIC column an INSERT column list or an UPDATE SET target names. */
 function moneyWritesIn(text: string, decimals: Map<string, Set<string>>): string[] {
@@ -138,6 +139,19 @@ describe("SA-816 (d)3: scripts that bind money into raw SQL call assertFiniteMon
       moneyWritesIn('UPDATE "User" SET password = $1, "updatedAt" = now() WHERE id = $2', decimals),
     ).toEqual([]);
     expect(moneyWritesIn('SELECT "categoryTaxAmount" FROM "InvoiceItem"', decimals)).toEqual([]);
+    // an aliased UPDATE (cf. apps/api/scripts/backfill-invoiceitem-tenantid.mjs) is still seen, with or without AS
+    expect(
+      moneyWritesIn(
+        'UPDATE "InvoiceItem" ii SET "categoryTaxAmount" = $2 WHERE ii.id = $1',
+        decimals,
+      ),
+    ).toEqual(["UPDATE InvoiceItem.categoryTaxAmount"]);
+    expect(
+      moneyWritesIn('UPDATE "InvoiceItem" AS ii SET "taxRate" = $2 WHERE ii.id = $1', decimals),
+    ).toEqual(["UPDATE InvoiceItem.taxRate"]);
+    expect(
+      moneyWritesIn('UPDATE "InvoiceItem" ii SET "tenantId" = $2 WHERE ii.id = $1', decimals),
+    ).toEqual([]);
   });
 
   it("finds the known raw-SQL money writers (a scan that matches nothing proves nothing)", () => {
@@ -176,7 +190,7 @@ describe("assertFiniteMoney (scripts/lib/assert-finite-money.cjs)", () => {
     ["a negative", -3],
     ["a NUMERIC text from pg", "12.50"],
     ["a signed exponent text", "1e3"],
-    ["a Decimal-like object", { toString: () => "7.25" }],
+    ["a Decimal-like object", { toFixed: () => "7.25", toString: () => "7.25" }],
   ])("passes %s and returns it unchanged", (_label, value) => {
     expect(assertFiniteMoney(value, "x")).toBe(value);
   });
@@ -192,6 +206,9 @@ describe("assertFiniteMoney (scripts/lib/assert-finite-money.cjs)", () => {
     ["a blank string", "  "],
     ["non-numeric text", "abc"],
     ["a plain object", {}],
+    ["a plain object that prints as a number", { toString: () => "7.25" }],
+    ["a one-element array ([5] prints as 5)", [5]],
+    ["a string array", ["5"]],
     ["a boolean", true],
   ])("refuses %s and names the label", (_label, value) => {
     expect(() => assertFiniteMoney(value, "InvoiceItem ii-1 categoryTaxAmount")).toThrow(

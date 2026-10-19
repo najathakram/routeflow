@@ -78,6 +78,8 @@ describe("CreditNotesService: a stored non-finite levy is refused, not refunded 
   it.each([
     ["the string 'NaN' (a raw pg row)", "NaN"],
     ["Prisma.Decimal('NaN') (a Prisma row)", new Prisma.Decimal("NaN")],
+    ["the string 'Infinity'", "Infinity"],
+    ["Prisma.Decimal('Infinity')", new Prisma.Decimal("Infinity")],
   ])("refuses %s with MONEY_INVARIANT and writes nothing", async (_label, nan) => {
     const err = await creditRegulatedLine(nan).then(
       () => undefined,
