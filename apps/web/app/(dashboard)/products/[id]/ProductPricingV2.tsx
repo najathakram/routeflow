@@ -17,6 +17,7 @@ import {
   type PriceDraftHooks,
 } from "./units-v2/edit/usePriceDraft";
 import { UnitRowRemove, UnitStructureControls } from "./units-v2/structure/UnitStructure";
+import { UnitsBesideGrid } from "./units-v2/structure/UnitsBesideGrid";
 import { useUnitStructureAllowed } from "./units-v2/structure/unit-structure";
 
 /**
@@ -59,7 +60,7 @@ function PricingSection({
   };
 }) {
   const cp = useChangePrices();
-  // K10d: Add a unit / Remove / Reset to Auto, only where the unit ladder can be edited.
+  // K10d: Add a unit / Remove / Reset to Auto (+ the default order unit and Name / Contains beside the grid), only where the unit ladder can be edited.
   const structure = useUnitStructureAllowed(product);
   return (
     <>
@@ -69,7 +70,14 @@ function PricingSection({
         changePricesOpen={cp.open}
         changePricesRef={cp.opener}
         panel={<ChangePrices open={cp.open} onClose={cp.close} openerRef={cp.opener} />}
-        unitControls={structure ? <UnitStructureControls productId={product.id} /> : undefined}
+        unitControls={
+          structure ? (
+            <>
+              <UnitStructureControls productId={product.id} />
+              <UnitsBesideGrid product={product} />
+            </>
+          ) : undefined
+        }
         rowAction={
           structure
             ? (row, layout) => <UnitRowRemove productId={product.id} row={row} layout={layout} />
