@@ -84,7 +84,7 @@ export class DraftsService {
     }
     const { count } = await this.prisma.forTenant().saleDraft.updateMany({
       where: { id, userId: user.sub, updatedAt: new Date(dto.expectedUpdatedAt) },
-      data: data as Prisma.SaleDraftUpdateManyMutationInput,
+      data,
     });
     const current = await this.assertOwned(user, id); // a draft deleted meanwhile is a 404, not a conflict
     if (count === 0) {

@@ -294,7 +294,7 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
       setConflict(null);
       return resolution;
     },
-    [mirror],
+    [],
   );
 
   return {
