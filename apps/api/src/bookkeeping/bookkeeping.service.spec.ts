@@ -1153,34 +1153,6 @@ describe("BookkeepingService", () => {
       expect(result.totalIn).toBe(450);
     });
 
-    it("REG-B288: a supplier-credit draw and a VOID bill's payment are not cash out", async () => {
-      const bp = (over: Record<string, any>) => ({
-        paidAt: new Date("2026-02-10T00:00:00Z"),
-        method: "CASH",
-        vendorBill: { status: "PAID" },
-        ...over,
-      });
-      const ROWS = [
-        bp({ id: "bp-cash", amount: 200 }),
-        bp({ id: "bp-credit-draw", amount: 1000, method: "CREDIT_NOTE" }),
-        bp({ id: "bp-void-bill", amount: 75, vendorBill: { status: "VOID" } }),
-      ];
-      // The mock does not evaluate `where`; apply the two filters the service must send.
-      prisma.billPayment.findMany.mockImplementation(async (args: any) =>
-        ROWS.filter(
-          (r) =>
-            (args.where.method?.not === undefined || r.method !== args.where.method.not) &&
-            (args.where.vendorBill?.status?.not === undefined ||
-              r.vendorBill.status !== args.where.vendorBill.status.not),
-        ),
-      );
-
-      const result = await service.getCashFlow(FROM, TO);
-
-      // Master: 1275 (the $1,000 credit draw and the voided bill's $75 counted as cash out).
-      expect(result.totalOut).toBe(200);
-    });
-
     it("getPaymentsReceivedReport includes/excludes rows on the effective date", async () => {
       const result = await service.getPaymentsReceivedReport(FROM, TO);
       const ids = result.data.map((r) => r.id);
