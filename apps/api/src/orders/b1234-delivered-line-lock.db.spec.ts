@@ -74,7 +74,8 @@ describeDb(
     async function product(tag: string) {
       const p = await raw.product.create({
         data: {
-          name: `${tag} cola ${run}`,
+          // Product names are unique per tenant (Product_tenant_root_name_active_key): one per call.
+          name: `${tag} cola ${run} #${productIds.length + 1}`,
           unit: "ea",
           pricePerUnit: "1.00",
           currentStock: "90",
@@ -256,9 +257,11 @@ describeDb(
     }
 
     /** Refused edit: 409, and stock, ledger, lines and header are identical afterwards. */
-    async function expectRefused(build: (ctx: { p: string; a: { id: string } }) => any) {
-      const { p, o, a } = await pdOrder();
-      const dto = build({ p, a });
+    async function expectRefused(
+      build: (ctx: { p: string; a: { id: string }; b: { id: string } }) => any,
+    ) {
+      const { p, o, a, b } = await pdOrder();
+      const dto = build({ p, a, b });
       const before = await snapshot(o.id);
       const stockBefore = await stock(p);
       const ledgerBefore = (await ledgerRows(p)).length;
@@ -306,9 +309,14 @@ describeDb(
       }));
     });
     it("any replace-all is refused (replace modes fail closed)", async () => {
-      await expectRefused(({ p }) => ({
+      // Both lines named by id (an id-less pair of one product is ORDER_EDIT_NEEDS_LINE_IDS first), restated exactly:
+      // a valid replace-all that only the B1234 guard can refuse, because a replace deletes and re-creates every line.
+      await expectRefused(({ p, a, b }) => ({
         replaceAll: true,
-        items: [{ productId: p, qty: 5, unitPrice: "1.00" }],
+        items: [
+          { id: a.id, productId: p, qty: 5, unitPrice: "1.00" },
+          { id: b.id, productId: p, qty: 4, unitPrice: "1.00" },
+        ],
       }));
     });
 
@@ -388,78 +396,105 @@ describeDb(
       "stale status: the linked SENT invoice is unchanged (status + totals) after the locked-status refusal (deferred: row (P2) pre-tx preflight read-only; revert in-tx under the lock)",
     );
 
+    /**
+     * The REAL race, reproduced at the one seam that matters. The delivery is already committed to the database
+     * (the caller writes it first); ONLY updateOrderItems' pre-transaction read of the order
+     * (`prisma.forTenant().order.findUnique` with `include: { lineItems }`) is made to return the stale snapshot
+     * `stale(real)` it would have returned before the delivery landed. The transaction's own locked reads
+     * (`tx.order` / `tx.orderItem`, a different client) are untouched, so they see the delivery. `forTenant()`
+     * builds a fresh extended client per call, so the spy wraps it and intercepts that one call; `hits()` lets the
+     * test assert the seam was really used (a non-intercepting spy can never pass silently).
+     */
+    function staleOnlyThePreTxRead(orderId: string, stale: (real: any) => any) {
+      const realForTenant = prisma.forTenant.bind(prisma);
+      let hits = 0;
+      const spy = jest.spyOn(prisma, "forTenant").mockImplementation((() => {
+        const client: any = realForTenant();
+        return new Proxy(client, {
+          get(target, prop) {
+            const value = Reflect.get(target, prop, target);
+            if (prop !== "order") return typeof value === "function" ? value.bind(target) : value;
+            return new Proxy(value, {
+              get(model, method) {
+                const fn = Reflect.get(model, method, model);
+                if (method !== "findUnique") return typeof fn === "function" ? fn.bind(model) : fn;
+                return async (args: any) => {
+                  const res = await fn.call(model, args);
+                  if (args?.where?.id !== orderId || !args?.include?.lineItems || !res) return res;
+                  hits += 1;
+                  return stale(res);
+                };
+              },
+            });
+          },
+        });
+      }) as any);
+      return { spy, hits: () => hits };
+    }
+
     it("stale status: the pre-tx read shows CONFIRMED, a delivery flips the order to PARTIALLY_DELIVERED, the LOCKED status refuses", async () => {
       const p = await product("flip");
       const o = await order([plain(p, 5, 0), plain(p, 4, 0)], "CONFIRMED");
       const target = o.lineItems.find((l) => Number(l.qty) === 5)!;
+      await sentInvoice(o.id, "9.00");
+      // The delivery lands for real: line A delivered 3, the order PARTIALLY_DELIVERED.
+      await raw.orderItem.update({ where: { id: target.id }, data: { deliveredQty: "3" } });
+      await raw.order.update({ where: { id: o.id }, data: { status: "PARTIALLY_DELIVERED" } });
       const before = await snapshot(o.id);
       const stockBefore = await stock(p);
-      // The first read of the order (the pre-tx one) returns CONFIRMED, then the delivery lands before the Order lock.
-      const orderModel = (prisma as any).order;
-      const real = orderModel.findUnique.bind(orderModel);
-      let landed = false;
-      const spy = jest
-        .spyOn(orderModel, "findUnique")
-        .mockImplementation(async (...args: any[]) => {
-          const res = await real(...args);
-          if (!landed) {
-            landed = true;
-            await raw.orderItem.update({ where: { id: target.id }, data: { deliveredQty: "3" } });
-            await raw.order.update({
-              where: { id: o.id },
-              data: { status: "PARTIALLY_DELIVERED" },
-            });
-          }
-          return res;
-        });
+      const ledgerBefore = (await ledgerRows(p)).length;
+      // ...but the edit's pre-transaction read still sees the order as it was: CONFIRMED, nothing delivered.
+      const seam = staleOnlyThePreTxRead(o.id, (real) => ({
+        ...real,
+        status: "CONFIRMED",
+        lineItems: real.lineItems.map((l: any) => ({ ...l, deliveredQty: 0 })),
+      }));
       try {
         await expect(
           edit(o.id, { replaceAll: false, items: [{ id: target.id, qty: 2 }] }),
         ).rejects.toMatchObject(REFUSED);
       } finally {
-        spy.mockRestore();
+        seam.spy.mockRestore();
       }
+      expect(seam.hits()).toBeGreaterThanOrEqual(1);
       const after = await snapshot(o.id);
-      const lineAfter = after.lines.find((l) => l.id === target.id)!;
-      expect(Number(lineAfter.qty)).toBe(5);
-      expect(Number(lineAfter.deliveredQty)).toBe(3);
-      expect(after.header).toEqual({ ...before.header, status: "PARTIALLY_DELIVERED" });
+      expect(after).toEqual(before);
+      expect(Number(after.lines.find((l) => l.id === target.id)!.qty)).toBe(5);
+      expect(Number(after.lines.find((l) => l.id === target.id)!.deliveredQty)).toBe(3);
+      expect(after.header.status).toBe("PARTIALLY_DELIVERED");
       expect(await stock(p)).toBe(stockBefore);
+      expect((await ledgerRows(p)).length).toBe(ledgerBefore);
     });
 
     it("stale read: the pre-tx read shows A undelivered, a delivery lands, the LOCKED read refuses", async () => {
       const p = await product("stale");
       const o = await order([plain(p, 5, 0), plain(p, 4, 0)], "PARTIALLY_DELIVERED");
       const target = o.lineItems.find((l) => Number(l.qty) === 5)!;
+      await sentInvoice(o.id, "9.00");
+      // The delivery lands for real: line A delivered 3 (the order is already PARTIALLY_DELIVERED).
+      await raw.orderItem.update({ where: { id: target.id }, data: { deliveredQty: "3" } });
       const before = await snapshot(o.id);
       const stockBefore = await stock(p);
-      // The first read of the order (the pre-tx one) returns, then the driver's delivery lands before the Order lock.
-      const orderModel = (prisma as any).order;
-      const real = orderModel.findUnique.bind(orderModel);
-      let landed = false;
-      const spy = jest
-        .spyOn(orderModel, "findUnique")
-        .mockImplementation(async (...args: any[]) => {
-          const res = await real(...args);
-          if (!landed) {
-            landed = true;
-            await raw.orderItem.update({ where: { id: target.id }, data: { deliveredQty: "3" } });
-          }
-          return res;
-        });
+      const ledgerBefore = (await ledgerRows(p)).length;
+      // ...but the edit's pre-transaction read still sees A undelivered.
+      const seam = staleOnlyThePreTxRead(o.id, (real) => ({
+        ...real,
+        lineItems: real.lineItems.map((l: any) => ({ ...l, deliveredQty: 0 })),
+      }));
       try {
         await expect(
           edit(o.id, { replaceAll: false, items: [{ id: target.id, qty: 2 }] }),
         ).rejects.toMatchObject(REFUSED);
       } finally {
-        spy.mockRestore();
+        seam.spy.mockRestore();
       }
+      expect(seam.hits()).toBeGreaterThanOrEqual(1);
       const after = await snapshot(o.id);
-      const lineAfter = after.lines.find((l) => l.id === target.id)!;
-      expect(Number(lineAfter.qty)).toBe(5);
-      expect(Number(lineAfter.deliveredQty)).toBe(3);
-      expect(after.header).toEqual(before.header);
+      expect(after).toEqual(before);
+      expect(Number(after.lines.find((l) => l.id === target.id)!.qty)).toBe(5);
+      expect(Number(after.lines.find((l) => l.id === target.id)!.deliveredQty)).toBe(3);
       expect(await stock(p)).toBe(stockBefore);
+      expect((await ledgerRows(p)).length).toBe(ledgerBefore);
     });
   },
 );
