@@ -9,7 +9,7 @@ import { usePriceDraft } from "./usePriceDraft";
 export const ORDER_UNIT_SWITCH_OFF = "Available after units settings update";
 
 /**
- * V06: the order unit control. Switching it waits for U-1, so in edit mode it stays visible but disabled
+ * V06: the pricing unit control (the U-1 anchor; K12: labelled "Pricing unit" so it never reads like the "Default order unit" select). Switching it waits for U-1, so in edit mode it stays visible but disabled
  * (aria-disabled, never silently gone) with the reason beside it. It shows the current order unit, read-only.
  */
 export function OrderUnitDraft() {
@@ -20,7 +20,7 @@ export function OrderUnitDraft() {
     <div className="mt-3 text-sm text-navy">
       <label className="flex items-center gap-2">
         <span className="text-[11px] font-medium uppercase tracking-wide text-navy/60">
-          Order unit
+          Pricing unit
         </span>
         <select
           data-testid={T.orderUnit}

@@ -222,6 +222,9 @@ describe("units v2 edit grid (S12a)", () => {
     const select = screen.getByTestId(T.orderUnit) as HTMLSelectElement;
     expect(select.getAttribute("aria-disabled")).toBe("true");
     expect(select.title).toBe("Available after units settings update");
+    // K12: it is the pricing anchor, so it must never read like the live "Default order unit" select.
+    expect(screen.getByLabelText("Pricing unit")).toBe(select);
+    expect(screen.queryByLabelText("Order unit")).toBeNull();
     expect(screen.getByTestId(T.orderUnitReason).textContent).toBe(
       "Available after units settings update",
     );
