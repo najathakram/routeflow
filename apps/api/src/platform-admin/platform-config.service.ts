@@ -1,6 +1,9 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import type { AppLinks, AppLinksPatch } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { APP_LINK_FIELDS, APP_LINK_KEYS, isValidAppLinkUrl } from "./app-links";
 
 const CLAUDE_MODELS = [
   "claude-opus-4-5",
@@ -261,5 +264,45 @@ export class PlatformConfigService {
 
   async setHouseTenantId(tenantId: string): Promise<void> {
     await this.setValue("platform.houseTenantId", tenantId);
+  }
+
+  // ─── Mobile app install links (register row 559) ────────────────────────────
+
+  /** The three install links; an absent, empty or invalid stored value reads as null (fails closed). */
+  async getAppLinks(): Promise<AppLinks> {
+    const values = await Promise.all(APP_LINK_FIELDS.map((f) => this.getValue(APP_LINK_KEYS[f])));
+    const links: AppLinks = { androidApkUrl: null, playStoreUrl: null, iosUrl: null };
+    APP_LINK_FIELDS.forEach((field, i) => {
+      const v = values[i]?.trim();
+      links[field] = isValidAppLinkUrl(v) ? v : null;
+    });
+    return links;
+  }
+
+  /**
+   * Applies a partial change: a string sets (trimmed, https only), "" or null clears the row, an absent
+   * field is left alone. Every field is validated before anything is written, so a bad one writes nothing.
+   */
+  async setAppLinks(patch: AppLinksPatch): Promise<AppLinks> {
+    const writes: Array<[(typeof APP_LINK_FIELDS)[number], string | null]> = [];
+    for (const field of APP_LINK_FIELDS) {
+      const raw = patch[field];
+      if (raw === undefined) continue;
+      const value = raw === null ? "" : String(raw).trim();
+      if (value !== "" && !isValidAppLinkUrl(value)) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: API_ERROR_CODES.APP_LINK_URL_INVALID,
+          field,
+          message: "Enter a full https:// link (up to 2048 characters).",
+        });
+      }
+      writes.push([field, value === "" ? null : value]);
+    }
+    for (const [field, value] of writes) {
+      if (value === null) await this.deleteValue(APP_LINK_KEYS[field]);
+      else await this.setValue(APP_LINK_KEYS[field], value);
+    }
+    return this.getAppLinks();
   }
 }
