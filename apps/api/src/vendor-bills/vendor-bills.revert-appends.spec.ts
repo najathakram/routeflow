@@ -1260,5 +1260,55 @@ describe("B846 sibling — voidBill appends a PURCHASE reversal (the tobacco fil
         { productId: "prod-1", name: "Widget", stockDrift: 10, noReceiptQty: 10 },
       ]);
     });
+
+    it("SA-808c S1: a shortfall product's lots that match no line are recorded as lotsUnmatched, never as lotsLeft", async () => {
+      const h = await legacyWorld();
+      h.lots.length = 0; // two partial receipt lots (6 + 4) instead of one 10: neither is the line's shape
+      for (const [id, qty] of [
+        ["lot-a", 6],
+        ["lot-b", 4],
+      ] as const)
+        h.lots.push({
+          id,
+          productId: "prod-1",
+          reference: "B-1",
+          purchaseDate: BILL_DATE,
+          qty: D(qty),
+          remainingQty: D(qty),
+          unitCost: D(2),
+        });
+      h.lots.push({
+        id: "lot-manual", // a person's purchase sharing the number looks the same
+        productId: "prod-1",
+        reference: "B-1",
+        purchaseDate: new Date("2026-05-20T00:00:00.000Z"),
+        qty: D(4),
+        remainingQty: D(4),
+        unitCost: D(1),
+      });
+      h.product.currentStock = D(14);
+
+      const out = await together(h, () => voidIt(h, 10));
+
+      expect(out.status).toBe("VOID");
+      // nothing is touched (as before) ...
+      expect(h.lots.map((l) => l.id)).toEqual(["lot-a", "lot-b", "lot-manual"]);
+      expect(h.prisma.stockLot.delete).not.toHaveBeenCalled();
+      expect(h.prisma.stockLot.update).not.toHaveBeenCalled();
+      // ... but no longer silently, and never in the zero-by-id repair list
+      const meta = h.prisma.auditLog.create.mock.calls[0][0].data.meta;
+      expect(meta.lotsLeft).toEqual([]);
+      expect(meta.lotsUnmatched).toEqual([
+        {
+          productId: "prod-1",
+          name: "Widget",
+          lotIds: ["lot-a", "lot-b", "lot-manual"],
+          remainingQty: "14",
+        },
+      ]);
+      expect(out.gapsDetected).toEqual([
+        { productId: "prod-1", name: "Widget", stockDrift: 10, noReceiptQty: 10 },
+      ]);
+    });
   });
 });

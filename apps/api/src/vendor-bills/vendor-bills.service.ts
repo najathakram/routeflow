@@ -136,6 +136,14 @@ interface LiveBillReceipt {
 /** What a bill-stock reversal is for: revert refuses a ledger it cannot explain; void degrades. */
 type BillReversalAction = "reverted to draft" | "voided";
 
+/** Lots of one product, as a void's audit row names them (SA-808b lotsLeft, SA-808c lotsUnmatched). */
+interface BillLotGroup {
+  productId: string;
+  name: string;
+  lotIds: string[];
+  remainingQty: string;
+}
+
 /** What the loader found for one product of a bill (SA-808b). */
 interface ProductReceipts {
   /** Unpaired receipt rows, oldest first; their total never exceeds what the bill received. */
@@ -1739,7 +1747,7 @@ export class VendorBillsService {
 
     // Reverse the lots this bill created (one per received line). A void leaves a lot it cannot
     // identify standing and reports it (SA-808b: the void is the AP exit and must not strand).
-    const lotsLeft = movesStock
+    const { left: lotsLeft, unmatched: lotsUnmatched } = movesStock
       ? await this.reverseBillLots(
           tx,
           bill.billNumber,
@@ -1748,7 +1756,7 @@ export class VendorBillsService {
           action,
           shortfalls,
         )
-      : [];
+      : { left: [], unmatched: [] };
     for (const left of lotsLeft) {
       gapsDetected.push({
         productId: left.productId,
@@ -1761,7 +1769,7 @@ export class VendorBillsService {
     // One audit row per bill when a void had to degrade: the receipt rows it found, the shortfall it
     // adjusted, the lots it left standing, and receipt rows that now sit on a DIFFERENT product
     // (moved by a merge or a family writer — they count as shortfall and are never reassigned).
-    if (shortfalls.size > 0 || lotsLeft.length > 0) {
+    if (shortfalls.size > 0 || lotsLeft.length > 0 || lotsUnmatched.length > 0) {
       const planned = new Set(plan.map((p) => p.item.productId as string));
       const moved = (await tx.stockMovement.findMany({
         where: {
@@ -1793,6 +1801,8 @@ export class VendorBillsService {
               noReceiptQty: r.shortfall.toString(),
             })),
             lotsLeft,
+            // SA-808c S1: census/review only. NEVER fed to the zero-by-id repair (lotsLeft is).
+            lotsUnmatched,
             receiptRowsOnOtherProducts: elsewhere.map((r) => ({
               id: r.id,
               productId: r.productId,
@@ -1895,9 +1905,14 @@ export class VendorBillsService {
       string,
       { name: string; lines: { qty: Prisma.Decimal; unitCost: Prisma.Decimal }[] }
     > = new Map(),
-  ): Promise<{ productId: string; name: string; lotIds: string[]; remainingQty: string }[]> {
+  ): Promise<{
+    /** Ambiguous lots a void left standing: the ONLY ids the zero-by-id repair may touch. */
+    left: BillLotGroup[];
+    /** SA-808c S1: lots of a shortfall product that carry the bill number but match no plan line. Review only. */
+    unmatched: BillLotGroup[];
+  }> {
     const lots: Awaited<ReturnType<typeof tx.stockLot.findMany>> = [];
-    const left: { productId: string; name: string; lotIds: string[]; remainingQty: string }[] = [];
+    const left: BillLotGroup[] = [];
     const leave = (productId: string, name: string, standing: typeof lots) => {
       left.push({
         productId,
@@ -1982,6 +1997,29 @@ export class VendorBillsService {
       }
       lots.push(...found); // none ⇒ no lot was ever made for these receipts: nothing to reverse
     }
+    // SA-808c S1 (void only): a shortfall product's lot that carries the bill number but matches NO plan
+    // line's shape (two partial receipt lots, an edited bill date, a legacy qty denomination) is left
+    // alone, as before, but no longer silently: it is recorded for review. It stays OUT of `left`, the
+    // zero-by-id repair list, because a manual lot sharing the number looks exactly the same.
+    const unmatched: BillLotGroup[] = [];
+    for (const [productId, { name }] of shortfalls) {
+      const taken = new Set(lots.map((l) => l.id));
+      for (const g of left) for (const id of g.lotIds) taken.add(id);
+      const rest = (
+        ((await tx.stockLot.findMany({ where: { productId, reference: billNumber } })) ??
+          []) as typeof lots
+      ).filter((l) => !(l.notes ?? "").includes("(bill reversed;") && !taken.has(l.id));
+      if (rest.length > 0) {
+        unmatched.push({
+          productId,
+          name,
+          lotIds: rest.map((l) => l.id),
+          remainingQty: rest
+            .reduce((t, l) => t.add(l.remainingQty), new Prisma.Decimal(0))
+            .toString(),
+        });
+      }
+    }
     for (const lot of lots) {
       const remaining = new Prisma.Decimal(lot.remainingQty);
       if (remaining.gte(new Prisma.Decimal(lot.qty))) {
@@ -1997,7 +2035,7 @@ export class VendorBillsService {
         });
       }
     }
-    return left;
+    return { left, unmatched };
   }
 
   async voidBill(id: string, performedById?: string) {
