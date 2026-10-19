@@ -42,15 +42,26 @@ const NO_CHANGES = {
 
 type Mode = PriceChange["mode"];
 
+/** K12 F04: what the owner typed, kept by the host while the panel is closed so Cancel does not forget it. */
+export interface PanelMemory {
+  form: PriceChange;
+  typed: string;
+}
+
 /** Waits for the grid: the draft has no ladder view until it loads. */
 export function ChangePricesPanel({
   onClose,
   onApplied,
   idSuffix = "",
+  memory,
+  onRemember,
 }: {
   onClose: () => void;
   /** Closes the panel after Apply (K11-15: focus goes to Save); without it Apply closes like Cancel. */
   onApplied?: () => void;
+  /** K12 F04: the form as left by a Cancel; it opens like this. Apply clears it (the host's job). */
+  memory?: PanelMemory | null;
+  onRemember?: (m: PanelMemory) => void;
   /** K11-20: suffix for the three fixed ids when a second panel is on the page (the floating price window). */
   idSuffix?: string;
 }) {
@@ -62,6 +73,8 @@ export function ChangePricesPanel({
       onClose={onClose}
       onApplied={onApplied}
       idSuffix={idSuffix}
+      memory={memory}
+      onRemember={onRemember}
     />
   ) : null;
 }
@@ -72,30 +85,36 @@ function ChangePricesForm({
   onClose,
   onApplied,
   idSuffix,
+  memory,
+  onRemember,
 }: {
   draft: PriceDraft;
   view: LadderView;
   onClose: () => void;
   onApplied?: () => void;
   idSuffix: string;
+  memory?: PanelMemory | null;
+  onRemember?: (m: PanelMemory) => void;
 }) {
   const { grid } = draft;
   const { tierName, customerName, customers, rules, customersTruncated } = usePlanNames();
   const ids = React.useId();
   const root = React.useRef<HTMLElement>(null);
   const { selection, toggleOffer, toggleKeep, toggleCustomerKeep, reset } = usePlanSelection();
-  const [form, setForm] = React.useState<PriceChange>({
+  const [form, setForm] = React.useState<PriceChange>(() => ({
     unit: view.anchor,
     direction: "raise",
     mode: "percent",
     value: 0,
     also: false,
-  });
-  const [typed, setTyped] = React.useState("");
+    ...(memory && view.rows.some((r) => r.ref === memory.form.unit) ? memory.form : {}),
+  }));
+  const [typed, setTyped] = React.useState(memory?.typed ?? "");
   const [blurred, setBlurred] = React.useState(false);
   const { unit, direction, mode, also } = form;
   const value = parseAmount(typed);
 
+  React.useEffect(() => onRemember?.({ form, typed }), [onRemember, form, typed]);
   // Ticks never carry onto a new plan (a new view, customers or revision is a new plan), nor onto a new question.
   React.useEffect(() => reset(), [reset, view, customers, rules, grid?.revision]);
   React.useEffect(() => root.current?.focus(), []);
