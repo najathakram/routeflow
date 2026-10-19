@@ -271,16 +271,28 @@ function ChangePricesForm({
         {field(
           "value",
           "Amount",
-          <input
-            id={`${ids}-value`}
-            type="text"
-            inputMode="decimal"
-            autoComplete="off"
-            className={FIELD}
-            value={typed}
-            onChange={(e) => change({}, e.target.value)}
-            onBlur={() => setBlurred(true)}
-          />,
+          // K12 P17: the unit rides inside the box (% after, $ before), so "5" is never a bare number.
+          <div className="relative">
+            <span
+              data-testid="amount-adornment"
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-y-0 flex items-center text-[13px] text-ink-500 ${
+                mode === "percent" ? "right-2.5" : "left-2.5"
+              }`}
+            >
+              {mode === "percent" ? "%" : "$"}
+            </span>
+            <input
+              id={`${ids}-value`}
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              className={`${FIELD} w-full ${mode === "percent" ? "pr-7" : "pl-6"}`}
+              value={typed}
+              onChange={(e) => change({}, e.target.value)}
+              onBlur={() => setBlurred(true)}
+            />
+          </div>,
           mode === "percent"
             ? "Other units move by the same percent."
             : `Per ${view.rows.find((r) => r.ref === unit)?.label ?? "unit"}. Other units that move change in proportion to what they contain.`,
