@@ -11,6 +11,7 @@ export type BadgeStatus =
   | "PENDING"
   | "CONFIRMED"
   | "OUT_FOR_DELIVERY"
+  | "PARTIALLY_DELIVERED"
   | "DELIVERED"
   | "CANCELLED"
   | "SCHEDULED"
@@ -56,6 +57,8 @@ const STATUS_MAP: Record<BadgeStatus, { variant: BadgeVariant; label: string }> 
   PENDING: { variant: "warning", label: "Pending" },
   CONFIRMED: { variant: "info", label: "Confirmed" },
   OUT_FOR_DELIVERY: { variant: "info", label: "Out for Delivery" },
+  // Owner 2026-10-19: a part-delivered order reads "Partly Delivered" (open-orders card, order lists).
+  PARTIALLY_DELIVERED: { variant: "warning", label: "Partly Delivered" },
   DELIVERED: { variant: "success", label: "Delivered" },
   CANCELLED: { variant: "danger", label: "Cancelled" },
   SCHEDULED: { variant: "neutral", label: "Scheduled" },
