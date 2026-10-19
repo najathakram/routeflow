@@ -367,7 +367,10 @@ function ChangePricesForm({
       </div>
       <div
         data-testid={T.changeFooter}
-        className="mt-4 flex gap-2 border-t border-surface-border bg-white py-2.5"
+        // K13 F03: in the floating window (it has an id suffix) the row sticks to the bottom of the window's scroll area.
+        className={`mt-4 flex gap-2 border-t border-surface-border bg-white py-2.5 ${
+          idSuffix ? "sticky bottom-0 z-10" : ""
+        }`}
       >
         <Button id={`ch-apply${idSuffix}`} type="button" disabled={!canApply} onClick={apply}>
           Apply
