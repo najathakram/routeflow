@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Badge, Skeleton } from "@routeflow/ui/web";
+import { Skeleton } from "@routeflow/ui/web";
+import { OrderStatusBadge } from "@/components/OrderStatusBadge";
 import { fmtCalendarDate } from "@/lib/formatting";
 import { formatQtySplit, invoiceLineQtyText, normalizeBoxesPieces } from "@routeflow/pricing";
 import { SortableTh } from "@/components/SortableTh";
@@ -11,7 +12,8 @@ import { useProductOpenOrders, type ProductOpenOrderLine } from "@/lib/api/produ
 
 /**
  * "Who has this on order, and how many" — the orders that still have this product to be billed
- * (PENDING, CONFIRMED, OUT_FOR_DELIVERY; counter sales excluded). Mounted directly above the invoiced
+ * (PENDING, CONFIRMED, OUT_FOR_DELIVERY; counter sales excluded) or, once part delivered, to deliver
+ * (PARTIALLY_DELIVERED, qty still to come = ordered - delivered). Mounted directly above the invoiced
  * Sales card, staff only. Same shell, header type and chip grid as SalesHistoryCard. No money.
  */
 
@@ -130,7 +132,7 @@ export function OpenOrdersCard({
                         onSort={requestSort}
                         className={TH}
                       >
-                        Qty to bill
+                        Still to come
                       </SortableTh>
                       <th className={`${TH} text-left`}>Status</th>
                       <SortableTh
@@ -180,7 +182,7 @@ export function OpenOrdersCard({
                           )}
                         </td>
                         <td className="px-3 py-2">
-                          <Badge status={l.status} />
+                          <OrderStatusBadge status={l.status} />
                         </td>
                         <td className="px-3 py-2 text-navy/70">{fmtCalendarDate(l.orderDate)}</td>
                       </tr>

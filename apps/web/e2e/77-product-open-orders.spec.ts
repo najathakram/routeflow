@@ -101,8 +101,20 @@ const OPEN_ORDERS = {
       boxes: 1,
       pieces: 0,
     }),
+    line({
+      orderId: "o-1004",
+      orderNumber: "ORD-1004",
+      status: "PARTIALLY_DELIVERED",
+      orderDate: "2026-10-06T00:00:00.000Z",
+      customerId: "c-globex",
+      customerName: "Globex Market",
+      qty: 72,
+      remainingQty: 18,
+      boxes: 0,
+      pieces: 18,
+    }),
   ],
-  summary: { orders: 3, customers: 2, totalQty: 102 },
+  summary: { orders: 4, customers: 2, totalQty: 120 },
   truncated: false,
 };
 
@@ -178,7 +190,7 @@ async function gotoCard(page: Page): Promise<void> {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe("Product detail: Open orders", () => {
-  test("lists the three mocked lines above Sales and links an order number to its order", async ({
+  test("lists the four mocked lines above Sales and links an order number to its order", async ({
     page,
   }) => {
     await mockProductPage(page);
@@ -187,9 +199,11 @@ test.describe("Product detail: Open orders", () => {
     const card = page
       .getByRole("heading", { name: "Open orders" })
       .locator("xpath=ancestor::div[contains(@class,'rounded-lg')][1]");
-    await expect(card.getByRole("row")).toHaveCount(4); // header + 3 lines
+    await expect(card.getByRole("row")).toHaveCount(5); // header + 4 lines
     await expect(card.getByText("1 box + 6 pcs")).toBeVisible();
-    await expect(card.getByText("of 3 boxes ordered")).toBeVisible();
+    await expect(card.getByText("of 3 boxes ordered").first()).toBeVisible();
+    // A part-delivered line shows what is still to deliver (ordered 72, delivered 54).
+    await expect(card.getByRole("row", { name: /ORD-1004/ })).toContainText("18 pcs");
 
     // Directly above the invoiced Sales card.
     const openBox = await page.getByRole("heading", { name: "Open orders" }).boundingBox();

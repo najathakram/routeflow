@@ -14,6 +14,17 @@ jest.mock("@/lib/api/product-open-orders", () => ({
   useProductOpenOrders: () => query,
 }));
 
+// The shared fulfilment word table is exercised in order-status-label.test.tsx; here the label hook is
+// pinned to the humanized status so the card's own wiring (badge per row) is what is asserted.
+jest.mock("@/lib/fulfilment-caps", () => ({
+  useFulfilmentCaps: () => ({}),
+  useOrderStatusLabel: () => (status: string) =>
+    status
+      .split("_")
+      .map((w) => w[0] + w.slice(1).toLowerCase())
+      .join(" "),
+}));
+
 const line = (over: Record<string, unknown> = {}) => ({
   orderId: "o1",
   orderNumber: "ORD-1001",
@@ -97,6 +108,24 @@ describe("OpenOrdersCard", () => {
     query.data = data([line({ qty: 60, remainingQty: 30, boxes: 2, pieces: 6 })]);
     render(<OpenOrdersCard productId="p1" unitsPerBox={12} />);
     expect(screen.getByText("of 5 boxes ordered")).toBeInTheDocument();
+  });
+
+  it("a partly delivered line shows the order-status badge and its remaining qty", () => {
+    query.data = data([
+      line({
+        status: "PARTIALLY_DELIVERED",
+        qty: 36,
+        remainingQty: 14,
+        boxes: 1,
+        pieces: 2,
+      }),
+    ]);
+    render(<OpenOrdersCard productId="p1" unitsPerBox={12} />);
+    const row = within(screen.getAllByRole("row")[1]);
+    expect(row.getByText("Partially Delivered")).toBeInTheDocument();
+    expect(row.getByText("1 box + 2 pcs")).toBeInTheDocument();
+    expect(row.getByText("of 3 boxes ordered")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /Still to come/ })).toBeInTheDocument();
   });
 
   it("a line with nothing billed does not say 'ordered'", () => {
