@@ -48,6 +48,7 @@ jest.mock("@routeflow/ui/web", () => ({
 }));
 jest.mock("@/lib/auth-context", () => ({
   useAuth: () => ({ user: { role: "OPERATOR" } }),
+  useOptionalAuth: () => ({ user: { role: "OPERATOR" } }),
 }));
 jest.mock("@/lib/api/products", () => ({
   ...jest.requireActual("@/lib/api/products"),

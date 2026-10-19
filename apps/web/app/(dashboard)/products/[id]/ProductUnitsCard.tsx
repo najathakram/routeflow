@@ -20,6 +20,7 @@ import {
 import { cascadePatch, proposeCascade, type CascadeProposal } from "@/lib/unit-cascade";
 import { unitNotListedNotice } from "@/lib/api/tenant-units";
 import { usePriceGrid } from "@/lib/api/usePriceGrid";
+import { MoneyFigure } from "./MoneyFigure";
 import { PriceFigure, TIERS, packRowOf, rowForUnit } from "./PriceFigures";
 import { usePriceWindowOpener } from "./PriceWindowHost";
 import { PriceSaveStatus } from "./ProductPricingV2";
@@ -311,9 +312,67 @@ function UnitRow({
   );
 }
 
+/** The badge a read-only row (or the pack row) wears instead of the Default order unit radio. */
+const DefaultBadge = () => (
+  <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[11px] font-medium text-navy">
+    Default order unit
+  </span>
+);
+
+/**
+ * Read-only row (the v2 grid owns every control now): name, size and each tier's price as text. Prices come from the
+ * served grid; with no grid row (the query failed) the unit's own stored prices stand in, as the live row does.
+ */
+function UnitRowReadOnly({
+  unit,
+  grid,
+  tierNames,
+}: {
+  unit: ProductUnitLevel;
+  grid: ProductPriceGridDto | undefined;
+  tierNames: Record<string, string> | undefined;
+}) {
+  const w = unitWords();
+  const row = rowForUnit(grid, unit);
+  const stored = draftOf(unit).prices;
+  return (
+    <li className="rounded-lg border border-surface-border bg-white p-3" data-testid="unit-row">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-sm text-navy">
+          <span className="font-medium">{unit.label}</span>{" "}
+          <span className="text-navy/60">
+            · {unit.factorToBase} {w.baseFor(unit.factorToBase)}
+          </span>
+        </span>
+        {unit.isDefaultSelling && <DefaultBadge />}
+      </div>
+      <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-5">
+        {TIERS.map((t) => {
+          const value = row ? row.cells.find((c) => c.tier === t)?.value : stored[t - 1];
+          return (
+            <div key={t}>
+              <dt className="text-[11px] uppercase tracking-wide text-navy/60">
+                {productTierLabel(tierNames, t)}
+              </dt>
+              <dd>
+                {value == null ? (
+                  <span aria-label="not set">—</span>
+                ) : (
+                  <MoneyFigure value={value} className="font-mono font-medium text-navy" />
+                )}
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+    </li>
+  );
+}
+
 export function ProductUnitsCard({
   product,
   hideAddForm = false,
+  readOnly = false,
 }: {
   product: UnitsCardProduct;
   /**
@@ -321,6 +380,12 @@ export function ProductUnitsCard({
    * goes. A product the shell does not mount it on (family, recipe, variant) keeps this form.
    */
   hideAddForm?: boolean;
+  /**
+   * Owner ruling D-2026-10-18: under the v2 grid this card only reads. Every live control (Add, Remove, Name / size, the
+   * default order unit, Edit prices) sits beside the grid. Applies once the grid has mounted those controls, so until
+   * then (or if its query fails) the card keeps its own, and nothing is ever without a control.
+   */
+  readOnly?: boolean;
 }) {
   const { user } = useAuth();
   // GET /billing/subscription is OPERATOR-only — never fire it (and 403) for other roles.
@@ -387,6 +452,7 @@ export function ProductUnitsCard({
   const busy = otherBusy || dflt.pending;
   if (!enabled) return null;
   const addInShell = shellOwns && shellHasUnitControls(grid);
+  const ro = readOnly && addInShell;
   const tierNames = tiers;
   // B594: no component-level error toasts — app/providers.tsx's global MutationCache handler
   // already toasts the server's message for every failed mutation, so a second one here doubled it.
@@ -483,7 +549,7 @@ export function ProductUnitsCard({
           >
             Units &amp; prices
           </h3>
-          {figures && opener && anyEditable && (
+          {figures && opener && anyEditable && !ro && (
             <button
               type="button"
               className={BTN}
@@ -507,11 +573,22 @@ export function ProductUnitsCard({
             <span className="font-medium">{product.unit || w.pack.one}</span>{" "}
             <span className="text-navy/60">
               · {packPieces} {w.baseFor(packPieces)} ·{" "}
-              {figures ? <>the {w.pack.lower}</> : <>the {w.pack.lower} (edit its price above)</>}
+              {figures || ro ? (
+                <>the {w.pack.lower}</>
+              ) : (
+                <>the {w.pack.lower} (edit its price above)</>
+              )}
             </span>
           </span>
           <span className="flex items-center gap-4">
-            {figures ? (
+            {ro ? (
+              <MoneyFigure
+                value={
+                  packRowOf(grid)?.cells.find((c) => c.tier === 1)?.value ?? product.pricePerUnit
+                }
+                className="font-mono font-medium text-navy"
+              />
+            ) : figures ? (
               <PriceFigure
                 row={packRowOf(grid)}
                 tier={1}
@@ -524,32 +601,39 @@ export function ProductUnitsCard({
                 {fmt(Number(product.pricePerUnit) || 0)}
               </span>
             )}
-            <label className="flex items-center gap-2 text-navy">
-              <input
-                type="radio"
-                name={DEFAULT_RADIO}
-                aria-describedby={DEFAULT_HINT_ID}
-                checked={noneDefault}
-                // Never natively disabled: a disabled radio drops focus the moment it becomes the checked default, so a
-                // screen-reader user would hear nothing. aria-disabled keeps it focusable; activating it does nothing.
-                aria-disabled={busy || noneDefault || undefined}
-                onChange={() => {
-                  if (!busy && !noneDefault) dflt.change(null);
-                }}
-                onKeyDown={radioKeys(() => {
-                  if (!busy && !noneDefault) dflt.change(null);
-                })}
-              />
-              Default order unit
-            </label>
+            {ro ? (
+              noneDefault && <DefaultBadge />
+            ) : (
+              <label className="flex items-center gap-2 text-navy">
+                <input
+                  type="radio"
+                  name={DEFAULT_RADIO}
+                  aria-describedby={DEFAULT_HINT_ID}
+                  checked={noneDefault}
+                  // Never natively disabled: a disabled radio drops focus the moment it becomes the checked default, so a
+                  // screen-reader user would hear nothing. aria-disabled keeps it focusable; activating it does nothing.
+                  aria-disabled={busy || noneDefault || undefined}
+                  onChange={() => {
+                    if (!busy && !noneDefault) dflt.change(null);
+                  }}
+                  onKeyDown={radioKeys(() => {
+                    if (!busy && !noneDefault) dflt.change(null);
+                  })}
+                />
+                Default order unit
+              </label>
+            )}
           </span>
         </div>
 
         {/* F18: always mounted, so the text it receives is announced. Undo and Dismiss sit beside it, not inside it. */}
-        <p id={DEFAULT_HINT_ID} className="sr-only">
-          {DEFAULT_HINT}
-        </p>
+        {!ro && (
+          <p id={DEFAULT_HINT_ID} className="sr-only">
+            {DEFAULT_HINT}
+          </p>
+        )}
         <div
+          hidden={ro}
           className={
             defaultNote
               ? "flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-surface-raised px-3 py-2 text-sm text-navy"
@@ -598,25 +682,29 @@ export function ProductUnitsCard({
           </p>
         ) : (
           <ul className="space-y-3">
-            {units.map((u) => (
-              <UnitRow
-                key={u.id}
-                unit={u}
-                product={product}
-                units={units}
-                tierNames={tierNames}
-                busy={busy}
-                onSave={save}
-                onDelete={setRemoving}
-                hideRemove={shellOwns && !gridQuery.isError && shellRemovesUnit(grid, u.id)}
-                figures={figureCtx}
-                onMakeDefault={dflt.change}
-              />
-            ))}
+            {units.map((u) =>
+              ro ? (
+                <UnitRowReadOnly key={u.id} unit={u} grid={grid} tierNames={tierNames} />
+              ) : (
+                <UnitRow
+                  key={u.id}
+                  unit={u}
+                  product={product}
+                  units={units}
+                  tierNames={tierNames}
+                  busy={busy}
+                  onSave={save}
+                  onDelete={setRemoving}
+                  hideRemove={shellOwns && !gridQuery.isError && shellRemovesUnit(grid, u.id)}
+                  figures={figureCtx}
+                  onMakeDefault={dflt.change}
+                />
+              ),
+            )}
           </ul>
         )}
 
-        {!addInShell && (
+        {!addInShell && !ro && (
           <form
             className="grid grid-cols-2 items-end gap-3 border-t border-surface-border pt-3 sm:grid-cols-4"
             onSubmit={(e) => {

@@ -64,6 +64,8 @@ describe("family page with units v2 on: parity", () => {
       .filter((l) => !/const v2( |Family)/.test(l))
       .map((l) => l.trim());
     expect(refs).toEqual([
+      // The Units & prices card reads only where the grid shell mounts the controls that replace it (D-2026-10-18)
+      "const cardRo = v2 && unitStructure;",
       // K11-20c: prices are edited in the floating window (and shown read-only in Details) for a non-governed product
       "const pricesInWindow = v2 && !unitStructureGoverned(product);",
       '{v2 ? null : stockStatus === "OUT_OF_STOCK" ? (',
@@ -72,7 +74,7 @@ describe("family page with units v2 on: parity", () => {
       "pricesV2={v2}",
       '{v2 && product.kind !== "FAMILY" ? (',
       // K10d: the v2 flag drops the old Units card's always-open Add form (the shell's Add a unit replaces it)
-      "{!v2Family && <ProductUnitsCard product={product} hideAddForm={v2} />}",
+      "{!v2Family && <ProductUnitsCard product={product} hideAddForm={v2} readOnly={cardRo} />}",
     ]);
   });
 });

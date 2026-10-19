@@ -35,7 +35,7 @@ describe("product page parity inventory (T38)", () => {
     expect(page).toMatch(/const v2Family = v2 && product\.kind === "FAMILY";/);
     // K10d: the v2 flag also drops the old always-open Add form (the shell's Add a unit replaces it)
     expect(page).toMatch(
-      /\{!v2Family && <ProductUnitsCard product=\{product\} hideAddForm=\{v2\} \/>\}/,
+      /\{!v2Family && <ProductUnitsCard product=\{product\} hideAddForm=\{v2\} readOnly=\{cardRo\} \/>\}/,
     );
   });
 

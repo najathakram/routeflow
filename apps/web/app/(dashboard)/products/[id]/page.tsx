@@ -103,6 +103,7 @@ import { ProductLabelsCard } from "./ProductLabelsCard";
 import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ProductPricingV2 } from "./ProductPricingV2";
+import { useUnitStructureAllowed } from "./units-v2/structure/unit-structure";
 import { PriceWindowHost, ProductPricingRegion } from "./PriceWindowHost";
 import { unitStructureGoverned } from "./units-v2/structure/unit-structure";
 import { ProductJumpLinks } from "./units-v2/nav/ProductJumpLinks";
@@ -404,6 +405,10 @@ export default function ProductDetailPage() {
   const hasTobaccoAddon = useHasAddon(TOBACCO_ADDON);
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
   const v2 = usePricesV2Enabled({ enabled: isStaff }) && isStaff;
+  // The grid shell mounts the default order unit, Name / Contains, Add and Remove only where this is true; only there does
+  // the Units & prices card stop editing (read-only), so no role or product is left without a control.
+  const unitStructure = useUnitStructureAllowed(product ?? {});
+  const cardRo = v2 && unitStructure;
 
   // ── Lightbox state ────────────────────────────────────────────────────────
   const [lightboxOpen, setLightboxOpen] = React.useState(false);
@@ -2336,7 +2341,7 @@ export default function ProductDetailPage() {
                 <ProductPricingV2 product={product} />
               </ProductPricingRegion>
             ) : null}
-            {!v2Family && <ProductUnitsCard product={product} hideAddForm={v2} />}
+            {!v2Family && <ProductUnitsCard product={product} hideAddForm={v2} readOnly={cardRo} />}
 
             {/* Sales demand — real data from invoiced sales. In its own file (unlike
                 CostHistoryCard below) because it owns range/metric state and five
