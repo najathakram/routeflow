@@ -1382,7 +1382,7 @@ export default function ProductDetailPage() {
           </div>
         </div>
 
-        {v2 && product.kind !== "FAMILY" ? <ProductJumpLinks /> : null}
+        {v2 && product.kind !== "FAMILY" ? <ProductJumpLinks reserveSpace /> : null}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 lg:grid-rows-[auto_1fr] lg:gap-y-5">
           {/* DOM order is the phone reading order and the tab order: Details, then Image and stock, then the rest.
               The columns are placed at lg with grid lines, not order-* classes (K11-23). */}

@@ -146,7 +146,15 @@ const SCOPED_CSS = `[data-jump-target][tabindex="-1"]:focus{outline:none}
 [data-jump-target]{scroll-margin-top:calc(var(--jump-offset,0px) + var(--jump-inset,0px))}
 .units-v2-jump-strip[data-fade="true"]{-webkit-mask-image:linear-gradient(90deg,#000 75%,transparent);mask-image:linear-gradient(90deg,#000 75%,transparent)}`;
 
-export function ProductJumpLinks() {
+export function ProductJumpLinks({ reserveSpace = false }: { reserveSpace?: boolean }) {
+  // K12 FE2: the strip appears only once two sections exist, which pushed the page down ~57 px (CLS). A host that
+  // knows the strip will show passes reserveSpace, and an empty shell of the strip's height holds the place until then.
+  const [reserved, setReserved] = React.useState(reserveSpace);
+  React.useEffect(() => {
+    if (!reserveSpace) return;
+    const t = setTimeout(() => setReserved(false), HASH_WAIT_MS);
+    return () => clearTimeout(t);
+  }, [reserveSpace]);
   const [sections, setSections] = React.useState<Resolved[]>([]);
   const [current, setCurrent] = React.useState<string | null>(null);
   const [fade, setFade] = React.useState(false);
@@ -426,7 +434,11 @@ export function ProductJumpLinks() {
     startJump(hit.id, hit.hrefId, free, left);
   }, [sections, startJump]);
 
-  if (!show) return null;
+  if (!show) {
+    return reserveSpace && reserved ? (
+      <div data-testid="units-v2-jump-placeholder" aria-hidden="true" className="min-h-[57px]" />
+    ) : null;
+  }
 
   const go = (e: React.MouseEvent, s: Resolved) => {
     if (!document.getElementById(s.hrefId)) return;

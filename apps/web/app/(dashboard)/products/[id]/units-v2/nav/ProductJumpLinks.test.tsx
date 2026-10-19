@@ -111,6 +111,33 @@ describe("ProductJumpLinks (V19)", () => {
     expect(document.getElementById("units-v2-grid-title")).not.toHaveAttribute("data-jump-target");
   });
 
+  it("reserves the strip's height before the sections resolve (K12 FE2)", async () => {
+    const { rerender } = render(
+      <div>
+        <ProductJumpLinks reserveSpace />
+      </div>,
+    );
+    const ph = screen.getByTestId("units-v2-jump-placeholder");
+    expect(ph).toHaveAttribute("aria-hidden", "true");
+    expect(ph.className).toContain("min-h-[57px]");
+    expect(nav()).toBeNull();
+    rerender(
+      <div>
+        <ProductJumpLinks reserveSpace />
+        <h1 id="h-product">Cola</h1>
+        <h2 id="h-units">Units</h2>
+      </div>,
+    );
+    await waitFor(() => expect(nav()).toBeInTheDocument());
+    expect(screen.queryByTestId("units-v2-jump-placeholder")).toBeNull();
+  });
+
+  it("renders nothing without reserveSpace and no sections", () => {
+    render(<ProductJumpLinks />);
+    expect(screen.queryByTestId("units-v2-jump-placeholder")).toBeNull();
+    expect(nav()).toBeNull();
+  });
+
   it("Product targets the product h1 and never stamps the dashboard header h1 before it", () => {
     const { unmount } = render(
       <div>
