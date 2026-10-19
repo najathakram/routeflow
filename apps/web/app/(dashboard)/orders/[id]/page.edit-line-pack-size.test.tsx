@@ -101,7 +101,7 @@ describe("row 620: Edit Items keeps a legacy boxed line's own pack size through 
     expect(edited.unitsPerBox).toBe(12);
     expect(screen.getByText("$30.00")).toBeInTheDocument();
 
-    // Same 30 pcs at the same size: nothing to save (the bug sent qty 18 / 54 here).
+    // Same 30 pcs at the same size: nothing to save. (The bug shows above, in the pack size and the $30.00 preview.)
     expect(buildItemUpdates(latest, [line])).toEqual([]);
   });
 
