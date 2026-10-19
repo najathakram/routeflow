@@ -325,11 +325,11 @@ describe("VendorBillsService — supplier payment allocation (WP2)", () => {
 
       expect((prisma.supplierCredit as any).update).toHaveBeenNthCalledWith(1, {
         where: { id: "credit-old-1" },
-        data: { balance: 0 },
+        data: { balance: { decrement: 30 } },
       });
       expect((prisma.supplierCredit as any).update).toHaveBeenNthCalledWith(2, {
         where: { id: "credit-new-2" },
-        data: { balance: 40 },
+        data: { balance: { decrement: 10 } },
       });
 
       // Only totalPaid moves — the bill STAYS DRAFT. Flipping it to PAID here
@@ -338,6 +338,55 @@ describe("VendorBillsService — supplier payment allocation (WP2)", () => {
       expect(prisma.vendorBill.update.mock.calls[0][0].data).toEqual({ totalPaid: 40 });
       expect(result.status).toBe("DRAFT");
       expect(result.totalPaid).toBe(40);
+    });
+
+    it("B291: row-locks the supplier's credits (tenant predicate, sorted) BEFORE reading them", async () => {
+      const events: string[] = [];
+      const lockSql: { sql: string; values: unknown[] }[] = [];
+      const real = (prisma.tenantTransaction as jest.Mock).getMockImplementation()!;
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any, ...rest: any[]) =>
+        real(
+          (tx: any) =>
+            fn({
+              ...tx,
+              $executeRaw: jest.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+                const sql = strings.join("?");
+                if (sql.includes('"SupplierCredit"')) {
+                  events.push("lock");
+                  lockSql.push({ sql, values });
+                }
+                return 0;
+              }),
+            }),
+          ...rest,
+        ),
+      );
+      (prisma.supplierCredit as any).findMany.mockImplementation(async () => {
+        events.push("read");
+        return [{ id: "credit-1", balance: D(1000), receivedAt: new Date("2026-01-01") }];
+      });
+      prisma.vendorBill.create.mockResolvedValueOnce({
+        id: "bill-new",
+        supplierId: "sup-1",
+        totalOwed: 1000,
+        totalPaid: D(0),
+        status: "DRAFT",
+      });
+
+      await service.create({ supplierId: "sup-1", totalOwed: 1000, allowDuplicate: true });
+
+      expect(events).toEqual(["lock", "read"]);
+      expect(lockSql).toHaveLength(1);
+      // Raw SQL is not tenant-rewritten: the predicate is on the statement, bound, not interpolated.
+      expect(lockSql[0].sql).toContain('WHERE "tenantId" = ?');
+      expect(lockSql[0].sql).toContain('ORDER BY "receivedAt", id FOR UPDATE');
+      expect(lockSql[0].values[0]).toBe("test-tenant");
+      expect(lockSql[0].values[1]).toEqual(["sup-1"]);
+      // The draw is a relative decrement of the row the lock just made current.
+      expect((prisma.supplierCredit as any).update).toHaveBeenCalledWith({
+        where: { id: "credit-1" },
+        data: { balance: { decrement: 1000 } },
+      });
     });
 
     it("leaves a bill untouched when the supplier has no available credit", async () => {
@@ -393,11 +442,11 @@ describe("VendorBillsService — supplier payment allocation (WP2)", () => {
       // and never above the amount that created it ($50, not $50 + $10).
       expect((prisma.supplierCredit as any).update).toHaveBeenNthCalledWith(1, {
         where: { id: "credit-old-1" },
-        data: { balance: 30 },
+        data: { balance: { increment: 30 } },
       });
       expect((prisma.supplierCredit as any).update).toHaveBeenNthCalledWith(2, {
         where: { id: "credit-new-2" },
-        data: { balance: 50 },
+        data: { balance: { increment: 10 } },
       });
       // The draw rows go with the refund, so voiding then deleting the same
       // bill cannot hand the same money back twice.
@@ -407,6 +456,27 @@ describe("VendorBillsService — supplier payment allocation (WP2)", () => {
       expect(prisma.vendorBill.update).toHaveBeenCalledWith({
         where: { id: "bill-1" },
         data: { status: "VOID", totalPaid: 0 },
+      });
+    });
+
+    it("B291: a refund is a relative increment clamped at the credit's original amount", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(drawnBill("DRAFT") as any);
+      prisma.billPayment.findMany.mockResolvedValue([
+        { id: "pay-1", amount: D(10), supplierCreditId: "credit-1" },
+      ] as any);
+      // Read under the lock: the row already holds 45 of the 50 that created it.
+      (prisma.supplierCredit as any).findUnique.mockResolvedValue({
+        id: "credit-1",
+        amount: D(50),
+        balance: D(45),
+      });
+
+      await service.voidBill("bill-1");
+
+      expect((prisma.supplierCredit as any).update).toHaveBeenCalledTimes(1);
+      expect((prisma.supplierCredit as any).update).toHaveBeenCalledWith({
+        where: { id: "credit-1" },
+        data: { balance: { increment: 5 } },
       });
     });
 
@@ -473,7 +543,7 @@ describe("VendorBillsService — supplier payment allocation (WP2)", () => {
       // The whole $500 goes back first...
       expect((prisma.supplierCredit as any).update).toHaveBeenNthCalledWith(1, {
         where: { id: "credit-1" },
-        data: { balance: 500 },
+        data: { balance: { increment: 500 } },
       });
       expect(prisma.vendorBill.update.mock.calls[0][0].data).toEqual({
         items: { deleteMany: {} },
@@ -487,7 +557,7 @@ describe("VendorBillsService — supplier payment allocation (WP2)", () => {
       expect(prisma.billPayment.create.mock.calls[0][0].data.amount).toBe(50);
       expect((prisma.supplierCredit as any).update).toHaveBeenNthCalledWith(2, {
         where: { id: "credit-1" },
-        data: { balance: 450 },
+        data: { balance: { decrement: 50 } },
       });
       expect(prisma.vendorBill.update.mock.calls[2][0].data).toEqual({ totalPaid: 50 });
       expect(result.totalPaid).toBe(50);
@@ -509,7 +579,7 @@ describe("VendorBillsService — supplier payment allocation (WP2)", () => {
 
       expect((prisma.supplierCredit as any).update).toHaveBeenCalledWith({
         where: { id: "credit-1" },
-        data: { balance: 500 },
+        data: { balance: { increment: 500 } },
       });
       expect(prisma.vendorBill.update.mock.calls[0][0].data).toEqual(
         expect.objectContaining({ supplierId: "sup-2", totalPaid: 0 }),

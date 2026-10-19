@@ -9,7 +9,7 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
-import { lockBillRows } from "./bill-locks";
+import { lockBillRows, lockSupplierCredits } from "./bill-locks";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -656,6 +656,9 @@ export class VendorBillsService {
     const owedRemaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
     if (!(owedRemaining > 0.001)) return bill;
 
+    // B291: lock the supplier's credits (sorted) BEFORE reading them, so a concurrent bill on the
+    // same supplier waits and then reads the balance this one left, not the one it started from.
+    await lockSupplierCredits(tx, this.prisma.getTenantId(), { supplierIds: [bill.supplierId] });
     const credits = await tx.supplierCredit.findMany({
       where: { supplierId: bill.supplierId, balance: { gt: 0 } },
       orderBy: { receivedAt: "asc" },
@@ -682,7 +685,9 @@ export class VendorBillsService {
       });
       await tx.supplierCredit.update({
         where: { id: credit.id },
-        data: { balance: roundMoney(creditBalance - draw) },
+        // Relative, never the absolute `creditBalance - draw` read above: the draw is applied to
+        // whatever the row holds now (B291).
+        data: { balance: { decrement: draw } },
       });
 
       remaining = roundMoney(remaining - draw);
@@ -718,14 +723,26 @@ export class VendorBillsService {
     });
     if (!draws || draws.length === 0) return 0;
 
+    // B291: lock every credit these draws came from (sorted) before reading its balance.
+    await lockSupplierCredits(tx, this.prisma.getTenantId(), {
+      creditIds: draws.map((d: any) => d.supplierCreditId),
+    });
+
     let refunded = 0;
     for (const draw of draws) {
       const credit = await tx.supplierCredit.findUnique({ where: { id: draw.supplierCreditId } });
       if (!credit) continue;
-      const restored = roundMoney(
-        Math.min(Number(credit.amount), Number(credit.balance) + Number(draw.amount)),
+      // Relative write: add back the draw, clamped so the balance never passes the amount that
+      // created the credit (the clamp is read under the row lock, so it cannot go stale).
+      const give = roundMoney(
+        Math.min(Number(draw.amount), Number(credit.amount) - Number(credit.balance)),
       );
-      await tx.supplierCredit.update({ where: { id: credit.id }, data: { balance: restored } });
+      if (give > 0) {
+        await tx.supplierCredit.update({
+          where: { id: credit.id },
+          data: { balance: { increment: give } },
+        });
+      }
       refunded = roundMoney(refunded + Number(draw.amount));
     }
 
@@ -1063,6 +1080,12 @@ export class VendorBillsService {
       // strands the difference on a bill that no longer owes it (the supplier
       // statement's `outstanding` goes negative), and re-pointing `supplierId`
       // pays the new supplier's bill out of the old supplier's account.
+      // B291: lock the credits of the old AND the new supplier once, sorted, before the refund
+      // and the re-draw touch either (one lock order for the whole edit, so a concurrent create
+      // on the same supplier cannot deadlock against the refund-then-draw sequence).
+      await lockSupplierCredits(tx, this.prisma.getTenantId(), {
+        supplierIds: [bill.supplierId, dto.supplierId],
+      });
       const refunded = await this.refundDrawnSupplierCredits(tx, id);
 
       const updated = await tx.vendorBill.update({
