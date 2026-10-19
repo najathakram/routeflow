@@ -93,8 +93,10 @@ const REGISTRY: Record<string, Entry> = {
   },
   "orders/order-cancel-tx.ts::cancelOrderInTx": {
     kind: "status-gated",
-    gate: /Cancelling would erase revenue for goods the customer already has/,
-    gateFile: "orders/orders.service.ts",
+    // B692 / SA-814h: the binding B56 refusal (delivered units) now runs under the order lock here;
+    // the "Cancelling would erase revenue…" pre-check in order-cancel-impact.ts is advisory.
+    gate: /await assertCancelDeliveryStateUnderLock\(tx, \{ id, status: lockedStatus \}\)/,
+    gateFile: "orders/order-cancel-tx.ts",
     reason: "B56: an order with delivered units cannot be cancelled (status flip of every line)",
   },
 
@@ -106,6 +108,11 @@ const REGISTRY: Record<string, Entry> = {
   "orders/delivered-stamp.ts::clearUnevidencedDelivered": {
     kind: "not-a-lock-column",
     reason: "resets deliveredQty to 0 only",
+  },
+  "orders/order-pd-quantities.ts::writeOfficeDeliveries": {
+    kind: "not-a-lock-column",
+    reason:
+      "B692: a manual PARTIALLY_DELIVERED writes delivery evidence rows and recomputes deliveredQty only",
   },
   "routes/routes.service.ts::completeWithPayment": {
     kind: "not-a-lock-column",
