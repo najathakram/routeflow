@@ -59,7 +59,9 @@ for (const vp of VIEWPORTS) {
       for (const group of await against.all()) {
         const rows = group.locator("tr");
         await expect(rows).toHaveCount(2);
-        await expect(rows.nth(1)).toContainText(/Follows .+, which you set\.|not moving\./);
+        await expect(rows.nth(1)).toContainText(
+          /Goes (down|up): it follows .+, which you set|not moving/,
+        );
         const [first, reason] = await Promise.all([
           rows.nth(0).boundingBox(),
           rows.nth(1).boundingBox(),
