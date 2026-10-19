@@ -246,19 +246,27 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
   }, []);
 
   /**
-   * Before a submit POST: the local copy (with the submit key) is written, and the server copy is saved within a short budget, so
-   * the key is durable before it is sent. Never gates the order: a failed or slow draft write is ignored.
+   * Before a submit POST: the local copy (with the submit key) is written, and the server copy is saved, within ONE short budget,
+   * so the key is durable before it is sent. Never gates the order: a failed, slow or hung draft write is ignored.
    */
   const durableBeforeSubmit = React.useCallback(async (): Promise<void> => {
-    try {
-      await mirrorRef.current?.flush();
-    } catch {
-      /* the order must still go */
-    }
+    // BOTH writes share ONE budget: a hung local store (IndexedDB can stall in Safari) must not hold the order back either.
+    const saves = (async () => {
+      try {
+        await mirrorRef.current?.flush();
+      } catch {
+        /* the order must still go */
+      }
+      await flush({ force: true });
+    })();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
-      flush({ force: true }),
-      new Promise<void>((resolve) => setTimeout(resolve, SUBMIT_FLUSH_BUDGET_MS)),
+      saves,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, SUBMIT_FLUSH_BUDGET_MS);
+      }),
     ]);
+    if (timer !== undefined) clearTimeout(timer);
   }, [flush]);
 
   /**

@@ -1558,7 +1558,12 @@ export function CreateOrderModal({
   // SA-817a: when the draft conflicts and this session has a submit whose outcome is unknown, that submit is replayed FIRST with
   // its original key (the order may already exist); only then is the user asked which version to keep.
   const [replay, setReplay] = React.useState<"idle" | "running" | "done">("idle");
-  const lastSubmitRef = React.useRef<{ data: FormValues; options: SubmitOptions } | null>(null);
+  const lastSubmitRef = React.useRef<{
+    data: FormValues;
+    options: SubmitOptions;
+    /** The builder state the attempt was sent with: the replay may only resend THAT cart. */
+    cartJson: string;
+  } | null>(null);
   const [pricesNotRefreshed, setPricesNotRefreshed] = React.useState(false);
   const resumePricesReady = priceLayer.ready && customerPricesData !== undefined;
   React.useEffect(() => {
@@ -1590,7 +1595,9 @@ export function CreateOrderModal({
     }
     if (replay !== "idle") return;
     const last = lastSubmitRef.current;
-    if (submitKey.hasUnknown() && last) {
+    // Replay only the cart that was actually sent: if the cart changed since, K1 may never have reached the server and a replay
+    // would create an order for edits nobody confirmed. Then the dialog opens at once and Keep this one still keeps K1.
+    if (submitKey.hasUnknown() && last && last.cartJson === draftPayloadJson) {
       setReplay("running");
       if (submitOrder(last.data, last.options) !== true) setReplay("done");
     } else {
@@ -1801,7 +1808,7 @@ export function CreateOrderModal({
     const { mergeChoice: _mc, idempotencyKey: _ik, ...cartForKey } = payload;
     const attemptKey = submitKey.begin(JSON.stringify(cartForKey));
     if (attemptKey === null) return false;
-    lastSubmitRef.current = { data, options };
+    lastSubmitRef.current = { data, options, cartJson: draftPayloadJson };
     // SA-817 A6: the key is DURABLE before it is sent - the local copy (with `_submitKey`) is written and the server copy saved
     // (short budget, never gating the order) before the POST, so a lost response followed by a reload can replay the same key.
     void autosave.durableBeforeSubmit().then(() =>
