@@ -74,24 +74,39 @@ for (const vp of VIEWPORTS) {
   test.describe(`K11-16 saved line @ ${vp.name}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
 
-    for (const how of ["Save button", "Ctrl+S"] as const) {
+    for (const how of ["Save button", "Save button (native click)", "Ctrl+S"] as const) {
       test(`${how}: the saved line is on screen within 1 s with no scroll, Undo works, it settles after 5 s`, async ({
         page,
         context,
       }) => {
-        // KNOWN (expected red, carded for window 2): a real mouse Save at 1440 scrolls the shell's overflow-hidden
-        // wrapper by the header's 64 px, so the line pins 64 px short of the bottom. Ctrl+S, 768 and 390 are flush.
-        // Remove this line with the fix.
-        test.fail(
-          vp.width === 1440 && how === "Save button",
-          "known: a mouse Save scrolls the shell's hidden wrapper by 64 px",
-        );
         await openProduct(page, context);
         await stageOneChange(page);
         const line = page.getByTestId(ID.line);
 
-        if (how === "Save button") await page.getByTestId(ID.save).click();
-        else await page.keyboard.press("Control+s");
+        if (how === "Save button") {
+          // A real click where the button rests, then the pointer leaves, as a person's would. locator.click() natively
+          // scrolls the target into view while the sticky bar is still settling, and that scroll also moves the shell's
+          // overflow-hidden wrapper by the header's 64 px (MM trace, 1440): no product code is involved. A pointer left
+          // resting where Save was would sit on the pinned line and hold it (the pointer-hold case below covers that).
+          await expect(page.getByTestId(ID.save)).toBeInViewport();
+          const b = (await page.getByTestId(ID.save).boundingBox())!;
+          await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+          await page.mouse.move(0, 0);
+        } else if (how === "Save button (native click)") {
+          // K11-16: locator.click() scrolls Save into view natively, as focus or scrollIntoView can. That scroll used to
+          // move the shell's overflow-hidden right column by the header's 64 px at 1440 (header off screen, line 64 px
+          // short). The column now refuses any scroll, so this path must be as flush as the settled click.
+          await page.getByTestId(ID.save).click();
+          await page.mouse.move(0, 0);
+        } else await page.keyboard.press("Control+s");
+
+        // The shell's right column never keeps a scroll (K11-16), so the header stays on screen.
+        expect(
+          await page.evaluate(
+            () => document.getElementById("main-content")?.parentElement?.scrollTop,
+          ),
+          "the shell's right column is not scrolled",
+        ).toBe(0);
 
         // Within 1 s, without scrolling, and pinned: the line is the one live region saying Saved.
         await expect(line).toContainText("Saved", { timeout: 1000 });
