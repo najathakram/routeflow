@@ -1055,7 +1055,7 @@ export function ProductCreateModal({
 
             {/* ── Costing method ── */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-navy">Costing Method</label>
+              <label className="mb-1 block text-sm font-medium text-navy">Costing method</label>
               <select
                 value={form.costingMethod}
                 onChange={(e) => set("costingMethod", e.target.value)}
