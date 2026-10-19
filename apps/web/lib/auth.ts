@@ -19,7 +19,7 @@ export interface AuthUser {
   isAdmin?: boolean;
   canActAsDriver?: boolean;
   tenantSlug?: string | null;
-  /** From the JWT (`tenantId`): the tenant segment of the local order-draft mirror key (SA-817). */
+  /** From the JWT (`tenantId`): the tenant segment of the local unsent-order copy key (SA-817). */
   tenantId?: string | null;
 }
 

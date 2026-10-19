@@ -1811,7 +1811,7 @@ export function CreateOrderModal({
     lastSubmitRef.current = { data, options, cartJson: draftPayloadJson };
     // SA-817 A6: the key is DURABLE before it is sent - the local copy (with `_submitKey`) is written and the server copy saved
     // (short budget, never gating the order) before the POST, so a lost response followed by a reload can replay the same key.
-    void autosave.durableBeforeSubmit().then(() =>
+    const send = () =>
       createOrder.mutate(
         { ...payload, idempotencyKey: attemptKey },
         {
@@ -1909,8 +1909,11 @@ export function CreateOrderModal({
           // SA-817a: a replay triggered by a draft conflict is over, whatever its outcome.
           onSettled: () => setReplay((r) => (r === "running" ? "done" : r)),
         },
-      ),
-    );
+      );
+    // With no local copy to make durable (no signed-in identity) the POST goes at once.
+    const durable = autosave.durableBeforeSubmit();
+    if (durable) void durable.then(send);
+    else send();
     return true;
   };
 

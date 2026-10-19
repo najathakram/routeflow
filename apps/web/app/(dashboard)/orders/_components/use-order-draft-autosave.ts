@@ -249,7 +249,12 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
    * Before a submit POST: the local copy (with the submit key) is written, and the server copy is saved, within ONE short budget,
    * so the key is durable before it is sent. Never gates the order: a failed, slow or hung draft write is ignored.
    */
-  const durableBeforeSubmit = React.useCallback(async (): Promise<void> => {
+  const durableBeforeSubmit = React.useCallback((): Promise<void> | null => {
+    // No signed-in identity means no local copy to make durable: the caller sends at once (still best effort for the server copy).
+    if (!mirrorRef.current) {
+      void flush({ force: true });
+      return null;
+    }
     // BOTH writes share ONE budget: a hung local store (IndexedDB can stall in Safari) must not hold the order back either.
     const saves = (async () => {
       try {
@@ -260,13 +265,14 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
       await flush({ force: true });
     })();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
+    return Promise.race([
       saves,
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, SUBMIT_FLUSH_BUDGET_MS);
       }),
-    ]);
-    if (timer !== undefined) clearTimeout(timer);
+    ]).then(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    });
   }, [flush]);
 
   /**
@@ -276,6 +282,7 @@ export function useOrderDraftAutosave(args: UseOrderDraftAutosaveArgs) {
   const finish = React.useCallback(async (): Promise<string | null> => {
     const engine = engineRef.current;
     engine?.discard();
+    setConflict(null); // the order exists: an open "which version?" question is moot
     void mirror?.remove(localIdRef.current);
     await engine?.settled();
     return engine?.draftId ?? null;

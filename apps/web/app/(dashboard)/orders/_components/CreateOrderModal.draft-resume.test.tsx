@@ -471,6 +471,7 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
       post.mockResolvedValue({ data: { id: "o1" } });
       renderWithProviders(<CreateOrderModal isOpen resumeDraftId="d1" onClose={jest.fn()} />);
       await screen.findByText("Widget p1");
+      await waitFor(() => expect(createBtn()).not.toBeDisabled()); // the fulfilment settings are still loading
       fireEvent.click(createBtn());
       await waitFor(() => expect(orderPosts()).toHaveLength(1));
       expect(keyOf(0)).toBe("K-FROM-SERVER");
