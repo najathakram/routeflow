@@ -36,6 +36,8 @@ describe("ConnectChargeReviewService", () => {
     prisma = createMockPrisma();
     (prisma as any).invoicePayment.findMany = jest.fn().mockResolvedValue([payment()]);
     (prisma as any).invoice.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    (prisma as any).advancePayment.findMany = jest.fn().mockResolvedValue([]);
+    (prisma as any).advancePayment.updateMany = jest.fn().mockResolvedValue({ count: 1 });
     (prisma as any).user.findMany = jest.fn().mockResolvedValue([{ id: "op-1" }, { id: "op-2" }]);
     notifications.sendToUser.mockResolvedValue(1);
     audit.log.mockResolvedValue(undefined);
@@ -57,7 +59,13 @@ describe("ConnectChargeReviewService", () => {
 
     expect(tenantContext.run).toHaveBeenCalledWith("tenant-1", expect.any(Function));
     expect((prisma as any).invoicePayment.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { reference: "pi_1", status: { not: "VOID" } } }),
+      expect.objectContaining({
+        where: {
+          reference: "pi_1",
+          status: { not: "VOID" },
+          method: { in: ["CREDIT_CARD", "ACH"] },
+        },
+      }),
     );
     const call = (prisma as any).invoice.updateMany.mock.calls[0][0];
     expect(call.where).toEqual({ id: "inv-1", internalNotes: null });
@@ -133,5 +141,83 @@ describe("ConnectChargeReviewService", () => {
     expect((prisma as any).invoice.updateMany).toHaveBeenCalledTimes(2);
     expect(notifications.sendToUser).toHaveBeenCalledTimes(2);
     expect(notifications.sendToUser.mock.calls[0][1].body).toContain("INV-100, INV-101");
+  });
+
+  describe("on-account credit (AdvancePayment) booked from the same PaymentIntent", () => {
+    const advance = (notes: string | null = null) => ({ id: "adv-1", notes });
+
+    it("flags an advance-only settlement (no InvoicePayment) and notifies once", async () => {
+      (prisma as any).invoicePayment.findMany.mockResolvedValue([]);
+      (prisma as any).advancePayment.findMany.mockResolvedValue([advance()]);
+
+      await expect(service.flagForReview(input)).resolves.toBe("flagged");
+
+      expect((prisma as any).advancePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { reference: "pi_1", method: { in: ["CREDIT_CARD", "ACH"] } },
+        }),
+      );
+      const call = (prisma as any).advancePayment.updateMany.mock.calls[0][0];
+      expect(call.where).toEqual({ id: "adv-1", notes: null });
+      expect(Object.keys(call.data)).toEqual(["notes"]);
+      expect(call.data.notes).toContain("[REVIEW]");
+      expect(call.data.notes).toContain("evt_1");
+      expect(audit.log).toHaveBeenCalledWith(
+        expect.objectContaining({ entityType: "AdvancePayment", entityId: "adv-1" }),
+      );
+      expect(notifications.sendToUser).toHaveBeenCalledTimes(2);
+    });
+
+    it("a split payment flags BOTH the invoice and the on-account credit", async () => {
+      (prisma as any).advancePayment.findMany.mockResolvedValue([advance("old")]);
+
+      await expect(service.flagForReview(input)).resolves.toBe("flagged");
+
+      expect((prisma as any).invoice.updateMany).toHaveBeenCalledTimes(1);
+      const call = (prisma as any).advancePayment.updateMany.mock.calls[0][0];
+      expect(call.where).toEqual({ id: "adv-1", notes: "old" });
+      expect(call.data.notes.startsWith("old\n[REVIEW]")).toBe(true);
+      expect(notifications.sendToUser.mock.calls[0][1].body).toContain("INV-100");
+    });
+
+    it("redelivery with both already flagged does nothing", async () => {
+      (prisma as any).invoicePayment.findMany.mockResolvedValue([payment("[REVIEW] (evt_1)")]);
+      (prisma as any).advancePayment.findMany.mockResolvedValue([advance("[REVIEW] (evt_1)")]);
+
+      await expect(service.flagForReview(input)).resolves.toBe("already_flagged");
+
+      expect((prisma as any).advancePayment.updateMany).not.toHaveBeenCalled();
+      expect(notifications.sendToUser).not.toHaveBeenCalled();
+    });
+
+    it("redelivery after the invoice flag landed but the advance flag failed flags the advance", async () => {
+      (prisma as any).invoicePayment.findMany.mockResolvedValue([payment("[REVIEW] (evt_1)")]);
+      (prisma as any).advancePayment.findMany.mockResolvedValue([advance()]);
+
+      await expect(service.flagForReview(input)).resolves.toBe("flagged");
+
+      expect((prisma as any).invoice.updateMany).not.toHaveBeenCalled();
+      expect((prisma as any).advancePayment.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("an advance flag write failure throws and notifies nobody", async () => {
+      (prisma as any).advancePayment.findMany.mockResolvedValue([advance()]);
+      (prisma as any).advancePayment.updateMany.mockRejectedValue(new Error("db down"));
+      await expect(service.flagForReview(input)).rejects.toThrow("db down");
+      expect(notifications.sendToUser).not.toHaveBeenCalled();
+    });
+  });
+
+  it("sends the staff pushes in parallel, and one slow push does not block the rest", async () => {
+    const started: string[] = [];
+    notifications.sendToUser.mockImplementation((id: string) => {
+      started.push(id);
+      return id === "op-1" ? new Promise(() => undefined) : Promise.resolve(1);
+    });
+    // op-1 never resolves: a serial loop would hang here and never reach op-2.
+    const done = service.flagForReview(input);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(started).toEqual(["op-1", "op-2"]);
+    void done;
   });
 });
