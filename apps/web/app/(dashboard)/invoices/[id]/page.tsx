@@ -99,6 +99,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useTenant } from "@/components/tenant-provider";
 import { isAccountAdmin } from "@/lib/auth";
 import { useAuth } from "@/lib/auth-context";
+import { ReviewFlagNotice } from "@/components/ReviewFlagNotice";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
 import { isPaidAtSale, termsAndConditionsToShow } from "@/lib/invoice-sale-terms";
@@ -2308,6 +2309,9 @@ export default function InvoiceDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Row 616: a Stripe refund/dispute flag written to the staff-only internal notes. */}
+      <ReviewFlagNotice notes={invoice.internalNotes} role={user?.role} />
 
       {/* What's Next guidance banner */}
       <WhatsNextBanner status={status} onRecordPayment={() => setIsPaymentOpen(true)} />
