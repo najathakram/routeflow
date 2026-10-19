@@ -159,6 +159,7 @@ export function OpenOrdersCard({
                           <Link
                             href={`/orders/${l.orderId}`}
                             className="font-mono text-xs font-medium text-brand-600 hover:underline"
+                            aria-label={l.orderNumber ?? `Order ${l.orderId.slice(0, 8)}`}
                           >
                             {l.orderNumber ?? "View"}
                           </Link>

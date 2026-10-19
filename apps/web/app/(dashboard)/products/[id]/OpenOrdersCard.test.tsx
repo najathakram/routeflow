@@ -80,6 +80,19 @@ describe("OpenOrdersCard", () => {
     expect(second.getByText(/out for delivery/i)).toBeInTheDocument();
   });
 
+  it("a line without an order number still links with a unique, meaningful name", () => {
+    query.data = data([
+      line({ orderId: "abcdef1234567890", orderNumber: null }),
+      line({ orderId: "zyxwvu9876543210", orderNumber: null }),
+    ]);
+    render(<OpenOrdersCard productId="p1" unitsPerBox={12} />);
+    expect(screen.getByRole("link", { name: "Order abcdef12" })).toHaveAttribute(
+      "href",
+      "/orders/abcdef1234567890",
+    );
+    expect(screen.getByRole("link", { name: "Order zyxwvu98" })).toBeInTheDocument();
+  });
+
   it("a part-billed line reads 'of N ordered'", () => {
     query.data = data([line({ qty: 60, remainingQty: 30, boxes: 2, pieces: 6 })]);
     render(<OpenOrdersCard productId="p1" unitsPerBox={12} />);

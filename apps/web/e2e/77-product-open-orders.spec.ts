@@ -155,14 +155,24 @@ async function mockProductPage(page: Page) {
 
 const SKIP_REASON = "Open orders card not present in this web build (pre-deploy)";
 
-/** Returns false when the build predates the card, so callers skip instead of failing. */
-async function gotoCard(page: Page): Promise<boolean> {
+/** Only a run against the deployed production web may predate the card; anywhere else it is a failure. */
+const TARGETS_PROD = /production\.up\.railway\.app|routeflow\.info/.test(
+  process.env.PLAYWRIGHT_BASE_URL ?? "",
+);
+
+/** Opens the product page. Skips (production, pre-deploy) or fails (everywhere else) without the card. */
+async function gotoCard(page: Page): Promise<void> {
   await page.goto(`/products/${PRODUCT_ID}`);
-  return page
-    .getByRole("heading", { name: "Open orders" })
-    .waitFor({ timeout: 15_000 })
-    .then(() => true)
-    .catch(() => false);
+  const heading = page.getByRole("heading", { name: "Open orders" });
+  if (TARGETS_PROD) {
+    const present = await heading
+      .waitFor({ timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false);
+    test.skip(!present, SKIP_REASON);
+  } else {
+    await heading.waitFor({ timeout: 15_000 });
+  }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -172,7 +182,7 @@ test.describe("Product detail: Open orders", () => {
     page,
   }) => {
     await mockProductPage(page);
-    test.skip(!(await gotoCard(page)), SKIP_REASON);
+    await gotoCard(page);
 
     const card = page
       .getByRole("heading", { name: "Open orders" })
@@ -198,7 +208,7 @@ test.describe("Product detail: Open orders", () => {
     test(`no horizontal overflow at ${name}px, with a screenshot`, async ({ page }) => {
       await page.setViewportSize({ width, height });
       await mockProductPage(page);
-      test.skip(!(await gotoCard(page)), SKIP_REASON);
+      await gotoCard(page);
 
       const heading = page.getByRole("heading", { name: "Open orders" });
       await heading.scrollIntoViewIfNeeded();

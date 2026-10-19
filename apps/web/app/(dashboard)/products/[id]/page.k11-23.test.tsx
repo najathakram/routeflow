@@ -132,7 +132,7 @@ describe("K11-23: Details first, then Image and stock, then the rest", () => {
     expect(follows(screen.getByTestId("demand-card"), open)).toBe(true);
     expect(follows(open, screen.getByTestId("sales-card"))).toBe(true);
     cleanup();
-    role = "STAFF";
+    role = "DRIVER";
     cards();
     expect(screen.queryByTestId("open-orders-card")).toBeNull();
     expect(screen.getByTestId("sales-card")).toBeInTheDocument();
