@@ -1,4 +1,5 @@
 import {
+  ArrayMinSize,
   IsArray,
   IsNumber,
   IsOptional,
@@ -29,8 +30,10 @@ export class UpdateVendorBillDto {
   /** Sales tax as printed. Omit to keep the stored tax; totalOwed refolds it. */
   @IsOptionalNotNull() @IsNumber() @Min(0) taxAmount?: number;
 
+  /** Absent = keep the lines. B292: an empty list would delete every line, so it is a 400. */
   @IsOptional()
   @IsArray()
+  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => VendorBillItemDto)
   items?: VendorBillItemDto[];

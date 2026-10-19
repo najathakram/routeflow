@@ -156,6 +156,8 @@ const CODE_COPY: Record<string, string> = {
     "That change would take the invoice total below what is already paid or credited. Remove the credit first, or change the lines or discount.",
   PO_ALREADY_BILLED: "That purchase order already has a bill.",
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
+  // B292: an edit that would clear every line is refused; the bill is voided or deleted instead.
+  [API_ERROR_CODES.BILL_NEEDS_A_LINE]: "A bill needs at least one line. Void or delete it instead.",
   INVOICE_HAS_UNSPENT_CREDIT:
     "This invoice has unspent credit. Release or use it first, then try again.",
   [API_ERROR_CODES.INVOICE_HAS_CASH_REFUND]:

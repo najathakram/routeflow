@@ -5,6 +5,7 @@
  * `taxAmount` stayed. Bootstrap copied from vendor-bills.due-date-2488.spec.ts.
  */
 import { Test, TestingModule } from "@nestjs/testing";
+import { BadRequestException } from "@nestjs/common";
 import { VendorBillsService } from "./vendor-bills.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
@@ -107,10 +108,70 @@ describe("VendorBillsService.update — a null taxAmount keeps the stored tax (r
     expect(totalWritten()).toBe(10);
   });
 
-  // update() does not persist taxAmount to the column (filed as row 594, not fixed here), so this control pins
-  // only the totalOwed it computes from the typed tax.
   it("a typed taxAmount replaces the stored one in the total (control)", async () => {
     await service.update("bill-1", { items, taxAmount: 1 });
     expect(totalWritten()).toBe(11);
+  });
+
+  // ── Row 594: the typed tax is SAVED ──────────────────────────────────────────────────────────
+  const writes = () => prisma.vendorBill.update.mock.calls.map((c) => c[0].data);
+  const taxWritten = () => writes().find((d) => "taxAmount" in d)?.taxAmount;
+
+  it("row 594: a tax-only edit is saved, and the total moves by the change in tax (14 -> 16)", async () => {
+    await service.update("bill-1", { taxAmount: 6 });
+    // Master (recorded): no write carried taxAmount, so the edit vanished.
+    expect(taxWritten()).toBe(6);
+    expect(totalWritten()).toBe(16);
+  });
+
+  it("row 594: a typed tax is rounded before it is saved", async () => {
+    await service.update("bill-1", { taxAmount: 6.126 });
+    expect(taxWritten()).toBe(6.13);
+  });
+
+  it("row 594: an items edit saves the typed tax too (10 + 1 = 11)", async () => {
+    await service.update("bill-1", { items, taxAmount: 1 });
+    expect(taxWritten()).toBe(1);
+    expect(totalWritten()).toBe(11);
+  });
+
+  it("row 594/591: an absent or null taxAmount writes no taxAmount (the stored tax stays)", async () => {
+    await service.update("bill-1", { items });
+    await service.update("bill-1", { items, taxAmount: null });
+    expect(taxWritten()).toBeUndefined();
+  });
+
+  it("row 594: a later items edit totals with the SAVED tax, not the stale one", async () => {
+    let stored: Record<string, any> = { ...draft };
+    prisma.vendorBill.findUnique.mockImplementation(async () => ({ ...stored }));
+    prisma.vendorBill.update.mockImplementation(async ({ data }: any) => {
+      for (const k of ["taxAmount", "totalOwed"]) if (data[k] !== undefined) stored[k] = data[k];
+      return { ...stored };
+    });
+    await service.update("bill-1", { taxAmount: 6 }); // tax-only: 4 -> 6
+    expect(stored.taxAmount).toBe(6);
+    await service.update("bill-1", { items }); // 10 pre-tax + the saved 6
+    expect(stored.totalOwed).toBe(16);
+  });
+
+  // ── B292: an edit never clears every line ────────────────────────────────────────────────────
+  it.each([
+    ["a plain bill", {}],
+    ["a PO-linked bill", { purchaseOrderId: "po-1" }],
+  ])("B292: items [] on %s is a 400 BILL_NEEDS_A_LINE and nothing is written", async (_n, over) => {
+    prisma.vendorBill.findUnique.mockResolvedValue({ ...draft, ...over });
+    const err = await service.update("bill-1", { items: [] }).catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toEqual({
+      code: "BILL_NEEDS_A_LINE",
+      message: "A bill needs at least one line. Void or delete it instead.",
+    });
+    expect(prisma.vendorBill.update).not.toHaveBeenCalled();
+    expect(prisma.vendorBillItem.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("B292: items absent is still 'no change' (the lines are not touched)", async () => {
+    await service.update("bill-1", { notes: "x" });
+    expect(writes().some((d) => d.items !== undefined)).toBe(false);
   });
 });

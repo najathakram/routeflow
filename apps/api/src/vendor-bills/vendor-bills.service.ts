@@ -986,6 +986,14 @@ export class VendorBillsService {
   async update(id: string, dto: any) {
     // #2488: 400 (naming the field) before any read or write.
     const dueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : null;
+    // B292: `items: []` would delete every line and recreate none. Absent items = no change; an
+    // empty list is never an edit, for any bill (a header-only bill is created, never edited into).
+    if (Array.isArray(dto.items) && dto.items.length === 0) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.BILL_NEEDS_A_LINE,
+        message: "A bill needs at least one line. Void or delete it instead.",
+      });
+    }
     const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: { items: { select: { id: true, qtyReceived: true } } },
@@ -1011,19 +1019,25 @@ export class VendorBillsService {
     // the FIRST edit (the G4 "tax lost on edit" bug the taxAmount column was
     // added to make recoverable) and skipped roundMoney.
     let totalOwed: number | undefined;
+    // Row 594: a typed tax (null counts as not typed, row 591) is SAVED, rounded, and every
+    // later total uses the saved value.
+    const newTax = dto.taxAmount != null ? roundMoney(Number(dto.taxAmount) || 0) : undefined;
     if (dto.items && Array.isArray(dto.items)) {
       const itemsTotal = dto.items.reduce(
         (sum: number, item: any) =>
           sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
         0,
       );
-      const tax = dto.taxAmount != null ? Number(dto.taxAmount) || 0 : Number(bill.taxAmount ?? 0);
+      const tax = newTax ?? Number(bill.taxAmount ?? 0);
       totalOwed = roundMoney(itemsTotal + tax);
 
       // B451 gap 4: same guard as create() — a negative qty/unitCost line
       // (or a negative taxAmount) must not persist a negative totalOwed here
       // either.
       assertMoneyInvariantsOrThrow({ subtotal: itemsTotal, tax, total: totalOwed });
+    } else if (newTax !== undefined) {
+      // A tax-only edit moves the total by exactly the change in tax; the lines are not re-read.
+      totalOwed = roundMoney(Number(bill.totalOwed) - Number(bill.taxAmount ?? 0) + newTax);
     }
 
     const billInclude = {
@@ -1041,11 +1055,6 @@ export class VendorBillsService {
       // A bill linked to a purchase order can't be edited past what the PO
       // authorised (checked before anything is deleted).
       if (bill.purchaseOrderId && Array.isArray(dto.items)) {
-        if (dto.items.length === 0) {
-          throw new BadRequestException(
-            "A bill linked to a purchase order needs at least one line.",
-          );
-        }
         const linkedPo = await tx.purchaseOrder.findUnique({
           where: { id: bill.purchaseOrderId },
           include: { items: true },
@@ -1105,6 +1114,7 @@ export class VendorBillsService {
             }),
           }),
           ...(totalOwed !== undefined && { totalOwed }),
+          ...(newTax !== undefined && { taxAmount: newTax }),
           ...(dto.items !== undefined && dto.items.length > 0
             ? {
                 items: {
