@@ -10,6 +10,7 @@ import {
   UnprocessableEntityException,
 } from "@nestjs/common";
 import { lockBillRows } from "./bill-locks";
+import { billCashPaidRefusal, isCashBillPayment, type BillPaymentLike } from "./bill-cash-guard";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -344,8 +345,11 @@ export class VendorBillsService {
       totalOwed?: unknown;
       items: { id: string; qtyReceived: Prisma.Decimal | null }[];
     },
+    // B288: void, revert and delete pass true — the refusal is the first statement under the lock.
+    refuseCashPayments = false,
   ) {
     await lockBillRows(tx, this.prisma.getTenantId(), [bill.id]);
+    if (refuseCashPayments) await this.refuseBillWithCash(tx, bill.id);
     const fresh = await tx.vendorBill.findUnique({
       where: { id: bill.id },
       select: {
@@ -382,6 +386,25 @@ export class VendorBillsService {
           "This bill was just changed by someone else (received, reverted, voided, paid or edited) — reload it and try again.",
       });
     }
+  }
+
+  /**
+   * B288 (SA-814 R5-3): 409 BILL_HAS_PAYMENTS when CASH payments sit on the bill. Read under the bill row
+   * lock, so a payment that committed after the caller's pre-tx read still counts. Void, revert-to-draft
+   * and delete used to keep (void, revert) or destroy (delete) that money; the way out is
+   * movePaymentToSupplierCredit.
+   */
+  private async refuseBillWithCash(tx: any, billId: string) {
+    const payments = await tx.billPayment.findMany({
+      where: {
+        vendorBillId: billId,
+        supplierCreditId: null,
+        method: { not: PaymentMethod.CREDIT_NOTE },
+      },
+      select: { amount: true, method: true, supplierCreditId: true },
+    });
+    const refusal = billCashPaidRefusal(payments ?? []);
+    if (refusal) throw new ConflictException(refusal);
   }
 
   private productIdsOf(items: { productId: string | null }[]): string[] {
@@ -1841,7 +1864,7 @@ export class VendorBillsService {
     // SA-767 L-1: the whole reversal tx re-runs on a 40P01 / 40001 / P2034 (nothing leaves the tx).
     const runBody = async (tx: any) => {
       await setStockLockTimeout(tx); // SA-767 R6: bound the bill row lock wait too
-      await this.lockBillAndAssertReceiptState(tx, bill);
+      await this.lockBillAndAssertReceiptState(tx, bill, true);
       // B285: the reversal below read-modify-writes the product's average — lock it first.
       await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
       const gapsDetected = await this.appendBillReversals(
@@ -2059,7 +2082,7 @@ export class VendorBillsService {
       // SA-767 L-1: the whole reversal tx re-runs on a 40P01 / 40001 / P2034 (nothing leaves the tx).
       const runBody = async (tx: any) => {
         await setStockLockTimeout(tx); // SA-767 R6: bound the bill row lock wait too
-        await this.lockBillAndAssertReceiptState(tx, bill);
+        await this.lockBillAndAssertReceiptState(tx, bill, true);
         await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
         // B846 sibling (SA-808 §5): the same append-only reversal revertToDraft writes — one signed
         // PURCHASE row per live receipt row, dated by documentStockDate (the tobacco filing sums
@@ -2091,7 +2114,7 @@ export class VendorBillsService {
     return this.prisma.tenantTransaction(async (tx) => {
       // B285: a first receive committing between our pre-read and this write would leave its
       // stock on a VOID bill (nothing here reverses it) — lock and re-check like the branch above.
-      await this.lockBillAndAssertReceiptState(tx, bill);
+      await this.lockBillAndAssertReceiptState(tx, bill, true);
       const refunded = await this.refundDrawnSupplierCredits(tx, id);
       return tx.vendorBill.update({
         where: { id },
@@ -2956,6 +2979,132 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
   }
 
   /**
+   * B288 (SA-814 R5-3): the exit that void / revert / delete send an operator to when a bill carries
+   * CASH (409 BILL_HAS_PAYMENTS) — take one payment off the bill and hold it as on-account supplier
+   * credit, so the money is neither kept on a dead bill nor destroyed.
+   *
+   * ONE transaction under the bill row lock: one `SupplierCredit` equal to the payment (same method and
+   * reference), dated (`receivedAt`) at the ORIGINAL payment's `paidAt` (SA-814n: the supplier
+   * statement counts a credit at `receivedAt`, so the cash stays on the day it left), then the payment
+   * row is removed. The bill's `totalPaid` and status are recomputed from its remaining payments, by the
+   * same arithmetic as recordPayment (never from the old column): at or past the total → PAID, some →
+   * PARTIAL, none → back to the receipt lifecycle (DRAFT never received, else RECEIVED / PARTIAL by
+   * line receipts; VOID stays VOID). The new credit is a fresh row, so no existing credit is read or
+   * written here. Credit DRAWS are not movable (void / delete hand them back to their credit).
+   */
+  async movePaymentToSupplierCredit(billId: string, paymentId: string, performedById?: string) {
+    return this.prisma.tenantTransaction(async (tx) => {
+      await lockBillRows(tx, this.prisma.getTenantId(), [billId]);
+      const bill = await tx.vendorBill.findUnique({
+        where: { id: billId },
+        include: {
+          payments: true,
+          items: { select: { id: true, qty: true, qtyReceived: true, productId: true } },
+        },
+      });
+      if (!bill) throw new NotFoundException("Bill not found");
+      const payment = bill.payments.find((p) => p.id === paymentId);
+      if (!payment) throw new NotFoundException("Payment not found");
+      if (!isCashBillPayment(payment)) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.BILL_PAYMENT_NOT_CASH,
+          message:
+            "This payment is a draw of supplier credit. Voiding or deleting the bill hands it back to the credit.",
+        });
+      }
+      if (!bill.supplierId) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.BILL_PAYMENT_NO_SUPPLIER,
+          message: "This bill has no supplier, so there is no account to hold the credit.",
+        });
+      }
+      const amount = roundMoney(Number(payment.amount));
+      const credit = await tx.supplierCredit.create({
+        data: {
+          supplierId: bill.supplierId,
+          amount,
+          balance: amount,
+          method: payment.method,
+          reference: payment.reference ?? null,
+          notes: `Moved from bill ${bill.billNumber}${payment.notes ? ` — ${payment.notes}` : ""}`,
+          receivedAt: payment.paidAt,
+        },
+      });
+      // Money is conserved only if BOTH writes land: a delete that matched nothing rolls the credit back.
+      const removed = await tx.billPayment.deleteMany({
+        where: { id: payment.id, vendorBillId: billId },
+      });
+      if (removed.count !== 1) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.BILL_STATE_CHANGED,
+          message:
+            "This bill was just changed by someone else (received, reverted, voided, paid or edited) — reload it and try again.",
+        });
+      }
+      const remaining = bill.payments.filter((p) => p.id !== payment.id);
+      const totalPaid = roundMoney(remaining.reduce((sum, p) => sum + Number(p.amount), 0));
+      const statusAfter = this.statusAfterPaymentRemoved(bill, totalPaid, remaining);
+      const updated = await tx.vendorBill.update({
+        where: { id: billId },
+        data: { totalPaid, status: statusAfter as any },
+        include: {
+          supplier: { select: { id: true, name: true } },
+          payments: { orderBy: { createdAt: "desc" } },
+          items: {
+            include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+          },
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          tenantId: this.prisma.getTenantId() ?? null,
+          userId: performedById ?? null,
+          action: AUDIT_ACTIONS.VENDOR_BILL_PAYMENT_MOVED_TO_CREDIT,
+          entityType: "VendorBill",
+          entityId: billId,
+          meta: {
+            billNumber: bill.billNumber,
+            paymentId: payment.id,
+            supplierCreditId: credit.id,
+            amount,
+            paidAt: payment.paidAt,
+            method: payment.method,
+            statusBefore: bill.status,
+            statusAfter,
+          },
+        },
+      });
+      return { bill: updated, supplierCredit: credit };
+    });
+  }
+
+  /** The status a bill takes once a payment leaves it: paid-ness is arithmetic, the rest is the receipt lifecycle. */
+  private statusAfterPaymentRemoved(
+    bill: {
+      status: string;
+      totalOwed: unknown;
+      receivedDate: Date | null;
+      items: {
+        qty: Prisma.Decimal;
+        qtyReceived: Prisma.Decimal | null;
+        productId: string | null;
+      }[];
+    },
+    totalPaid: number,
+    remaining: BillPaymentLike[],
+  ): string {
+    if (bill.status === "VOID") return "VOID";
+    // A never-received bill whose cash is gone is a draft again (credit draws never moved a DRAFT).
+    if (bill.receivedDate == null && !remaining.some((p) => isCashBillPayment(p))) return "DRAFT";
+    if (totalPaid >= Number(bill.totalOwed) - 0.001 && totalPaid > 0.001) return "PAID";
+    if (totalPaid > 0.001) return "PARTIAL";
+    const fullyReceived = bill.items
+      .filter((i) => i.productId)
+      .every((i) => this.lineReceivedQty(bill, i).gte(new Prisma.Decimal(i.qty)));
+    return fullyReceived ? "RECEIVED" : "PARTIAL";
+  }
+
+  /**
    * The AP mirror of `InvoicesService.recordStandalonePayment`: one lump-sum
    * supplier payment allocated across N of that supplier's bills, all sharing
    * one `paymentGroupId` so the group reads as a single event. Any amount left
@@ -3230,15 +3379,17 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       include: { items: { select: { id: true, qtyReceived: true } } },
     });
     if (!bill) throw new NotFoundException("Bill not found");
-    if (bill.status === "RECEIVED" || bill.status === "PAID" || bill.status === "PARTIAL") {
-      throw new BadRequestException(
-        "Cannot delete a bill that has been received or paid. Void it instead.",
-      );
-    }
     await this.prisma.tenantTransaction(async (tx) => {
       // B285: same lock + re-check as receive — a receive committing after our DRAFT check would
       // otherwise leave its stock behind a deleted bill.
-      await this.lockBillAndAssertReceiptState(tx, bill);
+      // B288: the lock's FIRST statement refuses cash payments (409 BILL_HAS_PAYMENTS). The status
+      // refusal follows it, so a part-paid PARTIAL/PAID bill gets the 409 that says how to proceed.
+      await this.lockBillAndAssertReceiptState(tx, bill, true);
+      if (bill.status === "RECEIVED" || bill.status === "PAID" || bill.status === "PARTIAL") {
+        throw new BadRequestException(
+          "Cannot delete a bill that has been received or paid. Void it instead.",
+        );
+      }
       // A DRAFT bill can legitimately carry auto-applied credit draws — give
       // that money back before its payment rows are destroyed with the bill.
       await this.refundDrawnSupplierCredits(tx, id);
@@ -3262,8 +3413,46 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         where: { id: { in: ids } },
         select: { id: true, status: true, billNumber: true },
       });
-      const deletable = bills.filter((b) => b.status === "DRAFT" || b.status === "VOID");
-      const skipped = bills.filter((b) => b.status !== "DRAFT" && b.status !== "VOID");
+      const byStatus = bills.filter((b) => b.status === "DRAFT" || b.status === "VOID");
+      const skipped: {
+        id: string;
+        billNumber: string;
+        reason: string;
+        code?: string;
+        amount?: number;
+      }[] = bills
+        .filter((b) => b.status !== "DRAFT" && b.status !== "VOID")
+        .map((b) => ({
+          id: b.id,
+          billNumber: b.billNumber,
+          reason: "Cannot delete received/paid/partial bills",
+        }));
+      // B288: per-bill outcome, as for status — a bill carrying CASH payments is skipped (BILL_HAS_PAYMENTS +
+      // amount), the rest of the batch still goes. Decided under the row locks, before any write.
+      const cashRows = byStatus.length
+        ? await tx.billPayment.findMany({
+            where: {
+              vendorBillId: { in: byStatus.map((b) => b.id) },
+              supplierCreditId: null,
+              method: { not: PaymentMethod.CREDIT_NOTE },
+            },
+            select: { vendorBillId: true, amount: true, method: true, supplierCreditId: true },
+          })
+        : [];
+      const deletable = byStatus.filter((b) => {
+        const refusal = billCashPaidRefusal(
+          (cashRows ?? []).filter((p: any) => p.vendorBillId === b.id && isCashBillPayment(p)),
+        );
+        if (!refusal) return true;
+        skipped.push({
+          id: b.id,
+          billNumber: b.billNumber,
+          reason: refusal.message,
+          code: refusal.code,
+          amount: refusal.amount,
+        });
+        return false;
+      });
       if (deletable.length > 0) {
         const deletableIds = deletable.map((b) => b.id);
         // Same reason as delete(): auto-applied credit goes back before the
@@ -3282,11 +3471,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       }
       return {
         deleted: deletable.length,
-        skipped: skipped.map((b) => ({
-          id: b.id,
-          billNumber: b.billNumber,
-          reason: "Cannot delete received/paid/partial bills",
-        })),
+        skipped,
       };
     });
   }

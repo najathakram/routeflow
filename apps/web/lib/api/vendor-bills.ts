@@ -53,7 +53,16 @@ export interface VendorBillPayment {
   method: AnyPaymentMethod;
   reference?: string;
   notes?: string;
+  /** Set only on a draw of on-account supplier credit (a CREDIT_NOTE row); cash payments leave it null. */
+  supplierCreditId?: string | null;
+  /** The date the money went out (the credit created by "Move to supplier credit" carries it). */
+  paidAt?: string;
   createdAt: string;
+}
+
+/** B288: a payment the bill page offers "Move to supplier credit" for — cash, not a credit draw. */
+export function isMovableBillPayment(p: Pick<VendorBillPayment, "method" | "supplierCreditId">) {
+  return p.method !== "CREDIT_NOTE" && !p.supplierCreditId;
 }
 
 export interface VendorBill {
@@ -465,6 +474,26 @@ export function useRecordVendorBillPayment() {
   });
 }
 
+/**
+ * B288 (SA-814 R5-3): the exit for a refused void / revert / delete (409 BILL_HAS_PAYMENTS) — holds one cash payment
+ * as a supplier credit dated at the payment. The bill page toasts a refusal itself (`codedToastCopy`).
+ */
+export function useMoveVendorBillPaymentToCredit() {
+  const qc = useQueryClient();
+  return useMutation<{ bill: VendorBill }, Error, { billId: string; paymentId: string }>({
+    mutationFn: ({ billId, paymentId }) =>
+      apiClient
+        .post(`/vendor-bills/${billId}/payments/${paymentId}/move-to-credit`)
+        .then((r) => r.data),
+    meta: { localErrorToast: true },
+    onSuccess: (_, { billId }) => {
+      qc.invalidateQueries({ queryKey: ["vendor-bills"] });
+      qc.invalidateQueries({ queryKey: ["vendor-bills", billId] });
+      qc.invalidateQueries({ queryKey: ["supplier-statement"] });
+    },
+  });
+}
+
 export function useDeleteVendorBill() {
   const qc = useQueryClient();
   return useMutation<{ success: boolean }, Error, string>({
@@ -475,7 +504,11 @@ export function useDeleteVendorBill() {
 
 export function useBulkDeleteVendorBills() {
   const qc = useQueryClient();
-  return useMutation<{ deleted: number; skipped: any[] }, Error, string[]>({
+  return useMutation<
+    { deleted: number; skipped: Array<{ id: string; billNumber: string; code?: string }> },
+    Error,
+    string[]
+  >({
     mutationFn: (ids) => apiClient.delete("/vendor-bills", { data: { ids } }).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["vendor-bills"] }),
   });

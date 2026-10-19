@@ -27,6 +27,8 @@ import {
   useVoidVendorBill,
   useRecordVendorBillPayment,
   useRevertVendorBillToDraft,
+  useMoveVendorBillPaymentToCredit,
+  isMovableBillPayment,
   useUpdateVendorBill,
   useSaveProductMapping,
   getUnlinkedItemsError,
@@ -60,6 +62,7 @@ import {
   type SelectablePaymentMethod,
 } from "@/lib/payment-methods";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
 
 /**
  * Extra fields the API additively includes on a bill's `findOne` mapped-
@@ -244,6 +247,48 @@ function VoidConfirmModal({
     >
       <p className="text-sm text-navy/70">
         Voiding this bill will mark it as cancelled. No further payments can be recorded on it.
+      </p>
+    </Modal>
+  );
+}
+
+// ─── Move Payment To Supplier Credit Modal (B288) ─────────────────────────────
+
+function MovePaymentModal({
+  payment,
+  onClose,
+  onConfirm,
+  isPending,
+}: {
+  payment: VendorBillPayment | null;
+  onClose: () => void;
+  onConfirm: () => void;
+  isPending: boolean;
+}) {
+  return (
+    <Modal
+      open={!!payment}
+      onClose={onClose}
+      title="Move to supplier credit?"
+      description={
+        payment
+          ? `${fmt(Number(payment.amount))} paid on ${fmtDate(payment.paidAt ?? payment.createdAt)} comes off this bill and becomes credit with the supplier, dated the same day.`
+          : ""
+      }
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button onClick={onConfirm} loading={isPending}>
+            Move to credit
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm text-navy/70">
+        The bill's balance goes back up by this amount. The credit is applied to the supplier's next
+        bill.
       </p>
     </Modal>
   );
@@ -731,6 +776,7 @@ export default function VendorBillDetailPage() {
   const voidBill = useVoidVendorBill();
   const recordPayment = useRecordVendorBillPayment();
   const revertToDraft = useRevertVendorBillToDraft();
+  const movePaymentToCredit = useMoveVendorBillPaymentToCredit();
   const updateBill = useUpdateVendorBill();
 
   const { data: suppliersData } = useSuppliers();
@@ -742,6 +788,7 @@ export default function VendorBillDetailPage() {
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isRevertOpen, setIsRevertOpen] = React.useState(false);
+  const [movingPayment, setMovingPayment] = React.useState<VendorBillPayment | null>(null);
   const [isReceiveOpen, setIsReceiveOpen] = React.useState(false);
   // Variant-split modal (PR-D) — set from a line's "Generic — split into
   // variants?" badge. The badge only carries the product id + this line's
@@ -939,11 +986,36 @@ export default function VendorBillDetailPage() {
         setIsRevertOpen(false);
         toast({
           title: "Failed to revert bill",
-          description: err?.response?.data?.message ?? "Please try again.",
+          description: codedToastCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
           variant: "error",
         });
       },
     });
+  };
+
+  const handleMovePaymentToCredit = () => {
+    if (!movingPayment) return;
+    movePaymentToCredit.mutate(
+      { billId: bill.id, paymentId: movingPayment.id },
+      {
+        onSuccess: () => {
+          setMovingPayment(null);
+          toast({
+            title: "Payment moved to supplier credit",
+            description: `${fmt(Number(movingPayment.amount))} is now credit with the supplier.`,
+            variant: "success",
+          });
+        },
+        onError: (err: any) => {
+          setMovingPayment(null);
+          toast({
+            title: "Failed to move payment",
+            description: codedToastCopy(err) ?? "Please try again.",
+            variant: "error",
+          });
+        },
+      },
+    );
   };
 
   const handleSaveEdit = () => {
@@ -1496,6 +1568,16 @@ export default function VendorBillDetailPage() {
                         {pmt.reference && ` · ${pmt.reference}`}
                       </p>
                       {pmt.notes && <p className="mt-0.5 text-xs text-navy/70">{pmt.notes}</p>}
+                      {isMovableBillPayment(pmt) && !isEditing && (
+                        <WriteButton
+                          variant="link"
+                          size="sm"
+                          className="mt-1"
+                          onClick={() => setMovingPayment(pmt)}
+                        >
+                          Move to supplier credit
+                        </WriteButton>
+                      )}
                     </div>
                   </li>
                 ))}
@@ -1577,6 +1659,13 @@ export default function VendorBillDetailPage() {
         onConfirm={handleVoid}
         billNumber={bill.billNumber}
         isPending={voidBill.isPending}
+      />
+
+      <MovePaymentModal
+        payment={movingPayment}
+        onClose={() => setMovingPayment(null)}
+        onConfirm={handleMovePaymentToCredit}
+        isPending={movePaymentToCredit.isPending}
       />
 
       <RevertToDraftModal

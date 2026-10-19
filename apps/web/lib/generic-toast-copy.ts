@@ -96,6 +96,10 @@ const CODE_COPY: Record<string, string> = {
   // B986-7 (Opus): coded refusals whose server sentence tells the user what to fix. Fixed sentences, no ids or typed text. Keys are
   // computed keys from API_ERROR_CODES (B987-A registered them); EMAIL_NOT_CONFIGURED / EMAIL_SEND_FAILED stay bare keys until
   // B987-B (#3053) registers them, then switch to the constants.
+  [API_ERROR_CODES.BILL_PAYMENT_NOT_CASH]:
+    "That payment is a draw of supplier credit. Voiding or deleting the bill hands it back.",
+  [API_ERROR_CODES.BILL_PAYMENT_NO_SUPPLIER]:
+    "This bill has no supplier, so there is no account to hold the credit.",
   [API_ERROR_CODES.UNIT_NOT_OFFERED]:
     "That unit isn't offered for this product any more. Choose another unit, or ask an admin to add it back.",
   [API_ERROR_CODES.UNIT_ARCHIVED]:
@@ -260,6 +264,15 @@ const STOCK_COPY = "Some items aren't available in that quantity.";
 const usd = (n: unknown): string | null =>
   typeof n === "number" && Number.isFinite(n) && n >= 0 ? `$${n.toFixed(2)}` : null;
 
+/**
+ * B288 (SA-814 R5-3): a vendor bill that still carries cash payments cannot be voided, reverted or deleted. FIXED sentence, the
+ * amount from the structured `amount` field (never the server's message); the bill page's "Move to supplier credit" is the exit.
+ */
+export function billHasPaymentsCopy(data: Record<string, unknown>): string {
+  const amount = usd(data.amount);
+  return `This bill has ${amount ?? "payments"}${amount ? " in payments" : ""}. Move them to a supplier credit first.`;
+}
+
 /** A payment's allocations add up to more than the payment: the two amounts come from structured body fields. */
 function allocationsCopy(data: Record<string, unknown>): string {
   const allocated = usd(data.allocatedTotal);
@@ -370,6 +383,7 @@ export function codedToastCopy(err: unknown): string | null {
   // B986: coded refusals whose server sentence tells the user what to fix; the numbers come from STRUCTURED fields.
   if (code === API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT) return allocationsCopy(data);
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);
+  if (code === API_ERROR_CODES.BILL_HAS_PAYMENTS) return billHasPaymentsCopy(data);
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);

@@ -590,6 +590,16 @@ export const API_ERROR_CODES = {
    * was written, so the caller never gets the tier price instead of the customer's typed price.
    */
   CUSTOMER_PRICES_UNAVAILABLE: "CUSTOMER_PRICES_UNAVAILABLE",
+  /**
+   * 409 from void / revert-to-draft / delete (and a per-bill `skipped` entry of the bulk delete) of a vendor bill that still carries CASH
+   * payments (B288, SA-814 R5-3). Body carries `amount` (the rounded cash total). Nothing was written; move the payments to a supplier
+   * credit first (POST /vendor-bills/:id/payments/:paymentId/move-to-credit).
+   */
+  BILL_HAS_PAYMENTS: "BILL_HAS_PAYMENTS",
+  /** 409 from move-to-credit: the payment is a draw of supplier credit (void or delete hands it back), not cash. */
+  BILL_PAYMENT_NOT_CASH: "BILL_PAYMENT_NOT_CASH",
+  /** 409 from move-to-credit: the bill has no supplier, so there is no account to hold the credit. */
+  BILL_PAYMENT_NO_SUPPLIER: "BILL_PAYMENT_NO_SUPPLIER",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
