@@ -1660,14 +1660,16 @@ export class VendorBillsService {
       // Read current product state within the transaction for accurate AVCO reversal
       const product = await tx.product.findFirst({
         where: { id: productId },
-        select: { currentStock: true, averageCost: true },
+        select: { currentStock: true, averageCost: true, costingMethod: true },
       });
       if (!product) continue;
 
       // Exact AVCO reversal; null ⇒ reversal empties stock — KEEP the
-      // previous average so the product's cost basis survives the revert
+      // previous average so the product's cost basis survives the revert.
+      // Row 647: a STANDARD product keeps its operator-set cost — receive() never moved its
+      // average (updatesAverage), so the reversal must not "undo" a move that never happened.
       const reversedAvg =
-        product.averageCost != null
+        product.averageCost != null && product.costingMethod !== "STANDARD"
           ? reverseAverageCost(product.currentStock, product.averageCost, qty, unitCost)
           : null;
 
