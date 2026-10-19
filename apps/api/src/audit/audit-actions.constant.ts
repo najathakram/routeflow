@@ -20,6 +20,10 @@ export const AUDIT_ACTIONS = {
   VENDOR_BILL_VOID_NO_RECEIPT: "vendor-bill.void-without-receipt",
   /** SA-808c: a void or revert refused because a product's receipt rows exceed what the bill received; the repair census reads it; meta {billNumber, productId, posted, received, action}. */
   VENDOR_BILL_LEDGER_EXCESS: "vendor-bill.ledger-excess",
+  /** Units v2 (SA-799 b): one price Save; meta {request, undo, revisionBefore, revisionAfter, actor}. Undoable once. */
+  PRODUCT_PRICES_SAVED: "product.prices-saved",
+  /** Units v2 (SA-799 b): the Undo of a PRODUCT_PRICES_SAVED row; meta {undoes, revisionBefore, revisionAfter, actor}. */
+  PRODUCT_PRICES_UNDONE: "product.prices-undone",
 } as const;
 
 export type AuditActionName = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

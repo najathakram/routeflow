@@ -51,6 +51,34 @@
 //                    NOT_FOUND | SELF | VARIANT_PARENT | INACTIVE | HAS_VARIANTS. Nothing was written.
 //   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
 //                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
+//   UNIT_NAME_TAKEN — `body.code` of the 409 when renaming a unit to a name another unit of the tenant already has
+//                    (archived or not).
+//   UNIT_RENAME_COLLISION — `body.code` of the 409 when a unit rename would give one product two levels the same name;
+//                    `body.reason` is NAME (a product already has that name), DUPLICATE_LEVELS (two of its levels are
+//                    linked to the unit), LINES_AT_OTHER_SIZE (orders or invoices already carry the new name at another
+//                    size) or MIXED; `products` lists up to 10 `{id, name}` and `total` counts them all.
+//                    Nothing was changed.
+//   UNITS_RENAME_IN_PROGRESS — `body.code` of the 409 when a pack edit, level write or import confirmation could not get the
+//                    tenant units lock within 3 s because a unit rename is running (or a rename could not get it within 5 s
+//                    because writers hold it, or a pack edit could not get one product's lock because another save of that product holds it).
+//                    The user-facing copy is neutral ("Another change is in progress"): the blocker is not always a rename. Nothing was changed; retry.
+//   UNIT_ARCHIVED — `body.code` of the 409 when a product level is given a unit name that is ARCHIVED in Settings > Units
+//                    and the product does not already use it (restore the unit first). Nothing was written.
+//   TENANT_UNIT_LIMIT — `body.code` of the 409 when a person adds or restores a unit in Settings > Units while the tenant
+//                    already has 200 ACTIVE units (SA-810); `body.limit` is the cap and `body.active` the active count.
+//                    Archive one to free a slot. Nothing was written. A level write at the cap is never refused: it saves
+//                    the level unlinked and its response carries `unitNotListed: [name]`.
+//   UNIT_SIZE_IN_USE — `body.code` of the 409 when a product level's size would change (or a label move onto a size) while
+//                    orders or invoices already carry that label at a different size. Nothing was written.
+//   PRODUCT_PACK_STALE — `body.code` of the 409 from PATCH /products/:id when the pack the form read (expectedUnit,
+//                    expectedUnitsPerBox, expectedTenantUnitId) no longer matches the product under its pack lock, e.g. a
+//                    Settings > Units rename committed while the form was open (SA-797). Nothing was written; reload.
+//   PRODUCT_PACK_PRECONDITION_REQUIRED — `body.code` of the 409 from PATCH /products/:id when a client sends `unit` or
+//                    `unitsPerBox` WITHOUT its expected twin and the value differs from the stored one (SA-797a): an
+//                    older app build that never sends the expected pack. An equal value (an echo) is accepted. Nothing
+//                    was written; reloading cannot fix it, updating the app does.
+//   VARIANT_NAME_PREFIX_ONLY — `body.code` of the 400 when a variant name is only its parent's name and the separator ("Acme - ",
+//                    any case / spacing); `body.field` is "name". Nothing was written; type what makes the variant different.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
 //                    in place (#2717 M2, I3); clone it with POST /recipes/:id/versions instead.
 //   RECIPE_CATEGORY_LOCKED — `body.code` of the 409 when a product that sits in a non-RETIRED
@@ -220,6 +248,16 @@ export const API_ERROR_CODES = {
   CODE_TAKEN: "CODE_TAKEN",
   PRODUCT_CODE_IN_USE: "PRODUCT_CODE_IN_USE",
   NAME_TAKEN: "NAME_TAKEN",
+  UNIT_NAME_TAKEN: "UNIT_NAME_TAKEN",
+  UNIT_RENAME_COLLISION: "UNIT_RENAME_COLLISION",
+  UNITS_RENAME_IN_PROGRESS: "UNITS_RENAME_IN_PROGRESS",
+  UNIT_ARCHIVED: "UNIT_ARCHIVED",
+  TENANT_UNIT_LIMIT: "TENANT_UNIT_LIMIT",
+  UNIT_SIZE_IN_USE: "UNIT_SIZE_IN_USE",
+  PRODUCT_PACK_STALE: "PRODUCT_PACK_STALE",
+  PRODUCT_PACK_PRECONDITION_REQUIRED: "PRODUCT_PACK_PRECONDITION_REQUIRED",
+  /** 400 from product create / update, the family grid and the stock split: a variant name that is only its parent's name plus the separator ("Acme - "); there is no label to store. Nothing was written. */
+  VARIANT_NAME_PREFIX_ONLY: "VARIANT_NAME_PREFIX_ONLY",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
   /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */
@@ -422,6 +460,8 @@ export const API_ERROR_CODES = {
   STRIPE_NOT_CONFIGURED: "STRIPE_NOT_CONFIGURED",
   STRIPE_ACCOUNT_MISMATCH: "STRIPE_ACCOUNT_MISMATCH",
   STRIPE_SUBSCRIPTION_OWNER_MISMATCH: "STRIPE_SUBSCRIPTION_OWNER_MISMATCH",
+  PAYMENT_NOT_DUE: "PAYMENT_NOT_DUE",
+  PAYMENT_TERMS_CHANGED: "PAYMENT_TERMS_CHANGED",
   CATCHUP_SESSION_OPEN: "CATCHUP_SESSION_OPEN",
   CATCHUP_PENDING: "CATCHUP_PENDING",
   CATCHUP_NOT_ELIGIBLE: "CATCHUP_NOT_ELIGIBLE",
@@ -731,6 +771,34 @@ export const API_ERROR_CODES = {
    * written (Perms PR1 M2).
    */
   LAST_TENANT_ADMIN: "LAST_TENANT_ADMIN",
+  /**
+   * 409 from the tier-rules setting (any tier discount above 0%) and from every order-unit switch (product, tier,
+   * customer, "Apply to existing products"): they stay off until every writer of the pack price columns uses the one
+   * write path (SA-795 h). Fixed body; nothing was written.
+   */
+  PRICING_RULES_NOT_READY: "PRICING_RULES_NOT_READY",
+  /**
+   * 400 from POST/PATCH /products and PATCH /settings/margin: the request tried to SET the costing method FIFO or LIFO,
+   * which are retired (a stored FIFO/LIFO is costed as average cost). Use AVCO, STANDARD or LAST_COST. Fixed body;
+   * nothing was written (SA-804 (1), B1232).
+   */
+  COSTING_METHOD_RETIRED: "COSTING_METHOD_RETIRED",
+  /**
+   * 409 from POST /products/:productId/prices and POST /prices/undo (units v2): the product's priceRevision, its price state
+   * (SA-796 R-1 value compare-and-set) or a customer cell's expected price changed since the grid was read. Body carries
+   * `revision`. Nothing was written; reload the grid.
+   */
+  LADDER_REVISION_STALE: "LADDER_REVISION_STALE",
+  /** 400 from POST /products/:productId/prices: the pricing core refused a value (zero/junk, the anchor's Retail cleared); body carries `problems`. */
+  PRICE_EDIT_INVALID: "PRICE_EDIT_INVALID",
+  /** 409 from POST /products/:productId/prices/undo: that audit row is not a price save of this product, or it was already undone. */
+  PRICE_UNDO_UNAVAILABLE: "PRICE_UNDO_UNAVAILABLE",
+  /**
+   * 503 from every server-priced order path (buyer checkout, standing orders, returns, order edits) when the customer has
+   * typed unit prices but the units_prices_v2 flag could not be read (the override or plan lookup failed). Retryable: nothing
+   * was written, so the caller never gets the tier price instead of the customer's typed price.
+   */
+  CUSTOMER_PRICES_UNAVAILABLE: "CUSTOMER_PRICES_UNAVAILABLE",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

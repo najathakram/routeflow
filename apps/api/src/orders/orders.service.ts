@@ -40,11 +40,11 @@ import {
   type DraftPromotionJudgement,
 } from "./draft-promotion-judgement";
 import {
-  isSpecialTier,
   categoryTaxSnapshotOf,
   computeCategoryTax,
   computeLineSubtotal,
   getTierPrice,
+  isSpecialPrice,
   normalizeBoxesPieces,
   regulatedUnitBasis,
   roundMoney,
@@ -52,6 +52,7 @@ import {
   type CategoryTaxType,
   type PromotionRule,
 } from "@routeflow/pricing";
+import { loadCustomerPriceHistory } from "./customer-price-history-query";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import { retryCreditTx } from "../common/tx-retry";
 import { stockTxBounded } from "../common/stock-tx";
@@ -87,7 +88,6 @@ import {
   UserRole,
   ItemStatus,
   MutationType,
-  InvoiceStatus,
   PriceType,
   ChangeRequestStatus,
   ChangeRequestType,
@@ -120,7 +120,6 @@ import { savedCreditsPending, withCreditsPendingHint } from "./create-credit-tai
 import {
   IDEMPOTENCY_KEY_CONFLICT,
   otherOrderConflict,
-  IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
   shouldSkipInPlaceResync,
   findOrderIdByKeyCheckingReturn as findOrderIdByKey,
   insertMergeIdempotencyKey,
@@ -130,7 +129,8 @@ import {
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { cancelBlockedMessage, cancelImpact } from "./order-cancel-impact";
-import { cancelOrderInTx, type CancelOrderTxOptions } from "./order-cancel-tx";
+import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
+import { claimReopenInTx } from "./order-reopen-claim";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
 import {
@@ -216,6 +216,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { resolveLineUnits } from "../products/line-units";
 import * as unitLines from "./unit-line-build";
 import * as unitEdit from "./unit-line-edit";
+import { customerPricing, omitCustomerLayerHistory } from "./units-prices-v2";
 import { loadCategoryMapForProducts } from "./category-map";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
 import { compositionStampOf, syncOrderLineCompositions } from "./order-composition";
@@ -250,6 +251,7 @@ import {
   stampDeliveredAfterEdit,
 } from "./delivered-stamp";
 import * as carrierGuard from "./order-carrier-guard";
+import { replayMergeReconcile } from "./replay-merge-reconcile";
 import {
   throwIfWithCarrier,
   invoicesAtShipment,
@@ -610,37 +612,9 @@ export class OrdersService implements OnApplicationBootstrap {
   async getCustomerPriceHistory(
     customerId: string,
   ): Promise<Record<string, { lastPrice: number; listPriceAtTime: number }>> {
-    const items = await this.prisma.forTenant().orderItem.findMany({
-      where: {
-        order: {
-          customerId,
-          status: { notIn: [OrderStatus.CANCELLED] },
-        },
-        originalPrice: { not: null },
-        priceType: { not: PriceType.PROMO },
-        unitLabel: null,
-      },
-      // Order by updatedAt so the MOST RECENTLY SAVED override wins — editing a
-      // line's price on any order and saving makes it the customer's remembered
-      // price for future orders (and re-editing later supersedes it).
-      orderBy: { updatedAt: "desc" },
-      distinct: ["productId"],
-      select: {
-        productId: true,
-        unitPrice: true,
-        originalPrice: true,
-      },
-    });
-
-    return Object.fromEntries(
-      items.map((item) => [
-        item.productId,
-        {
-          lastPrice: roundMoney(Number(item.unitPrice)),
-          listPriceAtTime: roundMoney(Number(item.originalPrice)),
-        },
-      ]),
-    );
+    const history = await loadCustomerPriceHistory(this.prisma.forTenant(), customerId);
+    // S19 R3 (SA-811a): a pack in the customer layer pre-fills the resolver's price, never the last-given one.
+    return omitCustomerLayerHistory(this, customerId, history);
   }
 
   private fulfilDeps() {
@@ -1581,7 +1555,6 @@ export class OrdersService implements OnApplicationBootstrap {
       where: { id: customerId },
       select: { pricingTier: true, fulfillPath: true },
     });
-    const defaultTier = customerRecord?.pricingTier ?? 1;
     // Ad-hoc trips + fulfillment mode: an explicit dto value always wins, else
     // fall back to the customer's own default, else ROUTE (byte-identical to
     // today for every existing order/customer, which default to ROUTE too).
@@ -1663,7 +1636,9 @@ export class OrdersService implements OnApplicationBootstrap {
             },
           })
         : [];
-    const cpMap = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
+    // S19: tier maps + (flag.units_prices_v2 only) the customer's typed unit prices; flag off = master's values.
+    const pc = await customerPricing(this, customerId, catalogIds, customerRecord, customerPrices);
+    const { defaultTier, cpMap } = pc;
 
     // Sticky upsell: the customer's remembered above-list price is their effective
     // price. Loaded once, applied via effectiveBuyerPrice in the price-race check
@@ -1682,6 +1657,7 @@ export class OrdersService implements OnApplicationBootstrap {
       cpMap,
       defaultTier,
       priceHistory,
+      layerOf: (id) => pc.layer(productMap.get(id)),
     });
 
     // RF-079 / RF-4: an exempt customer owes $0 of BOTH taxes on the order, as on the invoice.
@@ -1740,12 +1716,16 @@ export class OrdersService implements OnApplicationBootstrap {
           resolved: resolvedUnits,
           item: { ...item, productId: product.id },
           tier: cpMap.get(product.id) ?? defaultTier,
+          customerLayer: pc.layer(product, resolvedUnits.unitLabel),
           taxFor: (qty, sub) => unitLines.categoryTaxForLine(category, qty, sub),
           position: index,
           tenantId: this.prisma.getTenantId(),
+          // buildUnitLine copies this onto the line ONLY when staff really changed the price; the EDIT_LINE_PRICE gate below keys on
+          // that stamp, so a ladder-priced line (customer layer MANUAL, no stamp) is never refused for a right the cashier lacks.
           overriddenBy: user.sub,
         });
-        if (isOverride(unitLine)) assertPriceEditAllowed(options.priceEditAllowed); // POS-5, as the pack branch
+        // POS-5, as the pack branch. A staff override carries the editor's stamp; a layer-MANUAL line (SA-811a R2) is priced by the ladder and has none.
+        if (unitLine.overriddenBy != null) assertPriceEditAllowed(options.priceEditAllowed);
         subtotal += unitLine.subtotal;
         return unitLine;
       }
@@ -1790,6 +1770,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
       // Resolve tier: per-product override > customer default tier
       const tierForProduct = cpMap.get(item.productId) ?? defaultTier;
+      const layer = pc.layer(product);
       // B13: non-staff never set prices. POST /orders is reachable by DRIVER and
       // CUSTOMER as well as staff, and this DISCOUNTED-branch price had no role
       // gate — a hand-crafted driver request could bill any below-list price.
@@ -1836,7 +1817,13 @@ export class OrdersService implements OnApplicationBootstrap {
       // its base is redacted for the customer, upsell-redaction.ts). Within ½¢ of tier ⇒ the ladder.
       const staff =
         overridePrice != null
-          ? decideTierOverride(product, tierForProduct, Number(overridePrice), item.overrideReason)
+          ? decideTierOverride(
+              product,
+              tierForProduct,
+              Number(overridePrice),
+              item.overrideReason,
+              layer,
+            )
           : null;
       if (staff?.overridden) {
         // POS-5: counter callers pass `priceEditAllowed`; judged vs the SERVER tier price, before any lock or write.
@@ -1864,6 +1851,7 @@ export class OrdersService implements OnApplicationBootstrap {
           rememberedForLine,
           // REG-B109: the exact denomination this line bills with below.
           { boxes, pieces, unitsPerBox: upb },
+          layer,
         );
         unitPrice = resolved.unitPrice;
         priceType = resolved.priceType;
@@ -2760,10 +2748,9 @@ export class OrdersService implements OnApplicationBootstrap {
     return this.stockTx(
       "orders.reopen",
       async (tx) => {
-        // B64 (REG-B64): read the item-CANCELLED lines BEFORE they flip below —
-        // this is exactly the set an F07 cancel credited stock back for (a
-        // pre-F07 cancel left lines untouched, so this reads empty and
-        // re-decrements nothing — era consistency, not a regression).
+        await claimReopenInTx(tx, id); // B695: Order lock + CANCELLED -> PENDING CAS; the loser gets the 409
+        // B64: the item-CANCELLED lines, read BEFORE they flip below — exactly what an F07 cancel credited
+        // back (a pre-F07 cancel left lines untouched: empty, nothing re-decremented).
         const cancelledLines = await tx.orderItem.findMany({
           where: { orderId: id, status: ItemStatus.CANCELLED },
           select: STOCK_SALE_LINE_SELECT,
@@ -2781,7 +2768,7 @@ export class OrdersService implements OnApplicationBootstrap {
         const reopened = await tx.order.update({
           where: { id },
           data: {
-            status: OrderStatus.PENDING,
+            status: OrderStatus.PENDING, // already set by the claim; kept so this write names the transition
             notes: order.notes
               ? `${order.notes}\n[Reopened ${new Date().toLocaleDateString()}]`
               : `[Reopened ${new Date().toLocaleDateString()}]`,
@@ -2935,6 +2922,9 @@ export class OrdersService implements OnApplicationBootstrap {
           fulfilmentKind: saleFulfilmentKind(order),
         });
     }
+
+    // SA-812a G-1: a failed customer-prices read (503) must surface BEFORE the un-tx'd invoice revert below commits.
+    await unitEdit.preflightCustomerPrices(this, order, dto, user, unitCtx);
 
     // R1: a POST-DELIVERY edit (order already OUT_FOR_DELIVERY / PARTIALLY_DELIVERED /
     // DELIVERED) re-syncs its finalized / paid / delivery-batch invoice(s) IN PLACE
@@ -3118,16 +3108,21 @@ export class OrdersService implements OnApplicationBootstrap {
                 select: { pricingTier: true },
               })
             : null;
-          const buyerDefaultTier = buyerTierCtx?.pricingTier ?? 1;
           const buyerCustomerPrices =
             isBuyerEdit && productIds.length > 0
               ? await tx.customerPrice.findMany({
                   where: { customerId: order.customerId, productId: { in: productIds } },
                 })
               : [];
-          const buyerCpMap = new Map<string, number>(
-            buyerCustomerPrices.map((cp: any) => [cp.productId, cp.pricingTier]),
+          const buyerPc = await customerPricing(
+            this,
+            isBuyerEdit ? order.customerId : null,
+            productIds,
+            buyerTierCtx,
+            buyerCustomerPrices,
+            tx,
           );
+          const { defaultTier: buyerDefaultTier, cpMap: buyerCpMap } = buyerPc;
           // buyerPromos + buyerPriceHistory (sticky upsell) are hoisted above the
           // transaction (pool-starvation fix) and closed over here.
 
@@ -3231,6 +3226,7 @@ export class OrdersService implements OnApplicationBootstrap {
               isBuyerEdit,
               group: splitPromos.get(item.productId),
               tier: buyerCpMap.get(item.productId) ?? buyerDefaultTier,
+              layer: buyerPc.layer(product),
               buyerPromos,
               qtyPieces,
               qtyUnits,
@@ -3353,17 +3349,20 @@ export class OrdersService implements OnApplicationBootstrap {
                 ]),
               ] as string[])
             : [];
-          const { operatorCpMap, operatorDefaultTier } = await unitEdit.loadOperatorTiers(
-            tx,
-            atCustomerTier ? order.customerId : null,
-            operatorProductIds,
-          );
+          const { operatorCpMap, operatorDefaultTier, operatorPc } =
+            await unitEdit.loadOperatorTiers(
+              tx,
+              atCustomerTier ? order.customerId : null,
+              operatorProductIds,
+              this,
+            );
           const uctx: unitEdit.UnitWriteContext = {
             tx,
             orderId,
             ladders: unitCtx.ladders,
             tenantId: this.prisma.getTenantId(),
             tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
+            layerOf: atCustomerTier ? operatorPc.layer : undefined,
             overriddenBy: user?.sub ?? null,
             held: heldById,
             repriceTierOnQtyOnly: user?.role === UserRole.CUSTOMER,
@@ -3409,6 +3408,7 @@ export class OrdersService implements OnApplicationBootstrap {
               isStaffEdit,
               operatorCpMap,
               operatorDefaultTier,
+              layerOf: isStaffEdit ? operatorPc.layer : undefined,
               isCreateMerge: opts?.isCreateMerge,
               buyerPromos,
               userId: user?.sub ?? null,
@@ -3595,6 +3595,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 const tierForProduct = isStaffEdit
                   ? (operatorCpMap.get(item.productId) ?? operatorDefaultTier)
                   : 1;
+                const layer = isStaffEdit ? operatorPc.layer(product) : null;
                 // #2716c: ONE rule (staff-line-price.ts -> decideStaffOverride). A special-tier
                 // line (B465) refuses a changed price with no reason; a price within half a cent
                 // of the customer's tier price is no override; otherwise below list is DISCOUNTED,
@@ -3605,11 +3606,16 @@ export class OrdersService implements OnApplicationBootstrap {
                   overridePrice !== null
                     ? decideAddedLinePrice({
                         overridePrice,
-                        tierPrice: Number(getTierPrice(product, tierForProduct)),
-                        listPrice: catalogPrice,
-                        isSpecialTier: isSpecialTier(tierForProduct),
+                        tierPrice: layer?.price ?? Number(getTierPrice(product, tierForProduct)),
+                        listPrice: layer?.listPrice ?? catalogPrice,
+                        isSpecialTier: isSpecialPrice(
+                          tierForProduct,
+                          layer?.listPrice ?? catalogPrice,
+                          layer?.price,
+                        ),
                         hasReason: !!(item.overrideReason && item.overrideReason.trim()),
                         productName: product.name,
+                        aboveList: layer?.aboveList,
                       })
                     : null;
                 const isManualOverride = !!addDecision && isOverride(addDecision);
@@ -3629,6 +3635,7 @@ export class OrdersService implements OnApplicationBootstrap {
                           pieces: piecesForLine,
                           unitsPerBox: unitsPerBoxNum,
                         },
+                        layer,
                       )
                     : {
                         // Non-staff caller (driver diff add): legacy list pricing.
@@ -3762,11 +3769,13 @@ export class OrdersService implements OnApplicationBootstrap {
                 // decideStaffOverride, rounded) — pinned byte-identical to this branch's B466 shape.
                 const overridePrice =
                   isStaffCaller && item.unitPrice != null ? Number(item.unitPrice) : null;
+                const layerSub = isStaffCaller ? operatorPc.layer(product) : null;
                 const decided = decideTierOverride(
                   product,
                   tierForProduct,
-                  overridePrice ?? Number(getTierPrice(product, tierForProduct)),
+                  overridePrice ?? layerSub?.price ?? Number(getTierPrice(product, tierForProduct)),
                   item.overrideReason,
+                  layerSub,
                 );
                 const { unitPrice, originalPrice, overridden: isOverridden } = decided;
                 const priceType: PriceType = PriceType[decided.priceType];
@@ -3950,12 +3959,23 @@ export class OrdersService implements OnApplicationBootstrap {
                     where: { id: li.productId },
                   });
                 }
+                const layerEdit = editProduct && isStaffEdit ? operatorPc.layer(editProduct) : null;
                 const repriced = decideEditedLinePrice({
                   overridePrice,
                   storedPrice: existingUnitPrice,
-                  tierPrice: editProduct ? getTierPrice(editProduct, tierForProduct) : 0,
-                  listPrice: editProduct ? Number(editProduct.pricePerUnit) : existingUnitPrice,
-                  isSpecialTier: isSpecialTier(tierForProduct),
+                  tierPrice: editProduct
+                    ? (layerEdit?.price ?? getTierPrice(editProduct, tierForProduct))
+                    : 0,
+                  listPrice:
+                    layerEdit?.listPrice ??
+                    (editProduct ? Number(editProduct.pricePerUnit) : existingUnitPrice),
+                  isSpecialTier: isSpecialPrice(
+                    tierForProduct,
+                    layerEdit?.listPrice ??
+                      (editProduct ? Number(editProduct.pricePerUnit) : existingUnitPrice),
+                    layerEdit?.price,
+                  ),
+                  aboveList: layerEdit?.aboveList,
                   hasReason: !!(
                     (item.overrideReason && item.overrideReason.trim()) ||
                     (storedOverrideReason && String(storedOverrideReason).trim())
@@ -4421,74 +4441,17 @@ export class OrdersService implements OnApplicationBootstrap {
     customerId: string,
     appliedCreditNotes: AppliedCreditNoteDto[] | undefined,
   ): Promise<void> {
-    if (!this.prisma.getTenantId()) {
-      this.logger.warn(`replay reconcile refused: no tenant scope order=${orderId}`);
-      throw new ForbiddenException("Replay reconcile requires a tenant-scoped session");
-    }
-    // Customer-scoped, so a replay can never reconcile another customer's order.
-    const order = await this.prisma.forTenant().order.findFirst({
-      where: { id: orderId, customerId },
-      select: {
-        status: true,
-        ...{ id: true, tenantId: true, fulfillPath: true, shippedAt: true }, // #3219 S4: carrier routing
-        lineItems: { select: { qty: true, invoicedQty: true } },
+    return replayMergeReconcile(
+      {
+        prisma: this.prisma,
+        featureConfig: this.featureConfig,
+        logger: this.logger,
+        reconcile: (...a) => this.reconcileOrderAfterEdit(...a),
       },
-    });
-    if (!order) {
-      this.logger.warn(`replay reconcile skipped: order not found order=${orderId}`);
-      return;
-    }
-    // Routed by the SAME rule as the fold (`resyncsInPlace`, order-carrier-guard.ts), on the order's
-    // CURRENT state. That matches the fold's routing unless the state moved in between (a ship /
-    // unmark after the fold committed changes `withCarrier`); then the current state decides.
-    const carrierNow = await carrierGuard.carrierEditGuard(this, order); // #3219 S4: as the fold routed
-    const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrierNow);
-    let skipInPlaceResync = false;
-    if (postDeliveryEdit) {
-      // Same BILLABLE filter the predicate itself applies (`shouldSkipInPlaceResync`,
-      // merge-idempotency.ts): a zero-qty row cannot carry the partial-billing answer, so it must
-      // not make this gate read as "invoiced" either — otherwise the two disagree on exactly the
-      // rows that decide the branch.
-      const lines = (order.lineItems ?? []).filter((li) => Number(li.qty ?? 0) > 0.001);
-      const anyInvoiced = lines.some((li) => Number(li.invoicedQty ?? 0) > 0.001);
-      if (anyInvoiced) {
-        // The cumulative `invoicedQty` survived on these rows (an incremental edit, or a
-        // re-stamp by a later invoice sync), so the fold's own predicate answers over the
-        // current lines: resync when the order is wholly invoiced, skip when partially.
-        skipInPlaceResync = shouldSkipInPlaceResync(lines);
-      } else {
-        // Nothing shows as invoiced. Two indistinguishable states produce that:
-        //   (a) the order genuinely has nothing billed — then `resyncOrderInvoicesForEdit` is a
-        //       provable no-op (it returns null when the order has no non-VOID invoice), and the
-        //       fold's guard would also have been false, so routing the resync is faithful; or
-        //   (b) the replace-all fold RESET `invoicedQty` to 0 on every recreated row, erasing the
-        //       pre-edit cumulative billing the guard reads — in which case partial vs wholly
-        //       invoiced is unknowable from current state, and BOTH branches are unsafe (a resync
-        //       could expand an already-issued invoice to units it never billed; a skip leaves the
-        //       finalized invoice out of step with the merge forever).
-        // A surviving non-VOID invoice is what separates them: (a) has none.
-        const invoiceCount = await this.prisma
-          .forTenant()
-          .invoice.count({ where: { orderId, status: { not: InvoiceStatus.VOID } } });
-        if (invoiceCount > 0) {
-          this.logger.warn(
-            `replay reconcile cannot reproduce the partial-billing guard: refusing ` +
-              `tenant=${this.prisma.getTenantId()} customer=${customerId} order=${orderId} ` +
-              `status=${order.status} invoices=${invoiceCount}`,
-          );
-          throw new ConflictException({
-            code: IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
-            orderId,
-            message:
-              "This order was already submitted and later dispatched; open it to reconcile its invoice",
-          });
-        }
-      }
-    }
-    await this.reconcileOrderAfterEdit(orderId, customerId, appliedCreditNotes, {
-      postDeliveryEdit,
-      skipInPlaceResync,
-    });
+      orderId,
+      customerId,
+      appliedCreditNotes,
+    );
   }
 
   /** B283 / stock: extracted verbatim to `order-stock.ts` (B585 prefactor); thin delegators, same names. */
@@ -5008,16 +4971,22 @@ export class OrdersService implements OnApplicationBootstrap {
             // promo), the exact buyer create/merge pricing path (:1775-1787).
             // The buyer pays regardless of who requested, so customer pricing
             // applies uniformly.
-            const buyerTier =
-              (
-                await tx.customer.findFirst({
-                  where: { id: order.customerId },
-                  select: { pricingTier: true },
-                })
-              )?.pricingTier ?? 1;
+            const crCustomer = await tx.customer.findFirst({
+              where: { id: order.customerId },
+              select: { pricingTier: true },
+            });
             const cp = await tx.customerPrice.findFirst({
               where: { customerId: order.customerId, productId: product.id },
             });
+            // S19: tier through the one resolver + the customer's typed pack price (flag.units_prices_v2 only).
+            const crPc = await customerPricing(
+              this,
+              order.customerId,
+              [product.id],
+              crCustomer,
+              cp ? [cp] : [],
+              tx,
+            );
             const hasSplit = payload.boxes != null || payload.pieces != null;
             this.warnSplit(
               "orders.cr.add",
@@ -5038,13 +5007,14 @@ export class OrdersService implements OnApplicationBootstrap {
             const qtyUnits = split.boxes != null ? split.boxes : split.qty;
             const priced = this.resolveBuyerLinePrice(
               product,
-              cp?.pricingTier ?? buyerTier,
+              crPc.cpMap.get(product.id) ?? crPc.defaultTier,
               buyerPromos,
               qtyPieces,
               qtyUnits,
               priceHistory[product.id]?.lastPrice ?? null,
               // REG-B109: the exact denomination this line bills with below.
               { boxes: split.boxes, pieces: split.pieces, unitsPerBox: upb },
+              crPc.layer(product),
             );
             const created = await tx.orderItem.create({
               data: {
@@ -5275,6 +5245,7 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     await this.prisma.tenantTransaction(async (tx) => {
+      const held = await lockDeleteLines(tx, id); // B284: Order lock first (the cancel's lock order)
       await assertNoCashRefundOnOrder(tx, id); // 409 on a cash refund, before any write
       // B214 (REG-B214): this loop deletes invoices WITHOUT InvoicesService.deleteInvoice (ledger
       // reversal duplicated below), so it refuses on its own, before any write (L-072, L-081).
@@ -5282,6 +5253,9 @@ export class OrdersService implements OnApplicationBootstrap {
         tx,
         order.invoices.map((inv) => inv.id),
       );
+      // B284: the cancel's stock unwind (SALE row, notes DELETE) — Order, then Products, then the releases.
+      if (held)
+        await this.settleStockForEdit(tx, held.order, held.lines, [], user, { notes: "DELETE" });
       await this.creditNotes.releaseOrderCreditsInTx(tx, id);
       for (const inv of order.invoices) {
         await this.invoicesService.releaseWalletPaymentsInTx(tx, inv.id);

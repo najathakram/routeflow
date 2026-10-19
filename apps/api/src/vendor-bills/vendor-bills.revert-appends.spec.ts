@@ -44,6 +44,7 @@ type Row = Record<string, any>;
 function matches(row: Row, where: Row | undefined): boolean {
   if (!where) return true;
   return Object.entries(where).every(([key, cond]) => {
+    if (key === "OR") return (cond as Row[]).some((w) => matches(row, w));
     const v = row[key];
     if (cond === undefined) return true;
     if (cond === null) return v == null;

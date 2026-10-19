@@ -4,8 +4,10 @@
 // The scoped pre-push runs no DB spec (jest's base config ignores them), and lanes picked the relevant ones by
 // hand and missed some (#2301 rolled on import-invoice-reimport.db.spec, #2707 on specs that reach a change only
 // transitively). This names them from the diff, two ways:
-//   1. a REVERSE IMPORT GRAPH over apps/api/{src,prisma,scripts,test}, scripts/lib and packages/*/src:
-//      relative import / export-from / import() / require(), `@routeflow/<pkg>` → packages/<pkg>/src, and the
+//   1. a REVERSE IMPORT GRAPH over apps/api/{src,prisma,scripts,test}, scripts/lib and packages/* (its `src/`, or
+//      the whole package when it has none, like packages/types):
+//      relative import / export-from / import() / require(), `@routeflow/<pkg>[/sub]` → the package's `src/`,
+//      its package.json entry (exports "source", main, types) or `index.ts`, and the
 //      `scripts|prisma/...(mjs|cjs|ts)` path literals specs spawn or read (F3).
 //   2. a PRISMA-MODEL channel for specs that hand-mock their providers and so have no import path to the service
 //      (#2301): `model X` blocks added/removed and `prisma.x.` / `tx.x.` accessors on changed lines match a spec
@@ -35,7 +37,7 @@ const GRAPH_ROOTS = [
   "apps/api/test",
   "scripts/lib",
 ];
-const EXTS = [".ts", ".js", ".cjs", ".mjs"];
+const EXTS = [".ts", ".tsx", ".js", ".cjs", ".mjs"];
 
 function parseArgs(argv) {
   const a = {
@@ -110,25 +112,97 @@ function importText(text) {
 }
 const LITERAL_RE = /["'`]((?:apps\/api\/)?(?:scripts|prisma)\/[\w./-]+\.(?:mjs|cjs|ts))["'`]/g;
 
-/** Resolve `spec` (relative or @routeflow/x) from file `from` to a repo-relative path in `known`, or null. */
-function resolveImport(from, spec, known) {
-  let base;
-  if (spec.startsWith("."))
-    base = path.posix.normalize(path.posix.join(path.posix.dirname(from), spec));
-  else if (spec.startsWith("@routeflow/")) base = `packages/${spec.slice(11).split("/")[0]}/src`;
-  else return null;
+/** `base` itself, then base+ext, then base/index+ext, then (a `./x.js` import of an `x.ts` source) base→.ts. */
+function tryPaths(base, known) {
   const tries = [base, ...EXTS.map((e) => base + e), ...EXTS.map((e) => `${base}/index${e}`)];
-  // a `./x.js` import of an `x.ts` source
   if (/\.(js|mjs|cjs)$/.test(base)) tries.push(base.replace(/\.(js|mjs|cjs)$/, ".ts"));
   return tries.find((t) => known.has(t)) ?? null;
+}
+
+/** Flatten a package.json `exports` / `main` target into candidate file strings, TS source conditions first. */
+function targets(t) {
+  if (typeof t === "string") return [t];
+  if (!t || typeof t !== "object") return [];
+  const order = ["source", "types", "import", "default", "require"];
+  return [
+    ...order.flatMap((k) => targets(t[k])),
+    ...Object.keys(t)
+      .filter((k) => !order.includes(k))
+      .flatMap((k) => targets(t[k])),
+  ];
+}
+
+/** The entry files a `@routeflow/<pkg>` import can mean, best first (cached in `pkgs`). */
+function pkgEntries(root, pkg, sub, pkgs) {
+  if (!pkgs.has(pkg)) {
+    let json = {};
+    try {
+      json = JSON.parse(readFileSync(path.join(root, "packages", pkg, "package.json"), "utf8"));
+    } catch {
+      /* no/invalid manifest: fall back to the directory layout below */
+    }
+    pkgs.set(pkg, json);
+  }
+  const json = pkgs.get(pkg);
+  const dir = `packages/${pkg}`;
+  const exp = json.exports;
+  const out = [];
+  const clean = (t) => path.posix.normalize(path.posix.join(dir, t));
+  if (!sub) {
+    out.push(`${dir}/src`);
+    if (exp && typeof exp === "object" && !Array.isArray(exp))
+      out.push(...targets("." in exp ? exp["."] : exp).map(clean));
+    else if (typeof exp === "string") out.push(clean(exp));
+    for (const f of [json.main, json.types]) if (typeof f === "string") out.push(clean(f));
+    out.push(`${dir}/index`);
+  } else {
+    if (exp && typeof exp === "object" && !Array.isArray(exp)) {
+      for (const [k, v] of Object.entries(exp)) {
+        // "./web" (exact) or "./*" (one `*`: prefix + capture + suffix)
+        const [pre, post] =
+          k.startsWith("./") && k.includes("*") ? k.slice(2).split("*") : [null, null];
+        const mid =
+          pre === null
+            ? k === `./${sub}`
+              ? ""
+              : null
+            : sub.length >= pre.length + post.length && sub.startsWith(pre) && sub.endsWith(post)
+              ? sub.slice(pre.length, sub.length - post.length)
+              : null;
+        if (mid !== null) out.push(...targets(v).map((t) => clean(t.replace("*", mid))));
+      }
+    }
+    out.push(`${dir}/src/${sub}`, `${dir}/${sub}`);
+  }
+  return out;
+}
+
+/** Resolve `spec` (relative or @routeflow/x) from file `from` to a repo-relative path in `known`, or null. */
+function resolveImport(from, spec, known, root, pkgs) {
+  if (spec.startsWith("."))
+    return tryPaths(path.posix.normalize(path.posix.join(path.posix.dirname(from), spec)), known);
+  if (!spec.startsWith("@routeflow/")) return null;
+  const [pkg, ...rest] = spec.slice(11).split("/");
+  for (const base of pkgEntries(root, pkg, rest.join("/"), pkgs)) {
+    const hit = tryPaths(base, known);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 function buildGraph(root, changed) {
   const files = [];
   for (const r of GRAPH_ROOTS) walk(root, r, files);
+  // packages/<n>: its src/ when it has one, else the whole package (packages/types keeps index.ts + api/ at its root)
   const pk = path.join(root, "packages");
-  if (existsSync(pk)) for (const n of readdirSync(pk)) walk(root, `packages/${n}/src`, files);
+  if (existsSync(pk))
+    for (const n of readdirSync(pk)) {
+      const dir = `packages/${n}`;
+      if (!statSync(path.join(root, dir)).isDirectory()) continue;
+      walk(root, existsSync(path.join(root, dir, "src")) ? `${dir}/src` : dir, files);
+    }
   const known = new Set(files);
+  const pkgs = new Map();
   const fwd = new Map();
   const unresolved = [];
   const changedSet = new Set(changed);
@@ -138,7 +212,7 @@ function buildGraph(root, changed) {
     for (const m of importText(text).matchAll(IMPORT_RE)) {
       const spec = m[2];
       if (!spec.startsWith(".") && !spec.startsWith("@routeflow/")) continue;
-      const hit = resolveImport(f, spec, known);
+      const hit = resolveImport(f, spec, known, root, pkgs);
       if (hit) deps.add(hit);
       else if (spec.startsWith(".") && changedSet.has(f)) unresolved.push(`${f} → ${spec}`);
     }
@@ -337,4 +411,4 @@ function main() {
   return 0;
 }
 
-process.exit(main());
+process.exitCode = main();

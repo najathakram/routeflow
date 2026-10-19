@@ -1,17 +1,17 @@
 "use client";
 
 import { priceRowLabel } from "@/lib/product-unit-label";
-import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
+import { expectedPackFor, packWordToSend } from "@/lib/product-edit-unit";
+import type { ProductPackAtOpen } from "@routeflow/types";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
 import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
-  Package,
   Pencil,
   Check,
   X,
-  Upload,
   Trash2,
   ChevronLeft,
   ChevronRight,
@@ -58,10 +58,14 @@ import {
   type TierField,
 } from "@routeflow/pricing";
 import { useTierLabels } from "@/lib/api/tier-labels";
-import { tierLabel } from "@/lib/tier-label";
+import { productTierLabel, tierOneLabel } from "@/lib/tier-one-label";
 import { unitsLabel } from "@/lib/stock-label";
 import { stockCountLabel } from "../_components/product-status";
 import { PiecesPerBoxValue } from "./PiecesPerBoxValue";
+import { MoneyFigure } from "./MoneyFigure";
+import { FamilyPriceSection } from "./FamilyPriceSection";
+import { FamilySalesCards } from "./FamilySalesCards";
+import { ProductMerchandising } from "./ProductMerchandising";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { DecimalInput } from "@/components/MoneyInput";
@@ -72,8 +76,11 @@ import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { PackSizePrompt } from "@/components/PackSizePrompt";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
+import { usePricesV2Enabled } from "@/lib/api/units-v2";
 import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
+import { ProductImagesEmpty } from "./ProductImagesEmpty";
+import { ProductImageActions } from "./ProductImageActions";
 import { ProductStockCostCard } from "./ProductStockCostCard";
 import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { useReactivateFlow } from "./useReactivateFlow";
@@ -95,10 +102,20 @@ import { ProductInsightsExport } from "./ProductInsightsExport";
 import { ProductLabelsCard } from "./ProductLabelsCard";
 import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
+import { ProductPricingV2 } from "./ProductPricingV2";
+import { PriceWindowHost, ProductPricingRegion } from "./PriceWindowHost";
+import { DetailsPriceLine } from "./PriceFigures";
+import { unitStructureGoverned } from "./units-v2/structure/unit-structure";
+import { ProductJumpLinks } from "./units-v2/nav/ProductJumpLinks";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
-import { editTierPatch, editTierPatchMoves } from "@/lib/product-tier-patch";
+import {
+  cascadeTiers,
+  detailsPriceMoves,
+  detailsPricePatch,
+  type PriceDraftKey,
+} from "@/lib/product-tier-patch";
 import { keptLabelsNote } from "@/lib/kept-labels-copy";
 import { isStaffRole } from "@/lib/default-unit-line";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -169,58 +186,6 @@ function regUomLabel(
     if (match) return match.label;
   }
   return code;
-}
-
-// ─── Merchandising flag toggle (P5-01) ──────────────────────────────────────────
-
-function MerchFlagToggle({
-  label,
-  description,
-  active,
-  disabled,
-  onToggle,
-}: {
-  label: string;
-  description: string;
-  active: boolean;
-  disabled?: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={active}
-      disabled={disabled}
-      onClick={onToggle}
-      className={cn(
-        "flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors disabled:opacity-50",
-        active
-          ? "border-brand-300 bg-brand-50"
-          : "border-surface-border bg-white hover:bg-surface-raised",
-      )}
-    >
-      <span className="min-w-0">
-        <span className={cn("block text-sm font-medium", active ? "text-brand-700" : "text-navy")}>
-          {label}
-        </span>
-        <span className="block text-[11px] text-navy/60">{description}</span>
-      </span>
-      <span
-        className={cn(
-          "relative inline-flex h-5 w-9 flex-none items-center rounded-full transition-colors",
-          active ? "bg-brand-500" : "bg-navy/20",
-        )}
-      >
-        <span
-          className={cn(
-            "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
-            active ? "translate-x-4" : "translate-x-0.5",
-          )}
-        />
-      </span>
-    </button>
-  );
 }
 
 // ─── Inline number field ──────────────────────────────────────────────────────
@@ -345,6 +310,15 @@ export default function ProductDetailPage() {
 
   const [isEditing, setIsEditing] = React.useState(false);
   const [editDraft, setEditDraft] = React.useState<Record<string, unknown>>({});
+  // The pack the form opened with: a save sends `unit` only if the operator changed it, and then sends this
+  // pack back as the expected values (SA-797), so a Settings > Units rename made meanwhile is a 409, not lost.
+  const packWhenEditStartedRef = React.useRef<ProductPackAtOpen | undefined>(undefined);
+  /** K12 O1: the pack size typed into the prompt and not yet confirmed there (null when none). */
+  const pendingPackSizeRef = React.useRef<number | null>(null);
+  // The price strings the Details form was SEEDED with: a price is sent only when the draft differs (a dirty field).
+  const pricesWhenEditStartedRef = React.useRef<Record<PriceDraftKey, string> | undefined>(
+    undefined,
+  );
 
   // Regulated type picker (edit mode). The Category field below renders the
   // structured SubcategoryCombobox in place of the free-text combobox once a
@@ -403,6 +377,10 @@ export default function ProductDetailPage() {
     priceTier4: "",
     priceTier5: "",
   });
+  // The price strings the variant modal opened with: a variant price is sent only when changed against these.
+  const variantPricesWhenOpenedRef = React.useRef<Record<PriceDraftKey, string> | undefined>(
+    undefined,
+  );
   const variantSkuRef = React.useRef<HTMLInputElement>(null);
   const variantUnitSkuRef = React.useRef<HTMLInputElement>(null);
 
@@ -426,6 +404,7 @@ export default function ProductDetailPage() {
   const isStaff = isStaffRole(user?.role);
   const hasTobaccoAddon = useHasAddon(TOBACCO_ADDON);
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
+  const v2 = usePricesV2Enabled({ enabled: isStaff }) && isStaff;
 
   // ── Lightbox state ────────────────────────────────────────────────────────
   const [lightboxOpen, setLightboxOpen] = React.useState(false);
@@ -486,6 +465,11 @@ export default function ProductDetailPage() {
   const priceNumber = parseFloat(String(product.pricePerUnit));
   const currentStock = Number(product.currentStock ?? 0);
   const stockStatus = getStockStatus(currentStock, product.isActive, product.kind);
+  const v2Family = v2 && product.kind === "FAMILY";
+  // K11-20c: on a product whose prices the window can edit (not a family, recipe or variant), Details shows its
+  // prices read-only and the Details save carries none: the price window (S9) is the only price writer.
+  const pricesInWindow = v2 && !unitStructureGoverned(product);
+  const isFamily = product.kind === "FAMILY";
 
   // MSRP — display-only, never money math. Warn (non-blocking) when it undercuts
   // the wholesale price expressed per PIECE (pricePerUnit / unitsPerBox), which is
@@ -509,17 +493,26 @@ export default function ProductDetailPage() {
     msrpNumber != null && wholesalePerPiece > 0 && msrpNumber < wholesalePerPiece;
 
   const startEdit = () => {
+    packWhenEditStartedRef.current = {
+      unit: product.unit,
+      unitsPerBox: product.unitsPerBox ?? null,
+      packTenantUnitId: product.packTenantUnitId,
+    };
+    const seededPrices: Record<PriceDraftKey, string> = {
+      pricePerUnit: String(priceNumber),
+      priceTier2: String(parseFloat(String(product.priceTier2 ?? priceNumber))),
+      priceTier3: String(parseFloat(String(product.priceTier3 ?? priceNumber))),
+      priceTier4: String(parseFloat(String(product.priceTier4 ?? priceNumber))),
+      priceTier5: String(parseFloat(String(product.priceTier5 ?? priceNumber))),
+    };
+    pricesWhenEditStartedRef.current = seededPrices;
     setEditDraft({
       name: product.name,
       sku: product.sku ?? "",
       barcode: product.barcode ?? "",
       unitSku: product.unitSku ?? "",
       unit: product.unit,
-      pricePerUnit: String(priceNumber),
-      priceTier2: String(parseFloat(String(product.priceTier2 ?? priceNumber))),
-      priceTier3: String(parseFloat(String(product.priceTier3 ?? priceNumber))),
-      priceTier4: String(parseFloat(String(product.priceTier4 ?? priceNumber))),
-      priceTier5: String(parseFloat(String(product.priceTier5 ?? priceNumber))),
+      ...seededPrices,
       msrp: product.msrp != null ? String(parseFloat(String(product.msrp))) : "",
       category: product.category ?? "",
       description: product.description ?? "",
@@ -572,24 +565,33 @@ export default function ProductDetailPage() {
     const selectedParent = draft.parentProductId
       ? allProducts.find((p: any) => p.id === draft.parentProductId)
       : null;
-    const composedName =
+    // B1: a variant stores ONLY its own label (the display name is composed at read time); sending the
+    // "<parent> - <label>" composition made every edit re-prefix it.
+    const bareName =
       selectedParent && draft.variantName?.trim()
-        ? `${(selectedParent as any).name} - ${draft.variantName.trim()}`
+        ? draft.variantName.trim()
         : (draft.name as string);
 
     // Build the PATCH explicitly — spreading the raw draft used to send
     // parentProductId: "" for every standalone product, which @IsUUID rejects,
     // so saving from this form (tier prices included) silently 400'd.
     // Invalid/blank price fields are omitted (leave unchanged), never "".
-    const asDecimal = (v: unknown): string | undefined => {
-      const n = parseFloat(String(v ?? ""));
-      return Number.isFinite(n) && n >= 0 ? String(n) : undefined;
-    };
+    const unitToSend = packWordToSend(draft.unit, packWhenEditStartedRef.current?.unit);
+    // K12 O1: a count typed into the pack-size prompt but not confirmed there is still the operator's input; the
+    // header Save sends it rather than dropping it behind a "Saved".
+    const unitsPerBoxToSend = draft.unitsPerBox?.trim()
+      ? parseInt(draft.unitsPerBox, 10)
+      : pendingPackSizeRef.current;
     updateProduct.mutate(
       {
         id: id,
-        name: composedName,
-        unit: draft.unit || undefined,
+        name: bareName,
+        unit: unitToSend,
+        // SA-797a: every save carries unitsPerBox, so every save sends the pack the form opened with.
+        ...expectedPackFor(
+          { unit: unitToSend, unitsPerBox: unitsPerBoxToSend },
+          packWhenEditStartedRef.current,
+        ),
         sku: draft.sku?.trim() || null,
         barcode: draft.barcode?.trim() || null,
         unitSku: draft.unitSku?.trim() || null,
@@ -599,10 +601,13 @@ export default function ProductDetailPage() {
         // null-clears semantics.
         category: draft.trackedCategoryId ? undefined : draft.category?.trim() || null,
         description: draft.description?.trim() || null,
-        pricePerUnit: asDecimal(draft.pricePerUnit),
-        // Untouched tiers move with a list change exactly like the products list (applyLadderChange, audit 2026-10-14).
-        ...editTierPatch(product, draft),
-        unitsPerBox: draft.unitsPerBox?.trim() ? parseInt(draft.unitsPerBox, 10) : null,
+        // Only a price the operator changed is sent: a price save elsewhere on the page moves prices outside this
+        // form, so the snapshot it opened with must never be written back. Untouched tiers move with a list change exactly like
+        // the products list (applyLadderChange, audit 2026-10-14).
+        ...(pricesInWindow
+          ? {}
+          : { ...detailsPricePatch(product, draft, pricesWhenEditStartedRef.current) }),
+        unitsPerBox: unitsPerBoxToSend,
         // Regulated tags: value to set, null to clear (server auto-nulls the
         // category when the type is cleared).
         trackedCategoryId: draft.trackedCategoryId || null,
@@ -652,7 +657,7 @@ export default function ProductDetailPage() {
             title: "Failed to save product",
             // B964-2: a refused formula-led product / variant name is fixed copy with its label, never the server text
             description:
-              safeTextErrorCopy(e) ??
+              codedToastCopy(e) ??
               String(e?.response?.data?.message ?? "Check the fields and try again."),
             variant: "error",
           }),
@@ -763,7 +768,7 @@ export default function ProductDetailPage() {
     if (variant) {
       const vp = parseFloat(String(variant.pricePerUnit));
       setEditingVariant(variant);
-      setVariantForm({
+      const form = {
         variantName: variant.variantName ?? "",
         sku: variant.sku ?? "",
         unitSku: variant.unitSku ?? "",
@@ -773,7 +778,15 @@ export default function ProductDetailPage() {
         priceTier3: String(parseFloat(String((variant as any).priceTier3 ?? vp))),
         priceTier4: String(parseFloat(String((variant as any).priceTier4 ?? vp))),
         priceTier5: String(parseFloat(String((variant as any).priceTier5 ?? vp))),
-      });
+      };
+      variantPricesWhenOpenedRef.current = {
+        pricePerUnit: form.price,
+        priceTier2: form.priceTier2,
+        priceTier3: form.priceTier3,
+        priceTier4: form.priceTier4,
+        priceTier5: form.priceTier5,
+      };
+      setVariantForm(form);
     } else {
       setEditingVariant(null);
       setVariantForm({
@@ -812,8 +825,9 @@ export default function ProductDetailPage() {
         priceTier4: variantForm.priceTier4 || variantForm.price,
         priceTier5: variantForm.priceTier5 || variantForm.price,
       };
-      const vMoved = ladderChangeNote(editTierPatchMoves(editingVariant as any, vDraft), (n) =>
-        tierLabel(tierLabels, n),
+      const vMoved = ladderChangeNote(
+        detailsPriceMoves(editingVariant as any, vDraft, variantPricesWhenOpenedRef.current),
+        (n) => productTierLabel(tierLabels, n),
       );
       updateProduct.mutate(
         {
@@ -821,9 +835,9 @@ export default function ProductDetailPage() {
           variantName: variantForm.variantName,
           sku: variantForm.sku || undefined,
           unitSku: variantForm.unitSku || undefined,
-          pricePerUnit: vList,
-          // Untouched tiers move with the variant's list change, the same rule as the products list (audit 2026-10-14).
-          ...editTierPatch(editingVariant as any, vDraft),
+          // Only a price the operator changed is sent (never the variant row the parent's cache embeds); untouched
+          // tiers move with the variant's list change by the products list's rule (audit 2026-10-14).
+          ...detailsPricePatch(editingVariant as any, vDraft, variantPricesWhenOpenedRef.current),
         },
         {
           onSuccess: () => {
@@ -834,7 +848,13 @@ export default function ProductDetailPage() {
             });
             closeVariantModal();
           },
-          onError: () => toast({ title: "Failed to update variant", variant: "error" }),
+          // B1 R3: a refused name (only the product's own name) says why; anything else keeps the plain title.
+          onError: (e: unknown) =>
+            toast({
+              title: "Failed to update variant",
+              description: codedToastCopy(e) ?? undefined,
+              variant: "error",
+            }),
         },
       );
     } else {
@@ -860,7 +880,12 @@ export default function ProductDetailPage() {
             toast({ title: "Variant created", variant: "success" });
             closeVariantModal();
           },
-          onError: () => toast({ title: "Failed to create variant", variant: "error" }),
+          onError: (e: unknown) =>
+            toast({
+              title: "Failed to create variant",
+              description: codedToastCopy(e) ?? undefined,
+              variant: "error",
+            }),
         },
       );
     }
@@ -914,8 +939,7 @@ export default function ProductDetailPage() {
       return;
     }
     const parentProduct = allProducts.find((p: any) => p.id === makeVariantParentId) as any;
-    const baseName = parentProduct?.name ?? product.name;
-    const newName = `${baseName} - ${makeVariantName.trim()}`;
+    const newName = makeVariantName.trim(); // B1: bare — never "<parent> - <label>"
 
     // If the parent has no variantName yet, assign it one first
     const parentNeedsName =
@@ -942,12 +966,10 @@ export default function ProductDetailPage() {
       );
 
     if (parentNeedsName) {
-      const parentNewName = `${baseName} - ${makeVariantParentOwnName.trim()}`;
       updateProduct.mutate(
         {
           id: makeVariantParentId,
           variantName: makeVariantParentOwnName.trim(),
-          name: parentNewName,
         },
         {
           onSuccess: doLink,
@@ -994,8 +1016,7 @@ export default function ProductDetailPage() {
       toast({ title: "Flavor / variety name is required", variant: "error" });
       return;
     }
-    const baseName = product.name;
-    const composedName = `${baseName} - ${linkExistingVariantName.trim()}`;
+    const bareName = linkExistingVariantName.trim(); // B1: bare — never "<parent> - <label>"
 
     // Link the selected product as a child variant
     const doLinkChild = () =>
@@ -1004,7 +1025,7 @@ export default function ProductDetailPage() {
           id: linkExistingProductId,
           parentProductId: product.id,
           variantName: linkExistingVariantName.trim(),
-          name: composedName,
+          name: bareName,
         },
         {
           onSuccess: (data: { keptLabels?: string[] }) => {
@@ -1022,9 +1043,8 @@ export default function ProductDetailPage() {
     // If the current (parent) product has no variantName yet, assign it one first
     const parentNeedsName = !product.variantName && linkExistingParentVariantName.trim();
     if (parentNeedsName) {
-      const parentNewName = `${baseName} - ${linkExistingParentVariantName.trim()}`;
       updateProduct.mutate(
-        { id: product.id, variantName: linkExistingParentVariantName.trim(), name: parentNewName },
+        { id: product.id, variantName: linkExistingParentVariantName.trim() },
         {
           onSuccess: doLinkChild,
           onError: () => toast({ title: "Failed to update parent variant name", variant: "error" }),
@@ -1069,13 +1089,179 @@ export default function ProductDetailPage() {
     const pu = perUnitPrice(v, activeUnitsPerBox);
     return pu != null ? (
       <p className="mt-0.5 text-[11px] text-navy/50">
-        ≈ ${pu.toFixed(2)} / {UW.base.short.one}
+        ≈ <MoneyFigure value={pu} /> / {UW.base.short.one}
       </p>
     ) : null;
   };
 
+  // Price each (Tier 1) and Pricing Tiers. A family renders both inside FamilyPriceSection (K11-25); every
+  // other product keeps them where they always were.
+  const priceEachRow = (
+    <InfoRow
+      label={priceRowLabel(
+        isEditing ? (editDraft.unit as string) : product.unit,
+        tierOneLabel(tierLabels),
+      )}
+      value={
+        isEditing ? (
+          <>
+            <EditableNumber
+              value={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
+              onChange={(v) => setEditDraft((d) => ({ ...d, pricePerUnit: String(v) }))}
+            />
+            {perUnitHint(parseFloat(String(editDraft.pricePerUnit ?? priceNumber)))}
+          </>
+        ) : (
+          <>
+            <MoneyFigure value={priceNumber} className="font-mono" />
+            {perUnitHint(priceNumber)}
+          </>
+        )
+      }
+    />
+  );
+  const tiersBlock = (
+    <div className={isFamily ? "mt-4" : "mt-5 border-t border-surface-border pt-4"}>
+      <div className="flex items-center justify-between mb-2.5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+          Pricing Tiers
+        </p>
+        {isEditing && (
+          <button
+            type="button"
+            onClick={() => {
+              const t1 = editDraft.pricePerUnit as string;
+              setEditDraft((d) => ({
+                ...d,
+                priceTier2: t1,
+                priceTier3: t1,
+                priceTier4: t1,
+                priceTier5: t1,
+              }));
+            }}
+            className="text-xs text-brand-600 hover:underline"
+          >
+            Set all to {tierOneLabel(tierLabels)}
+          </button>
+        )}
+      </div>
+      {isEditing &&
+        (() => {
+          // Names the tiers a save would move with the list (#3470 review: never a fixed string).
+          const note = ladderChangeNote(
+            detailsPriceMoves(
+              product,
+              editDraft as Record<string, string>,
+              pricesWhenEditStartedRef.current,
+            ),
+            (n) => productTierLabel(tierLabels, n),
+          );
+          return note ? (
+            <p className="mb-2 text-xs text-navy/70" data-testid="tiers-move-note">
+              {note.replace(/\.$/, "")} when you save.
+            </p>
+          ) : null;
+        })()}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+        {(
+          [
+            [productTierLabel(tierLabels, 2), "priceTier2", product.priceTier2],
+            [productTierLabel(tierLabels, 3), "priceTier3", product.priceTier3],
+            [productTierLabel(tierLabels, 4), "priceTier4", product.priceTier4],
+            [productTierLabel(tierLabels, 5), "priceTier5", product.priceTier5],
+          ] as [string, string, any][]
+        ).map(([label, field, productVal], idx) => {
+          const prevFields = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4"];
+          const prevField = prevFields[idx];
+          const curVal = isEditing
+            ? parseFloat(String(editDraft[field] ?? parseFloat(String(productVal ?? priceNumber))))
+            : parseFloat(String(productVal ?? priceNumber));
+          const prevVal = isEditing
+            ? parseFloat(String(editDraft[prevField] ?? priceNumber))
+            : parseFloat(
+                String(idx === 0 ? priceNumber : ((product as any)[prevField] ?? priceNumber)),
+              );
+          const warn = isEditing && curVal > prevVal;
+          const inheritsList = !(Number(productVal) > 0);
+          return (
+            <div key={field}>
+              <p className={cn("mb-1 text-xs", warn ? "text-warning font-medium" : "text-navy/70")}>
+                {label}
+                {warn ? " ⚠" : ""}
+              </p>
+              {isEditing ? (
+                <>
+                  <EditableNumber
+                    value={curVal}
+                    onChange={(v) => setEditDraft((d) => ({ ...d, [field]: String(v) }))}
+                    onCommit={(v, atFocus) => {
+                      // P0 2026-10-14: lower tiers move only by applyLadderChange (tracking, 0 or above
+                      // the new price), never a blind copy-down, and the move is named on screen. The
+                      // OLD side is the field's own focus-time value (SA MUST: no staleable copy).
+                      const moved = applyLadderChange(
+                        field as TierField,
+                        atFocus ?? productVal,
+                        v,
+                        cascadeTiers(
+                          product,
+                          editDraft as Record<string, string>,
+                          pricesWhenEditStartedRef.current,
+                        ),
+                      );
+                      setEditDraft((d) => ({ ...d, ...moved }));
+                      setLadderNote(
+                        ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n)),
+                      );
+                    }}
+                  />
+                  {perUnitHint(curVal)}
+                </>
+              ) : (
+                <>
+                  <p className="font-mono text-sm font-medium tabular-nums text-navy">
+                    <MoneyFigure value={inheritsList ? priceNumber : Number(productVal)} />
+                    {inheritsList && (
+                      <span className="ml-1 rounded bg-surface-raised px-1 py-0.5 text-[9px] text-navy/50">
+                        list
+                      </span>
+                    )}
+                  </p>
+                  {perUnitHint(inheritsList ? priceNumber : Number(productVal))}
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {isEditing && ladderNote && (
+        <p role="status" data-testid="ladder-note" className="mt-2 text-xs text-navy/70">
+          {ladderNote}
+        </p>
+      )}
+      {isEditing &&
+        (() => {
+          const t1 = parseFloat(String(editDraft.pricePerUnit ?? priceNumber));
+          const t2 = parseFloat(String(editDraft.priceTier2 ?? (product as any).priceTier2 ?? t1));
+          const t3 = parseFloat(String(editDraft.priceTier3 ?? (product as any).priceTier3 ?? t1));
+          const t4 = parseFloat(String(editDraft.priceTier4 ?? (product as any).priceTier4 ?? t1));
+          const t5 = parseFloat(String(editDraft.priceTier5 ?? (product as any).priceTier5 ?? t1));
+          const hasViolation = t2 > t1 || t3 > t2 || t4 > t3 || t5 > t4;
+          return hasViolation ? (
+            <p className="mt-1.5 text-xs text-warning">
+              Higher tier prices should be ≤ the tier above (volume discounts are lower).
+            </p>
+          ) : null;
+        })()}
+      {isEditing && (
+        <p className="mt-1.5 text-xs text-navy/50">
+          A tier left blank or at 0 follows the list price.
+        </p>
+      )}
+    </div>
+  );
+
   return (
-    <>
+    <PriceWindowHost product={product} enabled={pricesInWindow}>
       {/* Crop-before-upload modal — intercepts every file selection */}
       {cropState && (
         <CropModal
@@ -1169,12 +1355,14 @@ export default function ProductDetailPage() {
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="text-2xl font-bold tracking-[-0.01em] text-navy">{product.name}</h1>
+              <h1 id="h-product" className="text-2xl font-bold tracking-[-0.01em] text-navy">
+                {product.name}
+              </h1>
               <Badge
                 variant={product.isActive ? "success" : "neutral"}
                 label={product.isActive ? "Active" : "Inactive"}
               />
-              {stockStatus === "OUT_OF_STOCK" ? (
+              {v2 ? null : stockStatus === "OUT_OF_STOCK" ? (
                 <Badge variant="warning" label={stockCountLabel(currentStock)} />
               ) : stockStatus === "LOW" ? (
                 <Badge variant="warning" label="Low Stock" />
@@ -1184,337 +1372,34 @@ export default function ProductDetailPage() {
               {(product as any).isNew && <Badge variant="info" label="New" />}
               {(product as any).isDeal && <Badge variant="success" label="Deal" />}
             </div>
-            <ProductHeaderLine product={product} currentStock={currentStock} />
+            <ProductHeaderLine product={product} currentStock={currentStock} pricesV2={v2} />
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          {/* ── Left: image gallery + stock card ── */}
-          <div className="space-y-4">
-            {/* ── Image gallery ── */}
-            <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-              <div className="border-b border-surface-border px-4 py-3">
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                  Image
-                </h3>
-              </div>
-              <div className="p-4">
-                {(() => {
-                  const images: string[] = (product as any).imageUrls ?? [];
-                  const hasImages = images.length > 0;
-                  const safeIdx = Math.min(activeImageIdx, images.length - 1);
-
-                  const handleUpload = (files: FileList | null) => queueForCrop(files);
-
-                  const toggleSelectImage = (i: number) => {
-                    setSelectedImages((prev) => {
-                      const next = new Set(prev);
-                      next.has(i) ? next.delete(i) : next.add(i);
-                      return next;
-                    });
-                  };
-
-                  const deleteSelected = () => {
-                    const keys = (product as any).imageKeys ?? [];
-                    const toDelete = Array.from(selectedImages)
-                      .map((i) => keys[i])
-                      .filter(Boolean);
-                    if (toDelete.length > 0) setPendingImageDelete(toDelete);
-                  };
-
-                  return (
-                    <div className="space-y-2">
-                      {/* Main image / drop zone — 4:5 portrait viewport matching the
-                    upload ratio. Below lg the photo is shown whole (contain, centred);
-                    lg+ crops with object-cover by each image's stored focal point
-                    (older images default to centre). */}
-                      <div
-                        onDragOver={(e) => {
-                          e.preventDefault();
-                          setIsDragging(true);
-                        }}
-                        onDragLeave={() => setIsDragging(false)}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          setIsDragging(false);
-                          handleUpload(e.dataTransfer.files);
-                        }}
-                        className={cn(
-                          "relative h-44 w-full overflow-hidden rounded-xl border lg:h-auto lg:aspect-[4/5]",
-                          isDragging && "ring-2 ring-brand-500",
-                          !hasImages && "cursor-pointer",
-                          stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
-                          stockStatus === "OUT_OF_STOCK" && "border-warning/30 bg-warning-bg",
-                          stockStatus === "IN_STOCK" && "border-surface-border bg-surface-raised",
-                        )}
-                        onClick={!hasImages ? () => fileInputRef.current?.click() : undefined}
-                      >
-                        {hasImages ? (
-                          <>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={images[safeIdx]}
-                              alt={`${product.name} — image ${safeIdx + 1}`}
-                              className="absolute inset-0 h-full w-full cursor-zoom-in object-contain max-lg:![object-position:50%_50%] lg:object-cover"
-                              style={{ objectPosition: objectPositionForUrl(images[safeIdx]) }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setLightboxIdx(safeIdx);
-                                setLightboxOpen(true);
-                              }}
-                            />
-                            {/* Delete current image (single) */}
-                            {!selectMode && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const key = (product as any).imageKeys?.[safeIdx];
-                                  if (key) setPendingImageDelete([key]);
-                                }}
-                                className={cn(
-                                  TAP_TARGET,
-                                  "absolute right-2 top-2 rounded-full bg-black/50 text-white hover:bg-danger transition-colors",
-                                )}
-                                title="Delete this image"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-                            {/* Prev / next arrows */}
-                            {images.length > 1 && !selectMode && (
-                              <>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActiveImageIdx(
-                                      (i) => (i - 1 + images.length) % images.length,
-                                    );
-                                  }}
-                                  className={cn(
-                                    TAP_TARGET,
-                                    "absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
-                                  )}
-                                >
-                                  <ChevronLeft className="h-4 w-4" />
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActiveImageIdx((i) => (i + 1) % images.length);
-                                  }}
-                                  className={cn(
-                                    TAP_TARGET,
-                                    "absolute right-8 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
-                                  )}
-                                >
-                                  <ChevronRight className="h-4 w-4" />
-                                </button>
-                              </>
-                            )}
-                            {/* Page indicator */}
-                            {images.length > 1 && !selectMode && (
-                              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-2 py-0.5 text-xs text-white">
-                                {safeIdx + 1} / {images.length}
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <div className="flex h-full flex-col items-center justify-center gap-2">
-                            <Package
-                              className={cn(
-                                "h-14 w-14",
-                                stockStatus === "LOW" && "text-warning/30",
-                                stockStatus === "OUT_OF_STOCK" && "text-warning/30",
-                                stockStatus === "IN_STOCK" && "text-navy/15",
-                              )}
-                            />
-                            <p className="text-xs text-navy/70">
-                              Drop images here or click to upload
-                            </p>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Thumbnail strip with checkboxes in select mode */}
-                      {images.length > 0 && (
-                        <div className="flex gap-1.5 overflow-x-auto pb-1">
-                          {images.map((url, i) => (
-                            <div key={i} className="relative shrink-0">
-                              <button
-                                onClick={() =>
-                                  selectMode ? toggleSelectImage(i) : setActiveImageIdx(i)
-                                }
-                                className={cn(
-                                  "h-14 w-14 overflow-hidden rounded-lg border-2 transition-all",
-                                  selectMode && selectedImages.has(i) && "border-danger",
-                                  !selectMode && i === safeIdx
-                                    ? "border-brand-500"
-                                    : !selectMode
-                                      ? "border-transparent opacity-60 hover:opacity-100"
-                                      : "border-surface-border",
-                                )}
-                              >
-                                <ThumbImage
-                                  url={url}
-                                  alt={`Image ${i + 1} of ${images.length}`}
-                                  objectPosition={objectPositionForUrl(url)}
-                                />
-                              </button>
-                              {selectMode && (
-                                <input
-                                  type="checkbox"
-                                  checked={selectedImages.has(i)}
-                                  onChange={() => toggleSelectImage(i)}
-                                  className="absolute left-0.5 top-0.5 h-3.5 w-3.5 cursor-pointer accent-danger"
-                                />
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Operator-only controls for the active image */}
-                      {isStaff && !selectMode && hasImages && (
-                        <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-border pt-2">
-                          {/* Move left / right */}
-                          <button
-                            onClick={() => handleMoveImage(safeIdx, safeIdx - 1)}
-                            disabled={safeIdx === 0 || updateProduct.isPending}
-                            title="Move left"
-                            className={cn(
-                              TAP_TARGET,
-                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
-                            )}
-                          >
-                            <ChevronLeft className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleMoveImage(safeIdx, safeIdx + 1)}
-                            disabled={safeIdx === images.length - 1 || updateProduct.isPending}
-                            title="Move right"
-                            className={cn(
-                              TAP_TARGET,
-                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
-                            )}
-                          >
-                            <ChevronRight className="h-3.5 w-3.5" />
-                          </button>
-
-                          {/* Default / Set default */}
-                          {safeIdx === 0 ? (
-                            <span className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-600 select-none">
-                              <Star className="h-3 w-3 fill-brand-500 text-brand-500" />
-                              Default
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => handleSetDefault(safeIdx)}
-                              disabled={updateProduct.isPending}
-                              title="Set as default image (move to first position)"
-                              className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/70 hover:border-brand-200 hover:text-brand-500 disabled:opacity-30 transition-colors"
-                            >
-                              <Star className="h-3 w-3" />
-                              Set default
-                            </button>
-                          )}
-
-                          {/* Crop / re-set focal — re-runs the crop + focal-point
-                        flow on the existing image and replaces the original. */}
-                          <button
-                            onClick={() =>
-                              handleCropExisting(
-                                images[safeIdx],
-                                (product as any).imageKeys?.[safeIdx],
-                              )
-                            }
-                            disabled={!!cropState || uploadImages.isPending}
-                            title="Re-crop and/or move the focal point (replaces the original image)"
-                            className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/70 hover:text-navy disabled:opacity-30 transition-colors"
-                          >
-                            <Scissors className="h-3 w-3" />
-                            Crop / focal
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Action row: select-mode toggle + bulk delete + upload */}
-                      <div className="flex items-center gap-2">
-                        {hasImages &&
-                          (selectMode ? (
-                            <>
-                              <button
-                                onClick={deleteSelected}
-                                disabled={selectedImages.size === 0 || deleteImage.isPending}
-                                className="flex items-center gap-1.5 rounded-lg bg-danger px-3 py-1.5 text-xs font-medium text-white hover:bg-danger/90 disabled:opacity-40 transition-colors"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Delete {selectedImages.size > 0 ? `${selectedImages.size} ` : ""}
-                                selected
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setSelectMode(false);
-                                  setSelectedImages(new Set());
-                                }}
-                                className="rounded-lg border border-surface-border px-3 py-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              onClick={() => setSelectMode(true)}
-                              className="flex items-center gap-1.5 rounded-lg border border-surface-border px-3 py-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              Select to delete
-                            </button>
-                          ))}
-                        <button
-                          onClick={() => fileInputRef.current?.click()}
-                          disabled={uploadImages.isPending || !!cropState}
-                          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-surface-border bg-white py-1.5 text-xs text-navy/70 hover:border-brand-500/50 hover:text-brand-500 transition-colors disabled:opacity-50"
-                        >
-                          <Upload className="h-3.5 w-3.5" />
-                          {uploadImages.isPending ? "Uploading…" : "Upload images"}
-                        </button>
-                      </div>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        className="hidden"
-                        onChange={(e) => handleUpload(e.target.files)}
-                      />
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-
-            {product.kind !== "FAMILY" && (
-              <ProductStockCostCard
-                product={product}
-                stockStatus={stockStatus}
-                currentStock={currentStock}
-                onSetCost={() => setShowCostModal(true)}
-              />
-            )}
-          </div>
-
-          {/* ── Right: details + chart ── */}
-          <div className="space-y-5 lg:col-span-2">
+        {v2 && product.kind !== "FAMILY" ? <ProductJumpLinks /> : null}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 lg:grid-rows-[auto_1fr] lg:gap-y-5">
+          {/* DOM order is the phone reading order and the tab order: Details, then Image and stock, then the rest.
+              The columns are placed at lg with grid lines, not order-* classes (K11-23). */}
+          <div className="space-y-5 lg:col-span-2 lg:col-start-2 lg:row-start-1">
             {/* Product details */}
             <div
               ref={detailsCardRef}
+              data-testid="product-details-card"
               className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card"
             >
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5">
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+              {/* max-sm:py-2: with the 44 px Edit and More controls the phone header is 61 px (K11-22: <= 64) */}
+              <div
+                data-testid="product-details-header"
+                className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5 max-sm:py-2"
+              >
+                <h3
+                  data-testid="product-details-heading"
+                  tabIndex={-1}
+                  className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70 outline-none"
+                >
                   Details
                 </h3>
-                <div className="flex max-w-full flex-wrap items-center justify-end gap-2 max-sm:w-full max-sm:justify-start">
+                <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
                   {isEditing ? (
                     <>
                       <EditActionButtons
@@ -1526,9 +1411,7 @@ export default function ProductDetailPage() {
                     </>
                   ) : (
                     <>
-                      <div className="max-sm:basis-full">
-                        <EditButton onClick={startEdit} />
-                      </div>
+                      <EditButton onClick={startEdit} />
                       <ProductHeaderControls
                         product={product}
                         reactivateFlow={reactivateFlow}
@@ -1543,6 +1426,7 @@ export default function ProductDetailPage() {
                         }
                         onMakeVariant={openMakeVariantModal}
                         onRequestDelete={() => setShowDeleteConfirm(true)}
+                        deleteOpen={showDeleteConfirm}
                       />
                     </>
                   )}
@@ -1575,6 +1459,7 @@ export default function ProductDetailPage() {
                         </div>
                       ) : (
                         <input
+                          aria-label="Product name"
                           value={(editDraft.name as string) ?? ""}
                           onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
                           className="w-full rounded border border-surface-border px-2 py-1 text-lg font-bold text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -1608,72 +1493,6 @@ export default function ProductDetailPage() {
                     >
                       Regulated Items →
                     </Link>
-                  </div>
-                )}
-
-                {/* Buyer merchandising flags (P5-01) */}
-                {isStaff && (
-                  <div className="mb-4 rounded-lg border border-surface-border bg-white p-4">
-                    <div className="mb-2.5 flex items-center gap-2">
-                      <Star className="h-4 w-4 text-brand-500" />
-                      <h3 className="text-sm font-semibold text-navy">Buyer merchandising</h3>
-                    </div>
-                    {isEditing && (
-                      <p className="mb-2 text-xs font-medium text-navy/60">
-                        These switches apply immediately, without Save.
-                      </p>
-                    )}
-                    <p className="mb-3 text-xs text-navy/60">
-                      Highlight this product on the buyer catalogue with badges and smart
-                      collections. These are display flags only — they don&apos;t change price.
-                    </p>
-                    <div className="grid gap-2 sm:grid-cols-3">
-                      <MerchFlagToggle
-                        label="Featured"
-                        description="Pin to the featured shelf"
-                        active={!!(product as any).isFeatured}
-                        disabled={updateProduct.isPending}
-                        onToggle={() =>
-                          updateProduct.mutate(
-                            { id: id, isFeatured: !(product as any).isFeatured } as any,
-                            {
-                              onSuccess: () =>
-                                toast({ title: "Merchandising updated", variant: "success" }),
-                              onError: () => toast({ title: "Failed to update", variant: "error" }),
-                            },
-                          )
-                        }
-                      />
-                      <MerchFlagToggle
-                        label="New"
-                        description={'Show a "New" badge'}
-                        active={!!(product as any).isNew}
-                        disabled={updateProduct.isPending}
-                        onToggle={() =>
-                          updateProduct.mutate({ id: id, isNew: !(product as any).isNew } as any, {
-                            onSuccess: () =>
-                              toast({ title: "Merchandising updated", variant: "success" }),
-                            onError: () => toast({ title: "Failed to update", variant: "error" }),
-                          })
-                        }
-                      />
-                      <MerchFlagToggle
-                        label="Deal"
-                        description={'Show a "Deal" badge'}
-                        active={!!(product as any).isDeal}
-                        disabled={updateProduct.isPending}
-                        onToggle={() =>
-                          updateProduct.mutate(
-                            { id: id, isDeal: !(product as any).isDeal } as any,
-                            {
-                              onSuccess: () =>
-                                toast({ title: "Merchandising updated", variant: "success" }),
-                              onError: () => toast({ title: "Failed to update", variant: "error" }),
-                            },
-                          )
-                        }
-                      />
-                    </div>
                   </div>
                 )}
 
@@ -1822,30 +1641,7 @@ export default function ProductDetailPage() {
                       )
                     }
                   />
-                  <InfoRow
-                    label={priceRowLabel(
-                      isEditing ? (editDraft.unit as string) : product.unit,
-                      tierLabel(tierLabels, 1),
-                    )}
-                    value={
-                      isEditing ? (
-                        <>
-                          <EditableNumber
-                            value={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
-                            onChange={(v) =>
-                              setEditDraft((d) => ({ ...d, pricePerUnit: String(v) }))
-                            }
-                          />
-                          {perUnitHint(parseFloat(String(editDraft.pricePerUnit ?? priceNumber)))}
-                        </>
-                      ) : (
-                        <>
-                          <span className="font-mono tabular-nums">${priceNumber.toFixed(2)}</span>
-                          {perUnitHint(priceNumber)}
-                        </>
-                      )
-                    }
-                  />
+                  {!isFamily && !pricesInWindow && priceEachRow}
                   {/* Variant of — edit only; view mode shows the parent in the header line and the banner */}
                   {isEditing && (
                     <InfoRow
@@ -1947,168 +1743,34 @@ export default function ProductDetailPage() {
                         onAccept={(value) =>
                           setEditDraft((d) => ({ ...d, unitsPerBox: String(value) }))
                         }
+                        onPendingChange={(value) => {
+                          pendingPackSizeRef.current = value;
+                        }}
                       />
                     );
                   })()}
 
-                {/* Tier Prices */}
-                <div className="mt-5 border-t border-surface-border pt-4">
-                  <div className="flex items-center justify-between mb-2.5">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                      Pricing Tiers
-                    </p>
-                    {isEditing && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const t1 = editDraft.pricePerUnit as string;
-                          setEditDraft((d) => ({
-                            ...d,
-                            priceTier2: t1,
-                            priceTier3: t1,
-                            priceTier4: t1,
-                            priceTier5: t1,
-                          }));
-                        }}
-                        className="text-xs text-brand-600 hover:underline"
-                      >
-                        Set all to {tierLabel(tierLabels, 1)}
-                      </button>
-                    )}
-                  </div>
-                  {isEditing &&
-                    (() => {
-                      // Names the tiers a save would move with the list (#3470 review: never a fixed string).
-                      const note = ladderChangeNote(
-                        editTierPatchMoves(product, editDraft as Record<string, string>),
-                        (n) => tierLabel(tierLabels, n),
-                      );
-                      return note ? (
-                        <p className="mb-2 text-xs text-navy/70" data-testid="tiers-move-note">
-                          {note.replace(/\.$/, "")} when you save.
-                        </p>
-                      ) : null;
-                    })()}
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                    {(
-                      [
-                        [tierLabel(tierLabels, 2), "priceTier2", product.priceTier2],
-                        [tierLabel(tierLabels, 3), "priceTier3", product.priceTier3],
-                        [tierLabel(tierLabels, 4), "priceTier4", product.priceTier4],
-                        [tierLabel(tierLabels, 5), "priceTier5", product.priceTier5],
-                      ] as [string, string, any][]
-                    ).map(([label, field, productVal], idx) => {
-                      const prevFields = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4"];
-                      const prevField = prevFields[idx];
-                      const curVal = isEditing
-                        ? parseFloat(
-                            String(
-                              editDraft[field] ?? parseFloat(String(productVal ?? priceNumber)),
-                            ),
-                          )
-                        : parseFloat(String(productVal ?? priceNumber));
-                      const prevVal = isEditing
-                        ? parseFloat(String(editDraft[prevField] ?? priceNumber))
-                        : parseFloat(
-                            String(
-                              idx === 0
-                                ? priceNumber
-                                : ((product as any)[prevField] ?? priceNumber),
-                            ),
-                          );
-                      const warn = isEditing && curVal > prevVal;
-                      const inheritsList = !(Number(productVal) > 0);
-                      return (
-                        <div key={field}>
-                          <p
-                            className={cn(
-                              "mb-1 text-xs",
-                              warn ? "text-warning font-medium" : "text-navy/70",
-                            )}
-                          >
-                            {label}
-                            {warn ? " ⚠" : ""}
-                          </p>
-                          {isEditing ? (
-                            <>
-                              <EditableNumber
-                                value={curVal}
-                                onChange={(v) =>
-                                  setEditDraft((d) => ({ ...d, [field]: String(v) }))
-                                }
-                                onCommit={(v, atFocus) => {
-                                  // P0 2026-10-14: lower tiers move only by applyLadderChange (tracking, 0 or above
-                                  // the new price), never a blind copy-down, and the move is named on screen. The
-                                  // OLD side is the field's own focus-time value (SA MUST: no staleable copy).
-                                  const moved = applyLadderChange(
-                                    field as TierField,
-                                    atFocus ?? productVal,
-                                    v,
-                                    editDraft as Record<string, string>,
-                                  );
-                                  setEditDraft((d) => ({ ...d, ...moved }));
-                                  setLadderNote(
-                                    ladderChangeNote(moved, (n) => tierLabel(tierLabels, n)),
-                                  );
-                                }}
-                              />
-                              {perUnitHint(curVal)}
-                            </>
-                          ) : (
-                            <>
-                              <p className="font-mono text-sm font-medium tabular-nums text-navy">
-                                ${(inheritsList ? priceNumber : Number(productVal)).toFixed(2)}
-                                {inheritsList && (
-                                  <span className="ml-1 rounded bg-surface-raised px-1 py-0.5 text-[9px] text-navy/50">
-                                    list
-                                  </span>
-                                )}
-                              </p>
-                              {perUnitHint(inheritsList ? priceNumber : Number(productVal))}
-                            </>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {isEditing && ladderNote && (
-                    <p
-                      role="status"
-                      data-testid="ladder-note"
-                      className="mt-2 text-xs text-navy/70"
-                    >
-                      {ladderNote}
-                    </p>
-                  )}
-                  {isEditing &&
-                    (() => {
-                      const t1 = parseFloat(String(editDraft.pricePerUnit ?? priceNumber));
-                      const t2 = parseFloat(
-                        String(editDraft.priceTier2 ?? (product as any).priceTier2 ?? t1),
-                      );
-                      const t3 = parseFloat(
-                        String(editDraft.priceTier3 ?? (product as any).priceTier3 ?? t1),
-                      );
-                      const t4 = parseFloat(
-                        String(editDraft.priceTier4 ?? (product as any).priceTier4 ?? t1),
-                      );
-                      const t5 = parseFloat(
-                        String(editDraft.priceTier5 ?? (product as any).priceTier5 ?? t1),
-                      );
-                      const hasViolation = t2 > t1 || t3 > t2 || t4 > t3 || t5 > t4;
-                      return hasViolation ? (
-                        <p className="mt-1.5 text-xs text-warning">
-                          Higher tier prices should be ≤ the tier above (volume discounts are
-                          lower).
-                        </p>
-                      ) : null;
-                    })()}
-                  {isEditing && (
-                    <p className="mt-1.5 text-xs text-navy/50">
-                      Tiers left at 0 inherit the list price at checkout.
-                    </p>
-                  )}
-                </div>
+                {isFamily ? (
+                  <FamilyPriceSection price={wholesaleListPrice} isEditing={isEditing}>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+                      {priceEachRow}
+                    </div>
+                    {tiersBlock}
+                  </FamilyPriceSection>
+                ) : pricesInWindow ? (
+                  <DetailsPriceLine
+                    productId={product.id}
+                    isEditing={isEditing}
+                    anchor={() => detailsCardRef.current}
+                    fallback={() =>
+                      detailsCardRef.current?.querySelector<HTMLElement>(
+                        '[data-testid="product-details-heading"]',
+                      )
+                    }
+                  />
+                ) : (
+                  tiersBlock
+                )}
 
                 {/* MSRP — suggested retail, per PIECE (even for boxed products).
                     Display-only: never feeds pricing/tax/margin math. Flag-gated
@@ -2143,7 +1805,7 @@ export default function ProductDetailPage() {
                         )}
                         {msrpBelowWholesale && (
                           <p className="mt-1 text-xs text-warning">
-                            Below wholesale price (${wholesalePerPiece.toFixed(2)}/
+                            Below wholesale price (<MoneyFigure value={wholesalePerPiece} />/
                             {UW.base.short.one})
                           </p>
                         )}
@@ -2154,13 +1816,13 @@ export default function ProductDetailPage() {
                   ) : msrpNumber != null ? (
                     <>
                       <p className="font-mono text-sm font-medium tabular-nums text-navy">
-                        ${msrpNumber.toFixed(2)}
+                        <MoneyFigure value={msrpNumber} />
                         <span className="ml-1 text-[10px] text-navy/50">/{UW.base.short.one}</span>
                       </p>
                       {msrpBelowWholesale && (
                         <p className="mt-1 text-xs text-warning">
-                          Below wholesale price (${wholesalePerPiece.toFixed(2)}/{UW.base.short.one}
-                          )
+                          Below wholesale price (<MoneyFigure value={wholesalePerPiece} />/
+                          {UW.base.short.one})
                         </p>
                       )}
                     </>
@@ -2184,9 +1846,295 @@ export default function ProductDetailPage() {
                     <p className="text-sm text-navy/80">{product.description}</p>
                   )}
                 </div>
+
+                {/* Buyer merchandising flags (P5-01): last in Details, so the price comes first (K11-23) */}
+                {isStaff && (
+                  <ProductMerchandising
+                    product={product as any}
+                    isEditing={isEditing}
+                    pending={updateProduct.isPending}
+                    onToggle={(flag, next) =>
+                      updateProduct.mutate({ id: id, [flag]: next } as any, {
+                        onSuccess: () =>
+                          toast({ title: "Merchandising updated", variant: "success" }),
+                        onError: () => toast({ title: "Failed to update", variant: "error" }),
+                      })
+                    }
+                  />
+                )}
+              </div>
+            </div>
+            {product.kind === "FAMILY" && (
+              <FamilyVariantsEditor familyId={product.id} variants={product.variants ?? []} />
+            )}
+          </div>
+          {/* ── Left: image gallery + stock card ── */}
+          <div
+            data-region-covers
+            className="space-y-4 lg:col-start-1 lg:row-start-1 lg:row-span-2 lg:[&[inert]]:opacity-40 motion-safe:lg:transition-opacity motion-safe:lg:duration-200"
+          >
+            {/* ── Image gallery ── */}
+            <div
+              data-testid="product-image-card"
+              className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card"
+            >
+              <div className="border-b border-surface-border px-4 py-3">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                  Image
+                </h3>
+              </div>
+              <div className="p-4">
+                {(() => {
+                  const images: string[] = (product as any).imageUrls ?? [];
+                  const safeIdx = Math.min(activeImageIdx, images.length - 1);
+
+                  const handleUpload = (files: FileList | null) => queueForCrop(files);
+
+                  const toggleSelectImage = (i: number) => {
+                    setSelectedImages((prev) => {
+                      const next = new Set(prev);
+                      next.has(i) ? next.delete(i) : next.add(i);
+                      return next;
+                    });
+                  };
+
+                  const deleteSelected = () => {
+                    const keys = (product as any).imageKeys ?? [];
+                    const toDelete = Array.from(selectedImages)
+                      .map((i) => keys[i])
+                      .filter(Boolean);
+                    if (toDelete.length > 0) setPendingImageDelete(toDelete);
+                  };
+
+                  if (images.length === 0)
+                    return (
+                      <ProductImagesEmpty onFiles={handleUpload} busy={uploadImages.isPending} />
+                    );
+                  return (
+                    <div className="space-y-2">
+                      {/* Main image / drop zone — 4:5 portrait viewport matching the
+                    upload ratio. Below lg the photo is shown whole (contain, centred);
+                    lg+ crops with object-cover by each image's stored focal point
+                    (older images default to centre). */}
+                      <div
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setIsDragging(true);
+                        }}
+                        onDragLeave={() => setIsDragging(false)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setIsDragging(false);
+                          handleUpload(e.dataTransfer.files);
+                        }}
+                        className={cn(
+                          "relative h-44 w-full overflow-hidden rounded-xl border lg:h-auto lg:aspect-[4/5]",
+                          isDragging && "ring-2 ring-brand-500",
+                          stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
+                          stockStatus === "OUT_OF_STOCK" && "border-warning/30 bg-warning-bg",
+                          stockStatus === "IN_STOCK" && "border-surface-border bg-surface-raised",
+                        )}
+                      >
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={images[safeIdx]}
+                            alt={`${product.name} — image ${safeIdx + 1}`}
+                            className="absolute inset-0 h-full w-full cursor-zoom-in object-contain max-lg:![object-position:50%_50%] lg:object-cover"
+                            style={{ objectPosition: objectPositionForUrl(images[safeIdx]) }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setLightboxIdx(safeIdx);
+                              setLightboxOpen(true);
+                            }}
+                          />
+                          {/* Delete current image (single) */}
+                          {!selectMode && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const key = (product as any).imageKeys?.[safeIdx];
+                                if (key) setPendingImageDelete([key]);
+                              }}
+                              className={cn(
+                                TAP_TARGET,
+                                "absolute right-2 top-2 rounded-full bg-black/50 text-white hover:bg-danger transition-colors",
+                              )}
+                              title="Delete this image"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {/* Prev / next arrows */}
+                          {images.length > 1 && !selectMode && (
+                            <>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveImageIdx((i) => (i - 1 + images.length) % images.length);
+                                }}
+                                className={cn(
+                                  TAP_TARGET,
+                                  "absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
+                                )}
+                              >
+                                <ChevronLeft className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveImageIdx((i) => (i + 1) % images.length);
+                                }}
+                                className={cn(
+                                  TAP_TARGET,
+                                  "absolute right-8 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
+                                )}
+                              >
+                                <ChevronRight className="h-4 w-4" />
+                              </button>
+                            </>
+                          )}
+                          {/* Page indicator */}
+                          {images.length > 1 && !selectMode && (
+                            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-2 py-0.5 text-xs text-white">
+                              {safeIdx + 1} / {images.length}
+                            </div>
+                          )}
+                        </>
+                      </div>
+
+                      {/* Thumbnail strip with checkboxes in select mode */}
+                      {images.length > 0 && (
+                        <div className="flex gap-1.5 overflow-x-auto pb-1">
+                          {images.map((url, i) => (
+                            <div key={i} className="relative shrink-0">
+                              <button
+                                onClick={() =>
+                                  selectMode ? toggleSelectImage(i) : setActiveImageIdx(i)
+                                }
+                                className={cn(
+                                  "h-14 w-14 overflow-hidden rounded-lg border-2 transition-all",
+                                  selectMode && selectedImages.has(i) && "border-danger",
+                                  !selectMode && i === safeIdx
+                                    ? "border-brand-500"
+                                    : !selectMode
+                                      ? "border-transparent opacity-60 hover:opacity-100"
+                                      : "border-surface-border",
+                                )}
+                              >
+                                <ThumbImage
+                                  url={url}
+                                  alt={`Image ${i + 1} of ${images.length}`}
+                                  objectPosition={objectPositionForUrl(url)}
+                                />
+                              </button>
+                              {selectMode && (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedImages.has(i)}
+                                  onChange={() => toggleSelectImage(i)}
+                                  className="absolute left-0.5 top-0.5 h-3.5 w-3.5 cursor-pointer accent-danger"
+                                />
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Operator-only controls for the active image */}
+                      {isStaff && !selectMode && (
+                        <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-border pt-2">
+                          {/* Move left / right */}
+                          <button
+                            onClick={() => handleMoveImage(safeIdx, safeIdx - 1)}
+                            disabled={safeIdx === 0 || updateProduct.isPending}
+                            title="Move left"
+                            className={cn(
+                              TAP_TARGET,
+                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
+                            )}
+                          >
+                            <ChevronLeft className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleMoveImage(safeIdx, safeIdx + 1)}
+                            disabled={safeIdx === images.length - 1 || updateProduct.isPending}
+                            title="Move right"
+                            className={cn(
+                              TAP_TARGET,
+                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
+                            )}
+                          >
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          </button>
+
+                          {/* Default / Set default */}
+                          {safeIdx === 0 ? (
+                            <span className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-600 select-none">
+                              <Star className="h-3 w-3 fill-brand-500 text-brand-500" />
+                              Default
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleSetDefault(safeIdx)}
+                              disabled={updateProduct.isPending}
+                              title="Set as default image (move to first position)"
+                              className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/70 hover:border-brand-200 hover:text-brand-500 disabled:opacity-30 transition-colors"
+                            >
+                              <Star className="h-3 w-3" />
+                              Set default
+                            </button>
+                          )}
+
+                          {/* Crop / re-set focal — re-runs the crop + focal-point
+                        flow on the existing image and replaces the original. */}
+                          <button
+                            onClick={() =>
+                              handleCropExisting(
+                                images[safeIdx],
+                                (product as any).imageKeys?.[safeIdx],
+                              )
+                            }
+                            disabled={!!cropState || uploadImages.isPending}
+                            title="Re-crop and/or move the focal point (replaces the original image)"
+                            className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/70 hover:text-navy disabled:opacity-30 transition-colors"
+                          >
+                            <Scissors className="h-3 w-3" />
+                            Crop / focal
+                          </button>
+                        </div>
+                      )}
+
+                      <ProductImageActions
+                        selectMode={selectMode}
+                        setSelectMode={setSelectMode}
+                        selectedImages={selectedImages}
+                        setSelectedImages={setSelectedImages}
+                        deleteSelected={deleteSelected}
+                        deletePending={deleteImage.isPending}
+                        uploadPending={uploadImages.isPending}
+                        cropping={!!cropState}
+                        fileInputRef={fileInputRef}
+                        handleUpload={handleUpload}
+                      />
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
+            {product.kind !== "FAMILY" && (
+              <ProductStockCostCard
+                product={product}
+                stockStatus={stockStatus}
+                currentStock={currentStock}
+                onSetCost={() => setShowCostModal(true)}
+                pricesV2={v2}
+              />
+            )}
+          </div>
+
+          <div className="space-y-5 lg:col-span-2 lg:col-start-2 lg:row-start-2">
             {/* ── Regulatory reporting ──────────────────────────────────────────
                 Filing vocabulary only (regulated type + the codes a report files
                 under), kept in its own card so it can't be mistaken for the
@@ -2395,24 +2343,30 @@ export default function ProductDetailPage() {
 
             <ProductLabelsCard productId={product.id} />
             <ProductPortalVisibilityCard product={product} />
-            <ProductUnitsCard product={product} />
+            {v2 && product.kind !== "FAMILY" ? (
+              <ProductPricingRegion>
+                <ProductPricingV2 product={product} />
+              </ProductPricingRegion>
+            ) : null}
+            {!v2Family && <ProductUnitsCard product={product} hideAddForm={v2} />}
 
             {/* Sales demand — real data from invoiced sales. In its own file (unlike
                 CostHistoryCard below) because it owns range/metric state and five
                 render states; this file is already ~2.7k lines. */}
-            <DemandCard productId={product.id} unitsPerBox={product.unitsPerBox} />
-
-            {/* Sales — per-buyer invoiced-sale history (PR-B): who bought this,
-                when, and at what price, with min/avg/max price summary chips. */}
-            <SalesHistoryCard productId={product.id} />
+            {isFamily ? (
+              <FamilySalesCards productId={product.id} unitsPerBox={product.unitsPerBox} />
+            ) : (
+              <>
+                <DemandCard productId={product.id} unitsPerBox={product.unitsPerBox} />
+                {/* Sales — per-buyer invoiced-sale history (PR-B): who bought this,
+                    when, and at what price, with min/avg/max price summary chips. */}
+                <SalesHistoryCard productId={product.id} />
+              </>
+            )}
             <ProductInsightsExport productId={product.id} sku={product.sku ?? product.id} />
 
             {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}
             <CostHistoryCard productId={product.id} />
-
-            {product.kind === "FAMILY" && (
-              <FamilyVariantsEditor familyId={product.id} variants={product.variants ?? []} />
-            )}
 
             {/* Variants section — only for non-variant (parent) products */}
             {!product.parentProductId && product.kind !== "FAMILY" && (
@@ -2446,10 +2400,10 @@ export default function ProductDetailPage() {
                             SKU
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            {tierLabel(tierLabels, 1)}
+                            {tierOneLabel(tierLabels)}
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            {tierLabel(tierLabels, 2)}
+                            {productTierLabel(tierLabels, 2)}
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
                             Status
@@ -2483,10 +2437,10 @@ export default function ProductDetailPage() {
                             {product.sku || <span className="text-navy/30">&mdash;</span>}
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                            ${priceNumber.toFixed(2)}
+                            <MoneyFigure value={priceNumber} />
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                            ${getTierPrice(product, 2).toFixed(2)}
+                            <MoneyFigure value={getTierPrice(product, 2)} />
                           </td>
                           <td className="px-3 py-2.5">
                             <Badge
@@ -2526,10 +2480,10 @@ export default function ProductDetailPage() {
                               {variant.sku || <span className="text-navy/30">&mdash;</span>}
                             </td>
                             <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                              ${parseFloat(String(variant.pricePerUnit)).toFixed(2)}
+                              <MoneyFigure value={variant.pricePerUnit} />
                             </td>
                             <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                              ${getTierPrice(variant, 2).toFixed(2)}
+                              <MoneyFigure value={getTierPrice(variant, 2)} />
                             </td>
                             <td className="px-3 py-2.5">
                               <Badge
@@ -2692,7 +2646,7 @@ export default function ProductDetailPage() {
               })}
             </div>
             <p className="mt-1.5 text-xs text-navy/70">
-              Higher tiers (volume) are typically equal to or lower than {tierLabel(tierLabels, 1)}.
+              Higher tiers (volume) are typically equal to or lower than {tierOneLabel(tierLabels)}.
             </p>
           </div>
 
@@ -2815,9 +2769,9 @@ export default function ProductDetailPage() {
                   </p>
                   {makeVariantParentOwnName.trim() && !parent.variantName && (
                     <p>
-                      {parent.name}:{" "}
+                      {parent.name} variant name:{" "}
                       <span className="font-medium text-navy">
-                        {parent.name} - {makeVariantParentOwnName.trim()}
+                        {makeVariantParentOwnName.trim()}
                       </span>
                     </p>
                   )}
@@ -2881,9 +2835,7 @@ export default function ProductDetailPage() {
                       <span className="font-medium text-navy">{p.name}</span>
                       {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
                     </div>
-                    <span className="text-xs text-navy/70">
-                      ${parseFloat(String(p.pricePerUnit)).toFixed(2)}
-                    </span>
+                    <MoneyFigure value={p.pricePerUnit} className="text-xs text-navy/70" />
                   </button>
                 ))
               )}
@@ -2934,9 +2886,9 @@ export default function ProductDetailPage() {
               </p>
               {linkExistingParentVariantName.trim() && !product.variantName && (
                 <p>
-                  This product:{" "}
+                  {product.name} variant name:{" "}
                   <span className="font-medium text-navy">
-                    {product.name} - {linkExistingParentVariantName.trim()}
+                    {linkExistingParentVariantName.trim()}
                   </span>
                 </p>
               )}
@@ -2944,6 +2896,6 @@ export default function ProductDetailPage() {
           )}
         </div>
       </Modal>
-    </>
+    </PriceWindowHost>
   );
 }

@@ -29,6 +29,10 @@
   --sunken: #edf1f6;
   --line: #e2e8f0;
   --line-strong: #d6dee8;
+  /* Border of text inputs, selects and textareas. Dividers keep --line / --line-strong. Re-derived for
+     this palette (WCAG 1.4.11): 3.72:1 on white, 3.53 on --canvas, 3.28 on --sunken, 3.16 on the
+     darkest surface (admin --sunken). Pinned by apps/web/lib/field-token.test.ts. */
+  --field: #79859b;
 
   /* ── brand (static teal) — tenant --primary overrides at runtime ── */
   --brand-700: #0b6e6b;
@@ -117,6 +121,12 @@
   --line:       #1e3a5c;
 }
 */
+
+/* Field border for the dark palette above: 3.96:1 on --paper, 3.65 on --canvas, 3.17 on --sunken.
+   Declared live so the token exists in both modes the day class="dark" is switched on. */
+.dark {
+  --field: #6b7a8f;
+}
 
 /* ── Base styles ────────────────────────────────────────────────────────────── */
 body {

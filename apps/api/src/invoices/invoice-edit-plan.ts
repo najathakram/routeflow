@@ -608,6 +608,10 @@ export async function loadEditCatalog(
             priceTier3: true,
             priceTier4: true,
             priceTier5: true,
+            packLabel: true,
+            baseUnitLabel: true,
+            orderUnitRef: true, // S19: the customer layer reads the product's anchor
+            packAuto: true,
             trackedCategoryId: true,
             trackedSubcategoryId: true,
           },

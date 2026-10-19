@@ -7,8 +7,9 @@ import ALLOWLIST from "./raw-message-allowlist.json";
 /**
  * B986 static pin: no non-test source under apps/web reads a server / axios message outside the closed allowlist
  * `raw-message-allowlist.json`. A RATCHET: each file's count must EQUAL its entry (a new read anywhere fails, and removing a
- * read without lowering the entry fails too). The PENDING total is an exact number, never a ceiling, and the PERMANENT
- * entries are pinned exactly (file + count): an area PR that removes reads edits this file and the JSON in the same diff.
+ * read without lowering the entry fails too). There is NO hand-edited pending total (two PRs that each remove an entry used to
+ * clash on it): the pending sum is DERIVED from the allowlist and checked against the scan. The PERMANENT entries are pinned
+ * exactly (file + count); a PENDING entry must carry a tracked-id (B### or SA-###) reason, so the allowlist cannot grow silently.
  */
 const WEB = path.resolve(__dirname, "..");
 
@@ -25,10 +26,9 @@ const PERMANENT_EXPECTED: Record<string, number> = {
   "lib/e2e-setup-guard.ts": 2,
   "lib/generic-toast-copy.ts": 1,
   "lib/hooks/useRealtimeUpdates.ts": 1,
+  "lib/password-policy.ts": 1,
   "lib/reason-copy.ts": 1,
 };
-/** The exact pending total (reads still to be converted by the B986 area PRs). */
-const PENDING_TOTAL = 224;
 
 describe("no raw server message in apps/web UI (B986 ratchet)", () => {
   const found = scanTree(WEB);
@@ -55,11 +55,17 @@ describe("no raw server message in apps/web UI (B986 ratchet)", () => {
     for (const e of Object.values(allow)) expect(e.why.length).toBeGreaterThan(8);
   });
 
-  it("the PENDING total is exact", () => {
-    const pending = Object.values(allow)
-      .filter((e) => !e.permanent)
-      .reduce((a, e) => a + e.count, 0);
-    expect(pending).toBe(PENDING_TOTAL);
+  it("the PENDING total is derived: the allowlist's pending sum equals the pending reads the scan finds", () => {
+    const pendingFiles = Object.entries(allow).filter(([, e]) => !e.permanent);
+    const allowed = pendingFiles.reduce((a, [, e]) => a + e.count, 0);
+    const scanned = pendingFiles.reduce((a, [f]) => a + (found[f] ?? 0), 0);
+    expect(scanned).toBe(allowed);
+  });
+
+  it("the allowlist cannot grow without a reason: every PENDING entry names its tracked id (B### or SA-###)", () => {
+    for (const [f, e] of Object.entries(allow))
+      if (!e.permanent)
+        expect({ f, why: e.why }).toEqual({ f, why: expect.stringMatching(/^(B|SA-)\d{3}/) });
   });
 });
 

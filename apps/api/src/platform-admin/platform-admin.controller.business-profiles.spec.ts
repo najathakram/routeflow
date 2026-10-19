@@ -55,6 +55,8 @@ function fakeTenant(start: {
   /** A config key whose (existing) set() rejects — a DB blip after billing was stopped. */
   setFails?: string;
   modes?: Record<string, string>;
+  /** Open SHIP orders already with the carrier (item 8). */
+  inTransit?: number;
 }) {
   let seq = 0;
   const rows: Row[] = Object.entries(start.overrides ?? {}).map(([featureKey, effect]) => ({
@@ -191,6 +193,7 @@ function fakeTenant(start: {
   };
   const svc = { recordAdminAction: jest.fn().mockResolvedValue(undefined) };
   const prisma = {
+    order: { count: jest.fn(async () => start.inTransit ?? 0) },
     tenant: { findUnique: jest.fn().mockResolvedValue({ id: T }) },
     tenantAddon: {
       findFirst: jest.fn(async ({ where }: any) => {
@@ -1079,5 +1082,32 @@ describe("ROW (c): the BUSINESS_PROFILE_BILLING_FAILED body says, per add-on, wh
       { key: "order_delivery", wasComp: true, billingStopped: false, switchedOff: true },
     ]);
     expect(JSON.stringify(body)).not.toContain("connection terminated");
+  });
+});
+
+describe("item 8 — the apply keeps the Settings in-transit guard", () => {
+  it("a profile that moves the billing moment while a carrier order is in transit: 409, nothing written or stopped", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"], inTransit: 1 });
+    await expect(
+      t.controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" }),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "FULFILMENT_CARRIER_IN_TRANSIT" }),
+    });
+    await expect(
+      t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "FULFILMENT_CARRIER_IN_TRANSIT" }),
+    });
+    expect(t.writes).toEqual([]);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+    expect(t.state().modes.fulfilment_model ?? "unset").toBe("unset");
+  });
+
+  it("guard row: no order in transit — the profile applies as today", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"] });
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    expect(t.state().modes.fulfilment_model).toBe("ship");
   });
 });

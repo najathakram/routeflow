@@ -235,6 +235,7 @@ model Customer {
   advancePayments      AdvancePayment[]
   recurringInvoices    RecurringInvoice[]
   prices               CustomerPrice[]
+  unitPrices           CustomerUnitPrice[]
   expenses             Expense[]
   contactPersons       ContactPerson[]
   tagAssignments       CustomerTagAssignment[]
@@ -1262,6 +1263,10 @@ model CustomerPrice {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   tenantId    String?
+  // Units program S6 (PLAN §1.6/§1.7): this customer's own order unit (it anchors their Auto prices,
+  // owner Q2b) and invoice unit for the product. "pack" | "base" | a ProductUnit.id; null = their tier's.
+  orderUnitRef   String?
+  invoiceUnitRef String?
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   tenant   Tenant?  @relation(fields: [tenantId], references: [id])
@@ -1270,6 +1275,28 @@ model CustomerPrice {
   @@unique([customerId, productId])
   @@index([customerId])
   @@index([tenantId])
+}
+
+/// Units program S6 (PLAN §1.2/§1.7, P4c): a customer's own price for one unit of one product. `unitRef` =
+/// "pack" | "base" | a ProductUnit.id. A row is a SET price; no row = Auto (worked out by P4c). The DB
+/// CHECK (raw SQL) refuses price <= 0: $0 is not a price (P6), clearing a price deletes the row.
+model CustomerUnitPrice {
+  id         String   @id @default(uuid())
+  tenantId   String
+  customerId String
+  productId  String
+  unitRef    String
+  price      Decimal  @db.Decimal(10, 2)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, productId, unitRef])
+  @@index([tenantId])
+  @@index([productId])
 }
 
 // ─── Buyer Favorites ──────────────────────────────────────────────────────────

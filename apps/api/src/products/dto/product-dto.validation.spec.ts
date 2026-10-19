@@ -105,4 +105,26 @@ describe("product DTO validation (tolerant optionals)", () => {
     expect(dto.priceTier3).toBe("9");
     expect(dto.parentProductId).toBeUndefined();
   });
+
+  describe("unitsPerBox is a whole number of 1 or more; null/absent = unboxed", () => {
+    const run = async (Cls: typeof UpdateProductDto | typeof CreateProductDto, v: unknown) => {
+      const base = Cls === CreateProductDto ? { name: "Cherry Tomatoes", sku: "CT-1" } : {};
+      const dto = plainToInstance(Cls as never, { ...base, unitsPerBox: v });
+      return (await validate(dto as object)).filter((e) => e.property === "unitsPerBox");
+    };
+    describe.each([
+      ["UpdateProductDto", UpdateProductDto],
+      ["CreateProductDto", CreateProductDto],
+    ])("%s", (_n, Cls) => {
+      it.each([0, -3, 1.5])("rejects %p", async (v) => {
+        expect(await run(Cls, v)).toHaveLength(1);
+      });
+      it.each([12, 1])("accepts %p", async (v) => {
+        expect(await run(Cls, v)).toHaveLength(0);
+      });
+      it("accepts null (unboxed)", async () => {
+        expect(await run(Cls, null)).toHaveLength(0);
+      });
+    });
+  });
 });

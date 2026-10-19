@@ -11,6 +11,7 @@ import {
   unitPickerValue,
   type UnitOption,
 } from "../lib/unit-options";
+import { unitDetailOrUnconfirmed } from "../lib/price-layer-gate";
 import { OptionPickerSheet, type PickerOption } from "./OptionPickerSheet";
 
 /** The line fields this control reads (structurally satisfied by CartRow's/DraftItemCard's own line). */
@@ -47,6 +48,7 @@ export function UnitPickerRow({
   onChange,
   style,
   startOnDefaultUnit = false,
+  pricesUnconfirmed = false,
 }: {
   line: UnitPickerLine;
   /**
@@ -58,7 +60,11 @@ export function UnitPickerRow({
    * product's own record, unclobbered by anything a line mutates.
    */
   product: LadderProduct;
-  /** The EFFECTIVE tier for this product (`CustomerPrice.pricingTier ?? customer.pricingTier ?? 1`). */
+  /**
+   * The EFFECTIVE tier for this product (`CustomerPrice.pricingTier ?? customer.pricingTier ?? 1`). This row only builds the
+   * tier's unit LADDER; the price a customer is charged for a unit comes from `customerLinePrice` (@routeflow/pricing, S19b:
+   * the customer's layer row when there is one, else this tier ladder), applied by the screen.
+   */
   tier: number;
   onChange: (option: UnitOption) => void;
   /**
@@ -69,6 +75,12 @@ export function UnitPickerRow({
   style?: StyleProp<ViewStyle>;
   /** #2784: a NEW line starts on the level flagged `isDefaultSelling` (once, never over a held unit). */
   startOnDefaultUnit?: boolean;
+  /**
+   * S19b (SA-813 M3): the customer's price layer is pending, failed or incomplete. The unit prices are the tier's, not yet
+   * confirmed, so the options show an ellipsis, the picker is closed, and the default unit is not started (it would bake a
+   * tier price into the line).
+   */
+  pricesUnconfirmed?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
   const enabled = useUnitsEnabled();
@@ -90,11 +102,13 @@ export function UnitPickerRow({
   const startedRef = React.useRef(false);
   React.useEffect(() => {
     if (!startOnDefaultUnit || startedRef.current || options.length <= 1 || !units) return;
+    if (pricesUnconfirmed) return; // wait for the layer: the default unit would bake in the tier price
     startedRef.current = true; // one shot per mount: a later choice is never re-overridden
     const start = defaultStartOption(product, units, tier, { hasUnit: !!unitPickerValue(line) });
     if (start) onChange(start);
   }, [
     startOnDefaultUnit,
+    pricesUnconfirmed,
     options,
     units,
     product,
@@ -112,7 +126,7 @@ export function UnitPickerRow({
   const pickerOptions: PickerOption[] = options.map((o) => ({
     id: o.value,
     label: o.label,
-    subtitle: unitOptionDetail(o),
+    subtitle: unitDetailOrUnconfirmed(unitOptionDetail(o), !!pricesUnconfirmed),
   }));
 
   return (
@@ -121,6 +135,7 @@ export function UnitPickerRow({
         style={styles.trigger}
         hitSlop={{ top: 4, bottom: 4 }}
         onPress={() => setOpen(true)}
+        disabled={pricesUnconfirmed}
         accessibilityRole="button"
         accessibilityLabel={`Sell by, currently ${selected.label}`}
       >

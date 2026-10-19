@@ -934,6 +934,25 @@ async function main() {
     console.log(`Granted flag.units_v1 on "${TENANT_SLUG}" (${tenantId})`);
   }
 
+  // Settings > Units (flag.units_settings_v1): same rules as above (test tenant, local fixture).
+  const existingUnitsSettingsOverride = await prisma.tenantFeatureOverride.findFirst({
+    where: { tenantId, featureKey: "flag.units_settings_v1", revokedAt: null },
+  });
+  if (!existingUnitsSettingsOverride) {
+    await prisma.tenantFeatureOverride.create({
+      data: {
+        tenantId,
+        featureKey: "flag.units_settings_v1",
+        effect: "GRANT",
+        kind: "COMP",
+        reason: "Local dev/test fixture — Settings > Units local coverage and proofs.",
+        expiresAt: null,
+        createdById: null,
+      },
+    });
+    console.log(`Granted flag.units_settings_v1 on "${TENANT_SLUG}" (${tenantId})`);
+  }
+
   // #2338: buyer-portal fixtures for the native-parity proof harness (local databases only).
   await ensureParityBuyers(prisma, {
     tenantId,

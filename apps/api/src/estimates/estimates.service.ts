@@ -9,9 +9,9 @@ import { assertSellableLines } from "../products/sellable-lines";
 import { EstimateStatus, PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import {
-  isSpecialTier,
   computeLineSubtotal,
   getTierPrice,
+  isSpecialPrice,
   round4,
   roundMoney,
 } from "@routeflow/pricing";
@@ -36,6 +36,7 @@ import {
   assertNoNegativeLineSubtotal,
 } from "../common/money-invariants.util";
 import { assertNoUnitAwareLines } from "../orders/unit-aware-guard";
+import { customerPricing } from "../orders/units-prices-v2";
 import { CreateEstimateDto } from "./dto/create-estimate.dto";
 import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
 
@@ -147,7 +148,6 @@ export class EstimatesService {
     if (!customer) throw new NotFoundException("Customer not found");
 
     const tenantId = this.prisma.getTenantId();
-    const defaultTier = customer.pricingTier ?? 1;
     const items: any[] = dto.items ?? [];
     // H5: a quote is taxed the way an invoice is - the tenant rate and the customer's exempt flag, today.
     const taxRate = await configuredTaxRateFraction(this.prisma);
@@ -171,7 +171,10 @@ export class EstimatesService {
             where: { customerId: dto.customerId, productId: { in: productIds } },
           })
         : [];
-    const cpMap = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
+    // S19: tier maps + (flag.units_prices_v2 only) the customer's typed pack prices; flag off = master's values.
+    const svc = { prisma: this.prisma, entitlements: this.entitlements };
+    const pc = await customerPricing(svc, dto.customerId, productIds, customer, customerPrices);
+    const { defaultTier, cpMap } = pc;
 
     let subtotal = 0;
     const itemsData = items.map((i: any) => {
@@ -197,8 +200,9 @@ export class EstimatesService {
       if (product) {
         // Resolve tier: per-product override > customer default tier
         const tierForProduct = cpMap.get(i.productId) ?? defaultTier;
-        const tierPrice = getTierPrice(product, tierForProduct);
-        const listPrice = Number(product.pricePerUnit);
+        const layer = pc.layer(product);
+        const tierPrice = layer?.price ?? getTierPrice(product, tierForProduct);
+        const listPrice = layer?.listPrice ?? Number(product.pricePerUnit);
         // H5: a typed override is money - cents, like every other written price
         const overridePrice = i.unitPrice != null ? roundMoney(Number(i.unitPrice)) : null;
 
@@ -206,9 +210,10 @@ export class EstimatesService {
           unitPrice = overridePrice;
           priceType = PriceType.DISCOUNTED;
           originalPrice = listPrice;
-        } else if (isSpecialTier(tierForProduct)) {
+        } else if (isSpecialPrice(tierForProduct, listPrice, layer?.price)) {
           unitPrice = tierPrice;
-          priceType = PriceType.SPECIAL;
+          // S19 R2: the customer's own price above the unit's list is the sticky upsell's twin
+          priceType = layer?.aboveList ? PriceType.MANUAL : PriceType.SPECIAL;
           originalPrice = listPrice;
         } else {
           unitPrice = tierPrice;

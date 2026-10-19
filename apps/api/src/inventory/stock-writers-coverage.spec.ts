@@ -31,15 +31,16 @@ const UNPAIRED_BASELINE = 0;
  * client is NON-ATOMIC — its movement row (even when the same function writes one) can commit
  * without it, or it without the row. Such a site must be listed here; the list may only shrink.
  */
-const ALLOW_NON_ATOMIC: Record<string, string> = {
-  // SA-136b: the Zoho stock sync SETS the counter, then writes its ADJUSTMENT row in a second call,
-  // with the quantity from a pre-read. Paired, but non-atomic. Filed on its own item.
-  "import/import.service.ts::ImportService.importInventory":
-    "paired, non-atomic, filed (SA-136b; absolute set + separate ADJUSTMENT row, pre-read delta)",
-};
-const NON_ATOMIC_BASELINE = 1;
+const ALLOW_NON_ATOMIC: Record<string, string> = {};
+const NON_ATOMIC_BASELINE = 0;
 
 const SRC_ROOT = path.resolve(__dirname, "..");
+
+/**
+ * DB-spec seed fixtures that set up counters directly (a historic booked state), never production writers.
+ * Named files, not a directory: a new writer under a `testing/` folder still fails this census.
+ */
+const SEED_FIXTURES = new Set(["inventory/testing/order-stock-world.ts"]);
 
 function collectSourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -50,6 +51,7 @@ function collectSourceFiles(dir: string, out: string[] = []): string[] {
       continue;
     }
     if (!entry.name.endsWith(".ts") || entry.name.endsWith(".spec.ts")) continue;
+    if (SEED_FIXTURES.has(path.relative(SRC_ROOT, full).split(path.sep).join("/"))) continue;
     out.push(full);
   }
   return out;
@@ -596,9 +598,6 @@ const OTHER_WRITERS: Record<string, string> = {
     "SA-767 L-4/L-5: a return cancel re-takes stock without the Product lock",
   "returns/inline-returns.service.ts::InlineReturnsService.cancel":
     "SA-767 L-4/L-5: an inline-return cancel re-takes stock without the Product lock",
-  // The Zoho stock sync SETS the counter (absolute) and writes its ADJUSTMENT row in a second call.
-  "import/import.service.ts::ImportService.importInventory":
-    "SA-767 L-4/L-5: the Zoho stock sync sets the counter without the Product lock (also ALLOW_NON_ATOMIC above)",
   // The Zoho product import CREATES rows with their opening stock: nothing exists to lock yet.
   "products/products.service.ts::ProductsService.importFromZoho":
     "new-row create: opening stock is written on a product created in the same transaction",

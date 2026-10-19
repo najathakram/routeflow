@@ -1,5 +1,5 @@
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
-import { costDecimal, planLotConsumption } from "./costing";
+import { costDecimal } from "./costing";
 import { pairedReceiptIds } from "./bill-revert";
 
 /**
@@ -18,20 +18,19 @@ export interface SaleCost {
   unitCost: Prisma.Decimal;
   /** The product's running average — a sale never moves it, so it is also `avgCostAfter`. */
   avgCost: Prisma.Decimal | null;
-  /** FIFO/LIFO only: the lots the quantity would draw down, oldest/newest first. */
-  lotConsumptions: { id: string; take: Prisma.Decimal }[];
 }
 
 /**
  * The cost of `quantity` pieces of a product sold now, by its costing method:
  * AVCO → averageCost; STANDARD → standardCost (else average); LAST_COST → the latest PURCHASE's unit
- * cost in accounting order (else average); FIFO/LIFO → the blended lot plan, any uncovered remainder
- * at the average. Reads only; the caller decides whether to consume `lotConsumptions`.
+ * cost in accounting order (else average). A stored FIFO/LIFO is RETIRED (SA-804 (1), B1233) and is costed
+ * as AVCO: the average cost, matching valuation and reports. No method consumes lots on a sale any more;
+ * the lots stay as history and for expiry. Reads only.
  */
 export async function resolveSaleCost(
   tx: Prisma.TransactionClient,
   productId: string,
-  quantity: Prisma.Decimal,
+  _quantity: Prisma.Decimal,
 ): Promise<SaleCost> {
   const product = await tx.product.findFirst({
     where: { id: productId },
@@ -41,26 +40,9 @@ export async function resolveSaleCost(
   const avgCost = product?.averageCost ?? null;
   const fallback = costDecimal(avgCost ?? 0);
   let unitCost = fallback;
-  let lotConsumptions: { id: string; take: Prisma.Decimal }[] = [];
 
-  if (
-    product?.costingMethod === CostingMethod.FIFO ||
-    product?.costingMethod === CostingMethod.LIFO
-  ) {
-    const orderBy =
-      product.costingMethod === CostingMethod.FIFO
-        ? { purchaseDate: "asc" as const }
-        : { purchaseDate: "desc" as const };
-    const lots = await tx.stockLot.findMany({
-      where: { productId, remainingQty: { gt: 0 } },
-      orderBy,
-    });
-    // Blend the consumed lots' costs; any uncovered remainder (negative
-    // stock / pre-fix data without lots) is priced at the average cost.
-    const plan = planLotConsumption(lots, quantity, fallback);
-    unitCost = plan.weightedUnitCost;
-    lotConsumptions = plan.consumptions;
-  } else if (product?.costingMethod === CostingMethod.STANDARD) {
+  // AVCO, and a stored (retired) FIFO/LIFO, cost at the average: `unitCost` already is.
+  if (product?.costingMethod === CostingMethod.STANDARD) {
     unitCost = costDecimal(product.standardCost ?? avgCost ?? 0);
   } else if (product?.costingMethod === CostingMethod.LAST_COST) {
     // Last cost — cost the sale at the most recent PURCHASE's unit cost
@@ -87,7 +69,7 @@ export async function resolveSaleCost(
     unitCost = costDecimal(lastPurchase?.unitCost ?? avgCost ?? 0);
   }
 
-  return { unitCost, avgCost, lotConsumptions };
+  return { unitCost, avgCost };
 }
 
 export interface SaleMovementInput {

@@ -3,10 +3,15 @@
 import * as React from "react";
 import { UnitPicker } from "@/components/UnitPicker";
 import { useProductUnits, useUnitsEnabled } from "@/lib/api/product-units";
-import { buildUnitOptions, defaultUnitValue, type UnitOption } from "@/lib/unit-options";
+import {
+  buildUnitOptions,
+  defaultUnitValue,
+  withLayerPrices,
+  type UnitOption,
+} from "@/lib/unit-options";
 import { isShapedLine } from "@/lib/default-unit-line";
 import { ladderProductOf, unitPickerValueOf, type PackBase } from "@/lib/order-line-unit";
-import type { DerivedBaseMarker } from "@routeflow/pricing";
+import type { CustomerLayerUnit, DerivedBaseMarker } from "@routeflow/pricing";
 
 /** The line fields the picker reads (structurally satisfied by the order modal's line). */
 export interface OrderLineUnitPickerLine extends DerivedBaseMarker {
@@ -28,6 +33,11 @@ export interface OrderLineUnitPickerLine extends DerivedBaseMarker {
   /** #2381: the operator TYPED this line's price this session. The first-sight refresh (which
    *  re-runs on every remount, e.g. "Not available" → Undo) must not snap it back to the ladder. */
   priceEdited?: boolean;
+  /**
+   * S19b: this MANUAL line is the customer layer's own above-list price (`isLayerManualLine`), so it follows the ladder like any
+   * system price. Absent or false = master: every MANUAL line is the operator's and the picker never re-prices it.
+   */
+  layerManual?: boolean;
 }
 
 /**
@@ -38,9 +48,10 @@ export interface OrderLineUnitPickerLine extends DerivedBaseMarker {
  * `onChange(option, refresh)`: `refresh` is true when the SAME unit is being re-priced (the customer's
  * tier changed under a unit line), so the caller keeps the typed count.
  */
-export function OrderLineUnitPicker({
+function OrderLineUnitPickerInner({
   line,
   tier,
+  layer,
   onChange,
   startOnDefaultUnit = false,
 }: {
@@ -50,8 +61,17 @@ export function OrderLineUnitPicker({
    * Applied once when the ladder first arrives, and never over a unit the line already holds or a price the operator typed.
    */
   startOnDefaultUnit?: boolean;
-  /** The EFFECTIVE tier for this product (`CustomerPrice.pricingTier ?? customer.pricingTier ?? 1`). */
+  /**
+   * The EFFECTIVE tier for this product (`CustomerPrice.pricingTier ?? customer.pricingTier ?? 1`). This is the tier-ladder
+   * price only: a flag-on customer's layer price (a typed price, or the customer's shape of it) is applied by the order
+   * surface through `customerLinePrice` (S19b, SA-811a), never evaluated here.
+   */
   tier: number;
+  /**
+   * S19b (SA-811a, SA-813): the customer's price-layer rows for this product (`useCustomerPriceLayer().layerOf`). Flag on, an
+   * option with a row is offered at the layer price and `onChange` carries it (`option.layerLine`); omitted = master's ladder.
+   */
+  layer?: readonly CustomerLayerUnit[] | null;
   onChange: (option: UnitOption, refresh: boolean) => void;
 }) {
   const enabled = useUnitsEnabled();
@@ -66,11 +86,16 @@ export function OrderLineUnitPicker({
   const options = React.useMemo<UnitOption[]>(() => {
     if (!enabled || !units.data || units.data.length === 0) return [];
     try {
-      return buildUnitOptions(product, units.data, tier, packPrice);
+      return withLayerPrices(
+        buildUnitOptions(product, units.data, tier, packPrice),
+        product,
+        tier,
+        layer,
+      );
     } catch {
       return []; // display-only: a bad tier never unmounts the order form (the server 400s on save)
     }
-  }, [enabled, units.data, product, tier, packPrice]);
+  }, [enabled, units.data, product, tier, packPrice, layer]);
 
   const startedRef = React.useRef(false);
   React.useEffect(() => {
@@ -122,9 +147,19 @@ export function OrderLineUnitPicker({
     // #2381: a remount (or a ladder arriving late) is a first sight, not a ladder move; a price
     // the operator typed stands. A real move afterwards (the tier changed) still re-prices.
     if (firstSight && line.priceEdited) return;
-    if (line.priceType === "DISCOUNTED" || line.priceType === "MANUAL") return;
+    if (line.priceType === "DISCOUNTED") return;
+    // master: MANUAL is the operator's and stands; only the layer's own above-list price (marked by the surface) follows
+    if (line.priceType === "MANUAL" && !line.layerManual) return;
     if (held.price !== line.unitPrice) onChange(held, true);
-  }, [line.unitLabel, line.priceType, line.unitPrice, line.priceEdited, held, onChange]);
+  }, [
+    line.unitLabel,
+    line.priceType,
+    line.layerManual,
+    line.unitPrice,
+    line.priceEdited,
+    held,
+    onChange,
+  ]);
 
   return (
     <UnitPicker
@@ -132,15 +167,25 @@ export function OrderLineUnitPicker({
       units={units.data}
       tier={tier}
       packPrice={packPrice}
+      layer={layer}
       ariaLabel={`Sell ${line.productName} by`}
       value={unitPickerValueOf(line)}
       onChange={(label) => {
         // "" = back to the pack, which must work even when the ladder is gone (no options to look in):
         // the held unit would otherwise be unfixable and the save would 400 on it.
         const option =
-          options.find((o) => o.value === label) ?? (label === "" ? packOption : undefined);
+          options.find((o) => o.value === label) ??
+          (label === "" ? withLayerPrices([packOption], product, tier, layer)[0] : undefined);
         if (option) onChange(option, false);
       }}
     />
   );
+}
+
+/**
+ * The "Sell by" control (see `OrderLineUnitPickerInner`). Every surface passes the customer's layer rows as `layer` (a pin
+ * spec, no-direct-customer-tier-price, fails a picker that omits it); the surface owns the unconfirmed-prices notice.
+ */
+export function OrderLineUnitPicker(props: React.ComponentProps<typeof OrderLineUnitPickerInner>) {
+  return <OrderLineUnitPickerInner {...props} />;
 }

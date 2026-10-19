@@ -174,7 +174,9 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
   const firstIndex = (pred: (e: string) => boolean) => events.findIndex(pred);
 
   it("every label lock is taken, in sorted key order, before the first FOR UPDATE row lock and before any write", async () => {
-    const out = await service.update("prod-1", { parentProductId: "fam" } as never);
+    const out = await service.update("prod-1", { parentProductId: "fam" } as never, {
+      packPrecondition: "internal",
+    });
     expect((out as { keptLabels?: string[] }).keptLabels).toEqual(["CA ban", "NY ban"]);
 
     const firstRowLock = firstIndex((e) => e.startsWith("for-update:"));
@@ -198,10 +200,12 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
 
   it("a lost label that was NOT pre-locked (a concurrent label write since the read) is the retryable 409, nothing locked out of order", async () => {
     labelRowsAfterPlan = [...labelRows, { productId: "old", categoryId: "wa", mode: "INCLUDE" }];
-    const err = await service.update("prod-1", { parentProductId: "fam" } as never).then(
-      () => null,
-      (e: unknown) => e,
-    );
+    const err = await service
+      .update("prod-1", { parentProductId: "fam" } as never, { packPrecondition: "internal" })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
     expect(err).toBeInstanceOf(LabelLockTimeoutError);
     expect((err as LabelLockTimeoutError).getStatus()).toBe(409);
     expect((err as LabelLockTimeoutError).getResponse()).toMatchObject({
@@ -225,10 +229,12 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
     ],
   ])("a %s inside a reparent is the coded, retryable 409, never a 500", async (_n, raw) => {
     prisma.product.update.mockRejectedValue(raw);
-    const err = await service.update("prod-1", { parentProductId: "fam" } as never).then(
-      () => null,
-      (e: unknown) => e,
-    );
+    const err = await service
+      .update("prod-1", { parentProductId: "fam" } as never, { packPrecondition: "internal" })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
     expect(err).toBeInstanceOf(LabelLockTimeoutError);
     expect((err as LabelLockTimeoutError).getStatus()).toBe(409);
   });
@@ -236,16 +242,20 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
   it("control: the same deadlock on an edit that is NOT a reparent is not relabelled", async () => {
     const raw = Object.assign(new Error("deadlock detected"), { code: "40P01" });
     prisma.product.update.mockRejectedValue(raw);
-    const err = await service.update("prod-1", { description: "x" } as never).then(
-      () => null,
-      (e: unknown) => e,
-    );
+    const err = await service
+      .update("prod-1", { description: "x" } as never, { packPrecondition: "internal" })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
     expect(err).not.toBeInstanceOf(LabelLockTimeoutError);
   });
 
   it("control: a reparent that loses nothing takes no label lock at all", async () => {
     labelRows = [];
-    await service.update("prod-1", { parentProductId: "fam" } as never);
+    await service.update("prod-1", { parentProductId: "fam" } as never, {
+      packPrecondition: "internal",
+    });
     expect(labelLocks()).toEqual([]);
   });
 
@@ -260,7 +270,9 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
         return { count: args.data.length };
       },
     );
-    const out = await service.update("prod-1", { parentProductId: "fam" } as never);
+    const out = await service.update("prod-1", { parentProductId: "fam" } as never, {
+      packPrecondition: "internal",
+    });
     expect((out as { keptLabels?: string[] }).keptLabels).toEqual(["CA ban", "NY ban"]);
     expect(events.filter((e) => e.startsWith("write:label:"))).toEqual([
       "write:label:ca",
@@ -283,7 +295,9 @@ describe("ProductsService.update: a lossy reparent takes the label locks BEFORE 
       events.push("write:product");
       return { ...PRODUCT, parentProductId: "fam", category: "Snacks" };
     });
-    await service.update("prod-1", { parentProductId: "fam", category: "Snacks" } as never);
+    await service.update("prod-1", { parentProductId: "fam", category: "Snacks" } as never, {
+      packPrecondition: "internal",
+    });
     const firstRowLock = firstIndex((e) => e.startsWith("for-update:"));
     expect(labelLocks().slice(0, 3)).toEqual([
       `advisory:product-labels:${TENANT}:ca`,

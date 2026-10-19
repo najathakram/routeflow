@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { CreateFamilyDto, UpdateFamilyVariantsDto } from "./dto/family.dto";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ProductFamiliesService } from "./product-families.service";
 import { ACTOR, T, makeTx, product, row } from "./product-code-release.fake-tx";
 
@@ -71,6 +72,34 @@ describe("POST /products/families (createFamily)", () => {
       }),
     );
     expect(gateway.emitProductUpdated).toHaveBeenCalledTimes(1);
+  });
+
+  it("B1: a variant typed as '<family> - <label>' (any case, repeated) is stored as the bare label", async () => {
+    const { service, tx } = build();
+    const out = await service.createFamily(
+      dto([variant("SODA - Cola"), variant("soda  -  Soda - Lime"), variant("Sodaberry - Plum")]),
+      ACTOR,
+    );
+    const names = tx.products
+      .filter((p) => (p as Record<string, unknown>).parentProductId === out.family.id)
+      .map((p) => [
+        (p as Record<string, unknown>).name,
+        (p as Record<string, unknown>).variantName,
+      ]);
+    expect(names).toEqual([
+      ["Cola", "Cola"],
+      ["Lime", "Lime"],
+      ["Sodaberry - Plum", "Sodaberry - Plum"],
+    ]);
+  });
+
+  it("B1 R3: a variant that is only the family prefix is a coded 400 and nothing is written", async () => {
+    const { service, tx } = build();
+    const before = tx.products.length;
+    await expect(
+      service.createFamily(dto([variant("Cola"), variant("SODA - ")]), ACTOR),
+    ).rejects.toMatchObject({ response: { code: API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY } });
+    expect(tx.products).toHaveLength(before);
   });
 
   it("money: prices go through roundMoney, standardCost through roundUnitCost; the family price is copied ONLY when asked", async () => {
@@ -226,6 +255,35 @@ describe("PATCH /products/:id/variants (updateVariants)", () => {
       other.service.updateVariants("fam", { deactivate: ["k1", "k2"] }, ACTOR),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(other.tx.products.find((p) => p.id === "k1")!.isActive).toBe(true);
+  });
+
+  it("B1: an added or renamed variant is stored as the bare label (family name stripped, any case)", async () => {
+    const { service, tx } = build({ products: [fam(), kid("k1")] });
+    const out = await service.updateVariants(
+      "fam",
+      {
+        add: [variant("soda - Mint")],
+        update: [{ id: "k1", name: "SODA - Berry" }],
+      } as never,
+      ACTOR,
+    );
+    const row = (id: string) => tx.products.find((p) => p.id === id) as Record<string, unknown>;
+    expect(row("k1")).toMatchObject({ name: "Berry", variantName: "Berry" });
+    expect(row(out.added[0])).toMatchObject({ name: "Mint", variantName: "Mint" });
+  });
+
+  it("B1 R3: an added or renamed variant that is only the family prefix is a coded 400, nothing changes", async () => {
+    for (const body of [
+      { add: [variant("soda -")] },
+      { update: [{ id: "k1", name: "SODA - " }] },
+    ]) {
+      const { service, tx } = build({ products: [fam(), kid("k1")] });
+      await expect(service.updateVariants("fam", body as never, ACTOR)).rejects.toMatchObject({
+        response: { code: API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY },
+      });
+      expect(tx.products.find((p) => p.id === "k1")).toMatchObject({ name: "Kid k1" });
+      expect(tx.products).toHaveLength(2);
+    }
   });
 
   it("more than 200 rows in total is a 400", async () => {

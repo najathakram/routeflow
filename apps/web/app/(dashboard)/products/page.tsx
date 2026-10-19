@@ -25,9 +25,14 @@ import { useToast } from "@routeflow/ui/web";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
-import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
+import {
+  useProducts,
+  useProductCategories,
+  useUpdateProduct,
+  useBulkDeleteProducts,
+} from "@/lib/api/products";
 import { applyLadderChange, ladderChangeNote, unitWords, type TierField } from "@routeflow/pricing";
-import { tierLabel } from "@/lib/tier-label";
+import { productTierLabel } from "@/lib/tier-one-label";
 import { useTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { unitsLabel } from "@/lib/stock-label";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
@@ -41,6 +46,7 @@ import { AssignToSectionModal } from "@/components/AssignToSectionModal";
 import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
+import { quickPackEdit } from "@/lib/quick-edit-pack";
 import { SectionEditCell } from "./_components/SectionEditCell";
 import {
   PortalBulkButtons,
@@ -54,6 +60,7 @@ import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactiv
 import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
+import { ProductNameLink } from "./_components/ProductNameLink";
 import { RestrictMenu } from "@/components/restrictions/RestrictMenu";
 import { SelectAllMatching } from "@/components/restrictions/SelectAllMatching";
 import { OFF_PAGE_HINT, OFF_PAGE_HINT_ID } from "@/lib/rule-chooser";
@@ -159,6 +166,11 @@ function ProductCard({
   sectionNameById: Map<string, string>;
 }) {
   const status = getProductStatus(product);
+  const trackedTypeTitle = product.trackedCategoryId
+    ? ((product as any).trackedSubcategory?.name ??
+      sectionNameById.get(product.trackedCategoryId) ??
+      "Type")
+    : undefined;
   return (
     <div
       className={cn(
@@ -228,7 +240,13 @@ function ProductCard({
                 context is rendered below as a small caption. Falls back to
                 full `name` for variants whose row still has the legacy
                 "Parent - Variant" composite name (pre-fix data). */}
-            {product.variantName ?? product.name}
+            {selectionMode ? (
+              (product.variantName ?? product.name)
+            ) : (
+              <ProductNameLink id={product.id} stretched srNote={trackedTypeTitle}>
+                {product.variantName ?? product.name}
+              </ProductNameLink>
+            )}
           </p>
         </div>
         <div className="mt-auto flex items-end justify-between gap-1">
@@ -253,12 +271,9 @@ function ProductCard({
           <MerchBadges product={product} />
           {product.trackedCategoryId && (
             <span
-              title={
-                (product as any).trackedSubcategory?.name ??
-                sectionNameById.get(product.trackedCategoryId) ??
-                "Type"
-              }
-              className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
+              title={trackedTypeTitle}
+              aria-hidden="true"
+              className="relative z-10 rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
             >
               {sectionNameById.get(product.trackedCategoryId) ?? "Type"}
             </span>
@@ -272,7 +287,7 @@ function ProductCard({
               e.stopPropagation();
               onAddVariant(product.id);
             }}
-            className="mt-1 flex items-center gap-1 text-[10px] text-navy/70 hover:text-brand-500 transition-colors"
+            className="relative z-10 mt-1 flex items-center gap-1 text-[10px] text-navy/70 hover:text-brand-500 transition-colors"
           >
             <Plus className="h-2.5 w-2.5" />
             Add variant
@@ -303,7 +318,7 @@ function makeTableColumns(
     field: string,
     newVal: string,
     record: EditRecord,
-  ) => Promise<void>,
+  ) => Promise<void | false>,
   barcodeRefs: React.MutableRefObject<Record<string, React.RefObject<HTMLInputElement | null>>>,
   productIds: string[],
   categories: string[],
@@ -457,7 +472,7 @@ function makeTableColumns(
             </div>
             <div className="min-w-0">
               <p className="font-semibold text-navy">
-                {p.name}
+                {selectMode ? p.name : <ProductNameLink id={p.id}>{p.name}</ProductNameLink>}
                 {(p as any).isTobacco && (
                   <span
                     title="Tobacco product — tracked separately for monthly tax reports"
@@ -641,6 +656,9 @@ function makeTableColumns(
               productId={p.id}
               productName={p.name}
               field="unitsPerBox"
+              type="number"
+              min={1}
+              step={1}
               value={p.unitsPerBox != null ? String(p.unitsPerBox) : ""}
               quickEditMode={quickEditMode}
               onSave={(val, rec) => onQuickSave(p, "unitsPerBox", val, rec)}
@@ -789,6 +807,23 @@ export default function ProductsPage() {
 
   const handleQuickSave = React.useCallback(
     async (product: ApiProduct, field: string, newVal: string, record: EditRecord) => {
+      // SA-797a: the size as a number, with the pack the cell read; undo / redo carry their own expected pack.
+      if (field === "unitsPerBox") {
+        const pack = quickPackEdit(product, newVal);
+        if (!pack.ok) {
+          // Invalid size: no PATCH, the cell stays open (the `false` result) so the typo can be fixed.
+          toast({ title: pack.message, variant: "error" });
+          return false;
+        }
+        await updateProduct.mutateAsync({ id: product.id, ...pack.save });
+        toast({ title: `${field} updated`, variant: "success" });
+        setUndoStack((prev) => [
+          ...prev.slice(-19),
+          { ...record, oldValue: pack.undo, newValue: pack.redo },
+        ]);
+        setRedoStack([]);
+        return;
+      }
       const updates: { id: string; [k: string]: unknown } = {
         id: product.id,
         [field]: newVal || null,
@@ -806,7 +841,7 @@ export default function ProductsPage() {
           product as never,
         );
         Object.assign(updates, moved);
-        ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
+        ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
       }
 
       // P0 2026-10-14: a tier commit moves lower tiers only by applyLadderChange (tracking the old value, 0, or above
@@ -819,7 +854,7 @@ export default function ProductsPage() {
           product as never,
         );
         Object.assign(updates, moved);
-        ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
+        ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
       }
 
       await updateProduct.mutateAsync(updates);
@@ -951,7 +986,7 @@ export default function ProductsPage() {
         ? applyLadderChange("pricePerUnit", product.pricePerUnit, newPriceStr, product as never)
         : {};
       Object.assign(updates, moved);
-      const ladderNote = ladderChangeNote(moved, (n) => tierLabel(tierLabels, n));
+      const ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
       await updateProduct.mutateAsync(updates);
       toast({
         title: "Price updated",
@@ -1048,8 +1083,8 @@ export default function ProductsPage() {
     limit: pageSize, // 0 = all
   });
 
-  // Separate unfiltered query just to populate the category dropdown — always fetches all
-  const { data: allProductsForCategories } = useProducts({ limit: 0 });
+  // Category dropdown: the tenant's distinct categories from their own endpoint (not the whole catalog).
+  const { data: tenantCategories } = useProductCategories();
 
   const productList: ApiProduct[] = result?.data ?? [];
   const meta = result?.meta;
@@ -1057,13 +1092,10 @@ export default function ProductsPage() {
   useClampPage(setPage, page, meta?.totalPages);
   const totalItems = meta?.total ?? 0;
 
-  const categories = Array.from(
-    new Set(
-      (allProductsForCategories?.data ?? productList)
-        .map((p: ApiProduct) => p.category)
-        .filter(Boolean),
-    ),
-  ) as string[];
+  const categories = (tenantCategories ??
+    Array.from(
+      new Set(productList.map((p: ApiProduct) => p.category).filter(Boolean)),
+    )) as string[];
 
   const existingUnits = Array.from(
     new Set(productList.map((p) => p.unit).filter(Boolean)),
@@ -1263,7 +1295,8 @@ export default function ProductsPage() {
       )}
 
       {/* Create product modal — creation, its toast, and list refresh are all
-          owned by ProductCreateModal itself now; nothing extra to do here. */}
+          owned by ProductCreateModal itself. K12 F07: the list then opens the
+          product just made (the toast survives the navigation). */}
       {showCreate && (
         <ProductCreateModal
           isOpen
@@ -1271,7 +1304,7 @@ export default function ProductsPage() {
             setShowCreate(false);
             setNewVariantParentId(undefined);
           }}
-          onCreated={() => {}}
+          onCreated={(created) => router.push(`/products/${created.id}`)}
           units={existingUnits}
           defaultParentId={newVariantParentId}
         />
@@ -1333,6 +1366,15 @@ export default function ProductsPage() {
           placeholder="Name, SKU or scan barcode…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => {
+            // K11-09: ArrowDown reaches the first product link of the current view (grid or table).
+            // Not during an IME composition: there ArrowDown picks a candidate.
+            if (e.key !== "ArrowDown" || e.nativeEvent.isComposing) return;
+            const first = document.querySelector<HTMLAnchorElement>("a[data-product-name-link]");
+            if (!first) return;
+            e.preventDefault();
+            first.focus();
+          }}
           className="ml-auto h-8 w-64 rounded-lg border border-surface-border bg-white px-3 text-xs text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <div className="w-40">

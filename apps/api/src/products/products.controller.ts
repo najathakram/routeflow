@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  Headers,
   Controller,
   Delete,
   Get,
@@ -166,8 +167,16 @@ export class ProductsController {
 
   @Patch(":id")
   @Roles(UserRole.OPERATOR)
-  update(@Param("id") id: string, @Body() dto: UpdateProductDto, @CurrentUser() user: JwtPayload) {
+  update(
+    @Param("id") id: string,
+    @Body() dto: UpdateProductDto,
+    @CurrentUser() user: JwtPayload,
+    @Headers("user-agent") userAgent?: string,
+  ) {
+    // SA-797a: the one "client" writer: a pack field without its expected twin is an echo or a 409.
     return this.productsService.update(id, dto, {
+      packPrecondition: "client",
+      clientAgent: userAgent ?? null,
       actorId: user.sub ?? null,
       actorName: user.username ?? null,
     });

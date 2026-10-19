@@ -42,6 +42,11 @@ import {
   type CustomerPrice,
 } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
+import { ladderProductOf } from "@/lib/order-line-unit";
+import { correctLayerLevelLines } from "./invoice-layer-correct";
+import { usePricesV2Enabled } from "@/lib/api/units-v2";
+import { PriceLayerNotice, pricesUnconfirmed } from "@/components/PriceLayerNotice";
 import {
   saleLineMovedOffSpecial,
   saleLineNeedsReason,
@@ -74,13 +79,14 @@ import {
   computeInvoiceLineTotal,
   computeInvoiceTotals,
   type InvoiceTotalsLine,
-  getTierPrice,
+  customerLinePrice,
   normalizeBoxesPieces,
   perUnitPrice,
   pendingScanDecision,
   pillLabel,
   plural,
   unitWords,
+  type CustomerLayerUnit,
   type SellLevel,
 } from "@routeflow/pricing";
 import { useAuth } from "@/lib/auth-context";
@@ -102,6 +108,8 @@ import {
   matchesPackLine,
   mergeIntoPackLine,
   mergeResolvedInvoiceLines,
+  hasPackSnapshot,
+  pickerLayerFor,
   pickerLineOf,
   saleUnitPriceField,
   toUnitLine,
@@ -735,12 +743,15 @@ function LineUnitControl({
   item,
   enabled,
   tier,
+  layer,
   onChoose,
   legacy,
 }: {
   item: LineItemState;
   enabled: boolean;
   tier: number;
+  /** S19b: the customer's layer rows for this product (priceLayer.layerOf); undefined = master's ladder. */
+  layer?: readonly CustomerLayerUnit[] | null;
   onChoose: (key: string, option: Parameters<typeof chooseUnit>[2], refresh: boolean) => void;
   legacy: React.ReactNode;
 }) {
@@ -750,8 +761,9 @@ function LineUnitControl({
   return (
     <div className="mt-1 [&_select]:h-8 max-md:[&_select]:h-11">
       <OrderLineUnitPicker
-        line={pickerLineOf(item)}
+        line={pickerLineOf(item, layer)}
         tier={tier}
+        layer={pickerLayerFor(item, layer)}
         startOnDefaultUnit={!!item.startOnDefaultUnit}
         onChange={(option, refresh) => onChoose(item.key, option, refresh)}
       />
@@ -990,7 +1002,11 @@ export default function NewInvoicePage() {
     for (const cp of (customerPricesData ?? []) as CustomerPrice[]) {
       if (!cp.product) continue;
       // An msrp-only override row has pricingTier null — price at the customer's default tier.
-      const price = getTierPrice(cp.product, cp.pricingTier ?? customer?.pricingTier ?? 1);
+      // No layer row: customerLinePrice returns master's getTierPrice number exactly.
+      const price = customerLinePrice({
+        product: cp.product as unknown as Record<string, unknown>,
+        tier: cp.pricingTier ?? customer?.pricingTier ?? 1,
+      }).price;
       if (Number.isFinite(price)) map[cp.productId] = price;
     }
     return map;
@@ -1002,6 +1018,22 @@ export default function NewInvoicePage() {
     );
     return cp?.pricingTier ?? customer?.pricingTier ?? 1;
   };
+  // S19b (SA-811a/813): flag-on, billing's own resolved customer layer. Flag off = no request and master's numbers.
+  const pricesV2 = usePricesV2Enabled();
+  const priceLayer = useCustomerPriceLayer(customer?.id);
+  /** The customer-layer line for a product's PACK (R2/R3), or undefined when there is no layer row (master's chain). */
+  const layerLineFor = (product: any) => {
+    if (!product?.id) return undefined;
+    const l = priceLayer.layerOf(product.id);
+    if (!l) return undefined;
+    const r = customerLinePrice({ product, tier: tierFor(product.id), layer: l, unitLabel: null });
+    return r.layered ? r : undefined;
+  };
+  // Unconfirmed prices (layer pending/failed, or this product absent from an incomplete layer) block Save/Send.
+  const priceBlocked = pricesUnconfirmed(
+    priceLayer,
+    items.map((i) => i.productId),
+  );
 
   // ── Selling units (VU-4a, B1218) ────────────────────────────────────────────
   // Staff only, and only under flag.units_v1: everyone else keeps today's row byte for byte.
@@ -1022,8 +1054,46 @@ export default function NewInvoicePage() {
     staff,
   );
   const resolvingRef = React.useRef(false);
+  // S19b MUST-1: a level pick is priced from the customer layer when its row is there (else the ladder, as master).
+  const layerLevelLine = (it: LineItemState, unitLabel: string, tierPrice?: number) => {
+    if (!it.productId) return undefined;
+    // A unit line with no pack snapshot (an old or corrupt draft) cannot be matched to a layer row safely: its own
+    // unit would read as the pack.
+    if (!hasPackSnapshot(it)) return undefined;
+    const rows = priceLayer.layerOf(it.productId);
+    if (!rows) return undefined;
+    const r = customerLinePrice({
+      product: ladderProductOf({
+        ...it,
+        unit: it.unit ?? "each",
+        listPrice: it.listPrice ?? it.unitPrice,
+      }) as unknown as Record<string, unknown>,
+      tier: tierFor(it.productId),
+      layer: rows,
+      unitLabel,
+      tierPrice,
+    });
+    return r.layered ? r : undefined;
+  };
   const setLineUnit = (key: string, option: Parameters<typeof chooseUnit>[2], refresh: boolean) =>
-    setItems((prev) => chooseUnit(prev, key, option, refresh, tierFor));
+    setItems((prev) => {
+      let opt = option;
+      const target = prev.find((i) => i.key === key);
+      if (option.kind === "level" && target) {
+        const r = layerLevelLine(target, option.value, option.price);
+        if (r) opt = { ...option, price: r.price, listPrice: r.listPrice ?? option.listPrice };
+      }
+      return chooseUnit(prev, key, opt, refresh, tierFor);
+    });
+  // Any other path that lands a unit line on the ladder price (the default-unit resolver, a restore, the layer arriving
+  // after the pick) is corrected here, idempotently: a typed price stands.
+  React.useEffect(() => {
+    if (!priceLayer.enabled || !priceLayer.ready) return;
+    setItems((prev) =>
+      correctLayerLevelLines(prev, (it) => layerLevelLine(it, it.unitLabel ?? "")),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- layerLevelLine reads the current layer; items is the trigger
+  }, [items, priceLayer.ready, priceLayer.enabled]);
   /** The row's pending-unit state: qty locked, the tap count, loading / failed + Retry. */
   const pendingUnitOf = (it: LineItemState) => {
     const status = statusFor(toUnitLine(it));
@@ -1056,7 +1126,11 @@ export default function NewInvoicePage() {
         }
         const byKey = new Map(before.map((i) => [i.key, i]));
         setItems((cur) => mergeResolvedInvoiceLines(cur, before, lines, folds, tierFor));
-        return run(lines.map((v) => fromUnitLine(byKey.get(v.tempId)!, v, tierFor)));
+        // The resolver priced the default unit from the ladder: put the customer layer's price on it before it is sent.
+        const resolved = lines.map((v) => fromUnitLine(byKey.get(v.tempId)!, v, tierFor));
+        return run(
+          correctLayerLevelLines(resolved, (it) => layerLevelLine(it, it.unitLabel ?? "")),
+        );
       })
       .finally(() => {
         resolvingRef.current = false;
@@ -1141,7 +1215,9 @@ export default function NewInvoicePage() {
     setDraftBusy(true);
     const formAtStart = draftFormRef.current;
     try {
-      const r = await checkDraftReferences(draft.offer.snapshot, (u) => apiClient.get(u));
+      const r = await checkDraftReferences(draft.offer.snapshot, (u) => apiClient.get(u), {
+        pricesV2,
+      });
       // The form stays usable while the checks run. If it changed meanwhile, applying would overwrite what was typed.
       if (draftFormRef.current !== formAtStart) {
         setDraftNotice(DRAFT_CANCELLED_COPY);
@@ -1314,12 +1390,15 @@ export default function NewInvoicePage() {
     scanLevel?: SellLevel,
     opts?: { startOnDefaultUnit?: boolean },
   ) {
+    // Flag on and the customer layer not read yet (or failed): a pick would price at the tier, so wait (the notice says why).
+    if (priceLayer.enabled && !priceLayer.ready) return;
     const dflt = unitsOn && !!opts?.startOnDefaultUnit;
     const upb = boxedUnitsPerBox(product.unitsPerBox);
     const fresh = catalogPricing(product, {
       customerTier: customer?.pricingTier ?? 1,
       customerPrice: priceMap[product.id],
       lineTier: tierFor(product.id),
+      layerLine: layerLineFor(product),
     });
     const { listPrice, effectivePrice } = fresh;
 
@@ -1346,7 +1425,7 @@ export default function NewInvoicePage() {
       pieces: seed.pieces,
       unit: product.unit ?? "each",
       listPrice,
-      priceType: effectivePrice !== listPrice ? "SPECIAL" : "STANDARD",
+      priceType: fresh.priceType,
       tierPrices: fresh.tierPrices,
       startOnDefaultUnit: dflt || undefined,
       pendingTaps: dflt ? 1 : undefined,
@@ -1644,6 +1723,7 @@ export default function NewInvoicePage() {
   }
 
   async function handlePreview(lines: LineItemState[] = items) {
+    if (priceBlocked) return;
     // Lenient check — only customer + dates required. Empty rows are dropped.
     if (!validateForPreview()) return;
     setPreviewLoading(true);
@@ -1690,6 +1770,7 @@ export default function NewInvoicePage() {
    */
   const [downloadLoading, setDownloadLoading] = React.useState(false);
   async function handleDownload(lines: LineItemState[] = items) {
+    if (priceBlocked) return;
     if (!validateForPreview()) return;
     setDownloadLoading(true);
     try {
@@ -1723,7 +1804,7 @@ export default function NewInvoicePage() {
   }
 
   async function handleSendFromPreview() {
-    if (!currentDraftId) return;
+    if (!currentDraftId || priceBlocked) return;
     try {
       await apiClient.post(`/invoices/${currentDraftId}/send`);
       draft.clear();
@@ -1748,7 +1829,7 @@ export default function NewInvoicePage() {
    * otherwise a PENDING order + DRAFT invoice is created (sent now only when `send`).
    */
   function handleSubmitSale(send: boolean, lines: LineItemState[] = items) {
-    if (saleLocked) return;
+    if (saleLocked || priceBlocked) return;
     const saleLines = lines.filter((it) => it.productId && Number(it.qty) > 0);
     // #2696(c) SA-558e: never send what the server refuses — a special price needs its reason.
     const needsReason = saleLines.find(saleLineNeedsReason);
@@ -1861,6 +1942,7 @@ export default function NewInvoicePage() {
   }
 
   function handleSubmit(sendNow: boolean, lines: LineItemState[] = items) {
+    if (priceBlocked) return;
     if (!validate()) return;
 
     // If we already have a preview draft, just update it and optionally send.
@@ -2445,16 +2527,29 @@ export default function NewInvoicePage() {
                         onChange={(desc, pid, price, avgCost, unitsPerBox, product, scanLevel) => {
                           // #2696(c) SA-558e: a picked product prices at the customer's TIER (the
                           // server's own baseline) — list for a tier customer would be refused.
-                          const pricing =
-                            pid && product ? saleLinePricing(product, tierFor(pid)) : undefined;
-                          const specialPrice =
-                            pricing && pricing.tierPrice !== pricing.listPrice
+                          if (pid && priceLayer.enabled && !priceLayer.ready) return;
+                          const layerLine = pid && product ? layerLineFor(product) : undefined;
+                          const pricing = layerLine
+                            ? {
+                                tierPrice: layerLine.price,
+                                listPrice: layerLine.listPrice ?? parseFloat(price),
+                                isSpecialTier: layerLine.isSpecial,
+                              }
+                            : pid && product
+                              ? saleLinePricing(product, tierFor(pid))
+                              : undefined;
+                          const specialPrice = layerLine
+                            ? layerLine.price !== layerLine.listPrice
+                              ? layerLine.price
+                              : undefined
+                            : pricing && pricing.tierPrice !== pricing.listPrice
                               ? pricing.tierPrice
                               : pid
                                 ? priceMap[pid]
                                 : undefined;
-                          const effectivePrice =
-                            specialPrice ?? (price ? parseFloat(price) : item.unitPrice);
+                          const effectivePrice = layerLine
+                            ? layerLine.price
+                            : (specialPrice ?? (price ? parseFloat(price) : item.unitPrice));
                           const upb = boxedUnitsPerBox(unitsPerBox);
                           updateItem(item.key, {
                             description: desc,
@@ -2463,14 +2558,22 @@ export default function NewInvoicePage() {
                             pricing,
                             overrideReason: undefined,
                             regularPrice:
-                              specialPrice !== undefined ? parseFloat(price) : undefined,
+                              specialPrice !== undefined
+                                ? (layerLine?.listPrice ?? parseFloat(price))
+                                : undefined,
                             isSpecialPrice: specialPrice !== undefined,
                             avgCost,
                             unitsPerBox: upb,
                             // a new product: the unit state of the old one is gone; staff start on the default unit
                             unit: (product as any)?.unit ?? "each",
-                            listPrice: price ? parseFloat(price) : undefined,
-                            priceType: specialPrice !== undefined ? "SPECIAL" : "STANDARD",
+                            listPrice: layerLine
+                              ? (layerLine.listPrice ?? (price ? parseFloat(price) : undefined))
+                              : price
+                                ? parseFloat(price)
+                                : undefined,
+                            priceType:
+                              layerLine?.priceType ??
+                              (specialPrice !== undefined ? "SPECIAL" : "STANDARD"),
                             tierPrices: product
                               ? {
                                   pricePerUnit: (product as any).pricePerUnit,
@@ -2501,6 +2604,7 @@ export default function NewInvoicePage() {
                         item={item}
                         enabled={unitsOn}
                         tier={tierFor(item.productId ?? "")}
+                        layer={priceLayer.layerOf(item.productId)}
                         onChoose={setLineUnit}
                         legacy={
                           <>
@@ -2929,7 +3033,7 @@ export default function NewInvoicePage() {
                 <WriteButton
                   onClick={() => withResolvedItems((l) => handleSubmitSale(true, l))}
                   loading={createSale.isPending}
-                  disabled={createSale.isPending || saleLocked}
+                  disabled={createSale.isPending || saleLocked || priceBlocked}
                 >
                   Create sale &amp; invoice
                 </WriteButton>
@@ -2939,7 +3043,7 @@ export default function NewInvoicePage() {
                 <WriteButton
                   onClick={() => withResolvedItems((l) => handleSubmitSale(false, l))}
                   loading={createSale.isPending}
-                  disabled={createSale.isPending || saleLocked}
+                  disabled={createSale.isPending || saleLocked || priceBlocked}
                 >
                   Save draft invoice
                 </WriteButton>
@@ -2951,7 +3055,7 @@ export default function NewInvoicePage() {
                   leftIcon={<Eye className="h-4 w-4" />}
                   onClick={() => withResolvedItems((l) => handlePreview(l))}
                   loading={previewLoading}
-                  disabled={previewLoading || createInvoice.isPending}
+                  disabled={previewLoading || createInvoice.isPending || priceBlocked}
                 >
                   Preview
                 </Button>
@@ -2960,7 +3064,12 @@ export default function NewInvoicePage() {
                   leftIcon={<Download className="h-4 w-4" />}
                   onClick={() => withResolvedItems((l) => handleDownload(l))}
                   loading={downloadLoading}
-                  disabled={downloadLoading || createInvoice.isPending || updateInvoice.isPending}
+                  disabled={
+                    downloadLoading ||
+                    createInvoice.isPending ||
+                    updateInvoice.isPending ||
+                    priceBlocked
+                  }
                   title="Save as draft and download the PDF without sending"
                 >
                   Download
@@ -2969,19 +3078,24 @@ export default function NewInvoicePage() {
                   variant="secondary"
                   onClick={() => withResolvedItems((l) => handleSubmit(false, l))}
                   loading={createInvoice.isPending || updateInvoice.isPending}
-                  disabled={createInvoice.isPending || updateInvoice.isPending}
+                  disabled={createInvoice.isPending || updateInvoice.isPending || priceBlocked}
                 >
                   Save as draft
                 </WriteButton>
                 <WriteButton
                   onClick={() => withResolvedItems((l) => handleSubmit(true, l))}
                   loading={createInvoice.isPending || updateInvoice.isPending}
-                  disabled={createInvoice.isPending || updateInvoice.isPending}
+                  disabled={createInvoice.isPending || updateInvoice.isPending || priceBlocked}
                 >
                   Save and Send
                 </WriteButton>
               </>
             )}
+            <PriceLayerNotice
+              layer={priceLayer}
+              unconfirmed={priceBlocked}
+              className="ml-2 text-xs text-amber-700"
+            />
             <ReadOnlyHint className="ml-2 text-xs text-slate-600" />
             <button
               onClick={() => router.push("/invoices")}
@@ -3017,7 +3131,7 @@ export default function NewInvoicePage() {
                 >
                   Close
                 </Button>
-                <Button onClick={handleSendFromPreview} disabled={previewLoading}>
+                <Button onClick={handleSendFromPreview} disabled={previewLoading || priceBlocked}>
                   Send invoice
                 </Button>
               </div>
