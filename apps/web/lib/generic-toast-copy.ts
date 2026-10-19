@@ -163,6 +163,8 @@ const CODE_COPY: Record<string, string> = {
     "Only draft bills can be edited. Revert the bill to draft first.",
   [API_ERROR_CODES.BILL_PO_SUPPLIER_LOCKED]:
     "This bill is linked to a purchase order, so its supplier can't be changed.",
+  [API_ERROR_CODES.BILL_TAX_UNKNOWN]:
+    "This bill's tax wasn't recorded separately, so it can't be changed on its own. Edit the lines and the tax together.",
   [API_ERROR_CODES.BILL_NEVER_RECEIVED]:
     "This bill was never received, so there is no stock or cost to revert. Its payments keep it out of draft.",
   INVOICE_HAS_UNSPENT_CREDIT:

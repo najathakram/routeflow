@@ -339,6 +339,9 @@ describe("genericToastCopy: codes users rely on", () => {
       expect(genericToastCopy(err(400, { code: API_ERROR_CODES.BILL_NEVER_RECEIVED }))).toBe(
         "This bill was never received, so there is no stock or cost to revert. Its payments keep it out of draft.",
       );
+      expect(genericToastCopy(err(409, { code: API_ERROR_CODES.BILL_TAX_UNKNOWN }))).toBe(
+        "This bill's tax wasn't recorded separately, so it can't be changed on its own. Edit the lines and the tax together.",
+      );
       expect(genericToastCopy(err(400, { code: API_ERROR_CODES.BILL_NEEDS_A_LINE }))).toBe(
         "A bill needs at least one line. Void or delete it instead.",
       );

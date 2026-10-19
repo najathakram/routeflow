@@ -5,7 +5,7 @@
  * `taxAmount` stayed. Bootstrap copied from vendor-bills.due-date-2488.spec.ts.
  */
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { VendorBillsService } from "./vendor-bills.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
@@ -152,6 +152,31 @@ describe("VendorBillsService.update — a null taxAmount keeps the stored tax (r
     expect(stored.taxAmount).toBe(6);
     await service.update("bill-1", { items }); // 10 pre-tax + the saved 6
     expect(stored.totalOwed).toBe(16);
+  });
+
+  // ── NIT: a NULL stored tax is "unknown", never "zero" ─────────────────────────────────────────
+  // A legacy bill whose $8 tax is already inside totalOwed ($108) has taxAmount NULL. Adding the new
+  // tax to totalOwed would give $116; the total is rebuilt from the lines instead (100 + 8 = 108).
+  const legacy = {
+    ...draft,
+    totalOwed: 108,
+    taxAmount: null,
+    items: [{ id: "i1", qtyReceived: null, qty: 10, unitCost: 10 }],
+  };
+
+  it("NIT: a tax-only edit on a NULL-tax bill rebuilds the total from its lines (108, not 116)", async () => {
+    prisma.vendorBill.findUnique.mockResolvedValue(legacy);
+    await service.update("bill-1", { taxAmount: 8 });
+    expect(totalWritten()).toBe(108);
+    expect(taxWritten()).toBe(8);
+  });
+
+  it("NIT: with no lines to rebuild from, the tax-only edit is a coded 409 and nothing is written", async () => {
+    prisma.vendorBill.findUnique.mockResolvedValue({ ...legacy, items: [] });
+    const err = await service.update("bill-1", { taxAmount: 8 }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse().code).toBe("BILL_TAX_UNKNOWN");
+    expect(prisma.vendorBill.update).not.toHaveBeenCalled();
   });
 
   // ── B292: an edit never clears every line ────────────────────────────────────────────────────

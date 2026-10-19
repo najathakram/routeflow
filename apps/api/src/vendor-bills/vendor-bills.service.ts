@@ -996,7 +996,9 @@ export class VendorBillsService {
     }
     const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
-      include: { items: { select: { id: true, qtyReceived: true } } },
+      include: {
+        items: { select: { id: true, qtyReceived: true, qty: true, unitCost: true } },
+      },
     });
     if (!bill) throw new NotFoundException("Bill not found");
     if (bill.status !== "DRAFT") {
@@ -1040,8 +1042,26 @@ export class VendorBillsService {
       // either.
       assertMoneyInvariantsOrThrow({ subtotal: itemsTotal, tax, total: totalOwed });
     } else if (newTax !== undefined) {
-      // A tax-only edit moves the total by exactly the change in tax; the lines are not re-read.
-      totalOwed = roundMoney(Number(bill.totalOwed) - Number(bill.taxAmount ?? 0) + newTax);
+      if (bill.taxAmount != null) {
+        // A tax-only edit moves the total by exactly the change in tax.
+        totalOwed = roundMoney(Number(bill.totalOwed) - Number(bill.taxAmount) + newTax);
+      } else if ((bill.items ?? []).length > 0) {
+        // A NULL stored tax is "unknown": a legacy bill may already carry its tax inside totalOwed,
+        // and adding the new tax to that would count it twice. Rebuild the total from the lines
+        // (the same sum an items edit uses), so the tax is replaced, never added.
+        const lines = bill.items.reduce(
+          (sum: number, i: any) => sum + (Number(i.qty) || 1) * Number(i.unitCost ?? 0),
+          0,
+        );
+        totalOwed = roundMoney(lines + newTax);
+      } else {
+        // No lines to rebuild from and no recorded tax: what the total already holds can't be known.
+        throw new ConflictException({
+          code: API_ERROR_CODES.BILL_TAX_UNKNOWN,
+          message:
+            "This bill's tax was not recorded separately, so it can't be changed on its own.",
+        });
+      }
     }
 
     const billInclude = {
