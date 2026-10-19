@@ -321,10 +321,13 @@ export function PriceSaveStatusLine({
     refocusUndo.current = false;
   }, [phase]);
 
+  // Row 614: `busy` is state, stale inside one tick; this ref is set synchronously so a double click runs one Undo.
+  const running = React.useRef(false);
   const run = async (confirmed: boolean, skip?: UndoSkipCell[]) => {
     const mine = state.auditId;
-    if (!mine || busy) return;
+    if (!mine || busy || running.current) return;
     if (confirmed && (state.revision === undefined || !state.priceState)) return;
+    running.current = true;
     dispatch({ type: "busy" });
     try {
       const out = await undo(
@@ -357,6 +360,8 @@ export function PriceSaveStatusLine({
       if (live.current !== mine) return;
       refocusUndo.current = true;
       dispatch({ type: "failed" });
+    } finally {
+      running.current = false;
     }
   };
 
