@@ -8,20 +8,24 @@
 -- bundle). Once applied it is immutable: a later Decimal column adds its own CHECK in its own folder
 -- (src/common/numeric-not-nan-check.spec.ts names every column without one).
 --
--- NOT VALID: no table scan, and existing rows are NOT checked (SA-816's 101 InvoiceItem.categoryTaxAmount NaN
--- lines on 4 invoices stay until the R593 repair). Postgres enforces the CHECK on every INSERT and on every UPDATE
--- from the moment this commits, so an UPDATE of a row that still holds NaN fails unless the same UPDATE replaces the
--- NaN. VALIDATE is a SEPARATE later folder, per column, after a census reads 0 NaN (SA-816 (d)1).
+-- NOT VALID: no table scan, and existing rows are NOT checked. (SA-816's InvoiceItem.categoryTaxAmount NaN lines
+-- are already repaired on prod by the R593 repair, before this sitting.) Postgres enforces the CHECK on every INSERT
+-- and on every UPDATE from the moment this commits, so an UPDATE of a row that still holds NaN fails unless the same
+-- UPDATE replaces the NaN. VALIDATE is a SEPARATE later folder, per column, after a census reads 0 NaN (SA-816 (d)1).
 -- CHECKs are raw SQL (Prisma does not model them), so the schema and the drift gate are unaffected (the T6 precedent,
 -- 20260920220000_t6_tenantid_check_not_valid).
 --
 -- LOCK PROFILE: ONE transaction (the T6 precedent), ONE ALTER TABLE per table (all its CHECKs in one statement). Each
 -- ALTER takes a brief ACCESS EXCLUSIVE lock (metadata-only: no scan, no rewrite), and every lock is held until COMMIT.
--- `SET LOCAL lock_timeout = '5s'` bounds each WAIT; a wait past 5s (or a deadlock with live traffic) aborts the
+-- `SET LOCAL lock_timeout = '2s'` bounds each WAIT; a wait past 2s (or a deadlock with live traffic) aborts the
 -- statement and the WHOLE folder rolls back cleanly: no constraint is left half-added and no data is touched. It is
 -- recorded FAILED: recover with
 -- `prisma migrate resolve --rolled-back 20261020090400_numeric_not_nan_checks` from apps/api, then re-run it;
 -- NEVER `--applied`.
+-- "current transaction is aborted" in the output means an EARLIER statement of this folder failed (a lock_timeout, a
+-- deadlock): nothing is applied. Re-check pg_stat_activity (below), run
+-- `prisma migrate resolve --rolled-back 20261020090400_numeric_not_nan_checks` from apps/api, then re-deploy the
+-- folder; NEVER `--applied`.
 --
 -- RUNBOOK PRE-STEP (before applying, read-only): run it OFF-PEAK, and first check pg_stat_activity for long-running
 -- or idle-in-transaction sessions (any one holding a lock on these tables makes an ACCESS EXCLUSIVE wait, and every
@@ -36,7 +40,7 @@
 -- name is "<t>_<col>_not_nan", or, past 63 bytes, a prefix + "_<8-hex>_not_nan": copy the exact names from below.
 
 BEGIN;
-SET LOCAL lock_timeout = '5s';
+SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE "AddonSku"
   ADD CONSTRAINT "AddonSku_monthlyPrice_not_nan" CHECK ("monthlyPrice" <> 'NaN'::numeric) NOT VALID;
