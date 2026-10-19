@@ -41,11 +41,18 @@
       {
         "matcher": "Bash",
         "hooks": [{ "type": "command", "command": "node scripts/work/claude-hook.mjs" }]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "node .claude/hooks/ops-post-push.mjs" }]
       }
     ],
     "Stop": [
       {
         "hooks": [{ "type": "command", "command": "node .claude/hooks/stop.mjs" }]
+      },
+      {
+        "hooks": [{ "type": "command", "command": "node .claude/hooks/ops-stop.mjs" }]
       }
     ]
   }

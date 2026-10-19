@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>RouteFlow ops</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header class="top" id="top">
+      <div class="top-row">
+        <h1>RouteFlow <span>ops</span></h1>
+        <div id="hdr-meta" class="hdr-meta"></div>
+        <div class="hdr-right">
+          <span id="conn" class="conn" role="status"><i class="dot"></i><span>connecting</span></span>
+          <span id="updated" class="muted"></span>
+          <button id="theme" type="button" class="btn" aria-label="Toggle colour theme">Theme</button>
+          <form class="logout" method="post" action="/logout">
+            <button type="submit" class="btn">Log out</button>
+          </form>
+        </div>
+      </div>
+      <div id="chips" class="chips" aria-label="Source freshness"></div>
+      <nav id="nav" class="nav" aria-label="Sections"></nav>
+    </header>
+    <section id="summary" class="summary" aria-label="The big picture"></section>
+    <main id="main" class="grid">
+      <noscript>The ops monitor needs JavaScript.</noscript>
+    </main>
+    <div id="scrim" class="scrim"></div>
+    <aside id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" aria-hidden="true" tabindex="-1">
+      <div class="sheet-bar">
+        <span class="sheet-kicker">Item</span>
+        <button id="sheet-close" type="button" class="btn">Close</button>
+      </div>
+      <div id="sheet-body" class="sheet-body"></div>
+    </aside>
+    <script src="/app.js"></script>
+  </body>
+</html>
