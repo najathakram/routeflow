@@ -81,8 +81,9 @@ export async function syncLedgerAfterPriceChange(
     .filter((li) => li.trackedCategoryId && adjustedItemIds.has(li.id))
     .map((li) => ({
       invoiceItemId: li.id as string,
-      qty: Number(li.qty),
-      netSales: Number(li.subtotal),
+      // SA-816c: the stored qty and subtotal are refused too when non-finite.
+      qty: finiteStoredMoney(li.qty, `Invoice line ${li.id} qty`),
+      netSales: finiteStoredMoney(li.subtotal, `Invoice line ${li.id} subtotal`),
       // SA-816: a stored non-finite levy is refused (400), never booked into a correction row as NaN.
       categoryTax: finiteStoredMoney(li.categoryTaxAmount, `Invoice line ${li.id} category tax`),
       boxes: li.boxes ?? null,

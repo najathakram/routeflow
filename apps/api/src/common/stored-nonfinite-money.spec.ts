@@ -383,4 +383,115 @@ describe("SA-816 (d)2: a stored non-finite levy is refused, not zeroed or copied
       );
     });
   });
+
+  describe("sibling stored columns (SA-816c)", () => {
+    // Master (static read): each of these was read with a bare Number(...): NaN reached the ledger line, or was
+    // carried verbatim into the edit rewrite.
+    it.each(STORED_NAN)("toSaleLedgerLines refuses a non-finite subtotal: %s", (_label, nan) => {
+      expectMoneyInvariant(
+        caught(() =>
+          toSaleLedgerLines(
+            [
+              {
+                id: "ii-1",
+                trackedCategoryId: "cat-1",
+                qty: 2,
+                subtotal: nan,
+                categoryTaxAmount: 0,
+              },
+            ],
+            new Map(),
+          ),
+        ),
+      );
+    });
+
+    const priceChange = (over: Record<string, unknown>) => {
+      const correctSaleForPriceChange = jest.fn().mockResolvedValue(undefined);
+      const call = () =>
+        syncLedgerAfterPriceChange(
+          { ledger: { correctSaleForPriceChange }, resync: jest.fn().mockResolvedValue(undefined) },
+          { id: "inv-1", status: InvoiceStatus.SENT },
+          [
+            {
+              id: "ii-1",
+              trackedCategoryId: "cat-1",
+              qty: 2,
+              subtotal: 20,
+              categoryTaxAmount: 0,
+              boxes: null,
+              unitsPerBox: null,
+              promoFreeUnits: null,
+              ...over,
+            },
+          ],
+          new Set(["ii-1"]),
+          {},
+        );
+      return { call, correctSaleForPriceChange };
+    };
+
+    describe.each(["qty", "subtotal"])("price-change correction: a non-finite %s", (column) => {
+      it.each(STORED_NAN)("is refused and books no correction row: %s", async (_label, nan) => {
+        const { call, correctSaleForPriceChange } = priceChange({ [column]: nan });
+        expectMoneyInvariant(await caughtAsync(call));
+        expect(correctSaleForPriceChange).not.toHaveBeenCalled();
+      });
+    });
+
+    describe.each(["unitPrice", "discount"])("invoice edit plan: a non-finite %s", (column) => {
+      const stored = (bad: unknown) =>
+        ({
+          id: "row-1",
+          invoiceId: "inv-1",
+          productId: null,
+          description: "Freight",
+          qty: 1,
+          unitPrice: 25,
+          discount: 0,
+          taxRate: 0,
+          subtotal: 25,
+          boxes: null,
+          pieces: null,
+          unitsPerBox: null,
+          promoFreeUnits: null,
+          notes: null,
+          orderItemId: null,
+          trackedCategoryId: null,
+          trackedSubcategoryId: null,
+          categoryTaxAmount: 0,
+          [column]: bad,
+        }) as unknown as StoredEditRow;
+      // the payload re-sends the stored figures, so the row reads as untouched when its own value is finite
+      const item = {
+        id: "row-1",
+        description: "Freight",
+        qty: 1,
+        unitPrice: 25,
+        discount: 0,
+        taxRate: 0,
+      };
+      const plan = (row: StoredEditRow) =>
+        buildEditedLines({
+          items: [item],
+          stored: [row],
+          matches: [{ row, untouched: true, productChanged: false }],
+          productMap: new Map(),
+          categoryMap: new Map(),
+          clampFreeUnits: (free: number | undefined) => free ?? 0,
+          warn: () => undefined,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any);
+
+      it.each(STORED_NAN)("is refused on an untouched row: %s", (_label, nan) => {
+        expectMoneyInvariant(caught(() => plan(stored(nan))));
+      });
+
+      it("control: a finite value is carried as before", () => {
+        expect(plan(stored(column === "unitPrice" ? "25.00" : "1.5"))[0].data[column]).toBe(
+          column === "unitPrice" ? 25 : 1.5,
+        );
+      });
+    });
+  });
 });

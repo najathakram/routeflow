@@ -93,7 +93,7 @@ export function toSaleLedgerLines(items: any[], packMap: Map<string, number>) {
       unitsPerBox: it.unitsPerBox ?? null,
       unitLabel: it.unitLabel ?? null,
       packAtSale: snapshotPack ?? livePack,
-      netSales: Number(it.subtotal),
+      netSales: finiteStoredMoney(it.subtotal, `Invoice line ${it.id} subtotal`), // SA-816c
       // SA-816: a stored non-finite levy is refused (400), never booked as a SALE row's categoryTax NaN.
       categoryTax: finiteStoredMoney(it.categoryTaxAmount, `Invoice line ${it.id} category tax`),
     };

@@ -304,8 +304,9 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         data: {
           ...row,
           qty: Number(row.qty),
-          unitPrice: Number(row.unitPrice),
-          discount: Number(row.discount ?? 0),
+          // SA-816c: the stored price and line discount are refused when non-finite, like the levy below.
+          unitPrice: finiteStoredMoney(row.unitPrice, `Invoice line ${row.id} unit price`),
+          discount: finiteStoredMoney(row.discount, `Invoice line ${row.id} discount`),
           taxRate: Number(row.taxRate ?? 0),
           subtotal: Number(row.subtotal),
           // SA-816: a stored non-finite levy is refused (400), never carried into the rewrite verbatim.

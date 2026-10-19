@@ -97,4 +97,60 @@ describe("CreditNotesService: a stored non-finite levy is refused, not refunded 
     const itemsData = prisma.creditNoteItem.createMany.mock.calls[0][0].data;
     expect(itemsData[0]).toMatchObject({ trackedCategoryId: "cat-A", amount: 30, categoryTax: 6 });
   });
+  // SA-816c. Master (static read): a NaN line subtotal or qty made every headroom comparison false
+  // (`prior + amt > NaN + 0.001`), so the over-credit check was SKIPPED and the note was written.
+  describe.each(["subtotal", "qty"])("a stored non-finite line %s", (column) => {
+    it.each([
+      ["the string 'NaN'", "NaN"],
+      ["Prisma.Decimal('NaN')", new Prisma.Decimal("NaN")],
+      ["the string 'Infinity'", "Infinity"],
+    ])("refuses %s with MONEY_INVARIANT and writes nothing", async (_label, bad) => {
+      prisma.invoice.findFirst.mockResolvedValue({
+        total: 100,
+        customerId: "c1",
+        items: [
+          {
+            id: "ii-1",
+            subtotal: 30,
+            qty: 3,
+            trackedCategoryId: null,
+            categoryTaxAmount: 0,
+            [column]: bad,
+          },
+        ],
+      });
+      const err = await service
+        .create({
+          customerId: "c1",
+          invoiceId: "inv-1",
+          amount: 30,
+          items: [{ invoiceItemId: "ii-1", amount: 30 }],
+        })
+        .then(
+          () => undefined,
+          (e: unknown) => e,
+        );
+      expect(codeOf(err)).toBe(API_ERROR_CODES.MONEY_INVARIANT);
+      expect(reserveNext).not.toHaveBeenCalled();
+      expect(prisma.creditNote.create).not.toHaveBeenCalled();
+      expect(prisma.creditNoteItem.createMany).not.toHaveBeenCalled();
+    });
+  });
+
+  it("control: a finite subtotal and qty credit as before", async () => {
+    prisma.invoice.findFirst.mockResolvedValue({
+      total: 100,
+      customerId: "c1",
+      items: [
+        { id: "ii-1", subtotal: "30.00", qty: "3", trackedCategoryId: null, categoryTaxAmount: 0 },
+      ],
+    });
+    await service.create({
+      customerId: "c1",
+      invoiceId: "inv-1",
+      amount: 30,
+      items: [{ invoiceItemId: "ii-1", amount: 30 }],
+    });
+    expect(prisma.creditNote.create).toHaveBeenCalled();
+  });
 });
