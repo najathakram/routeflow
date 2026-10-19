@@ -81,7 +81,8 @@ describe("CounterSaleScreen: the finished sale's order number (CQ-17)", () => {
     expect(note).toHaveTextContent("ORD-1042");
     expect(screen.getByRole("list", { name: "Items" })).toHaveTextContent("No items yet.");
     await scan("COLA");
-    expect(screen.queryByTestId("counter-last-sale")).toBeNull();
+    // The note clears in a passive effect one commit after the line renders: wait for it, not a race.
+    await waitFor(() => expect(screen.queryByTestId("counter-last-sale")).toBeNull());
   });
 
   // At 390 the note sat above the viewport (the scroll container was left scrolled at the Complete buttons).
