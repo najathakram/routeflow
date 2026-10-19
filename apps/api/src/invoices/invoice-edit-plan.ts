@@ -31,7 +31,7 @@
  */
 
 import { BadRequestException } from "@nestjs/common";
-import { finiteStoredMoney } from "../common/money-invariants.util";
+import { finiteStoredLevy, finiteStoredMoney } from "../common/money-invariants.util";
 import { assertSellableLines } from "../products/sellable-lines";
 import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware, prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
@@ -311,10 +311,7 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
           taxRate: Number(row.taxRate ?? 0),
           subtotal: finiteStoredMoney(row.subtotal, `Invoice line ${row.id} subtotal`),
           // SA-816: a stored non-finite levy is refused (400), never carried into the rewrite verbatim.
-          categoryTaxAmount: finiteStoredMoney(
-            row.categoryTaxAmount,
-            `Invoice line ${row.id} category tax`,
-          ),
+          categoryTaxAmount: finiteStoredLevy(row, `Invoice line ${row.id} category tax`),
           description: sentItem.description ?? row.description,
           notes: sentItem.notes ?? null,
           orderItemId: sentItem.orderItemId ?? row.orderItemId ?? null,

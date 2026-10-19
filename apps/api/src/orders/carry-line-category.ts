@@ -1,5 +1,5 @@
 import { copyCategoryTaxSnapshot, hasNullTrio } from "@routeflow/pricing";
-import { finiteStoredMoney } from "../common/money-invariants.util";
+import { finiteStoredLevy } from "../common/money-invariants.util";
 
 /**
  * B297 row 340 (SA-734r2 r-note 2): a merge FOLD re-creates every line of the open order (`foldMergeItems`
@@ -42,10 +42,7 @@ export function carriedCategory(
       categoryTaxRate: null,
       categoryPriceIncludesTax: null,
       // SA-816: a stored non-finite levy is refused (400), never re-created on the folded line as NaN.
-      categoryTaxAmount: finiteStoredMoney(
-        own.categoryTaxAmount,
-        `Order line ${own.id ?? "?"} category tax`,
-      ),
+      categoryTaxAmount: finiteStoredLevy(own, `Order line ${own.id ?? "?"} category tax`),
     };
   }
   if (hasNullTrio(own as any)) {

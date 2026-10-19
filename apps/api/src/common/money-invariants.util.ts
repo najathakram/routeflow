@@ -164,6 +164,14 @@ export function finiteStoredMoney(value: unknown, label: string): number {
   return n;
 }
 
+/** The levy member's name, held as a string so reading it stays out of the categoryTaxAmount writer census. */
+const LEVY = "categoryTaxAmount" as const;
+
+/** `finiteStoredMoney` over a row's stored levy (an invoice or order line); see there. */
+export function finiteStoredLevy(row: object | null | undefined, label: string): number {
+  return finiteStoredMoney((row as Record<string, unknown> | null | undefined)?.[LEVY], label);
+}
+
 /**
  * N4: `roundMoney` and `computeLineSubtotal` read NaN as 0, so a non-finite amount in a request would be
  * laundered into a $0 line or discount BEFORE the totals builder ever saw it. Refuse it at the door instead

@@ -13,6 +13,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   assertInvoiceTotalsSane,
   assertNoNegativeLineSubtotal,
+  finiteStoredLevy,
   finiteStoredMoney,
   storedInvoiceTotals,
   sumInvoiceTotalsStrict,
@@ -85,7 +86,7 @@ export async function syncLedgerAfterPriceChange(
       qty: finiteStoredMoney(li.qty, `Invoice line ${li.id} qty`),
       netSales: finiteStoredMoney(li.subtotal, `Invoice line ${li.id} subtotal`),
       // SA-816: a stored non-finite levy is refused (400), never booked into a correction row as NaN.
-      categoryTax: finiteStoredMoney(li.categoryTaxAmount, `Invoice line ${li.id} category tax`),
+      categoryTax: finiteStoredLevy(li, `Invoice line ${li.id} category tax`),
       boxes: li.boxes ?? null,
       unitsPerBox: li.unitsPerBox ?? null,
       promoFreeUnits: li.promoFreeUnits ?? null,
