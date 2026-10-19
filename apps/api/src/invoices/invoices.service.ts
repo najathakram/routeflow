@@ -195,6 +195,8 @@ import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates
 import { lockRowsNoWait } from "../common/db-locks";
 import { counterPay, type CounterPayOpts } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { planInvoicedQtyAdjustment } from "./unvoid-billing-claim";
+import { UNVOID_REFUSAL_COPY } from "./unvoid-billing-refusal";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
@@ -4046,7 +4048,8 @@ export class InvoicesService {
    *   - direction -1 (void/delete): RELEASE the qty so `qty - invoicedQty` reflects
    *     what's still billable and the operator can re-split.
    *   - direction +1 (unvoid): RE-CLAIM the qty the invoice bills again, so a later
-   *     invoice can't double-bill it. Capped at the order line's qty.
+   *     invoice can't double-bill it. NOT clamped (B299): a line that no longer has the qty
+   *     free (or is CANCELLED) throws 409 ORDER_BILLING_CHANGED before any write.
    *
    * Match is by the invoice line's `orderItemId` provenance — precise even when an
    * order has multiple lines for the same product. Legacy invoice rows that predate
@@ -4065,42 +4068,21 @@ export class InvoicesService {
     });
     if (items.length === 0) return;
 
-    // Precise path: adjust the exact source order line by this invoice line's qty.
-    const byOrderItem = new Map<string, number>();
-    // Legacy path: invoice lines with no provenance, aggregated by product.
-    const byProduct = new Map<string, number>();
-    for (const it of items) {
-      if (it.orderItemId) {
-        byOrderItem.set(it.orderItemId, (byOrderItem.get(it.orderItemId) ?? 0) + Number(it.qty));
-      } else if (it.productId) {
-        byProduct.set(it.productId, (byProduct.get(it.productId) ?? 0) + Number(it.qty));
-      }
-    }
-    if (byOrderItem.size === 0 && byProduct.size === 0) return;
-
     const orderItems = await tx.orderItem.findMany({
       where: { orderId },
       select: { id: true, productId: true, status: true, qty: true, invoicedQty: true },
     });
-    const adjust = async (oi: any, qtyDelta: number) => {
-      // Clamp into [0, line qty]: never negative, never claim more than the line has.
-      const next = Math.min(
-        Number(oi.qty ?? 0),
-        Math.max(0, Number(oi.invoicedQty ?? 0) + direction * qtyDelta),
-      );
-      await tx.orderItem.update({ where: { id: oi.id }, data: { invoicedQty: next } });
-    };
-
-    for (const [orderItemId, qty] of byOrderItem) {
-      const target = orderItems.find((oi: any) => oi.id === orderItemId);
-      if (target) await adjust(target, qty);
+    // Pure plan (unvoid-billing-claim.ts): a refusal happens before any write.
+    const plan = planInvoicedQtyAdjustment(items, orderItems, direction);
+    if ("refusal" in plan) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.ORDER_BILLING_CHANGED,
+        reason: plan.refusal,
+        message: UNVOID_REFUSAL_COPY[plan.refusal],
+      });
     }
-    for (const [productId, qty] of byProduct) {
-      // #1185 round 5, item 3: never pick a CANCELLED line as the fallback target.
-      const target = orderItems.find(
-        (oi: any) => oi.productId === productId && oi.status !== "CANCELLED",
-      );
-      if (target) await adjust(target, qty);
+    for (const { id, invoicedQty } of plan.writes) {
+      await tx.orderItem.update({ where: { id }, data: { invoicedQty } });
     }
   }
 
@@ -4231,12 +4213,13 @@ export class InvoicesService {
           code: API_ERROR_CODES.ORDER_BILLING_CHANGED,
           message: "The invoice changed while it was being restored. Refresh and try again.",
         });
-      const restored = await tx.invoice.update({
+      // B299 / SA-814 R4-5: the re-claim runs FIRST and is not clamped - if another invoice now bills these
+      // goods (or the line is CANCELLED) it throws 409 ORDER_BILLING_CHANGED before the status flip writes.
+      await this.adjustInvoicedQtyForInvoice(tx, id, inv.orderId, 1);
+      return tx.invoice.update({
         where: { id },
         data: { status: InvoiceStatus.DRAFT },
       });
-      await this.adjustInvoicedQtyForInvoice(tx, id, inv.orderId, 1);
-      return restored;
     });
   }
 

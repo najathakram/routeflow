@@ -106,6 +106,7 @@ import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
+import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
@@ -2993,7 +2994,8 @@ export default function InvoiceDetailPage() {
                   onError: (e: any) =>
                     toast({
                       title: "Failed to unvoid",
-                      description: e?.response?.data?.message ?? "Please try again.",
+                      description:
+                        unvoidRefusalCopy(e) ?? e?.response?.data?.message ?? "Please try again.",
                       variant: "error",
                     }),
                 });

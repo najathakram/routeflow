@@ -838,3 +838,24 @@ export type CreditNoteErrorCode = (typeof CREDIT_NOTE_ERROR_CODES)[number];
  */
 export const SHIPPED_ORDER_MESSAGE =
   "This order has already shipped. Contact the seller for changes.";
+
+/**
+ * SA-814d: why an unvoid is refused with 409 `ORDER_BILLING_CHANGED`. The body carries `reason` (a flat field, like
+ * `CONCURRENT_UPDATE`'s) and clients pick the copy from it, never by matching the message. `OTHER_INVOICE`: another
+ * live invoice bills part of the line (it wins when both apply). `LINE_REDUCED`: nothing else bills it, but the order
+ * line now holds less than this invoice bills (or is cancelled, or is gone). The API keeps literal copies
+ * (`apps/api/src/invoices/unvoid-billing-refusal.ts`), pinned equal by `unvoid-billing-refusal-parity.spec.ts`.
+ */
+export const ORDER_BILLING_CHANGED_REASONS = {
+  OTHER_INVOICE: "OTHER_INVOICE",
+  LINE_REDUCED: "LINE_REDUCED",
+} as const;
+
+export type OrderBillingChangedReason =
+  (typeof ORDER_BILLING_CHANGED_REASONS)[keyof typeof ORDER_BILLING_CHANGED_REASONS];
+
+export const UNVOID_BILLING_COPY: Record<OrderBillingChangedReason, string> = {
+  OTHER_INVOICE: "Another invoice now bills these items. Void it first.",
+  LINE_REDUCED:
+    "The order line now holds less than this invoice bills. Raise the order line, or create a new invoice from the order.",
+};
