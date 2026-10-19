@@ -217,7 +217,7 @@
     "why": "B986-8 the rest: per-surface raw message read, pending"
   },
   "app/(dashboard)/vendor-bills/[id]/page.tsx": {
-    "count": 4,
+    "count": 1,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
   "app/(dashboard)/vendor-bills/page.tsx": {
