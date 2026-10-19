@@ -29,6 +29,7 @@ import { writeLineUpdate } from "./order-line-removal";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import type { OrdersService } from "./orders.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { linesPriceAtCustomerTier } from "./driver-line-price";
 
 /**
  * units_v1 (A1) — everything `updateOrderItems` needs to touch a unit-aware line, kept out of
@@ -145,7 +146,7 @@ export async function loadOperatorTiers(
  * flag read is going to fail (the coded 503 CUSTOMER_PRICES_UNAVAILABLE), it must fail here, before any commit, or a SENT
  * invoice's mirror would stay reverted to DRAFT with nothing left to re-sync it. Same ids and same customer as the in-tx
  * read (payload products, substitutes, and the products of the existing lines the payload names). Only roles that price
- * from the customer's tier (staff, buyer) read anything; a driver edit keeps list pricing and reads nothing.
+ * from the customer's tier (staff, buyer, driver) read anything.
  */
 export async function preflightCustomerPrices(
   svc: Parameters<typeof customerPricing>[0],
@@ -161,7 +162,9 @@ export async function preflightCustomerPrices(
   ctx: Pick<UnitEditContext, "existingById">,
 ): Promise<void> {
   const role = user?.role;
-  if (role !== "OPERATOR" && role !== "TENANT_ADMIN" && role !== "CUSTOMER") return;
+  // B1036: a DRIVER's NEW / SUBSTITUTED lines resolve the customer's prices too (ruling 2026-10-03).
+  if (role !== "OPERATOR" && role !== "TENANT_ADMIN" && role !== "CUSTOMER" && role !== "DRIVER")
+    return;
   const productIds = [
     ...new Set(
       (dto.items ?? []).flatMap((i) => [
@@ -210,7 +213,8 @@ export async function normalizeDerivedBaseItems(
   };
   const candidates = (dto.items ?? []).filter(named);
   if (candidates.length === 0) return;
-  const atCustomerTier = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  // B1036: the one "who gets the customer's price" predicate (a driver cannot name a unit, so this is staff in practice).
+  const atCustomerTier = linesPriceAtCustomerTier(user);
   let defaultTier = 1;
   const overrides = new Map<string, number | null>();
   if (atCustomerTier && order.customerId) {
