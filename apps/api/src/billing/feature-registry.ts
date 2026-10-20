@@ -1096,6 +1096,33 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     },
   },
   {
+    key: "recipes",
+    kind: "boolean",
+    area: "catalog",
+    label: "Mixed boxes",
+    description:
+      "Fixed recipes: a recipe product sells a fixed mix of one family's variants as one product, priced by its own ladder.",
+    gate: {
+      via: "none",
+      state: "none",
+      added: "2026-10-20",
+      routes: [],
+      grantPath: NEW_ROW_GRANT_PATH,
+      backfill: NEW_ROW_BACKFILL,
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: false,
+    // SA-825 item 1: `recipes` gates the recipe routes, order-line composition and the editor;
+    // `mixed_packs` keeps only family price authority. The mode is read only, never a setting.
+    config: {
+      fallbackMode: "off",
+      modes: {
+        off: { label: "Off (today's behavior)", available: true, settings: [] },
+        on: { label: "On", available: true, settings: [] },
+      },
+    },
+  },
+  {
     key: "routes_dispatch",
     kind: "boolean",
     area: "routes",

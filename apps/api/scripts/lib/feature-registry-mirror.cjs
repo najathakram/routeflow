@@ -104,6 +104,7 @@ const FEATURE_REGISTRY_MIRROR = [
   ["metered_msgs", "none", "none", false, ["MSG_BUNDLE_500"]],
   ["catalog_varieties", "none", "none", true, []],
   ["mixed_packs", "none", "none", false, []],
+  ["recipes", "none", "none", false, []],
   ["routes_dispatch", "none", "none", true, []],
   ["fulfilment_model", "none", "none", true, []],
   ["counter_sales", "none", "none", true, []],
