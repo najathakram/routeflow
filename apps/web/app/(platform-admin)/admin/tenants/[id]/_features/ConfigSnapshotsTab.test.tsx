@@ -147,6 +147,70 @@ describe("ConfigSnapshotsTab", () => {
     expect(mockList).toHaveBeenCalledTimes(2); // initial load + refresh
   });
 
+  describe("a partial restore (BO-13 held rows) says what was held and why", () => {
+    const RESULT = {
+      snapshotId: "s1",
+      takenAt: "2026-09-10T12:00:00.000Z",
+      planKey: "SCALE",
+      restoredToPlanKey: "SCALE",
+      report: { restored: 1, skipped: 1, keptNewer: 0, unchanged: 3 },
+      supersededSnapshots: 0,
+    };
+    const confirm = async () => {
+      mockPreview.mockResolvedValue(PREVIEW);
+      await renderTab();
+      fireEvent.click(await screen.findByRole("button", { name: /^Restore now/ }));
+      const dialog = await screen.findByRole("dialog");
+      await within(dialog).findByText("Will be restored (2)");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Restore now" }));
+      return (await screen.findByRole("status")).textContent ?? "";
+    };
+
+    it("one held row: names the Delivery model and the reason", async () => {
+      mockRestore.mockResolvedValue({
+        ...RESULT,
+        held: [
+          {
+            featureKey: "fulfilment_model",
+            from: "ship",
+            to: "delivery",
+            reason: "CARRIER_IN_TRANSIT",
+            count: 2,
+          },
+        ],
+      });
+      const text = await confirm();
+      expect(text).toContain(
+        "Restored, except Delivery model: held while orders are with the carrier",
+      );
+    });
+
+    it("several held rows: each is listed with its own reason", async () => {
+      mockRestore.mockResolvedValue({
+        ...RESULT,
+        held: [
+          {
+            featureKey: "fulfilment_model",
+            from: "ship",
+            to: "delivery",
+            reason: "CARRIER_IN_TRANSIT",
+          },
+          { featureKey: "other_key", from: "a", to: "b", reason: "FULFILMENT_MODE_NEEDS_FLEET" },
+        ],
+      });
+      const text = await confirm();
+      expect(text).toContain("Delivery model: held while orders are with the carrier");
+      expect(text).toContain("other_key: held while own delivery needs a fleet module");
+    });
+
+    it("an empty held list is a plain restore (no 'except')", async () => {
+      mockRestore.mockResolvedValue({ ...RESULT, held: [] });
+      const text = await confirm();
+      expect(text).toMatch(/^Restored the /);
+      expect(text).not.toMatch(/except/);
+    });
+  });
+
   it("nothing to restore disables the confirm button", async () => {
     mockPreview.mockResolvedValue({ ...PREVIEW, willRestore: [], keptNewer: [], skipped: [] });
     await renderTab();

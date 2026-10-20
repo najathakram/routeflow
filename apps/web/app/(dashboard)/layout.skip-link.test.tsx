@@ -17,6 +17,8 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),
 }));
 jest.mock("@/lib/auth-context", () => ({
+  // BO-07: the gate reads the role from the optional context to decide whether to ask for permissions; none here.
+  useOptionalAuth: () => null,
   useAuth: () => ({
     isAuthenticated: true,
     isLoading: false,

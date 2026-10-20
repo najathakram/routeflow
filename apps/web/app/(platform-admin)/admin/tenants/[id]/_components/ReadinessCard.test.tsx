@@ -1,11 +1,17 @@
 import * as React from "react";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
-import type { EffectiveFeature } from "../_features/types";
+import type { BusinessCapabilities } from "@/lib/platform-admin/readiness-contract";
 import { ReadinessCard, type ReadinessTenant } from "./ReadinessCard";
 
+// The card must not read the effective-features trace any more (BO-02): it asks the server once.
 const mockFetchEffective = jest.fn();
 jest.mock("@/lib/platform-admin/features", () => ({
   fetchTenantFeaturesEffective: (id: string) => mockFetchEffective(id),
+}));
+
+const mockFetchCaps = jest.fn();
+jest.mock("@/lib/platform-admin/readiness-contract", () => ({
+  fetchBusinessCapabilities: (id: string) => mockFetchCaps(id),
 }));
 
 const mockGet = jest.fn();
@@ -19,21 +25,20 @@ function Card(p: Partial<CardProps> & Pick<CardProps, "tenant">) {
   return <ReadinessCard admin={admin as CardProps["admin"]} adminState="loaded" {...p} />;
 }
 
-function row(key: string, value: string): EffectiveFeature {
+function caps(over: Partial<BusinessCapabilities> = {}): BusinessCapabilities {
   return {
-    key,
-    area: "setup",
-    serving: false,
-    resolver: false,
-    source: "NONE",
-    detail: { planKey: "PROFESSIONAL", catalogVersionId: "v1", enforced: true },
-    billing: { charged: false },
-    mode: { value, effective: value, source: "TENANT", allowed: [], blocked: [] },
+    configured: true,
+    delivery: false,
+    doorPayments: false,
+    shipping: false,
+    counter: true,
+    opensAs: "counter",
+    opensAsChoosable: false,
+    counterCapability: "optional",
+    fleetHeld: false,
+    matchedPreset: null,
+    ...over,
   };
-}
-
-function effective(fulfilment: string, counter = "unset"): EffectiveFeature[] {
-  return [row("fulfilment_model", fulfilment), row("counter_sales", counter)];
 }
 
 function tenant(over: Partial<ReadinessTenant> = {}): ReadinessTenant {
@@ -56,7 +61,8 @@ beforeEach(() => {
   mockGet.mockImplementation((url: string) =>
     /\/admin$/.test(url) ? Promise.resolve({ data: { admin } }) : Promise.resolve({ data: {} }),
   );
-  mockFetchEffective.mockResolvedValue(effective("pickup"));
+  mockFetchEffective.mockResolvedValue([]);
+  mockFetchCaps.mockResolvedValue(caps());
 });
 
 async function loaded() {
@@ -75,7 +81,7 @@ function rowOf(label: string): HTMLElement {
   return screen.getByText(label).closest("li") as HTMLElement;
 }
 
-describe("ReadinessCard (SA-3)", () => {
+describe("ReadinessCard (SA-3, BO-02)", () => {
   it("never fetches the admin itself and updates the row when the admin prop changes", async () => {
     const { rerender } = render(<Card tenant={tenant()} admin={null} adminState="loaded" />);
     await ready();
@@ -85,7 +91,8 @@ describe("ReadinessCard (SA-3)", () => {
     expect(within(rowOf("Has an admin")).getByText("Ready")).toBeInTheDocument();
     expect(within(rowOf("Has an admin")).queryByText(/Not ready/)).toBeNull();
     expect(mockGet).not.toHaveBeenCalled();
-    expect(mockFetchEffective).toHaveBeenCalledTimes(1);
+    expect(mockFetchCaps).toHaveBeenCalledTimes(1);
+    expect(mockFetchCaps).toHaveBeenCalledWith("t-1");
   });
 
   it("a failed page admin read leaves the row Not checked, never green", async () => {
@@ -113,63 +120,99 @@ describe("ReadinessCard (SA-3)", () => {
     expect(within(r).getByText(/Ready/)).toBeInTheDocument();
   });
 
-  it("T2 no TENANT_ADMIN fails and links to #admin-account", async () => {
+  it("T2 no TENANT_ADMIN fails and links to the Admin Account focus target", async () => {
     admin = null;
     render(<Card tenant={tenant()} />);
     await ready();
     const r = rowOf("Has an admin");
     expect(within(r).getByRole("link", { name: "Create admin for Acme Retail" })).toHaveAttribute(
       "href",
-      "#admin-account",
+      "/admin/tenants/t-1?focus=admin-account",
     );
   });
 
-  it("T3 shipping-only and delivery-only tenants hide the card", async () => {
-    mockFetchEffective.mockResolvedValue(effective("ship"));
-    const { container, rerender } = render(<Card tenant={tenant()} />);
-    await waitFor(() => expect(mockFetchEffective).toHaveBeenCalled());
-    await waitFor(() => expect(container).toBeEmptyDOMElement());
-    mockFetchEffective.mockResolvedValue(effective("delivery"));
-    rerender(<Card key="d" tenant={tenant()} />);
-    await waitFor(() => expect(container).toBeEmptyDOMElement());
-    expect(screen.queryByText("Ready to take a sale?")).toBeNull();
-  });
+  describe("the server answer decides what the card shows", () => {
+    it("(a) configured with the counter optional, an admin, an ACTIVE account and a product is all green", async () => {
+      mockFetchCaps.mockResolvedValue(caps({ configured: true, counterCapability: "optional" }));
+      render(<Card tenant={tenant()} />);
+      await loaded();
+      expect(await screen.findByText("Ready to take a sale")).toBeInTheDocument();
+      expect(screen.queryByText(/Not ready/)).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+      expect(screen.queryByText(/Not ready/)).toBeNull();
+    });
 
-  it("T3 a tenant with no profile yet shows the card with a Set up link", async () => {
-    mockFetchEffective.mockResolvedValue(effective("unset"));
-    render(<Card tenant={tenant()} />);
-    await ready();
-    const r = rowOf("Sells in store");
-    expect(within(r).getByRole("link", { name: /Set up .*Acme Retail/ })).toHaveAttribute(
-      "href",
-      "/admin/tenants/t-1?tab=setup",
-    );
-  });
+    it("(a) a Delivery + counter tenant is green too", async () => {
+      mockFetchCaps.mockResolvedValue(
+        caps({ delivery: true, counter: true, counterCapability: "optional" }),
+      );
+      render(<Card tenant={tenant()} />);
+      await loaded();
+      expect(await screen.findByText("Ready to take a sale")).toBeInTheDocument();
+    });
 
-  it("T3 delivery with counter_sales on still shows the card (counter-intended)", async () => {
-    mockFetchEffective.mockResolvedValue(effective("delivery", "on"));
-    render(<Card tenant={tenant()} />);
-    await ready();
-    expect(within(rowOf("Counter sales is on")).getByText(/Ready/)).toBeInTheDocument();
-  });
+    it("(b) not configured shows ONE neutral line, never amber, no rows, no counter wording", async () => {
+      mockFetchCaps.mockResolvedValue(caps({ configured: false, counter: false }));
+      const { container } = render(<Card tenant={tenant()} />);
+      expect(await screen.findByText(/Choose how this business sells/)).toBeInTheDocument();
+      expect(container.querySelectorAll("li")).toHaveLength(0);
+      expect(container.innerHTML).not.toMatch(/amber/);
+      expect(screen.queryByText(/Not ready/)).toBeNull();
+      expect(screen.queryByText(/Counter sales/)).toBeNull();
+      expect(screen.queryByText("Has an admin")).toBeNull();
+      expect(screen.queryByText("Account can sell")).toBeNull();
+      expect(screen.queryByText("Has at least one product")).toBeNull();
+      expect(screen.queryByText("Ready to take a sale")).toBeNull();
+      expect(screen.queryByRole("button", { name: /details/i })).toBeNull();
+    });
 
-  it("T4 counter capability off while the mode is pickup-less fails with the #features link", async () => {
-    mockFetchEffective.mockResolvedValue(effective("unset", "unset"));
-    render(<Card tenant={tenant()} />);
-    await ready();
-    const r = rowOf("Counter sales is on");
-    expect(within(r).getByText(/Not ready/)).toBeInTheDocument();
-    expect(within(r).getByRole("link", { name: /Set up counter sales/ })).toHaveAttribute(
-      "href",
-      "/admin/tenants/t-1?tab=setup#features",
-    );
-  });
+    it("(b) the unset line links Choose to the Setup tab's capabilities target", async () => {
+      mockFetchCaps.mockResolvedValue(caps({ configured: false, counter: false }));
+      render(<Card tenant={tenant()} />);
+      const link = await screen.findByRole("link", { name: "Choose how Acme Retail sells" });
+      expect(link).toHaveTextContent("Choose");
+      expect(link).toHaveAttribute("href", "/admin/tenants/t-1?tab=setup&focus=capabilities");
+      expect(link.className).toMatch(/admin-tap-text/);
+    });
 
-  it("T4 pickup mode makes the counter capability always on (passes)", async () => {
-    render(<Card tenant={tenant()} />);
-    await ready();
-    expect(within(rowOf("Counter sales is on")).getByText(/Ready/)).toBeInTheDocument();
-    expect(within(rowOf("Sells in store")).getByText(/Ready/)).toBeInTheDocument();
+    it("(b) the unset line does not wait for the page's admin read", async () => {
+      mockFetchCaps.mockResolvedValue(caps({ configured: false, counter: false }));
+      render(<Card tenant={tenant()} admin={null} adminState="loading" />);
+      expect(await screen.findByText(/Choose how this business sells/)).toBeInTheDocument();
+      expect(screen.queryAllByTestId("readiness-skeleton")).toHaveLength(0);
+    });
+
+    it("(c) configured with no counter (delivery or shipping only) hides the card", async () => {
+      mockFetchCaps.mockResolvedValue(
+        caps({ delivery: true, counter: false, counterCapability: "off" }),
+      );
+      const { container } = render(<Card tenant={tenant()} />);
+      await waitFor(() => expect(mockFetchCaps).toHaveBeenCalled());
+      await waitFor(() => expect(container).toBeEmptyDOMElement());
+      expect(screen.queryByText("Ready to take a sale?")).toBeNull();
+    });
+
+    it("(d) makes no request to the effective-features trace", async () => {
+      render(<Card tenant={tenant()} />);
+      await ready();
+      expect(mockFetchEffective).not.toHaveBeenCalled();
+    });
+
+    it("shows ONE counter row from the server, named Sells at the counter, and no in-store row", async () => {
+      mockFetchCaps.mockResolvedValue(caps({ counterCapability: "always" }));
+      render(<Card tenant={tenant()} />);
+      await ready();
+      expect(within(rowOf("Sells at the counter")).getByText("Ready")).toBeInTheDocument();
+      expect(screen.queryByText("Sells in store")).toBeNull();
+      expect(screen.queryByText("Counter sales is on")).toBeNull();
+      expect(screen.getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+        expect.stringContaining("Has an admin"),
+        expect.stringContaining("Account can sell"),
+        expect.stringContaining("Sells at the counter"),
+        expect.stringContaining("Has at least one product"),
+        expect.stringContaining("Payment at the till"),
+      ]);
+    });
   });
 
   it("T5 zero products is amber with no link; a missing count is Not checked, never green", async () => {
@@ -216,19 +259,23 @@ describe("ReadinessCard (SA-3)", () => {
   });
 
   it("T7 a failed read says Couldn't check, never green, and Retry reloads", async () => {
-    mockFetchEffective.mockRejectedValueOnce(new Error("boom"));
+    mockFetchCaps.mockRejectedValueOnce(new Error("boom"));
     render(<Card tenant={tenant()} />);
     expect(await screen.findByText("Couldn't check this tenant.")).toBeInTheDocument();
     expect(screen.queryByText("Ready to take a sale")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(mockFetchEffective).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mockFetchCaps).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("Ready to take a sale")).toBeInTheDocument();
   });
 
-  it("T7 loading shows six skeleton rows", () => {
-    mockFetchEffective.mockReturnValue(new Promise(() => {}));
-    render(<Card tenant={tenant()} />);
-    expect(screen.getAllByTestId("readiness-skeleton")).toHaveLength(6);
+  it("T7 loading shows one skeleton row until the capabilities resolve, then the real row count", async () => {
+    let resolve!: (c: BusinessCapabilities) => void;
+    mockFetchCaps.mockReturnValue(new Promise<BusinessCapabilities>((r) => (resolve = r)));
+    render(<Card tenant={tenant()} admin={null} adminState="loading" />);
+    expect(screen.getAllByTestId("readiness-skeleton")).toHaveLength(1);
+    resolve(caps());
+    // admin read still pending: the skeleton now matches the five rows that will render
+    await waitFor(() => expect(screen.getAllByTestId("readiness-skeleton")).toHaveLength(5));
   });
 
   it.each(["READ_ONLY", "SUSPENDED", "CANCELLED", "ACTIVE"])(
@@ -245,5 +292,39 @@ describe("ReadinessCard (SA-3)", () => {
     render(<Card tenant={tenant({ status: "TRIAL", trialEndsAt: "2026-11-07T12:00:00.000Z" })} />);
     await ready();
     expect(screen.queryByRole("link", { name: /Extend/i })).toBeNull();
+  });
+});
+
+// The global admin floor is `.surface-admin button { min-height: 40px }` (specificity 0,1,1) which beats a plain
+// Tailwind min-h utility, so the actions carry the important variants: 44 px below sm, 24 px from sm up.
+describe("BO-05 follow-up: the card's links and buttons are real tap targets", () => {
+  const TAP = ["inline-flex", "items-center", "!min-h-[44px]", "sm:!min-h-6"];
+
+  it("the 'Choose' link on an unset tenant", async () => {
+    mockFetchCaps.mockResolvedValue(caps({ configured: false }));
+    render(<Card tenant={tenant()} />);
+    const link = await screen.findByRole("link", { name: "Choose how Acme Retail sells" });
+    expect(link).toHaveClass(...TAP);
+  });
+
+  it("every row action link (Create admin, Activate)", async () => {
+    admin = null;
+    render(<Card tenant={tenant({ status: "READ_ONLY" })} />);
+    await ready();
+    const links = screen.getAllByRole("link");
+    expect(links.length).toBeGreaterThanOrEqual(2);
+    for (const link of links) expect(link).toHaveClass(...TAP);
+  });
+
+  it("Show details and Retry", async () => {
+    render(<Card tenant={tenant()} />);
+    await loaded();
+    expect(screen.getByRole("button", { name: "Show details" })).toHaveClass(...TAP);
+  });
+
+  it("Retry after a failed read", async () => {
+    mockFetchCaps.mockRejectedValueOnce(new Error("boom"));
+    render(<Card tenant={tenant()} />);
+    expect(await screen.findByRole("button", { name: "Retry" })).toHaveClass(...TAP);
   });
 });

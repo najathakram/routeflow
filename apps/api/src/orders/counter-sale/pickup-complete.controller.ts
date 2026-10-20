@@ -12,6 +12,7 @@ import { ApiBearerAuth, ApiHeader, ApiTags } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../../auth/guards/roles.guard";
+import { TillPermissionGuard } from "./till-permission.guard";
 import { Roles } from "../../auth/decorators/roles.decorator";
 import { CurrentUser } from "../../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
@@ -34,7 +35,7 @@ export class PickupCompleteController {
 
   @Post(":id/pickup-complete")
   @HttpCode(HttpStatus.OK)
-  @UseGuards(RolesGuard)
+  @UseGuards(RolesGuard, TillPermissionGuard)
   @Roles(UserRole.OPERATOR)
   @ApiHeader({ name: "Idempotency-Key", required: true })
   async complete(

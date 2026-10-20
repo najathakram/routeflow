@@ -13,6 +13,7 @@ import { txConflictState } from "../common/tx-retry";
 import { isTxClient } from "../prisma/prisma.service";
 import { asLadderProduct } from "../products/line-units";
 import { ladderOptionsOf } from "../orders/units-prices-v2";
+import { withComponentViews } from "../orders/component-view";
 
 // SA-827 (T2): the invoice DISPLAY unit. A DISPLAY file (allow-listed by name in invoice-unit-display-only.spec.ts): it may
 // name the snapshot columns and the display math. It never reads or writes money. The only writes are the two display
@@ -328,9 +329,24 @@ export async function itemsWithDisplayUnits<
       ? await resolveLiveDisplayUnits(readDb, invoice.tenantId, invoice, entitlements)
       : null;
   return withItemDisplayUnits<I, { status: string; items: I[] }>(
-    { status: invoice.status, items: invoice.items },
+    { status: invoice.status, items: withComponentViews(invoice.items as any) as unknown as I[] },
     live,
   ).items;
+}
+
+/**
+ * At a DRAFT -> issued transition: resolve (invoice's own rows through `tx`, catalog through `readDb`) and freeze the
+ * display units in `tx`. No tenant, nothing to do. For the inline flip `readDb` and `tx` are the same non-tx client.
+ */
+export async function freezeDraftIssueUnits(
+  readDb: any,
+  tx: any,
+  inv: { id: string; tenantId: string | null },
+  entitlements?: DisplayUnitEntitlements | null,
+): Promise<void> {
+  if (!inv.tenantId) return;
+  const units = await resolveIssueDisplayUnits(readDb, inv.tenantId, inv.id, entitlements, tx);
+  await writeIssueDisplayUnits(tx, inv.id, units);
 }
 
 /**

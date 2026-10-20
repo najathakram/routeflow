@@ -1,6 +1,7 @@
 import type { InvoiceDisplayUnitView } from "@routeflow/types";
 import {
   clearIssueDisplayUnits,
+  freezeDraftIssueUnits,
   itemsWithDisplayUnits,
   resolveDraftIssueUnits,
   resolveIssueDisplayUnits,
@@ -413,6 +414,14 @@ describe("writeIssueDisplayUnits (write side: inside the caller's tx, under a sa
     expect(db.$executeRaw).not.toHaveBeenCalled();
   });
 
+  it("null or undefined units issue zero statements", async () => {
+    const { tx, sql } = makeTx();
+    await writeIssueDisplayUnits(tx, "inv-1", null);
+    await writeIssueDisplayUnits(tx, "inv-1", undefined);
+    expect(tx.invoiceItem.updateMany).not.toHaveBeenCalled();
+    expect(sql).toEqual([]);
+  });
+
   it("refuses to write with an undefined invoice id or item id (Prisma drops undefined where keys)", async () => {
     const { tx, sql } = makeTx();
     await writeIssueDisplayUnits(tx, undefined as any, new Map([["it-a", piecesUnit()]]));
@@ -578,5 +587,79 @@ describe("itemsWithDisplayUnits (read-side decorator)", () => {
       flag(true),
     );
     expect(out[0].displayUnit).toEqual({ kind: "legacy", label: null });
+  });
+});
+
+describe("freezeDraftIssueUnits (resolve + write at the DRAFT -> issued transition)", () => {
+  it("reads own rows through tx, the catalog through readDb, and writes pieces only in tx", async () => {
+    const catalog = makeDb({ products: [productRow("p1")], business: "smallest", items: [] });
+    const tx: any = makeDb({ items: [{ id: "it-a", productId: "p1" }] });
+    tx.$executeRaw = jest.fn(async () => 0);
+    tx.invoiceItem.updateMany = jest.fn(async () => ({ count: 1 }));
+    await freezeDraftIssueUnits(catalog as any, tx, { id: "inv-1", tenantId: TENANT }, flag(true));
+    expect(tx.invoiceItem.findMany).toHaveBeenCalledTimes(1);
+    expect(catalog.invoiceItem.findMany).not.toHaveBeenCalled();
+    expect(catalog.product.findMany).toHaveBeenCalled();
+    expect(tx.invoiceItem.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.invoiceItem.updateMany.mock.calls[0][0].data).toEqual({
+      invoiceUnitLabel: "Piece",
+      invoiceUnitFactor: 1,
+    });
+  });
+
+  it("a null tenantId does nothing", async () => {
+    const catalog = makeDb({ items: [] });
+    const { tx, sql } = makeTx();
+    await freezeDraftIssueUnits(catalog as any, tx, { id: "inv-1", tenantId: null }, flag(true));
+    expect(catalog.invoice.findFirst).not.toHaveBeenCalled();
+    expect(tx.invoiceItem.updateMany).not.toHaveBeenCalled();
+    expect(sql).toEqual([]);
+  });
+
+  it("the same non-tx client for read and write (the inline flip) swallows a write failure", async () => {
+    const db: any = makeDb({
+      products: [productRow("p1")],
+      business: "smallest",
+      items: [{ id: "it-a", productId: "p1" }],
+    });
+    db.$connect = jest.fn();
+    db.invoiceItem.updateMany = jest.fn(async () => {
+      throw new Error("boom");
+    });
+    await expect(
+      freezeDraftIssueUnits(db, db, { id: "inv-1", tenantId: TENANT }, flag(true)),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("itemsWithDisplayUnits component views", () => {
+  it("converts Decimal component prices to numbers", async () => {
+    const db = makeDb({ products: [productRow("p1")] });
+    const out = await itemsWithDisplayUnits(
+      db as any,
+      {
+        status: "SENT",
+        tenantId: TENANT,
+        customerId: CUSTOMER,
+        items: [
+          {
+            id: "it-0",
+            productId: "p1",
+            invoiceUnitLabel: "Piece",
+            invoiceUnitFactor: 1,
+            components: [
+              {
+                componentProductId: "p2",
+                name: "Part",
+                qty: { toString: () => "2" },
+                displayUnitPrice4: { toString: () => "0.7875" },
+              },
+            ],
+          } as any,
+        ],
+      },
+      flag(true),
+    );
+    expect((out[0] as any).components[0]).toMatchObject({ qty: 2, displayUnitPrice4: 0.7875 });
   });
 });

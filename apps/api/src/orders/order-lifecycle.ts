@@ -23,7 +23,6 @@ import {
 import { FulfillPath, OrderStatus, RouteRunStatus, UserRole } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { JwtPayload } from "../auth/jwt-payload.interface";
-import { staffMay } from "../auth/permissions/staff-capabilities";
 import type { OrdersService } from "./orders.service";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
@@ -32,6 +31,7 @@ import type { SellingRestrictionsService } from "../selling-restrictions/selling
 import { SHIPPED_STATUSES, notifyTrackingAdded } from "./shipment-notifications";
 import { resolveShipmentText } from "./shipment-text";
 import { assertFulfilPathOffered } from "./fulfil-path-resolver";
+import { mayUseTill } from "./counter-sale/till-permission.guard";
 
 const switchLogger = new Logger("OrderFulfilPathSwitch");
 
@@ -114,7 +114,8 @@ export async function updateFulfillPathImpl(
   restrictions?: Pick<SellingRestrictionsService, "assertLinesSellable">,
 ) {
   // POS mode (SA-763r R3): switching an order to PICKUP is a hand-over at the till, a staff capability.
-  if (dto.fulfillPath === FulfillPath.PICKUP && !staffMay(user?.role, "USE_POS_MODE")) {
+  // BO-07: the ONE till predicate (an OPERATOR's denied ORDERS group is read live; only for the PICKUP switch).
+  if (dto.fulfillPath === FulfillPath.PICKUP && !(await mayUseTill(self.prisma, user))) {
     throw new ForbiddenException({
       code: API_ERROR_CODES.POS_MODE_NOT_PERMITTED,
       message: "You don't have access to switch an order to pickup.",

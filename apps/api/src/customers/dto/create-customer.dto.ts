@@ -22,6 +22,7 @@ import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { WRITABLE_FULFILL_PATHS } from "../../orders/writable-fulfill-paths";
 import { MAX_DECIMAL_10_2 } from "../../common/decimal-bounds.constant";
 import { VALID_TERMS } from "../../system-config/dto/update-invoice-settings.dto";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 // Canonical list plus "" to allow explicitly leaving this customer on the
 // tenant default at create time.
@@ -90,7 +91,7 @@ export class CreateCustomerDto {
    * orders that don't already carry an explicit depositPercent. Omitted
    * leaves the customer without a deposit default.
    */
-  @IsOptional() @IsNumber() @Min(0) @Max(100) defaultDepositPercent?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(100) defaultDepositPercent?: number;
   /**
    * Sales agents & commissions: opens the customer's first attribution window
    * (AgentAssignment, effectiveFrom = now) inside the create tx.

@@ -228,8 +228,8 @@
 //                    committed but whose payment did not. An order create / buyer submit asking for a fulfilment method the business does
 //                    not offer is 400 FULFIL_METHOD_NOT_OFFERED.
 //   B1043 (invoice header-only PATCH, discount or shippingFee without items) — 409 INVOICE_TAX_STATE_STALE: the invoice's stored subtotal or
-//                    tax does not match its lines, so the discount/shipping change cannot be priced safely; nothing is written; re-save the
-//                    invoice lines. 409 INVOICE_TOTAL_BELOW_PAID (B1046): the edit would take a DRAFT's total below the amount already paid
+//                    tax does not match its lines, so the discount/shipping change cannot be priced safely; nothing is written. SA-814e: body
+//                    {code, message, path} where path is DRAFT_EDIT or PRICE_ADJUSTMENT (INVOICE_TAX_STATE_STALE_COPY). 409 INVOICE_TOTAL_BELOW_PAID (B1046): the edit would take a DRAFT's total below the amount already paid
 //                    or credited against it. Body {code, message}.
 
 export const API_ERROR_CODES = {
@@ -411,6 +411,12 @@ export const API_ERROR_CODES = {
   PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
   SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
   PO_LINK_BROKEN: "PO_LINK_BROKEN",
+  BILL_NEEDS_A_LINE: "BILL_NEEDS_A_LINE",
+  BILL_NOT_EDITABLE: "BILL_NOT_EDITABLE",
+  BILL_PO_SUPPLIER_LOCKED: "BILL_PO_SUPPLIER_LOCKED",
+  BILL_NEVER_RECEIVED: "BILL_NEVER_RECEIVED",
+  BILL_TAX_UNKNOWN: "BILL_TAX_UNKNOWN",
+  RECEIVE_EXCEEDS_OUTSTANDING: "RECEIVE_EXCEEDS_OUTSTANDING",
   AI_KEY_INVALID: "AI_KEY_INVALID",
   AI_SCAN_REJECTED: "AI_SCAN_REJECTED",
   AI_UNAVAILABLE: "AI_UNAVAILABLE",
@@ -802,11 +808,26 @@ export const API_ERROR_CODES = {
   /** 409 from POST /products/:productId/prices/undo: that audit row is not a price save of this product, or it was already undone. */
   PRICE_UNDO_UNAVAILABLE: "PRICE_UNDO_UNAVAILABLE",
   /**
+   * 400 from POST /platform-admin/tenants/:id/business-capabilities (and its /preview) when no capability is ticked
+   * (BO-04): at least one of Delivery, Shipping or Counter is needed. Fixed body; nothing was written.
+   */
+  BUSINESS_CAPABILITIES_EMPTY: "BUSINESS_CAPABILITIES_EMPTY",
+  /**
    * 503 from every server-priced order path (buyer checkout, standing orders, returns, order edits) when the customer has
    * typed unit prices but the units_prices_v2 flag could not be read (the override or plan lookup failed). Retryable: nothing
    * was written, so the caller never gets the tier price instead of the customer's typed price.
    */
   CUSTOMER_PRICES_UNAVAILABLE: "CUSTOMER_PRICES_UNAVAILABLE",
+  /**
+   * 409 from void / revert-to-draft / delete (and a per-bill `skipped` entry of the bulk delete) of a vendor bill that still carries CASH
+   * payments (B288, SA-814 R5-3). Body carries `amount` (the rounded cash total). Nothing was written; move the payments to a supplier
+   * credit first (POST /vendor-bills/:id/payments/:paymentId/move-to-credit).
+   */
+  BILL_HAS_PAYMENTS: "BILL_HAS_PAYMENTS",
+  /** 409 from move-to-credit: the payment is a draw of supplier credit (void or delete hands it back), not cash. */
+  BILL_PAYMENT_NOT_CASH: "BILL_PAYMENT_NOT_CASH",
+  /** 409 from move-to-credit: the bill has no supplier, so there is no account to hold the credit. */
+  BILL_PAYMENT_NO_SUPPLIER: "BILL_PAYMENT_NO_SUPPLIER",
   /**
    * 400 from PUT /platform-admin/app-links: a link is not an https URL with a host (or is over 2048 characters);
    * body carries `field` (the link's name). Nothing was written.
@@ -851,6 +872,29 @@ export type CreditNoteErrorCode = (typeof CREDIT_NOTE_ERROR_CODES)[number];
  */
 export const SHIPPED_ORDER_MESSAGE =
   "This order has already shipped. Contact the seller for changes.";
+
+/**
+ * SA-814g: the 409 INVOICE_TAX_STATE_STALE body carries `path`, the kind of invoice that refused: an
+ * order-linked DRAFT, a manual DRAFT, or an ISSUED invoice (whichever recompute asked: lines save, discount /
+ * shipping, price adjustment). Web and mobile pick their copy from it; the API keeps a literal copy
+ * (`TAX_STATE_STALE_COPY`, apps/api/src/invoices/stored-tax-state.ts) pinned byte-equal by
+ * apps/api/src/common/invoice-tax-state-copy-parity.spec.ts.
+ */
+export const INVOICE_TAX_STATE_STALE_PATH_VALUES = [
+  "DRAFT_ORDER",
+  "DRAFT_MANUAL",
+  "ISSUED",
+] as const;
+export type InvoiceTaxStateStalePath = (typeof INVOICE_TAX_STATE_STALE_PATH_VALUES)[number];
+
+export const INVOICE_TAX_STATE_STALE_COPY: Record<InvoiceTaxStateStalePath, string> = {
+  DRAFT_ORDER:
+    "This draft's tax was saved by an older version and can't be recalculated safely. Create it again from the order, or contact support.",
+  DRAFT_MANUAL:
+    "This draft's tax was saved by an older version and can't be recalculated safely. Create the draft again, or contact support.",
+  ISSUED:
+    "This invoice's stored tax can't be recalculated safely. Issue a credit note or contact support.",
+};
 
 /**
  * SA-814d: why an unvoid is refused with 409 `ORDER_BILLING_CHANGED`. The body carries `reason` (a flat field, like
