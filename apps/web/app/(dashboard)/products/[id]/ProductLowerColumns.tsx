@@ -43,20 +43,3 @@ export function ProductLowerColumns({
     </>
   );
 }
-
-const PHONE_QUERY = "(max-width: 639px)";
-/** Below Tailwind's `sm`. False on the server and wherever matchMedia is missing, so the DOM order is the wide one. */
-export function useIsPhone(): boolean {
-  const [phone, setPhone] = React.useState(
-    () => typeof window !== "undefined" && window.matchMedia?.(PHONE_QUERY).matches === true,
-  );
-  React.useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return undefined;
-    const mql = window.matchMedia(PHONE_QUERY);
-    const sync = () => setPhone(mql.matches);
-    sync();
-    mql.addEventListener?.("change", sync);
-    return () => mql.removeEventListener?.("change", sync);
-  }, []);
-  return phone;
-}

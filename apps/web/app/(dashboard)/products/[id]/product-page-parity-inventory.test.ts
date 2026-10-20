@@ -42,7 +42,7 @@ describe("product page parity inventory (T38)", () => {
   it("with the flag on and a non-FAMILY product, the v2 grid AND the old units card both render", () => {
     // K11-20c: the section sits in ProductPricingRegion (the inline edit mode's full-width wrapper)
     expect(page).toMatch(
-      /(?:const pricingItem = )?pricingSplit \? \(\s*<div[^>]*>\s*<ProductPricingRegion>\s*<ProductPricingV2 product=\{product\} \/>\s*<\/ProductPricingRegion>\s*<\/div>\s*\) : null;?/,
+      /\{pricingSplit \? \(\s*<div[^>]*>\s*<ProductPricingRegion>\s*<ProductPricingV2 product=\{product\} \/>\s*<\/ProductPricingRegion>\s*<\/div>\s*\) : null\}/,
     );
     expect(page).toMatch(/const pricingSplit = v2 && product\.kind !== "FAMILY";/);
     // the old card's gate never mentions v2 except to hide it for a v2 FAMILY
@@ -53,7 +53,7 @@ describe("product page parity inventory (T38)", () => {
   it("the v2 shell is mounted exactly once, only behind the flag", () => {
     expect(page.match(/<ProductPricingV2/g)?.length).toBe(1);
     const upTo = page.slice(0, page.indexOf("<ProductPricingV2"));
-    expect(upTo.split("\n").slice(-4, -3)[0]).toMatch(/pricingSplit \? \(/);
+    expect(upTo.split("\n").slice(-4, -3)[0]).toMatch(/\{pricingSplit \? \(/);
   });
 
   it("the old Units card keeps its edit controls (name, price, tiers, default, save, remove)", () => {
