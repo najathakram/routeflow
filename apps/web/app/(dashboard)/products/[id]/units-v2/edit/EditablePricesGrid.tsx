@@ -184,7 +184,17 @@ export function EditablePricesGrid({
           )}
         </div>
         {panel}
-        {unitControls ? <div data-wide-inset="">{unitControls}</div> : null}
+        {unitControls ? (
+          // `group` + data-panel: below sm the opener row drops its top margin only while Change prices is closed;
+          // with the panel open above it the 12 px gap stays (K11-19).
+          <div
+            data-wide-inset=""
+            data-panel={changePricesOpen ? "open" : "closed"}
+            className="group"
+          >
+            {unitControls}
+          </div>
+        ) : null}
         <ProductPricesGrid
           product={product}
           edit={edit}
