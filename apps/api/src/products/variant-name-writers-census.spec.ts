@@ -72,6 +72,8 @@ const ALLOWED: Record<string, string> = {
   "orders/orders.service.ts": "a select of variantName (read)",
   "product-labels/product-labels.service.ts": "a select of variantName (read)",
   "products/dto/bulk-assign-parent.dto.ts": "the request DTO (validated, then handed to update())",
+  "products/product-parent.ts":
+    "writeFamilyAssigned: variantName is AUDIT META on product.family_assigned (SA-823b); writes no product row",
   "products/family-price.ts":
     "propagates PRICE columns to a family's variants (where: parentProductId); writes no name",
 };

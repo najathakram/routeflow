@@ -423,8 +423,13 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
         parentProductId: "fam",
         kind: "VARIANT",
       });
+      // The locked in-tx re-read sees the SAME parent (a true echo), as Postgres would.
       prisma.product.findFirst.mockImplementation(async (args: { where?: { id?: string } }) =>
-        args?.where?.id === "fam" ? { ...FAMILY, isActive: false } : null,
+        args?.where?.id === "fam"
+          ? { ...FAMILY, isActive: false }
+          : args?.where?.id === "prod-1"
+            ? { parentProductId: "fam", category: null, unitsPerBox: null }
+            : null,
       );
       prisma.product.update.mockResolvedValue({ ...PRODUCT });
       await service.update("prod-1", { parentProductId: "fam", description: "x" } as never, {
