@@ -1104,7 +1104,7 @@ describe("B998: a formula-led VARIANT name's refusal names the offending row (ad
 describe("SA-823: the one family creator and the family-name reservation", () => {
   it("T7: createFamilyContainer creates one non-sellable FAMILY (unit each, no sku/barcode/stock, active) in the given tx and syncs its category once", async () => {
     const { service, tx } = build();
-    const sync = jest.spyOn(labelWriter, "syncCategoryLabel");
+    const sync = jest.spyOn(labelWriter, "syncCategoryLabel").mockResolvedValue(null as never);
     const before = tx.products.length;
     const fam = (await service.createFamilyContainer(tx as never, {
       name: "Soda",

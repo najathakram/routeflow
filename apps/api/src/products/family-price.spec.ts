@@ -536,7 +536,7 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
 
   it("ON: variant create ends with the family's five columns (locked re-read, not the dto)", async () => {
     const service = await build("on");
-    await service.create(createDto() as any);
+    await service.create(createDto() as any, { reparentVia: "editor" } as any);
     const data = prisma.product.create.mock.calls[0][0].data;
     for (const col of FAMILY_PRICE_COLUMNS)
       expect(String(data[col])).toBe(String(FAMILY_PRICES[col]));
@@ -544,14 +544,19 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
 
   it("ON: variant create with an explicit differing tier -> 409 FAMILY_PRICE_AUTHORITY", async () => {
     const service = await build("on");
-    const err = await service.create(createDto({ priceTier2: "1.00" }) as any).catch((e) => e);
+    const err = await service
+      .create(createDto({ priceTier2: "1.00" }) as any, { reparentVia: "editor" } as any)
+      .catch((e) => e);
     expect(err.getResponse()).toMatchObject({ code: "FAMILY_PRICE_AUTHORITY", familyId: "fam" });
     expect(prisma.product.create).not.toHaveBeenCalled();
   });
 
   it("OFF: variant create keeps today's inheritance from the parent", async () => {
     const service = await build("off");
-    await service.create(createDto({ priceTier2: "1.00" }) as any);
+    await service.create(
+      createDto({ priceTier2: "1.00" }) as any,
+      { reparentVia: "editor" } as any,
+    );
     expect(prisma.product.create.mock.calls[0][0].data.priceTier2).toBe("1.00");
   });
 });
