@@ -23,7 +23,14 @@ jest.mock("../vendor-bills/vendor-bills.service", () => ({
   VendorBillsService: jest.fn().mockImplementation(() => ({})),
 }));
 
+// SA-827: the display-unit helpers are mocked so the wiring (resolve outside the tx, write inside it, DRAFT only) is observable.
+jest.mock("../invoices/invoice-display-unit", () => ({
+  resolveIssueDisplayUnits: jest.fn(),
+  writeIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
+}));
+
 import { BookkeepingService } from "./bookkeeping.service";
+import { resolveIssueDisplayUnits, writeIssueDisplayUnits } from "../invoices/invoice-display-unit";
 import { InvoiceService } from "./invoice.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { StorageService } from "../storage/storage.service";
@@ -264,6 +271,56 @@ describe("BookkeepingService", () => {
     });
   });
 
+  describe("recordPayment — SA-827: a DRAFT paid through the ledger freezes its display unit once", () => {
+    const UNITS = new Map([["it-1", { kind: "pieces" as const, label: "Piece" }]]);
+
+    function arm(status: string) {
+      (resolveIssueDisplayUnits as jest.Mock).mockReset().mockResolvedValue(UNITS);
+      (writeIssueDisplayUnits as jest.Mock).mockClear();
+      prisma.invoice.findUnique.mockResolvedValue({ status, tenantId: "tenant-acme-1" });
+      const txClient = {
+        $executeRaw: jest.fn(),
+        invoice: {
+          findMany: jest.fn(async () => []),
+          findUnique: jest.fn().mockResolvedValue({
+            id: "inv-827",
+            status,
+            total: 100,
+            payments: [],
+          }),
+          update: jest.fn().mockResolvedValue({ id: "inv-827", status: "PARTIAL", payments: [] }),
+        },
+        invoicePayment: { create: jest.fn() },
+      };
+      prisma.tenantTransaction.mockImplementation(async (fn: any) => fn(txClient));
+      return txClient;
+    }
+
+    it("a DRAFT: resolves OUTSIDE the tx (a non-tx client, the row's own tenant), writes INSIDE it for this invoice", async () => {
+      const tx = arm("DRAFT");
+      await service.recordPayment("inv-827", { amount: 40, method: "CASH" as any });
+      expect(resolveIssueDisplayUnits).toHaveBeenCalledTimes(1);
+      const [readDb, tenantId, invoiceId] = (resolveIssueDisplayUnits as jest.Mock).mock.calls[0];
+      expect(readDb).toBe(prisma.forTenant());
+      expect(tenantId).toBe("tenant-acme-1");
+      expect(invoiceId).toBe("inv-827");
+      expect(writeIssueDisplayUnits).toHaveBeenCalledTimes(1);
+      expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][0]).toBe(tx);
+      expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][1]).toBe("inv-827");
+      expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][2]).toBe(UNITS);
+      expect((resolveIssueDisplayUnits as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.tenantTransaction.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("an already issued (SENT) invoice makes zero resolve calls and no write", async () => {
+      arm("SENT");
+      await service.recordPayment("inv-827", { amount: 40, method: "CASH" as any });
+      expect(resolveIssueDisplayUnits).not.toHaveBeenCalled();
+      expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
+    });
+  });
+
   describe("recordPayment — SA-121: dto.amount is rounded to the cent", () => {
     it("a sub-cent amount (10.005) is stored cent-exact, not silently truncated", async () => {
       const create = jest.fn();
@@ -351,6 +408,10 @@ describe("BookkeepingService", () => {
           findFirst: jest.fn(async () =>
             opts.counter ? { counterSale: true, registerKey: "r1" } : null,
           ),
+        },
+        // SA-827: the pre-tx status read (an issued invoice resolves nothing)
+        invoice: {
+          findUnique: jest.fn(async () => ({ status: "SENT", tenantId: "tenant-acme-1" })),
         },
       } as never);
       prisma.tenantTransaction.mockImplementation(async (fn: any) =>

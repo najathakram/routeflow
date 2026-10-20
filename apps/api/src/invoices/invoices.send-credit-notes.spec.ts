@@ -198,6 +198,8 @@ describe("InvoicesService", () => {
           status: InvoiceStatus.DRAFT,
           deliveryBatchId: null,
         })
+        // SA-827: markSent's pre-tx { status, tenantId } read (no tenantId here: nothing to resolve)
+        .mockResolvedValueOnce({ status: InvoiceStatus.DRAFT, tenantId: null })
         // #2255 / SA-404: the row markSent locks and re-reads as its first statement.
         .mockResolvedValueOnce({
           id: "i1",
@@ -258,6 +260,7 @@ describe("InvoicesService", () => {
       };
       prisma.invoice.findUnique
         .mockResolvedValueOnce(draft) // findOneOrThrow
+        .mockResolvedValueOnce({ status: InvoiceStatus.DRAFT, tenantId: null }) // SA-827: markSent's pre-tx read
         .mockResolvedValueOnce({ ...draft, payments: [] }); // #2255: markSent's locked re-read
       prisma.order.findFirst.mockResolvedValue({ status: "DELIVERED", orderNumber: "O2" });
       prisma.invoice.update.mockResolvedValueOnce({

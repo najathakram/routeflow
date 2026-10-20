@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  OnModuleInit,
+  Optional,
+} from "@nestjs/common";
 import { lockBillRows } from "../vendor-bills/bill-locks";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -43,6 +49,8 @@ import {
 } from "../invoices/payment-predicates";
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { lockInvoicesForPayment } from "../invoices/invoice-send-guard";
+import { resolveIssueDisplayUnits, writeIssueDisplayUnits } from "../invoices/invoice-display-unit";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { counterPay } from "../invoices/counter-payment-guard";
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
 import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
@@ -64,6 +72,8 @@ export class BookkeepingService implements OnModuleInit {
     private readonly systemConfig: SystemConfigService,
     private readonly platformConfig: PlatformConfigService,
     private readonly commissionEngine: CommissionEngineService,
+    // SA-827: the strict plan-flag read the display-unit resolve needs. Optional so a bare unit harness still builds.
+    @Optional() private readonly entitlements?: EntitlementsService,
   ) {}
 
   async onModuleInit() {
@@ -200,6 +210,20 @@ export class BookkeepingService implements OnModuleInit {
     // G4: the same end-of-day-close door the office recordPayment uses. The counter scope is read BEFORE the transaction so the
     // shared close lock is its FIRST statement; a non-counter invoice gets null here and every counterPay helper is a no-op.
     const till = await counterPay.scope(this.prisma, id);
+    // SA-827: a DRAFT paid through this ledger path becomes an issued invoice. Its display units are RESOLVED here on a
+    // non-tx client (no catalog read joins the Serializable snapshot) and WRITTEN inside the tx once the lock confirms DRAFT.
+    const pre = await this.prisma
+      .forTenant()
+      .invoice.findUnique({ where: { id }, select: { status: true, tenantId: true } });
+    const units =
+      pre?.status === InvoiceStatus.DRAFT && pre.tenantId
+        ? await resolveIssueDisplayUnits(
+            this.prisma.forTenant(),
+            pre.tenantId,
+            id,
+            this.entitlements,
+          )
+        : null;
     return this.prisma.tenantTransaction(async (tx) => {
       await counterPay.lock(tx, till);
       // SA-404f F1: FIRST lock (Order →) Invoice, so the status read below sees a committed VOID
@@ -285,6 +309,9 @@ export class BookkeepingService implements OnModuleInit {
           order: { select: { id: true, orderNumber: true, status: true } },
         },
       });
+
+      // SA-827: the DRAFT -> issued transition freezes the display unit (once; a SENT invoice never rewrites it).
+      if (inv.status === InvoiceStatus.DRAFT && units) await writeIssueDisplayUnits(tx, id, units);
 
       // Commission hook: this ledger path creates a PAID payment directly —
       // the accrual's payable must move with the cash in the same tx.

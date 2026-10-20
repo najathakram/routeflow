@@ -140,9 +140,18 @@ const INVOICE_ITEM = {
   notes: "keep",
   categoryTaxAmount: "keep",
   product: { plan: PRODUCT },
-  // no buyer screen (web portal or mobile) renders a line's tracked category or subcategory
-  trackedCategory: "strip",
+  // SA-827 I5: the pieces view's "{category} tax" row names the category, so the buyer's line keeps its NAME only
+  trackedCategory: {
+    plan: { id: "strip", name: "keep", invoiceTreatment: "strip" } satisfies Record<
+      keyof NonNullable<BuyerInvoiceItem["trackedCategory"]>,
+      Leaf
+    >,
+  },
+  // no buyer screen (web portal or mobile) renders a line's tracked subcategory
   trackedSubcategory: "strip",
+  components: { plan: COMPONENT, many: true },
+  // derived { kind, label } object, carried whole (never a stored column)
+  displayUnit: "keep",
 } satisfies Record<keyof BuyerInvoiceItem, Plan>;
 
 const PAYMENT = {

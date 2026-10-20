@@ -39,15 +39,15 @@ export function invoiceDisplayUnitFor(input: {
   }
 }
 
-/** The (label, factor) written at first issue. */
+/**
+ * The (label, factor) written at first issue: the pieces kind only. A legacy line writes nothing (null): an issued invoice
+ * with no snapshot reads legacy, and a stored label+factor 1 would read back as pieces.
+ */
 export function displayUnitSnapshotOf(
   unit: InvoiceDisplayUnitView,
-  line: { unitsPerBox?: number | null; packLabel?: string | null; unitLabel?: string | null },
-): { label: string; factor: number } {
-  if (unit.kind === "pieces") return { label: unit.label ?? PIECE_LABEL, factor: 1 };
-  const upb = Number(line.unitsPerBox);
-  const factor = Number.isInteger(upb) && upb > 1 ? upb : 1;
-  return { label: line.unitLabel ?? line.packLabel ?? "Box", factor };
+): { label: string; factor: 1 } | null {
+  if (unit.kind !== "pieces") return null;
+  return { label: unit.label ?? PIECE_LABEL, factor: 1 };
 }
 
 /** The display unit an item renders in. DRAFT: live. Otherwise the snapshot; none (issued before SA-827) is legacy. */
@@ -177,4 +177,17 @@ export function invoiceDisplayLines(
   } catch {
     return today;
   }
+}
+
+/**
+ * SA-827 rule 3: the line's category/excise tax for the pieces view's "{category} tax" row. ONE mapping for every renderer;
+ * the amount is the stored line levy, echoed, never computed.
+ */
+export function invoiceDisplayCategoryTax(item: {
+  categoryTaxAmount?: number | string | null;
+  trackedCategory?: { name?: string | null } | null;
+}): { name: string; amount: number } | null {
+  const amount = Number(item.categoryTaxAmount ?? 0);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return { name: item.trackedCategory?.name?.trim() || "Category", amount };
 }

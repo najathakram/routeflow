@@ -98,8 +98,8 @@ export const CUSTOMER_INVOICE_FIELDS = [
   "paidAtSale", // row 401: derived boolean (isPaidAtSale), so the buyer copy shows no due date / terms on a till sale
 ] as const;
 
-/** Invoice line scalars a buyer screen reads. `product` and `components` are projected below; the
- *  line's tracked category / subcategory are not (no buyer screen renders them). */
+/** Invoice line scalars a buyer screen reads. `product`, `components` and the category NAME are projected below; the
+ *  line's tracked subcategory is not (no buyer screen renders it). */
 export const CUSTOMER_INVOICE_ITEM_FIELDS = [
   "id",
   "description",
@@ -118,6 +118,7 @@ export const CUSTOMER_INVOICE_ITEM_FIELDS = [
   "promoFreeUnits",
   "notes",
   "categoryTaxAmount",
+  "displayUnit", // SA-827: derived { kind, label } of the unit the line is shown in (never a stored column)
 ] as const;
 
 /** Invoice payment scalars a buyer screen reads (no memo, image key, bank charge, bounce reason or replaced-payment link). */
@@ -197,6 +198,7 @@ function shape(value: unknown, fn: (row: Row) => Row): unknown {
 
 const customerProduct = (p: Row) => pick(p, CUSTOMER_PRODUCT_FIELDS);
 const customerComponent = (c: Row) => pick(c, CUSTOMER_COMPONENT_FIELDS);
+const customerCategory = (c: Row) => pick(c, ["name"]);
 
 /** What the order projection may derive from the seller's settings (never from a client). */
 export interface CustomerOrderOptions {
@@ -221,6 +223,9 @@ function customerInvoiceItem(line: Row): Row {
   const out = pick(line, CUSTOMER_INVOICE_ITEM_FIELDS);
   if ("product" in line) out.product = shape(line.product, customerProduct);
   if ("components" in line) out.components = shape(line.components, customerComponent);
+  // SA-827: the pieces view's "{category} tax" row names the category: the NAME only (no id, no tax type)
+  if ("trackedCategory" in line)
+    out.trackedCategory = shape(line.trackedCategory, customerCategory);
   return out;
 }
 

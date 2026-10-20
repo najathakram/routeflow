@@ -1,4 +1,5 @@
 import {
+  invoiceDisplayCategoryTax,
   displayUnitForItem,
   displayUnitSnapshotOf,
   invoiceDisplayLines,
@@ -136,12 +137,33 @@ describe("snapshot codec", () => {
     expect(displayUnitForItem("SENT", { label: null, factor: null }, PIECES)).toEqual(LEGACY);
     expect(displayUnitForItem("PAID", { label: "Box", factor: 15 }, PIECES)).toEqual(LEGACY);
   });
-  it("displayUnitSnapshotOf", () => {
-    expect(displayUnitSnapshotOf(PIECES, {})).toEqual({ label: "Piece", factor: 1 });
-    expect(displayUnitSnapshotOf(LEGACY, { unitsPerBox: 15, packLabel: "Carton" })).toEqual({
-      label: "Carton",
-      factor: 15,
+  it("displayUnitSnapshotOf writes the pieces kind only; legacy is null (the column stays empty)", () => {
+    expect(displayUnitSnapshotOf(PIECES)).toEqual({ label: "Piece", factor: 1 });
+    expect(displayUnitSnapshotOf({ kind: "pieces", label: "Each" })).toEqual({
+      label: "Each",
+      factor: 1,
     });
-    expect(displayUnitSnapshotOf(LEGACY, {})).toEqual({ label: "Box", factor: 1 });
+    expect(displayUnitSnapshotOf({ kind: "pieces", label: null })).toEqual({
+      label: "Piece",
+      factor: 1,
+    });
+    expect(displayUnitSnapshotOf(LEGACY)).toBeNull();
+  });
+});
+
+describe("invoiceDisplayCategoryTax", () => {
+  it("maps the stored levy and its category name; none when zero", () => {
+    expect(
+      invoiceDisplayCategoryTax({
+        categoryTaxAmount: "3.50",
+        trackedCategory: { name: "Tobacco" },
+      }),
+    ).toEqual({ name: "Tobacco", amount: 3.5 });
+    expect(invoiceDisplayCategoryTax({ categoryTaxAmount: 2, trackedCategory: null })).toEqual({
+      name: "Category",
+      amount: 2,
+    });
+    expect(invoiceDisplayCategoryTax({ categoryTaxAmount: 0 })).toBeNull();
+    expect(invoiceDisplayCategoryTax({ categoryTaxAmount: null })).toBeNull();
   });
 });

@@ -14,6 +14,18 @@ const REPO = path.resolve(__dirname, "../../../..");
 const FORBIDDEN =
   /\b(?:invoiceUnitFactor|invoiceUnitLabel|invoiceLineDisplay|InvoiceLineDisplay|invoiceDisplayLines|InvoiceDisplayLines|invoiceDisplayUnitFor|displayUnitSnapshotOf|displayUnitForItem)\b/;
 
+/**
+ * SA-827 (I6): the CALLER names. The display helpers (live resolve, issue-time resolve/write/clear, the item decorator) may be
+ * called only from the two services that own the DRAFT -> issued transition, plus the display files. A new caller is a new
+ * place that decides when a snapshot is written, so it must be added here on purpose.
+ */
+const CALLER =
+  /\b(?:resolveLiveDisplayUnits|withItemDisplayUnits|resolveIssueDisplayUnits|writeIssueDisplayUnits|clearIssueDisplayUnits|displayUnit)\b/;
+const CALLER_FILES = [
+  "apps/api/src/invoices/invoices.service.ts",
+  "apps/api/src/bookkeeping/bookkeeping.service.ts",
+];
+
 /** Directories whose non-spec source writes or computes money. */
 const MONEY_DIRS = [
   "apps/api/src/invoices",
@@ -46,6 +58,7 @@ const DISPLAY_API_FILES = [
   "invoice-pdf-variant.ts",
   "invoice-pdf.service.ts",
   "invoice-detail-read.ts",
+  "invoice-display-unit.ts",
 ].map((n) => `apps/api/src/invoices/${n}`);
 const isDisplay = (f: string): boolean => DISPLAY_FILES.has(f) || DISPLAY_API_FILES.includes(f);
 
@@ -104,6 +117,7 @@ describe("G1: the invoice unit never reaches a money writer", () => {
   it("the display allow-list covers the PDF modules and the detail read, and nothing else", () => {
     expect(isDisplay("apps/api/src/invoices/invoice-pdf.service.ts")).toBe(true);
     expect(isDisplay("apps/api/src/invoices/invoice-detail-read.ts")).toBe(true);
+    expect(isDisplay("apps/api/src/invoices/invoice-display-unit.ts")).toBe(true);
     expect(isDisplay("apps/api/src/invoices/invoices.service.ts")).toBe(false);
     expect(isDisplay("apps/api/src/invoices/invoice-pdf-new-money.ts")).toBe(false);
     expect(isDisplay("apps/api/src/invoices/price-adjustment-ledger.ts")).toBe(false);
@@ -114,5 +128,47 @@ describe("G1: the invoice unit never reaches a money writer", () => {
       .filter((f) => !isDisplay(f))
       .filter((f) => FORBIDDEN.test(stripComments(fs.readFileSync(path.join(REPO, f), "utf8"))));
     expect(offenders).toEqual([]);
+  });
+
+  const read = (f: string): string => stripComments(fs.readFileSync(path.join(REPO, f), "utf8"));
+
+  it("the caller detector is not vacuous: it matches each display helper and ignores a comment", () => {
+    for (const n of [
+      "resolveLiveDisplayUnits",
+      "withItemDisplayUnits",
+      "resolveIssueDisplayUnits",
+      "writeIssueDisplayUnits",
+      "clearIssueDisplayUnits",
+      "displayUnit",
+    ])
+      expect(CALLER.test(`await ${n}(x);`)).toBe(true);
+    expect(CALLER.test(stripComments("// writeIssueDisplayUnits"))).toBe(false);
+  });
+
+  it("only the two owning services (and the display files) name a display helper", () => {
+    const offenders = rel
+      .filter((f) => !isDisplay(f) && !CALLER_FILES.includes(f))
+      .filter((f) => CALLER.test(read(f)));
+    expect(offenders).toEqual([]);
+  });
+
+  it("the owning services name ONLY the allowed helpers, and write the snapshot from exactly 4 call sites", () => {
+    const ALLOWED = new Set([
+      "resolveLiveDisplayUnits",
+      "withItemDisplayUnits",
+      "resolveIssueDisplayUnits",
+      "writeIssueDisplayUnits",
+      "clearIssueDisplayUnits",
+    ]);
+    const named = new Set<string>();
+    let writeCalls = 0;
+    for (const f of CALLER_FILES) {
+      const src = read(f);
+      for (const m of src.matchAll(new RegExp(CALLER.source, "g"))) named.add(m[0]);
+      writeCalls += (src.match(/\bwriteIssueDisplayUnits\(/g) ?? []).length;
+    }
+    expect([...named].filter((n) => !ALLOWED.has(n))).toEqual([]);
+    // markSent, the inline flip in createInvoiceFromOrderWithTenant, recordDeliveryPaymentInTx, bookkeeping recordPayment
+    expect(writeCalls).toBe(4);
   });
 });
