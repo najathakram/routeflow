@@ -300,7 +300,7 @@ describe("B288 — a bill with cash payments", () => {
 
       expect((prisma.supplierCredit as any).update).toHaveBeenCalledWith({
         where: { id: "credit-1" },
-        data: { balance: 300 },
+        data: { balance: { increment: 300 } }, // F35 (B291): refunds are relative under the credit lock
       });
       expect(prisma.vendorBill.delete).toHaveBeenCalledWith({ where: { id: "bill-1" } });
     });

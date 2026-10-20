@@ -89,6 +89,8 @@ describe("move to supplier credit", () => {
     mockedPost.mockResolvedValue({ data: { bill: { id: "bill-1" } } });
     const qc = createTestQueryClient();
     const spy = jest.spyOn(qc, "invalidateQueries");
+    // The test client collects unobserved queries at once; keep this one so its state can be read.
+    qc.setQueryDefaults(["suppliers"], { gcTime: Infinity });
     qc.setQueryData(["suppliers", "s1", "statement"], { timeline: [] });
     const wrapper = ({ children }: { children: React.ReactNode }) => (
       <QueryClientProvider client={qc}>{children}</QueryClientProvider>
