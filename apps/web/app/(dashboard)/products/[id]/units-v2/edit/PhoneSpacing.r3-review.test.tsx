@@ -12,7 +12,9 @@ const src = (...p: string[]) => fs.readFileSync(path.join(D, ...p), "utf8");
 describe("phone spacing above the first price row (below sm only)", () => {
   it("the opener row, the structure block and the actions row tighten", () => {
     const u = src("units-v2", "structure", "UnitStructure.tsx");
-    expect(u).toMatch(/"mt-3 max-sm:mt-0 flex flex-wrap/);
+    // the 12 px gap under an open Change prices panel stays (K11-19); only the closed case tightens, below sm
+    expect(u).toMatch(/"mt-3 max-sm:group-data-\[panel=closed\]:mt-0 flex flex-wrap/);
+    expect(u).not.toMatch(/max-sm:mt-0/);
     expect(u).toMatch(/data-testid="units-v2-structure" className="mb-3 max-sm:mb-2"/);
   });
 

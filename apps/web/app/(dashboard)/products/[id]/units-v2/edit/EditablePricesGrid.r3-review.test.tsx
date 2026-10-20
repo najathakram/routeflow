@@ -146,3 +146,23 @@ describe("R3 review item 4: Name / Contains read straight under the grid card", 
     expect(screen.getByTestId(T.orderUnit)).toHaveAttribute("aria-disabled", "true");
   });
 });
+
+describe("R3 review: the opener row's phone tightening knows whether Change prices is open", () => {
+  it("marks the unit-controls wrapper closed or open, as a group for the opener row", () => {
+    const { rerender } = mount({ unitControls: <div data-testid="uc" />, changePricesOpen: false });
+    const wrap = () => screen.getByTestId("uc").parentElement!;
+    expect(wrap().className).toMatch(/\bgroup\b/);
+    expect(wrap()).toHaveAttribute("data-panel", "closed");
+    rerender(
+      <PriceDraftProvider productId="p1">
+        <EditablePricesGrid
+          product={product}
+          onOpenChangePrices={() => {}}
+          unitControls={<div data-testid="uc" />}
+          changePricesOpen
+        />
+      </PriceDraftProvider>,
+    );
+    expect(wrap()).toHaveAttribute("data-panel", "open");
+  });
+});
