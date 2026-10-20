@@ -45,6 +45,7 @@ const en = {
   // Top bar / avatar menu
   "topbar.searchPlaceholder": "Search or jump to…",
   "menu.profile": "Profile & Settings",
+  "menu.getTheApp": "Get the app",
   "menu.language": "Language / Idioma",
   "menu.signOut": "Sign out",
   "menu.switchToBuyerPortal": "Switch to buyer portal",
@@ -97,6 +98,7 @@ const es: Messages = {
 
   "topbar.searchPlaceholder": "Busca o salta a…",
   "menu.profile": "Perfil y ajustes",
+  "menu.getTheApp": "Descarga la app",
   "menu.language": "Idioma / Language",
   "menu.signOut": "Cerrar sesión",
   "menu.switchToBuyerPortal": "Cambiar al portal de compradores",

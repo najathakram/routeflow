@@ -1994,6 +1994,22 @@ describe("BookkeepingService", () => {
       expect(data.amount).toBe(0.3);
       expect(data.amount).not.toBe(0.30000000000000004);
     });
+
+    it("row 591 sibling: a null amount keeps the stored amount (never an expense of $0)", async () => {
+      prisma.expense.findFirst.mockResolvedValue({
+        id: "exp-1",
+        status: "PENDING",
+        receivedAt: null,
+        paidAt: null,
+      });
+      prisma.expense.update.mockResolvedValue({ id: "exp-1" });
+
+      await service.updateExpense("exp-1", { amount: null, notes: "n" });
+
+      const data = prisma.expense.update.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty("amount"); // a direct read wrote roundMoney(null) = 0
+      expect(data.notes).toBe("n");
+    });
   });
 
   describe("extractExpenseItems", () => {

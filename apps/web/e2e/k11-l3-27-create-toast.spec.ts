@@ -104,8 +104,11 @@ for (const vp of VIEWPORTS) {
         await page.waitForTimeout(3_000);
         await expect(toasts(page, `${flavor} added to ${familyName}`)).toHaveCount(1);
         await shot(page, info, "k11-27-add-variant-toast");
+        // K12 F07: Create from the list opens the new product's page.
+        await expect(page).toHaveURL(/\/products\/[0-9a-f-]{36}/);
 
         // 2. New product, double-clicked: one product, one toast.
+        await page.goto("/products");
         await page.getByRole("button", { name: "New Product", exact: true }).click();
         const dlg2 = page.getByRole("dialog", { name: "New product" });
         await dlg2.getByLabel("Name *", { exact: true }).fill(standalone);
@@ -115,6 +118,9 @@ for (const vp of VIEWPORTS) {
         await page.waitForTimeout(3_000);
         await expect(toasts(page, `${standalone} created`)).toHaveCount(1);
         expect(await idsBySearch(page, ctx, standalone)).toHaveLength(1);
+        // K12 F07: the one product it made is the page that opened.
+        const [madeId] = await idsBySearch(page, ctx, standalone);
+        await expect(page).toHaveURL(new RegExp(`/products/${madeId}`));
       } finally {
         await retire(page, ctx, [
           ...(await idsBySearch(page, ctx, flavor)),
