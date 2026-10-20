@@ -84,4 +84,23 @@ describe("move to supplier credit", () => {
     expect(mockedPost).toHaveBeenCalledWith("/vendor-bills/bill-1/payments/pay-1/move-to-credit");
     expect(qc.getMutationCache().getAll()[0]?.meta).toEqual({ localErrorToast: true });
   });
+
+  it("invalidates the real supplier statement / credit keys, not a dead one", async () => {
+    mockedPost.mockResolvedValue({ data: { bill: { id: "bill-1" } } });
+    const qc = createTestQueryClient();
+    const spy = jest.spyOn(qc, "invalidateQueries");
+    qc.setQueryData(["suppliers", "s1", "statement"], { timeline: [] });
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useMoveVendorBillPaymentToCredit(), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync({ billId: "bill-1", paymentId: "pay-1" });
+    });
+    const keys = spy.mock.calls.map((c) => (c[0] as { queryKey: unknown[] }).queryKey);
+    expect(keys).toContainEqual(["suppliers"]);
+    expect(keys).not.toContainEqual(["supplier-statement"]);
+    // ["suppliers"] is a prefix of the statement query ["suppliers", id, "statement"].
+    expect(qc.getQueryState(["suppliers", "s1", "statement"])?.isInvalidated).toBe(true);
+  });
 });

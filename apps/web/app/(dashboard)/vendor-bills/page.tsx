@@ -1086,8 +1086,19 @@ function InventoryPurchasesTab() {
       return;
     try {
       const result = await bulkDelete.mutateAsync(Array.from(selectedBills.keys()));
+      // Word the title from why each bill was skipped: cash payments vs. status (received/paid).
+      const skippedForCash = result.skipped.filter(
+        (b) => b.code === API_ERROR_CODES.BILL_HAS_PAYMENTS,
+      ).length;
+      const skippedForStatus = result.skipped.length - skippedForCash;
+      const skipReasons = [
+        skippedForCash > 0 ? "has payments" : null,
+        skippedForStatus > 0 ? "received/paid" : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
       toast({
-        title: `${result.deleted} bill(s) deleted${result.skipped.length > 0 ? `, ${result.skipped.length} skipped (received/paid)` : ""}`,
+        title: `${result.deleted} bill(s) deleted${result.skipped.length > 0 ? `, ${result.skipped.length} skipped (${skipReasons})` : ""}`,
         // B288: a bill with cash payments is skipped, not deleted — say how to proceed.
         description: result.skipped.some((b) => b.code === API_ERROR_CODES.BILL_HAS_PAYMENTS)
           ? "Some bills have payments. Open each one and move its payments to a supplier credit first."

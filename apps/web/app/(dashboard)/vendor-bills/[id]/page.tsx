@@ -257,11 +257,13 @@ function VoidConfirmModal({
 
 function MovePaymentModal({
   payment,
+  billStatus,
   onClose,
   onConfirm,
   isPending,
 }: {
   payment: VendorBillPayment | null;
+  billStatus: string;
   onClose: () => void;
   onConfirm: () => void;
   isPending: boolean;
@@ -288,7 +290,9 @@ function MovePaymentModal({
       }
     >
       <p className="text-sm text-navy/70">
-        This bill owes that amount again. The credit goes to the next bill from this supplier.
+        {billStatus === "VOID"
+          ? "The credit goes to the next bill from this supplier."
+          : "This bill owes that amount again. The credit goes to the next bill from this supplier."}
       </p>
     </Modal>
   );
@@ -1010,7 +1014,7 @@ export default function VendorBillDetailPage() {
           setMovingPayment(null);
           toast({
             title: "Failed to move payment",
-            description: codedToastCopy(err) ?? "Please try again.",
+            description: codedToastCopy(err) ?? genericToastCopy(err),
             variant: "error",
           });
         },
@@ -1664,6 +1668,7 @@ export default function VendorBillDetailPage() {
 
       <MovePaymentModal
         payment={movingPayment}
+        billStatus={bill.status}
         onClose={() => setMovingPayment(null)}
         onConfirm={handleMovePaymentToCredit}
         isPending={movePaymentToCredit.isPending}

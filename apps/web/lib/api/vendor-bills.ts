@@ -489,7 +489,9 @@ export function useMoveVendorBillPaymentToCredit() {
     onSuccess: (_, { billId }) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", billId] });
-      qc.invalidateQueries({ queryKey: ["supplier-statement"] });
+      // The statement lives at ["suppliers", supplierId, "statement"] and the supplier's credit balance
+      // under the same prefix; the mutation does not know the supplierId, so invalidate the prefix.
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
     },
   });
 }
