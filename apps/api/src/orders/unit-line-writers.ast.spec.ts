@@ -1049,6 +1049,10 @@ const REVISIONS: Record<string, RevisionRow> = {
   "orders/delivered-stamp.ts::clearUnevidencedDelivered": statusOnly(
     "delivery evidence (deliveredQty), not the sale",
   ),
+  // B692: a manual PARTIALLY_DELIVERED records per-line delivery evidence (deliveredQty recompute), not the sale.
+  "orders/order-pd-quantities.ts::writeOfficeDeliveries": statusOnly(
+    "delivery evidence (deliveredQty), not the sale",
+  ),
   "routes/routes.service.ts::RoutesService.completeWithPayment": statusOnly(
     "delivery (deliveredQty), not the sale",
   ),

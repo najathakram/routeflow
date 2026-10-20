@@ -113,6 +113,21 @@ describe("handleMutationError (#1965)", () => {
     );
   });
 
+  // B1234: the staff item save opts in to the fixed copy; the change-request screen (no opt-in) still owns its own toast.
+  it("toasts LINE_ALREADY_DELIVERED for the staff item save (meta.lineDeliveredToast) and swallows it elsewhere", () => {
+    const { toast, router } = setup();
+    handleMutationError(axiosErr({ code: "LINE_ALREADY_DELIVERED" }), {}, toast, router);
+    expect(toast).not.toHaveBeenCalled();
+    handleMutationError(
+      axiosErr({ code: "LINE_ALREADY_DELIVERED", message: "raw" }),
+      { meta: { lineDeliveredToast: true } },
+      toast,
+      router,
+    );
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast.mock.calls[0][0].title).toMatch(/delivered line can't be changed or removed/);
+  });
+
   // B1135: the buyer's request form says this refusal inline; a second generic toast would repeat it.
   it("swallows ORDER_WITH_CARRIER_NO_CHANGE_REQUEST (the request form renders it itself)", () => {
     const { toast, router } = setup();

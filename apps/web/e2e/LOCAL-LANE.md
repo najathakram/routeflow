@@ -246,3 +246,11 @@ the counter on and restores the tenant's fulfilment config in `afterAll`; it nee
 it enters the counter from the nav, checks the 64 px rail (lg+ only), the peek (which never writes `rf-sidebar-collapsed`), Exit
 with and without a cart (the "Discard this sale?" guard) and the device preference redirect. It sells nothing and creates no rows
 (it only puts a product on the cart and discards it); the preference lives in the browser context's localStorage.
+
+## Spec 76 (`get-the-app`): same lane, same rules as 71
+
+`76-get-the-app.spec.ts` (row 559: the signed-in "Get the app" page) is registered under the same local-only condition. It logs in as
+the local super admin (`npm run local:sa`), reads the three platform app links, sets them to `example.test` URLs over
+`PUT /platform-admin/app-links`, and puts the previous values back in `afterAll`. As the operator it opens the page from the avatar
+menu, checks three buttons, then two (iPhone link cleared), then the empty copy and no menu item (all cleared); at 390 / 768 / 1280 it
+checks no horizontal overflow and saves a screenshot under `test-results/`. No button is clicked and nothing is installed.

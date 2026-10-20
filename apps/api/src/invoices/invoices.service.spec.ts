@@ -3134,7 +3134,7 @@ describe("InvoicesService", () => {
   });
 
   describe("unvoidInvoice restores invoicedQty", () => {
-    it("re-claims each line's invoicedQty (capped at line qty) when unvoiding", async () => {
+    it("re-claims each line's invoicedQty when its quantity is still free (uncapped: B299 refuses instead)", async () => {
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-1",
         status: "VOID",

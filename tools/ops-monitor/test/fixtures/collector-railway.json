@@ -1,0 +1,66 @@
+{
+  "id": "proj-1",
+  "name": "routeflow",
+  "environments": {
+    "edges": [
+      {
+        "node": {
+          "name": "staging",
+          "serviceInstances": {
+            "edges": [
+              {
+                "node": {
+                  "serviceName": "@routeflow/api",
+                  "latestDeployment": {
+                    "status": "FAILED",
+                    "createdAt": "2026-10-01T00:00:00Z",
+                    "meta": { "commitHash": "0000000" }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "node": {
+          "name": "production",
+          "serviceInstances": {
+            "edges": [
+              {
+                "node": {
+                  "serviceName": "@routeflow/api",
+                  "latestDeployment": {
+                    "status": "SUCCESS",
+                    "createdAt": "2026-10-19T09:05:00.000Z",
+                    "meta": { "commitHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+                  }
+                }
+              },
+              {
+                "node": {
+                  "serviceName": "@routeflow/web",
+                  "latestDeployment": {
+                    "status": "BUILDING",
+                    "createdAt": "2026-10-19T09:06:00.000Z",
+                    "meta": { "commitHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+                  }
+                }
+              },
+              {
+                "node": {
+                  "serviceName": "postgres",
+                  "latestDeployment": {
+                    "status": "SUCCESS",
+                    "createdAt": "2026-09-01T00:00:00Z",
+                    "meta": {}
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

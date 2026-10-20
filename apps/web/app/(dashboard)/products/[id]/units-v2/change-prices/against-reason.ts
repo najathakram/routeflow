@@ -12,7 +12,9 @@ import { formatMoney } from "@/lib/format";
 // K11-17: a Change prices preview row that moves against the chosen direction says why. The reason itself is the pricing
 // package's (`explainMove` knows which Set price an Auto price follows); this only words it. No money is worked out here.
 
-export const NO_REASON = "This price follows another price that is not moving.";
+/** What the row does, said first so nobody reads the reason as "why it will not move" (K12 F03). */
+const verbOf = (direction: PriceChange["direction"]) =>
+  direction === "raise" ? "Goes down" : "Goes up";
 
 /** A Raise that shows a lower price, or a Lower that shows a higher one. */
 export const movesAgainst = (
@@ -40,7 +42,10 @@ export function againstReason({
   tierName: (tier: PriceTier) => string;
 }): string {
   const why = explainMove(view, rules, change, plan.changes);
-  if (!why) return NO_REASON;
-  const follows = `Follows ${tierName(why.tier)} ${why.label} ${formatMoney(why.value)}, which you set.`;
-  return also ? follows : `${follows} Tick "Also ${direction} the prices you set" to move it.`;
+  const verb = verbOf(direction);
+  if (!why) return `${verb}: it follows another price that is not moving.`;
+  const price = `${tierName(why.tier)} ${why.label} ${formatMoney(why.value)}`;
+  if (also) return `${verb}: it follows ${price}, which you set.`;
+  const ing = direction === "raise" ? "raising" : "lowering";
+  return `${verb}: it follows ${price}, which you set and are not ${ing}. Tick "Also ${direction} the prices you set" to ${direction} it.`;
 }

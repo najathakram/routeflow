@@ -130,6 +130,10 @@ export const API_ERROR_CODES = {
   MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
   ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
   ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
+  /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
+  ORDER_PD_NEEDS_QUANTITIES: "ORDER_PD_NEEDS_QUANTITIES",
+  /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
+  ORDER_DELIVERY_QUANTITIES_MISSING: "ORDER_DELIVERY_QUANTITIES_MISSING",
   ORDER_BILLING_CHANGED: "ORDER_BILLING_CHANGED",
   ORDER_EDIT_WOULD_OVERPAY: "ORDER_EDIT_WOULD_OVERPAY",
   FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
@@ -262,6 +266,8 @@ export const API_ERROR_CODES = {
   HANDOFF_ROLE_NOT_ALLOWED: "HANDOFF_ROLE_NOT_ALLOWED",
   REGULATED_AUTH_REQUIRED: "REGULATED_AUTH_REQUIRED",
   WALLET_LOCK_BUSY: "WALLET_LOCK_BUSY",
+  /** An advance payment can only be applied to an invoice of its own customer (customers). 400. */
+  ADVANCE_CUSTOMER_MISMATCH: "ADVANCE_CUSTOMER_MISMATCH",
   PROMOTION_ZERO_PRICE: "PROMOTION_ZERO_PRICE",
   UNEXPLAINED_DIFFS: "UNEXPLAINED_DIFFS",
   INTAKE_ANSWERS_INVALID: "INTAKE_ANSWERS_INVALID",
@@ -595,6 +601,8 @@ export const API_ERROR_CODES = {
    * was written, so the caller never gets the tier price instead of the customer's typed price.
    */
   CUSTOMER_PRICES_UNAVAILABLE: "CUSTOMER_PRICES_UNAVAILABLE",
+  /** 400 from PUT /platform-admin/app-links: a link is not an https URL with a host; body carries `field`. */
+  APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

@@ -47,6 +47,7 @@ import { staffMay } from "@routeflow/types";
 import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
+import { GetTheAppStrip } from "./GetTheAppStrip";
 import { GettingStartedBanner } from "./GettingStartedBanner";
 import { useTenantOnboarding } from "@/lib/api/onboarding";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
@@ -869,6 +870,9 @@ export default function DashboardPage() {
         visible={baseIsDriver && !driverBannerDismissed}
         onDismiss={() => setDriverBannerDismissed(true)}
       />
+
+      {/* ── Install-the-app nudge (row 559; never for drivers, who get the banner above) ── */}
+      <GetTheAppStrip isDriver={baseIsDriver} />
 
       {/* ── Driver with neither the routes nor the delivery add-on (#2254) ── */}
       {driverWithoutRuns && (

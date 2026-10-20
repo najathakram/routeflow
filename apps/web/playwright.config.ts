@@ -1105,6 +1105,16 @@ export default defineConfig({
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
           },
+          // Row 559 (Get the app): writes the platform-wide app links (restored in afterAll); local lane only like 71-73.
+          {
+            name: "get-the-app",
+            testMatch: /76-get-the-app\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
         ]
       : []),
   ],

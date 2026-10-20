@@ -207,4 +207,31 @@ describe("RouteGuard (B449 fix-round finding 5)", () => {
     );
     expect(mockReplace).not.toHaveBeenCalled();
   });
+
+  // Row 559: the install page is for every dashboard role, matched exactly like /settings.
+  it("a CUSTOMER and a DRIVER may open /get-the-app", () => {
+    for (const role of ["CUSTOMER", "DRIVER"]) {
+      mockReplace.mockClear();
+      mockUser = { role };
+      mockPathname = "/get-the-app";
+      const { unmount } = render(
+        <RouteGuard>
+          <div />
+        </RouteGuard>,
+      );
+      expect(mockReplace).not.toHaveBeenCalled();
+      unmount();
+    }
+  });
+
+  it("does not open the rest of a /get-the-app prefix to a CUSTOMER", () => {
+    mockUser = { role: "CUSTOMER" };
+    mockPathname = "/get-the-app/other";
+    render(
+      <RouteGuard>
+        <div />
+      </RouteGuard>,
+    );
+    expect(mockReplace).toHaveBeenCalledWith("/dashboard");
+  });
 });

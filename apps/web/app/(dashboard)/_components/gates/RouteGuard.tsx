@@ -26,8 +26,9 @@ const DRIVER_ALLOWED: string[] = ["/dashboard", "/routes"];
  * REG-B1013: `/settings` is a CUSTOMER/DRIVER's own account page (password, sessions, Google sign-in),
  * matched EXACTLY — every business sub-page under it (billing, restrictions, imports, migration,
  * product categories) is staff-only. The settings page itself also hides the hub from these roles.
+ * `/get-the-app` (row 559) is the install page every dashboard role may open.
  */
-const ROLE_EXACT_ALLOWED: string[] = ["/settings"];
+const ROLE_EXACT_ALLOWED: string[] = ["/settings", "/get-the-app"];
 /**
  * In-development surfaces gated per-feature addon (owner decision 2026-08-25:
  * recurring routes and ad-hoc order delivery are separate addons; owner

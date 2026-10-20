@@ -1,0 +1,7 @@
+# B299 — unvoid re-claims invoicedQty only when the quantity is free (branch, pre-landing)
+
+- `apps/api/src/invoices/invoices.service.ts` `adjustInvoicedQtyForInvoice(tx, invoiceId, orderId, direction)` — resolves invoice lines to order lines first (by `orderItemId`, legacy by product), then writes. Direction -1 (void/delete) keeps the clamp `[0, line qty]`; direction +1 (unvoid) is NOT clamped.
+- Guard (+1, under the SA-760 R-1 Order -> Invoice locks of `unvoidInvoice`, before any write; the claim now runs BEFORE the DRAFT flip): every line needs `qty - invoicedQty >= delta` (`QTY_EPSILON`) on a non-CANCELLED order line, else 409 `ORDER_BILLING_CHANGED` "Another invoice now bills these items. Void it first." (existing code, no new one; SA-814 R4-5).
+- Not touched: `partial-invoice-cas.ts` (increment CAS, not a clamp); `finalize-order-recompute.ts` partial branch still derives invoicedQty as `min(qty, billed)` (a sync, not a claim).
+- Specs: `invoices.unvoid-billing-claim-b299.spec.ts` (unit, fake db: a/b/c + void-direction clamp), `b299-unvoid-billing-claim.db.spec.ts`; `invoices.service.spec.ts` reworded to the void direction.
+- `apps/api/src/invoices/unvoid-billing-claim.ts` `planInvoicedQtyAdjustment(items, orderItems, direction): { refusal } | { writes: {id, invoicedQty}[] }` — pure claim resolution + free-qty check + OTHER_INVOICE/LINE_REDUCED reason (SA-814d/f); the service keeps the tx reads/writes and throws the 409. Void-direction clamp specs moved into the b299 spec.
