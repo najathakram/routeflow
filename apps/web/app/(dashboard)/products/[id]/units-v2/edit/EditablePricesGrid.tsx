@@ -157,7 +157,7 @@ export function EditablePricesGrid({
           )}
         </div>
         {panel}
-        {unitControls}
+        {unitControls ? <div data-wide-inset="">{unitControls}</div> : null}
         <ProductPricesGrid
           product={product}
           edit={edit}
