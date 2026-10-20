@@ -50,7 +50,8 @@ function derivedPiece(pack: number, n: number): Pick<UnitOption, "price" | "deri
  * Put the customer's layer prices on the picker's options (S19b): each option with a layer row (the pack included) takes
  * `customerLinePrice`'s price and list and records it as `layerLine`. No layer (flag off) or no row for an option = the
  * option unchanged, so master's ladder price stands. A derived Piece bills as the pack's proration, so it takes the layer's PACK
- * price over the pack size, except on an existing line (`ownPack`, row 630): that line keeps the price and size it was sold at.
+ * price over the pack size, except on an existing line (`ownPack`, row 630): that line keeps the price and size it was sold at,
+ * whether or not the customer has a layer or a pack row in it (the server re-splits the line at its own size and price).
  */
 export function withLayerPrices(
   options: readonly UnitOption[],
@@ -59,10 +60,16 @@ export function withLayerPrices(
   layer?: readonly CustomerLayerUnit[] | null,
   ownPack?: OwnPackBasis | null,
 ): UnitOption[] {
-  if (!layer || layer.length === 0) return options as UnitOption[];
+  // Row 630: an existing line's derived Piece is its OWN price over its OWN size, before any layer lookup. It is not a layer
+  // line, so no `layerLine` (its price and baseline stay the line's).
+  const own = ownPack && ownPack.unitsPerBox > 1 ? ownPack : null;
+  const ownPiece = (o: UnitOption): UnitOption =>
+    own && o.derived ? { ...o, ...derivedPiece(roundMoney(own.unitPrice), own.unitsPerBox) } : o;
+  if (!layer || layer.length === 0) return own ? options.map(ownPiece) : (options as UnitOption[]);
   const t = Number(tier);
   return options.map((o) => {
     if (o.derived) {
+      if (own) return ownPiece(o);
       // The Piece bills as the pack's proration: the layer's PACK price is what it divides.
       const pack = customerLinePrice({
         product: product as unknown as Record<string, unknown>,
@@ -71,16 +78,7 @@ export function withLayerPrices(
         unitLabel: null,
         tierPrice: o.derived.packPrice,
       });
-      if (!pack.layered) return o;
-      if (ownPack && ownPack.unitsPerBox > 1) {
-        // Row 630: an existing line is priced from its OWN price over its OWN size, never the live layer price; it is not a
-        // layer line, so no `layerLine` (its price and baseline stay the line's).
-        return {
-          ...o,
-          ...derivedPiece(roundMoney(ownPack.unitPrice), ownPack.unitsPerBox),
-        };
-      }
-      return { ...o, ...derivedPiece(pack.price, o.derived.n), layerLine: pack };
+      return pack.layered ? { ...o, ...derivedPiece(pack.price, o.derived.n), layerLine: pack } : o;
     }
     const lp = customerLinePrice({
       product: product as unknown as Record<string, unknown>,

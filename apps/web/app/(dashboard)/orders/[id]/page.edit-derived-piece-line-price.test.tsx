@@ -179,6 +179,59 @@ describe("row 630: a derived Piece of an existing line keeps the line's own pric
     expect(screen.getByText("$30.00")).toBeInTheDocument();
   });
 
+  it.each([6, 24])(
+    "flag off, live product %i: the Piece still keeps the line's own $12.00 at 12 per box, 30 pcs = $30.00",
+    (live) => {
+      const line = storedLine(live);
+      const latest = pickPieceAndType30(buildEditItemFromLine(line));
+      expect(latest[0]!.unitPrice).toBe(12);
+      expect(latest[0]!.unitsPerBox).toBe(12);
+      expect(screen.getByText("$30.00")).toBeInTheDocument();
+      expect(buildItemUpdates(latest, [line])).toEqual([]);
+    },
+  );
+
+  it.each([6, 24])(
+    "a layer with no pack row, live product %i: the Piece keeps the line's own price and size",
+    (live) => {
+      const line = storedLine(live);
+      const latest = pickPieceAndType30(buildEditItemFromLine(line), CASE_ONLY_LAYER);
+      expect(latest[0]!.unitPrice).toBe(12);
+      expect(latest[0]!.unitsPerBox).toBe(12);
+      expect(screen.getByText("$30.00")).toBeInTheDocument();
+      expect(buildItemUpdates(latest, [line])).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["flag off", undefined],
+    ["layered", LIVE_LAYER],
+  ])(
+    "%s: a SPECIAL line stored at $10 (list $12) stays $10, never repriced up to list",
+    (_n, layer) => {
+      const line = {
+        ...(storedLine(12) as object),
+        unitPrice: 10,
+        originalPrice: 12,
+        priceType: "SPECIAL",
+        subtotal: 25,
+      } as never;
+      const latest = pickPieceAndType30(buildEditItemFromLine(line), layer as never);
+      expect(latest[0]!.unitPrice).toBe(10);
+      expect(latest[0]!.unitsPerBox).toBe(12);
+      expect(screen.getByText("$25.00")).toBeInTheDocument();
+      expect(buildItemUpdates(latest, [line])).toEqual([]);
+    },
+  );
+
+  it("DECISION: a pack price typed this session is replaced by the STORED price when Piece is picked", () => {
+    // the Piece is the line's stored price over its stored size, so the operator's unsaved $11 on the pack does not carry over
+    const seed = { ...buildEditItemFromLine(storedLine(12)), unitPrice: 11, priceEdited: true };
+    const latest = pickPieceAndType30(seed, LIVE_LAYER);
+    expect(latest[0]!.unitPrice).toBe(12);
+    expect(screen.getByText("$30.00")).toBeInTheDocument();
+  });
+
   it("a FRESH line still takes the live layer price: $18 a box at 12 per box = $1.50 a piece", () => {
     let latest: EditItemState[] = [];
     renderWithProviders(

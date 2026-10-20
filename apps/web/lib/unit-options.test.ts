@@ -232,9 +232,18 @@ describe("withLayerPrices: an existing line's derived Piece (row 630)", () => {
     expect(o!.derived?.exact).toBe(false);
   });
 
-  it("no layer row for the pack: the option is returned unchanged", () => {
+  it("no layer row for the pack: a fresh line's option is unchanged, an existing line keeps its own basis", () => {
     const caseOnly = { ...packRow, ref: "u1", label: "Case" };
+    expect(withLayerPrices([derived], prod, 1, [caseOnly])[0]).toBe(derived);
     const [o] = withLayerPrices([derived], prod, 1, [caseOnly], { unitPrice: 12, unitsPerBox: 12 });
-    expect(o).toBe(derived);
+    expect(o!.price).toBe(1);
+    expect(o!.derived).toEqual({ n: 12, packPrice: 12, exact: true });
+  });
+
+  it("no layer at all (flag off): an existing line keeps its own basis, a fresh line is unchanged", () => {
+    expect(withLayerPrices([derived], prod, 1, null)[0]).toBe(derived);
+    const [o] = withLayerPrices([derived], prod, 1, undefined, { unitPrice: 10, unitsPerBox: 12 });
+    expect(o!.price).toBe(0.83);
+    expect(o!.derived).toEqual({ n: 12, packPrice: 10, exact: false });
   });
 });
