@@ -5,9 +5,15 @@
 -- Additive only: two nullable columns (metadata-only ADD COLUMN, no rewrite, no backfill) and one new type.
 -- Write-off is DERIVED from (type, sign, reason) — there is deliberately no write-off column.
 
+-- SA-582: one transaction, each statement bounded by lock_timeout (fails fast instead of queueing behind traffic).
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+
 -- CreateEnum
 CREATE TYPE "AdjustmentReason" AS ENUM ('DAMAGED', 'EXPIRED', 'THEFT', 'SAMPLE', 'COUNT_CORRECTION', 'OTHER');
 
 -- AlterTable
 ALTER TABLE "StockMovement" ADD COLUMN "reason" "AdjustmentReason",
 ADD COLUMN "reasonNote" TEXT;
+
+COMMIT;
