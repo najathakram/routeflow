@@ -302,19 +302,26 @@
 - **Lesson:** **Run the DB lane in chunks (a fixed number of suites per Jest process, each against the same migrated database), and treat an OOM at a stable suite count as a batching problem, not a flaky test. Re-run only the failed chunk.**
 - **Guard:** none automatic; the chunked invocation in the lane runbook.
 
+### L-326 · 2026-10-20 · testing · a migration that retires a known edge updates, in the same train, every spec that pins the edge's old behavior
+
+- **Symptom:** after a column widen retired a rounding edge (B296, a 4-dp rate), a spec that asserted the old 4-dp clamp stayed in the tree; it was green on its own branch and red only on the combined R5 tree.
+- **Root cause:** the pin lived in a different branch from the migration, so neither branch's run held both the new column and the old assertion, and a diff review cannot see a spec that asserts a behavior the migration removed.
+- **Lesson:** **When a migration retires a known edge (a widen, a dropped clamp, a new constraint), grep the specs for the edge's bug id and its old literal values in the same train and update each pin to the new rule; the pin goes red only on the combined tree, so run it there before the push.**
+- **Guard:** none automatic; the train gate runs the full suite on the combined tree (cf. [[L-264]], [[L-323]]).
+
+### L-327 · 2026-10-20 · testing · a more specific refusal added ahead of an existing guard is grepped against every spec that pins the old generic code
+
+- **Symptom:** a new coded refusal (a bill with cash payments, BILL_HAS_PAYMENTS) was added ahead of the generic state guard; race and concurrency specs that pinned the old generic code then failed on the combined tree.
+- **Root cause:** those specs asserted the old error code as a stand-in for "the second writer lost"; the new guard fires first on the same input, so the invariant still held but the expected code was stale.
+- **Lesson:** **When a new guard or error code is inserted ahead of an existing one, grep the specs for the old code and update each; keep the invariant the spec proves (one writer wins, nothing written) and change only the expected code, never loosen the assertion to accept any error.**
+- **Guard:** none automatic; the train gate runs the full suite (cf. [[L-264]]).
+
 ### L-320 · 2026-10-18 · testing · pin the mouse path of a button inside a clipped scroll wrapper, not only the keyboard path
 
 - **Symptom:** K11-16: saving with a real mouse click at desktop width left the saved-line 64 px short of its place, while Ctrl+S and Enter, which never move the pointer, looked correct.
 - **Root cause:** a real click focuses and scrolls its button into view; inside an `overflow: hidden` wrapper the browser can still scroll that wrapper, which the keyboard path never triggers. An unit test with `fireEvent.click` does neither.
 - **Lesson:** **For a control inside an overflow-hidden or sticky region, the e2e drives the REAL mouse click and asserts the scroll offset and the position of what the action reveals, in addition to the keyboard path. A synthetic click proves the handler, not the layout.**
 - **Guard:** `k11-l2-saved-line.spec.ts` (mouse Save at 1440; currently marked `test.fail` until the fix lands).
-
-### L-314 · 2026-10-17 · testing · back-to-back creates can tie on createdAt, so a test that asserts "oldest" pins the timestamps
-
-- **Symptom:** two label-sync specs picked the wrong category about half the time on a fast runner ("Dup" and "dup" created one statement apart); the b846 twin hit the same tie.
-- **Root cause:** the writer orders by `createdAt asc, id asc`; two rows created in the same millisecond tie on createdAt and the id tie-break is a random uuid, so "the oldest" is a coin flip the test never controlled.
-- **Lesson:** **A test that asserts an oldest, newest or first-created pick sets `createdAt` explicitly on every row it ranks (a second apart), or forces the tie on purpose and asserts the documented tie-break. Never rely on insertion order or the wall clock to separate two rows.**
-- **Guard:** the pinned `createdAt` in `label-sync.db.spec.ts` (branch fix/label-sync-oldest-tie) and the forced tie in the b846 twin (`vendor-bills.revert-appends.db.spec.ts`); none automatic.
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
 
@@ -395,13 +402,6 @@
 - **Root cause:** the product page offered the price in the grid, in Details and on the legacy units card, each with its own editable draft, so any of them could write a value it loaded before another saved.
 - **Lesson:** **A value that appears in several places has exactly ONE editor and one draft. Every other appearance is a read-only figure from the served data that opens that editor (a button, plain text when it cannot be edited). Then a stale write cannot happen by construction, and "which place saved last" is not a question.**
 - **Guard:** `units-v2-details-stale-price.spec.ts` (e2e), `k11-l3-floating-editor.spec.ts` (e2e). Cf. [[L-300]].
-
-### L-319 · 2026-10-18 · domain · a per-line check against a shared pool sums per product first
-
-- **Symptom:** B920: a buyer could oversell one product by splitting it across two order lines; each line passed the stock check alone and the decrement then went negative.
-- **Root cause:** the oversell check judged each line against the on-hand figure, while the decrement and the SALE row used a different grouping.
-- **Lesson:** **When lines share a pool (stock, a credit limit, a restriction), compute ONE per-product total (in the pool's unit, boxed and piece lines together) before anything is judged, and have the check, the decrement and the ledger row all read that total. Pin it with a test that splits one product across two lines and fails on the old per-line value.**
-- **Guard:** `order-stock.b920.spec.ts` (two lines of one product, and a mixed box and piece sum) and `order-stock-b920.db.spec.ts`.
 
 ### L-310 · 2026-10-16 · domain · every path that destroys a row holding booked stock settles that stock through the cancel's own unwind
 

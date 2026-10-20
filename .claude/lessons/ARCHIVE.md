@@ -4174,3 +4174,17 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the session carried no digest of the terms it was built from, so staleness was inferred from fields that did not cover every term, and a missing signature was read as "nothing to compare".
 - **Lesson:** **Sign (sha256) the exact params the session builder sends, store the signature in the session metadata, and on reuse recompute it from a fresh plan. A missing or different signature means expire-then-release and replan, never reuse. Gate the rule by a dated SIGNING_SINCE so older sessions are replaced, not grandfathered silently.**
 - **Guard:** `catchup-session-terms.spec.ts`, `payment-due.terms.spec.ts`, `payment-due.stale-session.spec.ts` (`catchupTermsSignature`, `assertSignedSession`).
+
+### L-314 · 2026-10-17 · testing · back-to-back creates can tie on createdAt, so a test that asserts "oldest" pins the timestamps
+
+- **Symptom:** two label-sync specs picked the wrong category about half the time on a fast runner ("Dup" and "dup" created one statement apart); the b846 twin hit the same tie.
+- **Root cause:** the writer orders by `createdAt asc, id asc`; two rows created in the same millisecond tie on createdAt and the id tie-break is a random uuid, so "the oldest" is a coin flip the test never controlled.
+- **Lesson:** **A test that asserts an oldest, newest or first-created pick sets `createdAt` explicitly on every row it ranks (a second apart), or forces the tie on purpose and asserts the documented tie-break. Never rely on insertion order or the wall clock to separate two rows.**
+- **Guard:** the pinned `createdAt` in `label-sync.db.spec.ts` (branch fix/label-sync-oldest-tie) and the forced tie in the b846 twin (`vendor-bills.revert-appends.db.spec.ts`); none automatic.
+
+### L-319 · 2026-10-18 · domain · a per-line check against a shared pool sums per product first
+
+- **Symptom:** B920: a buyer could oversell one product by splitting it across two order lines; each line passed the stock check alone and the decrement then went negative.
+- **Root cause:** the oversell check judged each line against the on-hand figure, while the decrement and the SALE row used a different grouping.
+- **Lesson:** **When lines share a pool (stock, a credit limit, a restriction), compute ONE per-product total (in the pool's unit, boxed and piece lines together) before anything is judged, and have the check, the decrement and the ledger row all read that total. Pin it with a test that splits one product across two lines and fails on the old per-line value.**
+- **Guard:** `order-stock.b920.spec.ts` (two lines of one product, and a mixed box and piece sum) and `order-stock-b920.db.spec.ts`.
