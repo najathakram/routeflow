@@ -85,3 +85,38 @@ export const REGISTRY_FIXTURE: FeatureRegistryRow[] = [
     billing: { skus: [] },
   },
 ];
+
+/** A free configuration row: no plan flag or add-on gates it (`gate.via: "none"`), so an
+ *  override on it would do nothing. Kept out of REGISTRY_FIXTURE so its row counts stay put. */
+export const FULFILMENT_MODEL_ROW: FeatureRegistryRow = {
+  key: "fulfilment_model",
+  kind: "boolean",
+  area: "routes",
+  label: "Where orders go",
+  description: "Whether orders go out on delivery runs, ship by carrier, or both.",
+  lifecycle: "ga",
+  internal: false,
+  gate: { via: "none", state: "none" },
+  billing: { skus: [] },
+  config: {
+    fallbackMode: "unset",
+    modes: [
+      { key: "unset", label: "Not configured (today's behavior)", lifecycle: "ga" },
+      { key: "delivery", label: "Own delivery", lifecycle: "ga" },
+      { key: "ship", label: "Ship by carrier", lifecycle: "ga" },
+    ],
+  },
+};
+
+/** A plain on/off row nothing checks yet (`gate.via: "none"`, no `config`). */
+export const UNCHECKED_SETTING_ROW: FeatureRegistryRow = {
+  key: "unchecked_setting",
+  kind: "boolean",
+  area: "platform",
+  label: "Unchecked setting",
+  description: "A setting no route or screen reads yet.",
+  lifecycle: "proposed",
+  internal: false,
+  gate: { via: "none", state: "none" },
+  billing: { skus: [] },
+};

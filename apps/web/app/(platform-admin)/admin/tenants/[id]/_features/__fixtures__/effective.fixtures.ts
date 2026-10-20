@@ -129,3 +129,26 @@ export const TENANT_FEATURES_RESPONSE_FIXTURE: TenantFeaturesResponse = {
   catalogVersionId: CATALOG_VERSION_ID,
   computedAt: "2026-09-17T00:00:00.000Z",
 };
+
+/** The effective row for FULFILMENT_MODEL_ROW. The real wire shape for a free config row: the old
+ *  path serves it OFF, the resolver says ON from the plan default, and the API also carries the
+ *  applied mode with its source. */
+export function fulfilmentModeEffective(mode?: EffectiveFeature["mode"]): EffectiveFeature {
+  return base("fulfilment_model", "routes", {
+    serving: false,
+    resolver: true,
+    source: "PRESET",
+    detail: {
+      planKey: "SCALE",
+      catalogVersionId: CATALOG_VERSION_ID,
+      term: "default",
+      enforced: false,
+    },
+    ...(mode ? { mode } : {}),
+  });
+}
+
+/** The effective row for UNCHECKED_SETTING_ROW: the plan does not include it. */
+export function uncheckedSettingEffective(): EffectiveFeature {
+  return base("unchecked_setting", "platform");
+}
