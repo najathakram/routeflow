@@ -19,7 +19,7 @@ export const BTN =
  * cure as the counter's checkout bar, #3500). The bar's own `bottom` (through the shell's pb-24) is the shared
  * `useShellBottom`, the one rule the pinned saved line uses too.
  */
-function useBarScrollPadding() {
+function useBarScrollPadding(): [(el: HTMLDivElement | null) => void, number] {
   const [height, setHeight] = React.useState(0);
   const observer = React.useRef<ResizeObserver | null>(null);
   // A callback ref: the bar mounts only while editing, so the observer follows the element, and its height is 0 when gone.
@@ -52,7 +52,7 @@ function useBarScrollPadding() {
       else main.style.removeProperty("padding-bottom");
     };
   }, [height]);
-  return ref;
+  return [ref, height];
 }
 
 const FINISH_FIRST = "Finish Change prices first.";
@@ -125,8 +125,9 @@ export function PriceEditBar({
     wasConfirm.current = confirm;
   }, [confirm, askingProp]);
   const [told, setTold] = React.useState(false);
-  const barRef = useBarScrollPadding();
-  const bottom = useShellBottom(d.editing);
+  const [barRef, barHeight] = useBarScrollPadding();
+  // The scroller is padded by the bar's height (P10/P11), so the sticky offset is the shell's padding plus that height.
+  const bottom = useShellBottom(d.editing, barHeight);
   React.useEffect(() => {
     if (!here) setConfirm(false);
   }, [here, setConfirm]);
@@ -149,6 +150,13 @@ export function PriceEditBar({
     return () => window.removeEventListener("keydown", block, true);
   }, [changePricesOpen, here, setConfirm]);
   if (!here) return null;
+  const longSentence =
+    !confirm &&
+    !changePricesOpen &&
+    d.problems.length === 0 &&
+    d.count > 0 &&
+    !!d.appliedLead &&
+    d.appliedFollows > 0;
   const label = (ref: string) => d.grid?.rows.find((r) => r.ref === ref)?.label ?? ref;
   return (
     <div
@@ -165,7 +173,13 @@ export function PriceEditBar({
       }
     >
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <div data-testid={T.ebText} className="min-w-0 flex-1 text-sm text-navy" aria-live="polite">
+        <div
+          data-testid={T.ebText}
+          // K13 R3: the sentence that also names the Auto followers is ~70 characters; beside Cancel and Save it wrapped to
+          // three lines at phone width. Below sm it takes the whole row (the buttons drop under it) and holds two.
+          className={`min-w-0 flex-1 text-sm text-navy${longSentence ? " max-sm:basis-full" : ""}`}
+          aria-live="polite"
+        >
           {confirm ? (
             <strong>Discard your unsaved changes?</strong>
           ) : d.problems.length > 0 ? (
@@ -253,7 +267,7 @@ export function PriceEditBar({
             </button>
           </div>
         ) : (
-          <div key="actions" className="flex items-center gap-2">
+          <div key="actions" className="ml-auto flex items-center gap-2">
             <button
               ref={cancelRef}
               type="button"

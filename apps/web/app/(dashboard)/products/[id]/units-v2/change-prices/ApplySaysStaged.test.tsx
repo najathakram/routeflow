@@ -140,6 +140,24 @@ describe("K11-15: after Apply the bar says what is staged and focus goes to Save
     expect(1 + Number(m![1])).toBe(willChange);
   });
 
+  // K13 R3: at phone width the long sentence (with the Auto followers) beside Cancel and Save wrapped to three lines. Below
+  // sm it takes the whole row and the buttons drop under it, so it holds two lines; the plain count stays beside them.
+  it("below sm the sentence that names Auto followers takes its own row; the plain count does not", async () => {
+    const user = userEvent.setup();
+    mount();
+    await raiseCaseFivePercent(user);
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(barText()).toMatch(/Auto prices? follows?/);
+    expect(screen.getByTestId(T.ebText).className).toContain("max-sm:basis-full");
+    const box = within(screen.getByTestId(T.row("piece"))).getByTestId(
+      T.input("piece", 2),
+    ) as HTMLInputElement;
+    await user.clear(box);
+    await user.type(box, "1.1");
+    expect(barText()).toMatch(/unsaved/);
+    expect(screen.getByTestId(T.ebText).className).not.toContain("max-sm:basis-full");
+  });
+
   it("no render shows staged prices without the sentence (no one-frame unsaved flash)", async () => {
     const user = userEvent.setup();
     mount();
