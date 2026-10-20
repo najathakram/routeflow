@@ -27,6 +27,8 @@ export interface CountTarget {
   name: string;
   unit: string;
   unitsPerBox?: number | null;
+  packLabel?: string | null;
+  baseUnitLabel?: string | null;
   /** PIECES (system-wide stock unit). */
   currentStock: number;
 }
@@ -66,7 +68,7 @@ export function CountAdjustModal({
   const [serverError, setServerError] = React.useState<string | null>(null);
 
   // Default to the pack (first option); keep a chosen unit that is still offered.
-  const unit = options.some((o) => o.label === form.unit) ? form.unit : (options[0]?.label ?? "");
+  const unit = options.some((o) => o.value === form.unit) ? form.unit : (options[0]?.value ?? "");
   const f: CountForm = { ...form, unit };
   const patch = (p: Partial<CountForm>) => {
     setServerError(null);
@@ -159,7 +161,7 @@ export function CountAdjustModal({
                 className={`${INPUT} !w-auto min-w-[6rem]`}
               >
                 {options.map((o) => (
-                  <option key={o.label} value={o.label}>
+                  <option key={o.value} value={o.value}>
                     {unitDisplayLabel(o)}
                   </option>
                 ))}

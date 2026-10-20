@@ -19,7 +19,7 @@ const base: CountForm = {
   mode: "SET",
   sign: "-",
   quantity: "3",
-  unit: "Case",
+  unit: "",
   reason: "COUNT_CORRECTION",
   note: "",
   date: "",
@@ -28,19 +28,50 @@ const base: CountForm = {
 describe("countUnitOptions", () => {
   it("uses the ladder when there is one", () => {
     expect(opts).toEqual([
-      { label: "Case", factor: 12 },
-      { label: "Piece", factor: 1 },
+      { label: "Case", factor: 12, value: "" },
+      { label: "Piece", factor: 1, value: "Piece" },
     ]);
+  });
+  it("keeps the pack, the levels and Piece for a 12-pack with a Case of 24", () => {
+    const o = countUnitOptions({ unit: "jug", unitsPerBox: 12 }, [
+      { label: "Case", factorToBase: 24 },
+    ]);
+    expect(o).toEqual([
+      { label: "jug", factor: 12, value: "" },
+      { label: "Case", factor: 24, value: "Case" },
+      { label: "Piece", factor: 1, value: "Piece" },
+    ]);
+  });
+  it("sends the pack as unit null and a level or Piece by label", () => {
+    const o = countUnitOptions({ unit: "jug", unitsPerBox: 12 }, [
+      { label: "Case", factorToBase: 24 },
+    ]);
+    const send = (value: string) =>
+      (buildCountRequest({ ...base, unit: value }) as { count: { unit: string | null } }).count
+        .unit;
+    expect(send(o[0].value)).toBeNull();
+    expect(send(o[1].value)).toBe("Case");
+    expect(send(o[2].value)).toBe("Piece");
+  });
+  it("shadows a level row named like the pack", () => {
+    const o = countUnitOptions({ unit: "jug", unitsPerBox: 12 }, [
+      { label: "JUG", factorToBase: 24 },
+    ]);
+    expect(o.filter((x) => x.label.toLowerCase() === "jug")).toHaveLength(1);
+    expect(o[0].factor).toBe(12);
+  });
+  it("offers a single option for a loose product", () => {
+    expect(countUnitOptions({ unit: "kg", unitsPerBox: 1 }, [])).toHaveLength(1);
   });
   it("offers the pack and pieces without a ladder", () => {
     expect(countUnitOptions({ unit: "Box", unitsPerBox: 24 })).toEqual([
-      { label: "Box", factor: 24 },
-      { label: "Piece", factor: 1 },
+      { label: "Box", factor: 24, value: "" },
+      { label: "Piece", factor: 1, value: "Piece" },
     ]);
   });
   it("offers just pieces for a product with no pack size", () => {
     expect(countUnitOptions({ unit: "kg", unitsPerBox: 1 })).toEqual([
-      { label: "Piece", factor: 1 },
+      { label: "kg", factor: 1, value: "" },
     ]);
   });
 });
@@ -65,8 +96,8 @@ describe("preview", () => {
     expect(formatStockQty(1234)).toBe("1,234");
   });
   it("shows the factor-1 Piece as pcs in display text only", () => {
-    expect(unitDisplayLabel({ label: "Piece", factor: 1 })).toBe("pcs");
-    expect(unitDisplayLabel({ label: "Case", factor: 12 })).toBe("Case");
+    expect(unitDisplayLabel({ label: "Piece", factor: 1, value: "Piece" })).toBe("pcs");
+    expect(unitDisplayLabel({ label: "Case", factor: 12, value: "" })).toBe("Case");
     expect(opts[1].label).toBe("Piece");
   });
   it("has nothing to show for a blank quantity", () => {
@@ -101,7 +132,7 @@ describe("buildCountRequest", () => {
   it("builds a SET body", () => {
     expect(buildCountRequest(base)).toEqual({
       mode: "SET",
-      count: { unit: "Case", quantity: 3 },
+      count: { unit: null, quantity: 3 },
       reason: "COUNT_CORRECTION",
     });
   });
@@ -117,7 +148,7 @@ describe("buildCountRequest", () => {
       }),
     ).toEqual({
       mode: "ADJUST",
-      delta: { unit: "Case", quantity: 1, sign: "-" },
+      delta: { unit: null, quantity: 1, sign: "-" },
       reason: "OTHER",
       reasonNote: "lost",
       effectiveDate: "2026-10-01",

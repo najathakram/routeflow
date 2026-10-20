@@ -1,3 +1,4 @@
+import { buildLadderOptions, type LadderProduct } from "@routeflow/pricing";
 import {
   ADJUSTMENT_REASON_NOTE_MAX,
   ADJUSTMENT_REASON_NOTE_MIN,
@@ -13,10 +14,12 @@ import {
  */
 
 export interface CountUnitOption {
-  /** The ladder label sent to the server ("Case", "Piece"). */
+  /** What the picker shows ("jug", "Case", "Piece"). */
   label: string;
   /** Pieces per ONE of this unit. */
   factor: number;
+  /** The option's identity and request value: "" = the pack (sent as `unit: null`), else the ladder label. */
+  value: string;
 }
 
 export const COUNT_WHOLE_NUMBER_COPY = "Use a whole number, or switch to pcs.";
@@ -29,7 +32,7 @@ export interface CountForm {
   sign: "+" | "-";
   /** The raw input text. */
   quantity: string;
-  /** A `CountUnitOption.label`. */
+  /** A `CountUnitOption.value`. */
   unit: string;
   reason: AdjustmentReason | "";
   note: string;
@@ -37,20 +40,48 @@ export interface CountForm {
   date: string;
 }
 
-/** The units a user can count in: the ladder when there is one, else the pack and pieces. */
-export function countUnitOptions(
-  product: { unit?: string | null; unitsPerBox?: number | null },
-  ladder?: { label: string; factorToBase: number }[] | null,
-): CountUnitOption[] {
-  if (ladder && ladder.length > 0)
-    return ladder.map((l) => ({ label: l.label, factor: Number(l.factorToBase) }));
-  const upb = Number(product.unitsPerBox ?? 0);
-  if (upb > 1) return [{ label: product.unit?.trim() || "Box", factor: upb }, pieceOption()];
-  return [pieceOption()];
+/** A ladder row as the count picker needs it (prices are irrelevant to a count). */
+export interface CountLadderRow {
+  label: string;
+  factorToBase: number;
 }
 
-function pieceOption(): CountUnitOption {
-  return { label: "Piece", factor: 1 };
+/**
+ * The units a user can count in, from THE shared order-entry builder: the pack first (`value: ""`),
+ * the ladder levels largest to smallest (a row named like the pack is shadowed), then Piece.
+ */
+export function countUnitOptions(
+  product: Partial<LadderProduct>,
+  ladder?: CountLadderRow[] | null,
+): CountUnitOption[] {
+  const units = (ladder ?? []).map((l) => ({
+    label: l.label,
+    factorToBase: Number(l.factorToBase),
+    price: null,
+    priceTier2: null,
+    priceTier3: null,
+    priceTier4: null,
+    priceTier5: null,
+  }));
+  const options: CountUnitOption[] = buildLadderOptions(
+    { pricePerUnit: 0, ...product },
+    units,
+    1,
+  ).map((o) => ({
+    label: o.label,
+    factor: o.kind === "pack" && o.factorToBase <= 1 ? 1 : o.factorToBase,
+    value: o.value,
+  }));
+  // A boxed product with no ladder rows can still be counted in pieces.
+  const upb = Number(product.unitsPerBox ?? 0);
+  if (upb > 1 && !options.some((o) => o.factor === 1)) {
+    options.push({
+      label: product.baseUnitLabel?.trim() || "Piece",
+      factor: 1,
+      value: product.baseUnitLabel?.trim() || "Piece",
+    });
+  }
+  return options;
 }
 
 /** Pieces in `quantity` of a unit (rounded to kill float noise). */
@@ -78,7 +109,7 @@ export function resultingStock(
   currentStock: number,
 ): number | null {
   const qty = parseQuantity(form.quantity);
-  const opt = options.find((o) => o.label === form.unit);
+  const opt = options.find((o) => o.value === form.unit);
   if (qty === null || !opt) return null;
   const pieces = previewPieces(qty, opt.factor);
   if (form.mode === "SET") return pieces;
@@ -95,7 +126,7 @@ export function previewLine(
   if (after === null) return null;
   if (form.mode === "SET")
     return `Stock will be ${pcs(after)} (was ${formatStockQty(currentStock)})`;
-  const opt = options.find((o) => o.label === form.unit) as CountUnitOption;
+  const opt = options.find((o) => o.value === form.unit) as CountUnitOption;
   const pieces = previewPieces(parseQuantity(form.quantity) as number, opt.factor);
   const op = form.sign === "-" ? "−" : "+";
   return `Stock will be ${formatStockQty(currentStock)} ${op} ${formatStockQty(pieces)} = ${pcs(after)}`;
@@ -111,7 +142,7 @@ function parseQuantity(text: string): number | null {
 /** The first thing wrong with the form (shown inline), or null when it can be saved. */
 export function validateCount(form: CountForm, options: CountUnitOption[]): string | null {
   const qty = parseQuantity(form.quantity);
-  const opt = options.find((o) => o.label === form.unit);
+  const opt = options.find((o) => o.value === form.unit);
   if (qty === null) return "Enter a quantity.";
   if (!opt) return "Pick a unit.";
   if (qty < 0) return "Enter zero or more. Use Adjust to take stock off.";
@@ -135,9 +166,11 @@ export function buildCountRequest(form: CountForm): ProductCountRequest {
     ...(note ? { reasonNote: note } : {}),
     ...(form.date ? { effectiveDate: form.date } : {}),
   };
+  // The pack is `unit: null` (the server's own pack label); any other option sends its ladder label.
+  const unit = form.unit === "" ? null : form.unit;
   return form.mode === "SET"
-    ? { mode: "SET", count: { unit: form.unit, quantity }, ...extra }
-    : { mode: "ADJUST", delta: { unit: form.unit, quantity, sign: form.sign }, ...extra };
+    ? { mode: "SET", count: { unit, quantity }, ...extra }
+    : { mode: "ADJUST", delta: { unit, quantity, sign: form.sign }, ...extra };
 }
 
 /** Today as "YYYY-MM-DD" (local), the date picker's max. */

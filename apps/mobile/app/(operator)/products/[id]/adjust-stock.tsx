@@ -44,10 +44,15 @@ export default function AdjustStockScreen() {
 
   const currentStock = Number(product?.currentStock ?? 0);
   const options = countUnitOptions(
-    { unit: product?.unit, unitsPerBox: product?.unitsPerBox },
+    {
+      unit: product?.unit,
+      unitsPerBox: product?.unitsPerBox,
+      packLabel: product?.packLabel,
+      baseUnitLabel: product?.baseUnitLabel,
+    },
     unitsEnabled ? ladder.data : null,
   );
-  const unit = options.some((o) => o.label === form.unit) ? form.unit : (options[0]?.label ?? "");
+  const unit = options.some((o) => o.value === form.unit) ? form.unit : (options[0]?.value ?? "");
   const f: CountForm = { ...form, unit };
   const patch = (p: Partial<CountForm>) => {
     setServerError(null);
@@ -126,10 +131,10 @@ export default function AdjustStockScreen() {
           <View style={styles.chips} accessibilityRole="radiogroup">
             {options.map((o) => (
               <Chip
-                key={o.label}
+                key={o.value}
                 label={unitDisplayLabel(o)}
-                active={unit === o.label}
-                onPress={() => patch({ unit: o.label })}
+                active={unit === o.value}
+                onPress={() => patch({ unit: o.value })}
               />
             ))}
           </View>
