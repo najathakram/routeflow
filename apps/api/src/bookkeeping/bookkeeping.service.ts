@@ -578,7 +578,7 @@ export class BookkeepingService implements OnModuleInit {
       where: { id },
       data: {
         // SA-121/B801: round every monetary write.
-        ...(dto.amount !== undefined && { amount: roundMoney(dto.amount) }),
+        ...(dto.amount != null && { amount: roundMoney(dto.amount) }),
         ...(dto.date && { date: new Date(dto.date) }),
         ...(dto.description !== undefined && { description: dto.description }),
         ...(dto.notes !== undefined && { notes: dto.notes }),

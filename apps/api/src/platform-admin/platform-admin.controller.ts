@@ -48,7 +48,13 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { FeaturePreviewService } from "../billing/feature-preview.service";
 import { TenantConfigSnapshotAdminService } from "../billing/tenant-config-snapshot-admin.service";
 import { toEffectiveFeature } from "../billing/feature-resolver.service";
-import type { EffectiveFeature, FeatureModeState, FeaturePreviewRequest } from "@routeflow/types";
+import type {
+  AppLinks,
+  AppLinksPatch,
+  EffectiveFeature,
+  FeatureModeState,
+  FeaturePreviewRequest,
+} from "@routeflow/types";
 import { AdminAuditAction } from "./audit-actions.constant";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -1001,6 +1007,31 @@ export class PlatformAdminController {
   ) {
     // The audit row (with the report) is written by the service INSIDE the restore transaction.
     return this.snapshotAdmin.restoreNow(id, snapshotId, admin.sub);
+  }
+
+  // ─── Mobile app install links ─────────────────────────────────────────────
+
+  @Get("app-links")
+  @ApiOperation({ summary: "Get the global mobile app install links (Get the app page)" })
+  getAppLinks(): Promise<AppLinks> {
+    return this.platformConfig.getAppLinks();
+  }
+
+  @Put("app-links")
+  @ApiOperation({
+    summary: "Set the mobile app install links (string sets, empty or null clears, absent leaves)",
+  })
+  async updateAppLinks(
+    @Body() dto: AppLinksPatch,
+    @CurrentUser() admin: JwtPayload,
+  ): Promise<AppLinks> {
+    const previous = await this.platformConfig.getAppLinks();
+    const next = await this.platformConfig.setAppLinks(dto);
+    await this.svc.recordAdminAction(null, admin.sub, AdminAuditAction.APP_LINKS_UPDATED, {
+      previous,
+      next,
+    });
+    return next;
   }
 
   // ─── Platform AI Configuration ────────────────────────────────────────────

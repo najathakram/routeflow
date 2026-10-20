@@ -231,8 +231,12 @@ export class CustomersController {
 
   @Post(":id/advance-payments/:apId/apply")
   @Roles(UserRole.OPERATOR)
-  applyAdvancePayment(@Param("apId") apId: string, @Body() dto: ApplyAdvancePaymentDto) {
-    return this.customersService.applyAdvancePaymentToInvoice(apId, dto);
+  applyAdvancePayment(
+    @Param("id") id: string,
+    @Param("apId") apId: string,
+    @Body() dto: ApplyAdvancePaymentDto,
+  ) {
+    return this.customersService.applyAdvancePaymentToInvoice(apId, dto, id);
   }
 
   @Get(":id/prices")

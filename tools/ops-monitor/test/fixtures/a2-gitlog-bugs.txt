@@ -1,0 +1,10 @@
+2026-10-18T12:00:00-05:00
+
+.claude/campaign/bugs/B9002.md
+.claude/campaign/bugs/B9003.md
+2026-10-15T08:30:00-05:00
+
+.claude/campaign/bugs/B9004.md
+2026-10-10T07:00:00-05:00
+
+.claude/campaign/bugs/B9002.md
