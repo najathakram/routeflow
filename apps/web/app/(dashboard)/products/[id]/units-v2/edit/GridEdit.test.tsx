@@ -297,6 +297,8 @@ describe("units v2 edit grid (S12a)", () => {
     expect(screen.queryByTestId(PLAN_TESTIDS.cellPlan)).toBeNull();
     await type(user, 2, "14.5");
     expect(screen.getByTestId(PLAN_TESTIDS.cellPlan)).toBeTruthy();
+    // R3 review: the slot holds its 8rem only while that plan exists
+    expect(screen.getByTestId("also-update-slot").className).toMatch(/\bmin-h-\[8rem\]/);
   });
 
   it("K5 seam: onSaved/onEdit fire, and loadUndoPreview refetches and returns display strings", async () => {

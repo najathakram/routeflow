@@ -178,9 +178,10 @@ export function EditablePricesGrid({
           addUnitPointers={surface !== "window"}
         />
         {editing && <OrderUnitDraft />}
-        {/* K12 F13: the panel's slot is held from the first keystroke, so typing a price never shoves the page down. */}
+        {/* K12 F13: the slot is held (8rem) while a plan exists, so its panel never shoves the page; with no plan it is
+            empty and takes no height. */}
         {editing && (
-          <div data-testid="also-update-slot" className="min-h-[8rem]">
+          <div data-testid="also-update-slot" className={d.plan ? "min-h-[8rem]" : undefined}>
             {d.plan && <AlsoUpdatePanel plan={d.plan.plan} />}
           </div>
         )}

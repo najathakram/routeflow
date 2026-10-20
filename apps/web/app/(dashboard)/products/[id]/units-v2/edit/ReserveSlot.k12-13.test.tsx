@@ -75,14 +75,14 @@ const edit = async () => {
   return user;
 };
 
-// K12 F13: "Set Tier 5 to $1.35 too" appeared under the grid only after a price was typed and pushed the page down.
-// While editing, its slot is always there and already tall enough for the panel's heading and one offer.
-describe("K12 F13: the also-update slot is reserved while editing", () => {
-  it("is absent outside edit mode and present, with a minimum height, from the moment Edit opens", async () => {
+// K12 F13, narrowed (R3 review): the also-update slot is there from the moment Edit opens, but only holds its 8rem
+// minimum once a plan exists, so a plan-less edit leaves no empty gap under the grid card.
+describe("K12 F13: the also-update slot", () => {
+  it("is absent outside edit mode and present, with no reserved height, until a plan exists", async () => {
     mount();
     expect(screen.queryByTestId("also-update-slot")).toBeNull();
     await edit();
     const slot = screen.getByTestId("also-update-slot");
-    expect(slot.className).toMatch(/\bmin-h-\[/);
+    expect(slot.className).not.toMatch(/\bmin-h-\[/);
   });
 });
