@@ -119,7 +119,7 @@ describe("R3 review item 2: the region heading leads the actions row", () => {
 describe("R3 review item 3: the entry button stays Edit, described by the region heading", () => {
   it("keeps the visible name Edit (no 'Edit prices' name, which the removed price-window opener owned)", () => {
     mount();
-    const edit = screen.getByRole("button", { name: "Edit", exact: true });
+    const edit = screen.getByRole("button", { name: /^Edit$/ });
     expect(edit).toHaveAttribute("aria-describedby", "units-v2-grid-title");
     expect(edit).not.toHaveAttribute("aria-label");
     expect(screen.queryByRole("button", { name: /Edit prices/ })).toBeNull();
@@ -131,7 +131,7 @@ describe("R3 review item 4: Name / Contains read straight under the grid card", 
   it("renders afterGrid after the grid card and before the order-unit footer", async () => {
     const user = userEvent.setup();
     mount({ afterGrid: <div data-testid="after-grid" /> });
-    await user.click(screen.getByRole("button", { name: "Edit", exact: true }));
+    await user.click(screen.getByRole("button", { name: /^Edit$/ }));
     const after = screen.getByTestId("after-grid");
     const follows = (a: Element, b: Element) =>
       !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
@@ -142,7 +142,7 @@ describe("R3 review item 4: Name / Contains read straight under the grid card", 
   it("keeps the disabled Pricing unit select (the guarded control) where it is", async () => {
     const user = userEvent.setup();
     mount();
-    await user.click(screen.getByRole("button", { name: "Edit", exact: true }));
+    await user.click(screen.getByRole("button", { name: /^Edit$/ }));
     expect(screen.getByTestId(T.orderUnit)).toHaveAttribute("aria-disabled", "true");
   });
 });

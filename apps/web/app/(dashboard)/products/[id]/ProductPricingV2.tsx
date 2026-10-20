@@ -74,15 +74,17 @@ function PricingSection({
           changePricesOpen={cp.open}
           changePricesRef={cp.opener}
           panel={<ChangePrices open={cp.open} onClose={cp.close} openerRef={cp.opener} />}
-          unitControls={
+          unitControls={structure ? <UnitStructureControls productId={product.id} /> : undefined}
+          afterGrid={
             structure ? (
               <>
-                <UnitStructureControls productId={product.id} />
+                <UnitDetailsEditor product={product} />
+                {/* R3 review: the default order unit is an ordering setting, not a price, so it sits under the grid card
+                    (before the order-unit footer) and the first price row climbs on a phone. */}
                 <UnitsBesideGrid product={product} />
               </>
             ) : undefined
           }
-          afterGrid={structure ? <UnitDetailsEditor product={product} /> : undefined}
           rowAction={
             structure
               ? (row, layout) => <UnitRowRemove productId={product.id} row={row} layout={layout} />

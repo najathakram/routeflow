@@ -35,7 +35,7 @@ export function UnitsBesideGrid({ product }: { product: { id: string; unit?: str
   const current = units.find((u) => u.isDefaultSelling)?.id ?? "";
 
   return (
-    <div data-testid="units-v2-beside" className="mb-3 space-y-3">
+    <div data-testid="units-v2-beside" className="mt-3 space-y-3">
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-[12rem]">
           <label className={LABEL} htmlFor={selectId}>
