@@ -156,6 +156,39 @@ export function regularTaxShare(
 }
 
 /**
+ * The ONE multi-invoice regular-tax allocator (createInvoiceFromOrder's groups, the draft-sibling rebuild):
+ * each group's share is `order.tax` x (group subtotal / the order's subtotal), cents-rounded, and the rounding
+ * remainder against the BILLED portion's tax goes to the LARGEST-subtotal group (never a tiny trailing group,
+ * which could round to a negative tax). Siblings sum to the single-invoice tax exactly. 0 for an exempt
+ * customer. Returns one regular tax per group, in order.
+ */
+export function allocateOrderRegularTax(
+  order: { tax?: unknown; subtotal?: unknown },
+  groupSubtotals: readonly number[],
+  isTaxExempt: boolean,
+): number[] {
+  const shares = groupSubtotals.map(() => 0);
+  if (isTaxExempt || groupSubtotals.length === 0) return shares;
+  const orderSubtotal = Number(order.subtotal) || 1;
+  const orderTax = Number(order.tax) || 0;
+  const billed = roundMoney(groupSubtotals.reduce((s, g) => s + g, 0));
+  const totalTax = roundMoney(orderTax * (billed / orderSubtotal));
+  let allocated = 0;
+  groupSubtotals.forEach((g, i) => {
+    shares[i] = roundMoney(orderTax * (g / orderSubtotal));
+    allocated = roundMoney(allocated + shares[i]);
+  });
+  const remainder = roundMoney(totalTax - allocated);
+  if (remainder !== 0) {
+    let maxIdx = 0;
+    for (let i = 1; i < groupSubtotals.length; i++)
+      if (groupSubtotals[i] > groupSubtotals[maxIdx]) maxIdx = i;
+    shares[maxIdx] = roundMoney(shares[maxIdx] + remainder);
+  }
+  return shares;
+}
+
+/**
  * SA-728 / units P0b: a derived Piece from an old client (typed at the derived per-piece price) becomes the
  * pack line's pieces at the PACK price, so computeLineSubtotal prorates it. Every other item is the same object.
  */

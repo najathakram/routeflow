@@ -34,6 +34,7 @@ export class OnboardingDealTermsDto {
   addonSkus?: string[];
   @IsOptional() @IsIn(["month", "year"]) interval?: "month" | "year";
   /** Integer cents — never a float dollar amount. */
+  // Null = absent: computeSnapshot reads a non-integer setupFeeCents as 0 (same as omitted).
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) setupFeeCents?: number;
   @IsOptional() @IsString() @MaxLength(2000) note?: string;
 }

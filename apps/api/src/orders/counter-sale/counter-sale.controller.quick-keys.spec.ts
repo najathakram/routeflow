@@ -12,6 +12,7 @@ import {
 } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { JwtAuthGuard } from "../../auth/guards/jwt-auth.guard";
+import { PrismaService } from "../../prisma/prisma.service";
 import { listenOnLoopback } from "../../common/testing/listen-loopback";
 import { OrdersController } from "../orders.controller";
 import { CounterSaleController } from "./counter-sale.controller";
@@ -69,7 +70,7 @@ describe("GET /orders/counter-sale/quick-keys over HTTP (roles and register)", (
       const req = ctx.switchToHttp().getRequest();
       const role = req.headers["x-role"];
       if (!role) throw new UnauthorizedException();
-      req.user = { role, sub: "u-1" };
+      req.user = { role, sub: "u-1", tenantId: "t-1" };
       return true;
     },
   };
@@ -78,6 +79,16 @@ describe("GET /orders/counter-sale/quick-keys over HTTP (roles and register)", (
     const moduleRef = await Test.createTestingModule({
       controllers: [CounterSaleController],
       providers: [
+        {
+          provide: PrismaService,
+          useValue: {
+            user: {
+              findFirst: jest
+                .fn()
+                .mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 1 }),
+            },
+          },
+        },
         { provide: CounterSaleService, useValue: {} },
         { provide: CounterSaleTodayService, useValue: {} },
         { provide: QuickKeysService, useValue: quickKeys },

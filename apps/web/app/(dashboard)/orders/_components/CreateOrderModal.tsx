@@ -123,6 +123,7 @@ import { STALE_CREDIT_COPY, isStaleCreditRefusal } from "./stale-credit-refusal"
 import { useCustomerChangeUndo } from "./use-customer-change-undo";
 import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useAuth } from "@/lib/auth-context";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
 import { useFulfilmentCaps, useStaffFulfilment } from "@/lib/fulfilment-caps";
@@ -283,7 +284,9 @@ export function CreateOrderModal({
   const pos = usePosMode(); // SA-763r P-2: server-backed preference, never localStorage
   const { user: posUser } = useAuth();
   // The switch and PICKUP are for roles with USE_POS_MODE only: a stored preference never applies without it.
-  const posAllowed = staffMay(posUser?.role, "USE_POS_MODE");
+  // BO-07: and not for an operator whose admin switched ORDERS off (the same deny list the till reads).
+  const { deniedGroups: posDenied, permsKnown } = useCounterSaleGate();
+  const posAllowed = permsKnown && staffMay(posUser?.role, "USE_POS_MODE", posDenied);
   // A store-only business (capabilities.fulfilment: PICKUP is its only method) has no delivery to switch back to:
   // the builder is simply POS mode, with no switch and no preference involved (row 331).
   const storeOnly = isStoreOnly(useFulfilmentCaps());

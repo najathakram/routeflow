@@ -1,5 +1,6 @@
 import { Transform } from "class-transformer";
 import { IsNumber, IsOptional, IsString, MaxLength, Min } from "class-validator";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /**
  * Returns Inside Order Creation — PR-1c fix round (Opus review HIGH-3): the controller used
@@ -14,7 +15,7 @@ import { IsNumber, IsOptional, IsString, MaxLength, Min } from "class-validator"
  * instead — approving a zero-dollar credit is never a legitimate "approval".
  */
 export class ApproveInlineReturnDto {
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsNumber()
   @Min(0.01)
   amount?: number;

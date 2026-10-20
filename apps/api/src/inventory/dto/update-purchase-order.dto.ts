@@ -15,6 +15,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /**
  * One line of an edited purchase order, in ONE of two forms (the server computes the money either way):
@@ -45,7 +46,7 @@ export class UpdatePurchaseOrderItemDto {
   @Max(999_999)
   unitCost?: number;
   /** PER CASE: the cost of one case as entered (4dp: a stored row's honest derivation is 11.0004). */
-  @IsOptional() @IsNumber({ maxDecimalPlaces: 4 }) @Min(0) @Max(999_999) caseCost?: number;
+  @IsOptionalNotNull() @IsNumber({ maxDecimalPlaces: 4 }) @Min(0) @Max(999_999) caseCost?: number;
   /** PER CASE: whole cases ordered. */
   @ValidateIf((o: UpdatePurchaseOrderItemDto) => o.caseCost !== undefined)
   @IsInt()
