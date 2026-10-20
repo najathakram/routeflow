@@ -104,7 +104,7 @@ import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ProductPricingV2 } from "./ProductPricingV2";
 import { PriceWindowHost, ProductPricingRegion } from "./PriceWindowHost";
-import { ProductLowerColumns } from "./ProductLowerColumns";
+import { ProductLowerColumns, useIsPhone } from "./ProductLowerColumns";
 import {
   unitStructureGoverned,
   useUnitStructureAllowed,
@@ -454,6 +454,7 @@ export default function ProductDetailPage() {
     setTitle(product?.name ?? "Product");
   }, [setTitle, product?.name]);
 
+  const isPhone = useIsPhone();
   if (isLoading) {
     return <div className="flex items-center justify-center p-12 text-navy/70">Loading...</div>;
   }
@@ -475,6 +476,14 @@ export default function ProductDetailPage() {
   const v2Family = v2 && product.kind === "FAMILY";
   /** K11-23: the prices region is its own grid item, right after Details in the DOM. */
   const pricingSplit = v2 && product.kind !== "FAMILY";
+  const pricesFirst = pricingSplit && isPhone;
+  const pricingItem = pricingSplit ? (
+    <div className="lg:col-span-2 lg:col-start-2 lg:row-start-3">
+      <ProductPricingRegion>
+        <ProductPricingV2 product={product} />
+      </ProductPricingRegion>
+    </div>
+  ) : null;
   // K11-20c: on a product whose prices the window can edit (not a family, recipe or variant), Details shows its
   // prices read-only and the Details save carries none: the price window (S9) is the only price writer.
   const pricesInWindow = v2 && !unitStructureGoverned(product);
@@ -1410,6 +1419,9 @@ export default function ProductDetailPage() {
         >
           {/* DOM order is the phone reading order and the tab order: Details, then Image and stock, then the rest.
               The columns are placed at lg with grid lines, not order-* classes (K11-23). */}
+          {/* K11-23 (phone, below sm): the prices region comes before Details so the price label starts on the first
+              screen. One mount: it renders here OR after Details, never both, so DOM order is the visual order. */}
+          {pricesFirst ? pricingItem : null}
           <div className="space-y-5 lg:col-span-2 lg:col-start-2 lg:row-start-1">
             {/* Product details */}
             <div
@@ -1875,13 +1887,7 @@ export default function ProductDetailPage() {
           </div>
           {/* K11-23: below lg the prices region follows Details (one render, in DOM order = tab order); at lg it is
               placed by grid lines under Labels and Portal visibility, where it always was. */}
-          {pricingSplit ? (
-            <div className="lg:col-span-2 lg:col-start-2 lg:row-start-3">
-              <ProductPricingRegion>
-                <ProductPricingV2 product={product} />
-              </ProductPricingRegion>
-            </div>
-          ) : null}
+          {!pricesFirst ? pricingItem : null}
           {/* ── Left: image gallery + stock card ── */}
           <div
             data-region-covers

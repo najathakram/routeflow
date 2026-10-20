@@ -155,3 +155,50 @@ describe("K11-23 prices v2: the prices region follows Details", () => {
     expect(items[at(screen.getByTestId("units-card"))].className).toMatch(/lg:row-start-4/);
   });
 });
+
+describe("K11-23 prices v2 on a phone (below sm): the prices region comes first", () => {
+  const original = window.matchMedia;
+  afterEach(() => {
+    window.matchMedia = original;
+  });
+  const phone = (matches: boolean) => {
+    window.matchMedia = ((q: string) => ({
+      matches: matches && q === "(max-width: 639px)",
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+  };
+
+  it("DOM order: prices region, Details, Image, Stock and cost, Labels, Portal visibility, Units", () => {
+    phone(true);
+    renderWithProviders(<ProductDetailPage />);
+    const chain = [
+      screen.getByTestId("units-v2-region"),
+      screen.getByTestId("product-details-card"),
+      screen.getByTestId("product-image-card"),
+      screen.getByTestId("stock-card"),
+      screen.getByTestId("labels-card"),
+      screen.getByTestId("portal-card"),
+      screen.getByTestId("units-card"),
+    ];
+    for (let i = 0; i < chain.length - 1; i++) expect(follows(chain[i], chain[i + 1])).toBe(true);
+  });
+
+  it("mounts the region and the price editor once, with no order-* classes", () => {
+    phone(true);
+    renderWithProviders(<ProductDetailPage />);
+    expect(screen.getAllByTestId("units-v2-region")).toHaveLength(1);
+    expect(screen.getAllByTestId("pricing-v2")).toHaveLength(1);
+    const grid = screen.getByTestId("product-details-card").closest(".grid") as HTMLElement;
+    expect(grid.outerHTML).not.toMatch(/(^|[\s"])(sm:|md:|lg:)?order-/);
+  });
+
+  it("from sm up the region still follows Details", () => {
+    phone(false);
+    renderWithProviders(<ProductDetailPage />);
+    expect(
+      follows(screen.getByTestId("product-details-card"), screen.getByTestId("units-v2-region")),
+    ).toBe(true);
+  });
+});
