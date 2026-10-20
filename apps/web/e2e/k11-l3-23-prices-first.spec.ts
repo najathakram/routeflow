@@ -89,6 +89,15 @@ async function expectPhoneOrder(page: Page, flagOff: boolean) {
 
 async function expectMerchLast(page: Page) {
   const details = card(page, "Details");
+  // Below sm the secondary fields sit behind "More details" (hidden by CSS, still mounted); open it, then assert the
+  // same things. From sm up the trigger is not shown and the fields are already visible.
+  const more = page.getByTestId("details-more-toggle");
+  if (await more.isVisible()) {
+    await expect(page.getByTestId("details-more-panel"), "collapsed on a phone").toBeHidden();
+    expect((await more.boundingBox())!.height, "a 44 px target").toBeGreaterThanOrEqual(44);
+    await more.click();
+    await expect(more).toHaveAttribute("aria-expanded", "true");
+  }
   const merch = details.getByRole("heading", { name: "Buyer merchandising" });
   await expect(merch).toBeVisible();
   const m = (await merch.boundingBox())!;
