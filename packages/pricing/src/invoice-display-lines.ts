@@ -23,17 +23,31 @@ export function invoiceDisplayUnitFor(input: {
 }): InvoiceDisplayUnitView {
   try {
     const { customerDefault, scopes, view } = input;
+    const asView = (choice: ReturnType<typeof resolveInvoiceUnit>): InvoiceDisplayUnitView => {
+      if (choice.mode !== "unit") return { ...LEGACY_VIEW };
+      const row = view?.rows.find((r) => r.ref === choice.unit);
+      return row?.kind === "base" ? { kind: "pieces", label: choice.label } : { ...LEGACY_VIEW };
+    };
+    // SA-827a: the most specific wins. 1) CustomerPrice ref (only when this ladder can use it; an unusable ref is skipped).
+    if (view && scopes.customer?.trim()) {
+      const own = resolveInvoiceUnit(view, { customer: scopes.customer });
+      if (own.scope === "customer") return asView(own);
+    }
+    // 2) the customer-wide default (LEGACY = not set, falls through).
     if (customerDefault === "PIECES") {
       const base = view?.rows.find((r) => r.kind === "base");
       return { kind: "pieces", label: base?.label?.trim() || PIECE_LABEL };
     }
     if (customerDefault === "PACK") return { ...LEGACY_VIEW };
     if (!view) return { ...LEGACY_VIEW };
-    const choice = resolveInvoiceUnit(view, scopes);
-    if (choice.mode !== "unit") return { ...LEGACY_VIEW };
-    const row = view.rows.find((r) => r.ref === choice.unit);
-    if (row?.kind === "base") return { kind: "pieces", label: choice.label };
-    return { ...LEGACY_VIEW };
+    // 3) tier > product > business > legacy.
+    return asView(
+      resolveInvoiceUnit(view, {
+        tier: scopes.tier,
+        product: scopes.product,
+        business: scopes.business,
+      }),
+    );
   } catch {
     return { ...LEGACY_VIEW };
   }
@@ -156,7 +170,16 @@ export function invoiceDisplayLines(
         // fall through to the pieces layout
       }
     }
-    if ((item.unitsPerBox ?? 1) > 1) {
+    // SA-827b: a plain line reads in pieces ONLY from its own STORED pack (boxes x unitsPerBox + pieces), never a live
+    // product's pack; no stored pack, or one that disagrees with the stored pieces, keeps the box line.
+    const upb = Number(item.unitsPerBox);
+    const boxes = Number(item.boxes ?? 0);
+    const loose = Number(item.pieces ?? 0);
+    const storedPack =
+      Number.isInteger(upb) && upb > 1 && Number.isInteger(boxes) && Number.isInteger(loose)
+        ? boxes * upb + loose
+        : null;
+    if (storedPack != null && storedPack === linePieces) {
       const d = invoiceLineDisplay({
         pieces: linePieces,
         amount: item.subtotal,

@@ -70,6 +70,22 @@ describe("invoiceDisplayLines", () => {
       amount: 60.02,
     });
   });
+  // SA-827b (lead ruling 2026-10-20): a plain boxed line reads in pieces ONLY from its own stored pack
+  // (boxes x unitsPerBox + pieces); the builder takes no live product pack at all.
+  it("SA-827b: a plain line converts from its STORED pack only; no stored pack or a mismatch -> the box line", () => {
+    const plain = { ...item, description: "Acme Cola 24pk" };
+    // stored pack: 2 x 15 + 0 = 30 = qty -> pieces
+    expect(invoiceDisplayLines(plain, null, PIECES)).toMatchObject({ layout: "pieces", qty: 30 });
+    // no stored pack (unitsPerBox null) -> the box line, never a live product's pack
+    expect(invoiceDisplayLines({ ...plain, unitsPerBox: null }, null, PIECES).layout).toBe("today");
+    // stored pack disagrees with the stored pieces (2 x 12 + 0 = 24 != 30) -> the box line
+    expect(invoiceDisplayLines({ ...plain, unitsPerBox: 12 }, null, PIECES).layout).toBe("today");
+    // boxes + loose pieces: 1 x 15 + 5 = 20 = qty -> pieces
+    expect(
+      invoiceDisplayLines({ ...plain, qty: 20, boxes: 1, pieces: 5 }, null, PIECES),
+    ).toMatchObject({ layout: "pieces", qty: 20 });
+  });
+
   it("P6: sum mismatch -> pieces layout", () => {
     const bad = [{ ...comps[1], qty: 9 }, comps[0]];
     expect(invoiceDisplayLines(item, bad, PIECES).layout).toBe("pieces");
@@ -112,13 +128,50 @@ describe("invoiceDisplayUnitFor", () => {
       invoiceDisplayUnitFor({ customerDefault: "PACK", scopes: { business: "smallest" }, view }),
     ).toEqual(LEGACY);
   });
-  it("customer PIECES beats a product 'pack' ref; customer PACK beats a customer 'base' ref", () => {
-    expect(
-      invoiceDisplayUnitFor({ customerDefault: "PIECES", scopes: { product: "pack" }, view }),
-    ).toEqual(PIECES);
+  // SA-827a (lead ruling 2026-10-20): the most specific wins. CustomerPrice ref > Customer.invoiceUnitDefault >
+  // ProductTierUnit ref > Product ref > business units.invoiceUnit > legacy.
+  it("SA-827a precedence: CustomerPrice ref > customer default > tier > product > business > legacy", () => {
+    // CustomerPrice beats the customer default, both ways
     expect(
       invoiceDisplayUnitFor({ customerDefault: "PACK", scopes: { customer: "base" }, view }),
+    ).toEqual(PIECES);
+    expect(
+      invoiceDisplayUnitFor({ customerDefault: "PIECES", scopes: { customer: "pack" }, view }),
     ).toEqual(LEGACY);
+    // the customer default beats the tier, product and business refs
+    expect(
+      invoiceDisplayUnitFor({
+        customerDefault: "PIECES",
+        scopes: { tier: "pack", product: "pack", business: "pack" },
+        view,
+      }),
+    ).toEqual(PIECES);
+    expect(
+      invoiceDisplayUnitFor({
+        customerDefault: "PACK",
+        scopes: { tier: "base", product: "base", business: "smallest" },
+        view,
+      }),
+    ).toEqual(LEGACY);
+    // tier > product > business
+    expect(invoiceDisplayUnitFor({ scopes: { tier: "base", product: "pack" }, view })).toEqual(
+      PIECES,
+    );
+    expect(invoiceDisplayUnitFor({ scopes: { product: "base", business: "pack" }, view })).toEqual(
+      PIECES,
+    );
+    // LEGACY (not set) falls through; a CustomerPrice ref the ladder lacks is skipped, never "smallest"
+    expect(
+      invoiceDisplayUnitFor({ customerDefault: "LEGACY", scopes: { business: "smallest" }, view }),
+    ).toEqual(PIECES);
+    expect(
+      invoiceDisplayUnitFor({
+        customerDefault: "PACK",
+        scopes: { customer: "00000000-0000-4000-8000-000000000000" },
+        view,
+      }),
+    ).toEqual(LEGACY);
+    expect(invoiceDisplayUnitFor({ scopes: {}, view })).toEqual(LEGACY);
   });
   it("scopes", () => {
     expect(

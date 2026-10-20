@@ -168,14 +168,14 @@ describe("resolveLiveDisplayUnits", () => {
     expect(live.get("it-0")).toEqual({ kind: "pieces", label: "Piece" });
   });
 
-  it("customer default PACK beats a CustomerPrice 'base' ref: legacy", async () => {
+  it("SA-827a: a CustomerPrice 'base' ref beats the customer default PACK: pieces", async () => {
     const db = makeDb({
       customer: { pricingTier: 1, invoiceUnitDefault: "PACK" },
       products: [productRow("p1")],
       customerPrices: [{ productId: "p1", pricingTier: null, invoiceUnitRef: "base" }],
     });
     const live = await resolveLiveDisplayUnits(db as any, TENANT, invoice(["p1"]), flag(true));
-    expect(live.get("it-0")).toEqual({ kind: "legacy", label: null });
+    expect(live.get("it-0")).toEqual({ kind: "pieces", label: "Piece" });
   });
 
   it("customer default LEGACY falls through to the business setting", async () => {
