@@ -84,6 +84,9 @@ const EXEMPT: Record<string, string> = {
   "apps/api/scripts/report-b673-next-delivery-overcharge.mjs":
     "READ-ONLY report: the UPDATE text is a negative test input for its own assertReadOnlySql guard, which refuses " +
     "it; nothing is executed.",
+  "apps/api/scripts/stamp-addon-comp.mjs":
+    "Binds no money: the BillingEvent INSERT writes amountDelta as the SQL literal NULL (an add-on comp state " +
+    "change, SA-788 A5); no Decimal value is bound.",
 };
 
 const GUARD_IMPORT =

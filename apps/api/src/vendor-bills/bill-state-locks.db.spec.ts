@@ -349,7 +349,8 @@ describeDb("Bill-state locks — real Postgres, parked first writer", () => {
         `status=${finalBill.status} payments=${rows.length} totalPaid=${finalBill.totalPaid}`,
     );
     expect(first.status).toBe("fulfilled");
-    expect(codeOf(second)).toBe("BILL_STATE_CHANGED");
+    // B288 (aa7f90025): once the parked payment commits, the more specific cash-payment guard refuses first.
+    expect(codeOf(second)).toBe("BILL_HAS_PAYMENTS");
     expect(Number(finalBill.totalPaid)).toBe(20);
     expect(rows).toHaveLength(1);
     expect(finalBill.status).not.toBe("VOID");
@@ -543,7 +544,8 @@ describeDb("Bill-state locks — real Postgres, parked first writer", () => {
         `stock=${(await productOf(w)).currentStock} status=${finalBill.status} totalPaid=${finalBill.totalPaid}`,
     );
     expect(first.status).toBe("fulfilled");
-    expect(codeOf(second)).toBe("BILL_STATE_CHANGED");
+    // B288 (aa7f90025): once the parked payment commits, the more specific cash-payment guard refuses first.
+    expect(codeOf(second)).toBe("BILL_HAS_PAYMENTS");
     expect(Number((await productOf(w)).currentStock)).toBe(60);
     expect(finalBill.status).toBe("PARTIAL");
     expect(Number(finalBill.totalPaid)).toBe(20);
