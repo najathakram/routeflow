@@ -567,7 +567,7 @@ function PricesGridBody({
   return (
     <div
       data-testid={T.grid}
-      className={`rounded-lg border bg-white p-4 ${FRAME_BORDER} ${edit?.editing ? "pb-6" : ""}`}
+      className={`rounded-lg border bg-white p-4 ${hideTitle ? "max-sm:pt-2" : ""} ${FRAME_BORDER} ${edit?.editing ? "pb-6" : ""}`}
     >
       {hideTitle ? null : <PricesTitle id={titleId} />}
 
@@ -680,7 +680,7 @@ function PricesGridBody({
             <div
               key={row.ref}
               data-testid={T.card(row.ref)}
-              className={`rounded-md border p-3 ${FRAME_BORDER}`}
+              className={`rounded-md border p-3 max-sm:pt-2 ${FRAME_BORDER}`}
             >
               <div className="font-medium text-navy">{row.label}</div>
               <NotEditable row={row} />
@@ -690,7 +690,7 @@ function PricesGridBody({
                   <div key={l}>{l}</div>
                 ))}
               </div>
-              <div className="mb-2 text-xs text-navy/70">
+              <div className="mb-2 max-sm:mb-1 text-xs text-navy/70">
                 Barcode: <span data-testid={T.code(row.ref)}>{barcodeText(row)}</span>
               </div>
               <dl className="grid grid-cols-2 gap-2">
