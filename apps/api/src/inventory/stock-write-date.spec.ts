@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
-import { stockWriteDate, effectiveDateOf } from "./stock-write-date";
+import { stockWriteDate, effectiveDateOf, documentStockDate } from "./stock-write-date";
 
 /**
  * SA-802 / SA-802a — `stockWriteDate`: the one date gate for a client-dated stock write. A date a
@@ -186,6 +186,28 @@ describe("stockWriteDate (SA-802)", () => {
     const d = await run(db, "2020-01-01T00:00:00.000Z", []);
     expect(d.toISOString()).toBe("2020-01-01T00:00:00.000Z");
     expect(db.product.findMany).not.toHaveBeenCalled();
+  });
+
+  it("every read is scoped by tenantId, so a raw (unscoped) client can't see another tenant's rows", async () => {
+    const db = makeDb({
+      products: [{ id: "p1", isTobacco: false, trackedCategoryId: "cat-1" }],
+      filings: { "cat-1": SEPT },
+      categories: { "cat-1": "Vape products" },
+    });
+    await run(db, "2026-09-10T00:00:00.000Z").catch(() => undefined);
+    expect(db.product.findMany.mock.calls[0][0].where).toMatchObject({ tenantId: T });
+    expect(db.trackedCategory.findFirst.mock.calls[0][0].where).toMatchObject({
+      id: "cat-1",
+      tenantId: T,
+    });
+    const doc = makeDb({ products: [{ id: "p1", isTobacco: false, trackedCategoryId: null }] });
+    await documentStockDate(doc, {
+      tenantId: T,
+      productIds: ["p1"],
+      documentDate: new Date("2026-09-10T00:00:00.000Z"),
+      now: NOW,
+    });
+    expect(doc.product.findMany.mock.calls[0][0].where).toMatchObject({ tenantId: T });
   });
 
   it("two lines sharing a category cost ONE filing read (and one product read)", async () => {

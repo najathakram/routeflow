@@ -11,7 +11,8 @@ jest.mock("../common/db-locks", () => ({
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { InventoryService, effectiveDateOf, isReplayCorrection } from "./inventory.service";
+import { InventoryService, isReplayCorrection } from "./inventory.service";
+import { effectiveDateOf } from "./stock-write-date";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { AuditService } from "../audit/audit.service";
@@ -1755,6 +1756,12 @@ describe("InventoryService", () => {
     const FILED = "2026-09-15T00:00:00.000Z"; // inside the filed September
     const tomorrow = () => new Date(Date.now() + 24 * 3600 * 1000).toISOString();
     const tobaccoProduct = () => product({ isTobacco: true, trackedCategoryId: null });
+    const plainProduct = () => product({ id: "prod-2", isTobacco: false, trackedCategoryId: null });
+    /** product.findMany answers by the requested ids: prod-1 is tobacco, prod-2 is unregulated. */
+    const productsById = () =>
+      prisma.product.findMany.mockImplementation(async (args: any) =>
+        [tobaccoProduct(), plainProduct()].filter((p) => args?.where?.id?.in?.includes(p.id)),
+      );
 
     beforeEach(() => {
       // September 2026 tobacco is GENERATED (periodEnd is the inclusive last instant).
@@ -1821,6 +1828,33 @@ describe("InventoryService", () => {
         expectNothingWritten();
       });
 
+      it("the gate reads ALL items: an unregulated first item and a tobacco second item is a 409", async () => {
+        productsById();
+        const mixed = {
+          sessionId: "22222222-2222-2222-2222-222222222222",
+          effectiveDate: FILED,
+          items: [
+            { productId: "prod-2", quantity: 5, mode: "ADD" },
+            { productId: "prod-1", quantity: 1, mode: "ADD" },
+          ],
+        } as any;
+        await expect(service.commitStockCount(mixed, "user-1")).rejects.toMatchObject(filedRefusal);
+        expectNothingWritten();
+      });
+
+      it("a lost-response retry after the month was filed returns the prior result, not a 409", async () => {
+        prisma.stockMovement.findFirst.mockResolvedValue({ id: "existing-1" });
+        prisma.stockMovement.findMany.mockResolvedValue([{ id: "existing-1" }]);
+        const result = await service.commitStockCount(count(FILED), "user-1");
+        expect(result).toMatchObject({ applied: 1, alreadyCommitted: true });
+        expect(prisma.stockMovement.findFirst).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { reference: "STOCK_COUNT-22222222-2222-2222-2222-222222222222" },
+          }),
+        );
+        expectNothingWritten();
+      });
+
       it("tomorrow is a 400 (the legacy path had no future bound) and nothing is written", async () => {
         await expect(service.commitStockCount(count(tomorrow()), "user-1")).rejects.toBeInstanceOf(
           BadRequestException,
@@ -1862,6 +1896,48 @@ describe("InventoryService", () => {
       });
 
       it("a filed date is a 409 and the batch body never runs", async () => {
+        await expect(
+          service.commitStockCountSession("sess-1", { effectiveDate: FILED } as any, {
+            sub: "user-1",
+          }),
+        ).rejects.toMatchObject(filedRefusal);
+        expectNothingWritten();
+        expect(prisma.stockCountSession.updateMany).not.toHaveBeenCalled();
+      });
+
+      it("the gate reads ALL lines: an unregulated first line and a tobacco second line is a 409", async () => {
+        productsById();
+        prisma.stockCountSession.findUnique.mockResolvedValue({
+          id: "sess-1",
+          status: "OPEN",
+          movementReference: null,
+          lines: [line({ productId: "prod-2" }), line({ id: "line-2", productId: "prod-1" })],
+        });
+        await expect(
+          service.commitStockCountSession("sess-1", { effectiveDate: FILED } as any, {
+            sub: "user-1",
+          }),
+        ).rejects.toMatchObject(filedRefusal);
+        expectNothingWritten();
+        expect(prisma.stockCountSession.updateMany).not.toHaveBeenCalled();
+      });
+
+      it("a tobacco line added while the commit waited for the lock is gated on the re-read lines", async () => {
+        productsById();
+        const open = (lines: unknown[]) => ({
+          id: "sess-1",
+          status: "OPEN",
+          movementReference: null,
+          startedAt: null,
+          lines,
+        });
+        // Pre-lock read: an unregulated line only (the gate passes). Under-lock re-read: a tobacco
+        // line has landed (an in-flight upsertStockCountLine) in the filed month.
+        prisma.stockCountSession.findUnique
+          .mockResolvedValueOnce(open([line({ productId: "prod-2" })]))
+          .mockResolvedValue(
+            open([line({ productId: "prod-2" }), line({ id: "line-2", productId: "prod-1" })]),
+          );
         await expect(
           service.commitStockCountSession("sess-1", { effectiveDate: FILED } as any, {
             sub: "user-1",

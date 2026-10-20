@@ -116,9 +116,13 @@ async function categoryFiledThrough(
   };
 }
 
-const loadProducts = async (db: StockDateDb, ids: string[]): Promise<StockDateProduct[]> =>
+const loadProducts = async (
+  db: StockDateDb,
+  tenantId: string,
+  ids: string[],
+): Promise<StockDateProduct[]> =>
   (await db.product.findMany({
-    where: { id: { in: ids } },
+    where: { tenantId, id: { in: ids } },
     select: { id: true, isTobacco: true, trackedCategoryId: true },
   })) ?? [];
 
@@ -142,7 +146,7 @@ export async function documentStockDate(
   const ids = [...new Set(args.productIds)];
   const out = new Map<string, DocumentStockDate>();
   if (ids.length === 0) return out;
-  const byId = new Map((await loadProducts(db, ids)).map((p) => [p.id, p]));
+  const byId = new Map((await loadProducts(db, tenantId, ids)).map((p) => [p.id, p]));
   for (const id of ids) {
     const product = byId.get(id);
     const filed = product ? await filedThroughOf(db, tenantId, product) : null;
@@ -191,7 +195,7 @@ export async function stockWriteDate(
   const tenantId = args.tenantId;
   const ids = [...new Set(args.productIds)];
   if (ids.length === 0) return date;
-  const products = await loadProducts(db, ids);
+  const products = await loadProducts(db, tenantId, ids);
 
   // The latest close wins, and its source (tobacco, or a category id) names the refusal.
   let latest: { filed: FiledThrough; categoryId: string | null } | null = null;
@@ -211,7 +215,7 @@ export async function stockWriteDate(
   const category = found.categoryId
     ? ((
         await db.trackedCategory?.findFirst({
-          where: { id: found.categoryId },
+          where: { id: found.categoryId, tenantId },
           select: { name: true },
         })
       )?.name ?? "a regulated category")

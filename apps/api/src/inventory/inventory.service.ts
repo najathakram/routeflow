@@ -112,7 +112,6 @@ export const isReplayCorrection = (m: {
   m.type === MovementType.COST_BASIS &&
   new Prisma.Decimal(m.quantity).isZero() &&
   (m.reference?.startsWith(REPLAY_CORRECTION_PREFIX) ?? false);
-export { effectiveDateOf } from "./stock-write-date";
 /** Averages closer than this are the same cost (costDecimal keeps 4dp). */
 const AVG_CORRECTION_EPSILON = new Prisma.Decimal("0.0001");
 
@@ -1002,8 +1001,16 @@ export class InventoryService {
     }
     assertSellableLines(products); // WS8: a counted FAMILY would drain phantom stock into its variants
 
-    const effectiveDate = await this.clientStockDate(productIds, dto.effectiveDate);
     const reference = `STOCK_COUNT-${dto.sessionId}`;
+    // SA-802: a re-post of a session that already wrote movements (a lost response) returns the prior
+    // result from the tx's own idempotency check, even if the month has been filed since: that path
+    // writes nothing, so its date is never read. Only a FIRST write is date-gated.
+    const priorWrite = await this.prisma
+      .forTenant()
+      .stockMovement.findFirst({ where: { reference }, select: { id: true } });
+    const effectiveDate = priorWrite
+      ? new Date()
+      : await this.clientStockDate(productIds, dto.effectiveDate);
     const restockedProductIds: string[] = [];
 
     // SA-767 L-2: every counted product is locked in one statement, THEN read inside the tx, so the
@@ -3229,6 +3236,13 @@ export class InventoryService {
       return this.alreadyCommittedOutcome(id, reference, fresh.lines.length);
     }
     if (fresh.lines.length === 0) throw new BadRequestException("Nothing counted yet");
+
+    // SA-802: the pre-lock gate saw the lines read BEFORE the lock; a line an in-flight edit added
+    // since is gated here, on the lines about to be written, at the SAME resolved instant.
+    await this.clientStockDate(
+      fresh.lines.map((l) => l.productId),
+      effectiveDate.toISOString(),
+    );
 
     // The batch order: productId, then line id (stable across a resume).
     const byProductThenId = (a: { productId: string; id: string }, b: typeof a) =>

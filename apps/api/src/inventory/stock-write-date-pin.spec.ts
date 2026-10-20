@@ -12,14 +12,20 @@ import * as path from "path";
 const SRC_ROOT = path.resolve(__dirname, "..");
 const GATE_FILE = path.join(SRC_ROOT, "inventory", "stock-write-date.ts");
 
-const RAW_DTO_DATE = /new\s+Date\s*\(\s*dto\s*\.\s*effectiveDate\b/;
+// Any `new Date(x.effectiveDate` / `Date.parse(effectiveDate` shape. `effectiveDate(` as a CALL (a
+// local helper function) is not a date parse and is not matched.
+const RAW_DATE_PARSE = /(?:new\s+Date|Date\s*\.\s*parse)\s*\(\s*[\w.?!]*\beffectiveDate\b(?!\s*\()/;
 const EFFECTIVE_DATE_OF_CALL = /\beffectiveDateOf\s*\(/;
+const EFFECTIVE_DATE_OF_IMPORT = /\bimport\b[^;]*\beffectiveDateOf\b/;
+const EFFECTIVE_DATE_OF_REEXPORT = /\bexport\b[^;]*\beffectiveDateOf\b/;
 
 /** The offences in one file's text; the gate file itself is the only legitimate `effectiveDateOf(`. */
 export function findOffences(source: string, isGateFile: boolean): string[] {
   const out: string[] = [];
-  if (RAW_DTO_DATE.test(source)) out.push("new Date(dto.effectiveDate)");
+  if (!isGateFile && RAW_DATE_PARSE.test(source)) out.push("new Date(...effectiveDate)");
   if (!isGateFile && EFFECTIVE_DATE_OF_CALL.test(source)) out.push("effectiveDateOf(");
+  if (!isGateFile && EFFECTIVE_DATE_OF_IMPORT.test(source)) out.push("import effectiveDateOf");
+  if (!isGateFile && EFFECTIVE_DATE_OF_REEXPORT.test(source)) out.push("export effectiveDateOf");
   return out;
 }
 
@@ -50,14 +56,32 @@ describe("SA-802: client-dated stock writes go through stockWriteDate", () => {
 
   it("detector self-test: flags the raw patterns, passes clean code", () => {
     expect(findOffences("const d = new Date(dto.effectiveDate);", false)).toEqual([
-      "new Date(dto.effectiveDate)",
+      "new Date(...effectiveDate)",
     ]);
     expect(
       findOffences("const d = dto.effectiveDate ? new Date(\n  dto.effectiveDate) : x", false),
-    ).toEqual(["new Date(dto.effectiveDate)"]);
+    ).toEqual(["new Date(...effectiveDate)"]);
     expect(findOffences("const d = effectiveDateOf(dto.effectiveDate);", false)).toEqual([
       "effectiveDateOf(",
     ]);
+    // The widened shapes: any receiver, a bare name, Date.parse, optional chaining.
+    for (const code of [
+      "const d = new Date(input.effectiveDate);",
+      "const d = new Date(effectiveDate);",
+      "const t = Date.parse(body.effectiveDate);",
+      "const d = new Date(dto?.effectiveDate ?? x);",
+    ]) {
+      expect(findOffences(code, false)).toEqual(["new Date(...effectiveDate)"]);
+    }
+    expect(findOffences('import { effectiveDateOf } from "./stock-write-date";', false)).toEqual([
+      "import effectiveDateOf",
+    ]);
+    expect(findOffences('export { effectiveDateOf } from "./stock-write-date";', false)).toEqual([
+      "export effectiveDateOf",
+    ]);
+    // A local helper CALLED effectiveDate(...) is not a date parse.
+    expect(findOffences("a.sort((x, y) => effectiveDate(y).getTime());", false)).toEqual([]);
+    expect(findOffences("const d = new Date(effectiveDate(p));", false)).toEqual([]);
     expect(findOffences("const d = effectiveDateOf(raw, now);", true)).toEqual([]);
     expect(
       findOffences(
