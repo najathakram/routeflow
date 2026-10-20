@@ -69,4 +69,27 @@ describe("CustomerInvoiceUnitControl", () => {
       variant: "error",
     });
   });
+
+  it("non-operator sees the read-only label and hint, no select", () => {
+    renderWithProviders(
+      <CustomerInvoiceUnitControl customerId="c1" value="PIECES" canEdit={false} />,
+    );
+    expect(screen.getByText("Invoice in")).toBeTruthy();
+    expect(screen.getByText("Pieces")).toBeTruthy();
+    expect(screen.getByText("Mixed boxes list each item; boxes show their pieces.")).toBeTruthy();
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
+  it("non-operator with no value reads Default", () => {
+    renderWithProviders(<CustomerInvoiceUnitControl customerId="c1" canEdit={false} />);
+    expect(screen.getByText("Default")).toBeTruthy();
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
+  it("tolerates a non-axios error without throwing", () => {
+    renderWithProviders(<CustomerInvoiceUnitControl customerId="c1" value="LEGACY" />);
+    fireEvent.change(select(), { target: { value: "PACK" } });
+    mutate.mock.calls[0][1].onError(new Error("boom"));
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ description: "" }));
+  });
 });

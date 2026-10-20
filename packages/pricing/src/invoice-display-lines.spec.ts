@@ -112,6 +112,14 @@ describe("invoiceDisplayUnitFor", () => {
       invoiceDisplayUnitFor({ customerDefault: "PACK", scopes: { business: "smallest" }, view }),
     ).toEqual(LEGACY);
   });
+  it("customer PIECES beats a product 'pack' ref; customer PACK beats a customer 'base' ref", () => {
+    expect(
+      invoiceDisplayUnitFor({ customerDefault: "PIECES", scopes: { product: "pack" }, view }),
+    ).toEqual(PIECES);
+    expect(
+      invoiceDisplayUnitFor({ customerDefault: "PACK", scopes: { customer: "base" }, view }),
+    ).toEqual(LEGACY);
+  });
   it("scopes", () => {
     expect(
       invoiceDisplayUnitFor({ customerDefault: "LEGACY", scopes: { business: "smallest" }, view }),

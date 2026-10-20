@@ -13,6 +13,7 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import {
   clearIssueDisplayUnits,
   resolveIssueDisplayUnits,
+  itemsWithDisplayUnits,
   resolveLiveDisplayUnits,
   writeIssueDisplayUnits,
 } from "./invoice-display-unit";
@@ -292,6 +293,59 @@ describeDb("SA-827 invoice display unit — real Postgres", () => {
     const row = await itemRow(s.item.id);
     expect(row.invoiceUnitLabel).toBe("Each");
     expect(row.invoiceUnitFactor).toBe(1);
+  });
+
+  it("a customer default change after issue leaves the issued item on its snapshot; a still-DRAFT invoice follows the new default", async () => {
+    const s = await seed("custflip", { invoiceUnitDefault: "PIECES" });
+    await issue(s, off);
+    await prisma.invoice.update({ where: { id: s.invoice.id }, data: { status: "SENT" } });
+    const second = await prisma.invoice.create({
+      data: {
+        tenantId: s.tenantId,
+        customerId: s.customer.id,
+        invoiceNumber: `INV-SA827-${RUN}-${seq}-b`,
+        status: "DRAFT",
+        subtotal: 60.02,
+        taxAmount: 0,
+        total: 60.02,
+      },
+    });
+    const secondItem = await prisma.invoiceItem.create({
+      data: {
+        tenantId: s.tenantId,
+        invoiceId: second.id,
+        productId: s.product.id,
+        description: "Acme mixed box",
+        qty: 30,
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: 15,
+        unitPrice: 30.01,
+        discount: 0,
+        taxRate: 0,
+        subtotal: 60.02,
+      },
+    });
+    await prisma.customer.update({
+      where: { id: s.customer.id },
+      data: { invoiceUnitDefault: "PACK" },
+    });
+    const issuedItems = await prisma.invoiceItem.findMany({ where: { invoiceId: s.invoice.id } });
+    const [issued] = await itemsWithDisplayUnits(
+      prisma,
+      { status: "SENT", tenantId: s.tenantId, customerId: s.customer.id, items: issuedItems },
+      off,
+    );
+    expect(issued.displayUnit).toEqual({ kind: "pieces", label: "Piece" });
+    expect(issued.invoiceUnitFactor).toBe(1);
+    const draftItems = await prisma.invoiceItem.findMany({ where: { invoiceId: second.id } });
+    const [draft] = await itemsWithDisplayUnits(
+      prisma,
+      { status: "DRAFT", tenantId: s.tenantId, customerId: s.customer.id, items: draftItems },
+      off,
+    );
+    expect(draft.id).toBe(secondItem.id);
+    expect(draft.displayUnit).toEqual({ kind: "legacy", label: null });
   });
 
   it("nothing set (legacy): zero writes, the columns stay null", async () => {

@@ -1158,12 +1158,11 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             </p>
           )}
         </div>
-        {isOperator && (
-          <CustomerInvoiceUnitControl
-            customerId={customerId}
-            value={customer?.invoiceUnitDefault}
-          />
-        )}
+        <CustomerInvoiceUnitControl
+          customerId={customerId}
+          value={customer?.invoiceUnitDefault}
+          canEdit={isOperator}
+        />
 
         {/* Deposit — auto-applies to every invoice GENERATED for this customer
             (order flows); computeDepositFields derives the amount at read time,
