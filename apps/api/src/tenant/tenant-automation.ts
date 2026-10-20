@@ -170,6 +170,9 @@ export const TENANT_JOBS: Readonly<Record<string, TenantJobSpec>> = {
   "billing.pauseReconcileFirst": PLATFORM("dunning pause"),
   "billing.reviewExpiredOverrides": PLATFORM("feature-grant lifecycle"),
   "billing.revokeExpiredOverrides": PLATFORM("feature-grant lifecycle"),
+  "billing.addonInvariants": PLATFORM(
+    "daily add-on invariant (SA-788): reads, then records and alerts; writes no tenant data",
+  ),
   "platform-admin.mirrorSync": PLATFORM(
     "mirrors tenants to the control plane; writes no tenant data",
   ),

@@ -71,6 +71,11 @@ describe("an order switched to PICKUP never loads on a route and never rides a t
 
     // The orders service: findFirst reads the table, update writes it (the real switch code runs).
     orders = await buildOrdersService();
+    // BO-07: an OPERATOR switching to PICKUP is judged on the live user row; this one denies nothing.
+    orders.prisma.user.findFirst.mockResolvedValue({
+      deniedPermissionGroups: [],
+      permissionsVersion: 1,
+    });
     orders.prisma.order.findFirst.mockImplementation(async (a: any) =>
       table.find((r) => r.id === a.where.id),
     );

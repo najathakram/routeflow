@@ -5,13 +5,13 @@
  * advisory lock (`addon:<tenant>:<sku>`), on the caller's promise that it already holds that key. The only
  * caller that can honestly make that promise is business-profile confirm, which holds every profile module's
  * key on one pinned connection (`BusinessProfileService.withConfirmLock`) and calls the comp enable from
- * `PlatformAdminController.applyBusinessProfileLocked`. Anywhere else the flag would silently remove the
+ * `PlatformAdminController.applyResolvedLocked`. Anywhere else the flag would silently remove the
  * serialisation the lock exists for (B342).
  *
  * This spec fails, naming the file, when:
  *   - any source file other than `addon.service.ts` (the definition) and `platform-admin.controller.ts` mentions
  *     `lockHeld` in code (src, scripts, prisma; comments are ignored);
- *   - a `lockHeld` in the controller sits outside `applyBusinessProfileLocked`, or in an options object without
+ *   - a `lockHeld` in the controller sits outside `applyResolvedLocked`, or in an options object without
  *     `comp: true`;
  *   - the service honours `lockHeld` without also requiring `comp`.
  */
@@ -62,10 +62,10 @@ function strayLockHeldFiles(list: string[]): string[] {
     .filter((f) => mentionsLockHeld(fs.readFileSync(f, "utf8")));
 }
 
-/** Body of `applyBusinessProfileLocked` in the controller source (comments kept out). */
+/** Body of `applyResolvedLocked` in the controller source (comments kept out). */
 function applyLockedBody(controllerCode: string): { start: number; end: number } {
-  const start = controllerCode.indexOf("private async applyBusinessProfileLocked(");
-  if (start < 0) throw new Error("applyBusinessProfileLocked not found in the controller");
+  const start = controllerCode.indexOf("private async applyResolvedLocked(");
+  if (start < 0) throw new Error("applyResolvedLocked not found in the controller");
   // the next decorated route or section after it ends the method
   const rest = controllerCode.slice(start + 10);
   const next = rest.search(/\n {2}@(Get|Post|Put|Patch|Delete)\(/);
@@ -90,7 +90,7 @@ describe("SA-769 - `lockHeld` has exactly one caller", () => {
     expect(strayLockHeldFiles(files).map((f) => path.relative(API_ROOT, f))).toEqual([]);
   });
 
-  it("the controller passes it only inside applyBusinessProfileLocked, always next to comp: true", () => {
+  it("the controller passes it only inside applyResolvedLocked, always next to comp: true", () => {
     const code = codeOnly(fs.readFileSync(CONTROLLER_FILE, "utf8"));
     const { start, end } = applyLockedBody(code);
     const hits = [...code.matchAll(/\blockHeld\b/g)];

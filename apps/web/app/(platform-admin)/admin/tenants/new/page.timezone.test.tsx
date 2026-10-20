@@ -9,10 +9,10 @@ jest.mock("@/lib/admin-api", () => ({ superAdminClient: { post: jest.fn() } }));
 jest.mock("@/lib/api/platform-pricing", () => ({
   fetchPlanCatalog: () => Promise.resolve({ version: 1, effectiveAt: null, plans: [] }),
 }));
-jest.mock("@/lib/platform-admin/business-profiles", () => ({
-  fetchBusinessProfiles: () => Promise.resolve([]),
-  previewBusinessProfile: jest.fn(),
-  applyBusinessProfile: jest.fn(),
+jest.mock("@/lib/platform-admin/capabilities-contract", () => ({
+  fetchCapabilityCatalog: () => Promise.resolve({ presets: [], availability: {} }),
+  previewBusinessCapabilities: jest.fn(),
+  applyBusinessCapabilities: jest.fn(),
 }));
 jest.mock("@/lib/platform-admin/features", () => ({
   ...jest.requireActual("@/lib/platform-admin/features"),
