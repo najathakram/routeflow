@@ -2,6 +2,7 @@
 // `GET/POST /platform-admin/tenants/:id/config-snapshots…`. Dates arrive as ISO strings. The API
 // side is `TenantConfigSnapshotAdminService` (apps/api/src/billing) — keep these in step with it.
 import type { SnapshotReasonValue } from "./enums";
+import type { API_ERROR_CODES } from "./error-codes";
 
 /** `GET …/config-snapshots` — one row per snapshot, newest first. */
 export interface ConfigSnapshotListItem {
@@ -26,7 +27,29 @@ export interface ConfigSnapshotListItem {
 export type ConfigSnapshotEntryKind = "config" | "override";
 
 export type ConfigSnapshotSkipReason =
-  "UNKNOWN_FEATURE" | "MODE_NOT_OFFERED" | "EXPIRED" | "PLAN_NOT_ALLOWED";
+  | "UNKNOWN_FEATURE"
+  | "MODE_NOT_OFFERED"
+  | "EXPIRED"
+  | "PLAN_NOT_ALLOWED"
+  /** BO-13: the delivery method is held — orders are with the carrier, so changing the billing moment now would bill them twice or never. */
+  | "CARRIER_IN_TRANSIT"
+  /** BO-13: the delivery method is held — own delivery (`delivery`/`both`) needs Routes or Order delivery, and the account has neither. */
+  | typeof API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET;
+
+/** A `fulfilment_model` row the restore HELD back (it is also in `skipped`): the snapshot stays restorable. */
+export interface ConfigSnapshotHeld {
+  featureKey: string;
+  /** The mode the tenant has now (the registry fallback when it has no row). */
+  from: string;
+  /** The mode the snapshot would have written. */
+  to: string;
+  reason: Extract<
+    ConfigSnapshotSkipReason,
+    "CARRIER_IN_TRANSIT" | typeof API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET
+  >;
+  /** Orders with the carrier (CARRIER_IN_TRANSIT only). */
+  count?: number;
+}
 
 /** `GET …/config-snapshots/:snapshotId/preview` — what "Restore now" would do right now. */
 export interface ConfigSnapshotPreview {
@@ -70,4 +93,6 @@ export interface ConfigSnapshotRestoreResult {
   report: ConfigSnapshotRestoreReport;
   /** Older un-restored snapshots this restore superseded (the API returns it; the tab ignores it). */
   supersededSnapshots: number;
+  /** Rows held back (BO-13). Non-empty = the snapshot was NOT stamped restored: "Restore now" again once cleared. */
+  held: ConfigSnapshotHeld[];
 }

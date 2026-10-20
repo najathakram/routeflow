@@ -58,15 +58,25 @@ import type {
 import { AdminAuditAction } from "./audit-actions.constant";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { BusinessProfileService } from "../billing/business-profile.service";
+import {
+  BusinessProfileService,
+  type BusinessProfileResolution,
+} from "../billing/business-profile.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import {
   ApplyBusinessProfileDto,
   ConfirmBusinessProfileDto,
 } from "./dto/apply-business-profile.dto";
+import {
+  BusinessCapabilitiesDto,
+  ConfirmBusinessCapabilitiesDto,
+} from "./dto/business-capabilities.dto";
 import type {
+  BusinessCapabilitiesApplyResponse,
+  BusinessCapabilitiesPreviewResponse,
   BusinessProfileApplyResponse,
   BusinessProfileBillingFailedAddon,
+  BusinessCapabilities,
   BusinessProfileListResponse,
   BusinessProfilePreviewResponse,
 } from "@routeflow/types";
@@ -783,6 +793,14 @@ export class PlatformAdminController {
     return this.businessProfiles.list();
   }
 
+  @Get("tenants/:id/business-capabilities")
+  @ApiOperation({
+    summary: "The capability ticks (delivery, shipping, counter, door payments) for one tenant",
+  })
+  getBusinessCapabilities(@Param("id") id: string): Promise<BusinessCapabilities> {
+    return this.businessProfiles.capabilities(id);
+  }
+
   @Post("tenants/:id/business-profile/preview")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -805,7 +823,8 @@ export class PlatformAdminController {
    * anything else is written; only fleet-OFF profiles have any, and their modes need no fleet.
    * Grants precede modes and modes precede denies because `set()` checks the fleet rule against
    * the SAVED state: delivery needs the fleet granted first, and a fleet is denied only after the
-   * mode has moved off delivery. Re-applying is idempotent (every step becomes a skip). Not one DB
+   * mode has moved off delivery. BO-04: this route is a thin alias - the preset goes through its ticks onto
+   * the same plan and the same `applyResolvedLocked` as `business-capabilities`. Re-applying is idempotent (every step becomes a skip). Not one DB
    * transaction: a mid-way failure leaves the steps already written, each audited, and a re-apply
    * completes the rest.
    */
@@ -818,17 +837,62 @@ export class PlatformAdminController {
     @CurrentUser() admin: JwtPayload,
   ): Promise<BusinessProfileApplyResponse> {
     // Plan-then-apply under the add-on locks the enable path takes (#3199 review): see withConfirmLock.
-    return this.businessProfiles.withConfirmLock(id, () =>
-      this.applyBusinessProfileLocked(id, dto, admin),
-    );
+    return this.businessProfiles.withConfirmLock(id, async () => {
+      // BO-04 review: re-plan from the DB, not this replica's 30s mode cache (see forgetCachedModes).
+      this.featureConfig.forgetCachedModes(id);
+      const resolved = await this.businessProfiles.plan(id, dto.profile);
+      const done = await this.applyResolvedLocked(id, resolved, dto, admin);
+      return { profile: resolved.profile.key as BusinessProfileApplyResponse["profile"], ...done };
+    });
   }
 
-  private async applyBusinessProfileLocked(
+  @Post("tenants/:id/business-capabilities/preview")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "What ticking these capabilities would change for this tenant (and whether it is blocked) - writes nothing",
+  })
+  previewBusinessCapabilities(
+    @Param("id") id: string,
+    @Body() dto: BusinessCapabilitiesDto,
+  ): Promise<BusinessCapabilitiesPreviewResponse> {
+    return this.businessProfiles.previewCapabilities(id, dto);
+  }
+
+  /**
+   * BO-04: confirm for capability ticks. The ticks map to the ONE planner the presets use, then the SAME
+   * apply sequence runs (`applyResolvedLocked`): nothing here has its own plan or its own write order.
+   */
+  @Post("tenants/:id/business-capabilities")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Apply capability ticks to a tenant (audited; idempotent)" })
+  applyBusinessCapabilities(
+    @Param("id") id: string,
+    @Body() dto: ConfirmBusinessCapabilitiesDto,
+    @CurrentUser() admin: JwtPayload,
+  ): Promise<BusinessCapabilitiesApplyResponse> {
+    return this.businessProfiles.withConfirmLock(id, async () => {
+      // BO-04 review: re-plan from the DB, not this replica's 30s mode cache (see forgetCachedModes).
+      this.featureConfig.forgetCachedModes(id);
+      const resolved = await this.businessProfiles.planCapabilities(id, dto);
+      const done = await this.applyResolvedLocked(id, resolved, dto, admin);
+      return { capabilities: resolved.capabilities, preset: resolved.preset, ...done };
+    });
+  }
+
+  /**
+   * The one apply sequence, for a plan already resolved from the tenant's CURRENT state (preset or ticks).
+   * Order: refuse a blocked plan (carrier in transit, a comp the comp path would refuse) and a stale
+   * fingerprint FIRST, before any write - so a refusal never leaves billing half stopped - then billing
+   * disables -> comps and grants -> modes -> denies.
+   */
+  private async applyResolvedLocked(
     id: string,
-    dto: ConfirmBusinessProfileDto,
+    resolved: BusinessProfileResolution,
+    dto: { planFingerprint: string; reason?: string },
     admin: JwtPayload,
-  ): Promise<BusinessProfileApplyResponse> {
-    const resolved = await this.businessProfiles.plan(id, dto.profile);
+  ): Promise<{ plan: BusinessProfileApplyResponse["plan"]; changed: string[]; summary: string[] }> {
+    this.businessProfiles.assertNotBlocked(resolved); // before any write, and before the fingerprint
     this.businessProfiles.assertPlanUnchanged(resolved, dto.planFingerprint); // before any write
     const reason = dto.reason?.trim() || resolved.reason;
     const { changed } = await this.featurePreview.preview(id, resolved.previewRequest);
@@ -954,7 +1018,10 @@ export class PlatformAdminController {
       current = { step: "audit", key: resolved.profile.key };
       this.authority.invalidate(id);
       await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.BUSINESS_PROFILE_APPLIED, {
-        profile: resolved.profile.key,
+        // alias calls (a preset key) keep `profile`; capability calls carry `capabilities` + `preset` instead
+        ...(resolved.aliasProfile ? { profile: resolved.aliasProfile } : {}),
+        capabilities: resolved.capabilities,
+        preset: resolved.preset,
         reason,
         plan: resolved.plan,
         // SA-769: the comp rows this apply wrote, listed so the audit row alone shows what was granted free
@@ -967,12 +1034,7 @@ export class PlatformAdminController {
       if (alreadyDisabled.length > 0) throw billingFailed();
       throw err;
     }
-    return {
-      profile: resolved.profile.key as BusinessProfileApplyResponse["profile"],
-      plan: resolved.plan,
-      changed,
-      summary: resolved.summary,
-    };
+    return { plan: resolved.plan, changed, summary: resolved.summary };
   }
 
   // ─── Configuration snapshots (Lane B A2 step c) ───────────────────────────

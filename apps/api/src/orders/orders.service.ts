@@ -101,6 +101,7 @@ import { ListOrdersDto } from "./dto/list-orders.dto";
 import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import { fulfilCaller, resolveFulfilPath } from "./fulfil-path-resolver";
+import { assertMayUseTill } from "./counter-sale/till-permission.guard";
 import {
   assertNoBackdatedMerge,
   findActiveOrderImpl,
@@ -1567,6 +1568,12 @@ export class OrdersService implements OnApplicationBootstrap {
     // today for every existing order/customer, which default to ROUTE too).
     // Counter sale (#3211): an INTERNAL `options.fulfillPath` (PICKUP) wins; every other caller goes
     // through the ONE resolver (#3210).
+    // BO-07: an explicit PICKUP is the till (POS mode), so an operator denied it is refused with the
+    // till guard's own 403 before the resolver can map the request to PICKUP. (A counter sale arrives
+    // through `options.fulfillPath`, behind TillPermissionGuard.)
+    if (!options.fulfillPath && isStaffRole && dto.fulfillPath === FulfillPath.PICKUP) {
+      await assertMayUseTill(this.prisma, user);
+    }
     const fulfillPath =
       options.fulfillPath ??
       (await resolveFulfilPath(this.fulfilDeps(), {

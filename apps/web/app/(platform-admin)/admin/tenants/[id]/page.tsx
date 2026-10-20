@@ -33,6 +33,7 @@ import {
 } from "../../../_components/TenantActionDialogs";
 import { TenantPricingCard } from "./_components/TenantPricingCard";
 import { ReadinessCard, type AdminReadState } from "./_components/ReadinessCard";
+import { useFocusTarget } from "./_features/useFocusTarget";
 import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText, Archive } from "lucide-react";
 import { FeatureConsole } from "./_features/FeatureConsole";
 import { SetupSection } from "./_features/SetupSection";
@@ -399,6 +400,9 @@ function OverviewTab({
     state: AdminReadState;
   }>({ admin: null, state: "loading" });
   const adminUsername = adminRead.admin?.username ?? null;
+  // "Create admin" on the Readiness card lands here: ?focus=admin-account scrolls <main> to the card and focuses it.
+  const adminAccountRef = React.useRef<HTMLDivElement>(null);
+  useFocusTarget("admin-account", adminAccountRef);
   const handleAdminChange = React.useCallback(
     (admin: TenantAdminUser | null, state: AdminReadState) => setAdminRead({ admin, state }),
     [],
@@ -425,11 +429,11 @@ function OverviewTab({
       : null;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <ReadinessCard tenant={tenant} admin={adminRead.admin} adminState={adminRead.state} />
 
       {/* At-a-glance KPIs */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:col-span-2">
+      <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3 lg:col-span-2">
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
           <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Est. MRR</p>
           <p className="mt-2 text-2xl font-bold text-white">{usd(tenant.estMrrUsd ?? 0)}</p>
@@ -450,7 +454,7 @@ function OverviewTab({
       </div>
 
       {/* Tenant Info */}
-      <AdminCard title="Tenant Info">
+      <AdminCard title="Tenant Info" className="min-w-0">
         <dl className="flex flex-col gap-2.5 text-sm">
           {[
             [
@@ -554,7 +558,12 @@ function OverviewTab({
       )}
 
       {/* Admin Account */}
-      <div id="admin-account">
+      <div
+        id="admin-account"
+        ref={adminAccountRef}
+        tabIndex={-1}
+        className="min-w-0 scroll-mt-4 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+      >
         <TenantAdminSection
           tenantId={tenant.id}
           onRefreshTenant={onRefreshTenant}
@@ -613,7 +622,7 @@ function OverviewTab({
       />
 
       {/* Quick Actions */}
-      <AdminCard title="Quick Actions" className="lg:col-span-2">
+      <AdminCard title="Quick Actions" className="min-w-0 lg:col-span-2">
         {statusMsg && (
           <div className="mb-4 rounded-lg bg-indigo-900/40 px-4 py-2 text-sm text-indigo-300 ring-1 ring-indigo-700">
             {statusMsg}
@@ -785,7 +794,7 @@ function OverviewTab({
       {/* Recent Audit Logs */}
       <AdminCard
         title="Recent Audit Logs"
-        className="lg:col-span-2"
+        className="min-w-0 lg:col-span-2"
         actions={
           <Link
             href={`/admin/audit-logs?tenantId=${tenant.id}`}
@@ -928,9 +937,9 @@ function BillingTab({
   };
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       {/* Current Plan */}
-      <AdminCard title="Current Plan">
+      <AdminCard title="Current Plan" className="min-w-0">
         <div className="flex items-center gap-4 mb-4">
           <AdminBadge variant="plan">{tenant.planKey ?? tenant.plan}</AdminBadge>
           <AdminBadge>{tenant.status}</AdminBadge>
@@ -945,7 +954,7 @@ function BillingTab({
       </AdminCard>
 
       {/* Subscription Details */}
-      <AdminCard title="Subscription">
+      <AdminCard title="Subscription" className="min-w-0">
         {sub ? (
           <dl className="flex flex-col gap-2 text-sm">
             {sub.externalPayment && (
@@ -1010,7 +1019,7 @@ function BillingTab({
       </AdminCard>
 
       {/* Manual Activation */}
-      <AdminCard title="Manual Activation" className="lg:col-span-2">
+      <AdminCard title="Manual Activation" className="min-w-0 lg:col-span-2">
         <p className="mb-4 text-sm text-slate-400">
           Activate this tenant&apos;s subscription when payment was received outside Stripe — via
           Zelle, bank transfer, check, or any other platform.
@@ -1141,7 +1150,7 @@ function BillingTab({
       </AdminCard>
 
       {/* Stripe Actions — checkout now lives on the Pricing card below (interval-aware) */}
-      <AdminCard title="Stripe Actions" className="lg:col-span-2">
+      <AdminCard title="Stripe Actions" className="min-w-0 lg:col-span-2">
         <div className="flex flex-wrap gap-3">
           <button
             disabled={portalLoading}

@@ -27,6 +27,17 @@ describe("AdminModal — accessibility", () => {
     expect(dialog).toHaveAttribute("aria-modal", "true");
   });
 
+  it("BO-05: role='alertdialog' makes it an alert dialog (a destructive confirm), still modal and named by its title", () => {
+    render(
+      <AdminModal open onClose={jest.fn()} title="Stop billing for 2 add-ons?" role="alertdialog">
+        <button>Field</button>
+      </AdminModal>,
+    );
+    const dialog = screen.getByRole("alertdialog", { name: "Stop billing for 2 add-ons?" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("moves focus into the modal on open, to its first focusable element", async () => {
     const user = userEvent.setup();
     render(<Harness open={false} />);

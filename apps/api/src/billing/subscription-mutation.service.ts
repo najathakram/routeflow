@@ -597,7 +597,14 @@ export class SubscriptionMutationService {
         }
       }
 
-      await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+      // BO-13: the add-on rows this checkout activates are written AFTER the hook (the `desiredNow` loop below),
+      // so the restore's fleet check is told about them and judges the end state. No fleet module is sold
+      // through checkout today, so this is future-proofing, not a live path.
+      await this.planTransition.onPlanChange(
+        tx,
+        { ...transition, pendingAddonKeys: [...desiredNow.keys()] },
+        preparedTransition,
+      );
       // #2223 / SA-444c (ii): a negotiated fee is what the tenant pays — a cycle change or re-subscribe
       // moves the plan/cycle, never the price. Both upsert branches write override ?? catalog.
       const override = priceOverrideOf(lockedSub);

@@ -9,7 +9,7 @@
  * (snapshots/overrides/configs cascade with the tenant).
  */
 import { randomUUID } from "crypto";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
@@ -43,6 +43,10 @@ describeDb("TenantConfigSnapshotService — real Postgres round trip", () => {
   });
 
   afterAll(async () => {
+    // BO-13 rows (cascade does not reach customers/users through orders): delete exactly what this file made.
+    await prisma.order.deleteMany({ where: { tenantId } });
+    await prisma.customer.deleteMany({ where: { tenantId } });
+    await prisma.user.deleteMany({ where: { tenantId } });
     await prisma.tenant.delete({ where: { id: tenantId } });
     await prisma.$disconnect();
     await pool.end();
@@ -201,5 +205,173 @@ describeDb("TenantConfigSnapshotService — real Postgres round trip", () => {
     const snaps = await prisma.tenantFeatureConfigSnapshot.findMany({ where: { tenantId } });
     expect(snaps).toHaveLength(1);
     expect(snaps[0].restoredAt).not.toBeNull();
+  });
+  // ─── BO-13: the restore never crosses the billing moment under a shipment, nor writes own delivery
+  // to an account with no fleet. The delivery-method row is held, everything else is restored, and
+  // the snapshot stays claimable until a run completes it.
+  describe("a held delivery method (BO-13)", () => {
+    const FM = "fulfilment_model";
+
+    async function reset() {
+      await prisma.tenantFeatureConfigSnapshot.deleteMany({ where: { tenantId } });
+      await prisma.tenantFeatureOverride.deleteMany({ where: { tenantId } });
+      await prisma.tenantFeatureConfig.deleteMany({ where: { tenantId } });
+      await prisma.tenantAddon.deleteMany({ where: { tenantId } });
+      await prisma.order.deleteMany({ where: { tenantId } });
+    }
+
+    /** Snapshot (delivery method = snapMode, CONFIG_KEY settings {x:1}), then drift both to the stored values. */
+    async function arrange(snapMode: string, storedMode: string) {
+      await reset();
+      await prisma.tenantFeatureConfig.createMany({
+        data: [
+          { tenantId, featureKey: FM, mode: snapMode, reason: "pilot" },
+          { tenantId, featureKey: CONFIG_KEY, mode: MODE, settings: { x: 1 }, reason: "pilot" },
+        ],
+      });
+      const snap = await prisma.$transaction((tx) => svc.snapshot(tx, tenantId, HIGH, "DOWNGRADE"));
+      // older than the snapshot, so the restore treats them as the downgrade-era values (not keptNewer)
+      const old = new Date(Date.now() - 3_600_000);
+      await prisma.tenantFeatureConfig.updateMany({
+        where: { tenantId, featureKey: FM },
+        data: { mode: storedMode, updatedAt: old },
+      });
+      await prisma.tenantFeatureConfig.updateMany({
+        where: { tenantId, featureKey: CONFIG_KEY },
+        data: { settings: { stale: 1 }, updatedAt: old },
+      });
+      return snap;
+    }
+
+    async function shippedOrder() {
+      const user = await prisma.user.create({
+        data: {
+          email: `cust-${RUN}@example.invalid`,
+          username: `cust-${RUN}`,
+          role: "CUSTOMER",
+          tenantId,
+        },
+      });
+      const customer = await prisma.customer.create({
+        data: { userId: user.id, businessName: "Acme Retail", contactName: "c", tenantId },
+      });
+      return prisma.order.create({
+        data: {
+          tenantId,
+          customerId: customer.id,
+          orderNumber: `ORD-BO13-${RUN}`,
+          fulfillPath: "SHIP",
+          status: "OUT_FOR_DELIVERY",
+          shippedAt: new Date(),
+        },
+      });
+    }
+
+    const modeOf = async (key: string) =>
+      (await prisma.tenantFeatureConfig.findFirstOrThrow({ where: { tenantId, featureKey: key } }))
+        .mode;
+
+    it("a shipped-not-delivered order holds delivery -> ship: the row stays, the rest restores, the snapshot stays claimable; delivered, a second run completes it", async () => {
+      const snap = await arrange("ship", "delivery");
+      const order = await shippedOrder();
+
+      const first = await prisma.$transaction((tx) =>
+        svc.restoreSnapshot(tx, tenantId, snap.id, HIGH),
+      );
+
+      expect(first!.held).toEqual([
+        { featureKey: FM, from: "delivery", to: "ship", reason: "CARRIER_IN_TRANSIT", count: 1 },
+      ]);
+      expect(first!.report.skipped).toBe(1);
+      expect(await modeOf(FM)).toBe("delivery");
+      expect(
+        (
+          await prisma.tenantFeatureConfig.findFirstOrThrow({
+            where: { tenantId, featureKey: CONFIG_KEY },
+          })
+        ).settings,
+      ).toEqual({ x: 1 });
+      expect(
+        (await prisma.tenantFeatureConfigSnapshot.findUniqueOrThrow({ where: { id: snap.id } }))
+          .restoredAt,
+      ).toBeNull();
+
+      await prisma.order.update({ where: { id: order.id }, data: { status: "DELIVERED" } });
+      const second = await prisma.$transaction((tx) =>
+        svc.restoreSnapshot(tx, tenantId, snap.id, HIGH),
+      );
+
+      expect(second!.held).toEqual([]);
+      expect(second!.report).toMatchObject({ restored: 1, unchanged: 1 });
+      expect(await modeOf(FM)).toBe("ship");
+      expect(
+        (await prisma.tenantFeatureConfigSnapshot.findUniqueOrThrow({ where: { id: snap.id } }))
+          .restoredAt,
+      ).not.toBeNull();
+    });
+
+    it("through restoreLatest inside a plan-change transaction: the upgrade commits, the row is held, the partial run is audited on its own action", async () => {
+      const snap = await arrange("ship", "delivery");
+      await shippedOrder();
+      const hook = new PlanTransitionConfigService(
+        { isEnabled: async () => true } as never,
+        svc,
+        { getVersionForTenant: async () => ({ definitions: [], addonSkus: [] }) } as never,
+        { invalidate: () => undefined } as never,
+        { invalidate: () => undefined } as never,
+        { invalidateTenant: () => undefined } as never,
+      );
+      const t = { tenantId, fromPlanKey: LOW, toPlanKey: HIGH, toPlanVersionId: null };
+
+      const out = await prisma.$transaction(async (tx) => {
+        const outcome = await hook.onPlanChange(tx, t, { enabled: true, planAllows: () => true });
+        // the plan change's own write still runs after the held restore
+        const still = await tx.tenant.count({ where: { id: tenantId } });
+        return { outcome, still };
+      });
+
+      expect(out.still).toBe(1);
+      expect(out.outcome).toMatchObject({
+        action: "restore",
+        restore: { held: [{ featureKey: FM, reason: "CARRIER_IN_TRANSIT", count: 1 }] },
+      });
+      expect(await modeOf(FM)).toBe("delivery");
+      expect(
+        (await prisma.tenantFeatureConfigSnapshot.findUniqueOrThrow({ where: { id: snap.id } }))
+          .restoredAt,
+      ).toBeNull();
+      const audit = await prisma.auditLog.findFirstOrThrow({
+        where: { tenantId, action: "CONFIG_SNAPSHOT_RESTORE_HELD" },
+      });
+      expect(((audit.meta as Prisma.JsonObject).report as Prisma.JsonObject).skipped).toBe(1);
+      await prisma.auditLog.deleteMany({
+        where: { tenantId, action: "CONFIG_SNAPSHOT_RESTORE_HELD" },
+      });
+    });
+
+    it("own delivery with no fleet module is held (FULFILMENT_MODE_NEEDS_FLEET); once a fleet add-on is held, the next run applies it", async () => {
+      const snap = await arrange("delivery", "ship");
+
+      const first = await prisma.$transaction((tx) =>
+        svc.restoreSnapshot(tx, tenantId, snap.id, HIGH),
+      );
+      expect(first!.held).toEqual([
+        { featureKey: FM, from: "ship", to: "delivery", reason: "FULFILMENT_MODE_NEEDS_FLEET" },
+      ]);
+      expect(await modeOf(FM)).toBe("ship");
+      expect(
+        (await prisma.tenantFeatureConfigSnapshot.findUniqueOrThrow({ where: { id: snap.id } }))
+          .restoredAt,
+      ).toBeNull();
+
+      await prisma.tenantAddon.create({
+        data: { tenantId, addonKey: "recurring_routes", active: true, isComp: true },
+      });
+      const second = await prisma.$transaction((tx) =>
+        svc.restoreSnapshot(tx, tenantId, snap.id, HIGH),
+      );
+      expect(second!.held).toEqual([]);
+      expect(await modeOf(FM)).toBe("delivery");
+    });
   });
 });
