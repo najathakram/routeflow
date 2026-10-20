@@ -1,3 +1,4 @@
+import type { InvoiceDisplayUnitView } from "@routeflow/types";
 import {
   clearIssueDisplayUnits,
   itemsWithDisplayUnits,
@@ -249,7 +250,7 @@ describe("writeIssueDisplayUnits (write side: inside the caller's tx, under a sa
     await writeIssueDisplayUnits(
       tx,
       "inv-1",
-      new Map([
+      new Map<string, InvoiceDisplayUnitView>([
         ["it-a", piecesUnit("Piece")],
         ["it-b", piecesUnit("Piece")],
         ["it-c", piecesUnit("Each")],

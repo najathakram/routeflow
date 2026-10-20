@@ -142,7 +142,7 @@ const INVOICE_ITEM = {
   product: { plan: PRODUCT },
   // SA-827 I5: the pieces view's "{category} tax" row names the category, so the buyer's line keeps its NAME only
   trackedCategory: {
-    plan: { id: "strip", name: "keep", invoiceTreatment: "strip" } satisfies Record<
+    plan: { name: "keep" } satisfies Record<
       keyof NonNullable<BuyerInvoiceItem["trackedCategory"]>,
       Leaf
     >,
