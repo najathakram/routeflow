@@ -36,7 +36,8 @@ describe("family page with units v2 on: parity", () => {
       .split("\n")
       .filter((l) => l.includes("v2Family") && !l.includes("const v2Family"));
     expect(uses).toHaveLength(1);
-    expect(uses.some((l) => /!v2Family && <ProductUnitsCard/.test(l))).toBe(true);
+    expect(uses[0]).toMatch(/!v2Family && /);
+    expect(src).toMatch(/\{!v2Family && \(\s*<ProductUnitsCard/);
     const cards = fs.readFileSync(path.join(__dirname, "FamilySalesCards.tsx"), "utf8");
     expect(cards).toMatch(
       /<SalesHistoryCard productId=\{productId\} hideCreateOrder compactEmpty \/>/,
@@ -53,7 +54,7 @@ describe("family page with units v2 on: parity", () => {
   it("the v2 family tiers grid is the only other family removal", () => {
     // K11-20c: the section sits in ProductPricingRegion (the inline edit mode's full-width wrapper)
     expect(src).toMatch(
-      /v2 && product\.kind !== "FAMILY" \? \(\s*<ProductPricingRegion>\s*<ProductPricingV2 product=\{product\} \/>/,
+      /pricingSplit \? \(\s*<div[^>]*>\s*<ProductPricingRegion>\s*<ProductPricingV2 product=\{product\} \/>/,
     );
   });
 
@@ -66,15 +67,16 @@ describe("family page with units v2 on: parity", () => {
     expect(refs).toEqual([
       // The Units & prices card reads only where the grid shell mounts the controls that replace it (D-2026-10-18)
       "const cardRo = v2 && unitStructure;",
+      // K11-23: the prices region is its own grid item right after Details
+      'const pricingSplit = v2 && product.kind !== "FAMILY";',
       // K11-20c: prices are edited in the floating window (and shown read-only in Details) for a non-governed product
       "const pricesInWindow = v2 && !unitStructureGoverned(product);",
       '{v2 ? null : stockStatus === "OUT_OF_STOCK" ? (',
       "<ProductHeaderLine product={product} currentStock={currentStock} pricesV2={v2} />",
       '{v2 && product.kind !== "FAMILY" ? <ProductJumpLinks reserveSpace /> : null}',
       "pricesV2={v2}",
-      '{v2 && product.kind !== "FAMILY" ? (',
       // K10d: the v2 flag drops the old Units card's always-open Add form (the shell's Add a unit replaces it)
-      "{!v2Family && <ProductUnitsCard product={product} hideAddForm={v2} readOnly={cardRo} />}",
+      "<ProductUnitsCard product={product} hideAddForm={v2} readOnly={cardRo} />",
     ]);
   });
 });
