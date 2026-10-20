@@ -35,7 +35,7 @@ export function UnitsBesideGrid({ product }: { product: { id: string; unit?: str
   const current = units.find((u) => u.isDefaultSelling)?.id ?? "";
 
   return (
-    <div data-testid="units-v2-beside" className="mt-3 space-y-3">
+    <div data-testid="units-v2-beside" data-wide-inset="" className="mt-3 space-y-3">
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-[12rem]">
           <label className={LABEL} htmlFor={selectId}>
@@ -99,7 +99,7 @@ export function UnitDetailsEditor({ product }: { product: { id: string } }) {
   const editable = (list.data ?? []).filter((u) => u.factorToBase !== 1);
   if (draft.editingIn !== "inline" || editable.length === 0) return null;
   return (
-    <div data-testid="units-v2-details" className="mt-3 space-y-3">
+    <div data-testid="units-v2-details" data-wide-inset="" className="mt-3 space-y-3">
       <ul className="space-y-2" data-testid="units-v2-beside-rows">
         {editable.map((u) => (
           <UnitNameRow

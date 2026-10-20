@@ -95,6 +95,13 @@ const mount = (extra: Partial<React.ComponentProps<typeof EditablePricesGrid>> =
     </PriceDraftProvider>,
   );
 
+describe("R3 review: edit-mode left edges share one inset", () => {
+  it("marks the heading row so the wide region insets it like Add a unit", () => {
+    mount();
+    expect(screen.getByTestId("units-v2-actions-row")).toHaveAttribute("data-wide-inset", "");
+  });
+});
+
 describe("R3 review item 2: the region heading leads the actions row", () => {
   it("renders Prices by unit once, in the actions row before Change prices, not in the grid card", () => {
     mount();
