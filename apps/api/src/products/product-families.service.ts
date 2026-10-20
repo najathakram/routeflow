@@ -44,6 +44,7 @@ import {
   type FamilyPriceColumn,
 } from "./family-price";
 import { UnitsPricesV2FlagCache, variantTierValue } from "./new-product-tiers";
+import { writeFamilyAssigned } from "./product-parent";
 import { lockProductName } from "./product-name-rules";
 import { bareRowNames } from "./product-variant-name";
 import { syncCategoryLabel } from "../product-categories/label-writer";
@@ -357,6 +358,16 @@ export class ProductFamiliesService {
             ),
           });
           variants.push({ id: created.id, name: created.name });
+          // eslint-disable-next-line no-await-in-loop
+          await writeFamilyAssigned(tx, {
+            tenantId,
+            actorId,
+            productId: created.id,
+            fromParentId: null,
+            toParentId: family.id,
+            variantName: v.name.trim(),
+            via: "family_editor",
+          });
           // eslint-disable-next-line no-await-in-loop
           await syncProductBarcodesFromLegacy(tx, {
             tenantId,
@@ -685,6 +696,16 @@ export class ProductFamiliesService {
             ),
           });
           added.push(created.id);
+          // eslint-disable-next-line no-await-in-loop
+          await writeFamilyAssigned(tx, {
+            tenantId,
+            actorId,
+            productId: created.id,
+            fromParentId: null,
+            toParentId: familyId,
+            variantName: v.name.trim(),
+            via: "family_editor",
+          });
           // eslint-disable-next-line no-await-in-loop
           await syncProductBarcodesFromLegacy(tx, {
             tenantId,

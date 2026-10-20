@@ -89,8 +89,7 @@ import {
 } from "./stock-count-commit";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
-import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
-import type { FamilyAssignVia } from "../products/product-parent";
+import { writeFamilyAssigned } from "../products/product-parent";
 
 /**
  * Interactive-tx options of a count add / amend (SA-767 r-note 5 SA-3). The product-lock helper bounds its
@@ -597,21 +596,14 @@ export class InventoryService {
     // The variant copied its parent's category text: add-only label sync, same tx.
     await syncCategoryLabel(tx, { tenantId, productId: created.id, text: created.category });
     // SA-823 R11: a variant born under the parent is an assignment (fromParentId null), written in this same tx.
-    await tx.auditLog.create({
-      data: {
-        tenantId: tenantId ?? undefined,
-        userId: actorId,
-        action: AUDIT_ACTIONS.PRODUCT_FAMILY_ASSIGNED,
-        entityType: "Product",
-        entityId: created.id,
-        meta: {
-          productId: created.id,
-          fromParentId: null,
-          toParentId: parent.id,
-          variantName: created.variantName ?? null,
-          via: "inventory" satisfies FamilyAssignVia,
-        },
-      },
+    await writeFamilyAssigned(tx, {
+      tenantId,
+      actorId,
+      productId: created.id,
+      fromParentId: null,
+      toParentId: parent.id,
+      variantName: created.variantName ?? null,
+      via: "inventory",
     });
     return created;
   }

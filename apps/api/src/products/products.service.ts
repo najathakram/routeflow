@@ -119,7 +119,6 @@ import {
   propagateFamilyPrice,
   readFamilyPriceMode,
 } from "./family-price";
-import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import {
   assertValidParent,
   parentInvalid,
@@ -127,6 +126,7 @@ import {
   tenantSafeParent,
   tenantSafeParentView,
   type FamilyAssignVia,
+  writeFamilyAssigned,
   type ReparentOptions,
 } from "./product-parent";
 import { scanReadInclude } from "./scan-product-view";
@@ -1078,21 +1078,14 @@ export class ProductsService {
       });
       if (dto.parentProductId && options?.reparentVia) {
         // SA-823 R11: a product born under a parent is an assignment too (fromParentId null), in this same tx.
-        await tx.auditLog.create({
-          data: {
-            tenantId,
-            userId: options.actorId ?? null,
-            action: AUDIT_ACTIONS.PRODUCT_FAMILY_ASSIGNED,
-            entityType: "Product",
-            entityId: row.id,
-            meta: {
-              productId: row.id,
-              fromParentId: null,
-              toParentId: dto.parentProductId,
-              variantName: row.variantName ?? null,
-              via: options.reparentVia,
-            },
-          },
+        await writeFamilyAssigned(tx, {
+          tenantId,
+          actorId: options.actorId,
+          productId: row.id,
+          fromParentId: null,
+          toParentId: dto.parentProductId,
+          variantName: row.variantName ?? null,
+          via: options.reparentVia,
         });
       }
       return row;
@@ -1669,21 +1662,21 @@ export class ProductsService {
           })
         ).keptLabels;
         // SA-823 R11: the assignment is audited in THIS transaction (rolls back with the reparent); an echo never gets here.
-        await tx.auditLog.create({
-          data: {
-            tenantId,
-            userId: options.actorId ?? null,
-            action: AUDIT_ACTIONS.PRODUCT_FAMILY_ASSIGNED,
-            entityType: "Product",
-            entityId: id,
-            meta: {
-              productId: id,
-              fromParentId,
-              toParentId: dto.parentProductId ?? null,
-              variantName: row.variantName ?? null,
-              via: options.reparentVia as FamilyAssignVia, // guarded above: reparenting implies it
-            },
-          },
+        const via = options?.reparentVia;
+        if (!via) {
+          // In-tx twin of the pre-tx guard: a parent that moved after findOne() must still name its door (rolls back).
+          throw new Error(
+            "ProductsService.update changed parentProductId without options.reparentVia",
+          );
+        }
+        await writeFamilyAssigned(tx, {
+          tenantId,
+          actorId: options?.actorId,
+          productId: id,
+          fromParentId,
+          toParentId: dto.parentProductId ?? null,
+          variantName: row.variantName ?? null,
+          via,
         });
       }
       if (family.propagate) {

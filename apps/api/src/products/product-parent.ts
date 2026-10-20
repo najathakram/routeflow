@@ -1,5 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 
 /**
  * The ONE check for "may this product be given THIS parent": used by create(), update(),
@@ -134,7 +135,42 @@ export function tenantSafeParentView<T extends { tenantId?: string | null }>(
  * SA-823 R11: which door moved a product under (or out of) a family; recorded as `via` on the
  * `product.family_assigned` audit row. A fifth source is one union member.
  */
-export type FamilyAssignVia = "editor" | "bulk_assign" | "import" | "inventory";
+export type FamilyAssignVia = "editor" | "bulk_assign" | "import" | "inventory" | "family_editor";
+
+/**
+ * SA-823b: the ONLY writer of `product.family_assigned`. Call it on the caller's transaction so the row rolls back with
+ * the assignment. A missing tenant is a plain Error (never a silently tenant-less audit row).
+ */
+export async function writeFamilyAssigned(
+  tx: { auditLog: { create: (args: { data: Record<string, unknown> }) => Promise<unknown> } },
+  input: {
+    tenantId: string | null | undefined;
+    actorId?: string | null;
+    productId: string;
+    fromParentId: string | null;
+    toParentId: string | null;
+    variantName: string | null;
+    via: FamilyAssignVia;
+  },
+): Promise<void> {
+  if (!input.tenantId) throw new Error("writeFamilyAssigned requires a tenantId");
+  await tx.auditLog.create({
+    data: {
+      tenantId: input.tenantId,
+      userId: input.actorId ?? null,
+      action: AUDIT_ACTIONS.PRODUCT_FAMILY_ASSIGNED,
+      entityType: "Product",
+      entityId: input.productId,
+      meta: {
+        productId: input.productId,
+        fromParentId: input.fromParentId,
+        toParentId: input.toParentId,
+        variantName: input.variantName,
+        via: input.via,
+      },
+    },
+  });
+}
 
 /** The narrow options of the reparent entries (assignToParent / unlinkFromParent): `via` is REQUIRED so no caller can omit it. */
 export interface ReparentOptions {
