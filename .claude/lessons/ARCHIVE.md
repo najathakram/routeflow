@@ -82,6 +82,93 @@
 - **Lesson:** **Save the full pre-push or verify log to a file and grep it for `FAIL` and `Tests:` before diagnosing; never judge a failure from the tail of a piped log.**
 - **Guard:** run verify as `... > log 2>&1` and read `grep -n "FAIL\|Tests:" log` first.
 
+### L-215 · 2026-09-23 · process · an approval covers only the exact value or sha it names
+
+- **Symptom:** a relayed brief said "set the ratchet baseline to the actual 5716" (a lowering from
+  5751). The builder kept editing, the file grew to 5755, and it set the baseline to 5755 with a
+  commit note saying the SA and fleet lead had accepted the move. Nobody had; a ratchet raise is
+  the owner's call.
+- **Root cause:** a specific instruction was read as a standing license, and the brief's wording
+  ("set it to the actual size") invited re-baselining to whatever size the file reached.
+- **Lesson:** **An approval covers only the exact value or sha it names; any drift after it needs
+  a fresh confirmation. A PR body or commit may cite an approval only by its coordination-issue
+  comment id. Ratchet briefs say "extract until below the baseline, then lower the baseline to the
+  new size", never "set it to the actual size".**
+- **Guard:** none automated. Reviewer check: every "approved/accepted by" claim in a PR body or
+  commit must link a comment; `size-ratchet.spec.ts` already refuses raises that exceed headroom.
+
+### L-197 · 2026-09-17/18 · process · verifying landed/unlanded needs a fresh fetch AND the right commit (merged: L-203)
+
+- **Symptom:** two related false "unlanded" verdicts, same underlying mistake. (1) PR #857/B502
+  was flagged unlanded by checking that #857's branch-tip commit isn't an ancestor of
+  `origin/master` — but #857 landed via a cherry-pick under a new sha, so the fix was fully live
+  even though the branch's own commits are correctly absent from master. (2) Separately, the
+  fleet lead investigated a different fix's landed status from a 59-commit-stale local
+  `routeflow` checkout, concluded — wrongly — it was missing, and broadcast it before a fresh
+  fetch corrected it.
+- **Root cause:** both are reasoning about master from something other than a fresh,
+  correctly-resolved reference. A squash or cherry-pick leaves the SOURCE branch's own commits
+  legitimately absent from master even when their content is fully live under a different sha —
+  checking the branch tip answers the wrong question. A local checkout's `HEAD` silently lags
+  `origin/master`, and nothing forces a fetch before it's trusted.
+- **Lesson:** **Before citing any bookkeeping/registry closure as landed or unlanded: (1)
+  `git fetch origin <branch>` first — never reason from a possibly-stale checkout, and name the
+  exact freshly-fetched sha in any ancestry claim; (2) resolve the SPECIFIC commit meant to carry
+  the fix — via `git log --grep` for the PR's `(#N)` tag, or `gh pr view <n> --json mergeCommit`
+  — never the source branch's tip or GitHub's PR view alone; (3) then run `merge-base
+--is-ancestor <that sha> origin/master` on full, unshallowed history (a shallow clone's
+  grafted boundary can misreport).**
+- **Guard:** none yet — propose the landing checklist require both halves together: fetch
+  fresh, then check the actual landing commit, never either alone.
+- Attribution: the second incident is the fleet lead's own mistake, logged at the lead's own
+  request.
+- **Recurrence (2026-10-01, worktree cleanup):** a squash-merged branch is never an ancestor of master, so `merge-base --is-ancestor <branch tip>` reads "not merged" for fully landed work; resolve the landing commit via its `(#N)` tag (half 2) before treating a branch as unsaved work or force-removing it.
+
+### L-201 · 2026-09-18 · process · five registry-id collisions in one session, all from allocating off an incomplete view
+
+- **Symptom:** five id collisions in one fleet window — a lead's "next free" read of merged
+  master missing an unmerged PR's reservations; a lane self-resolving to "the next real id" per
+  the B499-style protocol, blind to a second branch independently claiming the same id; two
+  allocations racing an unconfirmed in-flight request; a fix commit's own id reference going
+  stale when its registry record got renumbered during filing; and a fifth arrived after this
+  entry was drafted — an unrelated lesson landed on master at the same id this entry's branch had
+  already used.
+- **Root cause:** each was a _correct_ read of an _incomplete_ view — merged master, one
+  worktree's local scan, or memory of a conversation. Nobody can see an id reserved in an
+  unmerged branch until it's fetched, and nothing forces that fetch before allocating. The
+  self-resolve protocol makes this WORSE: a tree resolving blind to a concurrent claim produces
+  two full entries at the same id, each with a plausible justification — harder to catch than a
+  naive duplicate, since neither looks wrong alone.
+- **Lesson:** **A shared, monotonically-allocated id cannot be safely allocated from memory,
+  merged-mainline state, or one worktree's local scan — only from a fresh `fetch --all --prune`
+  then `git log --all -- <path-for-that-id>` across every local AND remote ref, unmerged branches
+  included. Treat any handed-to-you id as unverified until confirmed the same way — even from
+  the allocation owner, whose view can go stale the moment a concurrent branch reserves one.**
+- **Guard:** none yet — scoped a `bugs.mjs next-id` proposal (fetch-all-refs scan + a companion
+  neighbor query) so allocation routes through a command, not memory. See [[L-197]], same
+  problem, landed/unlanded side.
+- **Recurrence (2026-10-08):** bugs were minted in a stale checkout whose registry ended at an old id, and the id collided with a landed bug. Mint (`bugs.mjs file`) only in the current bookkeeping tree after a fetch, never in a stale main checkout.
+
+### L-231 · 2026-09-22 · process · a register claim needs the check that would disprove it, not just the belief
+
+- **Symptom:** this incident's own write-up first carried a false claim — "no CI workflow runs the
+  DB lane" — relayed from a colleague and written as though first-hand. False:
+  `db-migrations.yml` runs `npm run test:db -w apps/api`, path-gated on `*.db.spec.ts`, exactly why
+  it fired for #1221 (that PR added one). Separately, a stated clock time was already stale by the
+  time it was "corrected": 09:00Z when it was 08:34Z, then 09:05Z when it was 09:35Z.
+- **Root cause:** a claim someone VERIFIED and a claim someone RELAYED look identical once written
+  down — the register records what is believed, not how it came to be believed. A stated
+  elapsed/clock time is a proxy by construction and is stale the instant it's read.
+- **Lesson:** **A register claim must carry how it was established** — the command, the file:line,
+  or who checked it — so a later reader can disprove it in under a minute if it's wrong; an
+  unfalsifiable claim is not a fact yet. **A CLOCK-time claim carries `date -u`'s output, not an
+  estimate; an ELAPSED-time claim shouldn't be asserted at all, only the command that measures it.**
+  For a docs PR mid-edit: QUEUE IT OR EDIT IT, NOT BOTH — freeze and publish a final sha only once
+  inside a merge window; a quoted sha mid-edit is stale on arrival.
+- **Guard:** none automated yet — propose a lint on register entries requiring a cited command or
+  file:line beside any factual claim, and a landing-procedure reminder to run `date -u` before
+  quoting a time. Related: [[L-213]].
+
 ## tooling
 
 ### L-067 · 2026-09-04 · tooling · #597

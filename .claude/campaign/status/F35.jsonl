@@ -1,5 +1,5 @@
 {"id":"B288","batch":"F35","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B289","batch":"F35","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B290","batch":"F35","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B289","batch":"F35","tier":"T1","state":"already-fixed","pr":3513,"proof":null,"evidence":"SA-814: verified fixed at af182eaad (Merge train/product-k11, PR #3513); no per-bug fix commit found"}
+{"id":"B290","batch":"F35","tier":"T1","state":"already-fixed","pr":3513,"proof":null,"evidence":"SA-814: verified fixed at af182eaad (Merge train/product-k11, PR #3513); no per-bug fix commit found"}
 {"id":"B291","batch":"F35","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B292","batch":"F35","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
