@@ -62,6 +62,19 @@ describe("ProductPricingV2 wiring: units beside the grid", () => {
     expect(screen.getByTestId("stub-beside")).toBeInTheDocument();
   });
 
+  it("R3 review: the default order unit sits below the grid card (after the table, before the footer), not above it", () => {
+    mockStructure = true;
+    render(<ProductPricingV2 product={product} />);
+    const follows = (a: Element, b: Element) =>
+      !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const beside = screen.getByTestId("stub-beside");
+    expect(follows(screen.getByTestId("stub-controls"), screen.getByTestId("stub-table"))).toBe(
+      true,
+    );
+    expect(follows(screen.getByTestId("stub-table"), beside)).toBe(true);
+    expect(follows(beside, screen.getByTestId("stub-footer"))).toBe(true);
+  });
+
   it("is absent where the ladder cannot be edited", () => {
     mockStructure = false;
     render(<ProductPricingV2 product={product} />);
