@@ -8,6 +8,7 @@ import {
   IsUUID,
 } from "class-validator";
 import { PaymentMethod } from "@prisma/client";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /** B769: the endpoint took `dto: any` — no validation at all on a money-writing field. */
 export class CreateAdvancePaymentDto {
@@ -27,7 +28,7 @@ export class CreateAdvancePaymentDto {
 export class ApplyAdvancePaymentDto {
   @IsUUID() invoiceId: string;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsNumber({ maxDecimalPlaces: 2 })
   @IsPositive()
   amount?: number;

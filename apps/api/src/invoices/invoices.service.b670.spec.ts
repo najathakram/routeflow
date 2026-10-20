@@ -29,6 +29,7 @@ import { EmailService } from "../email/email.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { StorageService } from "../storage/storage.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { storedInvoiceHeader } from "../testing/stored-invoice-header";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -174,7 +175,10 @@ describe("InvoicesService — update() line preservation", () => {
       ...over,
     });
     const arrange = (rows: any[], over: { livePack?: number; category?: boolean } = {}) => {
-      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+      prisma.invoice.findUnique.mockResolvedValue({
+        ...draftInvoice,
+        ...storedInvoiceHeader(rows),
+      });
       prisma.product.findMany.mockResolvedValue([
         {
           id: "prod-box",

@@ -57,6 +57,7 @@ export const operatorPayload = {
   ...base,
   sub: "user-op",
   username: "operator",
+  tenantId: "t-1",
   role: "OPERATOR" as const,
 };
 export const customerPayload = {

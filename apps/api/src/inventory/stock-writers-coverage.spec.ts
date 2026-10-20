@@ -842,7 +842,7 @@ describe("SA-767 R6 - stock-writer transactions carry the 15 s budget and a boun
     expect(bodies.length).toBeGreaterThanOrEqual(3);
     for (const b of bodies) {
       const set = b.search(/await setStockLockTimeout\(tx\)/);
-      const lock = b.search(/this\.lockBillAndAssertReceiptState\(tx, bill\)/);
+      const lock = b.search(/this\.lockBillAndAssertReceiptState\(tx, bill(, [^)]*)?\)/);
       expect(set).toBeGreaterThan(-1);
       expect(set).toBeLessThan(lock);
     }

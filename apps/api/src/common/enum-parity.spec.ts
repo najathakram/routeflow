@@ -159,6 +159,9 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["COMPOSITION_MODE_VALUES", "CompositionMode"],
   // Per-operator feature groups: a brand-new Prisma enum, mirrored immediately — see the triage tripwire below.
   ["OPERATOR_PERMISSION_GROUP_VALUES", "OperatorPermissionGroup"],
+  // Sitting 4 (SA-772 folders 1 and 3): two brand-new Prisma enums.
+  ["TAX_RATE_SOURCE_VALUES", "TaxRateSource"],
+  ["INVOICE_ORDER_BILLING_ROLE_VALUES", "InvoiceOrderBillingRole"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -271,10 +274,15 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for OperatorPermissionGroup (per-operator feature groups): a brand-new Prisma enum (migration
 // 20261009120000_operator_permission_groups), mirrored as `OPERATOR_PERMISSION_GROUP_VALUES` + its `ENUM_TABLE`
 // row above; verified via `node apps/api/scripts/split-prisma-schema.mjs --check` (113 → 114).
+// Triage for TaxRateSource + InvoiceOrderBillingRole (sitting 4, SA-772 folders 1 and 3; migrations
+// 20261020090100_sales_tax_snapshot + 20261020090300_invoice_order_billing_role): two brand-new Prisma enums, mirrored
+// immediately as `TAX_RATE_SOURCE_VALUES` / `INVOICE_ORDER_BILLING_ROLE_VALUES` + their `ENUM_TABLE` rows above. Derived
+// from the merged schema folder (`grep -h "^enum " apps/api/prisma/schema/*.prisma | wc -l`: 114 on master af182eaad,
+// 116 with the bundle), not hand-picked (114 → 116).
 // Triage for AdjustmentReason (SA-804(3), SA-828 row 657): a brand-new Prisma enum (migration
 // 20261020130000_stock_movement_adjustment_reason), mirrored as `ADJUSTMENT_REASON_VALUES` + its `ENUM_TABLE` row
-// above (114 → 115).
-const PINNED_PRISMA_ENUM_COUNT = 115;
+// above (116 → 117).
+const PINNED_PRISMA_ENUM_COUNT = 117;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

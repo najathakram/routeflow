@@ -263,6 +263,12 @@ module.exports = {
     PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
     SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
     PO_LINK_BROKEN: "PO_LINK_BROKEN",
+    BILL_NEEDS_A_LINE: "BILL_NEEDS_A_LINE",
+    BILL_NOT_EDITABLE: "BILL_NOT_EDITABLE",
+    BILL_PO_SUPPLIER_LOCKED: "BILL_PO_SUPPLIER_LOCKED",
+    BILL_NEVER_RECEIVED: "BILL_NEVER_RECEIVED",
+    BILL_TAX_UNKNOWN: "BILL_TAX_UNKNOWN",
+    RECEIVE_EXCEEDS_OUTSTANDING: "RECEIVE_EXCEEDS_OUTSTANDING",
     AI_KEY_INVALID: "AI_KEY_INVALID",
     AI_SCAN_REJECTED: "AI_SCAN_REJECTED",
     AI_UNAVAILABLE: "AI_UNAVAILABLE",
@@ -466,8 +472,21 @@ module.exports = {
     LADDER_REVISION_STALE: "LADDER_REVISION_STALE",
     PRICE_EDIT_INVALID: "PRICE_EDIT_INVALID",
     PRICE_UNDO_UNAVAILABLE: "PRICE_UNDO_UNAVAILABLE",
+    BUSINESS_CAPABILITIES_EMPTY: "BUSINESS_CAPABILITIES_EMPTY",
     CUSTOMER_PRICES_UNAVAILABLE: "CUSTOMER_PRICES_UNAVAILABLE",
+    BILL_HAS_PAYMENTS: "BILL_HAS_PAYMENTS",
+    BILL_PAYMENT_NOT_CASH: "BILL_PAYMENT_NOT_CASH",
+    BILL_PAYMENT_NO_SUPPLIER: "BILL_PAYMENT_NO_SUPPLIER",
     APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
+  },
+  // SA-814e: hand copy of packages/types/api/error-codes.ts (pinned to the API's literal by the API parity spec).
+  INVOICE_TAX_STATE_STALE_COPY: {
+    DRAFT_ORDER:
+      "This draft's tax was saved by an older version and can't be recalculated safely. Create it again from the order, or contact support.",
+    DRAFT_MANUAL:
+      "This draft's tax was saved by an older version and can't be recalculated safely. Create the draft again, or contact support.",
+    ISSUED:
+      "This invoice's stored tax can't be recalculated safely. Issue a credit note or contact support.",
   },
   CHECK_TRANSITIONS: {
     RECORDED: ["DEPOSITED", "BOUNCED"],
