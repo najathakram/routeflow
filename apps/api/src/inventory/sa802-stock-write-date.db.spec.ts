@@ -30,6 +30,7 @@ describeDb("SA-802 stock write date gate (DB)", () => {
     const dto = {
       productId,
       quantity: -5,
+      reason: "DAMAGED" as const,
       effectiveDate: "2026-09-15T12:00:00.000Z",
     };
     await expect(
@@ -121,6 +122,7 @@ describeDb("SA-802 stock write date gate (DB)", () => {
         {
           productId,
           quantity: -3,
+          reason: "DAMAGED",
           effectiveDate: "2026-09-15T12:00:00.000Z",
         } as any,
         w.userId,
