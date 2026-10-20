@@ -533,6 +533,8 @@ export class InventoryService {
         await this.lockProducts(tx, [productId]);
         const locked = (await this.readLockedStockRows(tx, [productId])).get(productId);
         if (!locked) throw new NotFoundException("Product not found");
+        // The pre-check read the product before the lock; a variant assign can have made it a FAMILY since.
+        assertSellableLines([locked]); // SA-767 n2, as the count batch re-checks
         const stockBefore = locked.currentStock;
 
         const applied = await this.applyStockCountItemsInTx(tx, {

@@ -361,7 +361,10 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     await gateA.parked; // avg 2.00 -> 3.00, stock 20, uncommitted
     // B validates against the committed row (avg 2.00): the stale read the old code stamped.
     const adjustment = inTenant(B, w, () =>
-      B.inventory.recordAdjustment({ productId: w.productId, quantity: 5 }, w.userId),
+      B.inventory.recordAdjustment(
+        { productId: w.productId, quantity: 5, reason: "COUNT_CORRECTION" },
+        w.userId,
+      ),
     );
     const waited = await sawLockWait(gateA.holderPid);
     gateA.release();

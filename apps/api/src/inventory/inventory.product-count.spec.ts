@@ -282,6 +282,18 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
       nothingWritten();
     });
 
+    it("a product that became a FAMILY after the pre-check is refused under the lock", async () => {
+      // SA-767 n2: the pre-check reads a PRODUCT; a variant assign turns it into a FAMILY before the lock.
+      prisma.product.findMany.mockResolvedValue([row({ kind: "FAMILY" })]);
+      await expect(service.countProduct("prod-1", set(), "u-1")).rejects.toMatchObject({
+        response: { code: "FAMILY_NOT_SELLABLE" },
+      });
+      // Refused inside the transaction, before any write (the tx itself rolls back).
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(prisma.stockLot.create).not.toHaveBeenCalled();
+    });
+
     it("a date inside a filed period is a 409 before anything is locked or written", async () => {
       prisma.tobaccoReport.findFirst.mockResolvedValue({
         periodStart: new Date("2026-09-01T00:00:00.000Z"),

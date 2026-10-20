@@ -42,9 +42,9 @@ const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
     why: "loadEditCatalog: PATCH /invoices/:id line products (create and update do NOT share manual-invoice-context)",
   },
   "inventory/inventory.service.ts": {
-    calls: 12,
+    calls: 13,
     sites: 16,
-    why: "PO draft/create/update, recordPurchase (StockLot), recordAdjustment, countProduct (SA-828), commitStockCount (+ applyStockCountItemsInTx), commitStockCountSession (+ its batch re-check of kind under the product lock, SA-767 n2), upsertStockCountLine, setCostBasis, bulkSetCostBasis; the other writer sites (assignToVariants, PO receive/reverse, cost replay) move stock only out of / into a product that HAS stock: a FAMILY is created with zero stock and never receives any (every entry point above refuses it), so their pool checks reject it",
+    why: "PO draft/create/update, recordPurchase (StockLot), recordAdjustment, countProduct (SA-828, + its re-check of kind under the product lock), commitStockCount (+ applyStockCountItemsInTx), commitStockCountSession (+ its batch re-check of kind under the product lock, SA-767 n2), upsertStockCountLine, setCostBasis, bulkSetCostBasis; the other writer sites (assignToVariants, PO receive/reverse, cost replay) move stock only out of / into a product that HAS stock: a FAMILY is created with zero stock and never receives any (every entry point above refuses it), so their pool checks reject it",
   },
   "order-templates/order-templates.service.ts": {
     calls: 4,

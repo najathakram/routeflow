@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import type { LadderUnit } from "@routeflow/pricing";
 import { describeParts, piecesOf } from "./product-count";
 
 /**
@@ -7,11 +8,17 @@ import { describeParts, piecesOf } from "./product-count";
  * whole, and a fractional count is only for pieces.
  */
 const pack12 = { unit: "Box", unitsPerBox: 12 };
-const ladder = [
-  { label: "Case", factorToBase: 24, price: null },
-  { label: "Pallet", factorToBase: 480, price: null },
-];
-const caseOf12 = [{ label: "Case", factorToBase: 12, price: null }];
+const level = (label: string, factorToBase: number): LadderUnit => ({
+  label,
+  factorToBase,
+  price: null,
+  priceTier2: null,
+  priceTier3: null,
+  priceTier4: null,
+  priceTier5: null,
+});
+const ladder = [level("Case", 24), level("Pallet", 480)];
+const caseOf12 = [level("Case", 12)];
 
 const pieces = (p: any, l: any, parts: Array<{ unit?: string | null; quantity: number }>) =>
   piecesOf(p, l, parts).pieces.toString();
