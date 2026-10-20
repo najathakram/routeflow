@@ -2537,9 +2537,12 @@ export default function InvoiceDetailPage() {
                         <td className="px-4 py-3 text-right">
                           {/* Row 322c: the struck original follows pricing's showOriginalPrice (the PDF's rule). */}
                           {display.layout === "pieces" ? (
-                            <span className="text-navy/70">
-                              {formatUnitPrice4(display.unitPrice)}
-                            </span>
+                            <InvoiceLinePrice
+                              item={item}
+                              hideOriginal={hideOriginal}
+                              chargedText={formatUnitPrice4(display.unitPrice)}
+                              noStrike
+                            />
                           ) : (
                             <InvoiceLinePrice item={item} hideOriginal={hideOriginal} />
                           )}

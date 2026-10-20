@@ -123,7 +123,8 @@ export function invoiceDisplayRowTexts(item: {
     return {
       layout: "pieces",
       leading: [],
-      subLines: [],
+      // A composed line that fell back to pieces (component sums mismatch) keeps today's "(included)" sub-lines.
+      subLines: componentSubLineTexts(item.components),
       pieces: {
         qtyText: `${res.qty} ${plural(res.unitLabel, res.qty)}`,
         priceText: money4(res.unitPrice),

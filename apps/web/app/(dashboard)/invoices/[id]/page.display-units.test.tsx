@@ -147,4 +147,19 @@ describe("staff invoice page: display units", () => {
     expect(row).toHaveTextContent("MSRP $4.99/pc");
     expect(row).toHaveTextContent("$60.02");
   });
+
+  it("pieces: a PROMO line keeps its badge and the 4-dp price, with no struck per-box original", () => {
+    mockInvoice = invoiceWith({
+      ...boxLine,
+      components: null,
+      priceType: "PROMO",
+      originalPrice: 31,
+      displayUnit: { kind: "pieces", label: "Piece" },
+    });
+    renderWithProviders(<InvoiceDetailPage />);
+    const row = screen.getByTestId("display-pieces-item-1");
+    expect(row).toHaveTextContent("Promo price");
+    expect(row).toHaveTextContent("$2.0007");
+    expect(row.querySelector(".strike")).toBeNull();
+  });
 });

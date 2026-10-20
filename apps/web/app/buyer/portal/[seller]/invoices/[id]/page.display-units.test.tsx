@@ -111,7 +111,7 @@ describe("buyer invoice detail — display units (SA-827)", () => {
       invoiceItem({
         ...boxLine,
         categoryTaxAmount: 3.5,
-        trackedCategory: { id: "tc1", name: "Tobacco", invoiceTreatment: "LINE_TAX" },
+        trackedCategory: { name: "Tobacco" },
         displayUnit: pieceUnit,
       }),
     );
@@ -157,5 +157,12 @@ describe("buyer invoice detail — display units (SA-827)", () => {
     expect(screen.getByTestId("invoice-line-subtotal-item-1")).toHaveTextContent("$60.02");
     expect(screen.getAllByTestId("line-component-sub-line")).toHaveLength(2);
     expect(screen.getAllByText(/\(included\)/)).toHaveLength(2);
+  });
+
+  it("pieces fallback (components do not sum to the line): still prints the (included) sub-lines", () => {
+    show(invoiceItem({ ...boxLine, components: [comps[1]], displayUnit: pieceUnit }));
+    expect(screen.getByTestId("invoice-line-qty-item-1")).toHaveTextContent("30 Pieces");
+    expect(screen.getAllByTestId("line-component-sub-line")).toHaveLength(1);
+    expect(screen.getByText(/\(included\)/)).toBeInTheDocument();
   });
 });

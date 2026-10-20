@@ -19,6 +19,7 @@ import {
   invoiceDisplayLines,
   resolveConfirmedAmounts,
 } from "@routeflow/pricing";
+import { ComponentSubLines } from "@/components/ComponentSubLines";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerInvoice } from "@/lib/api/buyer";
@@ -397,17 +398,9 @@ export default function BuyerInvoiceDetailPage() {
                         {item.notes}
                       </p>
                     )}
-                    {display.layout === "today" && display.subLines.length > 0 && (
-                      <ul
-                        className="mt-1 space-y-0.5 text-xs font-normal text-navy/60"
-                        data-testid="line-components"
-                      >
-                        {display.subLines.map((text, i) => (
-                          <li key={i} data-testid="line-component-sub-line">
-                            {text}
-                          </li>
-                        ))}
-                      </ul>
+                    {/* Today and the pieces fallback (component sums mismatch) keep the "(included)" sub-lines. */}
+                    {display.layout !== "components" && (
+                      <ComponentSubLines components={item.components} />
                     )}
                   </td>
                   <td

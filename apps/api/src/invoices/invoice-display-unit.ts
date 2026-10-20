@@ -226,8 +226,9 @@ export function withItemDisplayUnits<
 
 /**
  * Resolves the display unit each not-yet-snapshotted line of an invoice would freeze into, through a NON-transaction client
- * (so no catalog read joins the money tx's Serializable snapshot). Never throws: any error gives an empty map, and a line
- * missing from the map is written nothing, so it renders legacy.
+ * (so no catalog read joins the money tx's Serializable snapshot). A catalog error gives an empty map, and a line missing
+ * from the map is written nothing, so it renders legacy. The one throw: a failed own-rows read through the caller's tx
+ * (`ownRowsDb`), which has already aborted that tx, is rethrown so a 40001 conflict reaches the retry instead of a 25P02.
  */
 export async function resolveIssueDisplayUnits(
   readDb: any,
@@ -238,21 +239,32 @@ export async function resolveIssueDisplayUnits(
    *  have been written in that uncommitted tx (the delivery path); catalog reads always stay on `readDb`. */
   ownRowsDb?: any,
 ): Promise<Map<string, InvoiceDisplayUnitView>> {
+  if (typeof invoiceId !== "string" || !invoiceId || typeof tenantId !== "string" || !tenantId) {
+    return new Map();
+  }
+  const own = ownRowsDb ?? readDb;
+  let inv: { customerId: string | null } | null = null;
+  let items: Array<{ id: string; productId: string | null }> = [];
   try {
-    if (typeof invoiceId !== "string" || !invoiceId || typeof tenantId !== "string" || !tenantId) {
-      return new Map();
-    }
-    const own = ownRowsDb ?? readDb;
-    const inv = await own.invoice.findFirst({
+    inv = await own.invoice.findFirst({
       where: { id: invoiceId, tenantId },
       select: { customerId: true },
     });
-    if (!inv?.customerId) return new Map();
-    const items: Array<{ id: string; productId: string | null }> = await own.invoiceItem.findMany({
-      where: { invoiceId, invoiceUnitFactor: null, invoice: { tenantId } },
-      select: { id: true, productId: true },
-    });
-    if (!items.length) return new Map();
+    if (inv?.customerId) {
+      items = await own.invoiceItem.findMany({
+        where: { invoiceId, invoiceUnitFactor: null, invoice: { tenantId } },
+        select: { id: true, productId: true },
+      });
+    }
+  } catch (err) {
+    // A failed read inside the caller's tx aborts it (25P02 on the next statement): surface the real error (a retryable
+    // 40001/40P01 conflict) instead of swallowing it. Any other client just skips.
+    if (ownRowsDb != null && isTxClient(own)) throw err;
+    log.warn(`display unit resolve skipped for invoice ${invoiceId}: ${(err as Error)?.message}`);
+    return new Map();
+  }
+  if (!inv?.customerId || !items.length) return new Map();
+  try {
     return await resolveOrThrow(
       readDb,
       tenantId,

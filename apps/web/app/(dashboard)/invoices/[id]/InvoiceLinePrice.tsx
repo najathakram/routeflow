@@ -43,11 +43,17 @@ const PILL = "rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1";
 export function InvoiceLinePrice({
   item,
   hideOriginal,
+  chargedText,
+  noStrike = false,
 }: {
   item: PriceItem;
   hideOriginal: boolean;
+  /** SA-827 pieces layout: replaces only the charged-price text (the per-piece 4-dp price). */
+  chargedText?: string;
+  /** SA-827 pieces layout: suppress the struck per-box original (it is not a per-piece figure). */
+  noStrike?: boolean;
 }) {
-  const charged = fmt(Number(item.unitPrice));
+  const charged = chargedText ?? fmt(Number(item.unitPrice));
   const isUpsell =
     item.priceType === "MANUAL" &&
     item.originalPrice != null &&
@@ -63,9 +69,10 @@ export function InvoiceLinePrice({
   }
   const lowered = LOWERED[item.priceType ?? ""];
   if (lowered && showOriginalPrice(item, hideOriginal)) {
+    const showStrike = !noStrike;
     return (
       <div className="flex flex-col items-end gap-0.5">
-        <span className="strike text-xs">{fmt(Number(item.originalPrice))}</span>
+        {showStrike && <span className="strike text-xs">{fmt(Number(item.originalPrice))}</span>}
         <span className={`money ${lowered.amount}`}>{charged}</span>
         <span className={`${PILL} ${lowered.pill}`}>{lowered.label}</span>
       </div>

@@ -193,6 +193,25 @@ describe("resolveIssueDisplayUnits (read side: a NON-transaction client)", () =>
     expect(out.size).toBe(0);
   });
 
+  it("rethrows an own-rows read failure on the caller's tx (a retryable conflict must not be swallowed)", async () => {
+    const catalog = makeDb({ products: [productRow("p1")], business: "smallest", items: [] });
+    const own = makeDb({});
+    // isTxClient: a tx client has no $connect function.
+    delete (own as any).$connect;
+    own.invoiceItem.findMany.mockRejectedValue({ code: "40001" });
+    await expect(
+      resolveIssueDisplayUnits(catalog as any, TENANT, "inv-1", flag(true), own),
+    ).rejects.toEqual({ code: "40001" });
+  });
+
+  it("the same own-rows rejection on a non-tx readDb (no ownRowsDb) gives an empty map", async () => {
+    const db = makeDb({});
+    (db as any).$connect = jest.fn();
+    db.invoiceItem.findMany.mockRejectedValue({ code: "40001" });
+    const out = await resolveIssueDisplayUnits(db as any, TENANT, "inv-1", flag(true));
+    expect(out.size).toBe(0);
+  });
+
   it("an undefined invoice id or tenant reads nothing", async () => {
     const db = makeDb({ items: [unsnapped("it-a", "p1")] });
     expect((await resolveIssueDisplayUnits(db as any, TENANT, undefined as any)).size).toBe(0);

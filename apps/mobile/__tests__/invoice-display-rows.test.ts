@@ -80,6 +80,8 @@ describe("invoiceDisplayRowTexts", () => {
   it("P6: components that do not sum to the line fall back to the pieces layout", () => {
     const r = invoiceDisplayRowTexts({ ...boxItem, components: [comps[1]], displayUnit: pieces });
     expect(r.layout).toBe("pieces");
+    expect(r.subLines).toEqual(componentSubLineTexts([comps[1]]));
+    expect(r.subLines.length).toBeGreaterThan(0);
   });
 
   it("legacy: today layout with sub-lines identical to componentSubLineTexts", () => {
