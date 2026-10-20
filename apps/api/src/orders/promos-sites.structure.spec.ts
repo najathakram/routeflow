@@ -47,6 +47,13 @@ const REGISTRY: Record<string, Array<{ arg: string; settledBy: string }>> = {
         "mergeBoxedContributions: one group of one product; the split is allocateSplitFreeUnits",
     },
   ],
+  "orders/buyer-replace-keep.ts": [
+    {
+      arg: "a.bogoPromos ?? []",
+      settledBy:
+        "B1036 driver replace-all kept line (same rescale as the diff qty edit) -> settleSplitFreeUnits at the updateOrderItems tail",
+    },
+  ],
   "orders/product-free-units.ts": [
     {
       arg: "[...opts.promos]",

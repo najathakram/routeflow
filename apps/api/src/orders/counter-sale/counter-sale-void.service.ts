@@ -290,6 +290,7 @@ export class CounterSaleVoidService {
       user,
       notes: "CANCEL",
       bookedFloor,
+      skipDeliveryStateCheck: true, // SA-814h: step 9 above already undid the hand-over
     });
 
     // 11. The audit row, in the same tx: step 3's replay reads it back.

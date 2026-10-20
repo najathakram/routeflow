@@ -80,6 +80,11 @@ export function makeStampDb(seed: {
     },
     deliveryMutation: {
       findMany: async () => state.mutations.map((m) => ({ ...m })),
+      // B692: an office PARTIALLY_DELIVERED writes its per-line evidence rows from the status transaction
+      create: async ({ data }: any) => {
+        state.mutations.push({ ...data });
+        return { ...data };
+      },
     },
     invoice: { findMany: async () => [] },
   });
