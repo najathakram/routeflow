@@ -278,6 +278,47 @@ export async function resolveIssueDisplayUnits(
 }
 
 /**
+ * Pre-tx resolve for a send/pay path: reads the invoice's status (the same read markSent always made; a failure throws),
+ * and only a DRAFT with a tenant resolves the units it would freeze. Anything else is null (nothing to write).
+ */
+export async function resolveDraftIssueUnits(
+  readDb: any,
+  invoiceId: string,
+  entitlements?: DisplayUnitEntitlements | null,
+): Promise<Map<string, InvoiceDisplayUnitView> | null> {
+  const pre = await readDb.invoice.findUnique({
+    where: { id: invoiceId },
+    select: { status: true, tenantId: true },
+  });
+  return pre?.status === "DRAFT" && pre.tenantId
+    ? resolveIssueDisplayUnits(readDb, pre.tenantId, invoiceId, entitlements)
+    : null;
+}
+
+/** `invoice.items` with `displayUnit`: a DRAFT resolves live, an issued invoice reads its snapshot (no catalog query). */
+export async function itemsWithDisplayUnits<
+  I extends {
+    id: string;
+    productId: string | null;
+    invoiceUnitLabel?: string | null;
+    invoiceUnitFactor?: number | null;
+  },
+>(
+  readDb: any,
+  invoice: { status: string; tenantId: string | null; customerId: string; items: I[] },
+  entitlements?: DisplayUnitEntitlements | null,
+): Promise<Array<I & { displayUnit: InvoiceDisplayUnitView }>> {
+  const live =
+    invoice.status === "DRAFT"
+      ? await resolveLiveDisplayUnits(readDb, invoice.tenantId, invoice, entitlements)
+      : null;
+  return withItemDisplayUnits<I, { status: string; items: I[] }>(
+    { status: invoice.status, items: invoice.items },
+    live,
+  ).items;
+}
+
+/**
  * Runs `work` under SAVEPOINT when `db` is a transaction client (the commission-sync pattern, sales-agents/
  * commission-engine.service.ts): a failed statement would otherwise abort the whole Postgres tx. A write conflict
  * (40001 / 40P01 / P2034) is RETHROWN with no rollback-to, so the caller's retryCreditTx re-runs the whole tx. Any other

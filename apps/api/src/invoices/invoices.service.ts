@@ -48,9 +48,9 @@ import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-
 import { withComponentViews } from "../orders/component-view";
 import {
   clearIssueDisplayUnits,
+  itemsWithDisplayUnits,
+  resolveDraftIssueUnits,
   resolveIssueDisplayUnits,
-  resolveLiveDisplayUnits,
-  withItemDisplayUnits,
   writeIssueDisplayUnits,
 } from "./invoice-display-unit";
 import {
@@ -2609,8 +2609,7 @@ export class InvoicesService {
             payments: true,
           },
         });
-        // SA-827: first issue (this inline DRAFT -> SENT flip has no tx, so no savepoint) freezes each line's display unit
-        // once: resolve and write with the same client; any error is swallowed (the line then reads legacy).
+        // SA-827: the inline flip has no tx: resolve and write on the same client (errors swallowed, line reads legacy).
         await writeIssueDisplayUnits(
           this.prisma,
           issued.id,
@@ -3064,16 +3063,6 @@ export class InvoicesService {
     // hide-original-price preference too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
     stampHandedOverBy(inv.order, user); // row 342: staff only (`invoiceDetailFor` drops `order` for a buyer)
-    // SA-827: an issued invoice reads its frozen snapshot (no queries); only a DRAFT resolves the live preference.
-    const liveUnits =
-      inv.status === InvoiceStatus.DRAFT
-        ? await resolveLiveDisplayUnits(
-            this.prisma.forTenant(),
-            inv.tenantId,
-            { customerId: inv.customerId, items: inv.items },
-            this.entitlements,
-          )
-        : null;
     return invoiceDetailFor(user, {
       ...inv,
       ...deriveInvoiceDetailFields(
@@ -3082,10 +3071,11 @@ export class InvoicesService {
         (await this.resolveTenantInvoiceDefaults()).timezone,
       ),
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
-      items: withItemDisplayUnits(
-        { status: inv.status, items: withComponentViews(inv.items) as typeof inv.items },
-        liveUnits,
-      ).items, // #2717 M3: displayUnitPrice4 as a number; SA-827: + displayUnit
+      items: await itemsWithDisplayUnits(
+        this.prisma.forTenant(),
+        { ...inv, items: withComponentViews(inv.items) as typeof inv.items },
+        this.entitlements,
+      ), // #2717 M3 + SA-827
       hideOriginalPrice,
       paidAtSale: isPaidAtSale(inv), // row 401: a counter sale paid at the till shows no due date / terms
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
@@ -3537,20 +3527,7 @@ export class InvoicesService {
    */
   private async markSent(id: string, orderId: string | null, emailSent = false) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
-    // SA-827: a DRAFT's display units are RESOLVED here, on a non-tx client (no catalog read joins the Serializable snapshot),
-    // and WRITTEN inside the tx once the lock shows it is still a DRAFT.
-    const pre = await this.prisma
-      .forTenant()
-      .invoice.findUnique({ where: { id }, select: { status: true, tenantId: true } });
-    const units =
-      pre?.status === InvoiceStatus.DRAFT && pre.tenantId
-        ? await resolveIssueDisplayUnits(
-            this.prisma.forTenant(),
-            pre.tenantId,
-            id,
-            this.entitlements,
-          )
-        : null;
+    const units = await resolveDraftIssueUnits(this.prisma.forTenant(), id, this.entitlements); // SA-827: resolved off-tx (no catalog read in the snapshot); written below only at DRAFT -> issued
     return retryCreditTx(`invoice mark-sent id=${id}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
@@ -3566,10 +3543,8 @@ export class InvoicesService {
             where: { id },
             data: { status: nextStatus, sentAt: new Date() },
           });
-          // SA-827: the DRAFT -> issued transition freezes the display unit (a re-send or reprint never rewrites it).
-          if (locked.status === InvoiceStatus.DRAFT && units) {
+          if (locked.status === InvoiceStatus.DRAFT && units)
             await writeIssueDisplayUnits(tx, id, units);
-          }
           // B108: make the "send() catches up" comment above actually true. An
           // operator's explicit-amount OrderCreditNote intents are settled HERE,
           // at their recorded amount, before the oldest-first sweep runs.

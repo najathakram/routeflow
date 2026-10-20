@@ -1,5 +1,7 @@
 import {
   clearIssueDisplayUnits,
+  itemsWithDisplayUnits,
+  resolveDraftIssueUnits,
   resolveIssueDisplayUnits,
   resolveLiveDisplayUnits,
   withItemDisplayUnits,
@@ -414,5 +416,90 @@ describe("withItemDisplayUnits (P4)", () => {
     );
     expect(out.total).toBe(5);
     expect(out.items[0].qty).toBe(3);
+  });
+});
+
+describe("resolveDraftIssueUnits (pre-tx resolve for send/pay paths)", () => {
+  const dbWith = (pre: unknown, fx: Fx = {}) => {
+    const db = makeDb(fx);
+    return { ...db, invoice: { ...db.invoice, findUnique: jest.fn().mockResolvedValue(pre) } };
+  };
+
+  it("an issued invoice gives null and runs no invoiceItem query", async () => {
+    const db = dbWith({ status: "SENT", tenantId: TENANT });
+    expect(await resolveDraftIssueUnits(db as any, "inv-1")).toBeNull();
+    expect(db.invoice.findUnique).toHaveBeenCalledWith({
+      where: { id: "inv-1" },
+      select: { status: true, tenantId: true },
+    });
+    expect(db.invoiceItem.findMany).not.toHaveBeenCalled();
+  });
+
+  it("a DRAFT resolves the units it would freeze", async () => {
+    const db = dbWith(
+      { status: "DRAFT", tenantId: TENANT },
+      {
+        products: [productRow("p1")],
+        business: "smallest",
+        items: [{ id: "it-a", productId: "p1" }],
+      },
+    );
+    const out = await resolveDraftIssueUnits(db as any, "inv-1", flag(true));
+    expect(out?.get("it-a")).toEqual({ kind: "pieces", label: "Piece" });
+  });
+
+  it("a row without a tenant (or a missing row) gives null", async () => {
+    expect(
+      await resolveDraftIssueUnits(dbWith({ status: "DRAFT", tenantId: null }) as any, "inv-1"),
+    ).toBeNull();
+    expect(await resolveDraftIssueUnits(dbWith(null) as any, "inv-1")).toBeNull();
+  });
+});
+
+describe("itemsWithDisplayUnits (read-side decorator)", () => {
+  const row = (snap: { label: string | null; factor: number | null }) => ({
+    id: "it-0",
+    productId: "p1",
+    invoiceUnitLabel: snap.label,
+    invoiceUnitFactor: snap.factor,
+  });
+  const inv = (status: string, snap: { label: string | null; factor: number | null }) => ({
+    status,
+    tenantId: TENANT,
+    customerId: CUSTOMER,
+    items: [row(snap)],
+  });
+
+  it("a SENT invoice with a Piece/1 snapshot reads pieces and makes no catalog query (P4)", async () => {
+    const db = makeDb({ products: [productRow("p1")] });
+    const out = await itemsWithDisplayUnits(
+      db as any,
+      inv("SENT", { label: "Piece", factor: 1 }),
+      flag(true),
+    );
+    expect(out[0].displayUnit).toEqual({ kind: "pieces", label: "Piece" });
+    expect(db.product.findMany).not.toHaveBeenCalled();
+    expect(db.customer.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("a DRAFT follows the live preference", async () => {
+    const db = makeDb({ products: [productRow("p1")], business: "smallest" });
+    const out = await itemsWithDisplayUnits(
+      db as any,
+      inv("DRAFT", { label: null, factor: null }),
+      flag(true),
+    );
+    expect(out[0].displayUnit).toEqual({ kind: "pieces", label: "Piece" });
+    expect(out[0].id).toBe("it-0");
+  });
+
+  it("an issued invoice with no snapshot stays legacy", async () => {
+    const db = makeDb({ products: [productRow("p1")], business: "smallest" });
+    const out = await itemsWithDisplayUnits(
+      db as any,
+      inv("SENT", { label: null, factor: null }),
+      flag(true),
+    );
+    expect(out[0].displayUnit).toEqual({ kind: "legacy", label: null });
   });
 });

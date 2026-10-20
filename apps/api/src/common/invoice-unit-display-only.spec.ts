@@ -20,7 +20,7 @@ const FORBIDDEN =
  * place that decides when a snapshot is written, so it must be added here on purpose.
  */
 const CALLER =
-  /\b(?:resolveLiveDisplayUnits|withItemDisplayUnits|resolveIssueDisplayUnits|writeIssueDisplayUnits|clearIssueDisplayUnits|displayUnit)\b/;
+  /\b(?:resolveLiveDisplayUnits|withItemDisplayUnits|resolveDraftIssueUnits|itemsWithDisplayUnits|resolveIssueDisplayUnits|writeIssueDisplayUnits|clearIssueDisplayUnits|displayUnit)\b/;
 const CALLER_FILES = [
   "apps/api/src/invoices/invoices.service.ts",
   "apps/api/src/bookkeeping/bookkeeping.service.ts",
@@ -156,6 +156,8 @@ describe("G1: the invoice unit never reaches a money writer", () => {
     const ALLOWED = new Set([
       "resolveLiveDisplayUnits",
       "withItemDisplayUnits",
+      "resolveDraftIssueUnits",
+      "itemsWithDisplayUnits",
       "resolveIssueDisplayUnits",
       "writeIssueDisplayUnits",
       "clearIssueDisplayUnits",

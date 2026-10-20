@@ -15,6 +15,8 @@ jest.mock("./invoice-display-unit", () => {
   return {
     ...actual,
     resolveLiveDisplayUnits: jest.fn(),
+    resolveDraftIssueUnits: jest.fn(),
+    itemsWithDisplayUnits: jest.fn(),
     resolveIssueDisplayUnits: jest.fn(),
     writeIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
     clearIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
@@ -44,8 +46,9 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 
 import {
   clearIssueDisplayUnits,
+  itemsWithDisplayUnits,
+  resolveDraftIssueUnits,
   resolveIssueDisplayUnits,
-  resolveLiveDisplayUnits,
   writeIssueDisplayUnits,
 } from "./invoice-display-unit";
 import { AfterCommit } from "../common/after-commit";
@@ -94,6 +97,7 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     (resolveIssueDisplayUnits as jest.Mock).mockResolvedValue(UNITS);
+    (resolveDraftIssueUnits as jest.Mock).mockResolvedValue(UNITS);
     prisma = createMockPrisma();
     const creditNotes = {
       settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
@@ -167,15 +171,14 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
     service = module.get<InvoicesService>(InvoicesService);
   });
 
-  it("markSent on a DRAFT: resolves OUTSIDE the tx with the row's own tenant, then writes INSIDE it for this invoice", async () => {
+  it("markSent on a DRAFT: resolves OUTSIDE the tx via resolveDraftIssueUnits, then writes INSIDE it for this invoice", async () => {
     const draft = fixture(InvoiceStatus.DRAFT);
     prisma.invoice.findUnique.mockResolvedValue(draft);
     prisma.invoice.update.mockResolvedValue({ ...draft, status: InvoiceStatus.SENT });
     await service.send(INVOICE_ID);
-    expect(resolveIssueDisplayUnits).toHaveBeenCalledTimes(1);
-    const [readDb, tenantId, invoiceId] = (resolveIssueDisplayUnits as jest.Mock).mock.calls[0];
+    expect(resolveDraftIssueUnits).toHaveBeenCalledTimes(1);
+    const [readDb, invoiceId] = (resolveDraftIssueUnits as jest.Mock).mock.calls[0];
     expect(readDb).toBe(prisma.forTenant()); // a non-transaction client
-    expect(tenantId).toBe(TENANT_ID); // the invoice row's own tenantId
     expect(invoiceId).toBe(INVOICE_ID);
     expect(writeIssueDisplayUnits).toHaveBeenCalledTimes(1);
     const [tx, id, units] = (writeIssueDisplayUnits as jest.Mock).mock.calls[0];
@@ -184,17 +187,26 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
     expect(id).toBe(INVOICE_ID);
     expect(units).toBe(UNITS);
     // the resolve ran BEFORE the transaction opened
-    expect((resolveIssueDisplayUnits as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+    expect((resolveDraftIssueUnits as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
       prisma.tenantTransaction.mock.invocationCallOrder[0],
     );
   });
 
-  it("markSent on an already SENT invoice makes ZERO resolve calls and no write (a re-send never rewrites)", async () => {
+  it("markSent: a locked SENT row writes nothing even when units were resolved (a re-send never rewrites)", async () => {
     const sent = fixture(InvoiceStatus.SENT);
     prisma.invoice.findUnique.mockResolvedValue(sent);
     prisma.invoice.update.mockResolvedValue(sent);
     await service.send(INVOICE_ID);
-    expect(resolveIssueDisplayUnits).not.toHaveBeenCalled();
+    expect(resolveDraftIssueUnits).toHaveBeenCalledTimes(1);
+    expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
+  });
+
+  it("markSent: a DRAFT whose resolve returned null writes nothing", async () => {
+    (resolveDraftIssueUnits as jest.Mock).mockResolvedValue(null);
+    const draft = fixture(InvoiceStatus.DRAFT);
+    prisma.invoice.findUnique.mockResolvedValue(draft);
+    prisma.invoice.update.mockResolvedValue({ ...draft, status: InvoiceStatus.SENT });
+    await service.send(INVOICE_ID);
     expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
   });
 
@@ -335,21 +347,25 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
     }>;
   };
 
-  it("P4: findOne on a SENT invoice with a Piece/1 snapshot reads pieces and resolves nothing live", async () => {
-    (resolveLiveDisplayUnits as jest.Mock).mockResolvedValue(
-      new Map([["it-1", { kind: "legacy", label: null }]]),
-    );
+  it("findOne hands the invoice's status/tenant/customer to itemsWithDisplayUnits and returns its items (P4 lives in the unit spec)", async () => {
+    const resolved = [{ id: "it-1", displayUnit: { kind: "pieces", label: "Piece" } }];
+    (itemsWithDisplayUnits as jest.Mock).mockResolvedValue(resolved);
     const out = await findOneOf(InvoiceStatus.SENT);
-    expect(out.items[0].displayUnit).toEqual({ kind: "pieces", label: "Piece" });
-    expect(resolveLiveDisplayUnits).not.toHaveBeenCalled();
+    expect(itemsWithDisplayUnits).toHaveBeenCalledTimes(1);
+    const [readDb, inv] = (itemsWithDisplayUnits as jest.Mock).mock.calls[0];
+    expect(readDb).toBe(prisma.forTenant());
+    expect(inv).toMatchObject({
+      status: InvoiceStatus.SENT,
+      tenantId: TENANT_ID,
+      customerId: CUSTOMER_ID,
+    });
+    expect(inv.items.map((i: { id: string }) => i.id)).toEqual(["it-1"]);
+    expect(out.items).toBe(resolved);
   });
 
-  it("a DRAFT follows the live preference", async () => {
-    (resolveLiveDisplayUnits as jest.Mock).mockResolvedValue(
-      new Map([["it-1", { kind: "pieces", label: "Piece" }]]),
-    );
-    const out = await findOneOf(InvoiceStatus.DRAFT);
-    expect(resolveLiveDisplayUnits).toHaveBeenCalledTimes(1);
-    expect(out.items[0].displayUnit).toEqual({ kind: "pieces", label: "Piece" });
+  it("findOne on a DRAFT passes the DRAFT status through (the live preference is resolved inside the helper)", async () => {
+    (itemsWithDisplayUnits as jest.Mock).mockResolvedValue([]);
+    await findOneOf(InvoiceStatus.DRAFT);
+    expect((itemsWithDisplayUnits as jest.Mock).mock.calls[0][1].status).toBe(InvoiceStatus.DRAFT);
   });
 });
