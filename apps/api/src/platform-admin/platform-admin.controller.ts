@@ -23,7 +23,12 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { PlatformAdminService } from "./platform-admin.service";
 import { PlatformConfigService } from "./platform-config.service";
 import { BillingService } from "../billing/billing.service";
-import { AddonService } from "../billing/addon.service";
+import {
+  ADMIN_DISABLE_SOURCE,
+  AddonService,
+  PROFILE_APPLY_SOURCE,
+  type AddonDisableSource,
+} from "../billing/addon.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
@@ -407,7 +412,7 @@ export class PlatformAdminController {
       dto.addonKey,
       dto.stripePriceId,
       dto.acknowledgeUnmetRequires,
-      { comp },
+      { comp, actorId: admin.sub },
     );
     if (comp) {
       // One audit row per action: a comp is ADDON_COMPED (actor = userId, plus the optional reason).
@@ -438,7 +443,12 @@ export class PlatformAdminController {
     @Body() dto: UncompAddonDto,
     @CurrentUser() admin: JwtPayload,
   ) {
-    const result = await this.addonService.uncompAddon(id, dto.addonKey, dto.stripePriceId);
+    const result = await this.addonService.uncompAddon(
+      id,
+      dto.addonKey,
+      dto.stripePriceId,
+      admin.sub,
+    );
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_UNCOMPED, {
       addonKey: dto.addonKey,
       // The mode the service ACTUALLY took (STRIPE / MANUAL / UNBILLED), never inferred from the DTO:
@@ -456,8 +466,10 @@ export class PlatformAdminController {
     @Param("id") id: string,
     @Body() dto: DisableAddonDto,
     @CurrentUser() admin: JwtPayload,
+    /** SA-788 A3: who is asking decides the record's source; this route is the direct admin disable. */
+    source: AddonDisableSource = ADMIN_DISABLE_SOURCE,
   ) {
-    const result = await this.addonService.disableAddon(id, dto.addonKey);
+    const result = await this.addonService.disableAddon(id, dto.addonKey, admin.sub, source);
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_DISABLED, {
       addonKey: dto.addonKey,
     });
@@ -960,7 +972,12 @@ export class PlatformAdminController {
     for (const b of resolved.plan.billing) {
       current = { step: "billing", key: b.featureKey };
       try {
-        await this.disableAddon(id, { addonKey: b.featureKey } as DisableAddonDto, admin);
+        await this.disableAddon(
+          id,
+          { addonKey: b.featureKey } as DisableAddonDto,
+          admin,
+          PROFILE_APPLY_SOURCE,
+        );
       } catch {
         throw billingFailed();
       }
@@ -978,6 +995,7 @@ export class PlatformAdminController {
       await this.addonService.enableAddon(id, featureKey, undefined, undefined, {
         comp: true,
         lockHeld: true,
+        source: PROFILE_APPLY_SOURCE,
         actorId: admin.sub,
         reason: compReason,
       });

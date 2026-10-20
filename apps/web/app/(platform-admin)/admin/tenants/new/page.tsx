@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { API_ERROR_CODES, PLAN_KEYS } from "@routeflow/types";
+import { API_ERROR_CODES, PLAN_KEYS, type ManualActivationAddons } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pricing";
 import {
@@ -26,6 +26,7 @@ import {
 } from "../[id]/_features/capability-ticks";
 import { profileErrorCopy } from "../[id]/_features/profile-errors";
 import { planLabel } from "../../../_components/AdminBadge";
+import { ActivationAddonChecklist } from "../../../_components/ActivationAddonChecklist";
 import { selectablePlanKeys } from "../../../_components/usePlanOptions";
 import { TimeZoneInput } from "@/components/TimeZoneInput";
 import {
@@ -223,6 +224,10 @@ export default function AdminCreateTenantPage() {
   // Plan and start (SA-2)
   const [startAs, setStartAs] = React.useState<StartAs>(START_AS_DEFAULT);
   const [startedLine, setStartedLine] = React.useState<string | null>(null);
+  // SA-788 (c): the new tenant's add-ons as the activation left them (shown under the start line).
+  const [activationAddons, setActivationAddons] = React.useState<ManualActivationAddons | null>(
+    null,
+  );
   const [activationFailed, setActivationFailed] = React.useState(false);
   // Free add-ons (SA-2): comped after the account exists, never billed.
   const [addonList, setAddonList] = React.useState<FreeAddon[] | null>(null);
@@ -410,6 +415,7 @@ export default function AdminCreateTenantPage() {
     setSuccess(null);
     setProfileResult(null);
     setStartedLine(null);
+    setActivationAddons(null);
     setActivationFailed(false);
     setAddonFailures([]);
     profileComped.current = new Set();
@@ -458,13 +464,14 @@ export default function AdminCreateTenantPage() {
       if (!created.id) return;
       if (mode === "active") {
         try {
-          await activateSubscription(created.id, {
+          const activated = await activateSubscription(created.id, {
             plan: form.plan,
             paymentMethod: startAs.paymentMethod,
             billingPeriodDays: startAs.billingPeriodDays,
             ...(startAs.paymentRef.trim() ? { paymentRef: startAs.paymentRef.trim() } : {}),
           });
           setStartedLine(billingLine("active", startAs));
+          setActivationAddons(activated.addons ?? null);
         } catch {
           // Nothing after a failed activation runs: the banner names the step and links the tenant's Billing tab.
           setActivationFailed(true);
@@ -633,6 +640,7 @@ export default function AdminCreateTenantPage() {
                     {startedLine}
                   </p>
                 )}
+                {startedLine && <ActivationAddonChecklist addons={activationAddons} />}
               </>
             )}
             {success.welcomeEmail &&

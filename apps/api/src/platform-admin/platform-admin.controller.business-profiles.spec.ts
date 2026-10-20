@@ -480,7 +480,7 @@ describe("POST business-profile (confirm) — through the existing audited write
       "recurring_routes",
       undefined,
       undefined,
-      expect.objectContaining({ comp: true, lockHeld: true }),
+      expect.objectContaining({ comp: true, lockHeld: true, source: "profile.apply" }),
     );
     expect(t.state().modes.fulfilment_model).toBe("delivery");
     // every comp went through the controller's own audited path (ADDON_COMPED, reason names the profile)
@@ -685,8 +685,8 @@ describe("OWNER RULING (money, tier 1): switching OFF a module the tenant PAYS f
     });
     await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
     expect(t.addonService.disableAddon.mock.calls).toEqual([
-      [T, "order_delivery"],
-      [T, "recurring_routes"],
+      [T, "order_delivery", "admin-1", "profile.apply"], // SA-822: the record names its true source
+      [T, "recurring_routes", "admin-1", "profile.apply"],
     ]);
     expect(t.writes).toEqual([
       "disable order_delivery",
@@ -709,7 +709,9 @@ describe("OWNER RULING (money, tier 1): switching OFF a module the tenant PAYS f
   it("SA-769: a comp add-on row (isComp) is switched off by the add-on disable - it has no Stripe item, so no billing is stopped - and needs no DENY override", async () => {
     const t = fakeTenant({ comped: ["recurring_routes"] });
     await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
-    expect(t.addonService.disableAddon.mock.calls).toEqual([[T, "recurring_routes"]]);
+    expect(t.addonService.disableAddon.mock.calls).toEqual([
+      [T, "recurring_routes", "admin-1", "profile.apply"],
+    ]);
     expect(t.writes).toEqual(["disable recurring_routes", "mode fulfilment_model=ship"]);
     expect(t.featureOverrides.create).not.toHaveBeenCalled();
   });
@@ -1438,5 +1440,23 @@ describe("BO-04 business-capabilities routes", () => {
       status: 409,
       response: expect.objectContaining({ code: "FULFILMENT_CARRIER_IN_TRANSIT" }),
     });
+  });
+});
+
+describe("SA-788 A3 / SA-822: the CALLER decides the source of a disable record, and the actor rides on both", () => {
+  it("the direct admin route passes admin.disable with the acting super-admin's id", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"] });
+    await t.controller.disableAddon(T, { addonKey: "recurring_routes" } as any, admin);
+    expect(t.addonService.disableAddon.mock.calls).toEqual([
+      [T, "recurring_routes", "admin-1", "admin.disable"],
+    ]);
+  });
+
+  it("a business-profile apply passes profile.apply with the same actor", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"] });
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    expect(t.addonService.disableAddon.mock.calls).toEqual([
+      [T, "recurring_routes", "admin-1", "profile.apply"],
+    ]);
   });
 });

@@ -67,6 +67,8 @@ function make(
     },
     tenant: {
       update: jest.fn().mockResolvedValue({}),
+      // SA-815a: the one pin writer mirrors the subscription's pin onto the tenant.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findUnique: jest.fn().mockResolvedValue({
         status: "ACTIVE",
         class: "PRODUCTION",
@@ -90,12 +92,13 @@ function make(
     // transaction reads the held rows (its `where` carries no `isComp`, the sweep's billable read does).
     tenantAddon: {
       findMany: jest.fn(async ({ where }: any = {}) =>
-        where?.isComp === false
+        where?.isComp === false && !where?.id
           ? (data.cancelAddons ?? [])
           : (data.heldAddons ?? data.cancelAddons ?? []),
       ),
+      // the writer limits its updateMany to the rows it locked: AND: [guard, { id: { in } }]
       updateMany: jest.fn(async ({ where }: any = {}) => ({
-        count: where?.id ? 1 : (data.cancelAddons?.length ?? 0),
+        count: (where?.AND?.[0] ?? where)?.id ? 1 : (data.cancelAddons?.length ?? 0),
       })),
     },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
@@ -511,7 +514,7 @@ describe("BillingCronService", () => {
     expect(order).toEqual(["onPlanChange", "tenant-lock", "plan-write"]);
   });
 
-  it("flag OFF: the sweep issues exactly its old query (no tenant.plan join) and never touches the hook", async () => {
+  it("flag OFF: the sweep issues its old query (no tenant.plan join; only the pin rides along) and never touches the hook", async () => {
     const { svc, prisma, planTransition } = make({
       downgrades: [
         {
@@ -530,7 +533,8 @@ describe("BillingCronService", () => {
     const call = prisma.tenantSubscription.findMany.mock.calls.find(
       (c: any[]) => c[0].where.downgradeEffectiveAt,
     )!;
-    expect(call[0].select).not.toHaveProperty("tenant");
+    // flag OFF: no `plan` join; only the tenant's pin (the resolver's fallback, SA-815a) rides along
+    expect(call[0].select.tenant).toEqual({ select: { planVersionId: true } });
     expect(planTransition.prepare).not.toHaveBeenCalled();
     expect(planTransition.onPlanChange).not.toHaveBeenCalled();
   });
@@ -543,7 +547,7 @@ describe("BillingCronService", () => {
     const call = prisma.tenantSubscription.findMany.mock.calls.find(
       (c: any[]) => c[0].where.downgradeEffectiveAt,
     )!;
-    expect(call[0].select.tenant).toEqual({ select: { plan: true } });
+    expect(call[0].select.tenant).toEqual({ select: { planVersionId: true, plan: true } });
   });
 
   it("A2b: a NULL stored planKey resolves the plan being left from tenant.plan, never skips the snapshot", async () => {
@@ -1005,7 +1009,12 @@ describe("BillingCronService", () => {
 
       expect(tx.tenantAddon.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ id: "ta_reg", isComp: false, stripeItemId: null }),
+          // limited to the locked rows by the writer: AND: [guard, { id: { in } }]
+          where: {
+            AND: expect.arrayContaining([
+              expect.objectContaining({ id: "ta_reg", isComp: false, stripeItemId: null }),
+            ]),
+          },
           data: { priceSnapshot: 39 },
         }),
       );
@@ -1329,8 +1338,16 @@ describe("BillingCronService", () => {
 
     expect(tx.tenantSubscription.update.mock.calls[0][0].data).toMatchObject({
       planKey: "LITE",
-      planVersionId: "v12",
       basePriceSnapshot: 99,
+    });
+    // SA-815a: the re-pin goes through the ONE pin writer, so BOTH pins move to the version that defines LITE
+    expect(tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
+      where: { tenantId: "t1" },
+      data: { planVersionId: "v12" },
+    });
+    expect(tx.tenant.updateMany).toHaveBeenCalledWith({
+      where: { id: "t1" },
+      data: { planVersionId: "v12" },
     });
     expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(-150); // 99 − 249
   });
@@ -1422,7 +1439,13 @@ describe("BillingCronService", () => {
     // it, so only the dead pointers clear; `active`, the price, `isComp` and the quantity are never written.
     expect(tx.tenantAddon.updateMany).toHaveBeenCalledTimes(1);
     expect(tx.tenantAddon.updateMany).toHaveBeenCalledWith({
-      where: { tenantId: "t1", active: true, stripeItemId: { not: null } },
+      // the guard, limited to the rows the writer locked and recorded
+      where: {
+        AND: [
+          { tenantId: "t1", active: true, stripeItemId: { not: null } },
+          { id: { in: expect.any(Array) } },
+        ],
+      },
       data: { stripeItemId: null },
     });
     for (const call of tx.tenantAddon.updateMany.mock.calls) {

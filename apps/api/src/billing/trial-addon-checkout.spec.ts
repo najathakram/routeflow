@@ -229,6 +229,9 @@ function make(opts: Opts = {}) {
     for (const [k, v] of Object.entries(where ?? {})) {
       if (k === "OR") {
         if (!(v as any[]).some((w) => matches(r, w))) return false;
+      } else if (k === "AND") {
+        // the writer limits its updateMany to the rows it locked: AND: [guard, { id: { in } }]
+        if (!([] as any[]).concat(v).every((w) => matches(r, w))) return false;
       } else if (v && typeof v === "object" && !(v instanceof Date)) {
         const c = v as any;
         if ("in" in c && !c.in.includes(r[k])) return false;
@@ -542,7 +545,14 @@ function make(opts: Opts = {}) {
   } as any;
   const mutations = new SubscriptionMutationService(
     prisma,
-    { getPublishedCatalog: jest.fn().mockResolvedValue(CATALOG) } as any,
+    (() => {
+      const getPublishedCatalog = jest.fn().mockResolvedValue(CATALOG);
+      // SA-815a: an UNPINNED tenant's inclusion catalog is `getVersionForTenant(null)` = the published one
+      return {
+        getPublishedCatalog,
+        getVersionForTenant: jest.fn(() => getPublishedCatalog()),
+      } as any;
+    })(),
     {} as any,
     { getSubscription: jest.fn().mockResolvedValue({}) } as any,
     entitlements,
@@ -604,12 +614,15 @@ function make(opts: Opts = {}) {
       type: "checkout.session.completed",
       data: { object: s },
     });
+  // the MRR ledger only: the per-change audit record (addon.state_changed, amountDelta null) is asserted elsewhere.
   const ledger = () =>
-    events.emit.mock.calls.map((c: any[]) => ({
-      type: c[1],
-      delta: c[3]?.amountDelta,
-      sku: c[2]?.sku,
-    }));
+    events.emit.mock.calls
+      .filter((c: any[]) => c[1] !== "addon.state_changed")
+      .map((c: any[]) => ({
+        type: c[1],
+        delta: c[3]?.amountDelta,
+        sku: c[2]?.sku,
+      }));
   const ledgerSum = () => ledger().reduce((s: number, e: any) => s + Number(e.delta ?? 0), 0);
   return {
     billing,
@@ -3896,6 +3909,93 @@ describe("SA-815d / N1: a priced row nothing can bill raises ONE platform notice
     expect(calls).toHaveLength(1);
     expect(calls[0][0].data.meta.message).toBe(
       "MSRP on invoices is priced at $15.00 for this workspace but has no card billing. Set up its billing at the agreed price.",
+    );
+  });
+
+  // SA-815a / G1a: the tenant (pin "v1") sits on a SUPERSEDED version where MSRP is $12; the published catalog says
+  // $20. The judge (the (c) loop) and the re-judge + bill (under the SKU's lock) read the SAME pinned version.
+  const pinMsrpAt12 = (h: ReturnType<typeof make>) => {
+    const catalog = (h.mutations as any).catalog;
+    catalog.getVersionForTenant.mockImplementation(async (id: string | null) =>
+      id === "v1"
+        ? {
+            id: "v1",
+            status: "SUPERSEDED",
+            definitions: [],
+            addonSkus: [{ sku: "MSRP", name: "MSRP on invoices", monthlyPrice: 12 }],
+          }
+        : catalog.getPublishedCatalog(),
+    );
+  };
+
+  it("pinned to a superseded version: an admin row priced at the PINNED $12 is billed at $12 (judged and billed on one version)", async () => {
+    const h = make({ rows: [addonRow("MSRP", { priceSnapshot: 12 })], items: [baseItem()] });
+    pinMsrpAt12(h);
+    await h.completed();
+    const creates = h.client.subscriptionItems.create.mock.calls;
+    expect(creates).toHaveLength(1);
+    expect(creates[0][0].price_data.unit_amount).toBe(1200);
+    expect(h.rows[0].priceSnapshot).toBe(12);
+    expect(noticeCalls(h)).toHaveLength(0);
+  });
+
+  // SA-815e: ONE rule - every add-on price (enable, un-comp, preview, checkout) is the SKU of the tenant's own pinned
+  // version. A self-serve row, an admin-only row and a catalog-default row written at the pinned $12 are all billed at
+  // $12 by the checkout, none is a mismatch.
+  const pinAllAt12 = (h: ReturnType<typeof make>) => {
+    const catalog = (h.mutations as any).catalog;
+    catalog.getVersionForTenant.mockImplementation(async (id: string | null) =>
+      id === "v1"
+        ? {
+            id: "v1",
+            status: "SUPERSEDED",
+            definitions: [],
+            addonSkus: ["CUSTOMER_PACK_100", "FORECASTING", "MSRP"].map((sku) => ({
+              sku,
+              name: sku,
+              monthlyPrice: 12,
+            })),
+          }
+        : catalog.getPublishedCatalog(),
+    );
+  };
+
+  it("SA-815e: pinned $12 / published (50, 19, 20): the checkout bills a self-serve row, a FORECASTING row and an admin row each at $12, with no mismatch notice", async () => {
+    const h = make({
+      rows: [
+        addonRow("CUSTOMER_PACK_100", { priceSnapshot: 12 }),
+        addonRow("FORECASTING", { priceSnapshot: 12 }),
+        addonRow("MSRP", { priceSnapshot: 12 }),
+      ],
+      items: [baseItem()],
+    });
+    pinAllAt12(h);
+    await h.completed();
+    const creates = h.client.subscriptionItems.create.mock.calls;
+    expect(creates).toHaveLength(3);
+    expect(creates.map((c: any[]) => c[0].price_data.unit_amount)).toEqual([1200, 1200, 1200]);
+    expect(h.rows.map((r: any) => r.priceSnapshot)).toEqual([12, 12, 12]);
+    expect(noticeCalls(h)).toHaveLength(0);
+  });
+
+  it("SA-815e: the checkout LINE of a self-serve row is priced at the pinned $12, not the published $50", async () => {
+    const h = make({ rows: [addonRow("CUSTOMER_PACK_100", { priceSnapshot: 12 })], items: [] });
+    pinAllAt12(h);
+    const { lineItems } = await h.mutations.checkoutAddonLines("t1", "month");
+    expect(lineItems).toHaveLength(1);
+    expect((lineItems[0] as any).price_data.unit_amount).toBe(1200);
+  });
+
+  it("pinned to a superseded version: a row priced at the PUBLISHED $20 is a mismatch - skipped untouched, one notice", async () => {
+    const h = make({ rows: [addonRow("MSRP", { priceSnapshot: 20 })], items: [baseItem()] });
+    pinMsrpAt12(h);
+    await h.completed();
+    expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(h.rows[0].priceSnapshot).toBe(20);
+    const calls = noticeCalls(h);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0].data.meta.message).toBe(
+      "MSRP on invoices is priced at $20.00 for this workspace but has no card billing. Set up its billing at the agreed price.",
     );
   });
 });

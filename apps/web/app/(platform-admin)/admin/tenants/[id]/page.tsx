@@ -8,6 +8,8 @@ import {
   BILLING_PERIODS,
   EXTERNAL_PAYMENT_METHODS,
   type FeatureRegistryRow,
+  type ManualActivationAddons,
+  type ManualActivationResult,
 } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { activationErrorText } from "@/lib/activation-error-copy";
@@ -18,6 +20,7 @@ import { AdminBadge, planLabel } from "../../../_components/AdminBadge";
 import { usePlanOptions, withCurrentPlan } from "../../../_components/usePlanOptions";
 import { AdminCard } from "../../../_components/AdminCard";
 import { AdminModal } from "../../../_components/AdminModal";
+import { ActivationAddonChecklist } from "../../../_components/ActivationAddonChecklist";
 import { DisabledHint } from "../../../_components/DisabledHint";
 import {
   DeleteTenantDialog,
@@ -870,6 +873,10 @@ function BillingTab({
   onRefreshTenant: () => void;
 }) {
   const [portalLoading, setPortalLoading] = React.useState(false);
+  // SA-788 (c): the tenant's add-ons as the last activation left them.
+  const [activationAddons, setActivationAddons] = React.useState<ManualActivationAddons | null>(
+    null,
+  );
   const [msg, setMsg] = React.useState<{ type: "success" | "error" | "info"; text: string } | null>(
     null,
   );
@@ -913,6 +920,7 @@ function BillingTab({
     e.preventDefault();
     setActivating(true);
     setMsg(null);
+    setActivationAddons(null);
     try {
       const res = await superAdminClient.post(
         `/platform-admin/tenants/${tenant.id}/activate-subscription`,
@@ -928,6 +936,7 @@ function BillingTab({
         type: "success",
         text: `Subscription activated — ${res.data.plan} plan, paid via ${manualForm.paymentMethod}. Next renewal: ${new Date(res.data.periodEnd).toLocaleDateString()}`,
       });
+      setActivationAddons((res.data as ManualActivationResult).addons ?? null);
       onRefreshTenant();
     } catch (err: unknown) {
       setMsg({ type: "error", text: activationErrorText(err) });
@@ -1038,6 +1047,7 @@ function BillingTab({
             {msg.text}
           </div>
         )}
+        {msg?.type === "success" && <ActivationAddonChecklist addons={activationAddons} />}
 
         <form
           onSubmit={handleManualActivation}

@@ -76,6 +76,8 @@ export const AdminAuditAction = {
   ADDON_MANUAL_INVOICE_STOP: "ADDON_MANUAL_INVOICE_STOP",
   /** B1102: a catalog add-on's includedAtPlan names no plan; a background path skipped billing it (meta: sku, value). */
   ADDON_CATALOG_INVALID: "ADDON_NOT_BILLED_CATALOG_INVALID",
+  /** SA-788 (b): the daily add-on invariant found a row that should not be in that state (meta: invariant, rowId, sku). */
+  ADDON_INVARIANT_BROKEN: "ADDON_INVARIANT_BROKEN",
   /** SA-815d: an add-on row an admin priced above zero that no card item bills (catalog $0 / unlisted / custom price); meta: sku, rowId, priceSnapshot. */
   ADDON_PRICED_NOT_BILLED: "ADDON_PRICED_NOT_BILLED",
   /** G1a: a stranded Stripe add-on item (no row holds it) was removed after a skipped admin-only bill; meta: sku, itemId, reason, subscriptionId. */
@@ -164,6 +166,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",
   ADDON_NOT_BILLED_CATALOG_INVALID: "Add-on not billed (catalog setting invalid)",
+  ADDON_INVARIANT_BROKEN: "Add-on invariant broken (check the tenant's add-ons)",
   ADDON_PRICED_NOT_BILLED: "Add-on priced but not billed by card (set up its billing)",
   ADDON_STRANDED_ITEM_REMOVED: "Stranded add-on card item removed (customer credited)",
   ADDON_STRANDED_ITEM_STUCK: "Stranded add-on card item not removed (reconcile in Stripe)",

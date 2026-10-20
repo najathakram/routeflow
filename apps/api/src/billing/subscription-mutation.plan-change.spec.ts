@@ -128,12 +128,14 @@ interface Opts {
 }
 
 /** The rows whose fields all equal the (simple) `where` — enough of Prisma's filter for these specs. */
-const matching = (rows: any[], where: any = {}) =>
+const matching = (rows: any[], where: any = {}): any[] =>
   rows.filter((r) =>
     Object.entries(where).every(([k, v]) =>
-      v && typeof v === "object" && "in" in (v as object)
-        ? (v as { in: unknown[] }).in.includes(r[k])
-        : r[k] === v,
+      k === "AND"
+        ? ([] as any[]).concat(v).every((w) => matching([r], w).length === 1)
+        : v && typeof v === "object" && "in" in (v as object)
+          ? (v as { in: unknown[] }).in.includes(r[k])
+          : r[k] === v,
     ),
   );
 
@@ -163,13 +165,15 @@ function make(o: Opts = {}) {
       findUnique: jest.fn(async () => ({ couponFull: false })),
       // The optimistic guard: lands only while the stored plan is still the one the attempt read.
       updateMany: jest.fn(async ({ where, data }: any) => {
-        if (where.planKey !== db.sub.planKey) return { count: 0 };
+        // the pin writer's write (SA-815a) has no planKey guard: it follows the committed plan write
+        if (where.planKey !== undefined && where.planKey !== db.sub.planKey) return { count: 0 };
         Object.assign(db.sub, data);
         return { count: 1 };
       }),
     },
     tenant: {
       update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }), // SA-815a: the pin writer's tenant mirror
       findUnique: jest
         .fn()
         .mockResolvedValue({ status: "ACTIVE", class: "PRODUCTION", deletedAt: null }),
@@ -183,12 +187,21 @@ function make(o: Opts = {}) {
     },
     tenantAddon: {
       findMany: jest.fn(async ({ where }: any = {}) => matching(db.addons, where)),
+      // SA-788: the writer reads the row it is about to change (a copy: the live object is mutated below).
+      findUnique: jest.fn(async ({ where }: any) => {
+        const hit = db.addons.find((r) => r.id === where.id);
+        return hit ? { ...hit } : null;
+      }),
       update: jest.fn(async ({ where, data }: any) => {
-        Object.assign(
-          db.addons.find((r) => r.id === where.id),
-          data,
-        );
-        return {};
+        const hit = db.addons.find((r) => r.id === where.id);
+        Object.assign(hit, data);
+        return { ...hit };
+      }),
+      // the compensating revert re-points a row's pointer through the writer, inside its own transaction
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        const hits = matching(db.addons, where);
+        for (const r of hits) Object.assign(r, data);
+        return { count: hits.length };
       }),
     },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
@@ -215,6 +228,7 @@ function make(o: Opts = {}) {
     },
     user: { count: jest.fn().mockResolvedValue(0) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
+    $queryRaw: jest.fn().mockResolvedValue([]),
     $transaction: jest.fn(async (fn: any) => {
       const saved = JSON.parse(JSON.stringify({ sub: db.sub, addons: db.addons }));
       try {
@@ -636,7 +650,7 @@ describe("upgrade(): the add-ons the new plan includes stop billing and stay ON 
 
 describe("upgrade(): a failed local write puts Stripe back (SA-733r M7)", () => {
   it("local CAS 409 after Stripe OK -> ONE revert update restoring the prior base price and re-creating the deleted add-on item", async () => {
-    const { svc, stripe, tx, prisma } = make({ addons: [row()] });
+    const { svc, stripe, tx } = make({ addons: [row()] });
     tx.tenantSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
 
     await expect(svc.upgrade("t1", "SCALE", "admin")).rejects.toBeInstanceOf(ConflictException);
@@ -662,8 +676,9 @@ describe("upgrade(): a failed local write puts Stripe back (SA-733r M7)", () => 
       metadata: { restoredFromItem: "si_fc" },
     });
     // The row points at the re-created item (a NEW id Stripe made), so a later disable still removes it.
-    expect(prisma.tenantAddon.updateMany).toHaveBeenCalledWith({
-      where: { id: "ta_fc", tenantId: "t1" },
+    expect(tx.tenantAddon.updateMany).toHaveBeenCalledWith({
+      // written inside the revert's own transaction, limited to the row the writer locked
+      where: { AND: [{ id: "ta_fc", tenantId: "t1" }, { id: { in: ["ta_fc"] } }] },
       data: { stripeItemId: "si_new_1" },
     });
     // Stripe is back where it started: base on the old price, the add-on item present again.

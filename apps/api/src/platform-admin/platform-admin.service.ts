@@ -27,6 +27,7 @@ import {
 } from "../billing/rf-invoice/rf-invoice-activation-void";
 import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { inclusionCatalogFor, pinPlanVersionTx } from "../billing/plan-version-pin";
 import { ProrationService } from "../billing/proration.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { MeterService } from "../billing/meter.service";
@@ -68,10 +69,13 @@ import {
 import { bookAddonsOnCrossing, lockTenantForLedger } from "../billing/addon-ledger";
 import { billableAddonWhere } from "../billing/addon-row";
 import {
+  diffActivationAddons,
   priceUnbilledAddonsOnActivation,
+  readActivationAddons,
   unbilledSelfServeSkus,
   withAddonLocks,
 } from "../billing/manual-activation-addons";
+import type { ManualActivationAddons } from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
 import { StripeService } from "../billing/stripe.service";
 import { stripeGateBeforeTermination, tenantChangedRefusal } from "./stripe-termination-gate";
@@ -926,6 +930,7 @@ export class PlatformAdminService {
         status: true,
         class: true,
         deletedAt: true,
+        planVersionId: true,
       },
     });
     if (!before) throw new NotFoundException(`Tenant ${id} not found`);
@@ -952,6 +957,7 @@ export class PlatformAdminService {
       where: { tenantId: id },
       select: {
         planKey: true,
+        planVersionId: true,
         basePriceSnapshot: true,
         priceOverrideMonthly: true,
         priceOverrideAnnual: true,
@@ -1002,6 +1008,14 @@ export class PlatformAdminService {
     // actually expected to be -1 here.
     const fromKey = normalizePlanKey(priorSub?.planKey) ?? planKeyFromEnum(before.plan);
     const fromDefinition = findPlanDefinition(version.definitions, fromKey);
+    // SA-815 / SA-815a: the plan being LEFT is judged by the tenant's own pinned catalog (sub pin, else tenant pin,
+    // else published), never the published one the target is read from.
+    const fromVersion = await inclusionCatalogFor(
+      this.planCatalogService,
+      priorSub,
+      before,
+      version,
+    );
     const rankFrom = planRank(fromKey);
     const rankTo = planRank(targetPlanKey);
     const isRankedPlanChange =
@@ -1143,6 +1157,7 @@ export class PlatformAdminService {
       tenantId: id,
       sub: priorSub,
       version,
+      fromVersion,
       def: definition,
       proration: isUpgrade ? "create_prorations" : "none",
       stopBillingAddons: stopsBilling,
@@ -1169,7 +1184,7 @@ export class PlatformAdminService {
       const updated = await tx.tenant
         .update({
           where: { id, status: before.status },
-          data: { plan: dto.plan, planVersionId: version.id },
+          data: { plan: dto.plan },
         })
         .catch((e: unknown) => {
           if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2025")
@@ -1182,7 +1197,6 @@ export class PlatformAdminService {
       const subWrite = {
         currentPlan: dto.plan,
         planKey: definition.planKey,
-        planVersionId: version.id,
         basePriceSnapshot: baseSnapshot,
       };
       if (priorSub) {
@@ -1220,6 +1234,12 @@ export class PlatformAdminService {
             throw e;
           });
       }
+      // SA-815a (G1c-1): the ONE pin writer sets both pins, after the subscription write (the row exists now).
+      await pinPlanVersionTx(tx, id, version.id, {
+        kind: "PLATFORM_ADMIN",
+        id: adminId,
+        source: "admin.update_plan",
+      });
 
       // Moving the snapshot run-rate without a matching ledger delta makes `mrr` and
       // `ledgerMrr`/`momDelta` diverge permanently (mrr.service.ts:21-27), so this path
@@ -1264,7 +1284,7 @@ export class PlatformAdminService {
         const reprice = await repriceAddonsLeavingInclusionTx(tx, this.billingEventService, {
           tenantId: id,
           fromPlanKey: fromKey,
-          fromAddonSkus: version.addonSkus,
+          fromAddonSkus: fromVersion.addonSkus,
           toPlanKey: definition.planKey,
           toPlanName: definition.name,
           toAddonSkus: version.addonSkus,
@@ -1276,6 +1296,7 @@ export class PlatformAdminService {
             year: "numeric",
           }),
           actorId: adminId,
+          actorKind: "PLATFORM_ADMIN",
         });
         leavingToBill = reprice.toBill;
       }
@@ -1384,6 +1405,8 @@ export class PlatformAdminService {
 
     const exitBox: { exit: PauseExit | null } = { exit: null };
     const duplicateBox: { hit: RecentActivation | null } = { hit: null };
+    // SA-788 (c): the tenant's add-ons before and after, read under the tenant lock (also on the repeat path).
+    const addonsBox: { value: ManualActivationAddons | null } = { value: null };
     const tenant = await withAddonLocks(id, addonSkusToPrice, () =>
       this.prisma.$transaction(async (tx) => {
         // B864 / SA-277 (D2): same tenant row lock as updateStatus/updateTenantClass/
@@ -1406,8 +1429,10 @@ export class PlatformAdminService {
           repeated &&
           (await tx.tenant.findUniqueOrThrow({ where: { id }, select: { status: true } }))
             .status === TenantStatus.ACTIVE;
+        const addonsBefore = await readActivationAddons(tx, id, version.addonSkus);
         if (repeated && stillActive) {
           duplicateBox.hit = repeated;
+          addonsBox.value = { before: addonsBefore, after: addonsBefore, changed: [] };
           return tx.tenant.findUniqueOrThrow({ where: { id } });
         }
         const activationWindow = await resolveActivationWindow(tx, {
@@ -1438,8 +1463,10 @@ export class PlatformAdminService {
             readOnlyReason: true,
             class: true,
             deletedAt: true,
+            planVersionId: true,
             subscription: {
               select: {
+                planVersionId: true,
                 planKey: true,
                 basePriceSnapshot: true,
                 discount: true,
@@ -1507,7 +1534,6 @@ export class PlatformAdminService {
               tenantId: id,
               currentPlan: dto.plan,
               planKey: definition.planKey,
-              planVersionId: version.id,
               periodStart,
               periodEnd,
               cycle,
@@ -1520,7 +1546,6 @@ export class PlatformAdminService {
             update: {
               currentPlan: dto.plan,
               planKey: definition.planKey,
-              planVersionId: version.id,
               periodStart,
               periodEnd,
               cycle,
@@ -1539,6 +1564,13 @@ export class PlatformAdminService {
             },
           }),
         ]);
+        // SA-815a (G1c-1): both pins, through the ONE writer, once the subscription row exists. (The upsert used to
+        // pin the subscription only, leaving the tenant's pin to drift.)
+        await pinPlanVersionTx(tx, id, version.id, {
+          kind: "PLATFORM_ADMIN",
+          id: adminId,
+          source: "admin.manual_activation",
+        });
 
         // PR4a (owner ruling): the new prepaid window settles any OPEN RouteFlow invoice it fully covers -
         // void them in THIS transaction, so the activation and the void land or roll back together.
@@ -1655,10 +1687,19 @@ export class PlatformAdminService {
           const fromKey = normalizePlanKey(before.subscription?.planKey);
           const label = before.name ?? before.slug ?? id;
           const fromRank = fromKey ? planRank(fromKey) : -1;
+          // SA-815a: the plan being left is judged by the tenant's pinned catalog as read BEFORE this activation
+          // re-pinned it (`before`), never the published one.
+          const fromVersion = await inclusionCatalogFor(
+            this.planCatalogService,
+            before.subscription,
+            before,
+            version,
+          );
           if (fromRank >= 0 && planRank(definition.planKey) > fromRank) {
             await stopBillingIncludedAddonsTx(tx, this.billingEventService, {
               tenantId: id,
               fromPlanKey: fromKey,
+              fromAddonSkus: fromVersion.addonSkus,
               toPlanKey: definition.planKey,
               toPlanName: definition.name,
               addonSkus: version.addonSkus,
@@ -1666,12 +1707,13 @@ export class PlatformAdminService {
               manualPay: true,
               tenantLabel: label,
               actorId: adminId,
+              actorKind: "PLATFORM_ADMIN",
             });
           } else if (fromRank >= 0 && planRank(definition.planKey) < fromRank) {
             await repriceAddonsLeavingInclusionTx(tx, this.billingEventService, {
               tenantId: id,
               fromPlanKey: fromKey,
-              fromAddonSkus: version.addonSkus,
+              fromAddonSkus: fromVersion.addonSkus,
               toPlanKey: definition.planKey,
               toPlanName: definition.name,
               toAddonSkus: version.addonSkus,
@@ -1683,6 +1725,7 @@ export class PlatformAdminService {
                 year: "numeric",
               }),
               actorId: adminId,
+              actorKind: "PLATFORM_ADMIN",
             });
           }
         }
@@ -1737,9 +1780,17 @@ export class PlatformAdminService {
           },
         });
 
+        // SA-788 (c): just before commit, so the list includes what this activation itself priced.
+        const addonsAfter = await readActivationAddons(tx, id, version.addonSkus);
+        addonsBox.value = {
+          before: addonsBefore,
+          after: addonsAfter,
+          changed: diffActivationAddons(addonsBefore, addonsAfter),
+        };
         return updated;
       }, this.planTransition.transactionOptions(preparedTransition)),
     );
+    const addons = addonsBox.value ?? { before: [], after: [], changed: [] };
 
     if (duplicateBox.hit) {
       // The repeat of a payment already recorded: nothing was written, so no cache, no pause, no trail row.
@@ -1753,6 +1804,7 @@ export class PlatformAdminService {
         paymentMethod: dto.paymentMethod,
         paymentRef: dto.paymentRef ?? null,
         repeated: true,
+        addons,
       };
     }
 
@@ -1777,6 +1829,7 @@ export class PlatformAdminService {
       periodEnd,
       paymentMethod: dto.paymentMethod,
       paymentRef: dto.paymentRef ?? null,
+      addons,
     };
   }
 

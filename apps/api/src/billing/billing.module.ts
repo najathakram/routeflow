@@ -22,6 +22,7 @@ import { SubscriptionBillingExtras } from "./subscription-billing-extras";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingEventService } from "./billing-event.service";
 import { BillingCronService } from "./billing-cron.service";
+import { AddonInvariantJob } from "./addon-invariant.job";
 import { RfInvoiceBuilder } from "./rf-invoice/rf-invoice-builder";
 import { RfInvoiceIssuerService } from "./rf-invoice/rf-invoice-issuer.service";
 import { RfInvoiceMailerService } from "./rf-invoice/rf-invoice-mailer.service";
@@ -64,6 +65,8 @@ import { AutoLockAdminService } from "./auto-lock-admin.service";
     SubscriptionMutationService,
     BillingEventService,
     BillingCronService,
+    // SA-788 (b): the daily add-on invariant (07:00 UTC; the email is dark until ADDON_INVARIANT_EMAIL=email).
+    AddonInvariantJob,
     // R1 option B: a scheduled downgrade's price reaches Stripe before the renewal (invoice.upcoming + a backup sweep).
     ScheduledPriceChangeService,
     // SA-733r3 N2: the October catch-up claim lifecycle (webhook entry points + the hourly sweep).

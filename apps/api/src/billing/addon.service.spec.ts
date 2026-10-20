@@ -60,13 +60,14 @@ import {
 } from "@nestjs/common";
 import { AddonService } from "./addon.service";
 import { fakeTenantAddonStore } from "../testing/fake-tenant-addon-store";
+import { mrrEmits } from "../testing/mrr-emits";
 
 beforeEach(() => {
   lockQueues.clear();
   mockWithAdvisoryLock.mockClear();
 });
 
-function published(skus: string[], includedAtPlan: Record<string, string> = {}) {
+function published(skus: string[], includedAtPlan: Record<string, string> = {}, price = 10) {
   return {
     definitions: [
       { planKey: "GROWTH", name: "Growth", monthlyPrice: 249 },
@@ -75,7 +76,7 @@ function published(skus: string[], includedAtPlan: Record<string, string> = {}) 
     addonSkus: skus.map((sku) => ({
       sku,
       name: sku,
-      monthlyPrice: 10,
+      monthlyPrice: price,
       ...(includedAtPlan[sku] ? { includedAtPlan: includedAtPlan[sku] } : {}),
     })),
   };
@@ -100,6 +101,11 @@ interface Opts {
    *  `isPayingRow` shape). Defaults to a paying (ACTIVE/PRODUCTION) row so the pre-existing
    *  priced-enable pins (T8/T9/T15, B342) keep booking unless a test overrides it. */
   tenantRow?: any;
+  /** SA-815a: the version the subscription is pinned to, and that pinned catalog's `includedAtPlan` per SKU. */
+  pinnedVersionId?: string;
+  pinnedIncludedAtPlan?: Record<string, string>;
+  /** SA-815e: the pinned catalog's add-on price (the published one stays $10). */
+  pinnedPrice?: number;
 }
 
 function make(opts: Opts = {}) {
@@ -136,6 +142,15 @@ function make(opts: Opts = {}) {
     getPublishedCatalog: jest
       .fn()
       .mockResolvedValue(published(opts.publishedSkus ?? [], opts.includedAtPlan)),
+    // SA-815a: a pinned version answers with ITS OWN includedAtPlan; anything else is the published catalog
+    getVersionForTenant: jest.fn().mockImplementation(async (id: string | null) => ({
+      id: id ?? "v_pub",
+      ...published(
+        opts.publishedSkus ?? [],
+        id && id === opts.pinnedVersionId ? opts.pinnedIncludedAtPlan : opts.includedAtPlan,
+        id && id === opts.pinnedVersionId ? (opts.pinnedPrice ?? 10) : 10,
+      ),
+    })),
   } as any;
   const featureResolver = { invalidate: jest.fn() } as any;
   const authority = {
@@ -188,6 +203,23 @@ describe("AddonService.enableAddon", () => {
     expect(featureResolver.invalidate).toHaveBeenCalledWith("t1");
   });
 
+  // Opus review of 60bedd24b (NIT): the CALLER names the record's source, like a disable - a profile apply that
+  // enables a NON-comp add-on still records profile.apply.
+  it("a caller-named source rides the record: a non-comp enable from a profile apply records profile.apply with the actor", async () => {
+    const { svc, events } = make({ publishedSkus: ["MSRP"] });
+
+    await svc.enableAddon("t1", "msrp", undefined, undefined, {
+      source: "profile.apply",
+      actorId: "admin-1",
+    });
+
+    const rec = events.emit.mock.calls.find((c: any[]) => c[1] === "addon.state_changed");
+    expect(rec[2]).toMatchObject({
+      source: "profile.apply",
+      actor: { kind: "PLATFORM_ADMIN", id: "admin-1" },
+    });
+  });
+
   it("allows an unbridged legacy key (developer_mode) unchanged, and still invalidates", async () => {
     const { svc, prisma, entitlements, catalog, featureResolver } = make({ publishedSkus: [] });
 
@@ -209,14 +241,41 @@ describe("AddonService.disableAddon", () => {
 
     await svc.disableAddon("t1", "msrp");
 
+    // SA-788: written by id through the one writer (the row was read and locked under the tenant lock first).
     expect(prisma.tenantAddon.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { tenantId_addonKey: { tenantId: "t1", addonKey: "msrp" } },
-      }),
+      expect.objectContaining({ where: { id: "addon1" } }),
     );
     expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
     // REG-B509: see the matching note in enableAddon's test above.
     expect(featureResolver.invalidate).toHaveBeenCalledWith("t1");
+  });
+
+  // SA-788 A-R13: the admin who disables is on the ledger event AND on the per-change record. On the G1a head the
+  // disable carried no actor at all (actorId null) and wrote no record.
+  it("A-R13: admin disable records the admin as the actor (ledger event and addon.state_changed)", async () => {
+    const { svc, events } = make({
+      existingAddon: {
+        id: "addon1",
+        tenantId: "t1",
+        addonKey: "msrp",
+        sku: "MSRP",
+        active: true,
+        priceSnapshot: 20,
+        quantity: 1,
+      },
+    });
+
+    await svc.disableAddon("t1", "msrp", "admin-9");
+
+    const disabled = events.emit.mock.calls.find((c: any[]) => c[1] === "addon.disabled");
+    expect(disabled?.[3].actorId).toBe("admin-9");
+    const record = events.emit.mock.calls.find((c: any[]) => c[1] === "addon.state_changed");
+    expect(record?.[2]).toMatchObject({
+      source: "admin.disable",
+      actor: { kind: "PLATFORM_ADMIN", id: "admin-9" },
+      changes: { active: [true, false] },
+    });
+    expect(record?.[3].amountDelta).toBeNull();
   });
 
   it("REG-B107 T7 refuses when the Stripe delete fails (non-missing error)", async () => {
@@ -391,7 +450,59 @@ describe("AddonService.enableAddon - an included add-on is never billed on top (
     });
     expect(create).not.toHaveBeenCalled();
     expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
+  });
+
+  // SA-815a (enable-with-price, SA-815 site 6): inclusion is judged by the tenant's PINNED catalog.
+  it("SA-815a: a tenant pinned to a version that INCLUDES the SKU at SCALE is refused a priced enable, though the published catalog no longer includes it", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "si_9" });
+    const { svc, prisma, events } = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+      subscription: atScale({ planVersionId: "v_old" }),
+      publishedSkus: ["REGULATED_ITEMS"], // published: NOT included at any plan
+      pinnedVersionId: "v_old",
+      pinnedIncludedAtPlan: includedAtScale, // pinned: included at SCALE
+    });
+
+    const err: any = await svc
+      .enableAddon("t1", "REGULATED_ITEMS", "price_x")
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: "ADDON_INCLUDED_IN_PLAN" });
+    expect(create).not.toHaveBeenCalled();
+    expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
+  });
+
+  it("SA-815a control: a tenant pinned to a version that does NOT include it is billed, though the published catalog includes it", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "si_9" });
+    const { svc } = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+      subscription: atScale({ planVersionId: "v_old" }),
+      publishedSkus: ["REGULATED_ITEMS"],
+      includedAtPlan: includedAtScale, // published includes it ...
+      pinnedVersionId: "v_old", // ... the pinned version does not
+      pinnedIncludedAtPlan: {},
+    });
+    await svc.enableAddon("t1", "REGULATED_ITEMS", "price_x");
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("SA-815e: an admin enable at the catalog writes the row at the PINNED version's price ($12), not the published ($10)", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "si_9" });
+    const { svc, prisma } = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+      subscription: atScale({ planKey: "GROWTH", planVersionId: "v_old" }),
+      publishedSkus: ["REGULATED_ITEMS"],
+      pinnedVersionId: "v_old",
+      pinnedIncludedAtPlan: {},
+      pinnedPrice: 12,
+    });
+    await svc.enableAddon("t1", "REGULATED_ITEMS", "price_x");
+    expect(prisma.tenantAddon.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ priceSnapshot: 12 }) }),
+    );
   });
 
   it("WITHOUT a price at SCALE it proceeds: the row is written at $0 and nothing is booked", async () => {
@@ -409,7 +520,7 @@ describe("AddonService.enableAddon - an included add-on is never billed on top (
     expect(prisma.tenantAddon.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ create: expect.objectContaining({ priceSnapshot: 0 }) }),
     );
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("below the including plan a priced enable is unchanged (GROWTH bills the item)", async () => {
@@ -616,7 +727,7 @@ describe("AddonService.enableAddon — F2 activation race with the tenant self-s
     // The orphan Stripe item THIS call created is cleaned up best-effort.
     expect(del).toHaveBeenCalledWith("si_orphan");
     // No double-booked ledger event, and no row write from the losing call.
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
     expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
   });
 });
@@ -771,7 +882,7 @@ describe("AddonService.enableAddon/disableAddon — B865 ledger (SA-277)", () =>
         update: expect.objectContaining({ priceSnapshot: 0 }),
       }),
     );
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 
   it("PIN P6: an unbridged key with no SKU and no price (developer_mode) still resolves, no emit", async () => {
@@ -786,7 +897,7 @@ describe("AddonService.enableAddon/disableAddon — B865 ledger (SA-277)", () =>
 
     await expect(svc.enableAddon("t1", "developer_mode")).resolves.toBeDefined();
     expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 });
 

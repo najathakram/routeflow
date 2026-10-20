@@ -44,9 +44,11 @@ import {
   type LeavingAddon,
   type LeavingBiller,
 } from "./addon-inclusion";
+import { updateAddonRowsTx } from "./tenant-addon-writer";
 import { dunningZone } from "./dunning-zone";
 import { formatInZone } from "./subscription-billing-extras";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
+import { inclusionCatalogFor, pinPlanVersionTx } from "./plan-version-pin";
 
 /** No mutation service wired (a bare unit build): billing a leaving add-on fails loudly into the notice path. */
 const MISSING_BILLER: LeavingBiller = {
@@ -306,7 +308,8 @@ export class BillingCronService {
         // `planKey` is nullable (the pre-plans-as-data cohort): resolve the plan being LEFT the
         // way every other plan path does, or the snapshot would be skipped for exactly those tenants.
         // Joined ONLY while the snapshot flag is on — flag off, the query is exactly what it was.
-        ...(snapshotOn ? { tenant: { select: { plan: true } } } : {}),
+        // SA-815a: the tenant's pin (the resolver's fallback) rides along; `plan` only while the snapshot flag is on.
+        tenant: { select: { planVersionId: true, ...(snapshotOn ? { plan: true } : {}) } },
       },
     });
     let applied = 0;
@@ -318,7 +321,7 @@ export class BillingCronService {
       // not the published one. Skip loudly if the catalog can't be resolved.
       let fromVersion: PlanVersionWithCatalog;
       try {
-        fromVersion = await this.catalog.getVersionForTenant(s.planVersionId);
+        fromVersion = await inclusionCatalogFor(this.catalog, s, s.tenant);
       } catch {
         this.logger.error(`Skipping downgrade for ${s.tenantId} — catalog unresolvable`);
         continue;
@@ -478,7 +481,6 @@ export class BillingCronService {
               // now THROWS instead of silently writing STARTER for such a key; caught below so ONE
               // bad row never stops the sweep from applying every other tenant's downgrade.
               currentPlan: planKeyToEnum(target),
-              planVersionId: targetVersion.id,
               basePriceSnapshot: override ?? targetDef.monthlyPrice ?? null,
               downgradeToPlanKey: null,
               downgradeEffectiveAt: null,
@@ -488,6 +490,12 @@ export class BillingCronService {
           await tx.tenant.update({
             where: { id: s.tenantId },
             data: { plan: planKeyToEnum(target) },
+          });
+          // SA-815a (G1c-1): both pins through the ONE writer (this sweep used to move only the subscription's).
+          await pinPlanVersionTx(tx, s.tenantId, targetVersion.id, {
+            kind: "SYSTEM",
+            id: null,
+            source: "cron.scheduled_downgrade",
           });
           // SA-786 S3 (owner ruling Q-B): an add-on the old plan included starts to bill at the TARGET version's
           // catalog price. AFTER the plan write, so the ledger judges "paying" on the new plan. MANUAL: priced
@@ -505,6 +513,7 @@ export class BillingCronService {
               mode: addonBillingModeOf(this.stripe.isConfigured, lockedSub),
               tenantLabel,
               dateLabel,
+              actorKind: "SYSTEM",
               onInvalid: (sku, value) =>
                 this.logger.error(
                   `Scheduled downgrade tenant=${s.tenantId}: add-on "${sku}" catalog includedAtPlan "${value}" names no plan - left unpriced`,
@@ -887,9 +896,10 @@ export class BillingCronService {
           priceSnapshot: r.priceSnapshot != null ? Number(r.priceSnapshot) : null,
           isComp: r.isComp,
         }));
-        await tx.tenantAddon.updateMany({
+        await updateAddonRowsTx(tx, this.events, {
           where: { tenantId: s.tenantId, active: true, stripeItemId: { not: null } },
           data: { stripeItemId: null },
+          actor: { kind: "SYSTEM", id: null, source: "lock.cancel_clear_item" },
         });
         await this.events.emit(
           s.tenantId,

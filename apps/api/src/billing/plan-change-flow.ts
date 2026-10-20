@@ -8,7 +8,9 @@ import { writeAdminNotice } from "./manual-invoice-notice";
 import { normalizePlanKey } from "./plan-catalog.constants";
 import { stripeRefId } from "./stripe-period";
 import { resolvePlanPrice } from "./plan-price";
-import type { BillingEventService } from "./billing-event.service";
+import { BillingEventService } from "./billing-event.service";
+import { updateAddonRowsTx } from "./tenant-addon-writer";
+import { lockTenantForLedger } from "./addon-ledger";
 import {
   addonsEnteringInclusion,
   stopBillingIncludedAddonsTx,
@@ -49,6 +51,8 @@ export interface PlanChangeFlowDeps extends Omit<PlanChangeDeps, "stripe"> {
   prisma: PrismaService;
   /** Absent in an environment without Stripe wired (a spec, a script): the push is skipped. */
   stripe?: PlanChangeDeps["stripe"] | null;
+  /** SA-788: the writer's event emitter for the revert pointer (default: one over `prisma`). */
+  events?: BillingEventService;
 }
 
 export interface PlanChangeFlowArgs {
@@ -119,6 +123,7 @@ export async function beginStripeFirstPlanChange(
             toPlanName: a.targetPlanName,
             addonSkus: a.addonSkus,
             ctx,
+            actorKind: a.audience === "admin" ? "PLATFORM_ADMIN" : "TENANT_USER",
             ...o,
           })
         : Promise.resolve([]);
@@ -187,7 +192,12 @@ export async function beginStripeFirstPlanChange(
         return out;
       } catch (err) {
         if (push.pushed) {
-          const outcome = await compensate({ prisma, stripe, logger }, push, a, err);
+          const outcome = await compensate(
+            { prisma, stripe, logger, events: deps.events },
+            push,
+            a,
+            err,
+          );
           // landed = the row is on the target; reverted = Stripe is back on the prior items: both agree again.
           // skipped / Stripe-ahead keep the flag (markNeedsReconcile raised it).
           if (outcome === "landed" || outcome === "reverted") {
@@ -301,15 +311,25 @@ async function compensate(
     `Plan change tenant ${a.tenantId}: the local write failed after Stripe applied it — Stripe restored (${push.key}:revert)`,
   );
   // A deleted add-on item came back under a new id: point its row at it, so a later disable removes the item.
+  // SA-788: through the one writer, in ONE transaction of its own - the local write that failed has already ended
+  // (no caller transaction is open here), and the row lock, the pointer write and the record must commit together or
+  // not at all (a failed record rolls the pointer back too). Same lock order as the forward path: the Tenant row
+  // lock first, then each add-on row `FOR UPDATE` inside the writer.
   try {
     for (const r of restored) {
       if (!r.newItemId)
         throw new Error(`restored item for row ${r.rowId} not found in Stripe's reply`);
-      await prisma.tenantAddon.updateMany({
-        where: { id: r.rowId, tenantId: a.tenantId },
-        data: { stripeItemId: r.newItemId },
-      });
     }
+    await prisma.$transaction(async (tx) => {
+      await lockTenantForLedger(tx, a.tenantId);
+      for (const r of restored) {
+        await updateAddonRowsTx(tx, deps.events ?? new BillingEventService(prisma), {
+          where: { id: r.rowId, tenantId: a.tenantId },
+          data: { stripeItemId: r.newItemId as string },
+          actor: { kind: "SYSTEM", id: null, source: "plan_change.revert" },
+        });
+      }
+    });
   } catch (pointerErr) {
     // The add-on pointers still name a deleted item: that IS an inconsistency, so the flag stays up.
     await alert(pointerErr);
