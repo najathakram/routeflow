@@ -1,0 +1,16 @@
+# Railway config for the ops monitor service (its own Railway project). Railway reads one config
+# file per service (path set in the service settings: tools/ops-monitor/railway.toml), so this
+# file never affects the api/web services.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "tools/ops-monitor/Dockerfile"
+# Railway builds from the repo root: the Dockerfile COPY context is "."
+watchPatterns = ["tools/ops-monitor/**"]
+
+[deploy]
+healthcheckPath = "/api/health"
+# The server clones both repos (read-only) before it listens.
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+# One replica: one collector, one in-memory session/rate-limit state.
+numReplicas = 1

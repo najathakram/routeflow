@@ -30,6 +30,7 @@ import {
   Handshake,
   BadgePercent,
   Store,
+  Smartphone,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
@@ -44,6 +45,8 @@ import { BillingShellBanner, BillingStripReserve } from "@/components/BillingShe
 import { DriverReadOnlyBanner } from "@/components/DriverReadOnlyBanner";
 import { subscriptionPollInterval } from "@/lib/subscription-banner-state";
 import { useSubscription } from "@/lib/api/billing";
+import { hasAnyAppLink, useAppLinks } from "@/lib/api/app-links";
+import { isInShell } from "@/lib/in-shell";
 import { useAuth } from "@/lib/auth-context";
 import {
   getImpersonation,
@@ -550,6 +553,10 @@ function HeaderTools({
   const bellCount = unreadCount + expiring.length + pendingApprovals.length;
   const { driveMode, setDriveMode } = useDriveMode();
   const counterPref = useOpenCounterPref();
+  // Row 559: "Get the app" shows only when an install link is ready (fails closed while loading or on an
+  // older api) and never inside the app shell itself.
+  const { data: appLinks } = useAppLinks();
+  const showGetTheApp = hasAnyAppLink(appLinks) && !isInShell();
   // Drive mode is a recurring-routes affordance ("My Routes"), so it's gated
   // on routesAccess (not delivery access).
   const { enabled: routesAccess } = useRoutesAccess();
@@ -788,6 +795,15 @@ function HeaderTools({
               <UserIcon className="h-4 w-4 text-navy/70" />
               {t("menu.profile")}
             </DropdownMenu.Item>
+            {showGetTheApp && (
+              <DropdownMenu.Item
+                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+                onSelect={() => router.push("/get-the-app")}
+              >
+                <Smartphone className="h-4 w-4 text-navy/70" />
+                {t("menu.getTheApp")}
+              </DropdownMenu.Item>
+            )}
             {/* POS-7: per-device preference; hidden when storage is blocked (the toggle could not persist). */}
             {showCounterPref && counterPref.available && (
               <DropdownMenu.CheckboxItem
