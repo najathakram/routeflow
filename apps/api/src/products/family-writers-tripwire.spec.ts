@@ -186,25 +186,37 @@ describe("SA-823: one family creator, one reparent path, units v2 untouched", ()
     expect(methodBody(svc, "createFamily")).toMatch(/this\.createFamilyContainer\(/);
   });
 
-  it("T11: product.family_assigned is written only by update()'s reparent block, create()'s own tx and the inventory new-variant row; bulkAssignParent goes through assignToParent", () => {
-    const AUDITED = /PRODUCT_FAMILY_ASSIGNED/;
+  it("T11: product.family_assigned is written only by writeFamilyAssigned (SA-823b); create(), update()'s reparent block, inventory createVariantRowInTx and the family editor call it; bulkAssignParent goes through assignToParent", () => {
     const holders = files
-      .filter((f) => AUDITED.test(f.src))
+      .filter((f) => /PRODUCT_FAMILY_ASSIGNED/.test(f.src))
       .map((f) => [f.rel, count(/PRODUCT_FAMILY_ASSIGNED/g, f.src)])
       .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
     expect(holders).toEqual([
       ["audit/audit-actions.constant.ts", 1],
-      ["inventory/inventory.service.ts", 1],
-      ["products/products.service.ts", 2],
+      ["products/product-parent.ts", 1],
     ]);
+    // global regexes so a SECOND call in any body is caught
+    const CALL = /writeFamilyAssigned\(/g;
     const ps = srcOf("products/products.service.ts");
-    // global so a SECOND write in either body is caught. Exempt by ruling: variants made by the family editor
-    // (createFamily's grid and updateVariants' added rows) are covered by product.family_created /
-    // product.family_variants_updated and write no family_assigned row.
-    const AUDITED_G = /PRODUCT_FAMILY_ASSIGNED/g;
-    expect(count(AUDITED_G, methodBody(ps, "update"))).toBe(1);
-    expect(count(AUDITED_G, methodBody(ps, "create"))).toBe(1);
-    // every writer is a tx write, never a non-tx audit.log
+    expect(count(CALL, methodBody(ps, "update"))).toBe(1);
+    expect(count(CALL, methodBody(ps, "create"))).toBe(1);
+    expect(
+      count(CALL, methodBody(srcOf("inventory/inventory.service.ts"), "createVariantRowInTx")),
+    ).toBe(1);
+    const fs = srcOf("products/product-families.service.ts");
+    expect(count(CALL, methodBody(fs, "createFamily"))).toBe(1);
+    expect(count(CALL, methodBody(fs, "updateVariants"))).toBe(1);
+    // no other file or method calls the writer, and none writes the row inline
+    const callers = files
+      .filter((f) => count(CALL, f.src) > 0)
+      .map((f) => f.rel)
+      .sort();
+    expect(callers).toEqual([
+      "inventory/inventory.service.ts",
+      "products/product-families.service.ts",
+      "products/product-parent.ts",
+      "products/products.service.ts",
+    ]);
     expect(ps).not.toMatch(/audit\.log\([^)]*family_assigned/);
     const bulk = methodBody(ps, "bulkAssignParent");
     expect(bulk).toMatch(/this\.assignToParent\(/);

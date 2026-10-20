@@ -336,4 +336,25 @@ describe("ProductsService: a parent change writes one product.family_assigned ro
     });
     expect(familyRows()).toHaveLength(0);
   });
+
+  it("MUST 3: findOne sees parent X, the locked re-read sees Y, the dto sends X with no reparentVia -> update throws inside the tx; no family_assigned row and no commit", async () => {
+    seed("fam-x", "fam-x");
+    prisma.product.findFirst.mockImplementation(async (args: { where?: { id?: string } }) => {
+      const id = args?.where?.id;
+      if (id === "prod-1")
+        return { parentProductId: "fam-y", unitsPerBox: null, category: "Produce" };
+      return id === "fam-x" || id === "fam-y" ? { ...FAMILY, id } : null;
+    });
+    const err = await service
+      .update("prod-1", { parentProductId: "fam-x" } as never, { packPrecondition: "internal" })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/without options\.reparentVia/);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1); // it got past the pre-tx guard and failed INSIDE the tx
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+    expect(committed).toBe(false);
+  });
 });

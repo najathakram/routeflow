@@ -1152,3 +1152,56 @@ describe("SA-823: the one family creator and the family-name reservation", () =>
     lock.mockRestore();
   });
 });
+
+describe("SA-823b: the family editor writes one product.family_assigned row per variant it ADDS", () => {
+  const assigned = (tx: { audits: Array<{ data: Record<string, unknown> }> }) =>
+    tx.audits.map((a) => a.data).filter((d) => d.action === "product.family_assigned");
+
+  it("createFamily with 3 variants writes 3 family_assigned rows with fromParentId null and via family_editor", async () => {
+    const { service, tx } = build();
+    const out = await service.createFamily(
+      dto([variant("Cola"), variant("Lime"), variant("Cherry")]),
+      ACTOR,
+    );
+    const rows = assigned(tx);
+    expect(rows).toHaveLength(3);
+    for (const r of rows) {
+      expect(r).toMatchObject({
+        tenantId: T,
+        userId: ACTOR,
+        entityType: "Product",
+        meta: { fromParentId: null, toParentId: out.family.id, via: "family_editor" },
+      });
+    }
+    expect(rows.map((r) => (r.meta as { variantName: string }).variantName)).toEqual([
+      "Cola",
+      "Lime",
+      "Cherry",
+    ]);
+  });
+
+  it("updateVariants adding 1 variant writes exactly 1 row; an update-only / deactivate call writes none", async () => {
+    const fam = { ...product({ id: "fam", name: "Soda" }), kind: "FAMILY" };
+    const kid = {
+      ...product({ id: "k1", name: "Kid k1" }),
+      kind: "VARIANT",
+      parentProductId: "fam",
+    } as never;
+    const add = build({ products: [fam, kid] });
+    await add.service.updateVariants("fam", { add: [variant("Grape")] }, ACTOR);
+    const rows = assigned(add.tx);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      tenantId: T,
+      userId: ACTOR,
+      meta: { fromParentId: null, toParentId: "fam", variantName: "Grape", via: "family_editor" },
+    });
+
+    const none = build({ products: [fam, kid] });
+    await none.service.updateVariants("fam", { deactivate: ["k1"] }, ACTOR);
+    expect(assigned(none.tx)).toHaveLength(0);
+    const upd = build({ products: [fam, kid] });
+    await upd.service.updateVariants("fam", { update: [{ id: "k1", name: "Renamed" }] }, ACTOR);
+    expect(assigned(upd.tx)).toHaveLength(0);
+  });
+});

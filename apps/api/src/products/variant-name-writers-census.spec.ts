@@ -168,7 +168,7 @@ const BLOCKS: Record<string, BlockPin> = {
       "updateVariants:create+": 1,
       "updateVariants:update+": 1,
     },
-    why: "the grid's variants (createFamily) and added and renamed rows (updateVariants); the variants this editor creates, in createFamily and as updateVariants' added rows, are covered by product.family_created / product.family_variants_updated and write no product.family_assigned row (ruled exemption): bareRowNames runs before each function builds its rows. createFamilyContainer is the ONE FAMILY writer: a bare container name, parentProductId null, never a variant label; its callers ran assertSafeProductNames and reserveFamilyName",
+    why: "the grid's variants (createFamily) and added and renamed rows (updateVariants); the variants this editor creates, in createFamily and as updateVariants' added rows, each write a product.family_assigned row (via family_editor, SA-823b) through writeFamilyAssigned: bareRowNames runs before each function builds its rows. createFamilyContainer is the ONE FAMILY writer: a bare container name, parentProductId null, never a variant label; its callers ran assertSafeProductNames and reserveFamilyName",
   },
   "src/inventory/inventory.service.ts": {
     blocks: {
