@@ -5,6 +5,8 @@ import {
   defaultUnitValue,
   unitLineSubtotal,
   unitOptionText,
+  withLayerPrices,
+  type UnitOption,
 } from "./unit-options";
 
 const product = {
@@ -187,5 +189,52 @@ describe("unitLineSubtotal", () => {
     expect(unitLineSubtotal(by("Case"), 3, 400)).toBe(1200);
     expect(unitLineSubtotal(by("Case"), 0)).toBe(0);
     expect(unitLineSubtotal(by("Case"), Number.NaN)).toBe(0);
+  });
+});
+
+describe("withLayerPrices: an existing line's derived Piece (row 630)", () => {
+  const derived = {
+    value: "Piece",
+    label: "Piece",
+    factorToBase: 1,
+    kind: "piece",
+    price: 3.5,
+    listPrice: 3.5,
+    derived: { n: 6, packPrice: 21, exact: true },
+  } as unknown as UnitOption;
+  const prod = { unit: "Box", unitsPerBox: 6, pricePerUnit: "21.00" } as never;
+  const packRow = {
+    ref: "pack",
+    label: null,
+    price: 18,
+    listPrice: 21,
+    source: "customer",
+    aboveList: false,
+  } as const;
+
+  it("keeps the line's own $12.00 over its own 12 per box, not the layer's $18 over the live 6", () => {
+    const [o] = withLayerPrices([derived], prod, 1, [packRow], { unitPrice: 12, unitsPerBox: 12 });
+    expect(o!.price).toBe(1);
+    expect(o!.derived).toEqual({ n: 12, packPrice: 12, exact: true });
+    expect(o!.layerLine).toBeUndefined();
+  });
+
+  it("a fresh line (no own basis) takes the layer's $18 over the pack size: $3.00", () => {
+    const [o] = withLayerPrices([derived], prod, 1, [packRow]);
+    expect(o!.price).toBe(3);
+    expect(o!.derived).toEqual({ n: 6, packPrice: 18, exact: true });
+    expect(o!.layerLine?.price).toBe(18);
+  });
+
+  it("a non-exact split is flagged inexact and rounded once to cents", () => {
+    const [o] = withLayerPrices([derived], prod, 1, [packRow], { unitPrice: 10, unitsPerBox: 3 });
+    expect(o!.price).toBe(3.33);
+    expect(o!.derived?.exact).toBe(false);
+  });
+
+  it("no layer row for the pack: the option is returned unchanged", () => {
+    const caseOnly = { ...packRow, ref: "u1", label: "Case" };
+    const [o] = withLayerPrices([derived], prod, 1, [caseOnly], { unitPrice: 12, unitsPerBox: 12 });
+    expect(o).toBe(derived);
   });
 });

@@ -490,6 +490,8 @@ export interface EditItemState {
    *  substitute re-denominates the line against ITS case size). */
   originalUnitsPerBox?: number | null;
   originalBoxSplit?: boolean;
+  /** Row 630: the named unit the line was STORED on (a unit line); absent = a stored pack line, whose own price and size price its derived Piece. */
+  originalUnitLabel?: string;
   /** The line's own price, restored alongside the denomination when a
    *  substitution is undone — otherwise the original product would save at the
    *  SUBSTITUTE's price (the UPDATE branch sees `priceChanged` and sends it). */
@@ -726,6 +728,7 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     category: li.product?.category ?? null,
     boxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
     originalBoxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
+    originalUnitLabel: li.unitLabel ?? undefined,
     // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
     promoFreeUnits: li.promoFreeUnits ?? null,
     // SA-378/388: unit line = unitLineCount (0 if LOCKED); PACK keeps boxes (boxes:0+pieces ⇒ 0).
@@ -739,6 +742,20 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     unitLabel: li.unitLabel ?? undefined,
     priceType: li.priceType,
   };
+}
+
+/**
+ * Row 630: the price and size a STORED pack line was sold at, which price its derived Piece (`OrderLineUnitPicker.ownPack`).
+ * Undefined for a line added this session, an unlisted line, a stored unit line (its price is per unit, not per pack), or a
+ * line with no pack size: those keep the picker's own pricing.
+ */
+function storedPackBasis(
+  item: EditItemState,
+): { unitPrice: number; unitsPerBox: number } | undefined {
+  const upb = Number(item.originalUnitsPerBox ?? 0);
+  if (item.isNew || item.isUnlisted || item.originalUnitLabel) return undefined;
+  if (item.originalUnitPrice == null || !(upb > 1)) return undefined;
+  return { unitPrice: item.originalUnitPrice, unitsPerBox: upb };
 }
 
 /**
@@ -1477,6 +1494,7 @@ export function EditableLineItems({
                     unitLabel: item.unitLabel,
                     derivedBase: item.derivedBase,
                     priceEdited: item.priceEdited,
+                    ownPack: storedPackBasis(item),
                   }}
                   tier={tierForProductId(item.productId)}
                   layer={layerOf?.(item.productId)}
