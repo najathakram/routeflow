@@ -151,6 +151,7 @@ import { AppliedCreditsPanel, appliedOnOrderRows } from "./AppliedCreditsPanel";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
 import * as scan from "./scan-level-line";
+import { storedPackBasis } from "./stored-pack-basis";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { toSplitInvoiceLine } from "@/lib/split-invoice-line";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
@@ -196,6 +197,8 @@ export interface EditItemState {
    *  substitute re-denominates the line against ITS case size). */
   originalUnitsPerBox?: number | null;
   originalBoxSplit?: boolean;
+  /** Row 630: the named unit the line was STORED on (a unit line); absent = a stored pack line, whose own price and size price its derived Piece. */
+  originalUnitLabel?: string;
   /** The line's own price, restored alongside the denomination when a
    *  substitution is undone — otherwise the original product would save at the
    *  SUBSTITUTE's price (the UPDATE branch sees `priceChanged` and sends it). */
@@ -432,6 +435,7 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     category: li.product?.category ?? null,
     boxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
     originalBoxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
+    originalUnitLabel: li.unitLabel ?? undefined,
     // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
     promoFreeUnits: li.promoFreeUnits ?? null,
     // SA-378/388: unit line = unitLineCount (0 if LOCKED); PACK keeps boxes (boxes:0+pieces ⇒ 0).
@@ -1198,6 +1202,7 @@ export function EditableLineItems({
                     unitLabel: item.unitLabel,
                     derivedBase: item.derivedBase,
                     priceEdited: item.priceEdited,
+                    ownPack: storedPackBasis(item),
                   }}
                   tier={tierForProductId(item.productId)}
                   layer={layerOf?.(item.productId)}
