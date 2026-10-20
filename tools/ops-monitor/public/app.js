@@ -456,17 +456,98 @@
     );
   }
 
+  // "N tasks of yours": owner-lane items that are not decisions, folded under one quiet line.
+  function ownerTodosList() {
+    const todos = snap.ownerTodos ?? [];
+    if (!todos.length) return null;
+    const d = el("details", { class: "tech todos" });
+    d.append(el("summary", { text: `${plural(todos.length, "task")} of yours` }));
+    for (const o of todos)
+      d.append(
+        el(
+          "div",
+          { class: "ci-row" },
+          el(
+            "span",
+            { class: "grow" },
+            openerBtn(o.id, o.title),
+            o.gate ? el("div", { class: "muted", text: o.gate }) : null,
+          ),
+          o.eta || o.etaAt ? el("span", { class: "muted", text: etaWords(o.eta, o.etaAt) }) : null,
+        ),
+      );
+    return d;
+  }
+
+  // Latent risks: broken code a census found no customer harmed by. Collapsed under the band.
+  function latentList() {
+    const list = snap.latentRisks ?? [];
+    if (!list.length) return null;
+    const d = el("details", { class: "tech latent" });
+    d.append(el("summary", { text: `Latent risks (no customer harmed) (${list.length})` }));
+    for (const r of list)
+      d.append(
+        el(
+          "div",
+          { class: "ci-row" },
+          el(
+            "span",
+            { class: "grow" },
+            openerBtn(r.id, r.title),
+            r.evidence ? el("div", { class: "muted", text: latentNote(r.evidence) }) : null,
+          ),
+        ),
+      );
+    return d;
+  }
+  // "Latent: no customer harmed (census 530: ...)" from an evidence string "<id>: <excerpt>".
+  function latentNote(evidence) {
+    return /^set by the team/.test(evidence)
+      ? "Latent: no customer harmed (set by the team)"
+      : `Latent: no customer harmed (census ${evidence})`;
+  }
+
+  // Incident files that are not hurting now: mitigated ones, and unverified (suspected) ones.
+  function incidentWatchList() {
+    const list = (snap.incidents ?? []).filter(
+      (i) => i.bucket === "mitigated" || i.bucket === "unverified",
+    );
+    if (!list.length) return null;
+    const mit = list.filter((i) => i.bucket === "mitigated");
+    const unv = list.length - mit.length;
+    // Only the non-empty parts: never "Mitigated incidents (0) · Unverified (2)".
+    const label = [
+      mit.length ? `Mitigated incidents (${mit.length})` : "",
+      unv ? `Unverified (${unv})` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const d = el("details", { class: "tech incidents" });
+    d.append(el("summary", { text: label }));
+    for (const i of list)
+      d.append(
+        el(
+          "div",
+          { class: "ci-row" },
+          pill(i.statusLabel, i.bucket === "mitigated" ? "ok" : "info"),
+          el("span", { class: "grow" }, openerBtn(i.id, i.title)),
+          i.changedAt
+            ? el("span", { class: "muted", "data-at": i.changedAt, text: agoIso(i.changedAt) })
+            : null,
+        ),
+      );
+    return d;
+  }
+
   function renderSummary() {
     const box = clear(document.getElementById("summary"));
     const items = byId();
     const alarms = snap.alarms ?? [];
 
-    // 1. Hurting customers or money now: open urgent items and incidents.
+    // 1. Hurting customers or money now: exactly the snapshot's problems (live harm only).
     const hurt = new Map();
     for (const id of snap.problems ?? [])
       if (items.get(id) && !DONE.has(items.get(id).status)) hurt.set(id, items.get(id));
-    for (const i of snap.items)
-      if (!DONE.has(i.status) && (i.priority === "P0" || i.type === "incident")) hurt.set(i.id, i);
     const hurtEntries = [...hurt.values()].map((i) =>
       bandEntry(
         i.id,
@@ -546,6 +627,12 @@
         ),
       ),
     );
+    const todos = ownerTodosList();
+    if (todos) box.append(todos);
+    const latent = latentList();
+    if (latent) box.append(latent);
+    const watch = incidentWatchList();
+    if (watch) box.append(watch);
 
     // One quiet line for system health, linking to Drift.
     const errs = alarms.filter((a) => a.severity === "error").length;
@@ -1057,6 +1144,8 @@
     ];
     if (!q.length)
       body.append(el("div", { class: "empty", text: "Nothing waiting on the owner." }));
+    const todos = ownerTodosList();
+    if (todos) body.append(todos);
     for (const o of ordered) {
       const it = items.get(o.id);
       const booked = o.state === "booked";
@@ -1265,6 +1354,9 @@
           i.priority,
         ),
         pill(itemStatus(i), DONE.has(i.status) ? "ok" : "", i.status),
+        i.harm === "latent"
+          ? pill("Latent", "info", latentNote(i.harmEvidence ?? "set by the team"))
+          : null,
         i.type !== "feature" ? el("span", { class: "muted", text: i.type }) : null,
         i.blocked ? pill("BLOCKED", "err", `Blocked by ${i.blocked.by}`) : null,
         i.claimedBy
@@ -1882,6 +1974,14 @@
     row("Type", it.type);
     row("Priority", `${prioWord(it.priority)} (${it.priority})`);
     row("Status", `${itemStatus(it)} (${it.status})`);
+    row(
+      "Register status word",
+      it.statusText ? `${it.statusText} (not known to the monitor)` : null,
+    );
+    row(
+      "Harm",
+      it.harm ? `${it.harm}${it.harmEvidence ? ` (census ${it.harmEvidence})` : ""}` : null,
+    );
     row("Gate", it.gate);
     row("Lane", it.lane);
     row(
@@ -2013,8 +2113,15 @@
           bug?.area ? pill(bug.area, "") : null,
           bug?.pending ? pill(PENDING_TEXT, "info") : null,
           it.blocked ? pill("Blocked", "err") : null,
+          it.harm === "latent" ? pill("Latent", "info") : null,
           it.summaryDraft ? pill("Draft summary", "info") : null,
         ),
+        it.harm === "latent"
+          ? el("p", {
+              class: "draftnote muted",
+              text: latentNote(it.harmEvidence ?? "set by the team"),
+            })
+          : null,
         it.summaryDraft
           ? el("p", {
               class: "draftnote muted",

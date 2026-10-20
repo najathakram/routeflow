@@ -88,10 +88,23 @@ export function briefFor(payload, env, now, deps) {
   const mode = payload.hook_event_name;
   const cwd = payload.cwd ?? process.cwd();
   const config = loadConfig(dir);
+  // Live-client names come from <opsHome>/client-names.json (machine-local), never the specs repo.
+  const loaded = deps.loadClientNames?.({ env, home }) ?? { names: [], error: null };
+  const clientNames = Array.isArray(loaded) ? loaded : (loaded.names ?? []);
+  const namesError = Array.isArray(loaded) ? null : (loaded.error ?? null);
   const lane = lanes.laneForCwd(cwd, env, { config, home });
   const markerFile = join(home, "seen", `${turn.sanitizeSessionId(payload.session_id)}.json`);
   const events = readAllEvents(dir);
   const newest = brief.lastEventId(events);
+
+  if (namesError) {
+    // Fail open but never unmasked: a broken names file prints one note and no item text.
+    if (mode === "SessionStart") {
+      writeJson(markerFile, { lastEventId: newest, ts: now });
+      return { text: "ops brief disabled: client-names.json unreadable", refresh: false };
+    }
+    return { text: "", refresh: false };
+  }
 
   if (mode === "SessionStart") {
     const state = fold(events);
@@ -101,6 +114,7 @@ export function briefFor(payload, env, now, deps) {
       now,
       snapshot,
       config,
+      clientNames,
       short: !lane,
       maxLines: lane ? 25 : 8,
       utcOffsetMin: -new Date(now).getTimezoneOffset(),
@@ -124,7 +138,8 @@ export function briefFor(payload, env, now, deps) {
     if (before.length !== sorted.length) {
       const line = brief.renderSince(fold(before), fold(sorted), {
         lane,
-        config, // client names are masked in the since-line too
+        config,
+        clientNames, // masked in the since-line too
         nowMs: now,
         utcOffsetMin: -new Date(now).getTimezoneOffset(),
       });
@@ -152,6 +167,7 @@ async function main() {
     opsHome: config.opsHome,
     specsDir: config.specsDir,
     loadConfig: config.loadConfig,
+    loadClientNames: (await import(lib("mask.mjs"))).loadClientNames,
     readAllEvents: store.readAllEvents,
     fold: foldMod.fold,
     lanes: await import(lib("lanes-local.mjs")),

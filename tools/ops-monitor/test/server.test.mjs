@@ -630,6 +630,30 @@ function runServer(args, env) {
   });
 }
 
+test("cloud boot refuses to start with an empty client-name list (exit 1), names never printed", async () => {
+  const home = mkdtempSync(join(tmpdir(), "rf-srv-cn-"));
+  const base = { RF_OPS_HOME: home, OPS_PASSWORD_HASH: HASH, OPS_SESSION_SECRET: SECRET };
+  const a = await runServer(["--cloud", "--port", "0"], { ...base, GITHUB_TOKEN: "x" });
+  assert.equal(a.code, 1);
+  assert.match(a.out, /CLIENT_NAMES_JSON/);
+  assert.doesNotMatch(a.out, /listening/);
+  const b = await runServer(["--cloud", "--port", "0"], {
+    ...base,
+    GITHUB_TOKEN: "x",
+    CLIENT_NAMES_JSON: "[]",
+  });
+  assert.equal(b.code, 1);
+  assert.match(b.out, /CLIENT_NAMES_JSON/);
+  // with a list it gets past this check (and stops later, at the GitHub clone)
+  const c = await runServer(["--cloud", "--port", "0"], {
+    ...base,
+    CLIENT_NAMES_JSON: '["acme-secret-name"]',
+  });
+  assert.equal(c.code, 1);
+  assert.doesNotMatch(c.out, /CLIENT_NAMES_JSON/);
+  assert.doesNotMatch(c.out, /acme-secret-name/);
+});
+
 test("cloud boot refuses to start without OPS_PASSWORD_HASH or OPS_SESSION_SECRET (exit 1)", async () => {
   const home = mkdtempSync(join(tmpdir(), "rf-srv-"));
   const a = await runServer(["--cloud", "--port", "0"], { RF_OPS_HOME: home, GITHUB_TOKEN: "x" });
@@ -648,6 +672,7 @@ test("cloud boot refuses to start without OPS_PASSWORD_HASH or OPS_SESSION_SECRE
     RF_OPS_HOME: home,
     OPS_PASSWORD_HASH: HASH,
     OPS_SESSION_SECRET: SECRET,
+    CLIENT_NAMES_JSON: '["acme"]',
   });
   assert.equal(c.code, 1);
   assert.match(c.out, /GITHUB_TOKEN/);
@@ -668,4 +693,52 @@ test("cloud boot refuses to start without OPS_PASSWORD_HASH or OPS_SESSION_SECRE
   assert.equal(e.code, 1);
   assert.match(e.out, /OPS_SESSION_SECRET/);
   assert.doesNotMatch(e.out, /tooshort-secret-xyz/);
+});
+
+// ---------- PWA: manifest, generated icons, sliding session ----------
+
+test("pwa: manifest and icons are open without a session, with right types and a real PNG", async () => {
+  await withServer(authHarness(), async (port) => {
+    const m = await call(port, "/manifest.webmanifest");
+    assert.equal(m.status, 200);
+    assert.match(m.headers["content-type"], /application\/manifest\+json/);
+    assert.equal(JSON.parse(m.body).short_name, "RF ops");
+    for (const p of ["/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"]) {
+      const r = await new Promise((resolve, reject) => {
+        http
+          .get({ host: "127.0.0.1", port, path: p }, (x) => {
+            const chunks = [];
+            x.on("data", (c) => chunks.push(c));
+            x.on("end", () =>
+              resolve({ status: x.statusCode, headers: x.headers, buf: Buffer.concat(chunks) }),
+            );
+          })
+          .on("error", reject);
+      });
+      assert.equal(r.status, 200, p);
+      assert.equal(r.headers["content-type"], "image/png");
+      assert.equal(r.headers["content-security-policy"], CSP);
+      assert.equal(r.buf.subarray(1, 4).toString("latin1"), "PNG");
+      assert.equal(r.buf.subarray(r.buf.length - 8, r.buf.length - 4).toString("latin1"), "IEND");
+    }
+  });
+});
+
+test("session: cookie is 30 days and re-issued only once under 15 days remain", async () => {
+  let t = Date.parse(NOW);
+  await withServer(authHarness({ auth: { now: () => t } }), async (port) => {
+    const r = await login(port);
+    assert.match(r.headers["set-cookie"][0], /Max-Age=2592000/);
+    const c = cookieOf(r);
+    const early = await call(port, "/api/snapshot", { headers: { cookie: c } });
+    assert.equal(early.status, 200);
+    assert.equal(early.headers["set-cookie"], undefined, "fresh session is not re-issued");
+    t += 20 * 86400_000; // 10 days left
+    const late = await call(port, "/api/snapshot", { headers: { cookie: c } });
+    assert.equal(late.status, 200);
+    assert.match(late.headers["set-cookie"][0], /Max-Age=2592000/);
+    assert.notEqual(cookieOf(late), c);
+    const again = await call(port, "/api/snapshot", { headers: { cookie: cookieOf(late) } });
+    assert.equal(again.status, 200);
+  });
 });

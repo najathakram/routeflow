@@ -23,6 +23,8 @@ import {
   verifyPassword,
   verifySession,
 } from "./lib/auth.mjs";
+import { renderIcon } from "./lib/icon.mjs";
+import { createNameLoader, maskDeep, maskText } from "./lib/mask.mjs";
 import { verifyGithubSignature } from "./lib/webhooks.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -38,7 +40,15 @@ const STATIC = {
   "/": ["index.html", "text/html; charset=utf-8"],
   "/app.js": ["app.js", "text/javascript; charset=utf-8"],
   "/app.css": ["app.css", "text/css; charset=utf-8"],
+  "/manifest.webmanifest": ["manifest.webmanifest", "application/manifest+json; charset=utf-8"],
 };
+// PWA icons are generated at runtime (no images in git): path -> [size, full-bleed].
+const ICONS = {
+  "/icon-192.png": [192, false],
+  "/icon-512.png": [512, false],
+  "/apple-touch-icon.png": [180, true],
+};
+const iconCache = new Map();
 const LOGIN_FILE = "login.html";
 const ERROR_MARKER = "<!--login-error-->";
 const LOGIN_ERRORS = {
@@ -46,7 +56,23 @@ const LOGIN_ERRORS = {
   2: "Too many attempts. Try again in a few minutes.",
 };
 // Reachable without a session (GET).
-const OPEN_GET = new Set(["/login", "/api/health", "/app.css", "/robots.txt"]);
+const OPEN_GET = new Set([
+  "/login",
+  "/api/health",
+  "/app.css",
+  "/robots.txt",
+  "/manifest.webmanifest",
+  ...Object.keys(ICONS),
+]);
+const SESSION_REFRESH_BELOW_MS = (SESSION_MAX_AGE_S * 1000) / 2; // sliding: re-issue under 15 days left
+
+function sessionExp(token) {
+  try {
+    return JSON.parse(Buffer.from(String(token).split(".")[0], "base64url").toString("utf8")).exp;
+  } catch {
+    return null;
+  }
+}
 
 export const CSP =
   "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'";
@@ -232,6 +258,24 @@ export function createMonitorServer({
         return redirect(res, 302, "/login");
       }
 
+      if (auth && !OPEN_GET.has(path)) {
+        // Sliding session: re-issue the cookie once less than half its life remains.
+        const token = parseCookies(req.headers.cookie)[COOKIE_NAME];
+        const exp = sessionExp(token);
+        if (typeof exp === "number" && exp - now() < SESSION_REFRESH_BELOW_MS) {
+          const fresh = signSession({ exp: now() + SESSION_MAX_AGE_S * 1000 }, auth.sessionSecret);
+          res.setHeader("set-cookie", sessionCookie(fresh, { secure: isHttps(req) }));
+        }
+      }
+      if (Object.hasOwn(ICONS, path)) {
+        if (!iconCache.has(path)) {
+          const [size, full] = ICONS[path];
+          iconCache.set(path, renderIcon(size, { full }));
+        }
+        return send(res, 200, "image/png", iconCache.get(path), {
+          "cache-control": "public, max-age=86400",
+        });
+      }
       if (path === "/login") {
         if (!auth || authed(req)) return redirect(res, 302, "/");
         return await loginPage(res, query);
@@ -444,12 +488,28 @@ export function withMergedDeploys(sources, mergeDeploys) {
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const opts = resolveListenOptions(argv, env);
   const { checkCloudEnv } = await import("./lib/cloud.mjs");
-  const check = checkCloudEnv(env, { cloud: opts.cloud });
+  const check = checkCloudEnv(env, {
+    cloud: opts.cloud,
+    views: opts.views,
+    lan: opts.host !== "127.0.0.1" && opts.host !== "localhost",
+  });
   if (!check.ok) throw new StartupError(check.errors.join("\n"));
   const auth = env.OPS_PASSWORD_HASH
     ? { passwordHash: env.OPS_PASSWORD_HASH, sessionSecret: env.OPS_SESSION_SECRET }
     : null;
 
+  // Client names are masked in every snapshot (SSE, /api/snapshot, last-snapshot.json, views).
+  const nameLoader = createNameLoader({ env });
+  {
+    // Plain localhost still runs without a list, but says so once (cloud, --lan and --views refused above).
+    nameLoader.get();
+    const problem = nameLoader.error();
+    if (problem || nameLoader.get().length === 0) {
+      console.error(
+        `[ops-monitor] warning: ${problem ?? "no client names"} - the board is not masked; fill client-names.json in the ops home.`,
+      );
+    }
+  }
   let snapshot;
   const listeners = new Set();
   const subscribe = (fn) => {
@@ -465,7 +525,10 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   let webhook = null;
 
   if (opts.fixture) {
-    snapshot = JSON.parse(await readFile(resolve(opts.fixture), "utf8"));
+    snapshot = maskDeep(
+      JSON.parse(await readFile(resolve(opts.fixture), "utf8")),
+      nameLoader.get(),
+    );
   } else {
     const cfg = await import("./lib/config.mjs");
     const { createCollector, mergeDeploys } = await import("./lib/collector.mjs");
@@ -490,11 +553,15 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     let collector = null;
     const rebuild = () => {
       const config = cfg.loadConfig(specs);
+      // Mask the raw inputs BEFORE the snapshot is built (a name cut in half by a clip or a slice
+      // would no longer match), and the finished snapshot again below.
+      const names = nameLoader.get();
       const snap = buildSnapshot({
-        sources: withMergedDeploys(collector.sources, mergeDeploys),
+        sources: maskDeep(withMergedDeploys(collector.sources, mergeDeploys), names),
         config,
         now: Date.now(),
         machine: cfg.machineId(config, env),
+        mask: (t) => maskText(t, names),
       });
       if (refused) {
         snap.alarms = [
@@ -513,14 +580,17 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
           },
         ];
       }
-      return snap;
+      return maskDeep(snap, names);
     };
     const persistSnapshot = () => {
       if (opts.cloud || opts.once || snapTimer) return;
-      snapTimer = setTimeout(() => {
-        snapTimer = null;
-        writeLastSnapshot(cfg.opsHome(env), snapshot);
-      }, 30_000);
+      snapTimer = setTimeout(
+        () => {
+          snapTimer = null;
+          writeLastSnapshot(cfg.opsHome(env), snapshot);
+        },
+        Number(env.RF_PERSIST_MS) || 30_000,
+      );
       snapTimer.unref?.();
     };
     const scheduleViews = (snap) => {
@@ -537,6 +607,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
             specsDir: specs,
             boardDir: cfg.boardDir(env),
             snapshot: cur,
+            clientNames: nameLoader.get(),
             push: true,
             dry: false,
             registerMode:
@@ -558,6 +629,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       now: Date.now,
       env,
       cloud: opts.cloud,
+      mask: (t) => maskText(t, nameLoader.get()),
       log: (m) => console.error(`[ops-monitor] ${m}`),
       onUpdate: () => {
         try {
@@ -605,6 +677,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
             dir: specs,
             home: cfg.opsHome(env),
             env,
+            mask: (t) => maskText(t, nameLoader.get()),
             bugIds: await loadBugIds(repoRoot),
           });
           // A refused register (duplicate row ids) or refused rows (id collisions): log once per change.

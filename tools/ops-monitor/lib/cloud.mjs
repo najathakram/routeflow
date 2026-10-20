@@ -5,6 +5,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { GITHUB_REPO, opsHome, specsDir, specsRemote } from "./config.mjs";
 import { isWellFormedHash } from "./auth.mjs";
+import { NAMES_FILE, loadClientNames } from "./mask.mjs";
 
 const SECRET_RULE =
   "at least 64 hex characters (32 random bytes) or at least 43 base64url characters";
@@ -32,10 +33,13 @@ export function repoDirFor(env = process.env) {
 }
 
 /**
- * Startup checks. Cloud needs OPS_PASSWORD_HASH + OPS_SESSION_SECRET; a local run that sets a
+ * Startup checks. Cloud needs OPS_PASSWORD_HASH + OPS_SESSION_SECRET + a non-empty client-name list (--views and --lan need the list too); a local run that sets a
  * hash also needs the secret (sessions cannot be signed without it). Never echoes a value.
  */
-export function checkCloudEnv(env = process.env, { cloud = false } = {}) {
+export function checkCloudEnv(
+  env = process.env,
+  { cloud = false, views = false, lan = false, home } = {},
+) {
   const errors = [];
   const hash = env.OPS_PASSWORD_HASH;
   const secret = env.OPS_SESSION_SECRET;
@@ -52,6 +56,21 @@ export function checkCloudEnv(env = process.env, { cloud = false } = {}) {
     errors.push(`OPS_SESSION_SECRET is not set (${SECRET_RULE}).`);
   } else if (secret && !isStrongSecret(secret)) {
     errors.push(`OPS_SESSION_SECRET is too weak (need ${SECRET_RULE}).`);
+  }
+  // The mask list gates every mode that publishes the board beyond this process: the cloud
+  // service, the LAN listener and the views writer (which pushes to git). Broken or empty = refuse.
+  if (cloud || views || lan) {
+    const mode = cloud ? "serve the board online" : views ? "write views to git" : "serve the LAN";
+    const { names, error } = loadClientNames({ env, home });
+    if (error) {
+      errors.push(
+        `${error}; refusing to ${mode} without a readable client-name mask list (fix ${NAMES_FILE} or CLIENT_NAMES_JSON).`,
+      );
+    } else if (names.length === 0) {
+      errors.push(
+        `No client names to mask (set CLIENT_NAMES_JSON to a JSON array of strings, or put ${NAMES_FILE} in the ops home); refusing to ${mode} without the mask list.`,
+      );
+    }
   }
   return { ok: errors.length === 0, errors };
 }

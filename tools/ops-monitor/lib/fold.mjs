@@ -55,6 +55,8 @@ function newItem(id, fields, ts) {
     type: fields.type ?? "chore",
     priority: fields.priority ?? "P2",
     status: fields.status ?? "planned",
+    statusText: fields.statusText ?? null,
+    harm: fields.harm ?? null,
     lane: fields.lane ?? null,
     train: fields.train ?? null,
     area: fields.area ?? null,

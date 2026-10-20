@@ -103,3 +103,24 @@ lib/turn-actions.mjs  hook bookkeeping                    server.mjs + public/  
 
 Zero dependencies (Node built-ins only). Security-sensitive registry bugs are masked to "Security
 hardening item (details machine-local)" everywhere. No client names belong in this directory.
+
+## Client names never leave the machine
+
+The names and slugs of live tenants must not appear in any git repo, the page, the brief, the
+generated views or `last-snapshot.json`. They are listed in `<opsHome>/client-names.json` (a JSON
+array of strings, or `{ "names": [...] }`; machine-local, outside both repos, filled in by the
+lead). Online the same array comes from the `CLIENT_NAMES_JSON` secret variable, and the cloud
+service refuses to start (exit 1) when the list is empty. `lib/mask.mjs` replaces each name
+(case-insensitive, whole word, longest first) with "a live business": the server masks every
+snapshot string before it is broadcast, served or saved (reloading the file when it changes,
+checked at most every 60 s), and `rf brief`, the session hook and the views writer use the same
+list. The specs `ops/config.json` no longer takes a `clientNames` list.
+
+A file that exists but does not parse (or holds no list) is an error, never an empty list: the cloud
+service, `--lan` and `--views` (which writes to git) refuse to start (exit 1, the message names
+`client-names.json`, never its contents); plain localhost starts and warns once; the brief hook and
+`rf brief` print only "ops brief disabled: client-names.json unreadable". A file that breaks after a
+good load keeps the last good list. Names are masked from the collector inputs _before_ the
+snapshot is built (and again after), and each text is masked before it is cut or clipped, so a
+name is never left as a fragment; incident ids are date + index only (`INC-1015a`), never a file
+slug.

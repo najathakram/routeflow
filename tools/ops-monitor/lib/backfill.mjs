@@ -71,11 +71,44 @@ const colIndex = (header) => {
 // ---------------------------------------------------------------------------------------------
 // Register
 
+/** Register status words the monitor reads as one of its own statuses (lead ruling 10-19). */
+const STATUS_SYNONYMS = {
+  done: "verified",
+  closed: "verified",
+  fixed: "verified",
+  complete: "verified",
+  completed: "verified",
+  resolved: "verified",
+  shipped: "live",
+  deployed: "live",
+  "in-progress": "building",
+  wip: "building",
+};
+
+/**
+ * A register Status cell -> { status?, statusText?, blocked? }. A known word is itself; synonyms
+ * map (done -> verified, shipped -> live, wip -> building); `blocked` keeps whatever status the
+ * item already has (no status field) and returns the raw cell as `blocked`; any other word is
+ * "planned" plus `statusText` (the raw cell), so the monitor can say it does not know it.
+ * An empty cell is plain planned.
+ */
+export function parseStatusCell(cellText, mask = (t) => t) {
+  const text = plain(cellText);
+  const m = /^([a-z][a-z-]*)/.exec(text.toLowerCase());
+  const word = m ? m[1] : "";
+  if (STATUSES.includes(word)) return { status: word };
+  if (STATUS_SYNONYMS[word]) return { status: STATUS_SYNONYMS[word] };
+  if (word === "blocked") return { blocked: clip(text, 280) };
+  if (isEmptyCell(text)) return { status: "planned" };
+  // Masked BEFORE the cut: a client name must never survive as an 80-character fragment.
+  return { status: "planned", statusText: clip(mask(text), 80) };
+}
+
 /**
  * Register table -> { drafts: [{ id, fields }], failed: [{ line, reason, raw }] }.
  * Fields are item.new data; empty cells are omitted.
  */
-export function parseRegisterReport(md, config = DEFAULT_CONFIG) {
+export function parseRegisterReport(md, config = DEFAULT_CONFIG, mask = (t) => t) {
   const drafts = [];
   const failed = [];
   for (const t of tables(md)) {
@@ -102,9 +135,10 @@ export function parseRegisterReport(md, config = DEFAULT_CONFIG) {
       const type = rawType === "fix" ? "bug" : TYPES.includes(rawType) ? rawType : "chore";
       const prio = plain(cell("priority")).toUpperCase();
       const priority = /^P[0-3]$/.test(prio) ? prio : "P2";
-      const sm = /^([a-z]+)/.exec(plain(cell("status")).toLowerCase());
-      const status = sm && STATUSES.includes(sm[1]) ? sm[1] : "planned";
-      const fields = { title, type, priority, status, source: "register" };
+      const st = parseStatusCell(cell("status"), mask);
+      const fields = { title, type, priority, source: "register" };
+      if (st.status) fields.status = st.status;
+      if (st.statusText) fields.statusText = st.statusText;
       const lane = normalizeLane(plain(cell("lane")), config);
       if (lane) fields.lane = lane;
       const trainText = plain(cell("train"));
@@ -125,7 +159,7 @@ export function parseRegisterReport(md, config = DEFAULT_CONFIG) {
       if (prs.length) fields.links = { prs };
       const dom = guessDomainFromText(title);
       if (dom) fields.area = `domain:${dom}`;
-      drafts.push({ id, fields });
+      drafts.push(st.blocked ? { id, fields, blocked: st.blocked } : { id, fields });
     }
   }
   return { drafts, failed };

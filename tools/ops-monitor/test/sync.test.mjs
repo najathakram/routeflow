@@ -693,3 +693,64 @@ test("syncEvents: duplicate register row ids refuse the whole register but still
   // a clean register is not refused
   assert.equal(run(baseEvents(), register(row(500), row(501))).refused, null);
 });
+
+// ---------------------------------------------------------------------------------------------
+// Accuracy round 2 (X1): status words
+
+test("X1 sync: a row already ingested as planned gets the corrected status when the parser knows its word", () => {
+  // The old parser read "done" as planned and recorded that in registerFields.
+  const stale = [
+    ...baseEvents(),
+    regNew("530", { type: "ops", status: "planned", priority: "P1" }),
+  ];
+  const out = run(stale, register(row(530, { type: "ops", prio: "P1", status: "done" })));
+  const edit = out.events.find((e) => e.kind === "item.edit");
+  assert.equal(edit.data.fields.status, "verified");
+  assert.equal(fold([...stale, ...out.events]).items.get("530").status, "verified");
+  // second pass: nothing
+  assert.deepEqual(
+    run([...stale, ...out.events], register(row(530, { type: "ops", prio: "P1", status: "done" })))
+      .events,
+    [],
+  );
+});
+
+test("X1 sync: an unknown status word sets statusText once, and clears it when the word becomes known", () => {
+  const md1 = register(row(531, { status: "triaged" }));
+  const first = run(baseEvents(), md1);
+  assert.equal(first.events[0].data.status, "planned");
+  assert.equal(first.events[0].data.statusText, "triaged");
+  const ev1 = [...baseEvents(), ...first.events];
+  assert.equal(fold(ev1).items.get("531").statusText, "triaged");
+  assert.deepEqual(run(ev1, md1).events, []);
+  const second = run(ev1, register(row(531, { status: "building" })));
+  assert.equal(second.events[0].data.fields.statusText, null);
+  assert.equal(fold([...ev1, ...second.events]).items.get("531").statusText, null);
+});
+
+test("X1 sync: a blocked row keeps the item's status and raises a blocked event, once; leaving blocked unblocks", () => {
+  const ev0 = [
+    ...baseEvents(),
+    ...run(baseEvents(), register(row(532, { status: "building" }))).events,
+  ];
+  const md = register(row(532, { status: "blocked (waiting on acme)" }));
+  const out = run(ev0, md);
+  assert.deepEqual(
+    out.events.map((e) => e.kind),
+    ["blocked"],
+  );
+  assert.match(out.events[0].data.by, /^register status: blocked/);
+  const ev1 = [...ev0, ...out.events];
+  const it = fold(ev1).items.get("532");
+  assert.equal(it.status, "building");
+  assert.ok(it.blocked);
+  assert.deepEqual(run(ev1, md).events, []);
+  const back = run(ev1, register(row(532, { status: "building" })));
+  assert.deepEqual(
+    back.events.map((e) => e.kind),
+    ["unblocked"],
+  );
+  // a block a lane raised itself is never lifted by the register
+  const laneBlocked = [...ev0, mk("blocked", "532", { by: "lane says wait" })];
+  assert.deepEqual(run(laneBlocked, register(row(532, { status: "building" }))).events, []);
+});
