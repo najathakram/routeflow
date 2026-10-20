@@ -51,7 +51,7 @@ export function ActivationAddonChecklist({
         {addons.after.map((a) => (
           <li key={a.addonKey} className="flex justify-between gap-4">
             <span>{a.name}</span>
-            <span className={a.active ? "text-slate-300" : "text-slate-500"}>{stateLabel(a)}</span>
+            <span className={a.active ? "text-slate-300" : "text-slate-400"}>{stateLabel(a)}</span>
           </li>
         ))}
       </ul>
