@@ -1,3 +1,6 @@
+import type { ConfigSnapshotHeld } from "@routeflow/types";
+import type { Prisma } from "@prisma/client";
+
 /**
  * The audit action for an entitlement-config restore, written by BOTH paths so the admin UI reads
  * one shape: the automatic restore on a re-upgrade (inside the plan-change transaction, by
@@ -7,6 +10,31 @@
  * unchanged} — no migration: the report lives in the existing audit trail.
  */
 export const CONFIG_SNAPSHOT_RESTORED_ACTION = "CONFIG_SNAPSHOT_RESTORED";
+
+/**
+ * BO-13: a PARTIAL restore — it HELD the delivery-method row (orders with the carrier, or own delivery
+ * with no fleet), so the snapshot was NOT stamped restored and stays claimable. Same `meta` as
+ * {@link CONFIG_SNAPSHOT_RESTORED_ACTION} (`report.skipped` counts the held row) plus `held`. It is a
+ * SEPARATE action on purpose: the admin list reads exactly one RESTORED row per restored snapshot
+ * (`take = restoredIds.length`, #2226), and a snapshot held on several runs would crowd that read.
+ */
+export const CONFIG_SNAPSHOT_RESTORE_HELD_ACTION = "CONFIG_SNAPSHOT_RESTORE_HELD";
+
+/** The `held` entries as audit `meta` JSON (no `undefined` keys — Prisma's JSON input forbids them); `{}` when none. */
+export function heldAuditMeta(
+  held: readonly ConfigSnapshotHeld[],
+): Record<string, Prisma.InputJsonValue> {
+  if (held.length === 0) return {};
+  return {
+    held: held.map((h) => ({
+      featureKey: h.featureKey,
+      from: h.from,
+      to: h.to,
+      reason: h.reason,
+      ...(h.count === undefined ? {} : { count: h.count }),
+    })),
+  };
+}
 
 /**
  * Stripe checkout bookkeeping written into the existing audit trail (no migration), only while the

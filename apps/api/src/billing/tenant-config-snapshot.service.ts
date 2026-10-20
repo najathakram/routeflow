@@ -1,13 +1,23 @@
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { carrierInTransitCount } from "../orders/carrier-in-transit-guard";
+import { featureDefByKey } from "./feature-registry";
 import { planRank } from "./plan-catalog.constants";
 import {
+  FULFILMENT_MODEL_KEY,
   buildSnapshotPayload,
+  fleetHeldAfterRestore,
+  holdConfigEntry,
   parseSnapshotPayload,
   planRestore,
   summarizeRestore,
+  type ConfigRow,
+  type HeldEntry,
+  type OverrideRow,
   type RestorePlan,
   type RestoreReport,
+  type SnapshotPayload,
 } from "./tenant-config-snapshot";
 
 /** As-was includes "no settings": a JSON null column needs DbNull — `undefined` would mean "leave it". */
@@ -74,6 +84,12 @@ export interface RestoreResult {
   report: RestoreReport;
   /** Older un-restored snapshots this restore superseded. */
   supersededSnapshots: number;
+  /**
+   * BO-13: config rows the restore HELD back (a delivery-method change under a shipment, or own
+   * delivery with no fleet). Each is also counted in `report.skipped`. Non-empty = the snapshot was
+   * NOT stamped restored and nothing older was superseded: it stays claimable.
+   */
+  held: HeldEntry[];
 }
 
 /** One row of the admin "Configuration snapshots" list. */
@@ -168,6 +184,8 @@ export class TenantConfigSnapshotService {
       maxRows: AUTO_RESTORE_MAX_ROWS,
       timeBudgetMs: AUTO_RESTORE_TIME_BUDGET_MS,
     },
+    /** BO-13: add-on keys the caller's transaction activates AFTER this restore (a checkout's purchased add-ons). */
+    pendingAddonKeys: readonly string[] = [],
   ): Promise<RestoreResult | null> {
     const clock = budget.clock ?? Date.now;
     const deadline = clock() + budget.timeBudgetMs;
@@ -193,10 +211,16 @@ export class TenantConfigSnapshotService {
 
     // ONLY the automatic path is bounded (see AUTO_RESTORE_MAX_ROWS): the admin's explicit
     // "Restore now" (restoreSnapshot) passes no bounds.
-    return this.applySnapshot(tx, tenantId, snapshot, newPlanKey, now, planAllows, {
-      maxRows: budget.maxRows,
-      withinBudget,
-    });
+    return this.applySnapshot(
+      tx,
+      tenantId,
+      snapshot,
+      newPlanKey,
+      now,
+      planAllows,
+      { maxRows: budget.maxRows, withinBudget },
+      pendingAddonKeys,
+    );
   }
 
   /**
@@ -246,6 +270,20 @@ export class TenantConfigSnapshotService {
       tx.tenantFeatureConfig.findMany({ where: { tenantId } }),
       tx.tenantFeatureOverride.findMany({ where: { tenantId } }),
     ]);
+    // The SAME guarded plan `applySnapshot` builds (one helper), so the dialog equals the apply.
+    const plan = payload
+      ? (
+          await this.planGuarded(
+            tx,
+            tenantId,
+            payload,
+            { configs, overrides },
+            snapshot.takenAt,
+            now,
+            planAllows,
+          )
+        ).plan
+      : null;
     return {
       snapshotId: snapshot.id,
       takenAt: snapshot.takenAt,
@@ -253,10 +291,74 @@ export class TenantConfigSnapshotService {
       restoredAt: snapshot.restoredAt,
       ageDays: snapshotAgeDays(snapshot.takenAt, now),
       beyondAutoRestoreHorizon: beyondAutoRestoreHorizon(snapshot.takenAt, now),
-      plan: payload
-        ? planRestore(payload, { configs, overrides }, snapshot.takenAt, now, planAllows)
-        : null,
+      plan,
     };
+  }
+
+  /**
+   * `planRestore` + the BO-13 guard on the delivery method — the ONE place preview and apply plan, so
+   * they cannot disagree. `planRestore` stays pure; the two DB questions it cannot ask are answered
+   * here and applied with the pure `holdConfigEntry`:
+   *  - CARRIER_IN_TRANSIT: the row would cross the shipping boundary (`carrierInTransitCount` makes no
+   *    query when it does not) while carrier orders are in flight -> hold it;
+   *  - FULFILMENT_MODE_NEEDS_FLEET: the row would write `delivery`/`both` and no fleet module is held
+   *    AFTER this restore's own override plan (the rule `FeatureConfigService.set` enforces).
+   * Only the delivery-method row is ever held; one row gets one reason (in transit first). No lock: the
+   * count is a read, like the Settings writer's.
+   */
+  private async planGuarded(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    payload: SnapshotPayload,
+    current: { configs: readonly ConfigRow[]; overrides: readonly OverrideRow[] },
+    takenAt: Date,
+    now: Date,
+    planAllows?: (featureKey: string) => boolean,
+    pendingAddonKeys: readonly string[] = [],
+  ): Promise<{ plan: RestorePlan; held: HeldEntry[] }> {
+    let plan = planRestore(payload, current, takenAt, now, planAllows);
+    const create = plan.configs.create.find((e) => e.featureKey === FULFILMENT_MODEL_KEY);
+    const update = plan.configs.update.find((u) => u.entry.featureKey === FULFILMENT_MODEL_KEY);
+    const entry = create ?? update?.entry;
+    if (!entry) return { plan, held: [] };
+
+    const stored = update ? current.configs.find((c) => c.id === update.id)?.mode : undefined;
+    const from = stored ?? featureDefByKey(FULFILMENT_MODEL_KEY)?.config?.fallbackMode ?? "unset";
+    const to = entry.mode;
+    const base = { featureKey: FULFILMENT_MODEL_KEY, from, to };
+
+    const inTransit = await carrierInTransitCount(tx, tenantId, from, to);
+    if (inTransit > 0) {
+      plan = holdConfigEntry(plan, FULFILMENT_MODEL_KEY, "CARRIER_IN_TRANSIT");
+      return { plan, held: [{ ...base, reason: "CARRIER_IN_TRANSIT", count: inTransit }] };
+    }
+    if (to === "delivery" || to === "both") {
+      const addons = await tx.tenantAddon.findMany({
+        where: { tenantId, active: true },
+        select: { addonKey: true },
+      });
+      const fleet = fleetHeldAfterRestore(
+        plan,
+        {
+          overrides: current.overrides,
+          activeAddonKeys: addons.map((a) => a.addonKey),
+          pendingAddonKeys,
+        },
+        now,
+      );
+      if (!fleet) {
+        plan = holdConfigEntry(
+          plan,
+          FULFILMENT_MODEL_KEY,
+          API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET,
+        );
+        return {
+          plan,
+          held: [{ ...base, reason: API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET }],
+        };
+      }
+    }
+    return { plan, held: [] };
   }
 
   /**
@@ -291,6 +393,7 @@ export class TenantConfigSnapshotService {
     planAllows?: (featureKey: string) => boolean,
     /** Present only for the automatic restore; absent = unbounded (the admin path). */
     bounds?: { maxRows: number; withinBudget: () => void },
+    pendingAddonKeys: readonly string[] = [],
   ): Promise<RestoreResult | null> {
     const [configs, overrides] = await Promise.all([
       tx.tenantFeatureConfig.findMany({ where: { tenantId } }),
@@ -301,7 +404,16 @@ export class TenantConfigSnapshotService {
     // manual look — and restore nothing.
     const payload = parseSnapshotPayload(snapshot.payload);
     if (!payload) return null;
-    const plan = planRestore(payload, { configs, overrides }, snapshot.takenAt, now, planAllows);
+    const { plan, held } = await this.planGuarded(
+      tx,
+      tenantId,
+      payload,
+      { configs, overrides },
+      snapshot.takenAt,
+      now,
+      planAllows,
+      pendingAddonKeys,
+    );
     const rows =
       plan.configs.create.length + plan.configs.update.length + plan.overrides.create.length;
     if (bounds && rows > bounds.maxRows) {
@@ -314,10 +426,31 @@ export class TenantConfigSnapshotService {
     // second UPDATE waits on the first's row lock, re-checks the predicate after it commits, matches
     // 0 rows, and returns null instead of restoring twice (and double-writing the audit row). If
     // the writes below throw, the caller's transaction rolls the claim back with them.
+    //
+    // BO-13: a restore that HELD a row is a partial one, and the snapshot stays CLAIMABLE: it is NOT
+    // stamped and nothing older is superseded. The same conditional UPDATE still runs (a no-op write
+    // of `restoredToPlanKey`, already NULL) so it keeps both properties of the claim — it returns 0
+    // rows when another run already consumed the snapshot, and it takes the row lock until this
+    // transaction ends. What a held snapshot does next, by construction:
+    //  - Restore Now again / the next automatic re-upgrade re-reads current state and re-runs the plan:
+    //    every row this run wrote now matches the snapshot (`unchanged`) or was changed by the tenant
+    //    since (`keptNewer`), so nothing is written twice and nothing grows; only the held row is
+    //    re-judged — still blocked it is held again (a fresh audit row, no state change), cleared it
+    //    is written and THEN the snapshot is stamped and the older ones superseded;
+    //  - a tenant edit of the row made after the downgrade turns it `keptNewer`, which completes the
+    //    snapshot instead of holding it forever;
+    //  - two concurrent runs over a held snapshot are not mutually exclusive after the lock is
+    //    released (the loser planned before it waited), but both write the same as-was values
+    //    (idempotent upsert / update / ON CONFLICT DO NOTHING), so a double apply is harmless.
+    // An automatic restore only considers a DOWNGRADE snapshot inside the 90-day horizon, so a snapshot
+    // held past it simply stops being picked up (it stays listed for an admin's Restore now).
     bounds?.withinBudget(); // a budget already spent must not even take the claim
     const claimed = await tx.tenantFeatureConfigSnapshot.updateMany({
       where: { id: snapshot.id, tenantId, restoredAt: null },
-      data: { restoredAt: now, restoredToPlanKey: stampPlanKey },
+      data:
+        held.length === 0
+          ? { restoredAt: now, restoredToPlanKey: stampPlanKey }
+          : { restoredToPlanKey: null },
     });
     if (claimed.count === 0) return null;
 
@@ -381,11 +514,21 @@ export class TenantConfigSnapshotService {
       conflictedOverrides = plan.overrides.create.length - inserted.count;
     }
 
-    const superseded = await tx.tenantFeatureConfigSnapshot.updateMany({
-      // Only older DOWNGRADE archives are superseded: a MANUAL save-point is never auto-consumed.
-      where: { tenantId, restoredAt: null, reason: "DOWNGRADE", takenAt: { lt: snapshot.takenAt } },
-      data: { restoredAt: now, restoredToPlanKey: "SUPERSEDED" },
-    });
+    // A held (partial) restore supersedes nothing: the older snapshots wait behind it, because the
+    // payload that carries their rows is not fully applied yet.
+    const superseded =
+      held.length === 0
+        ? await tx.tenantFeatureConfigSnapshot.updateMany({
+            // Only older DOWNGRADE archives are superseded: a MANUAL save-point is never auto-consumed.
+            where: {
+              tenantId,
+              restoredAt: null,
+              reason: "DOWNGRADE",
+              takenAt: { lt: snapshot.takenAt },
+            },
+            data: { restoredAt: now, restoredToPlanKey: "SUPERSEDED" },
+          })
+        : { count: 0 };
 
     return {
       snapshotId: snapshot.id,
@@ -400,6 +543,7 @@ export class TenantConfigSnapshotService {
         };
       })(),
       supersededSnapshots: superseded.count,
+      held,
     };
   }
 }

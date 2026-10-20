@@ -9,6 +9,7 @@ import {
   Min,
   ValidateIf,
 } from "class-validator";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /** Patch an add-on SKU in a DRAFT catalog version. The SKU code, unit and meter are immutable. */
 export class UpdateAddonSkuDto {
@@ -18,7 +19,7 @@ export class UpdateAddonSkuDto {
   name?: string;
 
   @ApiPropertyOptional()
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   monthlyPrice?: number;

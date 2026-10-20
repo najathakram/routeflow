@@ -70,6 +70,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import guardLib from "../apps/api/scripts/lib/live-target-guard.cjs";
+import { assertFiniteMoney } from "./lib/assert-finite-money.cjs";
 import protectedSlugsLib from "../apps/api/scripts/lib/protected-slugs.cjs";
 
 const { protectedTenantIds } = guardLib;
@@ -351,7 +352,8 @@ async function main() {
       const written = await client.query(
         `UPDATE "Product" SET "currentStock" = "currentStock" - $2
           WHERE id = $1 AND "tenantId" <> ALL($3::text[])`,
-        [id, r.inflated_by, protectedIds],
+        // SA-816: refuse a non-finite amount before it binds (node-pg sends NaN as 'NaN'; NUMERIC accepts it).
+        [id, assertFiniteMoney(r.inflated_by, `product ${id} inflated_by`), protectedIds],
       );
       if (written.rowCount !== 1) throw new Error("product row not writable (protected tenant)");
       await client.query(

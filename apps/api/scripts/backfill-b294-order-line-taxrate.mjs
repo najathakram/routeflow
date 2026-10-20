@@ -51,6 +51,7 @@ import {
   inferredGoodsFlatRate,
   isNsfLine,
 } from "@routeflow/pricing";
+import { assertFiniteMoney } from "../../../scripts/lib/assert-finite-money.cjs";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import payingTenant from "./lib/paying-tenant.cjs";
 import protectedSlugsLib from "./lib/protected-slugs.cjs";
@@ -490,7 +491,12 @@ async function apply() {
       const notNsf = notNsfSql(3);
       const res = await client.query(
         `UPDATE "InvoiceItem" SET "taxRate" = $1 WHERE "invoiceId" = $2 AND "taxRate" = 0 AND ${notNsf.sql}`,
-        [a.rate, a.invoiceId, ...notNsf.params],
+        // SA-816: a non-finite rate must never reach the bind (node-pg sends NaN as 'NaN'; NUMERIC accepts it).
+        [
+          assertFiniteMoney(a.rate, `invoice ${a.invoiceId} taxRate`),
+          a.invoiceId,
+          ...notNsf.params,
+        ],
       );
       stamped += res.rowCount;
     }

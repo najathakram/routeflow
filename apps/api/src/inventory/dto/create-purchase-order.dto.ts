@@ -16,6 +16,7 @@ import {
   ArrayNotEmpty,
 } from "class-validator";
 import { Type } from "class-transformer";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /**
  * One line of a new purchase order, in ONE of two forms (poLineFromInput computes the money either way):
@@ -45,7 +46,7 @@ export class PurchaseOrderItemDto {
   /** PER CASE: pieces per case (the stored denomination). */
   @IsOptional() @IsInt() @Min(1) packSize?: number;
   /** PER CASE: the cost of one case, as entered. */
-  @IsOptional() @IsNumber() @Min(0) caseCost?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) caseCost?: number;
   /** PER CASE: whole cases ordered. */
   @ValidateIf((o: PurchaseOrderItemDto) => o.caseCost !== undefined || o.cases !== undefined)
   @IsInt()

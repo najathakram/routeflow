@@ -1,0 +1,2235 @@
+{
+  "generatedAt": "2026-10-19T12:00:00.000Z",
+  "machine": "pc",
+  "sources": {
+    "specs": {
+      "ok": true,
+      "at": "2026-10-19T11:59:40.000Z",
+      "ageSec": 20,
+      "stale": false,
+      "error": null,
+      "intervalSec": 30
+    },
+    "github": {
+      "ok": true,
+      "at": "2026-10-19T11:59:20.000Z",
+      "ageSec": 40,
+      "stale": false,
+      "error": null,
+      "intervalSec": 45
+    },
+    "branches": {
+      "ok": true,
+      "at": "2026-10-19T11:58:25.000Z",
+      "ageSec": 95,
+      "stale": false,
+      "error": null,
+      "intervalSec": 120
+    },
+    "bugs": {
+      "ok": true,
+      "at": "2026-10-19T11:58:10.000Z",
+      "ageSec": 110,
+      "stale": false,
+      "error": null,
+      "intervalSec": 120
+    },
+    "areas": {
+      "ok": true,
+      "at": "2026-10-19T11:55:20.000Z",
+      "ageSec": 280,
+      "stale": false,
+      "error": null,
+      "intervalSec": 300
+    },
+    "railway": {
+      "ok": false,
+      "at": "2026-10-19T11:20:00.000Z",
+      "ageSec": 2400,
+      "stale": true,
+      "error": "railway CLI unavailable",
+      "intervalSec": 120
+    }
+  },
+  "items": [
+    {
+      "id": "R1",
+      "title": "R1 window 2: back office and product fixes",
+      "type": "release",
+      "priority": "P1",
+      "status": "building",
+      "lane": null,
+      "train": null,
+      "area": null,
+      "parent": null,
+      "eta": "2026-10-19 ~18:00Z",
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": ["520", "521", "522", "525", "B1201"],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "catalog",
+      "problem": "Product editing is slow and error-prone for back-office staff, and a few product screens still load the whole catalog.",
+      "impact": "Staff re-key prices, and big catalogs make pickers feel frozen.",
+      "solution": "Ship inline price editing, box/piece rollover, lighter pickers and the tenant settings search together as one release.",
+      "summaryDraft": true,
+      "statusLabel": "Being built",
+      "etaAt": "2026-10-19T18:00:00.000Z",
+      "refPrs": []
+    },
+    {
+      "id": "R2",
+      "title": "R2 counter sales and order screen",
+      "type": "release",
+      "priority": "P1",
+      "status": "planned",
+      "lane": null,
+      "train": null,
+      "area": null,
+      "parent": null,
+      "eta": "2026-10-21",
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": ["530", "531", "532"],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "orders",
+      "problem": "Shops with a counter cannot ring up a walk-in sale and take payment on one screen.",
+      "impact": "Counter customers still need a separate order and invoice, which slows the queue.",
+      "solution": "Add the walk-in flow, pay on the same screen, and a faster order editor.",
+      "summaryDraft": true,
+      "statusLabel": "Planned",
+      "etaAt": "2026-10-21T23:59:00.000Z",
+      "refPrs": []
+    },
+    {
+      "id": "R3",
+      "title": "R3 billing go-live",
+      "type": "release",
+      "priority": "P1",
+      "status": "spec",
+      "lane": null,
+      "train": null,
+      "area": null,
+      "parent": null,
+      "eta": "2026-10-24",
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": ["540", "541"],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "billing",
+      "problem": "Subscriptions are not yet billed automatically from the first of the month.",
+      "impact": "Invoices for new businesses are made by hand and can be late or wrong.",
+      "solution": "Prorate the first invoice, charge in advance, and move unpaid accounts to read-only after a 7-day grace period.",
+      "statusLabel": "Being specified",
+      "etaAt": "2026-10-24T23:59:00.000Z",
+      "refPrs": []
+    },
+    {
+      "id": "R4",
+      "title": "R4 driver app polish",
+      "type": "release",
+      "priority": "P3",
+      "status": "idea",
+      "lane": null,
+      "train": null,
+      "area": null,
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": ["550"],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "delivery",
+      "statusLabel": "Idea",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "520",
+      "title": "Product page: inline price editing",
+      "type": "feature",
+      "priority": "P1",
+      "status": "building",
+      "lane": "macmini",
+      "train": "R1",
+      "area": "web:products",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [3507],
+        "branches": ["feat/520-price-edit"],
+        "urls": []
+      },
+      "children": ["520.1", "520.2"],
+      "claimedBy": "macmini",
+      "claimedAt": "2026-10-19T10:00:00.000Z",
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "catalog",
+      "problem": "Changing a product price means opening a separate form and saving, one field at a time.",
+      "impact": "Staff lose minutes on every price update, and typos slip in when many prices change at once.",
+      "solution": "Let staff edit prices directly in the product table, with one shared editor so every screen behaves the same.",
+      "statusLabel": "Being built",
+      "etaAt": null,
+      "refPrs": [3402, 3498]
+    },
+    {
+      "id": "520.1",
+      "title": "Floating editor as the one price editor",
+      "type": "feature",
+      "priority": "P1",
+      "status": "review",
+      "lane": "macmini",
+      "train": "R1",
+      "area": "web:products",
+      "parent": "520",
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [3511],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "catalog",
+      "problem": "Price editing has two different editors that behave differently.",
+      "impact": "People get surprising results depending on where they edit, which erodes trust in the numbers.",
+      "solution": "Make the floating editor the single price editor and remove the old one. It is in review now.",
+      "statusLabel": "In review",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "520.2",
+      "title": "Tier price column keyboard flow",
+      "type": "feature",
+      "priority": "P2",
+      "status": "planned",
+      "lane": "macmini",
+      "train": "R1",
+      "area": "web:products",
+      "parent": "520",
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "catalog",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "521",
+      "title": "Units: box and piece rollover on edit",
+      "type": "feature",
+      "priority": "P1",
+      "status": "ready",
+      "lane": "macmini",
+      "train": "R1",
+      "area": "api:units",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [3498],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "catalog",
+      "problem": "Editing boxes and pieces together can leave a line with 12 pieces instead of 1 box and 0 pieces.",
+      "impact": "Customers can be charged the wrong amount on boxed products.",
+      "solution": "Roll pieces over into boxes automatically whenever a quantity is edited, using the shared money rules.",
+      "summaryDraft": true,
+      "statusLabel": "Ready to ship",
+      "etaAt": null,
+      "refPrs": [3401]
+    },
+    {
+      "id": "522",
+      "title": "Inventory picker without whole-catalog fetch",
+      "type": "feature",
+      "priority": "P2",
+      "status": "live",
+      "lane": "macmini",
+      "train": "R1",
+      "area": "web:inventory",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "catalog",
+      "problem": "The inventory picker downloaded the whole product catalog each time it opened.",
+      "impact": "Large businesses waited several seconds before they could pick a product.",
+      "solution": "Load only the products being searched. This is live now.",
+      "statusLabel": "Fixed",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "525",
+      "title": "Back office: tenant settings search",
+      "type": "feature",
+      "priority": "P2",
+      "status": "shipping",
+      "lane": "pc-lane",
+      "train": "R1",
+      "area": "web:settings",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "platform",
+      "problem": "Finding a setting in the back office means clicking through every tab.",
+      "impact": "New businesses struggle to set themselves up and ask support for help.",
+      "solution": "Add a search box that jumps straight to the setting.",
+      "statusLabel": "Shipping",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "530",
+      "title": "Counter sales: walk-in customer flow",
+      "type": "feature",
+      "priority": "P1",
+      "status": "spec",
+      "lane": "pc-lane",
+      "train": "R2",
+      "area": "web:counter",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": ["530.1"],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "orders",
+      "problem": "A shop cannot sell to a walk-in customer without first creating a customer record.",
+      "impact": "Counter sales are slow and customers walk away from long lines.",
+      "solution": "Let staff sell to a generic walk-in customer and add details later if needed.",
+      "ownerAsk": "Please confirm how cash totals should be rounded (see the question about cash rounding).",
+      "summaryDraft": true,
+      "statusLabel": "Being specified",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "530.1",
+      "title": "Pay on the same screen",
+      "type": "feature",
+      "priority": "P1",
+      "status": "planned",
+      "lane": "pc-lane",
+      "train": "R2",
+      "area": "web:counter",
+      "parent": "530",
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": {
+        "by": "OQ-N2 owner ruling on cash rounding",
+        "unblocker": "owner",
+        "at": "2026-10-19T02:00:00.000Z"
+      },
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "orders",
+      "problem": "After a counter sale the cashier has to leave the order and open the invoice to take payment.",
+      "impact": "Extra steps at the till; some sales are left unpaid by mistake.",
+      "solution": "Show the payment buttons on the same screen as the order.",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "531",
+      "title": "Order screen redesign: line editing",
+      "type": "feature",
+      "priority": "P1",
+      "status": "building",
+      "lane": "pc-lane",
+      "train": "R2",
+      "area": "web:orders",
+      "parent": null,
+      "eta": "unscheduled (slipped past 10-17)",
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [3509],
+        "branches": ["feat/531-order-lines"],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": "pc-lane",
+      "claimedAt": "2026-10-19T07:00:00.000Z",
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "orders",
+      "problem": "The order screen is crowded, and editing a line is easy to get wrong.",
+      "impact": "Orders contain mistakes that need correcting later.",
+      "solution": "Redesign line editing so quantity, price and units are clear and checked as you type.",
+      "statusLabel": "Being built",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "532",
+      "title": "Backorder marker per line",
+      "type": "feature",
+      "priority": "P2",
+      "status": "planned",
+      "lane": null,
+      "train": "R2",
+      "area": "api:orders",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "orders",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "540",
+      "title": "Billing: prorate first invoice",
+      "type": "feature",
+      "priority": "P1",
+      "status": "spec",
+      "lane": "macbook",
+      "train": "R3",
+      "area": "api:billing",
+      "parent": null,
+      "eta": "2026-10-20",
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "billing",
+      "problem": "A new business that starts mid-month gets a full month invoice.",
+      "impact": "Customers complain about being overcharged, and we refund by hand.",
+      "solution": "Charge only for the days left in the first month.",
+      "summaryDraft": true,
+      "statusLabel": "Being specified",
+      "etaAt": "2026-10-20T23:59:00.000Z",
+      "refPrs": [3377]
+    },
+    {
+      "id": "541",
+      "title": "Billing: 7-day grace then read-only",
+      "type": "feature",
+      "priority": "P1",
+      "status": "planned",
+      "lane": "macbook",
+      "train": "R3",
+      "area": "api:billing",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "billing",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "550",
+      "title": "Driver: offline stop list",
+      "type": "feature",
+      "priority": "P3",
+      "status": "idea",
+      "lane": null,
+      "train": "R4",
+      "area": "mobile:driver",
+      "parent": null,
+      "eta": "after census",
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "delivery",
+      "statusLabel": "Idea",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "560",
+      "title": "Ops monitor: server and UI",
+      "type": "feature",
+      "priority": "P1",
+      "status": "building",
+      "lane": "ops-monitor",
+      "train": null,
+      "area": "infra:tools",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [3515],
+        "branches": ["feat/ops-monitor"],
+        "urls": []
+      },
+      "children": ["560.1"],
+      "claimedBy": "ops-monitor",
+      "claimedAt": "2026-10-19T09:00:00.000Z",
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "tooling",
+      "problem": "Nobody can see one accurate picture of what is being built, what is stuck and what is next.",
+      "impact": "The owner and the lanes spend time asking each other, and work gets dropped.",
+      "solution": "This ops monitor: a live board built from the registers, pull requests and deploys.",
+      "statusLabel": "Being built",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "560.1",
+      "title": "Ops monitor: hooks",
+      "type": "feature",
+      "priority": "P2",
+      "status": "planned",
+      "lane": "ops-monitor",
+      "train": null,
+      "area": "infra:tools",
+      "parent": "560",
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "tooling",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "570",
+      "title": "Statement export for Acme Foods retailer accounts",
+      "type": "feature",
+      "priority": "P2",
+      "status": "planned",
+      "lane": null,
+      "train": null,
+      "area": "web:reports",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "finance",
+      "problem": "Retailer accounts cannot get a statement of what they owe.",
+      "impact": "Customers call to ask for balances, which takes staff time.",
+      "solution": "Add a statement export per account.",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "571",
+      "title": "Credit note numbering gap check",
+      "type": "feature",
+      "priority": "P3",
+      "status": "planned",
+      "lane": null,
+      "train": null,
+      "area": "api:credit-notes",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "finance",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "580",
+      "title": "Owner: choose cash rounding rule for counter sales",
+      "type": "decision",
+      "priority": "P1",
+      "status": "planned",
+      "lane": "owner",
+      "train": null,
+      "area": null,
+      "parent": null,
+      "eta": "2026-10-20",
+      "gate": "Recommended: round to nearest 5 cents",
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "orders",
+      "problem": "Counter sales in cash need a rule for rounding to the nearest coin.",
+      "impact": "Until it is decided, the pay-on-same-screen work cannot finish and totals may differ by a few cents.",
+      "solution": "Pick one rule and apply it everywhere. The team recommends rounding to the nearest 5 cents.",
+      "ownerAsk": "Choose the cash rounding rule.",
+      "statusLabel": "Planned",
+      "etaAt": "2026-10-20T23:59:00.000Z",
+      "refPrs": []
+    },
+    {
+      "id": "581",
+      "title": "Owner: approve prod migration sitting",
+      "type": "decision",
+      "priority": "P1",
+      "status": "planned",
+      "lane": "owner",
+      "train": null,
+      "area": null,
+      "parent": null,
+      "eta": null,
+      "gate": "Recommended: approve at 17:30Z",
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "platform",
+      "problem": "Database changes for the next release can only go to production with your approval.",
+      "impact": "The release cannot go live until the change is applied.",
+      "solution": "Approve a short sitting where the team applies it with a fresh backup.",
+      "ownerAsk": "Approve the migration sitting at 17:30Z.",
+      "statusLabel": "Planned",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "590",
+      "title": "Login throttle spike on staging probe",
+      "type": "incident",
+      "priority": "P0",
+      "status": "building",
+      "lane": "lead",
+      "train": null,
+      "area": "api:auth",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": "lead",
+      "claimedAt": "2026-10-19T11:00:00.000Z",
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "platform",
+      "problem": "Sign-in attempts spiked on the staging probe and the login limiter started refusing real users.",
+      "impact": "Staff at test businesses were locked out of signing in for several minutes.",
+      "solution": "Raise the limit for the probe address and add an alert so we see it before users do.",
+      "statusLabel": "Being built",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "B1201",
+      "title": "Unit price shows stale value after edit",
+      "type": "bug",
+      "priority": "P1",
+      "status": "building",
+      "lane": "macmini",
+      "train": "R1",
+      "area": "web:products",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "registry",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": "macmini",
+      "claimedAt": "2026-10-19T11:00:00.000Z",
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": true,
+      "domain": "catalog",
+      "problem": "After editing a unit price, the old price still shows until the page is refreshed.",
+      "impact": "Staff think the change did not save and enter it twice.",
+      "solution": "Refresh the displayed price from the saved value right after each edit.",
+      "statusLabel": "Being built",
+      "etaAt": null,
+      "refPrs": []
+    },
+    {
+      "id": "582",
+      "title": "Owner: allow card-only plan pick at signup",
+      "type": "decision",
+      "priority": "P1",
+      "status": "planned",
+      "lane": "owner",
+      "train": null,
+      "area": null,
+      "parent": null,
+      "eta": null,
+      "gate": "Recommended: keep bank debits",
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": null,
+      "claimedAt": null,
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "platform",
+      "problem": "Plan pick could be card-only.",
+      "impact": "The release cannot go live until the change is applied.",
+      "solution": "Approve a short sitting where the team applies it with a fresh backup.",
+      "ownerAsk": "Allow card-only plan pick at signup?",
+      "statusLabel": "Booked",
+      "etaAt": null,
+      "refPrs": []
+    }
+  ],
+  "bugs": [
+    {
+      "id": "B1201",
+      "title": "Unit price shows stale value after edit",
+      "severity": "high",
+      "state": "open",
+      "area": "web:products",
+      "domain": "catalog",
+      "sensitive": false,
+      "fix": {
+        "state": "pr-open",
+        "pr": 3511,
+        "branch": "fix/B1201-stale-price",
+        "prUrl": "https://github.com/acme/app/pull/3511"
+      },
+      "filedAt": "2026-10-18T06:00:00.000Z",
+      "pending": false,
+      "ledgerState": "building",
+      "items": ["520.1"],
+      "release": "R1"
+    },
+    {
+      "id": "B1210",
+      "title": "Order total rounds twice on boxed lines",
+      "severity": "critical",
+      "state": "open",
+      "area": "api:orders",
+      "domain": "orders",
+      "sensitive": false,
+      "fix": {
+        "state": "none",
+        "pr": null,
+        "branch": null,
+        "prUrl": null
+      },
+      "filedAt": "2026-10-19T03:00:00.000Z",
+      "pending": false,
+      "ledgerState": "open",
+      "items": [],
+      "release": null
+    },
+    {
+      "id": "B1211",
+      "title": "Counter receipt misses tax line",
+      "severity": "high",
+      "state": "open",
+      "area": "web:counter",
+      "domain": "orders",
+      "sensitive": false,
+      "fix": {
+        "state": "branch",
+        "pr": null,
+        "branch": "fix/B1211-receipt-tax",
+        "prUrl": null
+      },
+      "filedAt": "2026-10-18T16:00:00.000Z",
+      "pending": false,
+      "ledgerState": "open",
+      "items": ["531"],
+      "release": null
+    },
+    {
+      "id": "B1215",
+      "title": "Invoice PDF clips long product names",
+      "severity": "medium",
+      "state": "open",
+      "area": "api:invoices",
+      "domain": "finance",
+      "sensitive": false,
+      "fix": {
+        "state": "in-release",
+        "pr": 3519,
+        "branch": "train/R1",
+        "prUrl": "https://github.com/acme/app/pull/3519"
+      },
+      "filedAt": "2026-10-17T10:00:00.000Z",
+      "pending": false,
+      "ledgerState": "building",
+      "items": [],
+      "release": "R1"
+    },
+    {
+      "id": "B1218",
+      "title": "Add-on toggle flickers on slow network",
+      "severity": "high",
+      "state": "triaged",
+      "area": "web:billing",
+      "domain": "billing",
+      "sensitive": false,
+      "fix": {
+        "state": "merged",
+        "pr": 3498,
+        "branch": "fix/B1218-addon-flicker",
+        "prUrl": "https://github.com/acme/app/pull/3498"
+      },
+      "filedAt": "2026-10-15T18:00:00.000Z",
+      "pending": false,
+      "ledgerState": "fixed",
+      "items": ["521"],
+      "release": null
+    },
+    {
+      "id": "B1220",
+      "title": "Driver map pins overlap at zoom 12",
+      "severity": "medium",
+      "state": "open",
+      "area": "mobile:driver",
+      "domain": "delivery",
+      "sensitive": false,
+      "fix": {
+        "state": "deployed",
+        "pr": 3490,
+        "branch": "fix/B1220-map-pins",
+        "prUrl": "https://github.com/acme/app/pull/3490"
+      },
+      "filedAt": "2026-10-14T12:00:00.000Z",
+      "pending": false,
+      "ledgerState": "fixed",
+      "items": [],
+      "release": null
+    },
+    {
+      "id": "B1224",
+      "title": "Inventory export header typo",
+      "severity": "low",
+      "state": "open",
+      "area": "web:inventory",
+      "domain": "catalog",
+      "sensitive": false,
+      "fix": {
+        "state": "none",
+        "pr": null,
+        "branch": null,
+        "prUrl": null
+      },
+      "filedAt": null,
+      "pending": false,
+      "ledgerState": "open",
+      "items": [],
+      "release": null
+    },
+    {
+      "id": "B1230",
+      "title": "Report date picker ignores tenant timezone",
+      "severity": "low",
+      "state": "open",
+      "area": "web:reports",
+      "domain": "finance",
+      "sensitive": false,
+      "fix": {
+        "state": "none",
+        "pr": null,
+        "branch": null,
+        "prUrl": null
+      },
+      "filedAt": "2026-10-19T10:00:00.000Z",
+      "pending": true,
+      "ledgerState": null,
+      "items": [],
+      "release": null
+    },
+    {
+      "id": "B1233",
+      "title": "Billing proration off by one day in leap year",
+      "severity": "high",
+      "state": "open",
+      "area": "api:billing",
+      "domain": "billing",
+      "sensitive": false,
+      "fix": {
+        "state": "none",
+        "pr": null,
+        "branch": null,
+        "prUrl": null
+      },
+      "filedAt": "2026-10-19T07:00:00.000Z",
+      "pending": false,
+      "ledgerState": "open",
+      "items": ["540"],
+      "release": "R3"
+    },
+    {
+      "id": "B1240",
+      "title": "Security hardening item (details machine-local)",
+      "severity": "critical",
+      "state": "open",
+      "area": null,
+      "domain": null,
+      "sensitive": true,
+      "fix": {
+        "state": "branch",
+        "pr": null,
+        "branch": "fix/B1240-order-rounding",
+        "prUrl": null
+      },
+      "filedAt": "2026-10-18T10:00:00.000Z",
+      "pending": false,
+      "ledgerState": "open",
+      "items": [],
+      "release": null
+    }
+  ],
+  "bugsFixedByNote": [
+    {
+      "id": "B9301",
+      "title": "Acme widget total is wrong on B9301",
+      "severity": "high",
+      "pr": 712,
+      "prUrl": "https://github.com/acme-org/widgets/pull/712",
+      "sha": "abc1234"
+    }
+  ],
+  "trains": [
+    {
+      "id": "R1",
+      "title": "R1 window 2: back office and product fixes",
+      "status": "building",
+      "eta": "2026-10-19 ~18:00Z",
+      "members": ["520", "521", "522", "525", "B1201"]
+    },
+    {
+      "id": "R2",
+      "title": "R2 counter sales and order screen",
+      "status": "planned",
+      "eta": "2026-10-21",
+      "members": ["530", "531", "532"]
+    },
+    {
+      "id": "R3",
+      "title": "R3 billing go-live",
+      "status": "spec",
+      "eta": "2026-10-24",
+      "members": ["540", "541"]
+    },
+    {
+      "id": "R4",
+      "title": "R4 driver app polish",
+      "status": "idea",
+      "eta": null,
+      "members": ["550"]
+    }
+  ],
+  "lanes": [
+    {
+      "id": "lead",
+      "title": "Routeflow Lead",
+      "machine": "pc",
+      "lastEventAt": "2026-10-19T11:56:00.000Z",
+      "silentMin": 4,
+      "now": ["590"],
+      "next": null,
+      "lastActivityAt": "2026-10-19T10:00:00.000Z",
+      "lastActivitySource": "pushed"
+    },
+    {
+      "id": "pc-lane",
+      "title": "RouteFlow PC lane planning",
+      "machine": "pc",
+      "lastEventAt": "2026-10-19T11:51:00.000Z",
+      "silentMin": 9,
+      "now": ["531"],
+      "next": {
+        "id": "530",
+        "title": "Counter sales: walk-in customer flow",
+        "reason": "P1 Â· R2 Â· assigned to pc-lane"
+      },
+      "lastActivityAt": "2026-10-19T11:55:00.000Z",
+      "lastActivitySource": "recorded"
+    },
+    {
+      "id": "macmini",
+      "title": "RouteFlow Mac mini lane",
+      "machine": "macmini",
+      "lastEventAt": "2026-10-19T11:45:00.000Z",
+      "silentMin": 15,
+      "now": ["520", "B1201"],
+      "next": {
+        "id": "520.2",
+        "title": "Tier price column keyboard flow",
+        "reason": "P2 Â· R1 Â· assigned to macmini"
+      },
+      "lastActivityAt": "2026-10-19T11:20:00.000Z",
+      "lastActivitySource": "handoff note"
+    },
+    {
+      "id": "macbook",
+      "title": "RouteFlow MacBook lane",
+      "machine": "macbook",
+      "lastEventAt": "2026-10-19T10:25:00.000Z",
+      "silentMin": 95,
+      "now": [],
+      "next": {
+        "id": "540",
+        "title": "Billing: prorate first invoice",
+        "reason": "P1 Â· R3 Â· assigned to macbook"
+      },
+      "lastActivityAt": "2026-10-18T08:00:00.000Z",
+      "lastActivitySource": "pushed"
+    }
+  ],
+  "ownerQueue": [
+    {
+      "id": "580",
+      "title": "Owner: choose cash rounding rule for counter sales",
+      "gate": "Recommended: round to nearest 5 cents",
+      "eta": "2026-10-20",
+      "status": "planned",
+      "state": "open"
+    },
+    {
+      "id": "581",
+      "title": "Owner: approve prod migration sitting",
+      "gate": "Recommended: approve at 17:30Z",
+      "eta": null,
+      "status": "planned",
+      "state": "open"
+    },
+    {
+      "id": "582",
+      "title": "Owner: allow card-only plan pick at signup",
+      "gate": "Recommended: keep bank debits",
+      "eta": null,
+      "status": "planned",
+      "state": "booked"
+    }
+  ],
+  "decisions": [
+    {
+      "ts": "2026-10-19T00:20:00.000Z",
+      "item": "530.1",
+      "question": "Cash rounding on counter sales?",
+      "answer": "Pending",
+      "recommended": "Nearest 5 cents",
+      "actor": "lead"
+    }
+  ],
+  "problems": ["590"],
+  "prs": {
+    "open": [
+      {
+        "number": 3515,
+        "title": "feat(ops-monitor): live ops monitor server and UI",
+        "draft": false,
+        "branch": "feat/ops-monitor",
+        "headSha": "515a1b2c3d4e5f60718293a4b5c6d7e8f9012345",
+        "checks": "SUCCESS",
+        "updatedAt": "2026-10-19T11:48:00.000Z",
+        "url": "https://github.com/acme/app/pull/3515",
+        "areas": ["infra:tools"],
+        "item": "560"
+      },
+      {
+        "number": 3511,
+        "title": "feat(products): floating editor is the one price editor",
+        "draft": false,
+        "branch": "feat/520-floating-editor",
+        "headSha": "511a1b2c3d4e5f60718293a4b5c6d7e8f9012345",
+        "checks": "PENDING",
+        "updatedAt": "2026-10-19T11:35:00.000Z",
+        "url": "https://github.com/acme/app/pull/3511",
+        "areas": ["web:products", "api:products"],
+        "item": "520.1"
+      },
+      {
+        "number": 3509,
+        "title": "wip(orders): order screen line editing",
+        "draft": true,
+        "branch": "feat/531-order-lines",
+        "headSha": "509a1b2c3d4e5f60718293a4b5c6d7e8f9012345",
+        "checks": "FAILURE",
+        "updatedAt": "2026-10-19T10:45:00.000Z",
+        "url": "https://github.com/acme/app/pull/3509",
+        "areas": ["web:orders", "api:orders"],
+        "item": "531"
+      },
+      {
+        "number": 3516,
+        "title": "chore: bump jest family",
+        "draft": false,
+        "branch": "dependabot/jest-family",
+        "headSha": "516a1b2c3d4e5f60718293a4b5c6d7e8f9012345",
+        "checks": "SUCCESS",
+        "updatedAt": "2026-10-19T07:00:00.000Z",
+        "url": "https://github.com/acme/app/pull/3516",
+        "areas": ["infra:_root"],
+        "item": null
+      }
+    ],
+    "merged": [
+      {
+        "number": 3513,
+        "title": "Merge train/product-k11",
+        "branch": "train/product-k11",
+        "mergedAt": "2026-10-19T09:00:00.000Z",
+        "mergeSha": "513a1b2c3d4e5f60718293a4b5c6d7e8f9012345",
+        "url": "https://github.com/acme/app/pull/3513",
+        "item": "520"
+      },
+      {
+        "number": 3498,
+        "title": "fix(units): rollover on edit",
+        "branch": "fix/521-units",
+        "mergedAt": "2026-10-19T05:00:00.000Z",
+        "mergeSha": "498a1b2c3d4e5f60718293a4b5c6d7e8f9012345",
+        "url": "https://github.com/acme/app/pull/3498",
+        "item": "521"
+      }
+    ]
+  },
+  "branches": [
+    {
+      "branch": "feat/spike-barcode",
+      "sha": "77a1b2c3d4e5f60718293a4b5c6d7e8f90123456",
+      "date": "2026-10-18T06:00:00.000Z",
+      "areas": ["web:products"],
+      "item": null,
+      "pr": null
+    },
+    {
+      "branch": "feat/540-prorate",
+      "sha": "78a1b2c3d4e5f60718293a4b5c6d7e8f90123456",
+      "date": "2026-10-19T08:40:00.000Z",
+      "areas": ["api:billing"],
+      "item": "540",
+      "pr": null
+    }
+  ],
+  "ci": {
+    "master": {
+      "sha": "513a1b2c3d4e5f60718293a4b5c6d7e8f9012345",
+      "date": "2026-10-19T09:00:00.000Z",
+      "headline": "Merge train/product-k11 (#3513)",
+      "checks": "FAILURE",
+      "gate": "success",
+      "probesFailing": ["e2e-routeflow-regression"],
+      "runs": [
+        {
+          "name": "verify",
+          "kind": "gate",
+          "state": "success"
+        },
+        {
+          "name": "e2e-money",
+          "kind": "gate",
+          "state": "success"
+        },
+        {
+          "name": "e2e-routeflow-regression",
+          "kind": "probe",
+          "state": "failure"
+        },
+        {
+          "name": "lint-migrations",
+          "kind": "probe",
+          "state": "success"
+        }
+      ]
+    },
+    "visibility": "PRIVATE",
+    "deploys": [
+      {
+        "service": "@routeflow/api",
+        "status": "SUCCESS",
+        "sha": "513a1b2c3d4e5f60718293a4b5c6d7e8f9012345",
+        "createdAt": "2026-10-19T09:10:00.000Z"
+      },
+      {
+        "service": "@routeflow/web",
+        "status": "BUILDING",
+        "sha": "498a1b2c3d4e5f60718293a4b5c6d7e8f9012345",
+        "createdAt": "2026-10-19T11:52:00.000Z"
+      }
+    ]
+  },
+  "map": {
+    "domains": [
+      {
+        "id": "orders",
+        "label": "Orders & sales",
+        "items": 2,
+        "areas": [
+          {
+            "area": "api:orders",
+            "layer": "api",
+            "name": "orders",
+            "files": 6,
+            "items": 3,
+            "prs": 1,
+            "branches": 1,
+            "bugs": {
+              "critical": 0,
+              "high": 1,
+              "medium": 2,
+              "low": 0
+            }
+          },
+          {
+            "area": "api:estimates",
+            "layer": "api",
+            "name": "estimates",
+            "files": 43,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "web:orders",
+            "layer": "web",
+            "name": "orders",
+            "files": 80,
+            "items": 2,
+            "prs": 1,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 1,
+              "low": 1
+            }
+          },
+          {
+            "area": "web:counter",
+            "layer": "web",
+            "name": "counter",
+            "files": 27,
+            "items": 2,
+            "prs": 0,
+            "branches": 1,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "mobile:customer",
+            "layer": "mobile",
+            "name": "customer",
+            "files": 64,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "api:returns",
+            "layer": "api",
+            "name": "returns",
+            "files": 11,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          }
+        ]
+      },
+      {
+        "id": "catalog",
+        "label": "Catalog & stock",
+        "items": 3,
+        "areas": [
+          {
+            "area": "api:products",
+            "layer": "api",
+            "name": "products",
+            "files": 17,
+            "items": 4,
+            "prs": 2,
+            "branches": 1,
+            "bugs": {
+              "critical": 1,
+              "high": 1,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "api:inventory",
+            "layer": "api",
+            "name": "inventory",
+            "files": 54,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "web:products",
+            "layer": "web",
+            "name": "products",
+            "files": 91,
+            "items": 5,
+            "prs": 2,
+            "branches": 2,
+            "bugs": {
+              "critical": 0,
+              "high": 1,
+              "medium": 1,
+              "low": 0
+            }
+          },
+          {
+            "area": "web:inventory",
+            "layer": "web",
+            "name": "inventory",
+            "files": 38,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "api:units",
+            "layer": "api",
+            "name": "units",
+            "files": 75,
+            "items": 2,
+            "prs": 1,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "pkg:pricing",
+            "layer": "pkg",
+            "name": "pricing",
+            "files": 22,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "mobile:operator",
+            "layer": "mobile",
+            "name": "operator",
+            "files": 59,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          }
+        ]
+      },
+      {
+        "id": "finance",
+        "label": "Finance",
+        "items": 1,
+        "areas": [
+          {
+            "area": "api:invoices",
+            "layer": "api",
+            "name": "invoices",
+            "files": 28,
+            "items": 1,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 1,
+              "low": 0
+            }
+          },
+          {
+            "area": "api:bookkeeping",
+            "layer": "api",
+            "name": "bookkeeping",
+            "files": 65,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "web:invoices",
+            "layer": "web",
+            "name": "invoices",
+            "files": 12,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 1
+            }
+          },
+          {
+            "area": "web:reports",
+            "layer": "web",
+            "name": "reports",
+            "files": 49,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "api:credit-notes",
+            "layer": "api",
+            "name": "credit-notes",
+            "files": 86,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          }
+        ]
+      },
+      {
+        "id": "billing",
+        "label": "Billing & plans",
+        "items": 2,
+        "areas": [
+          {
+            "area": "api:billing",
+            "layer": "api",
+            "name": "billing",
+            "files": 39,
+            "items": 2,
+            "prs": 1,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 2,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "web:billing",
+            "layer": "web",
+            "name": "billing",
+            "files": 76,
+            "items": 1,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "api:addons",
+            "layer": "api",
+            "name": "addons",
+            "files": 23,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          }
+        ]
+      },
+      {
+        "id": "delivery",
+        "label": "Routes & delivery",
+        "items": 0,
+        "areas": [
+          {
+            "area": "api:routes",
+            "layer": "api",
+            "name": "routes",
+            "files": 50,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 1
+            }
+          },
+          {
+            "area": "web:routes",
+            "layer": "web",
+            "name": "routes",
+            "files": 87,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "mobile:driver",
+            "layer": "mobile",
+            "name": "driver",
+            "files": 34,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 1,
+              "low": 0
+            }
+          },
+          {
+            "area": "api:drivers",
+            "layer": "api",
+            "name": "drivers",
+            "files": 71,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          }
+        ]
+      },
+      {
+        "id": "customers",
+        "label": "Customers",
+        "items": 1,
+        "areas": [
+          {
+            "area": "api:customers",
+            "layer": "api",
+            "name": "customers",
+            "files": 61,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "web:customers",
+            "layer": "web",
+            "name": "customers",
+            "files": 8,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "api:notifications",
+            "layer": "api",
+            "name": "notifications",
+            "files": 45,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          }
+        ]
+      },
+      {
+        "id": "platform",
+        "label": "Platform & admin",
+        "items": 1,
+        "areas": [
+          {
+            "area": "api:auth",
+            "layer": "api",
+            "name": "auth",
+            "files": 72,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 1,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "api:tenants",
+            "layer": "api",
+            "name": "tenants",
+            "files": 19,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "web:settings",
+            "layer": "web",
+            "name": "settings",
+            "files": 56,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "api:_core",
+            "layer": "api",
+            "name": "_core",
+            "files": 93,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "web:_shell",
+            "layer": "web",
+            "name": "_shell",
+            "files": 40,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "pkg:types",
+            "layer": "pkg",
+            "name": "types",
+            "files": 77,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          }
+        ]
+      },
+      {
+        "id": "tooling",
+        "label": "Tooling & ops",
+        "items": 3,
+        "areas": [
+          {
+            "area": "infra:scripts",
+            "layer": "infra",
+            "name": "scripts",
+            "files": 83,
+            "items": 1,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "infra:.github",
+            "layer": "infra",
+            "name": ".github",
+            "files": 30,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "pkg:config",
+            "layer": "pkg",
+            "name": "config",
+            "files": 67,
+            "items": 0,
+            "prs": 0,
+            "branches": 0,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          },
+          {
+            "area": "infra:tools",
+            "layer": "infra",
+            "name": "tools",
+            "files": 14,
+            "items": 4,
+            "prs": 1,
+            "branches": 1,
+            "bugs": {
+              "critical": 0,
+              "high": 0,
+              "medium": 0,
+              "low": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "alarms": [
+    {
+      "id": "stale-source:railway",
+      "kind": "stale-source",
+      "severity": "warn",
+      "message": "railway source stale: railway CLI unavailable",
+      "suggest": null,
+      "item": null,
+      "lane": null,
+      "pr": null,
+      "branch": null,
+      "source": "railway"
+    },
+    {
+      "id": "status-behind-merge:521",
+      "kind": "status-behind-merge",
+      "severity": "error",
+      "message": "PR #3498 merged 7h ago but item 521 is ready",
+      "suggest": "rf status 521 live",
+      "item": "521",
+      "lane": null,
+      "pr": 3498,
+      "branch": null,
+      "source": null
+    },
+    {
+      "id": "untracked-pr:3516",
+      "kind": "untracked-pr",
+      "severity": "warn",
+      "message": "PR #3516 maps to no item",
+      "suggest": "rf event link <id> --pr 3516",
+      "item": null,
+      "lane": null,
+      "pr": 3516,
+      "branch": "dependabot/jest-family",
+      "source": null
+    },
+    {
+      "id": "lane-silent:macbook",
+      "kind": "lane-silent",
+      "severity": "warn",
+      "message": "macbook holds claims but has been silent for 95 min",
+      "suggest": null,
+      "item": null,
+      "lane": "macbook",
+      "pr": null,
+      "branch": null,
+      "source": null
+    },
+    {
+      "id": "past-eta:540",
+      "kind": "past-eta",
+      "severity": "warn",
+      "message": "Item 540 ETA 2026-10-20 is past",
+      "suggest": null,
+      "item": "540",
+      "lane": "macbook",
+      "pr": null,
+      "branch": null,
+      "source": null
+    },
+    {
+      "id": "untracked-branch:feat/spike-barcode",
+      "kind": "untracked-branch",
+      "severity": "info",
+      "message": "Branch feat/spike-barcode (30h old) has no PR and no item",
+      "suggest": "rf item new --title \"Barcode spike\" --type feature",
+      "item": null,
+      "lane": null,
+      "pr": null,
+      "branch": "feat/spike-barcode",
+      "source": null
+    }
+  ],
+  "stats": {
+    "events": 1342,
+    "items": 25,
+    "openBugs": 10,
+    "anomalies": 1
+  },
+  "answeredRecently": [
+    {
+      "id": "583",
+      "title": "Owner: tenants see backorder markers",
+      "answer": "ANSWERED, see D-0412",
+      "answeredAt": "2026-10-19T09:00:00.000Z"
+    },
+    {
+      "id": "584",
+      "title": "Owner: pilot price is $100",
+      "answer": "STANDING YES",
+      "answeredAt": "2026-10-18T06:00:00.000Z"
+    }
+  ],
+  "authEnabled": false
+}

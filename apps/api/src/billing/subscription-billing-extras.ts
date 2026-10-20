@@ -135,7 +135,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return Promise.race([p, cut]).finally(() => clearTimeout(timer));
 }
 
-function formatInZone(at: Date, zone: string, opts: Intl.DateTimeFormatOptions): string {
+export function formatInZone(at: Date, zone: string, opts: Intl.DateTimeFormatOptions): string {
   try {
     return new Intl.DateTimeFormat("en-US", { timeZone: zone, ...opts }).format(at);
   } catch {

@@ -11,7 +11,16 @@ import { StripeService } from "./stripe.service";
 import { EntitlementsService } from "./entitlements.service";
 import { FeatureResolverService } from "./feature-resolver.service";
 import { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
-import { LEGACY_ADDON_KEY_TO_SKU, addonSkuCode } from "./plan-catalog.constants";
+import {
+  LEGACY_ADDON_KEY_TO_SKU,
+  addonSkuCode,
+  normalizePlanKey,
+  planKeyFromEnum,
+} from "./plan-catalog.constants";
+import { inclusionOf } from "./addon-inclusion";
+import { inclusionCatalogFor, pricedAddonSku } from "./plan-version-pin";
+import { updateAddonRowTx, upsertAddonRowTx, type AddonChangeSource } from "./tenant-addon-writer";
+import { addonCatalogInvalidException } from "./addon-catalog-invalid";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
   ADDON_KEY_TO_REGISTRY_KEY,
@@ -26,6 +35,7 @@ import { emitAddonDelta, lockTenantForLedger } from "./addon-ledger";
 import { addonCodeOf, findAddonRow } from "./addon-row";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
+import { roundMoney } from "@routeflow/pricing";
 
 /**
  * A Stripe `resource_missing` / 404 error means the item we tried to act on is
@@ -52,6 +62,11 @@ export interface EnableAddonOptions {
    * billed enable always takes its own lock.
    */
   lockHeld?: boolean;
+  /**
+   * SA-788 A3: the CALLER names the record's source when it is not the plain admin route (a business-profile apply
+   * passes `profile.apply`, whether the add-on it enables is a comp or not). Absent = decided by `comp` / `uncomp`.
+   */
+  source?: typeof PROFILE_APPLY_SOURCE;
   /** SA-769: who and why, for the log line only. The audit row is the caller's (ADDON_COMPED). */
   actorId?: string;
   reason?: string;
@@ -81,6 +96,11 @@ export const UncompBilling = {
   UNBILLED: "UNBILLED",
 } as const;
 export type UncompBillingMode = (typeof UncompBilling)[keyof typeof UncompBilling];
+
+/** The two callers of `disableAddon`, each with its own source in the closed `AddonChangeSource` list (SA-788 A3). */
+export const ADMIN_DISABLE_SOURCE = "admin.disable" as const;
+export const PROFILE_APPLY_SOURCE = "profile.apply" as const;
+export type AddonDisableSource = typeof ADMIN_DISABLE_SOURCE | typeof PROFILE_APPLY_SOURCE;
 
 @Injectable()
 export class AddonService {
@@ -268,7 +288,7 @@ export class AddonService {
     // outside the lock.
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true, slug: true },
+      select: { id: true, slug: true, plan: true, planVersionId: true },
     });
     if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
 
@@ -295,10 +315,10 @@ export class AddonService {
     const lockKey = `addon:${tenantId}:${lockSku}`;
     // SA-769: a comp enable whose caller already holds this key (business-profile confirm) runs under that
     // lock; everything else - the admin route, a billed enable - takes it here, exactly as before.
-    const underLock: typeof withAdvisoryLock =
-      comp && opts?.lockHeld === true
-        ? async (_lockOpts, fn) => ({ acquired: true as const, value: await fn() })
-        : withAdvisoryLock;
+    const callerHoldsLock = comp && opts?.lockHeld === true;
+    const underLock: typeof withAdvisoryLock = callerHoldsLock
+      ? async (_lockOpts, fn) => ({ acquired: true as const, value: await fn() })
+      : withAdvisoryLock;
     try {
       const result = await underLock(
         { family: "billing", key: lockKey, mode: "wait", waitMs: 10_000 },
@@ -345,6 +365,38 @@ export class AddonService {
               throw new BadRequestException(
                 `Add-on "${addonKey}" has no catalog SKU to price — publish a catalog version defining "${sku}" before billing it`,
               );
+            }
+
+            // SA-786 S7 (owner ruling 2026-10-15): at a plan that INCLUDES the SKU the add-on is free once enabled, so a
+            // Stripe item on top would book a charge the plan already covers. Refused BEFORE any Stripe call or row
+            // write; without a price the enable proceeds below at $0. An unparseable includedAtPlan fails closed.
+            if (stripePriceId && skuDef) {
+              // SA-815a: judged by the tenant's own pinned catalog (sub pin, else tenant pin, else published). A SKU the
+              // pinned version predates falls back to the published definition (as the entitlement resolver does).
+              const { planKey, pinned } = await this.inclusionContextOf(
+                tenantId,
+                tenant,
+                published,
+              );
+              // SA-815e: the row's price is the SKU of the same pinned version (the published one when it lacks it)
+              const inclusionDef =
+                (await pricedAddonSku(this.catalog, pinned, sku, published)) ?? skuDef;
+              skuDef = inclusionDef;
+              const verdict =
+                inclusionDef.includedAtPlan != null
+                  ? inclusionOf(inclusionDef, planKey)
+                  : ({ kind: "NOT_INCLUDED" } as const);
+              if (verdict.kind === "CATALOG_INVALID") {
+                throw addonCatalogInvalidException(verdict.sku, verdict.value);
+              }
+              if (verdict.kind === "INCLUDED") {
+                const planName =
+                  pinned.definitions.find((d) => d.planKey === planKey)?.name ?? planKey;
+                throw new ConflictException({
+                  code: API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN,
+                  message: `This add-on is included in ${planName}. Enable it without a price.`,
+                });
+              }
             }
           }
 
@@ -445,8 +497,19 @@ export class AddonService {
             // #2188 / SA-385: an existing row — keyed by this legacy addonKey OR by the SKU a
             // self-serve/subscribe path wrote — is re-activated IN PLACE, by its OWN addonKey;
             // only when there is none is a new row created, under this path's (raw) key.
-            const row = await tx.tenantAddon.upsert({
-              where: { tenantId_addonKey: { tenantId, addonKey: current?.addonKey ?? addonKey } },
+            const row = await upsertAddonRowTx(tx, this.events, {
+              tenantId,
+              addonKey: current?.addonKey ?? addonKey,
+              actor: {
+                kind: "PLATFORM_ADMIN",
+                id: opts?.actorId ?? null,
+                source: (opts?.source ??
+                  (comp
+                    ? "admin.comp"
+                    : uncomp
+                      ? "admin.uncomp"
+                      : "admin.enable")) satisfies AddonChangeSource,
+              },
               create: {
                 tenantId,
                 addonKey,
@@ -533,6 +596,45 @@ export class AddonService {
   }
 
   /**
+   * The plan the tenant is on, resolved as everywhere in billing: the subscription's `planKey`, else the legacy
+   * `Tenant.plan` enum. Null when neither is known (then no add-on is "included").
+   */
+  /**
+   * SA-815a: what an inclusion judgment on this tenant needs - the plan it is on and the catalog it is pinned to
+   * (sub pin, else tenant pin, else published; `published` is reused when it is the resolved one).
+   */
+  private async inclusionContextOf(
+    tenantId: string,
+    tenant: { plan?: string | null; planVersionId?: string | null },
+    published: PlanVersionWithCatalog,
+  ): Promise<{ planKey: string | null; pinned: PlanVersionWithCatalog }> {
+    const sub = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: { planKey: true, planVersionId: true },
+    });
+    const planKey =
+      normalizePlanKey(sub?.planKey) ?? (tenant.plan ? planKeyFromEnum(tenant.plan) : null);
+    return { planKey, pinned: await inclusionCatalogFor(this.catalog, sub, tenant, published) };
+  }
+
+  private async currentPlanKeyOf(
+    tenantId: string,
+    tenantPlan?: string | null,
+  ): Promise<string | null> {
+    const sub = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: { planKey: true },
+    });
+    const fromSub = normalizePlanKey(sub?.planKey);
+    if (fromSub) return fromSub;
+    const plan =
+      tenantPlan ??
+      (await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { plan: true } }))
+        ?.plan;
+    return plan ? planKeyFromEnum(plan) : null;
+  }
+
+  /**
    * SA-693: turn an ACTIVE comp row back into a normal (non-comp) one. It NEVER silently starts billing:
    *  - tenant WITHOUT a Stripe subscription: only the flag flips (the row stays unbilled, price 0, as it
    *    was); the SA-690 checkout gate then treats it like any other unbilled self-serve row.
@@ -543,10 +645,10 @@ export class AddonService {
    * Takes the SAME advisory key as enableAddon and the self-serve path. Disable is a different path and
    * takes no lock (see `disableAddon`).
    */
-  async uncompAddon(tenantId: string, addonKey: string, stripePriceId?: string) {
+  async uncompAddon(tenantId: string, addonKey: string, stripePriceId?: string, actorId?: string) {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true, slug: true, name: true },
+      select: { id: true, slug: true, name: true, planVersionId: true },
     });
     if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
 
@@ -560,15 +662,33 @@ export class AddonService {
     }
 
     const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
+    // SA-786 S8: at a plan that INCLUDES the SKU the add-on is free, so un-comping only drops the comp marker: no
+    // price, no DUE notice, no Stripe re-entry (and no stripePriceId needed). An unparseable includedAtPlan fails
+    // closed (409, B1102).
+    const published = await this.catalog.getPublishedCatalog();
+    const catalogSku = published.addonSkus.find((k) => k.sku === lockSku) ?? null;
+    let includedHere = false;
+    // SA-815a / SA-815e: inclusion AND the price below are the tenant's own pinned catalog (sub pin, else tenant pin,
+    // else published); a SKU the pinned version predates falls back to the published definition.
+    const pinnedCatalog = await inclusionCatalogFor(this.catalog, sub, tenant, published);
+    const inclusionSku =
+      (await pricedAddonSku(this.catalog, pinnedCatalog, lockSku, published)) ?? catalogSku;
+    if (inclusionSku?.includedAtPlan != null) {
+      const verdict = inclusionOf(
+        inclusionSku,
+        normalizePlanKey(sub?.planKey) ?? (await this.currentPlanKeyOf(tenantId)),
+      );
+      if (verdict.kind === "CATALOG_INVALID") {
+        throw addonCatalogInvalidException(verdict.sku, verdict.value);
+      }
+      includedHere = verdict.kind === "INCLUDED";
+    }
     // A manually-invoiced tenant (externalPayment, no Stripe subscription): turning the comp off means
     // the owner now invoices it by hand, exactly like a self-serve enable there. Priced at the catalog
     // price and booked, with the same ADDON_MANUAL_INVOICE_DUE notice; without a catalog SKU it stays flag-only.
-    const manual = !sub?.stripeSubId && sub?.externalPayment === true;
-    const manualSkuDef = manual
-      ? ((await this.catalog.getPublishedCatalog()).addonSkus.find((k) => k.sku === lockSku) ??
-        null)
-      : null;
-    if (sub?.stripeSubId) {
+    const manual = !includedHere && !sub?.stripeSubId && sub?.externalPayment === true;
+    const manualSkuDef = manual ? inclusionSku : null;
+    if (!includedHere && sub?.stripeSubId) {
       // Without a configured Stripe the billed enable would write an ACTIVE, unbilled, non-comp row at 0
       // on a tenant that has a subscription: the exact silent state this method must never create.
       if (!this.stripe.isConfigured) {
@@ -587,6 +707,7 @@ export class AddonService {
       }
       const billedRow = await this.enableAddon(tenantId, addonKey, stripePriceId, true, {
         uncomp: true,
+        actorId,
       });
       return { addon: billedRow, billing: UncompBilling.STRIPE };
     }
@@ -603,13 +724,23 @@ export class AddonService {
                 `Add-on "${addonKey}" is not an active comp for tenant ${tenant.slug}`,
               );
             }
+            const actor = {
+              kind: "PLATFORM_ADMIN" as const,
+              id: actorId ?? null,
+              source: "admin.uncomp" as const,
+            };
             if (!manualSkuDef) {
-              return tx.tenantAddon.update({ where: { id: current.id }, data: { isComp: false } });
+              return updateAddonRowTx(tx, this.events, {
+                id: current.id,
+                data: { isComp: false },
+                actor,
+              });
             }
-            const price = Number(manualSkuDef.monthlyPrice);
-            const row = await tx.tenantAddon.update({
-              where: { id: current.id },
+            const price = roundMoney(Number(manualSkuDef.monthlyPrice));
+            const row = await updateAddonRowTx(tx, this.events, {
+              id: current.id,
               data: { isComp: false, priceSnapshot: price },
+              actor,
             });
             await emitAddonDelta(tx, this.events, {
               tenantId,
@@ -677,7 +808,14 @@ export class AddonService {
    * other than "already deleted" refuses the call so we never keep billing for
    * an add-on the tenant no longer has.
    */
-  async disableAddon(tenantId: string, addonKey: string) {
+  async disableAddon(
+    tenantId: string,
+    addonKey: string,
+    actorId?: string,
+    // SA-788 A3 / SA-822: the CALLER decides the record's source: the direct admin route passes ADMIN_DISABLE_SOURCE,
+    // a business-profile apply passes PROFILE_APPLY_SOURCE (both are in the closed source list).
+    source: AddonDisableSource = ADMIN_DISABLE_SOURCE,
+  ) {
     // Owner ruling 2026-09-28 / SA-540: a default-granted key is held with NO row, so disabling a
     // row would report success and remove nothing. Only a DENY override removes it — say so.
     if (DEFAULT_GRANTED_ADDON_FEATURES.some((f) => f.key === addonKey)) {
@@ -743,9 +881,14 @@ export class AddonService {
         // Already disabled by a concurrent call that won the race — nothing left to do.
         return current ?? addon;
       }
-      const row = await tx.tenantAddon.update({
-        where: { tenantId_addonKey: { tenantId, addonKey: addon.addonKey } },
+      const row = await updateAddonRowTx(tx, this.events, {
+        id: current.id,
         data: { active: false, stripeItemId: null },
+        actor: {
+          kind: "PLATFORM_ADMIN",
+          id: actorId ?? null,
+          source: source === PROFILE_APPLY_SOURCE ? "profile.apply" : "admin.disable",
+        },
       });
       // B865 / SA-277 FIX-6: the event's sku is the CANONICAL code (bridges a legacy addonKey
       // the same way subscription-mutation.service.ts's self-serve disable does), falling back
@@ -755,6 +898,7 @@ export class AddonService {
         sku: addonSkuCode(current) ?? addonCodeOf(addonKey),
         before: { priceSnapshot: current.priceSnapshot, quantity: current.quantity },
         after: { priceSnapshot: 0, quantity: 0 },
+        actorId,
       });
       return row;
     });

@@ -23,6 +23,8 @@ export interface CancelImpact {
   blockingPayments: Array<{ invoiceNumber: string; amount: number }>;
   /** B56: units already delivered on this order — > 0 refuses the cancel. */
   deliveredUnits: number;
+  /** B692: delivered / partly delivered with no quantity recorded (legacy rows) — refuses the cancel (409 ORDER_DELIVERY_QUANTITIES_MISSING). */
+  deliveryQuantitiesMissing?: boolean;
   canCancel: boolean;
 }
 

@@ -531,9 +531,13 @@ export class PaymentRequestsService {
   }
 
   /**
-   * Operator approves a declared cash payment: claim the row atomically, then
-   * write the money through recordStandalonePayment (oldest-first; anything
-   * above the balance becomes on-account credit, mirroring the AP flow).
+   * Operator approves a declared cash payment: the money is written through
+   * recordStandalonePayment (oldest-first; anything above the balance becomes on-account credit,
+   * mirroring the AP flow) and the request's PENDING -> APPROVED claim + paymentGroupId link is ONE
+   * compare-and-set INSIDE that same transaction (SA-818, row 615). The claim, the money and the link
+   * commit together or not at all: no pre-claim (a crash after it left APPROVED with no money) and no
+   * reopen-on-throw (a failure after the money committed reopened a paid request, so a second Approve
+   * credited twice).
    */
   async approve(requestId: string, decidedBy: { id: string; username: string }) {
     const tenantId = this.tenantContext.get();
@@ -544,23 +548,14 @@ export class PaymentRequestsService {
     if (request.kind !== "CASH") {
       throw new BadRequestException("Card payments settle from Stripe automatically.");
     }
+    // Friendly message only; the binding check is the CAS in the hook below.
+    if (request.status !== "PENDING") throw new BadRequestException("Request already decided");
 
-    const claimed = await this.prisma.buyerPaymentRequest.updateMany({
-      where: { id: requestId, tenantId, status: "PENDING" },
-      data: {
-        status: "APPROVED",
-        decidedById: decidedBy.id,
-        decidedByName: decidedBy.username,
-        decidedAt: new Date(),
-      },
-    });
-    if (claimed.count === 0) throw new BadRequestException("Request already decided");
-
+    const { allocations } = await this.buildOldestFirstAllocation(
+      request.customerId,
+      Number(request.amount),
+    );
     try {
-      const { allocations } = await this.buildOldestFirstAllocation(
-        request.customerId,
-        Number(request.amount),
-      );
       const result = await this.invoices.recordStandalonePayment(
         {
           customerId: request.customerId,
@@ -572,19 +567,43 @@ export class PaymentRequestsService {
           // Allocation computed outside the tx row locks — a stale preview must
           // roll back rather than overpay (carried from the #397 hardening).
         } as any,
-        { assertAllocationsWithinBalance: true },
+        {
+          assertAllocationsWithinBalance: true,
+          inTx: async (tx, paid) => {
+            // Every key defined: Prisma drops an undefined where key and would widen the write.
+            if (!requestId || !tenantId || !paid.paymentGroupId) {
+              throw new Error("approve: claim keys must be defined");
+            }
+            const claimed = await tx.buyerPaymentRequest.updateMany({
+              where: { id: requestId, tenantId, status: "PENDING" },
+              data: {
+                status: "APPROVED",
+                decidedById: decidedBy.id,
+                decidedByName: decidedBy.username,
+                decidedAt: new Date(),
+                paymentGroupId: paid.paymentGroupId,
+              },
+            });
+            // Lost the race (or the row moved): throwing rolls the money back with it.
+            if (claimed.count !== 1) throw new BadRequestException("Request already decided");
+          },
+        },
       );
-      await this.prisma.buyerPaymentRequest.update({
-        where: { id: requestId },
-        data: { paymentGroupId: result.paymentGroupId },
-      });
       return { approved: true, paymentGroupId: result.paymentGroupId, excess: result.excess };
     } catch (err) {
-      // Money write failed — reopen the request so the approval can be retried.
-      await this.prisma.buyerPaymentRequest.update({
-        where: { id: requestId },
-        data: { status: "PENDING", decidedById: null, decidedByName: null, decidedAt: null },
-      });
+      // A concurrent winner changes the invoices under this loser's preview, so it can fail on the
+      // balance guard before reaching the claim: report the real reason once the row is decided.
+      // If the re-read itself fails, fall through so the original error is not hidden.
+      let now: { status: string } | null = null;
+      try {
+        now = await this.prisma.buyerPaymentRequest.findFirst({
+          where: { id: requestId, tenantId },
+          select: { status: true },
+        });
+      } catch {
+        now = null;
+      }
+      if (now && now.status !== "PENDING") throw new BadRequestException("Request already decided");
       throw err;
     }
   }

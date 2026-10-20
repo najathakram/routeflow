@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>Sign in - RouteFlow ops</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body class="login-page">
+    <main class="login-card">
+      <h1 class="login-title">RouteFlow ops</h1>
+      <p class="login-lede">Enter the password to open the board.</p>
+      <form class="login-form" method="post" action="/login">
+        <label class="login-label" for="password">Password</label>
+        <input
+          class="login-input"
+          id="password"
+          name="password"
+          type="password"
+          autocomplete="current-password"
+          autofocus
+          required
+        />
+        <!--login-error-->
+        <button class="login-button" type="submit">Sign in</button>
+      </form>
+    </main>
+  </body>
+</html>

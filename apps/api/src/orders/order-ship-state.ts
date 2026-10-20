@@ -30,6 +30,11 @@ import { appendOrderRevisionInTx } from "./order-revisions";
 import { type buildStatusUpdateData, writeStatusIfUnchanged } from "./order-status-claim";
 import { billsAtShipment } from "./order-status-invoicing";
 import { stampDeliveredInFull } from "./delivered-stamp";
+import {
+  type OfficeDeliveryLine,
+  leavePartialDeliveryInTx,
+  recordPartialDeliveryInTx,
+} from "./order-pd-quantities";
 import { SHIP_STATE_REOPENED, SHIP_STATE_SOURCES, SHIP_STATE_UNMARKED } from "./ship-state-markers";
 
 export {
@@ -83,7 +88,11 @@ type ShipStateOrder = {
 export async function updateStatusWithShipMarker(
   { prisma, featureConfig }: ShipStateDeps,
   order: ShipStateOrder,
-  { status: to, reason }: { status: OrderStatus; reason?: string | null },
+  {
+    status: to,
+    reason,
+    deliveries,
+  }: { status: OrderStatus; reason?: string | null; deliveries?: readonly OfficeDeliveryLine[] },
   user: JwtPayload | undefined,
   data: ReturnType<typeof buildStatusUpdateData>,
 ) {
@@ -92,6 +101,23 @@ export async function updateStatusWithShipMarker(
     !source ||
     !(await billsAtShipment(featureConfig, order.tenantId ?? prisma.getTenantId(), order))
   ) {
+    if (to === OrderStatus.PARTIALLY_DELIVERED) {
+      // B692: a manual PARTIALLY_DELIVERED books its per-line quantities (or refuses) in the SAME tx as the status.
+      return prisma.tenantTransaction(async (tx) => {
+        const row = await writeStatusIfUnchanged(tx, order.id, order.status, data);
+        await recordPartialDeliveryInTx(tx, order.id, deliveries);
+        return row;
+      });
+    }
+    // Depends on shipStateMarker(PARTIALLY_DELIVERED -> OUT_FOR_DELIVERY) being null (pinned in b692-office-pd-quantities.spec.ts).
+    if (order.status === OrderStatus.PARTIALLY_DELIVERED && to === OrderStatus.OUT_FOR_DELIVERY) {
+      // B692: "Back out for delivery" on a legacy PD row (no quantities) is refused in the SAME tx as the status.
+      return prisma.tenantTransaction(async (tx) => {
+        const row = await writeStatusIfUnchanged(tx, order.id, order.status, data);
+        await leavePartialDeliveryInTx(tx, order.id, deliveries);
+        return row;
+      });
+    }
     if (to !== OrderStatus.DELIVERED) {
       return writeStatusIfUnchanged(prisma.forTenant(), order.id, order.status, data);
     }
@@ -104,6 +130,8 @@ export async function updateStatusWithShipMarker(
   }
   return prisma.tenantTransaction(async (tx) => {
     const row = await writeStatusIfUnchanged(tx, order.id, order.status, data);
+    if (to === OrderStatus.PARTIALLY_DELIVERED)
+      await recordPartialDeliveryInTx(tx, order.id, deliveries);
     // #3219 S1 (lead ruling): after ANY delivery, "Unmark shipped" never makes the order cancellable
     // again (the rest is still with the carrier): it records a reopen. Read in this transaction; a failed
     // read fails the change (closed), it is never guessed.
