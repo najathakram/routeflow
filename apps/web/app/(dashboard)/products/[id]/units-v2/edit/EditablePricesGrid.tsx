@@ -173,10 +173,13 @@ export function EditablePricesGrid({
               ref={editBtn}
               type="button"
               data-testid={T.btnEdit}
+              // Visible name stays "Edit" (the removed price-window opener owned "Edit prices"); the region heading in
+              // this row says what it edits.
+              aria-describedby={`units-v2-grid-title${sfx}`}
               className={BTN}
               onClick={() => d.startEditing()}
             >
-              Edit prices
+              Edit
             </button>
           )}
         </div>
