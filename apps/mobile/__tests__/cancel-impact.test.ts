@@ -92,6 +92,18 @@ describe("describeCancelImpact", () => {
     expect(copy.confirmLabel).toBeNull();
   });
 
+  it("B692 explains a refusal for a delivered order with no recorded quantities", () => {
+    const copy = describeCancelImpact({
+      ...base,
+      canCancel: false,
+      blockingPayments: [],
+      deliveredUnits: 0,
+      deliveryQuantitiesMissing: true,
+    } as any);
+    expect(copy.blockedReason).toBe("Delivery quantities are missing; set them before cancelling.");
+    expect(copy.confirmLabel).toBeNull();
+  });
+
   it("REG-B56 keeps the existing paid-block copy byte-identical when a payment blocks cancel", () => {
     const copy = describeCancelImpact({
       ...base,

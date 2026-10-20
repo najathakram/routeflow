@@ -25,13 +25,18 @@ describe("print surfaces — source pins (T11)", () => {
   });
 
   it("orders/[id]/page.tsx: printLoading state used at least 3x, printPdfBlob( called exactly once", () => {
-    const source = read("app/(dashboard)/orders/[id]/page.tsx");
+    // The page plus its extracted send-invoice modal (move-only split, 0320e6fd1), read as one source.
+    const source =
+      read("app/(dashboard)/orders/[id]/page.tsx") +
+      read("app/(dashboard)/orders/[id]/_components/SendInvoiceModal.tsx");
     expect(countOccurrences(source, "printLoading")).toBeGreaterThanOrEqual(3);
     expect(countOccurrences(source, "printPdfBlob(")).toBe(1);
   });
 
   it("orders/[id]/page.tsx: handleDownload and handlePrint fetch the PDF via the shared fetchPdfBlob, never bare apiClient against the storage URL (review finding F3)", () => {
-    const source = read("app/(dashboard)/orders/[id]/page.tsx");
+    const source =
+      read("app/(dashboard)/orders/[id]/page.tsx") +
+      read("app/(dashboard)/orders/[id]/_components/SendInvoiceModal.tsx");
     expect(source).toContain('import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";');
     // Two call sites (handleDownload + handlePrint) each go through fetchPdfBlob(meta.data.url, apiClient).
     expect(countOccurrences(source, "fetchPdfBlob(meta.data.url, apiClient)")).toBe(2);

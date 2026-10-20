@@ -1,5 +1,5 @@
 import { buildLadderView, planPriceChange, type LadderProduct } from "@routeflow/pricing";
-import { againstReason, movesAgainst, NO_REASON } from "./against-reason";
+import { againstReason, movesAgainst } from "./against-reason";
 
 // K11-17. The K9 fixture: Case $30.00 / Tier 2 $28.00 (both set), Piece Retail set $1.50, Piece Tier 2 Auto $1.40.
 const product = { unit: "Case", unitsPerBox: 24, pricePerUnit: "30.00", priceTier2: "28.00" };
@@ -42,7 +42,7 @@ describe("againstReason", () => {
         tierName,
       }),
     ).toBe(
-      'Follows Retail Piece $1.50, which you set. Tick "Also raise the prices you set" to move it.',
+      'Goes down: it follows Retail Piece $1.50, which you set and are not raising. Tick "Also raise the prices you set" to raise it.',
     );
   });
 
@@ -59,7 +59,9 @@ describe("againstReason", () => {
         also: false,
         tierName,
       }),
-    ).toContain('Tick "Also lower the prices you set"');
+    ).toBe(
+      'Goes up: it follows Retail Piece $1.50, which you set and are not lowering. Tick "Also lower the prices you set" to lower it.',
+    );
     expect(
       againstReason({
         view,
@@ -70,7 +72,7 @@ describe("againstReason", () => {
         also: true,
         tierName,
       }),
-    ).not.toContain("Tick");
+    ).toBe("Goes up: it follows Retail Piece $1.50, which you set.");
   });
 
   it("falls back to the plain sentence when no source can be derived", () => {
@@ -85,8 +87,7 @@ describe("againstReason", () => {
         also: false,
         tierName,
       }),
-    ).toBe(NO_REASON);
-    expect(NO_REASON).toBe("This price follows another price that is not moving.");
+    ).toBe("Goes down: it follows another price that is not moving.");
   });
 
   it("property: every row that goes the wrong way on this ladder gets a non-empty reason", () => {

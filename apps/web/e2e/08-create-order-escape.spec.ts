@@ -202,6 +202,21 @@ async function mockDraft(page: Page, orderDate: string, patched: unknown[] = [])
 
 const SKIP_REASON = "Draft resume not present in this web build (pre-deploy)";
 
+/**
+ * The resumed draft carries made-up ids (e2e-cust-1 / e2e-prod-1). With `flag.units_prices_v2` served,
+ * Create Order waits on that customer's price layer (SA-813 M3) and the layer read of a customer that
+ * does not exist fails, so the button would stay disabled. This spec is about the backdate/merge
+ * rule, not prices: show the browser the subscription without the flag (it is read client-side).
+ */
+async function stripPricesV2Flag(page: Page) {
+  await page.route("**/billing/subscription*", async (route) => {
+    const res = await route.fetch();
+    const body = (await res.json()) as { flags?: string[] };
+    body.flags = (body.flags ?? []).filter((f) => f !== "flag.units_prices_v2");
+    await route.fulfill({ response: res, json: body });
+  });
+}
+
 /** Opens the builder on a resumed draft; false when the build predates the flow. */
 async function resumeDraft(page: Page): Promise<boolean> {
   await page.goto(`/orders?resumeDraft=${DRAFT_ID}`);
@@ -250,6 +265,7 @@ test.describe("Operator — order date survives a parked draft (WP-4)", () => {
     page,
   }) => {
     await mockDraft(page, BACKDATE);
+    await stripPricesV2Flag(page);
     await page.route(/\/api\/v1\/orders\/active(\?.*)?$/, (route) =>
       fulfillJson(route, {
         id: "e2e-open-order-1",

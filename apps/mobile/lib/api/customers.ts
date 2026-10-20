@@ -179,7 +179,8 @@ export function useCreateAdvancePayment() {
  * `amount` applies min(wallet balance, invoice balance). Server guards
  * (verbatim): "Advance payment has no remaining balance", "Cannot apply
  * advance payment to invoice with status <S>", "Invoice has no outstanding
- * balance". ⚠️ Its status recompute is inline and does NOT preserve DRAFT —
+ * balance"; a 400 with code ADVANCE_CUSTOMER_MISMATCH when the invoice is
+ * another customer's, a 404 when the advance is not this customer's. ⚠️ Its status recompute is inline and does NOT preserve DRAFT —
  * gate the UI to SENT/VIEWED/PARTIAL/OVERDUE so a draft is never silently
  * flipped. Returns the UPDATED INVOICE.
  */
