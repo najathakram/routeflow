@@ -112,6 +112,8 @@ const savedPrices = (page: Page) =>
  * their opener; what they proved about the SAVE (one S9 write, no unit PATCH price, Details sends no price key, Undo,
  * dirty Cancel asks) is re-pinned below against the inline editor.
  */
+// T2 (geometry) and T7 (reduced motion): window unreachable on v2 product page; covered in PriceWindowHost.test.tsx
+// until the owner's two-price-editors decision.
 for (const vp of VIEWPORTS) {
   test.describe(`K11-20c one price editor, the inline grid @ ${vp.name}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });

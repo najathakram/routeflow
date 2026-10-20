@@ -393,3 +393,105 @@ describe("K11-20c region: the prices grid is full width only while the inline ed
     expect(region()).not.toHaveAttribute("data-wide");
   });
 });
+
+/**
+ * R3 (lead ruling a): the floating window has no opener on the v2 product page, so the e2e geometry (old T2) and
+ * reduced-motion (old T7) tests were retired with it. These are their jsdom equivalents, until the owner's
+ * two-price-editors decision: the window is placed from the card's rect inside the viewport, shows all five tiers,
+ * and under prefers-reduced-motion carries no scale/slide classes.
+ */
+describe("R3 floating window: geometry and motion (jsdom equivalents of old e2e T2 and T7)", () => {
+  const original = window.matchMedia;
+  const stubMedia = (reduce: boolean) => {
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes("prefers-reduced-motion") ? reduce : query.includes("min-width"),
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia;
+  };
+  afterEach(() => {
+    window.matchMedia = original;
+    jest.restoreAllMocks();
+  });
+
+  const rect = (r: Partial<DOMRect>) => ({ x: 0, y: 0, width: 0, height: 0, ...r }) as DOMRect;
+  const openWindow = () => {
+    const card = document.createElement("section");
+    card.textContent = "card";
+    const origin = document.createElement("button");
+    origin.textContent = "origin";
+    document.body.append(card, origin);
+    jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this === card) return rect({ left: 300, right: 1000, top: 100, bottom: 500 });
+      if (this === origin)
+        return rect({ left: 900, right: 980, top: 120, bottom: 150, width: 80, height: 30 });
+      return rect({});
+    });
+    jest.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(800);
+    jest.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(400);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
+    mount();
+    act(() => opener!.open({ origin, anchor: card, focus: { ref: "case", tier: 2 } }));
+    return { card, origin };
+  };
+
+  it("T2: hung off the card (right edges meet), inside the viewport margins, capped to the viewport", async () => {
+    stubMedia(false);
+    const { card, origin } = openWindow();
+    const dialog = await screen.findByRole("dialog", { name: "Edit prices" });
+    const left = parseInt(dialog.style.left, 10);
+    const top = parseInt(dialog.style.top, 10);
+    expect(left + 800).toBe(1000); // right-aligned to the card, as the e2e asserted within 1 px
+    expect(left).toBeGreaterThanOrEqual(16);
+    expect(left + 800).toBeLessThanOrEqual(1440 - 16);
+    expect(top).toBe(158); // 8 px below what opened it
+    expect(top + 400).toBeLessThanOrEqual(900 - 24);
+    expect(dialog.className).toContain("w-[min(860px,calc(100vw-32px))]");
+    expect(dialog.className).toContain("max-h-[min(40rem,calc(100dvh-48px))]");
+    card.remove();
+    origin.remove();
+  });
+
+  it("T2: all five tiers have a price box in the window's grid", async () => {
+    stubMedia(false);
+    const { card, origin } = openWindow();
+    const dialog = await screen.findByRole("dialog", { name: "Edit prices" });
+    act(() => {
+      draft!.startEditing(undefined, "window");
+    });
+    for (const tier of [1, 2, 3, 4, 5]) {
+      expect(
+        dialog.querySelector(`[data-testid^="units-v2-input-"][data-testid$="-${tier}"]`),
+      ).not.toBeNull();
+    }
+    card.remove();
+    origin.remove();
+  });
+
+  it("T7: under reduced motion the panel has no scale or slide class (opacity only)", async () => {
+    stubMedia(true);
+    const { card, origin } = openWindow();
+    const dialog = await screen.findByRole("dialog", { name: "Edit prices" });
+    expect(dialog.className).not.toMatch(/zoom-in|slide-in-from/);
+    expect(dialog.className).toContain("fade-in-0");
+    card.remove();
+    origin.remove();
+  });
+
+  it("T7 control: without reduced motion the panel does zoom in", async () => {
+    stubMedia(false);
+    const { card, origin } = openWindow();
+    const dialog = await screen.findByRole("dialog", { name: "Edit prices" });
+    expect(dialog.className).toContain("zoom-in-[0.97]");
+    card.remove();
+    origin.remove();
+  });
+});
