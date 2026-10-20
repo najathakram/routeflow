@@ -493,6 +493,12 @@ function AdjustStockModal({
     (form.reason !== "OTHER" ||
       (noteLen >= ADJUSTMENT_REASON_NOTE_MIN && noteLen <= ADJUSTMENT_REASON_NOTE_MAX));
 
+  const reasonProblem = reasonOk
+    ? null
+    : form.reason === ""
+      ? "Pick a reason."
+      : "Add a note for Other.";
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!reasonOk) return;
@@ -672,6 +678,11 @@ function AdjustStockModal({
             />
           )}
 
+          {reasonProblem && form.quantity.trim() !== "" && (
+            <p className="text-right text-xs text-navy/70" data-testid="adjust-save-hint">
+              {reasonProblem}
+            </p>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" onClick={onClose} type="button">
               Cancel

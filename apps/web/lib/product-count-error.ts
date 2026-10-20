@@ -1,7 +1,8 @@
 import { API_ERROR_CODES } from "@routeflow/types";
 import { genericToastCopy } from "./generic-toast-copy";
+import { COUNT_WHOLE_NUMBER_COPY } from "./product-count";
 
-export const COUNT_FRACTIONAL_PACK_COPY = "Count whole packs, or switch to pieces.";
+export const COUNT_FRACTIONAL_PACK_COPY = COUNT_WHOLE_NUMBER_COPY;
 
 /**
  * The inline line for a failed count. The filed-period refusal names the period, so its server

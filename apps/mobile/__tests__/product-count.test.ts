@@ -1,5 +1,7 @@
 import {
   buildCountRequest,
+  formatStockQty,
+  unitDisplayLabel,
   countUnitOptions,
   previewLine,
   previewPieces,
@@ -53,8 +55,19 @@ describe("preview", () => {
   });
   it("ADJUST shows the arithmetic and may go negative", () => {
     const f = { ...base, mode: "ADJUST" as const, quantity: "1" };
-    expect(previewLine(f, opts, 10)).toBe("Stock will be 10 − 12 = -2 pcs");
+    expect(previewLine(f, opts, 10)).toBe("Stock will be 10 − 12 = −2 pcs");
     expect(resultingStock({ ...f, sign: "+" }, opts, 10)).toBe(22);
+  });
+  it("uses a true minus sign for negative stock throughout", () => {
+    const f = { ...base, quantity: "1", unit: "Piece" };
+    expect(previewLine(f, opts, -5)).toBe("Stock will be 1 pcs (was −5)");
+    expect(formatStockQty(-1234)).toBe("−1,234");
+    expect(formatStockQty(1234)).toBe("1,234");
+  });
+  it("shows the factor-1 Piece as pcs in display text only", () => {
+    expect(unitDisplayLabel({ label: "Piece", factor: 1 })).toBe("pcs");
+    expect(unitDisplayLabel({ label: "Case", factor: 12 })).toBe("Case");
+    expect(opts[1].label).toBe("Piece");
   });
   it("has nothing to show for a blank quantity", () => {
     expect(previewLine({ ...base, quantity: "" }, opts, 10)).toBeNull();
@@ -65,14 +78,16 @@ describe("validateCount", () => {
   it("accepts a good form", () => expect(validateCount(base, opts)).toBeNull());
   it("refuses a fractional packed unit but allows fractional pieces", () => {
     expect(validateCount({ ...base, quantity: "1.5" }, opts)).toBe(
-      "Count whole cases, or switch to pieces.",
+      "Use a whole number, or switch to pcs.",
     );
     expect(validateCount({ ...base, quantity: "1.5", unit: "Piece" }, opts)).toBeNull();
   });
   it("needs a reason, and a 3+ character note for Other", () => {
-    expect(validateCount({ ...base, reason: "" }, opts)).toMatch(/reason/);
-    expect(validateCount({ ...base, reason: "OTHER" }, opts)).toMatch(/note/);
-    expect(validateCount({ ...base, reason: "OTHER", note: "ab" }, opts)).toMatch(/note/);
+    expect(validateCount({ ...base, reason: "" }, opts)).toBe("Pick a reason.");
+    expect(validateCount({ ...base, reason: "OTHER" }, opts)).toBe("Add a note for Other.");
+    expect(validateCount({ ...base, reason: "OTHER", note: "ab" }, opts)).toBe(
+      "Add a note for Other.",
+    );
     expect(validateCount({ ...base, reason: "OTHER", note: "lost" }, opts)).toBeNull();
   });
   it("SET allows zero, ADJUST does not, negatives never", () => {

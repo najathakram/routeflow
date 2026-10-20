@@ -13,7 +13,9 @@ import {
   buildCountRequest,
   countUnitOptions,
   previewLine,
+  formatStockQty,
   todayISO,
+  unitDisplayLabel,
   validateCount,
   type CountForm,
   type CountMode,
@@ -86,7 +88,7 @@ export function CountAdjustModal({
     count.mutate(buildCountRequest(f), {
       onSuccess: (res) => {
         toast({
-          title: `Stock updated to ${res.stockAfter.toLocaleString("en-US")} pcs`,
+          title: `Stock updated to ${formatStockQty(res.stockAfter)} pcs`,
           variant: "success",
         });
         onClose();
@@ -147,27 +149,38 @@ export function CountAdjustModal({
               onChange={(e) => patch({ quantity: e.target.value })}
               className={INPUT}
               placeholder="0"
+              aria-describedby="count-preview count-inline-error"
             />
-            <select
-              aria-label="Unit"
-              value={unit}
-              onChange={(e) => patch({ unit: e.target.value })}
-              className={`${INPUT} !w-auto min-w-[6rem]`}
-            >
-              {options.map((o) => (
-                <option key={o.label} value={o.label}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            {options.length > 1 ? (
+              <select
+                aria-label="Unit"
+                value={unit}
+                onChange={(e) => patch({ unit: e.target.value })}
+                className={`${INPUT} !w-auto min-w-[6rem]`}
+              >
+                {options.map((o) => (
+                  <option key={o.label} value={o.label}>
+                    {unitDisplayLabel(o)}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="flex items-center px-2 text-sm text-navy" data-testid="count-unit">
+                {options[0] ? unitDisplayLabel(options[0]) : ""}
+              </span>
+            )}
           </div>
           {inlineError && (
-            <p role="alert" className="mt-1 text-xs text-red-600">
+            <p id="count-inline-error" role="alert" className="mt-1 text-xs text-red-600">
               {inlineError}
             </p>
           )}
           {preview && !inlineError && (
-            <p className="mt-1 text-xs font-medium text-navy" data-testid="count-preview">
+            <p
+              id="count-preview"
+              className="mt-1 text-xs font-medium text-navy"
+              data-testid="count-preview"
+            >
               {preview}
             </p>
           )}
@@ -239,6 +252,11 @@ export function CountAdjustModal({
           </p>
         )}
 
+        {problem && f.quantity.trim() !== "" && !inlineError && (
+          <p className="text-right text-xs text-navy/70" data-testid="count-save-hint">
+            {problem}
+          </p>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel

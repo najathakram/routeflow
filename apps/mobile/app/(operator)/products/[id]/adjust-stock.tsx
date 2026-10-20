@@ -15,9 +15,12 @@ import {
   buildCountRequest,
   countUnitOptions,
   previewLine,
+  formatStockQty,
+  unitDisplayLabel,
   validateCount,
   type CountForm,
 } from "../../../../lib/product-count";
+import { countErrorText } from "../../../../lib/product-count-error";
 import { showToast } from "../../../../lib/toast";
 
 /** SA-828 (row 657): count the stock, or adjust it by an amount, in any of the product's units. */
@@ -67,10 +70,10 @@ export default function AdjustStockScreen() {
     setServerError(null);
     mut.mutate(buildCountRequest(f), {
       onSuccess: (res) => {
-        showToast(`Stock updated to ${Number(res.stockAfter).toLocaleString("en-US")} pcs`);
+        showToast(`Stock updated to ${formatStockQty(Number(res.stockAfter))} pcs`);
         router.back();
       },
-      onError: (e: any) => setServerError(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: unknown) => setServerError(countErrorText(e)),
     });
   };
 
@@ -86,10 +89,10 @@ export default function AdjustStockScreen() {
         {product && (
           <View style={styles.currentRow}>
             <Text style={styles.currentLabel}>Current stock</Text>
-            <Text style={styles.currentValue}>{currentStock.toLocaleString("en-US")} pcs</Text>
+            <Text style={styles.currentValue}>{formatStockQty(currentStock)} pcs</Text>
           </View>
         )}
-        <View style={styles.chips}>
+        <View style={styles.chips} accessibilityRole="radiogroup">
           {(["SET", "ADJUST"] as const).map((m) => (
             <Chip
               key={m}
@@ -120,23 +123,27 @@ export default function AdjustStockScreen() {
           </View>
         </FormField>
         {options.length > 1 && (
-          <View style={styles.chips}>
+          <View style={styles.chips} accessibilityRole="radiogroup">
             {options.map((o) => (
               <Chip
                 key={o.label}
-                label={o.label}
+                label={unitDisplayLabel(o)}
                 active={unit === o.label}
                 onPress={() => patch({ unit: o.label })}
               />
             ))}
           </View>
         )}
-        {inlineError ? <Text style={styles.error}>{inlineError}</Text> : null}
+        {inlineError ? (
+          <Text style={styles.error} accessibilityLiveRegion="polite">
+            {inlineError}
+          </Text>
+        ) : null}
         {preview && !inlineError ? <Text style={styles.preview}>{preview}</Text> : null}
       </FormSection>
 
       <FormSection title="Reason">
-        <View style={styles.chips}>
+        <View style={styles.chips} accessibilityRole="radiogroup">
           {(Object.keys(ADJUSTMENT_REASON_LABELS) as AdjustmentReason[]).map((r) => (
             <Chip
               key={r}
@@ -163,7 +170,11 @@ export default function AdjustStockScreen() {
         </FormField>
       </FormSection>
 
-      {serverError ? <Text style={styles.error}>{serverError}</Text> : null}
+      {serverError ? (
+        <Text style={styles.error} accessibilityLiveRegion="polite">
+          {serverError}
+        </Text>
+      ) : null}
 
       <View style={styles.helpRow}>
         <Ionicons name="information-circle-outline" size={14} color={ios.label2} />
@@ -178,8 +189,8 @@ function Chip({ label, active, onPress }: { label: string; active: boolean; onPr
     <Pressable
       style={[styles.chip, active ? styles.chipActive : styles.chipInactive]}
       onPress={onPress}
-      accessibilityRole="button"
-      accessibilityState={{ selected: active }}
+      accessibilityRole="radio"
+      accessibilityState={{ checked: active }}
     >
       <Text style={[styles.chipText, active ? styles.chipTextActive : styles.chipTextInactive]}>
         {label}

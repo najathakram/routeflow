@@ -19,6 +19,8 @@ export interface CountUnitOption {
   factor: number;
 }
 
+export const COUNT_WHOLE_NUMBER_COPY = "Use a whole number, or switch to pcs.";
+
 export type CountMode = "SET" | "ADJUST";
 
 export interface CountForm {
@@ -56,7 +58,18 @@ export function previewPieces(quantity: number, factor: number): number {
   return Math.round(quantity * factor * 1e6) / 1e6;
 }
 
-const pcs = (n: number) => `${n.toLocaleString("en-US")} pcs`;
+/** A stock number for display: thousands separators and a true minus sign (U+2212) for negatives. */
+export function formatStockQty(n: number): string {
+  const body = Math.abs(n).toLocaleString("en-US");
+  return n < 0 ? `\u2212${body}` : body;
+}
+
+const pcs = (n: number) => `${formatStockQty(n)} pcs`;
+
+/** The unit as shown in text: the factor-1 "Piece" reads "pcs" (the request still sends the label). */
+export function unitDisplayLabel(opt: CountUnitOption): string {
+  return opt.factor === 1 && opt.label === "Piece" ? "pcs" : opt.label;
+}
 
 /** The stock the count would leave, or null while the form has no usable quantity. */
 export function resultingStock(
@@ -72,7 +85,7 @@ export function resultingStock(
   return previewPieces(form.sign === "-" ? currentStock - pieces : currentStock + pieces, 1);
 }
 
-/** "Stock will be 36 pcs (was 10)" / "Stock will be 10 − 12 = -2 pcs"; null when there is nothing to show. */
+/** "Stock will be 36 pcs (was 10)" / "Stock will be 10 − 12 = −2 pcs"; null when there is nothing to show. */
 export function previewLine(
   form: Pick<CountForm, "mode" | "sign" | "quantity" | "unit">,
   options: CountUnitOption[],
@@ -81,11 +94,11 @@ export function previewLine(
   const after = resultingStock(form, options, currentStock);
   if (after === null) return null;
   if (form.mode === "SET")
-    return `Stock will be ${pcs(after)} (was ${currentStock.toLocaleString("en-US")})`;
+    return `Stock will be ${pcs(after)} (was ${formatStockQty(currentStock)})`;
   const opt = options.find((o) => o.label === form.unit) as CountUnitOption;
   const pieces = previewPieces(parseQuantity(form.quantity) as number, opt.factor);
   const op = form.sign === "-" ? "−" : "+";
-  return `Stock will be ${currentStock.toLocaleString("en-US")} ${op} ${pieces.toLocaleString("en-US")} = ${pcs(after)}`;
+  return `Stock will be ${formatStockQty(currentStock)} ${op} ${formatStockQty(pieces)} = ${pcs(after)}`;
 }
 
 function parseQuantity(text: string): number | null {
@@ -103,13 +116,12 @@ export function validateCount(form: CountForm, options: CountUnitOption[]): stri
   if (!opt) return "Pick a unit.";
   if (qty < 0) return "Enter zero or more. Use Adjust to take stock off.";
   if (form.mode === "ADJUST" && qty === 0) return "Enter a quantity above zero.";
-  if (opt.factor > 1 && !Number.isInteger(qty))
-    return `Count whole ${opt.label.toLowerCase()}s, or switch to pieces.`;
+  if (opt.factor > 1 && !Number.isInteger(qty)) return COUNT_WHOLE_NUMBER_COPY;
   if (!form.reason) return "Pick a reason.";
   if (form.reason === "OTHER") {
     const n = form.note.trim().length;
     if (n < ADJUSTMENT_REASON_NOTE_MIN || n > ADJUSTMENT_REASON_NOTE_MAX)
-      return `Add a note of ${ADJUSTMENT_REASON_NOTE_MIN} to ${ADJUSTMENT_REASON_NOTE_MAX} characters.`;
+      return "Add a note for Other.";
   }
   return null;
 }
