@@ -13,6 +13,7 @@
  */
 
 import { componentPriceText, invoiceLineQtyText } from "@routeflow/pricing";
+import type { InvoiceDisplayLines } from "@routeflow/pricing";
 import type { LineComponentView } from "@routeflow/types";
 
 /** Mirrors `invoice-pdf-template.tsx`'s own `DecimalLike` — a Prisma Decimal, a plain
@@ -117,5 +118,72 @@ export function pdfSubLine(view: LineComponentView, barcodeDataUri: string | nul
     barcodeDataUri,
     qtyText: `x ${view.qty}`,
     priceText: componentPriceText(view.displayUnitPrice4),
+  };
+}
+
+/** SA-827: a piece price at 4 dp ("$2.0005"). The ONE formatter for the PDF's display units; money is never computed here. */
+export function pieceUnitPriceText(n: number): string {
+  return `$${n.toFixed(4)}`;
+}
+
+const amountText = (n: number): string => `$${n.toFixed(2)}`;
+
+/** One component row of a components-layout line. */
+export interface PdfDisplayRow {
+  name: string;
+  unitSku: string | null;
+  barcodeText: string | null;
+  barcodeDataUri: string | null;
+  qtyText: string;
+  priceText: string;
+  amountText: string;
+}
+
+/** What the template renders for one item: its own today row, or the SA-827 piece/component layouts. */
+export type PdfItemDisplay =
+  | { layout: "today" }
+  | { layout: "pieces"; qtyText: string; priceText: string; hideOriginalPrice: true }
+  | {
+      layout: "components";
+      rows: PdfDisplayRow[];
+      group: { description: string; amountText: string };
+      categoryTax: { label: string; amountText: string } | null;
+    };
+
+/**
+ * SA-827: maps an `invoiceDisplayLines` value to the template's row objects. Every number comes from `lines`;
+ * this only formats. `barcodes` maps componentProductId -> rendered barcode data URI (I/O done by the caller).
+ */
+export function pdfItemDisplay(
+  lines: InvoiceDisplayLines,
+  barcodes?: ReadonlyMap<string, string | null>,
+): PdfItemDisplay {
+  if (lines.layout === "today") return { layout: "today" };
+  if (lines.layout === "pieces") {
+    return {
+      layout: "pieces",
+      qtyText: `${lines.qty} ${lines.unitLabel}`,
+      priceText: pieceUnitPriceText(lines.unitPrice),
+      hideOriginalPrice: true,
+    };
+  }
+  return {
+    layout: "components",
+    rows: lines.rows.map((r) => ({
+      name: r.name,
+      unitSku: r.unitSku,
+      barcodeText: r.unitBarcode,
+      barcodeDataUri: barcodes?.get(r.componentProductId) ?? null,
+      qtyText: `${r.qty} ${r.unitLabel}`,
+      priceText: pieceUnitPriceText(r.unitPrice),
+      amountText: amountText(r.amount),
+    })),
+    group: {
+      description: lines.groupTotal.description,
+      amountText: amountText(lines.groupTotal.amount),
+    },
+    categoryTax: lines.categoryTax
+      ? { label: lines.categoryTax.label, amountText: amountText(lines.categoryTax.amount) }
+      : null,
   };
 }
