@@ -45,12 +45,11 @@ import {
 } from "@routeflow/pricing";
 import { computeDepositFields } from "./deposit-fields";
 import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-read";
-import { withComponentViews } from "../orders/component-view";
 import {
   clearIssueDisplayUnits,
+  freezeDraftIssueUnits,
   itemsWithDisplayUnits,
   resolveDraftIssueUnits,
-  resolveIssueDisplayUnits,
   writeIssueDisplayUnits,
 } from "./invoice-display-unit";
 import {
@@ -2587,12 +2586,8 @@ export class InvoicesService {
             payments: true,
           },
         });
-        // SA-827: the inline flip has no tx: resolve and write on the same client (errors swallowed, line reads legacy).
-        await writeIssueDisplayUnits(
-          this.prisma,
-          issued.id,
-          await resolveIssueDisplayUnits(this.prisma, tenantId, issued.id, this.entitlements),
-        );
+        // SA-827: no tx on the inline flip: resolve and write on one client (errors swallowed, line reads legacy).
+        await freezeDraftIssueUnits(this.prisma, this.prisma, issued, this.entitlements);
         return [issued];
       }
     }
@@ -3049,11 +3044,7 @@ export class InvoicesService {
         (await this.resolveTenantInvoiceDefaults()).timezone,
       ),
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
-      items: await itemsWithDisplayUnits(
-        this.prisma.forTenant(),
-        { ...inv, items: withComponentViews(inv.items) as typeof inv.items },
-        this.entitlements,
-      ), // #2717 M3 + SA-827
+      items: await itemsWithDisplayUnits(this.prisma.forTenant(), inv, this.entitlements), // #2717 M3 + SA-827
       hideOriginalPrice,
       paidAtSale: isPaidAtSale(inv), // row 401: a counter sale paid at the till shows no due date / terms
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
@@ -3527,8 +3518,7 @@ export class InvoicesService {
             where: { id },
             data: { status: nextStatus, sentAt: new Date() },
           });
-          if (locked.status === InvoiceStatus.DRAFT && units)
-            await writeIssueDisplayUnits(tx, id, units);
+          await writeIssueDisplayUnits(tx, id, locked.status === "DRAFT" ? units : null);
           // B108: make the "send() catches up" comment above actually true. An
           // operator's explicit-amount OrderCreditNote intents are settled HERE,
           // at their recorded amount, before the oldest-first sweep runs.
@@ -4124,8 +4114,7 @@ export class InvoicesService {
         where: { id },
         data: { status: InvoiceStatus.DRAFT, sentAt: null, pdfUrl: null },
       });
-      // SA-827: a DRAFT renders live, so the snapshot is cleared and a re-issue freezes afresh.
-      await clearIssueDisplayUnits(tx, id);
+      await clearIssueDisplayUnits(tx, id); // SA-827: a DRAFT renders live; a re-issue freezes afresh
       await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
       return reverted;
     });
@@ -4839,19 +4828,8 @@ export class InvoicesService {
           ...(wasDraft ? { sentAt: new Date() } : {}),
         },
       });
-      // SA-827: a finalized DRAFT freezes its display unit once.
-      if (wasDraft && inv.tenantId) {
-        // catalog reads on a separate connection (never `tx`); the invoice's own rows through `tx`, since the caller may
-        // have created them in this uncommitted tx; written in the caller's tx under the display savepoint
-        const units = await resolveIssueDisplayUnits(
-          this.prisma.forTenant(),
-          inv.tenantId,
-          inv.id,
-          this.entitlements,
-          tx,
-        );
-        await writeIssueDisplayUnits(tx, inv.id, units);
-      }
+      if (wasDraft)
+        await freezeDraftIssueUnits(this.prisma.forTenant(), tx, inv, this.entitlements); // SA-827
       await this.commissionEngine.syncInvoiceCommissionSafe(inv.id, tx);
       after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: inv.id,

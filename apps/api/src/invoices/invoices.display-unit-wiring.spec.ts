@@ -19,6 +19,7 @@ jest.mock("./invoice-display-unit", () => {
     itemsWithDisplayUnits: jest.fn(),
     resolveIssueDisplayUnits: jest.fn(),
     writeIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
+    freezeDraftIssueUnits: jest.fn().mockResolvedValue(undefined),
     clearIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
   };
 });
@@ -46,6 +47,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 
 import {
   clearIssueDisplayUnits,
+  freezeDraftIssueUnits,
   itemsWithDisplayUnits,
   resolveDraftIssueUnits,
   resolveIssueDisplayUnits,
@@ -192,13 +194,14 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
     );
   });
 
-  it("markSent: a locked SENT row writes nothing even when units were resolved (a re-send never rewrites)", async () => {
+  it("markSent: a locked SENT row hands null units to the writer even when units were resolved (a re-send never rewrites)", async () => {
     const sent = fixture(InvoiceStatus.SENT);
     prisma.invoice.findUnique.mockResolvedValue(sent);
     prisma.invoice.update.mockResolvedValue(sent);
     await service.send(INVOICE_ID);
     expect(resolveDraftIssueUnits).toHaveBeenCalledTimes(1);
-    expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
+    expect(writeIssueDisplayUnits).toHaveBeenCalledTimes(1);
+    expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][2]).toBeNull();
   });
 
   it("markSent: a DRAFT whose resolve returned null writes nothing", async () => {
@@ -207,7 +210,7 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
     prisma.invoice.findUnique.mockResolvedValue(draft);
     prisma.invoice.update.mockResolvedValue({ ...draft, status: InvoiceStatus.SENT });
     await service.send(INVOICE_ID);
-    expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
+    expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][2]).toBeNull();
   });
 
   describe("recordDeliveryPaymentInTx (wasDraft)", () => {
@@ -233,28 +236,21 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
     const run = () =>
       (service as any).recordDeliveryPaymentInTx(prisma, new AfterCommit(), ["ord-1"], 100, "CASH");
 
-    it("a finalized DRAFT resolves on a separate (non-tx) client and writes in the caller's tx", async () => {
+    it("a finalized DRAFT freezes: catalog on a separate (non-tx) client, own rows + write in the caller's tx", async () => {
       arm(InvoiceStatus.DRAFT);
       await run();
-      expect(resolveIssueDisplayUnits).toHaveBeenCalledTimes(1);
-      const [readDb, tenantId, invoiceId, , ownRowsDb] = (resolveIssueDisplayUnits as jest.Mock)
-        .mock.calls[0];
+      expect(freezeDraftIssueUnits).toHaveBeenCalledTimes(1);
+      const [readDb, tx, inv, entitlements] = (freezeDraftIssueUnits as jest.Mock).mock.calls[0];
       expect(readDb).toBe(prisma.forTenant());
-      expect(tenantId).toBe(TENANT_ID);
-      expect(invoiceId).toBe(INVOICE_ID);
-      // the invoice's own rows are read through the caller's tx (it may have created them, uncommitted)
-      expect(ownRowsDb).toBe(prisma);
-      expect(writeIssueDisplayUnits).toHaveBeenCalledTimes(1);
-      expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][0]).toBe(prisma); // the caller's tx
-      expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][1]).toBe(INVOICE_ID);
-      expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][2]).toBe(UNITS);
+      expect(tx).toBe(prisma); // the caller's tx
+      expect(inv).toMatchObject({ id: INVOICE_ID, tenantId: TENANT_ID });
+      expect(entitlements).toBe((service as any).entitlements);
     });
 
-    it("an already issued invoice makes zero resolve calls and no write", async () => {
+    it("an already issued invoice makes no freeze call", async () => {
       arm(InvoiceStatus.SENT);
       await run();
-      expect(resolveIssueDisplayUnits).not.toHaveBeenCalled();
-      expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
+      expect(freezeDraftIssueUnits).not.toHaveBeenCalled();
     });
   });
 
@@ -327,15 +323,13 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
       const out = (await service.createInvoiceFromOrderWithTenant("ord-issue", TENANT_ID)) as any[];
 
       expect(out[0].status).toBe(InvoiceStatus.SENT);
-      expect(resolveIssueDisplayUnits).toHaveBeenCalledTimes(1);
-      const [readDb, tenantId, invoiceId] = (resolveIssueDisplayUnits as jest.Mock).mock.calls[0];
-      expect(tenantId).toBe(TENANT_ID);
-      expect(invoiceId).toBe("inv-issue-1");
-      expect(writeIssueDisplayUnits).toHaveBeenCalledTimes(1);
-      const [writeDb, id, units] = (writeIssueDisplayUnits as jest.Mock).mock.calls[0];
-      expect(writeDb).toBe(readDb); // the same client: no tx, so no savepoint
-      expect(id).toBe("inv-issue-1");
-      expect(units).toBe(UNITS);
+      expect(freezeDraftIssueUnits).toHaveBeenCalledTimes(1);
+      const [readDb, writeDb, inv, entitlements] = (freezeDraftIssueUnits as jest.Mock).mock
+        .calls[0];
+      expect(readDb).toBe(writeDb); // the same client: no tx, so no savepoint
+      expect(writeDb).toBe(prisma);
+      expect(inv).toMatchObject({ id: "inv-issue-1", tenantId: TENANT_ID });
+      expect(entitlements).toBe((service as any).entitlements);
     });
   });
 
