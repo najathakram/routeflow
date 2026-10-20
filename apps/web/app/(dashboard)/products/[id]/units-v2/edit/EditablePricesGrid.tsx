@@ -34,6 +34,7 @@ export function EditablePricesGrid({
   changePricesRef,
   panel,
   unitControls,
+  afterGrid,
   rowAction,
   surface = "inline",
   idSuffix,
@@ -50,6 +51,8 @@ export function EditablePricesGrid({
   panel?: React.ReactNode;
   /** K10d: Add a unit and Reset to Auto, rendered under `panel` and above the grid. */
   unitControls?: React.ReactNode;
+  /** K13: rendered directly after the grid card, before the order-unit footer and the also-update panel (Name / Contains). */
+  afterGrid?: React.ReactNode;
   /** K10d: a control under each unit's name (Remove). */
   rowAction?: (row: ProductPriceGridRowDto, layout: "table" | "card") => React.ReactNode;
   /** K11-20: which editor this is. Default "inline" (the page's own section). */
@@ -166,6 +169,7 @@ export function EditablePricesGrid({
           // The window has no Add a unit control of its own; the pointer would click a hidden page control.
           addUnitPointers={surface !== "window"}
         />
+        {afterGrid}
         {editing && <OrderUnitDraft />}
         {editing && d.plan && <AlsoUpdatePanel plan={d.plan.plan} />}
       </div>
