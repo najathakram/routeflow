@@ -115,3 +115,11 @@ describe("R3 review item 2: the region heading leads the actions row", () => {
     );
   });
 });
+
+describe("R3 review item 3: the entry button reads Edit prices", () => {
+  it("names the entry button Edit prices", () => {
+    mount();
+    expect(screen.getByRole("button", { name: "Edit prices" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Edit$/ })).toBeNull();
+  });
+});

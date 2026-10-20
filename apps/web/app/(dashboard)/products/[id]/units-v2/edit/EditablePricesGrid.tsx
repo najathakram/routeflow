@@ -149,7 +149,7 @@ export function EditablePricesGrid({
               className={BTN}
               onClick={() => d.startEditing()}
             >
-              Edit
+              Edit prices
             </button>
           )}
         </div>
