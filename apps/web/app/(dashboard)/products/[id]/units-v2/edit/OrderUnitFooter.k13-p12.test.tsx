@@ -31,7 +31,10 @@ describe("K13 P12: the pricing unit sits on the grid card's content edge", () =>
       </QueryClientProvider>,
     );
     const footer = screen.getByTestId("order-unit-footer");
-    expect(footer.className).toMatch(/\bpx-4\b/);
+    // R3 review: no left padding of its own, so it starts on the same x as Default order unit; in the wide edit
+    // region the data-wide-inset marker gives it the same 17 px inset as Add a unit.
+    expect(footer.className).not.toMatch(/\bpx-4\b/);
+    expect(footer).toHaveAttribute("data-wide-inset", "");
     expect(footer.className).toMatch(/\bmb-4\b/);
   });
 });

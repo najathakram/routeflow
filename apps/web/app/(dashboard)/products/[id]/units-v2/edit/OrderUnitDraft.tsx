@@ -17,7 +17,7 @@ export function OrderUnitDraft() {
   const reasonId = React.useId();
   if (!grid) return null;
   return (
-    <div data-testid="order-unit-footer" className="mb-4 mt-3 px-4 text-sm text-navy">
+    <div data-testid="order-unit-footer" data-wide-inset="" className="mb-4 mt-3 text-sm text-navy">
       <label className="flex items-center gap-2">
         <span className="text-[11px] font-medium uppercase tracking-wide text-navy/60">
           Pricing unit
