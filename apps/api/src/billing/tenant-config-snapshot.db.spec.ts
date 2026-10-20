@@ -243,11 +243,14 @@ describeDb("TenantConfigSnapshotService — real Postgres round trip", () => {
       return snap;
     }
 
+    // Called more than once per run: each call needs its own customer (User_tenantId_email_key is unique).
+    let shippedOrderSeq = 0;
     async function shippedOrder() {
+      const n = ++shippedOrderSeq;
       const user = await prisma.user.create({
         data: {
-          email: `cust-${RUN}@example.invalid`,
-          username: `cust-${RUN}`,
+          email: `cust-${RUN}-${n}@example.invalid`,
+          username: `cust-${RUN}-${n}`,
           role: "CUSTOMER",
           tenantId,
         },
