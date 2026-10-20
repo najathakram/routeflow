@@ -85,6 +85,7 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
     pricingTier: 1,
     creditLimit: 999999,
     defaultPaymentTerms: "Net 90",
+    invoiceUnitDefault: "PIECES",
     defaultDepositPercent: 0,
     taxId: "X-1",
     currency: "EUR",
@@ -344,12 +345,19 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
 
   // Customer `notes` is staff-internal: no customer-facing customer response carries it.
   describe("customer-facing customer responses omit staff-only fields", () => {
-    const row = () => ({ id: "cust-1", deletedAt: null, contactName: "Jo", notes: "internal" });
+    const row = () => ({
+      id: "cust-1",
+      deletedAt: null,
+      contactName: "Jo",
+      notes: "internal",
+      invoiceUnitDefault: "PIECES",
+    });
 
     it("(k) the helper drops notes without mutating its input", () => {
       const input = row();
       const out = omitStaffOnlyCustomerFields(input);
       expect(out).not.toHaveProperty("notes");
+      expect(out).not.toHaveProperty("invoiceUnitDefault"); // SA-827: staff-only
       expect(out.contactName).toBe("Jo");
       expect(input.notes).toBe("internal");
     });
@@ -358,6 +366,7 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
       prisma.customer.findFirst.mockResolvedValue(row());
       const res = await service.findMyProfile({ sub: "user-1" } as never);
       expect(res).not.toHaveProperty("notes");
+      expect(res).not.toHaveProperty("invoiceUnitDefault");
       expect(res).toHaveProperty("contactName", "Jo");
     });
 

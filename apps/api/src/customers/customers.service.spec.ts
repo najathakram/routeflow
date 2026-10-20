@@ -559,6 +559,17 @@ describe("CustomersService", () => {
         "defaultDepositPercent",
       );
     });
+
+    it("create stores invoiceUnitDefault only when provided (SA-827)", async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({ id: "u1", username: "acme", email: "placeholder" });
+      prisma.customer.create.mockResolvedValue({ id: "c1" });
+      await service.create({ ...baseDto, invoiceUnitDefault: "PIECES" });
+      await service.create({ ...baseDto });
+      const data = (n: number) => prisma.customer.create.mock.calls[n][0].data;
+      expect(data(0)).toHaveProperty("invoiceUnitDefault", "PIECES");
+      expect(data(1)).not.toHaveProperty("invoiceUnitDefault");
+    });
   });
 
   // ─── create: CUSTOMERS soft cap (WP3) ──────────────────────────────────────

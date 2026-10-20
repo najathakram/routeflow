@@ -1,4 +1,4 @@
-import type { InvoiceDisplayUnitView } from "@routeflow/types";
+import type { InvoiceDisplayUnitView, InvoiceUnitDefault } from "@routeflow/types";
 import { componentSubLineText } from "./component-pieces";
 import { invoiceLineDisplay } from "./invoice-display";
 import { prorateComponentCredit } from "./largest-remainder";
@@ -12,7 +12,7 @@ import { PIECE_LABEL } from "./unit-levels";
 // for money, tax, the regulated ledger, credits, returns and stock. Nothing here is stored or summed. A source pin
 // (apps/api/src/common/invoice-unit-display-only.spec.ts) keeps these names out of every money writer.
 
-export type CustomerInvoiceUnitDefault = "LEGACY" | "PIECES" | "PACK";
+export type CustomerInvoiceUnitDefault = InvoiceUnitDefault;
 
 const LEGACY_VIEW: InvoiceDisplayUnitView = { kind: "legacy", label: null };
 

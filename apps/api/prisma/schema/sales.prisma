@@ -132,6 +132,13 @@ enum CompositionMode {
   FLEX
 }
 
+// SA-827: Customer.invoiceUnitDefault. LEGACY = not set; mirrors INVOICE_UNIT_DEFAULT_VALUES in @routeflow/types.
+enum InvoiceUnitDefault {
+  LEGACY
+  PIECES
+  PACK
+}
+
 enum PriceType {
   STANDARD
   SPECIAL
@@ -178,6 +185,9 @@ model Customer {
   // Empty string clears an override; null means "use the tenant default". Wins
   // over the tenant SystemConfig default in resolveDefaultTerms().
   defaultPaymentTerms   String?
+  // SA-827: the customer-wide invoice unit. LEGACY = not set (falls through to the line/tier/product/business setting),
+  // PIECES = mixed boxes list each item and boxes show their pieces, PACK = always the unit sold. Display only.
+  invoiceUnitDefault    InvoiceUnitDefault @default(LEGACY)
   // Per-customer default deposit percent ("50% upfront, remainder on terms").
   // null = no deposit default. Auto-applied (depositDueDate = issueDate) to
   // invoices generated from orders that don't already carry an explicit

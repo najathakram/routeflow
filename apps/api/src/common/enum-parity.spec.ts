@@ -98,6 +98,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["MAILBOX_CONNECTION_STATUS_VALUES", "MailboxConnectionStatus"],
   ["CRM_HANDOFF_STATUS_VALUES", "CrmHandoffStatus"],
   ["TENANT_CLASS_VALUES", "TenantClass"],
+  // SA-827 PR2: Customer.invoiceUnitDefault, a brand-new Prisma enum.
+  ["INVOICE_UNIT_DEFAULT_VALUES", "InvoiceUnitDefault"],
   // Multi-category labels + selling restrictions (2026-09-19): all three are
   // brand-new Prisma enums.
   ["LABEL_MODE_VALUES", "LabelMode"],
@@ -270,7 +272,9 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for OperatorPermissionGroup (per-operator feature groups): a brand-new Prisma enum (migration
 // 20261009120000_operator_permission_groups), mirrored as `OPERATOR_PERMISSION_GROUP_VALUES` + its `ENUM_TABLE`
 // row above; verified via `node apps/api/scripts/split-prisma-schema.mjs --check` (113 → 114).
-const PINNED_PRISMA_ENUM_COUNT = 114;
+// Triage for InvoiceUnitDefault (SA-827 PR2): a brand-new Prisma enum (migration
+// 20261020120000_customer_invoice_unit_default), mirrored as `INVOICE_UNIT_DEFAULT_VALUES` + its `ENUM_TABLE` row (114 → 115).
+const PINNED_PRISMA_ENUM_COUNT = 115;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

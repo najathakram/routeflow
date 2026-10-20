@@ -37,7 +37,7 @@ const allLegacy = (items: ReadonlyArray<{ id: string }>): Map<string, InvoiceDis
 /**
  * The display unit each invoice line would render in RIGHT NOW (customer/product/tier/business preference, then legacy).
  * Batched: one query per table for the whole invoice. A failed flag read means flag off. Any error gives legacy for every
- * item: the read never fails. `customerDefault` is null until the PR2 column lands.
+ * item: the read never fails.
  */
 export async function resolveLiveDisplayUnits(
   db: any,
@@ -72,12 +72,27 @@ async function resolveOrThrow(
     } catch {
       on = false;
     }
-    if (!on) return out; // flag off: no ladder, and customerDefault is null in PR1, so everything is legacy
+    if (!on) {
+      // Flag off: no ladder and no catalog read. Only a customer-wide PIECES still applies (SA-827 rule 5); the pricing
+      // resolver returns pieces for it with a null view.
+      const c = await db.customer.findFirst({
+        where: { id: invoice.customerId, tenantId },
+        select: { invoiceUnitDefault: true },
+      });
+      if (c?.invoiceUnitDefault !== "PIECES") return out;
+      const pieces = invoiceDisplayUnitFor({
+        customerDefault: "PIECES",
+        scopes: {},
+        view: null,
+      });
+      for (const it of invoice.items) if (it.productId) out.set(it.id, { ...pieces });
+      return out;
+    }
 
     const [customer, cpRows, tierRows, products, unitRows, business] = await Promise.all([
       db.customer.findFirst({
         where: { id: invoice.customerId, tenantId },
-        select: { pricingTier: true },
+        select: { pricingTier: true, invoiceUnitDefault: true },
       }),
       db.customerPrice.findMany({
         // CustomerPrice.tenantId is nullable, so the tenant rides the non-null customer relation
@@ -179,7 +194,7 @@ async function resolveOrThrow(
         byProduct.set(
           pid,
           invoiceDisplayUnitFor({
-            customerDefault: null,
+            customerDefault: customer?.invoiceUnitDefault ?? null,
             scopes: {
               customer: cp?.invoiceUnitRef ?? null,
               tier: tierUnitBy.get(`${pid}:${tier}`)?.invoiceUnitRef ?? null,

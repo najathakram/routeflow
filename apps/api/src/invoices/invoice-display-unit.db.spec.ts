@@ -61,6 +61,7 @@ describeDb("SA-827 invoice display unit — real Postgres", () => {
     opts: {
       business?: string;
       customerRef?: string;
+      invoiceUnitDefault?: "LEGACY" | "PIECES" | "PACK";
       tier?: { customerTier: number; invoiceUnitRef: string };
       status?: "DRAFT" | "SENT";
     } = {},
@@ -83,6 +84,7 @@ describeDb("SA-827 invoice display unit — real Postgres", () => {
         contactName: "Pat",
         tenantId,
         ...(opts.tier ? { pricingTier: opts.tier.customerTier } : {}),
+        ...(opts.invoiceUnitDefault ? { invoiceUnitDefault: opts.invoiceUnitDefault } : {}),
       },
     });
     const product = await prisma.product.create({
@@ -207,14 +209,50 @@ describeDb("SA-827 invoice display unit — real Postgres", () => {
   });
 
   /** The first-issue sequence, as markSent runs it: resolve OUTSIDE the tx, write INSIDE a Serializable tx. */
-  async function issue(s: { tenantId: string; invoice: { id: string } }) {
-    const units = await resolveIssueDisplayUnits(prisma, s.tenantId, s.invoice.id, on);
+  async function issue(
+    s: { tenantId: string; invoice: { id: string } },
+    entitlements: typeof on | typeof off = on,
+  ) {
+    const units = await resolveIssueDisplayUnits(prisma, s.tenantId, s.invoice.id, entitlements);
     await tenantCtx.run(s.tenantId, () =>
       prisma.tenantTransaction(async (tx) => writeIssueDisplayUnits(tx, s.invoice.id, units), {
         isolationLevel: "Serializable",
       }),
     );
   }
+
+  it("Customer.invoiceUnitDefault PIECES on a flag-OFF tenant resolves pieces and snapshots Piece/1; money is untouched", async () => {
+    const s = await seed("custdefault", { invoiceUnitDefault: "PIECES" });
+    const inv = { customerId: s.customer.id, items: [{ id: s.item.id, productId: s.product.id }] };
+    expect((await resolveLiveDisplayUnits(prisma, s.tenantId, inv, off)).get(s.item.id)).toEqual({
+      kind: "pieces",
+      label: "Piece",
+    });
+    const units = await resolveIssueDisplayUnits(prisma, s.tenantId, s.invoice.id, off);
+    expect(units.get(s.item.id)).toEqual({ kind: "pieces", label: "Piece" });
+    await issue(s, off);
+    const row = await itemRow(s.item.id);
+    expect(row.invoiceUnitLabel).toBe("Piece");
+    expect(row.invoiceUnitFactor).toBe(1);
+    expect(Number(row.subtotal)).toBe(60.02);
+    expect(Number(row.unitPrice)).toBe(30.01);
+    expect(Number(row.qty)).toBe(30);
+  });
+
+  it("Customer.invoiceUnitDefault PACK beats the business 'smallest'; a new customer reads LEGACY", async () => {
+    const s = await seed("custpack", { business: "smallest", invoiceUnitDefault: "PACK" });
+    const inv = { customerId: s.customer.id, items: [{ id: s.item.id, productId: s.product.id }] };
+    expect((await resolveLiveDisplayUnits(prisma, s.tenantId, inv, on)).get(s.item.id)).toEqual({
+      kind: "legacy",
+      label: null,
+    });
+    const fresh = await seed("custlegacy");
+    const row = await prisma.customer.findUniqueOrThrow({
+      where: { id: fresh.customer.id },
+      select: { invoiceUnitDefault: true },
+    });
+    expect(row.invoiceUnitDefault).toBe("LEGACY");
+  });
 
   it("writeIssueDisplayUnits (real Serializable tenantTransaction) writes ONLY the two display columns, once; money is untouched", async () => {
     const s = await seed("snap", { business: "smallest" });

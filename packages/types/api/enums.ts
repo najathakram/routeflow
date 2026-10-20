@@ -36,6 +36,10 @@ export const INVOICE_STATUS_VALUES = [
 ] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUS_VALUES)[number];
 
+/** SA-827: the customer-wide invoice unit (Customer.invoiceUnitDefault). LEGACY = not set (falls through). */
+export const INVOICE_UNIT_DEFAULT_VALUES = ["LEGACY", "PIECES", "PACK"] as const;
+export type InvoiceUnitDefault = (typeof INVOICE_UNIT_DEFAULT_VALUES)[number];
+
 /**
  * SA-770: the OPEN invoice statuses - issued and not settled, so they can still be owed and can be overdue
  * (a reminder is sent for them, the Unpaid chip lists them). A SUBSET of INVOICE_STATUS_VALUES, not a Prisma

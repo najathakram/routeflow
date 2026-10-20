@@ -31,7 +31,7 @@ const productRow = (id: string, extra: Record<string, unknown> = {}) => ({
 });
 
 interface Fx {
-  customer?: { pricingTier: number | null } | null;
+  customer?: { pricingTier: number | null; invoiceUnitDefault?: string } | null;
   customerPrices?: unknown[];
   tierUnits?: unknown[];
   products?: unknown[];
@@ -118,6 +118,63 @@ describe("resolveLiveDisplayUnits", () => {
       customerPrices: [{ productId: "p1", pricingTier: null, invoiceUnitRef: "pack" }],
     });
     const live = await resolveLiveDisplayUnits(db as any, TENANT, invoice(["p1"]), flag(true));
+    expect(live.get("it-0")).toEqual({ kind: "legacy", label: null });
+  });
+
+  it("customer default PIECES on a flag-OFF tenant: product lines read pieces (no ladder), no catalog query runs", async () => {
+    const db = makeDb({
+      customer: { pricingTier: 1, invoiceUnitDefault: "PIECES" },
+      products: [productRow("p1")],
+    });
+    const live = await resolveLiveDisplayUnits(
+      db as any,
+      TENANT,
+      invoice(["p1", null]),
+      flag(false),
+    );
+    expect(live.get("it-0")).toEqual({ kind: "pieces", label: "Piece" });
+    expect(live.get("it-1")).toEqual({ kind: "legacy", label: null });
+    expect(db.product.findMany).not.toHaveBeenCalled();
+    expect(db.customer.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ invoiceUnitDefault: true }) }),
+    );
+  });
+
+  it("customer default PIECES on a flag-on tenant reads the ladder's base label", async () => {
+    const db = makeDb({
+      customer: { pricingTier: 1, invoiceUnitDefault: "PIECES" },
+      products: [productRow("p1", { baseUnitLabel: "Stick" })],
+    });
+    const live = await resolveLiveDisplayUnits(db as any, TENANT, invoice(["p1"]), flag(true));
+    expect(live.get("it-0")).toEqual({ kind: "pieces", label: "Stick" });
+  });
+
+  it("customer default PACK beats a business 'smallest': legacy", async () => {
+    const db = makeDb({
+      customer: { pricingTier: 1, invoiceUnitDefault: "PACK" },
+      products: [productRow("p1")],
+      business: "smallest",
+    });
+    const live = await resolveLiveDisplayUnits(db as any, TENANT, invoice(["p1"]), flag(true));
+    expect(live.get("it-0")).toEqual({ kind: "legacy", label: null });
+  });
+
+  it("customer default LEGACY falls through to the business setting", async () => {
+    const db = makeDb({
+      customer: { pricingTier: 1, invoiceUnitDefault: "LEGACY" },
+      products: [productRow("p1")],
+      business: "smallest",
+    });
+    const live = await resolveLiveDisplayUnits(db as any, TENANT, invoice(["p1"]), flag(true));
+    expect(live.get("it-0")).toEqual({ kind: "pieces", label: "Piece" });
+  });
+
+  it("customer default LEGACY on a flag-off tenant stays legacy", async () => {
+    const db = makeDb({
+      customer: { pricingTier: 1, invoiceUnitDefault: "LEGACY" },
+      business: "smallest",
+    });
+    const live = await resolveLiveDisplayUnits(db as any, TENANT, invoice(["p1"]), flag(false));
     expect(live.get("it-0")).toEqual({ kind: "legacy", label: null });
   });
 
