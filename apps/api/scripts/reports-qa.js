@@ -114,6 +114,7 @@ async function seedData() {
         productId: prod.id,
         quantity: 200,
         notes: "QA initial stock",
+        reason: "COUNT_CORRECTION",
       },
       opToken,
     );

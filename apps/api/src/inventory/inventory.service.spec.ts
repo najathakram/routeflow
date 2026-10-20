@@ -1366,6 +1366,8 @@ describe("InventoryService", () => {
       expect(mv.type).toBe("ADJUSTMENT");
       expect(Number(mv.quantity)).toBe(-3);
       expect(mv.reference).toBe("STOCK_COUNT-sess-1");
+      // SA-804(3): every count line's movement says WHY it exists.
+      expect(mv.reason).toBe("COUNT_CORRECTION");
       // Only the counted product is updated — a count asserts only what it saw.
       expect(prisma.product.update).toHaveBeenCalledTimes(1);
       expect(prisma.product.update.mock.calls[0][0].where).toEqual({ id: "prod-1" });

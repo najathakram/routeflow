@@ -307,6 +307,7 @@ const INVENTORY_WRITERS: Record<string, WriterClass> = {
   // SA-767 L-2: lock first, then read in-tx (this pin checks the order).
   "InventoryService.recordPurchase": { kind: "locks-first" },
   "InventoryService.recordAdjustment": { kind: "locks-first" },
+  "InventoryService.countProduct": { kind: "locks-first" },
   "InventoryService.recordSale": { kind: "locks-first" },
   "InventoryService.assignToVariants": { kind: "locks-first" },
   "InventoryService.commitStockCount": { kind: "locks-first" },
@@ -336,7 +337,7 @@ const INVENTORY_WRITERS: Record<string, WriterClass> = {
   // Private bodies that only ever run inside a locked caller.
   "InventoryService.applyStockCountItemsInTx": {
     kind: "caller-locked",
-    callers: ["commitStockCount", "commitStockCountBatch"],
+    callers: ["commitStockCount", "commitStockCountBatch", "countProduct"],
   },
   "InventoryService.setCostBasisInTx": {
     kind: "caller-locked",
@@ -807,6 +808,7 @@ describe("SA-767 R6 - stock-writer transactions carry the 15 s budget and a boun
   it.each([
     "recordPurchase",
     "recordAdjustment",
+    "countProduct",
     "commitStockCount",
     "setCostBasis",
     "bulkSetCostBasis",

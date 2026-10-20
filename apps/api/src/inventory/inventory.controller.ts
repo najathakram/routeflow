@@ -28,6 +28,7 @@ import { ExportMovementsDto } from "./dto/export-movements.dto";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { CreatePurchaseOrderDto, ReceivePurchaseOrderDto } from "./dto/create-purchase-order.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
+import { ProductCountDto } from "./dto/product-count.dto";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
 import { ListPurchaseOrdersDto } from "./dto/list-purchase-orders.dto";
@@ -93,6 +94,17 @@ export class InventoryController {
   @Post("movements/adjustment")
   recordAdjustment(@Body() dto: RecordAdjustmentDto, @CurrentUser() user: { id: string }) {
     return this.inventoryService.recordAdjustment(dto, user.id);
+  }
+
+  // SA-828 (row 657): set a product's stock to a count, or adjust it, in one of its units.
+  @Post("products/:id/count")
+  @Roles(UserRole.OPERATOR)
+  countProduct(
+    @Param("id") id: string,
+    @Body() dto: ProductCountDto,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.inventoryService.countProduct(id, dto, user.id);
   }
 
   @Post("stock-count/commit")

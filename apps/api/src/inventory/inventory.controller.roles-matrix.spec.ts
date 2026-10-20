@@ -30,6 +30,7 @@ const EXPECTED: Record<string, UserRole[]> = {
   exportMovementsCsv: OP,
   recordPurchase: OP,
   recordAdjustment: OP,
+  countProduct: OP,
   commitStockCount: OP,
   assignToVariants: OP,
   startStockCountSession: OP,

@@ -21,9 +21,9 @@ import {
   parentInvalid,
   PRODUCT_PARENT_REASONS,
 } from "../products/product-parent";
-import type { PurchaseOrderReceipt } from "@routeflow/types";
+import type { ProductCountResult, PurchaseOrderReceipt } from "@routeflow/types";
 import * as crypto from "crypto";
-import { CostingMethod, MovementType, Prisma } from "@prisma/client";
+import { AdjustmentReason, CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import {
@@ -42,6 +42,8 @@ import { poReversalNote, poReversalOf } from "./bill-revert";
 import { documentStockDate, stockWriteDate, type DocumentStockDate } from "./stock-write-date";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
+import { ProductCountDto } from "./dto/product-count.dto";
+import { describeParts, ladderOf, piecesOf } from "./product-count";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
 import {
   CommitStockCountSessionDto,
@@ -445,6 +447,9 @@ export class InventoryService {
             stockAfter: updated.currentStock,
             reference: dto.reference,
             notes: dto.notes,
+            // SA-804(3): why the stock moved (a required enum + a note, required for OTHER).
+            reason: dto.reason,
+            reasonNote: dto.reasonNote?.trim() || null,
             performedById,
             // B562: the effective date is the accounting date; createdAt stays write-once.
             effectiveAt: effectiveDate,
@@ -482,6 +487,96 @@ export class InventoryService {
     );
 
     if (qty.gt(0)) this.fireStockAlerts([dto.productId]);
+    return result;
+  }
+
+  /**
+   * SA-828 (row 657): set one product's stock to a count, or adjust it by a delta, entered in one of
+   * the product's units. The factor is the SERVER's (the product's ladder, `piecesOf`), never the
+   * client's; a packed unit is counted whole. The write is the count commit's own body
+   * (`applyStockCountItemsInTx`: one ADJUSTMENT movement, a lot for a gain) carrying the person's
+   * reason. No negative-stock refusal: a count can leave stock below zero exactly as a sale can.
+   */
+  async countProduct(
+    productId: string,
+    dto: ProductCountDto,
+    performedById: string,
+  ): Promise<ProductCountResult> {
+    const db = this.prisma.forTenant();
+    const product = await db.product.findUnique({ where: { id: productId } });
+    if (!product) throw new NotFoundException("Product not found");
+    assertSellableLines([product]); // a FAMILY is never stocked
+
+    const entered = dto.mode === "SET" ? dto.count : dto.mode === "ADJUST" ? dto.delta : undefined;
+    if (!entered) {
+      throw new BadRequestException(
+        dto.mode === "ADJUST" ? "delta is required for an ADJUST" : "count is required for a SET",
+      );
+    }
+    // One-element today; `parts` ("3 cases + 4 boxes") is a DTO change away.
+    const { pieces, parts } = piecesOf(product, await ladderOf(db, productId), [
+      { unit: entered.unit, quantity: entered.quantity },
+    ]);
+    const signed = dto.mode === "ADJUST" && dto.delta?.sign === "-" ? pieces.neg() : pieces;
+    if (dto.mode === "ADJUST" && signed.eq(0)) {
+      throw new BadRequestException("An adjustment must move at least some stock");
+    }
+    const effectiveDate = await this.clientStockDate([productId], dto.effectiveDate);
+    const note = `Product count: ${dto.mode === "SET" ? "set to" : dto.delta?.sign === "-" ? "removed" : "added"} ${describeParts(parts)}`;
+    const restockedProductIds: string[] = [];
+
+    // SA-767 L-2: lock the product, then read the stock INSIDE the tx (a SET is `counted - the
+    // locked stock`). The whole tx re-runs on a 40P01 / 40001 / P2034; alerts fire once, after commit.
+    const result = await retryStockTx("inventory.countProduct", () =>
+      this.stockTx(async (tx) => {
+        restockedProductIds.length = 0;
+        await this.lockProducts(tx, [productId]);
+        const locked = (await this.readLockedStockRows(tx, [productId])).get(productId);
+        if (!locked) throw new NotFoundException("Product not found");
+        const stockBefore = locked.currentStock;
+
+        const applied = await this.applyStockCountItemsInTx(tx, {
+          items: [
+            { productId, quantity: Number(signed), mode: dto.mode === "SET" ? "REPLACE" : "ADD" },
+          ],
+          lockedMap: new Map([[productId, locked]]),
+          reference: "PRODUCT_COUNT",
+          effectiveDate,
+          notes: note,
+          performedById,
+          restockedProductIds,
+          reason: {
+            reason: dto.reason as AdjustmentReason,
+            reasonNote: dto.reasonNote?.trim() || null,
+          },
+        });
+        const line = applied.lines[0];
+
+        // Backdated count: replay the product's average from that date (same rule as recordAdjustment)
+        if (line) {
+          const newer = await tx.stockMovement.count({
+            where: { productId, effectiveAt: { gt: effectiveDate } },
+          });
+          if (newer > 0) {
+            await this.recomputeProductInTx(tx, productId, {
+              trigger: `PRODUCT_COUNT:${line.movementId}`,
+              performedById,
+            });
+          }
+        }
+
+        return {
+          productId,
+          mode: dto.mode,
+          deltaPieces: line ? Number(line.delta) : 0,
+          stockBefore: Number(stockBefore),
+          stockAfter: Number(line ? line.stockAfter : stockBefore),
+          movementId: line?.movementId ?? null,
+        };
+      }),
+    );
+
+    this.fireStockAlerts(restockedProductIds);
     return result;
   }
 
@@ -1112,10 +1207,28 @@ export class InventoryService {
        * the interactive transaction, pushing a big session toward its timeout.
        */
       correctedCosts?: Map<string, Prisma.Decimal>;
+      /** SA-804(3): why these lines moved stock. Absent = a count correction (the session and legacy commits). */
+      reason?: { reason: AdjustmentReason; reasonNote?: string | null };
     },
-  ): Promise<{ movementIds: string[]; skipped: number }> {
+  ): Promise<{
+    movementIds: string[];
+    skipped: number;
+    /** One row per movement written (the delta is the signed pieces; stockAfter the counter the update returned). */
+    lines: Array<{
+      productId: string;
+      movementId: string;
+      delta: Prisma.Decimal;
+      stockAfter: Prisma.Decimal;
+    }>;
+  }> {
     const { items, lockedMap, reference, effectiveDate, notes, performedById } = args;
     const movementIds: string[] = [];
+    const lines: Array<{
+      productId: string;
+      movementId: string;
+      delta: Prisma.Decimal;
+      stockAfter: Prisma.Decimal;
+    }> = [];
     let skipped = 0;
     // Running stock per product so repeated items in one count session
     // produce truthful deltas against the stock left by the previous item.
@@ -1160,12 +1273,15 @@ export class InventoryService {
           stockAfter,
           reference,
           notes: itemNotes,
+          reason: args.reason?.reason ?? AdjustmentReason.COUNT_CORRECTION,
+          reasonNote: args.reason?.reasonNote ?? null,
           performedById,
           // B562: the count's effective date is the accounting date; createdAt stays write-once.
           effectiveAt: effectiveDate,
         },
       });
       movementIds.push(movement.id);
+      lines.push({ productId: item.productId, movementId: movement.id, delta, stockAfter });
 
       if (delta.gt(0)) {
         await tx.stockLot.create({
@@ -1183,7 +1299,7 @@ export class InventoryService {
       }
     }
 
-    return { movementIds, skipped };
+    return { movementIds, skipped, lines };
   }
 
   /**

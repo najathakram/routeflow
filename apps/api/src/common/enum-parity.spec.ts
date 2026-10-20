@@ -92,6 +92,7 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["FULFILL_PATH_VALUES", "FulfillPath"],
   ["RECURRING_FREQUENCY_VALUES", "RecurringFrequency"],
   ["MOVEMENT_TYPE_VALUES", "MovementType"],
+  ["ADJUSTMENT_REASON_VALUES", "AdjustmentReason"],
   ["CRM_CONNECTION_STATUS_VALUES", "CrmConnectionStatus"],
   ["CRM_TRIGGER_MODE_VALUES", "CrmTriggerMode"],
   ["MAILBOX_PROVIDER_VALUES", "MailboxProvider"],
@@ -270,7 +271,10 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for OperatorPermissionGroup (per-operator feature groups): a brand-new Prisma enum (migration
 // 20261009120000_operator_permission_groups), mirrored as `OPERATOR_PERMISSION_GROUP_VALUES` + its `ENUM_TABLE`
 // row above; verified via `node apps/api/scripts/split-prisma-schema.mjs --check` (113 → 114).
-const PINNED_PRISMA_ENUM_COUNT = 114;
+// Triage for AdjustmentReason (SA-804(3), SA-828 row 657): a brand-new Prisma enum (migration
+// 20261020130000_stock_movement_adjustment_reason), mirrored as `ADJUSTMENT_REASON_VALUES` + its `ENUM_TABLE` row
+// above (114 → 115).
+const PINNED_PRISMA_ENUM_COUNT = 115;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

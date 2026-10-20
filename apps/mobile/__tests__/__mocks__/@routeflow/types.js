@@ -22,6 +22,17 @@
 // API_ERROR_CODES (#2163): must stay equal to `packages/types/api/error-codes.ts`; pinned by
 // apps/api/src/common/api-error-codes-parity.spec.ts, which `require`s THIS file.
 module.exports = {
+  // Hand copy of packages/types/api/product-count.ts (SA-828); kept equal to it.
+  ADJUSTMENT_REASON_NOTE_MIN: 3,
+  ADJUSTMENT_REASON_NOTE_MAX: 200,
+  ADJUSTMENT_REASON_LABELS: {
+    COUNT_CORRECTION: "Count correction",
+    DAMAGED: "Damaged",
+    EXPIRED: "Expired",
+    THEFT: "Theft or loss",
+    SAMPLE: "Sample",
+    OTHER: "Other",
+  },
   // Hand copy of packages/types/api/orders.ts CREDITS_PENDING_COPY (B1205); byte-identical.
   CREDITS_PENDING_COPY:
     "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.",
@@ -261,6 +272,7 @@ module.exports = {
     PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
     INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
     STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
+    COUNT_FRACTIONAL_PACK: "COUNT_FRACTIONAL_PACK",
     ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
     INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
     EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",

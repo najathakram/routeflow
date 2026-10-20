@@ -22,6 +22,7 @@ describe("InventoryController effective @Roles (B168)", () => {
   it.each([
     "recordPurchase",
     "recordAdjustment",
+    "countProduct",
     "createPO",
     "updatePO",
     "receivePO",

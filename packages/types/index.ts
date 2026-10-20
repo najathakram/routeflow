@@ -145,6 +145,7 @@ export * from "./order-line-backorder";
 export * from "./invoice-line-code";
 export * from "./piece-synonyms";
 export * from "./api/enums";
+export * from "./api/product-count";
 export * from "./api/billing";
 export * from "./api/orders";
 export * from "./api/purchase-orders";

@@ -78,7 +78,7 @@ describe("the skipped line / stock writers now refuse a FAMILY (400 FAMILY_NOT_S
     await expect((svc as any).assertNoFamilyLines([{ productId: null }])).resolves.toBeUndefined();
   });
 
-  it("inventory: recordPurchase and recordAdjustment refuse a FAMILY before any StockLot / StockMovement", async () => {
+  it("inventory: recordPurchase, recordAdjustment and countProduct refuse a FAMILY before any StockLot / StockMovement", async () => {
     const tenantTransaction = jest.fn();
     const svc = build(InventoryService, {
       ...prismaWith({ product: { findUnique: jest.fn().mockResolvedValue(FAMILY) } }),
@@ -88,6 +88,13 @@ describe("the skipped line / stock writers now refuse a FAMILY (400 FAMILY_NOT_S
       svc.recordPurchase({ productId: FAMILY.id, quantity: 1, unitCost: 1 } as never, "u1"),
     );
     await refused(svc.recordAdjustment({ productId: FAMILY.id, quantity: 1 } as never, "u1"));
+    await refused(
+      svc.countProduct(
+        FAMILY.id,
+        { mode: "SET", count: { quantity: 1 }, reason: "COUNT_CORRECTION" } as never,
+        "u1",
+      ),
+    );
     expect(tenantTransaction).not.toHaveBeenCalled();
   });
 

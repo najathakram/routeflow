@@ -66,6 +66,23 @@ const WRITERS: Writer[] = [
     clean: { movement: 1, lot: 1, product: 1 },
   },
   {
+    name: "countProduct",
+    label: "inventory.countProduct",
+    method: "countProduct",
+    call: (svc) =>
+      svc.countProduct(
+        "prod-1",
+        {
+          mode: "ADJUST",
+          delta: { unit: null, quantity: 5, sign: "+" },
+          reason: "COUNT_CORRECTION",
+        } as any,
+        "user-1",
+      ),
+    alerts: ["prod-1"],
+    clean: { movement: 1, lot: 1, product: 1 },
+  },
+  {
     name: "commitStockCount",
     label: "inventory.commitStockCount",
     method: "commitStockCount",

@@ -336,6 +336,21 @@ export const MOVEMENT_TYPE_VALUES = [
 ] as const;
 export type MovementType = (typeof MOVEMENT_TYPE_VALUES)[number];
 
+/**
+ * SA-804(3): why a stock ADJUSTMENT was made (NULL on history and on every other movement type).
+ * A write-off is DERIVED, never stored: a negative ADJUSTMENT whose reason is in
+ * WRITE_OFF_ADJUSTMENT_REASONS (see `isWriteOff` in @routeflow/pricing). OTHER needs a note.
+ */
+export const ADJUSTMENT_REASON_VALUES = [
+  "DAMAGED",
+  "EXPIRED",
+  "THEFT",
+  "SAMPLE",
+  "COUNT_CORRECTION",
+  "OTHER",
+] as const;
+export type AdjustmentReason = (typeof ADJUSTMENT_REASON_VALUES)[number];
+
 export const CRM_CONNECTION_STATUS_VALUES = [
   "CONNECTED",
   "NEEDS_ATTENTION",

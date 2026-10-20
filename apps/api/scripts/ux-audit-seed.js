@@ -361,7 +361,12 @@ async function phase1_coreEntities(adminToken) {
     await api(
       "POST",
       "/inventory/movements/adjustment",
-      { productId: p.id, quantity: 100, notes: "UX audit initial stock" },
+      {
+        productId: p.id,
+        quantity: 100,
+        notes: "UX audit initial stock",
+        reason: "COUNT_CORRECTION",
+      },
       adminToken,
     );
     manifest.products.push(p.id);

@@ -104,6 +104,29 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
     expect(lockedBefore(prisma.product.findUnique, 2)).toBe(true);
   });
 
+  it("countProduct SET is counted minus the LOCKED stock, written as an increment (SA-828)", async () => {
+    // validation read + the date gate's flag read: 100 on hand; by the time the lock is granted a sale left 70
+    prisma.product.findUnique.mockResolvedValue(row({ currentStock: D(100) }));
+    prisma.product.findMany
+      .mockResolvedValueOnce([row({ currentStock: D(100) })])
+      .mockResolvedValue([row({ currentStock: D(70) })]);
+    prisma.product.update.mockResolvedValue({ currentStock: D(90) });
+
+    await service.countProduct(
+      "prod-1",
+      { mode: "SET", count: { quantity: 90 }, reason: "COUNT_CORRECTION" } as any,
+      "u-1",
+    );
+
+    expect(prisma.product.update.mock.calls[0][0].data).toEqual({
+      currentStock: { increment: D(20) },
+    });
+    expect(prisma.stockMovement.create.mock.calls[0][0].data.stockAfter.toString()).toBe("90");
+    // findMany calls: 1 the SA-802 date gate's flag read, 2 the locked read.
+    expect(lockedBefore(prisma.product.findMany, 2)).toBe(true);
+    expect(lockCalls()).toHaveLength(1);
+  });
+
   it("a count REPLACE is counted minus the LOCKED stock, written as an increment", async () => {
     // validation read: 100 on hand; by the time the lock is granted a sale left 70
     prisma.product.findMany
