@@ -592,7 +592,7 @@ function PricesGridBody({
                 <tr
                   key={row.ref}
                   data-testid={T.row(row.ref)}
-                  className={`align-top ${ROW_RULE} last:[&>*]:border-b-0`}
+                  className={`align-top ${ROW_RULE} [&:last-child>*]:border-b-0`}
                 >
                   <th scope="row" className={`${UNIT_CELL} py-3 font-medium text-navy`}>
                     {row.label}
