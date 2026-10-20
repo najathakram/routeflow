@@ -1585,6 +1585,111 @@ describe("BookkeepingService", () => {
   // Own fixture (not REG-B11's $200/$300/$800 one) — isolates the accrual-net
   // revenue figure from the cash-basis totalCollected/totalOutstanding ones.
 
+  // SA-814n / B288: cash out to suppliers = BillPayments that are not credit draws + SupplierCredit.amount on
+  // receivedAt. A draw is the same dollars already counted when the credit was created.
+  describe("getCashFlow — supplier cash out (SA-814n)", () => {
+    const FROM = "2026-01-01";
+    const TO = "2026-03-31";
+    const inWindow = (d: Date, w: any) =>
+      !w || ((w.gte === undefined || d >= w.gte) && (w.lte === undefined || d <= w.lte));
+    const notMethod = (method: string, cond: any) => cond?.not === undefined || method !== cond.not;
+
+    const billPay = (over: Record<string, any>) => ({
+      id: "bp",
+      amount: 0,
+      method: "CHECK",
+      paidAt: new Date("2026-02-10T00:00:00Z"),
+      supplierCreditId: null,
+      ...over,
+    });
+    const credit = (over: Record<string, any>) => ({
+      id: "sc",
+      amount: 0,
+      method: "CHECK",
+      receivedAt: new Date("2026-02-10T00:00:00Z"),
+      ...over,
+    });
+    /** The mock does not evaluate `where`: apply the service's own window + method filter. */
+    const stub = (payments: any[], credits: any[]) => {
+      prisma.billPayment.findMany.mockImplementation(async ({ where }: any) =>
+        payments.filter(
+          (p) => inWindow(p.paidAt, where.paidAt) && notMethod(p.method, where.method),
+        ),
+      );
+      (prisma.supplierCredit as any).findMany.mockImplementation(async ({ where }: any) =>
+        credits.filter(
+          (c) => inWindow(c.receivedAt, where.receivedAt) && notMethod(c.method, where.method),
+        ),
+      );
+    };
+
+    it("(a) $1,000 paid on a $600 bill ($600 payment + $400 credit), next bill draws $400 -> $1,000 out", async () => {
+      stub(
+        [
+          billPay({ id: "bp-1", amount: 600 }),
+          // The next bill's auto-applied draw of the $400 credit: not new money.
+          billPay({
+            id: "bp-draw",
+            amount: 400,
+            method: "CREDIT_NOTE",
+            supplierCreditId: "sc-1",
+            paidAt: new Date("2026-03-05T00:00:00Z"),
+          }),
+        ],
+        [credit({ id: "sc-1", amount: 400 })],
+      );
+
+      const result = await service.getCashFlow(FROM, TO);
+
+      expect(result.totalOut).toBe(1000); // not 1,400 (draw counted) and not 600 (credit missed)
+      // The credit counts the day the cash left; the later draw adds nothing in ANY window.
+      expect((await service.getCashFlow("2026-02-01", "2026-02-28")).totalOut).toBe(1000);
+      expect((await service.getCashFlow("2026-03-01", "2026-03-31")).totalOut).toBe(0);
+    });
+
+    it("(b) moving a $200 payment to credit leaves cash out unchanged, in the same period", async () => {
+      const before = [
+        billPay({ id: "bp-1", amount: 200, paidAt: new Date("2026-02-10T00:00:00Z") }),
+      ];
+      stub(before, []);
+      const was = (await service.getCashFlow(FROM, TO)).totalOut;
+
+      // After the move: the payment row is gone, a $200 credit is dated at the ORIGINAL payment.
+      stub([], [credit({ id: "sc-1", amount: 200, receivedAt: new Date("2026-02-10T00:00:00Z") })]);
+      const now = (await service.getCashFlow(FROM, TO)).totalOut;
+
+      expect(was).toBe(200);
+      expect(now).toBe(200);
+      // And in a window that excludes that day, neither version counts it.
+      const later = await service.getCashFlow("2026-03-01", TO);
+      expect(later.totalOut).toBe(0);
+    });
+
+    it("(c) a CREDIT_NOTE draw alone adds nothing", async () => {
+      stub(
+        [billPay({ id: "bp-draw", amount: 400, method: "CREDIT_NOTE", supplierCreditId: "sc-0" })],
+        [],
+      );
+
+      const result = await service.getCashFlow(FROM, TO);
+
+      expect(result.totalOut).toBe(0);
+    });
+
+    it("keeps payments on VOID bills counted (the cash left) and excludes a credit outside the window", async () => {
+      stub(
+        [billPay({ id: "bp-void", amount: 75 })],
+        [credit({ id: "sc-old", amount: 500, receivedAt: new Date("2025-11-01T00:00:00Z") })],
+      );
+
+      const result = await service.getCashFlow(FROM, TO);
+
+      expect(result.totalOut).toBe(75);
+      const where = prisma.billPayment.findMany.mock.calls[0][0].where;
+      expect(where).not.toHaveProperty("vendorBill");
+    });
+  });
+
   describe("getMobileDashboard (B440)", () => {
     it("REG-B440-mobile: revenue is accrual net sales, not totalCollected; netIncome subtracts badDebtExpense", async () => {
       prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 500, taxAmount: 0 } });

@@ -10,7 +10,7 @@ import { StorageService } from "../storage/storage.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { ProductAliasService } from "../import/product-alias.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { BILL_REVERTED_NOTE, billReceiptNote } from "../inventory/bill-revert";
+import { BILL_REVERTED_NOTE, billReceiptNote, pairedReceiptIds } from "../inventory/bill-revert";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
@@ -58,6 +58,7 @@ function matches(row: Row, where: Row | undefined): boolean {
         if (op === "lt") return v != null && cmp(v, arg) < 0;
         if (op === "gte") return v != null && cmp(v, arg) >= 0;
         if (op === "in") return (arg as unknown[]).includes(v);
+        if (op === "notIn") return !(arg as unknown[]).includes(v);
         if (op === "startsWith") return typeof v === "string" && v.startsWith(arg as string);
         if (op === "equals") return v === arg;
         throw new Error(`fake ledger: unsupported operator ${op}`);
@@ -760,5 +761,554 @@ describe("B846 / SA-808 — revertToDraft appends reversal rows and never delete
     await expect(revert(h, 10)).rejects.toBeInstanceOf(ConflictException);
     expect(h.rows).toHaveLength(1); // nothing written
     expect(h.product.currentStock.toNumber()).toBe(10);
+  });
+});
+
+// ─── voidBill: the same reversal, same helpers (SA-808 §5, "B846 sibling: void") ─────────────────
+async function voidIt(h: Harness, qty: number, userId = "user-2") {
+  h.setBill(receivedBill(qty));
+  return (h.service as any).voidBill("bill-1", userId);
+}
+/** The tobacco report's purchases for a month: the signed sum of PURCHASE rows only. */
+const purchaseSum = (h: Harness, y: number, m: number) =>
+  h.rows
+    .filter((r) => r.type === "PURCHASE" && inMonth(r, y, m))
+    .reduce((t, r) => t.add(r.quantity), D(0))
+    .toNumber();
+
+describe("B846 sibling — voidBill appends a PURCHASE reversal (the tobacco filing sums PURCHASE)", () => {
+  beforeEach(() => {
+    billDate = BILL_DATE;
+    jest.useFakeTimers({
+      now: NOW,
+      doNotFake: [
+        "nextTick",
+        "setImmediate",
+        "setTimeout",
+        "setInterval",
+        "clearTimeout",
+        "clearInterval",
+        "clearImmediate",
+        "queueMicrotask",
+        "performance",
+        "hrtime",
+      ],
+    });
+  });
+  afterEach(() => jest.useRealTimers());
+
+  it("V1: a September bill voided in October — one -10 PURCHASE at the original date, September purchases 0, no ADJUSTMENT", async () => {
+    const h = await harness();
+    h.flags.isTobacco = true;
+    await receive(h, 10);
+    expect(purchaseSum(h, 2026, 9)).toBe(10);
+
+    await voidIt(h, 10);
+
+    expect(h.rows.filter((r) => r.type === "ADJUSTMENT")).toHaveLength(0);
+    expect(h.rows).toHaveLength(2);
+    const [receipt, reversal] = h.rows;
+    expect(reversal).toMatchObject({
+      type: "PURCHASE",
+      reference: "B-1",
+      supplierId: "sup-1",
+      notes: `${BILL_REVERTED_NOTE}${receipt.id}`,
+      performedById: "user-2",
+    });
+    expect(D(reversal.quantity).eq(-10)).toBe(true);
+    expect(D(reversal.unitCost).eq(receipt.unitCost)).toBe(true);
+    expect(reversal.effectiveAt).toEqual(receipt.effectiveAt);
+    expect(purchaseSum(h, 2026, 9)).toBe(0);
+    expect(purchaseSum(h, 2026, 10)).toBe(0);
+    // Ledger invariant: Σq == the counter, and the reversal snapshots the counter after the void.
+    expect(h.sum({ productId: "prod-1" }).eq(h.product.currentStock)).toBe(true);
+    expect(D(reversal.stockAfter).eq(0)).toBe(true);
+    expect(h.lots).toHaveLength(0);
+    expect(h.prisma.stockMovement.deleteMany).not.toHaveBeenCalled();
+    expect(h.prisma.vendorBill.update.mock.calls.at(-1)?.[0].data.status).toBe("VOID");
+  });
+
+  it("V2: September already filed — the reversal is dated now with the filed-through note, live September equals the filing, October shows -10", async () => {
+    const h = await harness();
+    h.flags.isTobacco = true;
+    await receive(h, 10);
+    h.tobaccoReports.push(SEPT_FILED);
+
+    await voidIt(h, 10);
+
+    const [receipt, reversal] = h.rows;
+    expect(reversal.type).toBe("PURCHASE");
+    expect(reversal.effectiveAt).toEqual(NOW);
+    expect(reversal.notes).toBe(
+      `${BILL_REVERTED_NOTE}${receipt.id} (filed through September 2026)`,
+    );
+    expect(purchaseSum(h, 2026, 9)).toBe(10); // live September == what was filed
+    expect(purchaseSum(h, 2026, 10)).toBe(-10);
+    expect(h.rows.filter((r) => r.type === "ADJUSTMENT")).toHaveLength(0);
+  });
+
+  it("V2b: refuses 409 STOCK_DATE_IN_FILED_PERIOD when today is itself filed — nothing written", async () => {
+    const h = await harness();
+    h.flags.isTobacco = true;
+    await receive(h, 10);
+    h.tobaccoReports.push({
+      status: "GENERATED",
+      periodStart: new Date("2026-10-01T00:00:00.000Z"),
+      periodEnd: new Date("2026-10-31T23:59:59.999Z"),
+    });
+
+    await expect(voidIt(h, 10)).rejects.toMatchObject({
+      response: { code: API_ERROR_CODES.STOCK_DATE_IN_FILED_PERIOD },
+    });
+    expect(h.rows).toHaveLength(1); // (the counter rolls back with the tx; the db twin proves it)
+  });
+
+  it("V3: a manual purchase sharing the bill number survives the void — row and lot — and is not counted as the bill's", async () => {
+    const h = await harness();
+    h.flags.isTobacco = true;
+    manualPurchase(h, 5);
+    h.lots.push({
+      id: "lot-manual",
+      productId: "prod-1",
+      reference: "B-1",
+      purchaseDate: new Date("2026-05-20T00:00:00.000Z"),
+      qty: D(5),
+      remainingQty: D(5),
+      unitCost: D(1),
+    });
+    await receive(h, 10);
+
+    await voidIt(h, 10);
+
+    expect(h.rows.map((r) => Number(r.quantity))).toEqual([5, 10, -10]);
+    expect(h.rows[0].id).toBe("mv-manual");
+    expect(h.prisma.stockMovement.deleteMany).not.toHaveBeenCalled();
+    expect(purchaseSum(h, 2026, 5)).toBe(5);
+    expect(purchaseSum(h, 2026, 9)).toBe(0);
+    expect(h.lots.map((l) => l.id)).toEqual(["lot-manual"]);
+    expect(h.sum({ productId: "prod-1" }).eq(h.product.currentStock)).toBe(true);
+    expect(h.product.currentStock.toNumber()).toBe(5);
+  });
+
+  it("V4 (guard): a PO-linked bill posts no stock, so its void writes nothing to the ledger", async () => {
+    const h = await harness();
+    h.setBill({ ...receivedBill(10), purchaseOrderId: "po-1" });
+
+    await (h.service as any).voidBill("bill-1", "user-2");
+
+    expect(h.rows).toHaveLength(0);
+    expect(h.prisma.stockMovement.create).not.toHaveBeenCalled();
+    expect(h.prisma.product.update).not.toHaveBeenCalled();
+  });
+
+  it("V5 (guard): a voided bill's cost is not LAST_COST — the shared exclusion pairs its receipt", async () => {
+    const h = await harness();
+    await receive(h, 10);
+    await voidIt(h, 10);
+
+    const [receipt] = h.rows;
+    expect(await pairedReceiptIds(h.prisma as any, "prod-1")).toEqual([receipt.id]);
+  });
+
+  it("void after a revert and re-receive reverses only the re-received row", async () => {
+    const h = await harness();
+    await receive(h, 10);
+    await revert(h, 10);
+    await receive(h, 8);
+
+    await voidIt(h, 8);
+
+    expect(summary(h).map((r) => r.q)).toEqual([10, -10, 8, -8]);
+    expect(h.rows[3].notes).toBe(`${BILL_REVERTED_NOTE}${h.rows[2].id}`);
+    expect(h.product.currentStock.toNumber()).toBe(0);
+    expect(h.sum({ productId: "prod-1" }).toNumber()).toBe(0);
+  });
+
+  it("replays the product when newer rows sit after the (backdated) reversal, and surfaces the gap", async () => {
+    const h = await harness();
+    await receive(h, 10);
+    h.rows.push({
+      id: "mv-sale",
+      productId: "prod-1",
+      type: "SALE",
+      quantity: D(-2),
+      effectiveAt: new Date("2026-09-20T00:00:00.000Z"),
+      createdAt: new Date("2026-09-20T00:00:00.000Z"),
+    });
+    h.product.currentStock = D(8);
+    h.inventory.recomputeProductInTx.mockResolvedValue({ gapDetected: true, stockDrift: 3 });
+
+    const out = await voidIt(h, 10);
+
+    expect(h.inventory.recomputeProductInTx).toHaveBeenCalledTimes(1);
+    expect(out.gapsDetected).toEqual([{ productId: "prod-1", name: "Widget", stockDrift: 3 }]);
+    expect(out.status).toBe("VOID");
+  });
+
+  describe("SA-808b — a void degrades, an excess is still refused, revert names the way out", () => {
+    /** A legacy bill: the counter holds the stock, but no PURCHASE row was ever written for it. */
+    const legacyWorld = async () => {
+      const h = await harness();
+      h.flags.isTobacco = true;
+      h.product.currentStock = D(10);
+      h.product.averageCost = D(2);
+      h.lots.push({
+        id: "lot-legacy",
+        productId: "prod-1",
+        reference: "B-1",
+        purchaseDate: BILL_DATE,
+        qty: D(10),
+        remainingQty: D(10),
+        unitCost: D(2),
+      });
+      return h;
+    };
+    /** Review item 4: a void moves the product's Σq and its counter by the same amount. */
+    const together = async (h: Harness, run: () => Promise<any>) => {
+      const q0 = h.sum({ productId: "prod-1" });
+      const c0 = h.product.currentStock;
+      const out = await run();
+      expect(h.sum({ productId: "prod-1" }).sub(q0).toNumber()).toBe(
+        h.product.currentStock.sub(c0).toNumber(),
+      );
+      return out;
+    };
+
+    it("V1: a legacy bill with no receipt row voids — ADJUSTMENT -Q dated now, purchases unchanged, audit row, lot gone", async () => {
+      const h = await legacyWorld();
+
+      const out = await together(h, () => voidIt(h, 10));
+
+      expect(h.rows).toHaveLength(1);
+      expect(h.rows[0]).toMatchObject({
+        type: "ADJUSTMENT",
+        reference: "B-1",
+        supplierId: "sup-1",
+      });
+      expect(D(h.rows[0].quantity).eq(-10)).toBe(true);
+      expect(h.rows[0].effectiveAt).toEqual(NOW);
+      expect(h.rows[0].notes).toContain("B-1");
+      expect(h.rows[0].notes).toContain("had no receipt record");
+      expect(purchaseSum(h, 2026, 9)).toBe(0); // no PURCHASE was ever counted, none is added
+      expect(h.product.currentStock.toNumber()).toBe(0);
+      expect(h.lots).toHaveLength(0);
+      expect(out.status).toBe("VOID");
+      expect(out.gapsDetected).toEqual([
+        { productId: "prod-1", name: "Widget", stockDrift: 10, noReceiptQty: 10 },
+      ]);
+      expect(h.prisma.auditLog.create).toHaveBeenCalledTimes(1);
+      expect(h.prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
+        action: "vendor-bill.void-without-receipt",
+        entityType: "VendorBill",
+        entityId: "bill-1",
+        userId: "user-2",
+        meta: {
+          billNumber: "B-1",
+          products: [{ productId: "prod-1", found: [], noReceiptQty: "10" }],
+        },
+      });
+    });
+
+    it("V1b: a closed month never moves — with today filed the void is refused 409, nothing written", async () => {
+      const h = await legacyWorld();
+      h.tobaccoReports.push({
+        status: "GENERATED",
+        periodStart: new Date("2026-10-01T00:00:00.000Z"),
+        periodEnd: new Date("2026-10-31T23:59:59.999Z"),
+      });
+      await expect(voidIt(h, 10)).rejects.toMatchObject({
+        response: { code: API_ERROR_CODES.STOCK_DATE_IN_FILED_PERIOD },
+      });
+      expect(h.rows).toHaveLength(0);
+    });
+
+    it("V2: a PAID bill with half its rows missing — half reversed as -PURCHASE (original date), half as ADJUSTMENT now, credits returned", async () => {
+      const h = await harness();
+      h.flags.isTobacco = true;
+      await receive(h, 10);
+      h.rows[0].quantity = D(5); // the other 5 were never recorded
+      h.product.currentStock = D(10);
+      const refund = jest.spyOn(h.service as any, "refundDrawnSupplierCredits");
+      h.setBill({ ...receivedBill(10), status: "PAID" });
+
+      const out = await together(h, () => (h.service as any).voidBill("bill-1", "user-2"));
+
+      expect(h.rows.map((r) => [r.type, Number(r.quantity)])).toEqual([
+        ["PURCHASE", 5],
+        ["PURCHASE", -5],
+        ["ADJUSTMENT", -5],
+      ]);
+      expect(h.rows[1].effectiveAt).toEqual(h.rows[0].effectiveAt);
+      expect(h.rows[2].effectiveAt).toEqual(NOW);
+      expect(purchaseSum(h, 2026, 9)).toBe(0);
+      expect(h.product.currentStock.toNumber()).toBe(0);
+      expect(D(h.rows[2].stockAfter).toNumber()).toBe(0);
+      expect(h.lots).toHaveLength(0); // the bill's lot holds no more than it received: reversed
+      expect(refund).toHaveBeenCalledTimes(1);
+      expect(out.gapsDetected).toEqual([
+        { productId: "prod-1", name: "Widget", stockDrift: 5, noReceiptQty: 5 },
+      ]);
+      expect(out.status).toBe("VOID");
+    });
+
+    it("rows that sit on another product count as shortfall and are listed in the audit row, never reassigned", async () => {
+      const h = await legacyWorld();
+      h.rows.push({
+        id: "mv-moved",
+        productId: "prod-2",
+        type: "PURCHASE",
+        quantity: D(10),
+        unitCost: D(2),
+        reference: "B-1",
+        notes: billReceiptNote("B-1"),
+        effectiveAt: BILL_DATE,
+        createdAt: BILL_DATE,
+      });
+
+      await together(h, () => voidIt(h, 10));
+
+      expect(h.rows.find((r) => r.id === "mv-moved")?.productId).toBe("prod-2");
+      expect(D(h.rows.at(-1)?.quantity).eq(-10)).toBe(true);
+      expect(
+        h.prisma.auditLog.create.mock.calls[0][0].data.meta.receiptRowsOnOtherProducts,
+      ).toEqual([{ id: "mv-moved", productId: "prod-2", quantity: "10" }]);
+    });
+
+    it("V7 (SA-808c): an excess is refused for void and revert alike with the repair copy, and each refusal writes one ledger-excess audit row", async () => {
+      const h = await harness();
+      await receive(h, 10);
+      h.rows[0].quantity = D(12);
+      h.prisma.vendorBill.update.mockClear();
+      h.prisma.auditLog.create.mockClear();
+
+      await expect(voidIt(h, 10)).rejects.toMatchObject({
+        status: 409,
+        response: {
+          code: API_ERROR_CODES.INVENTORY_LEDGER_GAP,
+          message:
+            "Widget's stock records show more received than this bill, so it can't be voided here. We've flagged it for a repair.",
+        },
+      });
+      await expect(revert(h, 10)).rejects.toMatchObject({
+        status: 409,
+        response: {
+          code: API_ERROR_CODES.INVENTORY_LEDGER_GAP,
+          message:
+            "Widget's stock records show more received than this bill, so it can't be reverted here. We've flagged it for a repair.",
+        },
+      });
+      expect(h.rows).toHaveLength(1);
+      expect(h.prisma.vendorBill.update).not.toHaveBeenCalled();
+      const audits = h.prisma.auditLog.create.mock.calls.map((c: any) => c[0].data);
+      expect(audits).toHaveLength(2);
+      for (const a of audits) {
+        expect(a).toMatchObject({
+          action: "vendor-bill.ledger-excess",
+          entityType: "VendorBill",
+          entityId: "bill-1",
+          meta: { billNumber: "B-1", productId: "prod-1", posted: "12", received: "10" },
+        });
+      }
+      expect(audits.map((a: any) => a.meta.action)).toEqual(["voided", "reverted to draft"]);
+      expect(JSON.stringify(audits)).not.toContain("Void the bill");
+    });
+
+    it("V4 / V8 (guard): a shortfall revert on V1's bill is refused 409 with the message that names void", async () => {
+      const h = await legacyWorld();
+      await expect(revert(h, 10)).rejects.toMatchObject({
+        response: {
+          code: API_ERROR_CODES.INVENTORY_LEDGER_GAP,
+          message:
+            "Widget's stock records for this bill don't match what was received, so it can't go back to draft. Void the bill and enter it again.",
+        },
+      });
+      expect(h.rows).toHaveLength(0);
+      expect(h.prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("V5: a two-line, one-product bill voids in either row order (the planner is shared with revert)", async () => {
+      for (const reverse of [false, true]) {
+        const h = await harness();
+        const two = (received = false) => ({
+          ...draftBill(0),
+          items: [
+            item(5, 2, { id: "item-1", ...(received ? { qtyReceived: D(5) } : {}) }),
+            item(3, 3, { id: "item-2", ...(received ? { qtyReceived: D(3) } : {}) }),
+          ],
+        });
+        h.setBill(two());
+        await h.service.receive("bill-1", undefined, "user-1");
+        const tied = h.rows[0].createdAt;
+        for (const r of h.rows) r.createdAt = tied;
+        if (reverse) h.rows.reverse();
+        h.setBill({
+          ...two(true),
+          status: "RECEIVED",
+          receivedDate: billDate,
+        });
+        h.prisma.auditLog.create.mockClear();
+
+        await together(h, () => (h.service as any).voidBill("bill-1", "user-2"));
+
+        expect(h.rows.filter((r) => r.type === "ADJUSTMENT")).toHaveLength(0);
+        expect(h.rows.filter((r) => Number(r.quantity) < 0)).toHaveLength(2);
+        expect(h.sum({ productId: "prod-1" }).toNumber()).toBe(0);
+        expect(h.product.currentStock.toNumber()).toBe(0);
+        expect(h.prisma.auditLog.create).not.toHaveBeenCalled();
+      }
+    });
+
+    it("V6: lot ambiguity never blocks a void: both candidates stand untouched, the audit row and gapsDetected name them", async () => {
+      const h = await harness();
+      await receive(h, 10);
+      h.rows[0].effectiveAt = new Date("2026-09-16T08:00:00.000Z"); // legacy: lot and row disagree
+      h.lots.push({ ...h.lots[0], id: "lot-twin" });
+
+      const out = await together(h, () => voidIt(h, 10));
+
+      expect(out.status).toBe("VOID");
+      expect(h.rows.map((r) => [r.type, Number(r.quantity)])).toEqual([
+        ["PURCHASE", 10],
+        ["PURCHASE", -10],
+      ]);
+      expect(h.product.currentStock.toNumber()).toBe(0);
+      expect(h.lots.map((l) => [l.id, Number(l.remainingQty)])).toEqual([
+        ["lot-1", 10],
+        ["lot-twin", 10],
+      ]);
+      expect(h.prisma.stockLot.delete).not.toHaveBeenCalled();
+      expect(h.prisma.stockLot.update).not.toHaveBeenCalled();
+      expect(out.gapsDetected).toEqual([
+        { productId: "prod-1", name: "Widget", stockDrift: 0, lotsLeft: 20 },
+      ]);
+      expect(h.prisma.auditLog.create).toHaveBeenCalledTimes(1);
+      expect(h.prisma.auditLog.create.mock.calls[0][0].data.meta).toMatchObject({
+        billNumber: "B-1",
+        products: [{ productId: "prod-1", found: ["mv-1"], noReceiptQty: "0" }],
+        lotsLeft: [
+          {
+            productId: "prod-1",
+            name: "Widget",
+            lotIds: ["lot-1", "lot-twin"],
+            remainingQty: "20",
+          },
+        ],
+      });
+      // revert keeps refusing the same ambiguity (it has an exit: void)
+      const r = await harness();
+      await receive(r, 10);
+      r.rows[0].effectiveAt = new Date("2026-09-16T08:00:00.000Z");
+      r.lots.push({ ...r.lots[0], id: "lot-twin" });
+      await expect(revert(r, 10)).rejects.toMatchObject({
+        response: { code: API_ERROR_CODES.INVENTORY_LEDGER_GAP },
+      });
+    });
+
+    it("a manual lot alone, ≤ received, survives a void (never by reference alone, SA-808 §2)", async () => {
+      const h = await legacyWorld();
+      h.lots.length = 0; // the legacy bill never made a lot of its own
+      h.rows.push({
+        id: "mv-manual",
+        productId: "prod-1",
+        type: "PURCHASE",
+        quantity: D(4),
+        unitCost: D(1),
+        supplierId: "sup-1",
+        reference: "B-1",
+        notes: "manual purchase",
+        effectiveAt: new Date("2026-05-20T00:00:00.000Z"),
+        createdAt: new Date("2026-05-20T00:00:00.000Z"),
+      });
+      h.lots.push({
+        id: "lot-manual",
+        productId: "prod-1",
+        reference: "B-1", // a person's purchase that happens to share the bill number
+        purchaseDate: new Date("2026-05-20T00:00:00.000Z"),
+        qty: D(4),
+        remainingQty: D(4),
+        unitCost: D(1),
+      });
+      h.product.currentStock = D(14);
+
+      const out = await together(h, () => voidIt(h, 10));
+
+      expect(out.status).toBe("VOID");
+      expect(h.lots.map((l) => l.id)).toEqual(["lot-manual"]);
+      expect(h.prisma.stockLot.delete).not.toHaveBeenCalled();
+      expect(h.prisma.stockLot.update).not.toHaveBeenCalled();
+    });
+
+    it("a shortfall takes only the lot shaped like its line; a manual lot sharing the number stays", async () => {
+      const h = await legacyWorld();
+      h.lots.push({
+        id: "lot-manual",
+        productId: "prod-1",
+        reference: "B-1",
+        purchaseDate: new Date("2026-05-20T00:00:00.000Z"),
+        qty: D(4),
+        remainingQty: D(4),
+        unitCost: D(1),
+      });
+      h.product.currentStock = D(14);
+
+      const out = await together(h, () => voidIt(h, 10));
+
+      expect(out.status).toBe("VOID");
+      expect(D(h.rows[0].quantity).eq(-10)).toBe(true); // the shortfall ADJUSTMENT lands
+      expect(h.lots.map((l) => l.id)).toEqual(["lot-manual"]);
+      expect(out.gapsDetected).toEqual([
+        { productId: "prod-1", name: "Widget", stockDrift: 10, noReceiptQty: 10 },
+      ]);
+    });
+
+    it("SA-808c S1: a shortfall product's lots that match no line are recorded as lotsUnmatched, never as lotsLeft", async () => {
+      const h = await legacyWorld();
+      h.lots.length = 0; // two partial receipt lots (6 + 4) instead of one 10: neither is the line's shape
+      for (const [id, qty] of [
+        ["lot-a", 6],
+        ["lot-b", 4],
+      ] as const)
+        h.lots.push({
+          id,
+          productId: "prod-1",
+          reference: "B-1",
+          purchaseDate: BILL_DATE,
+          qty: D(qty),
+          remainingQty: D(qty),
+          unitCost: D(2),
+        });
+      h.lots.push({
+        id: "lot-manual", // a person's purchase sharing the number looks the same
+        productId: "prod-1",
+        reference: "B-1",
+        purchaseDate: new Date("2026-05-20T00:00:00.000Z"),
+        qty: D(4),
+        remainingQty: D(4),
+        unitCost: D(1),
+      });
+      h.product.currentStock = D(14);
+
+      const out = await together(h, () => voidIt(h, 10));
+
+      expect(out.status).toBe("VOID");
+      // nothing is touched (as before) ...
+      expect(h.lots.map((l) => l.id)).toEqual(["lot-a", "lot-b", "lot-manual"]);
+      expect(h.prisma.stockLot.delete).not.toHaveBeenCalled();
+      expect(h.prisma.stockLot.update).not.toHaveBeenCalled();
+      // ... but no longer silently, and never in the zero-by-id repair list
+      const meta = h.prisma.auditLog.create.mock.calls[0][0].data.meta;
+      expect(meta.lotsLeft).toEqual([]);
+      expect(meta.lotsUnmatched).toEqual([
+        {
+          productId: "prod-1",
+          name: "Widget",
+          lotIds: ["lot-a", "lot-b", "lot-manual"],
+          remainingQty: "14",
+        },
+      ]);
+      expect(out.gapsDetected).toEqual([
+        { productId: "prod-1", name: "Widget", stockDrift: 10, noReceiptQty: 10 },
+      ]);
+    });
   });
 });

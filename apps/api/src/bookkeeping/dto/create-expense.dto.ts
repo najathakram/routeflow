@@ -12,6 +12,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 export class ExpenseLineItemDto {
   @IsString() account: string;
@@ -35,7 +36,7 @@ export class CreateExpenseDto {
   @IsOptional() @IsString() employeeName?: string;
   @IsOptional() @IsString() mileageUnit?: string;
   @IsOptional() @IsNumber() @Min(0) distance?: number;
-  @IsOptional() @IsNumber() @Min(0) mileageRateSnapshot?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) mileageRateSnapshot?: number;
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
@@ -49,7 +50,7 @@ export class CreateExpenseCategoryDto {
 }
 
 export class UpdateExpenseDto {
-  @IsOptional() @IsNumber() @Min(0.01) amount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0.01) amount?: number;
   @IsOptional() @IsDateString() date?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsString() notes?: string;

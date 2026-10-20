@@ -191,6 +191,12 @@ export const API_ERROR_CODES = {
   PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
   SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
   PO_LINK_BROKEN: "PO_LINK_BROKEN",
+  BILL_NEEDS_A_LINE: "BILL_NEEDS_A_LINE",
+  BILL_NOT_EDITABLE: "BILL_NOT_EDITABLE",
+  BILL_PO_SUPPLIER_LOCKED: "BILL_PO_SUPPLIER_LOCKED",
+  BILL_NEVER_RECEIVED: "BILL_NEVER_RECEIVED",
+  BILL_TAX_UNKNOWN: "BILL_TAX_UNKNOWN",
+  RECEIVE_EXCEEDS_OUTSTANDING: "RECEIVE_EXCEEDS_OUTSTANDING",
   AI_KEY_INVALID: "AI_KEY_INVALID",
   AI_SCAN_REJECTED: "AI_SCAN_REJECTED",
   AI_UNAVAILABLE: "AI_UNAVAILABLE",
@@ -601,6 +607,16 @@ export const API_ERROR_CODES = {
    * was written, so the caller never gets the tier price instead of the customer's typed price.
    */
   CUSTOMER_PRICES_UNAVAILABLE: "CUSTOMER_PRICES_UNAVAILABLE",
+  /**
+   * 409 from void / revert-to-draft / delete (and a per-bill `skipped` entry of the bulk delete) of a vendor bill that still carries CASH
+   * payments (B288, SA-814 R5-3). Body carries `amount` (the rounded cash total). Nothing was written; move the payments to a supplier
+   * credit first (POST /vendor-bills/:id/payments/:paymentId/move-to-credit).
+   */
+  BILL_HAS_PAYMENTS: "BILL_HAS_PAYMENTS",
+  /** 409 from move-to-credit: the payment is a draw of supplier credit (void or delete hands it back), not cash. */
+  BILL_PAYMENT_NOT_CASH: "BILL_PAYMENT_NOT_CASH",
+  /** 409 from move-to-credit: the bill has no supplier, so there is no account to hold the credit. */
+  BILL_PAYMENT_NO_SUPPLIER: "BILL_PAYMENT_NO_SUPPLIER",
   /** 400 from PUT /platform-admin/app-links: a link is not an https URL with a host; body carries `field`. */
   APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
 } as const satisfies Record<string, ApiErrorCode>;
