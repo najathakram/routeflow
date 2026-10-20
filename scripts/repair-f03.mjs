@@ -88,6 +88,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { roundMoney } from "@routeflow/pricing";
 import guardLib from "../apps/api/scripts/lib/live-target-guard.cjs";
+import { assertFiniteMoney } from "./lib/assert-finite-money.cjs";
 import protectedSlugsLib from "../apps/api/scripts/lib/protected-slugs.cjs";
 
 const { protectedTenantIds } = guardLib;
@@ -735,7 +736,13 @@ export function createPgStore(client, protectedIds = []) {
             SET "invoicedQty" = $2, "updatedAt" = now()
           WHERE id = $1 AND "invoicedQty" = $3
             AND "tenantId" <> ALL($4::text[])`,
-        [id, qty, seen.get(`orderItem:${id}`), protectedIds],
+        // SA-816: refuse a non-finite quantity before it binds (node-pg sends NaN as 'NaN'; NUMERIC accepts it).
+        [
+          id,
+          assertFiniteMoney(qty, `orderItem ${id} invoicedQty`),
+          seen.get(`orderItem:${id}`),
+          protectedIds,
+        ],
       );
     },
   };

@@ -59,6 +59,7 @@ import {
 import { hydratedLineTax } from "../../../../../lib/invoice-edit-tax";
 import { reasonField, showsReason } from "../../../../../lib/invoice-edit-reason";
 import { safeTextErrorCopy } from "../../../../../lib/safe-text-error-copy";
+import { taxStateStaleCopy } from "../../../../../lib/invoice-tax-state-copy";
 
 /**
  * Invoice edit screen — DRAFT-only, mirroring web's invoices/[id]/edit page.
@@ -481,10 +482,9 @@ export default function EditInvoiceScreen() {
             );
             return;
           }
-          alertInfo(
-            "Couldn't save",
-            safeTextErrorCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
-          );
+          const fallback =
+            safeTextErrorCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.";
+          alertInfo("Couldn't save", taxStateStaleCopy(e) ?? fallback);
         },
       },
     );

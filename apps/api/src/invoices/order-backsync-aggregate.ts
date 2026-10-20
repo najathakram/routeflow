@@ -1,3 +1,4 @@
+import { finiteStoredMoney } from "../common/money-invariants.util";
 import { resolveProductMatches } from "./finalize-order-recompute";
 
 /**
@@ -71,6 +72,10 @@ export function aggregateInvoiceLines(
       // A new order line per (product, category, subcategory, trio): invoice lines of one product that were
       // billed under different snapshots must not be summed under the LAST one's (row 373 review).
       const key = line ? `line:${line.id}` : `product:${it.productId}|${snapshotKeyOf(it)}`;
+      // SA-816b: every stored money column summed or copied here is refused when non-finite (400), never read as 0.
+      const money = (column: string, v: unknown) =>
+        finiteStoredMoney(v, `Invoice line ${it.id} ${column}`);
+      const unitPrice = money("unit price", it.unitPrice);
       const prev = byTarget.get(key) ?? {
         line,
         productId: it.productId ?? null,
@@ -78,18 +83,18 @@ export function aggregateInvoiceLines(
         subtotal: 0,
         categoryTax: 0,
         freeUnits: 0,
-        unitPrice: Number(it.unitPrice),
+        unitPrice,
         n: 0,
         packs: new Set<number>(),
         sample: it,
       };
       prev.n += 1;
       prev.packs.add(Number(it.unitsPerBox ?? 0));
-      prev.qty += Number(it.qty);
-      prev.subtotal += Number(it.subtotal);
-      prev.categoryTax += Number(it.categoryTaxAmount ?? 0);
+      prev.qty += money("qty", it.qty);
+      prev.subtotal += money("subtotal", it.subtotal);
+      prev.categoryTax += money("category tax", it.categoryTaxAmount);
       prev.freeUnits += Math.max(0, Math.trunc(Number(it.promoFreeUnits ?? 0) || 0));
-      prev.unitPrice = Number(it.unitPrice); // most-recent line wins for display
+      prev.unitPrice = unitPrice; // most-recent line wins for display
       prev.sample = it;
       byTarget.set(key, prev);
     }

@@ -339,6 +339,48 @@ describe("bulk re-price: the overpay judgment is a PRE-FLIGHT check (B1058)", ()
       expect(String(warn.mock.calls[0][0])).toEqual(expect.stringContaining("inv-2"));
     });
 
+    it("(m) SA-816d: a NaN sibling on target #3's order refuses the WHOLE batch (400 MONEY_INVARIANT) before #1 or #2 commit", async () => {
+      const targets = [
+        invoiceOf(1, []),
+        invoiceOf(2, []),
+        invoiceOf(3, [], { orderId: "order-3" }),
+      ];
+      arrange(targets);
+      // the preflight's reads: the other invoices of order-3 (one carries a stored NaN levy) and the order's lines
+      prisma.invoice.findMany.mockImplementation(async (args: any) =>
+        args?.where?.orderId
+          ? [
+              {
+                id: "inv-sib",
+                orderId: "order-3",
+                items: [
+                  {
+                    id: "sib-1",
+                    orderItemId: "oi-1",
+                    productId: "p-1",
+                    qty: 1,
+                    unitPrice: 10,
+                    subtotal: 10,
+                    unitsPerBox: null,
+                    categoryTaxAmount: "NaN",
+                  },
+                ],
+              },
+            ]
+          : targets,
+      );
+      prisma.order.findUnique.mockResolvedValue({
+        id: "order-3",
+        lineItems: [{ id: "oi-1", productId: "p-1", status: "PENDING" }],
+      });
+      const recompute = jest.spyOn(service, "recomputeOrderFromInvoices");
+      const err = await caught(run());
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.MONEY_INVARIANT });
+      noWrites();
+      expect(recompute).not.toHaveBeenCalled();
+    });
+
     it("(l) a ONE-invoice batch whose own order re-sync throws is still PARTIAL (applied [1], skipped [])", async () => {
       arrange([invoiceOf(1, [], { orderId: "order-1" })]);
       jest.spyOn(service, "recomputeOrderFromInvoices").mockRejectedValue(new Error("boom"));
@@ -351,6 +393,25 @@ describe("bulk re-price: the overpay judgment is a PRE-FLIGHT check (B1058)", ()
       expect(body.message).toMatch(
         /^1 of 1 invoices were updated; invoice INV-1 was updated, but its follow-up sync \(order totals and commissions\) did not finish/,
       );
+    });
+
+    it("(l2) SA-816: a MONEY_INVARIANT refusal from the order re-sync AFTER the commit (only a race reaches it now, see (m)) is still PARTIAL with syncFailed, never the raw 400", async () => {
+      arrange(orderLinked());
+      jest.spyOn(service, "recomputeOrderFromInvoices").mockRejectedValue(
+        new BadRequestException({
+          code: API_ERROR_CODES.MONEY_INVARIANT,
+          message:
+            "Invoice line ii-9 category tax holds a stored amount that is not a valid number.",
+        }),
+      );
+      jest.spyOn(Logger.prototype, "warn").mockImplementation();
+      const err = await caught(run());
+      expect(err).toBeInstanceOf(ConflictException);
+      const body = err.getResponse();
+      expect(body.code).toBe(API_ERROR_CODES.PRICE_ADJUSTMENT_PARTIAL);
+      expect(body.applied).toEqual(["inv-1", "inv-2"]);
+      expect(body.syncFailed).toEqual({ invoiceId: "inv-2", invoiceNumber: "INV-2" });
+      expect(body.skipped).toEqual(["inv-3"]);
     });
   });
 
@@ -488,19 +549,27 @@ describe("bulk re-price: the overpay judgment is a PRE-FLIGHT check (B1058)", ()
   describe("totalsFromLines: the ONE totals arithmetic (pre-flight projection and tx write)", () => {
     it("(x) rounds the sums and the tax once: 83.70 at 5% + an 8.37 levy is 96.26", () => {
       expect(
-        totalsFromLines([{ subtotal: 83.7, taxRate: 0.05, categoryTaxAmount: 8.37 }], {
-          discount: 0,
-          shippingFee: 0,
-        }),
+        totalsFromLines(
+          [{ subtotal: 83.7, taxRate: 0.05, categoryTaxAmount: 8.37 }],
+          {
+            discount: 0,
+            shippingFee: 0,
+          },
+          false,
+        ),
       ).toEqual({ subtotal: 83.7, taxAmount: 12.56, total: 96.26, discount: 0 });
     });
 
     it("(y) a discount and a shipping fee enter the total, not the tax", () => {
       expect(
-        totalsFromLines([{ subtotal: 100, taxRate: 0.1, categoryTaxAmount: 0 }], {
-          discount: 5,
-          shippingFee: 2.5,
-        }),
+        totalsFromLines(
+          [{ subtotal: 100, taxRate: 0.1, categoryTaxAmount: 0 }],
+          {
+            discount: 5,
+            shippingFee: 2.5,
+          },
+          false,
+        ),
       ).toEqual({ subtotal: 100, taxAmount: 10, total: 107.5, discount: 5 });
     });
   });

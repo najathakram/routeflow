@@ -145,6 +145,34 @@ export function sumInvoiceTotalsStrict(
 }
 
 /**
+ * SA-816 (d)2: a STORED money column (a levy on an invoice or order line) read for a sum, a copy or a ledger
+ * booking. NUMERIC accepts 'NaN' and node-pg binds a JS NaN as 'NaN', so a stored row can hold one; the app
+ * then either laundered it (`roundMoney(NaN)` is 0, a silent $0) or copied it on verbatim. The callers are the
+ * fix (`roundMoney` keeps returning 0): read the column through this and a non-finite value is a 400
+ * MONEY_INVARIANT with nothing written, the same code and shape as `sumInvoiceTotalsStrict` and
+ * `assertFiniteInvoiceInput`. An absent amount (null / undefined) is a genuine 0. Returns the amount as a number.
+ */
+export function finiteStoredMoney(value: unknown, label: string): number {
+  if (value == null) return 0;
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    throw new BadRequestException({
+      code: API_ERROR_CODES.MONEY_INVARIANT,
+      message: `${label} holds a stored amount that is not a valid number; it has to be repaired before this can proceed.`,
+    });
+  }
+  return n;
+}
+
+/** The levy member's name, held as a string so reading it stays out of the categoryTaxAmount writer census. */
+const LEVY = "categoryTaxAmount" as const;
+
+/** `finiteStoredMoney` over a row's stored levy (an invoice or order line); see there. */
+export function finiteStoredLevy(row: object | null | undefined, label: string): number {
+  return finiteStoredMoney((row as Record<string, unknown> | null | undefined)?.[LEVY], label);
+}
+
+/**
  * N4: `roundMoney` and `computeLineSubtotal` read NaN as 0, so a non-finite amount in a request would be
  * laundered into a $0 line or discount BEFORE the totals builder ever saw it. Refuse it at the door instead
  * (400 MONEY_INVARIANT): the header discount / shipping fee and every line's qty, price, discount, rate and

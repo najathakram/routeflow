@@ -208,8 +208,8 @@ const BLOCKS: Record<string, BlockPin> = {
     why: "completes an import-created product's price / unit / unitsPerBox / category with conditional spreads (`...(dto.x !== undefined && { x })`, surfaced by the parenthesised-spread rule); the dto has no name field and the row's label is never touched",
   },
   "src/vendor-bills/vendor-bills.service.ts": {
-    blocks: { "receive:update": 1, "revertToDraft:update": 1, "voidBill:update": 1 },
-    why: "bill receive / revert / void move currentStock and averageCost (`...(updatesAverage ? { averageCost } : {})`, surfaced by the parenthesised-spread rule); they write no name",
+    blocks: { "receive:update": 1, "appendBillReversals:update": 1 },
+    why: "bill receive, and the one shared reversal revert and void both go through (SA-808), move currentStock and averageCost (`...(updatesAverage ? { averageCost } : {})`, surfaced by the parenthesised-spread rule); they write no name",
   },
   "prisma/seed.ts": {
     blocks: { "main:upsert": 1 },
