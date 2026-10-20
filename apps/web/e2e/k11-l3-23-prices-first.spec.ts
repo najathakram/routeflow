@@ -67,6 +67,24 @@ async function expectPhoneOrder(page: Page, flagOff: boolean) {
     : page.getByTestId(UNITS_V2_IDS.grid);
   const top = (await label.boundingBox())!.y;
   expect(top, "the price label is on the first screen").toBeLessThan(viewportHeight(page));
+  if (!flagOff) {
+    // The grid's top alone is too loose (More details collapsed, it passed with the "Prices by unit" heading at
+    // y=874 and the first figure at y=1012 on a 844 px screen). Both the region heading AND the first money figure
+    // in the grid must start on the first screen.
+    const hTop = (await page.getByTestId("units-v2-h-units").boundingBox())!.y;
+    expect(hTop, "the Prices by unit heading is on the first screen").toBeLessThan(
+      viewportHeight(page),
+    );
+    const figure = page
+      .getByTestId(UNITS_V2_IDS.grid)
+      .locator(':text-matches("^\\$[\\d,]+\\.\\d{2}$"):visible')
+      .first();
+    await expect(figure, "the grid shows a money figure").toBeVisible();
+    const fTop = (await figure.boundingBox())!.y;
+    expect(fTop, "the first money figure in the grid is on the first screen").toBeLessThan(
+      viewportHeight(page),
+    );
+  }
   const d = (await card(page, "Details").boundingBox())!;
   const i = (await card(page, "Image").boundingBox())!;
   expect(d.y, "Details comes before Image").toBeLessThan(i.y);

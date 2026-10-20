@@ -30,20 +30,26 @@ export function DetailsMore({
         aria-expanded={open}
         aria-controls="details-more-panel"
         onClick={() => setOpen((o) => !o)}
-        className="mt-5 flex min-h-[44px] w-full items-center justify-between rounded border border-surface-border px-3 text-sm font-medium text-navy sm:hidden"
+        className="mt-5 flex min-h-[44px] w-full items-center justify-between border-t border-surface-border text-sm font-medium text-navy focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 sm:hidden"
       >
         More details
         <ChevronDown
           aria-hidden="true"
-          className={cn("h-4 w-4 transition-transform", open && "rotate-180")}
+          className={cn("h-4 w-4 motion-safe:transition-transform", open && "rotate-180")}
         />
       </button>
+      {/* Below sm the panel is a 0fr to 1fr grid row: a 200 ms height and opacity reveal (motion-safe only, so reduced
+          motion is instant). Closed it is invisible, so its fields leave the Tab order but stay mounted. From sm up
+          the row is always 1fr and fully opaque. */}
       <div
         id="details-more-panel"
         data-testid="details-more-panel"
-        className={cn(!open && "max-sm:hidden")}
+        className={cn(
+          "grid sm:grid-rows-[1fr] sm:opacity-100 motion-safe:transition-[grid-template-rows,opacity,visibility] motion-safe:duration-200 motion-safe:ease-out",
+          open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0 max-sm:invisible",
+        )}
       >
-        {children}
+        <div className="min-h-0 max-sm:-mx-1 max-sm:overflow-hidden max-sm:px-1">{children}</div>
       </div>
     </>
   );

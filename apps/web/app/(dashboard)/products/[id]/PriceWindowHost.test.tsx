@@ -238,6 +238,21 @@ describe("K11-20c region: the prices grid is full width only while the inline ed
     expect(region().className).toMatch(/lg:w-\[calc\(150%\+0\.75rem\)\]/);
   });
 
+  it("insets the unit controls 17 px (card border 1 + p-4) while wide, so Add a unit lines up with the grid card's text", () => {
+    mount(
+      true,
+      <ProductPricingRegion>
+        <div data-wide-inset="" data-testid="inset-probe" />
+      </ProductPricingRegion>,
+    );
+    expect(region().className).not.toMatch(/data-wide-inset/);
+    act(() => {
+      draft!.startEditing(undefined, "inline");
+    });
+    expect(region().className).toContain("lg:[&_[data-wide-inset]]:px-[17px]");
+    expect(region().querySelector("[data-wide-inset]")).toBe(screen.getByTestId("inset-probe"));
+  });
+
   it("every width class is lg-only, so nothing changes below lg", () => {
     mount(true, <ProductPricingRegion>x</ProductPricingRegion>);
     act(() => {

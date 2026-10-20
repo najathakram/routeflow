@@ -100,6 +100,9 @@ describe("ProductPricesGrid layout (K13 P01, P04)", () => {
     expect(row.className).toContain("[&>*]:border-b");
     expect(row.className).toContain("[&>*]:border-line-strong");
     expect(row.className).not.toMatch(/(^|\s)border-b(\s|$)/);
-    expect(row.className).toContain("last:[&>*]:border-b-0");
+    // The last ROW drops its rule: `[&:last-child>*]` (tr:last-child > *). `last:[&>*]` compiles to `tr > *:last-child`,
+    // which strips the rule from the Tier 5 cell of EVERY row (and leaves the last row's other cells ruled).
+    expect(row.className).toContain("[&:last-child>*]:border-b-0");
+    expect(row.className).not.toContain("last:[&>*]");
   });
 });

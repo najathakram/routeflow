@@ -82,6 +82,7 @@ function PricingSection({
               </>
             ) : undefined
           }
+          afterGrid={structure ? <UnitDetailsEditor product={product} /> : undefined}
           rowAction={
             structure
               ? (row, layout) => <UnitRowRemove productId={product.id} row={row} layout={layout} />
@@ -89,8 +90,8 @@ function PricingSection({
           }
         />
       </div>
-      {/* K13: per-unit Name / Contains (edit mode) sit below the grid so entering edit never moves its rows. */}
-      {structure && <UnitDetailsEditor product={product} />}
+      {/* K13: per-unit Name / Contains (edit mode) render in the grid's afterGrid slot, right under the card, so entering
+          edit never moves its rows and Name / Contains read straight under the units they name. */}
       {/* K13 P09: the Save bar rests directly under the grid it saves, not below the Customer view block. */}
       <PriceEditBar changePricesOpen={cp.open} />
       <PriceSaveStatus productId={product.id} surface="inline" />

@@ -152,6 +152,7 @@ function UnitNameRow({
       className="rounded-lg border border-surface-border bg-white p-3"
       data-testid="units-v2-beside-row"
     >
+      <h3 className="mb-2 text-sm font-semibold text-navy">{unit.label} size</h3>
       <div className="grid grid-cols-2 items-end gap-3 sm:grid-cols-4">
         <div>
           <label className={LABEL} htmlFor={`${idp}-label`}>
@@ -172,17 +173,20 @@ function UnitNameRow({
           <label className={LABEL} htmlFor={`${idp}-factor`}>
             Contains
           </label>
-          <DecimalInput
-            id={`${idp}-factor`}
-            aria-label={`${w.base.other} per ${unit.label}`}
-            aria-describedby={desc}
-            className={FIELD}
-            decimals={0}
-            min={1}
-            value={draft.factor}
-            disabled={blocked}
-            onChange={(v) => setDraft({ ...draft, factor: v })}
-          />
+          <div className="flex items-center gap-2">
+            <DecimalInput
+              id={`${idp}-factor`}
+              aria-label={`${w.base.other} per ${unit.label}`}
+              aria-describedby={desc}
+              className={FIELD}
+              decimals={0}
+              min={1}
+              value={draft.factor}
+              disabled={blocked}
+              onChange={(v) => setDraft({ ...draft, factor: v })}
+            />
+            <span className="shrink-0 text-sm text-navy/70">{w.base.other}</span>
+          </div>
         </div>
         {dirty && (
           <div className="flex gap-2">

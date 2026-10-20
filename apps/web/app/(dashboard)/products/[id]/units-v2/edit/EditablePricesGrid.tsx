@@ -2,7 +2,12 @@
 
 import * as React from "react";
 import type { ProductPriceGridRowDto } from "@routeflow/types";
-import { ProductPricesGrid, type GridDensity, type GridLayout } from "../../ProductPricesGrid";
+import {
+  PricesTitle,
+  ProductPricesGrid,
+  type GridDensity,
+  type GridLayout,
+} from "../../ProductPricesGrid";
 import type { UnitsCardProduct } from "../../ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { AlsoUpdatePanel } from "../change-prices/AlsoUpdatePanel";
@@ -29,6 +34,7 @@ export function EditablePricesGrid({
   changePricesRef,
   panel,
   unitControls,
+  afterGrid,
   rowAction,
   surface = "inline",
   idSuffix,
@@ -45,6 +51,8 @@ export function EditablePricesGrid({
   panel?: React.ReactNode;
   /** K10d: Add a unit and Reset to Auto, rendered under `panel` and above the grid. */
   unitControls?: React.ReactNode;
+  /** K13: rendered directly after the grid card, before the order-unit footer and the also-update panel (Name / Contains). */
+  afterGrid?: React.ReactNode;
   /** K10d: a control under each unit's name (Remove). */
   rowAction?: (row: ProductPriceGridRowDto, layout: "table" | "card") => React.ReactNode;
   /** K11-20: which editor this is. Default "inline" (the page's own section). */
@@ -130,7 +138,14 @@ export function EditablePricesGrid({
     <AddUnitIntentProvider>
       <div ref={root} data-testid="units-v2-grid-root" className="relative">
         {editing && surface === "inline" && <SkipToSave />}
-        <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
+        <div
+          data-testid="units-v2-actions-row"
+          className="mb-2 flex flex-wrap items-center justify-end gap-2"
+        >
+          {/* K13: the region's heading leads the actions row, so on a phone it is one of the first things on the page. */}
+          {surface === "inline" && (
+            <PricesTitle id={`units-v2-grid-title${sfx}`} className="mr-auto" />
+          )}
           {editing && surface === "inline" && (
             <span
               data-testid={T.editingPill}
@@ -161,12 +176,12 @@ export function EditablePricesGrid({
               className={BTN}
               onClick={() => d.startEditing()}
             >
-              Edit
+              Edit prices
             </button>
           )}
         </div>
         {panel}
-        {unitControls}
+        {unitControls ? <div data-wide-inset="">{unitControls}</div> : null}
         <ProductPricesGrid
           product={product}
           edit={edit}
@@ -174,9 +189,11 @@ export function EditablePricesGrid({
           layout={layout}
           density={density}
           idSuffix={sfx}
+          hideTitle={surface === "inline"}
           // The window has no Add a unit control of its own; the pointer would click a hidden page control.
           addUnitPointers={surface !== "window"}
         />
+        {afterGrid}
         {editing && <OrderUnitDraft />}
         {/* K12 F13: the slot is held (8rem) while a plan exists, so its panel never shoves the page; with no plan it is
             empty and takes no height. */}
