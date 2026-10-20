@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { SelectablePaymentMethod } from "../payment-methods";
-import type { CustomerComment, CustomerDocument } from "@routeflow/types";
+import type { CustomerComment, CustomerDocument, InvoiceUnitDefault } from "@routeflow/types";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
 export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
@@ -47,6 +47,8 @@ export interface Customer {
    * Decimal serializes as a string on the wire.
    */
   defaultDepositPercent?: number | string | null;
+  /** SA-827: how this customer's invoices list mixed boxes; LEGACY = follow product/business setting. */
+  invoiceUnitDefault?: InvoiceUnitDefault;
   createdAt: string;
   updatedAt: string;
 }
