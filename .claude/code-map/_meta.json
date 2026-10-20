@@ -1,6 +1,6 @@
 {
   "mappedSha": "af182eaadf5814ec751d9407005cce1d3621cf3b",
-  "generatedAt": "2026-10-18T18:00:00.000Z",
+  "generatedAt": "2026-10-20T20:26:57.530Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 24,
-    "web": 20,
+    "api": 25,
+    "web": 21,
     "mobile": 13,
     "packages": 0
   },
   "fileCount": 1141,
-  "notes": "- **2026-10-18 — Bookkeeping for product-k11 (#3513, merge `af182eaad`; `32fbe0542..af182eaad`) and money-1 (#3480, merge `4b96fee63`, merged 2026-10-16; docs-only, Option B follow-up).** New `api/` and `web/landing-2026-10-18-k11-money1.md` (TOC row in each area file) and a packages.md section: K11-20 floating price editor as the one editor (`PriceEditWindow`, `PriceWindowHost`, `PriceFigures`, `FloatingPanel`), K11 L2 grid and save-bar cards, partial limit=0 removal; money-1: B920 per-product stock total, L8 store-vs-address state (`sale-fulfilment.ts`, `fulfil-path-restrictions.ts`), `stripe-termination-gate.ts`, price history v1.1 (`usePriceSummary`), legacy box-axis cutoff, graph tooling. Lessons L-317..L-320; L-197, L-201, L-231, L-215 archived. mappedSha af182eaad. Full history: CHANGELOG.md."
+  "notes": "**2026-10-20 — Bookkeeping for the bo-train and billing G1a/G1b train (#3551, merge `af2ab59df`; docs-only, Option B follow-up).** New `api/` and `web/landing-2026-10-20-bo-train-g1.md` (TOC row in each area file): business capabilities (`business-capabilities.ts`, three `business-capabilities` routes, `till-permission.guard.ts`, web `CapabilitiesCard`), G1a stranded-item sweep and `addon-invariant.job.ts`, `tenant-addon-writer.ts` / `addon-row.ts`, G1b `addon-inclusion.ts` and `plan-version-pin.ts`, `ActivationAddonChecklist`, `findAllOrdersImpl` (`orders/order-list.ts`) and `SendInvoiceModal` extractions. Lessons L-321..L-325; L-311, L-313, L-306, L-312, L-315 archived. mappedSha stays af182eaad (not advanced): the other ~125 commits between `af182eaad` and `af2ab59df` are NOT mapped here. Full history: CHANGELOG.md."
 }
