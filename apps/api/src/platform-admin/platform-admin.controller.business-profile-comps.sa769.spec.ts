@@ -89,6 +89,7 @@ import { BusinessProfileService } from "../billing/business-profile.service";
 import { SubscriptionMutationService } from "../billing/subscription-mutation.service";
 import { billableAddonWhere } from "../billing/addon-row";
 import { fakeTenantAddonStore } from "../testing/fake-tenant-addon-store";
+import { mrrEmits } from "../testing/mrr-emits";
 
 const T = "tenant-a";
 const FLEET = ["recurring_routes", "order_delivery"];
@@ -234,6 +235,7 @@ function world(
   };
   const stored = new Set<string>(Object.keys(start.modes ?? {}));
   const featureConfig = {
+    forgetCachedModes: jest.fn(), // BO-04 review: a confirm re-plans from the DB
     getState: jest.fn(async (_t: string, key: string) => ({
       value: modes[key],
       effective: modes[key],
@@ -337,7 +339,7 @@ describe("SA-769 red row 1: a profile applied to a tenant holding nothing COMPS 
     }
     expect(w.stripe.client.subscriptionItems.create).not.toHaveBeenCalled();
     expect(w.stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
-    expect(w.events.emit).not.toHaveBeenCalled(); // no MRR / ledger booking for a comp
+    expect(mrrEmits(w.events)).toHaveLength(0); // no MRR / ledger booking for a comp
     expect(w.featureOverrides.create).not.toHaveBeenCalled(); // 0 GRANT overrides
     expect(w.overrideRows).toEqual([]);
     expect(w.modes.fulfilment_model).toBe("delivery"); // the mode lands after the comps
@@ -465,7 +467,7 @@ describe("SA-769 red row 2: a module the tenant already pays for stays billable"
     ]);
     expect(w.stripe.client.subscriptionItems.create).not.toHaveBeenCalled();
     expect(w.stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
-    expect(w.events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(w.events)).toHaveLength(0);
     expect(w.audits(AdminAuditAction.ADDON_COMPED).map((a: any) => a.addonKey)).toEqual([
       "recurring_routes",
       "driver_payments",
@@ -538,7 +540,7 @@ describe("SA-769 red row 4: applying a fleet:false profile afterwards switches t
     ]);
     expect(w.stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
     expect(w.stripe.client.subscriptionItems.create).not.toHaveBeenCalled();
-    expect(w.events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(w.events)).toHaveLength(0);
     expect(w.featureOverrides.create).not.toHaveBeenCalled();
     expect(w.modes.fulfilment_model).toBe("ship");
   });

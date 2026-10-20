@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { handleMutationError } from "./mutation-error-toast";
-import { API_ERROR_CODES } from "@routeflow/types";
+import { API_ERROR_CODES, INVOICE_TAX_STATE_STALE_COPY } from "@routeflow/types";
 import { codedToastCopy, genericToastCopy } from "./generic-toast-copy";
 
 /**
@@ -338,6 +338,48 @@ describe("genericToastCopy: codes users rely on", () => {
       );
     });
 
+    it("row 648: the vendor bill refusals say what happened and what to do", () => {
+      expect(genericToastCopy(err(400, { code: API_ERROR_CODES.BILL_NOT_EDITABLE }))).toBe(
+        "Only draft bills can be edited. Revert the bill to draft first.",
+      );
+      expect(genericToastCopy(err(400, { code: API_ERROR_CODES.BILL_PO_SUPPLIER_LOCKED }))).toBe(
+        "This bill is linked to a purchase order, so its supplier can't be changed.",
+      );
+      expect(genericToastCopy(err(400, { code: API_ERROR_CODES.BILL_NEVER_RECEIVED }))).toBe(
+        "This bill was never received, so there is no stock or cost to revert. Its payments keep it out of draft.",
+      );
+      expect(genericToastCopy(err(409, { code: API_ERROR_CODES.BILL_TAX_UNKNOWN }))).toBe(
+        "This bill's tax wasn't recorded separately, so it can't be changed on its own. Edit the lines and the tax together.",
+      );
+      expect(genericToastCopy(err(400, { code: API_ERROR_CODES.BILL_NEEDS_A_LINE }))).toBe(
+        "A bill needs at least one line. Void or delete it instead.",
+      );
+    });
+
+    it("row 648: RECEIVE_EXCEEDS_OUTSTANDING names the product and both quantities from structured fields", () => {
+      expect(
+        genericToastCopy(
+          err(400, {
+            code: API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING,
+            productName: "Widget 24pk",
+            requested: "5",
+            outstanding: "2.5",
+          }),
+        ),
+      ).toBe("Can't receive 5 of Widget 24pk: only 2.5 still outstanding.");
+      // Never the server message, and a malformed field falls back to the numberless line.
+      const fallback = genericToastCopy(
+        err(400, {
+          code: API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING,
+          productName: "Widget",
+          requested: "<b>5</b>",
+          outstanding: "2",
+        }),
+      );
+      expect(fallback).toBe("You can't receive more than is still outstanding on a line.");
+      expect(fallback).not.toContain(RAW);
+    });
+
     it("PACK_SIZE_UNKNOWN keeps the 'confirm as loose pieces' option", () => {
       expect(genericToastCopy(err(409, { code: API_ERROR_CODES.PACK_SIZE_UNKNOWN }))).toBe(
         "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",
@@ -451,7 +493,10 @@ describe("genericToastCopy: codes users rely on", () => {
       ["UNIT_AWARE_LINE_UNVERIFIABLE", /lines couldn't be verified.*Ask an admin/],
       ["CHANGE_REQUEST_PACK_CHANGED", /pack size changed.*Decline it and re-add/],
       ["INVOICE_CHANGED_CONCURRENTLY", /invoice changed.*Refresh and try again/],
-      ["INVOICE_TAX_STATE_STALE", /tax no longer matches.*Re-save the invoice lines/],
+      [
+        "INVOICE_TAX_STATE_STALE",
+        /stored tax can't be recalculated safely.*Issue a credit note/, // the no-path default
+      ],
       [
         "INVOICE_TOTAL_BELOW_PAID",
         /total below what is already paid or credited.*change the lines or discount/,
@@ -748,5 +793,43 @@ describe("a selling-restriction refusal (409 SELLING_RESTRICTED) in a dialog wit
 
   it("a body with no lines still gets the sentence", () => {
     expect(genericToastCopy(restricted(undefined))).toContain("selling restrictions");
+  });
+});
+
+describe("SA-814g: 409 INVOICE_TAX_STATE_STALE copy follows the kind of invoice that refused", () => {
+  const stale = (data: Record<string, unknown> = {}) =>
+    err(409, { code: API_ERROR_CODES.INVOICE_TAX_STATE_STALE, ...data });
+
+  it("an order-linked DRAFT says to create it again from the order, never 'Re-save the invoice lines'", () => {
+    const copy = genericToastCopy(stale({ path: "DRAFT_ORDER" }));
+    expect(copy).toBe(INVOICE_TAX_STATE_STALE_COPY.DRAFT_ORDER);
+    expect(copy).toMatch(/Create it again from the order, or contact support/);
+    expect(copy).not.toMatch(/Re-save/);
+    expect(copy).not.toContain(RAW);
+  });
+
+  it("a manual DRAFT says to create the draft again", () => {
+    const copy = genericToastCopy(stale({ path: "DRAFT_MANUAL" }));
+    expect(copy).toBe(INVOICE_TAX_STATE_STALE_COPY.DRAFT_MANUAL);
+    expect(copy).toMatch(/Create the draft again, or contact support/);
+  });
+
+  it("an issued invoice points at a credit note", () => {
+    const copy = genericToastCopy(stale({ path: "ISSUED" }));
+    expect(copy).toBe(INVOICE_TAX_STATE_STALE_COPY.ISSUED);
+    expect(copy).toMatch(/Issue a credit note or contact support/);
+  });
+
+  it("a body with no (or an unknown) path gets the issued sentence, which claims nothing about drafts", () => {
+    expect(genericToastCopy(stale())).toBe(INVOICE_TAX_STATE_STALE_COPY.ISSUED);
+    expect(genericToastCopy(stale({ path: "SOMETHING_NEW" }))).toBe(
+      INVOICE_TAX_STATE_STALE_COPY.ISSUED,
+    );
+  });
+
+  it("codedToastCopy recognises it on every path", () => {
+    expect(codedToastCopy(stale({ path: "DRAFT_MANUAL" }))).toBe(
+      INVOICE_TAX_STATE_STALE_COPY.DRAFT_MANUAL,
+    );
   });
 });

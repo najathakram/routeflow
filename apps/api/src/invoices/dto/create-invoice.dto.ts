@@ -22,6 +22,7 @@ import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { Trim } from "../../common/transforms/trim.transform";
 import { SafeTextCell } from "../../common/transforms/safe-text-cell.transform";
 import { MAX_SHIPPING_CARRIER, MAX_SHIPPING_TRACKING } from "../../orders/shipment-text";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 export class CreateInvoiceItemDto {
   @IsString() description: string;
@@ -31,8 +32,8 @@ export class CreateInvoiceItemDto {
   @IsOptional() @IsUUID() orderItemId?: string;
   @IsNumber() @Min(0.001) qty: number;
   @IsNumber() @Min(0) unitPrice: number;
-  @IsOptional() @IsNumber() @Min(0) discount?: number;
-  @IsOptional() @IsNumber() @Min(0) taxRate?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) discount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) taxRate?: number;
   /**
    * units_v1: sell this line by a unit of the product's ladder (Case, Pallet, Piece …); `qty` then
    * counts the unit (a whole number) and boxes/pieces/promoFreeUnits must be omitted. Behind
@@ -71,8 +72,8 @@ export class CreateInvoiceDto {
   items: CreateInvoiceItemDto[];
   @IsOptional() @IsDateString() dueDate?: string;
   @IsOptional() @IsDateString() issueDate?: string;
-  @IsOptional() @IsNumber() @Min(0) discount?: number;
-  @IsOptional() @IsNumber() @Min(0) shippingFee?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) discount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) shippingFee?: number;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsString() terms?: string;
   @IsOptional() @IsString() referenceNumber?: string;
@@ -123,7 +124,7 @@ export class RecordInvoicePaymentDto {
   @IsOptional() @IsDateString() paidAt?: string;
   /** Date the money lands in the bank. May be in the future (post-dated check). */
   @IsOptional() @IsDateString() settledAt?: string | null;
-  @IsOptional() @IsNumber() @Min(0) bankCharges?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) bankCharges?: number;
   @IsOptional() @IsEnum(["DRAFT", "PAID"]) status?: string;
 }
 
@@ -135,7 +136,7 @@ export class UpdatePaymentDto {
   @IsOptional() @IsDateString() paidAt?: string;
   /** Omit to preserve the stored bank date; send null to clear it. */
   @IsOptional() @IsDateString() settledAt?: string | null;
-  @IsOptional() @IsNumber() @Min(0) bankCharges?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) bankCharges?: number;
   @IsOptional() @IsEnum(["DRAFT", "PAID", "VOID"]) status?: string;
 }
 
@@ -151,7 +152,7 @@ export class StandalonePaymentDto {
   @IsOptional() @IsDateString() paidAt?: string;
   /** Date the money lands in the bank; applied to every row of the allocation group. */
   @IsOptional() @IsDateString() settledAt?: string | null;
-  @IsOptional() @IsNumber() @Min(0) bankCharges?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) bankCharges?: number;
   @IsOptional() @IsString() reference?: string;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsEnum(["DRAFT", "PAID"]) status?: string;
@@ -174,7 +175,7 @@ export class WriteOffDto {
 export class SetCheckStatusDto {
   @IsEnum(CheckStatus) status: CheckStatus;
   /** NSF fee to bill the customer when status = BOUNCED (omit or 0 = no fee). */
-  @IsOptional() @IsNumber() @Min(0) nsfFeeAmount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) nsfFeeAmount?: number;
   /** The true landing date, meaningful with status = CLEARED; sets clearedAt and settledAt. */
   @IsOptional() @IsDateString() settledAt?: string;
 }

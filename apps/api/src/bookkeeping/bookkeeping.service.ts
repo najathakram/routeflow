@@ -1153,7 +1153,7 @@ export class BookkeepingService implements OnModuleInit {
       : new Date();
 
     const CfPayStatus = PaymentStatus;
-    const [payments, expenses, bills] = await Promise.all([
+    const [payments, expenses, bills, supplierCredits] = await Promise.all([
       this.prisma.forTenant().invoicePayment.findMany({
         // B421: cash-flow's "totalIn" is money genuinely received — a
         // CREDIT_NOTE application is never cash, but an ADVANCE application
@@ -1171,16 +1171,29 @@ export class BookkeepingService implements OnModuleInit {
         where: { deletedAt: null, date: { gte: fromDate, lte: toDate } },
         orderBy: { date: "asc" },
       }),
+      // SA-814n / B288: cash out to suppliers is what left the operator's hand. A CREDIT_NOTE BillPayment is a
+      // DRAW of on-account credit (not new money: the credit was counted when it was created, below), so it is
+      // excluded exactly as RECEIVED_METHOD_FILTER excludes a credit-note application on the money-in side.
+      // Payments on VOID bills stay counted: the cash really left (B288 makes a paid bill unvoidable anyway).
       this.prisma.forTenant().billPayment.findMany({
-        where: { paidAt: { gte: fromDate, lte: toDate } },
+        where: { paidAt: { gte: fromDate, lte: toDate }, method: RECEIVED_METHOD_FILTER },
         orderBy: { paidAt: "asc" },
+      }),
+      // The other half: a SupplierCredit is cash that left on an overpayment or a move-to-credit, counted on
+      // its `receivedAt` (a moved payment keeps the original payment's date, so cash out does not move).
+      // ASSUMPTION: SupplierCredit has no origin field, so every credit is cash-origin (recordSupplierPayment's
+      // excess and move-to-credit are its only writers); a CREDIT_NOTE-method credit is excluded as a guard.
+      this.prisma.forTenant().supplierCredit.findMany({
+        where: { receivedAt: { gte: fromDate, lte: toDate }, method: RECEIVED_METHOD_FILTER },
+        orderBy: { receivedAt: "asc" },
       }),
     ]);
 
     const totalIn = payments.reduce((s, p) => s + Number(p.amount), 0);
     const totalOut =
       expenses.reduce((s, e) => s + Number(e.amount), 0) +
-      bills.reduce((s, b) => s + Number(b.amount), 0);
+      bills.reduce((s, b) => s + Number(b.amount), 0) +
+      supplierCredits.reduce((s, c) => s + Number(c.amount), 0);
     return {
       totalIn,
       totalOut,
