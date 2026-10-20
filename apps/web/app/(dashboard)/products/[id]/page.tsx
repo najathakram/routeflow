@@ -1364,7 +1364,9 @@ export default function ProductDetailPage() {
         onClose={() => setShowDeleteConfirm(false)}
         flow={deleteFlow}
       />
-      <div className={cn("space-y-5 p-6", isEditing && "pb-24 md:pb-6")}>
+      <div
+        className={cn("space-y-5 p-6", isEditing && "pb-24 md:pb-6", !isEditing && "max-sm:pb-3")}
+      >
         {isEditing && (
           <StickyEditBar onCancel={cancelEdit} onSave={saveEdit} saving={updateProduct.isPending} />
         )}

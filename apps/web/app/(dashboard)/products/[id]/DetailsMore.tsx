@@ -30,7 +30,7 @@ export function DetailsMore({
         aria-expanded={open}
         aria-controls="details-more-panel"
         onClick={() => setOpen((o) => !o)}
-        className="mt-5 flex min-h-[44px] w-full items-center justify-between border-t border-surface-border text-sm font-medium text-navy focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 sm:hidden"
+        className="mt-5 max-sm:mt-3 flex min-h-[44px] w-full items-center justify-between border-t border-surface-border text-sm font-medium text-navy focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 sm:hidden"
       >
         More details
         <ChevronDown
