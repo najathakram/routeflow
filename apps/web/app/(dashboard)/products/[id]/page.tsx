@@ -105,6 +105,7 @@ import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ProductPricingV2 } from "./ProductPricingV2";
 import { PriceWindowHost, ProductPricingRegion } from "./PriceWindowHost";
 import { ProductLowerColumns } from "./ProductLowerColumns";
+import { DetailsMore } from "./DetailsMore";
 import {
   unitStructureGoverned,
   useUnitStructureAllowed,
@@ -1791,37 +1792,56 @@ export default function ProductDetailPage() {
                   tiersBlock
                 )}
 
-                {/* MSRP — suggested retail, per PIECE (even for boxed products).
+                <DetailsMore isEditing={isEditing}>
+                  {/* MSRP — suggested retail, per PIECE (even for boxed products).
                     Display-only: never feeds pricing/tax/margin math. Flag-gated
                     (flag.msrp) on write; the warning below is advisory only. */}
-                <div className="mt-5 border-t border-surface-border pt-4">
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                    MSRP (Suggested Retail)
-                  </p>
-                  {isEditing ? (
-                    hasMsrpAddon ? (
-                      <>
-                        <DecimalInput
-                          min={0}
-                          value={
-                            (editDraft.msrp as string)?.trim()
-                              ? parseFloat(editDraft.msrp as string)
-                              : null
-                          }
-                          onChange={(v) =>
-                            setEditDraft((d) => ({ ...d, msrp: v == null ? "" : String(v) }))
-                          }
-                          className="w-32 rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        />
-                        <p className="mt-1 text-xs text-navy/50">
-                          per {UW.base.lower} — even for boxed products
-                        </p>
-                        {!(editDraft.msrp as string)?.trim() && (
+                  <div className="mt-5 border-t border-surface-border pt-4">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                      MSRP (Suggested Retail)
+                    </p>
+                    {isEditing ? (
+                      hasMsrpAddon ? (
+                        <>
+                          <DecimalInput
+                            min={0}
+                            value={
+                              (editDraft.msrp as string)?.trim()
+                                ? parseFloat(editDraft.msrp as string)
+                                : null
+                            }
+                            onChange={(v) =>
+                              setEditDraft((d) => ({ ...d, msrp: v == null ? "" : String(v) }))
+                            }
+                            className="w-32 rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          />
                           <p className="mt-1 text-xs text-navy/50">
-                            Shown on new invoices once set — existing invoices keep their original
-                            snapshot.
+                            per {UW.base.lower} — even for boxed products
                           </p>
-                        )}
+                          {!(editDraft.msrp as string)?.trim() && (
+                            <p className="mt-1 text-xs text-navy/50">
+                              Shown on new invoices once set — existing invoices keep their original
+                              snapshot.
+                            </p>
+                          )}
+                          {msrpBelowWholesale && (
+                            <p className="mt-1 text-xs text-warning">
+                              Below wholesale price (<MoneyFigure value={wholesalePerPiece} />/
+                              {UW.base.short.one})
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-xs italic text-navy/50">Requires the MSRP add-on.</p>
+                      )
+                    ) : msrpNumber != null ? (
+                      <>
+                        <p className="font-mono text-sm font-medium tabular-nums text-navy">
+                          <MoneyFigure value={msrpNumber} />
+                          <span className="ml-1 text-[10px] text-navy/50">
+                            /{UW.base.short.one}
+                          </span>
+                        </p>
                         {msrpBelowWholesale && (
                           <p className="mt-1 text-xs text-warning">
                             Below wholesale price (<MoneyFigure value={wholesalePerPiece} />/
@@ -1830,42 +1850,29 @@ export default function ProductDetailPage() {
                         )}
                       </>
                     ) : (
-                      <p className="text-xs italic text-navy/50">Requires the MSRP add-on.</p>
-                    )
-                  ) : msrpNumber != null ? (
-                    <>
-                      <p className="font-mono text-sm font-medium tabular-nums text-navy">
-                        <MoneyFigure value={msrpNumber} />
-                        <span className="ml-1 text-[10px] text-navy/50">/{UW.base.short.one}</span>
-                      </p>
-                      {msrpBelowWholesale && (
-                        <p className="mt-1 text-xs text-warning">
-                          Below wholesale price (<MoneyFigure value={wholesalePerPiece} />/
-                          {UW.base.short.one})
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <p className="text-sm text-navy/30">—</p>
-                  )}
-                </div>
+                      <p className="text-sm text-navy/30">—</p>
+                    )}
+                  </div>
 
-                <div className="mt-5 border-t border-surface-border pt-4">
-                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                    Description
-                  </p>
-                  {isEditing ? (
-                    <textarea
-                      value={(editDraft.description as string) ?? ""}
-                      onChange={(e) => setEditDraft((d) => ({ ...d, description: e.target.value }))}
-                      rows={3}
-                      className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                  ) : (
-                    <p className="text-sm text-navy/80">{product.description}</p>
-                  )}
-                </div>
-                {!isFamily && merchandising}
+                  <div className="mt-5 border-t border-surface-border pt-4">
+                    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                      Description
+                    </p>
+                    {isEditing ? (
+                      <textarea
+                        value={(editDraft.description as string) ?? ""}
+                        onChange={(e) =>
+                          setEditDraft((d) => ({ ...d, description: e.target.value }))
+                        }
+                        rows={3}
+                        className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    ) : (
+                      <p className="text-sm text-navy/80">{product.description}</p>
+                    )}
+                  </div>
+                  {!isFamily && merchandising}
+                </DetailsMore>
               </div>
             </div>
             {product.kind === "FAMILY" && (
