@@ -1,5 +1,5 @@
 import * as React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ToastProvider } from "@routeflow/ui/web";
 import { createTestQueryClient } from "@/test-utils/render";
@@ -163,5 +163,18 @@ describe("UnitsBesideGrid: name and contains", () => {
     expect(screen.getByLabelText("Case name")).toHaveAccessibleDescription(
       "Save or discard your price changes first",
     );
+  });
+});
+
+describe("UnitsBesideGrid: each unit's block reads as a sentence (R3 review)", () => {
+  it("heads each unit with '<Unit> size' and prints the base unit after Contains", () => {
+    draft = { dirty: false, editingIn: "inline" };
+    renderBeside(UnitDetailsEditor);
+    const rows = screen.getAllByTestId("units-v2-beside-row");
+    const caseRow = rows.find((r) => r.textContent?.includes("Case size"))!;
+    expect(within(caseRow).getByRole("heading", { name: "Case size" })).toBeInTheDocument();
+    const contains = within(caseRow).getByLabelText(/per Case/);
+    expect(contains.parentElement).toHaveTextContent("Pieces");
+    expect(screen.getByRole("heading", { name: "Pallet size" })).toBeInTheDocument();
   });
 });
