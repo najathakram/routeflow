@@ -75,9 +75,12 @@ async function expectPhoneOrder(page: Page, flagOff: boolean) {
     expect(hTop, "the Prices by unit heading is on the first screen").toBeLessThan(
       viewportHeight(page),
     );
+    // A RegExp, not a `:text-matches("...")` string: the selector parser unescapes `\d` and `\$` inside its quoted
+    // argument, so that probe never matched anything.
     const figure = page
       .getByTestId(UNITS_V2_IDS.grid)
-      .locator(':text-matches("^\\$[\\d,]+\\.\\d{2}$"):visible')
+      .getByText(/^\$[\d,]+\.\d{2}$/)
+      .filter({ visible: true })
       .first();
     await expect(figure, "the grid shows a money figure").toBeVisible();
     const fTop = (await figure.boundingBox())!.y;
