@@ -58,10 +58,11 @@ const stockRows = [
     unitsPerBox: null,
   },
 ];
+const mockRecordAdjustment = jest.fn();
 jest.mock("@/lib/api/inventory", () => ({
   useStockOverview: () => ({ data: stockRows, isLoading: false }),
   useSuppliers: () => ({ data: [], isLoading: false }),
-  useRecordAdjustment: () => ({ mutate: jest.fn(), isPending: false }),
+  useRecordAdjustment: () => ({ mutate: mockRecordAdjustment, isPending: false }),
   useCreateSupplier: () => ({ mutate: jest.fn(), isPending: false }),
   useUpdateSupplier: () => ({ mutate: jest.fn(), isPending: false }),
   useForecasting: () => ({ data: [], isLoading: false }),
@@ -125,6 +126,24 @@ describe("InventoryPage catalog reads", () => {
     fireEvent.change(input, { target: { value: "g" } });
     expect(screen.getByRole("button", { name: /boxed gadget/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /retired gizmo/i })).not.toBeInTheDocument();
+  });
+
+  it("Adjust Stock needs a reason and sends it (SA-828)", () => {
+    mockRecordAdjustment.mockClear();
+    render(<InventoryPage />);
+    fireEvent.click(screen.getByRole("button", { name: /^adjust stock$/i }));
+    fireEvent.change(screen.getByPlaceholderText(/type name or sku/i), { target: { value: "g" } });
+    fireEvent.click(screen.getByRole("button", { name: /boxed gadget/i }));
+    fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "-2" } });
+    const save = screen.getByRole("button", { name: /save adjustment/i });
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: "DAMAGED" } });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    expect(mockRecordAdjustment.mock.calls[0][0]).toMatchObject({
+      quantity: -2,
+      reason: "DAMAGED",
+    });
   });
 
   it("reads the parent/variant lookup while the Stock tab is showing", () => {

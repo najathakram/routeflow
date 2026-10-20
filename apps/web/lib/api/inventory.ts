@@ -1,7 +1,12 @@
 import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { invalidateSupplierLists } from "./suppliers";
-import type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
+import type {
+  InventoryValuation,
+  ProductCountRequest,
+  ProductCountResult,
+  RecomputeCostsResult,
+} from "@routeflow/types";
 export type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
 
 // ─── Stock overview ───────────────────────────────────────────────────────────
@@ -66,6 +71,25 @@ export function useRecordAdjustment() {
   return useMutation({
     mutationFn: (data: Record<string, unknown>) =>
       apiClient.post("/inventory/movements/adjustment", data).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["products"] });
+    },
+  });
+}
+
+/**
+ * SA-828 (row 657): set the stock to a count, or adjust it by a delta, in one of the product's units.
+ * The modal renders the refusal itself (`localErrorToast`), so the app-wide toast stays quiet.
+ */
+export function useProductCount(productId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { localErrorToast: true },
+    mutationFn: (body: ProductCountRequest) =>
+      apiClient
+        .post<ProductCountResult>(`/inventory/products/${productId}/count`, body)
+        .then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["inventory"] });
       qc.invalidateQueries({ queryKey: ["products"] });

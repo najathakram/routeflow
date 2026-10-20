@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
+import type { AdjustmentReason, InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
 export type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -21,6 +21,9 @@ export interface StockItem {
 export interface StockAdjustmentDto {
   productId: string;
   quantity: number; // positive = add, negative = remove
+  /** SA-828: required by the server; OTHER also needs `reasonNote` (3-200 characters). */
+  reason: AdjustmentReason;
+  reasonNote?: string;
   notes?: string;
   reference?: string;
 }

@@ -81,3 +81,10 @@ describe("#1528 web vendor-bill hooks", () => {
     expect(hasAll(await run(hook, { id: "vb1" }), STOCK)).toBe(true);
   });
 });
+
+describe("SA-828 web count hook", () => {
+  it("useProductCount invalidates products + inventory (it writes currentStock)", async () => {
+    const { mod, run } = load("./inventory");
+    expect(hasAll(await run(() => mod.useProductCount("p1"), {}), STOCK)).toBe(true);
+  });
+});

@@ -85,6 +85,7 @@
   "POST /inventory/cost-basis/bulk",
   "POST /inventory/movements/adjustment",
   "POST /inventory/movements/purchase",
+  "POST /inventory/products/:p/count",
   "POST /inventory/purchase-orders",
   "POST /inventory/purchase-orders/:p/close",
   "POST /inventory/purchase-orders/:p/receive",

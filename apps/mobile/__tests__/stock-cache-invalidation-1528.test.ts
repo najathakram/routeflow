@@ -71,3 +71,10 @@ describe("#1528 mobile vendor-bill hooks", () => {
     expect(hasAll(await run(mod.useVoidVendorBill, "vb1"), STOCK)).toBe(true);
   });
 });
+
+describe("SA-828 mobile count hook", () => {
+  it("useProductCount invalidates products + inventory + admin products (it writes currentStock)", async () => {
+    const { mod, run } = load("../lib/api/products");
+    expect(hasAll(await run(() => mod.useProductCount("p1"), {}), STOCK)).toBe(true);
+  });
+});

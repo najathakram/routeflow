@@ -341,7 +341,7 @@ export default function ProductDetailScreen() {
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>Stock</Text>
               <Pressable onPress={() => router.push(`/(operator)/products/${id}/adjust-stock`)}>
-                <Text style={styles.linkText}>Adjust</Text>
+                <Text style={styles.linkText}>Count / Adjust</Text>
               </Pressable>
             </View>
             <Row label="On hand" value={`${stock} ${product.unit ?? ""}`.trim()} />

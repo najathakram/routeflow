@@ -5,6 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import type { ProductCountRequest, ProductCountResult } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import type { ImageUploadFile } from "../product-image";
 import { nextProductPage, type PaginationMeta } from "../product-search-params";
@@ -271,15 +272,13 @@ export function useDeleteProductImage() {
   });
 }
 
-export function useAdjustProductStock() {
+/** SA-828 (row 657): set the stock to a count, or adjust it by an amount, in one of the product's units. */
+export function useProductCount(productId: string) {
   const qc = useQueryClient();
-  return useMutation<
-    unknown,
-    Error,
-    { productId: string; quantity: number; notes?: string; reference?: string }
-  >({
-    mutationFn: (dto) => apiClient.post("/inventory/movements/adjustment", dto).then((r) => r.data),
-    onSuccess: (_, { productId }) => {
+  return useMutation<ProductCountResult, Error, ProductCountRequest>({
+    mutationFn: (body) =>
+      apiClient.post(`/inventory/products/${productId}/count`, body).then((r) => r.data),
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["products"] });
       qc.invalidateQueries({ queryKey: ["products", productId] });
       qc.invalidateQueries({ queryKey: ["admin", "products"] });

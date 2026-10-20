@@ -424,5 +424,9 @@
   "lib/order-error-text.ts": {
     "count": 1,
     "why": "B991 / B987-E (codes + structured fields first): an UNCODED order-delete refusal keeps the server's own sentence (e.g. void the invoice first); coded ones are fixed copy; pending"
+  },
+  "lib/product-count-error.ts": {
+    "count": 1,
+    "why": "SA-828 row 657: the filed-period refusal names the period; shown as written, other codes use fixed copy"
   }
 }
