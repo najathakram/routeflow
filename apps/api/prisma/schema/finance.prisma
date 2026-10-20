@@ -1079,6 +1079,32 @@ model AdvancePayment {
   @@index([sourcePaymentId])
 }
 
+// SA-824 (row 661 step 1): the replay store of the customer money-in writers. One row per
+// Idempotency-Key per tenant, claimed by the FIRST statement of the writer's transaction
+// (INSERT ... ON CONFLICT DO NOTHING) and completed with `result` in that same transaction, so a
+// committed key always means committed money. `requestHash` is the normalized body; a same-key
+// retry replays only when it (and `scope`) match, else 409 IDEMPOTENCY_KEY_CONFLICT. No TTL (as
+// OrderIdempotencyKey). The scope enum is the seam the AP writers reuse later.
+enum PaymentIdempotencyScope {
+  STANDALONE_PAYMENT
+  INVOICE_PAYMENT
+  ADVANCE_PAYMENT
+}
+
+model PaymentIdempotencyKey {
+  id               String                  @id @default(uuid())
+  tenantId         String
+  key              String
+  scope            PaymentIdempotencyScope
+  requestHash      String
+  result           Json
+  paymentGroupId   String?
+  advancePaymentId String?
+  createdAt        DateTime                @default(now())
+
+  @@unique([tenantId, key])
+}
+
 // ─── Supplier Credits ─────────────────────────────────────────────────────────
 
 /// On-account credit held for a supplier — the AP mirror of AdvancePayment.

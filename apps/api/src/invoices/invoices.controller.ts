@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -22,6 +23,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { InvoicesService } from "./invoices.service";
+import { optionalIdempotencyKey } from "../orders/counter-sale/required-idempotency-key";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import {
   CreateInvoiceDto,
@@ -102,8 +104,16 @@ export class InvoicesController {
 
   @Post("payments/record")
   @Roles(UserRole.OPERATOR)
-  recordStandalonePayment(@Body() dto: StandalonePaymentDto, @CurrentUser() user: JwtPayload) {
-    return this.invoicesService.recordStandalonePayment(dto, { actor: user?.sub ?? null });
+  recordStandalonePayment(
+    @Body() dto: StandalonePaymentDto,
+    @CurrentUser() user: JwtPayload,
+    // SA-824: optional (an old client is unchanged); a retry with the same key records once.
+    @Headers("idempotency-key") rawIdempotencyKey?: string,
+  ) {
+    return this.invoicesService.recordStandalonePayment(dto, {
+      actor: user?.sub ?? null,
+      idempotencyKey: optionalIdempotencyKey(rawIdempotencyKey),
+    });
   }
 
   @Get("payments/:paymentId")
@@ -255,8 +265,15 @@ export class InvoicesController {
   }
 
   @Post(":id/payments")
-  recordPayment(@Param("id") id: string, @Body() dto: RecordInvoicePaymentDto) {
-    return this.invoicesService.recordPayment(id, dto);
+  recordPayment(
+    @Param("id") id: string,
+    @Body() dto: RecordInvoicePaymentDto,
+    @Headers("idempotency-key") rawIdempotencyKey?: string, // SA-824: optional, as above
+  ) {
+    const idempotencyKey = optionalIdempotencyKey(rawIdempotencyKey);
+    return idempotencyKey
+      ? this.invoicesService.recordPayment(id, dto, { idempotencyKey })
+      : this.invoicesService.recordPayment(id, dto);
   }
 
   @Patch(":id/payments/:paymentId/void")

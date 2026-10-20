@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   Param,
   Patch,
@@ -28,6 +29,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CustomersService } from "./customers.service";
+import { optionalIdempotencyKey } from "../orders/counter-sale/required-idempotency-key";
 import { StatementService } from "../buyer/statement.service";
 import { StatementPdfService } from "../buyer/statement-pdf.service";
 import { PortalInviteDto } from "../buyer/dto/portal-invite.dto";
@@ -219,8 +221,16 @@ export class CustomersController {
 
   @Post(":id/advance-payments")
   @Roles(UserRole.OPERATOR)
-  createAdvancePayment(@Param("id") id: string, @Body() dto: CreateAdvancePaymentDto) {
-    return this.customersService.createAdvancePayment(id, dto);
+  createAdvancePayment(
+    @Param("id") id: string,
+    @Body() dto: CreateAdvancePaymentDto,
+    // SA-824: optional (an old client is unchanged); a retry with the same key records once.
+    @Headers("idempotency-key") rawIdempotencyKey?: string,
+  ) {
+    const idempotencyKey = optionalIdempotencyKey(rawIdempotencyKey);
+    return idempotencyKey
+      ? this.customersService.createAdvancePayment(id, dto, { idempotencyKey })
+      : this.customersService.createAdvancePayment(id, dto);
   }
 
   @Get(":id/advance-payments")
