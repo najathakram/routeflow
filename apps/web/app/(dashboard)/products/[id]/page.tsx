@@ -104,6 +104,7 @@ import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ProductPricingV2 } from "./ProductPricingV2";
 import { PriceWindowHost, ProductPricingRegion } from "./PriceWindowHost";
+import { ProductLowerColumns } from "./ProductLowerColumns";
 import {
   unitStructureGoverned,
   useUnitStructureAllowed,
@@ -472,6 +473,8 @@ export default function ProductDetailPage() {
   const currentStock = Number(product.currentStock ?? 0);
   const stockStatus = getStockStatus(currentStock, product.isActive, product.kind);
   const v2Family = v2 && product.kind === "FAMILY";
+  /** K11-23: the prices region is its own grid item, right after Details in the DOM. */
+  const pricingSplit = v2 && product.kind !== "FAMILY";
   // K11-20c: on a product whose prices the window can edit (not a family, recipe or variant), Details shows its
   // prices read-only and the Details save carries none: the price window (S9) is the only price writer.
   const pricesInWindow = v2 && !unitStructureGoverned(product);
@@ -1399,7 +1402,12 @@ export default function ProductDetailPage() {
         </div>
 
         {v2 && product.kind !== "FAMILY" ? <ProductJumpLinks reserveSpace /> : null}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 lg:grid-rows-[auto_1fr] lg:gap-y-5">
+        <div
+          className={cn(
+            "grid grid-cols-1 gap-6 lg:grid-cols-3 lg:gap-y-5",
+            pricingSplit ? "lg:grid-rows-[auto_auto_auto_1fr]" : "lg:grid-rows-[auto_1fr]",
+          )}
+        >
           {/* DOM order is the phone reading order and the tab order: Details, then Image and stock, then the rest.
               The columns are placed at lg with grid lines, not order-* classes (K11-23). */}
           <div className="space-y-5 lg:col-span-2 lg:col-start-2 lg:row-start-1">
@@ -1865,10 +1873,23 @@ export default function ProductDetailPage() {
             )}
             {isFamily && merchandising}
           </div>
+          {/* K11-23: below lg the prices region follows Details (one render, in DOM order = tab order); at lg it is
+              placed by grid lines under Labels and Portal visibility, where it always was. */}
+          {pricingSplit ? (
+            <div className="lg:col-span-2 lg:col-start-2 lg:row-start-3">
+              <ProductPricingRegion>
+                <ProductPricingV2 product={product} />
+              </ProductPricingRegion>
+            </div>
+          ) : null}
           {/* ── Left: image gallery + stock card ── */}
           <div
             data-region-covers
-            className="space-y-4 lg:col-start-1 lg:row-start-1 lg:row-span-2 lg:[&[inert]]:opacity-40 motion-safe:lg:transition-opacity motion-safe:lg:duration-200"
+            className={cn(
+              "space-y-4 lg:col-start-1 lg:row-start-1",
+              pricingSplit ? "lg:row-span-4" : "lg:row-span-2",
+              "lg:[&[inert]]:opacity-40 motion-safe:lg:transition-opacity motion-safe:lg:duration-200",
+            )}
           >
             {/* ── Image gallery ── */}
             <div
@@ -2131,369 +2152,334 @@ export default function ProductDetailPage() {
             )}
           </div>
 
-          <div className="space-y-5 lg:col-span-2 lg:col-start-2 lg:row-start-2">
-            {/* ── Regulatory reporting ──────────────────────────────────────────
+          <ProductLowerColumns
+            split={pricingSplit}
+            top={
+              <>
+                {/* ── Regulatory reporting ──────────────────────────────────────────
                 Filing vocabulary only (regulated type + the codes a report files
                 under), kept in its own card so it can't be mistaken for the
                 catalog's own unit/packaging fields in Details. Rendered whenever
                 the product is regulated, or whenever editing with any regulated
                 type available to assign. */}
-            {(product.trackedCategory || (isEditing && sectionOptions.length > 0)) && (
-              <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-                <div className="flex items-center gap-2 border-b border-surface-border px-5 py-3.5">
-                  <ShieldCheck className="h-4 w-4 shrink-0 text-brand-600" />
-                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                    Regulatory reporting
-                  </h3>
-                  {product.trackedCategory && (
-                    <Link
-                      href={`/compliance/${product.trackedCategory.id}`}
-                      className="ml-auto text-xs font-medium text-brand-600 hover:underline"
-                    >
-                      Regulated Items →
-                    </Link>
-                  )}
-                </div>
-                <div className="p-5">
-                  <p className="mb-4 text-xs text-navy/60">
-                    How this product is filed on regulated sales reports. These codes are the filing
-                    authority&apos;s vocabulary — separate from the catalog&apos;s own unit of
-                    measure and case packaging.
-                  </p>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
-                    <InfoRow
-                      label="Regulated type"
-                      value={
-                        isEditing && sectionOptions.length > 0 ? (
-                          <select
-                            value={(editDraft.trackedCategoryId as string) ?? ""}
-                            onChange={(e) => {
-                              const trackedCategoryId = e.target.value;
-                              setEditDraft((d) => ({
-                                ...d,
-                                trackedCategoryId,
-                                trackedSubcategoryId: "",
-                                // Selecting a type replaces the free-text Category
-                                // row in Details with the structured combobox —
-                                // clear any typed value so a stale one can't
-                                // resurface if the type is cleared.
-                                category: trackedCategoryId ? "" : d.category,
-                                // Regulatory reporting config is scoped to the
-                                // section's report template — clear it whenever the
-                                // section changes (including cleared entirely) so a
-                                // stale code from a different vocabulary can never
-                                // be submitted.
-                                regItemType: "",
-                                regUomCase: "",
-                                regUomUnit: "",
-                              }));
-                            }}
-                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                          >
-                            <option value="">None (not regulated)</option>
-                            {sectionOptions.map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.name}
-                                {s.inactive ? " (inactive)" : ""}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <>
-                            {product.trackedCategory?.name ?? "—"}
-                            {product.trackedSubcategory && (
-                              <span className="text-navy/70">
-                                {" "}
-                                · {product.trackedSubcategory.name}
-                              </span>
-                            )}
-                          </>
-                        )
-                      }
-                    />
-                    {activeProductConfig && (
-                      <InfoRow
-                        label="Item type"
-                        value={
-                          isEditing ? (
-                            <select
-                              value={(editDraft.regItemType as string) ?? ""}
-                              onChange={(e) => {
-                                const regItemType = e.target.value;
-                                setEditDraft((d) => {
-                                  const validUoms = uomsForItemType(
-                                    activeProductConfig,
-                                    regItemType,
-                                  ).map((u) => u.code);
-                                  return {
-                                    ...d,
-                                    regItemType,
-                                    regUomUnit: validUoms.includes((d.regUomUnit as string) ?? "")
-                                      ? d.regUomUnit
-                                      : "",
-                                    regUomCase: validUoms.includes((d.regUomCase as string) ?? "")
-                                      ? d.regUomCase
-                                      : "",
-                                  };
-                                });
-                              }}
-                              className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                            >
-                              <option value="">Select…</option>
-                              {activeProductConfig.itemTypes.map((t) => (
-                                <option key={t.code} value={t.code}>
-                                  {t.label}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            regItemTypeLabel(activeProductConfig, product.regItemType)
-                          )
-                        }
-                      />
-                    )}
-                    {activeProductConfig && (
-                      <InfoRow
-                        label={`Unit of measure (per ${UW.base.lower})`}
-                        value={
-                          isEditing ? (
-                            <select
-                              value={(editDraft.regUomUnit as string) ?? ""}
-                              onChange={(e) =>
-                                setEditDraft((d) => ({ ...d, regUomUnit: e.target.value }))
-                              }
-                              disabled={!(editDraft.regItemType as string)}
-                              className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
-                            >
-                              <option value="">
-                                {(editDraft.regItemType as string)
-                                  ? "Select…"
-                                  : "Select item type first"}
-                              </option>
-                              {uomsForItemType(
-                                activeProductConfig,
-                                (editDraft.regItemType as string) ?? "",
-                              ).map((u) => (
-                                <option key={u.code} value={u.code}>
-                                  {u.label}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            regUomLabel(activeProductConfig, product.regUomUnit)
-                          )
-                        }
-                      />
-                    )}
-                    {activeProductConfig?.caseUomSupported && activeUnitsPerBox > 1 && (
-                      <InfoRow
-                        label="Case unit of measure"
-                        value={
-                          isEditing ? (
-                            <>
+                {(product.trackedCategory || (isEditing && sectionOptions.length > 0)) && (
+                  <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+                    <div className="flex items-center gap-2 border-b border-surface-border px-5 py-3.5">
+                      <ShieldCheck className="h-4 w-4 shrink-0 text-brand-600" />
+                      <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                        Regulatory reporting
+                      </h3>
+                      {product.trackedCategory && (
+                        <Link
+                          href={`/compliance/${product.trackedCategory.id}`}
+                          className="ml-auto text-xs font-medium text-brand-600 hover:underline"
+                        >
+                          Regulated Items →
+                        </Link>
+                      )}
+                    </div>
+                    <div className="p-5">
+                      <p className="mb-4 text-xs text-navy/60">
+                        How this product is filed on regulated sales reports. These codes are the
+                        filing authority&apos;s vocabulary — separate from the catalog&apos;s own
+                        unit of measure and case packaging.
+                      </p>
+                      <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+                        <InfoRow
+                          label="Regulated type"
+                          value={
+                            isEditing && sectionOptions.length > 0 ? (
                               <select
-                                value={(editDraft.regUomCase as string) ?? ""}
-                                onChange={(e) =>
-                                  setEditDraft((d) => ({ ...d, regUomCase: e.target.value }))
-                                }
-                                disabled={!(editDraft.regItemType as string)}
-                                className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
+                                value={(editDraft.trackedCategoryId as string) ?? ""}
+                                onChange={(e) => {
+                                  const trackedCategoryId = e.target.value;
+                                  setEditDraft((d) => ({
+                                    ...d,
+                                    trackedCategoryId,
+                                    trackedSubcategoryId: "",
+                                    // Selecting a type replaces the free-text Category
+                                    // row in Details with the structured combobox —
+                                    // clear any typed value so a stale one can't
+                                    // resurface if the type is cleared.
+                                    category: trackedCategoryId ? "" : d.category,
+                                    // Regulatory reporting config is scoped to the
+                                    // section's report template — clear it whenever the
+                                    // section changes (including cleared entirely) so a
+                                    // stale code from a different vocabulary can never
+                                    // be submitted.
+                                    regItemType: "",
+                                    regUomCase: "",
+                                    regUomUnit: "",
+                                  }));
+                                }}
+                                className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                               >
-                                <option value="">
-                                  {(editDraft.regItemType as string)
-                                    ? "Select…"
-                                    : "Select item type first"}
-                                </option>
-                                {uomsForItemType(
-                                  activeProductConfig,
-                                  (editDraft.regItemType as string) ?? "",
-                                ).map((u) => (
-                                  <option key={u.code} value={u.code}>
-                                    {u.label}
+                                <option value="">None (not regulated)</option>
+                                {sectionOptions.map((s) => (
+                                  <option key={s.id} value={s.id}>
+                                    {s.name}
+                                    {s.inactive ? " (inactive)" : ""}
                                   </option>
                                 ))}
                               </select>
-                              <p className="mt-0.5 text-xs text-navy/70">
-                                Used when this product is sold by the case. Leave blank to report
-                                every quantity in {UW.base.lowerOther}.
-                              </p>
-                            </>
-                          ) : (
-                            regUomLabel(activeProductConfig, product.regUomCase)
-                          )
-                        }
-                      />
-                    )}
-                  </div>
-                  {/* A regulated type whose report template needs no per-product
+                            ) : (
+                              <>
+                                {product.trackedCategory?.name ?? "—"}
+                                {product.trackedSubcategory && (
+                                  <span className="text-navy/70">
+                                    {" "}
+                                    · {product.trackedSubcategory.name}
+                                  </span>
+                                )}
+                              </>
+                            )
+                          }
+                        />
+                        {activeProductConfig && (
+                          <InfoRow
+                            label="Item type"
+                            value={
+                              isEditing ? (
+                                <select
+                                  value={(editDraft.regItemType as string) ?? ""}
+                                  onChange={(e) => {
+                                    const regItemType = e.target.value;
+                                    setEditDraft((d) => {
+                                      const validUoms = uomsForItemType(
+                                        activeProductConfig,
+                                        regItemType,
+                                      ).map((u) => u.code);
+                                      return {
+                                        ...d,
+                                        regItemType,
+                                        regUomUnit: validUoms.includes(
+                                          (d.regUomUnit as string) ?? "",
+                                        )
+                                          ? d.regUomUnit
+                                          : "",
+                                        regUomCase: validUoms.includes(
+                                          (d.regUomCase as string) ?? "",
+                                        )
+                                          ? d.regUomCase
+                                          : "",
+                                      };
+                                    });
+                                  }}
+                                  className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                                >
+                                  <option value="">Select…</option>
+                                  {activeProductConfig.itemTypes.map((t) => (
+                                    <option key={t.code} value={t.code}>
+                                      {t.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                regItemTypeLabel(activeProductConfig, product.regItemType)
+                              )
+                            }
+                          />
+                        )}
+                        {activeProductConfig && (
+                          <InfoRow
+                            label={`Unit of measure (per ${UW.base.lower})`}
+                            value={
+                              isEditing ? (
+                                <select
+                                  value={(editDraft.regUomUnit as string) ?? ""}
+                                  onChange={(e) =>
+                                    setEditDraft((d) => ({ ...d, regUomUnit: e.target.value }))
+                                  }
+                                  disabled={!(editDraft.regItemType as string)}
+                                  className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
+                                >
+                                  <option value="">
+                                    {(editDraft.regItemType as string)
+                                      ? "Select…"
+                                      : "Select item type first"}
+                                  </option>
+                                  {uomsForItemType(
+                                    activeProductConfig,
+                                    (editDraft.regItemType as string) ?? "",
+                                  ).map((u) => (
+                                    <option key={u.code} value={u.code}>
+                                      {u.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                regUomLabel(activeProductConfig, product.regUomUnit)
+                              )
+                            }
+                          />
+                        )}
+                        {activeProductConfig?.caseUomSupported && activeUnitsPerBox > 1 && (
+                          <InfoRow
+                            label="Case unit of measure"
+                            value={
+                              isEditing ? (
+                                <>
+                                  <select
+                                    value={(editDraft.regUomCase as string) ?? ""}
+                                    onChange={(e) =>
+                                      setEditDraft((d) => ({ ...d, regUomCase: e.target.value }))
+                                    }
+                                    disabled={!(editDraft.regItemType as string)}
+                                    className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
+                                  >
+                                    <option value="">
+                                      {(editDraft.regItemType as string)
+                                        ? "Select…"
+                                        : "Select item type first"}
+                                    </option>
+                                    {uomsForItemType(
+                                      activeProductConfig,
+                                      (editDraft.regItemType as string) ?? "",
+                                    ).map((u) => (
+                                      <option key={u.code} value={u.code}>
+                                        {u.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <p className="mt-0.5 text-xs text-navy/70">
+                                    Used when this product is sold by the case. Leave blank to
+                                    report every quantity in {UW.base.lowerOther}.
+                                  </p>
+                                </>
+                              ) : (
+                                regUomLabel(activeProductConfig, product.regUomCase)
+                              )
+                            }
+                          />
+                        )}
+                      </div>
+                      {/* A regulated type whose report template needs no per-product
                       codes (GENERIC, CA_*, CALRECYCLE) would otherwise render an
                       unexplained single-field card. */}
-                  {hasActiveRegType && !activeProductConfig && (
-                    <p className="mt-4 border-t border-surface-border pt-3 text-xs text-navy/60">
-                      This regulated type&apos;s report template needs no per-product item type or
-                      unit of measure.
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
+                      {hasActiveRegType && !activeProductConfig && (
+                        <p className="mt-4 border-t border-surface-border pt-3 text-xs text-navy/60">
+                          This regulated type&apos;s report template needs no per-product item type
+                          or unit of measure.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
 
-            <ProductLabelsCard productId={product.id} />
-            <ProductPortalVisibilityCard product={product} />
-            {v2 && product.kind !== "FAMILY" ? (
-              <ProductPricingRegion>
-                <ProductPricingV2 product={product} />
-              </ProductPricingRegion>
-            ) : null}
-            {!v2Family && <ProductUnitsCard product={product} hideAddForm={v2} readOnly={cardRo} />}
+                <ProductLabelsCard productId={product.id} />
+                <ProductPortalVisibilityCard product={product} />
+              </>
+            }
+            bottom={
+              <>
+                {!v2Family && (
+                  <ProductUnitsCard product={product} hideAddForm={v2} readOnly={cardRo} />
+                )}
 
-            {/* Sales demand — real data from invoiced sales. In its own file (unlike
+                {/* Sales demand — real data from invoiced sales. In its own file (unlike
                 CostHistoryCard below) because it owns range/metric state and five
                 render states; this file is already ~2.7k lines. */}
-            {isFamily ? (
-              <FamilySalesCards productId={product.id} unitsPerBox={product.unitsPerBox} />
-            ) : (
-              <>
-                <DemandCard productId={product.id} unitsPerBox={product.unitsPerBox} />
-                {/* Sales — per-buyer invoiced-sale history (PR-B): who bought this,
-                    when, and at what price, with min/avg/max price summary chips. */}
-                <SalesHistoryCard productId={product.id} />
-              </>
-            )}
-            <ProductInsightsExport productId={product.id} sku={product.sku ?? product.id} />
-
-            {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}
-            <CostHistoryCard productId={product.id} />
-
-            {/* Variants section — only for non-variant (parent) products */}
-            {!product.parentProductId && product.kind !== "FAMILY" && (
-              <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5">
-                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                    Variants
-                  </h3>
-                  <LegacyVariantsActions
-                    product={product}
-                    isOperator={isStaff}
-                    onSplit={() => setShowVariantSplit(true)}
-                    onLinkExisting={openLinkExistingModal}
-                    onAddVariant={() => openVariantModal()}
-                  />
-                </div>
-
-                {(!product.variants || product.variants.length === 0) && !product.variantName ? (
-                  <p className="text-sm text-navy/70 text-center py-10">
-                    No variants yet. Add flavors, sizes, or other variations.
-                  </p>
+                {isFamily ? (
+                  <FamilySalesCards productId={product.id} unitsPerBox={product.unitsPerBox} />
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-left">
-                          <th className="border-b-2 border-navy px-5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            Variant
-                          </th>
-                          <th className="border-b-2 border-navy px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            SKU
-                          </th>
-                          <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            {tierOneLabel(tierLabels)}
-                          </th>
-                          <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            {productTierLabel(tierLabels, 2)}
-                          </th>
-                          <th className="border-b-2 border-navy px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            Status
-                          </th>
-                          {isStaff && (
-                            <th className="border-b-2 border-navy px-5 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                              Actions
-                            </th>
-                          )}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {/* Parent product itself as first row */}
-                        <tr className="border-b border-surface-border bg-surface-raised/30">
-                          <td className="px-5 py-2.5">
-                            <span className="font-medium text-navy">
-                              {product.variantName || (
-                                <span className="italic text-navy/70">this product</span>
+                  <>
+                    <DemandCard productId={product.id} unitsPerBox={product.unitsPerBox} />
+                    {/* Sales — per-buyer invoiced-sale history (PR-B): who bought this,
+                    when, and at what price, with min/avg/max price summary chips. */}
+                    <SalesHistoryCard productId={product.id} />
+                  </>
+                )}
+                <ProductInsightsExport productId={product.id} sku={product.sku ?? product.id} />
+
+                {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}
+                <CostHistoryCard productId={product.id} />
+
+                {/* Variants section — only for non-variant (parent) products */}
+                {!product.parentProductId && product.kind !== "FAMILY" && (
+                  <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5">
+                      <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                        Variants
+                      </h3>
+                      <LegacyVariantsActions
+                        product={product}
+                        isOperator={isStaff}
+                        onSplit={() => setShowVariantSplit(true)}
+                        onLinkExisting={openLinkExistingModal}
+                        onAddVariant={() => openVariantModal()}
+                      />
+                    </div>
+
+                    {(!product.variants || product.variants.length === 0) &&
+                    !product.variantName ? (
+                      <p className="text-sm text-navy/70 text-center py-10">
+                        No variants yet. Add flavors, sizes, or other variations.
+                      </p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-left">
+                              <th className="border-b-2 border-navy px-5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
+                                Variant
+                              </th>
+                              <th className="border-b-2 border-navy px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
+                                SKU
+                              </th>
+                              <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
+                                {tierOneLabel(tierLabels)}
+                              </th>
+                              <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
+                                {productTierLabel(tierLabels, 2)}
+                              </th>
+                              <th className="border-b-2 border-navy px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
+                                Status
+                              </th>
+                              {isStaff && (
+                                <th className="border-b-2 border-navy px-5 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
+                                  Actions
+                                </th>
                               )}
-                            </span>
-                            {!product.variantName && isStaff && (
-                              <button
-                                onClick={assignOwnName}
-                                className="ml-2 text-xs text-brand-500 hover:underline"
-                              >
-                                assign name
-                              </button>
-                            )}
-                          </td>
-                          <td className="px-3 py-2.5 font-mono text-xs text-navy/70">
-                            {product.sku || <span className="text-navy/30">&mdash;</span>}
-                          </td>
-                          <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                            <MoneyFigure value={priceNumber} />
-                          </td>
-                          <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                            <MoneyFigure value={getTierPrice(product, 2)} />
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <Badge
-                              variant={product.isActive ? "success" : "neutral"}
-                              label={product.isActive ? "Active" : "Inactive"}
-                            />
-                          </td>
-                          {isStaff && (
-                            <td className="px-5 py-2.5 text-right">
-                              <button
-                                onClick={startEdit}
-                                title="Edit this product"
-                                className={cn(
-                                  TAP_TARGET,
-                                  "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
-                                )}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                            </td>
-                          )}
-                        </tr>
-                        {(product.variants ?? []).map((variant: ApiProduct) => (
-                          <tr
-                            key={variant.id}
-                            className="border-b border-surface-border last:border-0"
-                          >
-                            <td className="px-5 py-2.5">
-                              <Link
-                                href={`/products/${variant.id}`}
-                                className="font-medium text-brand-600 hover:underline"
-                              >
-                                {variant.variantName || variant.name}
-                              </Link>
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-xs text-navy/70">
-                              {variant.sku || <span className="text-navy/30">&mdash;</span>}
-                            </td>
-                            <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                              <MoneyFigure value={variant.pricePerUnit} />
-                            </td>
-                            <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                              <MoneyFigure value={getTierPrice(variant, 2)} />
-                            </td>
-                            <td className="px-3 py-2.5">
-                              <Badge
-                                variant={variant.isActive ? "success" : "neutral"}
-                                label={variant.isActive ? "Active" : "Inactive"}
-                              />
-                            </td>
-                            {isStaff && (
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {/* Parent product itself as first row */}
+                            <tr className="border-b border-surface-border bg-surface-raised/30">
                               <td className="px-5 py-2.5">
-                                <div className="flex items-center justify-end gap-1.5">
+                                <span className="font-medium text-navy">
+                                  {product.variantName || (
+                                    <span className="italic text-navy/70">this product</span>
+                                  )}
+                                </span>
+                                {!product.variantName && isStaff && (
                                   <button
-                                    onClick={() => openVariantModal(variant)}
-                                    title="Edit variant"
+                                    onClick={assignOwnName}
+                                    className="ml-2 text-xs text-brand-500 hover:underline"
+                                  >
+                                    assign name
+                                  </button>
+                                )}
+                              </td>
+                              <td className="px-3 py-2.5 font-mono text-xs text-navy/70">
+                                {product.sku || <span className="text-navy/30">&mdash;</span>}
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
+                                <MoneyFigure value={priceNumber} />
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
+                                <MoneyFigure value={getTierPrice(product, 2)} />
+                              </td>
+                              <td className="px-3 py-2.5">
+                                <Badge
+                                  variant={product.isActive ? "success" : "neutral"}
+                                  label={product.isActive ? "Active" : "Inactive"}
+                                />
+                              </td>
+                              {isStaff && (
+                                <td className="px-5 py-2.5 text-right">
+                                  <button
+                                    onClick={startEdit}
+                                    title="Edit this product"
                                     className={cn(
                                       TAP_TARGET,
                                       "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
@@ -2501,30 +2487,76 @@ export default function ProductDetailPage() {
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
                                   </button>
-                                  <button
-                                    onClick={() => handleToggleVariantActive(variant)}
-                                    title={variant.isActive ? "Deactivate" : "Reactivate"}
-                                    className={cn(
-                                      "rounded p-1.5 transition-colors",
-                                      variant.isActive
-                                        ? "text-navy/70 hover:bg-warning-bg hover:text-warning"
-                                        : "text-navy/70 hover:bg-success-bg hover:text-success",
-                                    )}
+                                </td>
+                              )}
+                            </tr>
+                            {(product.variants ?? []).map((variant: ApiProduct) => (
+                              <tr
+                                key={variant.id}
+                                className="border-b border-surface-border last:border-0"
+                              >
+                                <td className="px-5 py-2.5">
+                                  <Link
+                                    href={`/products/${variant.id}`}
+                                    className="font-medium text-brand-600 hover:underline"
                                   >
-                                    <Power className="h-3.5 w-3.5" />
-                                  </button>
-                                </div>
-                              </td>
-                            )}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                                    {variant.variantName || variant.name}
+                                  </Link>
+                                </td>
+                                <td className="px-3 py-2.5 font-mono text-xs text-navy/70">
+                                  {variant.sku || <span className="text-navy/30">&mdash;</span>}
+                                </td>
+                                <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
+                                  <MoneyFigure value={variant.pricePerUnit} />
+                                </td>
+                                <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
+                                  <MoneyFigure value={getTierPrice(variant, 2)} />
+                                </td>
+                                <td className="px-3 py-2.5">
+                                  <Badge
+                                    variant={variant.isActive ? "success" : "neutral"}
+                                    label={variant.isActive ? "Active" : "Inactive"}
+                                  />
+                                </td>
+                                {isStaff && (
+                                  <td className="px-5 py-2.5">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <button
+                                        onClick={() => openVariantModal(variant)}
+                                        title="Edit variant"
+                                        className={cn(
+                                          TAP_TARGET,
+                                          "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
+                                        )}
+                                      >
+                                        <Pencil className="h-3.5 w-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleToggleVariantActive(variant)}
+                                        title={variant.isActive ? "Deactivate" : "Reactivate"}
+                                        className={cn(
+                                          "rounded p-1.5 transition-colors",
+                                          variant.isActive
+                                            ? "text-navy/70 hover:bg-warning-bg hover:text-warning"
+                                            : "text-navy/70 hover:bg-success-bg hover:text-success",
+                                        )}
+                                      >
+                                        <Power className="h-3.5 w-3.5" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
-            )}
-          </div>
+              </>
+            }
+          />
         </div>
       </div>
 

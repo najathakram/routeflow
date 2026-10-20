@@ -51,8 +51,7 @@ async function expectTwoColumns(page: Page) {
   expect(Math.abs(i.y - d.y), "both columns start on one line").toBeLessThanOrEqual(1);
   // 20 px from Details to the next card in the right column (space-y-5, as on master)
   const next = (await page
-    .locator("div.grid.lg\\:grid-cols-3 > div")
-    .nth(2)
+    .getByTestId("product-lower-column")
     .locator(":scope > *")
     .first()
     .boundingBox())!;
