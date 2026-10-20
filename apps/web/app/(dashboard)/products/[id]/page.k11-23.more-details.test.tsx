@@ -4,7 +4,7 @@ import { renderWithProviders, screen, fireEvent, within } from "@/test-utils/ren
 import ProductDetailPage from "./page";
 
 /**
- * K11-23 (phone): the secondary Details fields sit behind a "More details" disclosure. CSS only (max-sm:hidden), always
+ * K11-23 (phone): the secondary Details fields sit behind a "More details" disclosure. CSS only (max-sm:invisible), always
  * mounted, so a typed value survives collapse; edit mode opens it.
  */
 let role = "OPERATOR";
@@ -113,12 +113,28 @@ describe("K11-23 More details disclosure (below sm)", () => {
     expect(t).toHaveAttribute("aria-controls", panel().id);
     expect(t.className).toMatch(/min-h-\[44px\]/);
     expect(t.className).toMatch(/\bsm:hidden\b/);
+    // a plain disclosure row (text and chevron), not a bordered select-like box
+    expect(t.className).not.toMatch(/\brounded\b/);
+    expect(t.className).not.toMatch(/(^|\s)border(\s|$)/);
+  });
+
+  it("reveals with a motion-safe 200 ms grid-rows and opacity transition, instant under reduced motion", () => {
+    renderWithProviders(<ProductDetailPage />);
+    const c = panel().className;
+    expect(c).toMatch(/\bgrid-rows-\[0fr\]/);
+    expect(c).toMatch(/motion-safe:transition-\[grid-template-rows,opacity,visibility\]/);
+    expect(c).toMatch(/motion-safe:duration-200/);
+    // nothing outside motion-safe: sets a transition
+    expect(c.replace(/motion-safe:\S+/g, "")).not.toMatch(/\btransition|\bduration-/);
+    fireEvent.click(toggle());
+    expect(panel().className).toMatch(/\bgrid-rows-\[1fr\]/);
+    expect(panel().className).toMatch(/sm:grid-rows-\[1fr\]/);
   });
 
   it("holds MSRP, Description and Buyer merchandising, collapsed by a CSS class, still mounted", () => {
     renderWithProviders(<ProductDetailPage />);
     const p = panel();
-    expect(p.className).toMatch(/max-sm:hidden/);
+    expect(p.className).toMatch(/max-sm:invisible/);
     expect(p).toHaveTextContent("MSRP (Suggested Retail)");
     expect(p).toHaveTextContent("Description");
     expect(p).toContainElement(screen.getByRole("heading", { name: "Buyer merchandising" }));
@@ -126,9 +142,9 @@ describe("K11-23 More details disclosure (below sm)", () => {
     expect(p).not.toContainElement(screen.getByText("SKU (box code)"));
     fireEvent.click(toggle());
     expect(toggle()).toHaveAttribute("aria-expanded", "true");
-    expect(panel().className).not.toMatch(/max-sm:hidden/);
+    expect(panel().className).not.toMatch(/max-sm:invisible/);
     fireEvent.click(toggle());
-    expect(panel().className).toMatch(/max-sm:hidden/);
+    expect(panel().className).toMatch(/max-sm:invisible/);
   });
 
   it("edit mode opens it, and a typed value survives collapse and expand", async () => {
@@ -136,11 +152,11 @@ describe("K11-23 More details disclosure (below sm)", () => {
     renderWithProviders(<ProductDetailPage />);
     await user.click(screen.getByTitle("Edit product"));
     expect(toggle()).toHaveAttribute("aria-expanded", "true");
-    expect(panel().className).not.toMatch(/max-sm:hidden/);
+    expect(panel().className).not.toMatch(/max-sm:invisible/);
     const box = within(panel()).getByRole("textbox");
     await user.type(box, "typed note");
     await user.click(toggle());
-    expect(panel().className).toMatch(/max-sm:hidden/);
+    expect(panel().className).toMatch(/max-sm:invisible/);
     expect(screen.getByDisplayValue("typed note")).toBeInTheDocument();
     await user.click(toggle());
     expect(screen.getByDisplayValue("typed note")).toBeInTheDocument();
