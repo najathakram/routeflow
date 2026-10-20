@@ -166,6 +166,16 @@ describe("UnitsBesideGrid: name and contains", () => {
   });
 });
 
+describe("UnitsBesideGrid: shared left edge in the wide edit region (R3 review)", () => {
+  it("marks the default order unit block and the Name / Contains block for the 17 px inset", () => {
+    draft = { dirty: false, editingIn: "inline" };
+    renderBeside();
+    expect(screen.getByTestId("units-v2-beside")).toHaveAttribute("data-wide-inset", "");
+    renderBeside(UnitDetailsEditor);
+    expect(screen.getByTestId("units-v2-details")).toHaveAttribute("data-wide-inset", "");
+  });
+});
+
 describe("UnitsBesideGrid: each unit's block reads as a sentence (R3 review)", () => {
   it("heads each unit with '<Unit> size' and prints the base unit after Contains", () => {
     draft = { dirty: false, editingIn: "inline" };

@@ -1798,7 +1798,7 @@ export default function ProductDetailPage() {
                   {/* MSRP — suggested retail, per PIECE (even for boxed products).
                     Display-only: never feeds pricing/tax/margin math. Flag-gated
                     (flag.msrp) on write; the warning below is advisory only. */}
-                  <div className="mt-5 border-t border-surface-border pt-4">
+                  <div className="mt-5 border-surface-border pt-4 sm:border-t">
                     <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                       MSRP (Suggested Retail)
                     </p>

@@ -140,6 +140,7 @@ export function EditablePricesGrid({
         {editing && surface === "inline" && <SkipToSave />}
         <div
           data-testid="units-v2-actions-row"
+          data-wide-inset=""
           className="mb-2 flex flex-wrap items-center justify-end gap-2"
         >
           {/* K13: the region's heading leads the actions row, so on a phone it is one of the first things on the page. */}

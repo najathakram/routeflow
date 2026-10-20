@@ -25,6 +25,10 @@ describe("phone spacing above the first price row (below sm only)", () => {
     expect(g).toMatch(/mb-2 max-sm:mb-1 text-xs/);
   });
 
+  it("the open More details row keeps ONE hairline: the MSRP block's own top rule is sm-and-up only", () => {
+    expect(src("page.tsx")).toMatch(/mt-5 border-surface-border pt-4 sm:border-t/);
+  });
+
   it("the Details card's bottom padding and the More details trigger tighten (read mode)", () => {
     expect(src("page.tsx")).toMatch(/isEditing && "pb-24 md:pb-6", !isEditing && "max-sm:pb-3"/);
     expect(src("DetailsMore.tsx")).toMatch(/mt-5 max-sm:mt-3 flex min-h-\[44px\]/);
