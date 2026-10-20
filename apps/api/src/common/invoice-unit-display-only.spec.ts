@@ -12,7 +12,7 @@ import * as path from "path";
 
 const REPO = path.resolve(__dirname, "../../../..");
 const FORBIDDEN =
-  /\b(?:invoiceUnitFactor|invoiceUnitLabel|invoiceLineDisplay|InvoiceLineDisplay)\b/;
+  /\b(?:invoiceUnitFactor|invoiceUnitLabel|invoiceLineDisplay|InvoiceLineDisplay|invoiceDisplayLines|InvoiceDisplayLines|invoiceDisplayUnitFor|displayUnitSnapshotOf|displayUnitForItem)\b/;
 
 /** Directories whose non-spec source writes or computes money. */
 const MONEY_DIRS = [
@@ -34,6 +34,7 @@ const MONEY_FILES = ["apps/api/src/common/invoiced-sales.ts"];
 /** The pricing files that legitimately hold the display math. */
 const DISPLAY_FILES = new Set([
   "packages/pricing/src/invoice-display.ts",
+  "packages/pricing/src/invoice-display-lines.ts",
   "packages/pricing/src/index.ts",
 ]);
 /** The API files that render an invoice (display only), by exact name: the PDF modules and the detail read. A new file must be added here on purpose. */
@@ -87,6 +88,17 @@ describe("G1: the invoice unit never reaches a money writer", () => {
     expect(FORBIDDEN.test("const f = x.invoiceUnitFactor;")).toBe(true);
     expect(FORBIDDEN.test(stripComments("// invoiceUnitFactor"))).toBe(false);
     expect(FORBIDDEN.test(stripComments("/* invoiceLineDisplay */"))).toBe(false);
+  });
+
+  it("the detector matches each SA-827 display name", () => {
+    for (const n of [
+      "invoiceDisplayLines",
+      "InvoiceDisplayLines",
+      "invoiceDisplayUnitFor",
+      "displayUnitSnapshotOf",
+      "displayUnitForItem",
+    ])
+      expect(FORBIDDEN.test(`const f = ${n}(x);`)).toBe(true);
   });
 
   it("the display allow-list covers the PDF modules and the detail read, and nothing else", () => {

@@ -51,3 +51,9 @@ export interface PriceAdjustmentPartialBody {
   syncFailed?: { invoiceId: string; invoiceNumber: string | null };
   skipped: string[];
 }
+
+/** SA-827: how an invoice line reads. "pieces" = the customer's invoice unit is the base piece; "legacy" = today's layout. */
+export interface InvoiceDisplayUnitView {
+  kind: "legacy" | "pieces";
+  label: string | null;
+}

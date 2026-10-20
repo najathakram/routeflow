@@ -19,6 +19,7 @@ import type {
   RouteRunStatusValue,
 } from "./enums";
 import type { LineComponentView } from "./orders";
+import type { InvoiceDisplayUnitView } from "./invoices";
 import type { DecimalWire } from "./decimal";
 
 export interface LockedCategory {
@@ -461,6 +462,10 @@ export interface BuyerInvoiceItem {
   product: { id: string; name: string; unit: string; unitsPerBox: number | null } | null;
   trackedCategory: { id: string; name: string; invoiceTreatment: InvoiceTreatment } | null;
   trackedSubcategory: { id: string; name: string } | null;
+  /** SA-827: frozen component pieces of a composed line (display only). */
+  components?: LineComponentView[] | null;
+  /** SA-827: how this line reads (pieces view or today's layout). */
+  displayUnit?: InvoiceDisplayUnitView | null;
 }
 
 /** A payment row on GET /buyer/invoices/:id (newest first). `creditNote` is set when

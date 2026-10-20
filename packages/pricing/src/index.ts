@@ -43,6 +43,7 @@ export * from "./pack-write-path";
 export * from "./price-change";
 export * from "./unit-default";
 export * from "./invoice-display";
+export * from "./invoice-display-lines";
 export * from "./customer-unit-price";
 export * from "./customer-line-price";
 export * from "./units-prices-v2";
