@@ -1495,17 +1495,23 @@ describe("CustomersService", () => {
       expect(dataLine).toContain(",75.00,0.00");
     });
 
+    // B808: the apply path checks the advance's customer against the invoice's and the route's.
+    const apOf = (balance: number) => ({ id: "ap-1", balance, customerId: "cust-1" });
+    const applyAdv = (invoiceId: string) =>
+      service.applyAdvancePaymentToInvoice("ap-1", { invoiceId }, "cust-1");
+
     it("applyAdvancePaymentToInvoice: a VOID payment is not treated as paid, so the full balance is applied", async () => {
-      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 100 });
+      prisma.advancePayment.findUnique.mockResolvedValue(apOf(100));
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-1",
+        customerId: "cust-1",
         total: 100,
         status: "OVERDUE",
         dueDate: daysAgo(1),
         payments: [{ amount: 100, status: "VOID" }], // bounced — real balance is still 100
       });
 
-      await service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-1" });
+      await applyAdv("inv-1");
 
       // Without the fix, alreadyPaid=100 → balance 0 → "no outstanding balance" throw.
       // With the fix, alreadyPaid=0 → the full 100 is applied.
@@ -1520,18 +1526,17 @@ describe("CustomersService", () => {
     });
 
     it("F7: reports the server's own appliedAmount on the response (wallet 1000, invoice 1000, 400 already paid → 600)", async () => {
-      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 1000 });
+      prisma.advancePayment.findUnique.mockResolvedValue(apOf(1000));
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-1",
+        customerId: "cust-1",
         total: 1000,
         status: "SENT",
         dueDate: null,
         payments: [{ amount: 400, status: "PAID" }],
       });
 
-      const result: any = await service.applyAdvancePaymentToInvoice("ap-1", {
-        invoiceId: "inv-1",
-      });
+      const result: any = await applyAdv("inv-1");
 
       expect(result.appliedAmount).toBe(600);
       expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
@@ -1544,9 +1549,10 @@ describe("CustomersService", () => {
     // sibling now also reserves capacity, so an advance can no longer be applied on
     // top of it past what the invoice can actually hold once that DRAFT confirms.
     it("applyAdvancePaymentToInvoice: a DRAFT sibling payment reserves capacity too (PR-2 REG)", async () => {
-      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 1000 });
+      prisma.advancePayment.findUnique.mockResolvedValue(apOf(1000));
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-1",
+        customerId: "cust-1",
         total: 1000,
         status: "SENT",
         dueDate: null,
@@ -1558,9 +1564,7 @@ describe("CustomersService", () => {
         ],
       });
 
-      const result: any = await service.applyAdvancePaymentToInvoice("ap-1", {
-        invoiceId: "inv-1",
-      });
+      const result: any = await applyAdv("inv-1");
 
       expect(result.appliedAmount).toBe(500);
       expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
@@ -1572,16 +1576,17 @@ describe("CustomersService", () => {
     // CONFIRMED-basis, never the DRAFT-inclusive capacity figure — applying a $40
     // advance on top of a $60 DRAFT sibling must NOT flip a $100 invoice to PAID.
     it("applyAdvancePaymentToInvoice: a DRAFT sibling does not fund the recomputed status (PR-2 REG)", async () => {
-      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 1000 });
+      prisma.advancePayment.findUnique.mockResolvedValue(apOf(1000));
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-status-draft",
+        customerId: "cust-1",
         total: 100,
         status: "SENT",
         dueDate: null,
         payments: [{ amount: 60, status: "DRAFT" }],
       });
 
-      await service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-status-draft" });
+      await applyAdv("inv-status-draft");
 
       // capacity = 100 - 60(DRAFT) = 40, so applyAmount = 40. Buggy basis:
       // newPaid = alreadyPaid(60, DRAFT-inclusive) + 40 = 100 -> PAID. Fixed basis:
@@ -1599,16 +1604,17 @@ describe("CustomersService", () => {
     // classic 0.1 + 0.2 = 0.30000000000000004 case) can leave a fully-covered invoice
     // reading PARTIAL instead of PAID.
     it("applyAdvancePaymentToInvoice: a 0.1 + 0.2-style float remainder still reads PAID (PR-2 REG)", async () => {
-      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 0.2 });
+      prisma.advancePayment.findUnique.mockResolvedValue(apOf(0.2));
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-float",
+        customerId: "cust-1",
         total: 0.3,
         status: "SENT",
         dueDate: null,
         payments: [{ amount: 0.1, status: "PAID" }],
       });
 
-      await service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-float" });
+      await applyAdv("inv-float");
 
       // Unrounded: 0.1 + 0.2 === 0.30000000000000004 (a real JS float value) — asserting
       // PAID (not PARTIAL) proves newPaid was rounded before the total comparison.
@@ -1620,17 +1626,18 @@ describe("CustomersService", () => {
     // B310, DRAFT half (#719 fixed the concurrency half). DRAFT joins this check directly,
     // not CREDIT_NOT_APPLICABLE — :1835's exposure reads need DRAFT to stay out of that set.
     it("REG-B310 an advance cannot be applied to a DRAFT invoice — it has not been sent yet", async () => {
-      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 100 });
+      prisma.advancePayment.findUnique.mockResolvedValue(apOf(100));
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-draft",
+        customerId: "cust-1",
         total: 100,
         status: "DRAFT",
         dueDate: null,
         payments: [],
       });
-      await expect(
-        service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-draft" }),
-      ).rejects.toThrow("Cannot apply advance payment to invoice with status DRAFT");
+      await expect(applyAdv("inv-draft")).rejects.toThrow(
+        "Cannot apply advance payment to invoice with status DRAFT",
+      );
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
       expect(prisma.invoice.update).not.toHaveBeenCalled();
       expect(prisma.advancePayment.update).not.toHaveBeenCalled();
@@ -1654,6 +1661,7 @@ describe("CustomersService", () => {
       });
       prisma.invoice.findUnique.mockImplementation(async ({ where }: any) => ({
         id: where.id,
+        customerId,
         total: 100,
         status: "SENT",
         dueDate: null,
@@ -1667,8 +1675,8 @@ describe("CustomersService", () => {
       // landed, sees balance=0, and correctly REJECTS ("no remaining balance") instead of
       // silently overdrawing the wallet.
       const results = await Promise.allSettled([
-        service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-a" }),
-        service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-b" }),
+        service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-a" }, customerId),
+        service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-b" }, customerId),
       ]);
 
       expect(balance).toBeGreaterThanOrEqual(0);

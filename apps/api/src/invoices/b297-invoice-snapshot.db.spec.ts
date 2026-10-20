@@ -223,8 +223,9 @@ describeDb("B297 PR3 — invoice recompute reads the line's rate snapshot, real 
         invoiceNumber: `INV-B297-${RUN}-${seq}`,
         status: opts.status ?? "SENT",
         subtotal: 120,
-        taxAmount: 0.6,
-        total: 120.6,
+        // SA-814 R5-2: the header agrees with the line's levy (a recompute refuses one that does not)
+        taxAmount: opts.noCategory ? 4.2 : 0.6,
+        total: opts.noCategory ? 124.2 : 120.6,
       },
     });
     const item = await prisma.invoiceItem.create({

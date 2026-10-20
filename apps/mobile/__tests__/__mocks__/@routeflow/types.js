@@ -195,6 +195,10 @@ module.exports = {
     ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
     ORDER_DELIVERY_ADDRESS_MISSING: "ORDER_DELIVERY_ADDRESS_MISSING",
     ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
+    /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
+    ORDER_PD_NEEDS_QUANTITIES: "ORDER_PD_NEEDS_QUANTITIES",
+    /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
+    ORDER_DELIVERY_QUANTITIES_MISSING: "ORDER_DELIVERY_QUANTITIES_MISSING",
     ORDER_BILLING_CHANGED: "ORDER_BILLING_CHANGED",
     ORDER_EDIT_WOULD_OVERPAY: "ORDER_EDIT_WOULD_OVERPAY",
     FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
@@ -248,6 +252,12 @@ module.exports = {
     PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
     SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
     PO_LINK_BROKEN: "PO_LINK_BROKEN",
+    BILL_NEEDS_A_LINE: "BILL_NEEDS_A_LINE",
+    BILL_NOT_EDITABLE: "BILL_NOT_EDITABLE",
+    BILL_PO_SUPPLIER_LOCKED: "BILL_PO_SUPPLIER_LOCKED",
+    BILL_NEVER_RECEIVED: "BILL_NEVER_RECEIVED",
+    BILL_TAX_UNKNOWN: "BILL_TAX_UNKNOWN",
+    RECEIVE_EXCEEDS_OUTSTANDING: "RECEIVE_EXCEEDS_OUTSTANDING",
     AI_KEY_INVALID: "AI_KEY_INVALID",
     AI_SCAN_REJECTED: "AI_SCAN_REJECTED",
     AI_UNAVAILABLE: "AI_UNAVAILABLE",
@@ -321,6 +331,7 @@ module.exports = {
     HANDOFF_ROLE_NOT_ALLOWED: "HANDOFF_ROLE_NOT_ALLOWED",
     REGULATED_AUTH_REQUIRED: "REGULATED_AUTH_REQUIRED",
     WALLET_LOCK_BUSY: "WALLET_LOCK_BUSY",
+    ADVANCE_CUSTOMER_MISMATCH: "ADVANCE_CUSTOMER_MISMATCH",
     PROMOTION_ZERO_PRICE: "PROMOTION_ZERO_PRICE",
     UNEXPLAINED_DIFFS: "UNEXPLAINED_DIFFS",
     INTAKE_ANSWERS_INVALID: "INTAKE_ANSWERS_INVALID",
@@ -453,6 +464,16 @@ module.exports = {
     BILL_HAS_PAYMENTS: "BILL_HAS_PAYMENTS",
     BILL_PAYMENT_NOT_CASH: "BILL_PAYMENT_NOT_CASH",
     BILL_PAYMENT_NO_SUPPLIER: "BILL_PAYMENT_NO_SUPPLIER",
+    APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
+  },
+  // SA-814e: hand copy of packages/types/api/error-codes.ts (pinned to the API's literal by the API parity spec).
+  INVOICE_TAX_STATE_STALE_COPY: {
+    DRAFT_ORDER:
+      "This draft's tax was saved by an older version and can't be recalculated safely. Create it again from the order, or contact support.",
+    DRAFT_MANUAL:
+      "This draft's tax was saved by an older version and can't be recalculated safely. Create the draft again, or contact support.",
+    ISSUED:
+      "This invoice's stored tax can't be recalculated safely. Issue a credit note or contact support.",
   },
   CHECK_TRANSITIONS: {
     RECORDED: ["DEPOSITED", "BOUNCED"],

@@ -1,0 +1,89 @@
+{
+  "asOf": "2026-10-19T03:40:00Z",
+  "trains": [
+    {
+      "order": 1,
+      "train": "R1",
+      "name": "Back office and widget fixes",
+      "members": "BO API + web, rows 106/108, B1036",
+      "lanes": "PC lane, MacBook",
+      "target": "2026-10-19",
+      "state": "proofs",
+      "next": "Mac mini rebuilds the R1 image"
+    },
+    {
+      "order": 2,
+      "train": "R2",
+      "name": "Billing guards",
+      "members": "G1a/G1b add-ons never switched off",
+      "lanes": "PC lane",
+      "target": "2026-10-19",
+      "state": "fixing",
+      "next": "DB reds"
+    },
+    {
+      "order": 3,
+      "train": "R3",
+      "name": "Product page finish",
+      "members": "K13 re-score",
+      "lanes": "Mac mini",
+      "target": "2026-10-19",
+      "state": "waiting",
+      "next": "K13"
+    },
+    {
+      "order": 4,
+      "train": "R4",
+      "name": "Money fixes",
+      "members": "B1090",
+      "lanes": "PC lane",
+      "target": "2026-10-20",
+      "state": "shipped",
+      "next": ""
+    }
+  ],
+  "lanes": [
+    {
+      "lane": "Routeflow Lead",
+      "machine": "PC",
+      "model": "Opus, high",
+      "now": "Train assembly",
+      "next": "R1 window"
+    },
+    {
+      "lane": "RouteFlow Mac mini lane",
+      "machine": "Mac mini",
+      "model": "Sonnet",
+      "now": "Proofs",
+      "next": "K13"
+    }
+  ],
+  "owner": [
+    {
+      "ask": "R5 migration sitting",
+      "when": "2026-10-20 ~18:00Z",
+      "recommended": "Booked: backup first",
+      "state": "booked"
+    },
+    {
+      "ask": "Auto-confirm of staff orders: staff orders only, or portal orders too?",
+      "when": "",
+      "recommended": "Staff only",
+      "state": "open"
+    }
+  ],
+  "problems": [
+    {
+      "problem": "A plan upgrade switches the acme add-on off",
+      "impact": "Regulated pages skip the tenant",
+      "fix": "R2 (G1a/G1b)",
+      "state": "live"
+    },
+    {
+      "problem": "Acme export job times out",
+      "impact": "Nightly file late",
+      "fix": "Raise the timeout",
+      "state": "live"
+    }
+  ]
+}

@@ -507,12 +507,18 @@ describeDb("Bill-state locks — real Postgres, parked first writer", () => {
     expect(Number(finalBill.totalOwed)).toBe(42); // 7 x 6
   });
 
-  it("(p2) an edit that clears every line leaves none", async () => {
+  it("(p2) an edit that clears every line is refused (BILL_NEEDS_A_LINE) and the lines stay", async () => {
     const w = await seedWorld("p2");
     const bill = await draftBill(w);
-    await inTenant(A, w, () => A.bills.update(bill.id, { items: [] }));
+    const [outcome] = await Promise.allSettled([
+      inTenant(A, w, () => A.bills.update(bill.id, { items: [] })),
+    ]);
+    // B292: this used to pin the opposite (the edit deleted every line and recreated none).
+    expect(outcome.status).toBe("rejected");
+    expect(codeOf(outcome)).toBe("BILL_NEEDS_A_LINE");
     const items = await A.prisma.vendorBillItem.findMany({ where: { vendorBillId: bill.id } });
-    expect(items).toHaveLength(0);
+    expect(items).toHaveLength(1);
+    expect(Number(items[0].qty)).toBe(10);
   });
 
   it("(q) a payment that rounds to zero is refused, not written as a 0.00 row", async () => {

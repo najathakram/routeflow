@@ -168,6 +168,8 @@
 //                    add-on the tenant's plan already bundles, `includedAtPlan`). Both are `body.code` of the refusal and also `refusal.code`
 //                    of GET /billing/proration-preview (billing "REFUSED"), so the confirm sheet and the enable call agree. Clients show
 //                    the body's fixed copy or their own, never a Stripe message.
+//   B808 — ADVANCE_CUSTOMER_MISMATCH (customers): the 400 of an advance-payment apply whose invoice belongs to a different
+//                    customer than the advance (value == key); nothing is written.
 //   M11 (stackable add-on quantity) — the enable body's `quantity` is the TARGET total, so a stale page could cut a pack.
 //                    ADDON_QUANTITY_CHANGED (409: `expectedQuantity` no longer matches the stored quantity; nothing was changed, refetch),
 //                    ADDON_QUANTITY_NOT_INCREASED (409: a call carrying `expectedQuantity` is a buy-more and its target is not above it),
@@ -226,8 +228,8 @@
 //                    committed but whose payment did not. An order create / buyer submit asking for a fulfilment method the business does
 //                    not offer is 400 FULFIL_METHOD_NOT_OFFERED.
 //   B1043 (invoice header-only PATCH, discount or shippingFee without items) — 409 INVOICE_TAX_STATE_STALE: the invoice's stored subtotal or
-//                    tax does not match its lines, so the discount/shipping change cannot be priced safely; nothing is written; re-save the
-//                    invoice lines. 409 INVOICE_TOTAL_BELOW_PAID (B1046): the edit would take a DRAFT's total below the amount already paid
+//                    tax does not match its lines, so the discount/shipping change cannot be priced safely; nothing is written. SA-814e: body
+//                    {code, message, path} where path is DRAFT_EDIT or PRICE_ADJUSTMENT (INVOICE_TAX_STATE_STALE_COPY). 409 INVOICE_TOTAL_BELOW_PAID (B1046): the edit would take a DRAFT's total below the amount already paid
 //                    or credited against it. Body {code, message}.
 
 export const API_ERROR_CODES = {
@@ -348,6 +350,10 @@ export const API_ERROR_CODES = {
   MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
   ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
   ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
+  /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
+  ORDER_PD_NEEDS_QUANTITIES: "ORDER_PD_NEEDS_QUANTITIES",
+  /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
+  ORDER_DELIVERY_QUANTITIES_MISSING: "ORDER_DELIVERY_QUANTITIES_MISSING",
   ORDER_BILLING_CHANGED: "ORDER_BILLING_CHANGED",
   ORDER_EDIT_WOULD_OVERPAY: "ORDER_EDIT_WOULD_OVERPAY",
   FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
@@ -405,6 +411,12 @@ export const API_ERROR_CODES = {
   PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
   SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
   PO_LINK_BROKEN: "PO_LINK_BROKEN",
+  BILL_NEEDS_A_LINE: "BILL_NEEDS_A_LINE",
+  BILL_NOT_EDITABLE: "BILL_NOT_EDITABLE",
+  BILL_PO_SUPPLIER_LOCKED: "BILL_PO_SUPPLIER_LOCKED",
+  BILL_NEVER_RECEIVED: "BILL_NEVER_RECEIVED",
+  BILL_TAX_UNKNOWN: "BILL_TAX_UNKNOWN",
+  RECEIVE_EXCEEDS_OUTSTANDING: "RECEIVE_EXCEEDS_OUTSTANDING",
   AI_KEY_INVALID: "AI_KEY_INVALID",
   AI_SCAN_REJECTED: "AI_SCAN_REJECTED",
   AI_UNAVAILABLE: "AI_UNAVAILABLE",
@@ -482,6 +494,8 @@ export const API_ERROR_CODES = {
   HANDOFF_ROLE_NOT_ALLOWED: "HANDOFF_ROLE_NOT_ALLOWED",
   REGULATED_AUTH_REQUIRED: "REGULATED_AUTH_REQUIRED",
   WALLET_LOCK_BUSY: "WALLET_LOCK_BUSY",
+  /** An advance payment can only be applied to an invoice of its own customer (customers). 400. */
+  ADVANCE_CUSTOMER_MISMATCH: "ADVANCE_CUSTOMER_MISMATCH",
   PROMOTION_ZERO_PRICE: "PROMOTION_ZERO_PRICE",
   UNEXPLAINED_DIFFS: "UNEXPLAINED_DIFFS",
   INTAKE_ANSWERS_INVALID: "INTAKE_ANSWERS_INVALID",
@@ -809,6 +823,11 @@ export const API_ERROR_CODES = {
   BILL_PAYMENT_NOT_CASH: "BILL_PAYMENT_NOT_CASH",
   /** 409 from move-to-credit: the bill has no supplier, so there is no account to hold the credit. */
   BILL_PAYMENT_NO_SUPPLIER: "BILL_PAYMENT_NO_SUPPLIER",
+  /**
+   * 400 from PUT /platform-admin/app-links: a link is not an https URL with a host (or is over 2048 characters);
+   * body carries `field` (the link's name). Nothing was written.
+   */
+  APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
@@ -848,3 +867,47 @@ export type CreditNoteErrorCode = (typeof CREDIT_NOTE_ERROR_CODES)[number];
  */
 export const SHIPPED_ORDER_MESSAGE =
   "This order has already shipped. Contact the seller for changes.";
+
+/**
+ * SA-814g: the 409 INVOICE_TAX_STATE_STALE body carries `path`, the kind of invoice that refused: an
+ * order-linked DRAFT, a manual DRAFT, or an ISSUED invoice (whichever recompute asked: lines save, discount /
+ * shipping, price adjustment). Web and mobile pick their copy from it; the API keeps a literal copy
+ * (`TAX_STATE_STALE_COPY`, apps/api/src/invoices/stored-tax-state.ts) pinned byte-equal by
+ * apps/api/src/common/invoice-tax-state-copy-parity.spec.ts.
+ */
+export const INVOICE_TAX_STATE_STALE_PATH_VALUES = [
+  "DRAFT_ORDER",
+  "DRAFT_MANUAL",
+  "ISSUED",
+] as const;
+export type InvoiceTaxStateStalePath = (typeof INVOICE_TAX_STATE_STALE_PATH_VALUES)[number];
+
+export const INVOICE_TAX_STATE_STALE_COPY: Record<InvoiceTaxStateStalePath, string> = {
+  DRAFT_ORDER:
+    "This draft's tax was saved by an older version and can't be recalculated safely. Create it again from the order, or contact support.",
+  DRAFT_MANUAL:
+    "This draft's tax was saved by an older version and can't be recalculated safely. Create the draft again, or contact support.",
+  ISSUED:
+    "This invoice's stored tax can't be recalculated safely. Issue a credit note or contact support.",
+};
+
+/**
+ * SA-814d: why an unvoid is refused with 409 `ORDER_BILLING_CHANGED`. The body carries `reason` (a flat field, like
+ * `CONCURRENT_UPDATE`'s) and clients pick the copy from it, never by matching the message. `OTHER_INVOICE`: another
+ * live invoice bills part of the line (it wins when both apply). `LINE_REDUCED`: nothing else bills it, but the order
+ * line now holds less than this invoice bills (or is cancelled, or is gone). The API keeps literal copies
+ * (`apps/api/src/invoices/unvoid-billing-refusal.ts`), pinned equal by `unvoid-billing-refusal-parity.spec.ts`.
+ */
+export const ORDER_BILLING_CHANGED_REASONS = {
+  OTHER_INVOICE: "OTHER_INVOICE",
+  LINE_REDUCED: "LINE_REDUCED",
+} as const;
+
+export type OrderBillingChangedReason =
+  (typeof ORDER_BILLING_CHANGED_REASONS)[keyof typeof ORDER_BILLING_CHANGED_REASONS];
+
+export const UNVOID_BILLING_COPY: Record<OrderBillingChangedReason, string> = {
+  OTHER_INVOICE: "Another invoice now bills these items. Void it first.",
+  LINE_REDUCED:
+    "The order line now holds less than this invoice bills. Raise the order line, or create a new invoice from the order.",
+};

@@ -1,6 +1,7 @@
 import {
   API_ERROR_CODES,
   CREDITS_PENDING_COPY,
+  INVOICE_TAX_STATE_STALE_COPY,
   SHIPPED_ORDER_MESSAGE,
   productInOpenCountCopy,
 } from "@routeflow/types";
@@ -63,6 +64,9 @@ const CODE_COPY: Record<string, string> = {
   DUPLICATE_LINE_ID: "A line appears twice. Refresh the page and try again.",
   // Row 531: a buyer cart whose quantity and box split disagree; nothing was saved.
   QTY_SPLIT_MISMATCH: BUYER_QTY_SPLIT_MISMATCH_COPY,
+  // B692: a partial delivery needs per-line quantities; a delivered order with none recorded is not cancelled blind.
+  ORDER_PD_NEEDS_QUANTITIES: "Record what was delivered for each line first.",
+  ORDER_DELIVERY_QUANTITIES_MISSING: "Delivery quantities are missing; set them before cancelling.",
   ORDER_BILLING_CHANGED:
     "This order's billing changed while you were working on it. Refresh and try again.",
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
@@ -75,6 +79,10 @@ const CODE_COPY: Record<string, string> = {
   INVOICE_WITH_CARRIER_NO_LINE_CHANGE:
     "This order is already with the carrier, so its invoice lines and quantities can't change. Price, discount and notes still can.",
   [API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST]: SHIPPED_ORDER_MESSAGE,
+  // B1234 (D-O2-a): a staff edit of a delivered line of a partly delivered order; nothing was saved. The change-request
+  // screen toasts its own sentence for the same code (mutation-error-toast HANDLED_CODES).
+  [API_ERROR_CODES.LINE_ALREADY_DELIVERED]:
+    "A delivered line can't be changed or removed. Nothing was saved. Undelivered lines can still be edited.",
   [API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS]:
     "Another change is in progress. Try again in a moment.",
   [API_ERROR_CODES.ORDER_LINE_CHANGED]:
@@ -153,12 +161,23 @@ const CODE_COPY: Record<string, string> = {
   // SA-812a G-1: a typed-price customer's flag read failed (503); the write never ran, so a retry is safe.
   [API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE]:
     "Customer prices couldn't be loaded. Nothing was saved. Try again in a moment.",
-  [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]:
-    "This invoice's tax no longer matches its lines. Re-save the invoice lines, then try again.",
+  // SA-814g: the sentence follows the body's `path` (codedToastCopy, taxStateStaleCopy); this is the no-path default.
+  [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]: INVOICE_TAX_STATE_STALE_COPY.ISSUED,
   [API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID]:
     "That change would take the invoice total below what is already paid or credited. Remove the credit first, or change the lines or discount.",
   PO_ALREADY_BILLED: "That purchase order already has a bill.",
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
+  // B292: an edit that would clear every line is refused; the bill is voided or deleted instead.
+  [API_ERROR_CODES.BILL_NEEDS_A_LINE]: "A bill needs at least one line. Void or delete it instead.",
+  // Row 648: vendor bill refusals the page used to explain by rendering the server message.
+  [API_ERROR_CODES.BILL_NOT_EDITABLE]:
+    "Only draft bills can be edited. Revert the bill to draft first.",
+  [API_ERROR_CODES.BILL_PO_SUPPLIER_LOCKED]:
+    "This bill is linked to a purchase order, so its supplier can't be changed.",
+  [API_ERROR_CODES.BILL_TAX_UNKNOWN]:
+    "This bill's tax wasn't recorded separately, so it can't be changed on its own. Edit the lines and the tax together.",
+  [API_ERROR_CODES.BILL_NEVER_RECEIVED]:
+    "This bill was never received, so there is no stock or cost to revert. Its payments keep it out of draft.",
   INVOICE_HAS_UNSPENT_CREDIT:
     "This invoice has unspent credit. Release or use it first, then try again.",
   [API_ERROR_CODES.INVOICE_HAS_CASH_REFUND]:
@@ -306,6 +325,19 @@ function unlinkedCopy(data: Record<string, unknown>): string {
     : "Some bill lines aren't linked to a product, so they won't update inventory or costs. Link them, or confirm to receive the bill anyway.";
 }
 
+/** A decimal quantity as the API prints it ("3", "2.5"); anything else is not shown. */
+const QTY_TEXT = /^\d{1,9}(\.\d{1,4})?$/;
+
+/** Row 648: receiving more than a line has outstanding. Product and quantities come from STRUCTURED fields, never the message. */
+function receiveExceedsCopy(data: Record<string, unknown>): string {
+  const name = typeof data.productName === "string" ? data.productName.trim().slice(0, 80) : "";
+  const requested = typeof data.requested === "string" && QTY_TEXT.test(data.requested);
+  const outstanding = typeof data.outstanding === "string" && QTY_TEXT.test(data.outstanding);
+  return name && requested && outstanding
+    ? `Can't receive ${data.requested} of ${name}: only ${data.outstanding} still outstanding.`
+    : "You can't receive more than is still outstanding on a line.";
+}
+
 /** The closed duplicate-name 409s ("A category named "X" already exists."): the noun is matched, the typed name is never shown. */
 const DUPLICATE_NAME =
   /^A (category|subcategory|product) named ".*" already exists(?: in this section)?\.?$/;
@@ -364,6 +396,17 @@ function sentenceForMessage(data: Record<string, unknown>): string | null {
  * sentence), or null when the failure is uncoded / unknown / has no HTTP response. A surface whose uncoded server sentence
  * already tells the user what to fix uses `codedToastCopy(err) ?? <today's text>` so it never gets LESS actionable.
  */
+/**
+ * SA-814g: the 409 INVOICE_TAX_STATE_STALE sentence for the kind of invoice that refused (`path`); a body with no
+ * (or an unknown) path gets the issued-invoice sentence, which makes no claim about drafts.
+ */
+function taxStateStaleCopy(data: Record<string, unknown>): string {
+  const copy = INVOICE_TAX_STATE_STALE_COPY as Record<string, string>;
+  return typeof data.path === "string" && Object.prototype.hasOwnProperty.call(copy, data.path)
+    ? copy[data.path]
+    : INVOICE_TAX_STATE_STALE_COPY.ISSUED;
+}
+
 export function codedToastCopy(err: unknown): string | null {
   const refusal = safeTextErrorCopy(err);
   if (refusal) return refusal;
@@ -379,12 +422,14 @@ export function codedToastCopy(err: unknown): string | null {
   const code = typeof data.code === "string" ? data.code : "";
   if (code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
   if (code === API_ERROR_CODES.READ_ONLY) return READ_ONLY_COPY;
+  if (code === API_ERROR_CODES.INVOICE_TAX_STATE_STALE) return taxStateStaleCopy(data);
   if (code === API_ERROR_CODES.INSUFFICIENT_STOCK) return STOCK_COPY;
   // B986: coded refusals whose server sentence tells the user what to fix; the numbers come from STRUCTURED fields.
   if (code === API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT) return allocationsCopy(data);
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);
   if (code === API_ERROR_CODES.BILL_HAS_PAYMENTS) return billHasPaymentsCopy(data);
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
+  if (code === API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING) return receiveExceedsCopy(data);
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);
   if (code === API_ERROR_CODES.ACTIVATION_PERIOD_ALREADY_ENDED) return activationEndedCopy(err);

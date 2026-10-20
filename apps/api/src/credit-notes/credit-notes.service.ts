@@ -20,6 +20,7 @@ import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-uni
 import { retryCreditTx, retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { finiteStoredLevy, finiteStoredMoney } from "../common/money-invariants.util";
 import { autoApplyCandidateWhere, creditAutoApplyOnSend } from "./auto-apply-candidates";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import {
@@ -269,7 +270,8 @@ export class CreditNotesService {
           API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
           "Credit line amount must be greater than 0",
         );
-      const lineSubtotal = Number(line.subtotal);
+      // SA-816c: a NaN subtotal made every headroom comparison below false, so the over-credit check was skipped.
+      const lineSubtotal = finiteStoredMoney(line.subtotal, `Invoice line ${line.id} subtotal`);
       const priorForLine = creditedByLine.get(li.invoiceItemId) ?? 0;
       if (priorForLine + amt > lineSubtotal + 0.001)
         throw cnBad(
@@ -282,7 +284,7 @@ export class CreditNotesService {
         );
       sum += amt;
       const frac = lineSubtotal > 0 ? Math.min(1, amt / lineSubtotal) : 0;
-      const lineQty = Number(line.qty);
+      const lineQty = finiteStoredMoney(line.qty, `Invoice line ${line.id} qty`);
       const priorQtyForLine = creditedQtyByLine.get(li.invoiceItemId) ?? 0;
       // #2245: an amount-only credit (no qty — the web picker) defaults to line.qty × fraction,
       // and those round3s accumulate (three 1/3 credits of 2 pieces are 0.667 × 3 = 2.001). The
@@ -317,7 +319,10 @@ export class CreditNotesService {
         qty,
         categoryTax: opts.ledgerReversedByReturn
           ? 0
-          : roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
+          : roundMoney(
+              // SA-816: a stored non-finite levy is refused (400), never refunded as $0.
+              finiteStoredLevy(line, `Invoice line ${line.id} category tax`) * frac,
+            ),
       };
     });
     if (pool) {

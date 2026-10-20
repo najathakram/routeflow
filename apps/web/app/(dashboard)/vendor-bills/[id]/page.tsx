@@ -21,6 +21,8 @@ import {
 } from "lucide-react";
 import { Button, Card, Modal, cn, TAP_TARGET, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
+import { editItemsField } from "@/lib/vendor-bill-edit-items";
 import {
   useVendorBill,
   useReceiveVendorBill,
@@ -62,7 +64,6 @@ import {
   type SelectablePaymentMethod,
 } from "@/lib/payment-methods";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
-import { codedToastCopy } from "@/lib/generic-toast-copy";
 
 /**
  * Extra fields the API additively includes on a bill's `findOne` mapped-
@@ -946,7 +947,7 @@ export default function VendorBillDetailPage() {
           }
           toast({
             title: "Failed to mark received",
-            description: err?.response?.data?.message ?? "Please try again.",
+            description: genericToastCopy(err),
             variant: "error",
           });
         },
@@ -985,7 +986,7 @@ export default function VendorBillDetailPage() {
         setIsRevertOpen(false);
         toast({
           title: "Failed to revert bill",
-          description: codedToastCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
+          description: genericToastCopy(err),
           variant: "error",
         });
       },
@@ -1042,7 +1043,8 @@ export default function VendorBillDetailPage() {
         billDate: editBillDate || undefined,
         dueDate: editDueDate || undefined,
         notes: editNotes.trim() || undefined,
-        items,
+        // B292: a header-only bill with no added line leaves `items` out (an empty list is refused).
+        ...editItemsField(items, (bill.items ?? []).length),
       },
       {
         onSuccess: () => {
@@ -1056,7 +1058,7 @@ export default function VendorBillDetailPage() {
           const description =
             err?.response?.data?.code === "MONEY_INVARIANT"
               ? "These lines net to a negative amount — if this is a credit memo, record it as a supplier credit."
-              : (err?.response?.data?.message ?? "Please try again.");
+              : genericToastCopy(err);
           toast({ title: "Failed to update bill", description, variant: "error" });
         },
       },

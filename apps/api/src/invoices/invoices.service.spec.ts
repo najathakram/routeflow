@@ -31,6 +31,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { storedInvoiceHeader } from "../testing/stored-invoice-header";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -3134,7 +3135,7 @@ describe("InvoicesService", () => {
   });
 
   describe("unvoidInvoice restores invoicedQty", () => {
-    it("re-claims each line's invoicedQty (capped at line qty) when unvoiding", async () => {
+    it("re-claims each line's invoicedQty when its quantity is still free (uncapped: B299 refuses instead)", async () => {
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-1",
         status: "VOID",
@@ -6647,8 +6648,7 @@ describe("InvoicesService", () => {
         customerId: "cust-1",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         items: [invoiceItem],
       };
@@ -6784,8 +6784,7 @@ describe("InvoicesService", () => {
         customerId: "c-294b",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         items: [invoiceItem],
       };
@@ -6909,8 +6908,7 @@ describe("InvoicesService", () => {
         customerId: "c-294e",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         items: [invoiceItem],
       };
@@ -6961,8 +6959,7 @@ describe("InvoicesService", () => {
         customerId: "cust-1",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         items: [invoiceItem],
       };
@@ -7044,15 +7041,14 @@ describe("InvoicesService", () => {
         unitsPerBox: null,
         taxRate: 0,
         // 0.50 x (10 x 20 pieces) — what creation billed off the PRODUCT's box size.
-        categoryTaxAmount: 100,
+        categoryTaxAmount: opts.isTaxExempt ? 0 : 100, // foldCategoryTax zeroed an exempt line at creation
       };
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-b57e",
         customerId: "cust-2",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         dueDate: null,
         items: [invoiceItem],
@@ -7124,8 +7120,7 @@ describe("InvoicesService", () => {
         customerId: "cust-2",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([pieceItem]),
         internalNotes: null,
         dueDate: null,
         items: [pieceItem],
@@ -7214,8 +7209,7 @@ describe("InvoicesService", () => {
         customerId: "cust-1",
         orderId: null,
         status,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         dueDate: null,
         items: [invoiceItem],

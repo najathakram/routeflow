@@ -9,8 +9,9 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
-import { lockBillRows } from "./bill-locks";
+import { lockBillRows, lockSupplierCredits } from "./bill-locks";
 import { billCashPaidRefusal, isCashBillPayment, type BillPaymentLike } from "./bill-cash-guard";
+import { billLinesTotal } from "./bill-lines-total";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -459,11 +460,7 @@ export class VendorBillsService {
     // Calculate totalOwed from line items if provided, otherwise use dto.totalOwed
     let preTaxOwed = dto.totalOwed ?? 0;
     if (dto.items && Array.isArray(dto.items) && dto.items.length > 0) {
-      preTaxOwed = dto.items.reduce(
-        (sum: number, item: any) =>
-          sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
-        0,
-      );
+      preTaxOwed = billLinesTotal(dto.items);
     }
     const billTaxAmount = Number(dto.taxAmount) || 0;
     // Sales tax on the supplier invoice is owed too (the scan flow passes it as
@@ -715,6 +712,9 @@ export class VendorBillsService {
     const owedRemaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
     if (!(owedRemaining > 0.001)) return bill;
 
+    // B291: lock the supplier's credits (sorted) BEFORE reading them, so a concurrent bill on the
+    // same supplier waits and then reads the balance this one left, not the one it started from.
+    await lockSupplierCredits(tx, this.prisma.getTenantId(), { supplierIds: [bill.supplierId] });
     const credits = await tx.supplierCredit.findMany({
       where: { supplierId: bill.supplierId, balance: { gt: 0 } },
       orderBy: { receivedAt: "asc" },
@@ -741,7 +741,9 @@ export class VendorBillsService {
       });
       await tx.supplierCredit.update({
         where: { id: credit.id },
-        data: { balance: roundMoney(creditBalance - draw) },
+        // Relative, never the absolute `creditBalance - draw` read above: the draw is applied to
+        // whatever the row holds now (B291).
+        data: { balance: { decrement: draw } },
       });
 
       remaining = roundMoney(remaining - draw);
@@ -777,14 +779,26 @@ export class VendorBillsService {
     });
     if (!draws || draws.length === 0) return 0;
 
+    // B291: lock every credit these draws came from (sorted) before reading its balance.
+    await lockSupplierCredits(tx, this.prisma.getTenantId(), {
+      creditIds: draws.map((d: any) => d.supplierCreditId),
+    });
+
     let refunded = 0;
     for (const draw of draws) {
       const credit = await tx.supplierCredit.findUnique({ where: { id: draw.supplierCreditId } });
       if (!credit) continue;
-      const restored = roundMoney(
-        Math.min(Number(credit.amount), Number(credit.balance) + Number(draw.amount)),
+      // Relative write: add back the draw, clamped so the balance never passes the amount that
+      // created the credit (the clamp is read under the row lock, so it cannot go stale).
+      const give = roundMoney(
+        Math.min(Number(draw.amount), Number(credit.amount) - Number(credit.balance)),
       );
-      await tx.supplierCredit.update({ where: { id: credit.id }, data: { balance: restored } });
+      if (give > 0) {
+        await tx.supplierCredit.update({
+          where: { id: credit.id },
+          data: { balance: { increment: give } },
+        });
+      }
       refunded = roundMoney(refunded + Number(draw.amount));
     }
 
@@ -1028,22 +1042,36 @@ export class VendorBillsService {
   async update(id: string, dto: any) {
     // #2488: 400 (naming the field) before any read or write.
     const dueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : null;
+    // B292: `items: []` would delete every line and recreate none. Absent items = no change; an
+    // empty list is never an edit, for any bill (a header-only bill is created, never edited into).
+    if (Array.isArray(dto.items) && dto.items.length === 0) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.BILL_NEEDS_A_LINE,
+        message: "A bill needs at least one line. Void or delete it instead.",
+      });
+    }
     const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
-      include: { items: { select: { id: true, qtyReceived: true } } },
+      include: {
+        items: { select: { id: true, qtyReceived: true, qty: true, unitCost: true } },
+      },
     });
     if (!bill) throw new NotFoundException("Bill not found");
     if (bill.status !== "DRAFT") {
-      throw new BadRequestException("Only DRAFT bills can be edited. Revert to draft first.");
+      throw new BadRequestException({
+        code: API_ERROR_CODES.BILL_NOT_EDITABLE,
+        message: "Only DRAFT bills can be edited. Revert to draft first.",
+      });
     }
     if (
       bill.purchaseOrderId &&
       dto.supplierId !== undefined &&
       dto.supplierId !== bill.supplierId
     ) {
-      throw new BadRequestException(
-        "This bill is linked to a purchase order — its supplier can't be changed.",
-      );
+      throw new BadRequestException({
+        code: API_ERROR_CODES.BILL_PO_SUPPLIER_LOCKED,
+        message: "This bill is linked to a purchase order — its supplier can't be changed.",
+      });
     }
 
     if (Array.isArray(dto.items)) await this.assertLineProductsInCatalog(dto.items);
@@ -1053,20 +1081,37 @@ export class VendorBillsService {
     // the FIRST edit (the G4 "tax lost on edit" bug the taxAmount column was
     // added to make recoverable) and skipped roundMoney.
     let totalOwed: number | undefined;
+    // Row 594: a typed tax (null counts as not typed, row 591) is SAVED, rounded, and every
+    // later total uses the saved value.
+    const newTax = dto.taxAmount != null ? roundMoney(Number(dto.taxAmount) || 0) : undefined;
     if (dto.items && Array.isArray(dto.items)) {
-      const itemsTotal = dto.items.reduce(
-        (sum: number, item: any) =>
-          sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
-        0,
-      );
-      const tax =
-        dto.taxAmount !== undefined ? Number(dto.taxAmount) || 0 : Number(bill.taxAmount ?? 0);
+      const itemsTotal = billLinesTotal(dto.items);
+      const tax = newTax ?? Number(bill.taxAmount ?? 0);
       totalOwed = roundMoney(itemsTotal + tax);
 
       // B451 gap 4: same guard as create() — a negative qty/unitCost line
       // (or a negative taxAmount) must not persist a negative totalOwed here
       // either.
       assertMoneyInvariantsOrThrow({ subtotal: itemsTotal, tax, total: totalOwed });
+    } else if (newTax !== undefined) {
+      if (bill.taxAmount != null) {
+        // A tax-only edit moves the total by exactly the change in tax.
+        totalOwed = roundMoney(Number(bill.totalOwed) - Number(bill.taxAmount) + newTax);
+      } else if ((bill.items ?? []).length > 0) {
+        // A NULL stored tax is "unknown": a legacy bill may already carry its tax inside totalOwed,
+        // and adding the new tax to that would count it twice. Rebuild the total from the lines
+        // (the same sum an items edit uses), so the tax is replaced, never added.
+        const lines = billLinesTotal(bill.items);
+        totalOwed = roundMoney(lines + newTax);
+        assertMoneyInvariantsOrThrow({ subtotal: lines, tax: newTax, total: totalOwed });
+      } else {
+        // No lines to rebuild from and no recorded tax: what the total already holds can't be known.
+        throw new ConflictException({
+          code: API_ERROR_CODES.BILL_TAX_UNKNOWN,
+          message:
+            "This bill's tax was not recorded separately, so it can't be changed on its own.",
+        });
+      }
     }
 
     const billInclude = {
@@ -1084,11 +1129,6 @@ export class VendorBillsService {
       // A bill linked to a purchase order can't be edited past what the PO
       // authorised (checked before anything is deleted).
       if (bill.purchaseOrderId && Array.isArray(dto.items)) {
-        if (dto.items.length === 0) {
-          throw new BadRequestException(
-            "A bill linked to a purchase order needs at least one line.",
-          );
-        }
         const linkedPo = await tx.purchaseOrder.findUnique({
           where: { id: bill.purchaseOrderId },
           include: { items: true },
@@ -1123,6 +1163,12 @@ export class VendorBillsService {
       // strands the difference on a bill that no longer owes it (the supplier
       // statement's `outstanding` goes negative), and re-pointing `supplierId`
       // pays the new supplier's bill out of the old supplier's account.
+      // B291: lock the credits of the old AND the new supplier once, sorted, before the refund
+      // and the re-draw touch either (one lock order for the whole edit, so a concurrent create
+      // on the same supplier cannot deadlock against the refund-then-draw sequence).
+      await lockSupplierCredits(tx, this.prisma.getTenantId(), {
+        supplierIds: [bill.supplierId, dto.supplierId],
+      });
       const refunded = await this.refundDrawnSupplierCredits(tx, id);
 
       const updated = await tx.vendorBill.update({
@@ -1142,6 +1188,7 @@ export class VendorBillsService {
             }),
           }),
           ...(totalOwed !== undefined && { totalOwed }),
+          ...(newTax !== undefined && { taxAmount: newTax }),
           ...(dto.items !== undefined && dto.items.length > 0
             ? {
                 items: {
@@ -1259,9 +1306,15 @@ export class VendorBillsService {
         const receiveQty = new Prisma.Decimal(String(req.qty));
         const remaining = remainingOf(item);
         if (receiveQty.gt(remaining)) {
-          throw new BadRequestException(
-            `"${item.description}": receiving ${receiveQty.toString()} exceeds the ${remaining.toString()} still outstanding.`,
-          );
+          // Structured fields so a client builds its own sentence (product + quantities) without
+          // parsing the message.
+          throw new BadRequestException({
+            code: API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING,
+            message: `"${item.description}": receiving ${receiveQty.toString()} exceeds the ${remaining.toString()} still outstanding.`,
+            productName: item.product?.name ?? item.description,
+            requested: receiveQty.toString(),
+            outstanding: remaining.toString(),
+          });
         }
         return { item, receiveQty };
       });
@@ -1858,9 +1911,11 @@ export class VendorBillsService {
     // overwrites status). Reversing a receipt that never happened would drain
     // real stock and corrupt the average — the receipt marker is receivedDate.
     if (bill.receivedDate == null) {
-      throw new BadRequestException(
-        "This bill was never received — there is no stock or cost to revert. Its payments keep it out of DRAFT.",
-      );
+      throw new BadRequestException({
+        code: API_ERROR_CODES.BILL_NEVER_RECEIVED,
+        message:
+          "This bill was never received — there is no stock or cost to revert. Its payments keep it out of DRAFT.",
+      });
     }
 
     // SA-767 L-1: the whole reversal tx re-runs on a 40P01 / 40001 / P2034 (nothing leaves the tx).
@@ -3457,6 +3512,16 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       });
       if (deletable.length > 0) {
         const deletableIds = deletable.map((b) => b.id);
+        // B291: take ONE sorted lock over every credit any of these bills drew from, BEFORE the
+        // per-bill refunds. Locking per bill takes credits in bill order, which can invert against a
+        // concurrent create that locks the same credits in (receivedAt, id) order (40P01).
+        const allDraws = await tx.billPayment.findMany({
+          where: { vendorBillId: { in: deletableIds }, supplierCreditId: { not: null } },
+          select: { supplierCreditId: true },
+        });
+        await lockSupplierCredits(tx, this.prisma.getTenantId(), {
+          creditIds: (allDraws ?? []).map((d: any) => d.supplierCreditId),
+        });
         // Same reason as delete(): auto-applied credit goes back before the
         // draw rows are destroyed. Already-VOID bills refunded nothing left.
         for (const billId of deletableIds) {
