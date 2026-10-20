@@ -198,7 +198,7 @@ describeDb("SA-827 invoice display unit — real Postgres", () => {
 
   it("resolveLiveDisplayUnits: the tier scope (customer pricingTier -> ProductTierUnit.invoiceUnitRef) resolves pieces", async () => {
     // no business setting, no customer override: only scopes.tier can produce pieces
-    const s = await seed("tier", { tier: { customerTier: 2, invoiceUnitRef: "smallest" } });
+    const s = await seed("tier", { tier: { customerTier: 2, invoiceUnitRef: "base" } });
     const inv = { customerId: s.customer.id, items: [{ id: s.item.id, productId: s.product.id }] };
     expect((await resolveLiveDisplayUnits(prisma, s.tenantId, inv, on)).get(s.item.id)).toEqual({
       kind: "pieces",
@@ -224,7 +224,7 @@ describeDb("SA-827 invoice display unit — real Postgres", () => {
     expect(row.invoiceUnitFactor).toBe(1);
     expect(Number(row.subtotal)).toBe(60.02);
     expect(Number(row.unitPrice)).toBe(30.01);
-    expect(row.qty).toBe(30);
+    expect(Number(row.qty)).toBe(30);
   });
 
   it("a pre-snapshotted item is NOT overwritten when the preference later changes", async () => {
