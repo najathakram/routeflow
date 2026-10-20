@@ -1749,4 +1749,137 @@ describe("InventoryService", () => {
       ]);
     });
   });
+
+  // ─── SA-802: stockWriteDate — a person-chosen stock date can't land in a filed period ──────────
+  describe("SA-802 stockWriteDate", () => {
+    const FILED = "2026-09-15T00:00:00.000Z"; // inside the filed September
+    const tomorrow = () => new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+    const tobaccoProduct = () => product({ isTobacco: true, trackedCategoryId: null });
+
+    beforeEach(() => {
+      // September 2026 tobacco is GENERATED (periodEnd is the inclusive last instant).
+      prisma.tobaccoReport.findFirst.mockResolvedValue({
+        periodStart: new Date("2026-09-01T00:00:00.000Z"),
+        periodEnd: new Date("2026-09-30T23:59:59.999Z"),
+      });
+      prisma.product.findMany.mockResolvedValue([tobaccoProduct()]);
+      prisma.product.findUnique.mockResolvedValue(tobaccoProduct());
+      prisma.stockMovement.count.mockResolvedValue(0);
+    });
+
+    const expectNothingWritten = () => {
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(prisma.stockLot.create).not.toHaveBeenCalled();
+    };
+    const filedRefusal = {
+      constructor: ConflictException,
+      response: expect.objectContaining({ code: "STOCK_DATE_IN_FILED_PERIOD" }),
+    };
+
+    it("C2: an adjustment backdated into a filed tobacco month is a 409 and writes nothing", async () => {
+      await expect(
+        service.recordAdjustment(
+          { productId: "prod-1", quantity: 3, effectiveDate: FILED } as any,
+          "user-1",
+        ),
+      ).rejects.toMatchObject(filedRefusal);
+      expectNothingWritten();
+    });
+
+    it("C2: a purchase backdated into a filed tobacco month is a 409 and writes nothing", async () => {
+      await expect(
+        service.recordPurchase(
+          { productId: "prod-1", quantity: 5, unitCost: 3.5, effectiveDate: FILED } as any,
+          "user-1",
+        ),
+      ).rejects.toMatchObject(filedRefusal);
+      expectNothingWritten();
+    });
+
+    it("C2: today's date (no effectiveDate) is still accepted on a tobacco product", async () => {
+      await service.recordAdjustment({ productId: "prod-1", quantity: 3 } as any, "user-1");
+      await service.recordPurchase({ productId: "prod-1", quantity: 5, unitCost: 3.5 } as any, "u");
+      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(2);
+    });
+
+    describe("C3: legacy commitStockCount", () => {
+      const count = (effectiveDate: string) =>
+        ({
+          sessionId: "22222222-2222-2222-2222-222222222222",
+          effectiveDate,
+          items: [
+            { productId: "prod-1", quantity: 5, mode: "ADD" },
+            { productId: "prod-1", quantity: 1, mode: "ADD" },
+          ],
+        }) as any;
+
+      it("a filed date is a 409 and nothing is written", async () => {
+        await expect(service.commitStockCount(count(FILED), "user-1")).rejects.toMatchObject(
+          filedRefusal,
+        );
+        expectNothingWritten();
+      });
+
+      it("tomorrow is a 400 (the legacy path had no future bound) and nothing is written", async () => {
+        await expect(service.commitStockCount(count(tomorrow()), "user-1")).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+        expectNothingWritten();
+      });
+    });
+
+    describe("C3: commitStockCountSession", () => {
+      const line = (over: Record<string, unknown> = {}) => ({
+        id: "line-1",
+        sessionId: "sess-1",
+        productId: "prod-1",
+        mode: "REPLACE",
+        countedQty: D(7),
+        boxes: null,
+        pieces: null,
+        expectedQty: D(10),
+        unitCostOverride: null,
+        countedById: "user-1",
+        ...over,
+      });
+
+      beforeEach(() => {
+        prisma.stockCountSession.findUnique.mockResolvedValue({
+          id: "sess-1",
+          status: "OPEN",
+          movementReference: null,
+          lines: [line(), line({ id: "line-2" })],
+        });
+        prisma.stockCountSession.updateMany.mockResolvedValue({ count: 1 });
+        prisma.tenantTransaction.mockImplementation((fn: any) =>
+          fn({
+            ...prisma,
+            $executeRaw: jest.fn().mockResolvedValue(0),
+            $queryRaw: jest.fn().mockResolvedValue([{ ok: true }]),
+          }),
+        );
+      });
+
+      it("a filed date is a 409 and the batch body never runs", async () => {
+        await expect(
+          service.commitStockCountSession("sess-1", { effectiveDate: FILED } as any, {
+            sub: "user-1",
+          }),
+        ).rejects.toMatchObject(filedRefusal);
+        expectNothingWritten();
+        expect(prisma.stockCountSession.updateMany).not.toHaveBeenCalled();
+      });
+
+      it("tomorrow is a 400 and the batch body never runs", async () => {
+        await expect(
+          service.commitStockCountSession("sess-1", { effectiveDate: tomorrow() } as any, {
+            sub: "user-1",
+          }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expectNothingWritten();
+        expect(prisma.stockCountSession.updateMany).not.toHaveBeenCalled();
+      });
+    });
+  });
 });

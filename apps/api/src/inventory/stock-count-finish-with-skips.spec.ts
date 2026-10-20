@@ -215,7 +215,7 @@ describe("commitStockCountSession - finish with skips (SA-767 L-2.4 C)", () => {
 
       const locked = w.prisma.product.findMany.mock.calls
         .map((c: any[]) => c[0])
-        .find((a: any) => a?.select);
+        .find((a: any) => a?.select && !a.select.isTobacco); // not the SA-802 date gate's flag read
       expect(locked.select).toMatchObject({ kind: true, name: true });
     });
   });

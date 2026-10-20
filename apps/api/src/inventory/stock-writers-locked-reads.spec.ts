@@ -122,7 +122,8 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
     const movement = prisma.stockMovement.create.mock.calls[0][0].data;
     expect(movement.quantity.toString()).toBe("20");
     expect(movement.stockAfter.toString()).toBe("90"); // the counter the update RETURNED
-    expect(lockedBefore(prisma.product.findMany, 2)).toBe(true);
+    // findMany calls: 1 validation read, 2 the SA-802 date gate's flag read, 3 the locked read.
+    expect(lockedBefore(prisma.product.findMany, 3)).toBe(true);
     expect(lockCalls()).toHaveLength(1);
   });
 

@@ -1,4 +1,4 @@
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
@@ -6,7 +6,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
  * predicate (SA-802 shares it): a stock write whose accounting instant falls in a period that has
  * been FILED must not change that filing's live figures.
  *
- * - Dates a person chooses inside a filed period are refused (SA-802, not here).
+ * - Dates a person chooses inside a filed period are refused (SA-802: `stockWriteDate` below).
  * - Dates a DOCUMENT carries (a bill's date, the receipt a reversal undoes) move forward to `now`
  *   instead, so the filed period never moves and the bill can still be fixed.
  * - If `now` is itself filed, fail closed with 409 STOCK_DATE_IN_FILED_PERIOD naming the period.
@@ -27,6 +27,24 @@ export interface StockDateDb {
   product: { findMany(args: any): Promise<any> };
   tobaccoReport: { findFirst(args: any): Promise<any> };
   regulatedFiling: { findFirst(args: any): Promise<any> };
+  /** Read only to NAME the category on a refusal; absent, the message says "a regulated category". */
+  trackedCategory?: { findFirst(args: any): Promise<any> };
+}
+
+/** Clock-skew allowance for a client-sent "now" effective date. */
+const EFFECTIVE_DATE_SKEW_MS = 5 * 60 * 1000;
+/**
+ * B562 PR-3: a stock write's accounting date — the given `effectiveDate` or now. A FUTURE date is
+ * refused: it would sort after every real row still to come, so each later write would count it as
+ * "newer" and replay against a movement that has not happened yet.
+ */
+export function effectiveDateOf(raw: string | undefined, now = new Date()): Date {
+  if (!raw) return now;
+  const date = new Date(raw);
+  if (date.getTime() > now.getTime() + EFFECTIVE_DATE_SKEW_MS) {
+    throw new BadRequestException("The effective date can't be in the future.");
+  }
+  return date;
 }
 
 const monthLabel = (d: Date): string =>
@@ -52,43 +70,50 @@ async function filedThroughOf(
   product: StockDateProduct,
 ): Promise<FiledThrough | null> {
   let best: FiledThrough | null = null;
-  if (product.isTobacco) {
-    const report = await db.tobaccoReport.findFirst({
-      where: { tenantId, status: { not: "FAILED" } },
-      orderBy: { periodEnd: "desc" },
-      select: { periodStart: true, periodEnd: true },
-    });
-    if (report) {
-      best = {
-        through: new Date(new Date(report.periodEnd).getTime() + 1),
-        label: monthLabel(report.periodStart),
-      };
-    }
-  }
+  if (product.isTobacco) best = await tobaccoFiledThrough(db, tenantId);
   if (product.trackedCategoryId) {
-    const filing = await db.regulatedFiling.findFirst({
-      where: {
-        tenantId,
-        trackedCategoryId: product.trackedCategoryId,
-        status: { in: ["GENERATED", "LOCKED"] },
-      },
-      orderBy: { periodEnd: "desc" },
-      select: { periodStart: true, periodEnd: true, periodKey: true, cadence: true },
-    });
-    if (filing) {
-      const through = new Date(filing.periodEnd); // already exclusive
-      if (!best || through > best.through) {
-        best = {
-          through,
-          label:
-            filing.cadence === "MONTHLY" || filing.cadence == null
-              ? monthLabel(filing.periodStart)
-              : String(filing.periodKey),
-        };
-      }
-    }
+    const filed = await categoryFiledThrough(db, tenantId, product.trackedCategoryId);
+    if (filed && (!best || filed.through > best.through)) best = filed;
   }
   return best;
+}
+
+/** Tenant-wide: the close of the latest non-FAILED TobaccoReport (periodEnd is inclusive, +1 ms). */
+async function tobaccoFiledThrough(
+  db: StockDateDb,
+  tenantId: string,
+): Promise<FiledThrough | null> {
+  const report = await db.tobaccoReport.findFirst({
+    where: { tenantId, status: { not: "FAILED" } },
+    orderBy: { periodEnd: "desc" },
+    select: { periodStart: true, periodEnd: true },
+  });
+  if (!report) return null;
+  return {
+    through: new Date(new Date(report.periodEnd).getTime() + 1),
+    label: monthLabel(report.periodStart),
+  };
+}
+
+/** The close of the latest GENERATED or LOCKED RegulatedFiling of one tracked category. */
+async function categoryFiledThrough(
+  db: StockDateDb,
+  tenantId: string,
+  trackedCategoryId: string,
+): Promise<FiledThrough | null> {
+  const filing = await db.regulatedFiling.findFirst({
+    where: { tenantId, trackedCategoryId, status: { in: ["GENERATED", "LOCKED"] } },
+    orderBy: { periodEnd: "desc" },
+    select: { periodStart: true, periodEnd: true, periodKey: true, cadence: true },
+  });
+  if (!filing) return null;
+  return {
+    through: new Date(filing.periodEnd), // already exclusive
+    label:
+      filing.cadence === "MONTHLY" || filing.cadence == null
+        ? monthLabel(filing.periodStart)
+        : String(filing.periodKey),
+  };
 }
 
 const loadProducts = async (db: StockDateDb, ids: string[]): Promise<StockDateProduct[]> =>
@@ -138,4 +163,63 @@ export async function documentStockDate(
     out.set(id, { effectiveAt: now, movedFromPeriod: filed.label });
   }
   return out;
+}
+
+const dayLabel = (d: Date): string =>
+  d.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+
+/**
+ * SA-802 / SA-802a: the one date gate for a stock write whose date a PERSON chose (purchase,
+ * adjustment, stock count). A future date is a 400 (`effectiveDateOf`); a date before the close of
+ * the latest filed period covering ANY product in the write is a 409 STOCK_DATE_IN_FILED_PERIOD that
+ * names the last filed day and the category, and the caller writes nothing. Call it BEFORE any lock
+ * or transaction. One union close per write: a single tobacco read, and one filing read per DISTINCT
+ * tracked category (a count holds hundreds of lines).
+ */
+export async function stockWriteDate(
+  db: StockDateDb,
+  args: { tenantId: string | null; productIds: string[]; raw: string | undefined; now?: Date },
+): Promise<Date> {
+  const date = effectiveDateOf(args.raw, args.now);
+  // Fail closed: a filing lookup with no tenant would match nothing and call every period open.
+  if (!args.tenantId) throw new Error("stockWriteDate needs a tenant: refusing to read no filings");
+  const tenantId = args.tenantId;
+  const ids = [...new Set(args.productIds)];
+  if (ids.length === 0) return date;
+  const products = await loadProducts(db, ids);
+
+  // The latest close wins, and its source (tobacco, or a category id) names the refusal.
+  let latest: { filed: FiledThrough; categoryId: string | null } | null = null;
+  const consider = (filed: FiledThrough | null, categoryId: string | null) => {
+    if (filed && (!latest || filed.through > latest.filed.through)) latest = { filed, categoryId };
+  };
+  if (products.some((p) => p.isTobacco)) consider(await tobaccoFiledThrough(db, tenantId), null);
+  const categoryIds = new Set<string>();
+  for (const p of products) if (p.trackedCategoryId) categoryIds.add(p.trackedCategoryId);
+  for (const categoryId of categoryIds) {
+    consider(await categoryFiledThrough(db, tenantId, categoryId), categoryId);
+  }
+
+  const found = latest as { filed: FiledThrough; categoryId: string | null } | null;
+  if (!found || date >= found.filed.through) return date;
+  const lastDay = dayLabel(new Date(found.filed.through.getTime() - 1));
+  const category = found.categoryId
+    ? ((
+        await db.trackedCategory?.findFirst({
+          where: { id: found.categoryId },
+          select: { name: true },
+        })
+      )?.name ?? "a regulated category")
+    : "tobacco";
+  throw new ConflictException({
+    code: API_ERROR_CODES.STOCK_DATE_IN_FILED_PERIOD,
+    message: `This date is on or before ${lastDay}, which is already filed (for ${category}). Use a date after ${lastDay}.`,
+    period: found.filed.label,
+    filedThrough: found.filed.through.toISOString(),
+  });
 }

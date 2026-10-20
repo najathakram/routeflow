@@ -39,7 +39,7 @@ import { effectiveCostingMethod } from "./costing-method-policy";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { recordSaleMovement, resolveSaleCost } from "./sale-movement";
 import { poReversalNote, poReversalOf } from "./bill-revert";
-import { documentStockDate, type DocumentStockDate } from "./stock-write-date";
+import { documentStockDate, stockWriteDate, type DocumentStockDate } from "./stock-write-date";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
@@ -112,21 +112,7 @@ export const isReplayCorrection = (m: {
   m.type === MovementType.COST_BASIS &&
   new Prisma.Decimal(m.quantity).isZero() &&
   (m.reference?.startsWith(REPLAY_CORRECTION_PREFIX) ?? false);
-/** Clock-skew allowance for a client-sent "now" effective date. */
-const EFFECTIVE_DATE_SKEW_MS = 5 * 60 * 1000;
-/**
- * B562 PR-3: a stock write's accounting date — the given `effectiveDate` or now. A FUTURE date is
- * refused: it would sort after every real row still to come, so each later write would count it as
- * "newer" and replay against a movement that has not happened yet.
- */
-export function effectiveDateOf(raw: string | undefined, now = new Date()): Date {
-  if (!raw) return now;
-  const date = new Date(raw);
-  if (date.getTime() > now.getTime() + EFFECTIVE_DATE_SKEW_MS) {
-    throw new BadRequestException("The effective date can't be in the future.");
-  }
-  return date;
-}
+export { effectiveDateOf } from "./stock-write-date";
 /** Averages closer than this are the same cost (costDecimal keeps 4dp). */
 const AVG_CORRECTION_EPSILON = new Prisma.Decimal("0.0001");
 
@@ -282,6 +268,18 @@ export class InventoryService {
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
+  /**
+   * SA-802: the date of a stock write a person dated (purchase, adjustment, count) — future is a 400,
+   * a filed period a 409 — decided BEFORE any lock or write.
+   */
+  private clientStockDate(productIds: string[], raw: string | undefined): Promise<Date> {
+    return stockWriteDate(this.prisma.forTenant(), {
+      tenantId: this.prisma.getTenantId(),
+      productIds,
+      raw,
+    });
+  }
+
   async recordPurchase(dto: RecordPurchaseDto, performedById: string) {
     const product = await this.prisma
       .forTenant()
@@ -322,7 +320,7 @@ export class InventoryService {
       explicitBoxed && unitsPerBox > 1 ? costDecimal(rawUnitCost.div(unitsPerBox)) : rawUnitCost;
 
     const qty = new Prisma.Decimal(qtyPieces);
-    const effectiveDate = effectiveDateOf(dto.effectiveDate);
+    const effectiveDate = await this.clientStockDate([dto.productId], dto.effectiveDate);
 
     // SA-767 L-2 (B286 / #2840): lock the product, THEN read the stock and average the blend comes
     // from, inside the tx. The read above only validates (existence, sellable, pack size): a purchase
@@ -417,7 +415,7 @@ export class InventoryService {
     assertSellableLines([product]); // WS8: a FAMILY is never stocked (no StockLot / StockMovement)
 
     const qty = new Prisma.Decimal(dto.quantity);
-    const effectiveDate = effectiveDateOf(dto.effectiveDate);
+    const effectiveDate = await this.clientStockDate([dto.productId], dto.effectiveDate);
 
     // SA-767 L-2: lock the product, then read the average the movement and the new lot are stamped
     // with INSIDE the tx (a purchase committing since the read above has moved it). The whole tx
@@ -1004,7 +1002,7 @@ export class InventoryService {
     }
     assertSellableLines(products); // WS8: a counted FAMILY would drain phantom stock into its variants
 
-    const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
+    const effectiveDate = await this.clientStockDate(productIds, dto.effectiveDate);
     const reference = `STOCK_COUNT-${dto.sessionId}`;
     const restockedProductIds: string[] = [];
 
@@ -3113,7 +3111,11 @@ export class InventoryService {
       this.refuseUncountableProducts(await this.readCountProducts(session.lines));
     }
 
-    const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
+    // SA-802: the count's date is checked against EVERY counted product's filed period, before the lock.
+    const effectiveDate = await this.clientStockDate(
+      session.lines.map((l) => l.productId),
+      dto.effectiveDate,
+    );
     const reference = stockCountReference(id);
 
     let held;
