@@ -2,7 +2,12 @@
 
 import * as React from "react";
 import type { ProductPriceGridRowDto } from "@routeflow/types";
-import { ProductPricesGrid, type GridDensity, type GridLayout } from "../../ProductPricesGrid";
+import {
+  PricesTitle,
+  ProductPricesGrid,
+  type GridDensity,
+  type GridLayout,
+} from "../../ProductPricesGrid";
 import type { UnitsCardProduct } from "../../ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { AlsoUpdatePanel } from "../change-prices/AlsoUpdatePanel";
@@ -106,7 +111,14 @@ export function EditablePricesGrid({
     <AddUnitIntentProvider>
       <div ref={root} className="relative">
         {editing && surface === "inline" && <SkipToSave />}
-        <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
+        <div
+          data-testid="units-v2-actions-row"
+          className="mb-2 flex flex-wrap items-center justify-end gap-2"
+        >
+          {/* K13: the region's heading leads the actions row, so on a phone it is one of the first things on the page. */}
+          {surface === "inline" && (
+            <PricesTitle id={`units-v2-grid-title${sfx}`} className="mr-auto" />
+          )}
           {editing && surface === "inline" && (
             <span
               data-testid={T.editingPill}
@@ -150,6 +162,7 @@ export function EditablePricesGrid({
           layout={layout}
           density={density}
           idSuffix={sfx}
+          hideTitle={surface === "inline"}
           // The window has no Add a unit control of its own; the pointer would click a hidden page control.
           addUnitPointers={surface !== "window"}
         />

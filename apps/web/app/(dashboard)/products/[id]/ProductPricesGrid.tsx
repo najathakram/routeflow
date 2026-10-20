@@ -477,6 +477,20 @@ function ScrollRegion({
   );
 }
 
+/** The region heading ("Prices by unit"): the grid card's own, or the section actions row's (K13). */
+export function PricesTitle({ id, className = "mb-3" }: { id: string; className?: string }) {
+  return (
+    <h2
+      id={id}
+      data-testid={T.hUnits}
+      tabIndex={-1}
+      className={`${className} text-sm font-semibold text-navy focus:outline-none`}
+    >
+      Prices by unit
+    </h2>
+  );
+}
+
 function PricesGridBody({
   product,
   edit,
@@ -484,6 +498,7 @@ function PricesGridBody({
   layout = "auto",
   density = "default",
   idSuffix = "",
+  hideTitle = false,
 }: {
   product: UnitsCardProduct & { msrp?: number | string | null };
   /** Edit mode (S12a, behind flag.units_prices_v2). Omitted = today's read-only grid, unchanged. */
@@ -495,6 +510,11 @@ function PricesGridBody({
   density?: GridDensity;
   /** K11-20: suffix for the ids this grid owns when a second grid is on the page (the floating window's). */
   idSuffix?: string;
+  /**
+   * K13: the region heading renders in the section's actions row instead (EditablePricesGrid), under the same id
+   * (`units-v2-grid-title` + suffix) so the table's region stays named by it.
+   */
+  hideTitle?: boolean;
 }) {
   const grid = usePriceGrid(product.id);
   const containsCol = useContainsColumn();
@@ -549,14 +569,7 @@ function PricesGridBody({
       data-testid={T.grid}
       className={`rounded-lg border bg-white p-4 ${FRAME_BORDER} ${edit?.editing ? "pb-6" : ""}`}
     >
-      <h2
-        id={titleId}
-        data-testid={T.hUnits}
-        tabIndex={-1}
-        className="mb-3 text-sm font-semibold text-navy focus:outline-none"
-      >
-        Prices by unit
-      </h2>
+      {hideTitle ? null : <PricesTitle id={titleId} />}
 
       {layout !== "cards" && (
         <ScrollRegion
