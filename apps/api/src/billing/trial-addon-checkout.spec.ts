@@ -3851,6 +3851,55 @@ describe("NIT 7/8: the path-(c) snapshot goes through the pricing helpers, and t
   });
 });
 
+describe("SA-815d / N1: a priced row nothing can bill raises ONE platform notice and bills nothing", () => {
+  const noticeCalls = (h: ReturnType<typeof make>) =>
+    h.tx.auditLog.create.mock.calls.filter(
+      (c: any[]) => c[0].data.action === "ADDON_PRICED_NOT_BILLED",
+    );
+
+  it("a self-serve row the published catalog no longer lists, with a stale price above zero: no item, a notice naming the SKU", async () => {
+    const h = make({
+      rows: [addonRow("CUSTOMER_PACK_100", { priceSnapshot: 12 })],
+      items: [baseItem()],
+    });
+    (h.mutations as any).catalog.getPublishedCatalog.mockResolvedValue({ addonSkus: [] });
+    await h.completed();
+    expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(h.rows[0].priceSnapshot).toBe(12);
+    const calls = noticeCalls(h);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0].data.meta.message).toBe(
+      "CUSTOMER_PACK_100 is priced at $12.00 for this workspace but has no card billing. Set up its billing at the agreed price.",
+    );
+  });
+
+  it("the same row at $0 is only logged: no notice", async () => {
+    const h = make({
+      rows: [addonRow("CUSTOMER_PACK_100", { priceSnapshot: 0 })],
+      items: [baseItem()],
+    });
+    (h.mutations as any).catalog.getPublishedCatalog.mockResolvedValue({ addonSkus: [] });
+    await h.completed();
+    expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(noticeCalls(h)).toHaveLength(0);
+  });
+
+  it("an admin-priced row at a catalog-$0 SKU: no item, the snapshot is untouched, the notice carries the add-on's display name and the money-formatted price", async () => {
+    const h = make({ rows: [addonRow("MSRP", { priceSnapshot: 15 })], items: [baseItem()] });
+    (h.mutations as any).catalog.getPublishedCatalog.mockResolvedValue({
+      addonSkus: [{ sku: "MSRP", name: "MSRP on invoices", monthlyPrice: 0 }],
+    });
+    await h.completed();
+    expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(h.rows[0].priceSnapshot).toBe(15);
+    const calls = noticeCalls(h);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0].data.meta.message).toBe(
+      "MSRP on invoices is priced at $15.00 for this workspace but has no card billing. Set up its billing at the agreed price.",
+    );
+  });
+});
+
 describe("SA-693 comps: a platform grant (TenantAddon.isComp) is never billed at checkout and never blocks it", () => {
   const comp = (sku: string, o: RowOpts = {}) => addonRow(sku, { ...o, isComp: true });
 

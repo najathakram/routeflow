@@ -66,13 +66,26 @@ beforeEach(() => {
   mockWithAdvisoryLock.mockClear();
 });
 
-function published(skus: string[]) {
-  return { addonSkus: skus.map((sku) => ({ sku, name: sku, monthlyPrice: 10 })) };
+function published(skus: string[], includedAtPlan: Record<string, string> = {}) {
+  return {
+    definitions: [
+      { planKey: "GROWTH", name: "Growth", monthlyPrice: 249 },
+      { planKey: "SCALE", name: "Scale", monthlyPrice: 499 },
+    ],
+    addonSkus: skus.map((sku) => ({
+      sku,
+      name: sku,
+      monthlyPrice: 10,
+      ...(includedAtPlan[sku] ? { includedAtPlan: includedAtPlan[sku] } : {}),
+    })),
+  };
 }
 
 interface Opts {
   existingAddon?: any;
   publishedSkus?: string[];
+  /** SA-786: the catalog's `includedAtPlan` per published SKU. */
+  includedAtPlan?: Record<string, string>;
   /** Override the default unconfigured Stripe mock — e.g. `{ isConfigured: true, client: { subscriptionItems: { del: jest.fn()... } } }`. */
   stripe?: any;
   /** Override tenantSubscription.findUnique's resolved value (default null — no Stripe sub). */
@@ -120,7 +133,9 @@ function make(opts: Opts = {}) {
   const stripe = opts.stripe ?? ({ isConfigured: false, client: {} } as any);
   const entitlements = { invalidate: jest.fn() } as any;
   const catalog = {
-    getPublishedCatalog: jest.fn().mockResolvedValue(published(opts.publishedSkus ?? [])),
+    getPublishedCatalog: jest
+      .fn()
+      .mockResolvedValue(published(opts.publishedSkus ?? [], opts.includedAtPlan)),
   } as any;
   const featureResolver = { invalidate: jest.fn() } as any;
   const authority = {
@@ -345,6 +360,88 @@ describe("AddonService.enableAddon Stripe refusal", () => {
 // the existing-check -> Stripe-create -> upsert sequence, so two concurrent calls could both pass
 // the guard. `enableAddon` now serialises that whole window per (tenantId, addonKey) through
 // `withAdvisoryLock` (`common/db-locks.ts`), the same primitive customer-order merges use.
+// SA-786 S7 / R11: an admin enable that carries a Stripe price at a plan which INCLUDES the SKU would book a charge
+// the plan already covers (SA-785 Q3). It is refused before any Stripe call or row write; without a price it is the
+// free grant (price 0, nothing booked) the owner ruling describes.
+describe("AddonService.enableAddon - an included add-on is never billed on top (SA-786 S7)", () => {
+  const includedAtScale = { REGULATED_ITEMS: "SCALE" };
+  const atScale = (extra: Record<string, unknown> = {}) => ({
+    stripeSubId: "sub_1",
+    planKey: "SCALE",
+    ...extra,
+  });
+
+  it("R11: WITH a stripePriceId at SCALE -> 409 ADDON_INCLUDED_IN_PLAN, zero Stripe calls, no row", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "si_9" });
+    const { svc, prisma, events } = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+      subscription: atScale(),
+      publishedSkus: ["REGULATED_ITEMS"],
+      includedAtPlan: includedAtScale,
+    });
+
+    const err: any = await svc
+      .enableAddon("t1", "REGULATED_ITEMS", "price_x")
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: "ADDON_INCLUDED_IN_PLAN",
+      message: "This add-on is included in Scale. Enable it without a price.",
+    });
+    expect(create).not.toHaveBeenCalled();
+    expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("WITHOUT a price at SCALE it proceeds: the row is written at $0 and nothing is booked", async () => {
+    const create = jest.fn();
+    const { svc, prisma, events } = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+      subscription: atScale(),
+      publishedSkus: ["REGULATED_ITEMS"],
+      includedAtPlan: includedAtScale,
+    });
+
+    await svc.enableAddon("t1", "REGULATED_ITEMS");
+
+    expect(create).not.toHaveBeenCalled();
+    expect(prisma.tenantAddon.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ priceSnapshot: 0 }) }),
+    );
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("below the including plan a priced enable is unchanged (GROWTH bills the item)", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "si_9" });
+    const { svc } = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+      subscription: atScale({ planKey: "GROWTH" }),
+      publishedSkus: ["REGULATED_ITEMS"],
+      includedAtPlan: includedAtScale,
+    });
+    await svc.enableAddon("t1", "REGULATED_ITEMS", "price_x");
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("a catalog entry whose includedAtPlan names no plan fails a priced enable closed (409 ADDON_CATALOG_INVALID, B1102)", async () => {
+    const create = jest.fn();
+    const { svc, prisma } = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+      subscription: atScale(),
+      publishedSkus: ["REGULATED_ITEMS"],
+      includedAtPlan: { REGULATED_ITEMS: "SCAEL" },
+    });
+    const err: any = await svc
+      .enableAddon("t1", "REGULATED_ITEMS", "price_x")
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: "ADDON_CATALOG_INVALID" });
+    expect(create).not.toHaveBeenCalled();
+    expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
+  });
+});
+
 describe("AddonService.enableAddon — B342 concurrency lock", () => {
   it("REG-B342 guard (sequential, unchanged): a second enable while the row is already active is refused before Stripe, no second item created", async () => {
     const create = jest.fn();

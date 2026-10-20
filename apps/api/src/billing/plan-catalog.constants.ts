@@ -206,9 +206,9 @@ export type IncludedAtPlanResolution = { ok: true; plan: PlanKey | null } | { ok
 export function resolveIncludedAtPlan(
   includedAtPlan: string | null | undefined,
 ): IncludedAtPlanResolution {
-  // "" and null both keep the LEGACY meaning (never bundled): only a NON-EMPTY unknown value is a typo.
-  if (includedAtPlan == null || includedAtPlan === "") return { ok: true, plan: null };
-  const plan = normalizePlanKey(includedAtPlan);
+  // "", whitespace-only and null all keep the LEGACY meaning (never bundled): only a NON-BLANK unknown value is a typo.
+  if (includedAtPlan == null || includedAtPlan.trim() === "") return { ok: true, plan: null };
+  const plan = normalizePlanKey(includedAtPlan.trim());
   return plan ? { ok: true, plan } : { ok: false };
 }
 

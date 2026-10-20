@@ -1,7 +1,7 @@
 /**
  * SA-733 D8 / SA-733r [M7] (PR-B1 part B): an upgrade reaches Stripe — Stripe-first, ONE `subscriptions.update`
  * (the base item's new inline `price_data` + a delete for every add-on the new plan includes), compensated by
- * ONE revert when the local write loses — and the add-ons the new plan includes stop billing (B1103).
+ * ONE revert when the local write loses — and the add-ons the new plan includes stop billing and STAY ON at $0 (B1103; SA-786: never switched off).
  *
  * Stripe is mocked at the StripeService boundary: no live call anywhere here. On master `upgrade()` pushed
  * nothing and retired nothing, so every row below is red there.
@@ -123,6 +123,8 @@ interface Opts {
   tenantPlan?: string;
   /** Wire the REAL ScheduledPriceChangeService (the pre-renewal downgrade push) into the service. */
   realScheduledPrice?: boolean;
+  /** Override pieces of the catalog (the plan graph under test). */
+  catalog?: Partial<typeof CATALOG>;
 }
 
 /** The rows whose fields all equal the (simple) `where` — enough of Prisma's filter for these specs. */
@@ -232,9 +234,10 @@ function make(o: Opts = {}) {
   const entitlements = { invalidate: jest.fn() };
   const notify = { notifyUpgradeConfirmed: jest.fn().mockResolvedValue(undefined) };
   const real = new ProrationService({} as any, {} as any);
+  const catalogUnderTest = { ...CATALOG, ...(o.catalog ?? {}) };
   const catalogSvc = {
-    getPublishedCatalog: jest.fn().mockResolvedValue(CATALOG),
-    getVersionForTenant: jest.fn().mockResolvedValue(CATALOG),
+    getPublishedCatalog: jest.fn().mockResolvedValue(catalogUnderTest),
+    getVersionForTenant: jest.fn().mockResolvedValue(catalogUnderTest),
     getPublishedVersion: jest.fn().mockResolvedValue(null),
   } as any;
   const svc = new SubscriptionMutationService(
@@ -543,9 +546,9 @@ describe("upgrade(): a pre-renewal downgrade push is undone FIRST (R1 Option B)"
   });
 });
 
-describe("upgrade(): the add-ons the new plan includes stop billing (B1103)", () => {
-  it("GROWTH + an included add-on item -> upgrade(SCALE): item deleted in the SAME update with create_prorations, row inactive, MRR −price once", async () => {
-    const { svc, stripe, tx, events } = make({ addons: [row()] });
+describe("upgrade(): the add-ons the new plan includes stop billing and stay ON (B1103 / SA-786 R1)", () => {
+  it("GROWTH + an included add-on item -> upgrade(SCALE): item deleted in the SAME update with create_prorations, row ACTIVE at $0 with no item, MRR −price once", async () => {
+    const { svc, stripe, tx, events, db } = make({ addons: [row()] });
     await svc.upgrade("t1", "SCALE", "admin");
 
     expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
@@ -555,17 +558,20 @@ describe("upgrade(): the add-ons the new plan includes stop billing (B1103)", ()
     // The add-on the plan does NOT include is untouched.
     expect(params.items.map((i: any) => i.id)).not.toContain("si_pack");
 
+    // R1 (SA-786): the row is the entitlement - billing state clears, `active` is never written.
+    expect(tx.tenantAddon.update).toHaveBeenCalledTimes(1);
     expect(tx.tenantAddon.update).toHaveBeenCalledWith({
       where: { id: "ta_fc" },
-      data: { active: false, stripeItemId: null },
+      data: { priceSnapshot: 0, stripeItemId: null },
     });
+    expect(db.addons[0]).toMatchObject({ active: true, priceSnapshot: 0, stripeItemId: null });
     const addonDeltas = typesOf(events, BILLING_EVENTS.ADDON_DISABLED);
     expect(addonDeltas).toHaveLength(1);
     expect(addonDeltas[0][3].amountDelta).toBe(-25);
     expect(addonDeltas[0][2].sku).toBe("FORECASTING");
   });
 
-  it("a COMP add-on is deactivated with NO Stripe item delete and NO ledger delta", async () => {
+  it("a COMP add-on stays active with NO Stripe item delete and NO ledger delta", async () => {
     const { svc, stripe, tx, events } = make({
       // A STALE snapshot > 0 on purpose: only the isComp skip keeps the ledger clean.
       addons: [row({ id: "ta_comp", isComp: true, stripeItemId: null, priceSnapshot: 25 })],
@@ -576,12 +582,12 @@ describe("upgrade(): the add-ons the new plan includes stop billing (B1103)", ()
     expect(params.items.some((i: any) => i.deleted)).toBe(false);
     expect(tx.tenantAddon.update).toHaveBeenCalledWith({
       where: { id: "ta_comp" },
-      data: { active: false, stripeItemId: null },
+      data: { priceSnapshot: 0, stripeItemId: null },
     });
     expect(typesOf(events, BILLING_EVENTS.ADDON_DISABLED)).toHaveLength(0);
   });
 
-  it("a manual-pay tenant gets a STOP notice for the retired, priced add-on (and no Stripe call)", async () => {
+  it("a manual-pay tenant gets a STOP notice for the stopped, priced add-on (and no Stripe call)", async () => {
     const { svc, stripe, tx } = make({
       sub: { stripeSubId: null, externalPayment: true },
       addons: [row({ stripeItemId: null })],
@@ -610,7 +616,7 @@ describe("upgrade(): the add-ons the new plan includes stop billing (B1103)", ()
     expect(typesOf(events, BILLING_EVENTS.ADDON_DISABLED)).toHaveLength(0);
   });
 
-  it("an add-on item Stripe no longer has is already settled: it is not in the delete list, the row still retires", async () => {
+  it("an add-on item Stripe no longer has is already settled: it is not in the delete list, the row still stops billing", async () => {
     const { svc, stripe, tx } = make({ addons: [row()], stripeItems: [BASE_ITEM, KEEP_ITEM] });
     await svc.upgrade("t1", "SCALE", "admin");
     expect(stripe.updateSubscription.mock.calls[0][1].items.some((i: any) => i.deleted)).toBe(
@@ -836,12 +842,12 @@ describe("upgrade(): MRR ledger and flat-SKU guards", () => {
     });
     await svc.upgrade("t1", "SCALE", "admin");
 
-    expect(db.addons[0].active).toBe(false);
+    expect(db.addons[0]).toMatchObject({ active: true, priceSnapshot: 0 }); // SA-786: stays ON
     expect(typesOf(events, BILLING_EVENTS.ADDON_DISABLED)).toHaveLength(0);
     expect(typesOf(events, BILLING_EVENTS.PLAN_CHANGED)[0][3].amountDelta).toBe(499);
   });
 
-  it("a stackable row holding more than one unit is never retired wholesale (flat SKUs only)", async () => {
+  it("a stackable row holding more than one unit is never touched wholesale (flat SKUs only)", async () => {
     const { svc, stripe, tx, events } = make({ addons: [row({ quantity: 2 })] });
     await svc.upgrade("t1", "SCALE", "admin");
 
@@ -853,8 +859,8 @@ describe("upgrade(): MRR ledger and flat-SKU guards", () => {
   });
 });
 
-describe("planChangePreview(): lists the add-ons an upgrade retires (B1103)", () => {
-  it("UPGRADE names each included add-on, in the structured list and in the warning", async () => {
+describe("planChangePreview(): names the add-ons an upgrade now includes (SA-786 R4/R5)", () => {
+  it("UPGRADE names each newly included add-on, in the structured list and in the exact warning", async () => {
     const { svc } = make({
       addons: [
         row(),
@@ -866,24 +872,132 @@ describe("planChangePreview(): lists the add-ons an upgrade retires (B1103)", ()
         }),
       ],
     });
-    const p = await svc.planChangePreview("t1", "SCALE", "MONTHLY");
+    const p: any = await svc.planChangePreview("t1", "SCALE", "MONTHLY");
 
     expect(p.action).toBe("UPGRADE");
-    expect(p.retiredAddons).toEqual([{ sku: "FORECASTING", name: "Forecasting" }]);
-    expect(p.warning).toContain("Forecasting");
-    expect(p.warning).toContain("Scale");
+    expect(p.includedAddons).toEqual([{ sku: "FORECASTING", name: "Forecasting" }]);
+    expect(p.warning).toBe("Now included in Scale at no extra cost: Forecasting.");
   });
 
-  it("a row holding more than one unit is not listed (it would not be retired)", async () => {
+  it("a row holding more than one unit is not listed (it would not be touched)", async () => {
     const { svc } = make({ addons: [row({ quantity: 3 })] });
-    const p = await svc.planChangePreview("t1", "SCALE", "MONTHLY");
-    expect(p.retiredAddons).toEqual([]);
+    const p: any = await svc.planChangePreview("t1", "SCALE", "MONTHLY");
+    expect(p.includedAddons).toEqual([]);
   });
 
-  it("UPGRADE with nothing to retire has an empty list and no add-on note", async () => {
+  it("UPGRADE with nothing newly included has an empty list and no add-on note", async () => {
     const { svc } = make({ addons: [] });
-    const p = await svc.planChangePreview("t1", "SCALE", "MONTHLY");
-    expect(p.retiredAddons).toEqual([]);
-    expect(p.warning ?? "").not.toContain("switched off");
+    const p: any = await svc.planChangePreview("t1", "SCALE", "MONTHLY");
+    expect(p.includedAddons).toEqual([]);
+    expect(p.warning ?? "").not.toContain("included in");
+  });
+
+  it("R5: a $0 row already included at the plan the tenant is on is NOT listed again on the next upgrade", async () => {
+    // FORECASTING is bundled from GROWTH in this catalog, so GROWTH -> SCALE changes nothing for the row.
+    const { svc } = make({
+      addons: [row({ priceSnapshot: 0, stripeItemId: null })],
+      catalog: {
+        addonSkus: [
+          { sku: "FORECASTING", name: "Forecasting", monthlyPrice: 25, includedAtPlan: "GROWTH" },
+        ],
+      },
+    });
+    const p: any = await svc.planChangePreview("t1", "SCALE", "MONTHLY");
+    expect(p.action).toBe("UPGRADE");
+    expect(p.includedAddons).toEqual([]);
+    expect(p.warning ?? "").not.toContain("included in");
+  });
+});
+
+describe("planChangePreview(): a downgrade names the add-on it starts to bill (SA-786 S6 / R9)", () => {
+  const REGULATED_CATALOG = {
+    addonSkus: [
+      {
+        sku: "REGULATED_ITEMS",
+        name: "Regulated items",
+        monthlyPrice: 39,
+        includedAtPlan: "SCALE",
+      },
+    ],
+  };
+  const included = row({
+    id: "ta_reg",
+    addonKey: "REGULATED_ITEMS",
+    sku: "REGULATED_ITEMS",
+    priceSnapshot: 0,
+    stripeItemId: null,
+  });
+  const onScale = (sub: Record<string, unknown>, addons: any[] = [included]) =>
+    make({
+      tenantPlan: "BUSINESS",
+      sub: {
+        planKey: "SCALE",
+        basePriceSnapshot: 499,
+        periodEnd: new Date("2026-11-11T12:00:00.000Z"),
+        ...sub,
+      },
+      addons,
+      catalog: REGULATED_CATALOG,
+    });
+
+  it("STRIPE tenant: the exact sentence, with the separate charge named", async () => {
+    const { svc } = onScale({ stripeSubId: "sub_1" });
+    const p: any = await svc.planChangePreview("t1", "GROWTH", "MONTHLY");
+    expect(p.action).toBe("DOWNGRADE");
+    expect(p.warning).toBe(
+      "Regulated items isn't included in Growth. From November 11, 2026, it's billed at $39.00 a month, starting with a separate charge when the change takes effect.",
+    );
+    expect(p.repricedAddons).toEqual([
+      { sku: "REGULATED_ITEMS", name: "Regulated items", monthlyPrice: 39 },
+    ]);
+  });
+
+  it("MANUAL tenant: the same sentence without the separate charge", async () => {
+    const { svc } = onScale({ stripeSubId: null, externalPayment: true });
+    const p: any = await svc.planChangePreview("t1", "GROWTH", "MONTHLY");
+    expect(p.warning).toBe(
+      "Regulated items isn't included in Growth. From November 11, 2026, it's billed at $39.00 a month.",
+    );
+    expect(p.repricedAddons).toEqual([
+      { sku: "REGULATED_ITEMS", name: "Regulated items", monthlyPrice: 39 },
+    ]);
+  });
+
+  it("UNBILLED tenant: no add-on sentence (nothing is billed) and nothing listed", async () => {
+    const { svc } = onScale({ stripeSubId: null, externalPayment: false });
+    const p: any = await svc.planChangePreview("t1", "GROWTH", "MONTHLY");
+    expect(p.warning ?? "").not.toContain("Regulated items");
+    expect(p.repricedAddons).toEqual([]);
+  });
+
+  it("a comp row, a priced row with an item and a quantity > 1 row are not listed", async () => {
+    const { svc } = onScale({ stripeSubId: "sub_1" }, [
+      { ...included, id: "a", isComp: true },
+      { ...included, id: "b", priceSnapshot: 39, stripeItemId: "si_x" },
+      { ...included, id: "c", quantity: 3 },
+    ]);
+    const p: any = await svc.planChangePreview("t1", "GROWTH", "MONTHLY");
+    expect(p.repricedAddons).toEqual([]);
+  });
+
+  it("a held add-on whose includedAtPlan names no plan fails the preview closed (409, B1102)", async () => {
+    const { svc } = make({
+      tenantPlan: "BUSINESS",
+      sub: { planKey: "SCALE", basePriceSnapshot: 499 },
+      addons: [included],
+      catalog: {
+        addonSkus: [
+          {
+            sku: "REGULATED_ITEMS",
+            name: "Regulated items",
+            monthlyPrice: 39,
+            includedAtPlan: "SCAEL",
+          },
+        ],
+      },
+    });
+    await expect(svc.planChangePreview("t1", "GROWTH", "MONTHLY")).rejects.toBeInstanceOf(
+      ConflictException,
+    );
   });
 });
