@@ -12,6 +12,9 @@ import { act, renderHook } from "@testing-library/react";
  */
 const read = (rel: string) => fs.readFileSync(path.resolve(__dirname, "..", rel), "utf8");
 const D = "app/(dashboard)";
+/** The order detail page plus its extracted send-invoice modal (move-only split, 0320e6fd1), read as one source. */
+const orderDetail = () =>
+  read(`${D}/orders/[id]/page.tsx`) + read(`${D}/orders/[id]/_components/SendInvoiceModal.tsx`);
 
 describe("no raw server message on the orders + customers surfaces", () => {
   it.each([
@@ -42,7 +45,7 @@ describe("no raw server message on the orders + customers surfaces", () => {
   });
 
   it("order detail mark-sent and send-email use the extracted sentence helpers (the page stays under its size ratchet)", () => {
-    const page = read(`${D}/orders/[id]/page.tsx`);
+    const page = orderDetail();
     expect(page).toContain("markSentErrorText(e)");
     expect(page).toContain("sendEmailErrorText(e)");
     expect(page).not.toMatch(/couldn't be marked as sent|email couldn't be sent/);
@@ -50,7 +53,7 @@ describe("no raw server message on the orders + customers surfaces", () => {
 
   it("the surfaces that render their own error opt out of the global toast (a failure shows once)", () => {
     const opt = "{ localErrorToast: true }";
-    const page = read(`${D}/orders/[id]/page.tsx`);
+    const page = orderDetail();
     for (const h of ["useSendInvoice", "useSendInvoiceEmail"])
       expect(page).toContain(`${h}(${opt})`);
     expect(read(`${D}/orders/_components/OrderFulfilmentRow.tsx`)).toContain(

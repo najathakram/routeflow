@@ -64,6 +64,9 @@ const CODE_COPY: Record<string, string> = {
   DUPLICATE_LINE_ID: "A line appears twice. Refresh the page and try again.",
   // Row 531: a buyer cart whose quantity and box split disagree; nothing was saved.
   QTY_SPLIT_MISMATCH: BUYER_QTY_SPLIT_MISMATCH_COPY,
+  // B692: a partial delivery needs per-line quantities; a delivered order with none recorded is not cancelled blind.
+  ORDER_PD_NEEDS_QUANTITIES: "Record what was delivered for each line first.",
+  ORDER_DELIVERY_QUANTITIES_MISSING: "Delivery quantities are missing; set them before cancelling.",
   ORDER_BILLING_CHANGED:
     "This order's billing changed while you were working on it. Refresh and try again.",
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
@@ -76,6 +79,10 @@ const CODE_COPY: Record<string, string> = {
   INVOICE_WITH_CARRIER_NO_LINE_CHANGE:
     "This order is already with the carrier, so its invoice lines and quantities can't change. Price, discount and notes still can.",
   [API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST]: SHIPPED_ORDER_MESSAGE,
+  // B1234 (D-O2-a): a staff edit of a delivered line of a partly delivered order; nothing was saved. The change-request
+  // screen toasts its own sentence for the same code (mutation-error-toast HANDLED_CODES).
+  [API_ERROR_CODES.LINE_ALREADY_DELIVERED]:
+    "A delivered line can't be changed or removed. Nothing was saved. Undelivered lines can still be edited.",
   [API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS]:
     "Another change is in progress. Try again in a moment.",
   [API_ERROR_CODES.ORDER_LINE_CHANGED]:

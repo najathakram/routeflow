@@ -193,6 +193,15 @@ describe("genericToastCopy: codes users rely on", () => {
     );
   });
 
+  it("LINE_ALREADY_DELIVERED (B1234, staff item save) is fixed copy through the shared constant, never the server message, no dash", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.LINE_ALREADY_DELIVERED, message: "raw server text" }),
+    );
+    expect(copy).toMatch(/delivered line can't be changed or removed.*Nothing was saved/);
+    expect(copy).not.toContain("raw server text");
+    expect(copy).not.toMatch(/[–—]/);
+  });
+
   it("ORDER_INVOICES_NEED_REVIEW (SA-687) shows the fixed review copy, never the server message", () => {
     expect(
       genericToastCopy(
@@ -658,6 +667,7 @@ describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODE
     "INVOICE_CHANGED_CONCURRENTLY",
     "INVOICE_TAX_STATE_STALE",
     "INVOICE_TOTAL_BELOW_PAID",
+    "LINE_ALREADY_DELIVERED",
   ];
   it.each(REGISTERED)("%s is a computed [API_ERROR_CODES.X] key", (code) => {
     expect(src).toContain(`[API_ERROR_CODES.${code}]:`);

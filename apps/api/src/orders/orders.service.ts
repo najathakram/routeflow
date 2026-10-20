@@ -111,6 +111,7 @@ import {
 import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
+import { assertDeliveredLinesUntouched, reduceDeliveredLineEntries } from "./delivered-line-lock";
 import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
@@ -128,7 +129,12 @@ import {
   type IdempotencyLookupDeps,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
-import { cancelBlockedMessage, cancelImpact } from "./order-cancel-impact";
+import {
+  assertQuantitiesKnown,
+  cancelBlockedMessage,
+  cancelImpact,
+  deliveredUnitsBlockedMessage,
+} from "./order-cancel-impact";
 import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
 import { claimReopenInTx } from "./order-reopen-claim";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
@@ -2704,14 +2710,11 @@ export class OrdersService implements OnApplicationBootstrap {
     if (impact.canCancel) return;
     if (impact.blockingPayments.length > 0)
       throw new BadRequestException(cancelBlockedMessage(impact.blockingPayments));
+    assertQuantitiesKnown(impact); // B692: legacy delivered row, no quantity recorded
     // B56 (REG-B56): delivered goods can't be un-delivered by cancelling the
     // order out from under them — that would erase the revenue for goods the
     // customer already has. Record a return, or edit the order down instead.
-    throw new BadRequestException(
-      `This order has delivered items (${impact.deliveredUnits} unit(s) already delivered). ` +
-        `Cancelling would erase revenue for goods the customer already has. Record a return for ` +
-        `the delivered goods, or edit the order down to the undelivered items instead.`,
-    );
+    throw new BadRequestException(deliveredUnitsBlockedMessage(impact.deliveredUnits));
   }
 
   async reopenOrder(id: string) {
@@ -2893,6 +2896,7 @@ export class OrdersService implements OnApplicationBootstrap {
       throw new ForbiddenException(await carrierGuard.buyerEditClosedMessage(this, order)); // B1135
     }
 
+    assertDeliveredLinesUntouched(order, order.lineItems ?? [], dto, user, isDiffPayload); // B1234: before any side effect
     // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice revert and any
     // write; a draft is judged at its promotion UNLESS it has a live (non-VOID) linked invoice: the reconcile after this
     // edit copies the order's lines onto that sent mirror. Re-checked under the row lock (order-edit-restrictions.ts).
@@ -3048,6 +3052,28 @@ export class OrdersService implements OnApplicationBootstrap {
         await assertNoMirrorAppearedUnderLock(tx, orderId, judgeEdit, order.status); // DRAFT edit vs a concurrent bill
         await driverAccess.assertDriverMayEditOrder(tx, orderId, user); // SA-429: re-derived under the Order lock
         cancelledLines.assertHeldCancelledLines(heldItems, dto.items, user, isDiffPayload); // SA-422
+        // B1234 / SA-814: the binding check. Applicability comes from the status read UNDER the Order lock (a delivery
+        // can flip the order to PARTIALLY_DELIVERED after the pre-tx read), never from `order.status`.
+        const lockedStatus = await tx.order.findUnique({
+          where: { id: orderId },
+          select: { status: true },
+        });
+        assertDeliveredLinesUntouched(
+          { status: lockedStatus?.status ?? order.status },
+          heldItems,
+          dto,
+          user,
+          isDiffPayload,
+        ); // B1234: the locked lines
+        // B1234: a delivered line's entry that the guard let through (it restated qty / price / split / unit)
+        // is cut to its note / reason / rename NOW, so the write loop below never reprices a delivered line
+        // from live promotions, the live product or the live ladder. Replaces the items in place: every later
+        // read of `dto.items` (the unit resolution below included) sees the reduced entries.
+        dto.items = reduceDeliveredLineEntries(
+          { status: lockedStatus?.status ?? order.status },
+          heldItems,
+          dto.items,
+        ) as typeof dto.items;
 
         // units_v1 (A1, #1102 precedent): the pre-lock resolution above can go stale under a
         // concurrent edit of the SAME line — re-run it against the just-locked, authoritative
@@ -3832,7 +3858,10 @@ export class OrdersService implements OnApplicationBootstrap {
                 // reason-only and notes-only writes below were unreachable dead code
                 // for exactly the payload shape that needs them.
                 item.overrideReason !== undefined ||
-                item.notes !== undefined
+                item.notes !== undefined ||
+                // B1234: a delivered unlisted line's entry is reduced to {id, action, name}; a rename alone must
+                // still reach the fast path below (a name on a LISTED line is filtered out there, never written).
+                item.name !== undefined
               ) {
                 const li = item.id ? heldById.get(item.id) : undefined;
                 if (!li) continue;
@@ -3851,25 +3880,28 @@ export class OrdersService implements OnApplicationBootstrap {
                   item.boxes == null &&
                   item.pieces == null &&
                   item.unitPrice == null &&
-                  (item.overrideReason !== undefined || item.notes !== undefined);
+                  (item.overrideReason !== undefined ||
+                    item.notes !== undefined ||
+                    item.name !== undefined);
                 if (isReasonOrNotesOnly) {
-                  await tx.orderItem.update({
-                    where: { id: item.id },
-                    data: {
-                      // Round 3 finding 1 (independent review, PR-2): `name` is not a pricing
-                      // field — an unlisted line's rename must survive this fast path exactly
-                      // like the full path below allows it, or a payload combining a rename
-                      // with a reason/notes edit silently drops the rename.
-                      ...(isUnlisted && item.name !== undefined ? { name: item.name } : {}),
-                      ...(item.notes !== undefined ? { notes: item.notes } : {}),
-                      ...(item.overrideReason !== undefined
-                        ? {
-                            overrideReason: item.overrideReason ?? null,
-                            overriddenBy: user?.sub ?? null,
-                          }
-                        : {}),
-                    },
-                  });
+                  const fastData = {
+                    // Round 3 finding 1 (independent review, PR-2): `name` is not a pricing
+                    // field — an unlisted line's rename must survive this fast path exactly
+                    // like the full path below allows it, or a payload combining a rename
+                    // with a reason/notes edit silently drops the rename.
+                    ...(isUnlisted && item.name !== undefined ? { name: item.name } : {}),
+                    ...(item.notes !== undefined ? { notes: item.notes } : {}),
+                    ...(item.overrideReason !== undefined
+                      ? {
+                          overrideReason: item.overrideReason ?? null,
+                          overriddenBy: user?.sub ?? null,
+                        }
+                      : {}),
+                  };
+                  // A name-only entry on a listed line carries nothing to write.
+                  if (Object.keys(fastData).length > 0) {
+                    await tx.orderItem.update({ where: { id: item.id }, data: fastData });
+                  }
                   continue;
                 }
                 const unitRow = unitRows.get(item);

@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { superAdminClient } from "@/lib/admin-api";
 import { DisabledHint } from "../../_components/DisabledHint";
+import { MobileAppLinksCard } from "./MobileAppLinksCard";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -465,6 +466,8 @@ export default function AdminSettingsPage() {
             </aside>
           </div>
         )}
+
+        <MobileAppLinksCard />
       </div>
     </div>
   );

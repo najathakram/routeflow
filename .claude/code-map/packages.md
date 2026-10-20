@@ -630,3 +630,10 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 ## fixes-4 (2026-10-18, #3511)
 
 - `packages/types/api/error-codes.ts` `API_ERROR_CODES` gains `CUSTOMER_PRICES_UNAVAILABLE` (503: a typed-price customer's flag read failed; retryable, nothing written).
+
+## product-k11 and money-1 (2026-10-18, #3513, #3480)
+
+- `packages/ui/src/web/FloatingPanel.tsx` (NEW) `FloatingPanel` (`FloatingPanelProps`, `FloatingPanelTarget`: a ref or a getter for the anchor), `computeAnchoredPlacement({...})` / `AnchoredPlacementInput`: a small modal that hangs off its opener (anchored panel from `md` up, bottom sheet below; right edge on the anchor's, placed imperatively and measured); exported from `src/web/index.ts`.
+- `packages/pricing/src/price-change.ts`: `scalePrice(from, num, den)` (the one proportional-move rounding), `CellPatch`, `applyCellPatches(view, patches)` (returns the undo patches), `inversionOffers(...)`, `FollowerRow`, `CustomerChange` (SA-798 `against` flag).
+- `packages/pricing/src/legacy-box-axis.ts`: `B661_CUTOFF` and the REQUIRED `writtenAt` input (#2859); `packages/{pricing,returns,scanning}/package.json` gain a `source` export condition for the graph overlay.
+- `packages/types/api/price-history.ts`: `PriceHistoryReferences`, `PriceHistoryAggregate`, `PRICE_SUMMARY_MAX_PRODUCTS = 50`, `PriceSummaryEntry` (rows carry their own `unitsPerBox`), `PriceSummaryResponse`. `api/error-codes.ts` gains `ORDER_DELIVERY_ADDRESS_MISSING`, `STRIPE_NOT_CONFIGURED`, `STRIPE_ACCOUNT_MISMATCH`, `STRIPE_SUBSCRIPTION_OWNER_MISMATCH`.

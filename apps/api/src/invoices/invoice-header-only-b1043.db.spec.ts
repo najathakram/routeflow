@@ -399,9 +399,11 @@ describeDb("header-only invoice PATCH on the one builder - real Postgres (B1043/
     expect(after.map((r) => r.id)).toEqual([ledger.id]);
   });
 
-  it("B296 pin (Lead ruling B): a fresh draft with a >4-decimal rate is 409 on a header-only PATCH, never a silent re-tax; re-saving its lines recovers it", async () => {
+  it("B296 pin (SA-814o, the class rule): a fresh draft with a >4-decimal rate refuses BOTH recomputes with 409 INVOICE_TAX_STATE_STALE and writes nothing", async () => {
     // create() taxes with the UNROUNDED rate (0.08875 -> 88.75 on $1,000) while InvoiceItem.taxRate is
-    // Decimal(5,4) (0.0888 -> 88.80). SA-761 T-1 (sitting 4) widens the column and retires this pin.
+    // Decimal(5,4) (0.0888 -> 88.80), so the stored lines cannot reproduce the stored tax. The one guard
+    // (stored-tax-state.ts) refuses every recompute of such a row; the recovery is REG-B296 in R5-1, after
+    // the sitting-4 widen. Asserts the code, the path and the stored values, never message text.
     const s = await seed("b296");
     const created: any = await run(s.tenantId, () =>
       invoicesService.create({
@@ -411,32 +413,44 @@ describeDb("header-only invoice PATCH on the one builder - real Postgres (B1043/
     );
     const stored = await reload(created.id);
     expect(Number(stored!.taxAmount)).toBe(88.75);
+    const totalBefore = Number(stored!.total);
     const line = (await prisma.invoiceItem.findMany({ where: { invoiceId: created.id } }))[0];
     expect(Number(line.taxRate)).toBe(0.0888);
+    const unchanged = async () => {
+      const now = await reload(created.id);
+      expect(Number(now!.taxAmount)).toBe(88.75);
+      expect(Number(now!.discount)).toBe(0);
+      expect(Number(now!.total)).toBe(totalBefore);
+    };
 
+    // A header-only PATCH: refused, nothing written.
     await expect(
       run(s.tenantId, () => invoicesService.update(created.id, { discount: 1 })),
-    ).rejects.toMatchObject({ status: 409, response: { code: "INVOICE_TAX_STATE_STALE" } });
-    expect(Number((await reload(created.id))!.discount)).toBe(0);
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: "INVOICE_TAX_STATE_STALE", path: "DRAFT_MANUAL" },
+    });
+    await unchanged();
 
-    // The recovery the 409 asks for: re-save the lines (the stored rate comes back from the column).
-    await run(s.tenantId, () =>
-      invoicesService.update(created.id, {
-        items: [
-          {
-            id: line.id,
-            description: "Widget",
-            qty: 10,
-            unitPrice: 100,
-            taxRate: Number(line.taxRate),
-          },
-        ],
-      } as any),
-    );
-    expect(Number((await reload(created.id))!.taxAmount)).toBe(88.8);
-    await run(s.tenantId, () => invoicesService.update(created.id, { discount: 1 }));
-    const after = await reload(created.id);
-    expect(Number(after!.discount)).toBe(1);
-    expect(Number(after!.total)).toBe(1087.8);
+    // An items re-save with the rates unchanged (the stored rate back from the column): refused too.
+    await expect(
+      run(s.tenantId, () =>
+        invoicesService.update(created.id, {
+          items: [
+            {
+              id: line.id,
+              description: "Widget",
+              qty: 10,
+              unitPrice: 100,
+              taxRate: Number(line.taxRate),
+            },
+          ],
+        } as any),
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: "INVOICE_TAX_STATE_STALE", path: "DRAFT_MANUAL" },
+    });
+    await unchanged();
   });
 });
