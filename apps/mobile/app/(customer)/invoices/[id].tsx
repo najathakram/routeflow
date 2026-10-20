@@ -18,9 +18,13 @@ import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { fmtCalendarDate } from "../../../lib/format-date";
 import { overpaidText, revisedBadgeText } from "../../../lib/invoice-revision";
 import { invoiceShowsTerms } from "../../../lib/invoice-sale-terms";
-import { invoiceLineQtyText } from "@routeflow/pricing";
+import { invoiceDisplayCategoryTax, invoiceLineQtyText } from "@routeflow/pricing";
 import { buyerInvoiceTotalsRows, totalsRowText } from "../../../lib/buyer-invoice-totals";
-import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../lib/invoice-line-display";
+import {
+  invoiceDisplayRowTexts,
+  invoiceLineUnitNoun,
+  usesUnitDisplay,
+} from "../../../lib/invoice-line-display";
 
 // buyer.ts's BuyerInvoiceItem doesn't declare `msrp` yet even though the
 // server now snapshots it onto every InvoiceItem (display-only, per PIECE)
@@ -311,25 +315,51 @@ function LineItemRow({ item, last }: { item: BuyerInvoiceItem; last: boolean }) 
   const label = item.product?.name ?? item.description;
   const unit = item.product?.unit;
   const itemMsrp = (item as typeof item & ItemMsrpField).msrp;
+  const displayRows = invoiceDisplayRowTexts({
+    ...item,
+    categoryTax: invoiceDisplayCategoryTax(item),
+    components: item.components,
+    displayUnit: item.displayUnit,
+  });
   return (
     <View style={[styles.itemRow, last && { borderBottomWidth: 0 }]}>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={styles.itemName} numberOfLines={2}>
           {label}
         </Text>
+        {displayRows.leading.map((text, i) => (
+          <Text key={`row-${i}`} style={styles.itemMeta} testID="display-component-row">
+            {text}
+          </Text>
+        ))}
         <Text style={styles.itemMeta}>
-          {/* B758 review: a units_v1 line (Case, Pallet, a factor-1 "5 Piece") shows ITS
+          {displayRows.pieces ? (
+            `${displayRows.pieces.qtyText} × ${displayRows.pieces.priceText}`
+          ) : (
+            <>
+              {/* B758 review: a units_v1 line (Case, Pallet, a factor-1 "5 Piece") shows ITS
               label via the ONE shared formatter — a bare Number(item.qty) read "36" for a
               3-Case line instead of "3 Cases". A pack line is unchanged. */}
-          {usesUnitDisplay(item) ? invoiceLineQtyText(item) : Number(item.qty)} × $
-          {Number(item.unitPrice).toFixed(2)}
-          {/* #2046 REQUIRED (Opus): a units_v1 line's own unit noun (Case, Piece), never
+              {usesUnitDisplay(item) ? invoiceLineQtyText(item) : Number(item.qty)} × $
+              {Number(item.unitPrice).toFixed(2)}
+              {/* #2046 REQUIRED (Opus): a units_v1 line's own unit noun (Case, Piece), never
               the fallen-through product.unit — a Case line read "/ ea" and a factor-1
               Piece line could read "/ box" here despite the qty text above already
               naming it correctly. The operator invoice screen already does this. */}
-          {item.unitLabel?.trim() ? ` / ${invoiceLineUnitNoun(item)}` : unit ? ` / ${unit}` : ""}
+              {item.unitLabel?.trim()
+                ? ` / ${invoiceLineUnitNoun(item)}`
+                : unit
+                  ? ` / ${unit}`
+                  : ""}
+            </>
+          )}
           {item.discount ? ` − $${Number(item.discount).toFixed(2)} disc` : ""}
         </Text>
+        {displayRows.subLines.map((text, i) => (
+          <Text key={i} style={styles.itemMeta} testID="line-component-sub-line">
+            {text}
+          </Text>
+        ))}
         {item.notes?.trim() ? (
           <Text style={styles.itemNote} numberOfLines={4}>
             {item.notes}
@@ -344,6 +374,11 @@ function LineItemRow({ item, last }: { item: BuyerInvoiceItem; last: boolean }) 
         {freeUnitsLabel(item.promoFreeUnits) ? (
           <Text style={styles.itemFreeLabel}>{freeUnitsLabel(item.promoFreeUnits)}</Text>
         ) : null}
+        {displayRows.trailing.map((text, i) => (
+          <Text key={`tax-${i}`} style={styles.itemMeta} testID="display-category-tax">
+            {text}
+          </Text>
+        ))}
       </View>
       <Text style={styles.itemTotal}>${Number(item.subtotal).toFixed(2)}</Text>
     </View>

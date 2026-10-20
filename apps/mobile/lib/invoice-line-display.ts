@@ -7,7 +7,8 @@
  * `order-line-display.ts`'s helpers do — RN cannot import a web component to assert against.
  */
 
-import type { LineComponentView } from "@routeflow/types";
+import { invoiceDisplayLines, plural } from "@routeflow/pricing";
+import type { InvoiceDisplayUnitView, LineComponentView } from "@routeflow/types";
 import { componentSubLineTexts } from "./line-components";
 
 /**
@@ -57,4 +58,93 @@ export function priceUnitSuffix(
   if (item.unitLabel) return ` / ${item.unitLabel}`;
   if (item.unit) return ` / ${item.unit}`;
   return "";
+}
+
+const money2 = (n: number): string => `$${n.toFixed(2)}`;
+const money4 = (n: number): string => `$${n.toFixed(4)}`;
+
+/**
+ * SA-827: the text around an invoice item's own card. All amounts and unit prices come from
+ * `invoiceDisplayLines` (@routeflow/pricing); this only formats them.
+ * - `today`: `subLines` are the existing component sub-lines (identical to `invoiceLineSubLines`).
+ * - `pieces`: `pieces` swaps ONLY the qty/price text of the card's meta line; the discount, notes,
+ *   MSRP and free-units lines stay.
+ * - `components`: `leading` is one row per component (printed BEFORE the card's own lines, which are
+ *   the group), `trailing` the category-tax line (printed AFTER them). No sub-lines.
+ */
+export function invoiceDisplayRowTexts(item: {
+  description: string;
+  qty: number | string;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+  unitLabel?: string | null;
+  unitPrice: number | string;
+  subtotal: number | string;
+  categoryTax?: { name: string; amount: number | string } | null;
+  components?: ReadonlyArray<LineComponentView> | null;
+  displayUnit?: InvoiceDisplayUnitView | null;
+}): {
+  layout: "today" | "pieces" | "components";
+  leading: string[];
+  subLines: string[];
+  pieces: { qtyText: string; priceText: string } | null;
+  trailing: string[];
+} {
+  const res = invoiceDisplayLines(
+    {
+      description: item.description,
+      qty: Number(item.qty),
+      boxes: item.boxes,
+      pieces: item.pieces,
+      unitsPerBox: item.unitsPerBox,
+      unitLabel: item.unitLabel,
+      unitPrice: Number(item.unitPrice),
+      subtotal: Number(item.subtotal),
+      categoryTax: item.categoryTax
+        ? { name: item.categoryTax.name, amount: Number(item.categoryTax.amount) }
+        : null,
+    },
+    (item.components ?? []).map((c) => ({
+      componentProductId: c.componentProductId,
+      name: c.name,
+      qty: Number(c.qty),
+      unitSku: c.unitSku,
+      unitBarcode: c.unitBarcode,
+      displayUnitPrice4: c.displayUnitPrice4 == null ? null : Number(c.displayUnitPrice4),
+      position: c.position,
+    })),
+    item.displayUnit,
+  );
+  if (res.layout === "today") {
+    return { layout: "today", leading: [], subLines: res.subLines, pieces: null, trailing: [] };
+  }
+  if (res.layout === "pieces") {
+    return {
+      layout: "pieces",
+      leading: [],
+      subLines: [],
+      pieces: {
+        qtyText: `${res.qty} ${plural(res.unitLabel, res.qty)}`,
+        priceText: money4(res.unitPrice),
+      },
+      trailing: [],
+    };
+  }
+  const leading = res.rows.map((r) => {
+    const tail = [r.unitSku ? `SKU ${r.unitSku}` : null, r.unitBarcode].filter(Boolean);
+    return (
+      `${r.name} × ${r.qty} ${plural(r.unitLabel, r.qty)} @ ${money4(r.unitPrice)} — ${money2(r.amount)}` +
+      (tail.length ? ` | ${tail.join(" | ")}` : "")
+    );
+  });
+  return {
+    layout: "components",
+    leading,
+    subLines: [],
+    pieces: null,
+    trailing: res.categoryTax
+      ? [`${res.categoryTax.label} — ${money2(res.categoryTax.amount)}`]
+      : [],
+  };
 }

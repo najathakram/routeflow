@@ -57,12 +57,13 @@ import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
 import { alertInfo, confirm, chooseAction } from "../../../../lib/confirm";
 import {
-  invoiceLineSubLines,
+  invoiceDisplayRowTexts,
   invoiceLineUnitNoun,
   usesUnitDisplay,
 } from "../../../../lib/invoice-line-display";
 import { invoiceTaxLines } from "../../../../lib/invoice-tax-lines";
-import { invoiceLineQtyText } from "@routeflow/pricing";
+import { invoiceDisplayCategoryTax, invoiceLineQtyText } from "@routeflow/pricing";
+import type { InvoiceDisplayUnitView } from "@routeflow/types";
 import { shipmentSaveDecision } from "@routeflow/types/shipment-save";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
@@ -88,6 +89,12 @@ type PaymentImageFields = { imageKey?: string | null };
 // but admin.ts's AdminInvoice.items doesn't declare it yet. Widen locally
 // rather than touching admin.ts (out of scope for this change).
 type ItemMsrpField = { msrp?: number | null };
+// SA-827: the API sends `displayUnit` on each item; admin.ts's type doesn't declare it yet.
+type ItemCategoryTaxField = {
+  categoryTaxAmount?: number | string | null;
+  trackedCategory?: { name?: string | null } | null;
+};
+type ItemDisplayUnitField = { displayUnit?: InvoiceDisplayUnitView | null };
 
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -881,6 +888,11 @@ export default function InvoiceDetailScreen() {
               <Text style={styles.cardTitle}>Items</Text>
               {invoice.items.map((it, i) => {
                 const itemMsrp = (it as typeof it & ItemMsrpField).msrp;
+                const displayRows = invoiceDisplayRowTexts({
+                  ...it,
+                  displayUnit: (it as typeof it & ItemDisplayUnitField).displayUnit,
+                  categoryTax: invoiceDisplayCategoryTax(it as typeof it & ItemCategoryTaxField),
+                });
                 return (
                   <View
                     key={it.id}
@@ -896,16 +908,27 @@ export default function InvoiceDetailScreen() {
                       <Text style={styles.itemName} numberOfLines={1}>
                         {it.description}
                       </Text>
+                      {displayRows.leading.map((text, i) => (
+                        <Text
+                          key={`row-${i}`}
+                          style={styles.itemSub}
+                          testID="display-component-row"
+                        >
+                          {text}
+                        </Text>
+                      ))}
                       <Text style={styles.itemSub}>
-                        {usesUnitDisplay(it)
-                          ? // Boxed line: unitPrice is the BOX price — "qty × price"
-                            // would read as pieces × box-price (visually wrong). B653:
-                            // both the qty noun and the price-per-unit noun read the
-                            // line's own unitLabel ("Case"), not a hardcoded "box".
-                            // #1275: a factor-1 unit line (no split) also routes here —
-                            // usesUnitDisplay catches it via unitLabel alone.
-                            `${invoiceLineQtyText(it)} @ ${fmtCurrency(it.unitPrice)}/${invoiceLineUnitNoun(it)}`
-                          : `${it.qty} × ${fmtCurrency(it.unitPrice)}`}
+                        {displayRows.pieces
+                          ? `${displayRows.pieces.qtyText} @ ${displayRows.pieces.priceText}`
+                          : usesUnitDisplay(it)
+                            ? // Boxed line: unitPrice is the BOX price — "qty × price"
+                              // would read as pieces × box-price (visually wrong). B653:
+                              // both the qty noun and the price-per-unit noun read the
+                              // line's own unitLabel ("Case"), not a hardcoded "box".
+                              // #1275: a factor-1 unit line (no split) also routes here —
+                              // usesUnitDisplay catches it via unitLabel alone.
+                              `${invoiceLineQtyText(it)} @ ${fmtCurrency(it.unitPrice)}/${invoiceLineUnitNoun(it)}`
+                            : `${it.qty} × ${fmtCurrency(it.unitPrice)}`}
                       </Text>
                       {/* Suggested retail price snapshot — per PIECE, display-only. */}
                       {itemMsrp != null ? (
@@ -930,8 +953,13 @@ export default function InvoiceDetailScreen() {
                           {it.notes}
                         </Text>
                       ) : null}
-                      {invoiceLineSubLines(it).map((text, i) => (
+                      {displayRows.subLines.map((text, i) => (
                         <Text key={i} style={styles.itemSub} testID="line-component-sub-line">
+                          {text}
+                        </Text>
+                      ))}
+                      {displayRows.trailing.map((text, i) => (
+                        <Text key={`tax-${i}`} style={styles.itemSub} testID="display-category-tax">
                           {text}
                         </Text>
                       ))}
