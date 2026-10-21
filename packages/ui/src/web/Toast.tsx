@@ -140,7 +140,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             </RadixToast.Root>
           );
         })}
-        <RadixToast.Viewport className="fixed bottom-4 right-4 z-[100] flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-2 outline-none" />
+        <RadixToast.Viewport className="fixed bottom-[max(1rem,var(--toast-bottom-inset,1rem))] right-4 z-[100] flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-2 outline-none" />
       </RadixToast.Provider>
     </ToastContext.Provider>
   );
