@@ -69,7 +69,7 @@ export default function BuyerCartPage() {
   const [notes, setNotes] = React.useState("");
   const [deliveryDate, setDeliveryDate] = React.useState("");
   const [urgent, setUrgent] = React.useState(false);
-  const [forceNew, setForceNew] = useBuyerCartForceNew(buyer?.id, sellerSlug);
+  const [forceNew, setForceNew] = useBuyerCartForceNew(buyer?.id, sellerSlug, cart.items.length);
   const [orderPlaced, setOrderPlaced] = React.useState<{ id: string; orderNumber: string } | null>(
     null,
   );

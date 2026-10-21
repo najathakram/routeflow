@@ -11,14 +11,33 @@ function intentKey(buyerAccountId: string, sellerSlug: string) {
   return `buyerCartForceNew_${buyerAccountId}_${sellerSlug}`;
 }
 
-export function useBuyerCartForceNew(buyerAccountId?: string, sellerSlug?: string) {
+/** Row 604 S8: a stored choice older than this is stale (a different day's cart) and is dropped. */
+export const FORCE_NEW_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** The choice is stored as the time it was made; a legacy "1" has no time, so it counts as expired. */
+function isFresh(raw: string | null): boolean {
+  const at = Number(raw);
+  return Number.isFinite(at) && at > 1_000_000_000_000 && Date.now() - at < FORCE_NEW_TTL_MS;
+}
+
+/** `cartCount` (optional): the choice is cleared when a cart that had lines becomes empty. */
+export function useBuyerCartForceNew(
+  buyerAccountId?: string,
+  sellerSlug?: string,
+  cartCount?: number,
+) {
   const key = buyerAccountId && sellerSlug ? intentKey(buyerAccountId, sellerSlug) : null;
   const [forceNew, setState] = React.useState(false);
 
   React.useEffect(() => {
     if (!key) return;
     try {
-      setState(window.localStorage.getItem(key) === "1");
+      const raw = window.localStorage.getItem(key);
+      if (isFresh(raw)) setState(true);
+      else {
+        setState(false);
+        if (raw !== null) window.localStorage.removeItem(key);
+      }
     } catch {
       // storage blocked: the in-memory choice still holds for this mount
     }
@@ -29,7 +48,7 @@ export function useBuyerCartForceNew(buyerAccountId?: string, sellerSlug?: strin
       setState(next);
       if (!key) return;
       try {
-        if (next) window.localStorage.setItem(key, "1");
+        if (next) window.localStorage.setItem(key, String(Date.now()));
         else window.localStorage.removeItem(key);
       } catch {
         // storage full or blocked
@@ -37,6 +56,14 @@ export function useBuyerCartForceNew(buyerAccountId?: string, sellerSlug?: strin
     },
     [key],
   );
+
+  // Only a cart that HAD lines and is now empty clears it: the first render is empty before the cart hydrates.
+  const prevCount = React.useRef<number | undefined>(undefined);
+  React.useEffect(() => {
+    if (cartCount === undefined) return;
+    if ((prevCount.current ?? 0) > 0 && cartCount === 0) setForceNew(false);
+    prevCount.current = cartCount;
+  }, [cartCount, setForceNew]);
 
   return [forceNew, setForceNew] as const;
 }
