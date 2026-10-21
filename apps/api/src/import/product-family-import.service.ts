@@ -61,7 +61,7 @@ export type FamilyDecision =
   | { skip: string }
   | {
       skip?: undefined;
-      existing: any | null;
+      existing: any;
       target: FamilyTarget;
       label: string;
       info: ImportFamilyRowInfo;
