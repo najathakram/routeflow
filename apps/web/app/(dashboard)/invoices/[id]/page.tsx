@@ -112,6 +112,12 @@ import { voidFailureDescription } from "@/lib/invoice-void-copy";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 import { paymentMayBeRecordedCopy, usePaymentSubmitKey } from "@/lib/payment-submit-key";
+import {
+  usePaymentStatusCheck,
+  type PaymentStatusCheck as PaymentStatusCheckState,
+} from "@/lib/use-payment-status-check";
+import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
+import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -364,12 +370,15 @@ function RecordPaymentModal({
   onRecord,
   balanceDue,
   isPending,
+  statusCheck,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onRecord: (data: PaymentFormState, file: File | null) => void;
   balanceDue: number;
   isPending: boolean;
+  /** SA-824: the unknown-outcome "Check payment status" state (Record is off while it is unknown). */
+  statusCheck: PaymentStatusCheckState;
 }) {
   const [form, setForm] = React.useState<PaymentFormState>({
     method: "ACH",
@@ -420,13 +429,19 @@ function RecordPaymentModal({
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
             Cancel
           </Button>
-          <Button type="submit" form="invoice-payment-form" loading={isPending}>
+          <Button
+            type="submit"
+            form="invoice-payment-form"
+            loading={isPending}
+            disabled={statusCheck.unknown}
+          >
             Record Payment
           </Button>
         </>
       }
     >
       <form id="invoice-payment-form" onSubmit={handleSubmit} noValidate className="space-y-4">
+        <PaymentStatusCheck status={statusCheck} />
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Method</label>
           <select
@@ -1441,6 +1456,15 @@ export default function InvoiceDetailPage() {
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const paymentKey = usePaymentSubmitKey(isPaymentOpen); // SA-824: one Idempotency-Key per open
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
+  const paymentStatus = usePaymentStatusCheck(
+    paymentKey,
+    () => {
+      setIsPaymentOpen(false);
+      toast({ title: PAYMENT_STATUS_COPY.recorded, variant: "success" });
+    },
+    isPaymentOpen,
+  );
   // Payment row whose "Remove credit" was clicked — confirm before un-applying.
   const [removingCreditPayment, setRemovingCreditPayment] = React.useState<InvoicePayment | null>(
     null,
@@ -2835,6 +2859,7 @@ export default function InvoiceDetailPage() {
         onRecord={handleRecordPayment}
         balanceDue={balanceDue}
         isPending={recordPayment.isPending}
+        statusCheck={paymentStatus}
       />
 
       {isAdvanceOpen && invoice.customerId && (

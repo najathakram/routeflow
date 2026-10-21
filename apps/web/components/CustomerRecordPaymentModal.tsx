@@ -14,6 +14,9 @@ import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payme
 import { fmt } from "@/lib/formatting";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { usePaymentSubmitKey } from "@/lib/payment-submit-key";
+import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
+import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
+import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 import { clampAllocationInput } from "@/lib/payment-allocation";
 import {
   SELECTABLE_PAYMENT_METHODS,
@@ -64,6 +67,12 @@ export function CustomerRecordPaymentModal({
   const { toast } = useToast();
   const record = useRecordPaymentStandalone();
   const paymentKey = usePaymentSubmitKey(true); // SA-824: one Idempotency-Key per open (mounted per open)
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
+  const statusCheck = usePaymentStatusCheck(paymentKey, () => {
+    toast({ title: PAYMENT_STATUS_COPY.recorded, variant: "success" });
+    onSuccess?.();
+    onClose();
+  });
   const uploadPaymentImage = useUploadPaymentImage();
   const [totalAmount, setTotalAmount] = React.useState("");
   const [bankCharges, setBankCharges] = React.useState("");
@@ -392,6 +401,9 @@ export function CustomerRecordPaymentModal({
           </div>
         </div>
 
+        <div className="px-6 pb-2">
+          <PaymentStatusCheck status={statusCheck} />
+        </div>
         <div className="flex items-center justify-end gap-3 border-t border-surface-border px-6 py-4">
           <Button variant="secondary" onClick={onClose} disabled={record.isPending}>
             Cancel
@@ -400,14 +412,14 @@ export function CustomerRecordPaymentModal({
             variant="secondary"
             onClick={() => void handleSave("DRAFT")}
             loading={record.isPending}
-            disabled={totals.overAllocated}
+            disabled={totals.overAllocated || statusCheck.unknown}
           >
             Save as draft
           </Button>
           <Button
             onClick={() => void handleSave("PAID")}
             loading={record.isPending}
-            disabled={totals.overAllocated}
+            disabled={totals.overAllocated || statusCheck.unknown}
           >
             Save as Paid
           </Button>

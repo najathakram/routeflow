@@ -34,6 +34,9 @@ import {
 } from "@/lib/payment-methods";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { usePaymentSubmitKey } from "@/lib/payment-submit-key";
+import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
+import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
+import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -67,6 +70,11 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const { toast } = useToast();
   const record = useRecordPaymentStandalone();
   const paymentKey = usePaymentSubmitKey(true); // SA-824: one Idempotency-Key per open (mounted per open)
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
+  const statusCheck = usePaymentStatusCheck(paymentKey, () => {
+    toast({ title: PAYMENT_STATUS_COPY.recorded, variant: "success" });
+    onClose();
+  });
   const uploadPaymentImage = useUploadPaymentImage();
   const { data: customersData } = useCustomers({ limit: 200 });
   const [customerId, setCustomerId] = React.useState("");
@@ -429,6 +437,9 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
+        <div className="px-6 pb-2">
+          <PaymentStatusCheck status={statusCheck} />
+        </div>
         <div className="flex items-center justify-end gap-3 border-t border-surface-border px-6 py-4">
           <button
             onClick={onClose}
@@ -438,14 +449,14 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
           </button>
           <button
             onClick={() => handleSave("DRAFT")}
-            disabled={record.isPending || overAllocated}
+            disabled={record.isPending || overAllocated || statusCheck.unknown}
             className="rounded-lg border border-surface-border px-4 py-2 text-sm text-navy hover:bg-surface-raised disabled:opacity-50"
           >
             Save as draft
           </button>
           <button
             onClick={() => handleSave("PAID")}
-            disabled={record.isPending || overAllocated}
+            disabled={record.isPending || overAllocated || statusCheck.unknown}
             className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
           >
             {record.isPending ? "Saving..." : "Save as Paid"}

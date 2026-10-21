@@ -170,6 +170,9 @@ import { focusRefusedContactField } from "@/lib/refused-text-field";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, WriteLink } from "@/lib/read-only-gate";
 import { usePaymentSubmitKey } from "@/lib/payment-submit-key";
+import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
+import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
+import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -2160,6 +2163,15 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   // Advance payment
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
   const advanceKey = usePaymentSubmitKey(isAdvanceOpen); // SA-824: one Idempotency-Key per open
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
+  const advanceStatus = usePaymentStatusCheck(
+    advanceKey,
+    () => {
+      setIsAdvanceOpen(false);
+      toast({ title: PAYMENT_STATUS_COPY.recorded, variant: "success" });
+    },
+    isAdvanceOpen,
+  );
   const [advanceForm, setAdvanceForm] = React.useState<{
     method: SelectablePaymentMethod;
     amount: string;
@@ -3862,6 +3874,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 </Button>
                 <Button
                   loading={createAdvance.isPending}
+                  disabled={advanceStatus.unknown}
                   onClick={() => {
                     const amt = parseFloat(advanceForm.amount);
                     if (!amt || amt <= 0) return;
@@ -3884,6 +3897,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             }
           >
             <div className="space-y-4">
+              <PaymentStatusCheck status={advanceStatus} />
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">
                   Payment Method
