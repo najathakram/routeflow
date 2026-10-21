@@ -7,7 +7,6 @@ import type {
 import { apiClient } from "../api-client";
 import { getOrderSubmitKey, resetOrderSubmitKey } from "../order-submit-key";
 import { invalidateOrderCaches } from "./orders";
-import { splitIdAck, type IdWithAck } from "../restriction-warning";
 import {
   POS_MODE_PREF_KEY,
   pendingRefusalIsDone,

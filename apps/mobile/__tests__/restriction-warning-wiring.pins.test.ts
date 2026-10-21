@@ -84,7 +84,10 @@ describe("row 510: every mobile staff write flow uses the warning hook (search-d
     const ord = read("app/(operator)/(tabs)/orders/[id].tsx");
     expect(ord).toMatch(/reopenMut\.mutate\(rw\.attach\(order\.id\)/);
     expect(ord).toMatch(/changeMut\.mutate\(\s*rw\.attach\(/);
-    expect(ord).toMatch(/switchToDeliveryMut\.mutate\(rw\.attach\(order\.id\)/);
+    // master's one move-off-pickup handler (ROUTE or SHIP) carries the ack
+    expect(ord).toMatch(
+      /moveOffPickupMut\.mutate\(rw\.attach\(\{ id: order\.id, fulfillPath: path \}\)/,
+    );
   });
 
   it("the driver path of New order still reaches the 'Ask the office' block through the same hook", () => {
