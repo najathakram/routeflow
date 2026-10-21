@@ -1,5 +1,5 @@
 import * as React from "react";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { Providers } from "@/app/providers";
 import { seedSession } from "@/test-utils/session";
 import OrderDetailPage from "./page";
@@ -84,5 +84,50 @@ describe("Removing a line offers Undo (F22)", () => {
     expect(removed?.action?.label).toBe("Undo");
     act(() => removed.action.onClick());
     expect(screen.getByRole("spinbutton", { name: /qty/i })).toHaveValue(10);
+  });
+  it("an Undo from before a Save is dropped: it never re-adds the saved-away line in a later edit (row 604 S4)", async () => {
+    const twoLines = {
+      ...baseOrder,
+      lineItems: [
+        ...baseOrder.lineItems,
+        {
+          id: "li-2",
+          productId: "p2",
+          product: { id: "p2", name: "Gadget", unit: "each", unitsPerBox: null },
+          qty: 4,
+          unitPrice: 3,
+          status: "CONFIRMED",
+        },
+      ],
+    };
+    let saved = false;
+    get.mockImplementation((url: string) => {
+      if (url === "/orders/o1")
+        return Promise.resolve({
+          data: saved ? { ...twoLines, lineItems: [twoLines.lineItems[1]] } : twoLines,
+        });
+      if (url === "/tenants/me/addons") return Promise.resolve({ data: { addons: [] } });
+      return Promise.resolve({ data: [] });
+    });
+    patch.mockImplementation(() => {
+      saved = true;
+      return Promise.resolve({ data: {} });
+    });
+    render(
+      <Providers>
+        <OrderDetailPage />
+      </Providers>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /edit items/i }));
+    await screen.findByRole("button", { name: /^save changes$/i });
+    fireEvent.click(screen.getAllByTitle("Delete item")[0]);
+    const removed = mockToast.mock.calls.map((c) => c[0]).find((t) => /removed/i.test(t.title));
+    fireEvent.click(screen.getByRole("button", { name: /^save changes$/i }));
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    fireEvent.click(await screen.findByRole("button", { name: /edit items/i }));
+    await screen.findByRole("button", { name: /^save changes$/i });
+    expect(screen.getAllByRole("spinbutton", { name: /qty/i })).toHaveLength(1);
+    act(() => removed.action.onClick());
+    expect(screen.getAllByRole("spinbutton", { name: /qty/i })).toHaveLength(1);
   });
 });

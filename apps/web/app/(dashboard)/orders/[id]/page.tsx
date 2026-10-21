@@ -1774,6 +1774,11 @@ export default function OrderDetailPage() {
     editItems.map((it) => it.productId),
   );
   const [pendingDeletes, setPendingDeletes] = React.useState<string[]>([]);
+  // Row 604 S4: bumped each time edit mode opens or closes (save, publish, cancel, discard).
+  const editSessionRef = React.useRef(0);
+  React.useEffect(() => {
+    editSessionRef.current += 1;
+  }, [isEditing]);
   const [draftAutoEntered, setDraftAutoEntered] = React.useState(false);
   // Staff-editable shipping fee (operator/tenant-admin only page). Initialized from
   // the stored order fee whenever edit mode opens; never taxed.
@@ -1982,6 +1987,8 @@ export default function OrderDetailPage() {
   }
 
   function handleDeleteItem(id: string) {
+    // Row 604 S4: an Undo belongs to the edit session that removed the line; once that session saves or ends it is dropped.
+    const sessionAtRemove = editSessionRef.current;
     const index = editItems.findIndex((it) => it.id === id);
     const item = editItems[index];
     if (!item) return;
@@ -1998,6 +2005,7 @@ export default function OrderDetailPage() {
       action: {
         label: "Undo",
         onClick: () => {
+          if (editSessionRef.current !== sessionAtRemove) return;
           setPendingDeletes((prev) => prev.filter((x) => x !== id));
           setEditItems((prev) => {
             if (prev.some((it) => it.id === id)) return prev;
