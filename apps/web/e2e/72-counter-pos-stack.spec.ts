@@ -385,4 +385,36 @@ test.describe("R7b till: change due note and the keyboard path to pay", () => {
       }
     });
   }
+
+  test("a walk-in line in a licence category shows its note before any Complete @ 1280", async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await setTenantCookie(context, BASE);
+    const { api, headers } = await discover(page);
+    const cats: any = await (
+      await page.request.get(`${api}/tracked-categories`, { headers })
+    ).json();
+    const licensed = (Array.isArray(cats) ? cats : []).find(
+      (c: any) => c?.requiresLicense && c?.active,
+    );
+    test.skip(!licensed, "the test tenant has no licence-needing category with a product");
+    const prods: any = await (
+      await page.request.get(`${api}/products`, { headers, params: { limit: "100" } })
+    ).json();
+    const item = (prods?.data ?? []).find(
+      (p: any) => p?.isActive !== false && p?.trackedCategoryId === licensed.id && p?.sku,
+    );
+    test.skip(!item, "no active product with a SKU in the licence category");
+    await page.goto("/orders/counter-sale");
+    const scanField = page.getByLabel("Scan or search items");
+    await expect(scanField).toBeVisible({ timeout: 15_000 });
+    await scanField.fill(String(item.sku));
+    await scanField.press("Enter");
+    await expect(page.getByTestId("line-license-note")).toContainText("Needs a licensed customer", {
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId("counter-license-note")).toHaveCount(1);
+  });
 });

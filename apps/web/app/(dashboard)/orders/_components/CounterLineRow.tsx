@@ -184,12 +184,16 @@ function LineQtyEditor({
  * One cart line. Top row: name + quantity label, subtotal, remove. Below: the stepper and the note. `locked` disables EVERY
  * control on the line (an unknown outcome, or the sale POST in flight).
  */
+/** R7b 1.4: the one sentence (a line and the Payment area both say it; the server refusal at Complete stays authoritative). */
+export const COUNTER_LICENSE_NOTE = "Needs a licensed customer: choose one before paying";
+
 export function CounterLineRow({
   line: l,
   locked,
   onStep,
   onRemove,
   onNote,
+  needsLicense,
   onQty,
   canEditPrices = false,
   priceTier = 1,
@@ -206,6 +210,8 @@ export function CounterLineRow({
   onStep: (tempId: string, unit: StepUnit, dir: 1 | -1) => void;
   onRemove: (tempId: string) => void;
   onNote: (tempId: string, note: string) => void;
+  /** R7b 1.4: a walk-in sale holds a line that needs a licensed customer: show the one amber note on the line. */
+  needsLicense?: boolean;
   onQty: (tempId: string, typed: TypedQty) => boolean;
   /** POS-5: the ONE gate (`staffMay(role, "EDIT_LINE_PRICE")`). False = the price control does not exist (hidden, never disabled). */
   canEditPrices?: boolean;
@@ -351,6 +357,11 @@ export function CounterLineRow({
       ) : hasNote ? (
         <p className="break-words text-xs text-navy/70" data-testid="line-note">
           {l.note}
+        </p>
+      ) : null}
+      {needsLicense ? (
+        <p className="text-xs text-amber-800" data-testid="line-license-note">
+          {COUNTER_LICENSE_NOTE}
         </p>
       ) : null}
     </li>

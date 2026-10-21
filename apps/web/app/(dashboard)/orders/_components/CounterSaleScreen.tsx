@@ -97,7 +97,7 @@ import { scrollPageToTop } from "@/lib/scroll-top";
 import { useCounterLiveCart } from "./useCounterLiveCart";
 import { liveCartKey } from "@/lib/counter-live-cart-keys";
 import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
-import { CounterLineRow } from "./CounterLineRow";
+import { COUNTER_LICENSE_NOTE, CounterLineRow } from "./CounterLineRow";
 import type { CounterPriceEdit } from "./CounterLinePriceEdit";
 import {
   applyPriceEdit,
@@ -407,6 +407,12 @@ export function CounterSaleScreen() {
     categories,
     isTaxExempt: customer?.isTaxExempt === true,
   });
+  // R7b 1.4: a walk-in sale cannot carry a licence-needing line. Say so at add (the server check at Complete stays authoritative).
+  const needsLicense = (l: SaleLine) =>
+    customer === null &&
+    !!l.trackedCategoryId &&
+    categories.get(l.trackedCategoryId)?.requiresLicense === true;
+  const licenseNeeded = lines.some(needsLicense);
   const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
 
@@ -1304,6 +1310,7 @@ export function CounterSaleScreen() {
               <CounterLineRow
                 key={l.tempId}
                 line={l}
+                needsLicense={needsLicense(l)}
                 locked={lineLocked}
                 onStep={stepItem}
                 onRemove={removeLine}
@@ -1359,6 +1366,11 @@ export function CounterSaleScreen() {
         >
           {/* payment on the same screen */}
           <section ref={paymentRef} aria-label="Payment" className="space-y-3">
+            {licenseNeeded ? (
+              <p className="text-sm text-amber-800" data-testid="counter-license-note">
+                {COUNTER_LICENSE_NOTE}
+              </p>
+            ) : null}
             <div
               className="flex flex-wrap gap-2"
               role="radiogroup"

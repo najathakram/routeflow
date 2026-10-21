@@ -74,6 +74,7 @@ const CATEGORIES = [
     taxType: "EXCISE_PER_UNIT",
     rate: "0.5000",
     priceIncludesTax: false,
+    requiresLicense: true,
     active: true,
   },
 ];
@@ -159,5 +160,39 @@ describe("a regulated line waits for the categories before it can be paid (fail-
         "Still loading the regulated charges. Try again in a moment.",
       ),
     );
+  });
+});
+
+describe("R7b 1.4: a licence-needing line says so at add, for a walk-in", () => {
+  const NOTE = "Needs a licensed customer: choose one before paying";
+
+  it("a walk-in line in a licence category says it needs a licensed customer at add", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
+    expect(screen.queryByTestId("line-license-note")).toBeNull();
+    await scan("CIGAR");
+    await waitFor(() => expect(screen.getAllByTestId("line-license-note")).toHaveLength(1));
+    expect(screen.getByTestId("line-license-note")).toHaveTextContent(NOTE);
+    // the Payment area says it once, not per line
+    await scan("CIGAR");
+    await waitFor(() => expect(screen.getByTestId("counter-license-note")).toHaveTextContent(NOTE));
+    expect(screen.getAllByTestId("counter-license-note")).toHaveLength(1);
+  });
+
+  it("an account customer sees no add-time note", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("CIGAR");
+    await waitFor(() => expect(screen.getByTestId("line-license-note")).toBeInTheDocument());
+    pick("Taxed Cafe");
+    await waitFor(() => expect(screen.queryByTestId("line-license-note")).toBeNull());
+    expect(screen.queryByTestId("counter-license-note")).toBeNull();
+  });
+
+  it("a walk-in line in a category that needs no licence has no note", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("SODA");
+    await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
+    expect(screen.queryByTestId("line-license-note")).toBeNull();
   });
 });
