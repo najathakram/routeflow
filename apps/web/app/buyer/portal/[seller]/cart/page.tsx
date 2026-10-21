@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
+import { useBuyerCartForceNew } from "@/lib/buyer-cart-intent";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import {
   BUYER_QTY_SPLIT_MISMATCH_COPY,
@@ -68,7 +69,7 @@ export default function BuyerCartPage() {
   const [notes, setNotes] = React.useState("");
   const [deliveryDate, setDeliveryDate] = React.useState("");
   const [urgent, setUrgent] = React.useState(false);
-  const [forceNew, setForceNew] = React.useState(false);
+  const [forceNew, setForceNew] = useBuyerCartForceNew(buyer?.id, sellerSlug);
   const [orderPlaced, setOrderPlaced] = React.useState<{ id: string; orderNumber: string } | null>(
     null,
   );
@@ -256,6 +257,7 @@ export default function BuyerCartPage() {
 
       // Clear cart ONLY after confirmed success to avoid data loss on network failure
       cart.clearCart();
+      setForceNew(false);
 
       if (willMerge && activeOrder) {
         router.push(`/buyer/portal/${sellerSlug}/orders/${activeOrder.id}`);
@@ -701,13 +703,13 @@ export default function BuyerCartPage() {
           <div className="space-y-2">
             <SellerUnavailableLine className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/80" />
             <Button
-              className="w-full bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
+              className="min-h-[44px] w-full bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
               onClick={handlePlaceOrder}
               loading={createOrder.isPending}
               disabled={createOrder.isPending || !sellerAccepting}
               aria-describedby={sellerAccepting ? undefined : "seller-unavailable-line"}
             >
-              {willMerge ? "Add to existing order" : "Place Order"}
+              {willMerge ? "Add to existing order" : "Place order"}
             </Button>
           </div>
 
