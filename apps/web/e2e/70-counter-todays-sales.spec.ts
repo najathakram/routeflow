@@ -21,6 +21,12 @@ const ROW = {
   status: "DELIVERED",
   paymentState: "PAID",
   methods: [{ method: "CASH", amount: 22.5 }],
+  items: [
+    { name: "Cola 12oz Can", qty: 2 },
+    { name: "Ice Bag 10lb", qty: 1 },
+    { name: "Chips", qty: 1 },
+  ],
+  itemCount: 3,
   returned: { amount: 0, state: "NONE", returns: [] },
   voided: false,
 };
@@ -89,6 +95,10 @@ for (const [name, width, height] of [
       const box = await row.getByRole("button", { name }).boundingBox();
       expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
     }
+    // R7b 2.1: the row names what was sold, on one line, with no horizontal overflow (checked above)
+    await expect(row.getByTestId("today-row-items")).toHaveText(
+      "Cola 12oz Can ×2, Ice Bag 10lb +1 more",
+    );
     const link = await row.getByRole("link", { name: "View order" }).boundingBox();
     expect(link?.height ?? 0).toBeGreaterThanOrEqual(44);
     await expect(page.getByTestId("today-row-e2e-o2").getByText("Voided")).toBeVisible();
@@ -126,4 +136,45 @@ test("reprint prints on 80 mm paper with no Tendered or Change", async ({
   await expect(page.getByTestId("counter-payment-column")).toBeHidden();
   await expect(page.getByRole("button", { name: /^Complete/ })).toHaveCount(0);
   await expect(root).toBeVisible();
+});
+
+test("R7b 2.2: the Void dialog title names the sale total", async ({ page, context, baseURL }) => {
+  await setTenantCookie(context, baseURL ?? "");
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await openSheet(page);
+  await page
+    .getByTestId("today-row-e2e-o1")
+    .getByRole("button", { name: /^Void sale/ })
+    .click();
+  await expect(page.getByRole("dialog", { name: /Void sale/ })).toContainText("$");
+});
+
+test("R7b 2.4: on a day with 7 sales the first sale row is visible without scrolling at 390", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await setTenantCookie(context, baseURL ?? "");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const rows = Array.from({ length: 7 }, (_, i) => ({
+    ...ROW,
+    orderId: `e2e-d${i + 1}`,
+    orderNumber: `ORD-E2E-D${i + 1}`,
+    voided: false,
+  }));
+  await page.route(/\/api\/v1\/orders\/counter-sale\/today/, (r) =>
+    r.fulfill({
+      json: {
+        ...PAGE1,
+        data: rows,
+        meta: { ...PAGE1.meta, total: 7 },
+        summary: { ...PAGE1.summary, sales: { count: 7, total: 157.5 } },
+      },
+    }),
+  );
+  await page.goto("/orders/counter-sale");
+  await page.getByRole("button", { name: "Today's sales" }).click();
+  await expect(page.getByTestId("today-summary")).toBeVisible();
+  await expect(page.getByTestId("today-row-e2e-d1")).toBeInViewport();
+  await expect(page.getByRole("button", { name: "Show all figures" })).toBeVisible();
 });
