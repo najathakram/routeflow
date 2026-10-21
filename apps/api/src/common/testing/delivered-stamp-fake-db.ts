@@ -30,7 +30,13 @@ export type FakeOrder = {
   routeRunStopId: string | null;
   deliveredAt: Date | null;
 };
-export type FakeState = { order: FakeOrder; lines: FakeLine[]; mutations: FakeMutation[] };
+export type FakeAudit = Record<string, any>;
+export type FakeState = {
+  order: FakeOrder;
+  lines: FakeLine[];
+  mutations: FakeMutation[];
+  audits: FakeAudit[];
+};
 
 export function makeStampDb(seed: {
   status?: string;
@@ -48,12 +54,14 @@ export function makeStampDb(seed: {
     },
     lines: seed.lines.map((l) => ({ status: "PENDING", orderId: "o1", ...l })),
     mutations: (seed.mutations ?? []).map((m) => ({ orderId: "o1", ...m })),
+    audits: [],
   };
   const calls = { txCount: 0, lineWrites: 0 };
   const clone = (s: FakeState): FakeState => ({
     order: { ...s.order },
     lines: s.lines.map((l) => ({ ...l })),
     mutations: s.mutations.map((m) => ({ ...m })),
+    audits: s.audits.map((a) => ({ ...a })),
   });
   const delegates = (state: FakeState, inTx: boolean) => ({
     order: {
@@ -90,6 +98,13 @@ export function makeStampDb(seed: {
         return { ...data };
       },
     },
+    // row 587 (SA-833 a): the office-completion audit rows
+    auditLog: {
+      create: async ({ data }: any) => {
+        state.audits.push({ ...data });
+        return { ...data };
+      },
+    },
     invoice: { findMany: async () => [] },
   });
   const prisma: any = {
@@ -102,6 +117,7 @@ export function makeStampDb(seed: {
       committed.order = draft.order; // commit only when the callback resolved
       committed.lines = draft.lines;
       committed.mutations = draft.mutations;
+      committed.audits = draft.audits;
       return result;
     },
   };

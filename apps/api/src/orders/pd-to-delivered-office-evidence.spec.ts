@@ -77,6 +77,36 @@ describe("row 587: PD -> DELIVERED completes the office-evidenced lines", () => 
     });
   });
 
+  it("SA-833 (a): each completed line is audited ('line X: 6 -> 10, office completion') and named in the response", async () => {
+    const db = makeStampDb({
+      status: "PARTIALLY_DELIVERED",
+      lines: [{ id: "a", qty: 10, deliveredQty: 6 }],
+      mutations: [officeRow("a", 6)],
+    });
+    const res: any = await updateStatusWithShipMarker(
+      { prisma: db.prisma },
+      { ...order(db), status: OrderStatus.PARTIALLY_DELIVERED },
+      { status: OrderStatus.DELIVERED },
+      { sub: "u1", impersonatedBy: "sa1" } as never,
+      buildStatusUpdateData(order(db) as never, OrderStatus.DELIVERED, {
+        isDeliveredDemotion: false,
+      }),
+    );
+    expect(res.officeCompletedLines).toEqual([
+      { lineId: "a", from: 6, to: 10, summary: "line a: 6 -> 10, office completion" },
+    ]);
+    expect(db.committed.audits).toHaveLength(1);
+    expect(db.committed.audits[0]).toMatchObject({
+      tenantId: "t1",
+      userId: "u1",
+      impersonatedBy: "sa1",
+      action: "order.line-office-completed",
+      entityType: "Order",
+      entityId: "o1",
+      meta: { lineId: "a", from: 6, to: 10, summary: "line a: 6 -> 10, office completion" },
+    });
+  });
+
   it("a fractional remainder is exact (3 of 7.5 leaves 4.5)", async () => {
     const db = makeStampDb({
       status: "PARTIALLY_DELIVERED",
@@ -97,9 +127,11 @@ describe("row 587: PD -> DELIVERED completes the office-evidenced lines", () => 
     await deliver(db, OrderStatus.PARTIALLY_DELIVERED);
     const rows = db.committed.mutations.length;
     db.calls.lineWrites = 0;
-    await deliver(db, OrderStatus.PARTIALLY_DELIVERED);
+    const again: any = await deliver(db, OrderStatus.DELIVERED); // a re-entry of the DELIVERED write
     expect(db.committed.mutations).toHaveLength(rows);
     expect(db.calls.lineWrites).toBe(0);
+    expect(db.committed.audits).toHaveLength(1); // no second audit row
+    expect(again.officeCompletedLines).toBeUndefined();
   });
 
   it("an office line already delivered in full gets no extra row", async () => {
@@ -113,6 +145,7 @@ describe("row 587: PD -> DELIVERED completes the office-evidenced lines", () => 
     });
     await deliver(db, OrderStatus.PARTIALLY_DELIVERED);
     expect(db.committed.mutations).toHaveLength(1);
+    expect(db.committed.audits).toHaveLength(0);
     expect(db.line("b").deliveredQty).toBe(5);
   });
 
@@ -125,6 +158,7 @@ describe("row 587: PD -> DELIVERED completes the office-evidenced lines", () => 
     await deliver(db, OrderStatus.PARTIALLY_DELIVERED);
     expect(db.line("route").deliveredQty).toBe(6);
     expect(db.committed.mutations).toHaveLength(1);
+    expect(db.committed.audits).toHaveLength(0);
   });
 
   it("control: a line with a route row AND an office row is a route line and stays", async () => {
@@ -136,6 +170,7 @@ describe("row 587: PD -> DELIVERED completes the office-evidenced lines", () => 
     await deliver(db, OrderStatus.PARTIALLY_DELIVERED);
     expect(db.line("mixed").deliveredQty).toBe(6);
     expect(db.committed.mutations).toHaveLength(2);
+    expect(db.committed.audits).toHaveLength(0);
   });
 
   it("control: a REFUSED row is a resolved outcome, not a partial figure: the line stays", async () => {
@@ -147,6 +182,7 @@ describe("row 587: PD -> DELIVERED completes the office-evidenced lines", () => 
     await deliver(db, OrderStatus.PARTIALLY_DELIVERED);
     expect(db.line("a").deliveredQty).toBe(0);
     expect(db.committed.mutations).toHaveLength(1);
+    expect(db.committed.audits).toHaveLength(0);
   });
 
   it("control: a CANCELLED office line is left alone", async () => {
@@ -158,6 +194,7 @@ describe("row 587: PD -> DELIVERED completes the office-evidenced lines", () => 
     await deliver(db, OrderStatus.PARTIALLY_DELIVERED);
     expect(db.line("dead").deliveredQty).toBe(6);
     expect(db.committed.mutations).toHaveLength(1);
+    expect(db.committed.audits).toHaveLength(0);
   });
 
   it("a failure after the status write rolls the remainder row back with it", async () => {
@@ -169,6 +206,7 @@ describe("row 587: PD -> DELIVERED completes the office-evidenced lines", () => 
     });
     await expect(deliver(db, OrderStatus.PARTIALLY_DELIVERED)).rejects.toThrow("boom");
     expect(db.committed.mutations).toHaveLength(1);
+    expect(db.committed.audits).toHaveLength(0);
     expect(db.line("a").deliveredQty).toBe(6);
   });
 });
