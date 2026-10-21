@@ -4204,3 +4204,25 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the product page offered the price in the grid, in Details and on the legacy units card, each with its own editable draft, so any of them could write a value it loaded before another saved.
 - **Lesson:** **A value that appears in several places has exactly ONE editor and one draft. Every other appearance is a read-only figure from the served data that opens that editor (a button, plain text when it cannot be edited). Then a stale write cannot happen by construction, and "which place saved last" is not a question.**
 - **Guard:** `units-v2-details-stale-price.spec.ts` (e2e), `k11-l3-floating-editor.spec.ts` (e2e). Cf. [[L-300]].
+
+## Archived 2026-10-21 — headroom for L-330 and L-331 (bookkeeping, #3558)
+
+### L-310 · 2026-10-16 · domain · every path that destroys a row holding booked stock settles that stock through the cancel's own unwind
+
+- **Symptom:** deleting a live order (pending, confirmed, out for delivery, part delivered), or deleting or purging a customer that owned such orders, left the shelf count down for good; a cancel credited it back, a delete did not.
+- **Root cause:** stock is booked when the order is created and was credited back only by the cancel path. Delete, bulk delete and the customer delete and purge cascade removed the rows without that unwind, and each earlier fix looked only at the one path in front of it.
+- **Lesson:** **Enumerate every destroyer of a stock-holding row (delete, bulk delete, purge, a cascade from a parent) by search and route each through the cancel's own settle path in its own transaction: lock the Order row first, read the status under the lock, settle only the states a cancel would credit (not DRAFT, CANCELLED or DELIVERED), then lock the products once in ranked order. Prove it with a ledger invariant (shelf = opening + movements) after each destroyer, not a per-path count.** Cf. [[L-223]], [[L-301]] (a racing reopen is the same class: claim the row under its lock, then compare-and-set the status before re-booking).
+- **Guard:** `inventory/testing/ledger-consistency.ts` and `order-stock-world.ts`, the `order-stock-o6-delete-live`, `order-stock-o5-reopen-race` and `customer-delete-returns-stock` DB specs, `order-reopen-claim.spec.ts`, `customer-delete-stock.spec.ts`.
+
+### L-165 · 2026-09-16 · testing · #779 (B225/B244/B411)
+
+- **Symptom:** two unrelated integration tests intermittently failed under load — one asserted
+  elapsed wall-clock time, the other an ambient tmpdir file count shared across parallel workers.
+- **Root cause:** both asserted a proxy for correctness instead of the run's own declared
+  outcome. Neither proxy is stable under load; the process's own exit signal/result was
+  available and ignored.
+- **Lesson:** **Assert a process's own reported result/exit signal, never wall-clock timing or a
+  shared/global count, as a stand-in for it.** A shared ambient count in particular races every
+  other parallel worker touching the same path.
+- **Guard:** code review should flag any `Date.now()`-delta or directory-listing-count assertion
+  in a spec touching a spawned process or shared tmp path — no automated lint yet.
