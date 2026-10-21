@@ -10,6 +10,10 @@ import ProductsPage from "./page";
  */
 const mockPush = jest.fn();
 const mockNav = jest.fn();
+let mockCreated: { id: string; name: string; parentProductId?: string } = {
+  id: "new-1",
+  name: "Acme Tea",
+};
 
 const PRODUCTS = [
   {
@@ -91,8 +95,12 @@ jest.mock("@/lib/api/tracked-categories", () => ({
 }));
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => false }));
 jest.mock("@/components/ProductCreateModal", () => ({
-  ProductCreateModal: ({ onCreated }: { onCreated: (p: { id: string; name: string }) => void }) => (
-    <button type="button" onClick={() => onCreated({ id: "new-1", name: "Acme Tea" })}>
+  ProductCreateModal: ({
+    onCreated,
+  }: {
+    onCreated: (p: { id: string; name: string; parentProductId?: string }) => void;
+  }) => (
+    <button type="button" onClick={() => onCreated(mockCreated)}>
       stand-in create
     </button>
   ),
@@ -106,6 +114,7 @@ jest.mock("./_components/ProductsExportButton", () => ({ ProductsExportButton: (
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockCreated = { id: "new-1", name: "Acme Tea" };
 });
 
 it("opens the new product after Create from the list header", async () => {
@@ -114,4 +123,13 @@ it("opens the new product after Create from the list header", async () => {
   await user.click(screen.getByRole("button", { name: "New Product" }));
   await user.click(screen.getByRole("button", { name: "stand-in create" }));
   expect(mockPush).toHaveBeenCalledWith("/products/new-1");
+});
+
+it("opens the FAMILY page with the new variant in view when the product was created with a parent", async () => {
+  const user = userEvent.setup();
+  renderWithProviders(<ProductsPage />);
+  await user.click(screen.getByRole("button", { name: "New Product" }));
+  mockCreated = { id: "var-1", name: "Mint", parentProductId: "fam-1" };
+  await user.click(screen.getByRole("button", { name: "stand-in create" }));
+  expect(mockPush).toHaveBeenCalledWith("/products/fam-1?variant=var-1");
 });

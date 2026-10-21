@@ -93,6 +93,59 @@ describe("ProductJumpLinks (V19)", () => {
     expect(link("h-units")).toHaveAttribute("href", "#units-v2-grid-title");
   });
 
+  it("Units and prices lands on the actions row above the grid title (K12 F02)", () => {
+    render(
+      <div>
+        <ProductJumpLinks />
+        <h1 id="h-product">Cola</h1>
+        <div data-testid="actions-anchor" data-units-jump-anchor="">
+          <button type="button">Change prices</button>
+          <h2 id="units-v2-grid-title">Prices</h2>
+        </div>
+      </div>,
+    );
+    const anchor = screen.getByTestId("actions-anchor");
+    expect(link("h-units")).toHaveAttribute("href", "#h-units");
+    expect(anchor).toHaveAttribute("id", "h-units");
+    expect(anchor).toHaveAttribute("data-jump-target");
+    expect(document.getElementById("units-v2-grid-title")).not.toHaveAttribute("data-jump-target");
+  });
+
+  it("reserves the strip's height before the sections resolve (K12 FE2)", async () => {
+    const { rerender } = render(
+      <div>
+        <ProductJumpLinks reserveSpace />
+      </div>,
+    );
+    const ph = screen.getByTestId("units-v2-jump-placeholder");
+    expect(ph).toHaveAttribute("aria-hidden", "true");
+    expect(ph.className).toContain("min-h-[57px]");
+    expect(nav()).toBeNull();
+    rerender(
+      <div>
+        <ProductJumpLinks reserveSpace />
+        <h1 id="h-product">Cola</h1>
+        <h2 id="h-units">Units</h2>
+      </div>,
+    );
+    await waitFor(() => expect(nav()).toBeInTheDocument());
+    expect(screen.queryByTestId("units-v2-jump-placeholder")).toBeNull();
+  });
+
+  it("the band runs exactly the content column: no negative margin pulling it past the cards (K13 P05)", () => {
+    render(<Page ids={["h-units", "h-sales"]} />);
+    const cls = nav()!.className;
+    expect(cls).not.toMatch(/(^|\s)-m[xlr]-/);
+    expect(cls).toContain("w-full");
+    expect(cls).toContain("bg-surface");
+  });
+
+  it("renders nothing without reserveSpace and no sections", () => {
+    render(<ProductJumpLinks />);
+    expect(screen.queryByTestId("units-v2-jump-placeholder")).toBeNull();
+    expect(nav()).toBeNull();
+  });
+
   it("Product targets the product h1 and never stamps the dashboard header h1 before it", () => {
     const { unmount } = render(
       <div>
@@ -338,6 +391,20 @@ describe("ProductJumpLinks: the Customer view entry (K10c, F27)", () => {
       </div>,
     );
     await waitFor(() => expect(link("h-cust")).toBeInTheDocument());
+    await userEvent.click(link("h-cust")!);
+    // K12 F15: focus lands in the search field, so the next keystroke types a customer name.
+    expect(screen.getByPlaceholderText("Find a customer by name")).toHaveFocus();
+  });
+
+  it("falls back to the heading when the customer field is not mounted yet", async () => {
+    render(
+      <div>
+        <ProductJumpLinks />
+        <h1 id="h-product">Cola</h1>
+        <h2 id="h-cust">Customer view</h2>
+        <h2 id="h-sales">Sales</h2>
+      </div>,
+    );
     await userEvent.click(link("h-cust")!);
     expect(screen.getByRole("heading", { name: "Customer view" })).toHaveFocus();
   });

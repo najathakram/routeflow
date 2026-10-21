@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Loader2, Tag, X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { Button, cn, TAP_TARGET, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { isStaffRole } from "@/lib/default-unit-line";
@@ -96,8 +96,8 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
   return (
     <div className="rounded-xl border border-surface-border bg-white p-4">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="flex items-center gap-2 text-sm font-semibold text-navy">
-          <Tag className="h-4 w-4 text-brand-600" aria-hidden /> Restriction labels
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+          Restriction labels
         </h3>
       </div>
 
@@ -202,7 +202,10 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
         </div>
       )}
 
-      {canWrite && (
+      {canWrite && !categoriesFailed && addable.length === 0 && (
+        <p className="mt-3 text-sm text-navy/60">No more labels to add.</p>
+      )}
+      {canWrite && (categoriesFailed || addable.length > 0) && (
         <div className="mt-3 flex items-center gap-2">
           <select
             aria-label="Add a label"
@@ -213,11 +216,7 @@ export function ProductLabelsCard({ productId }: { productId: string }) {
             className="h-9 min-w-0 flex-1 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
             <option value="">
-              {categoriesFailed
-                ? "Couldn't load labels to add"
-                : addable.length === 0
-                  ? "No more labels to add"
-                  : "Add a label…"}
+              {categoriesFailed ? "Couldn't load labels to add" : "Add a label…"}
             </option>
             {addable.map((c) => (
               <option key={c.id} value={c.id} disabled={locked(c.id)}>

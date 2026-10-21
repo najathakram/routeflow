@@ -97,6 +97,11 @@ test.describe("Units v2 Details save after a v2 price save @ 1440", () => {
         ).toContainText(/Saved/, { timeout: 15_000 });
         // The server holds the new price. (No reload: the page must cope with what it already has.)
         expect(Number((await readProduct(page, ctx, id)).pricePerUnit)).toBe(NEXT);
+        // R3: the grid and the (read-only) Units & prices card follow the save with no reload, and Details has no tiers row.
+        const shown = NEXT.toFixed(2);
+        await expect(page.getByTestId(ID.grid)).toContainText(shown);
+        await expect(page.locator("[data-units-card]")).toContainText(shown);
+        await expect(page.getByTestId("details-price-line")).toHaveCount(0);
 
         // 3. Open Details edit (unless it already is), rename, save from the Details form itself.
         if (!detailsFirst) await openDetails();
@@ -139,7 +144,7 @@ test.describe("Units v2 Details save after a v2 price save @ 1440", () => {
     });
   }
 
-  test("a row Save in the legacy card writes the name and factor only: no price key, so the v2 price stands", async ({
+  test("a unit Name save from the grid's edit mode writes the name and factor only: no price key, so the v2 price stands", async ({
     page,
     context,
   }) => {
@@ -218,20 +223,25 @@ test.describe("Units v2 Details save after a v2 price save @ 1440", () => {
       );
       expect(Number((await readUnit()).price)).toBe(unitNext);
 
-      // 2. Rename that unit in the legacy Units card (no reload) and save the row.
+      // 2. Rename that unit where R3 put Name / Contains: the grid's edit mode, below the grid (no reload). The legacy
+      //    Units card is read-only now, so it has no name box; the price draft is clean, so the box is enabled.
+      await expect(page.locator("[data-units-card]").getByLabel(`${unitLabel} name`)).toHaveCount(
+        0,
+      );
+      await page.getByTestId(ID.btnEdit).click();
       const nameInput = page.getByLabel(`${unitLabel} name`);
       await expect(nameInput).toBeVisible({ timeout: 10_000 });
       await nameInput.fill(`${unitLabel} R`);
-      const row = page.locator('[data-testid="unit-row"]').filter({ has: nameInput });
+      const row = page.getByTestId("units-v2-beside-row").filter({ has: nameInput });
       const patched = page.waitForResponse(
         (r) =>
           r.request().method() === "PATCH" &&
           new URL(r.url()).pathname.endsWith(`/products/${id}/units/${unitId}`),
       );
-      await row.getByRole("button", { name: "Save", exact: true }).click();
+      await row.getByRole("button", { name: `Save ${unitLabel}`, exact: true }).click();
       const patchResponse = await patched;
       expect(patchResponse.status()).toBeLessThan(300);
-      // K11-20c: with the v2 price host the card never writes a price, so the row's PATCH carries none.
+      // K11-20c: the unit Name / Contains editor never writes a price, so the row's PATCH carries none.
       const patchBody = JSON.parse(patchResponse.request().postData() ?? "{}") as Record<
         string,
         unknown

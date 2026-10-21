@@ -156,6 +156,39 @@ describe("FamilyVariantsGrid read-only reads like a product list (K11-24)", () =
     expect(screen.getByRole("link", { name: "Vanilla" })).toHaveAttribute("href", "/products/v-2");
   });
 
+  it("K12 F18: the name link stretches over its whole row, so any tap on the row opens it", () => {
+    setup({ readOnly: true, rows: saved() });
+    const link = screen.getByRole("link", { name: "Strawberry" });
+    expect(link).toHaveClass("after:absolute", "after:inset-0");
+    expect(link.closest("tr")).toHaveClass("relative");
+    // the keyboard ring is drawn on the overlay, inside the row
+    expect(link).toHaveClass("focus-visible:after:ring-2", "focus-visible:after:ring-inset");
+  });
+
+  it("K12 A5: read-only hides the SKU, Barcode and Unit code columns when every row is empty", () => {
+    const bare: GridRow[] = [
+      { ...blankRow("a"), id: "v-1", name: "Strawberry", pricePerUnit: "1.25" },
+      { ...blankRow("b"), id: "v-2", name: "Vanilla", pricePerUnit: "1.5", sku: "AW-VAN" },
+    ];
+    setup({ readOnly: true, rows: bare });
+    expect(screen.getByRole("columnheader", { name: "SKU" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Barcode" })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Unit code" })).toBeNull();
+    // one cell fewer per row than the full grid: # + Name, SKU, Pieces/box, Price, Cost
+    expect(within(screen.getAllByRole("row")[1]).getAllByRole("cell")).toHaveLength(6);
+  });
+
+  it("K12 A5: edit mode keeps every code column even when empty", () => {
+    setup({ readOnly: false, rows: [{ ...blankRow("a"), name: "X" }] });
+    expect(screen.getByRole("columnheader", { name: "Barcode" })).toBeInTheDocument();
+  });
+
+  it("K12 P24: a read-only price never wraps or shrinks below its figures", () => {
+    setup({ readOnly: true, rows: saved() });
+    expect(screen.getByRole("columnheader", { name: "Price" })).toHaveClass("whitespace-nowrap");
+    expect(screen.getByText("$1.25").closest("td")).toHaveClass("whitespace-nowrap");
+  });
+
   it("a row with no id (not saved yet) keeps a plain name", () => {
     setup({ readOnly: true, rows: [{ ...blankRow("n"), name: "Unsaved", pricePerUnit: "2" }] });
     expect(screen.getByText("Unsaved")).toBeInTheDocument();
@@ -201,5 +234,28 @@ describe("FamilyVariantsGrid read-only reads like a product list (K11-24)", () =
       expect(th.className).not.toMatch(/max-sm:hidden/);
     }
     expect(screen.queryByRole("link", { name: "Strawberry" })).toBeNull();
+  });
+});
+
+describe("FamilyVariantsGrid focusId (K13 F18)", () => {
+  const saved = (): GridRow[] =>
+    rows(3).map((r, i) => ({ ...r, id: `v${i + 1}` }) as GridRow);
+
+  it("scrolls the target variant row into view, focuses its link and marks it for a moment", () => {
+    const scroll = jest.fn();
+    Element.prototype.scrollIntoView = scroll;
+    setup({ readOnly: true, rows: saved(), focusId: "v2" });
+    const link = screen.getByRole("link", { name: "V2" });
+    expect(document.activeElement).toBe(link);
+    expect(scroll).toHaveBeenCalled();
+    expect(link.closest("tr")).toHaveAttribute("data-focused-variant", "true");
+    expect(screen.getByRole("link", { name: "V1" }).closest("tr")).not.toHaveAttribute(
+      "data-focused-variant",
+    );
+  });
+
+  it("does nothing when no row matches", () => {
+    setup({ readOnly: true, rows: saved(), focusId: "nope" });
+    expect(document.querySelector("[data-focused-variant]")).toBeNull();
   });
 });

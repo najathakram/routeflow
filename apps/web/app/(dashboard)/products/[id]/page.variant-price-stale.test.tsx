@@ -54,6 +54,7 @@ jest.mock("@routeflow/ui/web", () => ({
 }));
 jest.mock("@/lib/auth-context", () => ({
   useAuth: () => ({ user: { role: "OPERATOR" } }),
+  useOptionalAuth: () => ({ user: { role: "OPERATOR" } }),
 }));
 jest.mock("@/lib/api/products", () => ({
   ...jest.requireActual("@/lib/api/products"),
@@ -119,3 +120,9 @@ describe("the variant modal never restores a stale variant price", () => {
     for (const k of PRICE_KEYS.slice(1)) expect(body[k]).toBeUndefined();
   });
 });
+
+// K14 FE1: the page waits for the units v2 flag; these tests are flag-off, so it is known.
+jest.mock("@/lib/api/units-v2", () => ({
+  ...jest.requireActual("@/lib/api/units-v2"),
+  usePricesV2Pending: () => false,
+}));
