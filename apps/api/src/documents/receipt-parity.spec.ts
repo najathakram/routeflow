@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import { roundMoney } from "@routeflow/pricing";
 import type { ReceiptModel } from "@routeflow/types";
 import {
@@ -237,6 +239,46 @@ describe("print / reprint / email carry one money model (SA-762r)", () => {
     expect(odd.emailModel.taxRatePercent).toBeNull();
     expect(odd.emailModel.tax).toBe(2.5);
     expect(adjustmentLabel(odd.emailModel.taxRatePercent)).toBe("Tax");
+  });
+});
+
+describe("B1262 / SA-838: an advance application is a tender on the email as on the print", () => {
+  it("an all-advance sale: email == print, Advance, Paid, no On account", () => {
+    const { emailModel, reprint } = build({
+      total: "12.50",
+      tax: "0.00",
+      payments: [{ method: "ADVANCE", amount: "12.50" }],
+    });
+    expect(emailModel.methodLabel).toBe("Advance");
+    expect(emailModel.showPaid).toBe(true);
+    expect(emailModel.onAccount).toBe(false);
+    expect(emailModel.paid).toBe(12.5);
+    expect(reprint.methodLabel).toBe(emailModel.methodLabel);
+    expect(reprint.showPaid).toBe(emailModel.showPaid);
+    expect(reprint.onAccount).toBe(emailModel.onAccount);
+    expect(moneyRows(emailModel)).toEqual(moneyRows(reprint));
+  });
+
+  it("advance $5 + cash $7.50: email == print, Advance then Cash, Paid $12.50", () => {
+    const { emailModel, reprint } = build({
+      total: "12.50",
+      tax: "0.00",
+      payments: [
+        { method: "CASH", amount: "7.50" },
+        { method: "ADVANCE", amount: "5.00" },
+      ],
+    });
+    expect(emailModel.methodLabel).toBe("Advance + Cash");
+    expect(emailModel.paid).toBe(12.5);
+    expect(emailModel.onAccount).toBe(false);
+    expect(reprint.methodLabel).toBe(emailModel.methodLabel);
+    expect(moneyRows(emailModel)).toEqual(moneyRows(reprint));
+  });
+
+  it("the email lists methods in the ONE shared order and labels (no hand-typed copy)", () => {
+    const src = readFileSync(join(__dirname, "receipt-model.ts"), "utf8");
+    expect(src).not.toMatch(/const METHOD_ORDER\s*=/);
+    expect(src).toMatch(/TODAYS_SALE_METHOD_ORDER/);
   });
 });
 

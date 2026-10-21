@@ -1,4 +1,5 @@
 import {
+  COUNTER_METHOD_LABEL,
   dayCloseDateLabel,
   explainedTaxRatePercent,
   formatReceiptMoney,
@@ -346,14 +347,7 @@ export interface ReprintSaleFacts {
 /** The tender of a today's-sales row (the shared POS-7b-1 type; never hand-typed here). */
 export type ReprintTender = TodaysSaleMethod;
 
-const REPRINT_METHOD_LABEL: Record<ReprintTender, string> = {
-  ADVANCE: "Advance",
-  CASH: "Cash",
-  CARD: "Card",
-  CHECK: "Check",
-  OTHER: "Other",
-  STORE_CREDIT: "Store credit",
-};
+const REPRINT_METHOD_LABEL = COUNTER_METHOD_LABEL;
 
 /**
  * "Oct 7, 2026, 11:15 AM" in the given zone (the sale's own zone, not the browser's). The tenant timezone is a free

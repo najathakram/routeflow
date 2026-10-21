@@ -1,3 +1,4 @@
+import type { TodaysSaleMethod } from "@routeflow/types";
 import { CONFIRMED_STATUS } from "./payment-confirmation";
 import { roundMoney } from "./pricing";
 
@@ -12,6 +13,19 @@ import { roundMoney } from "./pricing";
  * return credit only when its `creditNoteId` is in that set, so anything the caller could not prove stays a tender and
  * no money is ever hidden. Only PAID rows count (the `sumConfirmed` rule); every figure goes through `roundMoney`.
  */
+/**
+ * The ONE copy of what the till calls each display method (a receipt's Payment method row, the hand-over rows, the emailed
+ * receipt). `Record<TodaysSaleMethod, string>` makes a new method a compile error here, in the one place (L-072).
+ */
+export const COUNTER_METHOD_LABEL: Record<TodaysSaleMethod, string> = {
+  ADVANCE: "Advance",
+  CASH: "Cash",
+  CARD: "Card",
+  CHECK: "Check",
+  OTHER: "Other",
+  STORE_CREDIT: "Store credit",
+};
+
 export interface CounterTenderPayment<M extends string = string> {
   /** the DISPLAY method the till names the payment by (the caller maps the stored method) */
   method: M;
