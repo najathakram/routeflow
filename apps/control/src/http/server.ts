@@ -120,6 +120,9 @@ export const OWNER_TYPES: ReadonlySet<string> = new Set([
 
 const BODY_LIMIT = 16 * 1024;
 const LOGIN_LIMIT = 4 * 1024;
+/** Row 684: the 403 sign-in page's message (fixed copy, never request data). */
+export const BLOCKED_SIGN_IN =
+  "This sign-in was blocked because the request didn't come from this page. Reload the page and try again.";
 const WEBHOOK_LIMIT = 1024 * 1024;
 const MAX_WARNINGS = 20;
 const HOOK_MIN_MS = 10_000;
@@ -727,12 +730,24 @@ export function createControlServer(deps: ControlDeps): ControlApp {
   };
 
   const unauth = (res: http.ServerResponse): void => sendJson(res, 401, { error: "unauthorized" });
+  /**
+   * Form POST origin check (login, logout). Row 684, the Ops Monitor's rule: a browser that marks the request
+   * cross-site or same-site is refused; `Origin: null` (a privacy-mode or opaque origin) is accepted only when the
+   * browser also says `Sec-Fetch-Site: same-origin`; any other Origin must equal the served origin. A client that
+   * sends neither header is a non-browser one; SameSite=Strict covers browsers.
+   */
   const originOk = (req: http.IncomingMessage): boolean => {
+    const site = req.headers["sec-fetch-site"];
+    if (site === "cross-site" || site === "same-site") return false;
     const o = req.headers.origin;
-    if (o === undefined) return true; // non-browser client; SameSite=Strict covers browsers
+    if (o === undefined) return true;
+    if (o === "null") return site === "same-origin";
     const want = servedOrigin(req);
     return typeof o === "string" && want !== null && safeEqual(o, want);
   };
+  /** The refusal a browser user sees: the sign-in page with a plain reason, so a retry is one click. */
+  const refuseForm = (res: http.ServerResponse) =>
+    send(res, 403, loginPage(BLOCKED_SIGN_IN), "text/html; charset=utf-8");
 
   /* ---------------------------------------------------------------- handlers */
   const table = newTable();
@@ -767,7 +782,7 @@ export function createControlServer(deps: ControlDeps): ControlApp {
         "text/html; charset=utf-8",
       );
     }
-    if (!originOk(req)) return sendJson(res, 403, { error: "forbidden" });
+    if (!originOk(req)) return refuseForm(res);
     limiter.fail(ip); // count the attempt now, before the body arrives (no slow-body burst)
     const body = await readBody(req, LOGIN_LIMIT);
     if (!body.ok) return sendJson(res, 413, { error: "too_large" });
@@ -783,7 +798,7 @@ export function createControlServer(deps: ControlDeps): ControlApp {
 
   route(table, "POST", "/logout", (req, res) => {
     if (!cfg.local && !sessionOf(req)) return unauth(res);
-    if (!originOk(req)) return sendJson(res, 403, { error: "forbidden" });
+    if (!originOk(req)) return refuseForm(res);
     redirect(res, "/login", { "Set-Cookie": CLEAR_COOKIE(secure) }, 303);
   });
 
