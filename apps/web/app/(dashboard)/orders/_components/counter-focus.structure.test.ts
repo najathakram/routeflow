@@ -14,7 +14,7 @@ const DIR = __dirname;
 const ALLOWED: Record<string, { count: number; why: string }> = {
   "CounterSaleScreen.tsx": {
     count: 3,
-    why: "the receipt heading takes focus when the receipt appears (POS-1); the digit redirect (row 237) focuses the scan box SYNCHRONOUSLY so the very keystroke lands in it (a scheduled refocus would lose it); and focusNode, the one place the payment area takes focus (Enter in an empty scan box, the tender radiogroup arrows; R7b 1.2)",
+    why: "the receipt heading takes focus when the receipt appears (POS-1); the digit redirect (row 237) focuses the scan box SYNCHRONOUSLY so the very keystroke lands in it (a scheduled refocus would lose it); and focusPaymentControl, the one place the payment area takes focus (Enter in an empty scan box, the tender radiogroup arrows; R7b 1.2)",
   },
   "CounterReturnAction.tsx": {
     count: 1,
@@ -67,5 +67,14 @@ describe("counter scan focus has one owner (SA-762r)", () => {
     expect(src).not.toMatch(/setTimeout\([^)]*focus/);
     const hook = fs.readFileSync(path.join(DIR, "useCounterScanFocus.ts"), "utf8");
     expect(hook).toMatch(/scheduleScannerRefocus/);
+  });
+
+  it("focusPaymentControl is the payment area's helper and is never handed the scan box", () => {
+    const src = stripComments(fs.readFileSync(path.join(DIR, "CounterSaleScreen.tsx"), "utf8"));
+    expect(src).toMatch(/const focusPaymentControl = /);
+    expect(src).not.toMatch(/focusNode\b/);
+    for (const m of src.matchAll(/focusPaymentControl\(([^;]*?)\);/gs)) {
+      expect(m[1]).not.toMatch(/scanRef/);
+    }
   });
 });

@@ -579,9 +579,9 @@ export function CounterSaleScreen() {
   // R7b 1.2 (a): Enter in an EMPTY scan box with lines in the cart moves to the payment (a scanner never sends an empty Enter).
   const tenderRef = React.useRef<HTMLInputElement>(null);
   // The ONE place the payment area takes focus (Enter in an empty scan box, and the tender radiogroup's arrow keys).
-  const focusNode = (el: HTMLElement | null | undefined) => el?.focus();
+  const focusPaymentControl = (el: HTMLElement | null | undefined) => el?.focus();
   const focusPayment = () =>
-    focusNode(
+    focusPaymentControl(
       method === "CASH" && tenderRef.current
         ? tenderRef.current
         : document.querySelector<HTMLButtonElement>(
@@ -609,7 +609,9 @@ export function CounterSaleScreen() {
     if (!next) return;
     e.preventDefault();
     setMethod(next.method);
-    focusNode(e.currentTarget.querySelector<HTMLButtonElement>(`[data-method="${next.method}"]`));
+    focusPaymentControl(
+      e.currentTarget.querySelector<HTMLButtonElement>(`[data-method="${next.method}"]`),
+    );
   };
 
   // R7b 1.3: the tender(s) the sale will be paid with, as a list (split tender will add entries; today it holds one).
@@ -635,7 +637,7 @@ export function CounterSaleScreen() {
     const section = paymentRef.current;
     if (!section) return;
     section.scrollIntoView?.({ block: "start" });
-    focusNode(section.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]'));
+    focusPaymentControl(section.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]'));
   };
 
   // A scanner may end a read with CR+LF (or a double Enter): the empty Enter only counts after a human pause.
