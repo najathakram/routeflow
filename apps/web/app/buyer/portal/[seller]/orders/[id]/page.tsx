@@ -686,7 +686,12 @@ export default function BuyerOrderDetailPage() {
   // F32: refill the cart from this order and open it; the cart's Place order is the review step.
   const handleOrderAgain = () => {
     if (!order) return;
-    for (const line of orderAgainCartLines(order.lineItems)) cart.addItem(line);
+    const lines = orderAgainCartLines(order.lineItems, order.status);
+    if (lines.length === 0) {
+      toast({ title: "Nothing from this order can be added to your cart.", variant: "info" });
+      return;
+    }
+    for (const line of lines) cart.addItem(line);
     router.push(`/buyer/portal/${sellerSlug}/cart`);
   };
 

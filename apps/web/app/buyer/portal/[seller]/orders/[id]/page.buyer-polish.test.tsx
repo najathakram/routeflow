@@ -201,6 +201,31 @@ describe("buyer order detail - Order again (F32)", () => {
     expect(push).toHaveBeenCalledWith("/buyer/portal/acme/cart");
   });
 
+  it("row 604 M2: a CANCELLED order (every line CANCELLED) adds its catalog lines", () => {
+    mockOrder = order(
+      [
+        { ...PLAIN, status: "CANCELLED" },
+        { ...BOXED, status: "CANCELLED" },
+      ],
+      { status: "CANCELLED" },
+    );
+    renderWithProviders(<BuyerOrderDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /order again/i }));
+    expect(addItem).toHaveBeenCalledTimes(2);
+    expect(push).toHaveBeenCalledWith("/buyer/portal/acme/cart");
+  });
+
+  it("row 604 M2: nothing addable shows a plain toast and does not navigate", async () => {
+    mockOrder = order([CUSTOM], { status: "DELIVERED" });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /order again/i }));
+    expect(
+      await screen.findByText("Nothing from this order can be added to your cart."),
+    ).toBeInTheDocument();
+    expect(addItem).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it("an open (pending) order does not offer it", () => {
     mockOrder = order([PLAIN], { status: "PENDING" });
     renderWithProviders(<BuyerOrderDetailPage />);
