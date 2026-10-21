@@ -40,6 +40,7 @@ import {
   foldDraft,
   offerId,
   parseKey,
+  splitKeeps,
   staleKeepMoves,
   staleOfferEntries,
   type CellProblem,
@@ -135,9 +136,13 @@ export interface PriceDraft {
     replan: (customers: readonly CustomerPricingWithId[]) => PricePlan,
     /** K11-15: what this Apply did, as "Case raised 5%"; the bar says it while the draft is still exactly that. */
     lead?: string,
+    /** K12 F05: how many Auto prices follow this Apply's set prices; the bar names them so its count matches the panel's. */
+    follows?: number,
   ) => void;
   /** K11-15: what Apply staged ("Case raised 5%"), only while the draft equals it; any later edit makes it null. */
   appliedLead: string | null;
+  /** K12 F05: the Auto prices that follow what Apply staged (with `appliedLead`; 0 when none). */
+  appliedFollows: number;
   resetAllToAuto: () => void;
   /** The save body, or null while the grid has not loaded or the draft has a conflict (Save is then unavailable). */
   toRequest: () => SavePricesRequest | null;
@@ -151,6 +156,8 @@ export interface PriceDraft {
     revision: number;
     undo: SavePricesResponse["undo"];
     surface: EditSurface;
+    /** K12 F05: Auto prices that followed the Apply this save kept (the saved line names them). */
+    follows?: number;
   } | null;
   undo: () => void;
   /** A strict-undo conflict as a preview row: customer, tier-first unit label, money as shown. Display only. */
@@ -230,9 +237,11 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   // K11-15: the leads Apply staged and the draft they produced (its signature); read back once the draft has rendered.
   // `sig` is null for the render Apply produced (the draft is exactly what Apply made, so the sentence shows at once);
   // an effect then records the draft's signature, and any later difference is an edit.
-  const [applied, setApplied] = React.useState<{ leads: string[]; sig: string | null } | null>(
-    null,
-  );
+  const [applied, setApplied] = React.useState<{
+    leads: string[];
+    follows: number;
+    sig: string | null;
+  } | null>(null);
 
   // SA-799: a plain cell edit shows customer changes too. Same query (and cache entry) as Change prices' names; only
   // fetched while editing, so the product page costs nothing extra when nobody edits.
@@ -259,17 +268,23 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const conflicts = fold?.conflicts ?? [];
   const bakedTitles = fold?.bakedTitles ?? [];
   const patched = new Set(patches.map((p) => cellKey(p.ref, p.tier)));
-  const sendKeeps = keeps.filter((k) => !patched.has(cellKey(k.ref, k.tier)));
-  const count = patches.length + sendKeeps.length + customerMoves.length;
+  const unpatchedKeeps = keeps.filter((k) => !patched.has(cellKey(k.ref, k.tier)));
+  // Row 622: a Keep the saved ladder does not show cannot be validated as a Keep; it goes as the patch it amounts to.
+  const { keeps: sendKeeps, asPatches: keepPatches } = served
+    ? splitKeeps(served, rules, unpatchedKeeps)
+    : { keeps: unpatchedKeeps, asPatches: [] };
+  const count = patches.length + unpatchedKeeps.length + customerMoves.length;
   const dirty = count > 0 || problems.length > 0 || conflicts.length > 0;
-  const sig = JSON.stringify([patches, customerMoves, sendKeeps]);
+  const sig = JSON.stringify([patches, customerMoves, unpatchedKeeps]);
   React.useEffect(() => {
-    if (applied && applied.sig === null) setApplied({ leads: applied.leads, sig });
+    if (applied && applied.sig === null)
+      setApplied({ leads: applied.leads, follows: applied.follows, sig });
   }, [applied, sig]);
   const appliedLead =
     applied && count > 0 && (applied.sig === null || applied.sig === sig)
       ? new Intl.ListFormat("en").format(applied.leads)
       : null;
+  const appliedFollows = appliedLead ? (applied?.follows ?? 0) : 0;
 
   const reset = React.useCallback(() => {
     surfaceRef.current = null;
@@ -355,7 +370,11 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       : {
           expectedRevision: grid.revision,
           expectedPriceState: grid.priceState,
-          patches: patches.map((p) => ({ ref: p.ref, tier: p.tier, to: p.to })),
+          patches: [...patches, ...keepPatches].map((p) => ({
+            ref: p.ref,
+            tier: p.tier,
+            to: p.to,
+          })),
           keeps: sendKeeps.map((k) => ({ ref: k.ref, tier: k.tier, value: k.value })),
           customerMoves,
         };
@@ -417,18 +436,35 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     void qc.invalidateQueries({ queryKey: productCustomerPricesKey(productId) });
   };
 
+  // Row 614: set synchronously before the request, so two clicks (or Ctrl+S) in one tick send one POST.
+  const savingRef = React.useRef(false);
+  // Released when the save settles (onSettled) or reports an error; never on a plain render, so a render between
+  // the click and isPending flipping cannot reopen the gate.
+  React.useEffect(() => {
+    if (save.error) savingRef.current = false;
+  }, [save.error]);
   const doSave = () => {
     const req = toRequest();
-    if (!canSave || !req) return;
+    if (savingRef.current || !canSave || !req) return;
+    savingRef.current = true;
     // Where this save was made, read before the success resets the draft.
     const surface = surfaceRef.current ?? "inline";
     save.mutate(req, {
       onSuccess: (res) => {
-        const saved = { auditId: res.auditId, revision: res.revision, undo: res.undo, surface };
+        const saved = {
+          auditId: res.auditId,
+          revision: res.revision,
+          undo: res.undo,
+          surface,
+          ...(appliedFollows > 0 ? { follows: appliedFollows } : {}),
+        };
         setLastSave(saved);
         hooksRef.current.onSaved?.(saved);
         setUndoStale(false);
         reset();
+      },
+      onSettled: () => {
+        savingRef.current = false;
       },
     });
   };
@@ -636,13 +672,17 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
         );
         return on ? [...rest, move] : rest;
       }),
-    applyPlan: (plan, replan, lead) => {
+    applyPlan: (plan, replan, lead, follows = 0) => {
       // Only a draft that was empty, or still exactly the last Apply, can be described by Apply's words.
       const leads =
         lead && (count === 0 || appliedLead)
           ? [...(count === 0 ? [] : applied!.leads), lead]
           : null;
-      setApplied(leads ? { leads, sig: null } : null);
+      setApplied(
+        leads
+          ? { leads, follows: (count === 0 ? 0 : applied!.follows) + follows, sig: null }
+          : null,
+      );
       // Change prices Apply is made in the surface that is editing (or opens the inline one).
       beginEditing(surfaceRef.current ?? "inline");
       const key = `plan:${planSeq.current++}`;
@@ -692,6 +732,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     bakedTitles,
     count,
     appliedLead,
+    appliedFollows,
     keeps,
     tierName,
     api,

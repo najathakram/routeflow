@@ -157,6 +157,24 @@ describe("K11-25: Variants directly under Details", () => {
     expect(follows(image, screen.getByTestId("labels-card"))).toBe(true);
   });
 
+  it("K12 F17: Buyer merchandising sits after the variants, outside the Details card", () => {
+    const details = show();
+    const variants = screen.getByTestId("family-variants");
+    const merch = screen.getByRole("heading", { name: "Buyer merchandising" });
+    expect(details.contains(merch)).toBe(false);
+    expect(follows(variants, merch)).toBe(true);
+    const image = screen.getByRole("heading", { name: "Image" }).closest("div.overflow-hidden")!;
+    expect(follows(merch, image)).toBe(true);
+  });
+
+  it("K12 F17: a standalone product keeps Buyer merchandising inside Details", () => {
+    current = { ...BASE_PRODUCT, variants: [] };
+    const details = show();
+    expect(details.contains(screen.getByRole("heading", { name: "Buyer merchandising" }))).toBe(
+      true,
+    );
+  });
+
   it("the same order holds with the units v2 flag off, and nothing is missing", () => {
     flagOn = false;
     const details = show();
@@ -317,6 +335,7 @@ describe("K11-25 P23: the family price stays editable behind a disclosure", () =
     show();
     expect(screen.queryByRole("button", { name: /^Family price/ })).toBeNull();
     expect(screen.queryByText("New variants start from the family price.")).toBeNull();
-    expect(screen.getAllByText("Pricing Tiers")).toHaveLength(1);
+    // K12 P06: with the v2 grid on, Details carries no Pricing Tiers row.
+    expect(screen.queryByText("Pricing Tiers")).toBeNull();
   });
 });

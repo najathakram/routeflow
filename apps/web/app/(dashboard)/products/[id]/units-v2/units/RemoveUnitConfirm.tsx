@@ -53,11 +53,18 @@ export function RemoveUnitConfirm({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // Row 614: set before the request, so a second click in the same tick deletes nothing more.
+  const inFlight = React.useRef(false);
   const confirm = () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setErr("");
     remove.mutate(unit.id, {
       onSuccess: onRemoved ?? onClose,
       onError: (error) => setErr(orderErrorText(error)),
+      onSettled: () => {
+        inFlight.current = false;
+      },
     });
   };
 

@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { Star } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 
 /**
@@ -81,9 +80,10 @@ export function ProductMerchandising({
 }) {
   return (
     <div className="mt-5 rounded-lg border border-surface-border bg-white p-4">
-      <div className="mb-2.5 flex items-center gap-2">
-        <Star className="h-4 w-4 text-brand-500" />
-        <h3 className="text-sm font-semibold text-navy">Buyer merchandising</h3>
+      <div className="mb-2.5">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+          Buyer merchandising
+        </h3>
       </div>
       {isEditing && (
         <p className="mb-2 text-xs font-medium text-navy/60">

@@ -143,6 +143,18 @@ describe("ProductLabelsCard", () => {
     expect(removeMutate).toHaveBeenCalledWith({ categoryId: "c1" }, expect.any(Object));
   });
 
+  it("K12 P26: with every label taken there is one line, not a dead select and a dead Add", () => {
+    labels = view({
+      parentProductId: null,
+      inherited: [],
+      own: [own(), own({ id: "l2", categoryId: "c2", categoryName: "THC" })],
+    });
+    render();
+    expect(screen.queryByLabelText("Add a label")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
+    expect(screen.getByText("No more labels to add.")).toBeInTheDocument();
+  });
+
   it("a failed write raises NO page-level toast (the global mutation handler shows it once)", () => {
     // Fail the way react-query does: run whichever failure callbacks the component supplied. If the
     // component ever adds its own onError toast, this turns red.

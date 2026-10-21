@@ -283,7 +283,12 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
   const tierName = res ? productTierLabel(labels, res.tier) : "";
 
   return (
-    <section data-testid={T.section} aria-labelledby="h-cust" className="space-y-3">
+    <section
+      data-testid={T.section}
+      aria-labelledby="h-cust"
+      // K12 P05: on the product page the section follows a card; 24 px keeps the heading off it.
+      className={`space-y-3 ${productId ? "mt-6" : ""}`}
+    >
       <h2
         id="h-cust"
         data-testid={T.heading}

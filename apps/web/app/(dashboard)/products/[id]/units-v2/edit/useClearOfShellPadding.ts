@@ -8,8 +8,12 @@ import * as React from "react";
  * bottom: the shell's computed bottom padding, negated (0 when there is no shell or no padding). Read with Number():
  * the edit folder's guard spec keeps float parsers out. Shared by `PriceEditBar` (which also measures itself for
  * scroll-padding) and the saved line that takes the bar's slot, so the two can never disagree.
+ *
+ * `extra` is padding the caller has added to the scroller on top of the shell's own (K13 P10/P11: the bar pads
+ * `#main-content` by its own height so the last card clears it). The scroller's padding is then shell + extra, and the
+ * sticky offset has to be that whole amount, or the element floats `extra` px up.
  */
-export function useShellBottom(active: boolean): number {
+export function useShellBottom(active: boolean, extra = 0): number {
   const [inset, setInset] = React.useState(0);
   React.useEffect(() => {
     if (!active) return;
@@ -21,5 +25,6 @@ export function useShellBottom(active: boolean): number {
     const padding = Number(getComputedStyle(main).paddingBottom.replace("px", ""));
     setInset(Number.isFinite(padding) ? padding : 0);
   }, [active]);
-  return inset === 0 ? 0 : -inset;
+  const total = inset + (inset === 0 ? 0 : extra);
+  return total === 0 ? 0 : -total;
 }

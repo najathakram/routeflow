@@ -42,6 +42,12 @@ const NO_CHANGES = {
 
 type Mode = PriceChange["mode"];
 
+/** K12 F04: what the owner typed, kept by the host while the panel is closed so Cancel does not forget it. */
+export interface PanelMemory {
+  form: PriceChange;
+  typed: string;
+}
+
 /** Waits for the grid: the draft has no ladder view until it loads. */
 /** "9 prices will change, 1 goes down." The falling count is said here so a row that falls is no surprise (K12 F03). */
 function changeSummary(total: number, against: number, direction: "raise" | "lower"): string {
@@ -54,10 +60,15 @@ export function ChangePricesPanel({
   onClose,
   onApplied,
   idSuffix = "",
+  memory,
+  onRemember,
 }: {
   onClose: () => void;
   /** Closes the panel after Apply (K11-15: focus goes to Save); without it Apply closes like Cancel. */
   onApplied?: () => void;
+  /** K12 F04: the form as left by a Cancel; it opens like this. Apply clears it (the host's job). */
+  memory?: PanelMemory | null;
+  onRemember?: (m: PanelMemory) => void;
   /** K11-20: suffix for the three fixed ids when a second panel is on the page (the floating price window). */
   idSuffix?: string;
 }) {
@@ -69,6 +80,8 @@ export function ChangePricesPanel({
       onClose={onClose}
       onApplied={onApplied}
       idSuffix={idSuffix}
+      memory={memory}
+      onRemember={onRemember}
     />
   ) : null;
 }
@@ -79,30 +92,36 @@ function ChangePricesForm({
   onClose,
   onApplied,
   idSuffix,
+  memory,
+  onRemember,
 }: {
   draft: PriceDraft;
   view: LadderView;
   onClose: () => void;
   onApplied?: () => void;
   idSuffix: string;
+  memory?: PanelMemory | null;
+  onRemember?: (m: PanelMemory) => void;
 }) {
   const { grid } = draft;
   const { tierName, customerName, customers, rules, customersTruncated } = usePlanNames();
   const ids = React.useId();
   const root = React.useRef<HTMLElement>(null);
   const { selection, toggleOffer, toggleKeep, toggleCustomerKeep, reset } = usePlanSelection();
-  const [form, setForm] = React.useState<PriceChange>({
+  const [form, setForm] = React.useState<PriceChange>(() => ({
     unit: view.anchor,
     direction: "raise",
     mode: "percent",
     value: 0,
     also: false,
-  });
-  const [typed, setTyped] = React.useState("");
+    ...(memory && view.rows.some((r) => r.ref === memory.form.unit) ? memory.form : {}),
+  }));
+  const [typed, setTyped] = React.useState(memory?.typed ?? "");
   const [blurred, setBlurred] = React.useState(false);
   const { unit, direction, mode, also } = form;
   const value = parseAmount(typed);
 
+  React.useEffect(() => onRemember?.({ form, typed }), [onRemember, form, typed]);
   // Ticks never carry onto a new plan (a new view, customers or revision is a new plan), nor onto a new question.
   React.useEffect(() => reset(), [reset, view, customers, rules, grid?.revision]);
   React.useEffect(() => root.current?.focus(), []);
@@ -142,6 +161,7 @@ function ChangePricesForm({
       folded.plan,
       (cs) => planPriceChange(view, { ...form, value }, rules, tierName, { customers: cs }),
       lead,
+      folded.plan.followers.length,
     );
     if (folded.customerTicked) draft.setOfferTicked(0, true);
     folded.customerKeeps.forEach((m) => draft.keepCustomer(m));
@@ -258,16 +278,28 @@ function ChangePricesForm({
         {field(
           "value",
           "Amount",
-          <input
-            id={`${ids}-value`}
-            type="text"
-            inputMode="decimal"
-            autoComplete="off"
-            className={FIELD}
-            value={typed}
-            onChange={(e) => change({}, e.target.value)}
-            onBlur={() => setBlurred(true)}
-          />,
+          // K12 P17: the unit rides inside the box (% after, $ before), so "5" is never a bare number.
+          <div className="relative">
+            <span
+              data-testid="amount-adornment"
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-y-0 flex items-center text-[13px] text-ink-500 ${
+                mode === "percent" ? "right-2.5" : "left-2.5"
+              }`}
+            >
+              {mode === "percent" ? "%" : "$"}
+            </span>
+            <input
+              id={`${ids}-value`}
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              className={`${FIELD} w-full ${mode === "percent" ? "pr-7" : "pl-6"}`}
+              value={typed}
+              onChange={(e) => change({}, e.target.value)}
+              onBlur={() => setBlurred(true)}
+            />
+          </div>,
           mode === "percent"
             ? "Other units move by the same percent."
             : `Per ${view.rows.find((r) => r.ref === unit)?.label ?? "unit"}. Other units that move change in proportion to what they contain.`,
@@ -293,7 +325,8 @@ function ChangePricesForm({
         ) : (
           plan.changes.length > 0 && (
             <>
-              <div className="overflow-x-auto">
+              {/* K13 F03: on the page the Save bar owns the bottom edge, so a long preview scrolls in its own capped box. */}
+              <div className={idSuffix ? "overflow-x-auto" : "max-h-[40vh] overflow-auto"}>
                 <table className="w-full min-w-[300px] text-sm">
                   <caption className="sr-only">Old and new prices for every unit and tier</caption>
                   {plan.changes.map((c) => {
@@ -346,7 +379,10 @@ function ChangePricesForm({
       </div>
       <div
         data-testid={T.changeFooter}
-        className="mt-4 flex gap-2 border-t border-surface-border bg-white py-2.5"
+        // K13 F03: in the floating window (it has an id suffix) the row sticks to the bottom of the window's scroll area.
+        className={`mt-4 flex gap-2 border-t border-surface-border bg-white py-2.5 ${
+          idSuffix ? "sticky bottom-0 z-10" : ""
+        }`}
       >
         <Button id={`ch-apply${idSuffix}`} type="button" disabled={!canApply} onClick={apply}>
           Apply

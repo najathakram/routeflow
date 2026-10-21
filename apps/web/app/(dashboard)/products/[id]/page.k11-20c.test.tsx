@@ -152,7 +152,6 @@ async function renderPage() {
   await screen.findByTitle("Edit product");
   return view;
 }
-const line = () => screen.getByTestId("details-price-line");
 const edit = async (user: ReturnType<typeof userEvent.setup>) =>
   user.click(await screen.findByTitle("Edit product"));
 const rename = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -174,41 +173,19 @@ beforeEach(() => {
 });
 
 describe("K11-20c Details, v2 on", () => {
-  it("shows one read-only price line from the served grid, each figure a button to the window", async () => {
-    await renderPage();
-    const l = await screen.findByTestId("details-price-line");
-    await waitFor(() => expect(l).toHaveTextContent("$30.00"));
-    expect(l).toHaveTextContent("Retail");
-    expect(l).toHaveTextContent("$28.00");
-    expect(l).toHaveTextContent("Tier 5");
-    expect(l).toHaveTextContent("$22.00");
-    // The product row's own (stale) figures are not what Details shows.
-    expect(l).not.toHaveTextContent("$10.00");
-    expect(within(l).getByRole("button", { name: "Edit Retail Case price" })).toBeInTheDocument();
-    expect(within(l).getByRole("button", { name: "Edit Tier 2 Case price" })).toBeInTheDocument();
-  });
-
-  it("a figure opens the floating price window on that box, anchored over Details", async () => {
+  it("Details has no Pricing Tiers row or Edit prices button in view or edit mode (K12 P06)", async () => {
     const user = userEvent.setup();
     await renderPage();
-    await screen.findByTestId("details-price-line");
-    await user.click(await screen.findByRole("button", { name: "Edit Tier 2 Case price" }));
-    const dialog = await screen.findByRole("dialog", { name: "Edit prices" });
-    await waitFor(() => expect(within(dialog).getByTestId("units-v2-input-case-2")).toHaveFocus());
-  });
-
-  it("in Details edit mode the price fields are gone: the line is read-only and Edit prices is disabled", async () => {
-    const user = userEvent.setup();
-    await renderPage();
-    await screen.findByTestId("details-price-line");
+    await screen.findByTestId("pricing-v2");
+    expect(screen.queryByTestId("details-price-line")).toBeNull();
+    expect(screen.queryByText("Pricing Tiers")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit prices" })).toBeNull();
     await edit(user);
     expect(screen.queryByDisplayValue("10.00")).toBeNull();
     expect(screen.queryByDisplayValue("9.00")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Set all to/ })).toBeNull();
-    expect(within(line()).queryByRole("button", { name: /^Edit (Retail|Tier)/ })).toBeNull();
-    const trigger = within(line()).getByRole("button", { name: "Edit prices" });
-    expect(trigger).toBeDisabled();
-    expect(trigger).toHaveAccessibleDescription("Save or cancel Details first");
+    expect(screen.queryByText("Pricing Tiers")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit prices" })).toBeNull();
   });
 
   it("the Details save body has no price key, even after a rename", async () => {
@@ -238,6 +215,7 @@ describe("K11-20c Details, flag OFF is unchanged", () => {
     const user = userEvent.setup();
     await renderPage();
     expect(screen.queryByTestId("details-price-line")).toBeNull();
+    expect(screen.getByText("Pricing Tiers")).toBeInTheDocument();
     expect(screen.queryByTestId("units-v2-region")).toBeNull();
     await edit(user);
     const price = screen.getAllByDisplayValue("10.00")[0];
