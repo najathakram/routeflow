@@ -230,3 +230,13 @@ describe("CustomerPriceView on the customer page", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Could not load");
   });
 });
+
+describe("CustomerPriceView section gap (K12 P05)", () => {
+  it("the product-page section keeps a 24 px gap above its heading; the customer tab adds none", () => {
+    const { unmount } = render(<CustomerPriceView productId="p1" />);
+    expect(screen.getByTestId(T.section).className).toContain("mt-6");
+    unmount();
+    render(<CustomerPriceView customerId="c1" />);
+    expect(screen.getByTestId(T.section).className).not.toContain("mt-6");
+  });
+});

@@ -4188,3 +4188,41 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the oversell check judged each line against the on-hand figure, while the decrement and the SALE row used a different grouping.
 - **Lesson:** **When lines share a pool (stock, a credit limit, a restriction), compute ONE per-product total (in the pool's unit, boxed and piece lines together) before anything is judged, and have the check, the decrement and the ledger row all read that total. Pin it with a test that splits one product across two lines and fails on the old per-line value.**
 - **Guard:** `order-stock.b920.spec.ts` (two lines of one product, and a mixed box and piece sum) and `order-stock-b920.db.spec.ts`.
+
+## Archived 2026-10-21 — least-cited, spec-guarded; headroom for L-328, L-329 (bookkeeping for window 1, #3555)
+
+### L-316 · 2026-10-18 · tooling · a script whose stdout can be piped ends by setting process.exitCode, never process.exit()
+
+- **Symptom:** `db-lane-script.spec.ts` case 16 failed only on Linux CI (the fixes-4 train): the FULL listing was cut off after 173 of about 307 spec lines with no final `DB-LANE FULL (ratio ...)` line. It passed on Windows.
+- **Root cause:** `scripts/db-lane.mjs` ended with `process.exit(main())`. A Windows pipe writes synchronously; a Linux pipe is asynchronous, so exiting right after `console.log` killed the child with output still buffered. The test's own ratio logic was fine.
+- **Lesson:** **A script whose stdout may be piped (a CLI a spec or another script spawns) sets `process.exitCode = main()` and lets the event loop drain; `process.exit()` right after printing truncates large output on Linux. Prove such a script with an output larger than a 64 KB pipe buffer; a Windows run cannot show the failure.**
+- **Guard:** `db-lane-script.spec.ts` case 12b (a 1,700-spec FULL listing must end with its summary line); it can only fail on Linux CI.
+
+### L-318 · 2026-10-18 · domain · one editor for a value shown in several places; the other displays are read-only figures that open it
+
+- **Symptom:** a stale Details save restored the old case price after the price grid had saved a new one: two editors wrote the same price from two drafts.
+- **Root cause:** the product page offered the price in the grid, in Details and on the legacy units card, each with its own editable draft, so any of them could write a value it loaded before another saved.
+- **Lesson:** **A value that appears in several places has exactly ONE editor and one draft. Every other appearance is a read-only figure from the served data that opens that editor (a button, plain text when it cannot be edited). Then a stale write cannot happen by construction, and "which place saved last" is not a question.**
+- **Guard:** `units-v2-details-stale-price.spec.ts` (e2e), `k11-l3-floating-editor.spec.ts` (e2e). Cf. [[L-300]].
+
+## Archived 2026-10-21 — headroom for L-330 and L-331 (bookkeeping, #3558)
+
+### L-310 · 2026-10-16 · domain · every path that destroys a row holding booked stock settles that stock through the cancel's own unwind
+
+- **Symptom:** deleting a live order (pending, confirmed, out for delivery, part delivered), or deleting or purging a customer that owned such orders, left the shelf count down for good; a cancel credited it back, a delete did not.
+- **Root cause:** stock is booked when the order is created and was credited back only by the cancel path. Delete, bulk delete and the customer delete and purge cascade removed the rows without that unwind, and each earlier fix looked only at the one path in front of it.
+- **Lesson:** **Enumerate every destroyer of a stock-holding row (delete, bulk delete, purge, a cascade from a parent) by search and route each through the cancel's own settle path in its own transaction: lock the Order row first, read the status under the lock, settle only the states a cancel would credit (not DRAFT, CANCELLED or DELIVERED), then lock the products once in ranked order. Prove it with a ledger invariant (shelf = opening + movements) after each destroyer, not a per-path count.** Cf. [[L-223]], [[L-301]] (a racing reopen is the same class: claim the row under its lock, then compare-and-set the status before re-booking).
+- **Guard:** `inventory/testing/ledger-consistency.ts` and `order-stock-world.ts`, the `order-stock-o6-delete-live`, `order-stock-o5-reopen-race` and `customer-delete-returns-stock` DB specs, `order-reopen-claim.spec.ts`, `customer-delete-stock.spec.ts`.
+
+### L-165 · 2026-09-16 · testing · #779 (B225/B244/B411)
+
+- **Symptom:** two unrelated integration tests intermittently failed under load — one asserted
+  elapsed wall-clock time, the other an ambient tmpdir file count shared across parallel workers.
+- **Root cause:** both asserted a proxy for correctness instead of the run's own declared
+  outcome. Neither proxy is stable under load; the process's own exit signal/result was
+  available and ignored.
+- **Lesson:** **Assert a process's own reported result/exit signal, never wall-clock timing or a
+  shared/global count, as a stand-in for it.** A shared ambient count in particular races every
+  other parallel worker touching the same path.
+- **Guard:** code review should flag any `Date.now()`-delta or directory-listing-count assertion
+  in a spec touching a spawned process or shared tmp path — no automated lint yet.

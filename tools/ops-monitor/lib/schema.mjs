@@ -34,6 +34,7 @@ export const TYPES = [
   "audit",
   "incident",
 ];
+export const HARMS = ["live", "latent", "none"];
 export const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const PR_ACTIONS = ["create", "ready", "merge", "close", "edit"];
 
@@ -53,6 +54,11 @@ const ITEM_FIELDS = {
   type: (v) => TYPES.includes(v),
   priority: (v) => PRIORITIES.includes(v),
   status: (v) => STATUSES.includes(v),
+  // The raw register status word the monitor does not know (the item reads "planned" meanwhile).
+  statusText: (v) => v === null || (typeof v === "string" && v.length <= 80),
+  // Live harm (accuracy round 2): "live" = hurting a customer now, "latent" = broken code with no
+  // customer harmed, "none" = not harmful, null = not judged (derived from census items).
+  harm: (v) => v === null || HARMS.includes(v),
   lane: (v) => v === null || (typeof v === "string" && LANE_RE.test(v)),
   train: (v) => v === null || (typeof v === "string" && /^R\d{1,2}$/.test(v)),
   area: (v) => v === null || (typeof v === "string" && v.length <= 80),

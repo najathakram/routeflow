@@ -1031,6 +1031,123 @@
       "statusLabel": "Booked",
       "etaAt": null,
       "refPrs": []
+    },
+    {
+      "id": "591",
+      "title": "Widget price flips on an unrelated save",
+      "type": "bug",
+      "priority": "P2",
+      "status": "planned",
+      "lane": "lead",
+      "train": null,
+      "area": "api:auth",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": "lead",
+      "claimedAt": "2026-10-19T11:00:00.000Z",
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "platform",
+      "problem": "Sign-in attempts spiked on the staging probe and the login limiter started refusing real users.",
+      "impact": "Staff at test businesses were locked out of signing in for several minutes.",
+      "solution": "Raise the limit for the probe address and add an alert so we see it before users do.",
+      "statusLabel": "Being built",
+      "etaAt": null,
+      "refPrs": [],
+      "harm": "latent"
+    },
+    {
+      "id": "592",
+      "title": "Census of mis-billed widget lines",
+      "type": "task",
+      "priority": "P2",
+      "status": "done",
+      "lane": "lead",
+      "train": null,
+      "area": "api:auth",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": "lead",
+      "claimedAt": "2026-10-19T11:00:00.000Z",
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "platform",
+      "problem": "Sign-in attempts spiked on the staging probe and the login limiter started refusing real users.",
+      "impact": "Staff at test businesses were locked out of signing in for several minutes.",
+      "solution": "Raise the limit for the probe address and add an alert so we see it before users do.",
+      "statusLabel": "Being built",
+      "etaAt": null,
+      "refPrs": [],
+      "harm": null
+    },
+    {
+      "id": "593",
+      "title": "Run the EAS build",
+      "type": "task",
+      "priority": "P2",
+      "status": "planned",
+      "lane": "lead",
+      "train": null,
+      "area": "api:auth",
+      "parent": null,
+      "eta": null,
+      "gate": null,
+      "trainLabel": null,
+      "source": "events",
+      "tags": [],
+      "members": [],
+      "related": [],
+      "links": {
+        "prs": [],
+        "branches": [],
+        "urls": []
+      },
+      "children": [],
+      "claimedBy": "lead",
+      "claimedAt": "2026-10-19T11:00:00.000Z",
+      "claimConflict": null,
+      "blocked": null,
+      "createdAt": "2026-10-16T00:40:00.000Z",
+      "updatedAt": "2026-10-19T11:30:00.000Z",
+      "overlay": false,
+      "domain": "platform",
+      "problem": "Sign-in attempts spiked on the staging probe and the login limiter started refusing real users.",
+      "impact": "Staff at test businesses were locked out of signing in for several minutes.",
+      "solution": "Raise the limit for the probe address and add an alert so we see it before users do.",
+      "statusLabel": "Being built",
+      "etaAt": null,
+      "refPrs": [],
+      "harm": null
     }
   ],
   "bugs": [
@@ -1333,6 +1450,17 @@
       "lastActivitySource": "pushed"
     }
   ],
+  "ownerTodos": [
+    {
+      "id": "593",
+      "title": "Run the EAS build",
+      "gate": null,
+      "eta": null,
+      "etaAt": null,
+      "status": "planned",
+      "priority": "P2"
+    }
+  ],
   "ownerQueue": [
     {
       "id": "580",
@@ -1370,6 +1498,26 @@
     }
   ],
   "problems": ["590"],
+  "latentRisks": [
+    {
+      "id": "591",
+      "title": "Widget price flips on an unrelated save",
+      "evidence": "592: census 10-19 (read-only): 0 lines mis-billed; latent only"
+    }
+  ],
+  "incidents": [
+    {
+      "id": "INC-1015c",
+      "title": "Acme tier price bugs: fixed in code, past impact not counted",
+      "file": "2026-10-15-acme-tier-price-census.md",
+      "status": "mitigated",
+      "statusLabel": "Mitigated",
+      "bucket": "mitigated",
+      "date": "2026-10-15",
+      "changedAt": "2026-10-18T15:00:00.000Z",
+      "ageDays": 1
+    }
+  ],
   "prs": {
     "open": [
       {

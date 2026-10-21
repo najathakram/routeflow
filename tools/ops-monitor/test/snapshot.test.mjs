@@ -160,11 +160,14 @@ test("top-level contract keys and stats", () => {
       "ci",
       "decisions",
       "generatedAt",
+      "incidents",
       "items",
       "lanes",
+      "latentRisks",
       "machine",
       "map",
       "ownerQueue",
+      "ownerTodos",
       "prs",
       "problems",
       "sources",
@@ -659,10 +662,12 @@ const a2 = (over, extra = {}) =>
     ...extra,
   });
 
-test("A2 ruling 2: problems = open P0/P1 register items + open/mitigated incidents; board-sourced items never", () => {
+test("A2 ruling 2: problems = open P0/P1 register items + open incidents; board-sourced items never", () => {
   const s = a2();
-  // INC-1016a has no Status line (open) and INC-1017a is "suspected": both count as open
-  assert.deepEqual(s.problems, ["950", "INC-1015a", "INC-1016a", "INC-1017a", "INC-1015c"]);
+  // Fixture incidents carry no commit time, so their filename date (10-15) is the freshness.
+  // INC-1016a has no Status line (unknown) and INC-1017a is "suspected": neither is hurting now;
+  // the mitigated INC-1015c is listed apart.
+  assert.deepEqual(s.problems, ["950", "INC-1015a"]);
   // closed incidents are not problems; the incident files come in as derived read-only items
   const inc = s.items.find((i) => i.id === "INC-1015a");
   assert.equal(inc.type, "incident");
@@ -1147,4 +1152,337 @@ test("register duplicate ids and id collisions from the specs source become alar
     build().alarms.some((x) => x.kind === "register-duplicate-rows"),
     false,
   );
+});
+
+// =====================================================================================
+// Accuracy round 2 (X1): live harm, latent risks, incident freshness, decisions-only queue.
+// Shapes copied from the real register (rows 525 / 530) and incidents/*.md, acme placeholders.
+// =====================================================================================
+const DAY_MS = 86400000;
+const x1iso = (days) => new Date(NOW - days * DAY_MS).toISOString();
+
+function x1events() {
+  seq = 0;
+  const t = "2026-10-17T00:00:00Z";
+  const itm = (id, data) => ev(t, "item.new", id, "lead", { lane: "lead", ...data });
+  const reg = { source: "register" };
+  return [
+    // the motivating case: a P0 bug whose code is live, and the census that found no victim
+    itm("525", {
+      ...reg,
+      title: "Acme product page: tier prices flip to fixed on an unrelated save",
+      type: "bug",
+      priority: "P0",
+      status: "review",
+      links: { prs: [3467, 3470] },
+    }),
+    itm("530", {
+      ...reg,
+      title:
+        "Tier price bugs: read-only prod census of blast radius (code live via #3468 and #3470)",
+      type: "ops",
+      priority: "P1",
+      status: "verified",
+      gate: "census 10-19 (read-only): 0 lines / $0.00 mis-billed for both bugs; no live customer on tiers 3-5; latent only. Owner item: acme has 3 products with stale tier values; row 529 checked by hand",
+      links: { prs: [3468] },
+    }),
+    itm("526", {
+      title: "Acme checkout rounds wrong",
+      type: "bug",
+      priority: "P0",
+      status: "building",
+    }),
+    itm("527", { title: "Acme report drifts", type: "bug", priority: "P1", harm: "latent" }),
+    itm("528", { title: "Acme label typo", type: "bug", priority: "P1", harm: "none" }),
+    // an explicit harm wins over the derived latent rule (530 names row 529 in its gate)
+    itm("529", {
+      ...reg,
+      title: "Acme tier price still wrong for one buyer",
+      type: "bug",
+      priority: "P0",
+      harm: "live",
+      links: { prs: [3469] },
+    }),
+    // named by row in an audit's title
+    itm("540", {
+      title: "Audit of rows 531/532: nothing reached a customer",
+      type: "audit",
+      priority: "P2",
+      status: "live",
+      gate: "0 lines affected",
+    }),
+    itm("531", { title: "Acme export gap", type: "bug", priority: "P1" }),
+    itm("532", { title: "Acme export gap two", type: "bug", priority: "P0" }),
+    // a census that is not done marks nothing; a done one that says nothing about harm marks nothing
+    itm("541", {
+      title: "Audit of row 533, no live customer yet",
+      type: "audit",
+      status: "building",
+    }),
+    itm("533", { title: "Acme sync gap", type: "bug", priority: "P1" }),
+    itm("542", {
+      title: "Audit of row 534 finished",
+      type: "audit",
+      status: "live",
+      gate: "reviewed",
+    }),
+    itm("534", { title: "Acme sync gap two", type: "bug", priority: "P1" }),
+    // owner column: a decision and a task
+    itm("901", { title: "Acme decision 901", type: "decision", lane: "owner", priority: "P1" }),
+    itm("902", { title: "Run the EAS build", type: "chore", lane: "owner", priority: "P2" }),
+    itm("903", { title: "Done owner task", type: "chore", lane: "owner", status: "verified" }),
+  ];
+}
+
+const x1inc = (id, status, changedDays, over = {}) => ({
+  id,
+  file: `2026-10-15-acme-${id}.md`,
+  title: `Acme incident ${id}`,
+  status,
+  date: "2026-10-15",
+  changedAt: changedDays === null ? null : x1iso(changedDays),
+  ...over,
+});
+const X1_INCIDENTS = [
+  x1inc("INC-1015a", "open", 2),
+  x1inc("INC-1015b", "open", 10),
+  x1inc("INC-1015c", "mitigated", 1),
+  x1inc("INC-1015d", "suspected", 1),
+  x1inc("INC-1015e", "closed", 1),
+  x1inc("INC-1015f", "unknown", 1),
+  x1inc("INC-1015g", "resolved", 1),
+  x1inc("INC-1015h", "unverified", 20),
+];
+const x1 = (events = x1events(), incidents = X1_INCIDENTS) =>
+  buildSnapshot({
+    sources: {
+      specs: okSource(30, {
+        events,
+        config: DEFAULT_CONFIG,
+        incidents,
+        ownerQueueRows: null,
+        extrasErrors: [],
+      }),
+    },
+    config: DEFAULT_CONFIG,
+    now: NOW,
+    machine: "pc",
+  });
+
+test("X1 harm: a done census whose text says latent / 0 lines / $0.00 / no customer marks the bugs it shares a PR with", () => {
+  const s = x1();
+  const by = Object.fromEntries(s.items.map((i) => [i.id, i]));
+  // 530 and 525 share PR #3470 (530 cites it in its title; 525 in its register links)
+  assert.equal(by["525"].harm, "latent");
+  assert.match(by["525"].harmEvidence, /^530: census 10-19 \(read-only\): 0 lines/);
+  assert.ok(by["525"].harmEvidence.length <= 5 + 160);
+  assert.equal(by["526"].harm, null);
+  assert.equal(by["527"].harm, "latent"); // explicit
+  assert.equal(by["528"].harm, "none");
+  assert.equal(by["529"].harm, "live"); // an explicit harm beats the derived rule
+});
+
+test("X1 harm: a done census names rows in its title or gate; a census still open or silent marks nothing", () => {
+  const by = Object.fromEntries(x1().items.map((i) => [i.id, i]));
+  assert.equal(by["531"].harm, "latent");
+  assert.equal(by["532"].harm, "latent");
+  assert.equal(by["533"].harm, null); // its audit is not done
+  assert.equal(by["534"].harm, null); // its audit says nothing about harm
+});
+
+test("X1 problems: open P0/P1 bugs with no latent/none harm, plus fresh open incidents, never latent bugs", () => {
+  const s = x1();
+  assert.deepEqual(s.problems, ["526", "529", "INC-1015a", "533", "534"]);
+  assert.ok(!s.problems.includes("525"), "525 is latent: not hurting now");
+});
+
+test("X1 latentRisks: open bugs whose harm is latent, with the census evidence", () => {
+  const s = x1();
+  assert.deepEqual(
+    s.latentRisks.map((r) => r.id),
+    ["525", "532", "527", "531"],
+  );
+  const r = s.latentRisks[0];
+  assert.equal(r.title, "Acme product page: tier prices flip to fixed on an unrelated save");
+  assert.match(r.evidence, /^530: census 10-19/);
+  assert.ok(r.evidence.length <= 5 + 160);
+  assert.match(s.latentRisks.find((x) => x.id === "527").evidence, /^set by the team/);
+});
+
+test("X1 incidents: status word and file freshness decide the bucket; only open + fresh hurts", () => {
+  const s = x1();
+  const by = Object.fromEntries(s.incidents.map((i) => [i.id, i]));
+  assert.deepEqual(Object.fromEntries(Object.entries(by).map(([id, i]) => [id, i.bucket])), {
+    "INC-1015a": "hurting",
+    "INC-1015b": "stale",
+    "INC-1015c": "mitigated",
+    "INC-1015d": "unverified",
+    "INC-1015f": "stale",
+    "INC-1015h": "unverified",
+  }); // closed / resolved are hidden
+  assert.equal(by["INC-1015c"].statusLabel, "Mitigated");
+  assert.equal(by["INC-1015d"].statusLabel, "Unverified");
+  const alarm = (id) => s.alarms.find((a) => a.id === `incident-stale:${id}`);
+  assert.equal(alarm("INC-1015b").severity, "warn");
+  assert.match(alarm("INC-1015b").message, /no status update for 10 days/);
+  assert.ok(alarm("INC-1015f"));
+  assert.equal(alarm("INC-1015a"), undefined);
+  assert.equal(alarm("INC-1015c"), undefined);
+});
+
+test("X1 owner queue: decisions only; other owner-lane tasks go to ownerTodos", () => {
+  const s = x1();
+  assert.deepEqual(
+    s.ownerQueue.map((o) => o.id),
+    ["901"],
+  );
+  assert.deepEqual(
+    s.ownerTodos.map((o) => o.id),
+    ["902"],
+  );
+  assert.equal(s.ownerTodos[0].title, "Run the EAS build");
+});
+
+// ---- latent rule hardening (accuracy round 2 review) + mask-before-cut ----
+const lr = (events, { merged = [], extra = {} } = {}) => {
+  const gh = { open: [], merged, master: null };
+  return buildSnapshot({
+    sources: {
+      specs: okSource(30, {
+        events,
+        config: DEFAULT_CONFIG,
+        incidents: [],
+        ownerQueueRows: null,
+        extrasErrors: [],
+      }),
+      github: okSource(60, gh),
+    },
+    config: DEFAULT_CONFIG,
+    now: NOW,
+    machine: "pc",
+    ...extra,
+  });
+};
+const lrItem = (id, data) =>
+  ev("2026-10-17T00:00:00Z", "item.new", id, "lead", { lane: "lead", ...data });
+const CENSUS_GATE = "census: 0 lines / $0.00 mis-billed; latent only";
+
+test("latent rule: a P0 that shares only a release PR with a census stays in Hurting now", () => {
+  seq = 0;
+  const s = lr([
+    lrItem("R2", { title: "Train R2", type: "release", status: "planned", links: { prs: [3600] } }),
+    lrItem("700", { title: "Acme live bug", type: "bug", priority: "P0", links: { prs: [3600] } }),
+    lrItem("701", {
+      title: "Census of the train",
+      type: "ops",
+      status: "verified",
+      gate: CENSUS_GATE,
+      links: { prs: [3600] },
+    }),
+  ]);
+  assert.ok(s.problems.includes("700"), "the train PR proves nothing about this bug");
+  assert.equal(s.items.find((i) => i.id === "700").harm, null);
+});
+
+test("latent rule: a PR whose head branch is train/* is a train PR even without a release item", () => {
+  seq = 0;
+  const merged = [
+    {
+      number: 3601,
+      title: "Train r3",
+      body: "",
+      branch: "train/r3",
+      base: "master",
+      mergedAt: "2026-10-18T00:00:00Z",
+      mergeSha: "a".repeat(40),
+      url: "https://github.com/acme-org/widgets/pull/3601",
+    },
+  ];
+  const s = lr(
+    [
+      lrItem("702", {
+        title: "Acme live bug",
+        type: "bug",
+        priority: "P0",
+        links: { prs: [3601] },
+      }),
+      lrItem("703", {
+        title: "Census",
+        type: "audit",
+        status: "live",
+        gate: CENSUS_GATE,
+        links: { prs: [3601] },
+      }),
+    ],
+    { merged },
+  );
+  assert.ok(s.problems.includes("702"));
+});
+
+test("latent rule: a second open bug citing the same PR keeps both live; a bug alone on its PR is latent", () => {
+  seq = 0;
+  const s = lr([
+    lrItem("710", { title: "Acme bug one", type: "bug", priority: "P0", links: { prs: [3700] } }),
+    lrItem("711", { title: "Acme bug two", type: "bug", priority: "P0", links: { prs: [3700] } }),
+    lrItem("712", {
+      title: "Census",
+      type: "ops",
+      status: "verified",
+      gate: CENSUS_GATE,
+      links: { prs: [3700, 3701] },
+    }),
+    lrItem("713", { title: "Acme bug alone", type: "bug", priority: "P0", links: { prs: [3701] } }),
+  ]);
+  const by = Object.fromEntries(s.items.map((i) => [i.id, i]));
+  assert.equal(by["710"].harm, null);
+  assert.equal(by["711"].harm, null);
+  assert.ok(s.problems.includes("710") && s.problems.includes("711"));
+  assert.equal(by["713"].harm, "latent", "its own PR, no other open bug cites it");
+});
+
+test("latent rule: a negated verdict ('not latent', 'but 2 billed $0.00') never demotes a named row", () => {
+  seq = 0;
+  const s = lr([
+    lrItem("720", { title: "Acme bug 720", type: "bug", priority: "P0" }),
+    lrItem("721", {
+      title: "Census of row 720",
+      type: "audit",
+      status: "live",
+      gate: "found it is not latent, customers hit",
+    }),
+    lrItem("730", { title: "Acme bug 730", type: "bug", priority: "P0" }),
+    lrItem("731", {
+      title: "Census of row 730",
+      type: "ops",
+      status: "verified",
+      gate: "2 billed but $0.00 shown",
+    }),
+    lrItem("740", { title: "Acme bug 740", type: "bug", priority: "P0" }),
+    lrItem("741", {
+      title: "Census of row 740",
+      type: "ops",
+      status: "verified",
+      gate: "0 lines, latent only",
+    }),
+  ]);
+  const by = Object.fromEntries(s.items.map((i) => [i.id, i]));
+  assert.equal(by["720"].harm, null, "not latent");
+  assert.equal(by["730"].harm, null, "but ... $0.00");
+  assert.equal(by["740"].harm, "latent", "the plain verdict still names the row");
+});
+
+test("latent evidence is masked before it is cut at 160 characters", async () => {
+  const { maskText } = await import("../lib/mask.mjs");
+  const name = "acme-foods-distribution";
+  seq = 0;
+  const gate = `0 lines ${"p".repeat(145)} ${name} tail words`;
+  const events = [
+    lrItem("750", { title: "Acme bug 750", type: "bug", priority: "P0" }),
+    lrItem("751", { title: "Census of row 750", type: "ops", status: "verified", gate }),
+  ];
+  const s = lr(events, { extra: { mask: (t) => maskText(t, [name]) } });
+  const ev750 = s.latentRisks.find((r) => r.id === "750").evidence;
+  assert.doesNotMatch(ev750, /acme/i, "no fragment of the name");
+  assert.match(ev750, /a live/);
+  assert.ok(ev750.length <= 5 + 160);
 });

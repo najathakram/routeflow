@@ -12,3 +12,13 @@ export function usePricesV2Enabled(opts?: { enabled?: boolean }): boolean {
   const q = useSubscription({ staleTime: 60_000, ...opts });
   return (q.data?.flags ?? []).includes(PRICES_V2_FLAG);
 }
+
+/**
+ * K14 FE1: is the flag still UNKNOWN (the subscription has not answered yet)? The entitlement itself is unchanged
+ * (`usePricesV2Enabled` stays fail-closed); this only lets a page wait for the answer instead of mounting the flag-off
+ * layout and swapping it a moment later (a ~740 px shift at 390). An errored query is "known": it stays off.
+ */
+export function usePricesV2Pending(opts?: { enabled?: boolean }): boolean {
+  const q = useSubscription({ staleTime: 60_000, ...opts });
+  return opts?.enabled !== false && q.isPending;
+}

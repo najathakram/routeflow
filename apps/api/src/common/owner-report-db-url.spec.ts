@@ -35,6 +35,7 @@ const B768_REPORTS = [
   "stock-ledger-gap.mjs", // B562 PR-2 (SA-136 §6.3) — born on the resolver
   "report-addon-comp-candidates.mjs", // SA-693 — born on the resolver
   "report-sitting4-sizing.mjs", // SA-772 / SA-814 sitting 4 — born on the resolver
+  "report-640-restored-grants.mjs", // row 640 (SA-834) - born on the resolver
 ];
 
 /**

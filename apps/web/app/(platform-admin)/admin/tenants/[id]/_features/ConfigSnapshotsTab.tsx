@@ -8,6 +8,7 @@ import type {
   ConfigSnapshotRestoreResult,
   ConfigSnapshotSkipReason,
 } from "@routeflow/types";
+import { fetchFeatureRegistry } from "@/lib/platform-admin/features";
 import {
   fetchConfigSnapshots,
   previewConfigSnapshotRestore,
@@ -24,6 +25,10 @@ const SKIP_REASON_LABELS: Record<ConfigSnapshotSkipReason, string> = {
   // BO-13 compile-only labels (P-WEB owns the final wording): the row is held, the snapshot stays restorable.
   CARRIER_IN_TRANSIT: "Orders are with the carrier",
   FULFILMENT_MODE_NEEDS_FLEET: "Own delivery needs a fleet module",
+  // Row 640: a restored grant that nothing pays for, or whose prerequisite is missing.
+  ADDON_NOT_PAID:
+    "Add-on isn't paid for or included in the plan. Restore again once the add-on is billed.",
+  REQUIRES_UNMET: "A required feature is missing",
 };
 
 /** The display name of a held row's setting (BO-13 holds `fulfilment_model` only today). */
@@ -33,6 +38,9 @@ const HELD_FEATURE_LABELS: Record<string, string> = { fulfilment_model: "Deliver
 const HELD_REASON_TEXT: Record<ConfigSnapshotHeld["reason"], string> = {
   CARRIER_IN_TRANSIT: "orders are with the carrier",
   FULFILMENT_MODE_NEEDS_FLEET: "own delivery needs a fleet module",
+  ADDON_NOT_PAID:
+    "the add-on isn't paid for or included in the plan; restore again once it is billed",
+  REQUIRES_UNMET: "a required feature is missing",
 };
 
 const KIND_LABELS = { config: "Setting", override: "Grant/deny" } as const;
@@ -78,6 +86,13 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
   const [preview, setPreview] = React.useState<ConfigSnapshotPreview | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [restoring, setRestoring] = React.useState(false);
+  // Registry labels for held keys (best effort: a failed read falls back to the raw key).
+  const [labels, setLabels] = React.useState<Record<string, string>>({});
+  React.useEffect(() => {
+    fetchFeatureRegistry()
+      .then((rows) => setLabels(Object.fromEntries(rows.map((r) => [r.key, r.label]))))
+      .catch(() => undefined);
+  }, []);
 
   const load = React.useCallback(() => {
     setLoading(true);
@@ -121,7 +136,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
           : `Restored, except ${held
               .map(
                 (h) =>
-                  `${HELD_FEATURE_LABELS[h.featureKey] ?? h.featureKey}: held while ${HELD_REASON_TEXT[h.reason]}`,
+                  `${HELD_FEATURE_LABELS[h.featureKey] ?? labels[h.featureKey] ?? h.featureKey}: held while ${HELD_REASON_TEXT[h.reason]}`,
               )
               .join("; ")}. The ${fmt(res.takenAt)} snapshot: ${report}`,
       );

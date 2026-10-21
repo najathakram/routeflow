@@ -71,6 +71,10 @@ describe("VendorBillsService — supplier payment allocation (WP2)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // R5-5: refs resolve inside the tenant unless a test says otherwise.
+    prisma.supplier.findMany.mockImplementation(async (args: any) =>
+      (args?.where?.id?.in ?? []).map((id: string) => ({ id })),
+    );
     graftSupplierCredit(prisma);
     // recordSupplierPayment resolves the supplier through the tenant client
     // before it writes anything — see the "unknown supplier" case below.

@@ -143,8 +143,6 @@ describe("K11-28: when the field shows", () => {
     ["flag.units_prices_v2 is off", () => (flags.v2 = false), "12", "case"],
     ["flag.units_v1 is off", () => (flags.v1 = false), "12", "case"],
     ["the unit is not a pack", () => undefined, "12", "each"],
-    ["Units per case is 1", () => undefined, "1", "case"],
-    ["Units per case is not a whole number", () => undefined, "2.5", "case"],
   ])("is hidden when %s", async (_n, arrange, perCase, unit) => {
     arrange();
     open();
@@ -154,11 +152,28 @@ describe("K11-28: when the field shows", () => {
     expect(pieceField()).toBeNull();
   });
 
-  it("is hidden while Units per case is blank", async () => {
+  it("K14 F03: shows as soon as a pack unit is picked, before Units per box is typed", async () => {
     open();
     await userEvent.type(screen.getByLabelText(/^Unit \*/), "case");
-    expect(pieceField()).toBeNull();
+    expect(pieceField()).toBeInTheDocument();
+    expect(screen.getByLabelText("Units per box")).toBeInTheDocument();
   });
+
+  it.each(["", "1"])(
+    "K14 F03: with Units per box %p the field shows, but Create is refused with an inline error and nothing is written",
+    async (perCase) => {
+      open();
+      await userEvent.type(screen.getByLabelText("Name *"), "Cola");
+      await userEvent.type(screen.getByLabelText(/^Unit \*/), "case");
+      await userEvent.type(screen.getByLabelText(/^Price per case/), "21");
+      if (perCase) await userEvent.type(screen.getByLabelText("Units per box"), perCase);
+      await userEvent.type(pieceField()!, "1.75");
+      create();
+      await waitFor(() => expect(pieceField()).toHaveAttribute("aria-invalid", "true"));
+      expect(mutateAsync).not.toHaveBeenCalled();
+      expect(calls).toEqual([]);
+    },
+  );
 
   it("is hidden when a Variant of parent is set (the family prices a variant)", async () => {
     products = {
@@ -202,8 +217,6 @@ describe("K11-28: where it sits and how it reads", () => {
       open();
       await userEvent.type(screen.getByLabelText(/^Unit \*/), "case");
       await userEvent.type(screen.getByLabelText("Units per box"), "1");
-      expect(scroll).not.toHaveBeenCalled(); // hidden at 1: nothing to reveal
-      await userEvent.type(screen.getByLabelText("Units per box"), "2");
       await waitFor(() => expect(scroll).toHaveBeenCalledWith({ block: "nearest" }));
       const target = scroll.mock.instances[0] as HTMLElement;
       expect(target).toContainElement(pieceField() as HTMLElement); // the whole cell (field + helper)
@@ -294,10 +307,11 @@ describe("K11-28: the write chain", () => {
     expect(calls).toEqual(["POST /products"]);
   });
 
-  it("a typed value in a hidden field is kept in state but never sent, and comes back when the field does", async () => {
+  it("a typed value in a hidden field (flag off) is never sent", async () => {
     const { onCreated } = open();
     await fillCase({ piece: "1.75" });
-    await userEvent.clear(screen.getByLabelText("Units per box"));
+    flags.v2 = false;
+    await userEvent.type(screen.getByLabelText("Name *"), "!");
     expect(pieceField()).toBeNull();
     create();
     await waitFor(() => expect(onCreated).toHaveBeenCalled());

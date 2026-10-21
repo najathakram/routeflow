@@ -266,11 +266,11 @@ describe("ImportCsvPanel: a queued apply", () => {
   it("maps the read-only code to fixed copy", async () => {
     await startApply();
     get.mockResolvedValueOnce({
-      data: { id: "job-1", state: "failed", progress: 0, errorCode: "WORKSPACE_READ_ONLY" },
+      data: { id: "job-1", state: "failed", progress: 0, errorCode: "READ_ONLY" },
     });
     await tick();
     expect(screen.getByTestId(`${P}-job`)).toHaveTextContent(
-      "This workspace is read-only right now, so the import didn't run.",
+      "This workspace can't make changes right now, so the import didn't run.",
     );
   });
 
@@ -368,13 +368,28 @@ describe("ImportCsvPanel: a refused preview says why, inline and in fixed words 
 });
 
 describe("ImportCsvPanel: layout, focus and state hygiene (UI proof)", () => {
-  it("Preview, Import and the columns toggle are 44 px targets; the row wraps and Import never breaks across lines", async () => {
+  it("Preview, Import and the columns toggle are 44 px targets; the row wraps and the Import label wraps instead of clipping", async () => {
     setup();
     for (const id of ["preview-button", "import-button", "columns-toggle"]) {
       expect(screen.getByTestId(`${P}-${id}`).className).toContain("min-h-[44px]");
     }
-    expect(screen.getByTestId(`${P}-import-button`).className).toContain("whitespace-nowrap");
+    // the label wraps (a long "Import Products (Items)" is never clipped at 390): no nowrap, centred, tight lines
+    const importClass = screen.getByTestId(`${P}-import-button`).className;
+    expect(importClass).not.toContain("whitespace-nowrap");
+    expect(importClass).toContain("text-center");
+    expect(importClass).toContain("leading-tight");
     expect(screen.getByTestId(`${P}-actions`).className).toContain("flex-wrap");
+  });
+
+  it("focus moves to the refusal box when a Preview ends in the inline 409 refusal", async () => {
+    setup();
+    post.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "IMPORT_FAMILY_PRICING_ON", message: "x" } },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`${P}-preview-button`));
+    });
+    expect(document.activeElement).toBe(screen.getByTestId(`${P}-gate-error`));
   });
 
   it("focus moves to the preview result after Preview", async () => {

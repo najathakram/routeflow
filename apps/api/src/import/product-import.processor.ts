@@ -37,7 +37,7 @@ export class ProductImportProcessor {
     });
     if (!tenant || !acceptsAutomatedWrites(tenant.status)) {
       this.logger.warn(`Refusing product-import job ${job.id}: tenant ${tenantId} takes no writes`);
-      throw new Error(API_ERROR_CODES.WORKSPACE_READ_ONLY);
+      throw new Error(API_ERROR_CODES.READ_ONLY);
     }
     // report only when the percent moves (every 1%), with the running counts, so a failed job still shows how far it got
     let lastPercent = -1;

@@ -10,6 +10,10 @@ import {
   type SaleAxisState,
 } from "@routeflow/pricing";
 import { periodBucketOf } from "./period";
+import { resolveSaleLines, type ResolvedSaleLine } from "./sale-line-resolver";
+import { unbookedReversalMeta } from "./unbooked-reversals";
+import { writeAdminNotice } from "../billing/manual-invoice-notice";
+import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 
 /** Round a quantity to 3 decimals (matches the Decimal(12,3) ledger columns). */
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -329,69 +333,34 @@ export class RegulatedLedgerService {
    */
 
   /**
-   * B681/SA-067(2): the line shape `classifySaleAxis` needs for one SALE row — its OWN stored
-   * boxes/pieces/unitLabel/unitsPerBox and productId, read from the InvoiceItem the row still
-   * points at, or the OrderItem when the invoice item has since rotated away (a delivered-basis
-   * reconcile deletes and recreates InvoiceItems under fresh ids, per `lineKeyOfSale` above).
-   * `line: null` when neither resolves — "a row with NO readable line parks too" (SA-067(2)).
+   * SA-789 F1 (row 558): every ledger row -> line resolution goes through `resolveSaleLines`
+   * (`./sale-line-resolver`): invoice item first, then the stable order line. This returns the
+   * invoice-item -> product bridge the walks key on, filled for a row whose invoice item was
+   * re-created too (the stale id maps to the product its order line resolves to).
    */
-  private async loadSaleLineShapes(
+  private static async productsByInvoiceItem(
     db: any,
     sales: Array<{ id: string; invoiceItemId: string | null; orderItemId: string | null }>,
-  ): Promise<Map<string, { line: SaleAxisLine | null; productId: string | null }>> {
-    const invoiceItemIds = [
-      ...new Set(sales.map((s) => s.invoiceItemId).filter(Boolean)),
-    ] as string[];
-    const orderItemIds = [...new Set(sales.map((s) => s.orderItemId).filter(Boolean))] as string[];
-    const [invoiceItems, orderItems] = await Promise.all([
-      invoiceItemIds.length > 0
-        ? db.invoiceItem.findMany({
-            where: { id: { in: invoiceItemIds } },
-            select: {
-              id: true,
-              boxes: true,
-              pieces: true,
-              unitLabel: true,
-              unitsPerBox: true,
-              productId: true,
-            },
-          })
-        : [],
-      orderItemIds.length > 0
-        ? db.orderItem.findMany({
-            where: { id: { in: orderItemIds } },
-            select: {
-              id: true,
-              boxes: true,
-              pieces: true,
-              unitLabel: true,
-              unitsPerBox: true,
-              productId: true,
-            },
-          })
-        : [],
-    ]);
-    const byInvoiceItem = new Map<string, any>(invoiceItems.map((i: any) => [i.id, i]));
-    const byOrderItem = new Map<string, any>(orderItems.map((i: any) => [i.id, i]));
-    const out = new Map<string, { line: SaleAxisLine | null; productId: string | null }>();
+  ): Promise<{
+    productByItem: Map<string, string>;
+    resolved: Map<string, ResolvedSaleLine>;
+  }> {
+    const resolved = await resolveSaleLines(db, sales);
+    // SA-835 MUST-1: an order line that still has a row on a LIVE invoice item is booked against that
+    // row only. An earlier generation (already offset by a delivered-basis resync) resolves through the
+    // order line too, but must never become a reversal target: it would be booked first (oldest first)
+    // under the wrong invoice item / ratio. A stale row is a target only when its line has no live row.
+    const liveOrderLines = new Set<string>();
     for (const s of sales) {
-      const shape =
-        (s.invoiceItemId ? byInvoiceItem.get(s.invoiceItemId) : undefined) ??
-        (s.orderItemId ? byOrderItem.get(s.orderItemId) : undefined) ??
-        null;
-      out.set(s.id, {
-        line: shape
-          ? {
-              boxes: shape.boxes,
-              pieces: shape.pieces,
-              unitLabel: shape.unitLabel,
-              unitsPerBox: shape.unitsPerBox,
-            }
-          : null,
-        productId: shape?.productId ?? null,
-      });
+      if (s.orderItemId && resolved.get(s.id)?.liveInvoiceItemId) liveOrderLines.add(s.orderItemId);
     }
-    return out;
+    const productByItem = new Map<string, string>();
+    for (const s of sales) {
+      const r = resolved.get(s.id);
+      if (r?.viaOrderItem && s.orderItemId && liveOrderLines.has(s.orderItemId)) continue;
+      if (s.invoiceItemId && r?.productId) productByItem.set(s.invoiceItemId, r.productId);
+    }
+    return { productByItem, resolved };
   }
 
   /** Prior correction rows for these SALE row ids (correctsEntryId -> its deltas), for
@@ -430,6 +399,41 @@ export class RegulatedLedgerService {
       select: { id: true, unitsPerBox: true },
     });
     return new Map(products.map((p: any) => [p.id, p.unitsPerBox]));
+  }
+
+  /**
+   * SA-789 F1: a reversal the ledger could NOT book (its sold line resolves nowhere) is made visible,
+   * never skipped: `logger.error` plus an in-app notice for support. The return / credit note itself
+   * still goes through (no new refusal for operators). Ids only, no names.
+   */
+  private async reportUnbookedReversal(
+    db: any,
+    n: { tenantId: string; message: string; meta: Record<string, unknown> },
+  ): Promise<void> {
+    // One notice per (return | credit note, sale entry, period): a retried call must not write it again.
+    const field = n.meta.returnId ? "returnId" : "creditNoteId";
+    const already = await db.auditLog.findFirst({
+      where: {
+        tenantId: n.tenantId,
+        action: AdminAuditAction.REGULATED_REVERSAL_UNBOOKED,
+        AND: [
+          { meta: { path: [field], equals: n.meta[field] } },
+          { meta: { path: ["saleEntryId"], equals: n.meta.saleEntryId } },
+          // The period is part of the key: a return still unreversed when it is re-received in a
+          // later month writes its notice in that month, so that month's report warns too.
+          { meta: { path: ["period"], equals: n.meta.period } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (already) return;
+    this.logger.error(`regulated reversal unbooked: ${JSON.stringify(n.meta)}`);
+    await writeAdminNotice(db, {
+      tenantId: n.tenantId,
+      action: AdminAuditAction.REGULATED_REVERSAL_UNBOOKED,
+      message: n.message,
+      meta: n.meta,
+    });
   }
 
   /**
@@ -688,6 +692,8 @@ export class RegulatedLedgerService {
   ): Promise<{
     sales: any[];
     productByItem: Map<string, string>;
+    /** SA-789 F1: per SALE row id, how its line resolved (invoice item, else order line, else null). */
+    resolvedBySaleId: Map<string, ResolvedSaleLine>;
     lineKeyOfSale: (s: any) => string;
     lineKeyOfReversal: (r: any) => string;
     invoiceItemIds: string[];
@@ -709,14 +715,8 @@ export class RegulatedLedgerService {
     const invoiceItemIds = [
       ...new Set(sales.map((s: any) => s.invoiceItemId).filter(Boolean)),
     ] as string[];
-    const items =
-      invoiceItemIds.length > 0
-        ? await db.invoiceItem.findMany({
-            where: { id: { in: invoiceItemIds } },
-            select: { id: true, productId: true },
-          })
-        : [];
-    const productByItem = new Map<string, string>(items.map((i: any) => [i.id, i.productId]));
+    const { productByItem, resolved: resolvedBySaleId } =
+      await RegulatedLedgerService.productsByInvoiceItem(db, sales);
 
     // The cumulative-reversal cap is keyed on the ORDER LINE, not the invoice item.
     // A delivered-basis reconcile DELETES an open draft's InvoiceItems and recreates
@@ -763,8 +763,19 @@ export class RegulatedLedgerService {
     // credit notes AND reconcile re-syncs — folded into the per-line remaining so
     // cumulative reversal can never exceed the sold amount regardless of which path
     // (or which since-rotated invoice item) booked the earlier reversal.
+    // SA-789 F1: a reversal booked under the line's CURRENT (re-created) invoice item id carries the
+    // order line, so it is found by that too — otherwise a return after such a credit over-reverses.
+    const orderItemIds = [
+      ...new Set(sales.map((s: any) => s.orderItemId).filter(Boolean)),
+    ] as string[];
     const priorReversals = await db.regulatedSalesLedger.findMany({
-      where: { invoiceItemId: { in: invoiceItemIds }, entryType: "REVERSAL" },
+      where: {
+        entryType: "REVERSAL",
+        OR: [
+          { invoiceItemId: { in: invoiceItemIds } },
+          ...(orderItemIds.length > 0 ? [{ orderItemId: { in: orderItemIds } }] : []),
+        ],
+      },
       select: {
         invoiceItemId: true,
         orderItemId: true,
@@ -785,6 +796,7 @@ export class RegulatedLedgerService {
     return {
       sales,
       productByItem,
+      resolvedBySaleId,
       lineKeyOfSale,
       lineKeyOfReversal,
       invoiceItemIds,
@@ -851,6 +863,7 @@ export class RegulatedLedgerService {
     const {
       sales,
       productByItem,
+      resolvedBySaleId,
       lineKeyOfSale,
       remQtyByLine,
       remUnitBasisByLine,
@@ -859,7 +872,8 @@ export class RegulatedLedgerService {
     } = built;
 
     // SALE rows grouped by product (FIFO within a product). Only LIVE sale rows
-    // (invoice item still present) are reversal targets; the per-line remaining
+    // (invoice item still present; or, SA-789/SA-835, a row whose invoice item was re-created and whose
+    // order line has NO live row) are reversal targets; the per-line remaining
     // above already accounts for the pre-reconcile rows on the deleted items.
     // SA-070(b) Hazard 1: a `correctsEntryId != null` row is a units-only B681 correction
     // typed like the row it corrects (its own qty/net are 0, unitBasisQty is a delta) — it is
@@ -868,14 +882,19 @@ export class RegulatedLedgerService {
     // consume returned pieces against a zero-net row and book a reversal with a unit basis but no
     // money.
     const salesByProduct = new Map<string, any[]>();
+    const unresolvedSales: any[] = [];
     for (const s of sales) {
       if (s.correctsEntryId != null) continue;
       const pid = productByItem.get(s.invoiceItemId);
-      if (!pid) continue;
+      if (!pid) {
+        // SA-789 F1: a row that resolves through NEITHER its invoice item NOR its order line is
+        // never skipped silently. (An unlisted line that resolves but has no product is a normal skip.)
+        if (resolvedBySaleId.get(s.id)?.line == null) unresolvedSales.push(s);
+        continue;
+      }
       if (!salesByProduct.has(pid)) salesByProduct.set(pid, []);
       salesByProduct.get(pid)!.push(s);
     }
-
     // B681/SA-067: only the PIECES caller (the LINE_UNIT caller compares boxes to boxes
     // correctly on a box-unaware row and must not park it) — preloaded once for every candidate
     // row across every product, not per-row, to keep this one batch of queries regardless of how
@@ -883,8 +902,8 @@ export class RegulatedLedgerService {
     const candidateSales = [...salesByProduct.values()].flat();
     const lineShapeBySaleId =
       returnedUnit === "PIECES"
-        ? await this.loadSaleLineShapes(db, candidateSales)
-        : new Map<string, { line: SaleAxisLine | null; productId: string | null }>();
+        ? await resolveSaleLines(db, candidateSales)
+        : new Map<string, ResolvedSaleLine>();
     const correctionsBySaleId =
       returnedUnit === "PIECES"
         ? await this.loadCorrectionsBySaleId(
@@ -908,10 +927,11 @@ export class RegulatedLedgerService {
     // read off this one; the other axis is DERIVED from it, never independently clamped).
     const nativeRemByLine = returnedUnit === "PIECES" ? remUnitBasisByLine : remQtyByLine;
 
+    const unbookedByProduct: Record<string, number> = {};
     for (const [productId, returnedQtyRaw] of returnedByProduct.entries()) {
       const remaining = Number(returnedQtyRaw);
       if (!(remaining > 0)) continue;
-      await this.walkSaleRows({
+      const walked = await this.walkSaleRows({
         db,
         sales: salesByProduct.get(productId) ?? [],
         remaining,
@@ -931,6 +951,31 @@ export class RegulatedLedgerService {
         packNowByProduct,
         rows,
       });
+      if (walked.remaining > 0 && !walked.parkedOn) unbookedByProduct[productId] = walked.remaining;
+    }
+
+    // SA-835: a SALE row that resolves nowhere (its line is gone) is never skipped silently. Raise the
+    // notice only when it matters: the row's line still holds a balance AND returned units are still
+    // unbooked after the walk (a return of other goods books nothing there and is no loss).
+    const unbookedQty = Object.values(unbookedByProduct).reduce((n, q) => n + q, 0);
+    if (unbookedQty > 0) {
+      for (const s of unresolvedSales) {
+        if (!((remQtyByLine.get(lineKeyOfSale(s)) ?? 0) > 0)) continue;
+        await this.reportUnbookedReversal(db, {
+          tenantId: s.tenantId,
+          message: `A return could not be reversed on the regulated ledger: the sold line on order ${s.orderId} (ledger entry ${s.id}) can no longer be found. Support needs to resolve it.`,
+          meta: unbookedReversalMeta({
+            tenantId: s.tenantId,
+            returnId,
+            creditNoteId: null,
+            lineId: s.orderItemId ?? null,
+            saleEntryId: s.id,
+            qty: unbookedQty,
+            unbookedByProduct,
+            period: periodBucketOf(new Date()),
+          }),
+        });
+      }
     }
 
     if (rows.length === 0) return;
@@ -1043,7 +1088,7 @@ export class RegulatedLedgerService {
 
   /**
    * #2108: the ONE product-id definition for a parked sale row: its live invoice item's product,
-   * else the product of the order/invoice line shape (`loadSaleLineShapes`), which survives an
+   * else the product of the order/invoice line shape (`resolveSaleLines`), which survives an
    * InvoiceItem rotation. list() (`filedPeriodForParked`) and `resolveParkedReversal` both call it.
    */
   static productIdOfParkedRow(
@@ -1129,18 +1174,8 @@ export class RegulatedLedgerService {
       (await db.regulatedSalesLedger.findMany({
         where: { orderId: parked.orderId, entryType: "SALE" },
       })) ?? [];
-    const itemIds = [
-      ...new Set(sales.map((x: any) => x.invoiceItemId).filter(Boolean)),
-    ] as string[];
-    const items: any[] =
-      itemIds.length > 0
-        ? ((await db.invoiceItem.findMany({
-            where: { id: { in: itemIds } },
-            select: { id: true, productId: true },
-          })) ?? [])
-        : [];
-    const productByItem = new Map<string, string>(items.map((i: any) => [i.id, i.productId]));
-    const shape = (await this.loadSaleLineShapes(db, [saleRow])).get(saleRow.id);
+    const { productByItem } = await RegulatedLedgerService.productsByInvoiceItem(db, sales);
+    const shape = (await resolveSaleLines(db, [saleRow])).get(saleRow.id);
     return this.findFiledPeriod(
       db,
       RegulatedLedgerService.touchedCategoryIds(
@@ -1269,7 +1304,7 @@ export class RegulatedLedgerService {
     // as unresolvable rather than silently booking against nothing if it somehow is.
     if (!saleRow) return unresolvable("the sale row no longer exists");
 
-    const shapes = await this.loadSaleLineShapes(db, [saleRow]);
+    const shapes = await resolveSaleLines(db, [saleRow]);
     const shape = shapes.get(saleRow.id) ?? { line: null, productId: null };
     const lineWithSuppliedPack: SaleAxisLine = shape.line
       ? { ...shape.line, unitsPerBox: pack }
@@ -1501,7 +1536,7 @@ export class RegulatedLedgerService {
       // skips itself inside the chunk booker) — not only rows after the parked one.
       const rest = ordered.filter((s: any) => s.id !== saleRow.id);
       if (rest.length > 0) {
-        const restShapes = await this.loadSaleLineShapes(db, rest);
+        const restShapes = await resolveSaleLines(db, rest);
         const restCorrections = await this.loadCorrectionsBySaleId(
           db,
           rest.map((s: any) => s.id),
@@ -1617,6 +1652,60 @@ export class RegulatedLedgerService {
   }
 
   /**
+   * SA-789 F1: a credited regulated item that matched NO SALE row, on an invoice that has SALE rows no
+   * live invoice item and no other credited item accounts for, means the credit could not be tied to
+   * its sale. It is made visible (log + notice), not skipped; a line that never recorded a SALE (an
+   * invoice with no matching dangling row) stays the normal "no naked reversal" skip.
+   */
+  private async reportUnmatchedCredits(
+    db: any,
+    creditNoteId: string,
+    unmatched: any[],
+    creditedItems: any[],
+    claimedRows: any[],
+  ): Promise<void> {
+    const invoiceIds = [
+      ...new Set(
+        unmatched
+          .map((it) => creditedItems.find((c: any) => c.id === it.invoiceItemId)?.invoiceId)
+          .filter(Boolean),
+      ),
+    ] as string[];
+    if (invoiceIds.length === 0) return;
+    const claimedItemIds = new Set(claimedRows.map((r: any) => r.invoiceItemId));
+    const sales: any[] =
+      (await db.regulatedSalesLedger.findMany({
+        where: {
+          invoiceId: { in: invoiceIds },
+          entryType: "SALE",
+          correctsEntryId: null,
+          trackedCategoryId: { in: [...new Set(unmatched.map((it) => it.trackedCategoryId))] },
+        },
+        select: { id: true, invoiceId: true, invoiceItemId: true, orderItemId: true },
+      })) ?? [];
+    const candidates = sales.filter((r) => r.invoiceItemId && !claimedItemIds.has(r.invoiceItemId));
+    if (candidates.length === 0) return;
+    const resolvedRows = await resolveSaleLines(db, candidates);
+    const dangling = candidates.filter((r) => !resolvedRows.get(r.id)?.liveInvoiceItemId);
+    if (dangling.length === 0) return;
+    for (const it of unmatched) {
+      await this.reportUnbookedReversal(db, {
+        tenantId: it.tenantId,
+        message: `A credit note could not be reversed on the regulated ledger: credit note ${creditNoteId}, invoice line ${it.invoiceItemId} has no sale entry it can be tied to. Support needs to resolve it.`,
+        meta: unbookedReversalMeta({
+          tenantId: it.tenantId,
+          returnId: null,
+          creditNoteId,
+          lineId: it.id ?? null,
+          saleEntryId: dangling[0].id,
+          qty: Number(it.qty),
+          period: periodBucketOf(new Date()),
+        }),
+      });
+    }
+  }
+
+  /**
    * Reverse regulated SALE rows when a CREDIT NOTE is issued (W5c). Unlike a return,
    * a credit note carries no goods — so the per-category breakdown comes from its
    * CreditNoteItems, which credit-notes.service builds ONLY for the invoice lines the
@@ -1655,6 +1744,18 @@ export class RegulatedLedgerService {
     ] as string[];
     if (invoiceItemIds.length === 0) return;
 
+    // SA-789 F1: the credited items' order lines. A legacy rebuild re-creates the invoice items, so the
+    // item being credited now is not the id the SALE row was written under; the order line is stable.
+    // (This reads the CREDITED item, not a ledger row's id: that mapping lives in `resolveSaleLines`.)
+    const creditedItems: any[] =
+      (await db.invoiceItem.findMany({
+        where: { id: { in: invoiceItemIds } },
+        select: { id: true, orderItemId: true, invoiceId: true },
+      })) ?? [];
+    const creditedOrderItemIds = [
+      ...new Set(creditedItems.map((c: any) => c.orderItemId).filter(Boolean)),
+    ] as string[];
+
     // The credited lines' LIVE SALE rows — the source ids stamped onto reversals and
     // the SALE-existence guard (only a line that recorded a live regulated SALE can be
     // credited). Keyed by the credited invoice item.
@@ -1665,9 +1766,21 @@ export class RegulatedLedgerService {
       // (used below for the pieces-per-line-unit ratio) even though it never moves live.net/qty.
       // It is NOT excluded from `lineRows` below — the remaining-balance cap (`saleByLine`) must
       // still fold in its real net/qty/unitBasis contribution.
-      where: { invoiceItemId: { in: invoiceItemIds }, entryType: "SALE", correctsEntryId: null },
+      where: {
+        entryType: "SALE",
+        correctsEntryId: null,
+        ...(creditedOrderItemIds.length > 0
+          ? {
+              OR: [
+                { invoiceItemId: { in: invoiceItemIds } },
+                { orderItemId: { in: creditedOrderItemIds } },
+              ],
+            }
+          : { invoiceItemId: { in: invoiceItemIds } }),
+      },
       select: {
         invoiceItemId: true,
+        createdAt: true,
         netSales: true,
         // B661: both quantity axes of THIS credited line's own SALE rows — the pieces-per-line-unit
         // ratio is taken from here, not from the order line's aggregate (see below).
@@ -1690,11 +1803,13 @@ export class RegulatedLedgerService {
         orderItemId: string | null;
         invoiceId: string | null;
         trackedSubcategoryId: string | null;
+        /** The invoice item id the SALE rows sit under (differs from the credited item's after a rebuild). */
+        saleInvoiceItemId: string | null;
       }
     >();
-    for (const s of liveSaleRows) {
-      const k = s.invoiceItemId ?? "";
-      const cur = liveSaleByItem.get(k) ?? {
+    type LiveSale = typeof liveSaleByItem extends Map<string, infer V> ? V : never;
+    const addSale = (m: Map<string, LiveSale>, k: string, s: any) => {
+      const cur = m.get(k) ?? {
         net: 0,
         qty: 0,
         unitBasis: 0,
@@ -1702,12 +1817,53 @@ export class RegulatedLedgerService {
         orderItemId: s.orderItemId ?? null,
         invoiceId: s.invoiceId ?? null,
         trackedSubcategoryId: s.trackedSubcategoryId ?? null,
+        saleInvoiceItemId: s.invoiceItemId ?? null,
       };
       cur.net += Number(s.netSales);
       cur.qty += Number(s.qty);
       cur.unitBasis += Number(s.unitBasisQty);
-      liveSaleByItem.set(k, cur);
+      m.set(k, cur);
+    };
+    for (const s of liveSaleRows) addSale(liveSaleByItem, s.invoiceItemId ?? "", s);
+    // SA-789 F1: a credited item no SALE row points at (re-created since the sale) matches its ORDER
+    // LINE's SALE rows instead. Several generations of rows can share the order line: the figures
+    // (pieces-per-unit ratio) come from the NEWEST generation (one invoice item id), never an aggregate.
+    const unmatchedCredited: any[] = [];
+    for (const it of items) {
+      const key = it.invoiceItemId ?? "";
+      if (!key || liveSaleByItem.has(key)) continue;
+      const credited = creditedItems.find((c: any) => c.id === key);
+      const orderItemId = credited?.orderItemId ?? null;
+      const byGeneration = new Map<string, any[]>();
+      for (const r of liveSaleRows) {
+        // SA-835: the same order line AND the same invoice as the credited item.
+        if (!orderItemId || r.orderItemId !== orderItemId || r.invoiceId !== credited?.invoiceId) {
+          continue;
+        }
+        byGeneration.set(r.invoiceItemId ?? "", [
+          ...(byGeneration.get(r.invoiceItemId ?? "") ?? []),
+          r,
+        ]);
+      }
+      if (byGeneration.size === 0) {
+        unmatchedCredited.push(it);
+        continue;
+      }
+      const newest = [...byGeneration.values()].sort((x, y) => {
+        const tx = Math.max(...x.map((r: any) => new Date(r.createdAt ?? 0).getTime()));
+        const ty = Math.max(...y.map((r: any) => new Date(r.createdAt ?? 0).getTime()));
+        // Ties break on the invoice item id so the pick is deterministic.
+        return ty - tx || String(y[0].invoiceItemId).localeCompare(String(x[0].invoiceItemId));
+      })[0];
+      for (const r of newest) addSale(liveSaleByItem, key, r);
     }
+    await this.reportUnmatchedCredits(
+      db,
+      creditNoteId,
+      unmatchedCredited,
+      creditedItems,
+      liveSaleRows,
+    );
 
     // The cumulative-reversal cap is keyed on the ORDER LINE, not the invoice item.
     // A delivered-basis reconcile DELETES an open draft's InvoiceItems and recreates
@@ -1836,7 +1992,9 @@ export class RegulatedLedgerService {
         orderId: live.orderId,
         orderItemId: live.orderItemId,
         invoiceId: live.invoiceId,
-        invoiceItemId: it.invoiceItemId,
+        // SA-835 MUST-2: stamped with the id the matched SALE rows sit under, so a later invoice void
+        // (which nets by invoiceItemId) nets this reversal against its sale.
+        invoiceItemId: live.saleInvoiceItemId ?? it.invoiceItemId,
         creditNoteId,
         qty: bookedQty,
         unitBasisQty: bookedUnitBasis,

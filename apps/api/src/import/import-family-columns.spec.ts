@@ -1188,6 +1188,83 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
     });
   });
 
+  it("MUST-1: a variant the import creates carries the importing user (the create and its audit)", async () => {
+    rows.push(mk({ id: "fam", name: "Acme Cola", kind: "FAMILY" }));
+    await run(csv("Fresh One,SNEW,,6,Acme Cola,,,"));
+    expect(productsService.create.mock.calls[0][1]).toMatchObject({
+      reparentVia: "import",
+      actorId: "user-1",
+    });
+  });
+
+  describe("MUST-2: a crash mid-apply still writes the summary and cleans up run-made empty families", () => {
+    it("writes import.products.applied with completed:false and the counts so far, and removes the empty family", async () => {
+      rows.push(mk({ id: "p1", name: "P1", sku: "S1" }));
+      rows.push(mk({ id: "p2", name: "P2", sku: "S2" }));
+      productsService.assignToParent.mockRejectedValueOnce(new BadRequestException("boom"));
+      // row 1 fails (its new family stays empty); the walk then dies at row 2 (outside the per-row guard)
+      const crash = (done: number) => {
+        if (done === 1) throw new Error("process died");
+      };
+      await expect(
+        service.importProducts(csv(",S1,,,Ghost Family,X,,", ",S2,,,Other Family,Y,,"), "user-1", {
+          fileName: "f.csv",
+          onProgress: crash,
+        }),
+      ).rejects.toThrow("process died");
+      const summary = auditService.log.mock.calls
+        .map((c) => c[0])
+        .find((c) => c.action === "import.products.applied");
+      expect(summary.meta).toMatchObject({ completed: false, fileName: "f.csv", updated: 0 });
+      const ghost = FAMILY_ROWS().find((f) => f.name === "Ghost Family")!;
+      expect(productsService.remove).toHaveBeenCalledWith(ghost.id);
+    });
+
+    it("a completed apply says completed:true", async () => {
+      rows.push(mk({ id: "p1", name: "P1", sku: "S1" }));
+      rows.push(mk({ id: "fam", name: "Acme Cola", kind: "FAMILY" }));
+      await run(csv(",S1,,,Acme Cola,X,,"));
+      const summary = auditService.log.mock.calls
+        .map((c) => c[0])
+        .find((c) => c.action === "import.products.applied");
+      expect(summary.meta.completed).toBe(true);
+    });
+
+    it("a preview that crashes writes nothing", async () => {
+      rows.push(mk({ id: "p1", name: "P1", sku: "S1" }));
+      await expect(
+        service.importProducts(csv(",S1,,,Acme Cola,X,,"), "user-1", {
+          dryRun: true,
+          onProgress: () => {
+            throw new Error("died");
+          },
+        }),
+      ).rejects.toThrow("died");
+      expect(auditService.log).not.toHaveBeenCalled();
+    });
+  });
+
+  it("amended ruling 3: an export round trip whose Item Name carries the '{Family} - ' prefix is still a no-op", async () => {
+    rows.push(mk({ id: "fam", name: "Acme Cola", kind: "FAMILY" }));
+    rows.push(
+      mk({
+        id: "v1",
+        name: "Zero",
+        sku: "S1",
+        kind: "VARIANT",
+        parentProductId: "fam",
+        pricePerUnit: 5,
+      }),
+    );
+    const r = await service.importProducts(
+      Buffer.from("Item Name,SKU,Rate,Family\nAcme Cola - Zero,S1,5,Acme Cola\n"),
+      "user-1",
+    );
+    expect(r.unchanged).toBe(1);
+    expect(r.updated).toBe(0);
+    expect(productsService.update).not.toHaveBeenCalled();
+  });
+
   it("the family import branch calls no productUnit writer and no Prisma write (units v2 stays untouched)", () => {
     const src = readFileSync(join(__dirname, "product-family-import.service.ts"), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")

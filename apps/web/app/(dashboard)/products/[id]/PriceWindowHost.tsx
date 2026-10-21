@@ -170,6 +170,8 @@ export function ProductPricingRegion({ children }: { children: React.ReactNode }
         // Opaque and raised while it covers the image column: nothing shows through, and the column is inert.
         wide &&
           "lg:relative lg:z-10 lg:-ml-[calc(50%+0.75rem)] lg:w-[calc(150%+0.75rem)] lg:rounded-lg lg:bg-white lg:shadow-card",
+        // The unit controls (Add a unit, Reset, default order unit) line up with the grid card's own text: 1 px border + 16 px padding.
+        wide && "lg:[&_[data-wide-inset]]:px-[17px]",
       )}
     >
       {children}

@@ -26,8 +26,8 @@ export const IMPORT_REFUSAL_COPY: Readonly<Record<string, string>> = {
 
 const JOB_ERROR_COPY: Readonly<Record<string, string>> = {
   ...IMPORT_REFUSAL_COPY,
-  [API_ERROR_CODES.WORKSPACE_READ_ONLY]:
-    "This workspace is read-only right now, so the import didn't run.",
+  [API_ERROR_CODES.READ_ONLY]:
+    "This workspace can't make changes right now, so the import didn't run.",
 };
 
 /** The refusal copy for a response code, or null when it is not one of the import's file refusals. */

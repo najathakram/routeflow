@@ -1322,8 +1322,8 @@ test("A2 parseIncidents: title from '# ', Status word (default open), derived IN
       ["INC-1015a", "open", "2026-10-15"],
       ["INC-1015b", "closed", "2026-10-15"],
       ["INC-1015c", "mitigated", "2026-10-15"],
-      ["INC-1016a", "open", "2026-10-16"], // no Status line: open
-      ["INC-1017a", "open", "2026-10-17"], // "suspected" is not a known word: open
+      ["INC-1016a", "unknown", "2026-10-16"], // no Status line: unknown (never silently open)
+      ["INC-1017a", "suspected", "2026-10-17"], // suspected / unverified keep their word
     ],
   );
   assert.equal(inc[0].title, "Acme catch-up billing stuck, awaiting the in-app Pay (2026-10-15)");
@@ -1377,12 +1377,14 @@ test("A2 readSpecsExtras: reads incidents/ and priorities/OWNER-QUEUE.md, ONE gi
     assert.equal(x.ownerQueueRows.length, 11);
     assert.equal(x.laneHandoffs.length, 4);
     assert.deepEqual(x.errors, []);
-    assert.equal(calls.length, 1);
-    assert.equal(
-      calls[0].line,
-      "git log --since=7.days --format=%x00%cI --name-only -- handoff/lanes",
+    // ONE git log for the handoff times and ONE for the incident files' last commit times
+    assert.equal(calls.length, 2);
+    const lines = calls.map((c) => c.line);
+    assert.ok(
+      lines.includes("git log --since=7.days --format=%x00%cI --name-only -- handoff/lanes"),
     );
-    assert.equal(calls[0].cwd, dir);
+    assert.ok(lines.includes("git log --format=%x00%cI --name-only -- incidents"));
+    assert.ok(calls.every((c) => c.cwd === dir));
     // missing files are reported, never thrown
     const empty = mkdtempSync(join(tmpdir(), "a2-specs-empty-"));
     try {
@@ -1489,4 +1491,127 @@ test("specs source carries the register duplicate ids and row ids from the extra
   await c.runOnce("specs");
   assert.deepEqual(c.sources.specs.data.registerDuplicateIds, ["500"]);
   assert.deepEqual(c.sources.specs.data.registerRowIds, ["500", "500"]);
+});
+
+// ---------- X1: incident status words and freshness ----------
+
+test("X1 parseIncidents: first Status word open|mitigated|closed|resolved|suspected|unverified, else unknown", () => {
+  const f = (text) => COL.parseIncidents([{ file: "2026-10-15-acme-x.md", text }])[0].status;
+  assert.equal(f("# T\n\n**Status:** open. x"), "open");
+  assert.equal(f("# T\n\n**Status:** Mitigated. x"), "mitigated");
+  assert.equal(f("# T\n\n**Status:** closed (10-16)."), "closed");
+  assert.equal(f("# T\n\n**Status:** resolved."), "resolved");
+  assert.equal(f("# T\n\n**Status:** suspected, unverified."), "suspected");
+  assert.equal(f("# T\n\n**Status:** unverified."), "unverified");
+  assert.equal(f("# T\n\n**Symptom.** nothing here"), "unknown");
+  assert.equal(f("# T\n\n**Status:** wibble"), "unknown");
+});
+
+test("X1 parseIncidents: changedAt comes from the file's newest commit (basename map)", () => {
+  const inc = COL.parseIncidents(
+    [{ file: "2026-10-15-acme-billing-stuck.md", text: "# T\n\n**Status:** open." }],
+    { "2026-10-15-acme-billing-stuck.md": "2026-10-19T14:30:00.000Z" },
+  );
+  assert.equal(inc[0].changedAt, "2026-10-19T14:30:00.000Z");
+  assert.equal(
+    COL.parseIncidents([{ file: "2026-10-15-acme-z.md", text: "# T" }])[0].changedAt,
+    null,
+  );
+});
+
+test("X1 parseIncidentLog: newest commit time per incidents/ file", () => {
+  assert.deepEqual(COL.parseIncidentLog(read("a2-gitlog-incidents.txt")), {
+    "2026-10-15-acme-billing-stuck.md": "2026-10-19T14:30:00.000Z",
+    "2026-10-17-acme-suspected.md": "2026-10-19T14:30:00.000Z",
+    "2026-10-15-acme-tier-bug.md": "2026-10-18T15:00:00.000Z",
+    "README.md": "2026-10-15T13:00:00.000Z",
+  });
+});
+
+test("X1 readSpecsExtras: incidents carry changedAt from the incidents git log", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "x1-specs-"));
+  try {
+    cpSync(join(FIX, "a2-incidents"), join(dir, "incidents"), { recursive: true });
+    mkdirSync(join(dir, "priorities"));
+    cpSync(join(FIX, "a2-owner-queue.md"), join(dir, "priorities", "OWNER-QUEUE.md"));
+    const exec = async (cmd, args) => ({
+      code: 0,
+      stdout: args.includes("incidents") ? read("a2-gitlog-incidents.txt") : "",
+      stderr: "",
+    });
+    const x = await COL.readSpecsExtras({ dir, exec });
+    const by = Object.fromEntries(x.incidents.map((i) => [i.id, i.changedAt]));
+    assert.equal(by["INC-1015a"], "2026-10-19T14:30:00.000Z");
+    assert.equal(by["INC-1015c"], "2026-10-18T15:00:00.000Z");
+    assert.equal(by["INC-1016a"], null);
+    assert.deepEqual(x.errors, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("parseIncidents: ids are date + index only (no file-name slug, dated or not); the title is masked before its 300 cut", () => {
+  const name = "acme-foods-distribution";
+  const files = [
+    {
+      file: `2026-10-15-${name}-outage.md`,
+      text: `# ${"t".repeat(290)} ${name} down\n\n**Status:** open\n`,
+    },
+    { file: `${name}-undated-note.md`, text: `# Note\n\n**Status:** open\n` },
+    { file: `${name}-second-undated.md`, text: `# Second\n\n**Status:** closed\n` },
+  ];
+  const mask = (t) => t.replace(new RegExp(name, "gi"), "a live business");
+  const out = COL.parseIncidents(files, {}, mask);
+  // file order: the dated file, then the two undated ones (second-undated sorts before undated-note)
+  assert.deepEqual(
+    out.map((i) => i.id),
+    ["INC-1015a", "INC-0000a", "INC-0000b"],
+  );
+  for (const i of out) assert.match(i.id, /^INC-\d{4}[a-z]$/, `no slug in ${i.id}`);
+  assert.doesNotMatch(JSON.stringify(out.map((i) => i.id)), /acme|outage|note/i);
+  const dated = out.find((i) => i.date === "2026-10-15");
+  assert.equal(dated.id, "INC-1015a");
+  assert.doesNotMatch(dated.title, /acme/i, "no fragment of the name survives the cut");
+  assert.match(dated.title, /a live/);
+});
+
+// ---------- cloud: bounded git forks, honest spawn errors ----------
+
+test("cloud bugs: ONE prefetch fetch + ONE cat-file for N files; no per-blob fan-out", async () => {
+  const byBlob = Object.fromEntries(
+    BUG_FILES.map((f, i) => [String(i + 1).repeat(40), bugText(f)]),
+  );
+  void byBlob;
+  const { c, calls } = mk(
+    { cloud: true },
+    { "git cat-file --batch": () => ({ code: 0, stdout: "", stderr: "" }) },
+  );
+  await c.runOnce("bugs");
+  const gits = calls.filter((x) => x.cmd === "git");
+  assert.equal(gits.filter((x) => x.line.startsWith("git fetch")).length, 1);
+  assert.equal(gits.filter((x) => x.line.startsWith("git cat-file")).length, 1);
+  assert.equal(gits.filter((x) => x.line.startsWith("git cat-file blob")).length, 0);
+  assert.ok(gits.length <= 7, "bounded git spawns: " + gits.length);
+  const fetch = gits.find((x) => x.line.startsWith("git fetch"));
+  assert.equal(fetch.opts.env.GIT_CONFIG_VALUE_0, "noop");
+  for (let i = 1; i <= BUG_FILES.length; i++) assert.ok(fetch.args.includes(String(i).repeat(40)));
+});
+
+test("bugs: a git spawn failure surfaces as such, never as 'registry not found'", async () => {
+  for (const msg of ["git spawn failed: EAGAIN", "git timed out after 120000ms"]) {
+    const { c } = mk(
+      {},
+      {
+        "git rev-parse origin/master:.claude/campaign/bugs": () => ({
+          code: 1,
+          stdout: "",
+          stderr: msg,
+        }),
+      },
+    );
+    await c.runOnce("bugs");
+    assert.equal(c.sources.bugs.ok, false);
+    assert.ok(c.sources.bugs.error.includes(msg), c.sources.bugs.error);
+    assert.ok(!/not found/.test(c.sources.bugs.error), c.sources.bugs.error);
+  }
 });

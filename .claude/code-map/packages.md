@@ -642,3 +642,14 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 
 - `packages/types/api/enums.ts`: `TAX_RATE_SOURCE_VALUES`/`TaxRateSource`, `INVOICE_ORDER_BILLING_ROLE_VALUES`/`InvoiceOrderBillingRole` (set-equal to the Prisma enums in `enum-parity.spec.ts`).
 - `packages/types/api/error-codes.ts`: `BILL_NEEDS_A_LINE`, `BILL_NOT_EDITABLE`, `BILL_PO_SUPPLIER_LOCKED`, `BILL_NEVER_RECEIVED`, `BILL_TAX_UNKNOWN`, `RECEIVE_EXCEEDS_OUTSTANDING`, `BILL_HAS_PAYMENTS`, `BILL_PAYMENT_NOT_CASH`, `BILL_PAYMENT_NO_SUPPLIER`; `INVOICE_TAX_STATE_STALE_PATH_VALUES`, `InvoiceTaxStateStalePath`, `INVOICE_TAX_STATE_STALE_COPY`.
+
+## Window 1 (2026-10-21, #3555)
+
+- `packages/types/draft-submit-key.ts`: `DRAFT_SUBMIT_KEY_FIELD` (`_submitKey`), `isDraftSubmitKey`, `readDraftSubmitKey`, `withDraftSubmitKey` (one submit key per draft, SA-817 A).
+- `packages/types/api/misc.ts`: `expectedUpdatedAt` on the draft save request. `packages/types/api/error-codes.ts`: `DRAFT_CHANGED`.
+
+## Window 2 and R5 part 2 (2026-10-21, #3557, #3550, #3558)
+
+- `packages/pricing/src/tax-precision.ts`: `TAX_RATE_FRACTION_DECIMALS` (6), `TAX_PERCENT_DECIMALS` (4), `TAX_PERCENT_PRECISION_MESSAGE`, `sameRateAtLegacyPrecision(stored, configured)` (snaps the product before rounding), `taxPercentPrecisionError(percent, stored?)`. Exported from `index.ts`; used by api DTOs/settings, web and mobile.
+- `packages/pricing/src/inferred-flat-rate.ts`: `inferredFlatRate(invoice, opts?: InferredFlatRateOptions)`; `preferredRate` (tenant) wins when the single totals builder reproduces the stored tax, else the first verified of 4 dp then 6 dp. `explained-tax-rate.ts`, `nsf-line.ts` follow the widen.
+- `packages/types/api/config-snapshots.ts`: `ConfigSnapshotHeldFulfilment` / `ConfigSnapshotHeldOverride` (discriminated by `kind`), hold reasons `ADDON_NOT_PAID`, `REQUIRES_UNMET`. `regulated.ts`: unbooked-reversal warning field.

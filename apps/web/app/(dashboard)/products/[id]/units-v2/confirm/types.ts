@@ -7,6 +7,8 @@ export interface LastSave {
   revision: number;
   /** The inverse write; only its LENGTHS are read (counts for the summary, never money values). */
   undo?: { patches: readonly unknown[]; customerMoves: readonly unknown[] };
+  /** K12 F05: Auto prices that followed the set prices of a Change prices Apply (0 or absent when none). */
+  follows?: number;
 }
 
 /** One row of the preview-first state: values arrive pre-formatted (no money math in the UI). */

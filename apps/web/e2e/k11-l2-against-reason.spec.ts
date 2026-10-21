@@ -7,9 +7,9 @@
  * Role OPERATOR on the approved test tenant; fixture product E2E-FIX-UNITS (apps/api/scripts/e2e-seed.js): the product
  * itself is a REAL 1-piece unit (unit "Piece", no pack) with a real Case x12 unit row above it. E2E-FIX-CASEDEFAULT cannot
  * be used: its Piece is implicit, and since K11-11 the grid dashes a missing Piece and refuses to price it. The K9 shape
- * is made in the DRAFT only (a Set Tier 2 on the Case and a Set Retail on the Piece, so the Piece's Auto Tier 2 falls when
- * the Case's Retail rises); nothing is saved and the draft is discarded, so the fixture is untouched. The unit refs are
- * server ids the spec does not know, so the Case is the first visible row and the Piece the last (rows are largest unit
+ * is made in the DRAFT only (a Set Tier 2 on the Piece, so the Case's Auto Tier 2 falls when
+ * the Piece's Retail rises; the Piece anchors this ladder, so a Case Raise can never lower a Piece price); nothing is saved and the draft is discarded, so the fixture is untouched. The unit refs are
+ * server ids the spec does not know, so the Piece is the last visible row (rows are largest unit
  * first, in the table and in the phone cards alike).
  */
 import { test, expect, type Page } from "@playwright/test";
@@ -41,21 +41,20 @@ for (const vp of VIEWPORTS) {
       await expect(page.getByTestId(ID.grid)).toBeVisible({ timeout: 20_000 });
 
       await visible(page, ID.btnEdit).click();
-      await tierInputs(page, 2).first().fill("1000");
-      await tierInputs(page, 1).last().fill("5");
+      // Piece Tier 2 is Set, so the Case's Auto Tier 2 keeps the Piece's tier ratio (Case Retail x Piece Tier 2 / Piece Retail);
+      // raising the Piece's Retail then lowers that ratio and the Case's Auto Tier 2 falls. (A Case Raise cannot do it here:
+      // the Piece anchors the ladder, so the Piece's Auto Tier 2 never follows the Case.) Proof: AgainstReason.e2e-fixture.test.ts.
+      await tierInputs(page, 2).last().fill("1.5");
 
       await visible(page, ID.btnChange).click();
       // Scoped to the Change prices panel: "Unit" also matches the grid's own labelled controls (14 hits page-wide).
       const panel = page.locator("#change-panel");
-      await panel.getByLabel("Unit", { exact: true }).selectOption({ index: 0 });
+      await panel.getByLabel("Unit", { exact: true }).selectOption({ label: "Piece" });
       await panel.getByLabel("Amount").fill("5");
 
       const preview = page.getByTestId(ID.changePreview);
       const against = preview.locator('tbody[data-against="true"]');
-      await expect(
-        against.first(),
-        "the Piece's Auto Tier 2 goes down on this Raise",
-      ).toBeVisible();
+      await expect(against.first(), "the Case's Auto Tier 2 goes down on this Raise").toBeVisible();
       for (const group of await against.all()) {
         const rows = group.locator("tr");
         await expect(rows).toHaveCount(2);

@@ -19,7 +19,7 @@ export const BTN =
  * cure as the counter's checkout bar, #3500). The bar's own `bottom` (through the shell's pb-24) is the shared
  * `useShellBottom`, the one rule the pinned saved line uses too.
  */
-function useBarScrollPadding() {
+function useBarScrollPadding(): [(el: HTMLDivElement | null) => void, number] {
   const [height, setHeight] = React.useState(0);
   const observer = React.useRef<ResizeObserver | null>(null);
   // A callback ref: the bar mounts only while editing, so the observer follows the element, and its height is 0 when gone.
@@ -41,12 +41,18 @@ function useBarScrollPadding() {
     if (!main || height === 0) return;
     const before = main.style.getPropertyValue("scroll-padding-bottom");
     main.style.setProperty("scroll-padding-bottom", `${height}px`);
+    // K13 P10/P11: the content under the sticky bar is padded by the bar's height, so the last card scrolls clear of it.
+    const padBefore = main.style.getPropertyValue("padding-bottom");
+    const pad = Number(getComputedStyle(main).paddingBottom.replace("px", ""));
+    main.style.setProperty("padding-bottom", `${(Number.isFinite(pad) ? pad : 0) + height}px`);
     return () => {
       if (before) main.style.setProperty("scroll-padding-bottom", before);
       else main.style.removeProperty("scroll-padding-bottom");
+      if (padBefore) main.style.setProperty("padding-bottom", padBefore);
+      else main.style.removeProperty("padding-bottom");
     };
   }, [height]);
-  return ref;
+  return [ref, height];
 }
 
 const FINISH_FIRST = "Finish Change prices first.";
@@ -54,9 +60,14 @@ const FINISH_FIRST = "Finish Change prices first.";
 const SAVE_PAUSED = "Save is paused while Change prices is open.";
 
 /** K11-15: right after Change prices Apply the bar says what is staged; any later edit is the plain count. */
-const countLine = (count: number, lead: string | null) =>
+// K12 F05: the Auto prices that follow are named, so this count and the panel's "N prices will change" add up.
+const countLine = (count: number, lead: string | null, follows = 0) =>
   lead
-    ? `${lead}: ${count} price${count === 1 ? "" : "s"} ready. Save to keep ${count === 1 ? "it" : "them"}.`
+    ? `${lead}: ${count} price${count === 1 ? "" : "s"} ready${
+        follows > 0
+          ? `, and ${follows} Auto price${follows === 1 ? "" : "s"} follow${follows === 1 ? "s" : ""}`
+          : ""
+      }. Save to keep ${count === 1 ? "it" : "them"}.`
     : `${count} unsaved`;
 
 /**
@@ -114,8 +125,9 @@ export function PriceEditBar({
     wasConfirm.current = confirm;
   }, [confirm, askingProp]);
   const [told, setTold] = React.useState(false);
-  const barRef = useBarScrollPadding();
-  const bottom = useShellBottom(d.editing);
+  const [barRef, barHeight] = useBarScrollPadding();
+  // The scroller is padded by the bar's height (P10/P11), so the sticky offset is the shell's padding plus that height.
+  const bottom = useShellBottom(d.editing, barHeight);
   React.useEffect(() => {
     if (!here) setConfirm(false);
   }, [here, setConfirm]);
@@ -138,6 +150,13 @@ export function PriceEditBar({
     return () => window.removeEventListener("keydown", block, true);
   }, [changePricesOpen, here, setConfirm]);
   if (!here) return null;
+  const longSentence =
+    !confirm &&
+    !changePricesOpen &&
+    d.problems.length === 0 &&
+    d.count > 0 &&
+    !!d.appliedLead &&
+    d.appliedFollows > 0;
   const label = (ref: string) => d.grid?.rows.find((r) => r.ref === ref)?.label ?? ref;
   return (
     <div
@@ -150,11 +169,17 @@ export function PriceEditBar({
       className={
         windowed
           ? "bg-white"
-          : `sticky z-30 mt-4 rounded-lg border bg-white/95 px-4 py-3 backdrop-blur ${FRAME_BORDER}`
+          : `sticky z-30 mt-4 rounded-lg border bg-white px-4 py-3 shadow-card ${FRAME_BORDER}`
       }
     >
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <div data-testid={T.ebText} className="min-w-0 flex-1 text-sm text-navy" aria-live="polite">
+        <div
+          data-testid={T.ebText}
+          // K13 R3: the sentence that also names the Auto followers is ~70 characters; beside Cancel and Save it wrapped to
+          // three lines at phone width. Below sm it takes the whole row (the buttons drop under it) and holds two.
+          className={`min-w-0 flex-1 text-sm text-navy${longSentence ? " max-sm:basis-full" : ""}`}
+          aria-live="polite"
+        >
           {confirm ? (
             <strong>Discard your unsaved changes?</strong>
           ) : d.problems.length > 0 ? (
@@ -168,8 +193,12 @@ export function PriceEditBar({
           ) : (
             // K11-18: the wider "Finish Change prices first." link would squeeze this onto two lines at phone width
             // (+4 px of bar height); beside the open panel it is stale anyway, so below sm it is read, not shown.
-            <span className={changePricesOpen ? "max-sm:sr-only" : undefined}>
-              {d.count === 0 ? "Nothing changed yet" : countLine(d.count, d.appliedLead)}
+            // K14 P08: while Change prices is open its own panel and the inline hint carry the status, so the bar
+            // does not add a third "Nothing changed yet".
+            <span className={changePricesOpen ? "sr-only" : undefined}>
+              {d.count === 0
+                ? "Nothing changed yet"
+                : countLine(d.count, d.appliedLead, d.appliedFollows)}
             </span>
           )}
           {told && changePricesOpen && <span className="sr-only">{SAVE_PAUSED}</span>}
@@ -234,13 +263,13 @@ export function PriceEditBar({
             <button
               type="button"
               onClick={() => document.getElementById(`change-panel${sfx}`)?.focus()}
-              className="rounded text-sm font-medium text-navy underline underline-offset-2 hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
+              className="rounded text-sm font-normal text-navy/80 hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
             >
               {FINISH_FIRST}
             </button>
           </div>
         ) : (
-          <div key="actions" className="flex items-center gap-2">
+          <div key="actions" className="ml-auto flex items-center gap-2">
             <button
               ref={cancelRef}
               type="button"

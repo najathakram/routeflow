@@ -133,3 +133,11 @@ describe("K3b NIT-3: a capped customer list says so", () => {
     expect(screen.queryByTestId(T.customersTruncated)).toBeNull();
   });
 });
+
+describe("K12 P16: no 'ALSO UPDATE:' eyebrow over an 'Also ...' offer", () => {
+  it("the section label is not drawn (screen readers still get the group name)", () => {
+    mount();
+    const label = within(screen.getByTestId(T.alsoUpdate)).getByText("Also update:");
+    expect(label.className.split(/\s+/)).toContain("sr-only");
+  });
+});
