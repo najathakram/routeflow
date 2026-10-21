@@ -205,6 +205,32 @@ describe("RegulatedReportService", () => {
       expect(prisma.customer.findMany).toHaveBeenCalled();
     });
 
+    it("SA-789 F1: a ledger row whose invoice line was re-created still prints its product detail (resolved via the order line)", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue([
+        {
+          invoiceId: "inv-1",
+          invoiceItemId: "line-gone", // the old invoice item id: no such InvoiceItem any more
+          orderItemId: "oi-1",
+          unitBasisQty: 75,
+          netSales: 87.5,
+        },
+      ]);
+      prisma.invoiceItem.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "oi-1", productId: "prod-1", qty: 75, boxes: null, pieces: null, unitsPerBox: 10 },
+      ]);
+
+      const report = await service.buildReport({
+        category: "cat-tx",
+        from: "2026-07-01",
+        to: "2026-07-31",
+      });
+
+      expect(report.rows).toHaveLength(1);
+      expect(report.rows[0][9]).toBe("CP"); // unit of measure comes from the product
+      expect(report.warnings.map((w) => w.code)).not.toContain("UNMATCHED_LEDGER_LINE");
+    });
+
     it("resolves the customer's address via pickReportAddress precedence (default+BILLING over other rows)", async () => {
       prisma.customer.findMany.mockResolvedValue([
         customer({

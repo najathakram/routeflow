@@ -18,6 +18,7 @@ import { projectReportColumns } from "./report-projection";
 import { RegulatedReport } from "./report-types";
 import { listParkedReversals, parkedRestockNote, withParkedFirst } from "./parked-reversals";
 import { periodBucketOf } from "./period";
+import { resolveSaleLines } from "./sale-line-resolver";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { uncategorisedLineWarnings } from "./uncategorised-lines";
 
@@ -232,6 +233,7 @@ export class RegulatedReportService {
       select: {
         invoiceId: true,
         invoiceItemId: true,
+        orderItemId: true,
         qty: true,
         unitBasisQty: true,
         netSales: true,
@@ -245,38 +247,35 @@ export class RegulatedReportService {
       netSales: Number(r.netSales),
     }));
 
-    const itemIds = [
-      ...new Set(txLedgerRows.map((r) => r.invoiceItemId).filter((id): id is string => !!id)),
-    ];
-    const lines = itemIds.length
-      ? await this.prisma.forTenant().invoiceItem.findMany({
-          where: { id: { in: itemIds } },
-          select: {
-            id: true,
-            productId: true,
-            qty: true,
-            boxes: true,
-            pieces: true,
-            unitsPerBox: true,
-          },
-        })
-      : [];
-    const linesById = new Map<string, TxLineInfo>(
-      lines.map((l: any) => [
-        l.id,
-        {
-          id: l.id,
-          productId: l.productId,
-          qty: Number(l.qty),
-          boxes: l.boxes,
-          pieces: l.pieces,
-          unitsPerBox: l.unitsPerBox,
-        },
-      ]),
+    // SA-789 F1: a row whose invoice item was re-created since the sale resolves through its order
+    // line (`resolveSaleLines`), so the report keeps its product, unit and item type. The row's own
+    // (possibly stale) invoiceItemId stays the lookup key `buildTxReport` reads.
+    const resolved = await resolveSaleLines(
+      this.prisma.forTenant(),
+      ledgerRows.map((r, i) => ({
+        id: String(i),
+        invoiceItemId: r.invoiceItemId,
+        orderItemId: r.orderItemId,
+      })),
     );
+    const linesById = new Map<string, TxLineInfo>();
+    ledgerRows.forEach((r, i) => {
+      const hit = resolved.get(String(i));
+      if (!r.invoiceItemId || !hit?.line) return;
+      linesById.set(r.invoiceItemId, {
+        id: hit.liveInvoiceItemId ?? r.invoiceItemId,
+        productId: hit.productId,
+        qty: hit.qty ?? 0,
+        boxes: hit.line.boxes as number | null,
+        pieces: hit.line.pieces as number | null,
+        unitsPerBox: hit.line.unitsPerBox as number | null,
+      });
+    });
 
     const productIds = [
-      ...new Set(lines.map((l: any) => l.productId).filter((id: any): id is string => !!id)),
+      ...new Set(
+        [...linesById.values()].map((l) => l.productId).filter((id): id is string => !!id),
+      ),
     ];
     const products = productIds.length
       ? await this.prisma.forTenant().product.findMany({
