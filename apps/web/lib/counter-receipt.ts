@@ -15,7 +15,6 @@ import type {
   ReceiptLine,
   ReceiptModel,
   TodaysSaleMethod,
-  TodaysSaleReturnResolution,
 } from "@routeflow/types";
 import { displayProductName } from "./product-display";
 
@@ -333,21 +332,41 @@ export interface ReprintSaleFacts {
   /**
    * B1262 / SA-838, the server's split of `paid` (the row's `tenderPaid` / `tenderMethods`, `@routeflow/pricing`
    * `counterTenderSplit`): what was TENDERED, without the sale's own return credit. Used as given, never re-derived. Present:
-   * Paid and the payment method read these, and `returned` prints. Absent (an older server): `paid` / `methods` as before.
+   * Paid and the payment method read these, and the Returned line prints. Absent (an older server): `paid` / `methods` as before.
    */
   tenderPaid?: number;
   tenderMethods?: ReadonlyArray<{ method: ReprintTender; amount: number }>;
-  /** the row's `returned` (the amount returned and how each return was settled); read only with `tenderPaid` */
-  returned?: {
-    amount: number;
-    returns: ReadonlyArray<{ resolution: TodaysSaleReturnResolution }>;
-  } | null;
+  /**
+   * The row's `ownReturned` (review I1): the money of THIS sale's own returns and whether every one was a refund. A carrier
+   * order holding another sale's INLINE return has 0. Used as given, read only with `tenderPaid`; absent: no Returned line.
+   */
+  ownReturned?: { amount: number; allRefunded: boolean };
 }
 
 /** The tender of a today's-sales row (the shared POS-7b-1 type; never hand-typed here). */
 export type ReprintTender = TodaysSaleMethod;
 
 const REPRINT_METHOD_LABEL = COUNTER_METHOD_LABEL;
+
+/**
+ * The Payment method row. An older server: the labels joined, as ever. With the server's tender split (B1262 / SA-838) each
+ * tender carries its amount ("Advance $5.00 + Cash $7.50") when there are two or more, or when the single tender is not the whole
+ * sale ("Cash $6.25" on a $12.50 sale that was partly returned); a single tender that IS the total reads label only.
+ */
+function tenderMethodLabel(
+  tenders: ReadonlyArray<{ method: ReprintTender; amount: number }>,
+  orderTotal: number,
+  split: boolean,
+): string {
+  const withAmounts = split && (tenders.length > 1 || tenders[0]?.amount !== orderTotal);
+  return tenders
+    .map((m) =>
+      withAmounts
+        ? `${REPRINT_METHOD_LABEL[m.method]} ${formatReceiptMoney(m.amount)}`
+        : REPRINT_METHOD_LABEL[m.method],
+    )
+    .join(" + ");
+}
 
 /**
  * "Oct 7, 2026, 11:15 AM" in the given zone (the sale's own zone, not the browser's). The tenant timezone is a free
@@ -451,8 +470,8 @@ export function receiptModelFromOrder(input: {
   const hasTender = tenders.length > 0;
   const paid = split ? sale.tenderPaid! : sale.paid;
   const { balanceDue } = sale;
-  const returnedAmount = split ? roundMoney(num(sale.returned?.amount)) : 0;
-  const returns = sale.returned?.returns ?? [];
+  // the server's figures as given (no client rounding of a server field); absent or zero: no Returned line
+  const returnedAmount = split ? (sale.ownReturned?.amount ?? 0) : 0;
   const onAccount = !hasTender && balanceDue > 0;
   const orderTotal = num(order.total);
   const { tax, charges, adjustments } = receiptFigures({
@@ -488,14 +507,13 @@ export function receiptModelFromOrder(input: {
     paymentNotRecorded: false,
     showPaid: hasTender,
     showBalance: onAccount || balanceDue > 0,
-    methodLabel: hasTender ? tenders.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ") : null,
+    methodLabel: hasTender ? tenderMethodLabel(tenders, orderTotal, split) : null,
     ...(split
       ? {
           returned: returnedAmount > 0 ? returnedAmount : null,
-          // "Refunded" only when every return went out as a refund; a store-credit or still-pending one reads "Returned"
-          returnedLabel: (returns.length > 0 && returns.every((r) => r.resolution === "REFUND")
-            ? "Refunded"
-            : "Returned") as "Returned" | "Refunded",
+          // "Refunded" only when the server says every own return went out as a refund; else "Returned"
+          returnedLabel: (sale.ownReturned?.allRefunded ? "Refunded" : "Returned") as
+            "Returned" | "Refunded",
         }
       : {}),
     tendered,

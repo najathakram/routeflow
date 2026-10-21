@@ -260,7 +260,7 @@ describe("reprint after a return (B1262 / SA-838): the server's tender split, us
       profile: null,
     });
 
-  it("(a) on account $12.50, $6.25 returned, $6.25 cash: Cash, Paid $6.25, Returned −$6.25", () => {
+  it("(a) on account $12.50, $6.25 returned, $6.25 cash: Cash $6.25 (it differs from the total), Paid $6.25, Returned", () => {
     const m = reprint({
       methods: [
         { method: "CASH", amount: 6.25 },
@@ -268,9 +268,9 @@ describe("reprint after a return (B1262 / SA-838): the server's tender split, us
       ],
       tenderPaid: 6.25,
       tenderMethods: [{ method: "CASH", amount: 6.25 }],
-      returned: { amount: 6.25, returns: [{ resolution: "STORE_CREDIT" }] },
+      ownReturned: { amount: 6.25, allRefunded: false },
     });
-    expect(m.methodLabel).toBe("Cash");
+    expect(m.methodLabel).toBe("Cash $6.25");
     expect(m.showPaid).toBe(true);
     expect(m.paid).toBe(6.25);
     expect(m.showBalance).toBe(false);
@@ -278,7 +278,7 @@ describe("reprint after a return (B1262 / SA-838): the server's tender split, us
     expect(m.returnedLabel).toBe("Returned");
   });
 
-  it("(b) $5 advance + $7.50 cash, $2.50 refunded outside: Advance + Cash, Paid $12.50, Refunded −$2.50", () => {
+  it("(b) $5 advance + $7.50 cash, $2.50 refunded outside: each tender with its amount, Paid $12.50, Refunded", () => {
     const m = reprint({
       methods: [
         { method: "ADVANCE", amount: 5 },
@@ -289,20 +289,20 @@ describe("reprint after a return (B1262 / SA-838): the server's tender split, us
         { method: "ADVANCE", amount: 5 },
         { method: "CASH", amount: 7.5 },
       ],
-      returned: { amount: 2.5, returns: [{ resolution: "REFUND" }] },
+      ownReturned: { amount: 2.5, allRefunded: true },
     });
-    expect(m.methodLabel).toBe("Advance + Cash");
+    expect(m.methodLabel).toBe("Advance $5.00 + Cash $7.50");
     expect(m.paid).toBe(12.5);
     expect(m.returned).toBe(2.5);
     expect(m.returnedLabel).toBe("Refunded");
   });
 
-  it("(c) paid fully from an advance, then partly returned: Advance, Paid $12.50, Returned −$3.00", () => {
+  it("(c) paid fully from an advance, then partly returned: Advance alone (its amount is the total), Paid $12.50, Returned", () => {
     const m = reprint({
       methods: [{ method: "ADVANCE", amount: 12.5 }],
       tenderPaid: 12.5,
       tenderMethods: [{ method: "ADVANCE", amount: 12.5 }],
-      returned: { amount: 3, returns: [{ resolution: "STORE_CREDIT" }] },
+      ownReturned: { amount: 3, allRefunded: false },
     });
     expect(m.methodLabel).toBe("Advance");
     expect(m.paid).toBe(12.5);
@@ -310,36 +310,68 @@ describe("reprint after a return (B1262 / SA-838): the server's tender split, us
     expect(m.returnedLabel).toBe("Returned");
   });
 
-  it("a refund and a store-credit return together read Returned, never Refunded", () => {
-    const m = reprint({
-      tenderPaid: 12.5,
-      tenderMethods: [{ method: "CARD", amount: 12.5 }],
-      returned: { amount: 5, returns: [{ resolution: "REFUND" }, { resolution: "STORE_CREDIT" }] },
-    });
-    expect(m.returnedLabel).toBe("Returned");
+  it("a single tender equal to the total reads label only; two tenders always carry their amounts", () => {
     expect(
       reprint({
+        methods: [{ method: "CARD", amount: 12.5 }],
         tenderPaid: 12.5,
         tenderMethods: [{ method: "CARD", amount: 12.5 }],
-        returned: { amount: 2.5, returns: [{ resolution: "PENDING" }] },
-      }).returnedLabel,
-    ).toBe("Returned");
+        ownReturned: { amount: 0, allRefunded: false },
+      }).methodLabel,
+    ).toBe("Card");
+    expect(
+      reprint({
+        methods: [],
+        tenderPaid: 12.5,
+        tenderMethods: [
+          { method: "CASH", amount: 10 },
+          { method: "CARD", amount: 2.5 },
+        ],
+        ownReturned: { amount: 0, allRefunded: false },
+      }).methodLabel,
+    ).toBe("Cash $10.00 + Card $2.50");
+  });
+
+  it("Refunded only when every own return was a refund: the server's allRefunded, used as given", () => {
+    const base = {
+      tenderPaid: 12.5,
+      tenderMethods: [{ method: "CARD" as const, amount: 12.5 }],
+    };
+    expect(reprint({ ...base, ownReturned: { amount: 5, allRefunded: false } }).returnedLabel).toBe(
+      "Returned",
+    );
+    expect(reprint({ ...base, ownReturned: { amount: 5, allRefunded: true } }).returnedLabel).toBe(
+      "Refunded",
+    );
+  });
+
+  it("the carrier order of another sale's INLINE return: no Returned line, and Paid adds up to the tenders", () => {
+    const m = reprint({
+      methods: [
+        { method: "CASH", amount: 7 },
+        { method: "STORE_CREDIT", amount: 5.5 },
+      ],
+      tenderPaid: 12.5,
+      tenderMethods: [
+        { method: "CASH", amount: 7 },
+        { method: "STORE_CREDIT", amount: 5.5 },
+      ],
+      ownReturned: { amount: 0, allRefunded: false },
+    });
+    expect(m.returned).toBeNull();
+    expect(m.methodLabel).toBe("Cash $7.00 + Store credit $5.50");
+    expect(m.paid).toBe(12.5);
+    expect(m.balanceDue).toBe(0);
   });
 
   it("(d)(e)(f) a store-credit tender the server did not prove is the sale's own return stays Store credit", () => {
     const m = reprint({
-      methods: [
-        { method: "CASH", amount: 8.5 },
-        { method: "STORE_CREDIT", amount: 4 },
-      ],
+      methods: [{ method: "STORE_CREDIT", amount: 12.5 }],
       tenderPaid: 12.5,
-      tenderMethods: [
-        { method: "CASH", amount: 8.5 },
-        { method: "STORE_CREDIT", amount: 4 },
-      ],
-      returned: { amount: 0, returns: [] },
+      tenderMethods: [{ method: "STORE_CREDIT", amount: 12.5 }],
+      ownReturned: { amount: 0, allRefunded: false },
     });
-    expect(m.methodLabel).toBe("Cash + Store credit");
+    expect(m.methodLabel).toBe("Store credit");
     expect(m.paid).toBe(12.5);
     expect(m.returned).toBeNull();
   });
@@ -351,7 +383,7 @@ describe("reprint after a return (B1262 / SA-838): the server's tender split, us
       methods: [{ method: "STORE_CREDIT", amount: 6.25 }],
       tenderPaid: 0,
       tenderMethods: [],
-      returned: { amount: 6.25, returns: [{ resolution: "STORE_CREDIT" }] },
+      ownReturned: { amount: 6.25, allRefunded: false },
     });
     expect(m.onAccount).toBe(true);
     expect(m.methodLabel).toBeNull();
@@ -361,28 +393,34 @@ describe("reprint after a return (B1262 / SA-838): the server's tender split, us
     expect(m.returned).toBe(6.25);
   });
 
-  it("(g) an old server (none of the new fields): master's model exactly, even when a return is on the row", () => {
-    const oldRow = {
+  it("(g) an old server (none of the new fields): master's reading, byte for byte, with nothing new on the model", () => {
+    // master's literal behaviour: the row's paid and methods as given (store credit is a tender), no return line
+    const m = reprint({
       paid: 6.25,
       balanceDue: 6.25,
-      methods: [{ method: "STORE_CREDIT" as const, amount: 6.25 }],
-    };
-    const master = reprint(oldRow);
-    const withReturnOnRow = reprint({
-      ...oldRow,
-      returned: { amount: 6.25, returns: [{ resolution: "STORE_CREDIT" }] },
+      methods: [{ method: "STORE_CREDIT", amount: 6.25 }],
     });
-    expect(withReturnOnRow).toEqual(master);
-    expect("returned" in withReturnOnRow).toBe(false);
-    expect(master.methodLabel).toBe("Store credit");
-    expect(master.paid).toBe(6.25);
+    expect(m.methodLabel).toBe("Store credit");
+    expect(m.paid).toBe(6.25);
+    expect(m.showPaid).toBe(true);
+    expect(m.onAccount).toBe(false);
+    expect(m.showBalance).toBe(true);
+    expect(m.balanceDue).toBe(6.25);
+    expect("returned" in m).toBe(false);
+    expect("returnedLabel" in m).toBe(false);
+    // a multi-tender old row keeps master's label-only join
+    expect(
+      reprint({
+        methods: [
+          { method: "CASH", amount: 5 },
+          { method: "CARD", amount: 7.5 },
+        ],
+      }).methodLabel,
+    ).toBe("Cash + Card");
   });
 
-  it("a split present without tenderMethods reads the row's methods (the three fields travel together, but never throw)", () => {
-    const m = reprint({
-      methods: [{ method: "CASH", amount: 12.5 }],
-      tenderPaid: 12.5,
-    });
+  it("a split present without tenderMethods reads the row's methods (never throws)", () => {
+    const m = reprint({ methods: [{ method: "CASH", amount: 12.5 }], tenderPaid: 12.5 });
     expect(m.methodLabel).toBe("Cash");
     expect(m.paid).toBe(12.5);
   });

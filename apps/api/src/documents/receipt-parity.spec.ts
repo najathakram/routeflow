@@ -159,6 +159,10 @@ function build(s: Scenario) {
       paid: row.paid,
       balanceDue: row.balanceDue,
       methods: row.methods,
+      // as CounterTodaysSales hands the row over: the server's tender split and own-return figure (B1262 / SA-838)
+      tenderPaid: row.tenderPaid,
+      tenderMethods: row.tenderMethods,
+      ownReturned: row.ownReturned,
       createdAt: row.createdAt,
       cashTendered: row.cashTendered,
       change: row.change,
@@ -271,7 +275,9 @@ describe("B1262 / SA-838: an advance application is a tender on the email as on 
     expect(emailModel.methodLabel).toBe("Advance + Cash");
     expect(emailModel.paid).toBe(12.5);
     expect(emailModel.onAccount).toBe(false);
-    expect(reprint.methodLabel).toBe(emailModel.methodLabel);
+    // the reprint adds each tender's amount (two tenders); the same methods in the same order, Paid and On account
+    expect(reprint.methodLabel).toBe("Advance $5.00 + Cash $7.50");
+    expect(reprint.methodLabel?.replace(/ \$[\d.]+/g, "")).toBe(emailModel.methodLabel);
     expect(moneyRows(emailModel)).toEqual(moneyRows(reprint));
   });
 

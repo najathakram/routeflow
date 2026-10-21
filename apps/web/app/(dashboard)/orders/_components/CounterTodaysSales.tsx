@@ -286,7 +286,7 @@ function Reprint({
             // B1262 / SA-838: the server's tender split (absent on an older server) and the return it settled
             tenderPaid: row.tenderPaid,
             tenderMethods: row.tenderMethods,
-            returned: row.returned,
+            ownReturned: row.ownReturned,
             cashTendered: row.cashTendered,
             change: row.change,
             customerName: receiptCustomerName({

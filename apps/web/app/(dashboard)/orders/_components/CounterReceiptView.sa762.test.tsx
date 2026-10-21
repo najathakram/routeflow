@@ -195,7 +195,7 @@ describe("reprint after a return (B1262 / SA-838): the paper", () => {
     return rows.slice(rows.findIndex((r) => r.startsWith("Total")) + 1);
   };
 
-  it("(a) prints Payment method Cash, Paid $6.25, Returned −$6.25 (no Store credit, no Balance due)", () => {
+  it("(a) prints Payment method Cash $6.25, Paid $6.25, Returned −$6.25 (no Store credit, no Balance due)", () => {
     expect(
       paper({
         methods: [
@@ -204,12 +204,12 @@ describe("reprint after a return (B1262 / SA-838): the paper", () => {
         ],
         tenderPaid: 6.25,
         tenderMethods: [{ method: "CASH", amount: 6.25 }],
-        returned: { amount: 6.25, returns: [{ resolution: "STORE_CREDIT" }] },
+        ownReturned: { amount: 6.25, allRefunded: false },
       }),
-    ).toEqual(["Payment method Cash", "Paid $6.25", "Returned −$6.25"]);
+    ).toEqual(["Payment method Cash $6.25", "Paid $6.25", "Returned −$6.25"]);
   });
 
-  it("(b) prints Payment method Advance + Cash, Paid $12.50, Refunded −$2.50", () => {
+  it("(b) prints Payment method Advance $5.00 + Cash $7.50, Paid $12.50, Refunded −$2.50", () => {
     expect(
       paper({
         methods: [
@@ -221,9 +221,9 @@ describe("reprint after a return (B1262 / SA-838): the paper", () => {
           { method: "ADVANCE", amount: 5 },
           { method: "CASH", amount: 7.5 },
         ],
-        returned: { amount: 2.5, returns: [{ resolution: "REFUND" }] },
+        ownReturned: { amount: 2.5, allRefunded: true },
       }),
-    ).toEqual(["Payment method Advance + Cash", "Paid $12.50", "Refunded −$2.50"]);
+    ).toEqual(["Payment method Advance $5.00 + Cash $7.50", "Paid $12.50", "Refunded −$2.50"]);
   });
 
   it("(c) prints Payment method Advance, Paid $12.50, Returned −$3.00", () => {
@@ -232,7 +232,7 @@ describe("reprint after a return (B1262 / SA-838): the paper", () => {
         methods: [{ method: "ADVANCE", amount: 12.5 }],
         tenderPaid: 12.5,
         tenderMethods: [{ method: "ADVANCE", amount: 12.5 }],
-        returned: { amount: 3, returns: [{ resolution: "STORE_CREDIT" }] },
+        ownReturned: { amount: 3, allRefunded: false },
       }),
     ).toEqual(["Payment method Advance", "Paid $12.50", "Returned −$3.00"]);
   });
@@ -243,9 +243,40 @@ describe("reprint after a return (B1262 / SA-838): the paper", () => {
         methods: [{ method: "STORE_CREDIT", amount: 12.5 }],
         tenderPaid: 12.5,
         tenderMethods: [{ method: "STORE_CREDIT", amount: 12.5 }],
-        returned: { amount: 0, returns: [] },
+        ownReturned: { amount: 0, allRefunded: false },
       }),
     ).toEqual(["Payment method Store credit", "Paid $12.50"]);
+  });
+
+  it("the carrier order B of sale A's INLINE return prints NO Returned line, and Paid adds up", () => {
+    expect(
+      paper({
+        methods: [
+          { method: "CASH", amount: 7 },
+          { method: "STORE_CREDIT", amount: 5.5 },
+        ],
+        tenderPaid: 12.5,
+        tenderMethods: [
+          { method: "CASH", amount: 7 },
+          { method: "STORE_CREDIT", amount: 5.5 },
+        ],
+        ownReturned: { amount: 0, allRefunded: false },
+      }),
+    ).toEqual(["Payment method Cash $7.00 + Store credit $5.50", "Paid $12.50"]);
+  });
+
+  it("sale A, whose own INLINE return was carried on B, prints its own Returned line", () => {
+    expect(
+      paper({
+        methods: [
+          { method: "CASH", amount: 7 },
+          { method: "STORE_CREDIT", amount: 5.5 },
+        ],
+        tenderPaid: 7,
+        tenderMethods: [{ method: "CASH", amount: 7 }],
+        ownReturned: { amount: 5.5, allRefunded: false },
+      }),
+    ).toEqual(["Payment method Cash $7.00", "Paid $7.00", "Returned −$5.50"]);
   });
 
   it("an on-account sale with only its own return credit prints Returned −$6.25 and Balance due $6.25", () => {
@@ -256,22 +287,29 @@ describe("reprint after a return (B1262 / SA-838): the paper", () => {
         methods: [{ method: "STORE_CREDIT", amount: 6.25 }],
         tenderPaid: 0,
         tenderMethods: [],
-        returned: { amount: 6.25, returns: [{ resolution: "STORE_CREDIT" }] },
+        ownReturned: { amount: 6.25, allRefunded: false },
       }),
     ).toEqual(["Returned −$6.25", "Balance due $6.25"]);
   });
 
-  it("(g) an old server prints master's wording, byte for byte, return on the row or not", () => {
-    const oldRow = {
-      paid: 6.25,
-      balanceDue: 6.25,
-      methods: [{ method: "STORE_CREDIT" as const, amount: 6.25 }],
-    };
-    const master = ["Payment method Store credit", "Paid $6.25", "Balance due $6.25"];
-    expect(paper(oldRow)).toEqual(master);
+  it("(g) an old server prints master's wording, byte for byte (literal text taken from master's behaviour)", () => {
+    expect(
+      paper({
+        paid: 6.25,
+        balanceDue: 6.25,
+        methods: [{ method: "STORE_CREDIT", amount: 6.25 }],
+      }),
+    ).toEqual(["Payment method Store credit", "Paid $6.25", "Balance due $6.25"]);
     document.body.innerHTML = "";
     expect(
-      paper({ ...oldRow, returned: { amount: 6.25, returns: [{ resolution: "STORE_CREDIT" }] } }),
-    ).toEqual(master);
+      paper({
+        paid: 12.5,
+        balanceDue: 0,
+        methods: [
+          { method: "CASH", amount: 5 },
+          { method: "CARD", amount: 7.5 },
+        ],
+      }),
+    ).toEqual(["Payment method Cash + Card", "Paid $12.50"]);
   });
 });

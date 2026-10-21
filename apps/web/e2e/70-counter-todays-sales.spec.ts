@@ -195,6 +195,7 @@ test("R7b 3.3 (B1262): a reprint of a sale with a return says Returned at 390", 
     tenderPaid: 0,
     returnCredit: 6.25,
     tenderMethods: [],
+    ownReturned: { amount: 6.25, allRefunded: false },
     returned: {
       amount: 6.25,
       state: "PARTLY",
