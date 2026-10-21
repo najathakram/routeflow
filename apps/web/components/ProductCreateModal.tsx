@@ -253,11 +253,11 @@ export function ProductCreateModal({
   // K11-28: the piece price needs both units flags (the units POST and the S9 prices write are gated on them).
   const pricesV2 = usePricesV2Enabled();
   const unitsV1 = useUnitsEnabled();
-  // Shown only for a pack with a whole Units per box of 2 or more (a factor-1 unit equal to the pack's is refused)
-  // and no parent (a variant is priced by its family). The typed value stays in state while it is hidden.
+  // K14 F03: shown as soon as a pack unit is picked (no parent: a variant is priced by its family), so the owner sees
+  // it beside Units per box without typing first. Creating WITH a piece price still needs a whole Units per box of 2
+  // or more (a factor-1 unit equal to the pack's is refused): submit checks `piecesPerPack`, not visibility.
   const piecesPerPack = /^\d+$/.test(form.unitsPerBox.trim()) ? Number(form.unitsPerBox) : 0;
-  const showPiecePrice =
-    pricesV2 && unitsV1 && isPackUnit(form.unit) && piecesPerPack >= 2 && !form.parentProductId;
+  const showPiecePrice = pricesV2 && unitsV1 && isPackUnit(form.unit) && !form.parentProductId;
   // The cell appears one row below the field being typed in, possibly past the visible part of the scroll body (on a
   // phone, behind the pinned footer). Reveal it by the minimum scroll; focus stays where it is.
   const pieceCellRef = React.useRef<HTMLDivElement>(null);
@@ -383,6 +383,10 @@ export function ProductCreateModal({
     // K11-28: a bad piece price blocks Create BEFORE anything is written (validateSetPrice is the one rule).
     let pieceTo: number | null = null;
     if (showPiecePrice && form.pricePerPiece.trim() !== "") {
+      if (piecesPerPack < 2) {
+        setPieceError("Enter Units per box (2 or more) to price a single piece.");
+        return;
+      }
       const checked = validateSetPrice(form.pricePerPiece);
       if (!checked.ok) {
         setPieceError(checked.message);
@@ -586,7 +590,12 @@ export function ProductCreateModal({
       }
     >
       {/* pb-20: the last field (and an open Category list) clears the pinned footer, which is ~75 px tall */}
-      <form id={FORM_ID} onSubmit={handleSubmit} className="pb-20">
+      <form
+        id={FORM_ID}
+        onSubmit={handleSubmit}
+        // K14 F14: the field being typed (and the piece price) scrolls in with footer-sized room below it
+        className="pb-20 [&_input]:scroll-mb-24"
+      >
         <div className="space-y-4">
           {draft.offer && (
             <RestoreDraftBanner
@@ -856,7 +865,7 @@ export function ProductCreateModal({
               </div>
               {packUnit && unitsPerField}
               {showPiecePrice && (
-                <div ref={pieceCellRef}>
+                <div ref={pieceCellRef} className="scroll-mb-24">
                   <label
                     htmlFor="product-base-price"
                     className="mb-1 block text-sm font-medium text-navy"
@@ -1113,6 +1122,12 @@ export function ProductCreateModal({
             />
           </div>
         </div>
+        {/* K14 P16: a short fade over the last rows, so a scrolled form ends soft, not in a flat cut at the footer */}
+        <div
+          data-scroll-fade
+          aria-hidden="true"
+          className="pointer-events-none sticky bottom-0 -mb-20 h-6 bg-gradient-to-t from-white to-transparent"
+        />
       </form>
     </Modal>
   );
