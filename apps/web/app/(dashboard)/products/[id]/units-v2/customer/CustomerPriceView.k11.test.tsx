@@ -1,5 +1,5 @@
 import * as React from "react";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CustomerUnitPricesResponse } from "@routeflow/types";
 import { CustomerPriceView, resetCustomerViewMemory } from "./CustomerPriceView";
 import { CUSTOMER_VIEW_TESTIDS as T } from "./customer-testids";
@@ -310,5 +310,25 @@ describe("K11-07: nothing repeats in the table, the card fills the column", () =
     const tierFigure = within(cells[1] as HTMLElement).getByText("$1.40");
     expect(tierFigure.className).toContain("tabular-nums");
     expect(tierFigure.className).toContain("font-normal");
+  });
+});
+
+describe("K14 F12: a pick leaves focus on the chosen customer, with a visible ring", () => {
+  it("focuses the chosen-customer line after a pick, so the next Tab is Choose another customer", async () => {
+    at("/products/p1");
+    render(<CustomerPriceView productId="p1" />);
+    act(() => screen.getByTestId(T.search).focus());
+    fireEvent.click(screen.getByTestId(T.result("c1")));
+    const chosen = await screen.findByTestId(T.chosen);
+    await waitFor(() => expect(document.activeElement).toBe(chosen));
+    expect(chosen).toHaveAttribute("tabindex", "-1");
+    expect(chosen.className).toContain("focus-visible:outline");
+    expect(chosen.className).not.toContain("outline-none");
+  });
+
+  it("does not steal focus when the customer comes from the URL on mount", () => {
+    at("/products/p1?customer=c1");
+    render(<CustomerPriceView productId="p1" />);
+    expect(document.activeElement).not.toBe(screen.getByTestId(T.chosen));
   });
 });

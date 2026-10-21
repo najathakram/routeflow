@@ -256,7 +256,18 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
   const q = useCustomerUnitPrices(activeId, productId, { page, limit: PAGE_SIZE });
   const labels = useTierLabels().data;
 
+  // K14 F12: after a pick the picker unmounts and focus would drop to the page top. Hand it to the chosen-customer line
+  // (only for a pick, never for a customer restored from the URL or the session).
+  const chosenRef = React.useRef<HTMLSpanElement>(null);
+  const focusChosen = React.useRef(false);
+  React.useEffect(() => {
+    if (!focusChosen.current || !chosenRef.current) return;
+    focusChosen.current = false;
+    chosenRef.current.focus({ preventScroll: true });
+  });
+
   const choose = (c: { id: string; name: string } | null) => {
+    focusChosen.current = c !== null;
     lastChoice = c;
     setPicked(c);
     setPage(1);
@@ -302,7 +313,12 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
         <div className="flex flex-wrap items-center gap-2 text-sm">
           {/* A transient failure with no name yet (503, offline): not "loading", so no name span at all. */}
           {customerName || !q.isError ? (
-            <span data-testid={T.chosen} className="font-medium text-navy">
+            <span
+              ref={chosenRef}
+              tabIndex={-1}
+              data-testid={T.chosen}
+              className="rounded-sm font-medium text-navy focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+            >
               {customerName || "Loading customer\u2026"}
             </span>
           ) : null}
