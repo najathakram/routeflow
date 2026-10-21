@@ -24,7 +24,18 @@ const ANSWERED_WORDS = new Set(["ANSWERED", "DONE", "STANDING YES", "DEFAULT IN 
 const QUEUE_STATUS_RE = /\b(ANSWERED|DONE|STANDING YES|DEFAULT IN EFFECT|BOOKED|OPEN|CHECK)\b/;
 const DECISION_FILE_RE = /\bD-\d{4}-\d{2}-\d{2}-[A-Za-z0-9._-]*?\.md\b/;
 // Fields a register cell can empty; an emptied cell clears them (other fields are never cleared).
-const NULLABLE = new Set(["lane", "train", "area", "parent", "eta", "gate", "trainLabel"]);
+const NULLABLE = new Set([
+  "lane",
+  "train",
+  "area",
+  "parent",
+  "eta",
+  "gate",
+  "trainLabel",
+  "statusText",
+]);
+// A `blocked` event the register raised carries this prefix; only those are lifted by the register.
+const REGISTER_BLOCK = "register status:";
 
 const clip = (s, n) => (s.length > n ? s.slice(0, n).trimEnd() : s);
 const norm = (s) =>
@@ -180,6 +191,7 @@ export function planSync({
   machine,
   now,
   rand = Math.random,
+  mask = (t) => t,
 }) {
   const events = [];
   const summary = {
@@ -215,12 +227,15 @@ export function planSync({
     return true;
   };
 
+  const emitBlock = (id, text) =>
+    emit("blocked", id, { by: clip(`${REGISTER_BLOCK} ${text}`, 300) });
+
   // ---- register rows ----
   const releases = new Set(
     [...state.items.values()].filter((i) => i.type === "release").map((i) => i.id),
   );
   const known = new Set(state.items.keys());
-  const { drafts: allDrafts } = parseRegisterReport(registerMd ?? "", config);
+  const { drafts: allDrafts } = parseRegisterReport(registerMd ?? "", config, mask);
   // A register with duplicate row ids is a corrupted snapshot: ingest none of it (the owner queue
   // still syncs) and say so, rather than create phantom rows from whichever copy came first.
   const dupes = duplicateRowIds(allDrafts.map((d) => d.id));
@@ -257,6 +272,7 @@ export function planSync({
         summary.registerNew++;
         known.add(id);
         if (fields.type === "release") releases.add(id);
+        if (draft.blocked) emitBlock(id, draft.blocked);
       }
       continue;
     }
@@ -265,9 +281,15 @@ export function planSync({
         summary.registerNew++;
         known.add(id);
         if (fields.type === "release") releases.add(id);
+        if (draft.blocked) emitBlock(id, draft.blocked);
       }
       continue;
     }
+    // A register row that says "blocked" keeps the item's status and blocks it; leaving "blocked"
+    // lifts only a block the register itself raised.
+    if (draft.blocked && !it.blocked) emitBlock(id, draft.blocked);
+    else if (!draft.blocked && it.blocked && String(it.blocked.by ?? "").startsWith(REGISTER_BLOCK))
+      emit("unblocked", id, { note: "register status no longer blocked" });
     const last = it.registerFields ?? {};
     const diff = {};
     for (const [k, v] of Object.entries(fields)) {
@@ -353,6 +375,7 @@ export async function runSync({
   push = true,
   bugIds,
   rand,
+  mask,
 } = {}) {
   const store = await import("./store.mjs");
   const config = loadConfig(dir);
@@ -368,6 +391,7 @@ export async function runSync({
     machine: machine ?? machineId(config, env),
     now,
     rand,
+    mask,
   });
   const result = {
     ran: true,

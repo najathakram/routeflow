@@ -54,6 +54,8 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-10-18-k11-money1.md](api/landing-2026-10-18-k11-money1.md) | Landing 2026-10-18 k11-money1: B920 per-product stock total, L8 store-vs-address state, one Stripe termination gate, price history v1.1 |
 | [api/landing-2026-10-20-bo-train-g1.md](api/landing-2026-10-20-bo-train-g1.md) | Landing 2026-10-20 bo-train/G1 (#3551): business capabilities, till guard, stranded-item sweep, add-on writer, inclusion, order-list |
 | [api/landing-2026-10-20-r5.md](api/landing-2026-10-20-r5.md) | Landing 2026-10-20 R5 (#3552): sitting-4 migrations, stored-tax guard, JSON-null money DTOs, NaN backstop, bill cash guard |
+| [api/landing-2026-10-21-w1.md](api/landing-2026-10-21-w1.md) | Landing 2026-10-21 window 1 (#3555): draft compare-and-set (`DRAFT_CHANGED`), submit key kept |
+| [api/landing-2026-10-21-w2-r5p2.md](api/landing-2026-10-21-w2-r5p2.md) | Landing 2026-10-21 window 2 + R5 part 2 (#3558): regulated resolver, restore verdict, PO use guard, office completion, tax precision |
 | [api/b1234-delivered-line-lock.md](api/b1234-delivered-line-lock.md) | B1234: delivered lines locked on a PARTIALLY_DELIVERED order (409 LINE_ALREADY_DELIVERED, binding check under the lock) |
 | [api/b299-unvoid-billing-claim.md](api/b299-unvoid-billing-claim.md) | B299: unvoid re-claims invoicedQty only if the qty is free (409 ORDER_BILLING_CHANGED, no clamp on +1; void keeps its clamp) |
 | [api/b692-office-pd-quantities.md](api/b692-office-pd-quantities.md) | B692 office PARTIALLY_DELIVERED needs per-line quantities (409 ORDER_PD_NEEDS_QUANTITIES); legacy delivered cancel fails closed |

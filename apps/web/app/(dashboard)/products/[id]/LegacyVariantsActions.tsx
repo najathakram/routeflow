@@ -28,20 +28,31 @@ export function LegacyVariantsActions({
 }) {
   if (!isOperator || product.kind === "FAMILY") return null;
   return (
-    <div className="flex flex-col items-end gap-1.5">
-      <div className="flex items-center gap-2">
+    <div className="flex max-w-full flex-col items-end gap-1.5">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <Button
           size="sm"
           variant="secondary"
+          className="min-h-11 sm:min-h-0"
           leftIcon={<Scissors className="h-3.5 w-3.5" />}
           onClick={onSplit}
         >
           Assign to variants
         </Button>
-        <Button size="sm" variant="secondary" onClick={onLinkExisting}>
+        <Button
+          size="sm"
+          variant="secondary"
+          className="min-h-11 sm:min-h-0"
+          onClick={onLinkExisting}
+        >
           Link existing
         </Button>
-        <Button size="sm" leftIcon={<Plus className="h-3.5 w-3.5" />} onClick={onAddVariant}>
+        <Button
+          size="sm"
+          className="min-h-11 sm:min-h-0"
+          leftIcon={<Plus className="h-3.5 w-3.5" />}
+          onClick={onAddVariant}
+        >
           Add variant
         </Button>
       </div>

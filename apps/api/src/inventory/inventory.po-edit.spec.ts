@@ -460,6 +460,59 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       expectNoStockWrites();
     });
 
+    describe("row 645: goods used since the receipt are read from the ledger, not the lot (#3487: a sale never moves remainingQty)", () => {
+      const reapply = () =>
+        service.updatePurchaseOrder(
+          "po-1",
+          {
+            reapplyInventory: true,
+            items: [{ id: "poi-1", productId: "prod-1", qtyOrdered: 10, unitCost: 4 }],
+          },
+          "u",
+        );
+      const sale = movement({ id: "mv-sale", type: "SALE", quantity: D(-4) });
+
+      it("receive, sell, re-apply: refused 409 PO_LOT_PARTIALLY_CONSUMED even though the lot is untouched", async () => {
+        prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+        prisma.stockLot.findMany.mockResolvedValue([lot({ remainingQty: D(10) })]); // lot never moved
+        prisma.stockMovement.findFirst.mockResolvedValue(sale);
+        const err: any = await reapply().catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getResponse()).toMatchObject({
+          code: "PO_LOT_PARTIALLY_CONSUMED",
+          productIds: ["prod-1"],
+        });
+        expect(prisma.purchaseOrder.update).not.toHaveBeenCalled();
+        expectNoStockWrites();
+      });
+
+      it("receive, sell, return-to-stock, re-apply: still refused (stock is back at 10 - the figure is the ledger)", async () => {
+        prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+        prisma.stockLot.findMany.mockResolvedValue([lot({ remainingQty: D(10) })]);
+        prisma.product.findUnique.mockResolvedValue(product({ currentStock: D(10) }));
+        prisma.stockMovement.findFirst.mockResolvedValue(sale);
+        await expect(reapply()).rejects.toMatchObject({
+          response: { code: "PO_LOT_PARTIALLY_CONSUMED" },
+        });
+        expectNoStockWrites();
+      });
+
+      it("asks only for this PO's products, decreasing rows after the receipt, never the reversal pairs", async () => {
+        prisma.purchaseOrder.findUnique.mockResolvedValue(po());
+        prisma.stockMovement.findFirst.mockResolvedValue(null);
+        await reapply();
+        const q = prisma.stockMovement.findFirst.mock.calls[0][0];
+        expect(q.where.productId).toBe("prod-1");
+        expect(q.where.quantity).toEqual({ lt: 0 });
+        expect(q.where.OR).toEqual([
+          { effectiveAt: { gt: expect.any(Date) } },
+          { createdAt: { gt: expect.any(Date) } },
+        ]);
+        expect(JSON.stringify(q.where.NOT)).toContain("PO edit reversal");
+        expect(JSON.stringify(q.where.NOT)).toContain("BILL_REVERTED");
+      });
+    });
+
     it("refuses a regulated product — writing nothing", async () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue(po());
       prisma.product.findFirst.mockResolvedValueOnce({ name: "Cigars" });

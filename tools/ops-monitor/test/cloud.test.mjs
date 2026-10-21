@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hashPassword } from "../lib/auth.mjs";
@@ -62,6 +62,7 @@ test("checkCloudEnv: cloud refuses to start without hash or session secret", () 
   const good = {
     OPS_PASSWORD_HASH: hashPassword("a good password"),
     OPS_SESSION_SECRET: "a".repeat(64),
+    CLIENT_NAMES_JSON: '["acme"]',
   };
   assert.deepEqual(checkCloudEnv({ ...good }, { cloud: true }), { ok: true, errors: [] });
   const badHash = checkCloudEnv(
@@ -83,8 +84,43 @@ test("checkCloudEnv: cloud refuses to start without hash or session secret", () 
   assert.doesNotMatch(JSON.stringify(none), /a{20}/);
 });
 
+test("checkCloudEnv: cloud refuses to start without a client-name list (env or file), never echoing a name", () => {
+  const home = mkdtempSync(join(tmpdir(), "rf-cn-cloud-"));
+  try {
+    const base = {
+      OPS_PASSWORD_HASH: hashPassword("a good password"),
+      OPS_SESSION_SECRET: "a".repeat(64),
+      RF_OPS_HOME: home,
+    };
+    const none = checkCloudEnv({ ...base }, { cloud: true });
+    assert.equal(none.ok, false);
+    assert.ok(none.errors.some((e) => /CLIENT_NAMES_JSON/.test(e)));
+    const empty = checkCloudEnv({ ...base, CLIENT_NAMES_JSON: "[]" }, { cloud: true });
+    assert.equal(empty.ok, false, "an empty list is refused too");
+    const bad = checkCloudEnv({ ...base, CLIENT_NAMES_JSON: "{nope acme-x" }, { cloud: true });
+    assert.equal(bad.ok, false, "unparseable is refused");
+    assert.doesNotMatch(JSON.stringify([none, empty, bad]), /acme-x/);
+    assert.deepEqual(checkCloudEnv({ ...base, CLIENT_NAMES_JSON: '["acme-x"]' }, { cloud: true }), {
+      ok: true,
+      errors: [],
+    });
+    writeFileSync(join(home, "client-names.json"), JSON.stringify(["acme-x"]));
+    assert.equal(
+      checkCloudEnv({ ...base }, { cloud: true }).ok,
+      true,
+      "the file also satisfies it",
+    );
+    assert.equal(checkCloudEnv({}, { cloud: false }).ok, true, "local never needs a list");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("checkCloudEnv: the session secret must be 64+ hex or 43+ base64url characters", () => {
-  const base = { OPS_PASSWORD_HASH: hashPassword("a good password") };
+  const base = {
+    OPS_PASSWORD_HASH: hashPassword("a good password"),
+    CLIENT_NAMES_JSON: '["acme"]',
+  };
   const run = (s) => checkCloudEnv({ ...base, OPS_SESSION_SECRET: s }, { cloud: true });
   assert.equal(run("x".repeat(40)).ok, false, "40 chars");
   assert.equal(run("g".repeat(42)).ok, false, "42 base64url chars");
@@ -260,12 +296,56 @@ test("deploy files: Dockerfile and railway.toml match the plan", async () => {
   assert.doesNotMatch(docker, /COPY [^\n]*\. \./, "never copies the whole repo");
   const toml = read("railway.toml");
   assert.match(toml, /builder = "DOCKERFILE"/);
-  assert.match(toml, /dockerfilePath = "tools\/ops-monitor\/Dockerfile"/);
-  assert.match(toml, /watchPatterns = \["tools\/ops-monitor\/\*\*"\]/);
+  // Deployed with `railway up tools/ops-monitor --path-as-root`: the build context root IS the folder.
+  assert.match(toml, /dockerfilePath = "Dockerfile"/);
   assert.match(toml, /healthcheckPath = "\/api\/health"/);
   assert.match(toml, /restartPolicyType = "ON_FAILURE"/);
   assert.match(toml, /numReplicas = 1/);
-  const ign = read("Dockerfile.dockerignore").split("\n");
-  assert.equal(ign.includes("*"), true);
-  assert.equal(ign.includes("!tools/ops-monitor"), true);
+  const ign = read(".dockerignore").split("\n");
+  assert.equal(ign.includes("test/"), true);
+  assert.equal(ign.includes("node_modules/"), true);
+  assert.match(docker, /CLIENT_NAMES_JSON/, "the secrets comment lists the mask list");
+});
+
+test("checkCloudEnv: --views and --lan need a readable, non-empty client-name list too; plain localhost does not", () => {
+  const home = mkdtempSync(join(tmpdir(), "rf-cn-views-"));
+  try {
+    for (const mode of [{ views: true }, { lan: true }]) {
+      const none = checkCloudEnv({}, { ...mode, home });
+      assert.equal(none.ok, false, "no list");
+      assert.match(none.errors.join("\n"), /client-names\.json/);
+      writeFileSync(join(home, "client-names.json"), "[]");
+      assert.equal(checkCloudEnv({}, { ...mode, home }).ok, false, "empty list");
+      writeFileSync(join(home, "client-names.json"), '["acme-x", broken');
+      const broken = checkCloudEnv({}, { ...mode, home });
+      assert.equal(broken.ok, false, "broken file");
+      assert.match(broken.errors.join("\n"), /client-names\.json does not parse/);
+      assert.doesNotMatch(JSON.stringify(broken), /acme-x|broken file/);
+      writeFileSync(join(home, "client-names.json"), '["acme-x"]');
+      assert.deepEqual(checkCloudEnv({}, { ...mode, home }), { ok: true, errors: [] });
+      rmSync(join(home, "client-names.json"));
+    }
+    writeFileSync(join(home, "client-names.json"), "[ broken");
+    assert.equal(checkCloudEnv({}, { home }).ok, true, "plain localhost only warns (server side)");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("checkCloudEnv: a trailing newline on the hash / secret does not make them invalid", () => {
+  const hash = hashPassword("a long enough pw");
+  const secret = "ab".repeat(32);
+  const r = checkCloudEnv(
+    {
+      OPS_PASSWORD_HASH: hash + "\n",
+      OPS_SESSION_SECRET: secret + "\r\n",
+      GITHUB_TOKEN: "t",
+      CLIENT_NAMES_JSON: '["Acme"]',
+    },
+    { cloud: true },
+  );
+  assert.deepEqual(
+    r.errors.filter((e) => /OPS_(PASSWORD|SESSION)/.test(e)),
+    [],
+  );
 });

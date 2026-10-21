@@ -16,9 +16,16 @@ describe("PiecesPerBoxValue", () => {
     render(<PiecesPerBoxValue unitsPerBox={1} />);
     expect(screen.getByText("Sold individually")).toBeInTheDocument();
   });
+  it("reads 'Set per variant' on a family, whatever its own value", () => {
+    render(<PiecesPerBoxValue unitsPerBox={1} isFamily />);
+    expect(screen.getByText("Set per variant")).toBeInTheDocument();
+    expect(screen.queryByText("Sold individually")).not.toBeInTheDocument();
+  });
   it("the boxed product page renders the value through this component", () => {
     const src = readFileSync(resolve(__dirname, "page.tsx"), "utf8");
-    expect(src).toContain("<PiecesPerBoxValue unitsPerBox={product.unitsPerBox} />");
+    expect(src).toContain(
+      "<PiecesPerBoxValue unitsPerBox={product.unitsPerBox} isFamily={isFamily} />",
+    );
     expect(src).not.toContain("} units`");
   });
 });

@@ -476,3 +476,15 @@ test("item.rename to an id that exists is a rename-conflict anomaly and moves no
   assert.deepEqual(s.anomalies.map((a) => a.kind).sort(), ["rename-conflict", "unknown-item"]);
   assert.equal(s.anomalies.find((a) => a.kind === "rename-conflict").item, "5");
 });
+
+test("X1 items carry harm and statusText (null by default, settable by edit)", () => {
+  const s = fold([newItem("5", {}, { min: 0 })]);
+  assert.equal(s.items.get("5").harm, null);
+  assert.equal(s.items.get("5").statusText, null);
+  const s2 = fold([
+    newItem("5", { statusText: "triaged" }, { min: 0 }),
+    ev("item.edit", "5", { fields: { harm: "latent" } }, { min: 1 }),
+  ]);
+  assert.equal(s2.items.get("5").harm, "latent");
+  assert.equal(s2.items.get("5").statusText, "triaged");
+});

@@ -17,7 +17,12 @@ import * as React from "react";
  */
 const SECTIONS: { id: string; label: string; short: string; fallback?: string }[] = [
   { id: "h-product", label: "Product", short: "Product" },
-  { id: "h-units", label: "Units and prices", short: "Prices", fallback: "#units-v2-grid-title" },
+  {
+    id: "h-units",
+    label: "Units and prices",
+    short: "Prices",
+    fallback: "[data-units-jump-anchor], #units-v2-grid-title",
+  },
   { id: "h-exc", label: "Customers and tiers", short: "Tiers" },
   { id: "h-cust", label: "Customer view", short: "Customer" },
   { id: "h-sales", label: "Sales", short: "Sales" },
@@ -141,7 +146,15 @@ const SCOPED_CSS = `[data-jump-target][tabindex="-1"]:focus{outline:none}
 [data-jump-target]{scroll-margin-top:calc(var(--jump-offset,0px) + var(--jump-inset,0px))}
 .units-v2-jump-strip[data-fade="true"]{-webkit-mask-image:linear-gradient(90deg,#000 75%,transparent);mask-image:linear-gradient(90deg,#000 75%,transparent)}`;
 
-export function ProductJumpLinks() {
+export function ProductJumpLinks({ reserveSpace = false }: { reserveSpace?: boolean }) {
+  // K12 FE2: the strip appears only once two sections exist, which pushed the page down ~57 px (CLS). A host that
+  // knows the strip will show passes reserveSpace, and an empty shell of the strip's height holds the place until then.
+  const [reserved, setReserved] = React.useState(reserveSpace);
+  React.useEffect(() => {
+    if (!reserveSpace) return;
+    const t = setTimeout(() => setReserved(false), HASH_WAIT_MS);
+    return () => clearTimeout(t);
+  }, [reserveSpace]);
   const [sections, setSections] = React.useState<Resolved[]>([]);
   const [current, setCurrent] = React.useState<string | null>(null);
   const [fade, setFade] = React.useState(false);
@@ -228,7 +241,17 @@ export function ProductJumpLinks() {
         if (heldRef.current) return;
         const on = sections.find((s) => visible.get(s.hrefId));
         if (on) setCurrent(on.id);
-        else if ([...visible.values()].every((v) => !v)) setCurrent(null);
+        else if ([...visible.values()].every((v) => !v)) {
+          // K14 P14: no heading is inside the band, but a long section is still in view once its heading has scrolled
+          // above the strip: the last heading passed keeps its pill. Nothing passed yet (page top) = no pill.
+          const bandTop =
+            (document.getElementById("main-content")?.getBoundingClientRect().top ?? 0) + stripH;
+          const passed = sections.filter((s) => {
+            const el = document.getElementById(s.hrefId);
+            return el ? el.getBoundingClientRect().top < bandTop : false;
+          });
+          setCurrent(passed.length ? passed[passed.length - 1].id : null);
+        }
       },
       // The page scrolls inside #main-content, so that is the observer's root (null, the viewport, without it).
       { root: document.getElementById("main-content"), rootMargin: `${-stripH}px 0px -60% 0px` },
@@ -297,8 +320,11 @@ export function ProductJumpLinks() {
 
       scrollToTarget();
       if (focus) {
-        el.focus({ preventScroll: true });
-        listen(el, "focusout", end);
+        // K12 F15: the Customer view jump lands in its search field, so the next key types a name.
+        const field = hrefId === "h-cust" ? document.getElementById("units-v2-cust-search") : null;
+        const target = field ?? el;
+        target.focus({ preventScroll: true });
+        listen(target, "focusout", end);
       }
       heldRef.current = id;
       setCurrent(id);
@@ -421,7 +447,11 @@ export function ProductJumpLinks() {
     startJump(hit.id, hit.hrefId, free, left);
   }, [sections, startJump]);
 
-  if (!show) return null;
+  if (!show) {
+    return reserveSpace && reserved ? (
+      <div data-testid="units-v2-jump-placeholder" aria-hidden="true" className="min-h-[57px]" />
+    ) : null;
+  }
 
   const go = (e: React.MouseEvent, s: Resolved) => {
     if (!document.getElementById(s.hrefId)) return;
@@ -446,7 +476,7 @@ export function ProductJumpLinks() {
       ref={navRef}
       data-testid="units-v2-jump"
       aria-label="On this page"
-      className="sticky top-0 z-10 -mx-1 border-b border-surface-border bg-surface px-1"
+      className="sticky top-0 z-20 w-full border-b border-surface-border bg-surface"
     >
       <style>{SCOPED_CSS}</style>
       <div

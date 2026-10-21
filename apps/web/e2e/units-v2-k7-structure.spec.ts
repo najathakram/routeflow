@@ -106,6 +106,8 @@ for (const vp of VIEWPORTS) {
       context,
     }) => {
       await openProduct(page, context);
+      // R3: Remove exists only while the grid is in edit mode.
+      await page.getByTestId(ID.edit).click();
       const label = (await removeButtons(page).first().innerText()).replace(/^Remove\s+/, "");
       expect(label, "the fixture has a unit row to duplicate").not.toBe("");
       await page.getByTestId(ID.addOpen).click();
@@ -123,6 +125,8 @@ for (const vp of VIEWPORTS) {
       context,
     }, info) => {
       await openProduct(page, context);
+      // R3: Remove exists only while the grid is in edit mode.
+      await page.getByTestId(ID.edit).click();
       const rm = removeButtons(page).first();
       await expect(rm, "the fixture has a removable unit row").toBeVisible();
       const rmId = await rm.getAttribute("data-testid");
@@ -248,6 +252,7 @@ for (const vp of VIEWPORTS) {
         if (submitted) {
           try {
             await page.goto(`/products/${productId}`);
+            await page.getByTestId(ID.edit).click();
             const rm = page.getByRole("button", { name: `Remove ${name}`, exact: true });
             await rm.locator("visible=true").first().click();
             await page.getByTestId("units-v2-rm-confirm").click();

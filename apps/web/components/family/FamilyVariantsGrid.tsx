@@ -81,6 +81,7 @@ export function FamilyVariantsGrid({
   disabled = false,
   showCostHint = true,
   maxRows = MAX_FAMILY_ROWS,
+  focusId,
 }: {
   rows: GridRow[];
   onChange: (rows: GridRow[]) => void;
@@ -93,8 +94,28 @@ export function FamilyVariantsGrid({
   showCostHint?: boolean;
   /** The create form caps the grid at 200; a saved family's cap is on the REQUEST, not its row count. */
   maxRows?: number;
+  /** K13 F18: a saved variant to bring into view (scroll, focus its link, mark it briefly) on arrival. */
+  focusId?: string;
 }) {
+  const [marked, setMarked] = React.useState<string | null>(focusId ?? null);
+  const tableRef = React.useRef<HTMLTableSectionElement>(null);
+  React.useEffect(() => {
+    if (!focusId) return;
+    const row = Array.from(
+      tableRef.current?.querySelectorAll<HTMLElement>("[data-variant-id]") ?? [],
+    ).find((el) => el.dataset.variantId === focusId);
+    if (!row) return;
+    setMarked(focusId);
+    row.scrollIntoView?.({ block: "center" });
+    row.querySelector<HTMLElement>("a")?.focus({ preventScroll: true });
+    const t = window.setTimeout(() => setMarked(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [focusId, rows.length]);
   const atCap = rows.length >= maxRows;
+  // K12: a saved family with no SKU / barcode / unit code on any variant drops those empty columns.
+  const columns = readOnly
+    ? COLUMNS.filter((c) => !CODE_FIELDS.has(c.field) || rows.some((r) => r[c.field]))
+    : COLUMNS;
   const setCell = (i: number, field: RowField, value: string) =>
     onChange(rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
@@ -105,12 +126,13 @@ export function FamilyVariantsGrid({
           <thead className="bg-surface-raised text-left text-xs uppercase tracking-wide text-navy/70">
             <tr>
               <th className="w-8 px-2 py-2">#</th>
-              {COLUMNS.map((c) => (
+              {columns.map((c) => (
                 <th
                   key={c.field}
                   className={cn(
                     "px-2 py-2 font-semibold",
                     (c.align === "right" || (readOnly && c.money)) && "text-right",
+                    readOnly && c.money && "whitespace-nowrap",
                     readOnly && !c.core && "max-sm:hidden",
                   )}
                 >
@@ -120,16 +142,30 @@ export function FamilyVariantsGrid({
               {!readOnly && <th className="w-10 px-2 py-2" aria-label="Remove" />}
             </tr>
           </thead>
-          <tbody>
+          <tbody ref={tableRef}>
             {rows.map((r, i) => (
-              <tr key={r.key} className="border-t border-surface-border align-top">
+              <tr
+                key={r.key}
+                data-variant-id={r.id || undefined}
+                data-focused-variant={r.id && r.id === marked ? "true" : undefined}
+                className={cn(
+                  "border-t border-surface-border align-top",
+                  r.id && r.id === marked && "bg-brand-500/10 transition-colors",
+                  readOnly && r.id && "relative hover:bg-surface-raised/60",
+                )}
+              >
                 <td className="px-2 py-2 text-navy/60">{i + 1}</td>
-                {COLUMNS.map((c) => {
+                {columns.map((c) => {
                   const msg = cellMessages[`${i}:${c.field}`];
                   return (
                     <td
                       key={c.field}
-                      className={cn("px-2 py-1.5", c.width, readOnly && !c.core && "max-sm:hidden")}
+                      className={cn(
+                        "px-2 py-1.5",
+                        c.width,
+                        readOnly && c.money && "whitespace-nowrap",
+                        readOnly && !c.core && "max-sm:hidden",
+                      )}
                     >
                       {readOnly ? (
                         <span
@@ -144,7 +180,7 @@ export function FamilyVariantsGrid({
                           ) : c.field === "name" && r.id ? (
                             <Link
                               href={`/products/${r.id}`}
-                              className="font-medium text-brand-600 underline-offset-2 hover:underline"
+                              className="font-medium text-brand-600 underline-offset-2 after:absolute after:inset-0 hover:underline focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-brand-500"
                             >
                               {r.name}
                             </Link>

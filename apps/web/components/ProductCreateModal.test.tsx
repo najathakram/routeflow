@@ -133,6 +133,14 @@ describe("ProductCreateModal costing picker (SA-804 (1) / B1232)", () => {
   });
 });
 
+describe("ProductCreateModal sentence case (K12 P22)", () => {
+  it("labels the costing select in sentence case", () => {
+    open();
+    expect(screen.getByText("Costing method")).toBeInTheDocument();
+    expect(screen.queryByText("Costing Method")).toBeNull();
+  });
+});
+
 describe("ProductCreateModal price-as-quantity hint (V09)", () => {
   async function fill(unit: string, unitsPerBox: string, price: string) {
     open();

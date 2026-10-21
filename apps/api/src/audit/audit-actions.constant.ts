@@ -34,6 +34,8 @@ export const AUDIT_ACTIONS = {
   IMPORT_FAMILY_CREATED: "import.family.created",
   /** SA-823 (row 655 PR-2): an import re-run reactivated the empty family an earlier import made; meta {reason}. Written in the reactivation's own transaction. */
   PRODUCT_FAMILY_REACTIVATED: "product.family.reactivated",
+  /** Row 587 (SA-833): PARTIALLY_DELIVERED -> DELIVERED completed an office-evidenced line; meta {orderId, lineId, from, to, summary}. */
+  ORDER_LINE_OFFICE_COMPLETED: "order.line-office-completed",
 } as const;
 
 export type AuditActionName = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

@@ -109,6 +109,10 @@ const REGISTRY: Record<string, Entry> = {
     kind: "not-a-lock-column",
     reason: "resets deliveredQty to 0 only",
   },
+  "orders/office-evidence-completion.ts::completeOfficeEvidencedLines": {
+    kind: "not-a-lock-column",
+    reason: "row 587: raises deliveredQty to qty on office-evidenced lines at a DELIVERED write",
+  },
   "orders/order-pd-quantities.ts::writeOfficeDeliveries": {
     kind: "not-a-lock-column",
     reason:

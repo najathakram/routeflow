@@ -223,6 +223,15 @@ describe("K11-10: Contains and the price boxes are narrower", () => {
   });
 });
 
+describe("K12 P09: the edit box does not show two dollar signs", () => {
+  it("the $ prefix is the only currency symbol; the placeholder is the bare number", () => {
+    render(<ProductPricesGrid product={product} edit={editApi()} />);
+    const input = within(screen.getByTestId(T.row("case"))).getByTestId(T.input("case", 2));
+    expect(input).toHaveAttribute("placeholder", expect.stringMatching(/\d/));
+    expect(input.getAttribute("placeholder")).not.toContain("$");
+  });
+});
+
 describe("K11-10: the grid says what is clipped", () => {
   it("observes the five tier headers with the scroll region as root", () => {
     render(<ProductPricesGrid product={product} />);

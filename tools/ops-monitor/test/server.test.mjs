@@ -193,6 +193,7 @@ function authHarness(opts = {}) {
     auth: { passwordHash: HASH, sessionSecret: SECRET, ...(opts.auth ?? {}) },
     webhook: { secret: WH_SECRET, onEvent: (name, payload) => events.push([name, payload]) },
     cloud: opts.cloud ?? false,
+    ...(opts.log ? { log: opts.log } : {}),
   });
   return { server, events };
 }
@@ -489,7 +490,7 @@ test("security headers on every response, including redirects, errors and the SS
     ];
     for (const r of responses) {
       assert.equal(r.headers["x-content-type-options"], "nosniff", String(r.status));
-      assert.equal(r.headers["referrer-policy"], "no-referrer");
+      assert.equal(r.headers["referrer-policy"], "same-origin");
       assert.equal(r.headers["x-frame-options"], "DENY");
       assert.equal(r.headers["content-security-policy"], CSP);
       assert.equal(r.headers["x-robots-tag"], "noindex, nofollow");
@@ -630,6 +631,30 @@ function runServer(args, env) {
   });
 }
 
+test("cloud boot refuses to start with an empty client-name list (exit 1), names never printed", async () => {
+  const home = mkdtempSync(join(tmpdir(), "rf-srv-cn-"));
+  const base = { RF_OPS_HOME: home, OPS_PASSWORD_HASH: HASH, OPS_SESSION_SECRET: SECRET };
+  const a = await runServer(["--cloud", "--port", "0"], { ...base, GITHUB_TOKEN: "x" });
+  assert.equal(a.code, 1);
+  assert.match(a.out, /CLIENT_NAMES_JSON/);
+  assert.doesNotMatch(a.out, /listening/);
+  const b = await runServer(["--cloud", "--port", "0"], {
+    ...base,
+    GITHUB_TOKEN: "x",
+    CLIENT_NAMES_JSON: "[]",
+  });
+  assert.equal(b.code, 1);
+  assert.match(b.out, /CLIENT_NAMES_JSON/);
+  // with a list it gets past this check (and stops later, at the GitHub clone)
+  const c = await runServer(["--cloud", "--port", "0"], {
+    ...base,
+    CLIENT_NAMES_JSON: '["acme-secret-name"]',
+  });
+  assert.equal(c.code, 1);
+  assert.doesNotMatch(c.out, /CLIENT_NAMES_JSON/);
+  assert.doesNotMatch(c.out, /acme-secret-name/);
+});
+
 test("cloud boot refuses to start without OPS_PASSWORD_HASH or OPS_SESSION_SECRET (exit 1)", async () => {
   const home = mkdtempSync(join(tmpdir(), "rf-srv-"));
   const a = await runServer(["--cloud", "--port", "0"], { RF_OPS_HOME: home, GITHUB_TOKEN: "x" });
@@ -648,6 +673,7 @@ test("cloud boot refuses to start without OPS_PASSWORD_HASH or OPS_SESSION_SECRE
     RF_OPS_HOME: home,
     OPS_PASSWORD_HASH: HASH,
     OPS_SESSION_SECRET: SECRET,
+    CLIENT_NAMES_JSON: '["acme"]',
   });
   assert.equal(c.code, 1);
   assert.match(c.out, /GITHUB_TOKEN/);
@@ -668,4 +694,145 @@ test("cloud boot refuses to start without OPS_PASSWORD_HASH or OPS_SESSION_SECRE
   assert.equal(e.code, 1);
   assert.match(e.out, /OPS_SESSION_SECRET/);
   assert.doesNotMatch(e.out, /tooshort-secret-xyz/);
+});
+
+// ---------- PWA: manifest, generated icons, sliding session ----------
+
+test("pwa: manifest and icons are open without a session, with right types and a real PNG", async () => {
+  await withServer(authHarness(), async (port) => {
+    const m = await call(port, "/manifest.webmanifest");
+    assert.equal(m.status, 200);
+    assert.match(m.headers["content-type"], /application\/manifest\+json/);
+    assert.equal(JSON.parse(m.body).short_name, "RF ops");
+    for (const p of ["/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"]) {
+      const r = await new Promise((resolve, reject) => {
+        http
+          .get({ host: "127.0.0.1", port, path: p }, (x) => {
+            const chunks = [];
+            x.on("data", (c) => chunks.push(c));
+            x.on("end", () =>
+              resolve({ status: x.statusCode, headers: x.headers, buf: Buffer.concat(chunks) }),
+            );
+          })
+          .on("error", reject);
+      });
+      assert.equal(r.status, 200, p);
+      assert.equal(r.headers["content-type"], "image/png");
+      assert.equal(r.headers["content-security-policy"], CSP);
+      assert.equal(r.buf.subarray(1, 4).toString("latin1"), "PNG");
+      assert.equal(r.buf.subarray(r.buf.length - 8, r.buf.length - 4).toString("latin1"), "IEND");
+    }
+  });
+});
+
+test("session: cookie is 30 days and re-issued only once under 15 days remain", async () => {
+  let t = Date.parse(NOW);
+  await withServer(authHarness({ auth: { now: () => t } }), async (port) => {
+    const r = await login(port);
+    assert.match(r.headers["set-cookie"][0], /Max-Age=2592000/);
+    const c = cookieOf(r);
+    const early = await call(port, "/api/snapshot", { headers: { cookie: c } });
+    assert.equal(early.status, 200);
+    assert.equal(early.headers["set-cookie"], undefined, "fresh session is not re-issued");
+    t += 20 * 86400_000; // 10 days left
+    const late = await call(port, "/api/snapshot", { headers: { cookie: c } });
+    assert.equal(late.status, 200);
+    assert.match(late.headers["set-cookie"][0], /Max-Age=2592000/);
+    assert.notEqual(cookieOf(late), c);
+    const again = await call(port, "/api/snapshot", { headers: { cookie: cookieOf(late) } });
+    assert.equal(again.status, 200);
+  });
+});
+
+test("login outcomes are logged (ok | wrong | rate-limited | bad-request) without any secret", async () => {
+  const lines = [];
+  const h = authHarness({ log: (m) => lines.push(m) });
+  await withServer(h, async (port) => {
+    await login(port, "nope-nope-secret-typo");
+    await login(port);
+    await login(port, PASSWORD, { origin: "https://evil.example" });
+    for (let i = 0; i < 10; i++) await login(port, "wrong-again-" + i);
+    await login(port);
+  });
+  const outcomes = lines.map((l) => /login (ok|wrong|rate-limited|bad-request)/.exec(l)?.[1]);
+  assert.equal(outcomes[0], "wrong");
+  assert.equal(outcomes[1], "ok");
+  assert.equal(outcomes[2], "bad-request");
+  assert.equal(outcomes[outcomes.length - 1], "rate-limited");
+  assert.match(lines[0], /client [0-9a-f]{8}/);
+  const dump = lines.join("\n");
+  assert.ok(!dump.includes("nope-nope-secret-typo"));
+  assert.ok(!dump.includes("wrong-again-"));
+  assert.ok(!dump.includes(PASSWORD));
+  assert.ok(!dump.includes(HASH));
+  assert.ok(!/ops_session|127.0.0.1/.test(dump));
+});
+
+// ---------- login origin under Referrer-Policy: same-origin ----------
+
+test("login: GET /login sends referrer-policy same-origin", async () => {
+  const h = authHarness();
+  await withServer(h, async (port) => {
+    const r = await call(port, "/login");
+    assert.equal(r.headers["referrer-policy"], "same-origin");
+  });
+});
+
+test("login origin: null + sec-fetch-site same-origin signs in; other combinations are refused", async () => {
+  const lines = [];
+  const h = authHarness({ log: (m) => lines.push(m) });
+  await withServer(h, async (port) => {
+    const ok = await login(port, PASSWORD, { origin: "null", "sec-fetch-site": "same-origin" });
+    assert.equal(ok.status, 303);
+    assert.equal(ok.headers.location, "/");
+    assert.ok(ok.headers["set-cookie"]);
+
+    const cross = await login(port, PASSWORD, {
+      origin: "https://evil.example",
+      "sec-fetch-site": "cross-site",
+    });
+    assert.equal(cross.status, 403);
+    assert.match(cross.headers["content-type"], /text\/html/);
+    assert.match(cross.body, /somewhere the monitor doesn/);
+    assert.match(cross.body, /<form/);
+
+    const nullNoFetch = await login(port, PASSWORD, { origin: "null" });
+    assert.equal(nullNoFetch.status, 403);
+
+    const nullCross = await login(port, PASSWORD, {
+      origin: "null",
+      "sec-fetch-site": "cross-site",
+    });
+    assert.equal(nullCross.status, 403);
+
+    const wrong = await login(port, "nope-nope", {
+      origin: `http://127.0.0.1:${port}`,
+      "sec-fetch-site": "same-origin",
+    });
+    assert.equal(wrong.status, 303);
+    assert.equal(wrong.headers.location, "/login?e=1");
+  });
+  assert.ok(lines.some((l) => /login bad-request origin-mismatch client [0-9a-f]{8}/.test(l)));
+});
+
+test("login: the no-Origin allowance relies on a SameSite=Lax session cookie", async () => {
+  const h = authHarness();
+  await withServer(h, async (port) => {
+    const ok = await login(port);
+    assert.equal(ok.status, 303); // no Origin and no Sec-Fetch-Site: allowed (non-browser client)
+    assert.match(ok.headers["set-cookie"][0], /; SameSite=Lax;/);
+    const cross = await login(port, PASSWORD, { "sec-fetch-site": "cross-site" });
+    assert.equal(cross.status, 403);
+  });
+});
+
+test("login: the no-Origin allowance relies on a SameSite=Lax session cookie", async () => {
+  const h = authHarness();
+  await withServer(h, async (port) => {
+    const ok = await login(port);
+    assert.equal(ok.status, 303); // no Origin and no Sec-Fetch-Site: allowed (non-browser client)
+    assert.match(ok.headers["set-cookie"][0], /; SameSite=Lax;/);
+    const cross = await login(port, PASSWORD, { "sec-fetch-site": "cross-site" });
+    assert.equal(cross.status, 403);
+  });
 });

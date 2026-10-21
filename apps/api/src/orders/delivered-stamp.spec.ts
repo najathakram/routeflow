@@ -160,10 +160,12 @@ describe("stampDeliveredInFull — entry", () => {
         { id: "route", qty: 10, deliveredQty: 6 },
         { id: "manual", qty: 5, deliveredQty: 0 },
       ],
-      mutations: [{ orderItemId: "route", type: "PARTIAL", quantityDelivered: 6 }],
+      mutations: [
+        { orderItemId: "route", type: "PARTIAL", quantityDelivered: 6, routeRunStopId: "stop-1" },
+      ],
     });
     await stamp(db);
-    expect(db.line("route").deliveredQty).toBe(6); // evidence line: untouched
+    expect(db.line("route").deliveredQty).toBe(6); // route-evidence line: untouched
     expect(db.line("manual").deliveredQty).toBe(5); // no rows: stamped
   });
 
