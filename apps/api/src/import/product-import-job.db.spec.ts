@@ -222,7 +222,7 @@ describeQueue(
       expect(await prisma.product.count({ where: { tenantId, kind: "FAMILY" } })).toBe(0);
 
       const s = await waitDone(q.queued.jobId);
-      expect(s.error).toBeUndefined();
+      expect(s.errorCode).toBeUndefined();
       expect(s.state).toBe("done");
       expect(s.progress).toBe(100);
 
