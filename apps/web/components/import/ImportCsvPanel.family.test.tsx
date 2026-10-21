@@ -220,7 +220,8 @@ describe("ImportCsvPanel: a queued apply", () => {
         state: "failed",
         progress: 60,
         counts: { created: 3, updated: 20, unchanged: 1, skipped: 2 },
-        error: "Family pricing is on, so grouping would change these products' prices.",
+        errorCode: "IMPORT_FAMILY_PRICING_ON",
+        error: "RAW SERVER TEXT",
       },
     });
     await tick();
@@ -228,16 +229,85 @@ describe("ImportCsvPanel: a queued apply", () => {
     expect(banner).toHaveTextContent("The import stopped before it finished.");
     expect(banner).toHaveTextContent("3 created, 20 updated, 1 unchanged, 2 skipped");
     expect(banner).toHaveTextContent("Re-running the same file is safe.");
-    expect(banner).toHaveTextContent("Family pricing is on");
+    expect(banner).toHaveTextContent("Family pricing is on, so grouping would change these");
+    expect(banner).not.toHaveTextContent("RAW SERVER TEXT");
     expect(screen.getByTestId(`${P}-import-button`)).not.toBeDisabled();
   });
 
-  it("gives up after repeated poll failures with the same safe-to-rerun message", async () => {
+  it("gives up after repeated poll failures, says it may still be running, and does NOT say re-running is safe", async () => {
     await startApply();
     get.mockRejectedValue(new Error("network"));
     await tick(2000 * 5);
-    expect(screen.getByTestId(`${P}-job`)).toHaveTextContent("We lost contact with the import.");
-    expect(screen.getByTestId(`${P}-job`)).toHaveTextContent("Re-running the same file is safe.");
+    const banner = screen.getByTestId(`${P}-job`);
+    expect(banner).toHaveTextContent(
+      "We lost contact with the import. It may still be running — check Products before importing again.",
+    );
+    expect(banner).not.toHaveTextContent("safe");
+  });
+
+  it("MUST-2: a failed job never shows server text; an unknown code gets the fixed fallback", async () => {
+    await startApply();
+    get.mockResolvedValueOnce({
+      data: {
+        id: "job-1",
+        state: "failed",
+        progress: 5,
+        errorCode: "SOMETHING_NEW",
+        error: "RAW SERVER TEXT",
+      },
+    });
+    await tick();
+    const banner = screen.getByTestId(`${P}-job`);
+    expect(banner).not.toHaveTextContent("RAW SERVER TEXT");
+    expect(banner).not.toHaveTextContent("SOMETHING_NEW");
+    expect(banner).toHaveTextContent("Something went wrong while importing.");
+  });
+
+  it("maps the read-only code to fixed copy", async () => {
+    await startApply();
+    get.mockResolvedValueOnce({
+      data: { id: "job-1", state: "failed", progress: 0, errorCode: "WORKSPACE_READ_ONLY" },
+    });
+    await tick();
+    expect(screen.getByTestId(`${P}-job`)).toHaveTextContent(
+      "This workspace is read-only right now, so the import didn't run.",
+    );
+  });
+
+  it("onImported fires exactly once even when a slow poll overlaps the next tick", async () => {
+    const { onImported } = await startApply();
+    let resolve!: (v: unknown) => void;
+    get.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+    await tick(6000); // three ticks while the first response is still pending
+    expect(get).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolve({ data: { id: "job-1", state: "done", progress: 100, result: doneResult } });
+    });
+    await tick(6000);
+    expect(onImported).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("a done job with no result shows a fixed Import finished panel and still calls onImported", async () => {
+    const { onImported } = await startApply();
+    get.mockResolvedValueOnce({ data: { id: "job-1", state: "done", progress: 100 } });
+    await tick();
+    expect(screen.getByTestId(`${P}-summary`)).toHaveTextContent("Import finished");
+    expect(onImported).toHaveBeenCalledTimes(1);
+  });
+
+  it("the progress bar is labelled and the percent line is a polite live region", async () => {
+    await startApply();
+    get.mockResolvedValueOnce({ data: { id: "job-1", state: "running", progress: 25 } });
+    await tick();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-label", "Import progress");
+    expect(screen.getByTestId(`${P}-job-progress-text`)).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("the file input and drop zone are disabled while a job runs", async () => {
+    await startApply();
+    expect(screen.getByTestId(`${P}-file-input`)).toBeDisabled();
+    expect(screen.getByTestId(`${P}-dropzone`)).toHaveAttribute("aria-disabled", "true");
   });
 
   it("stops polling when the page goes away", async () => {
@@ -248,5 +318,122 @@ describe("ImportCsvPanel: a queued apply", () => {
     cleanup();
     await tick(6000);
     expect(get.mock.calls.length).toBe(calls);
+  });
+});
+
+describe("ImportCsvPanel: a refused preview says why, inline and in fixed words (B980)", () => {
+  const refuse = (status: number, code: string) =>
+    post.mockRejectedValueOnce({
+      response: { status, data: { code, message: "RAW SERVER TEXT" } },
+    });
+
+  it("family pricing on (409): the reason is shown on the page, Import stays off, no generic toast", async () => {
+    setup();
+    refuse(409, "IMPORT_FAMILY_PRICING_ON");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`${P}-preview-button`));
+    });
+    const gate = screen.getByTestId(`${P}-gate-error`);
+    expect(gate).toHaveTextContent(
+      "Family pricing is on, so grouping would change these products' prices. Turn family pricing off, or group them in the product editor.",
+    );
+    expect(gate).not.toHaveTextContent("RAW SERVER TEXT");
+    expect(screen.getByTestId(`${P}-import-button`)).toBeDisabled();
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("too many rows (400): says to split the file, not that the file could not be read", async () => {
+    setup();
+    refuse(400, "IMPORT_FAMILY_TOO_MANY_ROWS");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`${P}-preview-button`));
+    });
+    const gate = screen.getByTestId(`${P}-gate-error`);
+    expect(gate).toHaveTextContent(/too many rows/i);
+    expect(gate).toHaveTextContent("Split it into smaller files");
+    expect(gate).not.toHaveTextContent("couldn't be read");
+  });
+
+  it("the shared toast copy knows both codes too", () => {
+    const { genericToastCopy } = jest.requireActual("@/lib/generic-toast-copy");
+    expect(
+      genericToastCopy({ response: { status: 409, data: { code: "IMPORT_FAMILY_PRICING_ON" } } }),
+    ).toMatch(/Family pricing is on/);
+    expect(
+      genericToastCopy({
+        response: { status: 400, data: { code: "IMPORT_FAMILY_TOO_MANY_ROWS" } },
+      }),
+    ).toMatch(/too many rows/i);
+  });
+});
+
+describe("ImportCsvPanel: layout, focus and state hygiene (UI proof)", () => {
+  it("Preview, Import and the columns toggle are 44 px targets; the row wraps and Import never breaks across lines", async () => {
+    setup();
+    for (const id of ["preview-button", "import-button", "columns-toggle"]) {
+      expect(screen.getByTestId(`${P}-${id}`).className).toContain("min-h-[44px]");
+    }
+    expect(screen.getByTestId(`${P}-import-button`).className).toContain("whitespace-nowrap");
+    expect(screen.getByTestId(`${P}-actions`).className).toContain("flex-wrap");
+  });
+
+  it("focus moves to the preview result after Preview", async () => {
+    setup();
+    await preview(familyPreview);
+    expect(document.activeElement).toBe(screen.getByTestId(`${P}-summary`));
+  });
+
+  it("focus moves to the banner when a queued import starts, and again when it stops", async () => {
+    setup();
+    await preview(familyPreview);
+    post.mockResolvedValueOnce({
+      data: base({ dryRun: false, queued: { jobId: "job-1", rows: 300 } }),
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`${P}-import-button`));
+    });
+    expect(document.activeElement).toBe(screen.getByTestId(`${P}-job`));
+    (document.activeElement as HTMLElement).blur();
+    get.mockResolvedValueOnce({
+      data: { id: "job-1", state: "failed", progress: 5, errorCode: "X" },
+    });
+    await tick();
+    expect(document.activeElement).toBe(screen.getByTestId(`${P}-job`));
+  });
+
+  it("focus moves to the result when the job is done", async () => {
+    setup();
+    await preview(familyPreview);
+    post.mockResolvedValueOnce({
+      data: base({ dryRun: false, queued: { jobId: "job-1", rows: 300 } }),
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`${P}-import-button`));
+    });
+    get.mockResolvedValueOnce({
+      data: { id: "job-1", state: "done", progress: 100, result: base({ dryRun: false }) },
+    });
+    await tick();
+    expect(document.activeElement).toBe(screen.getByTestId(`${P}-summary`));
+  });
+
+  it("Preview is disabled while a job runs, and the old preview box is relabelled Last preview", async () => {
+    setup();
+    await preview(familyPreview);
+    expect(screen.getByTestId(`${P}-summary`)).toHaveTextContent("Preview — ");
+    post.mockResolvedValueOnce({
+      data: base({ dryRun: false, queued: { jobId: "job-1", rows: 300 } }),
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`${P}-import-button`));
+    });
+    expect(screen.getByTestId(`${P}-preview-button`)).toBeDisabled();
+    expect(screen.getByTestId(`${P}-summary`)).toHaveTextContent("Last preview — ");
+    get.mockResolvedValueOnce({
+      data: { id: "job-1", state: "failed", progress: 5, errorCode: "X" },
+    });
+    await tick();
+    expect(screen.getByTestId(`${P}-summary`)).toHaveTextContent("Last preview — ");
+    expect(screen.getByTestId(`${P}-preview-button`)).not.toBeDisabled();
   });
 });

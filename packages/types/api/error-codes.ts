@@ -269,6 +269,10 @@ export const API_ERROR_CODES = {
   IMPORT_FAMILY_PRICING_ON: "IMPORT_FAMILY_PRICING_ON",
   /** 400 from POST /import/products when a file with a Family column has more rows than IMPORT_FAMILY_MAX_ROWS (2500); `max` and `rows` are in the body. Split the file. */
   IMPORT_FAMILY_TOO_MANY_ROWS: "IMPORT_FAMILY_TOO_MANY_ROWS",
+  /** `errorCode` of a failed background job (product import): the workspace takes no writes right now (read-only, suspended or cancelled). */
+  WORKSPACE_READ_ONLY: "WORKSPACE_READ_ONLY",
+  /** `errorCode` of a failed background product import whose reason is not one the page names. */
+  IMPORT_JOB_FAILED: "IMPORT_JOB_FAILED",
   FAMILY_NOT_FOUND: "FAMILY_NOT_FOUND",
   /** 409 from DELETE /products/bulk and /products/clear-all: a unique violation while deleting; nothing was deleted, reload and retry. */
   PRODUCT_DELETE_CONFLICT: "PRODUCT_DELETE_CONFLICT",

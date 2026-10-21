@@ -69,6 +69,12 @@ export const TENANT_JOBS: Readonly<Record<string, TenantJobSpec>> = {
     reason:
       "GAP-5: stays ACTIVE-only - TRIAL tenants get no auto-orders today; the predicate would start them (a product call)",
   },
+  "product-import.apply": {
+    class: "TRANSACTIONAL",
+    filter: "AUTOMATED_WRITES",
+    reason:
+      "a queued product import CREATES and CHANGES products for one tenant: only a TRIAL or ACTIVE workspace takes the writes (acceptsAutomatedWrites), the job fails with a plain message otherwise",
+  },
   "recurring-invoices.generateDueRecurringInvoices": {
     class: "TRANSACTIONAL",
     filter: "ACTIVE_ONLY",

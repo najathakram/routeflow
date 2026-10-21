@@ -4,6 +4,7 @@ import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   PRODUCT_IMPORT_QUEUE,
+  productImportJobReasonCode,
   type ProductImportJobCounts,
   type ProductImportJobData,
   type ProductImportJobState,
@@ -78,7 +79,7 @@ export class ProductImportJobService {
           }
         : {}),
       ...(state === "done" ? { result: job.returnvalue as unknown } : {}),
-      ...(state === "failed" ? { error: job.failedReason ?? "import failed" } : {}),
+      ...(state === "failed" ? { errorCode: productImportJobReasonCode(job.failedReason) } : {}),
     };
   }
 }

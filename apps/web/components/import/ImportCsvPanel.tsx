@@ -11,6 +11,11 @@
 
 import * as React from "react";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import {
+  IMPORT_LOST_CONTACT_COPY,
+  importJobErrorCopy,
+  importRefusalCopy,
+} from "@/lib/import-job-copy";
 
 /** A 400 (unreadable / malformed file) or a 413 (too large) says what to fix; anything else is the shared generic copy. */
 const FILE_PROBLEM_COPY =
@@ -52,7 +57,8 @@ interface JobStatus {
   progress: number;
   counts?: JobCounts;
   result?: ImportCsvResult;
-  error?: string;
+  /** A closed code (B980): the page maps it to fixed copy and never prints server text. */
+  errorCode?: string;
 }
 
 /** What the panel shows for a large apply that the server queued (SA-823 section 5). */
@@ -62,8 +68,20 @@ interface JobView {
   state: JobStatus["state"];
   progress: number;
   counts?: JobCounts;
-  error?: string;
+  errorCode?: string;
+  /** The page stopped hearing from the job: it may still be running. */
+  lostContact?: boolean;
 }
+
+/** What the page treats as the result when a finished job did not bring one. */
+const EMPTY_RESULT: ImportCsvResult = {
+  errors: [],
+  rows: [],
+  skippedRows: [],
+  warnings: [],
+  unknownColumns: [],
+  dryRun: false,
+};
 
 /** How often a queued import is asked how far it got. */
 const JOB_POLL_MS = 2000;
@@ -263,31 +281,50 @@ function FamilyBlock({
 }
 
 /** A queued import: how far it got while it runs, and what it did if it stopped. */
-function JobBanner({ job, testIdPrefix }: { job: JobView; testIdPrefix: string }) {
+function JobBanner({
+  job,
+  testIdPrefix,
+  bannerRef,
+}: {
+  job: JobView;
+  testIdPrefix: string;
+  bannerRef: React.RefObject<HTMLDivElement | null>;
+}) {
   if (job.state === "done") return null;
   const so_far = job.counts ? summarize(job.counts) : null;
   if (job.state === "failed") {
     return (
       <div
+        ref={bannerRef}
+        tabIndex={-1}
         data-testid={`${testIdPrefix}-job`}
         role="alert"
-        className="rounded-lg border border-danger/40 bg-danger-bg/50 px-3 py-2.5 text-sm text-danger"
+        className="rounded-lg border border-danger/40 bg-danger-bg/50 px-3 py-2.5 text-sm text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-danger/40"
       >
-        <p className="font-medium">The import stopped before it finished.</p>
-        {job.error && <p className="mt-0.5">{job.error}</p>}
+        {job.lostContact ? (
+          <p className="font-medium">{IMPORT_LOST_CONTACT_COPY}</p>
+        ) : (
+          <>
+            <p className="font-medium">The import stopped before it finished.</p>
+            <p className="mt-0.5">{importJobErrorCopy(job.errorCode)}</p>
+          </>
+        )}
         {so_far && <p className="mt-0.5">Saved before it stopped: {so_far}.</p>}
-        <p className="mt-0.5">Re-running the same file is safe.</p>
+        {!job.lostContact && <p className="mt-0.5">Re-running the same file is safe.</p>}
       </div>
     );
   }
   return (
     <div
+      ref={bannerRef}
+      tabIndex={-1}
       data-testid={`${testIdPrefix}-job`}
-      className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5 text-sm text-brand-700"
+      className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5 text-sm text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
     >
       <p className="font-medium">Importing {plural(job.rows, "row", "rows")} in the background</p>
       <div
         role="progressbar"
+        aria-label="Import progress"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={job.progress}
@@ -295,7 +332,11 @@ function JobBanner({ job, testIdPrefix }: { job: JobView; testIdPrefix: string }
       >
         <div className="h-full bg-brand-500 transition-all" style={{ width: `${job.progress}%` }} />
       </div>
-      <p className="mt-1 text-xs">
+      <p
+        data-testid={`${testIdPrefix}-job-progress-text`}
+        aria-live="polite"
+        className="mt-1 text-xs"
+      >
         {job.progress}% done{so_far ? ` · ${so_far} so far` : ""}
       </p>
       <p className="mt-0.5 text-xs text-brand-700/80">
@@ -374,6 +415,9 @@ export function ImportCsvPanel({
   const [gateError, setGateError] = React.useState<string | null>(null);
   const [job, setJob] = React.useState<JobView | null>(null);
   const [showColumns, setShowColumns] = React.useState(false);
+  const [noResult, setNoResult] = React.useState(false);
+  const summaryRef = React.useRef<HTMLDivElement>(null);
+  const bannerRef = React.useRef<HTMLDivElement>(null);
   const jobRunning = job !== null && (job.state === "queued" || job.state === "running");
   // the polling loop reads the latest callbacks without restarting
   const latest = React.useRef({ onImported, toast, title, endpoint });
@@ -387,10 +431,12 @@ export function ImportCsvPanel({
     setFinal(null);
     setGateError(null);
     setJob(null);
+    setNoResult(false);
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    if (jobRunning) return;
     const f = e.dataTransfer.files?.[0];
     if (f && f.name.endsWith(".csv")) pickFile(f);
   };
@@ -401,13 +447,17 @@ export function ImportCsvPanel({
     setFinal(null);
     setGateError(null);
     setJob(null);
+    setNoResult(false);
     if (inputRef.current) inputRef.current.value = "";
   };
 
   const run = async (dryRun: boolean) => {
     if (!file) return;
     setLoading(dryRun ? "preview" : "import");
-    if (dryRun) setGateError(null);
+    if (dryRun) {
+      setGateError(null);
+      setJob(null);
+    }
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -427,7 +477,12 @@ export function ImportCsvPanel({
         toast({ title: `${title} imported`, description: summarize(data), variant: "success" });
       }
     } catch (err: any) {
-      if (err?.response?.status === 403) {
+      const refusal = importRefusalCopy(err?.response?.data?.code);
+      if (refusal) {
+        // the whole file is refused (family pricing on / too many rows): say why on the page, in fixed words
+        setGateError(refusal);
+        setPreview(null);
+      } else if (err?.response?.status === 403) {
         // Today's behaviour, deliberately: the server names WHICH add-on or flag is needed (and a role 403 reads differently).
         // Moving this to fixed copy needs codes + structured fields first (B991).
         setGateError(err?.response?.data?.message ?? "This column needs an add-on to import");
@@ -448,16 +503,23 @@ export function ImportCsvPanel({
     if (!job || !jobRunning) return undefined;
     const jobId = job.jobId;
     let cancelled = false;
+    let finished = false; // synchronous: onImported can only ever fire once
     let misses = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      timer = setTimeout(() => void tick(), JOB_POLL_MS);
+    };
     const tick = async () => {
       try {
         const res = await apiClient.get(`${latest.current.endpoint}/jobs/${jobId}`);
-        if (cancelled) return;
+        if (cancelled || finished) return;
         misses = 0;
         const status = res.data as JobStatus;
-        if (status.state === "done" && status.result) {
-          const result = status.result;
+        if (status.state === "done") {
+          finished = true;
+          const result = status.result ?? EMPTY_RESULT;
           setJob((j) => (j ? { ...j, state: "done", progress: 100 } : j));
+          setNoResult(!status.result);
           setFinal(result);
           latest.current.onImported?.(result);
           latest.current.toast({
@@ -465,35 +527,56 @@ export function ImportCsvPanel({
             description: summarize(result),
             variant: "success",
           });
-        } else {
-          setJob((j) =>
-            j
-              ? {
-                  ...j,
-                  state: status.state,
-                  progress: status.progress,
-                  counts: status.counts ?? j.counts,
-                  error: status.state === "failed" ? status.error : undefined,
-                }
-              : j,
-          );
+          return;
         }
+        setJob((j) =>
+          j
+            ? {
+                ...j,
+                state: status.state,
+                progress: status.progress,
+                counts: status.counts ?? j.counts,
+                errorCode: status.state === "failed" ? status.errorCode : undefined,
+              }
+            : j,
+        );
+        if (status.state === "failed") {
+          finished = true;
+          return;
+        }
+        schedule();
       } catch {
         if (cancelled) return;
         misses += 1;
         if (misses >= JOB_MAX_MISSES) {
-          setJob((j) =>
-            j ? { ...j, state: "failed", error: "We lost contact with the import." } : j,
-          );
+          setJob((j) => (j ? { ...j, state: "failed", lostContact: true } : j));
+          return;
         }
+        schedule();
       }
     };
-    const timer = setInterval(() => void tick(), JOB_POLL_MS);
+    schedule();
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      if (timer) clearTimeout(timer);
     };
   }, [job?.jobId, jobRunning]);
+
+  // After Preview, Import and a stop, focus lands on the thing that changed (the banner or the result), not on body.
+  const focusKey =
+    job && job.state !== "done"
+      ? jobRunning
+        ? "job:running"
+        : "job:stopped"
+      : final
+        ? "final"
+        : preview
+          ? "preview"
+          : "none";
+  React.useEffect(() => {
+    if (focusKey === "none") return;
+    (focusKey.startsWith("job:") ? bannerRef : summaryRef).current?.focus();
+  }, [focusKey]);
 
   const active = final ?? preview;
 
@@ -505,7 +588,7 @@ export function ImportCsvPanel({
           type="button"
           data-testid={`${prefix}-columns-toggle`}
           onClick={() => setShowColumns((v) => !v)}
-          className="flex w-full items-center justify-between px-3 py-2 text-xs font-medium text-navy/70"
+          className="flex min-h-[44px] w-full items-center justify-between px-3 py-2 text-xs font-medium text-navy/70"
         >
           <span>Accepted columns ({columns.length})</span>
           {showColumns ? (
@@ -536,11 +619,16 @@ export function ImportCsvPanel({
 
       {/* Drop zone */}
       <div
+        data-testid={`${prefix}-dropzone`}
+        aria-disabled={jobRunning}
         onDrop={handleDrop}
         onDragOver={(e) => e.preventDefault()}
-        onClick={() => inputRef.current?.click()}
+        onClick={() => {
+          if (!jobRunning) inputRef.current?.click();
+        }}
         className={cn(
           "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 transition-colors min-h-[96px]",
+          jobRunning && "pointer-events-none opacity-50",
           file
             ? "border-brand-300 bg-brand-50"
             : "border-surface-border hover:border-brand-300 hover:bg-brand-50/30",
@@ -551,6 +639,7 @@ export function ImportCsvPanel({
           data-testid={`${prefix}-file-input`}
           type="file"
           accept=".csv"
+          disabled={jobRunning}
           className="hidden"
           onChange={(e) => pickFile(e.target.files?.[0])}
         />
@@ -572,13 +661,13 @@ export function ImportCsvPanel({
       </div>
 
       {/* Actions */}
-      <div className="flex gap-2">
+      <div data-testid={`${prefix}-actions`} className="flex flex-wrap gap-2">
         <button
           type="button"
           data-testid={`${prefix}-preview-button`}
           onClick={() => run(true)}
-          disabled={!file || loading !== null}
-          className="flex-1 rounded-lg border border-brand-300 py-2 text-sm font-medium text-brand-600 hover:bg-brand-50 disabled:opacity-40 transition-colors"
+          disabled={!file || loading !== null || jobRunning}
+          className="min-h-[44px] min-w-[8rem] flex-1 rounded-lg border border-brand-300 py-2 text-sm font-medium text-brand-600 hover:bg-brand-50 disabled:opacity-40 transition-colors"
         >
           {loading === "preview" ? "Previewing…" : "Preview"}
         </button>
@@ -587,7 +676,7 @@ export function ImportCsvPanel({
           data-testid={`${prefix}-import-button`}
           onClick={() => run(false)}
           disabled={!file || loading !== null || !preview || !!gateError || !!final || jobRunning}
-          className="flex-1 rounded-lg bg-brand-500 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
+          className="min-h-[44px] min-w-[10rem] flex-1 whitespace-nowrap rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
         >
           {loading === "import" ? "Importing…" : jobRunning ? "Importing…" : `Import ${title}`}
         </button>
@@ -596,7 +685,7 @@ export function ImportCsvPanel({
             type="button"
             data-testid={`${prefix}-reset-button`}
             onClick={resetFile}
-            className="rounded-lg border border-surface-border px-3 py-2 text-sm text-navy hover:bg-surface-raised transition-colors"
+            className="min-h-[44px] rounded-lg border border-surface-border px-3 py-2 text-sm text-navy hover:bg-surface-raised transition-colors"
           >
             Choose another file
           </button>
@@ -615,14 +704,16 @@ export function ImportCsvPanel({
         </div>
       )}
 
-      {job && <JobBanner job={job} testIdPrefix={prefix} />}
+      {job && <JobBanner job={job} testIdPrefix={prefix} bannerRef={bannerRef} />}
 
       {/* Summary */}
       {active && (
         <div
+          ref={summaryRef}
+          tabIndex={-1}
           data-testid={`${prefix}-summary`}
           className={cn(
-            "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm",
+            "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300",
             final
               ? "border-success/30 bg-success-bg/50 text-success"
               : "border-brand-200 bg-brand-50 text-brand-700",
@@ -630,8 +721,14 @@ export function ImportCsvPanel({
         >
           <CheckCircle2 className="h-4 w-4 shrink-0" />
           <span>
-            {final ? "Import complete — " : "Preview — "}
-            {summarize(active)}
+            {final && noResult ? (
+              "Import finished. Check Products to see what changed."
+            ) : (
+              <>
+                {final ? "Import complete — " : job ? "Last preview — " : "Preview — "}
+                {summarize(active)}
+              </>
+            )}
           </span>
         </div>
       )}
