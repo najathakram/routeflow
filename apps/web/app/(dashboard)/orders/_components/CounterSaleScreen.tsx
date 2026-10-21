@@ -604,7 +604,11 @@ export function CounterSaleScreen() {
           : 0;
     if (!dir || locked) return;
     const options = paymentMethodOptions(isWalkIn).filter((m) => !m.disabled);
-    const at = options.findIndex((m) => m.method === method);
+    // movement starts from the tab stop (the checked method, or the first enabled one when that is disabled), wrapping
+    const at = Math.max(
+      0,
+      options.findIndex((m) => m.method === tabStopMethod),
+    );
     const next = options[(at + dir + options.length) % options.length];
     if (!next) return;
     e.preventDefault();

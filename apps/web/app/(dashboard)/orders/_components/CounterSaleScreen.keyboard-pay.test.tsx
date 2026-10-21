@@ -180,4 +180,13 @@ describe("CounterSaleScreen: keyboard path to pay (R7b 1.2)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Change payment/ }));
     expect(screen.getByRole("radio", { name: "Cash" })).toHaveFocus();
   });
+
+  it("ArrowLeft from the tab stop lands on the last enabled method", () => {
+    walkInAfterOnAccount();
+    const cash = screen.getByRole("radio", { name: "Cash" });
+    cash.focus();
+    fireEvent.keyDown(cash, { key: "ArrowLeft" });
+    expect(screen.getByRole("radio", { name: "Check" })).toHaveFocus();
+    expect(screen.getByRole("radio", { name: "Check" })).toHaveAttribute("aria-checked", "true");
+  });
 });
