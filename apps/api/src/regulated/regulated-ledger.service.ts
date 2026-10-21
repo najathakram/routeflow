@@ -11,6 +11,7 @@ import {
 } from "@routeflow/pricing";
 import { periodBucketOf } from "./period";
 import { resolveSaleLines, type ResolvedSaleLine } from "./sale-line-resolver";
+import { unbookedReversalMeta } from "./unbooked-reversals";
 import { writeAdminNotice } from "../billing/manual-invoice-notice";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 
@@ -871,7 +872,15 @@ export class RegulatedLedgerService {
       await this.reportUnbookedReversal(db, {
         tenantId: s.tenantId,
         message: `A return could not be reversed on the regulated ledger: the sold line on order ${s.orderId} (ledger entry ${s.id}) can no longer be found. Support needs to resolve it.`,
-        meta: { returnId, orderId, saleEntryId: s.id, orderItemId: s.orderItemId ?? null },
+        meta: unbookedReversalMeta({
+          tenantId: s.tenantId,
+          returnId,
+          creditNoteId: null,
+          lineId: s.orderItemId ?? null,
+          saleEntryId: s.id,
+          qty: Number(s.qty),
+          period: periodBucketOf(new Date()),
+        }),
       });
     }
 
@@ -1646,11 +1655,15 @@ export class RegulatedLedgerService {
       await this.reportUnbookedReversal(db, {
         tenantId: it.tenantId,
         message: `A credit note could not be reversed on the regulated ledger: credit note ${creditNoteId}, invoice line ${it.invoiceItemId} has no sale entry it can be tied to. Support needs to resolve it.`,
-        meta: {
+        meta: unbookedReversalMeta({
+          tenantId: it.tenantId,
+          returnId: null,
           creditNoteId,
-          invoiceItemId: it.invoiceItemId,
-          saleEntryIds: dangling.map((d) => d.id),
-        },
+          lineId: it.id ?? null,
+          saleEntryId: dangling[0].id,
+          qty: Number(it.qty),
+          period: periodBucketOf(new Date()),
+        }),
       });
     }
   }

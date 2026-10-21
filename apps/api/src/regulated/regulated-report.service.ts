@@ -19,6 +19,7 @@ import { RegulatedReport } from "./report-types";
 import { listParkedReversals, parkedRestockNote, withParkedFirst } from "./parked-reversals";
 import { periodBucketOf } from "./period";
 import { resolveSaleLines } from "./sale-line-resolver";
+import { countUnbookedReversals, unbookedReversalsWarning } from "./unbooked-reversals";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { uncategorisedLineWarnings } from "./uncategorised-lines";
 
@@ -210,6 +211,13 @@ export class RegulatedReportService {
       report.warnings.push(
         ...(await uncategorisedLineWarnings(db, policy, { from: fromDate, toExclusive }, tz)),
       );
+    }
+    // SA-835: a reversal the ledger could not book is counted from its notices, so the period never looks clean.
+    const unbooked = await countUnbookedReversals(db, { from: fromDate, toExclusive });
+    const unbookedWarning = unbookedReversalsWarning(unbooked);
+    if (unbookedWarning) {
+      report.warnings.unshift(unbookedWarning);
+      report.unbookedReversals = unbooked;
     }
     return withParkedFirst(report, parked, restockNote);
   }

@@ -155,4 +155,82 @@ describe("RegulatedLedgerService: rotated invoice item (SA-789 F1)", () => {
       expect(JSON.stringify(where)).toContain("oi-1");
     });
   });
+
+  describe("a reversal that cannot be booked is made visible (SA-835)", () => {
+    const periodRe = /^[0-9]{4}-[0-9]{2}$/;
+
+    it("return of an unresolvable SALE row: the return succeeds and a notice with the id-only meta is written", async () => {
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([staleSale({ orderItemId: "oi-gone" })])
+        .mockResolvedValueOnce([]);
+      prisma.invoiceItem.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([]); // the order line is gone too
+      prisma.product.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.reverseReturnEntries({
+          returnId: "ret-9",
+          orderId: "ord-1",
+          returnedByProduct: new Map([["p1", 10]]),
+          returnedUnit: "PIECES",
+          db: prisma,
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+      const data = prisma.auditLog.create.mock.calls[0][0].data;
+      expect(data.action).toBe("REGULATED_REVERSAL_UNBOOKED");
+      expect(data.meta).toEqual({
+        platformAdmin: true,
+        message: expect.any(String),
+        tenantId: "t1",
+        returnId: "ret-9",
+        creditNoteId: null,
+        lineId: "oi-gone",
+        saleEntryId: "sale-1",
+        qty: 75,
+        period: expect.stringMatching(periodRe),
+      });
+    });
+
+    it("credit note on a line no sale entry can be tied to: the notice carries the credit note ids", async () => {
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          id: "cni-1",
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          invoiceItemId: "ii-new",
+          amount: 11.67,
+          qty: 10,
+          categoryTax: 0,
+        },
+      ]);
+      prisma.invoiceItem.findMany
+        .mockResolvedValueOnce([{ id: "ii-new", orderItemId: null, invoiceId: "inv-1" }])
+        .mockResolvedValue([]); // the dangling sale's old item is gone
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([]) // idempotency
+        .mockResolvedValueOnce([]) // no sale row for the credited item
+        .mockResolvedValueOnce([
+          { id: "sale-1", invoiceId: "inv-1", invoiceItemId: "ii-old", orderItemId: null },
+        ]);
+
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-9", db: prisma });
+
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+      const data = prisma.auditLog.create.mock.calls[0][0].data;
+      expect(data.action).toBe("REGULATED_REVERSAL_UNBOOKED");
+      expect(data.meta).toMatchObject({
+        tenantId: "t1",
+        returnId: null,
+        creditNoteId: "cn-9",
+        lineId: "cni-1",
+        saleEntryId: "sale-1",
+        qty: 10,
+        period: expect.stringMatching(periodRe),
+      });
+    });
+  });
 });

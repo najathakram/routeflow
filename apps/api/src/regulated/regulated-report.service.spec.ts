@@ -231,6 +231,35 @@ describe("RegulatedReportService", () => {
       expect(report.warnings.map((w) => w.code)).not.toContain("UNMATCHED_LEDGER_LINE");
     });
 
+    it("shows how many reversals could not be booked in the period, counted from the notices", async () => {
+      prisma.auditLog.count.mockResolvedValue(1);
+      const report = await service.buildReport({
+        category: "cat-tx",
+        from: "2026-07-01",
+        to: "2026-07-31",
+      });
+      expect(report.unbookedReversals).toBe(1);
+      expect(report.warnings[0]).toEqual({
+        code: "UNBOOKED_REVERSALS",
+        message: "1 reversals could not be booked; contact support.",
+      });
+      const where = prisma.auditLog.count.mock.calls[0][0].where;
+      expect(where.action).toBe("REGULATED_REVERSAL_UNBOOKED");
+      expect(where.createdAt.gte).toEqual(new Date("2026-07-01T00:00:00.000Z"));
+      expect(where.createdAt.lt).toEqual(new Date("2026-08-01T00:00:00.000Z"));
+    });
+
+    it("a period with no unbooked notices carries no such warning or field", async () => {
+      prisma.auditLog.count.mockResolvedValue(0);
+      const report = await service.buildReport({
+        category: "cat-tx",
+        from: "2026-07-01",
+        to: "2026-07-31",
+      });
+      expect(report.unbookedReversals).toBeUndefined();
+      expect(report.warnings.map((w) => w.code)).not.toContain("UNBOOKED_REVERSALS");
+    });
+
     it("resolves the customer's address via pickReportAddress precedence (default+BILLING over other rows)", async () => {
       prisma.customer.findMany.mockResolvedValue([
         customer({
