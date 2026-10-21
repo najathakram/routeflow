@@ -1,3 +1,4 @@
+import { API_ERROR_CODES } from "./api/error-codes";
 import {
   isDefinitiveSaleRefusal,
   mintSaleKey,
@@ -78,6 +79,39 @@ export function paymentMayBeRecordedCopy(err: unknown): string | null {
 }
 
 /**
+ * True only for the server-definitive "nothing recorded for this key": 404 PAYMENT_KEY_NOT_FOUND from
+ * GET /invoices/payments/by-key/:key. Any other failure of that read is NOT an answer.
+ */
+export function isPaymentKeyNotFound(err: unknown): boolean {
+  const res = (err as { response?: { status?: unknown; data?: { code?: unknown } } })?.response;
+  return res?.status === 404 && res.data?.code === API_ERROR_CODES.PAYMENT_KEY_NOT_FOUND;
+}
+
+/** What "Check payment status" learned: the stored payment, nothing recorded, or no answer. */
+export type PaymentStatusOutcome<T = unknown> =
+  { kind: "found"; payment: T } | { kind: "notFound" } | { kind: "error" };
+
+/** The fixed copy of the status check (web and mobile): never a raw server message. */
+export const PAYMENT_STATUS_COPY = {
+  action: "Check payment status",
+  checking: "Checking...",
+  recorded: "This payment was recorded.",
+  notRecorded: "Nothing was recorded. You can try again.",
+  error: "We couldn't check right now. Try again in a moment.",
+  /** Shown while the outcome is unknown, beside the action that replaces Record. */
+  unknownHint:
+    "We couldn't confirm this payment. It may already be recorded. Check its status before trying again.",
+} as const;
+
+export function paymentStatusCopy(outcome: PaymentStatusOutcome): string {
+  return outcome.kind === "found"
+    ? PAYMENT_STATUS_COPY.recorded
+    : outcome.kind === "notFound"
+      ? PAYMENT_STATUS_COPY.notRecorded
+      : PAYMENT_STATUS_COPY.error;
+}
+
+/**
  * The holder a record-payment dialog keeps for one open: the sale-attempt rule (`saleAttemptKey`,
  * `isDefinitiveSaleRefusal`) plus two payment rules.
  *  - A payment key conflict (`isPaymentKeyConflict`) proves a payment may already exist under the key:
@@ -89,6 +123,14 @@ export function createPaymentKeyHolder(mint: () => string = mintSaleKey) {
   let held: HeldSaleKey | null = null;
   let locked = false;
   let mayBeRecorded = false;
+  const resolveStatus = <T>(outcome: PaymentStatusOutcome<T>): PaymentStatusOutcome<T> => {
+    if (outcome.kind !== "error") {
+      held = null;
+      locked = false;
+      mayBeRecorded = false;
+    }
+    return outcome;
+  };
   return {
     /** The key to send for this submit: the held one while the attempt is the same, or locked. */
     keyFor(p: PaymentSubmitShape): string {
@@ -110,6 +152,29 @@ export function createPaymentKeyHolder(mint: () => string = mintSaleKey) {
         if (!locked) held = null;
       } else {
         locked = true;
+      }
+    },
+    /** True while an outcome is unknown: the key is kept and locked, and the dialog offers the status check. */
+    hasUnknown(): boolean {
+      return locked;
+    },
+    /**
+     * Apply a status read (condition a): found settles as a success (key released), a server-definitive
+     * "nothing recorded" releases the key, an error changes nothing (still unknown and locked).
+     */
+    resolveFromStatus: resolveStatus,
+    /**
+     * "Check payment status": read the payment by the HELD key (`fetch` is a GET by key that rejects
+     * with the HTTP error) and apply the answer. Nothing held = nothing unknown: "notFound", no call.
+     */
+    async checkStatus<T>(fetch: (key: string) => Promise<T>): Promise<PaymentStatusOutcome<T>> {
+      if (!held || !locked) return { kind: "notFound" };
+      try {
+        return resolveStatus({ kind: "found", payment: await fetch(held.key) });
+      } catch (error) {
+        return resolveStatus<T>(
+          isPaymentKeyNotFound(error) ? { kind: "notFound" } : { kind: "error" },
+        );
       }
     },
     /** True after a payment key conflict: show PAYMENT_MAY_BE_RECORDED_COPY, never "nothing recorded". */
