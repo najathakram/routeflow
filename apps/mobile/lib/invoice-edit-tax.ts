@@ -10,26 +10,29 @@ import { inferredGoodsFlatRate, isNsfLine } from "@routeflow/pricing";
  * verifies a flat rate, each 0-rate line loads at that rate and as taxable. A line with its own
  * rate always keeps it.
  */
-export function hydratedLineTax(invoice: {
-  subtotal?: unknown;
-  taxAmount?: unknown;
-  items?: ReadonlyArray<{
-    taxRate?: unknown;
-    categoryTaxAmount?: unknown;
+export function hydratedLineTax(
+  invoice: {
     subtotal?: unknown;
-    systemKind?: string | null;
-    description?: string | null;
-  }>;
-}): Array<{ taxRate: number; taxable: boolean }> {
+    taxAmount?: unknown;
+    items?: ReadonlyArray<{
+      taxRate?: unknown;
+      categoryTaxAmount?: unknown;
+      subtotal?: unknown;
+      systemKind?: string | null;
+      description?: string | null;
+    }>;
+  },
+  /** The tenant's configured rate (a fraction): it wins the inference when it reproduces the stored tax. */
+  tenantRate?: number,
+): Array<{ taxRate: number; taxable: boolean }> {
   const items = invoice.items ?? [];
   // #2392 / SA-478: the NSF bounce-fee line is never taxed. #2656: the goods-only inference (line
   // AND money excluded, subtotal rounded) is the ONE shared helper, and an NSF line is never filled.
   const nsf = items.map((it) => isNsfLine(it));
-  const inferred = inferredGoodsFlatRate({
-    subtotal: invoice.subtotal,
-    taxAmount: invoice.taxAmount,
-    lines: items,
-  });
+  const inferred = inferredGoodsFlatRate(
+    { subtotal: invoice.subtotal, taxAmount: invoice.taxAmount, lines: items },
+    { preferredRate: tenantRate },
+  );
   const fill = inferred?.verified ? inferred.rate : 0;
   return items.map((it, i) => {
     const stored = Number(it.taxRate ?? 0);
