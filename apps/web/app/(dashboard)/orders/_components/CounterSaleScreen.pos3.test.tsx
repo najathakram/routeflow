@@ -366,9 +366,9 @@ describe("POS-3 layout and touch targets", () => {
     expect(small).toEqual([]);
     // compact controls (stepper, remove, Undo) are 44 wide as well, not just tall
     for (const name of ["Add a box to Water", "Remove Water", UNDO, "Cash", "Exact"]) {
-      expect(screen.getByRole(TENDERS.test(name) ? "radio" : "button", { name }).className).toMatch(
-        /min-w-\[44px\]/,
-      );
+      expect(
+        screen.getByRole(TENDERS.test(String(name)) ? "radio" : "button", { name }).className,
+      ).toMatch(/min-w-\[44px\]/);
     }
     const autoPrint = screen.getByLabelText("Print receipt automatically").closest("label")!;
     expect(autoPrint.className).toMatch(/min-h-\[44px\]/);
