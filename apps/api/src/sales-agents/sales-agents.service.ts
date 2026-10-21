@@ -272,6 +272,7 @@ export class SalesAgentsService {
 
   async addAssignment(agentId: string, dto: AddAgentAssignmentDto) {
     await this.ensureActiveAgent(agentId);
+    await assertRefsInTenant(this.prisma, { customerIds: [dto.customerId] });
     const effectiveFrom = dto.effectiveFrom ? new Date(dto.effectiveFrom) : new Date();
     let assignment;
     try {
@@ -308,6 +309,7 @@ export class SalesAgentsService {
 
   async addAssignmentsBulk(agentId: string, dto: BulkAgentAssignmentDto) {
     await this.ensureActiveAgent(agentId);
+    await assertRefsInTenant(this.prisma, { customerIds: dto.customerIds });
     const effectiveFrom = dto.effectiveFrom ? new Date(dto.effectiveFrom) : new Date();
     const assignments = await this.prisma.tenantTransaction(async (tx) => {
       const created: AgentAssignment[] = [];

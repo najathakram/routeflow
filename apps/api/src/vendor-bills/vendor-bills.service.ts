@@ -1076,6 +1076,8 @@ export class VendorBillsService {
       });
     }
 
+    // R5-5: a changed supplier must be this tenant's before anything is written (it also moves credit draws).
+    if (dto.supplierId) await assertRefsInTenant(this.prisma, { supplierIds: [dto.supplierId] });
     if (Array.isArray(dto.items)) await this.assertLineProductsInCatalog(dto.items);
 
     // Recalculate total if items are provided. Mirror create(): fold the

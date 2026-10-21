@@ -62,6 +62,10 @@ describe("SalesAgentsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // R5-5: refs resolve inside the tenant unless a test says otherwise.
+    prisma.customer.findMany.mockImplementation(async (args: any) =>
+      (args?.where?.id?.in ?? []).map((id: string) => ({ id })),
+    );
     models = extendWithSalesAgentModels(prisma);
     commissionEngine = {
       recomputeCommissionRange: jest.fn().mockResolvedValue({ invoicesSynced: 0 }),
@@ -239,6 +243,7 @@ describe("SalesAgentsService", () => {
     });
 
     it("triggers a customer-scoped recompute for a backdated customer rate", async () => {
+      prisma.customer.findMany.mockResolvedValue([{ id: "c1" }]);
       models.salesAgent.findUnique.mockResolvedValue({
         id: "a1",
         status: "ACTIVE",
@@ -256,6 +261,21 @@ describe("SalesAgentsService", () => {
         { customerId: "c1" },
         past,
       );
+    });
+  });
+
+  describe("assignments reject a reference from another business", () => {
+    it("addAssignment refuses a customer that is not this tenant's, with no write", async () => {
+      models.salesAgent.findUnique.mockResolvedValue({
+        id: "a1",
+        status: "ACTIVE",
+        deletedAt: null,
+      });
+      prisma.customer.findMany.mockResolvedValue([]);
+      await expect(
+        service.addAssignment("a1", { customerId: "other-biz-customer" }),
+      ).rejects.toThrow(/not found/i);
+      expect(models.agentAssignment.create).not.toHaveBeenCalled();
     });
   });
 

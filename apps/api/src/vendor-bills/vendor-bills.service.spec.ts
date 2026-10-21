@@ -1016,6 +1016,7 @@ describe("VendorBillsService", () => {
 
   describe("create", () => {
     beforeEach(() => {
+      prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1" }]); // the supplier is this tenant's
       prisma.vendorBill.findFirst.mockResolvedValue(null); // nextBillNumber
       prisma.vendorBill.create.mockResolvedValue(bill());
     });
@@ -1326,6 +1327,7 @@ describe("VendorBillsService", () => {
 
   describe("create — duplicate guard", () => {
     beforeEach(() => {
+      prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1" }]); // the supplier is this tenant's
       prisma.vendorBill.findFirst.mockResolvedValue(null); // nextBillNumber
       prisma.vendorBill.create.mockResolvedValue(bill());
       prisma.supplier.findFirst.mockResolvedValue({ name: "Acme Foods" });

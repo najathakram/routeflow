@@ -65,6 +65,7 @@ describe("ProductAliasService", () => {
     });
 
     it("upserts the normalized alias under the any-supplier sentinel when no supplier", async () => {
+      prisma.expenseCategory.findMany.mockResolvedValue([{ id: "cat-9" }]);
       await service.learn(null, "  BS Pallet Deposit ", { expenseCategoryId: "cat-9" });
       expect(prisma.productAlias.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
