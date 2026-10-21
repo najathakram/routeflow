@@ -111,7 +111,14 @@ import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
-import { paymentMayBeRecordedCopy, usePaymentSubmitKey } from "@/lib/payment-submit-key";
+import {
+  PAYMENT_PHOTO_LATER_COPY,
+  finishFoundPayment,
+  forgetPaymentProof,
+  paymentMayBeRecordedCopy,
+  rememberPaymentProof,
+  usePaymentSubmitKey,
+} from "@/lib/payment-submit-key";
 import {
   usePaymentStatusCheck,
   type PaymentStatusCheck as PaymentStatusCheckState,
@@ -409,6 +416,7 @@ function RecordPaymentModal({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (statusCheck.unknown) return; // SA-824: the status check comes before any new attempt
     const amt = parseFloat(form.amount);
     if (!form.amount || isNaN(amt) || amt <= 0) {
       setAmountError("Enter an amount greater than 0.");
@@ -1454,14 +1462,31 @@ export default function InvoiceDetailPage() {
   );
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
-  const paymentKey = usePaymentSubmitKey(isPaymentOpen); // SA-824: one Idempotency-Key per open
+  // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
+  const keyScope = `invoice:${id}`;
+  const paymentKey = usePaymentSubmitKey(isPaymentOpen, keyScope);
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
-  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx, and attaches the
+  // selected proof photo to the found payment (the same upload the 2xx path runs).
   const paymentStatus = usePaymentStatusCheck(
     paymentKey,
-    () => {
+    async (payment) => {
+      const photo = await finishFoundPayment<File>(keyScope, payment, (paymentId, file) =>
+        uploadPaymentImage.mutateAsync({ paymentId, file }),
+      );
       setIsPaymentOpen(false);
-      toast({ title: PAYMENT_STATUS_COPY.recorded, variant: "success" });
+      toast(
+        photo === "later"
+          ? { title: PAYMENT_PHOTO_LATER_COPY, variant: "info" }
+          : { title: PAYMENT_STATUS_COPY.recorded, variant: "success" },
+      );
+      if (photo === "failed") {
+        toast({
+          title: "Payment saved, image upload failed",
+          description: "You can attach it later from Payment History.",
+          variant: "error",
+        });
+      }
     },
     isPaymentOpen,
   );
@@ -1823,6 +1848,8 @@ export default function InvoiceDetailPage() {
   };
 
   const handleRecordPayment = (data: PaymentFormState, file: File | null) => {
+    if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
+    rememberPaymentProof(keyScope, file); // so a status check that finds the payment can attach it
     recordPayment.mutate(
       {
         id: invoice.id,
@@ -1836,6 +1863,7 @@ export default function InvoiceDetailPage() {
       },
       {
         onSuccess: (updated) => {
+          forgetPaymentProof(keyScope);
           setIsPaymentOpen(false);
           toast({
             title: "Payment recorded",

@@ -33,7 +33,13 @@ import {
   type SelectablePaymentMethod,
 } from "@/lib/payment-methods";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
-import { usePaymentSubmitKey } from "@/lib/payment-submit-key";
+import {
+  PAYMENT_PHOTO_LATER_COPY,
+  finishFoundPayment,
+  forgetPaymentProof,
+  rememberPaymentProof,
+  usePaymentSubmitKey,
+} from "@/lib/payment-submit-key";
 import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
 import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
 import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
@@ -69,13 +75,30 @@ interface Allocation {
 function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const { toast } = useToast();
   const record = useRecordPaymentStandalone();
-  const paymentKey = usePaymentSubmitKey(true); // SA-824: one Idempotency-Key per open (mounted per open)
-  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
-  const statusCheck = usePaymentStatusCheck(paymentKey, () => {
-    toast({ title: PAYMENT_STATUS_COPY.recorded, variant: "success" });
+  // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
+  const keyScope = "standalone:payments-page";
+  const paymentKey = usePaymentSubmitKey(true, keyScope);
+  const uploadPaymentImage = useUploadPaymentImage();
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx, and attaches the
+  // selected proof photo to the found payment (the same upload the 2xx path runs).
+  const statusCheck = usePaymentStatusCheck(paymentKey, async (payment) => {
+    const photo = await finishFoundPayment<File>(keyScope, payment, (paymentId, f) =>
+      uploadPaymentImage.mutateAsync({ paymentId, file: f }),
+    );
+    toast(
+      photo === "later"
+        ? { title: PAYMENT_PHOTO_LATER_COPY, variant: "info" }
+        : { title: PAYMENT_STATUS_COPY.recorded, variant: "success" },
+    );
+    if (photo === "failed") {
+      toast({
+        title: "Payment saved, image upload failed",
+        description: "You can attach it later from the payment detail page.",
+        variant: "error",
+      });
+    }
     onClose();
   });
-  const uploadPaymentImage = useUploadPaymentImage();
   const { data: customersData } = useCustomers({ limit: 200 });
   const [customerId, setCustomerId] = React.useState("");
   const [totalAmount, setTotalAmount] = React.useState("");
@@ -152,6 +175,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const customers = customersData?.data ?? [];
 
   const handleSave = async (status: "DRAFT" | "PAID") => {
+    if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
     if (!customerId) {
       toast({ title: "Select a customer", variant: "error" });
       return;
@@ -184,8 +208,10 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
         amount: parseFloat(a.amount),
       })),
     };
+    rememberPaymentProof(keyScope, file); // so a status check that finds the payment can attach it
     try {
       const res = await record.mutateAsync({ ...dto, submitKey: paymentKey });
+      forgetPaymentProof(keyScope);
       toast({
         title: `Payment ${status === "DRAFT" ? "saved as draft" : "recorded"}`,
         variant: "success",

@@ -26,14 +26,14 @@ const unknownHolder = () => {
 };
 
 describe("SA-824 payment status check (shared holder)", () => {
-  it("hasUnknown: false fresh, true after an unknown outcome, false after a success or reset", () => {
+  it("hasUnknown: false fresh, true after an unknown outcome, false after a success; reset() never clears it", () => {
     const h = createPaymentKeyHolder(mintSeq());
     expect(h.hasUnknown()).toBe(false);
     h.keyFor(pay);
     h.settle({ ok: false, error: err() });
     expect(h.hasUnknown()).toBe(true);
-    h.reset();
-    expect(h.hasUnknown()).toBe(false);
+    h.reset(); // a reopen must not drop the unknown outcome
+    expect(h.hasUnknown()).toBe(true);
     h.keyFor(pay);
     h.settle({ ok: true });
     expect(h.hasUnknown()).toBe(false);

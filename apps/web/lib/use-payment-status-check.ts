@@ -11,7 +11,7 @@ import { paymentStatusCopy, type PaymentStatusOutcome } from "@routeflow/types/p
  */
 export function usePaymentStatusCheck(
   holder: PaymentKeyHolder,
-  onRecorded?: (payment: unknown) => void,
+  onRecorded?: (payment: unknown) => void | Promise<void>,
   /** A dialog that stays mounted passes its open flag: closing forgets the last answer. */
   isOpen = true,
 ) {
@@ -30,7 +30,7 @@ export function usePaymentStatusCheck(
         for (const k of ["invoices", "customers", "payments"]) {
           void qc.invalidateQueries({ queryKey: [k] });
         }
-        onRecorded?.(out.payment);
+        await onRecorded?.(out.payment);
       }
     } finally {
       setChecking(false);

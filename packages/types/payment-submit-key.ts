@@ -185,10 +185,13 @@ export function createPaymentKeyHolder(mint: () => string = mintSaleKey) {
     peek(): string | null {
       return held ? held.key : null;
     },
-    /** A fresh dialog open: forget the held key and any unknown outcome. */
+    /**
+     * A fresh dialog open: forget a SETTLED key. NEVER while an outcome is unknown (condition b): a
+     * Cancel -> reopen must not drop the key the status check and the server's replay depend on.
+     */
     reset(): void {
+      if (locked) return;
       held = null;
-      locked = false;
       mayBeRecorded = false;
     },
   };
@@ -218,5 +221,114 @@ export async function sendWithPaymentKey<T>(
   } catch (error) {
     holder.settle({ ok: false, error });
     throw error;
+  }
+}
+
+/**
+ * One holder per payment TARGET (scope + customer / invoice id), kept at module level so it outlives the
+ * dialog: a Cancel -> reopen, or an unmount -> remount, of a dialog whose outcome is unknown gets the SAME
+ * holder back (same key, still locked, "Check payment status" still offered). The entry is dropped only
+ * once the key is released (nothing unknown, nothing in flight): `releasePaymentKeyHolder`.
+ */
+const holders = new Map<string, PaymentKeyHolder>();
+
+export function acquirePaymentKeyHolder(scope: string, mint?: () => string): PaymentKeyHolder {
+  let holder = holders.get(scope);
+  if (!holder) {
+    holder = createPaymentKeyHolder(mint);
+    holders.set(scope, holder);
+  }
+  return holder;
+}
+
+/**
+ * Put a holder a live dialog is using back in the registry if its entry was dropped under it (a
+ * development double-mount releases an idle entry between the two mounts).
+ */
+export function adoptPaymentKeyHolder(scope: string, holder: PaymentKeyHolder): void {
+  if (!holders.has(scope)) holders.set(scope, holder);
+}
+
+/**
+ * Called when a dialog unmounts (or its scope changes): drop the scope's holder (and its remembered proof) unless an
+ * outcome is unknown or a request is in flight (a key held with no outcome yet).
+ */
+export function releasePaymentKeyHolder(scope: string): void {
+  const holder = holders.get(scope);
+  if (!holder || holder.hasUnknown() || holder.peek() !== null) return;
+  holders.delete(scope);
+  proofs.delete(scope);
+}
+
+/** Test seam: forget every holder and proof. */
+export function clearPaymentKeyRegistry(): void {
+  holders.clear();
+  proofs.clear();
+}
+
+/**
+ * The proof photo (a web `File`, a mobile uri) of the attempt that may have recorded a payment. A status
+ * check that finds the payment attaches it, so the photo is not lost when the first response was.
+ */
+const proofs = new Map<string, unknown>();
+
+/** Remember the proof of the attempt being submitted (null = none). A 2xx forgets it. */
+export function rememberPaymentProof(scope: string, proof: unknown): void {
+  if (proof == null) proofs.delete(scope);
+  else proofs.set(scope, proof);
+}
+
+export function forgetPaymentProof(scope: string): void {
+  proofs.delete(scope);
+}
+
+/** The recovery copy when the photo cannot be attached to a found payment. */
+export const PAYMENT_PHOTO_LATER_COPY = "The payment was recorded. Add the photo from the payment.";
+
+/**
+ * The id the proof photo attaches to, from a stored payment result (the 2xx path's id): an invoice
+ * payment carries `createdPaymentId`; a standalone payment's first allocation row (`payments[0]`) is
+ * what the 2xx path uses. Anything else (an invoice result without it, an advance) is not derivable.
+ */
+export function recordedPaymentId(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  const r = result as {
+    scope?: unknown;
+    paymentGroupId?: unknown;
+    createdPaymentId?: unknown;
+    payments?: unknown;
+  };
+  if (typeof r.createdPaymentId === "string" && r.createdPaymentId) return r.createdPaymentId;
+  const standalone =
+    r.scope === "STANDALONE_PAYMENT" ||
+    (r.scope === undefined && typeof r.paymentGroupId === "string");
+  if (!standalone || !Array.isArray(r.payments)) return null;
+  const first = r.payments[0] as { id?: unknown } | undefined;
+  return typeof first?.id === "string" && first.id ? first.id : null;
+}
+
+/** What happened to the proof photo when a status check found the payment. */
+export type FoundPhotoOutcome = "none" | "uploaded" | "failed" | "later";
+
+/**
+ * The "found" path of "Check payment status": attach the remembered proof photo to the found payment
+ * with the same upload the 2xx path uses. "later" = a photo exists but no single payment id is derivable:
+ * the dialog shows PAYMENT_PHOTO_LATER_COPY, never a silent loss.
+ */
+export async function finishFoundPayment<P>(
+  scope: string,
+  found: unknown,
+  upload: (paymentId: string, proof: P) => Promise<unknown>,
+): Promise<FoundPhotoOutcome> {
+  if (!proofs.has(scope)) return "none";
+  const proof = proofs.get(scope) as P;
+  proofs.delete(scope);
+  const id = recordedPaymentId(found);
+  if (!id) return "later";
+  try {
+    await upload(id, proof);
+    return "uploaded";
+  } catch {
+    return "failed";
   }
 }

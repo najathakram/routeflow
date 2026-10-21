@@ -2162,7 +2162,8 @@ function CustomerDetailPageInner({ id }: { id: string }) {
 
   // Advance payment
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
-  const advanceKey = usePaymentSubmitKey(isAdvanceOpen); // SA-824: one Idempotency-Key per open
+  // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
+  const advanceKey = usePaymentSubmitKey(isAdvanceOpen, `advance:${id}`);
   // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
   const advanceStatus = usePaymentStatusCheck(
     advanceKey,
@@ -3876,6 +3877,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   loading={createAdvance.isPending}
                   disabled={advanceStatus.unknown}
                   onClick={() => {
+                    if (advanceKey.hasUnknown()) return; // SA-824: the status check comes first
                     const amt = parseFloat(advanceForm.amount);
                     if (!amt || amt <= 0) return;
                     createAdvance.mutate(

@@ -1,6 +1,14 @@
 import { renderHook } from "@testing-library/react";
 import {
+  acquirePaymentKeyHolder,
+  clearPaymentKeyRegistry,
   createPaymentKeyHolder,
+  finishFoundPayment,
+  forgetPaymentProof,
+  recordedPaymentId,
+  releasePaymentKeyHolder,
+  rememberPaymentProof,
+  PAYMENT_PHOTO_LATER_COPY,
   paymentSubmitFingerprint,
   PAYMENT_MAY_BE_RECORDED_COPY,
   paymentMayBeRecordedCopy,
@@ -80,12 +88,31 @@ describe("SA-824 payment submit key (web)", () => {
     expect(h.mayBeRecorded()).toBe(true);
   });
 
-  it("reset() (a fresh open) forgets the key and any unknown outcome", () => {
+  it("reset() (a fresh open) forgets a settled key but NEVER an unknown outcome", () => {
     const h = createPaymentKeyHolder(mintSeq());
     h.keyFor(pay);
     h.settle({ ok: false, error: err(502) });
+    h.reset(); // unknown: the key and the lock survive
+    expect(h.hasUnknown()).toBe(true);
+    expect(h.peek()).toBe("key-1");
+    expect(h.keyFor({ ...pay, amount: 1 })).toBe("key-1");
+    h.resolveFromStatus({ kind: "notFound" }); // released
+    h.keyFor(pay);
+    h.settle({ ok: true });
     h.reset();
-    expect(h.keyFor(pay)).toBe("key-2");
+    expect(h.keyFor(pay)).toBe("key-3");
+  });
+
+  it("a payment key conflict also survives reset() (it is unknown too)", () => {
+    const h = createPaymentKeyHolder(mintSeq());
+    h.keyFor(pay);
+    h.settle({
+      ok: false,
+      error: err(409, { code: "IDEMPOTENCY_KEY_CONFLICT", reason: "PAYMENT_MISMATCH" }),
+    });
+    h.reset();
+    expect(h.mayBeRecorded()).toBe(true);
+    expect(h.peek()).toBe("key-1");
   });
 
   it("the fingerprint ignores allocation order and float noise", () => {
@@ -117,18 +144,121 @@ describe("SA-824 payment submit key (web)", () => {
     expect(plain).toHaveBeenCalledWith([]);
   });
 
-  it("usePaymentSubmitKey: one holder per mount, reset when the dialog opens again", () => {
-    const { result, rerender } = renderHook(({ open }) => usePaymentSubmitKey(open), {
+  it("usePaymentSubmitKey: a fresh open after a SETTLED attempt gets a fresh key", () => {
+    clearPaymentKeyRegistry();
+    const { result, rerender } = renderHook(({ open }) => usePaymentSubmitKey(open, "s:a"), {
       initialProps: { open: true },
     });
-    const holder = result.current;
-    const first = holder.keyFor(pay);
-    holder.settle({ ok: false, error: err() }); // unknown: kept while open
-    rerender({ open: true });
-    expect(result.current).toBe(holder);
-    expect(holder.keyFor(pay)).toBe(first);
+    const first = result.current.keyFor(pay);
+    result.current.settle({ ok: true });
     rerender({ open: false });
-    rerender({ open: true }); // a fresh open
-    expect(holder.keyFor(pay)).not.toBe(first);
+    rerender({ open: true });
+    expect(result.current.keyFor(pay)).not.toBe(first);
+  });
+
+  it("usePaymentSubmitKey: unknown -> close -> reopen (and unmount -> remount) keeps the SAME key, still unknown", () => {
+    clearPaymentKeyRegistry();
+    const a = renderHook(({ open }) => usePaymentSubmitKey(open, "s:b"), {
+      initialProps: { open: true },
+    });
+    const first = a.result.current.keyFor(pay);
+    a.result.current.settle({ ok: false, error: err(503) });
+    a.rerender({ open: false });
+    a.rerender({ open: true });
+    expect(a.result.current.hasUnknown()).toBe(true);
+    expect(a.result.current.keyFor(pay)).toBe(first);
+    a.unmount(); // a per-mount dialog closing
+    const b = renderHook(() => usePaymentSubmitKey(true, "s:b"));
+    expect(b.result.current.hasUnknown()).toBe(true);
+    expect(b.result.current.keyFor({ ...pay, amount: 5 })).toBe(first);
+    // a different payment target is independent
+    const c = renderHook(() => usePaymentSubmitKey(true, "s:other"));
+    expect(c.result.current.hasUnknown()).toBe(false);
+    // after a release, the next open is fresh
+    b.result.current.resolveFromStatus({ kind: "notFound" });
+    b.unmount();
+    const d = renderHook(() => usePaymentSubmitKey(true, "s:b"));
+    expect(d.result.current.hasUnknown()).toBe(false);
+    expect(d.result.current.keyFor(pay)).not.toBe(first);
+  });
+});
+
+describe("SA-824 holder registry, recorded payment id and the found-path photo", () => {
+  beforeEach(() => clearPaymentKeyRegistry());
+
+  it("acquire returns the SAME holder per scope; release keeps an unknown one, drops a settled one", () => {
+    const h = acquirePaymentKeyHolder("x:1", mintSeq());
+    expect(acquirePaymentKeyHolder("x:1")).toBe(h);
+    expect(acquirePaymentKeyHolder("x:2")).not.toBe(h);
+    h.keyFor(pay);
+    h.settle({ ok: false, error: err(500) });
+    releasePaymentKeyHolder("x:1");
+    expect(acquirePaymentKeyHolder("x:1")).toBe(h);
+    h.resolveFromStatus({ kind: "found", payment: {} });
+    releasePaymentKeyHolder("x:1");
+    expect(acquirePaymentKeyHolder("x:1")).not.toBe(h);
+  });
+
+  it("release never drops a holder with a request in flight (a key held, no outcome yet)", () => {
+    const h = acquirePaymentKeyHolder("x:3", mintSeq());
+    h.keyFor(pay);
+    releasePaymentKeyHolder("x:3");
+    expect(acquirePaymentKeyHolder("x:3")).toBe(h);
+  });
+
+  it("recordedPaymentId: createdPaymentId (invoice scope), payments[0].id (standalone), else null", () => {
+    expect(recordedPaymentId({ createdPaymentId: "p9", payments: [{ id: "old" }] })).toBe("p9");
+    expect(
+      recordedPaymentId({
+        scope: "STANDALONE_PAYMENT",
+        paymentGroupId: "g",
+        payments: [{ id: "p1" }, { id: "p2" }],
+      }),
+    ).toBe("p1");
+    // an invoice-scope result without createdPaymentId: payments[] is the invoice's whole history -> not derivable
+    expect(
+      recordedPaymentId({ scope: "INVOICE_PAYMENT", id: "inv", payments: [{ id: "p0" }] }),
+    ).toBeNull();
+    expect(
+      recordedPaymentId({ scope: "STANDALONE_PAYMENT", paymentGroupId: "g", payments: [] }),
+    ).toBeNull();
+    expect(recordedPaymentId(null)).toBeNull();
+    expect(recordedPaymentId("x")).toBeNull();
+  });
+
+  it("finishFoundPayment: no proof -> none; derivable -> uploaded against that id; failure -> failed; not derivable -> later", async () => {
+    const upload = jest.fn().mockResolvedValue(undefined);
+    const stand = { scope: "STANDALONE_PAYMENT", paymentGroupId: "g", payments: [{ id: "p1" }] };
+    expect(await finishFoundPayment("p:1", stand, upload)).toBe("none");
+    expect(upload).not.toHaveBeenCalled();
+
+    rememberPaymentProof("p:1", "PHOTO");
+    expect(await finishFoundPayment("p:1", stand, upload)).toBe("uploaded");
+    expect(upload).toHaveBeenCalledWith("p1", "PHOTO");
+    expect(await finishFoundPayment("p:1", stand, upload)).toBe("none"); // taken once
+
+    rememberPaymentProof("p:1", "PHOTO");
+    upload.mockRejectedValueOnce(new Error("boom"));
+    expect(await finishFoundPayment("p:1", stand, upload)).toBe("failed");
+
+    rememberPaymentProof("p:1", "PHOTO");
+    expect(await finishFoundPayment("p:1", { scope: "ADVANCE_PAYMENT", id: "a" }, upload)).toBe(
+      "later",
+    );
+    expect(PAYMENT_PHOTO_LATER_COPY).toBe(
+      "The payment was recorded. Add the photo from the payment.",
+    );
+    forgetPaymentProof("p:1");
+    expect(await finishFoundPayment("p:1", stand, upload)).toBe("none");
+  });
+
+  it("releasing a holder drops its remembered proof", async () => {
+    const h = acquirePaymentKeyHolder("p:2", mintSeq());
+    rememberPaymentProof("p:2", "PHOTO");
+    releasePaymentKeyHolder("p:2");
+    expect(h).toBeTruthy();
+    expect(
+      await finishFoundPayment("p:2", { paymentGroupId: "g", payments: [{ id: "p" }] }, jest.fn()),
+    ).toBe("none");
   });
 });
