@@ -31,7 +31,9 @@ const deliver = (db: ReturnType<typeof makeStampDb>, from: OrderStatus) =>
     { ...order(db), status: from },
     { status: OrderStatus.DELIVERED },
     undefined,
-    buildStatusUpdateData(order(db) as never, OrderStatus.DELIVERED, { isDeliveredDemotion: false }),
+    buildStatusUpdateData(order(db) as never, OrderStatus.DELIVERED, {
+      isDeliveredDemotion: false,
+    }),
   );
 const officeRow = (orderItemId: string, quantityDelivered: number, type = "PARTIAL") => ({
   orderItemId,
@@ -63,7 +65,9 @@ describe("row 587: PD -> DELIVERED completes the office-evidenced lines", () => 
     expect(db.line("a").deliveredQty).toBe(10); // master: 6
     expect(await billedQty(db, "a")).toBe(10); // master: 6 (the invoice bills the partial figure)
     expect(db.line("b").deliveredQty).toBe(2); // the no-evidence line is stamped as before
-    const added = db.committed.mutations.filter((m) => m.orderItemId === "a" && m.type === "DELIVERED");
+    const added = db.committed.mutations.filter(
+      (m) => m.orderItemId === "a" && m.type === "DELIVERED",
+    );
     expect(added).toHaveLength(1);
     expect(added[0]).toMatchObject({
       orderId: "o1",
@@ -127,10 +131,7 @@ describe("row 587: PD -> DELIVERED completes the office-evidenced lines", () => 
     const db = makeStampDb({
       status: "PARTIALLY_DELIVERED",
       lines: [{ id: "mixed", qty: 10, deliveredQty: 6 }],
-      mutations: [
-        { ...officeRow("mixed", 4), routeRunStopId: "stop-1" },
-        officeRow("mixed", 2),
-      ],
+      mutations: [{ ...officeRow("mixed", 4), routeRunStopId: "stop-1" }, officeRow("mixed", 2)],
     });
     await deliver(db, OrderStatus.PARTIALLY_DELIVERED);
     expect(db.line("mixed").deliveredQty).toBe(6);
