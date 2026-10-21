@@ -12,6 +12,8 @@ import {
   billedChargeLines,
   cashierNameOf,
   counterTenderSplit,
+  isOwnReturn,
+  ownReturnedAmount,
   foldItemNames,
   roundMoney,
   storedTaxRatePercent,
@@ -439,7 +441,10 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           creditCategoryTax: true,
           // B1262 / SA-838: the second link. An INLINE return counts as this order's only through an item sold on it.
           kind: true,
-          items: { select: { sourceOrderId: true } },
+          // plus each item's priced amount: an INLINE return is worth its items (ownReturned), never a proration
+          items: {
+            select: { sourceOrderId: true, subtotal: true, taxAmount: true, categoryTax: true },
+          },
         },
       },
     },
@@ -509,7 +514,12 @@ export interface TodayOrderRecord {
     creditCategoryTax: unknown;
     /** B1262 / SA-838: STANDARD (absent reads STANDARD) or INLINE, and its items' source orders */
     kind?: string;
-    items?: ReadonlyArray<{ sourceOrderId?: string | null }>;
+    items?: ReadonlyArray<{
+      sourceOrderId?: string | null;
+      subtotal?: unknown;
+      taxAmount?: unknown;
+      categoryTax?: unknown;
+    }>;
   }>;
 }
 
@@ -539,7 +549,12 @@ export function todaysMethodOf(prismaMethod: string): TodaysSaleMethod {
   return method && method !== "ON_ACCOUNT" ? method : "OTHER";
 }
 
-function resolutionOf(r: TodayOrderRecord["returns"][number]): TodaysSaleReturnResolution {
+function resolutionOf(r: {
+  status: string;
+  refundMethod?: string | null;
+  refundedAt?: Date | null;
+  creditNoteId?: string | null;
+}): TodaysSaleReturnResolution {
   // A refund chosen at capture but not recorded yet (`refundedAt` null): the clerk still has to hand the money back.
   if (r.refundMethod === REFUND_METHOD_EXTERNAL && r.refundedAt === null) return "PENDING";
   if (r.refundMethod === REFUND_METHOD_EXTERNAL) return "REFUND";
@@ -567,26 +582,38 @@ export function returnAmount(r: ReturnMoney): number {
   return credit > 0 ? credit : roundMoney(num(r.refundAmount));
 }
 
-/** One return, as far as "whose return credit is this" needs it. */
+/** One return, as far as "whose return is this, and what is it worth" needs it. */
 export interface ReturnProvenance {
+  /** absent on a hand-built record; when set, a return seen twice (the page's own and the batched read) counts once */
+  id?: string;
   creditNoteId: string | null;
   /** the order the return is filed on (for an INLINE return, the CARRYING order) */
   orderId: string;
   /** STANDARD (absent reads STANDARD) or INLINE */
   kind?: string;
   status: string;
-  /** the return's items; an INLINE one is sold per line through `sourceOrderId` */
-  items?: ReadonlyArray<{ sourceOrderId?: string | null }>;
+  /** how it was settled, for the "Refunded" label (`resolutionOf`) */
+  refundMethod?: string | null;
+  refundedAt?: Date | null;
+  /** a STANDARD return's worth (`returnAmount`); an INLINE return is worth its items' amounts instead */
+  amount?: unknown;
+  /** the return's items; an INLINE one is sold per line through `sourceOrderId` and priced per item */
+  items?: ReadonlyArray<{
+    sourceOrderId?: string | null;
+    subtotal?: unknown;
+    taxAmount?: unknown;
+    categoryTax?: unknown;
+  }>;
 }
 
 /**
  * B1262 / SA-838: which credit notes applied to this sale are its OWN return credit (the return settling the invoice).
  * BOTH links must agree or the payment stays a tender (never hide money):
- *   1. the payment's credit note was made by a live return of THIS order: a STANDARD return filed on it, or an INLINE
- *      return (filed on any order, usually another) with an item whose `sourceOrderId` is this order; and
+ *   1. the payment's credit note was made by a live return of THIS order (`isOwnReturn` in pricing, the ONE predicate: a
+ *      STANDARD return filed on it, or an INLINE return, filed on any order, with an item sold on it); and
  *   2. that credit note was issued against one of this order's invoices (`CreditNote.invoiceId`).
  * A rejected or cancelled return proves nothing. `Return.creditNoteId` has no Prisma relation, so the caller supplies the
- * returns (this order's own, plus any INLINE return carried elsewhere).
+ * returns (this order's own, plus the INLINE ones the batched read finds).
  */
 export function ownReturnCreditNoteIds(input: {
   orderId: string;
@@ -597,13 +624,9 @@ export function ownReturnCreditNoteIds(input: {
   }>;
   returns: readonly ReturnProvenance[];
 }): Set<string> {
-  const isThisOrdersReturn = (r: ReturnProvenance): boolean =>
-    r.kind === "INLINE"
-      ? (r.items ?? []).some((i) => i.sourceOrderId === input.orderId)
-      : r.orderId === input.orderId;
   const madeByThisOrder = new Set(
     input.returns
-      .filter((r) => r.creditNoteId && !isDeadReturn(r.status) && isThisOrdersReturn(r))
+      .filter((r) => r.creditNoteId && !isDeadReturn(r.status) && isOwnReturn(input.orderId, r))
       .map((r) => r.creditNoteId as string),
   );
   const own = new Set<string>();
@@ -646,12 +669,18 @@ export function toTodaysSaleRow(
   });
 
   // B1262 / SA-838: the sale's own return credit is not a tender. One provenance read, then the ONE pricing split.
+  const provenance = dedupeById([
+    ...o.returns.map((r) => ({ ...r, orderId: o.id, amount: returnAmount(r) })),
+    ...carriedReturns,
+  ]);
   const ownCreditNoteIds = ownReturnCreditNoteIds({
     orderId: o.id,
     invoiceIds: o.invoices.map((i) => i.id),
     payments,
-    returns: [...o.returns.map((r) => ({ ...r, orderId: o.id })), ...carriedReturns],
+    returns: provenance,
   });
+  // review I1: the Returned line is THIS order's own return only (a carrier order holding another sale's INLINE return has none)
+  const ownReturns = provenance.filter((r) => !isDeadReturn(r.status) && isOwnReturn(o.id, r));
   const split = counterTenderSplit(
     payments.map((p) => ({ ...p, method: todaysMethodOf(p.method) })),
     ownCreditNoteIds,
@@ -700,6 +729,10 @@ export function toTodaysSaleRow(
     tenderPaid: split.tenderPaid,
     returnCredit: split.returnCredit,
     tenderMethods: split.methods,
+    ownReturned: {
+      amount: ownReturnedAmount(o.id, ownReturns),
+      allRefunded: ownReturns.length > 0 && ownReturns.every((r) => resolutionOf(r) === "REFUND"),
+    },
     paymentState,
     cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
     change: servedChange(o.counterCashTendered, payments, balanceDue),
@@ -714,6 +747,17 @@ export function toTodaysSaleRow(
     voided,
     ...names,
   };
+}
+
+/** A return the page and the batched read both carry counts once (by id); a record with no id is kept as is. */
+function dedupeById<T extends { id?: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    if (!r.id) return true;
+    if (seen.has(r.id)) return false;
+    seen.add(r.id);
+    return true;
+  });
 }
 
 /** The first few line names + qty and the line count (one shared fold with the parked list); `{}` when no lines are named. */

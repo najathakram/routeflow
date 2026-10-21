@@ -283,3 +283,93 @@ describe("ownReturnCreditNoteIds (SA-838 provenance: both links, or it is a tend
     ).toBe(0);
   });
 });
+
+describe("toTodaysSaleRow: ownReturned, the Returned line is THIS order's own return only (review I1)", () => {
+  /** an INLINE return filed on carrier order B, its goods sold on sale A, priced per item */
+  const inlineOfA = (over: Partial<ReturnProvenance> = {}): ReturnProvenance => ({
+    id: "r-inline",
+    creditNoteId: "cn-1",
+    orderId: "o-b",
+    kind: "INLINE",
+    status: "PROCESSED",
+    refundMethod: "CREDIT_NOTE",
+    items: [{ sourceOrderId: "o-1", subtotal: "5.00", taxAmount: "0.50", categoryTax: "0.00" }],
+    ...over,
+  });
+
+  it("sale A: its own INLINE return, carried on B, is A's ownReturned", () => {
+    const row = toTodaysSaleRow(order([pay("CASH", 6.25), creditPay(5.5, "cn-1")], []), null, [
+      inlineOfA(),
+    ]);
+    expect(row.ownReturned).toEqual({ amount: 5.5, allRefunded: false });
+  });
+
+  it("carrier B: holds the INLINE return (row.returned counts it) but ownReturned is zero", () => {
+    const carrier: TodayOrderRecord = {
+      ...order(
+        [pay("CASH", 12.5)],
+        [ret({ id: "r-inline", creditNoteId: "cn-1", creditSubtotal: "5.00", creditTax: "0.50" })],
+      ),
+      id: "o-b",
+    };
+    // as the page query reads it: the INLINE return filed on B, its items sold on A
+    carrier.returns = [
+      {
+        ...carrier.returns[0]!,
+        kind: "INLINE",
+        items: [{ sourceOrderId: "o-1", subtotal: "5.00", taxAmount: "0.50", categoryTax: "0.00" }],
+      },
+    ];
+    const row = toTodaysSaleRow(carrier);
+    expect(row.returned.amount).toBe(5.5);
+    expect(row.ownReturned).toEqual({ amount: 0, allRefunded: false });
+    expect(row.tenderPaid).toBe(12.5);
+    expect(row.returnCredit).toBe(0);
+  });
+
+  it("a STANDARD own return is worth its priced amount, and one return seen twice counts once", () => {
+    const own = ret({ id: "r-1" });
+    const row = toTodaysSaleRow(order([pay("CASH", 6.25), creditPay(6.25, "cn-1")], [own]), null, [
+      { id: "r-1", creditNoteId: "cn-1", orderId: "o-1", kind: "STANDARD", status: "PROCESSED" },
+    ]);
+    expect(row.ownReturned).toEqual({ amount: 6.25, allRefunded: false });
+  });
+
+  it("a rejected or cancelled return is no one's return", () => {
+    const row = toTodaysSaleRow(order([pay("CASH", 12.5)], [ret({ status: "REJECTED" })]), null, [
+      inlineOfA({ status: "CANCELLED" }),
+    ]);
+    expect(row.ownReturned).toEqual({ amount: 0, allRefunded: false });
+  });
+
+  it("allRefunded only when every live own return resolved REFUND", () => {
+    const refund = ret({
+      id: "r-ref",
+      refundMethod: "EXTERNAL_REFUND",
+      creditNoteId: null,
+      refundAmount: "2.50",
+      creditSubtotal: "2.50",
+      creditTax: "0",
+      refundedAt: new Date("2026-10-07T19:00:00.000Z"),
+    });
+    const only = toTodaysSaleRow(order([pay("CASH", 12.5)], [refund]));
+    expect(only.ownReturned).toEqual({ amount: 2.5, allRefunded: true });
+    const mixed = toTodaysSaleRow(
+      order([pay("CASH", 12.5)], [refund, ret({ id: "r-sc", creditNoteId: "cn-w" })]),
+    );
+    expect(mixed.ownReturned?.allRefunded).toBe(false);
+    const pending = toTodaysSaleRow(order([pay("CASH", 12.5)], [{ ...refund, refundedAt: null }]));
+    expect(pending.ownReturned?.allRefunded).toBe(false);
+  });
+
+  it("a carried INLINE refund (refundedAt set) counts toward allRefunded", () => {
+    const row = toTodaysSaleRow(order([pay("CASH", 12.5)], []), null, [
+      inlineOfA({
+        creditNoteId: null,
+        refundMethod: "EXTERNAL_REFUND",
+        refundedAt: new Date("2026-10-07T19:00:00.000Z"),
+      }),
+    ]);
+    expect(row.ownReturned).toEqual({ amount: 5.5, allRefunded: true });
+  });
+});

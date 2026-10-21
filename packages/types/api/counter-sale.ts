@@ -252,6 +252,13 @@ export interface TodaysSaleRow {
   returnCredit?: number;
   /** `methods` without the own-return credit */
   tenderMethods?: Array<{ method: TodaysSaleMethod; amount: number }>;
+  /**
+   * B1262 review I1: the money of THIS order's own live returns (a STANDARD return filed on it, plus the priced items of INLINE
+   * returns, filed on any order, whose `sourceOrderId` is this order; `@routeflow/pricing` `ownReturnedAmount`) and whether every
+   * one of them was settled as a refund. `returned` also counts an INLINE return merely CARRIED on this order, which is another
+   * sale's goods: the reprint prints its Returned / Refunded line from this field only. Omitted by an older server (no line).
+   */
+  ownReturned?: { amount: number; allRefunded: boolean };
   paymentState: TodaysSalePaymentState;
   /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
   cashTendered: number | null;
