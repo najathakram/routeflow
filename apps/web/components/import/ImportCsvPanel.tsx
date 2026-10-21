@@ -418,6 +418,7 @@ export function ImportCsvPanel({
   const [noResult, setNoResult] = React.useState(false);
   const summaryRef = React.useRef<HTMLDivElement>(null);
   const bannerRef = React.useRef<HTMLDivElement>(null);
+  const gateRef = React.useRef<HTMLDivElement>(null);
   const jobRunning = job !== null && (job.state === "queued" || job.state === "running");
   // the polling loop reads the latest callbacks without restarting
   const latest = React.useRef({ onImported, toast, title, endpoint });
@@ -563,8 +564,9 @@ export function ImportCsvPanel({
   }, [job?.jobId, jobRunning]);
 
   // After Preview, Import and a stop, focus lands on the thing that changed (the banner or the result), not on body.
-  const focusKey =
-    job && job.state !== "done"
+  const focusKey = gateError
+    ? "gate"
+    : job && job.state !== "done"
       ? jobRunning
         ? "job:running"
         : "job:stopped"
@@ -575,7 +577,12 @@ export function ImportCsvPanel({
           : "none";
   React.useEffect(() => {
     if (focusKey === "none") return;
-    (focusKey.startsWith("job:") ? bannerRef : summaryRef).current?.focus();
+    (focusKey === "gate"
+      ? gateRef
+      : focusKey.startsWith("job:")
+        ? bannerRef
+        : summaryRef
+    ).current?.focus();
   }, [focusKey]);
 
   const active = final ?? preview;
@@ -676,7 +683,7 @@ export function ImportCsvPanel({
           data-testid={`${prefix}-import-button`}
           onClick={() => run(false)}
           disabled={!file || loading !== null || !preview || !!gateError || !!final || jobRunning}
-          className="min-h-[44px] min-w-[10rem] flex-1 whitespace-nowrap rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
+          className="min-h-[44px] min-w-[10rem] flex-1 rounded-lg bg-brand-500 px-3 py-2 text-center text-sm font-medium leading-tight text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
         >
           {loading === "import" ? "Importing…" : jobRunning ? "Importing…" : `Import ${title}`}
         </button>
@@ -695,9 +702,11 @@ export function ImportCsvPanel({
       {/* Gate refusal — blocking, no retry-without-the-column affordance (FIX5) */}
       {gateError && (
         <div
+          ref={gateRef}
+          tabIndex={-1}
           data-testid={`${prefix}-gate-error`}
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-danger/40 bg-danger-bg/50 px-3 py-2.5 text-sm text-danger"
+          className="flex items-start gap-2 rounded-lg border border-danger/40 bg-danger-bg/50 px-3 py-2.5 text-sm text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-danger/40"
         >
           <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
           <span>{gateError}</span>
