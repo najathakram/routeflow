@@ -102,6 +102,10 @@ const pick = (name: string) => {
   fireEvent.click(screen.getByRole("button", { name }));
 };
 const text = (id: string) => screen.getByTestId(id).textContent ?? "";
+/** The total a SIGHTED user reads: the visible Estimated-total row when it shows, else the Amount due status. */
+const visibleTotal = () =>
+  (screen.queryByTestId("estimated-total-row") ?? screen.getByTestId("change-due")).textContent ??
+  "";
 
 describe("counter checkout panel: the number explains itself (CQ-08) and matches the receipt (CQ-01)", () => {
   it("a taxed cart with a deposit and an excise item: Subtotal, Tax, one named charge each, Estimated total", async () => {
@@ -116,7 +120,8 @@ describe("counter checkout panel: the number explains itself (CQ-08) and matches
     expect(text("running-charge-cat-tob")).toContain("$0.50");
     expect(text("running-charge-cat-tob")).toContain("Tobacco excise");
     // 30.00 + 2.48 + 0.10 + 0.50
-    expect(text("running-total")).toContain("$33.08");
+    expect(visibleTotal()).toContain("$33.08");
+    expect(text("running-total")).toContain("$33.08"); // and the accessible (visually hidden) total agrees
   });
 
   it("an exempt customer's panel carries no tax row and no charge: total = subtotal", async () => {
@@ -124,7 +129,7 @@ describe("counter checkout panel: the number explains itself (CQ-08) and matches
     await scan("SODA");
     await scan("CIGAR");
     pick("Exempt Cafe");
-    await waitFor(() => expect(text("running-total")).toContain("$20.00"));
+    await waitFor(() => expect(visibleTotal()).toContain("$20.00"));
     expect(screen.queryByTestId("running-tax")).toBeNull();
     expect(screen.queryByTestId("running-charge-cat-crv")).toBeNull();
     expect(text("running-subtotal")).toContain("$20.00");
@@ -136,7 +141,7 @@ describe("counter checkout panel: the number explains itself (CQ-08) and matches
     );
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
-    await waitFor(() => expect(text("running-total")).toContain("$10.00"));
+    await waitFor(() => expect(visibleTotal()).toContain("$10.00"));
     expect(text("running-subtotal")).toContain("$10.00");
     expect(screen.queryByTestId("running-tax")).toBeNull();
   });
