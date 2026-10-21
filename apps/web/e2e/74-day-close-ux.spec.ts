@@ -273,6 +273,24 @@ for (const v of VIEWS) {
       await page.screenshot({ path: path.join(SHOTS, `close-form-counted-${v.name}.png`) });
     });
 
+    test("R7b 2.3: a typed count survives Esc, Keep and reopen", async ({ page }) => {
+      await mockCounter(page, "open");
+      await page.goto("/orders/counter-sale");
+      await page.getByRole("button", { name: "Today's sales" }).click();
+      await page.getByRole("button", { name: "Close day" }).click();
+      await expect(page.getByText("Closing emails the Z report to admins.")).toBeVisible();
+      await page.getByLabel("Opening float").fill("80.00");
+      await page.getByLabel("$20 bill count").fill("2");
+      await page.getByLabel("$5 bill count").fill("1");
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Keep", exact: true }).click();
+      await expect(page.getByTestId("day-close-form")).toBeHidden();
+      await page.getByRole("button", { name: "Close day" }).click();
+      await expect(page.getByLabel("Opening float")).toHaveValue("80.00");
+      await expect(page.getByLabel("$20 bill count")).toHaveValue("2");
+      await expect(page.getByLabel("$5 bill count")).toHaveValue("1");
+    });
+
     test("row 345: the closed card and the Z report read in the owner's words", async ({
       page,
     }) => {

@@ -166,6 +166,7 @@ const apiError = (status: number, code: string, message = "server says no") => (
 
 beforeEach(() => {
   jest.clearAllMocks();
+  window.sessionStorage.clear(); // a kept count draft must not leak into the next test
   role = "OPERATOR";
   dayState = stateOf();
   serve();
@@ -640,6 +641,72 @@ describe("CounterDayClose: loading and failure", () => {
     const btn = await screen.findByRole("button", { name: "Close day" });
     const summary = await screen.findByTestId("today-summary");
     expect(btn.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+const draftKeys = () =>
+  Object.keys(window.sessionStorage).filter((k) => k.startsWith("rf:dayclose:draft:"));
+const pressEscape = () =>
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape", code: "Escape" });
+
+describe("CounterDayClose: the drawer count survives a dismissed dialog (R7b 2.3, B1263)", () => {
+  beforeEach(() => window.sessionStorage.clear());
+
+  it("closing the form with a typed count and reopening keeps the float and counts", async () => {
+    await openForm();
+    setFloat("50.00");
+    setCount("$20 bill", 2);
+    fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "short a five" } });
+    pressEscape();
+    fireEvent.click(await screen.findByRole("button", { name: "Keep" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+    await screen.findByTestId("day-close-form");
+    expect(screen.getByLabelText("Opening float")).toHaveValue("50.00");
+    expect(screen.getByLabelText("$20 bill count")).toHaveValue("2");
+    expect(screen.getByLabelText("Notes")).toHaveValue("short a five");
+    expect(draftKeys()).toHaveLength(1);
+    expect(draftKeys()[0]).toMatch(/^rf:dayclose:draft:[^:]+:main:\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("a dirty close asks Keep or Discard; Discard clears the draft", async () => {
+    await openForm();
+    setCount("$5 bill", 4);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByText("Keep your count for later?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    expect(draftKeys()).toHaveLength(0);
+    fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+    await screen.findByTestId("day-close-form");
+    expect(screen.getByLabelText("Opening float")).toHaveValue("100.00");
+    expect(screen.getByLabelText("$5 bill count")).toHaveValue("0");
+  });
+
+  it("a clean form closes with no question and writes no draft", async () => {
+    await openForm();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    expect(screen.queryByText("Keep your count for later?")).toBeNull();
+    expect(draftKeys()).toHaveLength(0);
+  });
+
+  it("a successful close clears the draft", async () => {
+    post.mockResolvedValue({ data: snapshot() });
+    await openForm();
+    setCount("$20 bill", 2);
+    await waitFor(() => expect(draftKeys()).toHaveLength(1));
+    fireEvent.click(submitButton());
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(draftKeys()).toHaveLength(0));
+  });
+
+  it("the form says the Z report is emailed before Close day", async () => {
+    await openForm();
+    const note = screen.getByText("Closing emails the Z report to admins.");
+    expect(
+      note.compareDocumentPosition(submitButton()) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });
 
