@@ -2,17 +2,20 @@ import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { paymentStatusCopy, type PaymentStatusOutcome } from "@routeflow/types/payment-submit-key";
 import { fetchPaymentByKey } from "./api/payment-by-key";
-import { runPaymentStatusCheck } from "./payment-status-check";
+import { checkPaymentStatus } from "./payment-status-check";
 import type { PaymentKeyHolder } from "./payment-submit-key";
 
 /**
  * SA-824: the mobile side of "Check payment status". While `unknown` the screen keeps Save off and shows
- * the action; `onRecorded(payment)` runs when the payment IS recorded and does what a 2xx does (toast,
- * close). The fixed line of the last answer is `message` (never a raw server message).
+ * the action; `onRecorded(message)` runs when the payment IS recorded and does what a 2xx does (toast the
+ * fixed `message`, close). The receipt photo remembered for `scope` is attached first (`upload` is the
+ * screen's throwing upload). The fixed line of the last answer is `message` (never a raw server message).
  */
 export function usePaymentStatusCheck(
   holder: PaymentKeyHolder,
-  onRecorded?: (payment: unknown) => void,
+  scope: string,
+  upload: (paymentId: string, photoUri: string) => Promise<unknown>,
+  onRecorded?: (message: string) => void,
 ) {
   const qc = useQueryClient();
   const [checking, setChecking] = useState(false);
@@ -20,18 +23,23 @@ export function usePaymentStatusCheck(
   const check = useCallback(async () => {
     setChecking(true);
     try {
-      const { outcome } = await runPaymentStatusCheck(holder, fetchPaymentByKey);
+      const { outcome, message } = await checkPaymentStatus(
+        holder,
+        scope,
+        fetchPaymentByKey,
+        upload,
+      );
       setAnswer(outcome);
       if (outcome.kind === "found") {
         for (const k of ["invoices", "admin", "customers"]) {
           void qc.invalidateQueries({ queryKey: [k] });
         }
-        onRecorded?.(outcome.payment);
+        onRecorded?.(message);
       }
     } finally {
       setChecking(false);
     }
-  }, [holder, qc, onRecorded]);
+  }, [holder, scope, upload, qc, onRecorded]);
   const unknown = holder.hasUnknown();
   // The last answer's fixed line; a newer unknown outcome hides a stale "nothing was recorded".
   const message =

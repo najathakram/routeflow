@@ -1,5 +1,7 @@
 import {
+  clearPaymentKeyRegistry,
   createPaymentKeyHolder,
+  mountPaymentKeyHolder,
   paymentSubmitFingerprint,
   sendWithPaymentKey,
   PAYMENT_MAY_BE_RECORDED_COPY,
@@ -76,12 +78,52 @@ describe("SA-824 payment submit key (mobile)", () => {
     expect(h.mayBeRecorded()).toBe(true);
   });
 
-  it("reset() (a fresh open) forgets the key and any unknown outcome", () => {
+  it("reset() (a fresh open) forgets a settled key but NEVER an unknown outcome", () => {
     const h = createPaymentKeyHolder(mintSeq());
     h.keyFor(pay);
     h.settle({ ok: false, error: err(502) });
     h.reset();
-    expect(h.keyFor(pay)).toBe("key-2");
+    expect(h.hasUnknown()).toBe(true);
+    expect(h.keyFor({ ...pay, amount: 1 })).toBe("key-1");
+    h.resolveFromStatus({ kind: "notFound" });
+    h.keyFor(pay);
+    h.settle({ ok: true });
+    h.reset();
+    expect(h.keyFor(pay)).toBe("key-3");
+  });
+
+  it("the screen helper: unknown -> unmount -> remount (Cancel -> reopen) keeps the SAME holder and key", () => {
+    clearPaymentKeyRegistry();
+    const first = mountPaymentKeyHolder("invoice:i1");
+    const key = first.holder.keyFor(pay);
+    first.holder.settle({ ok: false, error: err(503) });
+    first.unmount();
+    const again = mountPaymentKeyHolder("invoice:i1");
+    expect(again.holder).toBe(first.holder);
+    expect(again.holder.hasUnknown()).toBe(true);
+    expect(again.holder.keyFor({ ...pay, amount: 3 })).toBe(key);
+    expect(mountPaymentKeyHolder("invoice:i2").holder.hasUnknown()).toBe(false);
+  });
+
+  it("the screen helper: after a release the next open gets a fresh holder and key", () => {
+    clearPaymentKeyRegistry();
+    const first = mountPaymentKeyHolder("advance:c1");
+    const key = first.holder.keyFor(pay);
+    first.holder.settle({ ok: false, error: err(503) });
+    first.holder.resolveFromStatus({ kind: "found", payment: {} });
+    first.unmount();
+    const again = mountPaymentKeyHolder("advance:c1");
+    expect(again.holder).not.toBe(first.holder);
+    expect(again.holder.keyFor(pay)).not.toBe(key);
+  });
+
+  it("the screen helper: a SETTLED attempt left in the registry starts fresh on the next open", () => {
+    clearPaymentKeyRegistry();
+    const first = mountPaymentKeyHolder("standalone:c1");
+    const key = first.holder.keyFor(pay);
+    first.holder.settle({ ok: true });
+    first.unmount();
+    expect(mountPaymentKeyHolder("standalone:c1").holder.keyFor(pay)).not.toBe(key);
   });
 
   it("the fingerprint ignores allocation order and float noise", () => {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -20,12 +20,13 @@ import {
 import { productImageFile } from "../../../../../lib/product-image";
 import { showToast } from "../../../../../lib/toast";
 import {
+  forgetPaymentProof,
   paymentMayBeRecordedCopy,
+  rememberPaymentProof,
   usePaymentSubmitKey,
 } from "../../../../../lib/payment-submit-key";
 import { usePaymentStatusCheck } from "../../../../../lib/use-payment-status-check";
 import { PaymentStatusNotice } from "../../../../../components/PaymentStatusNotice";
-import { PAYMENT_STATUS_COPY } from "../../../../../lib/payment-status-check";
 
 // Advance / Credit-Note are intentionally excluded: the server rejects them here
 // ("use the dedicated Apply Credit Note / Apply Advance actions") so offering
@@ -43,13 +44,26 @@ export default function RecordPaymentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: invoice } = useAdminInvoice(id ?? "");
   const mut = useRecordInvoicePayment();
-  const paymentKey = usePaymentSubmitKey(); // SA-824: one Idempotency-Key per open (mounted per open)
-  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
-  const statusCheck = usePaymentStatusCheck(paymentKey, () => {
-    showToast(PAYMENT_STATUS_COPY.recorded);
+  // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
+  const keyScope = `invoice:${id ?? ""}`;
+  const paymentKey = usePaymentSubmitKey(keyScope);
+  const uploadImageMut = useUploadPaymentImage();
+  // Re-encode to JPEG first (iOS HEIC picks aren't decodable once uploaded as-is; see
+  // products/[id].tsx for the same trap). Throws on failure.
+  const attachReceiptPhoto = useCallback(
+    async (uri: string, paymentId: string) => {
+      const jpeg = await manipulateAsync(uri, [], { compress: 0.8, format: SaveFormat.JPEG });
+      const file = productImageFile({ uri: jpeg.uri, mimeType: "image/jpeg" });
+      await uploadImageMut.mutateAsync({ paymentId, file });
+    },
+    [uploadImageMut],
+  );
+  // SA-824: an unknown outcome offers "Check payment status"; found attaches the receipt photo and
+  // closes like a 2xx.
+  const statusCheck = usePaymentStatusCheck(paymentKey, keyScope, attachReceiptPhoto, (message) => {
+    showToast(message);
     router.back();
   });
-  const uploadImageMut = useUploadPaymentImage();
 
   const balance = invoice?.balanceDue ?? invoice?.total ?? 0;
   const [method, setMethod] = useState<SelectablePaymentMethod>("CASH");
@@ -62,15 +76,11 @@ export default function RecordPaymentScreen() {
   const [photos, setPhotos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Best-effort: the payment is already recorded by the time this runs, so a
-  // failure here must never surface as a payment failure — just note the photo
-  // didn't attach. Re-encode to JPEG first (iOS HEIC picks aren't decodable
-  // once uploaded as-is; see products/[id].tsx for the same trap).
+  // Best-effort: the payment is already recorded by the time this runs, so a failure here must never
+  // surface as a payment failure — just note the photo didn't attach.
   const uploadReceiptPhoto = async (uri: string, paymentId: string) => {
     try {
-      const jpeg = await manipulateAsync(uri, [], { compress: 0.8, format: SaveFormat.JPEG });
-      const file = productImageFile({ uri: jpeg.uri, mimeType: "image/jpeg" });
-      await uploadImageMut.mutateAsync({ paymentId, file });
+      await attachReceiptPhoto(uri, paymentId);
     } catch {
       showToast("Payment recorded, but the photo failed to upload.");
     }
@@ -78,6 +88,7 @@ export default function RecordPaymentScreen() {
 
   const submit = () => {
     if (!id) return;
+    if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
     const n = Number(amount);
     if (!Number.isFinite(n) || n <= 0) {
       setError("Enter a positive amount.");
@@ -95,8 +106,10 @@ export default function RecordPaymentScreen() {
       settledAt: settledAt.trim() || undefined,
       submitKey: paymentKey,
     };
+    rememberPaymentProof(keyScope, photos[0] ?? null); // so a status check that finds it can attach it
     mut.mutate(dto, {
       onSuccess: (result) => {
+        forgetPaymentProof(keyScope);
         showToast("Payment recorded");
         if (photos[0] && result.createdPaymentId) {
           uploadReceiptPhoto(photos[0], result.createdPaymentId);
