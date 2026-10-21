@@ -195,29 +195,32 @@ describe("staffBreaches", () => {
       product("u2", { unresolvable: true, nameKnown: true }),
     ];
 
-    for (const channel of ["STAFF", "BUYER_PORTAL"] as const) {
-      for (const [ruleName, rules] of ruleSets) {
-        for (const [stateName, governingState] of states) {
-          it(`${channel} / ${ruleName} / ${stateName}`, () => {
-            const i = input({ channel, rules, governingState, products });
-            const engine = evaluateRestrictions(i);
-            const breaches = staffBreaches(i);
-            expect(breaches.map((b) => b.productId).sort()).toEqual(
-              engine.reasons.map((r) => r.productId).sort(),
-            );
-            for (const reason of engine.reasons) {
-              const b = breaches.find((x) => x.productId === reason.productId)!;
-              expect(b.outcome).toBe(
-                reason.reason === "INDETERMINATE_ADDRESS" || reason.reason === "UNKNOWN_PRODUCT"
-                  ? "INDETERMINATE"
-                  : "BLOCK",
+    // L8 (merged with row 510): a counter / pickup sale is judged on the STORE's state (`storeJudged`), where a
+    // missing store state is INDETERMINATE even for a portal-only rule; the breach list must follow the engine there too.
+    for (const storeJudged of [false, true])
+      for (const channel of ["STAFF", "BUYER_PORTAL"] as const) {
+        for (const [ruleName, rules] of ruleSets) {
+          for (const [stateName, governingState] of states) {
+            it(`${channel} / ${ruleName} / ${stateName}${storeJudged ? " / store-judged" : ""}`, () => {
+              const i = input({ channel, rules, governingState, products, storeJudged });
+              const engine = evaluateRestrictions(i);
+              const breaches = staffBreaches(i);
+              expect(breaches.map((b) => b.productId).sort()).toEqual(
+                engine.reasons.map((r) => r.productId).sort(),
               );
-              // the rule the engine cites is always one of the listed ones
-              if (reason.ruleId) expect(b.ruleIds).toContain(reason.ruleId);
-            }
-          });
+              for (const reason of engine.reasons) {
+                const b = breaches.find((x) => x.productId === reason.productId)!;
+                expect(b.outcome).toBe(
+                  reason.reason === "INDETERMINATE_ADDRESS" || reason.reason === "UNKNOWN_PRODUCT"
+                    ? "INDETERMINATE"
+                    : "BLOCK",
+                );
+                // the rule the engine cites is always one of the listed ones
+                if (reason.ruleId) expect(b.ruleIds).toContain(reason.ruleId);
+              }
+            });
+          }
         }
       }
-    }
   });
 });
