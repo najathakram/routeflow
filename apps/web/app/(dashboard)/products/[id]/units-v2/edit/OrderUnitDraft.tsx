@@ -18,8 +18,8 @@ export function OrderUnitDraft() {
   if (!grid) return null;
   return (
     <div data-testid="order-unit-footer" data-wide-inset="" className="mb-4 mt-3 text-sm text-navy">
-      <label className="flex items-center gap-2">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-navy/60">
+      <label className="block min-w-[12rem]">
+        <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-navy/60">
           Pricing unit
         </span>
         <select
@@ -33,7 +33,7 @@ export function OrderUnitDraft() {
           onKeyDown={(e) => {
             if (e.key !== "Tab") e.preventDefault();
           }}
-          className={`h-9 cursor-not-allowed rounded-md border bg-white px-2.5 text-sm text-navy opacity-60 ${FIELD_BORDER}`}
+          className={`h-9 w-full cursor-not-allowed rounded-md border bg-white px-2.5 text-sm text-navy opacity-60 ${FIELD_BORDER}`}
         >
           {[...grid.rows]
             .sort((a, b) => b.factor - a.factor)
