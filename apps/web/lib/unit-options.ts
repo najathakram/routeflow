@@ -4,6 +4,7 @@ import {
   type CustomerLayerUnit,
   type CustomerLinePrice,
   defaultLadderOptionValue,
+  derivedPiece,
   ladderOptionLineTotal,
   ladderOptionPriceText,
   type LadderOption,
@@ -35,15 +36,6 @@ export type UnitOption = LadderOption & {
 export interface OwnPackBasis {
   unitPrice: number;
   unitsPerBox: number;
-}
-
-/** A derived Piece off a pack of `n` at `pack`: the per-piece price (cents) and the marker, exact when the split has no remainder. */
-function derivedPiece(pack: number, n: number): Pick<UnitOption, "price" | "derived"> {
-  const cents = (pack * 100) / n;
-  return {
-    price: roundMoney(pack / n),
-    derived: { n, packPrice: pack, exact: Math.abs(cents - Math.round(cents)) < 1e-9 },
-  };
 }
 
 /**

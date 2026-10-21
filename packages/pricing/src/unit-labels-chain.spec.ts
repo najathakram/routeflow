@@ -6,6 +6,7 @@ import {
   baseLabelOf,
   defaultSellingLabel,
   deriveChainFactors,
+  derivedPiece,
   describeBaseOption,
   fromBaseQty,
   packLabelOf,
@@ -283,6 +284,17 @@ describe("SA-728 base billing", () => {
     });
     expect(planBaseBilling(box24, [row], 1, 5).mode).toBe("pack");
   });
+  it("derivedPiece: the per-piece price in cents and whether the split is exact", () => {
+    expect(derivedPiece(24, 24)).toEqual({
+      price: 1,
+      derived: { n: 24, packPrice: 24, exact: true },
+    });
+    expect(derivedPiece(10, 3)).toEqual({
+      price: 3.33,
+      derived: { n: 3, packPrice: 10, exact: false },
+    });
+  });
+
   it("describeBaseOption: exact derived, inexact derived, own", () => {
     expect(describeBaseOption(box24, [], 1)).toEqual({
       price: 2,
