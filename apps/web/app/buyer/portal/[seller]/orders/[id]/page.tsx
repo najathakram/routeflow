@@ -11,6 +11,7 @@ import {
   XCircle,
   AlertTriangle,
   Edit3,
+  Repeat,
   Minus,
   Plus,
   Loader2,
@@ -21,6 +22,8 @@ import {
 } from "lucide-react";
 import { Badge, Button, Modal, useToast } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
+import { useBuyerCart } from "@/lib/buyer-cart";
+import { ORDER_AGAIN_STATUSES, orderAgainCartLines } from "@/lib/buyer-order-again";
 import {
   useBuyerOrder,
   useBuyerCancelOrder,
@@ -146,9 +149,10 @@ function fmt(n: number) {
 }
 
 function formatDate(d: string) {
-  return new Date(d).toLocaleDateString("en-GB", {
-    day: "2-digit",
+  // One date format on this page: the same "Sep 10, 2026" that fmtCalendarDate prints.
+  return new Date(d).toLocaleDateString("en-US", {
     month: "short",
+    day: "numeric",
     year: "numeric",
   });
 }
@@ -224,7 +228,7 @@ function OrderTimeline({ order, view }: { order: BuyerOrder; view: BuyerOrderTra
                 <Icon className="h-4 w-4" />
               </div>
               <span
-                className={`text-[10px] font-medium ${isCurrent ? "text-buyer-600" : isComplete ? "text-navy" : "text-navy/70"}`}
+                className={`text-[10px] font-medium ${isCurrent ? "text-buyer-600" : `max-sm:hidden ${isComplete ? "text-navy" : "text-navy/70"}`}`}
               >
                 {step.label}
               </span>
@@ -541,8 +545,9 @@ function lineLabel(li: BuyerOrder["lineItems"][number]): string {
 export default function BuyerOrderDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { activeSeller, isLoading: authLoading } = useBuyerAuth();
+  const { buyer, activeSeller, isLoading: authLoading } = useBuyerAuth();
   const sellerSlug = params.seller as string;
+  const cart = useBuyerCart(buyer?.id, sellerSlug);
   const orderId = params.id as string;
 
   const { data: order, isLoading, isError } = useBuyerOrder(orderId);
@@ -678,6 +683,13 @@ export default function BuyerOrderDetailPage() {
     }
   };
 
+  // F32: refill the cart from this order and open it; the cart's Place order is the review step.
+  const handleOrderAgain = () => {
+    if (!order) return;
+    for (const line of orderAgainCartLines(order.lineItems)) cart.addItem(line);
+    router.push(`/buyer/portal/${sellerSlug}/cart`);
+  };
+
   const handleCancel = async () => {
     if (!order) return;
     setActionError(null);
@@ -718,22 +730,22 @@ export default function BuyerOrderDetailPage() {
         <ArrowLeft className="h-4 w-4" /> Back to Orders
       </button>
 
-      <div className="flex items-center justify-between gap-4 mb-6">
-        <div>
+      <div className="mb-6">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <h1 className="text-2xl font-bold text-navy">{order.orderNumber ?? ""}</h1>
-          <p className="text-sm text-navy/70 mt-0.5">
-            Placed {formatDate(order.createdAt)}
-            {order.requestedDeliveryDate && (
-              <> · Delivery requested {fmtCalendarDate(order.requestedDeliveryDate)}</>
-            )}
-          </p>
+          <span data-testid="order-status-badge">
+            <Badge variant={getStatusVariant(order.status)}>
+              {buyerOrderStatusLabel(order, capabilities.data, capabilities.isLoading) ??
+                formatStatus(order.status)}
+            </Badge>
+          </span>
         </div>
-        <span data-testid="order-status-badge">
-          <Badge variant={getStatusVariant(order.status)}>
-            {buyerOrderStatusLabel(order, capabilities.data, capabilities.isLoading) ??
-              formatStatus(order.status)}
-          </Badge>
-        </span>
+        <p className="text-sm text-navy/70 mt-0.5">
+          Placed {formatDate(order.createdAt)}
+          {order.requestedDeliveryDate && (
+            <> · Delivery requested {fmtCalendarDate(order.requestedDeliveryDate)}</>
+          )}
+        </p>
       </div>
 
       {/* Status timeline. While the seller's capability loads, a SHIP order's timeline is held
@@ -787,8 +799,11 @@ export default function BuyerOrderDetailPage() {
         </div>
       )}
 
-      {/* Order summary cards */}
-      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+      {/* One summary card (P31): the four figures were four cards. */}
+      <dl
+        data-testid="order-summary"
+        className="mb-6 grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-surface-border bg-white p-4 sm:grid-cols-4"
+      >
         {[
           { label: "Subtotal", value: fmt(Number(order.subtotal)) },
           { label: "Tax", value: fmt(Number(order.tax)) },
@@ -799,14 +814,14 @@ export default function BuyerOrderDetailPage() {
           },
           { label: "Total", value: fmt(Number(order.total)), bold: true },
         ].map((c) => (
-          <div key={c.label} className="rounded-xl border border-surface-border bg-white p-4">
-            <p className="text-xs text-navy/70 mb-1">{c.label}</p>
-            <p className={`text-lg ${c.bold ? "font-bold text-navy" : "text-navy/80"}`}>
+          <div key={c.label}>
+            <dt className="text-xs text-navy/70 mb-1">{c.label}</dt>
+            <dd className={`text-lg ${c.bold ? "font-bold text-navy" : "text-navy/80"}`}>
               {c.value}
-            </p>
+            </dd>
           </div>
         ))}
-      </div>
+      </dl>
 
       {order.urgent && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-warning/30 bg-warning-bg px-4 py-2.5 text-sm text-warning">
@@ -835,6 +850,16 @@ export default function BuyerOrderDetailPage() {
           <h2 className="text-sm font-semibold text-navy">
             Items ({order.lineItems.filter((li) => li.status !== "CANCELLED").length})
           </h2>
+          {!editMode && ORDER_AGAIN_STATUSES.includes(order.status) && (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="min-h-[44px]"
+              onClick={handleOrderAgain}
+            >
+              <Repeat className="mr-1.5 h-3.5 w-3.5" /> Order again
+            </Button>
+          )}
           {canEdit && !editMode && (
             <Button variant="secondary" size="sm" onClick={enterEditMode}>
               <Edit3 className="mr-1.5 h-3.5 w-3.5" /> Edit Items
@@ -873,7 +898,7 @@ export default function BuyerOrderDetailPage() {
         )}
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px]">
+          <table className="w-full sm:min-w-[640px]">
             <thead>
               <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
                 <th className="px-4 py-2.5 text-left">Product</th>
@@ -886,7 +911,7 @@ export default function BuyerOrderDetailPage() {
                     <th className="px-4 py-2.5 text-right w-20">Remaining</th>
                   </>
                 )}
-                <th className="px-4 py-2.5 text-right w-28">Unit Price</th>
+                <th className="px-4 py-2.5 text-right w-28 max-sm:hidden">Unit Price</th>
                 <th className="px-4 py-2.5 text-right w-28">Subtotal</th>
               </tr>
             </thead>
@@ -977,6 +1002,7 @@ export default function BuyerOrderDetailPage() {
                         <p className="text-sm font-medium text-navy">{lineLabel(li)}</p>
                         <p className="text-xs text-navy/70">
                           {li.product?.unit}
+                          <span className="sm:hidden"> · {fmt(Number(li.unitPrice))} each</span>
                           {li.product && li.priceType !== "STANDARD" && (
                             <span
                               className={`ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
@@ -1033,7 +1059,7 @@ export default function BuyerOrderDetailPage() {
                           </td>
                         </>
                       )}
-                      <td className="px-4 py-3 text-right text-sm text-navy/70">
+                      <td className="px-4 py-3 text-right text-sm text-navy/70 max-sm:hidden">
                         {fmt(Number(li.unitPrice))}
                         {li.originalPrice && Number(li.originalPrice) > Number(li.unitPrice) && (
                           <span className="ml-1 text-xs text-navy/70 line-through">
@@ -1117,7 +1143,11 @@ export default function BuyerOrderDetailPage() {
       {/* Actions */}
       {canCancel && (
         <div className="flex justify-end">
-          <Button variant="danger" onClick={() => setCancelOpen(true)}>
+          <Button
+            variant="danger-outline"
+            className="min-h-[44px]"
+            onClick={() => setCancelOpen(true)}
+          >
             Cancel Order
           </Button>
         </div>
