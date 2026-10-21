@@ -19,6 +19,10 @@ export type FakeMutation = {
   orderItemId: string | null;
   type: string;
   quantityDelivered: number | null;
+  /** Set on a route-stop row; null/absent on an office-recorded one (R5 part 2, row 587). */
+  routeRunStopId?: string | null;
+  driverId?: string | null;
+  note?: string | null;
 };
 export type FakeOrder = {
   id: string;
