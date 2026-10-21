@@ -3,7 +3,7 @@
  * IMPORT_FAMILY_SYNC_MAX_ROWS is queued on a REAL Bull queue (Redis) and processed by the REAL
  * ProductImportProcessor. The queued apply returns {queued:{jobId}}; the job completes with the same counts a
  * synchronous apply of an equal file gives; the job's status is tenant-scoped (another tenant's id is a 404); a
- * workspace that takes no writes (SUSPENDED) gets a failed job with the plain message and nothing written.
+ * workspace that takes no writes (SUSPENDED) gets a failed job with the closed code WORKSPACE_READ_ONLY and nothing written.
  *
  * Needs Postgres AND Redis: set REDIS_URL (local, e.g. redis://127.0.0.1:6390). CI's DB lane runs Postgres only, so
  * without REDIS_URL this suite is skipped there. The base jest config mocks `ioredis`, so Bull gets the real
@@ -12,6 +12,7 @@
  */
 import type { Queue } from "bull";
 import { NotFoundException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
 import { randomUUID } from "crypto";
@@ -269,7 +270,7 @@ describeQueue(
       expect((await waitDone(jobId)).state).toBe("done");
     }, 300_000);
 
-    it("REG: a SUSPENDED workspace's queued apply fails with the plain message and writes nothing", async () => {
+    it("REG: a SUSPENDED workspace's queued apply fails with WORKSPACE_READ_ONLY and writes nothing", async () => {
       const lines = Array.from({ length: N }, (_, i) => `,${RUN}-U${i},,${RUN} U Family,V${i}`);
       for (let i = 0; i < N; i++) {
         await prisma.product.create({
@@ -295,9 +296,7 @@ describeQueue(
         );
         const s = await waitDone(q.queued.jobId);
         expect(s.state).toBe("failed");
-        expect(s.error).toBe(
-          "This workspace can't make changes right now, so the import didn't run.",
-        );
+        expect((s as { errorCode?: string }).errorCode).toBe(API_ERROR_CODES.WORKSPACE_READ_ONLY);
         expect(await prisma.product.count({ where: { tenantId, kind: "FAMILY" } })).toBe(
           familiesBefore,
         );
