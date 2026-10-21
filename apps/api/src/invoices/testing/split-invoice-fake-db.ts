@@ -262,6 +262,8 @@ export function fakeOrderLine(over: Row = {}): Row {
     promoFreeUnits: null,
     unitLabel: null,
     originalPrice: null,
+    overrideReason: null, // H3b: a real OrderItem row always carries both (CAS basis)
+    overriddenBy: null,
     priceType: "STANDARD",
     name: null,
     notes: null,

@@ -143,7 +143,7 @@ export class CounterSaleService {
         deliveredNow: true,
         idempotencyKey,
         // Row 510: the till's acknowledgement of a RESTRICTION_WARNING. create() judges the sale at the STORE's state
-        // (counterSale -> COUNTER -> jurisdiction.ts) and stamps for THIS user; it is not part of the replay's cart.
+        // (counterSale -> COUNTER -> sale-fulfilment.ts) and stamps for THIS user; it is not part of the replay's cart.
         restrictionOverrides: dto.restrictionOverrides,
         warningHash: dto.warningHash,
       } as never,
@@ -286,6 +286,7 @@ export class CounterSaleService {
         this.prisma.forTenant(),
         customerId,
         edited.flatMap((l) => (l.productId ? [l.productId] : [])),
+        { prisma: this.prisma, entitlements: this.orders.entitlements },
       );
       await this.audit.log({
         tenantId: this.prisma.getTenantId() ?? null,

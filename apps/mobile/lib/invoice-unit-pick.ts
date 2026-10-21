@@ -1,5 +1,5 @@
 import { API_ERROR_CODES } from "@routeflow/types";
-import { PIECE_LABEL, effectiveQty } from "@routeflow/pricing";
+import { PIECE_LABEL, effectiveQty, unitNameKey } from "@routeflow/pricing";
 import type { LineState } from "./cart-line-state";
 import { applyUnitOption } from "./default-unit-line";
 import { invoiceLineDto, type InvoiceTotalsLine } from "./invoice-totals";
@@ -259,6 +259,28 @@ export function saleItemDto(
   };
 }
 
+/**
+ * H3b: the override field of ONE catalog line of a POST /invoices body. The server judges an invoice line
+ * exactly as a sale line (the ONE staff-override rule, against the customer's TIER price), so the same
+ * decision decides here what to send: the trimmed reason when the price moved off the tier price, nothing
+ * when it did not. `{ refused: true }` = off a special price with no reason (the screen blocks the save).
+ */
+export function invoiceItemOverride(
+  line: InvoiceLineState,
+  ctx: { catalogPrice: number; listPrice: number; isSpecial: boolean },
+): { refused: true } | { overrideReason?: string } {
+  const unit = isUnitLine(line);
+  const d = decideTrayPrice({
+    typed: invoiceLinePrice(line, ctx.catalogPrice),
+    base: unit ? unitPriceBase(line, ctx.catalogPrice) : ctx.catalogPrice,
+    listPrice: unit ? (line.unitListPrice ?? ctx.listPrice) : ctx.listPrice,
+    isSpecial: ctx.isSpecial,
+    reason: line.overrideReason,
+  });
+  if (d.kind === "refused") return { refused: true };
+  return d.kind === "set" && d.overrideReason ? { overrideReason: d.overrideReason } : {};
+}
+
 /** The pack option, for resetting a line. */
 const PACK_OPTION: UnitOption = {
   value: "",
@@ -270,9 +292,28 @@ const PACK_OPTION: UnitOption = {
 };
 
 /**
+ * A unit line moved onto the pack BY PIECES (row 458): 5 Cases of 12 are 60 pieces, i.e. 2 Boxes of 24
+ * plus 12 loose (entered by the piece when there is a remainder); with no pack the pieces are the count.
+ * The count is never lost. A line whose factor is unknown falls back to one Box.
+ */
+function toPackByPieces(line: InvoiceLineState, unitsPerBox: Upb): InvoiceLineState {
+  const pack = chooseInvoiceUnit(line, PACK_OPTION, unitsPerBox);
+  const factor = Number(line.unitFactor);
+  const count = Math.trunc(Number(line.qty) || 0);
+  if (!Number.isInteger(factor) || factor < 1 || count < 1) return pack;
+  const total = count * factor;
+  const upb = Math.trunc(packSize(unitsPerBox));
+  if (!(upb > 1)) return { ...pack, qty: total };
+  const split = setLineUnits(pack, total, upb);
+  if (!split) return pack;
+  return { ...split, sellBy: split.pieces ? "unit" : "case", pieceLabel: undefined };
+}
+
+/**
  * After the server says a unit is no longer offered: ONLY the unit-sold lines whose label the
- * refreshed ladder no longer offers (`offered` false) go back to ONE Box; the others and lines with no
- * unitLabel (including Piece-as-pack) are returned as the SAME object.
+ * refreshed ladder no longer offers (`offered` false) move onto the pack, converted by pieces so the
+ * count is kept (the web keeps its line too); the others and lines with no unitLabel (including
+ * Piece-as-pack) are returned as the SAME object.
  */
 export function dropStaleUnitLines<T extends InvoiceLineState>(
   items: Record<string, T>,
@@ -283,10 +324,25 @@ export function dropStaleUnitLines<T extends InvoiceLineState>(
   for (const [id, line] of Object.entries(items)) {
     next[id] =
       isUnitLine(line) && !offered(id, line.unitLabel as string)
-        ? (chooseInvoiceUnit(line, PACK_OPTION, unitsPerBox(id)) as T)
+        ? (toPackByPieces(line, unitsPerBox(id)) as T)
         : line;
   }
   return next;
+}
+
+/**
+ * The `offered` predicate for `dropStaleUnitLines` from each product's REFRESHED ladder labels, compared by
+ * `unitNameKey` (NFC, trim, case-fold), the key the picker options use: an NFD "Café" line is the NFC
+ * "Café" level, never silently dropped. A product whose ladder could not be read is absent and its lines
+ * are left alone.
+ */
+export function offeredByLadder(
+  ladders: Record<string, readonly string[]>,
+): (productId: string, unitLabel: string) => boolean {
+  const keys = new Map(
+    Object.entries(ladders).map(([id, labels]) => [id, labels.map(unitNameKey)]),
+  );
+  return (id, label) => !keys.has(id) || keys.get(id)!.includes(unitNameKey(label));
 }
 
 export const UNIT_NOT_OFFERED_MESSAGE =

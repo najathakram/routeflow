@@ -29,11 +29,30 @@ function catalog() {
   };
 }
 
-function makeService(sub?: { cycle?: string; periodStart: Date; periodEnd: Date } | null) {
+function makeService(
+  sub?: { cycle?: string; periodStart: Date; periodEnd: Date; planVersionId?: string } | null,
+  pinned?: { id: string; price?: number },
+) {
   const prisma = {
     tenantSubscription: { findUnique: jest.fn().mockResolvedValue(sub ?? null) },
   } as any;
-  const cat = { getPublishedCatalog: jest.fn().mockResolvedValue(catalog()) } as any;
+  const cat = {
+    getPublishedCatalog: jest.fn().mockResolvedValue(catalog()),
+    // SA-815e: a pinned version answers with ITS OWN add-on price
+    getVersionForTenant: jest.fn(async (id: string | null) =>
+      pinned && id === pinned.id
+        ? {
+            id,
+            ...catalog(),
+            // no price = a version that predates the SKU (lists none)
+            addonSkus:
+              pinned.price === undefined
+                ? []
+                : catalog().addonSkus.map((s) => ({ ...s, monthlyPrice: pinned.price })),
+          }
+        : catalog(),
+    ),
+  } as any;
   return new ProrationService(prisma, cat);
 }
 
@@ -213,5 +232,37 @@ describe("#2187 manual rows with a 90/180-day period (SA-383)", () => {
     expect(p.monthly).toBe(12);
     expect(p.proratedToday).toBe(32); // 12 × 3 × 80 / 90
     expect(p.nextChargeAt).toBe(r.periodEnd.toISOString());
+  });
+});
+
+describe("SA-815e: the preview quotes the add-on at the tenant's PINNED version", () => {
+  it("pinned v-old SEAT_EXTRA $9 / published $12 -> the preview shows $9 (the price the enable writes and the checkout bills)", async () => {
+    const now = new Date();
+    const svc = makeService(
+      {
+        cycle: "MONTHLY",
+        planVersionId: "v-old",
+        periodStart: new Date(now.getTime() - 5 * DAY),
+        periodEnd: new Date(now.getTime() + 25 * DAY),
+      },
+      { id: "v-old", price: 9 },
+    );
+    const p = await svc.prorationPreview("t1", "SEAT_EXTRA");
+    expect(p.monthly).toBe(9);
+    expect(p.proratedToday).toBeLessThanOrEqual(9);
+  });
+
+  it("a SKU the pinned version predates falls back to the published price", async () => {
+    const svc = makeService(
+      {
+        cycle: "MONTHLY",
+        planVersionId: "v-old",
+        periodStart: new Date(0),
+        periodEnd: new Date(1),
+      },
+      { id: "v-old" },
+    );
+    const p = await svc.prorationPreview("t1", "SEAT_EXTRA");
+    expect(p.monthly).toBe(12);
   });
 });

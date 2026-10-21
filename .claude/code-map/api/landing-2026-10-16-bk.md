@@ -1,0 +1,22 @@
+# API landing 2026-10-16 (#3473 train S3, #3471 buyer qty split)
+
+Range `96fc7351f..b6ed040dc`, api side. Symbols read at the tip; paths under `apps/api/src/` unless noted. Web: `web/landing-2026-10-16-bk.md`; packages in `packages.md` (end). Tests not indexed. The train touched `prisma/schema/catalog.prisma` (unit-chain fields); read the migration folder for the exact change.
+
+## #3473 merge train S3 (11 members: #3468 #3470 #3457 #3467 #3465 #3464 #3461 #3462 #3339 #3454 #3463)
+
+- `common/product-locks.ts` (NEW) `PRODUCT_LOCK_RANK_SQL`, `STOCK_LOCK_TIMEOUT` ("5s"), `STOCK_TX_OPTIONS` (15 s tx timeout), `setStockLockTimeout(tx)`, `lockProductsForStock(tx, ids)`: row-locks products in one ranked order so concurrent stock writers cannot deadlock.
+- `common/stock-tx.ts` (NEW) `stockTxBounded(prisma, fn, ...)`: the one wrapper for stock-writing transactions (bounded lock wait + tx-retry).
+- `common/tx-retry.ts`, `common/db-locks.ts` edited: stock-lane retry on lock timeout / deadlock; `withAdvisoryLock` contract unchanged.
+- `common/lock-conflict.filter.ts` (NEW) `LockConflictFilter`, `LOCK_UNAVAILABLE_BODY`, `LOCK_RETRY_AFTER_SECONDS` (2): a lock timeout becomes a retryable 503, never a bare 500. `common/global-exception-filters.ts` (NEW) `buildGlobalExceptionFilters(httpAdapter)` / `registerGlobalExceptionFilters(app)`; `main.ts` calls the latter.
+- `inventory/stock-count-commit.ts` (NEW) count commit in batches: `COUNT_COMMIT_BATCH` (50), `STOCK_COUNT_LOCK_FAMILY`, `STOCK_COUNT_PRODUCT_LOCK_FAMILY`, `OPEN_COUNT_STATUSES`, `COUNT_LOCK_ATTEMPTS` / `COUNT_LOCK_RETRY_MS`, `StockCountSkipReason` (`PRODUCT_IS_FAMILY` | `PRODUCT_DELETED`), `StockCountSkippedProduct`. `inventory.service.ts` commits through it (progress, restamp, finish-with-skips); `dto/stock-count-session.dto.ts` carries the skip fields. Copy: `packages/types/stock-count-commit-copy.ts`.
+- `orders/replay-cart-normalize.ts` (NEW) `normalizeReplayItems`, `replayCartOf`, `assertReplayOfCart`: idempotent replay compares the normalized cart, not raw items. `orders/merge-idempotency.ts`, `order-stock.ts`, `order-status-transitions.ts`, `order-inline-return.ts`, `counter-sale/counter-sale-void.service.ts`: stock writers moved onto `stockTxBounded` and ranked locks.
+- `orders/unit-line-build.ts`, `unit-line-edit.ts` (P0b x H3 resolution): derived base-unit lines build and edit as whole pieces; a gone unit is refused. `products/line-units.ts`, `product-units.service.ts`, `dto/product-unit.dto.ts`: unit chain validated on write via `deriveChainFactors` / `validateUnitChain` from `@routeflow/pricing`.
+- `product-labels/keep-labels-on-reparent.ts` (NEW) `planReparentLabels`, `keepLabelsOnReparent`, `effectiveCategoryIdsUnder`, `ProductChainUnreadableError` (409): reparenting keeps the effective labels; `parent-carries.ts`, `product-categories/label-writer.ts`, `product-labels-admin.service.ts` share it.
+- `estimates/estimates.service.ts`, `invoices/invoices.service.ts`, `invoices/manual-invoice-context.ts`, `order-templates/order-templates.service.ts`, `common/tax-rate.ts`: estimate tax basis (`EstimateTaxBasis`, packages/types) and levy carried through convert-to-invoice.
+- `selling-restrictions-admin/rule-lock.ts`, `vendor-bills/vendor-bills.service.ts`, `products/products.controller.ts` / `products.service.ts` / `product-catalog-sync.ts` / `product-delete-classify.ts`, `dto/update-product.dto.ts`: family-writer and price tripwires (`products/*-tripwire.spec.ts`), delete classification. `common/api-error-codes.ts` + `packages/types/api/error-codes.ts` gain the lock and count codes.
+
+## #3471 buyer cart keeps quantity and split in step (row 531, P0)
+
+- `orders/qty-split-consistency.ts` (NEW) `qtySplitMismatch(line)`, `checkQtySplitConsistency({lines, mode, ...}) -> QtySplitMismatch[]`, `warnQtySplit(...)`, `QtySplitMode` ("enforce" | "warn"): a boxed line's qty must equal boxes x unitsPerBox + pieces. `orders.service.ts` calls it: buyer `createOrder` (incl. fold-in) enforces, staff paths warn only, template reorder not enforced.
+- `buyer/buyer-qty-split.ts` (NEW) `assertBuyerQtySplit(...)`, `BuyerEditScope`: coded 400 `QTY_SPLIT_MISMATCH` before any key, lock or write; `buyer.controller.ts` wires buyer edit-lines against the line's stored pack.
+- `scripts/report-buyer-split-mismatch.mjs` (NEW, owner-run, READ ONLY tx): prints tenant ids and counts only; pinned by `common/report-buyer-split-mismatch-script.spec.ts`, `.db.spec.ts`, `scripts-live-target-guard.spec.ts`.

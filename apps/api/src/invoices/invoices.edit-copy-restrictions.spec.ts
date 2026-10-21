@@ -86,8 +86,36 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
             { productId: "p-new", lineKey: "n:1" },
           ],
           channel: "STAFF",
+          fulfilmentKind: "DELIVERY",
           document: "INVOICE",
         }),
+      );
+    });
+
+    it.each([
+      [{ counterSale: false, fulfillPath: "PICKUP" }, "PICKUP"],
+      [{ counterSale: true, fulfillPath: "PICKUP" }, "COUNTER"],
+      [{ counterSale: false, fulfillPath: "ROUTE" }, "DELIVERY"],
+    ])("L8: an order-linked draft whose order is %j is judged as %s", async (facts, kind) => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        ...draft,
+        orderId: "ord-1",
+        deliveryBatchId: "batch-1",
+      });
+      prisma.order.findFirst.mockResolvedValue(facts);
+      restrictions.assertLinesSellable.mockRejectedValue(banned());
+      await expect(edit([line("p-new", 1)])).rejects.toBeDefined();
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ fulfilmentKind: kind }),
+      );
+    });
+
+    it("L8: an order-less draft is judged as DELIVERY (the customer-address rule), stated not omitted", async () => {
+      restrictions.assertLinesSellable.mockRejectedValue(banned());
+      await expect(edit([line("p-new", 1)])).rejects.toBeDefined();
+      expect(restrictions.assertLinesSellable.mock.calls[0][0]).toHaveProperty(
+        "fulfilmentKind",
+        "DELIVERY",
       );
     });
 
@@ -138,10 +166,26 @@ describe("invoice edit / copy — selling restrictions (F-05)", () => {
           customerId: "cust-1",
           lines: [{ productId: "p-banned", lineKey: "n:0" }],
           channel: "STAFF",
+          fulfilmentKind: "DELIVERY",
           document: "INVOICE",
         }),
       );
       expect(prisma.invoice.create).not.toHaveBeenCalled();
+    });
+
+    it("L8: at a PICKUP-ONLY tenant a copy is judged as PICKUP (the store's state)", async () => {
+      prisma.tenantFeatureConfig.findFirst.mockResolvedValue({ mode: "pickup" });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        customerId: "cust-1",
+        orderId: null,
+        items: [{ productId: "p-banned", description: "B" }],
+      });
+      restrictions.assertLinesSellable.mockRejectedValue(banned());
+      await expect(service.duplicate("inv-1")).rejects.toBeDefined();
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ fulfilmentKind: "PICKUP" }),
+      );
     });
   });
 

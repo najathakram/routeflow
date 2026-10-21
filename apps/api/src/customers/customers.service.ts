@@ -11,6 +11,7 @@ import {
   ForbiddenException,
   ServiceUnavailableException,
   UnprocessableEntityException,
+  Optional,
 } from "@nestjs/common";
 import * as crypto from "crypto";
 import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
@@ -33,6 +34,7 @@ import {
   deleteNonBlockingInvoicesCas,
   readInvoicesAssertingNoneBlocking,
 } from "./customer-delete-preflight";
+import { assertOrdersUnchanged, releaseLiveOrderStockInTx } from "./customer-delete-stock";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
@@ -62,12 +64,8 @@ import { omitStaffOnlyCustomerFields } from "./self-service-fields";
 import { type SelfServiceWriteArgs, writeSelfServiceProfile } from "./self-service-audit";
 import { toCustomerOrder } from "../common/staff-only-fields";
 import { customerUpdateData } from "./customer-update-data";
-import { assertSafeCustomerNames } from "./customer-name-guard";
-import {
-  assertSafeAddress,
-  assertSafeLicense,
-  assertSafePersonName,
-} from "../common/text-cell-guards";
+import { assertSafeCustomerNames, assertSafeCustomerUpdate } from "./customer-name-guard";
+import { assertSafeAddress, assertSafePersonName } from "../common/text-cell-guards";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
@@ -90,6 +88,8 @@ import { portalInviteEmailHtml } from "./portal-invite-email";
 import { buildCustomersCsv } from "./customers-csv";
 import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes";
 import { assertProductIdNotFamily } from "../products/sellable-lines";
+import { AuditService } from "../audit/audit.service";
+import { recordCreditLimitChange, type CreditLimitActor } from "./credit-limit-audit";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -113,6 +113,7 @@ export class CustomersService {
     // once the invoice row is gone the entries can never be matched back.
     private readonly ledger: RegulatedLedgerService,
     private readonly email: EmailService,
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   /**
@@ -638,20 +639,25 @@ export class CustomersService {
     }
   }
 
-  async update(id: string, dto: UpdateCustomerDto, options?: compliance.CustomerUpdateOptions) {
+  async update(
+    id: string,
+    dto: UpdateCustomerDto,
+    options?: compliance.CustomerUpdateOptions,
+    actor?: CreditLimitActor,
+  ) {
     const existing = await this.findCustomerOrThrow(id);
     // REG-B170: refuse writes to a removed customer (its page still rendered edit controls).
     if (existing.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
     assertWalkInLoginUntouched(existing, dto); // the walk-in customer's sign-in email stays fixed
-    assertSafeCustomerNames(dto, existing); // B956: only a CHANGED name is checked
-    assertSafePersonName(dto, existing); // B984: same for salutation / first / last name
-    assertSafeLicense(options?.compliance ?? {}, existing); // B964: the importer's tobaccoLicenseNo, change-only
-    return this.prisma.forTenant().customer.update({
+    assertSafeCustomerUpdate(dto, existing, options?.compliance); // B956 / B984 / B964
+    const updated = await this.prisma.forTenant().customer.update({
       where: { id },
       data: compliance.withCompliance(options, customerUpdateData(dto)),
     });
+    await recordCreditLimitChange(this.audit, this.prisma.getTenantId(), existing, dto, actor);
+    return updated;
   }
 
   /** SA-305 (2): sole consent writer, self-opening tx; never call inside a tenantTransaction. */
@@ -1080,12 +1086,17 @@ export class CustomersService {
   async applyAdvancePaymentToInvoice(
     advancePaymentId: string,
     dto: { invoiceId: string; amount?: number },
+    /** The route's customer id (`:id`): the advance must belong to this customer (B808). */
+    routeCustomerId: string,
   ) {
     const apStub = await this.prisma.forTenant().advancePayment.findUnique({
       where: { id: advancePaymentId },
       select: { customerId: true },
     });
-    if (!apStub) throw new NotFoundException("Advance payment not found");
+    // B808: an advance under another customer is the same 404 as a missing advance.
+    if (!apStub || apStub.customerId !== routeCustomerId) {
+      throw new NotFoundException("Advance payment not found");
+    }
 
     try {
       const lock = await withAdvisoryLock(
@@ -1147,6 +1158,13 @@ export class CustomersService {
         include: { payments: true },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
+      // B808: the invoice must belong to the advance's own customer (checked before any write).
+      if (inv.customerId !== ap.customerId) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.ADVANCE_CUSTOMER_MISMATCH,
+          message: "An advance payment can only be applied to an invoice of the same customer.",
+        });
+      }
       if (inv.status === "DRAFT" || CREDIT_NOT_APPLICABLE.includes(inv.status)) {
         throw new BadRequestException(
           `Cannot apply advance payment to invoice with status ${inv.status}`,
@@ -1996,6 +2014,13 @@ export class CustomersService {
       await assertRecordFreeInTx(tx, id);
       await assertNoMoneyRecordsInTx(tx, [id]); // #2587/SA-516
       await assertNoDeliveryHistory(tx, [id]); // #2591/SA-516b
+      // B1241: orders that slipped in after the pre-flight booked stock; hand it back before they go.
+      const lockedOrderIds = await releaseLiveOrderStockInTx(
+        tx,
+        this.prisma.getTenantId(),
+        this.logger,
+        [id],
+      );
 
       // #2587/SA-516: credit notes are never destroyed (so no order links to clear either)
       await deleteMoneyRecordCas(tx.creditNote, { customerId: id });
@@ -2010,6 +2035,10 @@ export class CustomersService {
 
       // Orders and their items (must delete referencing records first)
       const orders = await tx.order.findMany({ where: { customerId: id }, select: { id: true } });
+      assertOrdersUnchanged(
+        orders.map((o) => o.id),
+        lockedOrderIds,
+      ); // B1241
       if (orders.length) {
         const orderIds = orders.map((o) => o.id);
         // Delivery mutations reference orders and order items
@@ -2026,7 +2055,7 @@ export class CustomersService {
           await tx.transaction.deleteMany({ where: { id: { in: txIds } } });
         }
         await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
-        await tx.order.deleteMany({ where: { customerId: id } });
+        await tx.order.deleteMany({ where: { id: { in: orderIds } } });
       }
 
       // Estimates
@@ -2172,6 +2201,13 @@ export class CustomersService {
         const invoices = await readInvoicesAssertingNoneBlocking(tx, customerIds); // SA-510a (1)
         await assertNoMoneyRecordsInTx(tx, customerIds); // #2587/SA-516
         await assertNoDeliveryHistory(tx, customerIds); // #2591/SA-516b: the in-tx twin
+        // B1241: the live orders booked stock; hand it back (Order rows, then Products) before anything is deleted.
+        const lockedOrderIds = await releaseLiveOrderStockInTx(
+          tx,
+          tenantId,
+          this.logger,
+          customerIds,
+        );
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
           // Reverse each invoice's regulated-sales ledger rows BEFORE its items
@@ -2208,6 +2244,10 @@ export class CustomersService {
           where: { customerId: { in: customerIds } },
           select: { id: true },
         });
+        assertOrdersUnchanged(
+          orders.map((o) => o.id),
+          lockedOrderIds,
+        ); // B1241
         if (orders.length) {
           const orderIds = orders.map((o) => o.id);
           await tx.deliveryMutation.deleteMany({ where: { orderId: { in: orderIds } } });
@@ -2222,7 +2262,7 @@ export class CustomersService {
             await tx.transaction.deleteMany({ where: { id: { in: txnIds } } });
           }
           await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
-          await tx.order.deleteMany({ where: { customerId: { in: customerIds } } });
+          await tx.order.deleteMany({ where: { id: { in: orderIds } } });
         }
 
         const estimates = await tx.estimate.findMany({
@@ -2358,6 +2398,13 @@ export class CustomersService {
         const invoices = await readInvoicesAssertingNoneBlocking(tx, ids);
         await assertNoMoneyRecordsInTx(tx, ids); // #2587/SA-516
         await assertNoDeliveryHistory(tx, ids); // #2591/SA-516b: the in-tx twin
+        // B1241: as deleteAllCustomers: live orders hand their booked stock back first.
+        const lockedOrderIds = await releaseLiveOrderStockInTx(
+          tx,
+          this.prisma.getTenantId(),
+          this.logger,
+          ids,
+        );
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
           // Reverse each invoice's regulated-sales ledger rows BEFORE its items
@@ -2395,6 +2442,10 @@ export class CustomersService {
           where: { customerId: { in: ids } },
           select: { id: true },
         });
+        assertOrdersUnchanged(
+          orders.map((o) => o.id),
+          lockedOrderIds,
+        ); // B1241
         if (orders.length) {
           const orderIds = orders.map((o) => o.id);
           await tx.deliveryMutation.deleteMany({ where: { orderId: { in: orderIds } } });
@@ -2409,7 +2460,7 @@ export class CustomersService {
             await tx.transaction.deleteMany({ where: { id: { in: txnIds } } });
           }
           await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
-          await tx.order.deleteMany({ where: { customerId: { in: ids } } });
+          await tx.order.deleteMany({ where: { id: { in: orderIds } } });
         }
 
         // Estimates

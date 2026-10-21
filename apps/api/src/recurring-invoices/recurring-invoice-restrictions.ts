@@ -1,6 +1,7 @@
 import type { RestrictionAck } from "@routeflow/types";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import * as iGate from "../invoices/invoice-restriction-gate";
+import type { SaleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 /**
@@ -22,6 +23,7 @@ export async function blockedTemplateLines(
   tenantId: string,
   ri: { customerId: string; items: ReadonlyArray<{ productId?: string | null }> },
   unattended: boolean,
+  sale: { fulfilmentKind: SaleFulfilmentKind }, // L8: from `defaultSaleFulfilmentKind` (a template has no order)
   run?: {
     actor?: Pick<JwtPayload, "sub" | "role" | "impersonatedBy">;
     ack?: RestrictionAck | null;
@@ -29,7 +31,7 @@ export async function blockedTemplateLines(
 ) {
   if (!unattended) {
     await restrictions.assertLinesSellable({
-      ...iGate.create(tenantId, ri.customerId, ri.items, run?.actor, run?.ack ?? undefined),
+      ...iGate.create(tenantId, ri.customerId, ri.items, run?.actor, run?.ack ?? undefined, sale),
       channel: "STAFF",
     });
     return null;
@@ -40,6 +42,7 @@ export async function blockedTemplateLines(
     customerId: ri.customerId,
     lines,
     channel: "STAFF",
+    fulfilmentKind: sale.fulfilmentKind,
   });
   return verdict.outcome === "BLOCK" || verdict.outcome === "INDETERMINATE"
     ? verdict.reasons

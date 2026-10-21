@@ -1,7 +1,7 @@
 import * as React from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MoneyInput } from "./MoneyInput";
+import { DecimalInput, MoneyInput } from "./MoneyInput";
 
 /**
  * Money-display component 1/2. `MoneyInput` is the standard money FIELD used
@@ -81,5 +81,50 @@ describe("MoneyInput", () => {
       input.focus();
       expect(input).toHaveValue("5");
     });
+  });
+});
+
+describe("DecimalInput onCommit passes the FOCUS-time value (P0 2026-10-14: the ladder's old side)", () => {
+  function Harness({ onCommit, start = 21 }: { onCommit: jest.Mock; start?: number }) {
+    const [v, setV] = React.useState<number | null>(start);
+    return (
+      <>
+        <DecimalInput aria-label="tier" value={v} onChange={setV} onCommit={onCommit} />
+        <button type="button" onClick={() => setV(5)}>
+          set all
+        </button>
+      </>
+    );
+  }
+
+  it("commits (new value, value at focus)", async () => {
+    const onCommit = jest.fn();
+    render(<Harness onCommit={onCommit} />);
+    const input = screen.getByLabelText("tier");
+    await userEvent.click(input);
+    await userEvent.keyboard("21.25");
+    fireEvent.blur(input);
+    expect(onCommit).toHaveBeenCalledWith(21.25, 21);
+  });
+
+  it("an outside change before focus (e.g. 'Set all to Tier 1') is the old side, never a stale copy", async () => {
+    const onCommit = jest.fn();
+    render(<Harness onCommit={onCommit} />);
+    fireEvent.click(screen.getByText("set all"));
+    const input = screen.getByLabelText("tier");
+    await userEvent.click(input);
+    await userEvent.keyboard("4");
+    fireEvent.blur(input);
+    expect(onCommit).toHaveBeenCalledWith(4, 5);
+  });
+
+  it("a cleared field blurred does not commit", async () => {
+    const onCommit = jest.fn();
+    render(<Harness onCommit={onCommit} />);
+    const input = screen.getByLabelText("tier");
+    await userEvent.click(input);
+    await userEvent.clear(input);
+    fireEvent.blur(input);
+    expect(onCommit).not.toHaveBeenCalled();
   });
 });

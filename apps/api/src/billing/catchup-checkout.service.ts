@@ -31,6 +31,7 @@ import { buildCatchupSessionParams } from "./catchup-session-params";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { withCheckoutPolicy } from "./checkout-session-params";
 import { StripeService } from "./stripe.service";
+import { webBaseUrl } from "../config/web-base-url";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 
 /**
@@ -133,6 +134,16 @@ export function catchupReportJson(r: CatchupReport) {
         }
       : { ok: false as const, reason: p.reason },
   };
+}
+
+/**
+ * Defence in depth for the Checkout return paths: a same-origin PATH only ("/x"), never "//host", "/\host" or
+ * "@host" (which would turn `${base}${path}` into another origin). Callers pass constants today.
+ */
+function safePath(path: string | undefined, fallback: string): string {
+  if (path === undefined) return fallback;
+  if (!/^\/(?![/\\])/.test(path)) throw new Error(`unsafe Checkout return path: ${path}`);
+  return path;
 }
 
 @Injectable()
@@ -342,9 +353,12 @@ export class CatchupCheckoutService {
    */
   async open(
     tenantId: string,
-    opts: { expectedStubCents: number; now?: Date },
+    opts: { expectedStubCents: number; now?: Date; successPath?: string; cancelPath?: string },
   ): Promise<{ checkoutUrl: string; sessionId: string; stubCents: number; shape: string }> {
     const now = opts.now ?? new Date();
+    // validated before anything is claimed or created
+    const successPath = safePath(opts.successPath, "/settings/billing?checkout=success");
+    const cancelPath = safePath(opts.cancelPath, "/settings/billing?checkout=cancelled");
     if (!this.stripe.isConfigured) {
       throw new ServiceUnavailableException("Stripe is not configured.");
     }
@@ -398,7 +412,7 @@ export class CatchupCheckoutService {
         throw new ChangedUnderClaim();
       }
       const customerId = await this.billing.ensureStripeCustomer(tenantId);
-      const base = process.env.FRONTEND_URL ?? "http://localhost:3001";
+      const base = webBaseUrl();
       const params = buildCatchupSessionParams({
         tenantId,
         slug: report.slug,
@@ -409,8 +423,9 @@ export class CatchupCheckoutService {
         addonSkus: fresh._inputs!.addonSkus,
         plan: fresh.plan,
         now,
-        successUrl: `${base}/settings/billing?checkout=success`,
-        cancelUrl: `${base}/settings/billing?checkout=cancelled`,
+        // PATHS ("/settings/billing?..."), joined to the one web base (webBaseUrl) here
+        successUrl: `${base}${successPath}`,
+        cancelUrl: `${base}${cancelPath}`,
       });
       session = await this.stripe.client.checkout.sessions.create(withCheckoutPolicy(params), {
         idempotencyKey: `${tenantId}:catchup-session:${plan.paidThrough.getTime()}:${now.getTime()}`,

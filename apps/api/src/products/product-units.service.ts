@@ -4,12 +4,31 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { PIECE_LABEL } from "@routeflow/pricing";
+import { Prisma } from "@prisma/client";
+import {
+  PIECE_LABEL,
+  baseLabelOf,
+  deriveChainFactors,
+  packLabelOf,
+  validateUnitChain,
+  type ChainLevel,
+  type ChainViolation,
+} from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
+import { isPieceSynonym, unitNameKey } from "../units/piece-words";
+import { sqlKeyOf } from "../units/unit-name-sql";
+import { unitRoom } from "../units/unit-room";
+import { lockProductPack } from "../units/tenant-units-lock";
+import { MAX_UNIT_NAME_LENGTH } from "../units/units.service";
 import { CreateProductUnitDto, UpdateProductUnitDto } from "./dto/product-unit.dto";
 
 interface PackInfo {
   label: string;
+  /** The pack's legacy unit text (Product.unit) — also names the pack. */
+  legacyLabel: string;
+  /** Units rebuild P0b: the base unit's name (baseLabelOf — "Piece" when unset). */
+  baseLabel: string;
   factor: number;
   regulated: boolean;
 }
@@ -19,7 +38,26 @@ interface LevelKey {
   factorToBase: number;
 }
 
-const norm = (s: string) => s.trim().toLowerCase();
+type Sibling = LevelKey & {
+  id: string;
+  parentUnitId?: string | null;
+  perParent?: number | null;
+};
+
+const norm = unitNameKey;
+
+/** A level's link to its tenant unit; `unitNotListed` = the name was not added because the list is full. */
+interface UnitLink {
+  tenantUnitId: string | null;
+  unitNotListed?: string;
+}
+
+/** A saved level, plus `unitNotListed: [name]` when its name was not added to the full unit list (SA-810). */
+const withNotListed = <T extends object>(
+  row: T,
+  link: UnitLink,
+): T & { unitNotListed?: string[] } =>
+  link.unitNotListed ? { ...row, unitNotListed: [link.unitNotListed] } : row;
 
 /** What the API returns for a level — never `tenantId` or audit columns. */
 const UNIT_SELECT = {
@@ -33,6 +71,8 @@ const UNIT_SELECT = {
   priceTier5: true,
   isDefaultSelling: true,
   sortOrder: true,
+  parentUnitId: true,
+  perParent: true,
 } as const;
 
 const isUniqueViolation = (e: unknown) => (e as { code?: string } | null)?.code === "P2002";
@@ -60,22 +100,30 @@ export class ProductUnitsService {
     });
   }
 
-  create(productId: string, dto: CreateProductUnitDto) {
+  create(productId: string, dto: CreateProductUnitDto, actorId: string | null = null) {
     return this.locked(productId, async (tx) => {
       const pack = await this.loadPack(tx, productId);
-      const label = this.cleanLabel(dto.label, dto.factorToBase);
-      this.assertLevelValid(pack, await this.siblings(tx, productId), {
+      const label = this.cleanLabel(dto.label, dto.factorToBase, pack);
+      const siblings = await this.siblings(tx, productId);
+      this.assertLevelValid(pack, siblings, { label, factorToBase: dto.factorToBase });
+      this.assertChain(siblings, {
+        id: "__new__",
         label,
         factorToBase: dto.factorToBase,
+        parentUnitId: dto.parentUnitId ?? null,
+        perParent: dto.perParent ?? null,
       });
       await this.assertNoLineDisagrees(tx, productId, label, dto.factorToBase);
       const makeDefault = dto.isDefaultSelling === true;
       if (makeDefault) await this.clearDefaults(tx, productId);
-      return tx.productUnit.create({
+      const link = await this.tenantUnitIdFor(tx, productId, label, actorId);
+      const created = await tx.productUnit.create({
         data: {
           productId,
           label,
           factorToBase: dto.factorToBase,
+          parentUnitId: dto.parentUnitId ?? null,
+          perParent: dto.perParent ?? null,
           price: dto.price ?? null,
           priceTier2: dto.priceTier2 ?? null,
           priceTier3: dto.priceTier3 ?? null,
@@ -83,34 +131,70 @@ export class ProductUnitsService {
           priceTier5: dto.priceTier5 ?? null,
           isDefaultSelling: makeDefault,
           sortOrder: dto.sortOrder ?? 0,
+          tenantUnitId: link.tenantUnitId,
         },
         select: UNIT_SELECT,
       });
+      return withNotListed(created, link);
     });
   }
 
-  update(productId: string, unitId: string, dto: UpdateProductUnitDto) {
+  update(
+    productId: string,
+    unitId: string,
+    dto: UpdateProductUnitDto,
+    actorId: string | null = null,
+  ) {
     return this.locked(productId, async (tx) => {
       const pack = await this.loadPack(tx, productId);
       const row = await tx.productUnit.findFirst({ where: { id: unitId, productId } });
       if (!row) throw new NotFoundException("Unit not found");
       const factorToBase = dto.factorToBase ?? row.factorToBase;
-      const label = this.cleanLabel(dto.label ?? row.label, factorToBase);
-      const siblings = (await this.siblings(tx, productId)).filter((s) => s.id !== unitId);
+      const label = this.cleanLabel(dto.label ?? row.label, factorToBase, pack);
+      const all = await this.siblings(tx, productId);
+      const siblings = all.filter((s) => s.id !== unitId);
       this.assertLevelValid(pack, siblings, { label, factorToBase });
       await this.assertImmutableIfUsed(tx, productId, row, { label, factorToBase });
+      // P0b: validate the whole tree with this edit applied; a parent edit recomputes descendants
+      // (factorToBase = perParent x parent) and each changed descendant is checked + written below.
+      const descendants = this.assertChain(
+        siblings,
+        {
+          id: unitId,
+          label,
+          factorToBase,
+          parentUnitId:
+            dto.parentUnitId !== undefined ? dto.parentUnitId : (row.parentUnitId ?? null),
+          perParent: dto.perParent !== undefined ? dto.perParent : (row.perParent ?? null),
+        },
+        true,
+      );
+      for (const d of descendants) {
+        await this.assertNoLineDisagrees(tx, productId, d.label, d.factorToBase);
+      }
       const { label: _l, factorToBase: _f, isDefaultSelling, ...rest } = dto;
       if (isDefaultSelling === true) await this.clearDefaults(tx, productId, unitId);
-      return tx.productUnit.update({
+      for (const d of descendants) {
+        await tx.productUnit.update({
+          where: { id: d.id },
+          data: { factorToBase: d.factorToBase },
+        });
+      }
+      // The link follows the NAME: a retyped label must leave the old unit's rename behind.
+      const link =
+        dto.label !== undefined ? await this.tenantUnitIdFor(tx, productId, label, actorId) : null;
+      const updated = await tx.productUnit.update({
         where: { id: unitId },
         data: {
           ...rest,
           label,
           factorToBase,
           ...(isDefaultSelling !== undefined ? { isDefaultSelling } : {}),
+          ...(link ? { tenantUnitId: link.tenantUnitId } : {}),
         },
         select: UNIT_SELECT,
       });
+      return link ? withNotListed(updated, link) : updated;
     });
   }
 
@@ -127,6 +211,12 @@ export class ProductUnitsService {
         select: { id: true },
       });
       if (!row) throw new NotFoundException("Unit not found");
+      const child = (await this.siblings(tx, productId)).find((s) => s.parentUnitId === unitId);
+      if (child) {
+        throw new ConflictException(
+          `"${child.label}" is counted in this unit — remove or re-parent it first.`,
+        );
+      }
       await tx.productUnit.delete({ where: { id: unitId } });
       return { deleted: true };
     });
@@ -134,16 +224,18 @@ export class ProductUnitsService {
 
   // ─── helpers ────────────────────────────────────────────────────────────────
 
-  /** One transaction + a per-product advisory xact lock; unique-index races become a 409. */
+  /** One transaction + the tenant units lock (shared) + a per-product advisory xact lock; unique-index races become a 409. */
   private async locked<T>(productId: string, fn: (tx: any) => Promise<T>): Promise<T> {
     // A write needs a tenant: without one `tenantTransaction` hands back the raw client and the
     // insert would carry no tenantId (a 500 on the NOT NULL column). SUPER_ADMIN must act inside a tenant.
-    if (!this.prisma.getTenantId()) {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) {
       throw new BadRequestException("Select a tenant before editing a product's units.");
     }
     try {
       return await this.prisma.tenantTransaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('product-units'), hashtext(${productId}))`;
+        // Tenant units lock (shared; a rename holds it exclusive), then this product's lock.
+        await lockProductPack(tx, tenantId, productId);
         return fn(tx);
       });
     } catch (e) {
@@ -154,27 +246,137 @@ export class ProductUnitsService {
     }
   }
 
+  /**
+   * The tenant unit a level's label names, so a unit rename relabels the level. The unit is added
+   * when the tenant has none (ON CONFLICT DO NOTHING: a racing add must not abort this transaction).
+   * Piece and its synonyms, and any name past the unit-name limit, are never units: unlinked (null).
+   * An ARCHIVED unit is refused (UNIT_ARCHIVED) unless this product already uses it: a level that
+   * already carries the name keeps its meaning, but archiving means "stop offering it", so no new
+   * level may pick it up. This is the ONE place that rule lives (create and update both come here).
+   *
+   * At the active-unit cap (SA-810, `unitRoom`) a NEW name is not added and not refused: the level saves
+   * unlinked with its label (a names list is never a math source) and the result reports
+   * `unitNotListed`. Refusing would block a catalog save over a names list (L-207); adding would make the
+   * cap meaningless. The count is read under the SHARED tenant-units lock this write already holds.
+   */
+  private async tenantUnitIdFor(
+    tx: any,
+    productId: string,
+    label: string,
+    actorId: string | null,
+  ): Promise<UnitLink> {
+    const name = label.normalize("NFC").trim();
+    if (!name || name.length > MAX_UNIT_NAME_LENGTH || isPieceSynonym(name)) {
+      return { tenantUnitId: null };
+    }
+    // Every caller runs inside locked(), which refused a call with no tenant.
+    const tenantId = this.prisma.getTenantId() as string;
+    const nameKey = unitNameKey(name);
+    const find = () =>
+      tx.tenantUnit.findFirst({
+        where: { tenantId, nameKey },
+        select: { id: true, archivedAt: true },
+      });
+    let unit = await find();
+    if (!unit) {
+      if ((await unitRoom(tx, tenantId)) <= 0) return { tenantUnitId: null, unitNotListed: name };
+      const { count } = await tx.tenantUnit.createMany({
+        data: [{ tenantId, name, nameKey }],
+        skipDuplicates: true,
+      });
+      unit = await find();
+      // Only the creator audits: a skipDuplicates loser (count 0) re-read the winner's row.
+      if (count === 1 && unit) {
+        await tx.auditLog.create({
+          data: {
+            tenantId,
+            userId: actorId,
+            action: "tenant_unit.created",
+            entityType: "TenantUnit",
+            entityId: unit.id,
+            meta: { name, via: "level" },
+          },
+        });
+      }
+    }
+    if (unit?.archivedAt) {
+      const used = await tx.productUnit.findFirst({
+        where: { productId, tenantUnitId: unit.id },
+        select: { id: true },
+      });
+      if (!used) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.UNIT_ARCHIVED,
+          message: `The unit ${name} is archived. Restore it in Settings > Units first.`,
+        });
+      }
+    }
+    return { tenantUnitId: unit?.id ?? null };
+  }
+
   /** `findFirst` (not `findUnique`) so the tenant filter is ANDed into the WHERE — a foreign
    *  product 404s instead of leaking its pack shape. */
   private async loadPack(db: any, productId: string): Promise<PackInfo> {
     const p = await db.product.findFirst({
       where: { id: productId },
-      select: { unit: true, unitsPerBox: true, trackedCategoryId: true },
+      select: {
+        unit: true,
+        baseUnitLabel: true,
+        packLabel: true,
+        unitsPerBox: true,
+        trackedCategoryId: true,
+      },
     });
     if (!p) throw new NotFoundException("Product not found");
     const upb = Math.trunc(Number(p.unitsPerBox ?? 0));
     return {
-      label: (p.unit ?? "").trim() || "Box",
+      label: packLabelOf(p),
+      legacyLabel: (p.unit ?? "").trim(),
+      baseLabel: baseLabelOf(p),
       factor: upb > 1 ? upb : 1,
       regulated: p.trackedCategoryId != null,
     };
   }
 
-  private siblings(db: any, productId: string): Promise<Array<LevelKey & { id: string }>> {
+  private siblings(db: any, productId: string): Promise<Sibling[]> {
     return db.productUnit.findMany({
       where: { productId },
-      select: { id: true, label: true, factorToBase: true },
+      select: { id: true, label: true, factorToBase: true, parentUnitId: true, perParent: true },
     });
+  }
+
+  /**
+   * P0b: the ladder is a tree rooted at the base. Validates `others + level` with the pure
+   * @routeflow/pricing validator (structure → 400; a collision or over-cap → 409) and returns the
+   * descendants of `level` whose factor a recompute changed (only when `recompute`).
+   */
+  private assertChain(
+    others: Sibling[],
+    level: Sibling,
+    recompute = false,
+  ): Array<{ id: string; label: string; factorToBase: number }> {
+    const toChain = (s: Sibling): ChainLevel => ({
+      key: s.id,
+      factorToBase: s.factorToBase,
+      parentKey: s.parentUnitId ?? null,
+      perParent: s.perParent ?? null,
+    });
+    const before = [...others, level].map(toChain);
+    const derived = recompute ? deriveChainFactors(before) : before;
+    const result = validateUnitChain(derived);
+    if (!result.ok) {
+      const worst: ChainViolation =
+        result.violations.find((v) => v.code === "OVER_CAP" || v.code === "DUPLICATE_FACTOR") ??
+        result.violations[0];
+      if (worst.code === "OVER_CAP" || worst.code === "DUPLICATE_FACTOR") {
+        throw new ConflictException(worst.message);
+      }
+      throw new BadRequestException(worst.message);
+    }
+    const labelOf = new Map(others.map((o) => [o.id, o.label]));
+    return derived
+      .filter((d, i) => d.key !== level.id && d.factorToBase !== before[i].factorToBase)
+      .map((d) => ({ id: d.key, label: labelOf.get(d.key) ?? "", factorToBase: d.factorToBase }));
   }
 
   private clearDefaults(db: any, productId: string, exceptUnitId?: string) {
@@ -188,18 +390,19 @@ export class ProductUnitsService {
     });
   }
 
-  /** The Piece level is always factor 1 and factor 1 is always exactly "Piece" — never renamed. */
-  private cleanLabel(raw: string, factorToBase: number): string {
+  /** The base level is always factor 1 and factor 1 is always exactly the base label (P0b: the tenant's
+   *  name, "Piece" when unset; the legacy "Piece" spelling is still accepted and canonicalised). */
+  private cleanLabel(raw: string, factorToBase: number, pack: PackInfo): string {
     const label = (raw ?? "").trim();
     if (!label) throw new BadRequestException("A unit needs a name");
-    const isPiece = norm(label) === norm(PIECE_LABEL);
-    if (factorToBase === 1 && !isPiece) {
-      throw new BadRequestException(`A 1-piece unit is always named "${PIECE_LABEL}".`);
+    const isBase = norm(label) === norm(pack.baseLabel) || norm(label) === norm(PIECE_LABEL);
+    if (factorToBase === 1 && !isBase) {
+      throw new BadRequestException(`A 1-piece unit is always named "${pack.baseLabel}".`);
     }
-    if (factorToBase !== 1 && isPiece) {
-      throw new BadRequestException(`"${PIECE_LABEL}" is always exactly 1 piece.`);
+    if (factorToBase !== 1 && isBase) {
+      throw new BadRequestException(`"${pack.baseLabel}" is always exactly 1 piece.`);
     }
-    return factorToBase === 1 ? PIECE_LABEL : label;
+    return factorToBase === 1 ? pack.baseLabel : label;
   }
 
   private assertLevelValid(pack: PackInfo, siblings: LevelKey[], level: LevelKey): void {
@@ -210,7 +413,10 @@ export class ProductUnitsService {
           : `${level.factorToBase} pieces is the pack size — set the pack's own price on the product.`,
       );
     }
-    if (norm(level.label) === norm(pack.label)) {
+    if (
+      norm(level.label) === norm(pack.label) ||
+      (pack.legacyLabel !== "" && norm(level.label) === norm(pack.legacyLabel))
+    ) {
       throw new BadRequestException(`"${level.label}" is already the name of the pack.`);
     }
     if (pack.regulated && level.factorToBase > pack.factor) {
@@ -258,23 +464,29 @@ export class ProductUnitsService {
     label: string,
     factorToBase: number,
   ): Promise<void> {
-    // Through the PARENT (order/invoice) relation, never `orderItem`/`invoiceItem` top-level: a
-    // top-level read is scoped by the ITEM's nullable tenantId and would miss a NULL-tenant line.
-    const lineWhere = {
-      productId,
-      unitLabel: { equals: label, mode: "insensitive" as const },
-      // Explicit OR: SQL `NOT (col = n)` drops NULL rows, and a line with no snapshot factor is
-      // exactly the one we must not let slip past.
-      OR: [{ unitsPerBox: null }, { unitsPerBox: { not: factorToBase } }],
-    };
-    const [order, invoice] = await Promise.all([
-      db.order.findFirst({ where: { lineItems: { some: lineWhere } }, select: { id: true } }),
-      db.invoice.findFirst({ where: { items: { some: lineWhere } }, select: { id: true } }),
-    ]);
-    if (order || invoice) {
-      throw new ConflictException(
-        `"${label}" is already used on an order or invoice at a different size, so its size cannot change. Create a new unit instead.`,
-      );
+    // Through the PARENT order / invoice of THIS tenant, never the item tables top-level: a top-level
+    // read is scoped by the ITEM's nullable tenantId and would miss a NULL-tenant line. The label is
+    // compared by the shared NFC key in SQL (a Prisma `equals`/insensitive cannot fold NFC), so lines
+    // carrying the NFD spelling of the label are found too. A line with no size snapshot counts as a
+    // different size (SQL `<>` drops NULLs, hence the explicit IS NULL).
+    const tenantId = this.prisma.getTenantId();
+    const key = unitNameKey(label);
+    const hit: unknown[] = await db.$queryRaw(Prisma.sql`
+      SELECT 1 FROM "OrderItem" oi JOIN "Order" o ON o."id" = oi."orderId"
+      WHERE o."tenantId" = ${tenantId} AND oi."productId" = ${productId}
+        AND ${sqlKeyOf(Prisma.sql`oi."unitLabel"`)} = ${key}
+        AND (oi."unitsPerBox" IS NULL OR oi."unitsPerBox" <> ${factorToBase})
+      UNION ALL
+      SELECT 1 FROM "InvoiceItem" ii JOIN "Invoice" i ON i."id" = ii."invoiceId"
+      WHERE i."tenantId" = ${tenantId} AND ii."productId" = ${productId}
+        AND ${sqlKeyOf(Prisma.sql`ii."unitLabel"`)} = ${key}
+        AND (ii."unitsPerBox" IS NULL OR ii."unitsPerBox" <> ${factorToBase})
+      LIMIT 1`);
+    if (hit.length > 0) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.UNIT_SIZE_IN_USE,
+        message: `"${label}" is already used on an order or invoice at a different size, so its size cannot change.`,
+      });
     }
   }
 }

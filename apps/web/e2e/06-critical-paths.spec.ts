@@ -324,13 +324,37 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
       throw new Error("No orders to inspect — run `node apps/api/scripts/e2e-seed.js` (B566)");
     }
 
+    // The detail page fetches GET /orders/:id after the route change (the row is a click target,
+    // not an <a href>, so there is no id to read off it); wait for that exact response by its
+    // UUID path - the list call (/orders?...) and /orders/active-style routes never match.
+    // Registered before the click so it cannot be missed.
+    const orderLoaded = page.waitForResponse(
+      (r) =>
+        r.request().method() === "GET" &&
+        /\/api\/v1\/orders\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\?|$)/.test(
+          r.url(),
+        ),
+      { timeout: 30_000 },
+    );
     await firstRow.click();
     await page.waitForURL(/\/orders\/.+/, { timeout: 30_000 });
+    expect((await orderLoaded).ok(), "GET /orders/:id failed").toBe(true);
 
     // Any dollar amount visible on the order detail page should be $X.XX
     const dollarEls = page
       .locator("td, span, p, [class*='amount'], [class*='total'], [class*='price']")
       .filter({ hasText: /^\s*\$/ });
+
+    // waitForURL resolves on the route change, while the detail page is still fetching (it renders
+    // a spinner until the order loads). Wait for the loaded summary and the first amount before
+    // counting - a count() taken against the spinner is 0 and fails for the wrong reason.
+    await expect(page.locator("dt", { hasText: /^Line items$/ }).first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(
+      dollarEls.first(),
+      "The order detail page rendered no dollar amounts (B566)",
+    ).toBeVisible({ timeout: 15_000 });
 
     const count = await dollarEls.count();
     expect(count, "The order detail page rendered no dollar amounts (B566)").toBeGreaterThan(0);

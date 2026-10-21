@@ -19,6 +19,7 @@ const INV = { id: "inv-1", invoiceNumber: "INV-1" };
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { storedInvoiceHeader } from "../testing/stored-invoice-header";
 
 const autoMock = () =>
   new Proxy({} as Record<string | symbol, jest.Mock>, {
@@ -65,8 +66,7 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
       customerId: "cust-1",
       orderId: null,
       status,
-      discount: 0,
-      shippingFee: 0,
+      ...storedInvoiceHeader(items), // SA-814 R5-2: a header the lines reproduce
       internalNotes: null,
       payments: [],
       items,

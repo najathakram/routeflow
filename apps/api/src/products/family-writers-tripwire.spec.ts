@@ -42,9 +42,9 @@ const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
     why: "loadEditCatalog: PATCH /invoices/:id line products (create and update do NOT share manual-invoice-context)",
   },
   "inventory/inventory.service.ts": {
-    calls: 10,
+    calls: 11,
     sites: 16,
-    why: "PO draft/create/update, recordPurchase (StockLot), recordAdjustment, commitStockCount (+ applyStockCountItemsInTx), commitStockCountSession, upsertStockCountLine, setCostBasis, bulkSetCostBasis; the other writer sites (assignToVariants, PO receive/reverse, cost replay) move stock only out of / into a product that HAS stock: a FAMILY is created with zero stock and never receives any (every entry point above refuses it), so their pool checks reject it",
+    why: "PO draft/create/update, recordPurchase (StockLot), recordAdjustment, commitStockCount (+ applyStockCountItemsInTx), commitStockCountSession (+ its batch re-check of kind under the product lock, SA-767 n2), upsertStockCountLine, setCostBasis, bulkSetCostBasis; the other writer sites (assignToVariants, PO receive/reverse, cost replay) move stock only out of / into a product that HAS stock: a FAMILY is created with zero stock and never receives any (every entry point above refuses it), so their pool checks reject it",
   },
   "order-templates/order-templates.service.ts": {
     calls: 4,
@@ -58,8 +58,8 @@ const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
   },
   "vendor-bills/vendor-bills.service.ts": {
     calls: 1,
-    sites: 4,
-    why: "receiving a bill line writes a StockLot + PURCHASE movement: a FAMILY is refused there",
+    sites: 5,
+    why: "receiving a bill line writes a StockLot + PURCHASE movement: a FAMILY is refused there (the 4th site is the ONE reversal row revertToDraft and voidBill share (appendBillReversals): it mirrors a receipt row found by the receive() note, so it assumes that row was written by receive() under this guard — a receipt that predates the guard could name a FAMILY, and the reversal then just undoes it; the 5th is voidBill's shortfall ADJUSTMENT (SA-808b): stock with no receipt record is taken out of the product the BILL LINE names, which the receive guard already kept off FAMILY)",
   },
 };
 

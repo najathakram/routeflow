@@ -402,16 +402,17 @@ describeDb("SA-775 automatic locks pause (real Postgres)", () => {
       expect(await audits(t)).toHaveLength(1);
     });
 
-    it("TEST class, paused: still READ_ONLY with its add-ons off", async () => {
+    it("TEST class, paused: still READ_ONLY; its add-ons stay on (SA-787)", async () => {
       await setSwitch("paused");
       const { t } = await cancelling("cancel-test", TenantClass.TEST);
       await cron.applyScheduledCancellations();
       const row = await tenantRow(t);
       expect(row.status).toBe("READ_ONLY");
       expect(row.readOnlyReason).toBe("subscription_cancelled");
+      // SA-787: the cancellation lock never switches an add-on off; READ_ONLY alone gates it.
       expect(
-        (await prisma.tenantAddon.findMany({ where: { tenantId: t } })).some((a) => a.active),
-      ).toBe(false);
+        (await prisma.tenantAddon.findMany({ where: { tenantId: t } })).every((a) => a.active),
+      ).toBe(true);
     });
 
     it("unpause: the next pass locks the held PRODUCTION tenant (no case is lost)", async () => {
@@ -424,9 +425,10 @@ describeDb("SA-775 automatic locks pause (real Postgres)", () => {
       const row = await tenantRow(t);
       expect(row.status).toBe("READ_ONLY");
       expect(row.readOnlyReason).toBe("subscription_cancelled");
+      // SA-787: the cancellation lock never switches an add-on off; READ_ONLY alone gates it.
       expect(
-        (await prisma.tenantAddon.findMany({ where: { tenantId: t } })).some((a) => a.active),
-      ).toBe(false);
+        (await prisma.tenantAddon.findMany({ where: { tenantId: t } })).every((a) => a.active),
+      ).toBe(true);
     });
   });
 

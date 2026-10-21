@@ -90,6 +90,17 @@ enum OrderSource {
   ROUTE
 }
 
+/// SA-761 / SA-772 folder 1 (sitting 4): where Order.taxRate was taken from when the order was stamped.
+/// TENANT_DEFAULT = the tenant's settings.taxRate; CUSTOMER_EXEMPT = the customer is tax-exempt (rate 0);
+/// LEGACY_INFERRED = a SEAM for the B294 census/backfill to label a pre-snapshot order whose rate was
+/// inferred from its stored totals (no writer yet). NULL on the row = not stamped (legacy; read-time fallback).
+/// Mirrored by packages/types/api/enums.ts TAX_RATE_SOURCE_VALUES (enum-parity.spec.ts).
+enum TaxRateSource {
+  TENANT_DEFAULT
+  CUSTOMER_EXEMPT
+  LEGACY_INFERRED
+}
+
 enum DriverStatus {
   ACTIVE
   INACTIVE
@@ -235,6 +246,7 @@ model Customer {
   advancePayments      AdvancePayment[]
   recurringInvoices    RecurringInvoice[]
   prices               CustomerPrice[]
+  unitPrices           CustomerUnitPrice[]
   expenses             Expense[]
   contactPersons       ContactPerson[]
   tagAssignments       CustomerTagAssignment[]
@@ -601,25 +613,28 @@ model RouteRunStop {
 }
 
 model Order {
-  id                     String      @id @default(uuid())
+  id                     String         @id @default(uuid())
   customerId             String
   routeRunId             String?
   routeRunStopId         String?
   templateId             String?
   orderNumber            String?
-  status                 OrderStatus @default(PENDING)
-  source                 OrderSource @default(APP)
-  urgent                 Boolean     @default(false)
+  status                 OrderStatus    @default(PENDING)
+  source                 OrderSource    @default(APP)
+  /// F1(i) (#3418): true when `source` was written from the creating principal (every create site of the new code).
+  /// false = UNKNOWN_LEGACY (rows that predate the column keep the default APP whoever made them): judged on STAFF.
+  sourceRecorded         Boolean        @default(false)
+  urgent                 Boolean        @default(false)
   notes                  String?
   driverNote             String?
-  subtotal               Decimal     @default(0) @db.Decimal(10, 2)
-  tax                    Decimal     @default(0) @db.Decimal(10, 2)
-  total                  Decimal     @default(0) @db.Decimal(10, 2)
-  discountAmount         Decimal     @default(0) @db.Decimal(10, 2)
+  subtotal               Decimal        @default(0) @db.Decimal(10, 2)
+  tax                    Decimal        @default(0) @db.Decimal(10, 2)
+  total                  Decimal        @default(0) @db.Decimal(10, 2)
+  discountAmount         Decimal        @default(0) @db.Decimal(10, 2)
   // Optional per-order shipping fee (never taxed; added after tax like the
   // invoice-side shippingFee). Invariant: equals Σ shippingFee of this order's
   // non-VOID invoices — recomputeOrderFromInvoices maintains the back-sync.
-  shippingFee            Decimal     @default(0) @db.Decimal(10, 2)
+  shippingFee            Decimal        @default(0) @db.Decimal(10, 2)
   requestedDeliveryDate  DateTime?
   // BUSINESS date of the order — the day it actually happened, which is NOT
   // `createdAt` (the entry timestamp) when an operator enters a forgotten order
@@ -640,16 +655,16 @@ model Order {
   trackingNotifiedAt     DateTime?
   // When true, the auto-merge cron + on-create merge will skip this order entirely.
   // Set when an operator explicitly chose "Create as separate order" despite an active draft existing.
-  skipAutoMerge          Boolean     @default(false)
-  counterSale            Boolean     @default(false) // SA-672e: set only by the counter-sale POST; GET by-key matches on it
+  skipAutoMerge          Boolean        @default(false)
+  counterSale            Boolean        @default(false) // SA-672e: set only by the counter-sale POST; GET by-key matches on it
   // Phase 4: denormalized flag — true when any line's product is in a tracked
   // (regulated) category. Drives the split preview + signature-POD requirement.
-  hasRegulated           Boolean     @default(false)
+  hasRegulated           Boolean        @default(false)
   // Sales agents & commissions (flag.sales_agents): staff-set per-order override of
   // the commission rate, resolved ahead of any customer/agent default. `0` is a valid
   // value meaning "exempt"; `null` means no override (fall through to rate resolution).
-  commissionRatePct      Decimal?    @db.Decimal(5, 2)
-  fulfillPath            FulfillPath @default(ROUTE)
+  commissionRatePct      Decimal?       @db.Decimal(5, 2)
+  fulfillPath            FulfillPath    @default(ROUTE)
   // F30/R8: client-generated key (uuid per cart session) for POST /orders replay
   // semantics. A duplicate submit under the same (tenantId, idempotencyKey) —
   // queue self-duplication, a timed-out-but-completed request retried — returns
@@ -662,9 +677,15 @@ model Order {
   idempotencyCartHash    String?
   registerKey            String?
   soldById               String?
-  counterCashTendered    Decimal?    @db.Decimal(10, 2)
-  createdAt              DateTime    @default(now())
-  updatedAt              DateTime    @updatedAt
+  counterCashTendered    Decimal?       @db.Decimal(10, 2)
+  // SA-761 T-1 / SA-772 folder 1 (sitting 4): the sales-tax rate snapshot, frozen at creation. A FRACTION
+  // (0.08875), like InvoiceItem.taxRate, at Decimal(9,6) (a percent to 4 dp; CHECK 0..1 in raw SQL). Nullable,
+  // no default, no backfill: NULL = an order stamped before the snapshot (read-time fallback). No writer or
+  // reader until the SA-761 T-2 PR merges after the apply.
+  taxRate                Decimal?       @db.Decimal(9, 6)
+  taxRateSource          TaxRateSource?
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
   tenantId               String?
 
   soldBy               User?                 @relation("OrderSoldBy", fields: [soldById], references: [id], onDelete: SetNull)
@@ -879,6 +900,16 @@ model OrderItem {
   // backorderPieces* helpers, never read by money, invoice, stock or status code. 0 = not
   // backordered OR unknown (history is not backfilled; a recreate-mode edit resets it).
   backorderedPieces          Decimal                 @default(0) @db.Decimal(10, 3)
+  /// F1(i) SA ruling (#3418): who AUTHORED this line, 'STAFF' | 'BUYER' (line-author-channel.ts
+  /// ORDER_ITEM_AUTHOR_CHANNELS), written by every new-code line write from the ACTING principal; a merge
+  /// carries the folded line's own author. NULL = written before the marker: read through the order-level
+  /// rule (sourceRecorded=false -> STAFF, else Order.source). Never derived from a timestamp. No default,
+  /// no backfill. A String, not a Prisma enum: server-internal (never on a DTO), so no CREATE TYPE.
+  authorChannel              String?
+  // SA-761 T-1 / SA-772 folder 1 (sitting 4): this line's sales-tax rate snapshot, a FRACTION at Decimal(9,6)
+  // (CHECK 0..1 in raw SQL), same unit and precision as Order.taxRate. Nullable, no default, no backfill;
+  // no writer or reader until SA-761 T-2.
+  taxRate                    Decimal?                @db.Decimal(9, 6)
   // Row 510: a staff override of a selling restriction on this line (staff-only; never on a buyer read,
   // a PDF or a receipt). Reason = the staff member's own words (3..200 after trim); By = the User id
   // (Q4 default ruling); RuleIds = the rule ids the override acknowledged (coverage: a later breach of a
@@ -891,22 +922,25 @@ model OrderItem {
   updatedAt                  DateTime                @updatedAt
   tenantId                   String?
 
-  order              Order               @relation(fields: [orderId], references: [id])
-  tenant             Tenant?             @relation(fields: [tenantId], references: [id])
+  order              Order                @relation(fields: [orderId], references: [id])
+  tenant             Tenant?              @relation(fields: [tenantId], references: [id])
   // Restrict, stated explicitly: production has always enforced RESTRICT here, while
   // an un-annotated optional relation means SetNull to Prisma — so the schema quietly
   // disagreed with the database. Nothing relies on SetNull: remove() soft-deletes,
   // bulkDelete() clears dependants first, and clearAll() delegates to bulkDelete, so
   // no path reaches this FK. Keeping RESTRICT preserves the backstop that stops a
   // stray hard-delete silently orphaning order history.
-  product            Product?            @relation(fields: [productId], references: [id], onDelete: Restrict)
-  trackedCategory    TrackedCategory?    @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
-  trackedSubcategory TrackedSubcategory? @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
+  product            Product?             @relation(fields: [productId], references: [id], onDelete: Restrict)
+  trackedCategory    TrackedCategory?     @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
+  trackedSubcategory TrackedSubcategory?  @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
   deliveryMutations  DeliveryMutation[]
   transactionItems   TransactionItem[]
   invoiceItems       InvoiceItem[]
   changeRequests     ChangeRequest[]
   components         OrderItemComponent[]
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel          String?
+  packLabel          String?
 
   @@index([orderId])
   @@index([productId])
@@ -914,9 +948,6 @@ model OrderItem {
   @@index([tenantId])
   @@index([trackedCategoryId])
   @@index([trackedSubcategoryId])
-  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
-  baseLabel String?
-  packLabel String?
 }
 
 // #2717 M3 (SA-572 A1/I9/I12): the frozen per-component snapshot of a FIXED order line. Sum of qty
@@ -1261,6 +1292,10 @@ model CustomerPrice {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   tenantId    String?
+  // Units program S6 (PLAN §1.6/§1.7): this customer's own order unit (it anchors their Auto prices,
+  // owner Q2b) and invoice unit for the product. "pack" | "base" | a ProductUnit.id; null = their tier's.
+  orderUnitRef   String?
+  invoiceUnitRef String?
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   tenant   Tenant?  @relation(fields: [tenantId], references: [id])
@@ -1269,6 +1304,28 @@ model CustomerPrice {
   @@unique([customerId, productId])
   @@index([customerId])
   @@index([tenantId])
+}
+
+/// Units program S6 (PLAN §1.2/§1.7, P4c): a customer's own price for one unit of one product. `unitRef` =
+/// "pack" | "base" | a ProductUnit.id. A row is a SET price; no row = Auto (worked out by P4c). The DB
+/// CHECK (raw SQL) refuses price <= 0: $0 is not a price (P6), clearing a price deletes the row.
+model CustomerUnitPrice {
+  id         String   @id @default(uuid())
+  tenantId   String
+  customerId String
+  productId  String
+  unitRef    String
+  price      Decimal  @db.Decimal(10, 2)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, productId, unitRef])
+  @@index([tenantId])
+  @@index([productId])
 }
 
 // ─── Buyer Favorites ──────────────────────────────────────────────────────────

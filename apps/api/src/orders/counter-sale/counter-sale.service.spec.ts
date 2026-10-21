@@ -242,7 +242,7 @@ describe("CounterSaleService.ring", () => {
         expect(dto.warningHash).toBe("rw1:abc");
         expect(dto.restrictionOverrides).toEqual(ackFields.restrictionOverrides);
         expect(user).toBe(staff);
-        // counterSale + PICKUP is exactly what salePathForOrder maps to COUNTER (jurisdiction.ts), the store's state
+        // counterSale + PICKUP is exactly what saleFulfilmentKind maps to COUNTER (sale-fulfilment.ts), the store's state
         expect(sale).toMatchObject({ counterSale: true, fulfillPath: "PICKUP" });
       });
 

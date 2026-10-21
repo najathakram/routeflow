@@ -17,6 +17,7 @@ import { Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { AppliedCreditNoteDto, OrderItemDto } from "./create-order.dto";
 import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /**
  * "Sale" = an order plus its invoice created in one step (the operator "bill now" flow).
@@ -55,9 +56,9 @@ export class CreateSaleDto extends RestrictionAckDto {
   @IsOptional() @IsDateString() deliveredOn?: string;
 
   @IsOptional() @StripHtml() @IsString() @MaxLength(5000) notes?: string;
-  @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) discountAmount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1_000_000) discountAmount?: number;
   /** Optional flat shipping fee added to the order total (never taxed). */
-  @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) shippingFee?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1_000_000) shippingFee?: number;
   @IsOptional() @IsDateString() requestedDeliveryDate?: string;
   /**
    * Business date of the sale — the day it actually happened, for a sale entered

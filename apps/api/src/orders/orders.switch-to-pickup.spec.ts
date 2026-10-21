@@ -30,6 +30,11 @@ describe("OrdersService.updateFulfillPath: switch to PICKUP", () => {
 
   beforeEach(async () => {
     h = await buildOrdersService();
+    // BO-07: an OPERATOR switching to PICKUP is judged on the live user row; this one denies nothing.
+    h.prisma.user.findFirst.mockResolvedValue({
+      deniedPermissionGroups: [],
+      permissionsVersion: 1,
+    });
     h.prisma.order.update.mockImplementation((a: any) =>
       Promise.resolve({ id: "ord-1", ...a.data }),
     );

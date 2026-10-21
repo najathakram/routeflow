@@ -130,9 +130,11 @@ describe("T2 — golden money table (R2, R7)", () => {
     });
   });
 
-  describe("cascadeTierPrices — CASCADE_TIER_PRICE_FIXTURES (REG-B122)", () => {
+  describe("applyLadderChange — CASCADE_TIER_PRICE_FIXTURES (REG-B122, P0 2026-10-14)", () => {
     itEachFixture("CASCADE_TIER_PRICE_FIXTURES", "golden: $label", (row: AnyRow) => {
-      expect(callFn("cascadeTierPrices", row.field, row.value)).toEqual(row.expected);
+      expect(callFn("applyLadderChange", row.field, row.oldValue, row.value, row.tiers)).toEqual(
+        row.expected,
+      );
     });
   });
 

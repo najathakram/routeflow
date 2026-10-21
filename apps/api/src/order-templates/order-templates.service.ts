@@ -5,13 +5,16 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
+import { customerPricing } from "../orders/units-prices-v2";
 import { resolveFulfilPath } from "../orders/fulfil-path-resolver";
 import { syncOrderLineCompositions } from "../orders/order-composition";
 import { orderTotalsOf } from "../orders/order-totals";
@@ -23,6 +26,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import { saleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
 import { AddTemplateItemDto } from "./dto/add-template-item.dto";
@@ -32,23 +36,65 @@ import {
   computeLineSubtotal,
   roundMoney,
 } from "@routeflow/pricing";
-import type { CategoryTaxType } from "@routeflow/pricing";
+import type { CategoryTaxType, CustomerLayerPrice } from "@routeflow/pricing";
 import type { BuyerReorderSkippedLine, RestrictionAck } from "@routeflow/types";
 import { taxRateFractionFrom } from "../common/tax-rate";
 import { decrementStockForSale } from "../orders/order-stock";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { assertSellableLines } from "../products/sellable-lines";
+import { RegulatedVisibilityService } from "../buyer/regulated-visibility.service";
+import { assertBuyerMayListProducts } from "./buyer-template-products";
+import { assertBuyerMayListRegulated } from "./buyer-template-regulated";
+import {
+  BUYER_TEMPLATE_PRODUCT_SELECT,
+  buyerTemplateReadContext,
+  toBuyerView,
+} from "./buyer-template-view";
 import { assertPositiveTemplateQty } from "./template-qty";
 import * as tGate from "./template-restriction-gate";
+import { authorMarkerOf, withAuthor } from "../orders/line-author-channel";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
+import { retryStockTx } from "../common/tx-retry";
+import { STOCK_TX_OPTIONS } from "../common/product-locks";
 import {
   GENERATED_ORDER_INCLUDE,
   findReplayOrder,
   lockTemplateThenFindReplay,
   replayCutoff,
 } from "./generate-replay";
+
+/** A due template as the 06:00 cron loads it (its items and the customer's name for operator notices). */
+interface DueTemplate {
+  id: string;
+  customerId: string;
+  name: string;
+  isActive?: boolean;
+  createdByRole?: string | null;
+  itemsEditedByRole?: string | null;
+  items: Array<{
+    id?: string;
+    productId: string;
+    qty: number;
+    notes?: string | null;
+    suspendedAt?: Date | null;
+  }>;
+  customer?: { businessName?: string | null } | null;
+}
+
+/** How long the 06:00 cron waits before its one re-attempt of a template held for a failed customer-prices read. */
+const CUSTOMER_PRICES_RETRY_BACKOFF_MS = 5_000;
+
+/** The coded 503 loadUnitsPricesV2 throws when a typed-price customer's flag read failed (nothing was written). */
+function isCustomerPricesUnavailable(err: unknown): boolean {
+  if (!(err instanceof ServiceUnavailableException)) return false;
+  const body = err.getResponse();
+  return (
+    typeof body === "object" &&
+    (body as { code?: unknown }).code === API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE
+  );
+}
 
 /** F-05 (SA-247): the LEAST privileged author of a template — STAFF only when creator AND last items-editor are staff. */
 function leastPrivilegedAuthor(t: {
@@ -92,6 +138,8 @@ export class OrderTemplatesService {
     // WS9: the backorder policy reader behind resolveOversellAllowed (once per generated order, before
     // the transaction). Required (never @Optional): a missing provider is a DI error (L-247).
     private readonly oversellReader: PolicyOversellReader,
+    // The catalog's regulated-category gate, applied to a buyer's template reads and writes (row 479). Required.
+    private readonly regulated: RegulatedVisibilityService,
     // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work).
     @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
@@ -111,14 +159,33 @@ export class OrderTemplatesService {
     });
   }
 
+  /**
+   * The BUYER's own templates (portal list, standing orders). Staff keep `findAll`. Every line is judged by the ONE
+   * catalog rule (`isBuyerVisibleProduct` over this buyer's `buyerVisibilityFor` context, exactly as
+   * `BuyerCatalogService.getProductDetail`), and a line whose product the catalog would 404 is DROPPED from the
+   * response, so neither its name nor any other product detail leaves the server. The template row itself stays.
+   */
+  async findAllForBuyer(customerId: string) {
+    const templates = await this.prisma.forTenant().orderTemplate.findMany({
+      where: { customerId },
+      include: {
+        items: { include: { product: { select: BUYER_TEMPLATE_PRODUCT_SELECT } } },
+        customer: { select: { id: true, businessName: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const ctx = await this.buyerReadContext(customerId);
+    const data = templates.map((t) => toBuyerView(t, ctx));
+    return { data, meta: { total: data.length } };
+  }
+
   async findAllForUser(user: JwtPayload, customerId?: string) {
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) return { data: [], meta: { total: 0 } };
-      const data = await this.findAll(customer.id);
-      return { data, meta: { total: data.length } };
+      return this.findAllForBuyer(customer.id);
     }
     const data = await this.findAll(customerId);
     return { data, meta: { total: data.length } };
@@ -138,7 +205,12 @@ export class OrderTemplatesService {
     return template;
   }
 
-  async findOneForUser(id: string, user: JwtPayload) {
+  /**
+   * 404 for a missing template, 403 for a CUSTOMER who does not own it; returns the staff-shaped row. The mutation and
+   * generate paths use this (they read ids, qty and ownership, never a name for a response); the READ endpoint is
+   * `findOneForUser`, which adds the buyer filter.
+   */
+  private async assertTemplateAccess(id: string, user: JwtPayload) {
     const template = await this.findOne(id);
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma
@@ -149,6 +221,44 @@ export class OrderTemplatesService {
     return template;
   }
 
+  async findOneForUser(id: string, user: JwtPayload) {
+    const owned = await this.assertTemplateAccess(id, user);
+    if (user.role !== "CUSTOMER") return owned;
+    // A buyer's read: re-load with the visibility facts, judge each line by the catalog rule, drop the hidden ones.
+    const template = await this.prisma.forTenant().orderTemplate.findUnique({
+      where: { id },
+      include: {
+        items: { include: { product: { select: BUYER_TEMPLATE_PRODUCT_SELECT } } },
+        customer: { select: { id: true, businessName: true } },
+      },
+    });
+    if (!template) throw new NotFoundException("Order template not found");
+    return toBuyerView(template, await this.buyerReadContext(owned.customerId));
+  }
+
+  /** The catalog rules a buyer's request is judged by: the portal context and the locked regulated categories. */
+  private buyerReadContext(customerId: string) {
+    return buyerTemplateReadContext(
+      { restrictions: this.sellingRestrictions, regulated: this.regulated },
+      this.prisma.getTenantId(),
+      customerId,
+    );
+  }
+
+  /** The buyer write gate: the same 404 for a hidden, regulated-locked, or missing product; nothing is stored first. */
+  private async assertBuyerMayList(customerId: string, productIds: readonly string[]) {
+    await assertBuyerMayListProducts(
+      { prisma: this.prisma, restrictions: this.sellingRestrictions },
+      customerId,
+      productIds,
+    );
+    await assertBuyerMayListRegulated(
+      { prisma: this.prisma, regulated: this.regulated },
+      customerId,
+      productIds,
+    );
+  }
+
   async createForUser(dto: CreateOrderTemplateDto, user: JwtPayload) {
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma
@@ -156,6 +266,12 @@ export class OrderTemplatesService {
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) throw new ForbiddenException();
       dto.customerId = customer.id;
+      await this.assertBuyerMayList(
+        customer.id,
+        (dto.items ?? []).map((i) => i.productId),
+      );
+      const created = await this.create(dto, { role: user.role, userId: user.sub });
+      return this.findOneForUser(created.id, user); // the buyer-filtered read (row 479)
     }
     return this.create(dto, { role: user.role, userId: user.sub });
   }
@@ -167,8 +283,15 @@ export class OrderTemplatesService {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || template.customerId !== customer.id) throw new ForbiddenException();
+      if (dto.items)
+        await this.assertBuyerMayList(
+          customer.id,
+          dto.items.map((i) => i.productId),
+        );
     }
-    return this.update(id, dto, { role: user.role, userId: user.sub });
+    const updated = await this.update(id, dto, { role: user.role, userId: user.sub });
+    // A buyer's answer is the buyer-filtered read, never the staff-shaped write result (row 479).
+    return user.role === "CUSTOMER" ? this.findOneForUser(id, user) : updated;
   }
 
   async removeForUser(id: string, user: JwtPayload) {
@@ -469,23 +592,25 @@ export class OrderTemplatesService {
   // ─── SECURITY (F2-003): ownership-enforced wrappers ──────────────────────────
   // The customer-reachable item-removal and order-generation endpoints previously
   // had no role guard and no ownership check, letting any CUSTOMER edit/generate
-  // from ANOTHER customer's template. findOneForUser() throws for a non-owner.
+  // from ANOTHER customer's template. assertTemplateAccess() throws for a non-owner.
 
   // B133: every mutation on the controller goes through an ownership wrapper. For
   // OPERATOR this is a pass-through today (the ownership branch is CUSTOMER-only);
   // its value is uniformity — a future CUSTOMER grant on addItem cannot ship unguarded.
   async addItemForUser(templateId: string, dto: AddTemplateItemDto, user: JwtPayload) {
-    await this.findOneForUser(templateId, user);
+    const template = await this.assertTemplateAccess(templateId, user);
+    if (user.role === "CUSTOMER")
+      await this.assertBuyerMayList(template.customerId, [dto.productId]);
     return this.addItem(templateId, dto, { role: user.role });
   }
 
   async removeItemForUser(templateId: string, itemId: string, user: JwtPayload) {
-    await this.findOneForUser(templateId, user);
+    await this.assertTemplateAccess(templateId, user);
     return this.removeItem(templateId, itemId, { role: user.role });
   }
 
   async generateOrderForUser(templateId: string, user: JwtPayload, ack?: RestrictionAck) {
-    const template = await this.findOneForUser(templateId, user);
+    const template = await this.assertTemplateAccess(templateId, user);
     // #1208 review LOW-MED: POST :id/generate is open to CUSTOMER (controller); a buyer's own
     // "Reorder" must not oversell where their own checkout would 409. WS9: the policy is resolved
     // ONCE here, before the run's transaction (source "buyer" for a CUSTOMER, "staff_entry" else).
@@ -503,6 +628,11 @@ export class OrderTemplatesService {
       undefined,
       isStaffRole ? { actor: user, ack } : undefined,
     );
+  }
+
+  /** The backoff seam of the cron's one retry (a spec replaces it, so no test waits on a real timer). */
+  private pause(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   @LeaderCron("0 6 * * *", "order-templates.generateDailyOrders")
@@ -524,13 +654,79 @@ export class OrderTemplatesService {
     let totalSkipped = 0;
     let totalSuppressed = 0;
 
+    const heldForPrices: Array<{
+      tenantId: string;
+      template: DueTemplate;
+      ban: { count: number; names: string } | null;
+    }> = [];
+    // One unattended attempt for one template. "held" = the coded customer-prices 503 (the caller re-attempts it once);
+    // any other failure is logged and counts as nothing (as before). `retry` (the second attempt) carries the first
+    // attempt's ban note and tells createOrderFromTemplate its pre-pricing side effects already ran.
+    const attemptOne = async (
+      tenantId: string,
+      template: DueTemplate,
+      retry: { ban: { count: number; names: string } | null } | null,
+    ): Promise<{
+      outcome: "created" | "skipped" | "held" | "failed";
+      ban: { count: number; names: string } | null;
+    }> => {
+      // F-05: the ban notice is sent AFTER the attempt, whatever its outcome (the suspension already
+      // committed, so a throw past it must not lose the one notice for good).
+      const ctx: {
+        ban: { count: number; names: string } | null;
+        placed?: boolean;
+        replayed?: boolean;
+        retry?: boolean;
+      } = { ban: retry?.ban ?? null, retry: retry != null };
+      let held = false;
+      try {
+        // Unattended cron run — same warn-and-oversell posture as an operator.
+        // B1054: the unlocked check above cannot see a manual "Generate now" that is still in
+        // flight, so the run also passes the start of today (UTC) as `replaySince`: the order
+        // transaction then takes the template's row lock first and re-reads, exactly like the
+        // manual path, and a twin that committed meanwhile is answered instead of doubled.
+        const order = await this.createOrderFromTemplate(
+          template,
+          true,
+          true,
+          ctx,
+          undefined,
+          startOfUtcDay(today),
+        );
+        // null = all lines were license-gated + skipped → nothing created.
+        // ctx.replayed = a concurrent manual run placed today's order first → nothing created here.
+        return { outcome: order && !ctx.replayed ? "created" : "skipped", ban: null };
+      } catch (err) {
+        const pricesDown = isCustomerPricesUnavailable(err);
+        // Only the FIRST attempt hands a held template to the retry; the second one gives up.
+        held = pricesDown && retry == null;
+        this.logger.error(
+          `[tenant:${tenantId}] Failed to generate order for template ${template.id} (${template.name})` +
+            (held ? " (customer prices unavailable; will retry once)" : ""),
+          err instanceof Error ? err.stack : String(err),
+        );
+        return { outcome: pricesDown ? "held" : "failed", ban: ctx.ban };
+      } finally {
+        // A replay means today's order exists (a manual run placed it; that path sends no ban
+        // notice), so the customer is told it went ahead, not that it was held. A first attempt
+        // that is being retried says nothing yet: the retry's outcome decides the ONE notice
+        // ("ordered" if it places the order, "held" if it does not), never a "held" followed by "ordered".
+        if (ctx.ban && !held)
+          await this.notifyBanSkipped(
+            template,
+            ctx.ban,
+            ctx.placed || ctx.replayed ? "ordered" : "held",
+          );
+      }
+    };
+
     for (const tenant of activeTenants) {
       await this.tenantCtx.run(tenant.id, async () => {
         const templates = await this.prisma.forTenant().orderTemplate.findMany({
           // REG-B131: a removed (soft-deleted) customer's standing orders stop firing. Stateless on
           // purpose: restoreCustomer() clears deletedAt and the template resumes with no other write.
           where: { isActive: true, daysOfWeek: { has: dayOfWeek }, customer: { deletedAt: null } },
-          include: { items: true },
+          include: { items: true, customer: { select: { businessName: true } } },
         });
 
         // REG-B131: a template the filter above dropped enters neither counter, so a tenant whose only
@@ -566,48 +762,33 @@ export class OrderTemplatesService {
             continue;
           }
 
-          // F-05: the ban notice is sent AFTER the attempt, whatever its outcome (the suspension already
-          // committed, so a throw past it must not lose the one notice for good).
-          const ctx: {
-            ban: { count: number; names: string } | null;
-            placed?: boolean;
-            replayed?: boolean;
-          } = { ban: null };
-          try {
-            // Unattended cron run — same warn-and-oversell posture as an operator.
-            // B1054: the unlocked check above cannot see a manual "Generate now" that is still in
-            // flight, so the run also passes the start of today (UTC) as `replaySince`: the order
-            // transaction then takes the template's row lock first and re-reads, exactly like the
-            // manual path, and a twin that committed meanwhile is answered instead of doubled.
-            const order = await this.createOrderFromTemplate(
-              template,
-              true,
-              true,
-              ctx,
-              undefined,
-              startOfUtcDay(today),
-            );
-            // null = all lines were license-gated + skipped → nothing created.
-            // ctx.replayed = a concurrent manual run placed today's order first → nothing created here.
-            if (order && !ctx.replayed) totalCreated++;
-            else totalSkipped++;
-          } catch (err) {
-            this.logger.error(
-              `[tenant:${tenant.id}] Failed to generate order for template ${template.id} (${template.name})`,
-              err instanceof Error ? err.stack : String(err),
-            );
-          } finally {
-            // A replay means today's order exists (a manual run placed it; that path sends no ban
-            // notice), so the customer is told it went ahead, not that it was held.
-            if (ctx.ban)
-              await this.notifyBanSkipped(
-                template,
-                ctx.ban,
-                ctx.placed || ctx.replayed ? "ordered" : "held",
-              );
-          }
+          const r = await attemptOne(tenant.id, template, null);
+          if (r.outcome === "created") totalCreated++;
+          else if (r.outcome === "skipped") totalSkipped++;
+          else if (r.outcome === "held")
+            heldForPrices.push({ tenantId: tenant.id, template, ban: r.ban });
         }
       });
+    }
+
+    // SA-812a G-1: a template whose customer prices could not be loaded was NOT priced at the tier and nothing was
+    // written. After EVERY tenant has run, wait ONCE (a wide outage costs one backoff, not one per tenant) and re-attempt
+    // each held template once, in its own tenant scope. One still failing is announced to that tenant's operators so the
+    // day's order is not lost silently. The retry must not repeat the side effects the first attempt already had
+    // (see `retry` on the ctx and the carried ban note), so the buyer gets exactly one notice.
+    if (heldForPrices.length > 0) {
+      await this.pause(CUSTOMER_PRICES_RETRY_BACKOFF_MS);
+      for (const held of heldForPrices) {
+        await this.tenantCtx.run(held.tenantId, async () => {
+          const r = await attemptOne(held.tenantId, held.template, { ban: held.ban });
+          if (r.outcome === "created") totalCreated++;
+          else if (r.outcome === "skipped") totalSkipped++;
+          else if (r.outcome === "held") {
+            totalSkipped++;
+            await this.notifyStandingOrderHeldForPrices(held.template);
+          }
+        });
+      }
     }
 
     this.logger.log(
@@ -638,6 +819,11 @@ export class OrderTemplatesService {
       ban: { count: number; names: string } | null;
       placed?: boolean;
       replayed?: boolean;
+      /**
+       * The cron's ONE re-attempt after a customer-prices 503: the first attempt already suspended + audited the banned
+       * lines and told the buyer about regulated skips, so none of that is repeated (`ctx.ban` is carried in).
+       */
+      retry?: boolean;
       /** A buyer's manual run: the lines left out because a selling restriction hides them from this buyer. */
       restricted?: BuyerReorderSkippedLine[];
     },
@@ -663,7 +849,8 @@ export class OrderTemplatesService {
     );
     const restrictionTenantId = requireRestrictionTenantId(this.prisma.getTenantId());
     const customerId = template.customerId;
-
+    // L8: the path decides which state judges a STATE rule (a PICKUP standing order: the store's), so it is
+    // resolved BEFORE the restriction judgments below.
     // Fulfil path (SA-678): the standing order takes the path order create would give it (the shared
     // resolver) for EVERY tenant, so a SHIP customer's standing order is SHIP and folds with their
     // other SHIP orders (the column default made it ROUTE).
@@ -682,6 +869,7 @@ export class OrderTemplatesService {
       // role null: a system caller never gets POS mode (SA-763r M1).
       { stored: storedPath, audience: "staff", role: null },
     );
+    const fulfilmentKind = saleFulfilmentKind({ counterSale: false, fulfillPath });
     let live = template.items.filter((i) => !i.suspendedAt);
     let restrictionDecision: tGate.TemplateDecision | undefined;
     let banNote: { count: number; names: string } | null = null;
@@ -699,6 +887,7 @@ export class OrderTemplatesService {
           customerId,
           lines: live.map((i) => ({ productId: i.productId })),
           channel,
+          fulfilmentKind,
         });
         if (verdict.outcome === "BLOCK" || verdict.outcome === "INDETERMINATE") {
           const nameOf = new Map(verdict.reasons.map((r) => [r.productId, r.productName]));
@@ -719,15 +908,16 @@ export class OrderTemplatesService {
           tenantId: restrictionTenantId,
           customerId,
           live,
-          fulfillPath,
           run: staffRun,
         }),
         channel,
+        fulfilmentKind,
       });
     } else {
       const verdict = await this.sellingRestrictions.checkLinesSellable({
-        ...tGate.scheduledArgs({ tenantId: restrictionTenantId, customerId, live, fulfillPath }),
+        ...tGate.scheduledArgs({ tenantId: restrictionTenantId, customerId, live }),
         channel,
+        fulfilmentKind,
         // A staff-built legacy template is not suspended by a portal limit; a legal ban still is.
         ...(isLegacyStaffBuilt(template) ? { skipPortalOnlyRules: true } : {}),
       });
@@ -737,7 +927,8 @@ export class OrderTemplatesService {
           : [],
       );
       if (banned.size > 0) {
-        await this.suspendBannedLines(template, banned, verdict.reasons);
+        // the retry only re-derives WHICH lines are banned: they are already suspended and audited
+        if (!ctx?.retry) await this.suspendBannedLines(template, banned, verdict.reasons);
         banNote = {
           count: banned.size,
           names: [...new Set(verdict.reasons.map((r) => r.productName).filter(Boolean))].join(", "),
@@ -839,7 +1030,7 @@ export class OrderTemplatesService {
     const unavailableNote =
       inactiveCount > 0 ? ` (${inactiveCount} item(s) skipped — no longer available)` : "";
 
-    if (skippedCount > 0) {
+    if (skippedCount > 0 && !ctx?.retry) {
       await this.notifySkippedRegulatedLines(template, blocked, skippedCount).catch(() => {});
     }
     // Every line was a license-gated category the customer isn't verified for —
@@ -857,14 +1048,22 @@ export class OrderTemplatesService {
       where: { id: template.customerId },
       select: { pricingTier: true, isTaxExempt: true },
     });
-    const defaultTier = customerRecord?.pricingTier ?? 1;
     // RF-079 / RF-4: an exempt customer owes $0 of BOTH taxes on the standing order, as on its invoice.
     const isTaxExempt = customerRecord?.isTaxExempt === true;
     const customerPrices = await this.prisma.forTenant().customerPrice.findMany({
       where: { customerId: template.customerId, productId: { in: productIds } },
     });
     // An MSRP-only CustomerPrice row has pricingTier null — `??` below falls through it.
-    const cpTier = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
+    // S19: tier maps + (flag.units_prices_v2 only) the customer's typed pack prices; flag off = master's values.
+    const svc = { prisma: this.prisma, entitlements: this.ordersService.entitlements };
+    const pc = await customerPricing(
+      svc,
+      template.customerId,
+      productIds,
+      customerRecord,
+      customerPrices,
+    );
+    const { defaultTier, cpMap: cpTier } = pc;
     const activePromos = await this.ordersService.loadActivePromotions(UserRole.CUSTOMER);
     const priceHistory = await this.ordersService.getCustomerPriceHistory(template.customerId);
 
@@ -883,6 +1082,7 @@ export class OrderTemplatesService {
       // B661-sweep: a line-tax (not ledger) box-unaware multiply — follow-up PR converts this to
       // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.
       const qtyPieces = upb > 1 ? item.qty * upb : item.qty;
+      const layer = pc.layer(product);
       const resolved = this.ordersService.resolveBuyerLinePrice(
         product,
         tierForProduct,
@@ -891,6 +1091,8 @@ export class OrderTemplatesService {
         qtyUnits,
         priceHistory[item.productId]?.lastPrice ?? null,
         { boxes: null, pieces: null, unitsPerBox: upb },
+        // S19: the 8th argument exists only when the pack is in the customer layer (flag off: master's 7 arguments).
+        ...((layer ? [layer] : []) as [CustomerLayerPrice] | []),
       );
       // BUY_N_GET_M subtracts whole free selling units BEFORE pricing (exact, never a
       // rounded net unit price); every other line reduces to unitPrice × qty, rounded.
@@ -993,68 +1195,89 @@ export class OrderTemplatesService {
         })
       : (allowOversellArg ?? isStaffRole);
     let replayed = false;
-    const created = await this.prisma.tenantTransaction(async (tx) => {
-      if (replaySince) {
-        // B1054: first statement. A concurrent twin that committed while we waited is returned as is.
-        const prior = await lockTemplateThenFindReplay(
-          tx,
-          template.id,
-          restrictionTenantId,
-          replaySince,
-        );
-        if (prior) {
-          replayed = true;
-          if (ctx) ctx.replayed = true;
-          return prior;
+    // SA-767 r-note 3 (b): the generation tx (order write + locked decrement) inside retryStockTx: a lock
+    // wait that gave up, a deadlock or an expired budget re-runs the WHOLE body (3 attempts, then the coded
+    // 503; the 06:00 cron logs it per template like any other failure). Replay-safe: the order id is
+    // minted by the insert, the number/total are computed before the tx, the only state it sets outside
+    // (`replayed`, `ctx.replayed`) is reset below, and every notice / the merge run after the commit.
+    const created = await retryStockTx("orderTemplates.generate", () =>
+      this.prisma.tenantTransaction(async (tx) => {
+        replayed = false;
+        if (ctx?.replayed) ctx.replayed = false;
+        if (replaySince) {
+          // B1054: first statement. A concurrent twin that committed while we waited is returned as is.
+          const prior = await lockTemplateThenFindReplay(
+            tx,
+            template.id,
+            restrictionTenantId,
+            replaySince,
+          );
+          if (prior) {
+            replayed = true;
+            if (ctx) ctx.replayed = true;
+            return prior;
+          }
         }
-      }
-      const order = await tx.order.create({
-        data: {
-          customerId: template.customerId,
-          templateId: template.id,
-          fulfillPath,
-          orderNumber,
-          subtotal,
-          tax,
-          total,
-          notes: `Auto-generated from standing order: ${template.name}${skipNote}`,
-          requestedDeliveryDate: today,
-          // Denormalized flag — true when any (allowed) line is regulated.
-          hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
-          lineItems: { create: lineItemsData },
-        },
-        include: GENERATED_ORDER_INCLUDE,
-      });
-      await tGate.stampOrder(tx, restrictionDecision, order.id); // row 510: the clicker's override, same tx
-      await syncOrderLineCompositions(tx, order.id, this.prisma.getTenantId(), this.featureConfig);
-      // SA-714 R1: each stock line is paired with its created row (product + qty, consumed once) so the
-      // decrement can SET that row's backorder marker; `position` is the template's own line order.
-      const unmatched = [...(Array.isArray(order.lineItems) ? order.lineItems : [])];
-      const stockLines = lineItemsData.map((li, position) => {
-        const at = unmatched.findIndex(
-          (r) => r.productId === li.productId && Number(r.qty) === Number(li.qty),
+        const authorChannel = authorMarkerOf(channel); // SA ruling (#3418): the run's judged channel
+        const order = await tx.order.create({
+          data: {
+            customerId: template.customerId,
+            templateId: template.id,
+            fulfillPath,
+            orderNumber,
+            // Unattended run: no principal creates it, and the template's author is judged per line
+            // (leastPrivilegedAuthor), so the recorded source is the stricter, buyer side (the column default, explicit).
+            source: "APP",
+            sourceRecorded: true, // F1(i): the source above is deliberate, not the column default
+            subtotal,
+            tax,
+            total,
+            notes: `Auto-generated from standing order: ${template.name}${skipNote}`,
+            requestedDeliveryDate: today,
+            // Denormalized flag — true when any (allowed) line is regulated.
+            hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
+            // SA ruling (#3418): each line's explicit author marker: the channel this run is judged on (the least
+            // privileged of the template's creator and last editor when unattended; the caller's role otherwise).
+            lineItems: { create: withAuthor(lineItemsData, authorChannel) },
+          },
+          include: GENERATED_ORDER_INCLUDE,
+        });
+        await tGate.stampOrder(tx, restrictionDecision, order.id); // row 510: the clicker's override, same tx
+        await syncOrderLineCompositions(
+          tx,
+          order.id,
+          this.prisma.getTenantId(),
+          this.featureConfig,
         );
-        const id = at >= 0 ? unmatched.splice(at, 1)[0].id : undefined;
-        return { id, position, productId: li.productId, qty: li.qty };
-      });
-      // WS9: `allowOversell` is the resolved boolean (cron: template_cron = true; staff manual run
-      // = true; a buyer's Reorder = their checkout's policy). Never a policy read in this section.
-      await decrementStockForSale(
-        { logger: this.logger, tenantId: this.prisma.getTenantId() },
-        tx,
-        stockLines,
-        allowOversell,
-        // B562 PR-2: the standing order's SALE rows; the cron run has no acting user.
-        // OOS PR2 (R4): a buyer's Reorder is customer-facing: a refusal carries the fixed copy, no numbers.
-        {
-          orderId: order.id,
-          notes: `TEMPLATE:${template.id}`,
-          performedById: null,
-          customerFacing: !unattended && !isStaffRole,
-        },
-      );
-      return order;
-    });
+        // SA-714 R1: each stock line is paired with its created row (product + qty, consumed once) so the
+        // decrement can SET that row's backorder marker; `position` is the template's own line order.
+        const unmatched = [...(Array.isArray(order.lineItems) ? order.lineItems : [])];
+        const stockLines = lineItemsData.map((li, position) => {
+          const at = unmatched.findIndex(
+            (r) => r.productId === li.productId && Number(r.qty) === Number(li.qty),
+          );
+          const id = at >= 0 ? unmatched.splice(at, 1)[0].id : undefined;
+          return { id, position, productId: li.productId, qty: li.qty };
+        });
+        // WS9: `allowOversell` is the resolved boolean (cron: template_cron = true; staff manual run
+        // = true; a buyer's Reorder = their checkout's policy). Never a policy read in this section.
+        await decrementStockForSale(
+          { logger: this.logger, tenantId: this.prisma.getTenantId() },
+          tx,
+          stockLines,
+          allowOversell,
+          // B562 PR-2: the standing order's SALE rows; the cron run has no acting user.
+          // OOS PR2 (R4): a buyer's Reorder is customer-facing: a refusal carries the fixed copy, no numbers.
+          {
+            orderId: order.id,
+            notes: `TEMPLATE:${template.id}`,
+            performedById: null,
+            customerFacing: !unattended && !isStaffRole,
+          },
+        );
+        return order;
+      }, STOCK_TX_OPTIONS),
+    );
 
     if (replayed) return created; // B1054: nothing was placed by THIS call: no notice, no merge
     if (ctx) ctx.placed = true; // the order tx committed: whatever happens next, the order EXISTS
@@ -1108,6 +1331,25 @@ export class OrderTemplatesService {
       );
     }
     return merged ?? created;
+  }
+
+  /**
+   * SA-812a G-1: the cron re-attempted a standing order once and the customer's prices still could not be loaded, so it
+   * was NOT placed (never priced at the tier instead). Tell the operators, with what to do. Best-effort: never fails a run.
+   */
+  private async notifyStandingOrderHeldForPrices(template: {
+    name: string;
+    customer?: { businessName?: string | null } | null;
+  }): Promise<void> {
+    const who = template.customer?.businessName ? ` for ${template.customer.businessName}` : "";
+    try {
+      await this.notifyOperators(
+        `Standing order "${template.name}"${who} was held and not placed: the customer's prices could not be loaded. ` +
+          `Nothing was ordered or charged. Open the template and use "Generate now" to place it.`,
+      );
+    } catch {
+      /* best-effort */
+    }
   }
 
   /**

@@ -45,10 +45,11 @@ import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { mrrEmits } from "../testing/mrr-emits";
 
 const CATALOG = {
   addonSkus: [
-    { sku: "CUSTOMER_PACK_100", name: "Customer pack", monthlyPrice: 12 },
+    { sku: "CUSTOMER_PACK_100", name: "Customer pack", monthlyPrice: 12, stackable: true },
     { sku: "FORECASTING", name: "Forecasting", monthlyPrice: 25, includedAtPlan: "SCALE" },
     { sku: "MSRP", name: "MSRP", monthlyPrice: 20 },
   ],
@@ -1541,6 +1542,6 @@ describe("SA-693 — self-serve add-on vs comp rows", () => {
     await svc.disableAddon("t1", "CUSTOMER_PACK_100", "u1");
 
     expect(getRow()).toMatchObject({ active: false });
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(mrrEmits(events)).toHaveLength(0);
   });
 });

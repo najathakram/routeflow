@@ -31,11 +31,13 @@
  */
 
 import { BadRequestException } from "@nestjs/common";
+import { finiteStoredLevy, finiteStoredMoney } from "../common/money-invariants.util";
 import { assertSellableLines } from "../products/sellable-lines";
 import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware, prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
 import { buildInvoiceUnitLine } from "./invoice-unit-line";
+import { priceLineItem, type LineOverrideCtx } from "./invoice-line-override";
 import {
   categoryTaxSnapshotOf,
   computeCategoryTax,
@@ -65,6 +67,8 @@ export interface EditPayloadLine {
   unitsPerBox?: number | null;
   promoFreeUnits?: number | null;
   notes?: string | null;
+  /** H3b: why this line's price moves off the customer's tier price (a changed price only). */
+  overrideReason?: string | null;
 }
 
 /** A stored InvoiceItem row, as this module reads it (Prisma Decimals arrive as objects). */
@@ -83,13 +87,22 @@ const same = (a: unknown, b: unknown): boolean =>
   a == null || b == null ? a == null && b == null : Math.abs(Number(a) - Number(b)) < 1e-9;
 
 /**
+ * The stored count of a unit line: `boxes` holds the unit count. A factor-1 unit row (its `unitsPerBox`
+ * snapshot is the unit's factor, <= 1) stores no boxes, and there the base-piece `qty` IS the unit count
+ * (row 457). A larger unit never falls back to `qty` (base pieces), so a stale row cannot read as
+ * untouched.
+ */
+const storedUnitCount = (row: StoredEditRow): unknown =>
+  Number(row.unitsPerBox ?? 1) <= 1 ? (row.boxes ?? row.qty) : row.boxes;
+
+/**
  * qty, boxes, pieces, unitPrice, discount, taxRate — the tuple SA-184 calls "untouched" — plus the unit
  * (VU-4a). A unit line's payload qty counts the UNIT (stored as `boxes`; its `qty` column is base pieces).
  */
 const sameMoneyTuple = (item: EditPayloadLine, row: StoredEditRow): boolean =>
   norm(item.unitLabel ?? "") === norm(row.unitLabel ?? "") &&
   (requestsUnit(item)
-    ? same(item.qty, row.boxes)
+    ? same(item.qty, storedUnitCount(row))
     : same(item.qty, row.qty) && same(item.boxes, row.boxes) && same(item.pieces, row.pieces)) &&
   same(item.unitPrice, row.unitPrice) &&
   same(item.discount ?? 0, row.discount ?? 0) &&
@@ -165,7 +178,15 @@ interface PlanCtx {
   productMap: ReadonlyMap<
     string,
     {
+      id?: string;
+      name?: string | null;
+      unit?: string | null;
       unitsPerBox?: number | null;
+      pricePerUnit?: unknown;
+      priceTier2?: unknown;
+      priceTier3?: unknown;
+      priceTier4?: unknown;
+      priceTier5?: unknown;
       trackedCategoryId?: string | null;
       trackedSubcategoryId?: string | null;
     }
@@ -175,6 +196,8 @@ interface PlanCtx {
   warn: (message: string) => void;
   /** VU-4a: `resolveLineUnits` per item (index-aligned; undefined = no unit requested). The CALLER resolves. */
   resolved?: ReadonlyArray<ResolvedLineUnits | undefined>;
+  /** H3b: set by PATCH /invoices/:id — a CHANGED price is judged against the customer's tier price; an unchanged one is kept. */
+  override?: LineOverrideCtx;
 }
 
 const lineLabel = (item: EditPayloadLine) =>
@@ -271,7 +294,7 @@ function isEditOfUnmatchedLegacyRow(ctx: PlanCtx, item: EditPayloadLine): boolea
 }
 
 export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
-  return ctx.items.map((rawItem, i): EditedLine => {
+  return ctx.items.map((sentItem, i): EditedLine => {
     const { row, untouched, productChanged, leftUnit } = ctx.matches[i];
     if (row && untouched) {
       // Verbatim: stored money, split, pack, levy and snapshots. Only cosmetic fields follow the payload.
@@ -280,20 +303,31 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         untouched: true,
         data: {
           ...row,
-          qty: Number(row.qty),
-          unitPrice: Number(row.unitPrice),
-          discount: Number(row.discount ?? 0),
+          // SA-816: qty and subtotal survive an untouched row and are summed by the order back-sync.
+          qty: finiteStoredMoney(row.qty, `Invoice line ${row.id} qty`),
+          // SA-816c: the stored price and line discount are refused when non-finite, like the levy below.
+          unitPrice: finiteStoredMoney(row.unitPrice, `Invoice line ${row.id} unit price`),
+          discount: finiteStoredMoney(row.discount, `Invoice line ${row.id} discount`),
           taxRate: Number(row.taxRate ?? 0),
-          subtotal: Number(row.subtotal),
-          categoryTaxAmount: Number(row.categoryTaxAmount ?? 0),
-          description: rawItem.description ?? row.description,
-          notes: rawItem.notes ?? null,
-          orderItemId: rawItem.orderItemId ?? row.orderItemId ?? null,
+          subtotal: finiteStoredMoney(row.subtotal, `Invoice line ${row.id} subtotal`),
+          // SA-816: a stored non-finite levy is refused (400), never carried into the rewrite verbatim.
+          categoryTaxAmount: finiteStoredLevy(row, `Invoice line ${row.id} category tax`),
+          description: sentItem.description ?? row.description,
+          notes: sentItem.notes ?? null,
+          orderItemId: sentItem.orderItemId ?? row.orderItemId ?? null,
         },
       };
     }
-    const product = rawItem.productId ? ctx.productMap.get(rawItem.productId) : undefined;
+    const product = sentItem.productId ? ctx.productMap.get(sentItem.productId) : undefined;
     const unitRes = ctx.resolved?.[i];
+    // H3b: a re-sent stored price keeps its stored type/reason/author; a changed one is decided afresh.
+    const { item: rawItem, stamp } = priceLineItem(
+      ctx.override,
+      sentItem,
+      product,
+      unitRes?.unitLabel ?? null,
+      productChanged ? null : row,
+    );
     if (product && unitRes && isUnitAware(unitRes)) {
       // VU-4a (D3): the SAME builder create() uses for a unit line; a changed line writes its whole data.
       const category = product.trackedCategoryId
@@ -318,6 +352,7 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       });
       const data = {
         ...built,
+        ...stamp,
         trackedCategoryId: levy.lineCategoryId,
         trackedSubcategoryId: keepsRow
           ? (row.trackedSubcategoryId ?? null)
@@ -434,6 +469,7 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         ...levy.categoryTrio,
         notes: item.notes ?? null,
         msrp: null as number | null,
+        ...stamp,
       },
     };
   });
@@ -520,6 +556,8 @@ export function inPlacePatch(line: EditedLine, row: StoredEditRow): Record<strin
   }
   if (!same(data.categoryTaxAmount ?? 0, row.categoryTaxAmount ?? 0))
     patch.categoryTaxAmount = data.categoryTaxAmount;
+  // SA-814 R5-2: a verified B294 rate stamped on a kept legacy rate-0 line (stored-tax-state.ts) is the one rate write.
+  if (!same(data.taxRate ?? 0, row.taxRate ?? 0)) patch.taxRate = data.taxRate;
   return Object.keys(patch).length > 0 ? patch : null;
 }
 
@@ -571,6 +609,15 @@ export async function loadEditCatalog(
             kind: true,
             unit: true,
             unitsPerBox: true,
+            pricePerUnit: true,
+            priceTier2: true,
+            priceTier3: true,
+            priceTier4: true,
+            priceTier5: true,
+            packLabel: true,
+            baseUnitLabel: true,
+            orderUnitRef: true, // S19: the customer layer reads the product's anchor
+            packAuto: true,
             trackedCategoryId: true,
             trackedSubcategoryId: true,
           },

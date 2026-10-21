@@ -250,10 +250,6 @@ const INVENTORY: Record<string, Row> = {
     kind: "DELETE_ONLY",
     why: "customer purge",
   },
-  "products/products.service.ts::ProductsService.bulkDelete": {
-    kind: "DELETE_ONLY",
-    why: "product purge",
-  },
   "system-config/settings.controller.ts::SettingsController.clearFinancialData": {
     kind: "DELETE_ONLY",
     why: "financial reset",
@@ -1035,10 +1031,6 @@ const REVISIONS: Record<string, RevisionRow> = {
     kind: "ORDER_GONE",
     why: "deletes imported customers' orders with their lines",
   },
-  "products/products.service.ts::ProductsService.bulkDelete": {
-    kind: "ORDER_GONE",
-    why: "hard-deletes a product with no live history; its lines are removed with it (no editable order depends on it)",
-  },
   "bookkeeping/bookkeeping.service.ts::BookkeepingService.createExpense": {
     kind: "NOT_AN_ORDER",
     why: "the nested `lineItems` are an expense's, not an order's",
@@ -1055,6 +1047,10 @@ const REVISIONS: Record<string, RevisionRow> = {
     "delivery evidence (deliveredQty), not the sale",
   ),
   "orders/delivered-stamp.ts::clearUnevidencedDelivered": statusOnly(
+    "delivery evidence (deliveredQty), not the sale",
+  ),
+  // B692: a manual PARTIALLY_DELIVERED records per-line delivery evidence (deliveredQty recompute), not the sale.
+  "orders/order-pd-quantities.ts::writeOfficeDeliveries": statusOnly(
     "delivery evidence (deliveredQty), not the sale",
   ),
   "routes/routes.service.ts::RoutesService.completeWithPayment": statusOnly(

@@ -55,7 +55,26 @@ export const INFRA: Record<Model, string> = {
  * moment a gap is written).
  */
 const P0A_LABELS: Record<string, GapRef> = { baseLabel: "unfiled", packLabel: "unfiled" };
-const P0A_LABELS_LINECODE: Record<string, GapRef> = { ...P0A_LABELS, lineCode: "unfiled" };
+/**
+ * Units program S6 (SA-795 (g)): the invoice-unit snapshot columns exist (nullable, display-only) but nothing
+ * writes them yet; the invoice-unit slice (S23) snapshots them at issue and moves each out of gaps.
+ */
+const S6_INVOICE_UNIT: Record<string, GapRef> = {
+  invoiceUnitLabel: "unfiled",
+  invoiceUnitFactor: "unfiled",
+};
+const P0A_LABELS_LINECODE: Record<string, GapRef> = {
+  ...P0A_LABELS,
+  lineCode: "unfiled",
+  ...S6_INVOICE_UNIT,
+};
+
+/**
+ * Sitting 4 (SA-772 folder 1, SA-761 T-1): OrderItem.taxRate, the sale-time sales-tax rate snapshot. The column exists
+ * (nullable, no backfill) but NO copier writes it until SA-761 T-2 / T-3 (the resolver stamp in create + template
+ * generation, carried through merge and back-sync) merge after the apply, so it is a known gap on every OrderItem copier.
+ */
+const SA772_ORDER_TAX_GAP: Record<string, GapRef> = { taxRate: "unfiled" };
 
 /**
  * Row 510: the staff restriction-override stamp on OrderItem / InvoiceItem (the four columns below). Lead + owner ruling
@@ -85,6 +104,8 @@ const MERGE = {
     "categoryTaxType categoryTaxRate categoryPriceIncludesTax " +
     // SA-716 MUST 2: the backorder marker is a fact of the sale; the fold CARRIES it (winner += losers').
     "backorderedPieces " +
+    // SA ruling (#3418): the folded line's OWN author (its marker, else its loser order's rule), never the winner's.
+    "authorChannel " +
     // row 510: the loser line's staff-override stamp (a fold keeps the acknowledged sale), via write.data.
     R510_STAMP,
   // #2717 M3: the stamp rides `...compositionStampOf(write.data)` (an opaque local spread, so not checked as
@@ -94,6 +115,7 @@ const MERGE = {
   na: "deliveredQty invoicedQty",
   gaps: {
     ...P0A_LABELS,
+    ...SA772_ORDER_TAX_GAP,
     // B776/SA-124a (#938): buildMergeLineWrites now carries the contributing line's OWN
     // snapshot pack through every write (the whole point of the fix — never re-split at the
     // live product's CURRENT pack) — unitsPerBox moved to carried above, gap closed.
@@ -113,6 +135,7 @@ export const COPIERS: Copier[] = [
     carried:
       "productId qty unitPrice subtotal boxes pieces unitsPerBox unitLabel promoFreeUnits originalPrice priceType notes categoryTaxAmount orderItemId trackedCategoryId trackedSubcategoryId " +
       "categoryTaxType categoryTaxRate categoryPriceIncludesTax " + // B297: the order line's own trio, verbatim
+      "overrideReason overriddenBy " + // H3b: the staff override reason + author, verbatim (staff-only reads)
       R510_STAMP, // row 510: order -> invoice carries the staff override (no re-warn), split included
     // #2717 M3: the FIXED stamp and the frozen component rows ride `...invoiceCompositionFields(...)`, an opaque
     // local spread (invoice-line-composition.ts), for exactly the pieces this bill covers.
@@ -133,7 +156,8 @@ export const COPIERS: Copier[] = [
       "description productId qty unitPrice discount taxRate boxes pieces promoFreeUnits msrp subtotal trackedCategoryId trackedSubcategoryId categoryTaxAmount unitsPerBox originalPrice priceType notes " +
       // #2169 (SA-395): a duplicated NSF fee line stays a real system-written NSF line — carried
       // verbatim, same as every other snapshot column here.
-      "categoryTaxType categoryTaxRate categoryPriceIncludesTax systemKind", // B297: the source line's trio, verbatim
+      "categoryTaxType categoryTaxRate categoryPriceIncludesTax systemKind " + // B297: the source line's trio, verbatim
+      "overrideReason overriddenBy", // H3b: travel with the override price they explain
     // unit lines are refused (409); order-linked invoices are refused (RF-011), and composed lines exist only on those
     na: "unitLabel orderItemId compositionMode recipeId recipeVersion",
     reset: R510_STAMP, // row 510: a duplicate is a new sale, re-judged; the source line's override is never copied
@@ -173,7 +197,8 @@ export const COPIERS: Copier[] = [
     reset: "discount " + R510_STAMP,
     // The estimate line has no such column / no order link; unit-aware lines are refused (409 UNIT_AWARE_LINE).
     // #2169 (SA-395): an estimate line, never a copy of a system-stamped source line.
-    na: "promoFreeUnits notes orderItemId unitLabel systemKind compositionMode recipeId recipeVersion",
+    // H3b: EstimateItem has no overrideReason / overriddenBy columns.
+    na: "promoFreeUnits notes orderItemId unitLabel systemKind compositionMode recipeId recipeVersion overrideReason overriddenBy",
     components: "na",
     gaps: {
       ...P0A_LABELS_LINECODE,
@@ -192,7 +217,7 @@ export const COPIERS: Copier[] = [
     rederived:
       "subtotal msrp categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax",
     // #2169 (SA-395): a template-generated line, never a copy of a system-stamped source line.
-    na: "originalPrice priceType promoFreeUnits notes orderItemId systemKind compositionMode recipeId recipeVersion", // RecurringInvoiceItem has none of these columns
+    na: "originalPrice priceType promoFreeUnits notes orderItemId systemKind compositionMode recipeId recipeVersion overrideReason overriddenBy", // RecurringInvoiceItem has none of these columns
     reset: R510_STAMP, // row 510 (#2093): a breached line is skipped, never stamped; an override is never carried forward
     components: "na",
     gaps: {
@@ -217,12 +242,15 @@ export const COPIERS: Copier[] = [
     rederived:
       "unitPrice subtotal priceType originalPrice promoFreeUnits trackedCategoryId categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax compositionMode recipeId recipeVersion " +
       // SA-714/SA-716: a standing order is a fresh sale — decrementStockForSale SETs the marker after the create.
-      "backorderedPieces",
+      "backorderedPieces " +
+      // SA ruling (#3418): the run's judged channel, stamped by `withAuthor` at the nested create.
+      "authorChannel",
     components: "rederived", // #2717 M3: syncOrderLineCompositions plans a RECIPE line from the ACTIVE recipe, mode-gated
     na: ORDER_FRESH,
     reset: R510_STAMP, // row 510 (#2093): template items have no stamp; a banned line is skipped, never stamped
     gaps: {
       ...P0A_LABELS,
+      ...SA772_ORDER_TAX_GAP,
       boxes: "B647",
       pieces: "B647",
       unitsPerBox: "B647",
@@ -248,12 +276,15 @@ export const COPIERS: Copier[] = [
     rederived:
       "name subtotal promoFreeUnits trackedCategoryId trackedSubcategoryId categoryTaxAmount position categoryTaxType categoryTaxRate categoryPriceIncludesTax compositionMode recipeId recipeVersion " +
       // SA-716: the rollover line is a fresh sale of the remainder — create()'s decrement SETs the marker.
-      "backorderedPieces",
+      "backorderedPieces " +
+      // SA ruling (#3418): create() stamps the creating principal's marker (the buyer pseudo-user: BUYER).
+      "authorChannel",
     components: "rederived", // #2717 M3: written by OrdersService.create, which syncs compositions in its tx
     na: "deliveredQty invoicedQty status", // overrideReason/overriddenBy ride viaOptions (D-20)
     reset: R510_STAMP, // row 510: the rollover is a new sale through create(), re-judged; the source stamp is not passed
     gaps: {
       ...P0A_LABELS,
+      ...SA772_ORDER_TAX_GAP,
       unitLabel: "unfiled",
       notes: "unverified",
     },
@@ -314,7 +345,7 @@ export const COPIERS: Copier[] = [
     reset: "taxRate", // forced 0
     rederived: R510_STAMP, // row 510: the import marker (see R510_STAMP), written after the loop, not in this literal
     // #2169 (SA-395): an imported CSV line, never a copy of a system-stamped source line.
-    na: "originalPrice msrp priceType boxes pieces unitsPerBox promoFreeUnits notes orderItemId trackedCategoryId trackedSubcategoryId categoryTaxAmount unitLabel categoryTaxType categoryTaxRate categoryPriceIncludesTax systemKind compositionMode recipeId recipeVersion",
+    na: "originalPrice msrp priceType boxes pieces unitsPerBox promoFreeUnits notes orderItemId trackedCategoryId trackedSubcategoryId categoryTaxAmount unitLabel categoryTaxType categoryTaxRate categoryPriceIncludesTax systemKind compositionMode recipeId recipeVersion overrideReason overriddenBy",
     components: "na",
     // row 510 (#2093): historical import is exempt; it STAMPS the fixed "Imported (historical)" marker (importing user,
     // rules matched at import) AFTER the loop, through import-restriction-marker.ts: re-derived from the live rules.
@@ -341,11 +372,13 @@ export const COPIERS: Copier[] = [
       R510_STAMP, // row 510: a line rebuilt from an invoice line keeps its staff-override stamp
     // SA-716: a line rebuilt from invoice lines has no sale-time stock history — backorderedPieces stays 0.
     reset: "priceType status invoicedQty backorderedPieces",
-    rederived: "name compositionMode recipeId recipeVersion",
+    // SA ruling (#3418): an invoice edit is a staff-initiated path, so the back-synced new line is STAFF.
+    rederived: "name compositionMode recipeId recipeVersion authorChannel",
     components: "rederived", // #2717 M3: syncOrderLineCompositions runs right after the back-sync loop
     na: "deliveredQty overrideReason overriddenBy",
     gaps: {
       ...P0A_LABELS,
+      ...SA772_ORDER_TAX_GAP,
       originalPrice: "unfiled",
       notes: "unfiled",
       position: "unfiled",

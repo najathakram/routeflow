@@ -27,6 +27,7 @@ import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { DocumentLetterhead } from "@/components/DocumentLetterhead";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { storedOrComputedLineSubtotal } from "@/lib/line-subtotal";
+import { estimateTaxBasisNotice } from "@/lib/estimate-tax-basis";
 
 // ─── Void confirm modal ───────────────────────────────────────────────────────
 
@@ -177,9 +178,11 @@ export default function EstimateDetailPage() {
   const handleConvert = () => {
     convertToInvoice.mutate(rw.attach(estimate.id), {
       onSuccess: (inv) => {
+        // H5: the invoice is taxed at TODAY's rate and exempt flag; say so when that differs from the quote.
+        const taxNotice = estimateTaxBasisNotice(inv?.taxBasis);
         toast({
           title: "Invoice created",
-          description: `${estimate.estimateNumber} has been converted to an invoice.`,
+          description: `${estimate.estimateNumber} has been converted to an invoice.${taxNotice ? ` ${taxNotice}` : ""}`,
           variant: "success",
         });
         // B15-NAV: the server returns the created Invoice keyed `id` (not

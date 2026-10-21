@@ -87,6 +87,14 @@ describe("CustomersWithoutState (Addendum D)", () => {
     expect(screen.queryByText("Customer a")).toBeNull();
   });
 
+  it("row 510: the header says staff are warned (no switch), never that staff orders aren't checked", async () => {
+    renderWithProviders(<CustomersWithoutState canFix />);
+    expect(
+      await screen.findByText(/Staff \(except drivers\) are warned and can override with a reason/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Staff orders and invoices aren't checked/)).toBeNull();
+  });
+
   it("is amber, never red", async () => {
     renderWithProviders(<CustomersWithoutState canFix />);
     const card = await screen.findByTestId("customers-without-state");
@@ -455,7 +463,7 @@ describe("CustomersWithoutState: SA rows R2 + undo by action id", () => {
     renderWithProviders(<CustomersWithoutState canFix />);
     expect(
       await screen.findByText(
-        "Your customer list is too large to check all at once, so some customers may still need a state.",
+        /^Your customer list is too large to check all at once, so some customers may still need a state\. Until it's set/,
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Every customer has a state on file.")).toBeNull();

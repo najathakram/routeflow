@@ -12,11 +12,12 @@ import {
   Min,
   ValidateNested,
 } from "class-validator";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { AppliedCreditNoteDto } from "./create-order.dto";
 import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
 import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 class UpdateOrderItemDto {
   @IsOptional()
@@ -84,7 +85,7 @@ class UpdateOrderItemDto {
   @IsOptional() @IsInt() @Min(0) @Max(100_000) boxes?: number;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) pieces?: number;
 
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsNumber()
   @Min(0)
   @Max(1_000_000)
@@ -107,8 +108,11 @@ class UpdateOrderItemDto {
   @IsString()
   substitution?: string;
 
+  /** Row 496: capped (as create-order.dto.ts), trimmed (a blank one is null); a formula-led value is refused in the service. */
   @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() || null : value))
   @IsString()
+  @MaxLength(200)
   overrideReason?: string;
 }
 
@@ -159,7 +163,7 @@ export class UpdateOrderItemsDto extends RestrictionAckDto {
   orderNotes?: string;
 
   /** Optional flat shipping fee added to the order total (never taxed). Staff-only. */
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsNumber()
   @Min(0)
   @Max(1_000_000)

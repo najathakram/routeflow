@@ -240,15 +240,14 @@ export default function BuyerShelfPage() {
       // suggestedQty is a whole-box multiple of PIECES, and a box-unaware boxed
       // line is ordered/charged as suggestedQty BOXES (unitsPerBox× too much).
       const upb = e.unitsPerBox;
+      // Row 531: qty is derived FROM the box count, so the pair always agrees (the server refuses a
+      // buyer line whose qty and split differ).
+      const boxes = upb && upb > 1 ? Math.max(1, Math.round(e.suggestedQty / upb)) : 0;
       await createOrder.mutateAsync({
         items: [
-          {
-            productId: e.productId,
-            qty: e.suggestedQty,
-            ...(upb && upb > 1
-              ? { boxes: Math.max(1, Math.round(e.suggestedQty / upb)), pieces: 0 }
-              : {}),
-          },
+          boxes > 0 && upb
+            ? { productId: e.productId, qty: boxes * upb, boxes, pieces: 0 }
+            : { productId: e.productId, qty: e.suggestedQty },
         ],
         ...(quickFulfillPath ? { fulfillPath: quickFulfillPath } : {}),
       });

@@ -4,6 +4,7 @@ import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
 import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware } from "../orders/unit-line-build";
 import { buildInvoiceUnitLine } from "./invoice-unit-line";
+import { priceLineItem, type LineOverrideCtx } from "./invoice-line-override";
 import {
   categoryTaxSnapshotOf,
   computeCategoryTax,
@@ -48,15 +49,23 @@ export function buildManualInvoiceLines(
     clampFreeUnits: (free: number | undefined, boxes: number | null, qty: number) => number;
     /** units_v1: `resolveLineUnits` per item, index-aligned with `items` (the caller resolves). */
     resolved?: ReadonlyArray<ResolvedLineUnits>;
+    /** H3b: set by POST /invoices only — a typed price is judged against the customer's tier price (invoice-line-override.ts). */
+    override?: LineOverrideCtx;
   },
 ) {
-  const { productMap, categoryMap, tenantId, clampFreeUnits, resolved } = ctx;
+  const { productMap, categoryMap, tenantId, clampFreeUnits, resolved, override } = ctx;
   let subtotal = 0;
-  const itemsData = items.map((item, index) => {
-    const product = item.productId ? productMap.get(item.productId) : undefined;
+  const itemsData = items.map((sent, index) => {
+    const product = sent.productId ? productMap.get(sent.productId) : undefined;
     // units_v1 (4c-1): a non-pack unit is built from the SERVER ladder's factor; the pack falls
     // through to the unchanged branch below.
     const unitResolution = resolved?.[index];
+    const { item, stamp } = priceLineItem(
+      override,
+      sent,
+      product,
+      unitResolution?.unitLabel ?? null,
+    );
     if (product && unitResolution && isUnitAware(unitResolution)) {
       const category = product.trackedCategoryId
         ? categoryMap.get(product.trackedCategoryId)
@@ -69,7 +78,7 @@ export function buildManualInvoiceLines(
         tenantId,
       });
       subtotal += unitLine.subtotal;
-      return unitLine;
+      return { ...unitLine, ...stamp };
     }
     let qty = item.qty;
     let boxes: number | null = null;
@@ -199,6 +208,7 @@ export function buildManualInvoiceLines(
       notes: item.notes ?? null,
       // MSRP snapshot — set below by applyMsrpSnapshots (null when flag.msrp is off).
       msrp: null as number | null,
+      ...stamp, // H3b: priceType, originalPrice, overrideReason, overriddenBy (POST /invoices only)
       tenantId: tenantId, // nested creates bypass forTenant() extension
     };
   });

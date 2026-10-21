@@ -203,6 +203,18 @@ export type DocumentNumberType = (typeof DOCUMENT_NUMBER_TYPE_VALUES)[number];
 export const COSTING_METHOD_VALUES = ["FIFO", "LIFO", "AVCO", "STANDARD", "LAST_COST"] as const;
 export type CostingMethod = (typeof COSTING_METHOD_VALUES)[number];
 
+/**
+ * SA-804 (1) / B1232: FIFO and LIFO stay in the Prisma enum (removing a Postgres enum value is destructive, and
+ * old rows keep their value) but no write may SET them. A stored FIFO/LIFO is costed as AVCO (B1233). The API keeps
+ * a literal mirror in `apps/api/src/inventory/costing-method-policy.ts` (it never value-imports this package);
+ * `common/costing-method-retired.spec.ts` pins the two equal.
+ */
+export const RETIRED_COSTING_METHODS = ["FIFO", "LIFO"] as const;
+export type RetiredCostingMethod = (typeof RETIRED_COSTING_METHODS)[number];
+/** What a picker may offer: every method that is not retired. */
+export const SELECTABLE_COSTING_METHODS = ["AVCO", "STANDARD", "LAST_COST"] as const;
+export type SelectableCostingMethod = (typeof SELECTABLE_COSTING_METHODS)[number];
+
 export const AUTHORIZATION_STATUS_VALUES = [
   "NONE",
   "PENDING_REVIEW",
@@ -570,3 +582,27 @@ export const OPERATOR_PERMISSION_GROUP_VALUES = [
   "REPORTS",
 ] as const;
 export type OperatorPermissionGroup = (typeof OPERATOR_PERMISSION_GROUP_VALUES)[number];
+
+// M11: the billing usage meters (Prisma `MeterKey`, returned by `GET /billing/usage`). The web
+// meter labels are keyed on this union, so a new server meter is a type error, not a raw key.
+export const METER_KEY_VALUES = ["SEATS", "ROUTES", "SCANS", "MSGS", "CUSTOMERS"] as const;
+export type MeterKey = (typeof METER_KEY_VALUES)[number];
+
+// SA-761 / SA-772 folder 1 (sitting 4): where `Order.taxRate` was taken from when the order was stamped (Prisma
+// `TaxRateSource`). LEGACY_INFERRED labels a pre-snapshot order whose rate the B294 backfill inferred from its totals.
+export const TAX_RATE_SOURCE_VALUES = [
+  "TENANT_DEFAULT",
+  "CUSTOMER_EXEMPT",
+  "LEGACY_INFERRED",
+] as const;
+export type TaxRateSource = (typeof TAX_RATE_SOURCE_VALUES)[number];
+
+// SA-760 R-3 / SA-772 folder 3 (sitting 4): an order invoice's billing role (Prisma `InvoiceOrderBillingRole`,
+// `Invoice.orderBillingRole`). Only MIRROR drafts are ever rebuilt automatically; a PARTIAL is never re-billed.
+export const INVOICE_ORDER_BILLING_ROLE_VALUES = [
+  "MIRROR",
+  "PARTIAL",
+  "REMAINDER",
+  "MANUAL",
+] as const;
+export type InvoiceOrderBillingRole = (typeof INVOICE_ORDER_BILLING_ROLE_VALUES)[number];

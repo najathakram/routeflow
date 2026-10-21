@@ -29,19 +29,22 @@ import { useProducts } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import {
   attachParent,
+  groupOffered,
+  groupEnterAction,
   groupSearchRows,
   isFamilyProduct,
   isGroupExpanded,
   pickerProductName,
-  sellableOnly,
 } from "@/lib/product-search-groups";
 import {
   isSpecialTier,
   computeInvoiceLineTotal,
   computeInvoiceTotals,
-  getTierPrice,
+  customerLinePrice,
   type InvoiceTotalsLine,
 } from "@routeflow/pricing";
+import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
+import { PriceLayerNotice, pricesUnconfirmed } from "@/components/PriceLayerNotice";
 import { apiClient } from "@/lib/api-client";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
@@ -113,7 +116,7 @@ interface EstimateLineItem {
   tierPrice: number;
   discountedPrice?: number;
   unitPrice: number;
-  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED";
+  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
   qty: number;
   unitsPerBox?: number;
   boxes?: number;
@@ -186,6 +189,9 @@ function CreateEstimateModal({
   const productSearchRef = React.useRef<HTMLInputElement>(null);
   // The group last toggled in the dropdown ("" = closed it); null = not toggled yet.
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
+  // Row 503: the highlighted visible variant of an OPEN family in the first row (Enter adds it; arrows move it).
+  const [variantHighlight, setVariantHighlight] = React.useState(0);
+  React.useEffect(() => setVariantHighlight(0), [productSearch, expandedParentId]);
 
   // Line items
   const [lineItems, setLineItems] = React.useState<EstimateLineItem[]>([]);
@@ -203,6 +209,9 @@ function CreateEstimateModal({
     (customerPricesData ?? []).forEach((cp: any) => map.set(cp.productId, cp.pricingTier));
     return map;
   }, [customerPricesData]);
+
+  // S19b (SA-811a/813): flag-on, billing's own customer layer. Flag off = no request and master's chain.
+  const priceLayer = useCustomerPriceLayer(selectedCustomer?.id);
 
   // Debounce
   React.useEffect(() => {
@@ -266,13 +275,26 @@ function CreateEstimateModal({
       scheduleScannerRefocus(productSearchRef, 50);
       return;
     }
+    // Flag on and the layer not read yet (or failed): a pick would price at the tier, so wait (the notice says why).
+    if (priceLayer.enabled && !priceLayer.ready) return;
     const upb: number | undefined = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
     const listPrice = Number(product.pricePerUnit ?? 0);
     const customerTier = selectedCustomer?.pricingTier ?? 1;
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
-    const tierPrice = getTierPrice(product, effectiveTier);
-    const priceType = isSpecialTier(effectiveTier) ? ("SPECIAL" as const) : ("STANDARD" as const);
+    let tierPrice = customerLinePrice({ product, tier: effectiveTier }).price;
+    let priceType: EstimateLineItem["priceType"] = isSpecialTier(effectiveTier)
+      ? "SPECIAL"
+      : "STANDARD";
+    const layer = priceLayer.layerOf(product.id);
+    if (layer) {
+      const r = customerLinePrice({ product, tier: effectiveTier, layer, unitLabel: null });
+      if (r.layered) {
+        // The layer's price is the line's price; an above-list one is MANUAL (badged MANUAL, no tier badge or strikethrough).
+        tierPrice = r.price;
+        priceType = r.priceType;
+      }
+    }
     setLineItems((prev) => [
       ...prev,
       {
@@ -300,7 +322,10 @@ function CreateEstimateModal({
   };
 
   // Barcode / Enter handler
-  const handleProductSearchEnter = async () => {
+  const handleProductSearchEnter = async (
+    /** Row 503: the grouped rows on screen, when they were built from this exact text. */
+    shownRows?: any[],
+  ) => {
     const code = productSearch.trim();
     if (!code) return;
     try {
@@ -313,14 +338,38 @@ function CreateEstimateModal({
       /* not found by barcode */
     }
     try {
-      const res = await apiClient
-        .get("/products", { params: { search: code, limit: 10, isActive: true } })
-        .then((r) => r.data);
-      const matches: any[] = sellableOnly<any>(res?.data ?? []);
-      const skuMatch = matches.find((p: any) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
-      const toAdd = skuMatch ?? matches[0];
-      if (toAdd) {
-        addLineItem(toAdd);
+      // Row 503: the rows the dropdown shows (or, before it caught up, the search grouped the same way).
+      const grouped = shownRows
+        ? { rows: shownRows, expandedIds: productGroups.expandedIds }
+        : groupSearchRows<any>(
+            (
+              await apiClient
+                .get("/products", {
+                  params: { search: code, limit: 10, isActive: true, includeVariants: true },
+                })
+                .then((r) => r.data)
+            )?.data ?? [],
+          );
+      const rows: any[] = grouped.rows;
+      const offered = groupOffered<any>(rows);
+      const skuMatch = offered.find((p: any) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
+      if (skuMatch) {
+        addLineItem(skuMatch);
+        return;
+      }
+      // Enter does what a click on the first shown row does: a FAMILY opens (SA must, row 503).
+      const first = rows[0];
+      const action = groupEnterAction<any>(
+        first,
+        !!first && isGroupExpanded(expandedParentId, grouped.expandedIds, first.id),
+        variantHighlight,
+      );
+      if (action.kind === "add") {
+        addLineItem(action.product);
+        return;
+      }
+      if (action.kind === "expand") {
+        setExpandedParentId(action.id);
         return;
       }
     } catch {
@@ -370,8 +419,14 @@ function CreateEstimateModal({
   // Footer subtotal: boxed-aware per-line totals, summed and rounded once in pricing.
   const { subtotal } = computeInvoiceTotals(lineItems.map(toTotalsLine));
 
+  const priceBlocked = pricesUnconfirmed(
+    priceLayer,
+    lineItems.map((li) => li.productId),
+  );
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (priceBlocked) return;
     const errs: Record<string, string> = {};
     if (!selectedCustomer) errs.customer = "Select a customer.";
     if (!issueDate) errs.issueDate = "Issue date is required.";
@@ -426,7 +481,17 @@ function CreateEstimateModal({
           <Button variant="secondary" onClick={onClose} disabled={createEstimate.isPending}>
             Cancel
           </Button>
-          <Button type="submit" form="create-estimate-form" loading={createEstimate.isPending}>
+          <PriceLayerNotice
+            layer={priceLayer}
+            unconfirmed={priceBlocked}
+            className="mr-auto self-center text-xs text-amber-700"
+          />
+          <Button
+            type="submit"
+            form="create-estimate-form"
+            loading={createEstimate.isPending}
+            disabled={priceBlocked}
+          >
             Create Estimate
           </Button>
         </>
@@ -550,9 +615,27 @@ function CreateEstimateModal({
                   setExpandedParentId(null);
                 }}
                 onKeyDown={(e) => {
+                  // Row 503: arrows move over the visible variants of an open family in the first row.
+                  const head = filteredProducts[0];
+                  const navigable =
+                    head &&
+                    isFamilyProduct(head) &&
+                    (head.variants?.length ?? 0) > 1 &&
+                    isGroupExpanded(expandedParentId, productGroups.expandedIds, head.id);
+                  if (navigable && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                    e.preventDefault();
+                    const last = head.variants.length - 1;
+                    setVariantHighlight((h) =>
+                      e.key === "ArrowDown" ? Math.min(h + 1, last) : Math.max(h - 1, 0),
+                    );
+                    return;
+                  }
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    handleProductSearchEnter();
+                    // Trust the shown rows only once they were built from this exact text (row 503).
+                    const settled =
+                      filteredProducts.length > 0 && debouncedProductSearch === productSearch;
+                    void handleProductSearchEnter(settled ? filteredProducts : undefined);
                   }
                 }}
                 className="h-10 w-full rounded-lg border border-surface-border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -619,12 +702,23 @@ function CreateEstimateModal({
                         )}
                         {hasVariants &&
                           isExpanded &&
-                          p.variants.map((v: any) => (
+                          p.variants.map((v: any, vi: number) => (
                             <li key={v.id} className="bg-surface-raised/50">
                               <button
                                 type="button"
                                 onClick={() => addLineItem(attachParent(v, p))}
-                                className="flex w-full items-center justify-between py-2 pl-8 pr-3 text-left text-sm hover:bg-surface-raised"
+                                aria-selected={
+                                  p.id === filteredProducts[0]?.id && isFamilyProduct(p)
+                                    ? vi === variantHighlight
+                                    : undefined
+                                }
+                                className={`flex w-full items-center justify-between py-2 pl-8 pr-3 text-left text-sm hover:bg-surface-raised${
+                                  p.id === filteredProducts[0]?.id &&
+                                  isFamilyProduct(p) &&
+                                  vi === variantHighlight
+                                    ? " bg-surface-raised"
+                                    : ""
+                                }`}
                               >
                                 <div className="flex min-w-0 items-center gap-1.5">
                                   <span className="font-medium text-navy">
@@ -672,6 +766,11 @@ function CreateEstimateModal({
                       <span className="text-sm font-medium text-navy truncate">
                         {li.productName}
                       </span>
+                      {li.priceType === "MANUAL" && (
+                        <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                          MANUAL
+                        </span>
+                      )}
                       {li.priceType === "SPECIAL" && (
                         <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
                           TIER

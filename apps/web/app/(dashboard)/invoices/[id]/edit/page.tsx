@@ -3,12 +3,15 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { useInvoice, useUpdateInvoice, type UpdateInvoiceItem } from "@/lib/api/invoices";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
+import { INVOICE_STALE_COPY, isInvoiceStale } from "@/lib/invoice-stale";
 import { hasUnitLine, unitLabelsOf } from "@/lib/invoice-line-unit";
 import {
   useCustomers,
@@ -17,6 +20,12 @@ import {
   type CustomerPrice,
 } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
+import {
+  PRICE_LAYER_FAILED_COPY,
+  PriceLayerNotice,
+  pricesUnconfirmed,
+} from "@/components/PriceLayerNotice";
 import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -24,6 +33,7 @@ import { scanRowQty } from "../../invoice-scan-level";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
 import { sellableFlat } from "@/lib/product-search-groups";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import {
   isSpecialTier,
   computeInvoiceLineTotal,
@@ -31,7 +41,7 @@ import {
   type InvoiceTotalsLine,
   normalizeBoxesPieces,
   packFromOwnSplit,
-  getTierPrice,
+  customerLinePrice,
   isNsfLine,
 } from "@routeflow/pricing";
 
@@ -97,6 +107,7 @@ function ProductSearchInput({
   onBarcodeNotFound,
   tierPriceFor,
   pricingPending,
+  pricingFailed = false,
 }: {
   value: string;
   onChange: (
@@ -116,12 +127,15 @@ function ProductSearchInput({
   /** True until the customer + customer-prices queries settle. `tierPriceFor`
    *  would resolve to LIST until then, so no product may be picked yet. */
   pricingPending: boolean;
+  /** S19b: the customer's price layer failed to load (flag on). Selection stays held, but it is a failure, not a spinner. */
+  pricingFailed?: boolean;
 }) {
   const [query, setQuery] = React.useState(value);
   const [debouncedQuery, setDebouncedQuery] = React.useState("");
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const listRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
@@ -150,7 +164,13 @@ function ProductSearchInput({
         ref={inputRef}
         type="text"
         disabled={pricingPending}
-        placeholder={pricingPending ? "Loading customer pricing…" : "Description / product…"}
+        placeholder={
+          pricingFailed
+            ? PRICE_LAYER_FAILED_COPY
+            : pricingPending
+              ? "Loading customer pricing…"
+              : "Description / product…"
+        }
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
@@ -158,6 +178,15 @@ function ProductSearchInput({
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
+        // Row 446: Tab (or any focus move) away from the field closes its popup, so it never sits
+        // over the unit select below; focus moving into the popup's own list keeps it open.
+        onBlur={(e) => {
+          if (!listRef.current?.contains(e.relatedTarget as Node | null)) setOpen(false);
+        }}
+        // Tab leaves the field: close first, so focus moves to the next field, never into the list
+        onKeyDown={(e) => {
+          if (e.key === "Tab") setOpen(false);
+        }}
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:cursor-not-allowed disabled:bg-surface-raised"
       />
       {/* Hold every product-selection path until the tier data lands: picking or
@@ -167,10 +196,10 @@ function ProductSearchInput({
           listener that BarcodeScannerButton attaches to it. */}
       {pricingPending ? (
         <span
-          title="Loading customer pricing…"
+          title={pricingFailed ? PRICE_LAYER_FAILED_COPY : "Loading customer pricing…"}
           className="inline-flex items-center justify-center rounded border border-surface-border bg-white p-1.5 text-navy/30"
         >
-          <Loader2 className="h-4 w-4 animate-spin" />
+          <Loader2 className={pricingFailed ? "h-4 w-4" : "h-4 w-4 animate-spin"} />
         </span>
       ) : (
         <BarcodeScannerButton
@@ -203,7 +232,13 @@ function ProductSearchInput({
         open &&
         debouncedQuery.length > 0 &&
         (products.length > 0 || onCreateProduct) && (
-          <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+          <div
+            ref={listRef}
+            // a press inside the list keeps focus on the input (Safari never focuses a clicked
+            // button, so a blur would close the list before the click lands)
+            onMouseDown={(e) => e.preventDefault()}
+            className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg"
+          >
             <ul className="max-h-36 overflow-y-auto">
               {products.length === 0 && (
                 <li className="px-3 py-2 text-sm text-navy/70">No products found.</li>
@@ -303,7 +338,18 @@ interface LineItemState {
   /** Whole selling units the snapshot above was earned at, so a qty edit rescales
    *  it instead of handing over free units the new quantity never earned. */
   promoBaseUnits?: number;
+  /** H3b: the price this line was offered at (the stored price on load, the tier price on a pick). A
+   *  Reason field shows once the price moves off it; the server judges the move against the customer's
+   *  tier price (a special price needs the reason). */
+  offeredPrice?: number;
+  overrideReason?: string;
 }
+
+/** H3b: this product line's price has moved off the price it was offered at (half a cent, pricing's own band). */
+const priceMoved = (it: LineItemState): boolean =>
+  !!it.productId &&
+  it.offeredPrice != null &&
+  Math.abs(Number(it.unitPrice) - it.offeredPrice) >= 0.005;
 
 /**
  * Boxed split for a line, derived from its `qty` (total pieces) + `unitsPerBox`.
@@ -396,6 +442,10 @@ export default function EditInvoicePage() {
   const { toast } = useToast();
 
   const { data: invoice, isLoading, isError } = useInvoice(id);
+  const queryClient = useQueryClient();
+  // H4: the updatedAt the form was SEEDED from (a background refetch never moves it) and the 409 notice.
+  const openedUpdatedAt = React.useRef<string | undefined>(undefined);
+  const [stale, setStale] = React.useState(false);
   const updateInvoice = useUpdateInvoice();
   const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
 
@@ -428,7 +478,13 @@ export default function EditInvoicePage() {
   // and `tierPriceFor` would answer LIST. Block selection until they settle.
   // (v5 `isLoading` is false while a query is disabled or after it errors, so an
   // invoice with no customer, or a failed fetch, never leaves the rows stuck.)
-  const tierPricingPending = customerQuery.isLoading || customerPricesQuery.isLoading;
+  // S19b (SA-811a/813): flag-on, billing's own customer layer. Flag off = no request, master's chain below. Until it is read
+  // (or after it failed) a pick would price at the tier, so selection waits and Save stays disabled with the M3 copy.
+  const priceLayer = useCustomerPriceLayer(invoice?.customerId);
+  const tierPricingPending =
+    customerQuery.isLoading ||
+    customerPricesQuery.isLoading ||
+    (priceLayer.enabled && !priceLayer.ready);
   // Per-product PRICE resolved from the CustomerPrice TIER override through the
   // product's tier ladder. An msrp-only override row has pricingTier null —
   // price at the customer's default tier (Post-MSRP hazard).
@@ -436,7 +492,11 @@ export default function EditInvoicePage() {
     const map: Record<string, number> = {};
     for (const cp of (customerPricesData ?? []) as CustomerPrice[]) {
       if (!cp.product) continue;
-      const price = getTierPrice(cp.product, cp.pricingTier ?? customer?.pricingTier ?? 1);
+      // No layer row: customerLinePrice returns master's getTierPrice number exactly.
+      const price = customerLinePrice({
+        product: cp.product as unknown as Record<string, unknown>,
+        tier: cp.pricingTier ?? customer?.pricingTier ?? 1,
+      }).price;
       if (Number.isFinite(price)) map[cp.productId] = price;
     }
     return map;
@@ -444,17 +504,36 @@ export default function EditInvoicePage() {
   /** This customer's price for `product` — the per-product CustomerPrice
    *  override first, else this customer's own tier ladder; falls back to list
    *  for Tier 1 / no override (mirrors invoices/new's addProductFromCatalog). */
+  const layerOfRef = React.useRef(priceLayer.layerOf);
+  layerOfRef.current = priceLayer.layerOf;
   const tierPriceFor = React.useCallback(
     (product: TierPriceableProduct) => {
       const listPrice = parseFloat(String(product.pricePerUnit ?? 0)) || 0;
       const customerTier = customer?.pricingTier ?? 1;
+      const layer = layerOfRef.current(product.id);
+      if (layer) {
+        // The layer row, when this product has one for its pack (R3); otherwise master's chain below.
+        const cp = ((customerPricesData ?? []) as CustomerPrice[]).find(
+          (c) => c.productId === product.id,
+        );
+        const r = customerLinePrice({
+          product: product as unknown as Record<string, unknown>,
+          tier: cp?.pricingTier ?? customerTier,
+          layer,
+          unitLabel: null,
+        });
+        if (r.layered) return r.price;
+      }
       const tierLadderPrice = isSpecialTier(customerTier)
-        ? getTierPrice(product, customerTier)
+        ? customerLinePrice({
+            product: product as unknown as Record<string, unknown>,
+            tier: customerTier,
+          }).price
         : undefined;
       const specialPrice = priceMap[product.id] ?? tierLadderPrice;
       return specialPrice != null && Number.isFinite(specialPrice) ? specialPrice : listPrice;
     },
-    [customer, priceMap],
+    [customer, priceMap, priceLayer.ready, customerPricesData],
   );
 
   const [initialized, setInitialized] = React.useState(false);
@@ -478,6 +557,7 @@ export default function EditInvoicePage() {
 
   React.useEffect(() => {
     if (invoice && !initialized) {
+      openedUpdatedAt.current = invoice.updatedAt;
       setTitle(`Edit ${invoice.invoiceNumber}`);
       setIssueDate(
         invoice.issueDate ? invoice.issueDate.slice(0, 10) : new Date().toISOString().slice(0, 10),
@@ -520,6 +600,7 @@ export default function EditInvoicePage() {
                 systemKind: it.systemKind ?? null,
                 qty: Number(it.qty),
                 unitPrice: Number(it.unitPrice),
+                offeredPrice: Number(it.unitPrice),
                 // #2656: the NSF fee line is never taxed — a legacy stored rate loads (and saves) as 0.
                 taxRate: isNsfLine(it) ? 0 : Number(it.taxRate ?? 0),
                 discount: Number(it.discount ?? 0),
@@ -601,11 +682,18 @@ export default function EditInvoicePage() {
 
   // ── Submit ────────────────────────────────────────────────────────────────────
 
+  const priceBlocked = pricesUnconfirmed(
+    priceLayer,
+    items.map((i) => i.productId),
+  );
+
   function handleSubmit() {
+    if (priceBlocked) return;
     if (!validate()) return;
 
     const dto = {
       id,
+      expectedUpdatedAt: openedUpdatedAt.current,
       issueDate: issueDate || undefined,
       dueDate: dueDate || undefined,
       discount: invDiscount,
@@ -640,6 +728,10 @@ export default function EditInvoicePage() {
               : {}),
           // SA-189: only an operator-attested pack is ever sent.
           ...(it.attestedPack ? { unitsPerBox: it.attestedPack } : {}),
+          // H3b: why the price moved off the customer's special price (the server decides if it needs one).
+          ...(priceMoved(it) && it.overrideReason?.trim()
+            ? { overrideReason: it.overrideReason.trim() }
+            : {}),
           // Round-trip the BUY_N_GET_M snapshot — the server replaces every line.
           ...(freeUnits > 0 ? { promoFreeUnits: freeUnits } : {}),
           // Round-trip the per-line note — the server recreates all items on update.
@@ -659,6 +751,10 @@ export default function EditInvoicePage() {
       },
       onError: (err: any) => {
         if (rw.handle(err, handleSubmit)) return; // row 510
+        if (isInvoiceStale(err)) {
+          setStale(true); // H4: the notice owns it; no toast
+          return;
+        }
         // A class-validator 400 carries `message` as a string[] when more than
         // one constraint fails at once — join it into one readable sentence
         // instead of handing the array straight to the toast (B788).
@@ -666,11 +762,21 @@ export default function EditInvoicePage() {
         toast({
           title: "Failed to update invoice",
           description:
-            (Array.isArray(message) ? message.join("; ") : message) || "Please try again.",
+            safeTextErrorCopy(err) ??
+            (codedToastCopy(err) ||
+              (Array.isArray(message) ? message.join("; ") : message) ||
+              "Please try again."),
           variant: "error",
         });
       },
     });
+  }
+
+  // H4: Reload refetches the invoice, then re-seeds the form from it (and its updatedAt) for the user to re-apply.
+  async function reloadStale() {
+    await queryClient.invalidateQueries({ queryKey: ["invoices", id] });
+    setStale(false);
+    setInitialized(false);
   }
 
   // ── Guards ────────────────────────────────────────────────────────────────────
@@ -834,6 +940,7 @@ export default function EditInvoicePage() {
                       value={item.description}
                       tierPriceFor={tierPriceFor}
                       pricingPending={tierPricingPending}
+                      pricingFailed={priceLayer.failed}
                       onCreateProduct={(searchTerm) => {
                         const idx = items.findIndex((it) => it.key === item.key);
                         const looksLikeSku = /^\d{6,}$/.test(searchTerm.trim());
@@ -856,6 +963,10 @@ export default function EditInvoicePage() {
                         updateItem(item.key, {
                           ...(swapped
                             ? { id: undefined, locked: undefined, attestedPack: undefined }
+                            : {}),
+                          // H3b: a picked product is offered at the tier price; a new sale, a new reason
+                          ...(swapped
+                            ? { offeredPrice: unitPrice, overrideReason: undefined }
                             : {}),
                           description,
                           productId,
@@ -922,6 +1033,21 @@ export default function EditInvoicePage() {
                           onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
                           className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                         />
+                        {/* H3b: the same reason field the new-invoice page shows off a special price. The
+                            server decides whether this move needs one and says so in the save error. */}
+                        {priceMoved(item) && (
+                          <input
+                            type="text"
+                            maxLength={200}
+                            value={item.overrideReason ?? ""}
+                            onChange={(e) =>
+                              updateItem(item.key, { overrideReason: e.target.value })
+                            }
+                            aria-label="Reason for the price change"
+                            placeholder="Reason (needed off a special price)"
+                            className="mt-1 h-8 w-full rounded border border-surface-border bg-white px-2 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          />
+                        )}
                       </MobileField>
                       <MobileField label="Disc. $">
                         <MoneyInput
@@ -1092,11 +1218,33 @@ export default function EditInvoicePage() {
             </dl>
 
             <div className="mt-5 space-y-2">
+              {stale && (
+                <div
+                  role="alert"
+                  data-testid="invoice-stale-notice"
+                  className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-navy"
+                >
+                  <p>{INVOICE_STALE_COPY}</p>
+                  <Button
+                    className="mt-2"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void reloadStale()}
+                  >
+                    Reload
+                  </Button>
+                </div>
+              )}
+              <PriceLayerNotice
+                layer={priceLayer}
+                unconfirmed={priceBlocked}
+                className="block text-xs text-amber-700"
+              />
               <Button
                 className="w-full"
                 onClick={handleSubmit}
                 loading={updateInvoice.isPending}
-                disabled={updateInvoice.isPending}
+                disabled={updateInvoice.isPending || priceBlocked}
               >
                 Save Changes
               </Button>
@@ -1129,6 +1277,7 @@ export default function EditInvoicePage() {
                       description: displayProductName(product),
                       productId: product.id,
                       unitPrice: tierPriceFor(product),
+                      offeredPrice: tierPriceFor(product),
                     }
                   : item,
               ),

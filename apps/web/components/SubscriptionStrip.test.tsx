@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { SubscriptionView } from "@routeflow/types";
 import { renderWithProviders, screen, within } from "@/test-utils/render";
 import { BillingShellBanner, BillingStripReserve } from "./BillingShellBanner";
+import { SubscriptionStrip } from "./SubscriptionStrip";
 
 const mockPortalMutate = jest.fn();
 jest.mock("@/lib/api/billing", () => ({
@@ -47,6 +48,14 @@ const view = (daysAgo: number, over: Partial<SubscriptionView> = {}): Subscripti
 });
 const paused = () => view(8, { status: "READ_ONLY", readOnlyReason: "payment_overdue" });
 
+/**
+ * Row 542: in the shell, grace / overdue are drawn by the failed-renewal banner (BillingShellBanner.payment-due.test).
+ * The strip component itself still draws them, so these tests render it directly.
+ */
+function StripOnly({ view: v, userRole }: { view: SubscriptionView; userRole: string }) {
+  return <SubscriptionStrip view={v} role={userRole === "TENANT_ADMIN" ? "admin" : "staff"} />;
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   window.localStorage.clear();
@@ -55,7 +64,7 @@ beforeEach(() => {
 
 describe("BillingShellBanner - the shell strip", () => {
   it("grace (day 2), admin: neutral blue, role=status, Update payment, dismissible", async () => {
-    renderWithProviders(<BillingShellBanner scope="acme" view={view(2)} userRole="TENANT_ADMIN" />);
+    renderWithProviders(<StripOnly view={view(2)} userRole="TENANT_ADMIN" />);
     const strip = await screen.findByTestId("subscription-strip");
     expect(strip).toHaveAttribute("role", "status");
     expect(strip.className).toMatch(/blue/);
@@ -77,18 +86,16 @@ describe("BillingShellBanner - the shell strip", () => {
   });
 
   it("dismissing a grace strip hides it for the day", async () => {
-    renderWithProviders(<BillingShellBanner scope="acme" view={view(1)} userRole="TENANT_ADMIN" />);
+    renderWithProviders(<StripOnly view={view(1)} userRole="TENANT_ADMIN" />);
     await userEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
     expect(screen.queryByTestId("subscription-strip")).toBeNull();
   });
 
   it("a grace strip stays dismissed on the next mount the same day", async () => {
-    const first = renderWithProviders(
-      <BillingShellBanner scope="acme" view={view(1)} userRole="TENANT_ADMIN" />,
-    );
+    const first = renderWithProviders(<StripOnly view={view(1)} userRole="TENANT_ADMIN" />);
     await userEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
     first.unmount();
-    renderWithProviders(<BillingShellBanner scope="acme" view={view(1)} userRole="TENANT_ADMIN" />);
+    renderWithProviders(<StripOnly view={view(1)} userRole="TENANT_ADMIN" />);
     expect(screen.queryByTestId("subscription-strip")).toBeNull();
   });
 
@@ -122,7 +129,7 @@ describe("BillingShellBanner - the shell strip", () => {
   });
 
   it("the full sentence is in the DOM and wraps: nothing is truncated or hidden behind a tap", async () => {
-    renderWithProviders(<BillingShellBanner scope="acme" view={view(2)} userRole="OPERATOR" />);
+    renderWithProviders(<StripOnly view={view(2)} userRole="OPERATOR" />);
     const strip = await screen.findByTestId("subscription-strip");
     expect(strip).toHaveTextContent(
       "There's a billing issue. Everything still works. Your admin can sort it out in Billing.",
@@ -168,9 +175,7 @@ describe("BillingShellBanner - the shell strip", () => {
       [view(2), "TENANT_ADMIN"],
       [view(6), "OPERATOR"],
     ] as const) {
-      const { container, unmount } = renderWithProviders(
-        <BillingShellBanner scope="acme" view={v} userRole={role} />,
-      );
+      const { container, unmount } = renderWithProviders(<StripOnly view={v} userRole={role} />);
       await screen.findByTestId("subscription-strip");
       expect(container.textContent ?? "").not.toMatch(
         /overdue|failed|suspend|choose a plan|subscribe/i,
@@ -236,11 +241,7 @@ describe("BillingShellBanner - announce once, link, reserve (review folds)", () 
 
   it("dark mode day 9: the owner's overdue sentence with Pay now, an amber dismissible status, no threat (SA-777)", async () => {
     renderWithProviders(
-      <BillingShellBanner
-        scope="acme"
-        view={view(9, { pauseEnforced: false })}
-        userRole="TENANT_ADMIN"
-      />,
+      <StripOnly view={view(9, { pauseEnforced: false })} userRole="TENANT_ADMIN" />,
     );
     const strip = await screen.findByTestId("subscription-strip");
     expect(strip).toHaveAttribute("role", "status");
@@ -395,8 +396,7 @@ describe("BillingShellBanner - review folds #2", () => {
 describe("SubscriptionStrip controls stay inside a 390 px row (UX B4)", () => {
   it("overdue strip, admin: Pay now flexes (flex-1 min-w-0) and Dismiss keeps its 44 px box beside it", async () => {
     renderWithProviders(
-      <BillingShellBanner
-        scope="acme"
+      <StripOnly
         view={view(2, { pauseEnforced: false, payNowAmount: 149, outstandingTotal: 149 })}
         userRole="TENANT_ADMIN"
       />,

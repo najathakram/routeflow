@@ -8,6 +8,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /**
  * B451 gap 4: replaces `@Body() dto: any` (estimates.controller.ts), which
@@ -38,7 +39,7 @@ export class CreateEstimateItemDto {
   @IsOptional() @IsString() productId?: string;
   @IsOptional() @IsString() description?: string;
   @IsNumber() @Min(0) qty: number;
-  @IsOptional() @IsNumber() @Min(0) unitPrice?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) unitPrice?: number;
   @IsOptional() @IsNumber() @Min(0) boxes?: number;
   @IsOptional() @IsNumber() @Min(0) pieces?: number;
 }

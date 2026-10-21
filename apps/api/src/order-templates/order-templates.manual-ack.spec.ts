@@ -14,7 +14,7 @@ jest.mock("../common/db-locks", () => ({
  *    ack, `document: "ORDER"` and `n:<index>` line keys;
  *  - breaches answer 409 RESTRICTION_WARNING (nothing written); with a valid ack the order is created and the decision
  *    is STAMPED inside the order's own transaction, by the clicker;
- *  - a PICKUP customer's standing order is judged at the STORE (path PICKUP, jurisdiction.ts);
+ *  - a PICKUP customer's standing order is judged at the STORE (kind PICKUP, sale-fulfilment.ts);
  *  - a buyer's Reorder (CUSTOMER) keeps the hard BUYER_PORTAL 409 and never carries an actor or an ack;
  *  - the SCHEDULED 06:00 run never asks for an acknowledgement and never stamps: it follows #2093 (skip the banned line,
  *    order the rest, notify once, suspend the template line), and a template line carries no override forward.

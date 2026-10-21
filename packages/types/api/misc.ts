@@ -3,7 +3,8 @@
 import type { EstimateStatus } from "./enums";
 
 export interface MarginConfig {
-  costingMethod: "WEIGHTED_AVERAGE" | "FIFO" | "LAST_COST";
+  /** FIFO is retired (SA-804 (1)): a stored FIFO reads as WEIGHTED_AVERAGE. */
+  costingMethod: "WEIGHTED_AVERAGE" | "LAST_COST";
   /** Default minimum margin as a fraction (0.15 = 15%). */
   defaultMarginFloor: number;
   /** Per-category floor overrides, keyed by Product.category. */

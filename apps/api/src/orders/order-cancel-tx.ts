@@ -5,7 +5,16 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import type { InvoicesService } from "../invoices/invoices.service";
-import { lockedOrderStatus, lockOrderForCancel } from "./order-cancel-impact";
+import {
+  deliveredUnitsBlockedMessage,
+  lockedOrderStatus,
+  lockOrderForCancel,
+} from "./order-cancel-impact";
+import {
+  cancelBlockedByMissingQuantities,
+  throwDeliveryQuantitiesMissing,
+} from "./order-pd-quantities";
+import { CANCELLABLE_FROM } from "./order-status-transitions";
 import { throwIfInTransitUnderLock, type CarrierEditGuard } from "./order-carrier-guard";
 import { STOCK_SETTLE_SELECT, type StockArgs, type settleStockForEdit } from "./order-stock";
 
@@ -34,6 +43,47 @@ export interface CancelOrderTxOptions {
    * credit only: the line row (qty, history) is never written. Absent for the office cancel.
    */
   bookedFloor?: ReadonlyMap<string, number>;
+  /**
+   * SA-814h: skip the in-lock delivery-state refusal (`assertCancelDeliveryStateUnderLock`). Only the counter-sale
+   * void sets it: it undoes its own hand-over first (step 9), so its lines legitimately read delivered.
+   */
+  skipDeliveryStateCheck?: boolean;
+}
+
+/**
+ * SA-814h: the delivery-state refusals, decided from lines/evidence read UNDER the Order lock. The pre-checks
+ * (`assertCancellableOrThrow` / `cancelImpact`) read the same facts before the lock and stay for the early,
+ * friendly message; they are advisory. A route stop that delivered between the pre-check and the lock moves the
+ * order to PARTIALLY_DELIVERED (a status the cancel's compare-and-set still allows), so only this read stops the
+ * cancel from restocking and voiding goods the customer already holds. Two refusals, one helper:
+ *  - delivered units (B56): some active line reads deliveredQty > 0 (409 here: the order changed under the cancel);
+ *  - legacy rows: DELIVERED / PARTIALLY_DELIVERED with no recorded quantity (B692, 409 ORDER_DELIVERY_QUANTITIES_MISSING).
+ * `refuseDeliveredUnits: false` runs only the legacy predicate (the hard delete: its broader "any delivered unit
+ * refuses a delete" rule is a separate row; this helper is where it would plug in). `order.status`, when the caller
+ * already read it under the lock, saves a query. Call it AFTER the Order lock, before any write.
+ */
+export async function assertCancelDeliveryStateUnderLock(
+  tx: any,
+  order: { id: string; status?: OrderStatus },
+  opts: { refuseDeliveredUnits?: boolean; action?: "cancel" | "delete" } = {},
+): Promise<void> {
+  const { refuseDeliveredUnits = true, action = "cancel" } = opts;
+  if (refuseDeliveredUnits) {
+    const lines: Array<{ deliveredQty: unknown }> = await tx.orderItem.findMany({
+      where: { orderId: order.id, status: { not: "CANCELLED" } },
+      select: { deliveredQty: true },
+    });
+    const units =
+      Math.round(lines.reduce((s, l) => s + Number(l.deliveredQty ?? 0), 0) * 1000) / 1000;
+    if (units > 0.001)
+      throw new ConflictException({
+        code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
+        message: deliveredUnitsBlockedMessage(units),
+      });
+  }
+  const status = order.status ?? (await lockedOrderStatus(tx, order.id));
+  if (await cancelBlockedByMissingQuantities(tx, { id: order.id, status }))
+    throwDeliveryQuantitiesMissing(action);
 }
 
 /**
@@ -49,13 +99,24 @@ export async function cancelOrderInTx(
   order: { id: string },
   opts: CancelOrderTxOptions,
 ) {
-  const { fromStatuses, statusUpdateData, carrier, user, notes, bookedFloor } = opts;
+  const {
+    fromStatuses,
+    statusUpdateData,
+    carrier,
+    user,
+    notes,
+    bookedFloor,
+    skipDeliveryStateCheck,
+  } = opts;
   const id = order.id;
   await lockOrderForCancel(tx, id);
   await assertNoCashRefundOnOrder(tx, id); // 409 on a cash refund, before any write
   // #2472 (2): decided from the status UNDER the lock, never the unlocked pre-read.
   const lockedStatus = await lockedOrderStatus(tx, id);
   throwIfInTransitUnderLock(carrier, lockedStatus); // #3219 S5
+  // SA-814h: delivered units / legacy missing quantities, re-read under the lock (the pre-checks are advisory).
+  if (!skipDeliveryStateCheck)
+    await assertCancelDeliveryStateUnderLock(tx, { id, status: lockedStatus });
   const cancelReturnsStock = lockedStatus !== OrderStatus.DRAFT;
   const lockedOrder = { ...order, status: lockedStatus };
   // SA-404f F2: compare-and-set on the cancellable set the pre-check used (`fromStatuses`) — a retry after
@@ -107,4 +168,32 @@ export async function cancelOrderInTx(
     });
   }
   return row;
+}
+
+/**
+ * B284: the lock half of a hard DELETE's stock release. Locks the Order row FIRST (the cancel tx's lock
+ * order: Order, then everything else; never take it after an Invoice row), reads the status UNDER the lock
+ * and, for an order that holds stock, the lines still booked. Returns them for the caller to hand to
+ * `settleStockForEdit(tx, order, lines, [], user, { notes: "DELETE" })` — the SAME unwind the cancel runs —
+ * right after the read-only credit pre-check and BEFORE the credit/wallet releases (house order in
+ * common/product-locks.ts: Order, then Products, then everything else; the cancel settles before its
+ * releases too). Returns null when nothing is booked: a DRAFT never took a decrement, a CANCELLED order
+ * was already credited by its cancel, and a DELIVERED order's goods are gone.
+ */
+export async function lockDeleteLines(tx: any, id: string) {
+  // $queryRaw, not $executeRaw: deleteOrder's lock-order pins count its $executeRaw row locks (the Invoice NOWAIT one).
+  await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${id} FOR UPDATE`;
+  const status = await lockedOrderStatus(tx, id);
+  // SA-814h: a legacy delivered row (no recorded quantity) is refused here, under the lock, before any restock.
+  await assertCancelDeliveryStateUnderLock(
+    tx,
+    { id, status },
+    { refuseDeliveredUnits: false, action: "delete" },
+  );
+  if (status === OrderStatus.DRAFT || !CANCELLABLE_FROM.includes(status)) return null;
+  const lines = await tx.orderItem.findMany({
+    where: { orderId: id, status: { not: "CANCELLED" } },
+    select: STOCK_SETTLE_SELECT,
+  });
+  return { order: { id, status }, lines };
 }

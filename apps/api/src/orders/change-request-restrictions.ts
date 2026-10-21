@@ -1,5 +1,5 @@
 import { ConflictException } from "@nestjs/common";
-import type { SalePath } from "../selling-restrictions/jurisdiction";
+import type { SaleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import type { StaffWriteDecision } from "../selling-restrictions/restriction-warning";
 import {
   sellableLinesForChangeRequest,
@@ -48,7 +48,7 @@ export function planChangeRequestRestrictions(p: {
   cr: ChangeRequestFacts & { id: string };
   /** The resolver: the channel and the override right. */
   principal: ChannelPrincipal | null | undefined;
-  path: SalePath;
+  fulfilmentKind: SaleFulfilmentKind;
   ack?: SellableLinesParams["ack"];
 }): ChangeRequestRestrictionPlan {
   const lineKey = `cr:${p.cr.id}`;
@@ -59,7 +59,7 @@ export function planChangeRequestRestrictions(p: {
       tenantId: p.tenantId,
       customerId: p.customerId,
       lines: lines.map((l) => ({ ...l, lineKey })),
-      path: p.path,
+      fulfilmentKind: p.fulfilmentKind,
       principal: p.principal,
       ack: p.ack,
       held: p.existing,

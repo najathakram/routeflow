@@ -14,11 +14,16 @@ import {
 import { playScanCue, unlockScanCue } from "@/lib/scan-cue";
 
 interface BarcodeScannerButtonProps {
-  onScan: (code: string) => void;
+  /** `source` is "field" when a wedge/USB scanner typed the code into `inputRef` (the caller clears the field). */
+  onScan: (code: string, source?: "field") => void;
   /** Pass the ref of an associated text input to enable USB/physical-scanner auto-submit */
   inputRef?: React.RefObject<HTMLInputElement | null>;
   className?: string;
   title?: string;
+  /** Disables the camera button (a wedge scanner on `inputRef` is unaffected). Pair it with `ariaLabel` to say why. */
+  disabled?: boolean;
+  /** Overrides the button's accessible name (otherwise `title` names it), e.g. to carry the reason it is disabled. */
+  ariaLabel?: string;
   /**
    * Called with a plain-language message whenever the webcam path can't start —
    * permission denied, no camera present, or an insecure origin (getUserMedia is
@@ -53,6 +58,8 @@ export function BarcodeScannerButton({
   inputRef,
   className,
   title = "Scan barcode",
+  disabled,
+  ariaLabel,
   onError,
   onOpenContinuous,
 }: BarcodeScannerButtonProps) {
@@ -85,14 +92,20 @@ export function BarcodeScannerButton({
     let sequence = "";
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      const now = Date.now();
+      // The browser's own event time, not Date.now() at handling time: a long task (a render, a lookup
+      // landing) delays HANDLING of queued keys, which made a fast burst look like slow typing and cut
+      // the sequence short.
+      const now = e.timeStamp;
 
       if (e.key === "Enter") {
-        // If we have a barcode-length sequence that arrived fast, treat as scan
+        // If we have a barcode-length sequence that arrived fast, treat as scan. The code is taken and the
+        // sequence emptied in ONE step, before anything else can run.
         if (sequence.length >= 6 && now - lastKeyTime < 150) {
-          e.preventDefault();
-          onScanRef.current(sequence);
+          const code = sequence;
           sequence = "";
+          lastKeyTime = 0;
+          e.preventDefault();
+          onScanRef.current(code, "field");
         }
         return;
       }
@@ -217,8 +230,10 @@ export function BarcodeScannerButton({
         type="button"
         onClick={startWebcam}
         title={title}
+        disabled={disabled}
+        aria-label={ariaLabel}
         className={cn(
-          "inline-flex items-center justify-center rounded border border-surface-border bg-white p-1.5 text-navy/70 transition hover:bg-surface-raised hover:text-navy focus:outline-none focus:ring-2 focus:ring-brand-500",
+          "inline-flex items-center justify-center rounded border border-surface-border bg-white p-1.5 text-navy/70 transition hover:bg-surface-raised hover:text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:bg-surface-raised disabled:text-navy/40 disabled:hover:text-navy/40",
           className,
         )}
       >

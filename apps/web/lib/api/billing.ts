@@ -4,6 +4,7 @@ import {
   type AddonBillingMode,
   type EnableAddonResult,
   type BillingPortalResult,
+  type MeterKey,
   type SubscriptionView,
 } from "@routeflow/types";
 import { apiClient } from "../api-client";
@@ -49,7 +50,7 @@ export interface PublicCatalog {
   addons: AddonSkuDef[];
 }
 
-export type MeterKey = "SEATS" | "ROUTES" | "SCANS" | "MSGS";
+export type { MeterKey };
 
 export interface MeterReading {
   meter: MeterKey;
@@ -91,6 +92,10 @@ export interface PlanChange {
    *  mark the plan they are on without re-deriving it from a stored (possibly aliased)
    *  key. Absent when the caller carries no tenant context. */
   fromPlanKey?: string | null;
+  /** UPGRADE only (SA-786): the add-ons the new plan newly includes - free from commit, still on. */
+  includedAddons?: { sku: string; name: string }[];
+  /** DOWNGRADE only (SA-786): the add-ons the new plan stops including - billed at the catalog price. */
+  repricedAddons?: { sku: string; name: string; monthlyPrice: number }[];
 }
 
 export interface QuoteResult {
@@ -226,11 +231,16 @@ type LocalErrorToast = boolean | ((error: unknown) => boolean);
 function useBillingMutation<TBody, TResult = unknown>(
   fn: (b: TBody) => Promise<TResult>,
   localErrorToast?: LocalErrorToast,
+  /** Seeds the cache from the response BEFORE the invalidation refetch (so a page never shows a stale value). */
+  seed?: (qc: ReturnType<typeof useQueryClient>, result: TResult) => void,
 ) {
   const qc = useQueryClient();
   return useMutation<TResult, Error, TBody>({
     mutationFn: fn,
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: (result) => {
+      seed?.(qc, result);
+      return qc.invalidateQueries({ queryKey: KEY });
+    },
     meta: localErrorToast ? { localErrorToast } : undefined,
   });
 }
@@ -254,12 +264,15 @@ export const isMappedCheckoutError = (error: unknown): boolean => {
   );
 };
 
-/** A refused add-on enable the confirm sheet words itself (annual plan, or already in the plan). */
+/** A refused add-on enable the confirm sheet words itself (annual plan, already in the plan, the quantity moved
+ *  under the page, or an unbilled row that can't be raised). */
 export const isMappedEnableAddonError = (error: unknown): boolean => {
   const code = apiErrorCodeOf(error);
   return (
     code === API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED ||
-    code === API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN
+    code === API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN ||
+    code === API_ERROR_CODES.ADDON_QUANTITY_CHANGED ||
+    code === API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW
   );
 };
 
@@ -362,10 +375,20 @@ export function useCreateCheckout() {
 
 export function useEnableAddon() {
   // The sheet words the two refusals it maps inline; every other failure keeps the global toast.
-  return useBillingMutation<{ sku: string; quantity?: number }, EnableAddonResult>(
-    ({ sku, quantity }) =>
-      apiClient.post(`/billing/addons/${sku}/enable`, { quantity }).then((r) => r.data),
+  // `quantity` is the TARGET total; `expectedQuantity` is the owned count the page showed (0 = not on), so the
+  // server refuses (409 ADDON_QUANTITY_CHANGED) instead of cutting a pack that changed under a stale page.
+  return useBillingMutation<
+    { sku: string; quantity?: number; expectedQuantity?: number },
+    EnableAddonResult
+  >(
+    ({ sku, quantity, expectedQuantity }) =>
+      apiClient
+        .post(`/billing/addons/${sku}/enable`, { quantity, expectedQuantity })
+        .then((r) => r.data),
     isMappedEnableAddonError,
+    (qc, res) => {
+      if (res?.subscription) qc.setQueryData([...KEY, "subscription"], res.subscription);
+    },
   );
 }
 

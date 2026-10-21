@@ -132,6 +132,44 @@ describe("api-client", () => {
     expect(localStorage.getItem("rf.counterSale.liveCart:acme:u1")).toBeNull();
   });
 
+  it("a failed refresh (session over) wipes every stored unsaved-invoice draft, whoever's", async () => {
+    localStorage.setItem(OP_KEYS.accessToken, "old-token");
+    localStorage.setItem(OP_KEYS.refreshToken, "refresh-token");
+    localStorage.setItem("rf.invoice-draft.v1:acme:u1", "{}");
+    localStorage.setItem("rf.invoice-draft.v1:acme:u2", "{}");
+    axiosPost.mockRejectedValue(new Error("refresh denied"));
+    const original: Config = {
+      url: "/orders",
+      method: "get",
+      headers: { Authorization: "Bearer old-token" },
+    };
+    await expect(errorHandler({ response: { status: 401 }, config: original })).rejects.toThrow();
+    expect(localStorage.getItem("rf.invoice-draft.v1:acme:u1")).toBeNull();
+    expect(localStorage.getItem("rf.invoice-draft.v1:acme:u2")).toBeNull();
+  });
+
+  it("after the forced sign-out a late pagehide flush cannot write a draft back", async () => {
+    localStorage.setItem(OP_KEYS.accessToken, "old-token");
+    localStorage.setItem(OP_KEYS.refreshToken, "refresh-token");
+    axiosPost.mockRejectedValue(new Error("refresh denied"));
+    const original: Config = {
+      url: "/orders",
+      method: "get",
+      headers: { Authorization: "Bearer old-token" },
+    };
+    await expect(errorHandler({ response: { status: 401 }, config: original })).rejects.toThrow();
+    const form = {
+      basis: "standalone",
+      customer: { id: "c-1", businessName: "Acme Co" },
+      lines: [],
+    };
+    // same module registry as the fresh api-client copy (jest.resetModules() above)
+    const store =
+      jest.requireActual<typeof import("./invoice-draft-storage")>("./invoice-draft-storage");
+    expect(store.writeInvoiceDraft("rf.invoice-draft.v1:acme:u1", form)).toBe(false);
+    expect(localStorage.getItem("rf.invoice-draft.v1:acme:u1")).toBeNull();
+  });
+
   // FINDING: the brief (PR-9 R3) claims a 401 on /auth/refresh itself "clears the
   // stored tokens". Reading apps/web/lib/api-client.ts:178-187, the guard that
   // matches original.url?.includes("/auth/refresh") returns Promise.reject(error)

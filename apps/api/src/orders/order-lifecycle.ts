@@ -17,18 +17,24 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { FulfillPath, OrderStatus, RouteRunStatus, UserRole } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { JwtPayload } from "../auth/jwt-payload.interface";
-import { staffMay } from "../auth/permissions/staff-capabilities";
 import type { OrdersService } from "./orders.service";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
+import { assertFulfilPathAddress } from "./fulfil-path-restrictions";
 import { SHIPPED_STATUSES, notifyTrackingAdded } from "./shipment-notifications";
 import { judgeFulfilSwitch } from "./fulfil-path-restrictions";
 import * as rGate from "./order-restriction-gate";
+import { resolveShipmentText } from "./shipment-text";
+import { assertFulfilPathOffered } from "./fulfil-path-resolver";
+import { mayUseTill } from "./counter-sale/till-permission.guard";
+
+const switchLogger = new Logger("OrderFulfilPathSwitch");
 
 export async function updateShipmentImpl(
   self: OrdersService,
@@ -45,13 +51,14 @@ export async function updateShipmentImpl(
       fulfillPath: true,
       customerId: true,
       orderNumber: true,
+      shippingCarrier: true,
       shippingTrackingNumber: true,
     },
   });
   if (!order) throw new NotFoundException("Order not found");
 
-  const carrier = dto.shippingCarrier?.trim() || null;
-  const tracking = dto.shippingTrackingNumber?.trim() || null;
+  // Row 507: trimmed, and a CHANGED formula-led carrier / tracking is a coded 400 (change-only vs the stored pair).
+  const { carrier, tracking } = resolveShipmentText(dto, order);
   // E-b: shippedAt is the SHIP TRANSITION's stamp (changeStatus), never a side effect of saving
   // tracking on an order that has not shipped. Saving tracking keeps whatever is there; it only
   // backfills a legacy already-shipped order that has none.
@@ -113,12 +120,23 @@ export async function updateFulfillPathImpl(
   assertSellable?: Parameters<typeof judgeFulfilSwitch>[4],
 ) {
   // POS mode (SA-763r R3): switching an order to PICKUP is a hand-over at the till, a staff capability.
-  if (dto.fulfillPath === FulfillPath.PICKUP && !staffMay(user?.role, "USE_POS_MODE")) {
+  // BO-07: the ONE till predicate (an OPERATOR's denied ORDERS group is read live; only for the PICKUP switch).
+  if (dto.fulfillPath === FulfillPath.PICKUP && !(await mayUseTill(self.prisma, user))) {
     throw new ForbiddenException({
       code: API_ERROR_CODES.POS_MODE_NOT_PERMITTED,
       message: "You don't have access to switch an order to pickup.",
     });
   }
+  // Row 506: the account must offer the requested path (the one capability the web's select reads).
+  await assertFulfilPathOffered(
+    {
+      featureConfig: self.featureConfig,
+      tenantId: self.prisma.getTenantId(),
+      logger: switchLogger,
+    },
+    dto.fulfillPath,
+    user?.role ?? null,
+  );
   // `findFirst`, NOT `findUnique`: forTenant()'s findUnique can only POST-filter
   // on the returned row's `tenantId`, and an exclusive `select` that omits it
   // silently disables that check — which would leak another tenant's order
@@ -129,10 +147,12 @@ export async function updateFulfillPathImpl(
     select: {
       id: true,
       status: true,
+      // L8 / row 510: what the selling-restrictions re-judge on a switch reads (fulfil-path-restrictions.ts).
       tenantId: true,
       customerId: true,
       fulfillPath: true,
       counterSale: true,
+      customer: { select: { addresses: { select: { id: true }, take: 1 } } },
       routeRunId: true,
       routeRunStopId: true,
       routeRunStop: {
@@ -179,6 +199,9 @@ export async function updateFulfillPathImpl(
       }.`,
     );
   }
+  // L8: PICKUP -> ROUTE / SHIP for a customer with no address is a coded 400, before anything is judged or written.
+  if (assertSellable && order.status !== OrderStatus.DRAFT && order.fulfillPath !== dto.fulfillPath)
+    assertFulfilPathAddress(order, dto.fulfillPath);
   const hasLink = order.routeRunId != null || order.routeRunStopId != null;
   // The path write itself (unchanged), on `db`: the tenant client, or the transaction below.
   const write = async (db: any) => {

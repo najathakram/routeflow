@@ -1,4 +1,6 @@
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import type { PrismaService } from "../prisma/prisma.service";
+import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { RESTRICTION_OVERRIDE_IMPORTED_REASON } from "../selling-restrictions/override-constants";
 import { writeOverrideAuditRows } from "../selling-restrictions/restriction-override-audit";
 import { breachKeys } from "../selling-restrictions/staff-breaches";
@@ -49,7 +51,10 @@ interface MarkerTx {
 
 export interface MarkerDeps {
   restrictions: Pick<SellingRestrictionsService, "judgeStaffWrite">;
-  prisma: { tenantTransaction<T>(fn: (tx: any) => Promise<T>): Promise<T> };
+  /** `tenantTransaction` for the marks; `tenantFeatureConfig` / `forTenant` for the sale's kind (L8). */
+  prisma: Pick<PrismaService, "tenantFeatureConfig" | "forTenant"> & {
+    tenantTransaction<T>(fn: (tx: any) => Promise<T>): Promise<T>;
+  };
   warn: (message: string) => void;
 }
 
@@ -78,6 +83,8 @@ export async function markImportedRestrictedLines(
         customerId,
         lines: productIds.map((productId) => ({ productId })),
         channel: "STAFF",
+        // L8: an imported invoice has no order; judged as the customer's next order would go.
+        fulfilmentKind: await defaultSaleFulfilmentKind(deps.prisma, p.tenantId, customerId),
       });
       if (judgement.outcome !== "BLOCK" && judgement.outcome !== "INDETERMINATE") continue;
       const reasonOf = new Map(judgement.reasons.map((r) => [r.productId, r]));

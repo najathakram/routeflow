@@ -10,8 +10,12 @@ import type {
   PickupCompleteResponse,
 } from "@routeflow/types";
 import { apiClient } from "../api-client";
+import { useOptionalAuth } from "../auth-context";
 import { counterSaleGate, isPickupHandledError } from "../counter-sale";
 import { useTenantFeatures } from "../tenant-features";
+import { keptSaleHref } from "../kept-draft-invoice";
+import { deniedGroupsOf, useMyPermissions } from "./my-permissions";
+import { staffMay } from "@routeflow/types";
 
 /**
  * The counter-sale gate: ONE read of `capabilities.fulfilment` from GET /tenants/me/features (never the raw `modes`).
@@ -27,7 +31,20 @@ export function useCounterSaleGate(options?: { enabled?: boolean }) {
     ?.capabilities?.fulfilment;
   // `loading`: the answer is not in yet. The screen shows an empty placeholder (never "not turned on", which would be false).
   // A disabled gate (non-staff) stays DARK even when a cached answer is in the query cache.
-  const gate = enabled
+  // BO-07: only an OPERATOR's admin can switch the till off, so only an operator's permissions are read. Admins (and
+  // impersonation tokens, which carry TENANT_ADMIN) never fetch. A failed read leaves the till offered: the server refuses.
+  const authUser = useOptionalAuth()?.user;
+  const role = authUser?.role;
+  const checkPermissions = enabled && role === "OPERATOR";
+  const perms = useMyPermissions(authUser?.id, { enabled: checkPermissions });
+  const permsPending = checkPermissions && perms.isLoading === true;
+  const deniedGroups = checkPermissions && perms.data ? deniedGroupsOf(perms.data) : [];
+  // Fail-closed flag for the builder's POS path: false while the read is pending AND after it errors (deniedGroups is
+  // [] in both, which would read as "nothing denied"). Everyone but an OPERATOR has nothing to read: true.
+  const permsKnown = !checkPermissions || perms.data !== undefined;
+  const mayUseTill =
+    checkPermissions && perms.data ? staffMay(role, "USE_POS_MODE", deniedGroups) : true;
+  const baseGate = enabled
     ? counterSaleGate(cap)
     : {
         showButton: false,
@@ -35,10 +52,22 @@ export function useCounterSaleGate(options?: { enabled?: boolean }) {
         offerShipInstead: false,
         offerInvoiceOrder: false,
       };
+  const open = mayUseTill && !permsPending;
+  const gate = {
+    ...baseGate,
+    showButton: baseGate.showButton && open,
+    opensAsCounter: baseGate.opensAsCounter && open,
+  };
   return {
     ...gate,
+    /** BO-07: the operator's admin has not turned selling on for this account (false only then). */
+    mayUseTill,
+    /** BO-07: the groups the operator's admin switched off (empty for everyone else); feeds `staffMay(role, action, denied)`. */
+    deniedGroups,
+    /** BO-07: the operator's denied groups are actually known (true for non-operators; false while pending or on error). */
+    permsKnown,
     capability: enabled ? cap : null,
-    loading: enabled && isLoading === true,
+    loading: enabled && (isLoading === true || permsPending),
     // CQ-30: the lookup itself FAILED (a server error) or could not even start (React Query PAUSES a query while the browser is
     // offline: not loading, not an error) and there is no earlier answer. That is not "counter sales are off": the screen says
     // it could not check and offers a retry. The gate stays dark (no sale UI) either way.
@@ -65,6 +94,13 @@ export function useCreateCounterSale() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["orders"] });
       void qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
+    // Row 466: a failure after the sale committed still wrote an order (and maybe an invoice).
+    onError: (err) => {
+      if (keptSaleHref(err)) {
+        void qc.invalidateQueries({ queryKey: ["orders"] });
+        void qc.invalidateQueries({ queryKey: ["invoices"] });
+      }
     },
   });
 }

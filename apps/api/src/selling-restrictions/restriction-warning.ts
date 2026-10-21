@@ -15,7 +15,7 @@ import {
   type OverrideStamp,
 } from "../common/restriction-override-columns";
 import { assertSafeTextCell } from "../common/safe-text-cell";
-import type { JurisdictionBasis } from "./jurisdiction";
+import type { JurisdictionBasis } from "./sale-fulfilment";
 import {
   DRIVER_RESTRICTION_BLOCK_MESSAGE,
   RESTRICTION_OVERRIDE_CODES,

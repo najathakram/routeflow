@@ -12,6 +12,7 @@ import { EmailService } from "../email/email.service";
 import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { webBaseUrl } from "../config/web-base-url";
 
 @Injectable()
 export class BuyerMergeService {
@@ -82,7 +83,7 @@ export class BuyerMergeService {
       },
     });
 
-    const appUrl = process.env.WEB_APP_URL ?? process.env.NEXTAUTH_URL ?? "http://localhost:3001";
+    const appUrl = webBaseUrl();
     const verifyUrl = `${appUrl}/buyer/verify-merge?token=${token}`;
 
     const sendResult = await this.emailService.sendMergeVerificationEmail({

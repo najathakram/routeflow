@@ -16,7 +16,6 @@
   "src/email/mailbox/mailbox-connection.microsoft.spec.ts": 2,
   "src/email/mailbox/mailbox-connection.service.spec.ts": 2,
   "src/estimates/estimates.service.spec.ts": 1,
-  "src/inventory/inventory.service.spec.ts": 1,
   "src/invoices/invoice-item-data-category-snapshot.spec.ts": 1,
   "src/invoices/manual-invoice-lines.spec.ts": 1,
   "src/orders/category-map.spec.ts": 2,

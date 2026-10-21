@@ -265,6 +265,27 @@ describe("ProductForm — buildProductPayload (synchronous, no fetch)", () => {
     }
   });
 
+  it("B1: editing a variant round-trips the bare label — never '<parent> - <label>' (mobile never composed)", () => {
+    // The edit form loads the stored row (with its parent) and saves it back; the parent's name is carried for the
+    // picker label only and must not reach the payload's name or variantName.
+    const form = productFormFromValues({
+      name: "Classic",
+      variantName: "Classic",
+      parentProductId: "parent-uuid",
+      parent: { name: "Acme" },
+      pricePerUnit: "5",
+    });
+    for (let i = 0; i < 2; i += 1) {
+      const result = buildProductPayload(form, "edit");
+      expect("error" in result).toBe(false);
+      if (!("error" in result)) {
+        expect(result.name).toBe("Classic");
+        expect(result.variantName).toBe("Classic");
+        expect(JSON.stringify(result)).not.toContain("Acme");
+      }
+    }
+  });
+
   it("treats unitsPerBox <= 1 (or blank) as non-boxed (omitted)", () => {
     const one = buildProductPayload({
       ...emptyProductForm(),

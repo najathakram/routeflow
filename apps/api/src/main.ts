@@ -1,6 +1,6 @@
 import "./instrument";
 
-import { HttpAdapterHost, NestFactory } from "@nestjs/core";
+import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
@@ -8,11 +8,10 @@ import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import helmet from "helmet";
 import { AppModule } from "./app.module";
 import { RedisIoAdapter } from "./gateways/redis-io.adapter";
-import { ThrottlerExceptionFilter } from "./common/throttler-exception.filter";
-import { SentryExceptionFilter } from "./common/sentry-exception.filter";
-import { MulterExceptionFilter } from "./common/multer-exception.filter";
+import { registerGlobalExceptionFilters } from "./common/global-exception-filters";
 import { schemelessLinkBaseVars } from "./common/html-escape";
 import { assertSecrets } from "./assert-secrets";
+import { assertWebBaseUrlAtBoot } from "./config/web-base-url";
 
 const DEFAULT_CORS_ORIGINS = [
   "http://localhost:3001", // web dashboard
@@ -40,6 +39,9 @@ function buildWildcardPatterns(): RegExp[] {
 
 async function bootstrap() {
   assertSecrets();
+  // Production never defaults the public web origin to localhost (a payer was once sent there by Checkout); this throws
+  // before anything listens and exports the resolved base into WEB_URL for every reader.
+  assertWebBaseUrlAtBoot();
   // B809: every email link is built from these. Without a scheme, each link renders as plain
   // text (see safeLinkHref), so say so loudly at boot rather than per email.
   for (const name of schemelessLinkBaseVars()) {
@@ -104,22 +106,10 @@ async function bootstrap() {
   });
 
   // ─── Global exception filters ────────────────────────────────────────────────
-  // RF-160: emit Retry-After header on 429 throttle responses
-  // Sentry filter runs first (reports 5xx before the throttler filter handles
-  // its own exception type), then defers to Nest's default handling.
-  //
-  // ⚠️ ORDER IS LOAD-BEARING. Nest checks globally-registered filters in REVERSE
-  // registration order, so the narrow `@Catch(X)` filters must come AFTER the
-  // catch-all SentryExceptionFilter or they are never reached. MulterExceptionFilter
-  // maps multer 2.3.0's newer error codes (which @nestjs/platform-express does not
-  // know) to 400 — without it they arrive as raw MulterErrors, which the Sentry
-  // filter scores as 500 and captures once per request.
-  const { httpAdapter } = app.get(HttpAdapterHost);
-  app.useGlobalFilters(
-    new SentryExceptionFilter(httpAdapter),
-    new ThrottlerExceptionFilter(),
-    new MulterExceptionFilter(),
-  );
+  // Sentry catch-all, the SA-767 stock-lock backstop (55P03/40P01/40001/P2028/P2034 -> 503), the
+  // 429 Retry-After filter and the multer 400 filter. ORDER IS LOAD-BEARING and lives (documented and
+  // pinned) in common/global-exception-filters.ts, not here.
+  registerGlobalExceptionFilters(app);
 
   // ─── Validation ─────────────────────────────────────────────────────────────
   app.useGlobalPipes(

@@ -22,6 +22,7 @@ import {
   hasOverrideStamp,
   type OverrideStamp,
 } from "../common/restriction-override-columns";
+import type { OrderItemAuthorChannel } from "./line-author-channel";
 
 export { compositionStampOf };
 
@@ -48,6 +49,8 @@ export interface MergeLine extends PackCandidate, Partial<OverrideStamp> {
   recipeVersion?: number | null;
   /** SA-716: the line's backorder marker (PIECES); a merge CARRIES it, never recomputes it. */
   backorderedPieces?: unknown;
+  /** SA ruling (#3418): the line's author marker; a loser's is RESOLVED first (`loserLinesOf`). Unset = BUYER. */
+  authorChannel?: string | null;
 }
 
 /** Row 510: extends the staff-override stamp (a created line carries the losing line's; NULL columns when none). */
@@ -78,12 +81,18 @@ export interface MergeLineWriteData extends OverrideStamp {
   recipeVersion?: number | null;
   /** SA-716: Σ of the folded losing lines' markers; absent (= 0) when none carried one. */
   backorderedPieces?: number;
+  /** SA ruling (#3418): the folded line's OWN author: STAFF only when every folded contribution was STAFF. */
+  authorChannel: OrderItemAuthorChannel;
 }
 
 type MergeLineUpdateData = Pick<
   MergeLineWriteData,
   "qty" | "boxes" | "pieces" | "unitsPerBox" | "subtotal"
-> & { promoFreeUnits?: number | null; backorderedPieces?: number } & Partial<OverrideStamp>;
+> & {
+  promoFreeUnits?: number | null;
+  backorderedPieces?: number;
+  authorChannel?: "BUYER";
+} & Partial<OverrideStamp>;
 
 export type MergeLineWrite =
   | { kind: "update"; lineId: string; data: MergeLineUpdateData }
@@ -113,6 +122,10 @@ const versionKey = (li: MergeLine): string =>
 /** SA-716: the markers of `lines` summed at the column's 3 decimals; the carried value. */
 const markerSum = (lines: readonly MergeLine[]): number =>
   Math.round(lines.reduce((sum, li) => sum + (Number(li.backorderedPieces) || 0), 0) * 1000) / 1000;
+
+/** SA ruling (#3418): the author of a line folded from `lines`: STAFF only when each is positively STAFF. */
+const authorOfFold = (lines: readonly MergeLine[]): OrderItemAuthorChannel =>
+  lines.every((li) => li.authorChannel === "STAFF") ? "STAFF" : "BUYER";
 
 /** `unitsPerBox` a NON-boxed line ends up written with — matches computeLineSubtotal's own
  * "boxed only when boxes != null" contract: a group whose resolved pack is <= 1 never boxes. */
@@ -253,6 +266,7 @@ export function buildMergeLineWrites(
             ...compositionStampOf(c),
             ...carryOverrideStamp(c), // row 510: a fold keeps the acknowledged sale
             ...(markerSum([c]) > 0 ? { backorderedPieces: markerSum([c]) } : {}),
+            authorChannel: authorOfFold([c]), // the moved line keeps its own author
           },
         });
         continue;
@@ -307,6 +321,8 @@ export function buildMergeLineWrites(
               : {}),
             // Row 510: a winner line with no stamp takes the first folded loser's (it now holds that loser's goods).
             ...(stampFill ? carryOverrideStamp(stampFill) : {}),
+            // A buyer's quantity folded into the winner's line makes it BUYER; a staff fold leaves its marker.
+            ...(authorOfFold(losersInGroup) === "BUYER" ? { authorChannel: "BUYER" as const } : {}),
           },
         });
       } else {
@@ -337,6 +353,7 @@ export function buildMergeLineWrites(
             ...(markerSum(losersInGroup) > 0
               ? { backorderedPieces: markerSum(losersInGroup) }
               : {}),
+            authorChannel: authorOfFold(losersInGroup),
           },
         });
       }

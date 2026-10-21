@@ -1,7 +1,10 @@
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { OverrideStamp } from "../common/restriction-override-columns";
 import type { HeldLine, StaffWriteDecision } from "../selling-restrictions/restriction-warning";
-import { salePathForOrder, type SalePath } from "../selling-restrictions/jurisdiction";
+import {
+  orderFulfilmentKind,
+  type SaleFulfilmentKind,
+} from "../selling-restrictions/sale-fulfilment";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import type {
   SellableLinesArgs,
@@ -15,7 +18,9 @@ import { addedRestrictionLinesWithHeld } from "./invoice-restriction-lines";
  * coverage ratchets see it); the keys, the held lines and the stamp target live here, which keeps `invoices.service.ts`
  * flat (size-ratchet). Imported as a namespace (`import * as iGate`).
  *
- * An invoice has no fulfil path: it is judged at the customer's address (`DELIVERY`). The actor is the staff user
+ * An invoice has no fulfil path of its own (L8, `sale-fulfilment.ts`): an order-linked invoice is judged at its order's
+ * kind (`orderFulfilmentKind`), an order-less one at the kind the caller resolved (`defaultSaleFulfilmentKind`, passed as
+ * `sale`), so a builder never assumes one. The actor is the staff user
  * (`undefined` for an internal caller, which can never override). `lineKey`: "n:<index>" for a payload entry,
  * "l:<lineId>" for an existing line the payload names or a source line being copied.
  */
@@ -25,6 +30,8 @@ export type Decision = StaffWriteDecision;
 export type Ack = SellableLinesParams["ack"];
 type Actor = Pick<JwtPayload, "sub" | "role" | "impersonatedBy"> | undefined;
 type Held = Array<Partial<OverrideStamp> & { id?: string | null; productId?: string | null }>;
+/** How the goods change hands, as the call site resolved it (L8: one of the `sale-fulfilment.ts` helpers). */
+type Sale = { fulfilmentKind: SaleFulfilmentKind };
 
 /** The ambient tenant, or a 403: a tenant-less session cannot be judged (fail closed). */
 export const tenantId = (prisma: { getTenantId(): string | null | undefined }): string =>
@@ -35,13 +42,13 @@ const base = (
   customerId: string,
   actor: Actor,
   ack: Ack,
+  sale: Sale,
   held?: Held,
-  path: SalePath = "DELIVERY",
 ) =>
   ({
     tenantId: tenant,
     customerId,
-    path,
+    fulfilmentKind: sale.fulfilmentKind,
     principal: actor,
     ack,
     held: held?.flatMap((h) => (h.id ? [{ ...h, id: h.id, productId: h.productId ?? null }] : [])),
@@ -55,9 +62,10 @@ export function create(
   items: ReadonlyArray<{ productId?: string | null }>,
   actor: Actor,
   ack: Ack,
+  sale: Sale,
 ): SellableLinesArgs {
   return {
-    ...base(tenant, customerId, actor, ack),
+    ...base(tenant, customerId, actor, ack, sale),
     lines: items.flatMap((it, i) =>
       it.productId ? [{ productId: it.productId, lineKey: `n:${i}` }] : [],
     ),
@@ -76,14 +84,14 @@ export function edit(
   held: Held,
   actor: Actor,
   ack: Ack,
-  path: SalePath = "DELIVERY",
+  sale: Sale,
 ): SellableLinesArgs {
   const keyOf = (productId: string) => {
     const i = items.findIndex((it) => it.productId === productId);
     return items[i]?.id ? `l:${items[i].id}` : `n:${i}`;
   };
   return {
-    ...base(tenant, customerId, actor, ack, held, path),
+    ...base(tenant, customerId, actor, ack, sale, held),
     lines: netted.map((l) => ({ ...l, lineKey: keyOf(l.productId) })),
   };
 }
@@ -102,16 +110,10 @@ export async function editParams(
 ) {
   const { lines, held } = await addedRestrictionLinesWithHeld(prisma.forTenant(), inv.id, items);
   // An order-linked invoice is the same sale as its order: a counter / pickup order's invoice is judged at the store.
-  const order = inv.orderId
-    ? await prisma.forTenant().order.findUnique({
-        where: { id: inv.orderId },
-        select: { fulfillPath: true, counterSale: true },
-      })
-    : null;
-  const path = order ? salePathForOrder(order) : "DELIVERY";
+  const sale = { fulfilmentKind: await orderFulfilmentKind(prisma.forTenant(), inv.orderId) };
   return {
     lines,
-    params: edit(tenantId(prisma), inv.customerId, lines, items, held, actor, ack, path),
+    params: edit(tenantId(prisma), inv.customerId, lines, items, held, actor, ack, sale),
   };
 }
 
@@ -125,10 +127,11 @@ export function copy(
   source: ReadonlyArray<{ id?: string | null; productId?: string | null }>,
   actor: Actor,
   ack: Ack,
+  sale: Sale,
 ): SellableLinesArgs {
   const seen = new Set<string>();
   return {
-    ...base(tenant, customerId, actor, ack),
+    ...base(tenant, customerId, actor, ack, sale),
     lines: source.flatMap((it, i) => {
       if (!it.productId || seen.has(it.productId)) return [];
       seen.add(it.productId);

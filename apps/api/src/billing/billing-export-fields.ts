@@ -7,8 +7,8 @@
  * - Invoices: exactly the fields below (never pdfKey, tenantId, id, nor the admin-only manual-invoice
  *   columns: issuedById, paid{Method,Ref,Note,ById}, lastSentAt, sendCount, voidedAt, voidReason,
  *   periodKey, needsReview). `getExport` derives its Prisma `select` from this ONE list.
- * - Events: {type, createdAt, amountDelta, actor, payload}. `actorId` is REPLACED by a derived
- *   `actor` label and never exported as an id. `payload` keeps only the keys listed for that
+ * - Events: {type, createdAt, actor, payload}. `amountDelta` (the internal MRR change) is never
+ *   exported (owner ruling, PR4a). `actorId` is REPLACED by a derived `actor` label and never exported as an id. `payload` keeps only the keys listed for that
  *   event type (scalar values only); a type with no entry exports an empty payload.
  */
 import { BILLING_EVENTS } from "./plan-catalog.constants";
@@ -108,6 +108,8 @@ export const EXPORT_EXCLUDED_EVENT_TYPES: readonly string[] = [
   // SA-736r: MRR-only ledger rows booked when a coupon makes the next invoice $0 (or stops doing so).
   "coupon.unbilled",
   "coupon.billed",
+  // SA-788: the per-change audit record of a TenantAddon row (actor + before/after); internal, amountDelta null.
+  "addon.state_changed",
 ];
 
 export function projectInvoiceForExport(row: Record<string, unknown>) {
@@ -153,13 +155,12 @@ export function deriveExportActor(
 }
 
 export function projectBillingEventForExport(
-  row: { type: string; payload: unknown; amountDelta: unknown; createdAt: unknown },
+  row: { type: string; payload: unknown; createdAt: unknown },
   actor: BillingExportActor,
 ) {
   return {
     type: row.type,
     createdAt: row.createdAt,
-    amountDelta: row.amountDelta,
     actor,
     payload: projectEventPayloadForExport(row.type, row.payload),
   };

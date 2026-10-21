@@ -8,6 +8,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { CronExpression } from "@nestjs/schedule";
+import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { blockedTemplateLines } from "./recurring-invoice-restrictions";
 import { calcNextRunAt } from "./recurring-schedule";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -367,11 +368,19 @@ export class RecurringInvoicesService {
     // 409 RESTRICTION_WARNING, the template untouched; a resubmit with the ack generates with stamps by the
     // clicker); the unattended run skips the cycle BEFORE it is claimed, notifies once and SUSPENDS the template
     // until a tenant admin reactivates it. A tenant-owned template sells as STAFF.
+    const restrictionTenantId = requireRestrictionTenantId(this.prisma.getTenantId());
     const blocked = await blockedTemplateLines(
       this.sellingRestrictions,
-      requireRestrictionTenantId(this.prisma.getTenantId()),
+      restrictionTenantId,
       ri,
       unattended,
+      {
+        fulfilmentKind: await defaultSaleFulfilmentKind(
+          this.prisma,
+          restrictionTenantId,
+          ri.customerId,
+        ),
+      },
       run,
     );
     if (blocked) {

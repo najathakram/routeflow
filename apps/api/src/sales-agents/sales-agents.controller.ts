@@ -36,6 +36,7 @@ import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { MAX_LIST_LIMIT } from "../common/pagination";
 import { SalesAgentsService } from "./sales-agents.service";
+import { IsOptionalNotNull } from "../common/validators/optional-not-null";
 
 // ─── DTOs ────────────────────────────────────────────────────────────────────
 // House convention keeps request DTOs in their own dto/*.ts file (see
@@ -54,7 +55,7 @@ export class CreateSalesAgentDto {
   @IsOptional() @IsEmail() @MaxLength(254) email?: string;
   @IsOptional() @IsString() @MaxLength(40) phone?: string;
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
-  @IsOptional() @IsNumber() @Min(0) @Max(100) defaultRatePct?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(100) defaultRatePct?: number;
   @IsOptional() @IsDateString() rateEffectiveFrom?: string;
 }
 

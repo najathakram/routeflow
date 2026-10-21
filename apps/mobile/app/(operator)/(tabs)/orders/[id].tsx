@@ -52,6 +52,7 @@ import {
 } from "../../../../lib/credit-limit-error";
 import { parseSellingRestricted } from "../../../../lib/selling-restricted";
 import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
+import { shipmentSaveDecision } from "@routeflow/types/shipment-save";
 import { lineBackorderPieces } from "@routeflow/types/order-line-backorder";
 import { useOfflineQueue } from "../../../../store/offlineQueue";
 import { alertInfo, confirm } from "../../../../lib/confirm";
@@ -69,7 +70,11 @@ import {
   sharePdf,
 } from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
-import { shipmentForDisplay } from "../../../../lib/shipment-display";
+import {
+  shipmentCardPlacement,
+  shipmentForDisplay,
+  shipmentNotShippedNote,
+} from "../../../../lib/shipment-display";
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
 import {
@@ -80,12 +85,15 @@ import {
 import {
   POS_COPY,
   POS_READY_FAILED,
-  POS_SWITCH_FAILED,
   pickupCompleteErrorCopy,
   decidePickupResponse,
   posHandOverBalance,
   posLiveInvoices,
-  posCanSwitchToDelivery,
+  posMoveConfirm,
+  posMoveFailedCopy,
+  posMoveOptions,
+  posMoveSuccessCopy,
+  posSwitchToDeliveryHint,
   posCutNote,
   posOrderActions,
   posProgressSteps,
@@ -97,9 +105,10 @@ import {
   releasePickupKey,
   usePickupComplete,
   usePickupInvoiceBalances,
-  useSwitchOrderToDelivery,
+  useMoveOrderOffPickup,
 } from "../../../../lib/api/pos-orders";
 import { statusActions, type StatusAction } from "../../../../lib/order-actions";
+import { useStaffFulfilment } from "../../../../lib/tenant-features";
 import { useRecordReturn } from "../../../../hooks/useRecordReturn";
 
 function formatCurrency(n: number | string | undefined): string {
@@ -155,7 +164,9 @@ export default function OrderDetailScreen() {
   const { data: walkInCustomer } = useCustomer(
     isPosOrder(order) ? (order?.customer?.id ?? order?.customerId ?? "") : "",
   );
-  const switchToDeliveryMut = useSwitchOrderToDelivery();
+  const moveOffPickupMut = useMoveOrderOffPickup();
+  // Row 505: which "move off pickup" buttons the account offers (same capability answer as web).
+  const staffFulfilment = useStaffFulfilment();
   const sendMut = useSendInvoice();
   const pdfMut = useInvoicePdf();
   const [shipmentModal, setShipmentModal] = useState(false);
@@ -242,7 +253,8 @@ export default function OrderDetailScreen() {
   );
   // SA-763r P-2: a POS-mode order = PICKUP and not a counter sale. One primary per state.
   const isPos = isPosOrder(order);
-  const posActions = isPos ? posOrderActions(order, order.status) : [];
+  const moveOptions = posMoveOptions(staffFulfilment.formMethods, staffFulfilment.formDefault);
+  const posActions = isPos ? posOrderActions(order, order.status, moveOptions) : [];
   const posSteps =
     isPos && order.status !== "DRAFT" && order.status !== "CANCELLED"
       ? posProgressSteps(order, order.status)
@@ -375,21 +387,21 @@ export default function OrderDetailScreen() {
           },
         );
         return;
-      case "switchToDelivery": {
-        const switchNow = () =>
-          switchToDeliveryMut.mutate(rw.attach(order.id), {
+      case "switchToDelivery":
+      case "shipByCarrier": {
+        // ONE handler for both moves: the action carries its own path (Ship by carrier… is always SHIP).
+        const path = a.path ?? (a.key === "shipByCarrier" ? "SHIP" : "ROUTE");
+        const copy = posMoveConfirm(path);
+        // Row 510: the switch is re-judged; a restriction warning re-runs THIS move with the ack attached.
+        const moveNow = () =>
+          moveOffPickupMut.mutate(rw.attach({ id: order.id, fulfillPath: path }), {
             onSuccess: () => {
-              showToast("Switched to delivery");
+              showToast(posMoveSuccessCopy(path));
               refetch();
             },
-            onError: (e) => rw.handle(e, switchNow) || toastPosError(e, POS_SWITCH_FAILED),
+            onError: (e) => rw.handle(e, moveNow) || toastPosError(e, posMoveFailedCopy(path)),
           });
-        confirm(
-          POS_COPY.switchToDelivery,
-          "Move this order onto the delivery route instead of pickup?",
-          switchNow,
-          { confirmText: POS_COPY.switchToDelivery },
-        );
+        confirm(copy.title, copy.message, moveNow, { confirmText: copy.confirmText });
         return;
       }
       case "recordPayment":
@@ -726,11 +738,17 @@ export default function OrderDetailScreen() {
   };
 
   const handleSaveShipment = (carrier: string, trackingNumber: string) => {
+    const { outcome, payload } = shipmentSaveDecision(order, carrier, trackingNumber);
+    if (!payload) {
+      // Nothing stored and nothing typed: not a change, so no request and no "cleared" toast.
+      setShipmentModal(false);
+      return;
+    }
     shipmentMut.mutate(
-      { id: order.id, shippingCarrier: carrier, shippingTrackingNumber: trackingNumber },
+      { id: order.id, ...payload },
       {
         onSuccess: () => {
-          showToast(carrier || trackingNumber ? "Shipment saved" : "Shipment cleared");
+          showToast(outcome === "saved" ? "Shipment saved" : "Shipment cleared");
           setShipmentModal(false);
           refetch();
         },
@@ -741,6 +759,23 @@ export default function OrderDetailScreen() {
       },
     );
   };
+
+  // Carrier shipment: only for carrier-shipped orders, or rows that already carry tracking data recorded
+  // before this gate existed.
+  const shipFirst = shipmentCardPlacement(order.fulfillPath) === "aboveItems";
+  const shipmentCard =
+    order.fulfillPath === "SHIP" || order.shippingCarrier || order.shippingTrackingNumber ? (
+      <ShipmentSection
+        shipment={shipmentForDisplay(order, order.status)}
+        note={shipmentNotShippedNote(
+          order.fulfillPath,
+          order.status,
+          order.shippingTrackingNumber,
+          order.shippingCarrier,
+        )}
+        onEdit={() => setShipmentModal(true)}
+      />
+    ) : null;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -798,6 +833,10 @@ export default function OrderDetailScreen() {
             ) : null}
             {order.notes ? <Text style={styles.notes}>"{order.notes}"</Text> : null}
           </View>
+
+          {/* M8 (row 505): a carrier (SHIP) order shows its Shipment card above the Items card with the totals,
+              where the ship step is found. Any other order keeps it after the Invoice card. */}
+          {shipFirst && shipmentCard}
 
           {/* Items */}
           <View style={styles.card}>
@@ -1010,14 +1049,7 @@ export default function OrderDetailScreen() {
             </View>
           ) : null}
 
-          {/* Carrier shipment — only for carrier-shipped orders, or rows that
-              already carry tracking data recorded before this gate existed. */}
-          {order.fulfillPath === "SHIP" || order.shippingCarrier || order.shippingTrackingNumber ? (
-            <ShipmentSection
-              shipment={shipmentForDisplay(order, order.status)}
-              onEdit={() => setShipmentModal(true)}
-            />
-          ) : null}
+          {!shipFirst && shipmentCard}
 
           {/* POS mode: Confirmed -> Invoice (draft) -> Handed over, one primary per state. */}
           {isPos && (posSteps || posActions.length > 0) ? (
@@ -1034,14 +1066,12 @@ export default function OrderDetailScreen() {
               {posActions.length > 0 ? (
                 <View style={[styles.actionsCol, posSteps ? { marginTop: 10 } : null]}>
                   {posActions.map((a) => {
-                    const hidden =
-                      a.key === "switchToDelivery" && !posCanSwitchToDelivery(order.status);
-                    if (hidden) return null;
+                    // posOrderActions already leaves Switch to delivery out once it can't succeed (M6).
                     const busy =
                       pickupMut.isPending ||
                       createInvoiceMut.isPending ||
                       changeMut.isPending ||
-                      switchToDeliveryMut.isPending;
+                      moveOffPickupMut.isPending;
                     return (
                       <Pressable
                         key={a.key}
@@ -1063,6 +1093,9 @@ export default function OrderDetailScreen() {
                     );
                   })}
                 </View>
+              ) : null}
+              {posSwitchToDeliveryHint(order.status) ? (
+                <Text style={styles.shipHint}>{posSwitchToDeliveryHint(order.status)}</Text>
               ) : null}
               {posCutNote(order, order.status) ? (
                 <Text style={styles.shipHint}>{posCutNote(order, order.status)}</Text>
@@ -1389,6 +1422,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    minHeight: 44,
     paddingVertical: 13,
     paddingHorizontal: 14,
     borderRadius: 12,

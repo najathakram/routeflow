@@ -57,14 +57,84 @@ describe("newlyRestricted (restricted by the NEW settings and not by the OLD)", 
   });
 });
 
+describe("newlyRestricted: a window END that is extended", () => {
+  const ends = new Date("2026-07-01T00:00:00Z");
+  const bounded = { ...prev, effectiveTo: ends };
+
+  it("judges the ADDED interval: a customer the rule only restricts after the old end is newly restricted", () => {
+    expect(newlyRestricted(bounded, { ...bounded, effectiveTo: null }, tx, opts)).toBe(true);
+    expect(
+      newlyRestricted(
+        bounded,
+        { ...bounded, effectiveTo: new Date("2026-09-01T00:00:00Z") },
+        tx,
+        opts,
+      ),
+    ).toBe(true);
+    // a customer outside the rule's states is not reached by a longer window
+    expect(newlyRestricted(bounded, { ...bounded, effectiveTo: null }, ca, opts)).toBe(false);
+  });
+
+  it("a shortened end reaches nobody new", () => {
+    expect(
+      newlyRestricted(prev, { ...prev, effectiveTo: new Date("2026-08-01T00:00:00Z") }, tx, opts),
+    ).toBe(false);
+    expect(
+      newlyRestricted(
+        bounded,
+        { ...bounded, effectiveTo: new Date("2026-06-15T00:00:00Z") },
+        tx,
+        opts,
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("impactHash", () => {
+  const ids = ["o:b", "o:a"];
+
   it("is order-independent, and changes with the rule, the revision or any id", () => {
-    const h = impactHash("r1", 2, ["o:b", "o:a"]);
+    const h = impactHash("r1", 2, ids, prev);
     expect(h).toMatch(/^[0-9a-f]{64}$/);
-    expect(impactHash("r1", 2, ["o:a", "o:b"])).toBe(h);
-    expect(impactHash("r2", 2, ["o:a", "o:b"])).not.toBe(h);
-    expect(impactHash("r1", 3, ["o:a", "o:b"])).not.toBe(h);
-    expect(impactHash("r1", 2, ["o:a", "o:b", "o:c"])).not.toBe(h);
-    expect(impactHash("r1", 2, [])).toMatch(/^[0-9a-f]{64}$/);
+    expect(impactHash("r1", 2, ["o:a", "o:b"], prev)).toBe(h);
+    expect(impactHash("r2", 2, ids, prev)).not.toBe(h);
+    expect(impactHash("r1", 3, ids, prev)).not.toBe(h);
+    expect(impactHash("r1", 2, [...ids, "o:c"], prev)).not.toBe(h);
+    expect(impactHash("r1", 2, [], prev)).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("covers the NORMALISED proposed settings: any field changes it, spelling and order do not", () => {
+    const h = impactHash("r1", 2, ids, prev);
+    const other = (over: Partial<RuleEditSettings>) =>
+      impactHash("r1", 2, ids, { ...prev, ...over });
+    expect(other({ states: ["CA"] })).not.toBe(h);
+    expect(other({ jurisdiction: "FEDERAL", states: [] })).not.toBe(h);
+    expect(other({ surface: "BUYER_PORTAL" })).not.toBe(h);
+    expect(other({ effectiveFrom: new Date("2026-02-01T00:00:00Z") })).not.toBe(h);
+    expect(other({ effectiveTo: new Date("2027-01-01T00:00:00Z") })).not.toBe(h);
+    expect(other({ reason: "different" })).not.toBe(h);
+    expect(impactHash("r1", 2, ids, { ...prev, states: ["tx"] })).toBe(h);
+    expect(impactHash("r1", 2, ids, { ...prev, states: ["TX", "CA"] })).toBe(
+      impactHash("r1", 2, ids, { ...prev, states: ["ca", "Texas"] }),
+    );
+  });
+});
+
+describe("impactHash when the scan was capped", () => {
+  const cap = { capped: true as const, cap: 2000 };
+
+  it("covers the proposed settings and the cap, not the ids", () => {
+    const h = impactHash("r1", 2, [], prev, cap);
+    expect(h).toMatch(/^[0-9a-f]{64}$/);
+    // the ids do not matter once capped (the count is a lower bound that more orders cannot invalidate)
+    expect(impactHash("r1", 2, ["o:a", "o:b"], prev, cap)).toBe(h);
+    expect(impactHash("r1", 2, ["o:z"], prev, cap)).toBe(h);
+    // the settings, the rule, the revision and the cap still do
+    expect(impactHash("r1", 2, [], { ...prev, states: ["CA"] }, cap)).not.toBe(h);
+    expect(impactHash("r2", 2, [], prev, cap)).not.toBe(h);
+    expect(impactHash("r1", 3, [], prev, cap)).not.toBe(h);
+    expect(impactHash("r1", 2, [], prev, { capped: true, cap: 50 })).not.toBe(h);
+    // and a capped hash is never an uncapped one
+    expect(impactHash("r1", 2, [], prev)).not.toBe(h);
   });
 });

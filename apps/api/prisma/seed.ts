@@ -5,6 +5,7 @@ import * as bcrypt from "bcrypt";
 import { assertTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import { localConnectionConfig } from "../scripts/lib/local-db-target.cjs";
 import { ensureParityBuyers } from "./seed-parity-buyer";
+import { addressStateFields } from "../src/customers/address-state";
 
 // A provably-local target dials the explicit fields that were vetted (never the raw string, whose ?host= could
 // redirect it); only a deliberate SEED_ALLOW_REMOTE=1 run uses the raw URL (#2204).
@@ -345,6 +346,8 @@ async function main() {
           line1: def.address.line1,
           city: def.address.city,
           state: def.address.state,
+          // Row 434: the engine reads ONLY stateCode; derive it at the write boundary like every writer
+          ...addressStateFields(def.address.state, def.address.zip),
           zip: def.address.zip,
           lat: def.address.lat,
           lng: def.address.lng,
@@ -775,6 +778,7 @@ async function main() {
         status,
         urgent,
         source: "APP",
+        sourceRecorded: true, // F1(i): the seed means APP (a buyer order); not a legacy row
         subtotal: subtotal.toFixed(2),
         tax: tax.toFixed(2),
         total: total.toFixed(2),
@@ -801,6 +805,7 @@ async function main() {
             qty: item.qty.toString(),
             unitPrice: item.unitPrice.toFixed(2),
             subtotal: (item.qty * item.unitPrice).toFixed(2),
+            authorChannel: "BUYER", // F1(i) SA ruling (#3418): the seed order is source APP (a buyer's lines)
           },
         }),
       ),
@@ -927,6 +932,25 @@ async function main() {
       },
     });
     console.log(`Granted flag.units_v1 on "${TENANT_SLUG}" (${tenantId})`);
+  }
+
+  // Settings > Units (flag.units_settings_v1): same rules as above (test tenant, local fixture).
+  const existingUnitsSettingsOverride = await prisma.tenantFeatureOverride.findFirst({
+    where: { tenantId, featureKey: "flag.units_settings_v1", revokedAt: null },
+  });
+  if (!existingUnitsSettingsOverride) {
+    await prisma.tenantFeatureOverride.create({
+      data: {
+        tenantId,
+        featureKey: "flag.units_settings_v1",
+        effect: "GRANT",
+        kind: "COMP",
+        reason: "Local dev/test fixture — Settings > Units local coverage and proofs.",
+        expiresAt: null,
+        createdById: null,
+      },
+    });
+    console.log(`Granted flag.units_settings_v1 on "${TENANT_SLUG}" (${tenantId})`);
   }
 
   // #2338: buyer-portal fixtures for the native-parity proof harness (local databases only).

@@ -1,7 +1,7 @@
 import {
-  getTierPrice,
-  isSpecialTier,
+  customerLinePrice,
   normalizeBoxesPieces,
+  type CustomerLayerUnit,
   type SellLevel,
 } from "@routeflow/pricing";
 import { displayProductName } from "@/lib/product-display";
@@ -33,6 +33,11 @@ export interface SaleLine {
   listPrice?: number;
   unit?: string;
   priceType?: "STANDARD" | "SPECIAL";
+  /**
+   * S19b: set ONLY while the customer's price layer prices this line (flag on): the layer's `isSpecial`, which the edit-reason
+   * gate reads in place of the tier. Absent otherwise, so the gate keeps master's tier rule.
+   */
+  special?: boolean;
   category?: string;
   /** The product's regulated category when the line was added: the estimate adds its levy (excise / deposit). */
   trackedCategoryId?: string | null;
@@ -65,6 +70,8 @@ export function addScannedProduct(
   level: SellLevel,
   n: number,
   tier: number,
+  /** S19b: the customer's price layer for this product (flag on); omitted = master's tier price. */
+  layer?: readonly CustomerLayerUnit[],
 ): SaleLine[] {
   const upb = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
   const unitScan = level === "UNIT" && (upb ?? 0) > 1;
@@ -75,6 +82,7 @@ export function addScannedProduct(
     );
   }
   // A UNIT multiplier at or over the pack size (x30 on a 24-pack) rolls into boxes: 1 box + 6 pcs, never 0 boxes + 30 pcs.
+  const lp = customerLinePrice({ product, tier, layer });
   const born = newLineQtyForLevel(upb, level, n);
   const qty = unitScan && upb ? normalizeBoxesPieces({ qty: born.qty, unitsPerBox: upb }) : null;
   return [
@@ -83,11 +91,12 @@ export function addScannedProduct(
       tempId: `${product.id}-${prev.length}`,
       productId: product.id,
       name: displayProductName(product),
-      unitPrice: getTierPrice(product, tier),
+      unitPrice: lp.price,
       unitsPerBox: upb,
       listPrice: Number(product.pricePerUnit ?? 0),
       unit: product.unit ?? "each",
-      priceType: isSpecialTier(tier) ? "SPECIAL" : "STANDARD",
+      priceType: lp.isSpecial ? "SPECIAL" : "STANDARD",
+      ...(lp.layered ? { special: lp.isSpecial } : {}),
       ...(product.category ? { category: String(product.category) } : {}),
       ...(product.trackedCategoryId
         ? { trackedCategoryId: String(product.trackedCategoryId) }

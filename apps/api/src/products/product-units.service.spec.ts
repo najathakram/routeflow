@@ -1,3 +1,4 @@
+import { lockCalls } from "../testing/lock-calls";
 import "reflect-metadata";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { plainToInstance } from "class-transformer";
@@ -10,7 +11,13 @@ import { REQUIRE_PLAN_FLAG_KEY } from "../billing/require-plan-flag.decorator";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { FEATURE_REGISTRY } from "../billing/feature-registry";
 
-type Row = { id: string; label: string; factorToBase: number };
+type Row = {
+  id: string;
+  label: string;
+  factorToBase: number;
+  parentUnitId?: string | null;
+  perParent?: number | null;
+};
 
 function build(opts: {
   product?: Record<string, unknown> | null;
@@ -27,6 +34,14 @@ function build(opts: {
   // One object serves as both `forTenant()` and the transaction client.
   const db = {
     $executeRaw: jest.fn().mockResolvedValue(1),
+    // The tenant's unit NAMES: a level is linked to its unit by name so a rename reaches it.
+    tenantUnit: {
+      findFirst: jest.fn().mockResolvedValue({ id: "tu-1" }),
+      createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // Active units of the tenant (SA-810 cap of 200): well under it unless a test says otherwise.
+      count: jest.fn().mockResolvedValue(3),
+    },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
     product: { findFirst: jest.fn().mockResolvedValue(product) },
     productUnit: {
       findMany: jest.fn().mockResolvedValue(opts.rows ?? []),
@@ -43,14 +58,11 @@ function build(opts: {
       update: jest.fn().mockImplementation(async ({ where, data }) => ({ id: where.id, ...data })),
       delete: jest.fn().mockResolvedValue({}),
     },
-    // Parents only: the immutability check must read lines through the order/invoice relation
-    // (a top-level orderItem/invoiceItem read would miss a NULL-tenant line).
-    order: {
-      findFirst: jest.fn().mockResolvedValue(opts.orderLineHit ? { id: "oi" } : null),
-    },
-    invoice: {
-      findFirst: jest.fn().mockResolvedValue(opts.invoiceLineHit ? { id: "ii" } : null),
-    },
+    // The line-size check is ONE raw query over OrderItem and InvoiceItem (through their parent
+    // order / invoice), keyed by the same NFC SQL key the rename uses.
+    $queryRaw: jest
+      .fn()
+      .mockResolvedValue(opts.orderLineHit || opts.invoiceLineHit ? [{ hit: 1 }] : []),
   };
   const prisma = {
     getTenantId: jest.fn().mockReturnValue(opts.noTenant ? null : "t1"),
@@ -182,18 +194,247 @@ describe("ProductUnitsService.create", () => {
     await expect(
       invoice.service.create("p1", { label: "Case", factorToBase: 300 }),
     ).rejects.toThrow(ConflictException);
-    expect(order.db.order.findFirst).toHaveBeenCalledWith({
-      where: {
-        lineItems: {
-          some: {
-            productId: "p1",
-            unitLabel: { equals: "Case", mode: "insensitive" },
-            OR: [{ unitsPerBox: null }, { unitsPerBox: { not: 300 } }],
-          },
-        },
-      },
-      select: { id: true },
+    // A coded refusal (UNIT_SIZE_IN_USE), never a raw English sentence.
+    const coded = await order.service
+      .create("p1", { label: "Case", factorToBase: 300 })
+      .catch((e) => e);
+    expect(coded.getResponse()).toEqual(expect.objectContaining({ code: "UNIT_SIZE_IN_USE" }));
+    const q = order.db.$queryRaw.mock.calls[0][0] as { sql: string; values: unknown[] };
+    // Through the PARENT order / invoice of this tenant (a top-level item read misses a NULL-tenant line).
+    expect(q.sql).toContain('JOIN "Order"');
+    expect(q.sql).toContain('JOIN "Invoice"');
+    expect(q.sql).toContain("normalize(");
+    expect(q.values).toEqual(expect.arrayContaining(["t1", "p1", "case", 300]));
+  });
+
+  it("looks lines up by the NFC key: Café at size 12 is checked against lines carrying the NFD spelling", async () => {
+    const { service, db } = build({});
+    await service.create("p1", { label: "Cafe\u0301", factorToBase: 12 });
+    const q = db.$queryRaw.mock.calls[0][0] as { values: unknown[] };
+    expect(q.values).toContain("caf\u00e9");
+    expect(q.values).not.toContain("Cafe\u0301");
+  });
+});
+
+describe("ProductUnitsService: levels are linked to the tenant's unit by name (tenantUnitId)", () => {
+  it("create links the level to the existing TenantUnit of that name (by nameKey, tenant-scoped)", async () => {
+    const { service, db, tx } = build({});
+    await service.create("p1", { label: "  Case ", factorToBase: 288 });
+    expect(db.tenantUnit.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: "t1", nameKey: "case" } }),
+    );
+    expect(db.tenantUnit.createMany).not.toHaveBeenCalled();
+    expect(tx.productUnit.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ label: "Case", tenantUnitId: "tu-1" }),
+      }),
+    );
+  });
+
+  it("create adds the unit name when the tenant has none (skipDuplicates: a racing add cannot abort the tx)", async () => {
+    const { service, db, tx } = build({});
+    db.tenantUnit.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "tu-new" });
+    await service.create("p1", { label: "Case", factorToBase: 288 });
+    expect(db.tenantUnit.createMany).toHaveBeenCalledWith({
+      data: [{ tenantId: "t1", name: "Case", nameKey: "case" }],
+      skipDuplicates: true,
     });
+    expect(tx.productUnit.create.mock.calls[0][0].data.tenantUnitId).toBe("tu-new");
+  });
+
+  it("a unit added implicitly by a level write is audited by its creator (tenant_unit.created, in the tx)", async () => {
+    const { service, db, prisma } = build({});
+    db.tenantUnit.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "tu-new" });
+    await service.create("p1", { label: "Case", factorToBase: 288 }, "user-7");
+    expect(db.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(db.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        tenantId: "t1",
+        userId: "user-7",
+        action: "tenant_unit.created",
+        entityType: "TenantUnit",
+        entityId: "tu-new",
+        meta: { name: "Case", via: "level" },
+      },
+    });
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("the skipDuplicates LOSER of a racing add (createMany count 0) writes no audit row", async () => {
+    const { service, db } = build({});
+    db.tenantUnit.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "tu-won" });
+    db.tenantUnit.createMany.mockResolvedValue({ count: 0 });
+    await service.create("p1", { label: "Case", factorToBase: 288 }, "user-7");
+    expect(db.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("linking to an EXISTING unit writes no audit row", async () => {
+    const { service, db } = build({});
+    await service.create("p1", { label: "Case", factorToBase: 288 }, "user-7");
+    expect(db.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Piece (factor 1) is never a unit name", "Piece", 1],
+    ["a name past 30 characters cannot be a unit name", "x".repeat(31), 288],
+    ["a piece synonym cannot be a unit name", "Pcs", 288],
+  ])("%s: the level is left unlinked and no unit is created", async (_t, label, factorToBase) => {
+    const { service, db, tx } = build({});
+    await service.create("p1", { label, factorToBase });
+    expect(db.tenantUnit.findFirst).not.toHaveBeenCalled();
+    expect(db.tenantUnit.createMany).not.toHaveBeenCalled();
+    expect(tx.productUnit.create.mock.calls[0][0].data.tenantUnitId).toBeNull();
+  });
+
+  it("an NFD and an NFC spelling of one word look up ONE unit (the NFC nameKey) and create it once", async () => {
+    const { service, db } = build({});
+    db.tenantUnit.findFirst.mockResolvedValue(null);
+    await service.create("p1", { label: "Cafe\u0301", factorToBase: 6 });
+    expect(db.tenantUnit.findFirst.mock.calls[0][0].where).toEqual({
+      tenantId: "t1",
+      nameKey: "caf\u00e9",
+    });
+    expect(db.tenantUnit.createMany.mock.calls[0][0].data).toEqual([
+      { tenantId: "t1", name: "Caf\u00e9", nameKey: "caf\u00e9" },
+    ]);
+  });
+
+  it("a pack named with the NFC spelling refuses a level typed NFD (same word)", async () => {
+    const { service } = build({
+      product: { unit: "Caf\u00e9", unitsPerBox: 24, trackedCategoryId: null },
+    });
+    await expect(service.create("p1", { label: "Cafe\u0301", factorToBase: 6 })).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it("a label edit re-links the level to the NEW name's unit (else a later rename of the old unit would relabel it)", async () => {
+    const { service, db, tx } = build({ rows: [caseRow] });
+    db.tenantUnit.findFirst.mockResolvedValue({ id: "tu-crate" });
+    await service.update("p1", "u-case", { label: "Crate" });
+    expect(db.tenantUnit.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: "t1", nameKey: "crate" } }),
+    );
+    expect(tx.productUnit.update.mock.calls[0][0].data.tenantUnitId).toBe("tu-crate");
+  });
+
+  it("an edit that sends no label never touches the link", async () => {
+    const { service, db, tx } = build({ rows: [caseRow] });
+    await service.update("p1", "u-case", { price: 5 });
+    expect(db.tenantUnit.findFirst).not.toHaveBeenCalled();
+    expect(tx.productUnit.update.mock.calls[0][0].data).not.toHaveProperty("tenantUnitId");
+  });
+});
+
+describe("SA-810 G6b: a level write at the 200-unit cap skips the list link (never refuses, never adds #201)", () => {
+  it("a NEW name at the cap: no unit is added, the level saves unlinked, and the result says unitNotListed", async () => {
+    const { service, db, tx } = build({});
+    db.tenantUnit.count.mockResolvedValue(200);
+    db.tenantUnit.findFirst.mockResolvedValue(null);
+    const out = await service.create("p1", { label: "Crate", factorToBase: 48 }, "user-7");
+    expect(db.tenantUnit.count).toHaveBeenCalledWith({
+      where: { tenantId: "t1", archivedAt: null },
+    });
+    expect(db.tenantUnit.createMany).not.toHaveBeenCalled();
+    expect(db.auditLog.create).not.toHaveBeenCalled();
+    expect(tx.productUnit.create).toHaveBeenCalledTimes(1);
+    expect(tx.productUnit.create.mock.calls[0][0].data).toMatchObject({
+      label: "Crate",
+      tenantUnitId: null,
+    });
+    expect(out).toMatchObject({ label: "Crate", unitNotListed: ["Crate"] });
+  });
+
+  it("a grandfathered tenant over the cap (230) skips the add the same way", async () => {
+    const { service, db } = build({});
+    db.tenantUnit.count.mockResolvedValue(230);
+    db.tenantUnit.findFirst.mockResolvedValue(null);
+    const out = await service.create("p1", { label: "Crate", factorToBase: 48 });
+    expect(db.tenantUnit.createMany).not.toHaveBeenCalled();
+    expect(out).toMatchObject({ unitNotListed: ["Crate"] });
+  });
+
+  it("an EXISTING name at the cap links normally (guard): no count, no unitNotListed", async () => {
+    const { service, db, tx } = build({});
+    db.tenantUnit.count.mockResolvedValue(200);
+    db.tenantUnit.findFirst.mockResolvedValue({ id: "tu-1", archivedAt: null });
+    const out = await service.create("p1", { label: "Case", factorToBase: 288 });
+    expect(tx.productUnit.create.mock.calls[0][0].data.tenantUnitId).toBe("tu-1");
+    expect(db.tenantUnit.createMany).not.toHaveBeenCalled();
+    expect(out).not.toHaveProperty("unitNotListed");
+  });
+
+  it("below the cap a new name is added as today, with no unitNotListed", async () => {
+    const { service, db } = build({});
+    db.tenantUnit.count.mockResolvedValue(199);
+    db.tenantUnit.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "tu-new" });
+    const out = await service.create("p1", { label: "Crate", factorToBase: 48 });
+    expect(db.tenantUnit.createMany).toHaveBeenCalledTimes(1);
+    expect(out).not.toHaveProperty("unitNotListed");
+  });
+
+  it("a relabel to a new name at the cap saves unlinked with unitNotListed too", async () => {
+    const { service, db, tx } = build({ rows: [caseRow] });
+    db.tenantUnit.count.mockResolvedValue(200);
+    db.tenantUnit.findFirst.mockResolvedValue(null);
+    const out = await service.update("p1", "u-case", { label: "Crate" });
+    expect(db.tenantUnit.createMany).not.toHaveBeenCalled();
+    expect(tx.productUnit.update.mock.calls[0][0].data.tenantUnitId).toBeNull();
+    expect(out).toMatchObject({ unitNotListed: ["Crate"] });
+  });
+});
+
+describe("ProductUnitsService: an ARCHIVED tenant unit (UNIT_ARCHIVED)", () => {
+  const archived = { id: "tu-old", archivedAt: new Date("2026-10-01") };
+  const usesIt = (db: ReturnType<typeof build>["db"], used: boolean) =>
+    db.productUnit.findFirst.mockImplementation(async ({ where }) => {
+      if (where.tenantUnitId === "tu-old") return used ? { id: "pu-1" } : null;
+      return where.id === caseRow.id ? caseRow : null;
+    });
+
+  it("create refuses a unit archived in Settings when this product does not already use it", async () => {
+    const { service, db, tx } = build({});
+    db.tenantUnit.findFirst.mockResolvedValue(archived);
+    usesIt(db, false);
+    const err = await service.create("p1", { label: "Case", factorToBase: 288 }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toEqual(expect.objectContaining({ code: "UNIT_ARCHIVED" }));
+    expect(tx.productUnit.create).not.toHaveBeenCalled();
+  });
+
+  it("the check is tenant- and product-scoped (the product's own levels, by tenantUnitId)", async () => {
+    const { service, db } = build({});
+    db.tenantUnit.findFirst.mockResolvedValue(archived);
+    usesIt(db, false);
+    await service.create("p1", { label: "Case", factorToBase: 288 }).catch(() => undefined);
+    expect(db.productUnit.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { productId: "p1", tenantUnitId: "tu-old" } }),
+    );
+  });
+
+  it("update refuses a retype onto an archived unit the product does not use", async () => {
+    const { service, db, tx } = build({ rows: [caseRow] });
+    db.tenantUnit.findFirst.mockResolvedValue(archived);
+    usesIt(db, false);
+    await expect(service.update("p1", "u-case", { label: "Crate" })).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "UNIT_ARCHIVED" }),
+    });
+    expect(tx.productUnit.update).not.toHaveBeenCalled();
+  });
+
+  it("allows an archived unit the product ALREADY uses (the level keeps its meaning)", async () => {
+    const { service, db, tx } = build({ rows: [caseRow] });
+    db.tenantUnit.findFirst.mockResolvedValue(archived);
+    usesIt(db, true);
+    await service.update("p1", "u-case", { label: "Crate" });
+    expect(tx.productUnit.update.mock.calls[0][0].data.tenantUnitId).toBe("tu-old");
+  });
+
+  it("an active unit never triggers the product lookup", async () => {
+    const { service, db } = build({});
+    db.tenantUnit.findFirst.mockResolvedValue({ id: "tu-1", archivedAt: null });
+    await service.create("p1", { label: "Case", factorToBase: 288 });
+    expect(db.productUnit.findFirst).not.toHaveBeenCalled();
   });
 });
 
@@ -201,7 +442,7 @@ describe("ProductUnitsService.update", () => {
   it("a price-only edit never consults the lines (prices are not immutable)", async () => {
     const { service, db, tx } = build({ rows: [caseRow], orderLineHit: true });
     await service.update("p1", "u-case", { price: 500 });
-    expect(db.order.findFirst).not.toHaveBeenCalled();
+    expect(db.$queryRaw).not.toHaveBeenCalled();
     expect(tx.productUnit.update).toHaveBeenCalledWith({
       select: expect.objectContaining({ id: true }),
       where: { id: "u-case" },
@@ -217,21 +458,18 @@ describe("ProductUnitsService.update", () => {
     expect(tx.productUnit.update).not.toHaveBeenCalled();
   });
 
-  it("a factor edit is allowed while no line uses the level, with ONE line check per table", async () => {
+  it("a factor edit is allowed while no line uses the level, with ONE line check (one query over both tables)", async () => {
     const { service, db, tx } = build({ rows: [caseRow] });
     await service.update("p1", "u-case", { factorToBase: 300 });
-    expect(db.order.findFirst).toHaveBeenCalledTimes(1);
-    expect(db.invoice.findFirst).toHaveBeenCalledTimes(1);
+    expect(db.$queryRaw).toHaveBeenCalledTimes(1);
     expect(tx.productUnit.update).toHaveBeenCalled();
   });
 
   it("a rename + factor change also checks the OLD label's lines", async () => {
     const { service, db } = build({ rows: [caseRow] });
     await service.update("p1", "u-case", { label: "Crate", factorToBase: 300 });
-    const labels = db.order.findFirst.mock.calls.map(
-      (c) => c[0].where.lineItems.some.unitLabel.equals,
-    );
-    expect(labels).toEqual(["Case", "Crate"]);
+    const keys = db.$queryRaw.mock.calls.map((c) => (c[0] as { values: unknown[] }).values[2]);
+    expect(keys).toEqual(["case", "crate"]);
   });
 
   it("does not collide with itself when re-saving the same label/factor", async () => {
@@ -267,7 +505,7 @@ describe("ProductUnitsService.remove / list", () => {
     const { service, db } = build({ rows: [caseRow] });
     await expect(service.remove("p1", "u-case")).resolves.toEqual({ deleted: true });
     expect(db.productUnit.delete).toHaveBeenCalledWith({ where: { id: "u-case" } });
-    expect(db.order.findFirst).not.toHaveBeenCalled();
+    expect(db.$queryRaw).not.toHaveBeenCalled();
   });
 
   it("lists in sortOrder then factor order", async () => {
@@ -360,16 +598,22 @@ describe("ProductUnitsController — gate wiring", () => {
 });
 
 describe("concurrency + isolation (Opus review of step 2a)", () => {
-  it("every mutation runs in ONE transaction that takes the per-product advisory lock first", async () => {
+  it("every mutation runs in ONE transaction that takes the tenant's SHARED units lock, then the per-product advisory lock, before any read", async () => {
     const { service, prisma, db } = build({ rows: [caseRow] });
     await service.create("p1", { label: "Pallet", factorToBase: 5760 });
     await service.update("p1", "u-case", { price: 1 });
     await service.remove("p1", "u-case");
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
-    expect(db.$executeRaw).toHaveBeenCalledTimes(3);
-    expect(db.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
-      db.product.findFirst.mock.invocationCallOrder[0],
-    );
+    const locks = lockCalls(db.$executeRaw);
+    expect(locks.calls).toHaveLength(6);
+    // A unit rename holds the EXCLUSIVE tenant lock: a level write must wait for it, never interleave.
+    for (const i of [0, 2, 4]) {
+      const [strings, ...values] = locks.calls[i];
+      expect(strings.join("?")).toContain("pg_advisory_xact_lock_shared(");
+      expect(values).toEqual(["tenant-units", "t1"]);
+    }
+    expect(locks.calls[1][0].join("?")).toContain("product-units");
+    expect(locks.order[1]).toBeLessThan(db.product.findFirst.mock.invocationCallOrder[0]);
   });
 
   it("reads the pack with findFirst({where:{id}}) so a foreign tenant product 404s", async () => {
@@ -444,5 +688,139 @@ describe("no-tenant callers and factor-1 aliases (fleet-lead carry items)", () =
     await expect(service.create("p1", { label: "Piece", factorToBase: 1 })).rejects.toThrow(
       BadRequestException,
     );
+  });
+});
+
+describe("units P0b: tenant labels (baseLabelOf / packLabelOf)", () => {
+  const eachProduct = {
+    unit: "Case",
+    baseUnitLabel: "Each",
+    packLabel: "Carton",
+    unitsPerBox: 24,
+    trackedCategoryId: null,
+  };
+  it("a factor-1 row on a product with base label Each is stored as Each; legacy Piece is accepted and canonicalised", async () => {
+    const a = build({ product: eachProduct });
+    await a.service.create("p1", { label: "Each", factorToBase: 1, price: 2.5 });
+    expect(a.tx.productUnit.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ label: "Each", factorToBase: 1 }),
+      }),
+    );
+    const b = build({ product: eachProduct });
+    await b.service.create("p1", { label: "piece", factorToBase: 1 });
+    expect(b.tx.productUnit.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ label: "Each" }) }),
+    );
+  });
+  it("the base label (or Piece) is never a larger level, and factor 1 can't take another name", async () => {
+    const { service } = build({ product: eachProduct });
+    await expect(service.create("p1", { label: "Each", factorToBase: 12 })).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(service.create("p1", { label: "Piece", factorToBase: 12 })).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(service.create("p1", { label: "Unit", factorToBase: 1 })).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+  it("a label equal to the packLabel OR the legacy unit text is the pack's name", async () => {
+    const { service } = build({ product: eachProduct });
+    await expect(service.create("p1", { label: "carton", factorToBase: 48 })).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(service.create("p1", { label: "Case", factorToBase: 48 })).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+});
+
+describe("units P0b: chain validator on every write", () => {
+  const rowB: Row = { id: "u-b", label: "Inner", factorToBase: 5 };
+  const rowC: Row = {
+    id: "u-c",
+    label: "Tray",
+    factorToBase: 50,
+    parentUnitId: "u-b",
+    perParent: 10,
+  };
+
+  it("accepts a child whose factor is perParent x parent factor and stores perParent + parent", async () => {
+    const { service, tx } = build({ rows: [rowB] });
+    await service.create("p1", {
+      label: "Tray",
+      factorToBase: 50,
+      parentUnitId: "u-b",
+      perParent: 10,
+    } as never);
+    expect(tx.productUnit.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ parentUnitId: "u-b", perParent: 10, factorToBase: 50 }),
+      }),
+    );
+  });
+  it("refuses a factor that is not perParent x parent (400), perParent 1 (400), an unknown parent (400)", async () => {
+    const { service, tx } = build({ rows: [rowB] });
+    for (const bad of [
+      { factorToBase: 49, parentUnitId: "u-b", perParent: 10 },
+      { factorToBase: 7, parentUnitId: "u-b", perParent: 1 },
+      { factorToBase: 50, parentUnitId: "u-zzz", perParent: 10 },
+    ]) {
+      await expect(service.create("p1", { label: "Tray", ...bad } as never)).rejects.toThrow(
+        BadRequestException,
+      );
+    }
+    expect(tx.productUnit.create).not.toHaveBeenCalled();
+  });
+  it("editing a parent's factor recomputes its descendants in the same transaction", async () => {
+    const { service, tx, prisma } = build({ rows: [rowB, rowC] });
+    await service.update("p1", "u-b", { factorToBase: 6 });
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+    expect(tx.productUnit.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "u-c" }, data: { factorToBase: 60 } }),
+    );
+  });
+  it("a recompute that pushes a descendant over 1,000,000 is a 409 and writes nothing", async () => {
+    const big: Row = { id: "u-big", label: "Big", factorToBase: 5, parentUnitId: null };
+    const kid: Row = {
+      id: "u-kid",
+      label: "Kid",
+      factorToBase: 500_000,
+      parentUnitId: "u-big",
+      perParent: 100_000,
+    };
+    const { service, tx } = build({ rows: [big, kid] });
+    await expect(service.update("p1", "u-big", { factorToBase: 50 })).rejects.toThrow(
+      ConflictException,
+    );
+    expect(tx.productUnit.update).not.toHaveBeenCalled();
+  });
+  it("a recomputed descendant that an order line already carries blocks the edit (409)", async () => {
+    const { service, tx } = build({ rows: [rowB, rowC], orderLineHit: true });
+    await expect(service.update("p1", "u-b", { factorToBase: 6 })).rejects.toThrow(
+      ConflictException,
+    );
+    expect(tx.productUnit.update).not.toHaveBeenCalled();
+  });
+  it("a unit that still has sub-units cannot be deleted (409)", async () => {
+    const { service, tx } = build({ rows: [rowB, rowC] });
+    await expect(service.remove("p1", "u-b")).rejects.toThrow(ConflictException);
+    expect(tx.productUnit.delete).not.toHaveBeenCalled();
+  });
+  it("the DTOs accept perParent >= 2 and reject 1", async () => {
+    const ok = await validate(
+      plainToInstance(CreateProductUnitDto, {
+        label: "Tray",
+        factorToBase: 50,
+        perParent: 10,
+        parentUnitId: "u-b",
+      }),
+    );
+    expect(ok).toHaveLength(0);
+    const bad = await validate(
+      plainToInstance(CreateProductUnitDto, { label: "Tray", factorToBase: 50, perParent: 1 }),
+    );
+    expect(bad.length).toBeGreaterThan(0);
   });
 });

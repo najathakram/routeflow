@@ -30,6 +30,11 @@ const ALLOW: Record<string, string> = {};
  * carry the flag) is listed here; a new one, or one more in a listed file, fails.
  */
 export const OPAQUE_ALLOW: Record<string, { count: number; reason: string }> = {
+  "src/inventory/testing/count-db-harness.ts": {
+    count: 1,
+    reason:
+      "Test-only seeding helper of the SA-767 count DB specs (inventory/testing, collected only by *.db.spec.ts): it createMany's throwaway Product rows (name, pricePerUnit, a variable data array) into `qa-sa767-*` tenants, never a governed variant or recipe row and never a live tenant.",
+  },
   "src/inventory/inventory.service.ts": {
     count: 3,
     reason:

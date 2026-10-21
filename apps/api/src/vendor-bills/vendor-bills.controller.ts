@@ -179,8 +179,11 @@ export class VendorBillsController {
     return this.vendorBillsService.receive(id, dto, user.id);
   }
 
-  @Post(":id/revert-to-draft") revertToDraft(@Param("id") id: string) {
-    return this.vendorBillsService.revertToDraft(id);
+  @Post(":id/revert-to-draft") revertToDraft(
+    @Param("id") id: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.vendorBillsService.revertToDraft(id, user.id);
   }
 
   @Post(":id/void") voidBill(@Param("id") id: string, @CurrentUser() user: { id: string }) {
@@ -192,6 +195,15 @@ export class VendorBillsController {
     @Body() dto: RecordVendorBillPaymentDto,
   ) {
     return this.vendorBillsService.recordPayment(id, dto);
+  }
+
+  // B288: the exit for a 409 BILL_HAS_PAYMENTS — hold one cash payment as a supplier credit dated at the payment.
+  @Post(":id/payments/:paymentId/move-to-credit") movePaymentToCredit(
+    @Param("id") id: string,
+    @Param("paymentId") paymentId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.vendorBillsService.movePaymentToSupplierCredit(id, paymentId, user.id);
   }
 
   @Delete(":id") deleteBill(@Param("id") id: string) {

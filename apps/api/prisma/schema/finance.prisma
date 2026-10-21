@@ -49,6 +49,19 @@ enum CheckReturnReason {
   OTHER
 }
 
+/// SA-760 R-3 / SA-772 folder 3 (sitting 4; B1105): an order invoice's billing role, set at creation once R-3 ships.
+/// MIRROR = the order's own mirror invoice; PARTIAL = createPartialFromOrder; REMAINDER = the delivery remainder;
+/// MANUAL = named by the SA-760 rule text, no creation path assigned yet (R-3 defines it). NULL = not stamped
+/// (legacy, or an invoice with no order): read through billingRoleOf()'s inference until the R-3 census + backfill.
+/// Only MIRROR drafts are ever rebuilt automatically.
+/// Mirrored by packages/types/api/enums.ts INVOICE_ORDER_BILLING_ROLE_VALUES (enum-parity.spec.ts).
+enum InvoiceOrderBillingRole {
+  MIRROR
+  PARTIAL
+  REMAINDER
+  MANUAL
+}
+
 // ─── New Enums (Zoho-parity) ──────────────────────────────────────────────────
 
 enum InvoiceStatus {
@@ -176,15 +189,15 @@ model Payment {
 // ─── Standalone invoicing ──────────────────────────────────────────
 
 model Invoice {
-  id                     String        @id @default(uuid())
+  id                     String                   @id @default(uuid())
   invoiceNumber          String
   customerId             String
-  status                 InvoiceStatus @default(DRAFT)
-  subtotal               Decimal       @db.Decimal(10, 2)
-  taxAmount              Decimal       @default(0) @db.Decimal(10, 2)
-  discount               Decimal       @default(0) @db.Decimal(10, 2)
-  shippingFee            Decimal       @default(0) @db.Decimal(10, 2)
-  total                  Decimal       @db.Decimal(10, 2)
+  status                 InvoiceStatus            @default(DRAFT)
+  subtotal               Decimal                  @db.Decimal(10, 2)
+  taxAmount              Decimal                  @default(0) @db.Decimal(10, 2)
+  discount               Decimal                  @default(0) @db.Decimal(10, 2)
+  shippingFee            Decimal                  @default(0) @db.Decimal(10, 2)
+  total                  Decimal                  @db.Decimal(10, 2)
   dueDate                DateTime?
   sentAt                 DateTime?
   viewedAt               DateTime?
@@ -203,9 +216,9 @@ model Invoice {
   // Deliberately minimal deposit schedule (Tier 1): the deposit AMOUNT is always
   // derived from depositPercent * total at read time (see InvoicesService), never
   // stored. No InvoiceInstallment table / deposit-aware statuses in this phase.
-  depositPercent         Decimal?      @db.Decimal(5, 2)
+  depositPercent         Decimal?                 @db.Decimal(5, 2)
   depositDueDate         DateTime?
-  issueDate              DateTime      @default(now())
+  issueDate              DateTime                 @default(now())
   pdfUrl                 String?
   // Carrier shipment tracking — copied from the linked order on invoice generation,
   // and editable on the invoice itself. Carrier is a label (UPS/FedEx/USPS/DHL/Other);
@@ -227,8 +240,11 @@ model Invoice {
   // InvoicePayment.nsfFeeInvoiceId's own no-FK rationale. Null on every
   // ordinary invoice.
   feeForPaymentId        String?
-  createdAt              DateTime      @default(now())
-  updatedAt              DateTime      @updatedAt
+  // SA-760 R-3 / SA-772 folder 3 (sitting 4): see InvoiceOrderBillingRole. Nullable, no default, no backfill, no
+  // index in v1 (read per order; the Invoice(orderId) index serves it). No writer or reader until R-3 merges.
+  orderBillingRole       InvoiceOrderBillingRole?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
   tenantId               String?
 
   customer           Customer               @relation(fields: [customerId], references: [id])
@@ -279,7 +295,14 @@ model InvoiceItem {
   // from the live product at render time. Null when unset or flag.msrp is off.
   msrp                       Decimal?                @db.Decimal(10, 2)
   priceType                  PriceType               @default(STANDARD)
-  taxRate                    Decimal                 @default(0) @db.Decimal(5, 4)
+  // H3b: the staff price-override reason and author, copied verbatim from OrderItem's own
+  // pair by every order-to-invoice copier (null on manual lines and on lines billed before
+  // H3b). STAFF-ONLY: never selected by the buyer portal nor rendered on the customer PDF.
+  overrideReason             String?
+  overriddenBy               String?
+  // B296 (SA-814 §3, sitting 4 folder 2a): a FRACTION at Decimal(9,6) (a percent to 4 dp), the precision of
+  // Order.taxRate / OrderItem.taxRate; widened in place from Decimal(5,4). Rows written before keep their 4-dp value.
+  taxRate                    Decimal                 @default(0) @db.Decimal(9, 6)
   subtotal                   Decimal                 @db.Decimal(10, 2)
   boxes                      Int?
   pieces                     Int?
@@ -344,13 +367,22 @@ model InvoiceItem {
   updatedAt                  DateTime                @updatedAt
   tenantId                   String?
 
-  invoice            Invoice             @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  tenant             Tenant?             @relation(fields: [tenantId], references: [id])
-  product            Product?            @relation(fields: [productId], references: [id])
-  orderItem          OrderItem?          @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
-  trackedCategory    TrackedCategory?    @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
-  trackedSubcategory TrackedSubcategory? @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
+  invoice            Invoice                @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  tenant             Tenant?                @relation(fields: [tenantId], references: [id])
+  product            Product?               @relation(fields: [productId], references: [id])
+  orderItem          OrderItem?             @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  trackedCategory    TrackedCategory?       @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
+  trackedSubcategory TrackedSubcategory?    @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
   components         InvoiceItemComponent[]
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel          String?
+  packLabel          String?
+  lineCode           String?
+
+  // Units program S6 (SA-795 (g), G1): the invoice unit snapshot taken at issue (unit word + pieces per
+  // that unit). DISPLAY ONLY: never read by totals, tax, payments, credits or the ledger. Null = legacy.
+  invoiceUnitLabel  String?
+  invoiceUnitFactor Int?
 
   @@index([invoiceId])
   @@index([productId])
@@ -358,10 +390,6 @@ model InvoiceItem {
   @@index([tenantId])
   @@index([trackedCategoryId])
   @@index([trackedSubcategoryId])
-  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
-  baseLabel String?
-  packLabel String?
-  lineCode  String?
 }
 
 // #2717 M3: the invoice-side twin of OrderItemComponent, frozen at bill time. qty is an INTEGER
@@ -654,6 +682,11 @@ model CreditNoteItem {
   baseLabel String?
   packLabel String?
   lineCode  String?
+
+  // Units program S6 (SA-795 (g), G1): the invoice unit snapshot taken at issue (unit word + pieces per
+  // that unit). DISPLAY ONLY: never read by totals, tax, payments, credits or the ledger. Null = legacy.
+  invoiceUnitLabel  String?
+  invoiceUnitFactor Int?
 }
 
 /// Order↔credit-note INTENT: "apply this credit (up to `amount`, or its remaining
@@ -974,6 +1007,15 @@ model VendorBillItem {
   @@index([tenantId])
   // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
   baseLabel String?
+
+  // Units program S6 (PLAN §1.8): the family purchase split (PurchaseOrderItem's twins; SetNull: provenance only).
+  unitLabel       String?
+  familyProductId String?
+  familyGroupId   String?
+  familyProduct   Product? @relation("VendorBillItemFamily", fields: [familyProductId], references: [id], onDelete: SetNull)
+
+  @@index([familyGroupId])
+  @@index([familyProductId])
 }
 
 model BillPayment {
@@ -1114,7 +1156,8 @@ model RecurringInvoiceItem {
   qty                Decimal @db.Decimal(10, 3)
   unitPrice          Decimal @db.Decimal(10, 2)
   discount           Decimal @default(0) @db.Decimal(10, 2)
-  taxRate            Decimal @default(0) @db.Decimal(5, 4)
+  // B296 (SA-814 §3, sitting 4 folder 2a): a FRACTION at Decimal(9,6), InvoiceItem.taxRate's twin (was Decimal(5,4)).
+  taxRate            Decimal @default(0) @db.Decimal(9, 6)
   // U1 (A0): the selling unit for this line (InvoiceItem.unitLabel's twin). Null = the pack.
   unitLabel          String?
   tenantId           String?

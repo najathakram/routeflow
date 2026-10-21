@@ -94,11 +94,20 @@ describe("EstimatesService.convertToInvoice — selling restrictions (F-05)", ()
           { productId: "p-ok", lineKey: "n:2" },
         ],
         channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
         document: "INVOICE",
       }),
     );
     expect(restrictions.assertLinesSellable.mock.invocationCallOrder[0]).toBeLessThan(
       numbering.reserveNext.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("L8: at a PICKUP-ONLY tenant this sale is judged as PICKUP (the store's state), not DELIVERY", async () => {
+    prisma.tenantFeatureConfig.findFirst.mockResolvedValue({ mode: "pickup" });
+    await expect(service.convertToInvoice("est-1")).rejects.toThrow("stop: past the guard");
+    expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: "PICKUP" }),
     );
   });
 

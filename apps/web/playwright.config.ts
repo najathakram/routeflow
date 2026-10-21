@@ -84,6 +84,17 @@ export default defineConfig({
       },
     },
 
+    // ── Backoffice web cards (BO-01 …): super-admin, approved test tenants only ──
+    {
+      name: "bo-web",
+      testMatch: /bo-web-.*\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "super-admin.json"),
+      },
+    },
+
     // ── Operator tests ─────────────────────────────────────────────────────────
     {
       name: "operator",
@@ -532,6 +543,15 @@ export default defineConfig({
       testMatch: /68-create-order-customer-keyboard\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── Settings search (settings-search.spec.ts): carrier / low stock / clear at 1440 and 390. READ-ONLY.
+    {
+      name: "settings-search",
+      testMatch: /settings-search\.spec\.ts/,
+      dependencies: ["setup"],
+      // tenant admin: the spec opens the Low-stock digest, an admin-only setting (an OPERATOR never sees it)
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).
@@ -1056,9 +1076,39 @@ export default defineConfig({
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
           },
+          // Units v2 (grid / stock-off / family / blank-tiers money): needs a stack built WITH the feature and `flag.units_prices_v2`
+          // served to the test tenant; each spec fails (never skips) without it. Local lane only, like 71-73.
+          {
+            name: "units-v2",
+            testMatch: /(units-v2-|k11-).*\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
           {
             name: "counter-register-look",
             testMatch: /73-counter-register-look\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          {
+            name: "till-permission",
+            testMatch: /bo-api-till-permission\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          // Row 559 (Get the app): writes the platform-wide app links (restored in afterAll); local lane only like 71-73.
+          {
+            name: "get-the-app",
+            testMatch: /76-get-the-app\.spec\.ts/,
             dependencies: ["setup"],
             use: {
               ...devices["Desktop Chrome"],

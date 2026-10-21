@@ -2,6 +2,9 @@ import * as React from "react";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+jest.mock("@/lib/api/counter-sale", () => ({
+  useCounterSaleGate: () => ({ mayUseTill: true, loading: false }),
+}));
 jest.mock("@/lib/api/invoices", () => ({
   useCreateInvoiceFromOrder: () => ({ isPending: false, mutate: jest.fn() }),
 }));
@@ -11,7 +14,7 @@ jest.mock("@routeflow/ui/web", () => {
   return { ...actual, useToast: () => ({ toast: jest.fn() }) };
 });
 
-import { PosOrderActions } from "./PosOrderActions";
+import { PosOrderActions, posMoveOptions } from "./PosOrderActions";
 import { PickupHandOverButton } from "./PickupHandOver";
 
 const noop = () => undefined;
@@ -29,7 +32,8 @@ function renderActions(status: string, invoices: unknown[] = []) {
         status={status}
         onHandOver={noop}
         onReadyForPickup={noop}
-        onSwitchToDelivery={noop}
+        moveOptions={{ delivery: "ROUTE", ship: true }}
+        onMove={noop}
       />
     </QueryClientProvider>,
   );
@@ -48,7 +52,28 @@ describe("POS order action buttons are touch-sized (>= 44 px)", () => {
   });
 
   it("the Picked up button is 44 px too", () => {
-    render(<PickupHandOverButton onOpen={noop} />);
+    // BO-07: the entry reads the till gate, which needs a query client.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <PickupHandOverButton onOpen={noop} />
+      </QueryClientProvider>,
+    );
     expect(screen.getByRole("button", { name: "Picked up" }).className).toMatch(/\bh-11\b/);
+  });
+});
+
+describe("posMoveOptions (M8)", () => {
+  it("both paths: two buttons, delivery is the route", () => {
+    expect(posMoveOptions(["ROUTE", "SHIP"], "SHIP")).toEqual({ delivery: "ROUTE", ship: true });
+  });
+  it("ship only: one button, Ship by carrier", () => {
+    expect(posMoveOptions(["SHIP"], "SHIP")).toEqual({ delivery: null, ship: true });
+  });
+  it("route only: the old single Switch to delivery", () => {
+    expect(posMoveOptions(["ROUTE"], "ROUTE")).toEqual({ delivery: "ROUTE", ship: false });
+  });
+  it("neither (pickup-only account): today's lone button, to the account default", () => {
+    expect(posMoveOptions([], "SHIP")).toEqual({ delivery: "SHIP", ship: false });
   });
 });

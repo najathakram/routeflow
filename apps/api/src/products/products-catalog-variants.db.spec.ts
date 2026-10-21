@@ -1,3 +1,5 @@
+import { plainToInstance } from "class-transformer";
+import { UpdateProductDto } from "./dto/update-product.dto";
 /**
  * B1212 / B1213 / B1214 DB-lane proof for product families and their variants (real Postgres, throwaway
  * `qa-*` tenants). UNRUN when it was written (no database in the authoring checkout): the first DB-lane run
@@ -116,6 +118,34 @@ describeDb("families and variants: delete, sellability, barcodes — real Postgr
       select: { id: true },
     });
 
+  describe("audit 2026-10-14: the Unlink button's PATCH really unlinks (it returned 200 and changed nothing)", () => {
+    // The body goes through the same transform the global ValidationPipe applies, so a DTO that drops `null`
+    // is caught here, not only in a unit spec.
+    const unlinkBody = () =>
+      plainToInstance(UpdateProductDto, { parentProductId: null, variantName: null });
+
+    it.each([
+      ["a legacy variant (standalone parent)", "STANDARD", "STANDARD"],
+      ["a family variant", "FAMILY", "VARIANT"],
+    ])("%s becomes standalone", async (_label, parentKind, childKind) => {
+      const tenantId = await seedTenant("unlink");
+      const parent = await row(tenantId, "Unlink parent", { kind: parentKind });
+      const child = await row(tenantId, "Unlink parent - Red", {
+        kind: childKind,
+        parentProductId: parent.id,
+        variantName: "Red",
+      });
+      await inTenant(tenantId, () =>
+        service.update(child.id, unlinkBody() as never, { packPrecondition: "internal" }),
+      );
+      const after = await prisma.product.findUnique({
+        where: { id: child.id },
+        select: { parentProductId: true },
+      });
+      expect(after?.parentProductId).toBeNull();
+    });
+  });
+
   describe("B1212: bulkDelete / clearAll never hard-delete a product that has variants", () => {
     it("a family whose variant is outside the selection is skipped; the variant stays attached", async () => {
       const tenantId = await seedTenant("del-skip");
@@ -200,14 +230,16 @@ describeDb("families and variants: delete, sellability, barcodes — real Postgr
         sku: `CH-${RUN_SUFFIX}`,
       });
       const err = await inTenant(tenantId, () =>
-        service.update(fam.id, { isActive: false } as never),
+        service.update(fam.id, { isActive: false } as never, { packPrecondition: "internal" }),
       ).catch((e: unknown) => e);
       expect((err as { getResponse(): unknown }).getResponse()).toMatchObject({
         code: "FAMILY_HAS_ACTIVE_VARIANTS",
         variantCount: 1,
       });
       await inTenant(tenantId, () =>
-        service.update(fam.id, { isActive: false, confirmCascade: true } as never),
+        service.update(fam.id, { isActive: false, confirmCascade: true } as never, {
+          packPrecondition: "internal",
+        }),
       );
       const after = await prisma.product.findUniqueOrThrow({
         where: { id: v1.id },
@@ -225,7 +257,7 @@ describeDb("families and variants: delete, sellability, barcodes — real Postgr
         isActive: false,
       });
       const err = await inTenant(tenantId, () =>
-        service.update(v1.id, { isActive: true } as never),
+        service.update(v1.id, { isActive: true } as never, { packPrecondition: "internal" }),
       ).catch((e: unknown) => e);
       expect((err as { getResponse(): unknown }).getResponse()).toMatchObject({
         code: "VARIANT_PARENT_INACTIVE",

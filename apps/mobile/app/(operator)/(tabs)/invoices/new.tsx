@@ -32,7 +32,11 @@ import { useProductSearch } from "../../../../lib/use-product-search";
 import { mergeProductIndex } from "../../../../lib/paged-rows";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
 import { depositErrors, depositPayload } from "../../../../lib/invoice-deposit";
-import { useCreateSale, type CreateSaleItemInput } from "../../../../lib/api/orders";
+import {
+  useCreateSale,
+  type CreateSaleDto,
+  type CreateSaleItemInput,
+} from "../../../../lib/api/orders";
 import { useRestrictionWarningRetry } from "../../../../lib/use-restriction-warning-retry";
 import { decideTrayPrice, reasonRequiredMessage } from "../../../../lib/staff-price-override";
 import { useTrackedCategories } from "../../../../lib/api/tracked-categories";
@@ -70,7 +74,9 @@ import {
   UNIT_NOT_OFFERED_MESSAGE,
   chooseInvoiceUnit,
   dropStaleUnitLines,
+  offeredByLadder,
   invoiceItemDto,
+  invoiceItemOverride,
   invoiceTotalsLine,
   normalizeInvoiceUnitLines,
   withUnitListPrices,
@@ -96,7 +102,10 @@ import { useAuthStore } from "../../../../lib/auth-store";
 import { hasUnsavedInvoiceDraft, shouldConfirmDiscard } from "../../../../lib/discard-guard";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
-import { computeLineSubtotal, effectiveQty, getTierPrice, isSpecialTier } from "@routeflow/pricing";
+import { computeLineSubtotal, effectiveQty, type CustomerLayerUnit } from "@routeflow/pricing";
+import { useCustomerPriceLayer } from "../../../../lib/api/price-layer";
+import { lineIsSpecial, packLinePrice, withLayerBase } from "../../../../lib/cart-order-total";
+import { guardLayerSave, priceLayerGate } from "../../../../lib/price-layer-gate";
 import { useCustomerPrices } from "../../../../lib/api/customers";
 import {
   computeInvoiceTotals,
@@ -104,6 +113,7 @@ import {
   type InvoiceTotals,
   type InvoiceTotalsLine,
 } from "../../../../lib/invoice-totals";
+import { invoiceLineCount, lineCountLabel } from "../../../../lib/invoice-line-count";
 import {
   DEFAULT_TERMS,
   ISO_DATE,
@@ -113,6 +123,15 @@ import {
 } from "../../../../lib/invoice-terms";
 import { MoneyTextInput } from "../../../../components/MoneyTextInput";
 import { alertInfo, chooseAction, confirm } from "../../../../lib/confirm";
+import { createSaleAttemptKey } from "../../../../lib/sale-attempt-key";
+import {
+  SALE_RECOVERY_COPY,
+  saleRecovery,
+  type SaleRecovery,
+  type UnknownSale,
+} from "@routeflow/types/sale-attempt";
+import { SaleUnknownPanel } from "../../../../components/SaleUnknownPanel";
+import { KEPT_DRAFT_COPY, keptDraftInvoiceId } from "../../../../lib/kept-draft-invoice";
 import { QtyStepper } from "../../../../components/QtyStepper";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
 import { ProductPickerSheet } from "../../../../components/ProductPickerSheet";
@@ -131,6 +150,7 @@ import {
 import { isCatalogHeader, visibleCatalogRows, type CatalogRow } from "../../../../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../../../../lib/unlisted-affordance";
 import { sanitizeIntInput } from "../../../../lib/qty";
+import { safeTextErrorCopy } from "../../../../lib/safe-text-error-copy";
 import { MONEY_INPUT_MAX_WIDTH } from "../../../../lib/row-layout";
 
 /**
@@ -284,6 +304,21 @@ export default function NewInvoiceScreen() {
           showToast(`Invoice ${invoiceNumber} created`);
           router.replace(`/(operator)/invoices/${invoiceId}` as any);
         }}
+        onKeptDraft={(invoiceId) => {
+          // Row 466: the invoice was created and only the send failed. Open it, never retry the create.
+          showToast(KEPT_DRAFT_COPY);
+          router.replace(`/(operator)/invoices/${invoiceId}` as any);
+        }}
+        onOpenRecovery={(recovery) => {
+          // Row 485: an unknown sale outcome. Look at what exists; push so the locked cart stays behind it.
+          router.push(
+            (recovery.kind === "invoice"
+              ? `/(operator)/invoices/${recovery.id}`
+              : recovery.kind === "order"
+                ? `/(operator)/orders/${recovery.id}`
+                : "/(operator)/(tabs)/orders") as any,
+          );
+        }}
       />
     </SafeAreaView>
   );
@@ -372,20 +407,35 @@ function InvoiceComposer({
   onBack,
   onChangeCustomer,
   onSaved,
+  onKeptDraft,
+  onOpenRecovery,
 }: {
   customerId: string;
   customerName: string | null;
   onBack: () => void;
   onChangeCustomer: () => void;
   onSaved: (invoiceId: string, invoiceNumber: string) => void;
+  /** The create committed but the send step failed: open the kept draft. */
+  onKeptDraft: (invoiceId: string) => void;
+  /** Row 485: open the invoice, the order, or the recent orders for an unknown sale outcome. */
+  onOpenRecovery: (recovery: SaleRecovery) => void;
 }) {
   const [category, setCategory] = useState("All");
-  const [items, setItems] = useState<Record<string, InvoiceLineState>>({});
+  // Row 485: while a sale's outcome is UNKNOWN the cart is locked; every line edit refuses (the ref is set the
+  // moment the sale locks, ahead of the state that renders the panel).
+  const saleLockRef = useRef(false);
+  const [items, setItemsRaw] = useState<Record<string, InvoiceLineState>>({});
+  const setItems: typeof setItemsRaw = (u) => {
+    if (!saleLockRef.current) setItemsRaw(u);
+  };
   const itemsRef = useRef(items); // the latest committed lines, for the pending-line scan/tap decision in addOne
   itemsRef.current = items;
   const qc = useQueryClient();
   // Ad-hoc lines not in the catalog (no productId on submit).
-  const [unlisted, setUnlisted] = useState<UnlistedLine[]>([]);
+  const [unlisted, setUnlistedRaw] = useState<UnlistedLine[]>([]);
+  const setUnlisted: typeof setUnlistedRaw = (u) => {
+    if (!saleLockRef.current) setUnlistedRaw(u);
+  };
   const [unlistedModalOpen, setUnlistedModalOpen] = useState(false);
   // Name to prefill the unlisted-item composer with (from an empty search).
   const [unlistedPrefill, setUnlistedPrefill] = useState("");
@@ -465,10 +515,22 @@ function InvoiceComposer({
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
     return m;
   }, [customerPrices]);
-  const tierPriceFor = (p: Product) => getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
+  // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, every number is master's.
+  const priceLayer = useCustomerPriceLayer(customerId);
+  const layerOf = priceLayer.layerOf;
   const effectiveTierFor = (id: string) => cpMap.get(id) ?? customerTier ?? 1;
+  const packPriceFor = (p: Product) => packLinePrice(p, effectiveTierFor(p.id), layerOf(p.id));
+  const tierPriceFor = (p: Product) => packPriceFor(p).price;
+  /** A unit line whose unit is in the layer carries the layer's price as its base (same line object otherwise). */
+  const lineFor = <L extends { unitLabel?: string | null; unitBasePrice?: number }>(
+    line: L,
+    p: Product,
+  ): L => withLayerBase(line, p, effectiveTierFor(p.id), layerOf(p.id));
   // #2696(c): the server's "special" — the tier it prices this product at is not tier 1.
-  const isSpecialFor = (p: Product) => isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1);
+  const isSpecialFor = (p: Product) => packPriceFor(p).isSpecial;
+  /** This LINE's SPECIAL-ness: a unit line answers with its own layer row (a Can is not the pack). */
+  const lineSpecialFor = (line: Parameters<typeof lineFor>[0], p: Product) =>
+    lineIsSpecial(line, p, effectiveTierFor(p.id), layerOf(p.id));
   const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
   // Rate the row toggles actually offer: hidden entirely for exempt customers.
   const taxRateFraction = isTaxExempt ? 0 : tenantTaxRate;
@@ -859,8 +921,9 @@ function InvoiceComposer({
   // saleModeGate (WP4). The gate's equality assertion is only meaningful when
   // both the preview and the gate see the identical lines; building them twice
   // (even from the same inputs) would risk the two silently drifting apart.
-  const { invoiceLines, totalItems, hasSeparateInvoiceCategoryLine } = useMemo(() => {
+  const { invoiceLines, totalItems, lineCount, hasSeparateInvoiceCategoryLine } = useMemo(() => {
     const lines: InvoiceTotalsLine[] = [];
+    const catalogQtys: number[] = [];
     let totalItems = 0;
     let hasSeparateInvoiceCategoryLine = false;
     for (const [id, line] of Object.entries(items)) {
@@ -869,10 +932,13 @@ function InvoiceComposer({
       const qty = effectiveQty(line, p.unitsPerBox);
       if (qty <= 0) continue;
       totalItems += qty;
+      catalogQtys.push(qty);
       if (p.trackedCategoryId && separateInvoiceCategoryIds.has(p.trackedCategoryId)) {
         hasSeparateInvoiceCategoryLine = true;
       }
-      lines.push(invoiceTotalsLine(line, p.unitsPerBox, tierPriceFor(p), taxRateFraction));
+      lines.push(
+        invoiceTotalsLine(lineFor(line, p), p.unitsPerBox, tierPriceFor(p), taxRateFraction),
+      );
     }
     // Unlisted lines: never boxed, simple unitPrice × qty.
     for (const u of unlisted) {
@@ -884,7 +950,9 @@ function InvoiceComposer({
         taxRate: u.taxable ? taxRateFraction : 0,
       });
     }
-    return { invoiceLines: lines, totalItems, hasSeparateInvoiceCategoryLine };
+    // row 440: the header and footer count LINES; the piece total stays the Create gate
+    const lineCount = invoiceLineCount(catalogQtys, unlisted);
+    return { invoiceLines: lines, totalItems, lineCount, hasSeparateInvoiceCategoryLine };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     items,
@@ -894,6 +962,8 @@ function InvoiceComposer({
     cpMap,
     customerTier,
     separateInvoiceCategoryIds,
+    priceLayer.data,
+    customerId,
   ]);
 
   // Full money preview through lib/invoice-totals — the same formula the server
@@ -1007,13 +1077,14 @@ function InvoiceComposer({
         unlisted,
         scanOrder,
         lookup: (id) => productById.get(id),
-        priceFor: (p, line) => {
+        priceFor: (p, rawLine) => {
           const full = productById.get(p.id);
+          const line = full ? lineFor(rawLine, full) : rawLine;
           return full ? unitPriceBase(line, tierPriceFor(full)) : 0;
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, unlisted, scanOrder, productById, cpMap, customerTier],
+    [items, unlisted, scanOrder, productById, cpMap, customerTier, priceLayer.data, customerId],
   );
 
   /**
@@ -1125,7 +1196,7 @@ function InvoiceComposer({
       if (isCatalogHeader(p)) return <CatalogSectionLabel label={p.label} />;
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
-      const price = line ? unitPriceBase(line, tierPriceFor(p)) : tierPriceFor(p);
+      const price = line ? unitPriceBase(lineFor(line, p), tierPriceFor(p)) : tierPriceFor(p);
       const band =
         line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 && !line.unitLabel ? (
           <BoxedQtyBand
@@ -1178,6 +1249,10 @@ function InvoiceComposer({
   const createMut = useCreateInvoice();
   const createSaleMut = useCreateSale();
   const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
+  const [saleKey] = useState(createSaleAttemptKey); // row 485: one Idempotency-Key per sale attempt
+  // Set while the sale's outcome is UNKNOWN: the cart is locked behind SaleUnknownPanel.
+  const [saleUnknown, setSaleUnknown] = useState<UnknownSale | null>(null);
+  const lastSaleRef = useRef<CreateSaleDto | null>(null);
   // The pending-unit gate in onSave awaits before either request starts; `settling` covers that gap.
   const [settling, setSettling] = useState(false);
   const saving = createMut.isPending || createSaleMut.isPending || settling;
@@ -1187,7 +1262,14 @@ function InvoiceComposer({
   // missed toast can't become a second order, a second stock deduction and a
   // second issued invoice.
   const [saleRecorded, setSaleRecorded] = useState(false);
-  const canSave = totalItems > 0 && !saving && !anyUnitLoading && !saleRecorded;
+  // D-5 (SA-813 M3): Create stays disabled until every line's price is confirmed by the layer read.
+  const layerGate = priceLayerGate(
+    priceLayer,
+    Object.keys(items),
+    (id) => productById.get(id)?.name ?? id,
+  );
+  const baseOk = totalItems > 0 && !saving && !anyUnitLoading && !saleRecorded && !saleUnknown;
+  const canSave = baseOk && !layerGate.blocked;
 
   // No FormSheet on this screen, so it applies the same choke-point rule as
   // FormSheet.tsx's handleCancel directly: never prompt "Discard invoice?"
@@ -1231,7 +1313,8 @@ function InvoiceComposer({
 
   /**
    * The server dropped a unit from a product's ladder after it was picked: say so, refresh the
-   * ladders (staleTime 0, so the picker stops offering it) and put those lines back on one Box.
+   * ladders (staleTime 0, so the picker stops offering it) and move those lines onto the pack,
+   * converted by pieces so the count is kept (row 458).
    */
   const onUnitNotOffered = async (title: string) => {
     alertInfo(title, UNIT_NOT_OFFERED_MESSAGE);
@@ -1247,19 +1330,73 @@ function InvoiceComposer({
             queryFn: () => fetchProductUnits(id),
             staleTime: 0,
           });
-          offered[id] = units.map((u) => u.label.trim().toLowerCase());
+          offered[id] = units.map((u) => u.label);
         } catch {
           // ladder unreachable: that product's lines are left alone (the next save re-checks)
         }
       }),
     );
     setItems((cur) =>
-      dropStaleUnitLines(
-        cur,
-        (id, label) => !(id in offered) || offered[id]!.includes(label.trim().toLowerCase()),
-        (id) => productById.get(id)?.unitsPerBox,
-      ),
+      dropStaleUnitLines(cur, offeredByLadder(offered), (id) => productById.get(id)?.unitsPerBox),
     );
+  };
+
+  /**
+   * Posts the sale under its Idempotency-Key (row 485). The same cart retried sends the SAME key, so the
+   * server resumes the stored sale. An UNKNOWN outcome (a 5xx, a dropped connection, an error that names a
+   * committed order or invoice) locks the cart behind SaleUnknownPanel; a success or a definitive refusal
+   * unlocks it.
+   */
+  const postSale = (saleDto: CreateSaleDto) => {
+    // Row 510: a resubmit after the restriction warning carries the ack, so it is a new payload (a new key).
+    const body = rw.attach(saleDto) as CreateSaleDto;
+    const idempotencyKey = saleKey.keyFor(JSON.stringify(body));
+    createSaleMut.mutate(
+      { ...body, idempotencyKey },
+      {
+        // POST /orders/sell resolves to the created INVOICE (not the order) —
+        // see CreatedSaleInvoice in lib/api/orders.ts.
+        onSuccess: (inv) => {
+          saleKey.settle({ ok: true });
+          saleLockRef.current = false;
+          setSaleUnknown(null);
+          if (inv?.id) {
+            onSaved(inv.id, inv.invoiceNumber);
+            return;
+          }
+          // Defensive only: the sale IS already recorded server-side, so lock
+          // the builder instead of leaving a live Create button behind a toast
+          // that's easy to miss on a phone.
+          setSaleRecorded(true);
+          showToast("Sale recorded — open the invoice from the Invoices tab.");
+        },
+        onError: (err: any) => {
+          saleKey.settle({ ok: false, error: err });
+          const unknown = saleKey.unknown();
+          if (unknown) {
+            saleLockRef.current = true;
+            setReviewOpen(false);
+            setSaleUnknown(unknown);
+            return;
+          }
+          saleLockRef.current = false;
+          setSaleUnknown(null);
+          if (rw.handle(err, () => postSale(saleDto))) return; // row 510
+          if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't record the sale");
+          alertInfo(
+            "Couldn't record the sale",
+            err?.response?.data?.message ?? err?.message ?? "Try again.",
+          );
+        },
+      },
+    );
+  };
+
+  const startNewSale = () => {
+    saleKey.startNew();
+    saleLockRef.current = false;
+    lastSaleRef.current = null;
+    setSaleUnknown(null);
   };
 
   /**
@@ -1267,6 +1404,12 @@ function InvoiceComposer({
    *   this. The van-sale path is gated on it — see the sale branch below.
    */
   const onSave = async (fromReview = false) => {
+    // D-5: name the layer block instead of the misleading "add an item" copy.
+    const layerBlock = guardLayerSave(layerGate, false);
+    if (layerBlock) {
+      alertInfo("Prices aren't confirmed", layerBlock);
+      return;
+    }
     if (!canSave) {
       alertInfo("Add at least one item", "Tap + on any product to start the invoice.");
       return;
@@ -1338,10 +1481,10 @@ function InvoiceComposer({
         if (!p) continue;
         if (effectiveQty(line, p.unitsPerBox) <= 0) continue;
         // #2696(c) SA-558e: the server's rule A — a special price moves only with a reason.
-        const item = saleItemDto(line, p, {
+        const item = saleItemDto(lineFor(line, p), p, {
           catalogPrice: tierPriceFor(p),
           listPrice: toNumber(p.pricePerUnit),
-          isSpecial: isSpecialFor(p),
+          isSpecial: lineSpecialFor(line, p),
         });
         if ("refused" in item) {
           alertInfo("Reason needed", reasonRequiredMessage(displayName(p)));
@@ -1355,46 +1498,23 @@ function InvoiceComposer({
         if (u.qty <= 0 || u.name.trim() === "" || u.unitPrice <= 0) continue;
         saleItems.push({ name: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice });
       }
-      createSaleMut.mutate(
-        rw.attach({
-          customerId,
-          items: saleItems,
-          deliveredNow,
-          ...(shippingFee && shippingFee > 0 ? { shippingFee } : {}),
-          // Only a genuinely backdated sale carries orderDate — a same-day sale
-          // stays unsent so deliveredAt lands at the full current timestamp.
-          ...(issueTrim && issueTrim !== todayPlusDays(0) ? { orderDate: issueTrim } : {}),
-          // No dueDate: gate rule 4 (lib/sale-mode.ts) makes sale mode
-          // ineligible the moment the operator touches Due date or Terms, so an
-          // eligible sale's `dueDate` is always this screen's hardcoded Net-30
-          // default. Sending it would override the tenant's configured
-          // `invoice.defaultTerms` with a date nobody chose (and put a free-text
-          // field on the wire ahead of this path's ISO_DATE check).
-        }),
-        {
-          // POST /orders/sell resolves to the created INVOICE (not the order) —
-          // see CreatedSaleInvoice in lib/api/orders.ts.
-          onSuccess: (inv) => {
-            if (inv?.id) {
-              onSaved(inv.id, inv.invoiceNumber);
-              return;
-            }
-            // Defensive only: the sale IS already recorded server-side, so lock
-            // the builder instead of leaving a live Create button behind a toast
-            // that's easy to miss on a phone.
-            setSaleRecorded(true);
-            showToast("Sale recorded — open the invoice from the Invoices tab.");
-          },
-          onError: (err: any) => {
-            if (rw.handle(err, () => onSave(fromReview))) return; // row 510
-            if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't record the sale");
-            alertInfo(
-              "Couldn't record the sale",
-              err?.response?.data?.message ?? err?.message ?? "Try again.",
-            );
-          },
-        },
-      );
+      const saleDto = {
+        customerId,
+        items: saleItems,
+        deliveredNow,
+        ...(shippingFee && shippingFee > 0 ? { shippingFee } : {}),
+        // Only a genuinely backdated sale carries orderDate — a same-day sale
+        // stays unsent so deliveredAt lands at the full current timestamp.
+        ...(issueTrim && issueTrim !== todayPlusDays(0) ? { orderDate: issueTrim } : {}),
+        // No dueDate: gate rule 4 (lib/sale-mode.ts) makes sale mode
+        // ineligible the moment the operator touches Due date or Terms, so an
+        // eligible sale's `dueDate` is always this screen's hardcoded Net-30
+        // default. Sending it would override the tenant's configured
+        // `invoice.defaultTerms` with a date nobody chose (and put a free-text
+        // field on the wire ahead of this path's ISO_DATE check).
+      };
+      lastSaleRef.current = saleDto;
+      postSale(saleDto);
       return;
     }
 
@@ -1417,15 +1537,26 @@ function InvoiceComposer({
       const p = productById.get(productId);
       if (!p) continue;
       if (effectiveQty(line, p.unitsPerBox) <= 0) continue;
-      payload.push(
-        invoiceItemDto(
-          line,
+      // H3b: the server judges an invoice line like a sale line — a special price moves only with a reason.
+      const over = invoiceItemOverride(lineFor(line, p), {
+        catalogPrice: tierPriceFor(p),
+        listPrice: toNumber(p.pricePerUnit),
+        isSpecial: lineSpecialFor(line, p),
+      });
+      if ("refused" in over) {
+        alertInfo("Reason needed", reasonRequiredMessage(displayName(p)));
+        return;
+      }
+      payload.push({
+        ...invoiceItemDto(
+          lineFor(line, p),
           { id: productId, description: displayName(p) },
           tierPriceFor(p),
           p.unitsPerBox,
           taxRateFraction,
         ),
-      );
+        ...over,
+      });
     }
     // Unlisted lines → `{ description, qty, unitPrice }` (no productId).
     for (const u of unlisted) {
@@ -1457,10 +1588,12 @@ function InvoiceComposer({
         },
         onError: (err: any) => {
           if (rw.handle(err, () => onSave(fromReview))) return; // row 510
+          const keptId = keptDraftInvoiceId(err);
+          if (keptId) return void onKeptDraft(keptId);
           if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't create invoice");
           alertInfo(
             "Couldn't create invoice",
-            err?.response?.data?.message ?? err?.message ?? "Try again.",
+            safeTextErrorCopy(err) ?? err?.response?.data?.message ?? err?.message ?? "Try again.",
           );
         },
       },
@@ -1487,155 +1620,196 @@ function InvoiceComposer({
         leading={<NavBackButton label="Back" onPress={handleBack} />}
       />
 
-      <View style={styles.customerChipWrap}>
-        <Pressable style={styles.customerChip} onPress={onChangeCustomer}>
-          <Ionicons name="person-outline" size={14} color={ios.brand} />
-          <Text style={styles.customerChipText} numberOfLines={1}>
-            {customerName ?? "Customer"}
-          </Text>
-          <Text style={styles.customerChipChange}>Change</Text>
-        </Pressable>
-      </View>
-
-      {/* Find: search + categories, pinned so they never scroll away. */}
-      <SearchBar
-        placeholder="Search items…"
-        value={search}
-        onChangeText={setSearch}
-        onSubmitEditing={() => void handleSearchSubmit()}
-        autoFocus
-        trailing={
-          <View style={styles.searchTrailing}>
-            {isSearching ? <ActivityIndicator size="small" color={ios.gray[1]} /> : null}
-            <Pressable
-              onPress={() => setScanOpen(true)}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Scan items"
-            >
-              <Ionicons name="barcode-outline" size={20} color={ios.brand} />
-            </Pressable>
-          </View>
-        }
-      />
-
-      {visible.showCategoryChips ? (
-        <View style={styles.browseBar}>
-          {categoryChips.length > 1 ? (
-            <View style={{ flex: 1 }}>
-              <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
-            </View>
-          ) : (
-            <View style={{ flex: 1 }} />
-          )}
-          <Pressable
-            onPress={() => {
-              setBrowsing(false);
-              setCategory("All");
-            }}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel="Close the catalogue"
-            style={styles.browseClose}
-          >
-            <Ionicons name="close" size={18} color={ios.label2} />
-          </Pressable>
-        </View>
+      {saleUnknown ? (
+        <SaleUnknownPanel
+          unknown={saleUnknown}
+          busy={createSaleMut.isPending}
+          onTryAgain={() => {
+            if (lastSaleRef.current) postSale(lastSaleRef.current);
+          }}
+          onOpen={() => onOpenRecovery(saleRecovery(saleUnknown))}
+          onStartNew={() =>
+            chooseAction(SALE_RECOVERY_COPY.confirmTitle, SALE_RECOVERY_COPY.confirmBody, [
+              {
+                label: SALE_RECOVERY_COPY.recentOrders,
+                style: "default",
+                onPress: () => onOpenRecovery({ kind: "recent" }),
+              },
+              { label: SALE_RECOVERY_COPY.startNew, style: "destructive", onPress: startNewSale },
+              { label: SALE_RECOVERY_COPY.confirmKeep, style: "cancel" },
+            ])
+          }
+        />
       ) : null}
 
-      <FlatList
-        ref={listRef}
-        style={styles.catalogList}
-        data={filtered}
-        keyExtractor={productKey}
-        renderItem={renderProduct}
-        extraData={items}
-        initialNumToRender={12}
-        maxToRenderPerBatch={12}
-        windowSize={7}
-        // RN's own default is Android-only; forcing it on for iOS is a known
-        // source of cells failing to render. No-op on web.
-        removeClippedSubviews={Platform.OS === "android"}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        onScrollToIndexFailed={onScrollToIndexFailed}
-        onEndReachedThreshold={0.5}
-        onEndReached={() => {
-          if (isPlaceholder || !hasNextPage || isFetchingNextPage) return;
-          fetchNextPage();
-        }}
-        contentContainerStyle={styles.listContent}
-        ItemSeparatorComponent={RowSpacer}
-        ListEmptyComponent={
-          visible.emptyHint ? (
-            <View style={styles.center}>
-              <Text style={styles.emptyText}>{visible.emptyHint}</Text>
-            </View>
-          ) : unlistedPlacement === "empty-state" ? (
-            <View style={styles.center}>
-              <Text style={styles.emptyText}>
-                No products{searchTerm ? " match your search" : " yet"}.
-              </Text>
+      {/* Row 485: a sale with an unknown outcome locks the whole cart behind the panel above. */}
+      <View
+        style={[styles.lockWrap, saleUnknown ? styles.locked : null]}
+        pointerEvents={saleUnknown ? "none" : "auto"}
+      >
+        <View style={styles.customerChipWrap}>
+          <Pressable style={styles.customerChip} onPress={onChangeCustomer}>
+            <Ionicons name="person-outline" size={14} color={ios.brand} />
+            <Text style={styles.customerChipText} numberOfLines={1}>
+              {customerName ?? "Customer"}
+            </Text>
+            <Text style={styles.customerChipChange}>Change</Text>
+          </Pressable>
+        </View>
+
+        {/* Find: search + categories, pinned so they never scroll away. */}
+        <SearchBar
+          placeholder="Search items…"
+          value={search}
+          onChangeText={setSearch}
+          onSubmitEditing={() => void handleSearchSubmit()}
+          autoFocus
+          trailing={
+            <View style={styles.searchTrailing}>
+              {isSearching ? <ActivityIndicator size="small" color={ios.gray[1]} /> : null}
               <Pressable
-                style={styles.emptyUnlistedBtn}
-                onPress={() => openUnlistedModal(searchTerm)}
+                onPress={() => setScanOpen(true)}
+                hitSlop={10}
                 accessibilityRole="button"
+                accessibilityLabel="Scan items"
               >
-                <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
-                <Text style={styles.emptyUnlistedText} numberOfLines={2}>
-                  {unlistedLabel}
+                <Ionicons name="barcode-outline" size={20} color={ios.brand} />
+              </Pressable>
+            </View>
+          }
+        />
+
+        {visible.showCategoryChips ? (
+          <View style={styles.browseBar}>
+            {categoryChips.length > 1 ? (
+              <View style={{ flex: 1 }}>
+                <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
+              </View>
+            ) : (
+              <View style={{ flex: 1 }} />
+            )}
+            <Pressable
+              onPress={() => {
+                setBrowsing(false);
+                setCategory("All");
+              }}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Close the catalogue"
+              style={styles.browseClose}
+            >
+              <Ionicons name="close" size={18} color={ios.label2} />
+            </Pressable>
+          </View>
+        ) : null}
+
+        <FlatList
+          ref={listRef}
+          style={styles.catalogList}
+          data={filtered}
+          keyExtractor={productKey}
+          renderItem={renderProduct}
+          extraData={items}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={7}
+          // RN's own default is Android-only; forcing it on for iOS is a known
+          // source of cells failing to render. No-op on web.
+          removeClippedSubviews={Platform.OS === "android"}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          onScrollToIndexFailed={onScrollToIndexFailed}
+          onEndReachedThreshold={0.5}
+          onEndReached={() => {
+            if (isPlaceholder || !hasNextPage || isFetchingNextPage) return;
+            fetchNextPage();
+          }}
+          contentContainerStyle={styles.listContent}
+          ItemSeparatorComponent={RowSpacer}
+          ListEmptyComponent={
+            visible.emptyHint ? (
+              <View style={styles.center}>
+                <Text style={styles.emptyText}>{visible.emptyHint}</Text>
+              </View>
+            ) : unlistedPlacement === "empty-state" ? (
+              <View style={styles.center}>
+                <Text style={styles.emptyText}>
+                  No products{searchTerm ? " match your search" : " yet"}.
                 </Text>
-              </Pressable>
-            </View>
-          ) : (
-            <View style={styles.center}>
-              <ActivityIndicator color={ios.brand} />
-            </View>
-          )
-        }
-        ListFooterComponent={
-          <>
-            {visible.showBrowseButton ? (
-              <Pressable
-                style={styles.listUnlistedBtn}
-                onPress={() => setBrowsing(true)}
-                accessibilityRole="button"
-                accessibilityLabel="Browse the full catalogue"
-              >
-                <Ionicons name="grid-outline" size={16} color={ios.brand} />
-                <Text style={styles.listUnlistedText}>Browse catalogue</Text>
-              </Pressable>
-            ) : null}
-            {unlistedPlacement === "list-footer" ? (
-              <Pressable
-                style={styles.listUnlistedBtn}
-                onPress={() => openUnlistedModal(searchTerm)}
-                accessibilityRole="button"
-                accessibilityLabel={unlistedLabel}
-                hitSlop={4}
-              >
-                <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
-                <Text style={styles.listUnlistedText} numberOfLines={1}>
-                  {unlistedLabel}
-                </Text>
-              </Pressable>
-            ) : null}
-            {isFetchingNextPage ? (
-              <View style={styles.pageSpinner}>
+                <Pressable
+                  style={styles.emptyUnlistedBtn}
+                  onPress={() => openUnlistedModal(searchTerm)}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+                  <Text style={styles.emptyUnlistedText} numberOfLines={2}>
+                    {unlistedLabel}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.center}>
                 <ActivityIndicator color={ios.brand} />
               </View>
-            ) : null}
-          </>
-        }
-      />
+            )
+          }
+          ListFooterComponent={
+            <>
+              {visible.showBrowseButton ? (
+                <Pressable
+                  style={styles.listUnlistedBtn}
+                  onPress={() => setBrowsing(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Browse the full catalogue"
+                >
+                  <Ionicons name="grid-outline" size={16} color={ios.brand} />
+                  <Text style={styles.listUnlistedText}>Browse catalogue</Text>
+                </Pressable>
+              ) : null}
+              {unlistedPlacement === "list-footer" ? (
+                <Pressable
+                  style={styles.listUnlistedBtn}
+                  onPress={() => openUnlistedModal(searchTerm)}
+                  accessibilityRole="button"
+                  accessibilityLabel={unlistedLabel}
+                  hitSlop={4}
+                >
+                  <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+                  <Text style={styles.listUnlistedText} numberOfLines={1}>
+                    {unlistedLabel}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {isFetchingNextPage ? (
+                <View style={styles.pageSpinner}>
+                  <ActivityIndicator color={ios.brand} />
+                </View>
+              ) : null}
+            </>
+          }
+        />
+      </View>
 
+      {layerGate.message ? (
+        <Pressable
+          onPress={layerGate.canRetry ? priceLayer.refetch : undefined}
+          disabled={!layerGate.canRetry}
+          accessibilityRole={layerGate.canRetry ? "button" : "text"}
+          accessibilityLabel={layerGate.message}
+          hitSlop={6}
+        >
+          <Text style={{ color: ios.system.orangeInk, fontSize: 12, textAlign: "center" }}>
+            {layerGate.message}
+          </Text>
+        </Pressable>
+      ) : null}
       <View style={styles.footer}>
         {/* ONE entry point into review: the summary itself is the button —
             see NewOrderScreen's footer for the history. */}
         <Pressable
           style={[styles.footerSummaryBtn, totalItems === 0 && styles.footerSummaryBtnDisabled]}
-          onPress={totalItems > 0 ? openReview : undefined}
-          disabled={totalItems === 0}
+          onPress={totalItems > 0 && !saleUnknown ? openReview : undefined}
+          disabled={totalItems === 0 || !!saleUnknown}
           accessibilityRole="button"
           accessibilityLabel="Review invoice"
           accessibilityState={{ disabled: totalItems === 0 }}
@@ -1643,7 +1817,7 @@ function InvoiceComposer({
         >
           <View style={styles.footerSummaryEyebrowRow}>
             <Text style={styles.footerEyebrow} numberOfLines={1}>
-              {totalItems} ITEM{totalItems === 1 ? "" : "S"}
+              {lineCountLabel(lineCount).toUpperCase()}
             </Text>
             {totalItems > 0 ? <Ionicons name="chevron-up" size={12} color={ios.brand} /> : null}
           </View>
@@ -1696,9 +1870,12 @@ function InvoiceComposer({
         unlisted={unlisted}
         totals={totals}
         totalItems={totalItems}
+        lineCount={lineCount}
         taxRateFraction={taxRateFraction}
         tierPriceFor={tierPriceFor}
         isSpecialFor={isSpecialFor}
+        layerOf={layerOf}
+        pricesUnconfirmed={layerGate.blocked}
         tierFor={effectiveTierFor}
         isStaff={isStaff}
         onChangeUnit={setUnitLabel}
@@ -1855,9 +2032,12 @@ function ReviewSheet({
   unlisted,
   totals,
   totalItems,
+  lineCount,
   taxRateFraction,
   tierPriceFor,
   isSpecialFor,
+  layerOf,
+  pricesUnconfirmed,
   tierFor,
   isStaff,
   onChangeUnit,
@@ -1890,12 +2070,18 @@ function ReviewSheet({
   unlisted: UnlistedLine[];
   totals: InvoiceTotals;
   totalItems: number;
+  /** Lines with a quantity (row 440): what the header counts. */
+  lineCount: number;
   /** 0 hides every taxable toggle (no tenant rate, or tax-exempt customer). */
   taxRateFraction: number;
   /** The customer's effective (tier / customer-price) catalog price per product. */
   tierPriceFor: (p: Product) => number;
   /** #2696(c): the server's "special" for this customer (tier ≠ 1). */
   isSpecialFor: (p: Product) => boolean;
+  /** S19b: the customer's price layer per product (undefined flag-off / no typed price). */
+  layerOf?: (productId: string) => readonly CustomerLayerUnit[] | null | undefined;
+  /** S19b: the layer is not confirmed (unit options show an ellipsis). */
+  pricesUnconfirmed?: boolean;
   /** units_v1: the EFFECTIVE tier per product, for the picker's ladder prices. */
   tierFor: (id: string) => number;
   isStaff: boolean;
@@ -1946,9 +2132,7 @@ function ReviewSheet({
               <Ionicons name="chevron-down" size={22} color={ios.label2} />
             </Pressable>
             <Text style={styles.sheetTitle}>Review invoice</Text>
-            <Text style={styles.sheetCount}>
-              {totalItems} item{totalItems === 1 ? "" : "s"}
-            </Text>
+            <Text style={styles.sheetCount}>{lineCountLabel(lineCount)}</Text>
           </View>
 
           <ScrollView
@@ -1967,10 +2151,11 @@ function ReviewSheet({
                   <ReviewRow
                     key={id}
                     product={product}
-                    line={line}
+                    line={withLayerBase(line, product, tierFor(id), layerOf?.(id))}
                     taxRateFraction={taxRateFraction}
                     catalogPrice={tierPriceFor(product)}
-                    isSpecial={details.saleEligible && isSpecialFor(product)}
+                    isSpecial={lineIsSpecial(line, product, tierFor(id), layerOf?.(id))}
+                    pricesUnconfirmed={pricesUnconfirmed}
                     tier={tierFor(id)}
                     isStaff={isStaff}
                     onChangeUnit={(o) => onChangeUnit(id, o)}
@@ -2084,6 +2269,7 @@ function ReviewRow({
   line,
   taxRateFraction,
   catalogPrice: catalogPriceProp,
+  pricesUnconfirmed,
   isSpecial = false,
   tier,
   isStaff,
@@ -2109,6 +2295,8 @@ function ReviewRow({
   catalogPrice?: number;
   /** #2696(c) SA-558e: a New-sale line at a special (tier) price — moving it takes a reason. */
   isSpecial?: boolean;
+  /** S19b: the layer is not confirmed: the unit picker shows an ellipsis and stays closed. */
+  pricesUnconfirmed?: boolean;
   /** units_v1: the effective tier for this product's ladder prices. */
   tier: number;
   isStaff: boolean;
@@ -2225,6 +2413,7 @@ function ReviewRow({
           line={pickerLineOf(product.id, line, catalogPrice)}
           product={product}
           tier={tier}
+          pricesUnconfirmed={pricesUnconfirmed}
           onChange={onChangeUnit}
           style={{ marginBottom: 8 }}
         />
@@ -2870,6 +3059,8 @@ const styles = StyleSheet.create({
 
   browseBar: { flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 12 },
   browseClose: { padding: 6 },
+  lockWrap: { flex: 1 },
+  locked: { opacity: 0.45 },
   catalogList: { flex: 1 },
   listContent: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, flexGrow: 1 },
   pageSpinner: { paddingVertical: 16, alignItems: "center" },

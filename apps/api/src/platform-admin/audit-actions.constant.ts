@@ -76,6 +76,16 @@ export const AdminAuditAction = {
   ADDON_MANUAL_INVOICE_STOP: "ADDON_MANUAL_INVOICE_STOP",
   /** B1102: a catalog add-on's includedAtPlan names no plan; a background path skipped billing it (meta: sku, value). */
   ADDON_CATALOG_INVALID: "ADDON_NOT_BILLED_CATALOG_INVALID",
+  /** SA-788 (b): the daily add-on invariant found a row that should not be in that state (meta: invariant, rowId, sku). */
+  ADDON_INVARIANT_BROKEN: "ADDON_INVARIANT_BROKEN",
+  /** SA-815d: an add-on row an admin priced above zero that no card item bills (catalog $0 / unlisted / custom price); meta: sku, rowId, priceSnapshot. */
+  ADDON_PRICED_NOT_BILLED: "ADDON_PRICED_NOT_BILLED",
+  /** G1a: a stranded Stripe add-on item (no row holds it) was removed after a skipped admin-only bill; meta: sku, itemId, reason, subscriptionId. */
+  ADDON_STRANDED_ITEM_REMOVED: "ADDON_STRANDED_ITEM_REMOVED",
+  /** G1a: a stranded Stripe add-on item could not be removed (or the subscription's items could not be read): it may still bill, reconcile by hand; meta: sku, itemIds, reason, subscriptionId. */
+  ADDON_STRANDED_ITEM_STUCK: "ADDON_STRANDED_ITEM_STUCK",
+  /** G1a: an unheld card item for an add-on was too new to remove safely (under ten minutes old); the tenant is flagged for reconcile; meta: sku, itemId, reason, subscriptionId. */
+  ADDON_STRANDED_ITEM_SPARED: "ADDON_STRANDED_ITEM_SPARED",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
   TENANT_CLASS_CHANGED: "TENANT_CLASS_CHANGED",
   FEATURE_OVERRIDE_SET: "FEATURE_OVERRIDE_SET",
@@ -104,6 +114,7 @@ export const AdminAuditAction = {
   RF_INVOICE_VOIDED: "RF_INVOICE_VOIDED",
   RF_INVOICE_IRREGULAR_PERIOD: "RF_INVOICE_IRREGULAR_PERIOD",
   RF_INVOICE_SENT: "RF_INVOICE_SENT",
+  RF_INVOICE_PARTLY_COVERED: "RF_INVOICE_PARTLY_COVERED",
   // Counter day close (SA-750r3): a tenant operator or admin reopened a closed till window. Written INSIDE the reopen transaction
   // (entityType "CounterDayClose", meta = the snapshot that was in force), so the old figures are never lost.
   COUNTER_DAY_CLOSE_REOPENED: "COUNTER_DAY_CLOSE_REOPENED",
@@ -112,6 +123,8 @@ export const AdminAuditAction = {
   // FEATURE_CONFIG_SET_ACTION / FEATURE_CONFIG_CLEARED_ACTION (pinned by the constant spec).
   FEATURE_CONFIG_SET: "FEATURE_CONFIG_SET",
   FEATURE_CONFIG_CLEARED: "FEATURE_CONFIG_CLEARED",
+  // Mobile app install links (row 559): a super admin changed the global "Get the app" URLs; meta = { previous, next }.
+  APP_LINKS_UPDATED: "APP_LINKS_UPDATED",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -153,6 +166,12 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",
   ADDON_NOT_BILLED_CATALOG_INVALID: "Add-on not billed (catalog setting invalid)",
+  ADDON_INVARIANT_BROKEN: "Add-on invariant broken (check the tenant's add-ons)",
+  ADDON_PRICED_NOT_BILLED: "Add-on priced but not billed by card (set up its billing)",
+  ADDON_STRANDED_ITEM_REMOVED: "Stranded add-on card item removed (customer credited)",
+  ADDON_STRANDED_ITEM_STUCK: "Stranded add-on card item not removed (reconcile in Stripe)",
+  ADDON_STRANDED_ITEM_SPARED:
+    "Add-on card item possibly stranded (too new to remove; check in Stripe)",
   IMPERSONATION_STARTED: "Impersonation started",
   TENANT_CLASS_CHANGED: "Class changed",
   FEATURE_OVERRIDE_SET: "Feature override set",
@@ -176,9 +195,11 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   RF_INVOICE_VOIDED: "RouteFlow invoice voided",
   RF_INVOICE_IRREGULAR_PERIOD: "RouteFlow invoice needs review (irregular period)",
   RF_INVOICE_SENT: "RouteFlow invoice emailed",
+  RF_INVOICE_PARTLY_COVERED: "RouteFlow invoice partly covered by manual activation",
   COUNTER_DAY_CLOSE_REOPENED: "Counter day close reopened",
   FEATURE_CONFIG_SET: "Feature setting changed",
   FEATURE_CONFIG_CLEARED: "Feature setting cleared",
+  APP_LINKS_UPDATED: "Mobile app links updated",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */

@@ -279,7 +279,7 @@ describe("settings registry — every SystemConfig key the settings writers writ
       depositCollectAtOrder: true,
     } as any);
     await controller.updateMarginConfig({
-      costingMethod: "FIFO",
+      costingMethod: "LAST_COST",
       defaultMarginFloor: 10,
       categoryFloors: { SNACKS: 20 },
     });

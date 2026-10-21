@@ -126,6 +126,7 @@ export * from "./trip-grouping";
 // ─── Sentinel emails (B910 — one impl for web/mobile; the api keeps a spec-pinned local copy) ──
 
 export * from "./internal-email";
+export * from "./stock-count-commit-copy";
 
 // ─── Post-delivery invoice prompt (#2089) ─────────────────────────────────────
 
@@ -142,12 +143,15 @@ export * from "./order-applied-credits";
 
 export * from "./order-line-backorder";
 export * from "./invoice-line-code";
+export * from "./piece-synonyms";
 export * from "./api/enums";
 export * from "./api/billing";
+export * from "./api/platform-admin-activation";
 export * from "./api/orders";
 export * from "./api/purchase-orders";
 export * from "./api/customers";
 export * from "./api/products";
+export * from "./api/product-prices-v2";
 export * from "./api/finance";
 export * from "./api/credit-notes";
 export * from "./api/returns";
@@ -189,10 +193,12 @@ export * from "./api/price-history";
 export * from "./api/order-suggestions";
 export * from "./api/order-cancel";
 export * from "./api/ship-state";
+export * from "./shipment-save";
 export * from "./api/order-tracking";
 export * from "./api/onboarding";
 export * from "./api/order-tracking-view";
 export * from "./api/error-codes";
+export * from "./api/app-links";
 export * from "./api/policies";
 export * from "./api/inventory-settings";
 export * from "./api/preferences";

@@ -1,9 +1,15 @@
-import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
-import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { sumConfirmed } from "./payment-predicates";
+import {
+  assertTaxStateRecomputable,
+  countOrderInvoices,
+  orderSiblingCountOf,
+  stalePathOf,
+  staleTaxStateError,
+} from "./stored-tax-state";
 
 /**
  * B1043 (SA-742r2 INV-A): the ONE locked read both branches of `InvoicesService.update()` start from,
@@ -26,6 +32,8 @@ export interface LockedInvoiceForEdit {
   isTaxExempt: boolean;
   /** Its payment rows (amount + status), read under the lock for the B1046 overpayment guard. */
   payments: Array<{ amount: unknown; status: unknown }>;
+  /** SA-814e: non-VOID invoices sharing the invoice's order, counted under the same lock (null = no order). */
+  orderInvoiceCount?: number | null;
 }
 
 /**
@@ -37,7 +45,13 @@ export interface LockedInvoiceForEdit {
  *  - 400 when the invoice has a line whose tenant is NULL or another tenant's (B929): the tenant-scoped
  *    line read would silently drop it and under-bill the invoice.
  */
-export async function loadLockedInvoiceForEdit(tx: any, id: string): Promise<LockedInvoiceForEdit> {
+export async function loadLockedInvoiceForEdit(
+  tx: any,
+  id: string,
+  /** H4: the editor's token, checked against the LOCKED row before the lines are read (assertInvoiceCurrent). */
+  expectedUpdatedAt?: string,
+  onMissingToken?: () => void,
+): Promise<LockedInvoiceForEdit> {
   const peek = await tx.invoice.findUnique({ where: { id }, select: { orderId: true } });
   if (!peek) throw new NotFoundException("Invoice not found");
   if (peek.orderId)
@@ -51,6 +65,7 @@ export async function loadLockedInvoiceForEdit(tx: any, id: string): Promise<Loc
       message: "The invoice changed while it was being edited. Try again.",
     });
   }
+  assertInvoiceCurrent(invoice, expectedUpdatedAt, onMissingToken);
   const storedRows: any[] = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
   const foreign = await tx.$queryRaw<Array<{ n: number }>>`
     SELECT count(*)::int AS n FROM "InvoiceItem"
@@ -68,7 +83,14 @@ export async function loadLockedInvoiceForEdit(tx: any, id: string): Promise<Loc
     where: { invoiceId: id },
     select: { amount: true, status: true },
   });
-  return { invoice, storedRows, isTaxExempt: !!customer?.isTaxExempt, payments: payments ?? [] };
+  const orderInvoiceCount = invoice.orderId ? await countOrderInvoices(tx, invoice.orderId) : null;
+  return {
+    invoice,
+    storedRows,
+    isTaxExempt: !!customer?.isTaxExempt,
+    payments: payments ?? [],
+    orderInvoiceCount,
+  };
 }
 
 /**
@@ -85,6 +107,66 @@ export function assertSameOrderLink(
       message: "The invoice changed while it was being edited. Try again.",
     });
   }
+}
+
+/**
+ * H4: the editor's `expectedUpdatedAt` must equal the LOCKED invoice's updatedAt, else 409 INVOICE_STALE and
+ * nothing is written (a second editor replaying an old form deleted the first editor's changes). Absent = a
+ * legacy client: accepted for one release, reported through `onMissing` (a warn log) so it can be made required.
+ */
+export function assertInvoiceCurrent(
+  invoice: { id?: string; updatedAt?: Date | string | null },
+  expected: string | null | undefined,
+  onMissing?: () => void,
+): void {
+  if (expected == null) {
+    onMissing?.();
+    return;
+  }
+  const current = invoice.updatedAt ? new Date(invoice.updatedAt).getTime() : NaN;
+  if (new Date(expected).getTime() !== current) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.INVOICE_STALE,
+      message:
+        "This invoice was changed by someone else since you opened it. Reload to see the latest, then re-apply your changes.",
+    });
+  }
+}
+
+/** H4: its own channel, so the count of token-less invoice saves is one grep before the token is required. */
+const staleTokenLogger = new Logger("InvoiceStaleToken");
+export const noTokenWarner = (id: string) => () =>
+  staleTokenLogger.warn(
+    `PATCH /invoices/${id} without expectedUpdatedAt (H4: last-writer save accepted)`,
+  );
+
+/**
+ * H4: the header-only save that touches no totals. Without a token it stays one unlocked update (legacy);
+ * with one, the Invoice row is locked and the token checked first, so a stale editor writes nothing.
+ */
+export async function updateHeaderOnly(
+  prisma: { forTenant(): any; tenantTransaction(fn: (tx: any) => Promise<any>): Promise<any> },
+  id: string,
+  { expectedUpdatedAt }: { expectedUpdatedAt?: string },
+  data: any,
+  include: any,
+  onMissingToken: () => void,
+) {
+  if (expectedUpdatedAt == null) {
+    onMissingToken();
+    return prisma.forTenant().invoice.update({ where: { id }, data, include });
+  }
+  return prisma.tenantTransaction(async (tx: any) => {
+    await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
+    const cur = await tx.invoice.findUnique({
+      where: { id },
+      select: { id: true, updatedAt: true, status: true },
+    });
+    if (!cur) throw new NotFoundException("Invoice not found");
+    assertInvoiceCurrent(cur, expectedUpdatedAt);
+    assertStillDraft(cur);
+    return tx.invoice.update({ where: { id }, data, include });
+  });
 }
 
 /** r87: the unlocked pre-read said DRAFT; the lock says whether it still is (a send can commit in between). */
@@ -123,22 +205,22 @@ export function planHeaderOnlyTotals(
   locked: LockedInvoiceForEdit,
   dto: { discount?: number; shippingFee?: number },
 ): { discount: number; shippingFee: number; total: number; subtotal: number } {
-  const { invoice, storedRows, isTaxExempt } = locked;
+  const { invoice, storedRows, isTaxExempt, orderInvoiceCount } = locked;
   const discount = intakeMoney(dto.discount, invoice.discount);
   const shippingFee = intakeMoney(dto.shippingFee, invoice.shippingFee);
-  const t = sumInvoiceTotalsStrict(storedRows, { discount, shipping: shippingFee, isTaxExempt });
-  const exemptWithLevy =
-    isTaxExempt && storedRows.some((r) => differs(r.categoryTaxAmount ?? 0, 0));
-  if (
-    exemptWithLevy ||
-    differs(t.subtotal, invoice.subtotal) ||
-    differs(t.tax, invoice.taxAmount)
-  ) {
-    throw new ConflictException({
-      code: API_ERROR_CODES.INVOICE_TAX_STATE_STALE,
-      message:
-        "This invoice's subtotal or tax no longer matches its lines, so the discount or shipping change can't be priced. Re-save the invoice lines, then try again.",
-    });
+  // SA-814 R5-2: the tax half is the ONE recompute guard (stored-tax-state.ts); this path cannot stamp a rate.
+  const t = assertTaxStateRecomputable({
+    invoice,
+    storedLines: storedRows,
+    canRestamp: false,
+    isTaxExempt,
+    refuseExemptLevy: true,
+    orderSiblingCount: orderSiblingCountOf({ orderId: invoice.orderId, orderInvoiceCount }),
+    discount,
+    shipping: shippingFee,
+  }).totals;
+  if (differs(t.subtotal, invoice.subtotal)) {
+    throw staleTaxStateError(stalePathOf(invoice));
   }
   return { discount, shippingFee, total: t.total, subtotal: t.subtotal };
 }

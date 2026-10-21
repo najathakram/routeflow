@@ -129,14 +129,20 @@ export function usePickupComplete(orderId: string) {
   });
 }
 
-/** "Switch to delivery": `PATCH /orders/:id/fulfill-path` ROUTE (open states only; the server decides). */
-export function useSwitchOrderToDelivery() {
+/**
+ * Move an order off pickup (open states only; the server decides): "Switch to delivery" sends ROUTE, "Ship by
+ * carrier…" SHIP, both through `PATCH /orders/:id/fulfill-path`, the endpoint web's `usePatchOrderFulfillPath` uses.
+ */
+export function useMoveOrderOffPickup() {
   const qc = useQueryClient();
-  return useMutation<unknown, Error, IdWithAck>({
-    mutationFn: (v) => {
-      const { id, ack } = splitIdAck(v); // row 510: the path switch is re-judged, so it can carry an ack
-      return apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath: "ROUTE", ...ack });
-    },
+  return useMutation<
+    unknown,
+    Error,
+    { id: string; fulfillPath: "ROUTE" | "SHIP" } & Partial<RestrictionAck>
+  >({
+    // row 510: the path switch is re-judged, so it can carry an ack (restrictionOverrides + warningHash)
+    mutationFn: ({ id, fulfillPath, ...ack }) =>
+      apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath, ...ack }),
     onSuccess: () => invalidateOrderCaches(qc),
   });
 }

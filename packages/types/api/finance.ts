@@ -39,6 +39,9 @@ export interface CreateInvoiceItem {
   /** Buyer-visible line note — prints under the description on the PDF (≤2000). */
   notes?: string;
   unitLabel?: string;
+  /** H3b: why this price moves off the customer's tier price (≤200). The server requires it off a
+   *  SPECIAL (tier) price, as on POST /orders/sell; stored on the line with the acting user. */
+  overrideReason?: string;
 }
 
 /** An invoice PATCH line: a create line plus the stored row it edits (SA-186) and

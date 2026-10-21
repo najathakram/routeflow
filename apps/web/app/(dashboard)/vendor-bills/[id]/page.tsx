@@ -21,18 +21,25 @@ import {
 } from "lucide-react";
 import { Button, Card, Modal, cn, TAP_TARGET, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
+import { editItemsField } from "@/lib/vendor-bill-edit-items";
 import {
   useVendorBill,
   useReceiveVendorBill,
   useVoidVendorBill,
   useRecordVendorBillPayment,
   useRevertVendorBillToDraft,
+  useMoveVendorBillPaymentToCredit,
+  isMovableBillPayment,
   useUpdateVendorBill,
   useSaveProductMapping,
   getUnlinkedItemsError,
   type UnlinkedItemsError,
   getPackSizeUnknownError,
   type PackSizeUnknownError,
+  costHistoryGapToast,
+  voidFailureToast,
+  voidSuccessToast,
   type VendorBill,
   type VendorBillItem,
   type VendorBillStatus,
@@ -241,6 +248,51 @@ function VoidConfirmModal({
     >
       <p className="text-sm text-navy/70">
         Voiding this bill will mark it as cancelled. No further payments can be recorded on it.
+      </p>
+    </Modal>
+  );
+}
+
+// ─── Move Payment To Supplier Credit Modal (B288) ─────────────────────────────
+
+function MovePaymentModal({
+  payment,
+  billStatus,
+  onClose,
+  onConfirm,
+  isPending,
+}: {
+  payment: VendorBillPayment | null;
+  billStatus: string;
+  onClose: () => void;
+  onConfirm: () => void;
+  isPending: boolean;
+}) {
+  return (
+    <Modal
+      open={!!payment}
+      onClose={onClose}
+      title="Move to supplier credit?"
+      description={
+        payment
+          ? `${fmt(Number(payment.amount))} paid on ${fmtDate(payment.paidAt ?? payment.createdAt)} comes off this bill and becomes credit with the supplier, dated the same day.`
+          : ""
+      }
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button onClick={onConfirm} loading={isPending}>
+            Move to credit
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm text-navy/70">
+        {billStatus === "VOID"
+          ? "The credit goes to the next bill from this supplier."
+          : "This bill owes that amount again. The credit goes to the next bill from this supplier."}
       </p>
     </Modal>
   );
@@ -728,6 +780,7 @@ export default function VendorBillDetailPage() {
   const voidBill = useVoidVendorBill();
   const recordPayment = useRecordVendorBillPayment();
   const revertToDraft = useRevertVendorBillToDraft();
+  const movePaymentToCredit = useMoveVendorBillPaymentToCredit();
   const updateBill = useUpdateVendorBill();
 
   const { data: suppliersData } = useSuppliers();
@@ -739,6 +792,7 @@ export default function VendorBillDetailPage() {
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isRevertOpen, setIsRevertOpen] = React.useState(false);
+  const [movingPayment, setMovingPayment] = React.useState<VendorBillPayment | null>(null);
   const [isReceiveOpen, setIsReceiveOpen] = React.useState(false);
   // Variant-split modal (PR-D) — set from a line's "Generic — split into
   // variants?" badge. The badge only carries the product id + this line's
@@ -874,24 +928,12 @@ export default function VendorBillDetailPage() {
           // ledger has a gap (usually past sales). The copy must not imply
           // the cost wasn't updated — that reads as an invitation to hand-fix
           // a value that is already correct.
-          // Same advice as the API's INVENTORY_LEDGER_GAP conflict ("Ask an admin to
-          // look into this product") — the two used to disagree (this toast said
-          // "No action needed"): it is one ledger gap, told one way.
-          if (updated?.gapsDetected && updated.gapsDetected.length > 0) {
-            const names = [...new Set(updated.gapsDetected.map((g) => g.name))];
-            const isPlural = names.length > 1;
-            toast({
-              title: "Received — cost history not recomputed",
-              description: `${names.join(", ")} — received and costed normally, but ${
-                isPlural ? "their" : "its"
-              } stock records don't fully explain the quantity on hand (this usually happens after past sales), so ${
-                isPlural ? "their" : "its"
-              } historical cost snapshots weren't recalculated. Ask an admin to look into ${
-                isPlural ? "these products" : "this product"
-              }.`,
-              variant: "warning",
-            });
-          }
+          // This receive-time toast says "Ask an admin" (nothing is blocked; the cost history
+          // just needs a look). The revert path's INVENTORY_LEDGER_GAP conflict is different: it
+          // refuses, so its text says to void the bill and enter it again. Neither says "No
+          // action needed" any more — it is one ledger gap, told honestly per surface.
+          const gapsToast = costHistoryGapToast(updated?.gapsDetected, "received");
+          if (gapsToast) toast(gapsToast);
         },
         onError: (err: any) => {
           // B743: lines of a case-sold product with no units per case → an explicit choice.
@@ -909,7 +951,7 @@ export default function VendorBillDetailPage() {
           }
           toast({
             title: "Failed to mark received",
-            description: err?.response?.data?.message ?? "Please try again.",
+            description: genericToastCopy(err),
             variant: "error",
           });
         },
@@ -919,16 +961,17 @@ export default function VendorBillDetailPage() {
 
   const handleVoid = () => {
     voidBill.mutate(bill.id, {
-      onSuccess: () => {
+      onSuccess: (updated) => {
         setIsVoidOpen(false);
-        toast({
-          title: "Bill voided",
-          description: `Bill ${bill.billNumber} has been voided.`,
-          variant: "info",
-        });
+        toast(voidSuccessToast(bill.billNumber, updated?.gapsDetected));
+        // B846 sibling: a void's backdated reversal replays the product like receive does.
+        const gapsToast = costHistoryGapToast(updated?.gapsDetected, "voided");
+        if (gapsToast) toast(gapsToast);
       },
-      onError: () => {
-        toast({ title: "Failed to void bill", description: "Please try again.", variant: "error" });
+      onError: (err: any) => {
+        // A coded refusal (e.g. INVENTORY_LEDGER_GAP) shows fixed copy that says what happened; "try again" would not help.
+        setIsVoidOpen(false);
+        toast(voidFailureToast(err));
       },
     });
   };
@@ -947,11 +990,36 @@ export default function VendorBillDetailPage() {
         setIsRevertOpen(false);
         toast({
           title: "Failed to revert bill",
-          description: err?.response?.data?.message ?? "Please try again.",
+          description: genericToastCopy(err),
           variant: "error",
         });
       },
     });
+  };
+
+  const handleMovePaymentToCredit = () => {
+    if (!movingPayment) return;
+    movePaymentToCredit.mutate(
+      { billId: bill.id, paymentId: movingPayment.id },
+      {
+        onSuccess: () => {
+          setMovingPayment(null);
+          toast({
+            title: "Payment moved to supplier credit",
+            description: `${fmt(Number(movingPayment.amount))} is now credit with the supplier.`,
+            variant: "success",
+          });
+        },
+        onError: (err: any) => {
+          setMovingPayment(null);
+          toast({
+            title: "Failed to move payment",
+            description: codedToastCopy(err) ?? genericToastCopy(err),
+            variant: "error",
+          });
+        },
+      },
+    );
   };
 
   const handleSaveEdit = () => {
@@ -979,7 +1047,8 @@ export default function VendorBillDetailPage() {
         billDate: editBillDate || undefined,
         dueDate: editDueDate || undefined,
         notes: editNotes.trim() || undefined,
-        items,
+        // B292: a header-only bill with no added line leaves `items` out (an empty list is refused).
+        ...editItemsField(items, (bill.items ?? []).length),
       },
       {
         onSuccess: () => {
@@ -993,7 +1062,7 @@ export default function VendorBillDetailPage() {
           const description =
             err?.response?.data?.code === "MONEY_INVARIANT"
               ? "These lines net to a negative amount — if this is a credit memo, record it as a supplier credit."
-              : (err?.response?.data?.message ?? "Please try again.");
+              : genericToastCopy(err);
           toast({ title: "Failed to update bill", description, variant: "error" });
         },
       },
@@ -1504,6 +1573,16 @@ export default function VendorBillDetailPage() {
                         {pmt.reference && ` · ${pmt.reference}`}
                       </p>
                       {pmt.notes && <p className="mt-0.5 text-xs text-navy/70">{pmt.notes}</p>}
+                      {isMovableBillPayment(pmt) && !isEditing && (
+                        <WriteButton
+                          variant="link"
+                          size="sm"
+                          className="mt-1"
+                          onClick={() => setMovingPayment(pmt)}
+                        >
+                          Move to supplier credit
+                        </WriteButton>
+                      )}
                     </div>
                   </li>
                 ))}
@@ -1585,6 +1664,14 @@ export default function VendorBillDetailPage() {
         onConfirm={handleVoid}
         billNumber={bill.billNumber}
         isPending={voidBill.isPending}
+      />
+
+      <MovePaymentModal
+        payment={movingPayment}
+        billStatus={bill.status}
+        onClose={() => setMovingPayment(null)}
+        onConfirm={handleMovePaymentToCredit}
+        isPending={movePaymentToCredit.isPending}
       />
 
       <RevertToDraftModal

@@ -77,6 +77,7 @@ describeDb("row 509: rule targets in the one engine — real Postgres", () => {
       async () =>
         (
           await service.evaluate(tenantId, customerId, [{ productId: p[key] }], {
+            fulfilmentKind: "DELIVERY",
             channel: "BUYER_PORTAL",
             ...(at ? { at } : {}),
           })

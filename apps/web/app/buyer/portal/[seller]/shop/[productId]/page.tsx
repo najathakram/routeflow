@@ -17,6 +17,7 @@ import {
   toPromotionRules,
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import { newCartLine } from "@/lib/buyer-cart-line";
 import { deriveTilePrice } from "../_components/tile-pricing";
 import { canOrderOutOfStock, stockLine } from "@/lib/buyer-backorder";
 import { ProductGallery } from "./_components/ProductGallery";
@@ -180,18 +181,20 @@ export default function BuyerProductDetailPage() {
             promoRules={promoRules}
             promotions={promotions}
             onAdd={() =>
-              cart.addItem({
-                productId: product.id,
-                qty: product.unitsPerBox ? product.unitsPerBox : 1,
-                name: product.name,
-                unit: product.unit,
-                thumbnailUrl: product.thumbnailUrl,
-                unitsPerBox: product.unitsPerBox,
-                boxes: product.unitsPerBox ? 1 : undefined,
-                pieces: product.unitsPerBox ? 0 : undefined,
-              })
+              cart.addItem(
+                newCartLine(
+                  {
+                    productId: product.id,
+                    name: product.name,
+                    unit: product.unit,
+                    thumbnailUrl: product.thumbnailUrl,
+                  },
+                  product.unitsPerBox,
+                ),
+              )
             }
             onUpdateQty={(qty) => cart.updateQty(product.id, qty)}
+            onSetUnit={(unit) => cart.setUnit(product.id, unit)}
             onRestore={cartItem ? () => cart.addItem(cartItem) : undefined}
             isAlertSubscribed={isAlertSubscribed}
             onToggleStockAlert={toggleStockAlert}

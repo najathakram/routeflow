@@ -30,6 +30,7 @@ import {
   Handshake,
   BadgePercent,
   Store,
+  Smartphone,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
@@ -44,6 +45,8 @@ import { BillingShellBanner, BillingStripReserve } from "@/components/BillingShe
 import { DriverReadOnlyBanner } from "@/components/DriverReadOnlyBanner";
 import { subscriptionPollInterval } from "@/lib/subscription-banner-state";
 import { useSubscription } from "@/lib/api/billing";
+import { hasAnyAppLink, useAppLinks } from "@/lib/api/app-links";
+import { isInShell } from "@/lib/in-shell";
 import { useAuth } from "@/lib/auth-context";
 import {
   getImpersonation,
@@ -71,6 +74,7 @@ import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
 import { matchPlanGatedRoute, planFlagVisible } from "@/lib/plan-gated-nav";
 import { SkipToContentLink } from "@/components/SkipToContentLink";
+import { useNoShellScroll } from "@/lib/use-no-shell-scroll";
 import { RouteGuard } from "./_components/gates/RouteGuard";
 import { activeLeafHref } from "./_components/nav-active";
 
@@ -549,6 +553,10 @@ function HeaderTools({
   const bellCount = unreadCount + expiring.length + pendingApprovals.length;
   const { driveMode, setDriveMode } = useDriveMode();
   const counterPref = useOpenCounterPref();
+  // Row 559: "Get the app" shows only when an install link is ready (fails closed while loading or on an
+  // older api) and never inside the app shell itself.
+  const { data: appLinks } = useAppLinks();
+  const showGetTheApp = hasAnyAppLink(appLinks) && !isInShell();
   // Drive mode is a recurring-routes affordance ("My Routes"), so it's gated
   // on routesAccess (not delivery access).
   const { enabled: routesAccess } = useRoutesAccess();
@@ -787,6 +795,15 @@ function HeaderTools({
               <UserIcon className="h-4 w-4 text-navy/70" />
               {t("menu.profile")}
             </DropdownMenu.Item>
+            {showGetTheApp && (
+              <DropdownMenu.Item
+                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+                onSelect={() => router.push("/get-the-app")}
+              >
+                <Smartphone className="h-4 w-4 text-navy/70" />
+                {t("menu.getTheApp")}
+              </DropdownMenu.Item>
+            )}
             {/* POS-7: per-device preference; hidden when storage is blocked (the toggle could not persist). */}
             {showCounterPref && counterPref.available && (
               <DropdownMenu.CheckboxItem
@@ -1177,6 +1194,9 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
   // Below lg the static rail is hidden and replaced by an off-canvas drawer.
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
+  // K11-16: the right column is overflow-hidden; a native click/focus scroll must never move it.
+  const shellColumnRef = React.useRef<HTMLDivElement>(null);
+  useNoShellScroll(shellColumnRef);
 
   // Close the mobile drawer whenever the route changes.
   React.useEffect(() => {
@@ -1354,14 +1374,17 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       {/* Right column — `relative` so the draft dock anchors to the bottom-left of
           the content area (right of the rail), not over the sidebar's collapse
           control; below lg the rail is a drawer so it becomes the viewport corner. */}
-      <div className="relative flex flex-1 flex-col overflow-hidden">
+      <div ref={shellColumnRef} className="relative flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
         {subscriptionStatus ? (
-          <BillingShellBanner
-            view={subscriptionStatus}
-            userRole={user?.role}
-            scope={billingScope}
-          />
+          // useSearchParams() (the ?paid=1 return) needs a Suspense boundary for the static prerender
+          <React.Suspense fallback={null}>
+            <BillingShellBanner
+              view={subscriptionStatus}
+              userRole={user?.role}
+              scope={billingScope}
+            />
+          </React.Suspense>
         ) : isStaff && !subscriptionFailed ? (
           <BillingStripReserve scope={billingScope} />
         ) : user?.role === "DRIVER" ? (

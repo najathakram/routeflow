@@ -10,7 +10,15 @@ function sources(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) sources(p, out);
-    else if (p.endsWith(".ts") && !p.endsWith(".spec.ts")) out.push(p);
+    else if (
+      p.endsWith(".ts") &&
+      !p.endsWith(".spec.ts") &&
+      p
+        .slice(SRC.length + 1)
+        .split(sep)
+        .join("/") !== "inventory/testing/order-stock-world.ts"
+    )
+      out.push(p); // B695: that DB-spec fixture seeds a CANCEL row by hand, it is not a cancel path
   }
   return out;
 }

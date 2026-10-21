@@ -1,3 +1,5 @@
+import { STOCK_TX_OPTIONS, setStockLockTimeout } from "../common/product-locks";
+import { retryStockTx } from "../common/tx-retry";
 import {
   BadRequestException,
   ConflictException,
@@ -7,13 +9,17 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
-import { lockBillRows } from "./bill-locks";
+import { lockBillRows, lockSupplierCredits } from "./bill-locks";
+import { billCashPaidRefusal, isCashBillPayment, type BillPaymentLike } from "./bill-cash-guard";
+import { billLinesTotal } from "./bill-lines-total";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { Prisma, MovementType, PaymentMethod } from "@prisma/client";
 import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/costing";
+import { billReceiptNote, billReversalNote, pairedReceiptIds } from "../inventory/bill-revert";
+import { documentStockDate, type DocumentStockDate } from "../inventory/stock-write-date";
 import { assertBillWithinPo, type BillLinePieces } from "./po-bill-match";
 import { assertPackSizeKnownOrLog } from "./pack-size-gate";
 import { roundMoney } from "@routeflow/pricing";
@@ -38,6 +44,7 @@ import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
 import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { assertSellableLines } from "../products/sellable-lines";
 import { tenantSafeParentView } from "../products/product-parent";
 
@@ -118,6 +125,62 @@ const INVOICE_SCAN_LIST_SELECT = {
   supplier: { select: { id: true, name: true } },
   vendorBill: { select: { id: true, billNumber: true, status: true } },
 } as const;
+
+/** A receipt row `receive()` wrote for a bill, as `revertToDraft` reads it back (B846). */
+interface LiveBillReceipt {
+  id: string;
+  quantity: Prisma.Decimal;
+  unitCost: Prisma.Decimal | null;
+  effectiveAt: Date;
+  supplierId: string | null;
+}
+
+/** What a bill-stock reversal is for: revert refuses a ledger it cannot explain; void degrades. */
+type BillReversalAction = "reverted to draft" | "voided";
+
+/** Lots of one product, as a void's audit row names them (SA-808b lotsLeft, SA-808c lotsUnmatched). */
+interface BillLotGroup {
+  productId: string;
+  name: string;
+  lotIds: string[];
+  remainingQty: string;
+}
+
+/** What the loader found for one product of a bill (SA-808b). */
+interface ProductReceipts {
+  /** Unpaired receipt rows, oldest first; their total never exceeds what the bill received. */
+  rows: LiveBillReceipt[];
+  /** Received minus found (> 0 only for a void): stock that has no receipt record. */
+  shortfall: Prisma.Decimal;
+}
+
+/**
+ * L-207: a reversal the ledger cannot explain is refused, never guessed (the tx rolls back).
+ * SA-808b: a revert's message names the way out (void), which covers a shortfall only.
+ * SA-808c: an excess (posted above received) has no exit here in either mode: the same repair copy,
+ * and `ledgerExcess` asks the caller to flag it (a ledger-excess audit row, after the rollback).
+ */
+const ledgerGap = (
+  productId: string,
+  name: string,
+  detail: string,
+  stockDrift = 0,
+  action: BillReversalAction = "reverted to draft",
+  excess?: { posted: Prisma.Decimal; received: Prisma.Decimal },
+) =>
+  new ConflictException({
+    code: API_ERROR_CODES.INVENTORY_LEDGER_GAP,
+    message: excess
+      ? `${name}'s stock records show more received than this bill, so it can't be ${action === "voided" ? "voided" : "reverted"} here. We've flagged it for a repair.`
+      : `${name}'s stock records for this bill don't match what was received, so it can't go back to draft. Void the bill and enter it again.`,
+    detail,
+    productId,
+    name,
+    stockDrift,
+    ...(excess
+      ? { ledgerExcess: { posted: excess.posted.toString(), received: excess.received.toString() } }
+      : {}),
+  });
 
 @Injectable()
 export class VendorBillsService {
@@ -283,8 +346,11 @@ export class VendorBillsService {
       totalOwed?: unknown;
       items: { id: string; qtyReceived: Prisma.Decimal | null }[];
     },
+    // B288: void, revert and delete pass true — the refusal is the first statement under the lock.
+    refuseCashPayments = false,
   ) {
     await lockBillRows(tx, this.prisma.getTenantId(), [bill.id]);
+    if (refuseCashPayments) await this.refuseBillWithCash(tx, bill.id);
     const fresh = await tx.vendorBill.findUnique({
       where: { id: bill.id },
       select: {
@@ -323,6 +389,25 @@ export class VendorBillsService {
     }
   }
 
+  /**
+   * B288 (SA-814 R5-3): 409 BILL_HAS_PAYMENTS when CASH payments sit on the bill. Read under the bill row
+   * lock, so a payment that committed after the caller's pre-tx read still counts. Void, revert-to-draft
+   * and delete used to keep (void, revert) or destroy (delete) that money; the way out is
+   * movePaymentToSupplierCredit.
+   */
+  private async refuseBillWithCash(tx: any, billId: string) {
+    const payments = await tx.billPayment.findMany({
+      where: {
+        vendorBillId: billId,
+        supplierCreditId: null,
+        method: { not: PaymentMethod.CREDIT_NOTE },
+      },
+      select: { amount: true, method: true, supplierCreditId: true },
+    });
+    const refusal = billCashPaidRefusal(payments ?? []);
+    if (refusal) throw new ConflictException(refusal);
+  }
+
   private productIdsOf(items: { productId: string | null }[]): string[] {
     return items.flatMap((i) => (i.productId ? [i.productId] : []));
   }
@@ -338,6 +423,28 @@ export class VendorBillsService {
     return `${prefix}${String(seq).padStart(4, "0")}`;
   }
 
+  /**
+   * B1236: every line's productId must be a product of the caller's own catalog. One scoped read for
+   * the set of ids; any id it does not return is refused (404 naming them) before a bill row is written.
+   */
+  private async assertLineProductsInCatalog(items: any[] | undefined | null) {
+    if (!Array.isArray(items)) return;
+    const ids = [...new Set(items.map((i) => i?.productId).filter(Boolean))] as string[];
+    if (ids.length === 0) return;
+    const found = await this.prisma.forTenant().product.findMany({
+      where: { id: { in: ids } },
+      select: { id: true },
+    });
+    const have = new Set(found.map((p) => p.id));
+    const missing = ids.filter((id) => !have.has(id));
+    if (missing.length > 0) {
+      throw new NotFoundException({
+        message: "Product not found",
+        missingProductIds: missing,
+      });
+    }
+  }
+
   async create(dto: any) {
     // #2488: the literal calendar day, refused (400 naming the field) before any read or write.
     const dueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : null;
@@ -348,15 +455,12 @@ export class VendorBillsService {
       }
     }
     const supplierId = dto.supplierId && dto.supplierId.trim() ? dto.supplierId.trim() : null;
+    await this.assertLineProductsInCatalog(dto.items);
 
     // Calculate totalOwed from line items if provided, otherwise use dto.totalOwed
     let preTaxOwed = dto.totalOwed ?? 0;
     if (dto.items && Array.isArray(dto.items) && dto.items.length > 0) {
-      preTaxOwed = dto.items.reduce(
-        (sum: number, item: any) =>
-          sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
-        0,
-      );
+      preTaxOwed = billLinesTotal(dto.items);
     }
     const billTaxAmount = Number(dto.taxAmount) || 0;
     // Sales tax on the supplier invoice is owed too (the scan flow passes it as
@@ -608,6 +712,9 @@ export class VendorBillsService {
     const owedRemaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
     if (!(owedRemaining > 0.001)) return bill;
 
+    // B291: lock the supplier's credits (sorted) BEFORE reading them, so a concurrent bill on the
+    // same supplier waits and then reads the balance this one left, not the one it started from.
+    await lockSupplierCredits(tx, this.prisma.getTenantId(), { supplierIds: [bill.supplierId] });
     const credits = await tx.supplierCredit.findMany({
       where: { supplierId: bill.supplierId, balance: { gt: 0 } },
       orderBy: { receivedAt: "asc" },
@@ -634,7 +741,9 @@ export class VendorBillsService {
       });
       await tx.supplierCredit.update({
         where: { id: credit.id },
-        data: { balance: roundMoney(creditBalance - draw) },
+        // Relative, never the absolute `creditBalance - draw` read above: the draw is applied to
+        // whatever the row holds now (B291).
+        data: { balance: { decrement: draw } },
       });
 
       remaining = roundMoney(remaining - draw);
@@ -670,14 +779,26 @@ export class VendorBillsService {
     });
     if (!draws || draws.length === 0) return 0;
 
+    // B291: lock every credit these draws came from (sorted) before reading its balance.
+    await lockSupplierCredits(tx, this.prisma.getTenantId(), {
+      creditIds: draws.map((d: any) => d.supplierCreditId),
+    });
+
     let refunded = 0;
     for (const draw of draws) {
       const credit = await tx.supplierCredit.findUnique({ where: { id: draw.supplierCreditId } });
       if (!credit) continue;
-      const restored = roundMoney(
-        Math.min(Number(credit.amount), Number(credit.balance) + Number(draw.amount)),
+      // Relative write: add back the draw, clamped so the balance never passes the amount that
+      // created the credit (the clamp is read under the row lock, so it cannot go stale).
+      const give = roundMoney(
+        Math.min(Number(draw.amount), Number(credit.amount) - Number(credit.balance)),
       );
-      await tx.supplierCredit.update({ where: { id: credit.id }, data: { balance: restored } });
+      if (give > 0) {
+        await tx.supplierCredit.update({
+          where: { id: credit.id },
+          data: { balance: { increment: give } },
+        });
+      }
       refunded = roundMoney(refunded + Number(draw.amount));
     }
 
@@ -921,43 +1042,76 @@ export class VendorBillsService {
   async update(id: string, dto: any) {
     // #2488: 400 (naming the field) before any read or write.
     const dueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : null;
+    // B292: `items: []` would delete every line and recreate none. Absent items = no change; an
+    // empty list is never an edit, for any bill (a header-only bill is created, never edited into).
+    if (Array.isArray(dto.items) && dto.items.length === 0) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.BILL_NEEDS_A_LINE,
+        message: "A bill needs at least one line. Void or delete it instead.",
+      });
+    }
     const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
-      include: { items: { select: { id: true, qtyReceived: true } } },
+      include: {
+        items: { select: { id: true, qtyReceived: true, qty: true, unitCost: true } },
+      },
     });
     if (!bill) throw new NotFoundException("Bill not found");
     if (bill.status !== "DRAFT") {
-      throw new BadRequestException("Only DRAFT bills can be edited. Revert to draft first.");
+      throw new BadRequestException({
+        code: API_ERROR_CODES.BILL_NOT_EDITABLE,
+        message: "Only DRAFT bills can be edited. Revert to draft first.",
+      });
     }
     if (
       bill.purchaseOrderId &&
       dto.supplierId !== undefined &&
       dto.supplierId !== bill.supplierId
     ) {
-      throw new BadRequestException(
-        "This bill is linked to a purchase order — its supplier can't be changed.",
-      );
+      throw new BadRequestException({
+        code: API_ERROR_CODES.BILL_PO_SUPPLIER_LOCKED,
+        message: "This bill is linked to a purchase order — its supplier can't be changed.",
+      });
     }
+
+    if (Array.isArray(dto.items)) await this.assertLineProductsInCatalog(dto.items);
 
     // Recalculate total if items are provided. Mirror create(): fold the
     // bill's tax back in and round — the old recompute dropped taxAmount on
     // the FIRST edit (the G4 "tax lost on edit" bug the taxAmount column was
     // added to make recoverable) and skipped roundMoney.
     let totalOwed: number | undefined;
+    // Row 594: a typed tax (null counts as not typed, row 591) is SAVED, rounded, and every
+    // later total uses the saved value.
+    const newTax = dto.taxAmount != null ? roundMoney(Number(dto.taxAmount) || 0) : undefined;
     if (dto.items && Array.isArray(dto.items)) {
-      const itemsTotal = dto.items.reduce(
-        (sum: number, item: any) =>
-          sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
-        0,
-      );
-      const tax =
-        dto.taxAmount !== undefined ? Number(dto.taxAmount) || 0 : Number(bill.taxAmount ?? 0);
+      const itemsTotal = billLinesTotal(dto.items);
+      const tax = newTax ?? Number(bill.taxAmount ?? 0);
       totalOwed = roundMoney(itemsTotal + tax);
 
       // B451 gap 4: same guard as create() — a negative qty/unitCost line
       // (or a negative taxAmount) must not persist a negative totalOwed here
       // either.
       assertMoneyInvariantsOrThrow({ subtotal: itemsTotal, tax, total: totalOwed });
+    } else if (newTax !== undefined) {
+      if (bill.taxAmount != null) {
+        // A tax-only edit moves the total by exactly the change in tax.
+        totalOwed = roundMoney(Number(bill.totalOwed) - Number(bill.taxAmount) + newTax);
+      } else if ((bill.items ?? []).length > 0) {
+        // A NULL stored tax is "unknown": a legacy bill may already carry its tax inside totalOwed,
+        // and adding the new tax to that would count it twice. Rebuild the total from the lines
+        // (the same sum an items edit uses), so the tax is replaced, never added.
+        const lines = billLinesTotal(bill.items);
+        totalOwed = roundMoney(lines + newTax);
+        assertMoneyInvariantsOrThrow({ subtotal: lines, tax: newTax, total: totalOwed });
+      } else {
+        // No lines to rebuild from and no recorded tax: what the total already holds can't be known.
+        throw new ConflictException({
+          code: API_ERROR_CODES.BILL_TAX_UNKNOWN,
+          message:
+            "This bill's tax was not recorded separately, so it can't be changed on its own.",
+        });
+      }
     }
 
     const billInclude = {
@@ -975,11 +1129,6 @@ export class VendorBillsService {
       // A bill linked to a purchase order can't be edited past what the PO
       // authorised (checked before anything is deleted).
       if (bill.purchaseOrderId && Array.isArray(dto.items)) {
-        if (dto.items.length === 0) {
-          throw new BadRequestException(
-            "A bill linked to a purchase order needs at least one line.",
-          );
-        }
         const linkedPo = await tx.purchaseOrder.findUnique({
           where: { id: bill.purchaseOrderId },
           include: { items: true },
@@ -1014,6 +1163,12 @@ export class VendorBillsService {
       // strands the difference on a bill that no longer owes it (the supplier
       // statement's `outstanding` goes negative), and re-pointing `supplierId`
       // pays the new supplier's bill out of the old supplier's account.
+      // B291: lock the credits of the old AND the new supplier once, sorted, before the refund
+      // and the re-draw touch either (one lock order for the whole edit, so a concurrent create
+      // on the same supplier cannot deadlock against the refund-then-draw sequence).
+      await lockSupplierCredits(tx, this.prisma.getTenantId(), {
+        supplierIds: [bill.supplierId, dto.supplierId],
+      });
       const refunded = await this.refundDrawnSupplierCredits(tx, id);
 
       const updated = await tx.vendorBill.update({
@@ -1033,6 +1188,7 @@ export class VendorBillsService {
             }),
           }),
           ...(totalOwed !== undefined && { totalOwed }),
+          ...(newTax !== undefined && { taxAmount: newTax }),
           ...(dto.items !== undefined && dto.items.length > 0
             ? {
                 items: {
@@ -1150,9 +1306,15 @@ export class VendorBillsService {
         const receiveQty = new Prisma.Decimal(String(req.qty));
         const remaining = remainingOf(item);
         if (receiveQty.gt(remaining)) {
-          throw new BadRequestException(
-            `"${item.description}": receiving ${receiveQty.toString()} exceeds the ${remaining.toString()} still outstanding.`,
-          );
+          // Structured fields so a client builds its own sentence (product + quantities) without
+          // parsing the message.
+          throw new BadRequestException({
+            code: API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING,
+            message: `"${item.description}": receiving ${receiveQty.toString()} exceeds the ${remaining.toString()} still outstanding.`,
+            productName: item.product?.name ?? item.description,
+            requested: receiveQty.toString(),
+            outstanding: remaining.toString(),
+          });
         }
         return { item, receiveQty };
       });
@@ -1205,7 +1367,11 @@ export class VendorBillsService {
       return this.lineReceivedQty(bill, item).add(adding).gte(new Prisma.Decimal(item.qty));
     });
 
-    const updated = await this.prisma.tenantTransaction(async (tx) => {
+    // SA-767 L-1: re-run the whole tx on a 40P01 / 40001 / P2034. Every local the body fills
+    // (restockedIds, gapsDetected) is declared inside it, the plan was computed before it, and the
+    // alerts below fire after the commit, so a rolled-back attempt leaves nothing behind.
+    const runBody = async (tx: any) => {
+      await setStockLockTimeout(tx); // SA-767 R6: bound the bill row lock wait too
       await this.lockBillAndAssertReceiptState(tx, bill);
       // Sync inventory for each line in the plan. The whole block works in
       // INVENTORY denomination: lineInventoryDelta converts a case-priced line
@@ -1221,6 +1387,17 @@ export class VendorBillsService {
         tx,
         plan.flatMap((p) => (p.item.productId ? [p.item.productId] : [])),
       );
+      // B846 / SA-808: a regulated product whose bill month is already filed books at `now`, never
+      // back into the filed period (a re-receive would otherwise add Q' to a month that was filed on Q).
+      const stockDates =
+        bill.purchaseOrderId == null
+          ? await documentStockDate(tx, {
+              tenantId: this.prisma.getTenantId(),
+              productIds: plan.flatMap((p) => (p.item.productId ? [p.item.productId] : [])),
+              documentDate: effectiveDate,
+              now: new Date(),
+            })
+          : new Map<string, { effectiveAt: Date }>();
       // B562 follow-up: a bill is received in ONE transaction across every
       // line. If one product's ledger has a gap (see recomputeProductInTx),
       // that must not abort lines that are perfectly fine — receiving stock
@@ -1242,6 +1419,7 @@ export class VendorBillsService {
           unitCost: item.unitCost,
           packSize: item.packSize,
         });
+        const rowDate = stockDates.get(item.productId)?.effectiveAt ?? effectiveDate;
 
         // Read fresh state inside the tx so multi-line bills of the same
         // product compound correctly instead of using the pre-tx snapshot
@@ -1273,7 +1451,7 @@ export class VendorBillsService {
         await tx.stockLot.create({
           data: {
             productId: item.productId,
-            purchaseDate: effectiveDate,
+            purchaseDate: rowDate,
             qty,
             remainingQty: qty,
             unitCost,
@@ -1291,13 +1469,13 @@ export class VendorBillsService {
             stockAfter,
             supplierId: bill.supplierId,
             reference: bill.billNumber,
-            notes: `Auto-synced from vendor bill ${bill.billNumber}`,
+            notes: billReceiptNote(bill.billNumber),
             performedById: performedById ?? null,
             // Stamp the movement at the BILL date, matching the lot — a
             // backdated bill's cost snapshot must sit at the right point in
             // the ledger (the lot and the movement used to disagree). B562:
             // on effectiveAt (the accounting date); createdAt stays write-once.
-            effectiveAt: effectiveDate,
+            effectiveAt: rowDate,
           },
         });
 
@@ -1314,7 +1492,7 @@ export class VendorBillsService {
         // `throwOnGap: false` — a gap here must flag this ONE line, never
         // abort the whole bill (see the comment above the loop).
         const newer = await tx.stockMovement.count({
-          where: { productId: item.productId, effectiveAt: { gt: effectiveDate } },
+          where: { productId: item.productId, effectiveAt: { gt: rowDate } },
         });
         if (newer > 0) {
           const replay = await this.inventory.recomputeProductInTx(tx, item.productId, {
@@ -1361,7 +1539,10 @@ export class VendorBillsService {
       });
 
       return { updatedBill, restockedIds, gapsDetected };
-    });
+    };
+    const updated = await retryStockTx("vendorBills.receive", () =>
+      this.prisma.tenantTransaction(runBody, STOCK_TX_OPTIONS),
+    );
 
     // Bill receive is the main restock path — fire the same low-stock-cleared
     // alerts a manual purchase does (it never did).
@@ -1374,7 +1555,345 @@ export class VendorBillsService {
     return { ...updated.updatedBill, gapsDetected: updated.gapsDetected };
   }
 
-  async revertToDraft(id: string) {
+  /**
+   * B846 / SA-808 + SA-808b: the receipt rows `receive()` wrote for this bill that no reversal row has
+   * paired yet, per PRODUCT (oldest first). Found structurally: type PURCHASE, the bill's product,
+   * reference = bill number AND the exact system receive note (a person's purchase never carries it),
+   * quantity > 0 — never by the free-text reference alone.
+   *
+   * Only the product TOTAL is checked (never a per-line split: one receive's rows share effectiveAt,
+   * while createdAt is set per create call and may tie and fall to the uuid, so row order never
+   * names the line). Found above what was received: refused (ambiguous which rows belong). Found
+   * below: a revert refuses (L-207); a void reports the shortfall so the caller can adjust it instead
+   * of stranding the bill.
+   */
+  private async loadLiveBillReceipts(
+    tx: Prisma.TransactionClient,
+    bill: { billNumber: string },
+    lines: { productId: string; name: string; qty: Prisma.Decimal }[],
+    action: BillReversalAction,
+  ) {
+    const out = new Map<string, ProductReceipts>();
+    for (const productId of new Set(lines.map((l) => l.productId))) {
+      const mine = lines.filter((l) => l.productId === productId);
+      const name = mine[0].name;
+      const want = mine.reduce((t, l) => t.add(l.qty), new Prisma.Decimal(0));
+      const paired = new Set(await pairedReceiptIds(tx, productId));
+      const receipts = (await tx.stockMovement.findMany({
+        where: {
+          productId,
+          type: MovementType.PURCHASE,
+          reference: bill.billNumber,
+          notes: billReceiptNote(bill.billNumber),
+          quantity: { gt: 0 },
+        },
+        orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+        select: { id: true, quantity: true, unitCost: true, effectiveAt: true, supplierId: true },
+      })) as LiveBillReceipt[];
+      const rows = receipts.filter((r) => !paired.has(r.id));
+      const posted = rows.reduce((t, r) => t.add(r.quantity), new Prisma.Decimal(0));
+      // SA-808b item 3: only the PRODUCT total is checked — row order never names the line (see
+      // above). Above what was received is refused for both modes; below is refused for a revert
+      // only (item 2), a void adjusts the shortfall instead (item 1).
+      const drift = Number(posted.sub(want));
+      const detail = `its stock records for bill ${bill.billNumber} (${posted.toString()}) do not match what the bill says was received (${want.toString()}).`;
+      if (posted.gt(want)) {
+        throw ledgerGap(productId, name, detail, drift, action, { posted, received: want });
+      }
+      if (action === "reverted to draft" && posted.lt(want)) {
+        throw ledgerGap(productId, name, detail, drift, action);
+      }
+      out.set(productId, { rows, shortfall: want.sub(posted) });
+    }
+    return out;
+  }
+
+  /**
+   * B846 / SA-808 (+ the voidBill sibling, §5): undo a received bill's stock without deleting any
+   * ledger row. The ONE body behind revertToDraft and voidBill: counter and average reversed, one
+   * signed PURCHASE row per live receipt row (dated by documentStockDate), the product replayed when
+   * newer rows exist, the bill's lots removed. The caller holds the bill and product locks.
+   */
+  private async appendBillReversals(
+    tx: any,
+    bill: {
+      id: string;
+      billNumber: string;
+      billDate: Date | null;
+      receivedDate: Date | null;
+      purchaseOrderId: string | null;
+      supplierId?: string | null;
+      items: any[];
+    },
+    performedById: string | undefined,
+    action: BillReversalAction,
+  ) {
+    // Guard (e): a PO-linked bill never posted stock (receive skips it), so there is nothing to
+    // reverse — the PO owns its own movements and lots.
+    const movesStock = bill.purchaseOrderId == null;
+    // Reverse inventory for each product-linked item — in the SAME
+    // inventory denomination receive() applied (case lines converted to
+    // pieces + per-piece cost), and only the quantity ACTUALLY received
+    // (partial receipts reverse partially), or the reversal stops matching
+    // the receipt.
+    // B846: nothing deletes a StockMovement (B562 / SA-136). Each receipt row this bill wrote is
+    // answered by one signed PURCHASE row of the opposite sign; find the live ones up front and
+    // refuse (L-207) if they do not add up to what the lines say was received.
+    const plan: {
+      item: (typeof bill.items)[number];
+      name: string;
+      qty: Prisma.Decimal;
+      unitCost: Prisma.Decimal;
+    }[] = [];
+    for (const item of movesStock ? bill.items : []) {
+      if (!item.productId) continue;
+      const receivedQty = this.lineReceivedQty(bill, item);
+      if (receivedQty.lte(0)) continue;
+      const { qty, unitCost } = this.lineInventoryDelta({
+        qty: receivedQty,
+        unitCost: item.unitCost,
+        packSize: item.packSize,
+      });
+      plan.push({
+        item,
+        name: item.product?.name ?? item.description ?? item.productId,
+        qty,
+        unitCost,
+      });
+    }
+    const receiptsByProduct = await this.loadLiveBillReceipts(
+      tx,
+      bill,
+      plan.map((p) => ({ productId: p.item.productId as string, name: p.name, qty: p.qty })),
+      action,
+    );
+    const now = new Date();
+    const tenantId = this.prisma.getTenantId();
+    const reversedReceipts: (LiveBillReceipt & { productId: string; name: string })[] = [];
+    const earliestReversal = new Map<string, Date>();
+    const gapsDetected: {
+      productId: string;
+      name: string;
+      stockDrift: number;
+      /** SA-808b: pieces a void adjusted today because no receipt record existed for them. */
+      noReceiptQty?: number;
+      /** SA-808b (void): pieces still on bill lots the void could not identify and left standing. */
+      lotsLeft?: number;
+    }[] = [];
+    // SA-808b (void only): products with a shortfall, and their plan lines (the lot shapes).
+    const shortfalls = new Map<string, { name: string; lines: typeof plan }>();
+    // One filed-period decision per (product, distinct date), not one per row.
+    const dateMemo = new Map<string, DocumentStockDate>();
+    const stockDateOf = async (productId: string, documentDate: Date) => {
+      const key = `${productId}|${documentDate.getTime()}`;
+      if (!dateMemo.has(key)) {
+        const got = await documentStockDate(tx, {
+          tenantId,
+          productIds: [productId],
+          documentDate,
+          now,
+        });
+        dateMemo.set(key, got.get(productId) as DocumentStockDate);
+      }
+      return dateMemo.get(key) as DocumentStockDate;
+    };
+
+    // The product's rows are written once, after its LAST line moved the counter (SA-808b item 3:
+    // which row belongs to which line is not knowable, and per-line money does not need it).
+    const lastLineOf = new Map<string, number>();
+    for (const [lineNo, p] of plan.entries()) lastLineOf.set(p.item.productId as string, lineNo);
+
+    for (const [lineNo, { item, name, qty, unitCost }] of plan.entries()) {
+      const productId = item.productId as string;
+      const isLast = lastLineOf.get(productId) === lineNo;
+      const found = isLast ? receiptsByProduct.get(productId) : undefined;
+      const mine = found?.rows ?? [];
+      const shortfall = found?.shortfall ?? new Prisma.Decimal(0);
+
+      // Read current product state within the transaction for accurate AVCO reversal
+      const product = await tx.product.findFirst({
+        where: { id: productId },
+        select: { currentStock: true, averageCost: true, costingMethod: true },
+      });
+      if (!product) continue;
+
+      // Exact AVCO reversal; null ⇒ reversal empties stock — KEEP the
+      // previous average so the product's cost basis survives the revert.
+      // Row 647: a STANDARD product keeps its operator-set cost — receive() never moved its
+      // average (updatesAverage), so the reversal must not "undo" a move that never happened.
+      const reversedAvg =
+        product.averageCost != null && product.costingMethod !== "STANDARD"
+          ? reverseAverageCost(product.currentStock, product.averageCost, qty, unitCost)
+          : null;
+
+      const updated = await tx.product.update({
+        where: { id: productId },
+        data: {
+          currentStock: { decrement: qty },
+          ...(reversedAvg !== null ? { averageCost: reversedAvg } : {}),
+        },
+        select: { currentStock: true },
+      });
+
+      // One reversing row per receipt row, written AFTER the update from the counter it returned
+      // (SA-136 §1). The product's rows (plus any shortfall) sum to the product's total received,
+      // so the counter walks down from (counter + that total) to `updated` on the last row.
+      let stockAfter = new Prisma.Decimal(updated.currentStock)
+        .add(mine.reduce((t, r) => t.add(r.quantity), new Prisma.Decimal(0)))
+        .add(shortfall);
+      for (const original of mine) {
+        stockAfter = stockAfter.sub(original.quantity);
+        // SA-808 §3 (A): dated at the receipt's own instant so every period nets, UNLESS that
+        // instant is in a filed period for this product — then dated now, and the note says so.
+        const when = await stockDateOf(productId, original.effectiveAt);
+        reversedReceipts.push({ ...original, productId, name });
+        const prior = earliestReversal.get(productId);
+        if (!prior || when.effectiveAt < prior) earliestReversal.set(productId, when.effectiveAt);
+        await tx.stockMovement.create({
+          data: {
+            productId,
+            type: MovementType.PURCHASE,
+            quantity: new Prisma.Decimal(original.quantity).negated(),
+            unitCost: original.unitCost,
+            // One instant: every row of a multi-line product carries the LAST line's average here;
+            // the replay recomputes the later rows.
+            avgCostAfter: reversedAvg ?? product.averageCost ?? null,
+            stockAfter,
+            supplierId: original.supplierId,
+            reference: bill.billNumber,
+            notes: billReversalNote(original.id, when.movedFromPeriod),
+            performedById: performedById ?? null,
+            effectiveAt: when.effectiveAt,
+          },
+        });
+      }
+
+      // SA-808b: a void never strands on a missing receipt. The part with no PURCHASE record gets
+      // ONE ADJUSTMENT per product dated now (no purchase was ever counted for it, so purchases stay
+      // as filed; now is open or documentStockDate refuses, so no closed ending moves).
+      if (shortfall.gt(0)) {
+        const when = await stockDateOf(productId, now);
+        const costs = plan.filter((p) => p.item.productId === productId);
+        const totalQty = costs.reduce((t, p) => t.add(p.qty), new Prisma.Decimal(0));
+        const lineCost = costDecimal(
+          costs.reduce((t, p) => t.add(p.qty.mul(p.unitCost)), new Prisma.Decimal(0)).div(totalQty),
+        );
+        stockAfter = stockAfter.sub(shortfall);
+        await tx.stockMovement.create({
+          data: {
+            productId,
+            type: MovementType.ADJUSTMENT,
+            quantity: shortfall.negated(),
+            unitCost: lineCost,
+            avgCostAfter: reversedAvg ?? product.averageCost ?? null,
+            stockAfter,
+            supplierId: bill.supplierId ?? null,
+            reference: bill.billNumber,
+            notes: `Void of vendor bill ${bill.billNumber}: ${shortfall.toString()} had no receipt record`,
+            performedById: performedById ?? null,
+            effectiveAt: when.effectiveAt,
+          },
+        });
+        gapsDetected.push({
+          productId,
+          name,
+          stockDrift: shortfall.toNumber(),
+          noReceiptQty: shortfall.toNumber(),
+        });
+        shortfalls.set(productId, { name, lines: costs });
+      }
+    }
+
+    // Like receive(): rows newer than a (backdated) reversal can move the average they imply —
+    // replay the product (a dated COST_BASIS correction, SA-136 §4). A gap never aborts a revert.
+    for (const [productId, at] of earliestReversal) {
+      const newer = await tx.stockMovement.count({
+        where: { productId, effectiveAt: { gt: at } },
+      });
+      if (newer > 0) {
+        const replay = await this.inventory.recomputeProductInTx(tx, productId, {
+          throwOnGap: false,
+          trigger: `BILL:${bill.id}`,
+          performedById: performedById ?? null,
+        });
+        if (replay?.gapDetected) {
+          const name = plan.find((p) => p.item.productId === productId)?.name ?? productId;
+          gapsDetected.push({ productId, name, stockDrift: replay.stockDrift });
+        }
+      }
+    }
+
+    // Reverse the lots this bill created (one per received line). A void leaves a lot it cannot
+    // identify standing and reports it (SA-808b: the void is the AP exit and must not strand).
+    const { left: lotsLeft, unmatched: lotsUnmatched } = movesStock
+      ? await this.reverseBillLots(
+          tx,
+          bill.billNumber,
+          reversedReceipts,
+          bill.billDate,
+          action,
+          shortfalls,
+        )
+      : { left: [], unmatched: [] };
+    for (const left of lotsLeft) {
+      gapsDetected.push({
+        productId: left.productId,
+        name: left.name,
+        stockDrift: 0,
+        lotsLeft: Number(left.remainingQty),
+      });
+    }
+
+    // One audit row per bill when a void had to degrade: the receipt rows it found, the shortfall it
+    // adjusted, the lots it left standing, and receipt rows that now sit on a DIFFERENT product
+    // (moved by a merge or a family writer — they count as shortfall and are never reassigned).
+    if (shortfalls.size > 0 || lotsLeft.length > 0 || lotsUnmatched.length > 0) {
+      const planned = new Set(plan.map((p) => p.item.productId as string));
+      const moved = (await tx.stockMovement.findMany({
+        where: {
+          type: MovementType.PURCHASE,
+          reference: bill.billNumber,
+          notes: billReceiptNote(bill.billNumber),
+          quantity: { gt: 0 },
+          productId: { notIn: [...planned] },
+        },
+        select: { id: true, productId: true, quantity: true },
+      })) as { id: string; productId: string; quantity: Prisma.Decimal }[];
+      // A row moved together with its reversal is not live: drop paired originals.
+      const pairedElsewhere = new Set<string>();
+      for (const pid of new Set((moved ?? []).map((r) => r.productId)))
+        for (const pairedId of await pairedReceiptIds(tx, pid)) pairedElsewhere.add(pairedId);
+      const elsewhere = (moved ?? []).filter((r) => !pairedElsewhere.has(r.id));
+      await tx.auditLog.create({
+        data: {
+          tenantId: tenantId ?? null,
+          userId: performedById ?? null,
+          action: AUDIT_ACTIONS.VENDOR_BILL_VOID_NO_RECEIPT,
+          entityType: "VendorBill",
+          entityId: bill.id,
+          meta: {
+            billNumber: bill.billNumber,
+            products: [...receiptsByProduct].map(([productId, r]) => ({
+              productId,
+              found: r.rows.map((x) => x.id),
+              noReceiptQty: r.shortfall.toString(),
+            })),
+            lotsLeft,
+            // SA-808c S1: census/review only. NEVER fed to the zero-by-id repair (lotsLeft is).
+            lotsUnmatched,
+            receiptRowsOnOtherProducts: elsewhere.map((r) => ({
+              id: r.id,
+              productId: r.productId,
+              quantity: String(r.quantity),
+            })),
+          },
+        },
+      });
+    }
+    return gapsDetected;
+  }
+
+  async revertToDraft(id: string, performedById?: string) {
     const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: {
@@ -1392,75 +1911,31 @@ export class VendorBillsService {
     // overwrites status). Reversing a receipt that never happened would drain
     // real stock and corrupt the average — the receipt marker is receivedDate.
     if (bill.receivedDate == null) {
-      throw new BadRequestException(
-        "This bill was never received — there is no stock or cost to revert. Its payments keep it out of DRAFT.",
-      );
+      throw new BadRequestException({
+        code: API_ERROR_CODES.BILL_NEVER_RECEIVED,
+        message:
+          "This bill was never received — there is no stock or cost to revert. Its payments keep it out of DRAFT.",
+      });
     }
 
-    // Guard (e): a PO-linked bill never posted stock (receive skips it), so
-    // there is nothing to reverse — the PO owns its own movements and lots.
-    const movesStock = bill.purchaseOrderId == null;
-
-    return this.prisma.tenantTransaction(async (tx) => {
-      await this.lockBillAndAssertReceiptState(tx, bill);
+    // SA-767 L-1: the whole reversal tx re-runs on a 40P01 / 40001 / P2034 (nothing leaves the tx).
+    const runBody = async (tx: any) => {
+      await setStockLockTimeout(tx); // SA-767 R6: bound the bill row lock wait too
+      await this.lockBillAndAssertReceiptState(tx, bill, true);
       // B285: the reversal below read-modify-writes the product's average — lock it first.
       await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
-      // Reverse inventory for each product-linked item — in the SAME
-      // inventory denomination receive() applied (case lines converted to
-      // pieces + per-piece cost), and only the quantity ACTUALLY received
-      // (partial receipts reverse partially), or the reversal stops matching
-      // the receipt.
-      for (const item of movesStock ? bill.items : []) {
-        if (!item.productId) continue;
-
-        const receivedQty = this.lineReceivedQty(bill, item);
-        if (receivedQty.lte(0)) continue;
-        const { qty, unitCost } = this.lineInventoryDelta({
-          qty: receivedQty,
-          unitCost: item.unitCost,
-          packSize: item.packSize,
-        });
-
-        // Delete the stock movement created when this bill was received
-        await tx.stockMovement.deleteMany({
-          where: {
-            productId: item.productId,
-            reference: bill.billNumber,
-            type: MovementType.PURCHASE,
-          },
-        });
-
-        // Read current product state within the transaction for accurate AVCO reversal
-        const product = await tx.product.findFirst({
-          where: { id: item.productId },
-          select: { currentStock: true, averageCost: true },
-        });
-        if (!product) continue;
-
-        // Exact AVCO reversal; null ⇒ reversal empties stock — KEEP the
-        // previous average so the product's cost basis survives the revert
-        const reversedAvg =
-          product.averageCost != null
-            ? reverseAverageCost(product.currentStock, product.averageCost, qty, unitCost)
-            : null;
-
-        await tx.product.update({
-          where: { id: item.productId },
-          data: {
-            currentStock: { decrement: qty },
-            ...(reversedAvg !== null ? { averageCost: reversedAvg } : {}),
-          },
-        });
-      }
-
-      // Reverse the lots this bill created (one per received line)
-      if (movesStock) await this.reverseBillLots(tx, bill.billNumber);
+      const gapsDetected = await this.appendBillReversals(
+        tx,
+        bill,
+        performedById,
+        "reverted to draft",
+      );
 
       // Revert bill status to DRAFT and clear per-line receipt progress — the
       // bill is back to never-received. Nested updateMany, not a direct
       // vendorBillItem call: nested-created items have null tenantId, so the
       // tenant-scoped model method can't see them; the parent's scope can.
-      return tx.vendorBill.update({
+      const updatedBill = await tx.vendorBill.update({
         where: { id },
         data: {
           status: "DRAFT",
@@ -1475,16 +1950,156 @@ export class VendorBillsService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-    });
+      return { updatedBill, gapsDetected };
+    };
+    const out = await retryStockTx("vendorBills.revertToDraft", () =>
+      this.prisma.tenantTransaction(runBody, STOCK_TX_OPTIONS),
+    ).catch((err: unknown) => this.flagLedgerExcess(err, bill, "reverted to draft", performedById));
+    // gapsDetected is additive (as in receive): lines whose cost history could not be recomputed.
+    return { ...out.updatedBill, gapsDetected: out.gapsDetected };
   }
 
   /**
-   * Remove the StockLots a bill's receive created (reference = billNumber).
-   * Untouched lots are deleted outright; partially-consumed lots can only
-   * surrender what remains, so they are zeroed and annotated.
+   * Remove the StockLots a bill's receive created. Untouched lots are deleted outright;
+   * partially-consumed lots can only surrender what remains, so they are zeroed and annotated.
+   *
+   * Shared by revertToDraft and voidBill (B846 / SA-808): each reversed receipt row's lot is
+   * matched by its FULL tuple (product, purchaseDate = effectiveAt, qty, unit cost, reference),
+   * never by reference alone, so a manual purchase's lot that shares the number survives. Bills received
+   * before 2026-08-12 stamped the lot and the movement at different instants, so a tuple miss falls
+   * back to (product, reference, qty, unit cost) and reverses ONLY a single candidate; several are
+   * refused (INVENTORY_LEDGER_GAP) rather than guess, and none means no lot was ever made.
+   *
+   * SA-808b (void only): a shortfall's lots are found by its plan lines' shape through the same
+   * fallback; an ambiguous lot is left standing, untouched, and returned for the audit row. A revert
+   * still refuses (it has an exit: void).
    */
-  private async reverseBillLots(tx: Prisma.TransactionClient, billNumber: string) {
-    const lots = await tx.stockLot.findMany({ where: { reference: billNumber } });
+  private async reverseBillLots(
+    tx: Prisma.TransactionClient,
+    billNumber: string,
+    receipts: (LiveBillReceipt & { productId: string; name: string })[],
+    billDate: Date | null,
+    action: BillReversalAction,
+    /** SA-808b (void only): products with a shortfall, and their plan lines. */
+    shortfalls: Map<
+      string,
+      { name: string; lines: { qty: Prisma.Decimal; unitCost: Prisma.Decimal }[] }
+    > = new Map(),
+  ): Promise<{
+    /** Ambiguous lots a void left standing: the ONLY ids the zero-by-id repair may touch. */
+    left: BillLotGroup[];
+    /** SA-808c S1: lots of a shortfall product that carry the bill number but match no plan line. Review only. */
+    unmatched: BillLotGroup[];
+  }> {
+    const lots: Awaited<ReturnType<typeof tx.stockLot.findMany>> = [];
+    const left: BillLotGroup[] = [];
+    const leave = (productId: string, name: string, standing: typeof lots) => {
+      left.push({
+        productId,
+        name,
+        lotIds: standing.map((l) => l.id),
+        remainingQty: standing
+          .reduce((t, l) => t.add(l.remainingQty), new Prisma.Decimal(0))
+          .toString(),
+      });
+    };
+    const shape = (r: (typeof receipts)[number]) => ({
+      productId: r.productId,
+      reference: billNumber,
+      qty: r.quantity,
+      ...(r.unitCost != null ? { unitCost: r.unitCost } : {}),
+    });
+    const free = async (r: (typeof receipts)[number], extra: object) =>
+      ((await tx.stockLot.findMany({ where: { ...shape(r), ...extra } })) ?? []).filter(
+        (l) => !(l.notes ?? "").includes("(bill reversed;") && !lots.some((x) => x.id === l.id),
+      );
+    // Pass 1: every receipt's EXACT tuple first, so a legacy receipt never sees an exact one's lot.
+    const unmatched: typeof receipts = [];
+    for (const r of receipts) {
+      const exact = await free(r, { purchaseDate: r.effectiveAt });
+      if (exact.length > 0) lots.push(exact[0]);
+      else unmatched.push(r);
+    }
+    // SA-808b: stock with no receipt row has no tuple of its own, so each plan line of a shortfall
+    // product not already answered (by a lot taken above or an unmatched receipt of its shape)
+    // joins pass 2 as a synthetic receipt — matched by (product, reference, qty, cost, bill date),
+    // never by reference alone (SA-808 §2).
+    const dec = (v: unknown) =>
+      v == null ? "null" : new Prisma.Decimal(v as Prisma.Decimal).toString();
+    const shapeKey = (productId: string, qty: unknown, cost: unknown) =>
+      `${productId}|${dec(qty)}|${dec(cost)}`;
+    const answered = new Map<string, number>();
+    const bump = (k: string) => answered.set(k, (answered.get(k) ?? 0) + 1);
+    for (const l of lots) bump(shapeKey(l.productId, l.qty, l.unitCost));
+    for (const r of unmatched) bump(shapeKey(r.productId, r.quantity, r.unitCost));
+    // No bill date ⇒ no exact match is possible: the shortfall's lots stay untouched.
+    for (const [productId, { name, lines }] of shortfalls) {
+      if (!billDate) break;
+      for (const line of lines) {
+        const k = shapeKey(productId, line.qty, line.unitCost);
+        if ((answered.get(k) ?? 0) > 0) {
+          answered.set(k, (answered.get(k) ?? 0) - 1); // this line's lot is already accounted for
+          continue;
+        }
+        unmatched.push({
+          id: "",
+          supplierId: null,
+          effectiveAt: billDate, // unused: pass 2 matches the bill date
+          productId,
+          name,
+          quantity: line.qty,
+          unitCost: line.unitCost,
+        });
+      }
+    }
+    // Pass 2 (legacy lots were stamped with the bill date): receipts that share a shape share
+    // their candidates, so accept when there are no more candidates than receipts of that shape.
+    const groups = new Map<string, typeof receipts>();
+    for (const r of unmatched) {
+      const key = `${r.productId}|${String(r.quantity)}|${String(r.unitCost)}`;
+      groups.set(key, [...(groups.get(key) ?? []), r]);
+    }
+    for (const group of groups.values()) {
+      const found = await free(group[0], billDate ? { purchaseDate: billDate } : {});
+      if (found.length > group.length) {
+        if (action !== "voided") {
+          throw ledgerGap(
+            group[0].productId,
+            group[0].name,
+            `its stock lot for bill ${billNumber} cannot be identified.`,
+            0,
+            action,
+          );
+        }
+        // Never guess which lot is the bill's: none is touched, and the audit row names them all.
+        leave(group[0].productId, group[0].name, found);
+        continue;
+      }
+      lots.push(...found); // none ⇒ no lot was ever made for these receipts: nothing to reverse
+    }
+    // SA-808c S1 (void only): a shortfall product's lot that carries the bill number but matches NO plan
+    // line's shape (two partial receipt lots, an edited bill date, a legacy qty denomination) is left
+    // alone, as before, but no longer silently: it is recorded for review. It stays OUT of `left`, the
+    // zero-by-id repair list, because a manual lot sharing the number looks exactly the same.
+    const strays: BillLotGroup[] = [];
+    for (const [productId, { name }] of shortfalls) {
+      const taken = new Set(lots.map((l) => l.id));
+      for (const g of left) for (const id of g.lotIds) taken.add(id);
+      const rest = (
+        ((await tx.stockLot.findMany({ where: { productId, reference: billNumber } })) ??
+          []) as typeof lots
+      ).filter((l) => !(l.notes ?? "").includes("(bill reversed;") && !taken.has(l.id));
+      if (rest.length > 0) {
+        strays.push({
+          productId,
+          name,
+          lotIds: rest.map((l) => l.id),
+          remainingQty: rest
+            .reduce((t, l) => t.add(l.remainingQty), new Prisma.Decimal(0))
+            .toString(),
+        });
+      }
+    }
     for (const lot of lots) {
       const remaining = new Prisma.Decimal(lot.remainingQty);
       if (remaining.gte(new Prisma.Decimal(lot.qty))) {
@@ -1500,6 +2115,7 @@ export class VendorBillsService {
         });
       }
     }
+    return { left, unmatched: strays };
   }
 
   async voidBill(id: string, performedById?: string) {
@@ -1520,65 +2136,18 @@ export class VendorBillsService {
       bill.receivedDate != null &&
       bill.purchaseOrderId == null;
     if (needsReversal) {
-      return this.prisma.tenantTransaction(async (tx) => {
-        await this.lockBillAndAssertReceiptState(tx, bill);
+      // SA-767 L-1: the whole reversal tx re-runs on a 40P01 / 40001 / P2034 (nothing leaves the tx).
+      const runBody = async (tx: any) => {
+        await setStockLockTimeout(tx); // SA-767 R6: bound the bill row lock wait too
+        await this.lockBillAndAssertReceiptState(tx, bill, true);
         await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
-        for (const item of bill.items) {
-          if (!item.productId || !item.product) continue;
-          // Same inventory denomination receive() applied — see
-          // lineInventoryDelta — and only what was actually received.
-          const receivedQty = this.lineReceivedQty(bill, item);
-          if (receivedQty.lte(0)) continue;
-          const { qty, unitCost } = this.lineInventoryDelta({
-            qty: receivedQty,
-            unitCost: item.unitCost,
-            packSize: item.packSize,
-          });
-
-          const product = await tx.product.findFirst({
-            where: { id: item.productId },
-            select: { currentStock: true, averageCost: true },
-          });
-          if (!product) continue;
-
-          // Exact AVCO reversal; null ⇒ keep the previous average (never zero
-          // the cost basis just because the void drains stock)
-          const reversedAvg =
-            product.averageCost != null
-              ? reverseAverageCost(product.currentStock, product.averageCost, qty, unitCost)
-              : null;
-          const stockAfter = product.currentStock.sub(qty);
-
-          // Compensating stock movement with negative quantity
-          await tx.stockMovement.create({
-            data: {
-              productId: item.productId,
-              type: MovementType.ADJUSTMENT,
-              quantity: qty.negated(),
-              unitCost,
-              avgCostAfter: reversedAvg ?? product.averageCost,
-              stockAfter,
-              supplierId: bill.supplierId,
-              reference: bill.billNumber,
-              notes: `Void reversal for vendor bill ${bill.billNumber}`,
-              performedById: performedById ?? null,
-            },
-          });
-
-          await tx.product.update({
-            where: { id: item.productId },
-            data: {
-              currentStock: { decrement: qty },
-              ...(reversedAvg !== null ? { averageCost: reversedAvg } : {}),
-            },
-          });
-        }
-
-        // Reverse the lots this bill created
-        await this.reverseBillLots(tx, bill.billNumber);
+        // B846 sibling (SA-808 §5): the same append-only reversal revertToDraft writes — one signed
+        // PURCHASE row per live receipt row, dated by documentStockDate (the tobacco filing sums
+        // PURCHASE rows, so an ADJUSTMENT left the voided purchase counted), lots by full tuple.
+        const gapsDetected = await this.appendBillReversals(tx, bill, performedById, "voided");
 
         const refunded = await this.refundDrawnSupplierCredits(tx, id);
-        return tx.vendorBill.update({
+        const voided = await tx.vendorBill.update({
           where: { id },
           data: {
             status: "VOID" as any,
@@ -1586,7 +2155,14 @@ export class VendorBillsService {
             ...(await this.unlinkPurchaseOrderOnVoid(tx, bill)),
           },
         });
-      });
+        return { voided, gapsDetected };
+      };
+      const out = await retryStockTx("vendorBills.voidBill", () =>
+        this.prisma.tenantTransaction(runBody, STOCK_TX_OPTIONS),
+      ).catch((err: unknown) => this.flagLedgerExcess(err, bill, "voided", performedById));
+      // gapsDetected is additive (as in receive / revert): products whose cost history could not be
+      // recomputed after a backdated reversal.
+      return { ...out.voided, gapsDetected: out.gapsDetected };
     }
 
     // Transactional (it used to be a bare update) so the credit refund and the
@@ -1595,7 +2171,7 @@ export class VendorBillsService {
     return this.prisma.tenantTransaction(async (tx) => {
       // B285: a first receive committing between our pre-read and this write would leave its
       // stock on a VOID bill (nothing here reverses it) — lock and re-check like the branch above.
-      await this.lockBillAndAssertReceiptState(tx, bill);
+      await this.lockBillAndAssertReceiptState(tx, bill, true);
       const refunded = await this.refundDrawnSupplierCredits(tx, id);
       return tx.vendorBill.update({
         where: { id },
@@ -1606,6 +2182,45 @@ export class VendorBillsService {
         },
       });
     });
+  }
+
+  /**
+   * SA-808c: an excess refusal is flagged for the repair census: one `vendor-bill.ledger-excess`
+   * audit row (bill, product, posted, received), written AFTER the reversal tx rolled back so it
+   * survives the refusal. A failed audit write never replaces the 409. Always rethrows `err`.
+   */
+  private async flagLedgerExcess(
+    err: unknown,
+    bill: { id: string; billNumber: string },
+    action: BillReversalAction,
+    performedById?: string,
+  ): Promise<never> {
+    const body = err instanceof ConflictException ? (err.getResponse() as any) : null;
+    if (body?.ledgerExcess) {
+      try {
+        await this.prisma.auditLog.create({
+          data: {
+            tenantId: this.prisma.getTenantId() ?? null,
+            userId: performedById ?? null,
+            action: AUDIT_ACTIONS.VENDOR_BILL_LEDGER_EXCESS,
+            entityType: "VendorBill",
+            entityId: bill.id,
+            meta: {
+              billNumber: bill.billNumber,
+              productId: body.productId,
+              posted: body.ledgerExcess.posted,
+              received: body.ledgerExcess.received,
+              action,
+            },
+          },
+        });
+      } catch (auditErr) {
+        this.logger.error(
+          `ledger-excess flag for bill ${bill.id} not written: ${(auditErr as Error)?.message}`,
+        );
+      }
+    }
+    throw err;
   }
 
   /**
@@ -2421,6 +3036,132 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
   }
 
   /**
+   * B288 (SA-814 R5-3): the exit that void / revert / delete send an operator to when a bill carries
+   * CASH (409 BILL_HAS_PAYMENTS) — take one payment off the bill and hold it as on-account supplier
+   * credit, so the money is neither kept on a dead bill nor destroyed.
+   *
+   * ONE transaction under the bill row lock: one `SupplierCredit` equal to the payment (same method and
+   * reference), dated (`receivedAt`) at the ORIGINAL payment's `paidAt` (SA-814n: the supplier
+   * statement counts a credit at `receivedAt`, so the cash stays on the day it left), then the payment
+   * row is removed. The bill's `totalPaid` and status are recomputed from its remaining payments, by the
+   * same arithmetic as recordPayment (never from the old column): at or past the total → PAID, some →
+   * PARTIAL, none → back to the receipt lifecycle (DRAFT never received, else RECEIVED / PARTIAL by
+   * line receipts; VOID stays VOID). The new credit is a fresh row, so no existing credit is read or
+   * written here. Credit DRAWS are not movable (void / delete hand them back to their credit).
+   */
+  async movePaymentToSupplierCredit(billId: string, paymentId: string, performedById?: string) {
+    return this.prisma.tenantTransaction(async (tx) => {
+      await lockBillRows(tx, this.prisma.getTenantId(), [billId]);
+      const bill = await tx.vendorBill.findUnique({
+        where: { id: billId },
+        include: {
+          payments: true,
+          items: { select: { id: true, qty: true, qtyReceived: true, productId: true } },
+        },
+      });
+      if (!bill) throw new NotFoundException("Bill not found");
+      const payment = bill.payments.find((p) => p.id === paymentId);
+      if (!payment) throw new NotFoundException("Payment not found");
+      if (!isCashBillPayment(payment)) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.BILL_PAYMENT_NOT_CASH,
+          message:
+            "This payment is a draw of supplier credit. Voiding or deleting the bill hands it back to the credit.",
+        });
+      }
+      if (!bill.supplierId) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.BILL_PAYMENT_NO_SUPPLIER,
+          message: "This bill has no supplier, so there is no account to hold the credit.",
+        });
+      }
+      const amount = roundMoney(Number(payment.amount));
+      const credit = await tx.supplierCredit.create({
+        data: {
+          supplierId: bill.supplierId,
+          amount,
+          balance: amount,
+          method: payment.method,
+          reference: payment.reference ?? null,
+          notes: `Moved from bill ${bill.billNumber}${payment.notes ? ` — ${payment.notes}` : ""}`,
+          receivedAt: payment.paidAt,
+        },
+      });
+      // Money is conserved only if BOTH writes land: a delete that matched nothing rolls the credit back.
+      const removed = await tx.billPayment.deleteMany({
+        where: { id: payment.id, vendorBillId: billId },
+      });
+      if (removed.count !== 1) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.BILL_STATE_CHANGED,
+          message:
+            "This bill was just changed by someone else (received, reverted, voided, paid or edited) — reload it and try again.",
+        });
+      }
+      const remaining = bill.payments.filter((p) => p.id !== payment.id);
+      const totalPaid = roundMoney(remaining.reduce((sum, p) => sum + Number(p.amount), 0));
+      const statusAfter = this.statusAfterPaymentRemoved(bill, totalPaid, remaining);
+      const updated = await tx.vendorBill.update({
+        where: { id: billId },
+        data: { totalPaid, status: statusAfter as any },
+        include: {
+          supplier: { select: { id: true, name: true } },
+          payments: { orderBy: { createdAt: "desc" } },
+          items: {
+            include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+          },
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          tenantId: this.prisma.getTenantId() ?? null,
+          userId: performedById ?? null,
+          action: AUDIT_ACTIONS.VENDOR_BILL_PAYMENT_MOVED_TO_CREDIT,
+          entityType: "VendorBill",
+          entityId: billId,
+          meta: {
+            billNumber: bill.billNumber,
+            paymentId: payment.id,
+            supplierCreditId: credit.id,
+            amount,
+            paidAt: payment.paidAt,
+            method: payment.method,
+            statusBefore: bill.status,
+            statusAfter,
+          },
+        },
+      });
+      return { bill: updated, supplierCredit: credit };
+    });
+  }
+
+  /** The status a bill takes once a payment leaves it: paid-ness is arithmetic, the rest is the receipt lifecycle. */
+  private statusAfterPaymentRemoved(
+    bill: {
+      status: string;
+      totalOwed: unknown;
+      receivedDate: Date | null;
+      items: {
+        qty: Prisma.Decimal;
+        qtyReceived: Prisma.Decimal | null;
+        productId: string | null;
+      }[];
+    },
+    totalPaid: number,
+    remaining: BillPaymentLike[],
+  ): string {
+    if (bill.status === "VOID") return "VOID";
+    // A never-received bill whose cash is gone is a draft again (credit draws never moved a DRAFT).
+    if (bill.receivedDate == null && !remaining.some((p) => isCashBillPayment(p))) return "DRAFT";
+    if (totalPaid >= Number(bill.totalOwed) - 0.001 && totalPaid > 0.001) return "PAID";
+    if (totalPaid > 0.001) return "PARTIAL";
+    const fullyReceived = bill.items
+      .filter((i) => i.productId)
+      .every((i) => this.lineReceivedQty(bill, i).gte(new Prisma.Decimal(i.qty)));
+    return fullyReceived ? "RECEIVED" : "PARTIAL";
+  }
+
+  /**
    * The AP mirror of `InvoicesService.recordStandalonePayment`: one lump-sum
    * supplier payment allocated across N of that supplier's bills, all sharing
    * one `paymentGroupId` so the group reads as a single event. Any amount left
@@ -2695,15 +3436,17 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       include: { items: { select: { id: true, qtyReceived: true } } },
     });
     if (!bill) throw new NotFoundException("Bill not found");
-    if (bill.status === "RECEIVED" || bill.status === "PAID" || bill.status === "PARTIAL") {
-      throw new BadRequestException(
-        "Cannot delete a bill that has been received or paid. Void it instead.",
-      );
-    }
     await this.prisma.tenantTransaction(async (tx) => {
       // B285: same lock + re-check as receive — a receive committing after our DRAFT check would
       // otherwise leave its stock behind a deleted bill.
-      await this.lockBillAndAssertReceiptState(tx, bill);
+      // B288: the lock's FIRST statement refuses cash payments (409 BILL_HAS_PAYMENTS). The status
+      // refusal follows it, so a part-paid PARTIAL/PAID bill gets the 409 that says how to proceed.
+      await this.lockBillAndAssertReceiptState(tx, bill, true);
+      if (bill.status === "RECEIVED" || bill.status === "PAID" || bill.status === "PARTIAL") {
+        throw new BadRequestException(
+          "Cannot delete a bill that has been received or paid. Void it instead.",
+        );
+      }
       // A DRAFT bill can legitimately carry auto-applied credit draws — give
       // that money back before its payment rows are destroyed with the bill.
       await this.refundDrawnSupplierCredits(tx, id);
@@ -2727,10 +3470,58 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         where: { id: { in: ids } },
         select: { id: true, status: true, billNumber: true },
       });
-      const deletable = bills.filter((b) => b.status === "DRAFT" || b.status === "VOID");
-      const skipped = bills.filter((b) => b.status !== "DRAFT" && b.status !== "VOID");
+      const byStatus = bills.filter((b) => b.status === "DRAFT" || b.status === "VOID");
+      const skipped: {
+        id: string;
+        billNumber: string;
+        reason: string;
+        code?: string;
+        amount?: number;
+      }[] = bills
+        .filter((b) => b.status !== "DRAFT" && b.status !== "VOID")
+        .map((b) => ({
+          id: b.id,
+          billNumber: b.billNumber,
+          reason: "Cannot delete received/paid/partial bills",
+        }));
+      // B288: per-bill outcome, as for status — a bill carrying CASH payments is skipped (BILL_HAS_PAYMENTS +
+      // amount), the rest of the batch still goes. Decided under the row locks, before any write.
+      const cashRows = byStatus.length
+        ? await tx.billPayment.findMany({
+            where: {
+              vendorBillId: { in: byStatus.map((b) => b.id) },
+              supplierCreditId: null,
+              method: { not: PaymentMethod.CREDIT_NOTE },
+            },
+            select: { vendorBillId: true, amount: true, method: true, supplierCreditId: true },
+          })
+        : [];
+      const deletable = byStatus.filter((b) => {
+        const refusal = billCashPaidRefusal(
+          (cashRows ?? []).filter((p: any) => p.vendorBillId === b.id && isCashBillPayment(p)),
+        );
+        if (!refusal) return true;
+        skipped.push({
+          id: b.id,
+          billNumber: b.billNumber,
+          reason: refusal.message,
+          code: refusal.code,
+          amount: refusal.amount,
+        });
+        return false;
+      });
       if (deletable.length > 0) {
         const deletableIds = deletable.map((b) => b.id);
+        // B291: take ONE sorted lock over every credit any of these bills drew from, BEFORE the
+        // per-bill refunds. Locking per bill takes credits in bill order, which can invert against a
+        // concurrent create that locks the same credits in (receivedAt, id) order (40P01).
+        const allDraws = await tx.billPayment.findMany({
+          where: { vendorBillId: { in: deletableIds }, supplierCreditId: { not: null } },
+          select: { supplierCreditId: true },
+        });
+        await lockSupplierCredits(tx, this.prisma.getTenantId(), {
+          creditIds: (allDraws ?? []).map((d: any) => d.supplierCreditId),
+        });
         // Same reason as delete(): auto-applied credit goes back before the
         // draw rows are destroyed. Already-VOID bills refunded nothing left.
         for (const billId of deletableIds) {
@@ -2747,11 +3538,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       }
       return {
         deleted: deletable.length,
-        skipped: skipped.map((b) => ({
-          id: b.id,
-          billNumber: b.billNumber,
-          reason: "Cannot delete received/paid/partial bills",
-        })),
+        skipped,
       };
     });
   }

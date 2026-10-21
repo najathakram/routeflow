@@ -40,13 +40,16 @@ import {
   useCounterSaleGate,
   useCreateCounterSale,
 } from "@/lib/api/counter-sale";
+import { usePermissionDeniedWatcher } from "@/lib/api/my-permissions";
 import { displayProductName } from "@/lib/product-display";
 import {
   COUNTER_LOOKUP_FAILED_COPY,
   COUNTER_OFFLINE_COPY,
   COUNTER_DISCARD_COPY,
   COUNTER_OUTCOME_UNKNOWN_COPY,
+  COUNTER_NO_ACCESS_COPY,
   COUNTER_SALES_DISABLED_COPY,
+  counterSaleGate,
   isTenderShortCopy,
   paymentProblemCopy,
   cartTotals,
@@ -71,6 +74,7 @@ import {
   writeAutoPrint,
   writeHeldAttempt,
 } from "@/lib/counter-sale";
+import { keptSaleHref } from "@/lib/kept-draft-invoice";
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
@@ -83,6 +87,7 @@ import { useCounterLineUndo } from "./useCounterLineUndo";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
+import { PRICE_LAYER_TOO_MANY_COPY } from "@/components/PriceLayerNotice";
 import { isTextEntryActive } from "@/lib/refocus-scanner";
 import { scrollPageToTop } from "@/lib/scroll-top";
 import { useCounterLiveCart } from "./useCounterLiveCart";
@@ -132,6 +137,7 @@ export function CounterSaleScreen() {
   const readOnlyGate = useReadOnlyGate();
   const router = useRouter();
   const gate = useCounterSaleGate();
+  usePermissionDeniedWatcher();
   // CQ-30: once the capability check has failed, the retry panel stays up for the WHOLE refetch. React Query flips a failed,
   // data-less lookup back to "loading" the moment it refetches; without this the panel gave way to the blank loading
   // placeholder for the length of the request. It leaves only when the lookup settles (the sale UI, or the panel again).
@@ -162,6 +168,8 @@ export function CounterSaleScreen() {
   // The total and change the clerk SAW (client figures) when the sale was submitted: compared with the server's on the way out.
   const estimateRef = React.useRef({ total: 0, change: 0 });
   const [outcomeUnknown, setOutcomeUnknown] = React.useState(false);
+  // Row 466: where the sale landed when the call failed AFTER it committed (the invoice, else the order).
+  const [recordedHref, setRecordedHref] = React.useState<string | null>(null);
   const [heldCorrupt, setHeldCorrupt] = React.useState(false); // a stored attempt was unreadable: locked, only "recent sales" or discard
   const [lookupFailed, setLookupFailed] = React.useState(false); // "Check sale status" itself failed (not a 404 answer)
   // CQ-29: the key of a sale that got no answer for want of a connection. The form is usable again, and the next Complete reuses
@@ -422,7 +430,16 @@ export function CounterSaleScreen() {
 
   // The ONE add path: a scan, a picker click and a quick-key tap all land a product through here.
   const addProduct = (product: any, level: SellLevel, n: number) =>
-    setLines((prev) => addScannedProduct(prev, product, level, n, reprice.tierFor(product.id)));
+    setLines((prev) =>
+      addScannedProduct(
+        prev,
+        product,
+        level,
+        n,
+        reprice.tierFor(product.id),
+        reprice.layerOf(product.id),
+      ),
+    );
 
   // B1206-B1208: every scan joins one FIFO queue resolved through the shared exact-code ladder (see useCounterSaleScan).
   const scan = useCounterSaleScan({
@@ -430,7 +447,16 @@ export function CounterSaleScreen() {
     refocus,
     add: (product, level, n) => {
       scanCueArmedRef.current = true;
-      setLines((prev) => addScannedProduct(prev, product, level, n, reprice.tierFor(product.id)));
+      setLines((prev) =>
+        addScannedProduct(
+          prev,
+          product,
+          level,
+          n,
+          reprice.tierFor(product.id),
+          reprice.layerOf(product.id),
+        ),
+      );
     },
   });
 
@@ -557,7 +583,9 @@ export function CounterSaleScreen() {
   const undoRemove = () => {
     if (!undo || lineLocked || saleInFlight()) return;
     // A customer pick may have re-priced the cart while the line sat in the undo window: price it for them too (an edited price is kept).
-    setLines((prev) => repriceLines(restoreLine(prev, undo), reprice.tierFor).lines);
+    setLines(
+      (prev) => repriceLines(restoreLine(prev, undo), reprice.tierFor, reprice.layerOf).lines,
+    );
     dropUndo();
     refocus();
   };
@@ -694,6 +722,7 @@ export function CounterSaleScreen() {
         });
         // A tender refused for a CLOSED DAY leaves the sale saved but unpaid: say so (the banner below is the generic one).
         setError(isCounterSaleDayClosed(err) ? counterSaleErrorCopy(err) : "");
+        setRecordedHref(keptSaleHref(err));
         setOutcomeUnknown(true);
       }
       return null;
@@ -887,6 +916,16 @@ export function CounterSaleScreen() {
   // The features answer is not in yet: an empty, non-interactive placeholder, with no copy (neither the sale UI nor a false
   // "not turned on").
   if (gate.loading) return <div data-testid="counter-sale-loading" aria-busy="true" />;
+
+  // BO-07: the counter is on for the business but this operator's admin has not turned selling on for their account (read
+  // live; a PERMISSION_DENIED from any till call lands here too). A plain panel, checked before the "off" copy, never a toast.
+  if (gate.mayUseTill === false && counterSaleGate(gate.capability).showButton) {
+    return (
+      <div className="mx-auto max-w-md p-4 text-sm" data-testid="counter-sale-no-access">
+        {COUNTER_NO_ACCESS_COPY}
+      </div>
+    );
+  }
 
   // Missing means dark: loading, error, unknown, a response without the capability, or counter "off" all render NO sale UI
   // (a deep link or a stale tab). Only "optional" / "always" open the screen.
@@ -1351,6 +1390,15 @@ export function CounterSaleScreen() {
             >
               <p className="font-semibold">{COUNTER_OUTCOME_UNKNOWN_COPY}</p>
               {lookupFailed ? <p>{COUNTER_LOOKUP_FAILED_COPY}</p> : null}
+              {recordedHref ? (
+                <p>
+                  The sale was recorded.{" "}
+                  <Link href={recordedHref} className="text-brand-700 underline">
+                    Open it
+                  </Link>{" "}
+                  to check it. Try again finishes it once, without ringing it twice.
+                </p>
+              ) : null}
               {heldCorrupt ? <p>{COUNTER_DISCARD_COPY}</p> : null}
               <div className="flex flex-wrap items-center gap-3">
                 {heldCorrupt ? (
@@ -1392,7 +1440,34 @@ export function CounterSaleScreen() {
             </p>
           ) : null}
 
-          {reprice.failed ? (
+          {reprice.unconfirmed === "failed" ? (
+            <p
+              role="alert"
+              className="text-sm text-red-700"
+              data-testid="counter-price-layer-failed"
+            >
+              Couldn&apos;t load this customer&apos;s prices.{" "}
+              <button type="button" className={cn(TAP_TARGET, "underline")} onClick={reprice.retry}>
+                Retry
+              </button>
+            </p>
+          ) : reprice.unconfirmed === "incomplete" ? (
+            <p
+              role="status"
+              className="text-sm text-navy/70"
+              data-testid="counter-price-layer-incomplete"
+            >
+              {PRICE_LAYER_TOO_MANY_COPY}
+            </p>
+          ) : reprice.unconfirmed === "pending" ? (
+            <p
+              role="status"
+              className="text-sm text-navy/70"
+              data-testid="counter-price-layer-pending"
+            >
+              Checking this customer&apos;s prices…
+            </p>
+          ) : reprice.failed ? (
             <p role="alert" className="text-sm text-red-700" data-testid="counter-reprice-failed">
               Couldn&apos;t update prices for this customer. The old prices are still showing.{" "}
               <button type="button" className={cn(TAP_TARGET, "underline")} onClick={reprice.retry}>

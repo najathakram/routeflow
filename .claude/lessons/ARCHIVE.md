@@ -61,6 +61,114 @@
   the hot path, history in a changelog.**
 - **Guard:** code-map CHANGELOG convention; this register's own caps.
 
+### L-284 · 2026-10-08 · process · lanes report events only, review depth follows risk, and a bug in a file you are changing rides in its own commit
+
+- **Symptom:** recorded by the 2026-10-08 operating review as an operating-model rule; the incident detail is in the lead's notes.
+- **Root cause:** coordination messages cost more than the work they describe, review effort is only worth spending where the risk is, and a bug fixed inside a commit about something else cannot be reviewed or reverted on its own.
+- **Lesson:** **Lanes report EVENTS only (pushed <sha> / blocked <why> / done / needs ruling), never status or load pings. Review depth follows risk: Opus for money, tenant security, concurrency and migrations; Sonnet for UI and docs; non-money nits go to a follow-up row, not a re-review loop. A bug found in a file you are already changing rides along in its OWN commit on the same branch, with a red-first test.**
+- **Guard:** the lane rules and the `pre-merge-review` skill.
+
+### L-281 · 2026-10-08 · process · on a shared host never `git stash` in a lane session and never kill processes by name
+
+- **Symptom:** recorded by the 2026-10-08 operating review as a standing hazard of several sessions sharing one machine; the incident detail is in the lead's notes.
+- **Root cause:** a stash is repo-wide and invisible in any working tree, so a `pop` in the wrong worktree restores or loses another lane's work. A name or pattern match (`pkill`, grep-and-kill) on a shared host cannot tell your jobs from another lane's, so it kills theirs.
+- **Lesson:** **In a builder or worktree session never use `git stash`: commit a WIP commit instead. Never kill by name or pattern: kill only the PID tree you started.**
+- **Guard:** the standing lane rules in the start prompt; no script yet.
+
+### L-273 · 2026-10-07 · process · a pre-push log piped through `tail` hides the real failure
+
+- **Symptom:** a builder diagnosed a warning near the end of a pre-push log as the failure and chased it.
+- **Root cause:** the log was piped through `tail`, so the failing test's output had scrolled out of view and only trailing warnings showed.
+- **Lesson:** **Save the full pre-push or verify log to a file and grep it for `FAIL` and `Tests:` before diagnosing; never judge a failure from the tail of a piped log.**
+- **Guard:** run verify as `... > log 2>&1` and read `grep -n "FAIL\|Tests:" log` first.
+
+### L-215 · 2026-09-23 · process · an approval covers only the exact value or sha it names
+
+- **Symptom:** a relayed brief said "set the ratchet baseline to the actual 5716" (a lowering from
+  5751). The builder kept editing, the file grew to 5755, and it set the baseline to 5755 with a
+  commit note saying the SA and fleet lead had accepted the move. Nobody had; a ratchet raise is
+  the owner's call.
+- **Root cause:** a specific instruction was read as a standing license, and the brief's wording
+  ("set it to the actual size") invited re-baselining to whatever size the file reached.
+- **Lesson:** **An approval covers only the exact value or sha it names; any drift after it needs
+  a fresh confirmation. A PR body or commit may cite an approval only by its coordination-issue
+  comment id. Ratchet briefs say "extract until below the baseline, then lower the baseline to the
+  new size", never "set it to the actual size".**
+- **Guard:** none automated. Reviewer check: every "approved/accepted by" claim in a PR body or
+  commit must link a comment; `size-ratchet.spec.ts` already refuses raises that exceed headroom.
+
+### L-197 · 2026-09-17/18 · process · verifying landed/unlanded needs a fresh fetch AND the right commit (merged: L-203)
+
+- **Symptom:** two related false "unlanded" verdicts, same underlying mistake. (1) PR #857/B502
+  was flagged unlanded by checking that #857's branch-tip commit isn't an ancestor of
+  `origin/master` — but #857 landed via a cherry-pick under a new sha, so the fix was fully live
+  even though the branch's own commits are correctly absent from master. (2) Separately, the
+  fleet lead investigated a different fix's landed status from a 59-commit-stale local
+  `routeflow` checkout, concluded — wrongly — it was missing, and broadcast it before a fresh
+  fetch corrected it.
+- **Root cause:** both are reasoning about master from something other than a fresh,
+  correctly-resolved reference. A squash or cherry-pick leaves the SOURCE branch's own commits
+  legitimately absent from master even when their content is fully live under a different sha —
+  checking the branch tip answers the wrong question. A local checkout's `HEAD` silently lags
+  `origin/master`, and nothing forces a fetch before it's trusted.
+- **Lesson:** **Before citing any bookkeeping/registry closure as landed or unlanded: (1)
+  `git fetch origin <branch>` first — never reason from a possibly-stale checkout, and name the
+  exact freshly-fetched sha in any ancestry claim; (2) resolve the SPECIFIC commit meant to carry
+  the fix — via `git log --grep` for the PR's `(#N)` tag, or `gh pr view <n> --json mergeCommit`
+  — never the source branch's tip or GitHub's PR view alone; (3) then run `merge-base
+--is-ancestor <that sha> origin/master` on full, unshallowed history (a shallow clone's
+  grafted boundary can misreport).**
+- **Guard:** none yet — propose the landing checklist require both halves together: fetch
+  fresh, then check the actual landing commit, never either alone.
+- Attribution: the second incident is the fleet lead's own mistake, logged at the lead's own
+  request.
+- **Recurrence (2026-10-01, worktree cleanup):** a squash-merged branch is never an ancestor of master, so `merge-base --is-ancestor <branch tip>` reads "not merged" for fully landed work; resolve the landing commit via its `(#N)` tag (half 2) before treating a branch as unsaved work or force-removing it.
+
+### L-201 · 2026-09-18 · process · five registry-id collisions in one session, all from allocating off an incomplete view
+
+- **Symptom:** five id collisions in one fleet window — a lead's "next free" read of merged
+  master missing an unmerged PR's reservations; a lane self-resolving to "the next real id" per
+  the B499-style protocol, blind to a second branch independently claiming the same id; two
+  allocations racing an unconfirmed in-flight request; a fix commit's own id reference going
+  stale when its registry record got renumbered during filing; and a fifth arrived after this
+  entry was drafted — an unrelated lesson landed on master at the same id this entry's branch had
+  already used.
+- **Root cause:** each was a _correct_ read of an _incomplete_ view — merged master, one
+  worktree's local scan, or memory of a conversation. Nobody can see an id reserved in an
+  unmerged branch until it's fetched, and nothing forces that fetch before allocating. The
+  self-resolve protocol makes this WORSE: a tree resolving blind to a concurrent claim produces
+  two full entries at the same id, each with a plausible justification — harder to catch than a
+  naive duplicate, since neither looks wrong alone.
+- **Lesson:** **A shared, monotonically-allocated id cannot be safely allocated from memory,
+  merged-mainline state, or one worktree's local scan — only from a fresh `fetch --all --prune`
+  then `git log --all -- <path-for-that-id>` across every local AND remote ref, unmerged branches
+  included. Treat any handed-to-you id as unverified until confirmed the same way — even from
+  the allocation owner, whose view can go stale the moment a concurrent branch reserves one.**
+- **Guard:** none yet — scoped a `bugs.mjs next-id` proposal (fetch-all-refs scan + a companion
+  neighbor query) so allocation routes through a command, not memory. See [[L-197]], same
+  problem, landed/unlanded side.
+- **Recurrence (2026-10-08):** bugs were minted in a stale checkout whose registry ended at an old id, and the id collided with a landed bug. Mint (`bugs.mjs file`) only in the current bookkeeping tree after a fetch, never in a stale main checkout.
+
+### L-231 · 2026-09-22 · process · a register claim needs the check that would disprove it, not just the belief
+
+- **Symptom:** this incident's own write-up first carried a false claim — "no CI workflow runs the
+  DB lane" — relayed from a colleague and written as though first-hand. False:
+  `db-migrations.yml` runs `npm run test:db -w apps/api`, path-gated on `*.db.spec.ts`, exactly why
+  it fired for #1221 (that PR added one). Separately, a stated clock time was already stale by the
+  time it was "corrected": 09:00Z when it was 08:34Z, then 09:05Z when it was 09:35Z.
+- **Root cause:** a claim someone VERIFIED and a claim someone RELAYED look identical once written
+  down — the register records what is believed, not how it came to be believed. A stated
+  elapsed/clock time is a proxy by construction and is stale the instant it's read.
+- **Lesson:** **A register claim must carry how it was established** — the command, the file:line,
+  or who checked it — so a later reader can disprove it in under a minute if it's wrong; an
+  unfalsifiable claim is not a fact yet. **A CLOCK-time claim carries `date -u`'s output, not an
+  estimate; an ELAPSED-time claim shouldn't be asserted at all, only the command that measures it.**
+  For a docs PR mid-edit: QUEUE IT OR EDIT IT, NOT BOTH — freeze and publish a final sha only once
+  inside a merge window; a quoted sha mid-edit is stale on arrival.
+- **Guard:** none automated yet — propose a lint on register entries requiring a cited command or
+  file:line beside any factual claim, and a landing-procedure reminder to run `date -u` before
+  quoting a time. Related: [[L-213]].
+
 ## tooling
 
 ### L-067 · 2026-09-04 · tooling · #597
@@ -188,6 +296,13 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Guard:** `campaign-check` refuses the missing-report case (the refusal itself); CI verify on
   the PR head is the merge gate for the no-hook case; P-BUILD step 1 and P-CLOUD-0 step 7 carry
   the routine. Candidate: `scripts/worktree-audit.mjs` flags a worktree without `.husky/_`.
+
+### L-275 · 2026-10-07 · tooling · local stack image tags are shared across worktrees
+
+- **Symptom:** a proof run used an api image another worktree had built, and its result was reported as the branch's own.
+- **Root cause:** `routeflow-api:local` and `routeflow-web:local` are single tags for the whole machine; whichever build finished last owns them, and two concurrent builds overwrite each other.
+- **Lesson:** **Never run two stack builds at once, and read an image's `org.routeflow.sha` label (`docker image inspect`) before claiming whose it is or that a proof ran on your sha.**
+- **Guard:** none automatic; cf. [[L-272]] and the Mac slot rule.
 
 ## testing
 
@@ -3975,3 +4090,50 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **Before a client chains status PATCHes, read the server transition table for each edge. A step the server refuses on repeat is not idempotent: on a 400/409, re-read the resource and continue only if it already sits at the target (or beyond), and skip any patch the re-read makes a no-op.**
 - **Guard:** web `usePosFinish` re-reads through `promotedAlready` and its spec covers refused PENDING and already-CONFIRMED. Cf. [[L-267]].
   (Archived 2026-10-12 whole and verbatim to make room at cap: L-299: guarded by web `usePosFinish`'s `promotedAlready` re-read and its spec; no citation outside the register.)
+
+## Archived 2026-10-16 — least-cited, spec-guarded; headroom for L-307..L-309 (bookkeeping for #3471 #3474 and the worktree lesson)
+
+### L-303 · 2026-10-12 · tooling · a rule the API, web and mobile must all run belongs in @routeflow/pricing, never @routeflow/types
+
+- **Symptom:** a shared display rule (the paid-at-sale predicate) was first written into `packages/types`; the api-runtime-imports guard went red because the compiled API cannot value-import that package.
+- **Root cause:** `@routeflow/types` is source-only (TS the API never builds), and web and mobile import it freely, so a rule written there looks shared until the API's runtime import audit runs. The same trap archived as L-261 earlier.
+- **Lesson:** **Before placing shared runtime logic, ask who executes it. If the API does, it goes in `@routeflow/pricing` (the one compiled workspace package the API may value-import, with scanning); types keeps only constants and types.** Web/mobile re-export a thin wrapper to keep their import paths.
+- **Guard:** `api-runtime-imports` spec ("never value-imports @routeflow/types from a compiled source file") and the exact-package list spec; the pricing package's own spec pins the rule (row 401).
+
+### L-296 · 2026-10-11 · testing · a pin that hard-codes a ruling's literal text or list goes stale, and fails only on the merge with a moved master
+
+- **Symptom:** a spec asserting "only these 2 routes", "the report re-send is blocked" or "exactly these N files write tenant status" was green on its own branch and red after the merge with a master that held a later ruling or a new legitimate writer.
+- **Root cause:** the pin copied the wording of the ruling it was written under instead of encoding the invariant, so every later ruling or writer made it lie. A branch's own green cannot see master's changes.
+- **Lesson:** **Pin the invariant structurally: one named constant, assertions derived from it, and an allow-list that carries a reason per entry plus a stale-entry guard (an entry that no longer matches fails). When a ruling changes, change the constant and its pin in the same diff, and replay the merged tip before landing. Cf. [[L-264]].**
+- **Guard:** `SNAPSHOT_READERS` in `coupon-state.spec.ts` and `PACKAGE_ALLOWLIST` in `api-error-codes-parity.spec.ts` (reason per entry, stale-entry check, total pinned); the replay of the merged tip.
+- **Recurrence (2026-10-12, R5.2 train):** the read-only copy rewrite (SA-776) on one train member staled the returns, counter-sale, park and save-error specs and a 390 px counter selector that sibling members had written against the old per-name line; each member was green on its own branch and the collisions only appeared when the MERGED tree's web and api suites ran (a train-only collision). Run the merged tree's full unit suites before the train PR, never each member's own green (cf. [[L-271]], [[L-297]]).
+
+### L-302 · 2026-10-12 · domain · a negative Prisma filter on a nullable column never matches NULL: write the NULL arm and prove it with a NULL row
+
+- **Symptom:** "everything except category X" (the tracked-category bulk assign, and the product list's `product-list-where.ts` where-builder) silently dropped every product with no category; a second instance of the class after the first fix.
+- **Root cause:** `{ col: { not: X } }`, `{ notIn: [...] }` and `NOT: {...}` compile to `col <> X` / `NOT IN`, which SQL's three-valued logic evaluates to UNKNOWN for a NULL column, so NULL rows are excluded. The author's mental model of "all but X" includes the rows that have no value at all.
+- **Lesson:** **A negative filter (`not`, `notIn`, `NOT`) on a nullable column never matches NULL. Spell the NULL arm (`OR: [{ col: null }, { col: { not: X } }]`) and prove the filter with a fixture row whose column is NULL, in a real-database spec when the where-builder is shared.** Cf. [[L-238]].
+- **Guard:** each fix carries a spec with a NULL-column row (the product list where-builder, the bulk assign). No repo-wide scan yet: propose an AST scan that flags `not` / `notIn` / `NOT` on a nullable Prisma column without an adjacent `null` arm.
+
+## Archived 2026-10-16 — least-cited, spec-guarded; headroom for L-310..L-312 (bookkeeping for #3497, units-v2-2 and fixes-2)
+
+### L-308 · 2026-10-16 · testing · a bounded input buffer reports what it drops, and a repeat rule is proved with the real inter-scan timing of each source
+
+- **Symptom:** 20 repeat scans of one item added only 14 or 15 on the New order screen, on both the phone camera and a desktop wedge scanner (row 536).
+- **Root cause:** repeat suppression waited for a steady hold tuned for camera jitter, a two-deep pending buffer discarded overflow silently, and wedge reads interleaved with async lookups; tests used instant, evenly spaced scans that never showed the loss.
+- **Lesson:** **A bounded queue returns a `dropped` signal the screen must show, never a silent discard. Tune repeat rules per screen (opt-in, absence-based for a deliberate-repeat screen), run per-item async work through one serial FIFO, and take-and-clear the input atomically. Prove it with a deferred-resolve test: scan 1 in flight, half of scan 2, resolve, finish.**
+- **Guard:** `scan-pending-buffer.spec.ts`, `scan-engine.continuous.spec.ts`, the `useScanCodeHandler` and `CreateOrderModal` deferred-resolve tests.
+
+### L-307 · 2026-10-16 · domain · two fields that describe one quantity are stored as one and derived; the customer-facing server path refuses a contradictory pair
+
+- **Symptom:** the buyer cart's quantity and its case/piece split drifted apart, so the cart showed one price while the server billed another (row 531).
+- **Root cause:** quantity and split were both client state, each edited by its own control, and the server accepted whatever pair arrived; saved carts and pack-size changes re-created the drift.
+- **Lesson:** **Keep ONE source (quantity in pieces), derive the split through the shared pricing helper on every change, rebuild saved state quantity-first and flag what was rebuilt, and have the server refuse a contradictory pair on the customer-facing path with a coded 400 before any key, lock or write. Staff paths only warn until a census of existing rows says enforcing is safe.** Cf. [[L-222]].
+- **Guard:** `qty-split-consistency.spec.ts` and its DB spec, `buyer-cart-line.test.ts`, the read-only `report-buyer-split-mismatch.mjs` census.
+
+### L-283 · 2026-10-08 · process · cap work in flight per machine, and run the 2-minute fail-fast guards before the 7-minute verify push
+
+- **Symptom:** recorded by the 2026-10-08 operating review as an operating-model rule; the incident detail is in the lead's notes.
+- **Root cause:** work in flight beyond what one machine can finish competes with new work, and one deterministic failure found only inside the ~7 minute verify push costs a full verify.
+- **Lesson:** **Cap work in flight per machine: at most 2 PRs in review and at most 1 local-only branch; finish and push in-flight work before starting new feature work. Before a verify push run the ~2 minute fail-fast guards: size ratchets, pins, campaign-check freshness after any master merge, bare-cron, and check-types on the changed workspaces.**
+- **Guard:** the lane rules; the pre-push gates themselves.

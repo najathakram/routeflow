@@ -357,7 +357,12 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
       { provide: StorageService, useValue: { presignedUrls: jest.fn().mockResolvedValue([]) } },
       { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
       { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-      { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
+      {
+        provide: EntitlementsService,
+        useValue: {
+          hasFlag: jest.fn(async (_t: string, k: string) => k !== "flag.units_prices_v2"),
+        },
+      },
       entitlementAuthorityFromEntitlements,
       // #2185: the reorder gate's deny body reads admin overrides.
       { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
@@ -376,16 +381,16 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
   // 16 — OFF is behaviour-neutral
   it("OFF: a variant tier PATCH writes exactly as today, and a family PATCH leaves variants alone", async () => {
     const service = await build("off");
-    await service.update("var1", { priceTier3: "1.00" } as any);
+    await service.update("var1", { priceTier3: "1.00" } as any, { packPrecondition: "internal" });
     expect(written("var1")).toMatchObject({ priceTier3: "1.00" });
-    await service.update("fam", { priceTier3: "5.00" } as any);
+    await service.update("fam", { priceTier3: "5.00" } as any, { packPrecondition: "internal" });
     expect(prisma.product.updateMany).not.toHaveBeenCalled();
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
   });
 
   it("no FeatureConfigService wired at all behaves as OFF", async () => {
     const service = await build("absent");
-    await service.update("var1", { priceTier3: "1.00" } as any);
+    await service.update("var1", { priceTier3: "1.00" } as any, { packPrecondition: "internal" });
     expect(written("var1")).toMatchObject({ priceTier3: "1.00" });
     expect(prisma.product.updateMany).not.toHaveBeenCalled();
   });
@@ -393,7 +398,9 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
   // 19
   it("ON: a variant tier PATCH -> 409 FAMILY_PRICE_AUTHORITY {familyId}, nothing written", async () => {
     const service = await build("on");
-    const err = await service.update("var1", { priceTier3: "1.00" } as any).catch((e) => e);
+    const err = await service
+      .update("var1", { priceTier3: "1.00" } as any, { packPrecondition: "internal" })
+      .catch((e) => e);
     expect(err).toBeInstanceOf(ConflictException);
     expect(err.getResponse()).toMatchObject({ code: "FAMILY_PRICE_AUTHORITY", familyId: "fam" });
     expect(prisma.product.update).not.toHaveBeenCalled();
@@ -401,14 +408,18 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
 
   it("ON: a non-price PATCH on a variant is 200 and never consults the family", async () => {
     const service = await build("on");
-    await service.update("var1", { description: "new copy" } as any);
+    await service.update("var1", { description: "new copy" } as any, {
+      packPrecondition: "internal",
+    });
     expect(written("var1")).toMatchObject({ description: "new copy" });
     expect(prisma.product.updateMany).not.toHaveBeenCalled();
   });
 
   it("ON: a variant re-save with equal prices is allowed and writes no price column", async () => {
     const service = await build("on");
-    await service.update("var1", { priceTier3: "9.004", description: "x" } as any);
+    await service.update("var1", { priceTier3: "9.004", description: "x" } as any, {
+      packPrecondition: "internal",
+    });
     const data = written("var1");
     for (const col of FAMILY_PRICE_COLUMNS) expect(data[col]).toBeUndefined();
   });
@@ -421,7 +432,7 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
       rows[where.id] = { ...rows[where.id], ...data };
       return { ...rows[where.id], barcode: null, imageKeys: [] };
     });
-    await service.update("fam", { priceTier3: "8.50" } as any);
+    await service.update("fam", { priceTier3: "8.50" } as any, { packPrecondition: "internal" });
     expect(prisma.product.updateMany).toHaveBeenCalled();
     const bulk = gateway.emitProductUpdated.mock.calls.filter((c) => c[1].action === "bulk");
     expect(bulk).toHaveLength(1);
@@ -432,13 +443,15 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
   it("ON: no bulk emit when the transaction rejects (L-237)", async () => {
     const service = await build("on");
     prisma.product.update.mockRejectedValue(new Error("boom"));
-    await expect(service.update("fam", { priceTier3: "8.50" } as any)).rejects.toThrow("boom");
+    await expect(
+      service.update("fam", { priceTier3: "8.50" } as any, { packPrecondition: "internal" }),
+    ).rejects.toThrow("boom");
     expect(gateway.emitProductUpdated).not.toHaveBeenCalled();
   });
 
   it("ON: a family PATCH with no price key does not propagate", async () => {
     const service = await build("on");
-    await service.update("fam", { description: "x" } as any);
+    await service.update("fam", { description: "x" } as any, { packPrecondition: "internal" });
     expect(prisma.product.updateMany).not.toHaveBeenCalled();
   });
 
@@ -446,10 +459,12 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
   it("ON: a non-override recipe's own tier PATCH -> 409; familyPriceOverride=true -> 200", async () => {
     const service = await build("on");
     prisma.recipe.findFirst.mockResolvedValue({ familyProductId: "fam" });
-    const err = await service.update("rec1", { priceTier3: "1.00" } as any).catch((e) => e);
+    const err = await service
+      .update("rec1", { priceTier3: "1.00" } as any, { packPrecondition: "internal" })
+      .catch((e) => e);
     expect(err.getResponse()).toMatchObject({ code: "FAMILY_PRICE_AUTHORITY", familyId: "fam" });
     rows.rec1 = { ...rows.rec1, familyPriceOverride: true };
-    await service.update("rec1", { priceTier3: "1.00" } as any);
+    await service.update("rec1", { priceTier3: "1.00" } as any, { packPrecondition: "internal" });
     expect(written("rec1")).toMatchObject({ priceTier3: "1.00" });
   });
 

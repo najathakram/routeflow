@@ -3,6 +3,7 @@ import { Linking, Modal, Pressable, StyleSheet, Text, TextInput, View } from "re
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { CARRIERS, carrierLabel, getTrackingUrl } from "../lib/shipping";
+import { CARRIER_HINT, needsCarrierHint } from "@routeflow/types/shipment-save";
 import { showToast } from "../lib/toast";
 
 /**
@@ -23,9 +24,12 @@ export interface ShipmentInfo {
 export function ShipmentSection({
   shipment,
   onEdit,
+  note,
 }: {
   shipment: ShipmentInfo;
   onEdit: () => void;
+  /** A line under the tracking, e.g. "Not shipped yet." (see `shipmentNotShippedNote`). */
+  note?: string | null;
 }) {
   const carrier = shipment.shippingCarrier ?? null;
   const tracking = shipment.shippingTrackingNumber ?? null;
@@ -82,6 +86,7 @@ export function ShipmentSection({
               </View>
             )
           ) : null}
+          {note ? <Text style={styles.empty}>{note}</Text> : null}
           {shipment.shippedAt ? (
             <View style={styles.row}>
               <Text style={styles.rowLabel}>Shipped</Text>
@@ -157,6 +162,9 @@ export function ShipmentEditModal({
               );
             })}
           </View>
+          {needsCarrierHint(carrier, tracking) ? (
+            <Text style={styles.carrierHint}>{CARRIER_HINT}</Text>
+          ) : null}
 
           <Text style={styles.fieldLabel}>Tracking number</Text>
           <TextInput
@@ -206,7 +214,7 @@ const styles = StyleSheet.create({
   card: { backgroundColor: ios.bgElev, borderRadius: 14, padding: 14, gap: 10 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   cardTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
-  editBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
+  editBtn: { flexDirection: "row", alignItems: "center", gap: 4, minHeight: 44 },
   linkText: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.brand },
   empty: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
   row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
@@ -268,7 +276,16 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   carrierRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 16 },
+  carrierHint: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginTop: -8,
+    marginBottom: 16,
+  },
   carrierChip: {
+    minHeight: 44,
+    justifyContent: "center",
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 999,

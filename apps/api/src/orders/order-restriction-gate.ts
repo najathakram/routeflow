@@ -2,7 +2,7 @@ import { ConflictException, ForbiddenException } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { OVERRIDE_STAMP_SELECT } from "../common/restriction-override-columns";
-import { salePathForOrder } from "../selling-restrictions/jurisdiction";
+import { saleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import type {
   GateLine,
   HeldLine,
@@ -34,7 +34,6 @@ import {
  * change-request-restrictions.ts). Imported as a namespace (`import * as rGate`), like `driverAccess` / `unitAware`.
  */
 
-export { salePathForOrder };
 export { stampOverrideNames } from "../common/restriction-override-names";
 export type Decision = StaffWriteDecision;
 export type Ack = SellableLinesParams["ack"];
@@ -74,7 +73,10 @@ export function create(a: {
     lines: a.lineItemsData.flatMap((li, i) =>
       li.productId ? [{ productId: li.productId, lineKey: `n:${i}` }] : [],
     ),
-    path: salePathForOrder({ fulfillPath: a.fulfillPath, counterSale: a.options.counterSale }),
+    fulfilmentKind: saleFulfilmentKind({
+      fulfillPath: a.fulfillPath,
+      counterSale: a.options.counterSale,
+    }),
     principal: a.user,
     ack: a.dto,
     document: "ORDER",
@@ -102,8 +104,6 @@ export function whole(a: {
   user: User;
   lines: readonly OrderLine[];
   dto?: Ack;
-  /** The path the sale is judged at when it differs from the stored one (the path switch). */
-  fulfillPath?: string | null;
   allLive?: boolean;
 }): SellableLinesArgs {
   return {
@@ -112,10 +112,7 @@ export function whole(a: {
     lines: a.lines.flatMap((l) =>
       l.productId ? [{ productId: l.productId, lineKey: `l:${l.id}` }] : [],
     ),
-    path: salePathForOrder({
-      counterSale: a.order.counterSale,
-      fulfillPath: a.fulfillPath ?? a.order.fulfillPath,
-    }),
+    fulfilmentKind: saleFulfilmentKind(a.order), // the path switch passes the path switched TO
     principal: a.user,
     ack: a.dto,
     held: a.allLive ? a.lines.map((l) => ({ ...l, status: null })) : a.lines,
@@ -149,7 +146,7 @@ export function editPlan(
     items: a.dto.items ?? [],
     mode: orderEditMode(a.user?.role, a.dto.replaceAll, a.isDiffPayload),
     principal: a.user,
-    path: salePathForOrder(a.order),
+    fulfilmentKind: saleFulfilmentKind(a.order),
     ack: a.dto,
   });
 }
@@ -173,7 +170,7 @@ export function crPlan(a: {
     existing: a.order.lineItems ?? [],
     cr: a.cr,
     principal: a.user,
-    path: salePathForOrder(a.order),
+    fulfilmentKind: saleFulfilmentKind(a.order),
     ack: a.ack,
   });
 }

@@ -24,7 +24,9 @@
  * tell "lost" from "deliberately reset" and recreates it. Closing that needs a deletion record
  * (or an audit lookup) — raised with the lead, not guessed at here.
  */
+import type { ConfigSnapshotHeld, ConfigSnapshotSkipReason } from "@routeflow/types";
 import { featureDefByKey } from "./feature-registry";
+import { applyAddonOverrides, fleetHeldIn } from "./fulfilment-capability";
 
 export const SNAPSHOT_PAYLOAD_VERSION = 1 as const;
 
@@ -114,8 +116,11 @@ export function buildSnapshotPayload(
 
 export interface SkippedEntry {
   featureKey: string;
-  reason: "UNKNOWN_FEATURE" | "MODE_NOT_OFFERED" | "EXPIRED" | "PLAN_NOT_ALLOWED";
+  /** The shared wire union (`@routeflow/types`) — never a second copy; `config-snapshot-wire-parity` pins it. */
+  reason: ConfigSnapshotSkipReason;
 }
+
+export type HeldEntry = ConfigSnapshotHeld;
 
 /**
  * Validates a stored payload before it is trusted. Returns null for anything that is not a
@@ -254,4 +259,59 @@ export function summarizeRestore(plan: RestorePlan): RestoreReport {
     keptNewer: plan.configs.keptNewer.length + plan.overrides.keptNewer.length,
     unchanged: plan.configs.unchanged.length + plan.overrides.unchanged.length,
   };
+}
+
+/** The registry key of the delivery method — the one config row a restore can HOLD (BO-13). */
+export const FULFILMENT_MODEL_KEY = "fulfilment_model";
+
+/**
+ * BO-13: move ONE config entry out of `create`/`update` into `skipped` with `reason` — a pure transform
+ * (the input plan is never mutated) applied AFTER `planRestore`, so preview and apply hold the same row
+ * by construction. `unchanged` / `keptNewer` / already-`skipped` entries are left alone, and a key that is
+ * not being written returns the plan untouched.
+ */
+export function holdConfigEntry(
+  plan: RestorePlan,
+  featureKey: string,
+  reason: SkippedEntry["reason"],
+): RestorePlan {
+  const writing =
+    plan.configs.create.some((e) => e.featureKey === featureKey) ||
+    plan.configs.update.some((u) => u.entry.featureKey === featureKey);
+  if (!writing) return plan;
+  return {
+    ...plan,
+    configs: {
+      ...plan.configs,
+      create: plan.configs.create.filter((e) => e.featureKey !== featureKey),
+      update: plan.configs.update.filter((u) => u.entry.featureKey !== featureKey),
+      skipped: [...plan.configs.skipped, { featureKey, reason }],
+    },
+  };
+}
+
+/**
+ * BO-13: does the tenant hold a fleet module (Routes / Order delivery) AFTER this restore's own
+ * override writes? Same rule as `isFleetHeld` (add-on rows, an override absolute: GRANT adds, DENY
+ * removes), but over the tx-read rows plus the overrides this plan is about to create, so the answer is
+ * the END state the restore would leave — not the saved state `FeatureConfigService.set` judges.
+ */
+export function fleetHeldAfterRestore(
+  plan: RestorePlan,
+  current: {
+    overrides: readonly OverrideRow[];
+    activeAddonKeys: Iterable<string>;
+    /** Add-on keys the SAME transaction activates AFTER the restore (a checkout's `desiredNow`): held at commit. */
+    pendingAddonKeys?: Iterable<string>;
+  },
+  now: Date,
+): boolean {
+  const effects: [string, "GRANT" | "DENY"][] = [
+    ...current.overrides
+      .filter((o) => isActive(o, now))
+      .map((o): [string, "GRANT" | "DENY"] => [o.featureKey, o.effect]),
+    ...plan.overrides.create.map((e): [string, "GRANT" | "DENY"] => [e.featureKey, e.effect]),
+  ];
+  const rows = [...current.activeAddonKeys, ...(current.pendingAddonKeys ?? [])];
+  return fleetHeldIn(applyAddonOverrides(rows, effects));
 }

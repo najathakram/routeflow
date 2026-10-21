@@ -6,6 +6,10 @@ import SettingsImportPage from "./page";
 // This card has no `next/navigation` dependency, unlike other settings pages —
 // no router/search-params mock needed here.
 
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { id: "u1", username: "x", role: "TENANT_ADMIN" } }),
+}));
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
     get: jest.fn().mockResolvedValue({ data: {} }),

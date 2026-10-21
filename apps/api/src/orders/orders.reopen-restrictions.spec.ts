@@ -53,8 +53,20 @@ describe("OrdersService.reopenOrder — selling restrictions (F-05)", () => {
           { productId: "prod-live", lineKey: "l:li-l" },
         ],
         channel: "STAFF",
+        fulfilmentKind: "DELIVERY",
         document: "ORDER",
       }),
+    );
+  });
+
+  it.each([
+    [{ fulfillPath: "PICKUP" }, "PICKUP"],
+    [{ counterSale: true, fulfillPath: "PICKUP" }, "COUNTER"],
+    [{ fulfillPath: "SHIP" }, "DELIVERY"],
+  ])("L8: the order's fulfilment %j is judged as %s", async (facts, kind) => {
+    await reopen({ ...order([live]), ...facts }).catch(() => undefined);
+    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfilmentKind: kind }),
     );
   });
 

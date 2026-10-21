@@ -113,6 +113,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       dbRule({ jurisdiction: "FEDERAL", states: [] }),
     ]);
     const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      fulfilmentKind: "DELIVERY",
       at: NOW,
       channel: "STAFF",
     });
@@ -151,6 +152,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       dbRule({ jurisdiction: "FEDERAL", states: [] }),
     ]);
     const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      fulfilmentKind: "DELIVERY",
       at: NOW,
       channel: "BUYER_PORTAL",
     });
@@ -163,7 +165,10 @@ describe("SellingRestrictionsService.evaluate", () => {
     prisma.sellingRestriction.findMany.mockResolvedValue([
       dbRule({ jurisdiction: "FEDERAL", states: [] }),
     ]);
-    const res = await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
+    const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      fulfilmentKind: "DELIVERY",
+      at: NOW,
+    });
     expect(res.outcome).toBe("BLOCK");
   });
 
@@ -171,6 +176,7 @@ describe("SellingRestrictionsService.evaluate", () => {
     enable(false);
     prisma.sellingRestriction.findMany.mockResolvedValue([]);
     const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      fulfilmentKind: "DELIVERY",
       at: NOW,
       channel: "BUYER_PORTAL",
     });
@@ -185,7 +191,12 @@ describe("SellingRestrictionsService.evaluate", () => {
     prisma.sellingRestriction.findMany.mockResolvedValue([
       dbRule({ id: "portal", jurisdiction: "FEDERAL", states: [], surface: "BUYER_PORTAL" }),
     ]);
-    const opts = { at: NOW, channel: "BUYER_PORTAL" as const, skipPortalOnlyRules: true };
+    const opts = {
+      at: NOW,
+      channel: "BUYER_PORTAL" as const,
+      skipPortalOnlyRules: true,
+      fulfilmentKind: "DELIVERY" as const,
+    };
     expect((await service.evaluate(T, "c1", [{ productId: "p1" }], opts)).outcome).toBe("ALLOW");
     // same call without the option: the portal rule binds
     expect(
@@ -206,6 +217,7 @@ describe("SellingRestrictionsService.evaluate", () => {
     enable(false);
     prisma.sellingRestriction.findMany.mockResolvedValue([]);
     const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      fulfilmentKind: "DELIVERY",
       at: NOW,
       channel: "BUYER_PORTAL",
       skipPortalOnlyRules: true,
@@ -227,7 +239,10 @@ describe("SellingRestrictionsService.evaluate", () => {
   it("ALLOW: enabled, no rule matches, the customer's addresses are never loaded", async () => {
     enable(true);
     withProduct();
-    const res = await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
+    const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      fulfilmentKind: "DELIVERY",
+      at: NOW,
+    });
     expect(res.outcome).toBe("ALLOW");
     expect(prisma.customer.findFirst).not.toHaveBeenCalled();
   });
@@ -240,6 +255,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       { isDefault: true, addressType: "BILLING", stateCode: "TX", stateNeedsReview: false },
     ]);
     const res = await service.evaluate(T, "c1", [{ productId: "p1" }, { productId: "p1" }], {
+      fulfilmentKind: "DELIVERY",
       at: NOW,
     });
     expect(res.outcome).toBe("BLOCK");
@@ -253,7 +269,10 @@ describe("SellingRestrictionsService.evaluate", () => {
     prisma.sellingRestriction.findMany.mockResolvedValue([
       dbRule({ jurisdiction: "FEDERAL", states: [] }),
     ]);
-    const res = await service.evaluate(T, null, [{ productId: "p1" }], { at: NOW });
+    const res = await service.evaluate(T, null, [{ productId: "p1" }], {
+      fulfilmentKind: "DELIVERY",
+      at: NOW,
+    });
     expect(res.outcome).toBe("BLOCK");
     expect(prisma.customer.findFirst).not.toHaveBeenCalled();
   });
@@ -263,18 +282,28 @@ describe("SellingRestrictionsService.evaluate", () => {
     withProduct();
     prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
     withAddresses([]);
-    expect((await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW })).outcome).toBe(
-      "INDETERMINATE",
-    );
+    expect(
+      (
+        await service.evaluate(T, "c1", [{ productId: "p1" }], {
+          fulfilmentKind: "DELIVERY",
+          at: NOW,
+        })
+      ).outcome,
+    ).toBe("INDETERMINATE");
   });
 
   it("INDETERMINATE: a walk-in (null customer) with a matching state rule; no address query", async () => {
     enable(true);
     withProduct();
     prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
-    expect((await service.evaluate(T, null, [{ productId: "p1" }], { at: NOW })).outcome).toBe(
-      "INDETERMINATE",
-    );
+    expect(
+      (
+        await service.evaluate(T, null, [{ productId: "p1" }], {
+          fulfilmentKind: "DELIVERY",
+          at: NOW,
+        })
+      ).outcome,
+    ).toBe("INDETERMINATE");
     expect(prisma.customer.findFirst).not.toHaveBeenCalled();
   });
 
@@ -284,7 +313,11 @@ describe("SellingRestrictionsService.evaluate", () => {
     const businessState = (state: string | null) =>
       prisma.tenantConfig.findUnique.mockResolvedValue(state === null ? null : { state });
     const sale = (customerId: string | null = "walk-in-id") =>
-      service.evaluate(T, customerId, [{ productId: "p1" }], { at: NOW, channel: "STAFF" });
+      service.evaluate(T, customerId, [{ productId: "p1" }], {
+        fulfilmentKind: "DELIVERY",
+        at: NOW,
+        channel: "STAFF",
+      });
 
     beforeEach(() => {
       enable(true);
@@ -382,9 +415,14 @@ describe("SellingRestrictionsService.evaluate", () => {
       { isDefault: true, addressType: "BILLING", stateCode: "TX", stateNeedsReview: false },
       { isDefault: true, addressType: "SHIPPING", stateCode: "FL", stateNeedsReview: false },
     ]);
-    expect((await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW })).outcome).toBe(
-      "BLOCK",
-    );
+    expect(
+      (
+        await service.evaluate(T, "c1", [{ productId: "p1" }], {
+          fulfilmentKind: "DELIVERY",
+          at: NOW,
+        })
+      ).outcome,
+    ).toBe("BLOCK");
   });
 
   it("variant opt-out: a variant that excludes its parent's label is not blocked by the label rule", async () => {
@@ -412,7 +450,10 @@ describe("SellingRestrictionsService.evaluate", () => {
     withAddresses([
       { isDefault: true, addressType: "BILLING", stateCode: "TX", stateNeedsReview: false },
     ]);
-    const res = await service.evaluate(T, "c1", [{ productId: "v1" }], { at: NOW });
+    const res = await service.evaluate(T, "c1", [{ productId: "v1" }], {
+      fulfilmentKind: "DELIVERY",
+      at: NOW,
+    });
     expect(res.outcome).toBe("ALLOW");
     // no label survives the opt-out, so no category-scoped rule query is even built; the
     // product-scoped prefilter covers the variant AND its parent (lineage)
@@ -452,9 +493,14 @@ describe("SellingRestrictionsService.evaluate", () => {
     prisma.sellingRestriction.findMany.mockResolvedValue([
       dbRule({ jurisdiction: "FEDERAL", states: [] }),
     ]);
-    expect((await service.evaluate(T, "c1", [{ productId: "v1" }], { at: NOW })).outcome).toBe(
-      "BLOCK",
-    );
+    expect(
+      (
+        await service.evaluate(T, "c1", [{ productId: "v1" }], {
+          fulfilmentKind: "DELIVERY",
+          at: NOW,
+        })
+      ).outcome,
+    ).toBe("BLOCK");
   });
 
   it("scopes every query by the explicit tenantId (no ambient context on cron paths)", async () => {
@@ -462,7 +508,7 @@ describe("SellingRestrictionsService.evaluate", () => {
     withProduct();
     prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
     withAddresses([]);
-    await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
+    await service.evaluate(T, "c1", [{ productId: "p1" }], { fulfilmentKind: "DELIVERY", at: NOW });
     expect(prisma.systemConfig.findMany.mock.calls[0][0].where).toEqual({
       tenantId: T,
       key: GOVERNING,
@@ -478,7 +524,7 @@ describe("SellingRestrictionsService.evaluate", () => {
     enable(true);
     withProduct();
     prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
-    await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
+    await service.evaluate(T, "c1", [{ productId: "p1" }], { fulfilmentKind: "DELIVERY", at: NOW });
     for (const model of [
       "systemConfig",
       "product",
@@ -504,7 +550,10 @@ describe("SellingRestrictionsService.evaluate", () => {
     prisma.sellingRestriction.findMany.mockResolvedValue([
       dbRule({ categoryId: null, productId: "p1", jurisdiction: "FEDERAL", states: [] }),
     ]);
-    const res = await service.evaluate(T, "c1", [{ productId: "v1" }], { at: NOW });
+    const res = await service.evaluate(T, "c1", [{ productId: "v1" }], {
+      fulfilmentKind: "DELIVERY",
+      at: NOW,
+    });
     expect(res.outcome).toBe("BLOCK");
     expect(res.reasons[0].productId).toBe("v1");
   });
@@ -513,7 +562,10 @@ describe("SellingRestrictionsService.evaluate", () => {
     enable(true);
     someRule(); // a tenant with no rule at all never reaches the label read (row 510, Q6)
     prisma.product.findMany.mockResolvedValue([]);
-    const res = await service.evaluate(T, "c1", [{ productId: "ghost" }], { at: NOW });
+    const res = await service.evaluate(T, "c1", [{ productId: "ghost" }], {
+      fulfilmentKind: "DELIVERY",
+      at: NOW,
+    });
     expect(res.outcome).toBe("INDETERMINATE");
     expect(res.reasons[0]).toMatchObject({ reason: "UNKNOWN_PRODUCT", productId: "ghost" });
   });
@@ -527,7 +579,10 @@ describe("SellingRestrictionsService.evaluate", () => {
         { id: "v1", name: "Sour", parentProductId: "p1", categoryLabels: [] },
       ])
       .mockResolvedValue([]);
-    const res = await service.evaluate(T, "c1", [{ productId: "v1" }], { at: NOW });
+    const res = await service.evaluate(T, "c1", [{ productId: "v1" }], {
+      fulfilmentKind: "DELIVERY",
+      at: NOW,
+    });
     expect(res.outcome).toBe("INDETERMINATE");
     expect(res.reasons[0].reason).toBe("UNKNOWN_PRODUCT");
   });
@@ -539,7 +594,10 @@ describe("SellingRestrictionsService.evaluate", () => {
       .mockResolvedValueOnce([{ id: "a", name: "A", parentProductId: "b", categoryLabels: [] }])
       .mockResolvedValueOnce([{ id: "b", name: "B", parentProductId: "a", categoryLabels: [] }])
       .mockResolvedValue([]);
-    const res = await service.evaluate(T, "c1", [{ productId: "a" }], { at: NOW });
+    const res = await service.evaluate(T, "c1", [{ productId: "a" }], {
+      fulfilmentKind: "DELIVERY",
+      at: NOW,
+    });
     expect(res.outcome).toBe("INDETERMINATE");
   });
 
@@ -549,7 +607,12 @@ describe("SellingRestrictionsService.evaluate", () => {
     prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
     prisma.customer.findFirst.mockResolvedValue(null);
     expect(
-      (await service.evaluate(T, "someone-elses", [{ productId: "p1" }], { at: NOW })).outcome,
+      (
+        await service.evaluate(T, "someone-elses", [{ productId: "p1" }], {
+          fulfilmentKind: "DELIVERY",
+          at: NOW,
+        })
+      ).outcome,
     ).toBe("INDETERMINATE");
   });
 
@@ -675,7 +738,10 @@ describe("SellingRestrictionsService.evaluate", () => {
         states: [],
       }),
     ]);
-    const res = await service.evaluate(T, "c1", [{ productId: "v1" }], { at: NOW });
+    const res = await service.evaluate(T, "c1", [{ productId: "v1" }], {
+      fulfilmentKind: "DELIVERY",
+      at: NOW,
+    });
     expect(res.outcome).toBe("BLOCK");
     expect(res.reasons[0]).toMatchObject({ productId: "v1", ruleId: "parent-rule" });
   });
@@ -705,9 +771,14 @@ describe("SellingRestrictionsService.evaluate", () => {
       },
     ]);
     prisma.sellingRestriction.findMany.mockResolvedValue([dbRule({ categoryId: "cat-thc" })]);
-    expect((await service.evaluate(T, "c1", [{ productId: "v1" }], { at: NOW })).outcome).toBe(
-      "ALLOW",
-    );
+    expect(
+      (
+        await service.evaluate(T, "c1", [{ productId: "v1" }], {
+          fulfilmentKind: "DELIVERY",
+          at: NOW,
+        })
+      ).outcome,
+    ).toBe("ALLOW");
 
     // Reparented under P2 (carries cat-vape, banned in TX): the stale opt-out of cat-thc has no
     // effect and does NOT exempt the variant from P2's ban.
@@ -722,7 +793,10 @@ describe("SellingRestrictionsService.evaluate", () => {
     prisma.sellingRestriction.findMany.mockResolvedValue([
       dbRule({ id: "r-vape", categoryId: "cat-vape" }),
     ]);
-    const res = await service.evaluate(T, "c1", [{ productId: "v1" }], { at: NOW });
+    const res = await service.evaluate(T, "c1", [{ productId: "v1" }], {
+      fulfilmentKind: "DELIVERY",
+      at: NOW,
+    });
     expect(res.outcome).toBe("BLOCK");
     expect(res.reasons[0]).toMatchObject({ ruleId: "r-vape", state: "TX" });
   });
@@ -735,7 +809,10 @@ describe("SellingRestrictionsService.evaluate", () => {
       prisma.sellingRestriction.findMany.mockResolvedValue([
         dbRule({ id: "typo", states: ["Tex"] }),
       ]);
-      const res = await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
+      const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+        fulfilmentKind: "DELIVERY",
+        at: NOW,
+      });
       expect(res.outcome).toBe("BLOCK");
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("typo"));
     } finally {
@@ -768,7 +845,10 @@ describe("SellingRestrictionsService.evaluate", () => {
       prisma.sellingRestriction.findMany.mockResolvedValue([
         dbRule({ jurisdiction: "FEDERAL", states: [] }),
       ]);
-      return service.evaluate(T, "c1", [{ productId: "v1" }], { at: NOW });
+      return service.evaluate(T, "c1", [{ productId: "v1" }], {
+        fulfilmentKind: "DELIVERY",
+        at: NOW,
+      });
     };
 
     it("MATCHING pin: the opt-out is effective → ALLOW", async () => {
@@ -798,7 +878,10 @@ describe("SellingRestrictionsService.evaluate", () => {
       prisma.sellingRestriction.findMany.mockResolvedValue([
         dbRule({ id: "typo", states: ["Tex"] }),
       ]);
-      const res = await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
+      const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+        fulfilmentKind: "DELIVERY",
+        at: NOW,
+      });
       expect(res.outcome).toBe("ALLOW");
       expect(warn).not.toHaveBeenCalled();
     } finally {
@@ -835,7 +918,10 @@ describe("SellingRestrictionsService.evaluate", () => {
       const citations: Array<Array<string | null>> = [];
       for (const order of orders) {
         prisma.sellingRestriction.findMany.mockResolvedValue(order);
-        const res = await service.evaluate(T, null, [{ productId: "p1" }], { at: NOW });
+        const res = await service.evaluate(T, null, [{ productId: "p1" }], {
+          fulfilmentKind: "DELIVERY",
+          at: NOW,
+        });
         citations.push(res.reasons.map((r) => r.ruleId));
       }
       expect(citations).toEqual(orders.map(() => ["r-a"]));
@@ -868,7 +954,10 @@ describe("SellingRestrictionsService.evaluate", () => {
       prisma.sellingRestriction.findMany.mockResolvedValue([
         dbRule({ jurisdiction: "FEDERAL", states: [], liftedAt: new Date("2026-09-01T00:00:00Z") }),
       ]);
-      const res = await service.evaluate(T, null, [{ productId: "p1" }], { at: NOW });
+      const res = await service.evaluate(T, null, [{ productId: "p1" }], {
+        fulfilmentKind: "DELIVERY",
+        at: NOW,
+      });
       expect(res.outcome).toBe("ALLOW");
     });
   });
@@ -903,7 +992,10 @@ describe("SellingRestrictionsService.evaluate", () => {
         enable(true);
         someRule();
         prisma.product.findMany.mockResolvedValue([]);
-        const res = await service.evaluate(T, "c1", [{ productId: id }], { at: NOW });
+        const res = await service.evaluate(T, "c1", [{ productId: id }], {
+          fulfilmentKind: "DELIVERY",
+          at: NOW,
+        });
         expect(res.outcome).toBe("INDETERMINATE");
         expect(res.reasons[0]).toMatchObject({
           reason: "UNKNOWN_PRODUCT",
@@ -924,7 +1016,10 @@ describe("SellingRestrictionsService.evaluate", () => {
           { id: "v-uuid-1", name: "Bourbon 750ml", parentProductId: "gone", categoryLabels: [] },
         ])
         .mockResolvedValue([]);
-      const res = await service.evaluate(T, "c1", [{ productId: "v-uuid-1" }], { at: NOW });
+      const res = await service.evaluate(T, "c1", [{ productId: "v-uuid-1" }], {
+        fulfilmentKind: "DELIVERY",
+        at: NOW,
+      });
       expect(res.outcome).toBe("INDETERMINATE");
       expect(res.reasons[0]).toMatchObject({
         reason: "UNKNOWN_PRODUCT",
@@ -1023,6 +1118,43 @@ describe("SellingRestrictionsService.evaluate", () => {
       }
     });
 
+    describe("L8 M1: a tenant with a PICKUP path judges it by the store state, so a portal rule needs one", () => {
+      const portalRule = () => stateRule({ surface: "BUYER_PORTAL" });
+      const modelIs = (mode: string | null) =>
+        prisma.tenantFeatureConfig.findFirst.mockResolvedValue(mode ? { mode } : null);
+
+      it("pickup + a portal-only STATE rule + no store state is MISSING", async () => {
+        modelIs("pickup");
+        prisma.sellingRestriction.findMany.mockResolvedValue([portalRule()]);
+        prisma.tenantConfig.findUnique.mockResolvedValue(null);
+        expect(await service.businessStateMissing(T)).toBe(true);
+      });
+
+      it("pickup + a portal-only STATE rule + a store state is not missing", async () => {
+        modelIs("pickup");
+        prisma.sellingRestriction.findMany.mockResolvedValue([portalRule()]);
+        prisma.tenantConfig.findUnique.mockResolvedValue({ state: "TX" });
+        expect(await service.businessStateMissing(T)).toBe(false);
+      });
+
+      it("pickup_ship (MIXED) + a portal-only STATE rule + no store state is MISSING (its pickup path needs one)", async () => {
+        modelIs("pickup_ship");
+        prisma.sellingRestriction.findMany.mockResolvedValue([portalRule()]);
+        prisma.tenantConfig.findUnique.mockResolvedValue(null);
+        expect(await service.businessStateMissing(T)).toBe(true);
+      });
+
+      it.each(["ship", "both", "delivery", null])(
+        "%s + a portal-only STATE rule + no store state is not missing (no pickup path)",
+        async (mode) => {
+          modelIs(mode);
+          prisma.sellingRestriction.findMany.mockResolvedValue([portalRule()]);
+          prisma.tenantConfig.findUnique.mockResolvedValue(null);
+          expect(await service.businessStateMissing(T)).toBe(false);
+        },
+      );
+    });
+
     it("the readiness probe, the assert-ready gate and the NOT_READY constant are gone from the engine", () => {
       expect(service).not.toHaveProperty("getEnableReadiness");
       expect(service).not.toHaveProperty("assertReadyToEnable");
@@ -1049,6 +1181,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       // NB: specs are not type-checked, so the required `channel` is only enforced in source; most
       // fixtures here are `surface: "ALL"` (channel-agnostic) — a BUYER_PORTAL fixture must say so.
       channel: "STAFF" as const,
+      fulfilmentKind: "DELIVERY" as const,
       at: NOW,
       ...over,
     });

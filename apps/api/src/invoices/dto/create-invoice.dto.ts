@@ -16,10 +16,14 @@ import {
   Min,
   ValidateNested,
 } from "class-validator";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import { CheckStatus, PaymentMethod } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
+import { Trim } from "../../common/transforms/trim.transform";
+import { SafeTextCell } from "../../common/transforms/safe-text-cell.transform";
+import { MAX_SHIPPING_CARRIER, MAX_SHIPPING_TRACKING } from "../../orders/shipment-text";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 export class CreateInvoiceItemDto {
   @IsString() description: string;
@@ -29,8 +33,8 @@ export class CreateInvoiceItemDto {
   @IsOptional() @IsUUID() orderItemId?: string;
   @IsNumber() @Min(0.001) qty: number;
   @IsNumber() @Min(0) unitPrice: number;
-  @IsOptional() @IsNumber() @Min(0) discount?: number;
-  @IsOptional() @IsNumber() @Min(0) taxRate?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) discount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) taxRate?: number;
   /**
    * units_v1: sell this line by a unit of the product's ladder (Case, Pallet, Piece …); `qty` then
    * counts the unit (a whole number) and boxes/pieces/promoFreeUnits must be omitted. Behind
@@ -49,6 +53,15 @@ export class CreateInvoiceItemDto {
   @IsOptional() @IsInt() @Min(0) promoFreeUnits?: number;
   /** Per-line note (buyer-visible; prints under the description on the PDF). */
   @IsOptional() @StripHtml() @IsString() @MaxLength(2000) notes?: string;
+  /**
+   * H3b: why a staff price moves off this customer's tier price (required when it moves off a SPECIAL one).
+   * Trimmed, then judged by `decideStaffOverride`; stored on the line with the acting user.
+   */
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+  @IsString()
+  @MaxLength(200)
+  overrideReason?: string;
 }
 
 export class CreateInvoiceDto extends RestrictionAckDto {
@@ -60,15 +73,26 @@ export class CreateInvoiceDto extends RestrictionAckDto {
   items: CreateInvoiceItemDto[];
   @IsOptional() @IsDateString() dueDate?: string;
   @IsOptional() @IsDateString() issueDate?: string;
-  @IsOptional() @IsNumber() @Min(0) discount?: number;
-  @IsOptional() @IsNumber() @Min(0) shippingFee?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) discount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) shippingFee?: number;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsString() terms?: string;
   @IsOptional() @IsString() referenceNumber?: string;
   @IsOptional() @IsString() subject?: string;
-  /** Carrier shipment tracking — set when goods ship via a carrier, not our route. */
-  @IsOptional() @IsString() @MaxLength(64) shippingCarrier?: string;
-  @IsOptional() @IsString() @MaxLength(128) shippingTrackingNumber?: string;
+  /** Carrier shipment tracking — set when goods ship via a carrier, not our route. Row 507: trimmed,
+   *  capped, and a formula-led value is the coded 400 TEXT_CELL_FORMULA_LEAD (same as the shipment PATCH). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_SHIPPING_CARRIER)
+  @Trim()
+  @SafeTextCell()
+  shippingCarrier?: string;
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_SHIPPING_TRACKING)
+  @Trim()
+  @SafeTextCell()
+  shippingTrackingNumber?: string;
   /** If true, immediately send the invoice after creation (DRAFT → SENT). */
   @IsOptional() @IsBoolean() send?: boolean;
   /**
@@ -101,7 +125,7 @@ export class RecordInvoicePaymentDto {
   @IsOptional() @IsDateString() paidAt?: string;
   /** Date the money lands in the bank. May be in the future (post-dated check). */
   @IsOptional() @IsDateString() settledAt?: string | null;
-  @IsOptional() @IsNumber() @Min(0) bankCharges?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) bankCharges?: number;
   @IsOptional() @IsEnum(["DRAFT", "PAID"]) status?: string;
 }
 
@@ -113,7 +137,7 @@ export class UpdatePaymentDto {
   @IsOptional() @IsDateString() paidAt?: string;
   /** Omit to preserve the stored bank date; send null to clear it. */
   @IsOptional() @IsDateString() settledAt?: string | null;
-  @IsOptional() @IsNumber() @Min(0) bankCharges?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) bankCharges?: number;
   @IsOptional() @IsEnum(["DRAFT", "PAID", "VOID"]) status?: string;
 }
 
@@ -129,7 +153,7 @@ export class StandalonePaymentDto {
   @IsOptional() @IsDateString() paidAt?: string;
   /** Date the money lands in the bank; applied to every row of the allocation group. */
   @IsOptional() @IsDateString() settledAt?: string | null;
-  @IsOptional() @IsNumber() @Min(0) bankCharges?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) bankCharges?: number;
   @IsOptional() @IsString() reference?: string;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsEnum(["DRAFT", "PAID"]) status?: string;
@@ -152,7 +176,7 @@ export class WriteOffDto {
 export class SetCheckStatusDto {
   @IsEnum(CheckStatus) status: CheckStatus;
   /** NSF fee to bill the customer when status = BOUNCED (omit or 0 = no fee). */
-  @IsOptional() @IsNumber() @Min(0) nsfFeeAmount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) nsfFeeAmount?: number;
   /** The true landing date, meaningful with status = CLEARED; sets clearedAt and settledAt. */
   @IsOptional() @IsDateString() settledAt?: string;
 }

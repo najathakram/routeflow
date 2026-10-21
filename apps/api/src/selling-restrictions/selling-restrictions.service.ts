@@ -14,13 +14,9 @@ import type {
 import { assertAmbientTenant } from "../common/ambient-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import { tenantBusinessState } from "./tenant-business-state";
+import { tenantIsPickupOnly, tenantOffersPickup } from "./tenant-fulfilment-model";
+import { judgedAtStore, type JurisdictionBasis, type SaleFulfilmentKind } from "./sale-fulfilment";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
-import {
-  resolveSaleJurisdiction,
-  usesStoreState,
-  type JurisdictionBasis,
-  type SalePath,
-} from "./jurisdiction";
 import {
   decideStaffWrite,
   noRestrictionOverride,
@@ -161,8 +157,8 @@ export interface SellableLinesParams {
   at?: Date;
   /** As `EvaluateOptions.skipPortalOnlyRules`. */
   skipPortalOnlyRules?: boolean;
-  /** Row 510: the sale's path (decides which state governs: the store's or the customer's). Default DELIVERY. */
-  path?: SalePath;
+  /** As `EvaluateOptions.fulfilmentKind`: REQUIRED, so every caller states how the goods change hands. */
+  fulfilmentKind: SaleFulfilmentKind;
   /**
    * Row 510, STAFF channel only: who is selling, the acknowledgement the client sent, and the document's lines already
    * held (for coverage). With `principal` omitted (a system caller) a breach is a hard block, never a warning.
@@ -185,8 +181,11 @@ export interface EvaluateOptions {
   channel: RestrictionChannel;
   /** Point-in-time evaluation; defaults to now. */
   at?: Date;
-  /** Row 510: the sale's path; COUNTER / POS / PICKUP are judged at the store's state (`jurisdiction.ts`). Default DELIVERY. */
-  path?: SalePath;
+  /**
+   * L8: how the goods change hands (`sale-fulfilment.ts`), REQUIRED so no caller can forget to say. COUNTER / PICKUP
+   * judge a STATE rule on the STORE's state for every customer, named or walk-in; DELIVERY keeps the customer's address.
+   */
+  fulfilmentKind: SaleFulfilmentKind;
   /**
    * Judge as the portal channel but ignore rules whose surface is BUYER_PORTAL: a portal limit asks to hide a product
    * from the buyer portal, not to block a staff-built order. A legal ban (surface ALL) still binds. For a standing
@@ -272,8 +271,9 @@ export class SellingRestrictionsService {
 
   /**
    * True only when a business state is REQUIRED and absent. A business state matters only when some active STATE
-   * rule could need it (the same `stateRuleInPlay` evaluate() asks, on the STAFF channel: an `ALL` legal-ban rule):
-   * a tenant with no such rule (none, FEDERAL only, or only lifted / expired / buyer-portal-only ones) never needs
+   * rule could need it (the same `stateRuleInPlay` evaluate() asks, on the STAFF channel: an `ALL` legal-ban rule, or
+   * on the portal channel of a PICKUP-ONLY tenant):
+   * a tenant with no such rule (none, FEDERAL only, or only lifted / expired ones, or portal-only ones on a shipping tenant) never needs
    * one. The ONE answer for the "customers without a state" card.
    */
   async businessStateMissing(tenantId: string, at: Date = new Date()): Promise<boolean> {
@@ -284,10 +284,13 @@ export class SellingRestrictionsService {
         where: { tenantId, jurisdiction: "STATE", AND: [activeRuleWhere(at)] },
         select: RULE_FACTS_SELECT,
       });
-    return (
-      stateRuleInPlay(stateRules, "STAFF", at) &&
-      (await tenantBusinessState(this.prisma, tenantId)) === null
-    );
+    // L8 M1: a tenant WITH a pickup path (pickup-only or pickup+ship) judges that path by the store state, so a state
+    // rule that binds the portal (any surface) needs one there as well. Read lazily: only when no staff rule already asks for it.
+    const needed =
+      stateRuleInPlay(stateRules, "STAFF", at) ||
+      (stateRuleInPlay(stateRules, "BUYER_PORTAL", at) &&
+        (await tenantOffersPickup(this.prisma, tenantId)));
+    return needed && (await tenantBusinessState(this.prisma, tenantId)) === null;
   }
 
   async evaluate(
@@ -316,8 +319,8 @@ export class SellingRestrictionsService {
   }> {
     assertAmbientTenant(this.prisma, tenantId, "SellingRestrictionsService"); // before ANY read, as getPolicy did
     const channel = options?.channel ?? "BUYER_PORTAL"; // fail closed: the channel that binds more
-    const path = options?.path ?? "DELIVERY";
-    let basis: JurisdictionBasis = usesStoreState(path) ? "STORE" : "CUSTOMER";
+    const storeJudged = judgedAtStore(options.fulfilmentKind);
+    let basis: JurisdictionBasis = storeJudged ? "STORE" : "CUSTOMER";
     const allowed = { evaluation: { outcome: "ALLOW" as const, reasons: [] }, input: null, basis };
 
     const productIds = [...new Set(lines.map((l) => l.productId))];
@@ -409,30 +412,37 @@ export class SellingRestrictionsService {
       }
     }
     let governingState = UNRESOLVED_STATE;
-    if (stateRuleInPlay(matched, channel, at)) {
-      // Row 510 (jurisdiction.ts): the ONE answer to "whose state?" — the store's for a counter / POS / pickup sale (and
-      // the system walk-in, which has no address of its own), the customer's governing address otherwise. The
-      // customer is read only when the path can use it. A nested select is not rewritten by the tenant extension, so a
-      // legacy address row with a NULL tenantId is still seen (dropping it could let a different, stamped address
-      // govern), and a customer that isn't this tenant's yields no addresses -> UNRESOLVED.
-      const customer =
-        customerId && !usesStoreState(path)
-          ? await db.customer.findFirst({
-              where: { id: customerId, tenantId },
-              select: { isWalkIn: true, addresses: { select: ADDRESS_SELECT } },
-            })
-          : null;
-      const businessState = usesStoreState(path, customer)
-        ? await tenantBusinessState(this.prisma, tenantId)
-        : null;
-      const policy = await this.getPolicy(tenantId); // only the governing-address precedence is read from it
-      const jurisdiction = resolveSaleJurisdiction({
-        path,
-        customer: customer ? { isWalkIn: customer.isWalkIn, addresses: customer.addresses } : null,
-        tenant: { businessState, addressPrecedence: policy.addressPrecedence },
+    const stateInPlay = stateRuleInPlay(matched, channel, at); // asked ONCE (the no-state card asks the same)
+    if (stateInPlay && storeJudged) {
+      // L8: a counter sale / pickup is judged where the STORE is, whoever the customer is (or none). No usable store
+      // state stays UNRESOLVED (INDETERMINATE, fail closed) — never the customer's address instead.
+      const state = await tenantBusinessState(this.prisma, tenantId);
+      governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
+    } else if (stateInPlay && customerId) {
+      // Ownership check + addresses in ONE query through the customer: a nested select is not
+      // rewritten by the tenant extension, so a legacy address row with a NULL tenantId is still
+      // seen (dropping it could let a different, stamped address govern), and a customer that
+      // isn't this tenant's yields no addresses → UNRESOLVED.
+      const customer = await db.customer.findFirst({
+        where: { id: customerId, tenantId },
+        select: {
+          isWalkIn: true,
+          addresses: { select: ADDRESS_SELECT },
+        },
       });
-      basis = jurisdiction.basis;
-      if (jurisdiction.state) governingState = { resolved: true, state: jurisdiction.state };
+      if (customer?.isWalkIn === true) {
+        // The tenant's system walk-in (the SYSTEM flag, never the name) has no address of its own: a counter sale is
+        // judged where the store is. A walk-in's own address, if one is ever added, is intentionally ignored in
+        // favour of the tenant state. No usable business state stays UNRESOLVED (INDETERMINATE), as before.
+        basis = "STORE";
+        const state = await tenantBusinessState(this.prisma, tenantId);
+        governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
+      } else {
+        const policy = await this.getPolicy(tenantId); // only the governing-address precedence is read from it
+        governingState = customer
+          ? resolveGoverningState(customer.addresses, policy.addressPrecedence)
+          : UNRESOLVED_STATE;
+      }
     }
 
     const ruleCategoryIds = [
@@ -447,7 +457,15 @@ export class SellingRestrictionsService {
       for (const c of cats) categoryNames.set(c.id, c.name);
     }
 
-    const input: EvaluateInput = { channel, at, products, rules, governingState, categoryNames };
+    const input: EvaluateInput = {
+      channel,
+      at,
+      products,
+      rules,
+      governingState,
+      categoryNames,
+      storeJudged,
+    };
     return { evaluation: evaluateRestrictions(input), input, basis };
   }
 
@@ -484,20 +502,29 @@ export class SellingRestrictionsService {
     const rules = withTargetSets(rows, at);
 
     let governingState = UNRESOLVED_STATE;
-    if (customerId && stateRuleInPlay(rules, "BUYER_PORTAL", at)) {
-      const { addressPrecedence } = await this.getPolicy(tenantId);
-      const customer = await db.customer.findFirst({
-        where: { id: customerId, tenantId },
-        select: { isWalkIn: true, addresses: { select: ADDRESS_SELECT } },
-      });
-      if (customer?.isWalkIn === true) {
+    let judgedOnStore = false;
+    if (stateRuleInPlay(rules, "BUYER_PORTAL", at)) {
+      if (await tenantIsPickupOnly(this.prisma, tenantId)) {
+        // L8 M1: buyers of a pickup-only tenant collect in store, so the portal hides by the STORE's state (no customer
+        // needed); an unset store state stays UNRESOLVED and hides the restricted products (fail closed).
+        judgedOnStore = true;
         const state = await tenantBusinessState(this.prisma, tenantId);
         governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
-      } else if (customer) {
-        governingState = resolveGoverningState(customer.addresses, addressPrecedence);
+      } else if (customerId) {
+        const { addressPrecedence } = await this.getPolicy(tenantId);
+        const customer = await db.customer.findFirst({
+          where: { id: customerId, tenantId },
+          select: { isWalkIn: true, addresses: { select: ADDRESS_SELECT } },
+        });
+        if (customer?.isWalkIn === true) {
+          const state = await tenantBusinessState(this.prisma, tenantId);
+          governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
+        } else if (customer) {
+          governingState = resolveGoverningState(customer.addresses, addressPrecedence);
+        }
       }
     }
-    const hiding = rules.filter((r) => ruleHidesFromBuyer(r, governingState));
+    const hiding = rules.filter((r) => ruleHidesFromBuyer(r, governingState, judgedOnStore));
     if (hiding.length === 0) return new Set<string>();
 
     // Candidates: the rules' own products and the products labelled with a hiding category, plus their variants.
@@ -570,7 +597,7 @@ export class SellingRestrictionsService {
       {
         channel: params.channel,
         at: params.at,
-        path: params.path,
+        fulfilmentKind: params.fulfilmentKind,
         skipPortalOnlyRules: params.skipPortalOnlyRules,
       },
     );
@@ -584,9 +611,7 @@ export class SellingRestrictionsService {
   async judgeStaffWrite(params: SellableLinesParams): Promise<StaffJudgement> {
     if (!params.tenantId) throw new Error("judgeStaffWrite requires a tenantId");
     const checkable = checkableProductIds(params.lines);
-    const basis: JurisdictionBasis = usesStoreState(params.path ?? "DELIVERY")
-      ? "STORE"
-      : "CUSTOMER";
+    const basis: JurisdictionBasis = judgedAtStore(params.fulfilmentKind) ? "STORE" : "CUSTOMER";
     if (checkable.length === 0) return { outcome: "ALLOW", reasons: [], breaches: [], basis };
     const {
       evaluation,
@@ -599,7 +624,7 @@ export class SellingRestrictionsService {
       {
         channel: params.channel,
         at: params.at,
-        path: params.path,
+        fulfilmentKind: params.fulfilmentKind,
         skipPortalOnlyRules: params.skipPortalOnlyRules,
       },
     );

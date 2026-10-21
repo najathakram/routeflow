@@ -69,6 +69,11 @@ const REGISTRY: Record<string, Entry> = {
     kind: "exempt",
     reason: "SA-763r: writes only OrderItem.deliveredQty, on lines with no delivery evidence",
   },
+  "orders/order-pd-quantities.ts::writeOfficeDeliveries": {
+    kind: "exempt",
+    reason:
+      "B692: writes only OrderItem.deliveredQty (recomputed from the evidence rows it inserts)",
+  },
   "orders/orders.service.ts::reopenOrder": { kind: "exempt", reason: "status only" },
   "orders/recompute-line-category-taxes.ts::recomputeLineCategoryTaxes": {
     kind: "exempt",
@@ -144,6 +149,10 @@ const REGISTRY: Record<string, Entry> = {
   "returns/inline-returns.service.ts::captureInTx": { kind: "exempt", reason: "credit note items" },
   "routes/routes.service.ts::completeWithPayment": { kind: "exempt", reason: "deliveredQty only" },
   "routes/routes.service.ts::reopenStop": { kind: "exempt", reason: "deliveredQty/status only" },
+  "inventory/testing/order-stock-world.ts::buildOrderStockWorld": {
+    kind: "exempt",
+    reason: "DB-spec seed of stock-only lines (no recipe), never a production writer",
+  },
   "common/testing/copier-contract/copier-ast.ts::?": {
     kind: "exempt",
     reason: "a comment in the copier AST helper",

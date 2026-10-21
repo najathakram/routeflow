@@ -18,12 +18,6 @@ import {
   RotateCcw,
   Trash2,
   Calendar,
-  Download,
-  Printer,
-  Mail,
-  MessageCircle,
-  Phone,
-  Send,
   X,
 } from "lucide-react";
 import {
@@ -83,20 +77,19 @@ import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
 import { OrderRevisionLog } from "./_components/OrderRevisionLog";
+import { SendInvoiceModal, type InvoiceModalData } from "./_components/SendInvoiceModal";
 import {
   describeChangeRequest,
   describeResolution,
   type ChangeRequest,
   type ChangeRequestResolveAction,
 } from "@/lib/change-requests";
-import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
+import { useCreateInvoiceFromOrder } from "@/lib/api/invoices";
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { CancelOrderButton } from "./CancelOrderButton";
-import { ShipWithTrackingDialog } from "./ShipWithTrackingDialog";
-import { shipWithTracking } from "@/lib/ship-with-tracking";
+import { OrderShipmentSection } from "./_components/OrderShipmentSection";
 import { UnmarkShippedConfirm } from "./UnmarkShippedConfirm";
 import { orderHasFinalInvoice } from "@/lib/unmark-shipped";
-import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { orderActionAccess } from "./order-action-access";
 import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
@@ -109,14 +102,21 @@ import {
   PosCutAfterHandOverNote,
   PosOrderActions,
   PosProgress,
+  posMoveOptions,
 } from "./_components/PosOrderActions";
 import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
+import { InvoicedEditNotice } from "./_components/InvoicedEditNotice";
+import { StickyEditBar } from "./_components/StickyEditBar";
+import { EditCasesPieces } from "./_components/EditCasesPieces";
+import { isCasesPiecesLine } from "./edit-cases-pieces";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditTaxLabel } from "./_components/EditTaxLabel";
 import { EditScanBar } from "./_components/EditScanBar";
+import { DeliveredLockedHint, DeliveredLockedQty } from "./_components/DeliveredLineLock";
+import { deliveredLockedLineIds } from "@/lib/order-line-lock";
 import {
   findLockedUnitLineEdit,
   LockedUnitLineBadge,
@@ -136,13 +136,14 @@ import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-li
 import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
-  getTierPrice,
-  isSpecialTier,
+  type CustomerLayerUnit,
   needsOverrideReason,
   normalizeBoxesPieces,
   roundMoney,
 } from "@routeflow/pricing";
 import { useCustomer, useCustomerPrices } from "@/lib/api/customers";
+import { PriceLayerNotice, pricesUnconfirmed } from "@/components/PriceLayerNotice";
+import { useOrderCustomerPricing, type SpecialLine } from "./_components/use-order-pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { PriceEditRow } from "./price-edit-row";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
@@ -151,307 +152,16 @@ import { AppliedCreditsPanel, appliedOnOrderRows } from "./AppliedCreditsPanel";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
 import * as scan from "./scan-level-line";
-import { ShipmentCard } from "@/components/ShipmentCard";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { toSplitInvoiceLine } from "@/lib/split-invoice-line";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
-import { apiClient } from "@/lib/api-client";
-import { printPdfBlob } from "@/lib/print-pdf-blob";
-import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
+import { derivedUnitPatch } from "@/lib/edit-line-derived-unit";
 import type { UnitOption } from "@/lib/unit-options";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
-import { markSentErrorText, orderErrorText, sendEmailErrorText } from "@/lib/order-error-text";
+import { orderErrorText } from "@/lib/order-error-text";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
-
-// ─── Send Invoice Modal ────────────────────────────────────────────────────────
-
-interface InvoiceModalData {
-  invoiceId: string;
-  invoiceNumber: string;
-  total: number;
-  customerName: string;
-  customerPhone?: string | null;
-  customerMobile?: string | null;
-  customerEmail?: string | null;
-  /**
-   * #2089: true when `postDeliveryInvoicePrompt` returned "issue-and-send" — this
-   * is still a DRAFT, and `useSendInvoice`/`useSendInvoiceEmail` issue it
-   * (DRAFT → SENT) in the same call. The modal says so instead of "Mark as Sent",
-   * which would misleadingly imply it was already issued.
-   */
-  issuePrompt?: boolean;
-}
-
-function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: () => void }) {
-  const { toast } = useToast();
-  const sendInvoice = useSendInvoice({ localErrorToast: true });
-  const sendInvoiceEmail = useSendInvoiceEmail({ localErrorToast: true });
-  const [pdfLoading, setPdfLoading] = React.useState(false);
-  const [printLoading, setPrintLoading] = React.useState(false);
-  const [sent, setSent] = React.useState(false);
-  const [emailSent, setEmailSent] = React.useState(false);
-
-  const phone = data.customerMobile || data.customerPhone;
-  const totalFmt = formatMoney(data.total);
-  const invoiceMsg = encodeURIComponent(
-    `Hi ${data.customerName}, your invoice ${data.invoiceNumber} for ${totalFmt} is ready. Please let us know if you have any questions.`,
-  );
-
-  async function handleSend() {
-    sendInvoice.mutate(data.invoiceId, {
-      onSuccess: () => {
-        setSent(true);
-        toast({ title: "Invoice marked as sent", variant: "success" });
-      },
-      onError: (e) =>
-        toast({
-          title: "Couldn't mark the invoice as sent",
-          description: markSentErrorText(e),
-          variant: "error",
-        }),
-    });
-  }
-
-  function handleSendEmail() {
-    sendInvoiceEmail.mutate(
-      { id: data.invoiceId, email: data.customerEmail! },
-      {
-        onSuccess: (res) => {
-          setEmailSent(true);
-          setSent(true);
-          toast({
-            title: "Invoice emailed",
-            description: `Sent to ${res.sentTo}`,
-            variant: "success",
-          });
-        },
-        onError: (e: any) =>
-          toast({
-            title: "Failed to send email",
-            description: sendEmailErrorText(e),
-            variant: "error",
-          }),
-      },
-    );
-  }
-
-  async function handleDownload() {
-    setPdfLoading(true);
-    try {
-      // Two-step: ask the API to render the PDF, then fetch the bytes.
-      // Cannot `window.open(url)` directly — the storage endpoint requires a
-      // JWT (RF-075) and a top-level new-tab navigation has no token in
-      // localStorage scope, so it returns 401. `fetchPdfBlob` (not bare
-      // apiClient — review finding F3) picks the right transport: same-origin
-      // → auth'd apiClient; external presigned URL → bare axios, so the JWT
-      // is never sent to a third-party host.
-      const meta = await apiClient.get<{ url: string }>(`/invoices/${data.invoiceId}/pdf`);
-      if (!meta.data?.url) throw new Error("No PDF URL returned");
-      const blob = await fetchPdfBlob(meta.data.url, apiClient);
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `invoice-${data.invoiceId}.pdf`;
-      a.rel = "noopener noreferrer";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
-    } catch {
-      toast({ title: "Could not generate PDF", variant: "error" });
-    } finally {
-      setPdfLoading(false);
-    }
-  }
-
-  async function handlePrint() {
-    setPrintLoading(true);
-    try {
-      // Mirrors handleDownload's two-step fetch (RF-075 — the storage URL
-      // still requires a JWT; fetchPdfBlob, not bare apiClient — review
-      // finding F3), then hands the bytes to the shared print helper
-      // instead of triggering a download.
-      const meta = await apiClient.get<{ url: string }>(`/invoices/${data.invoiceId}/pdf`);
-      if (!meta.data?.url) throw new Error("No PDF URL returned");
-      const blob = await fetchPdfBlob(meta.data.url, apiClient);
-      printPdfBlob(blob);
-    } catch {
-      toast({ title: "Could not generate PDF", variant: "error" });
-    } finally {
-      setPrintLoading(false);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center">
-      <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl">
-        {/* Header */}
-        <div className="flex items-start justify-between border-b border-surface-border px-5 py-4">
-          <div>
-            <h2 className="text-base font-semibold text-navy">
-              {data.issuePrompt ? "Issue & Send Invoice" : "Invoice Ready"}
-            </h2>
-            <p className="mt-0.5 text-sm text-navy/70">
-              {data.invoiceNumber} · {totalFmt} · {data.customerName}
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            title="Close"
-            className={cn(TAP_TARGET, "rounded text-navy/70 hover:text-navy transition-colors")}
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Options */}
-        <div className="px-5 py-4 space-y-2">
-          {sent ? (
-            <div className="flex items-center gap-2 rounded-lg bg-success-bg px-4 py-3 text-sm font-medium text-success">
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
-              Invoice marked as sent
-            </div>
-          ) : (
-            <button
-              onClick={handleSend}
-              disabled={sendInvoice.isPending}
-              className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-brand-50 hover:border-brand-300 disabled:opacity-50"
-            >
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-100">
-                {sendInvoice.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
-                ) : (
-                  <Send className="h-4 w-4 text-brand-600" />
-                )}
-              </div>
-              <div>
-                <p className="text-sm font-medium text-navy">
-                  {data.issuePrompt ? "Issue & Mark as Sent" : "Mark as Sent"}
-                </p>
-                <p className="text-xs text-navy/70">
-                  {data.issuePrompt
-                    ? "Issues the draft invoice and records it sent to customer"
-                    : "Record invoice as sent to customer"}
-                </p>
-              </div>
-            </button>
-          )}
-
-          {/* WhatsApp */}
-          {phone && (
-            <a
-              href={`https://wa.me/${phone.replace(/\D/g, "")}?text=${invoiceMsg}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-[#e7f9e7] hover:border-[#25D366]/40"
-            >
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#e7f9e7]">
-                <MessageCircle className="h-4 w-4 text-[#25D366]" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-navy">Send via WhatsApp</p>
-                <p className="text-xs text-navy/70">{phone}</p>
-              </div>
-            </a>
-          )}
-
-          {/* Email */}
-          {data.customerEmail &&
-            (emailSent ? (
-              <div className="flex items-center gap-2 rounded-lg bg-success-bg px-4 py-3 text-sm font-medium text-success">
-                <CheckCircle2 className="h-4 w-4 shrink-0" />
-                Email sent to {data.customerEmail}
-              </div>
-            ) : (
-              <button
-                onClick={handleSendEmail}
-                disabled={sendInvoiceEmail.isPending}
-                className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised disabled:opacity-50"
-              >
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
-                  {sendInvoiceEmail.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-navy/70" />
-                  ) : (
-                    <Mail className="h-4 w-4 text-navy/70" />
-                  )}
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-navy">Send via Email</p>
-                  <p className="text-xs text-navy/70">{data.customerEmail}</p>
-                </div>
-              </button>
-            ))}
-
-          {/* SMS */}
-          {phone && (
-            <a
-              href={`sms:${phone}?body=${invoiceMsg}`}
-              className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised"
-            >
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
-                <Phone className="h-4 w-4 text-navy/70" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-navy">Send via Text</p>
-                <p className="text-xs text-navy/70">{phone}</p>
-              </div>
-            </a>
-          )}
-
-          {/* Download PDF */}
-          <button
-            onClick={handleDownload}
-            disabled={pdfLoading}
-            className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised disabled:opacity-50"
-          >
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
-              {pdfLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin text-navy/70" />
-              ) : (
-                <Download className="h-4 w-4 text-navy/70" />
-              )}
-            </div>
-            <div>
-              <p className="text-sm font-medium text-navy">Download PDF</p>
-              <p className="text-xs text-navy/70">Save a copy to your device</p>
-            </div>
-          </button>
-
-          {/* Print PDF */}
-          <button
-            onClick={handlePrint}
-            disabled={printLoading}
-            className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised disabled:opacity-50"
-          >
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
-              {printLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin text-navy/70" />
-              ) : (
-                <Printer className="h-4 w-4 text-navy/70" />
-              )}
-            </div>
-            <div>
-              <p className="text-sm font-medium text-navy">Print</p>
-              <p className="text-xs text-navy/70">Open the print dialog</p>
-            </div>
-          </button>
-        </div>
-
-        {/* Footer */}
-        <div className="border-t border-surface-border px-5 py-3">
-          <button
-            onClick={onClose}
-            className="w-full rounded-lg px-4 py-2 text-sm text-navy/70 hover:text-navy hover:bg-surface-raised transition-colors"
-          >
-            Skip — I&apos;ll send it later
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -470,6 +180,8 @@ type ApiOrderStatus =
 
 export interface EditItemState {
   priceEdited?: boolean; // #2381: the operator typed this price (picker remounts keep it)
+  /** Units P0b: the picker shows this derived base option for a pack-pieces line. Display state, never submitted. */
+  derivedBase?: string;
   id: string; // real DB id for existing items; temp "new-{uuid}" for new items
   isNew?: boolean;
   /** True for a free-text, non-catalog line (no productId; { name, qty, unitPrice }). */
@@ -538,6 +250,10 @@ export interface EditItemState {
   priceType?: PriceType;
   /** A line ADDED here starts on the product's default selling unit (OrderLineUnitPicker applies it). */
   startOnDefaultUnit?: boolean;
+  /** The product's PACK label and pack size, kept when a unit pick overwrites `unit` / `unitsPerBox` (S19b: the per-line
+   *  SPECIAL judgement names the real product, so a level called "Box" is not read as the pack). */
+  packUnit?: string;
+  packUnitsPerBox?: number | null;
 }
 
 // ─── Boxed proration helpers ──────────────────────────────────────────────────
@@ -724,6 +440,12 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
       ? Math.trunc(Number(isUnitLine ? unitCount : li.boxes != null ? li.boxes : li.qty) || 0)
       : null,
     unit: li.product?.unit ?? "",
+    packUnit: li.product?.unit ?? undefined,
+    // Row 620: a legacy boxed line's own sale-time size wins over the live product (a repack after the sale must not
+    // re-denominate a Piece pick). A unit line's snapshot is the picked unit's factor, so it keeps the live pack.
+    packUnitsPerBox: isUnitLine
+      ? (li.product?.unitsPerBox ?? undefined)
+      : (li.unitsPerBox ?? li.product?.unitsPerBox ?? undefined),
     unitLabel: li.unitLabel ?? undefined,
     priceType: li.priceType,
   };
@@ -1055,9 +777,11 @@ export function EditableLineItems({
   tierPriceFor,
   isSpecialTierFor,
   tierForProductId,
+  layerOf,
   pricingReady,
   customer,
   orderId,
+  lockedLineIds,
 }: {
   items: EditItemState[];
   onChange: (items: EditItemState[]) => void;
@@ -1074,10 +798,12 @@ export function EditableLineItems({
   tierPriceFor: (product: SubstituteOption) => number;
   /** True when this customer's effective tier for the product is not tier 1 — a
    *  contracted price a stale remembered price must never outrank. */
-  isSpecialTierFor: (product: SubstituteOption) => boolean;
+  isSpecialTierFor: (product: SubstituteOption, line?: SpecialLine) => boolean;
   /** units_v1: the EFFECTIVE numeric tier (1-5) for a product — `OrderLineUnitPicker` resolves
    *  the ladder price at this tier, same source as `isSpecialTierFor`. */
   tierForProductId: (productId: string) => number;
+  /** S19b: the customer's price-layer rows for a product (`useCustomerPriceLayer().layerOf`); omitted = master's ladder. */
+  layerOf?: (productId: string) => readonly CustomerLayerUnit[] | null | undefined;
   /** B62 (REG-B62): false while customer/customer-price queries are in flight —
    *  gates the add-product control and the Substitute trigger so neither can
    *  bake a list price before the customer's contracted tier is known. */
@@ -1086,7 +812,10 @@ export function EditableLineItems({
   customer?: { id: string; name?: string | null };
   /** The order being edited: its own lines are left out of that history (hunt2 F6). */
   orderId?: string;
+  /** B1234: delivered lines of a PARTIALLY_DELIVERED order; no editing control is rendered for them. */
+  lockedLineIds?: ReadonlySet<string>;
 }) {
+  const isLocked = (id: string) => lockedLineIds?.has(id) === true;
   const { toast } = useToast();
   // Scroll the just-scanned/added row into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
@@ -1272,13 +1001,19 @@ export function EditableLineItems({
    * new baseline (via `PriceEditRow`) should.
    */
   function setLineUnit(id: string, option: UnitOption, refresh: boolean) {
-    if (option.kind === "pack") return;
     const current = items.find((it) => it.id === id);
     if (!current) return;
+    // Units P0b / SA-728: a DERIVED Piece is the pack's pieces, and going back to the pack from it is one whole pack.
+    const derived = derivedUnitPatch(current, option, refresh);
+    if (derived) return update(id, derived);
+    if (option.kind === "pack") return;
     update(id, {
       unitLabel: option.value,
+      derivedBase: undefined,
       startOnDefaultUnit: false, // any unit choice consumes the default start
       unit: option.label,
+      packUnit: current.packUnit ?? current.unit,
+      packUnitsPerBox: current.packUnitsPerBox ?? current.unitsPerBox,
       unitsPerBox: option.factorToBase,
       boxSplit: false,
       qty: refresh && current.unitLabel === option.value ? current.qty : 1,
@@ -1404,24 +1139,36 @@ export function EditableLineItems({
               <LockedUnitLineBadge display={item.lockedDisplay} />
             )}
 
-            {/* Qty input */}
-            {!item.cancelled && !item.countLocked && (
-              <label className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-navy/40">
-                Qty
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  className="mono w-16 rounded border border-surface-border bg-surface-raised px-2 py-1 text-right text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  value={item.qty}
-                  onChange={(e) => {
-                    const v = parseInt(e.target.value, 10);
-                    if (!isNaN(v) && v > 0) update(item.id, { qty: v, startOnDefaultUnit: false });
-                  }}
-                />
-                <scan.SplitLineHint item={item} />
-              </label>
+            {/* B1234: a delivered line shows its quantity as text, no input */}
+            {!item.cancelled && isLocked(item.id) && <DeliveredLockedQty qty={item.qty} />}
+
+            {/* O1 (F06): a classic boxed line gets the SAME cases + loose-pieces control as Create. */}
+            {!isLocked(item.id) && isCasesPiecesLine(item) && (
+              <EditCasesPieces item={item} onChange={(patch) => update(item.id, patch)} />
             )}
+
+            {/* Qty input */}
+            {!item.cancelled &&
+              !item.countLocked &&
+              !isCasesPiecesLine(item) &&
+              !isLocked(item.id) && (
+                <label className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-navy/40">
+                  Qty
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    className="mono w-16 rounded border border-surface-border bg-surface-raised px-2 py-1 text-right text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    value={item.qty}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      if (!isNaN(v) && v > 0)
+                        update(item.id, { qty: v, startOnDefaultUnit: false });
+                    }}
+                  />
+                  <scan.SplitLineHint item={item} />
+                </label>
+              )}
 
             {/* units_v1 (A3-2): renders nothing unless flag.units_v1 is on AND this product has
                 levels (OrderLineUnitPicker/UnitPicker self-gate) — every other tenant/product sees
@@ -1430,13 +1177,15 @@ export function EditableLineItems({
             {!item.cancelled &&
               !item.isUnlisted &&
               !item.substituteProductId &&
-              !item.countLocked && (
+              !item.countLocked &&
+              !isLocked(item.id) && (
                 <OrderLineUnitPicker
                   line={{
                     productId: item.productId,
                     productName: item.productName,
-                    unit: item.unit ?? "",
-                    unitsPerBox: item.unitsPerBox ?? undefined,
+                    // the PACK's label and size, not the picked unit's (a pick overwrites item.unit / unitsPerBox)
+                    unit: item.packUnit ?? item.unit ?? "",
+                    unitsPerBox: item.packUnitsPerBox ?? item.unitsPerBox ?? undefined,
                     listPrice: item.basePrice,
                     unitPrice: item.unitPrice,
                     // PROMO (server-only, never client-set) has no picker-relevant meaning —
@@ -1448,9 +1197,11 @@ export function EditableLineItems({
                         ? item.priceType
                         : "STANDARD",
                     unitLabel: item.unitLabel,
+                    derivedBase: item.derivedBase,
                     priceEdited: item.priceEdited,
                   }}
                   tier={tierForProductId(item.productId)}
+                  layer={layerOf?.(item.productId)}
                   startOnDefaultUnit={item.startOnDefaultUnit}
                   onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
                 />
@@ -1499,7 +1250,7 @@ export function EditableLineItems({
                   <RotateCcw className="h-3 w-3" />
                   Undo
                 </button>
-              ) : (
+              ) : isLocked(item.id) ? null : (
                 <>
                   {!item.substituteProductId && !item.isUnlisted && !item.countLocked && (
                     <button
@@ -1555,7 +1306,7 @@ export function EditableLineItems({
 
           {/* Per-line price + discount editor — DRAFT catalog lines, or any unlisted
               line (its price is intrinsic, so always editable in edit mode). */}
-          {(canEditPrice || item.isUnlisted) && !item.cancelled && (
+          {(canEditPrice || item.isUnlisted) && !item.cancelled && !isLocked(item.id) && (
             <PriceEditRow
               basePrice={item.basePrice}
               unitPrice={item.unitPrice}
@@ -1573,7 +1324,7 @@ export function EditableLineItems({
               isSpecial={
                 !item.isUnlisted &&
                 item.productId != null &&
-                isSpecialTierFor({ id: item.productId } as SubstituteOption)
+                isSpecialTierFor({ id: item.productId } as SubstituteOption, item)
               }
               history={
                 item.isUnlisted
@@ -1592,6 +1343,8 @@ export function EditableLineItems({
               }
             />
           )}
+
+          {isLocked(item.id) && !item.cancelled && <DeliveredLockedHint />}
 
           {/* Per-line note — carried onto the invoice line (buyer-visible). */}
           {!item.cancelled && (
@@ -1879,9 +1632,6 @@ export default function OrderDetailPage() {
   // path even SENDS it). Gate pricing-dependent controls until both settle.
   // NOTE: a disabled query is isPending forever — short-circuit when there is no
   // customer. An errored fetch falls back to today's tier-1 degraded mode.
-  const pricingReady =
-    !order?.customerId ||
-    ((!customerPending || customerFailed) && (!pricesPending || pricesFailed));
   const cpMap = React.useMemo(() => {
     const m = new Map<string, number | null>();
     for (const cp of (customerPrices ?? []) as Array<{
@@ -1893,27 +1643,19 @@ export default function OrderDetailPage() {
     return m;
   }, [customerPrices]);
   const customerTier = (customerDetail as { pricingTier?: number } | undefined)?.pricingTier ?? 1;
-  const tierPriceFor = React.useCallback(
-    (p: SubstituteOption) => getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1),
-    [cpMap, customerTier],
-  );
-  const isSpecialTierFor = React.useCallback(
-    (p: SubstituteOption) => isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1),
-    [cpMap, customerTier],
-  );
-  // B465: id-only variant for call sites that only have `productId` (an
-  // EditItemState line, not a full SubstituteOption/product row) — same rule,
-  // shared so the save-time guard below and the row's own render never drift.
-  const isSpecialTierForProductId = React.useCallback(
-    (productId: string) => isSpecialTier(cpMap.get(productId) ?? customerTier ?? 1),
-    [cpMap, customerTier],
-  );
   // units_v1: the EFFECTIVE numeric tier `OrderLineUnitPicker` needs (it resolves the ladder
-  // price at this tier, same source as isSpecialTierForProductId above).
+  // price at this tier, same source as isSpecialTierForProductId below).
   const tierForProductId = React.useCallback(
     (productId: string) => cpMap.get(productId) ?? customerTier ?? 1,
     [cpMap, customerTier],
   );
+  const { priceLayer, tierPriceFor, isSpecialTierFor, isSpecialTierForProductId } =
+    useOrderCustomerPricing(order?.customerId, tierForProductId);
+  // S19b: flag on, the customer's price layer must also have settled (a price is UNCONFIRMED while it reads or failed); flag
+  // off it is ready at once, no request.
+  const pricingReady =
+    !order?.customerId ||
+    ((!customerPending || customerFailed) && (!pricesPending || pricesFailed) && priceLayer.ready);
   const router = useRouter();
   const updateStatus = useUpdateOrderStatus();
   // The cancel flow renders its own error (every other status change keeps the global toast), so it has its own instance.
@@ -2011,6 +1753,12 @@ export default function OrderDetailPage() {
   });
   const savingItems = updateItems.isPending;
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
+  // S19b M3: while this customer's prices are unconfirmed (layer pending / failed / this product missing from an incomplete
+  // layer) the edit cannot be saved or published; flag off nothing is read, so this is false.
+  const layerBlocked = pricesUnconfirmed(
+    priceLayer,
+    editItems.map((it) => it.productId),
+  );
   const [pendingDeletes, setPendingDeletes] = React.useState<string[]>([]);
   const [draftAutoEntered, setDraftAutoEntered] = React.useState(false);
   // Staff-editable shipping fee (operator/tenant-admin only page). Initialized from
@@ -2240,7 +1988,7 @@ export default function OrderDetailPage() {
       (it) =>
         !it.cancelled &&
         it.productId != null &&
-        needsSpecialTierReason(it, isSpecialTierForProductId(it.productId)),
+        needsSpecialTierReason(it, isSpecialTierForProductId(it.productId, it)),
     );
     if (missingReasonLine) {
       toast({
@@ -2541,6 +2289,21 @@ export default function OrderDetailPage() {
       ? order.lineItems
       : order.lineItems.filter((li) => li.status !== "CANCELLED");
 
+  const shipFirst = order.fulfillPath === "SHIP";
+  const shipmentSection = (
+    <OrderShipmentSection
+      order={order}
+      status={localStatus}
+      staff={access.staff}
+      canEditShipment={access.shipmentEdit}
+      dialogOpen={showShipDialog}
+      onDialogClose={() => setShowShipDialog(false)}
+      updateShipment={updateShipment}
+      statusPending={updateStatus.isPending}
+      onShip={handleLock}
+    />
+  );
+
   return (
     <div className="space-y-5 p-6">
       {/* Back */}
@@ -2703,6 +2466,26 @@ export default function OrderDetailPage() {
                   </Button>
                 </ActionTier>
               )}
+            </>
+          )}
+
+          {/* POS mode: one primary per state (Create invoice -> Hand over -> Record payment / Print). */}
+          {isPos && access.staff && !isEditing && (
+            <PosOrderActions
+              order={order}
+              orderId={order.id}
+              status={localStatus}
+              onHandOver={() => setPickupOpen(true)}
+              onReadyForPickup={handleMarkShipped}
+              readyPending={updateStatus.isPending}
+              moveOptions={posMoveOptions(staffFulfilment.formMethods, staffFulfilment.formDefault)}
+              onMove={setPendingPath}
+            />
+          )}
+
+          {/* PENDING danger tier (Cancel, Delete): after the POS path moves so Delete is always last. */}
+          {localStatus === "PENDING" && !isEditing && (
+            <>
               <ActionTier tier="danger">
                 {access.cancel && (
                   <CancelOrderButton
@@ -2754,25 +2537,6 @@ export default function OrderDetailPage() {
                   ))}
               </ActionTier>
             </>
-          )}
-
-          {/* POS mode: one primary per state (Create invoice -> Hand over -> Record payment / Print). */}
-          {isPos && access.staff && !isEditing && (
-            <PosOrderActions
-              order={order}
-              orderId={order.id}
-              status={localStatus}
-              onHandOver={() => setPickupOpen(true)}
-              onReadyForPickup={handleMarkShipped}
-              readyPending={updateStatus.isPending}
-              onSwitchToDelivery={() =>
-                setPendingPath(
-                  access.fulfillmentPath && !fulfillPathLocked
-                    ? staffFulfilment.formDefault
-                    : "ROUTE",
-                )
-              }
-            />
           )}
 
           {/* CONFIRMED actions */}
@@ -2941,14 +2705,6 @@ export default function OrderDetailPage() {
                   <Badge variant="info" label="Editing" className="normal-case tracking-normal" />
                 )}
               </h3>
-              {isEditing && (
-                <span className="text-xs text-navy/70">
-                  Prices &amp; quantities save on{" "}
-                  <b className="font-semibold text-navy">
-                    {localStatus === "DRAFT" ? "Save Draft" : "Save Changes"}
-                  </b>
-                </span>
-              )}
             </div>
             {isEditing ? (
               <div className="space-y-4">
@@ -2960,6 +2716,7 @@ export default function OrderDetailPage() {
                 </p>
                 {overpay.node}
                 {stale.node}
+                <InvoicedEditNotice invoices={order.invoices} />
                 <EditableLineItems
                   items={editItems}
                   onChange={setEditItems}
@@ -2970,9 +2727,11 @@ export default function OrderDetailPage() {
                   tierPriceFor={tierPriceFor}
                   isSpecialTierFor={isSpecialTierFor}
                   tierForProductId={tierForProductId}
+                  layerOf={priceLayer.layerOf}
                   pricingReady={pricingReady}
                   customer={{ id: order.customerId, name: order.customer?.businessName }}
                   orderId={order.id}
+                  lockedLineIds={deliveredLockedLineIds(order.status, order.lineItems)}
                 />
 
                 {/* Live total preview */}
@@ -3034,13 +2793,19 @@ export default function OrderDetailPage() {
                   refusalReturn={returnSave.refusalReturn}
                 />
 
-                <div className="flex gap-2 flex-wrap">
+                <StickyEditBar>
+                  <PriceLayerNotice
+                    layer={priceLayer}
+                    unconfirmed={layerBlocked}
+                    className="w-full text-xs text-navy/60"
+                  />
                   {localStatus === "DRAFT" ? (
                     <>
                       <WriteButton
                         size="sm"
                         className="bg-amber-500 text-white hover:bg-amber-600"
                         onClick={handleSaveItems}
+                        disabled={layerBlocked}
                         loading={updateItems.isPending}
                       >
                         Save Draft
@@ -3123,6 +2888,7 @@ export default function OrderDetailPage() {
                             };
                             saveThenPublish();
                           }}
+                          disabled={layerBlocked}
                           loading={updateItems.isPending || updateStatus.isPending}
                         >
                           Publish Order
@@ -3139,7 +2905,12 @@ export default function OrderDetailPage() {
                     </>
                   ) : (
                     <>
-                      <WriteButton size="sm" onClick={handleSaveItems} loading={savingItems}>
+                      <WriteButton
+                        size="sm"
+                        onClick={handleSaveItems}
+                        disabled={layerBlocked}
+                        loading={savingItems}
+                      >
                         Save Changes
                       </WriteButton>
                       <Button
@@ -3152,7 +2923,7 @@ export default function OrderDetailPage() {
                       </Button>
                     </>
                   )}
-                </div>
+                </StickyEditBar>
               </div>
             ) : orderUiV2.enabled ? (
               <OrderLineItemCards
@@ -3330,6 +3101,9 @@ export default function OrderDetailPage() {
             </div>
           </div>
 
+          {/* M8: a carrier (SHIP) order shows its Shipment card above Summary, where the ship step is found. */}
+          {shipFirst && shipmentSection}
+
           {/* Order summary */}
           <Card title="Summary">
             <dl className="space-y-2.5 text-sm">
@@ -3422,50 +3196,7 @@ export default function OrderDetailPage() {
           {/* Returns on this order (#2406) — server figures only, never the quote's. */}
           <OrderReturnsPanel orderId={order.id} />
 
-          {/* Carrier shipment — operator records carrier + tracking when goods ship
-              via a carrier instead of our own route. Gated so it doesn't render on
-              every order: only carrier-shipped (fulfillPath === "SHIP") orders, or
-              historical rows that already carry tracking data. */}
-          {order.fulfillPath === "SHIP" && access.staff && (
-            <ShipWithTrackingDialog
-              open={showShipDialog}
-              onClose={() => setShowShipDialog(false)}
-              isPending={updateShipment.isPending || updateStatus.isPending}
-              initialCarrier={order.shippingCarrier}
-              initialTracking={order.shippingTrackingNumber}
-              onSkip={() => handleLock()}
-              onShipWithTracking={(values) =>
-                shipWithTracking(
-                  {
-                    saveShipment: (v) =>
-                      updateShipment.mutateAsync({ id: order.id, ...v }).catch((e: unknown) => {
-                        toast({
-                          title: "Could not save shipment",
-                          description: genericToastCopy(e),
-                          variant: "error",
-                        });
-                        throw e;
-                      }),
-                    ship: () => handleLock(),
-                  },
-                  values,
-                )
-              }
-            />
-          )}
-          {(order.fulfillPath === "SHIP" ||
-            order.shippingCarrier ||
-            order.shippingTrackingNumber) && (
-            <ShipmentCard
-              carrier={order.shippingCarrier}
-              trackingNumber={order.shippingTrackingNumber}
-              shippedAt={order.shippedAt}
-              orderStatus={localStatus}
-              isSaving={updateShipment.isPending}
-              onSave={(values) => updateShipment.mutateAsync({ id: order.id, ...values })}
-              readOnly={!access.shipmentEdit}
-            />
-          )}
+          {!shipFirst && shipmentSection}
 
           {/* Invoice card — show for any non-draft, non-cancelled order so the operator
               can split into multiple invoices any time after the order is confirmed. */}
@@ -3638,6 +3369,7 @@ export default function OrderDetailPage() {
       )}
       <FulfillPathMoveConfirm
         open={pendingPath !== null}
+        path={pendingPath}
         onClose={() => setPendingPath(null)}
         loading={patchFulfillPath.isPending}
         onConfirm={() => {

@@ -12,6 +12,8 @@ interface ErrorBody {
   missing?: unknown;
   alreadyDisabled?: unknown;
   failedStep?: { step?: unknown; key?: unknown } | null;
+  /** FULFILMENT_CARRIER_IN_TRANSIT: open carrier orders blocking a billing-moment change. */
+  count?: unknown;
   /** ROW c: per-add-on outcomes (`BusinessProfileBillingFailedAddon[]`); absent from an older server. */
   addons?: unknown;
 }
@@ -48,7 +50,7 @@ function stepPhrase(step: unknown, key: unknown): string {
 }
 
 const BILLING_STOPPED_NO_BODY =
-  "The business profile could not be applied because billing could not be stopped. Check the tenant's setup, then try again.";
+  "This change could not be applied because billing could not be stopped. Check the tenant's setup, then try again.";
 
 /** The well-formed entries of the 503 body's `addons` list; anything else is dropped (never printed). */
 function readAddons(raw: unknown): BusinessProfileBillingFailedAddon[] {
@@ -84,9 +86,7 @@ function billingFailedAddonsCopy(
   const ordered = [...addons.filter((a) => !a.switchedOff), ...addons.filter((a) => a.switchedOff)];
   const anyDone = ordered.some((a) => a.switchedOff);
   const step = body.failedStep?.step;
-  const head = anyDone
-    ? "The business profile was only partly applied."
-    : "The business profile was not applied.";
+  const head = anyDone ? "This change was only partly applied." : "This change was not applied.";
   const tail =
     step && step !== "billing"
       ? `Then ${stepPhrase(step, body.failedStep?.key)} failed. Try again to finish.`
@@ -105,15 +105,15 @@ function billingFailedCopy(body: ErrorBody): string {
   const key = body.failedStep?.key;
   if (step === "billing") {
     if (!done) {
-      return `The business profile was not applied: billing for ${keyLabel(key)} could not be stopped. Nothing was changed. Try again.`;
+      return `This change was not applied: billing for ${keyLabel(key)} could not be stopped. Nothing was changed. Try again.`;
     }
-    return `The business profile was only partly applied. Billing was already stopped for ${done}, but not for ${keyLabel(key)}. Try again to finish.`;
+    return `This change was only partly applied. Billing was already stopped for ${done}, but not for ${keyLabel(key)}. Try again to finish.`;
   }
   if (done && step) {
-    return `The business profile was only partly applied. Billing was already stopped for ${done}, then ${stepPhrase(step, key)} failed. Try again to finish.`;
+    return `This change was only partly applied. Billing was already stopped for ${done}, then ${stepPhrase(step, key)} failed. Try again to finish.`;
   }
   if (done) {
-    return `The business profile was only partly applied. Billing was already stopped for ${done}. Try again to finish.`;
+    return `This change was only partly applied. Billing was already stopped for ${done}. Try again to finish.`;
   }
   return BILLING_STOPPED_NO_BODY;
 }
@@ -131,9 +131,9 @@ export function profileErrorCopy(err: unknown, fallback: string): string {
     case API_ERROR_CODES.LOCK_UNAVAILABLE:
       return "This account's add-ons are being changed right now. Try again in a moment.";
     case API_ERROR_CODES.BUSINESS_PROFILE_UNKNOWN:
-      return "That business profile does not exist.";
+      return "That setup option does not exist.";
     case API_ERROR_CODES.BUSINESS_PROFILE_UNAVAILABLE:
-      return "This business profile isn't available for this tenant.";
+      return "This isn't available for this business.";
     case API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET: {
       const named = Array.isArray(body.missing)
         ? body.missing.filter((k): k is string =>
@@ -145,6 +145,14 @@ export function profileErrorCopy(err: unknown, fallback: string): string {
         ? `Delivery needs a fleet feature turned on first: ${labels.join(" or ")}. Any one is enough.`
         : "Delivery needs a fleet feature turned on first.";
     }
+    case API_ERROR_CODES.FULFILMENT_CARRIER_IN_TRANSIT: {
+      const n = typeof body.count === "number" && body.count > 0 ? body.count : null;
+      const who = n === null ? "Orders are" : n === 1 ? "1 order is" : `${n} orders are`;
+      return (
+        `${who} with the carrier right now. Change this once they are delivered: changing ` +
+        "how orders ship now would bill them twice or not at all."
+      );
+    }
     case API_ERROR_CODES.FEATURE_MODE_REQUIRES:
       return KNOWN_KEY(body.missing)
         ? `This needs ${keyLabel(body.missing)} turned on first.`
@@ -153,7 +161,7 @@ export function profileErrorCopy(err: unknown, fallback: string): string {
       break;
   }
   if (status === 404) return "That tenant was not found.";
-  if (status === 403) return "Only platform admins can change a business profile.";
+  if (status === 403) return "Only platform admins can change what a business does.";
   return fallback;
 }
 
