@@ -28,7 +28,7 @@ interface RawExecutor {
 }
 
 /** SQLSTATE 55P03 (lock_not_available), as pg, Prisma raw queries and the driver adapter report it. */
-function isLockTimeout(e: unknown): boolean {
+export function isLockTimeout(e: unknown): boolean {
   const x = e as {
     code?: string;
     message?: string;

@@ -15,6 +15,17 @@
  *    records exactly once.
  *  - T3 (MUST g): the same key in two tenants records two independent payments.
  *
+ * SA-824 race ruling 6 (POST /invoices/payments/by-key/:key/resolve, `PaymentKeyStatusService.resolve` on
+ * connection B while connection A holds an UNCOMMITTED claim of the same key):
+ *  - R1: B's resolve WAITS; A commits -> "found" with A's payment group; exactly one payment set.
+ *  - R2: B's resolve WAITS; A rolls back -> "tombstoned"; 0 payments; the row is TOMBSTONED.
+ *  - R3: resolve, then the late original POST -> 409 PAYMENT_KEY_RESOLVED and 0 payments.
+ *  - R4: resolve twice -> "tombstoned" both times, one row, one audit row each (sha256, never the raw key).
+ *  - R5: A holds a raw claim past the 5 s lock_timeout -> B's resolve is 409 PAYMENT_KEY_IN_FLIGHT, writes
+ *        nothing.
+ *  - R6: another tenant's key: GET is 404 from tenant B, B's resolve tombstones only B's own namespace and
+ *        A's COMPLETED row (and its GET) is untouched.
+ *
  * SAFETY: throwaway `qa-sa824-<run>-<n>-<label>` tenants only (`assertTestTenant`); `afterAll`
  * deletes exactly what this run created.
  */
@@ -29,7 +40,10 @@ jest.mock("../storage/compress.util", () => ({
 }));
 
 import { Test } from "@nestjs/testing";
-import { randomUUID } from "crypto";
+import { ConflictException, NotFoundException } from "@nestjs/common";
+import { createHash, randomUUID } from "crypto";
+import { PaymentKeyStatusService } from "./payment-key-status.service";
+import { AuditService } from "../audit/audit.service";
 import { InvoicesService } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -125,6 +139,8 @@ describeDb(
     let prismaB: PrismaService;
     let invoicesA: InvoicesService;
     let invoicesB: InvoicesService;
+    /** The resolve / by-key service on connection B (its own pool), auditing through B. */
+    let statusB: PaymentKeyStatusService;
     const createdTenantIds: string[] = [];
 
     beforeAll(async () => {
@@ -136,6 +152,7 @@ describeDb(
       await prismaB.$connect();
       invoicesA = await buildInvoices(prismaA, tenantCtx);
       invoicesB = await buildInvoices(prismaB, tenantCtx);
+      statusB = new PaymentKeyStatusService(prismaB, new AuditService(prismaB));
     });
 
     afterAll(async () => {
@@ -148,6 +165,7 @@ describeDb(
     });
 
     async function cleanupTenant(tenantId: string): Promise<void> {
+      await prismaA.auditLog.deleteMany({ where: { tenantId } });
       await prismaA.paymentIdempotencyKey.deleteMany({ where: { tenantId } });
       await prismaA.advancePayment.deleteMany({ where: { tenantId } });
       await prismaA.invoicePayment.deleteMany({ where: { invoice: { tenantId } } });
@@ -296,6 +314,163 @@ describeDb(
       expect(b.paymentGroupId).not.toBe(a.paymentGroupId);
       expect((await one.state()).payments).toHaveLength(1);
       expect((await two.state()).payments).toHaveLength(1);
+    }, 60_000);
+    const actor = { sub: null, impersonatedBy: null };
+    const keyHash = (k: string) => createHash("sha256").update(k).digest("hex");
+    const codeOf = (e: unknown) => (e as ConflictException).getResponse?.() as { code?: string };
+
+    /** A's money transaction held open (uncommitted claim) until `release(outcome)`. */
+    function holdOnA(
+      seeded: Awaited<ReturnType<typeof seed>>,
+      key: string,
+    ): {
+      held: Promise<void>;
+      release: (outcome: "commit" | "rollback") => void;
+      done: Promise<unknown>;
+    } {
+      let inTx!: () => void;
+      const held = new Promise<void>((r) => (inTx = r));
+      let release!: (o: "commit" | "rollback") => void;
+      const gate = new Promise<"commit" | "rollback">((r) => (release = r));
+      const done = seeded
+        .asTenant(() =>
+          invoicesA.recordStandalonePayment(seeded.dto, {
+            idempotencyKey: key,
+            inTx: async () => {
+              inTx();
+              if ((await gate) === "rollback") throw new Error("A rolls back");
+            },
+          }),
+        )
+        .catch((e: unknown) => e);
+      return { held, release, done };
+    }
+
+    it("R1 resolve on B WAITS behind A's uncommitted claim; A commits -> found, one payment set", async () => {
+      const seeded = await seed("r1");
+      const key = `r1-${randomUUID()}`;
+      const a = holdOnA(seeded, key);
+      await a.held;
+      let resolvedAt = 0;
+      const resolving = seeded
+        .asTenant(() => statusB.resolve(key, actor))
+        .then((r) => ((resolvedAt = Date.now()), r));
+      await new Promise((r) => setTimeout(r, 700)); // B is now blocked on the unique index
+      expect(resolvedAt).toBe(0);
+      const releasedAt = Date.now();
+      a.release("commit");
+      const [w, out]: any[] = await Promise.all([a.done, resolving]);
+
+      expect(out.state).toBe("found");
+      expect(out.paymentGroupId).toBe(w.paymentGroupId);
+      expect(resolvedAt).toBeGreaterThanOrEqual(releasedAt);
+      const after = await seeded.state();
+      expect(after.payments).toHaveLength(1);
+      expect(after.keys.map((k: any) => k.state)).toEqual(["COMPLETED"]);
+      expect(out).toEqual(await seeded.asTenant(() => statusB.byKey(key)));
+    }, 60_000);
+
+    it("R2 resolve on B WAITS; A rolls back -> tombstoned, 0 payments, the row is TOMBSTONED", async () => {
+      const seeded = await seed("r2");
+      const key = `r2-${randomUUID()}`;
+      const a = holdOnA(seeded, key);
+      await a.held;
+      const resolving = seeded.asTenant(() => statusB.resolve(key, actor));
+      await new Promise((r) => setTimeout(r, 700));
+      a.release("rollback");
+      const [aErr, out] = await Promise.all([a.done, resolving]);
+
+      expect((aErr as Error).message).toBe("A rolls back");
+      expect(out).toEqual({ state: "tombstoned" });
+      const after = await seeded.state();
+      expect(after.payments).toHaveLength(0);
+      expect(after.keys.map((k: any) => k.state)).toEqual(["TOMBSTONED"]);
+    }, 60_000);
+
+    it("R3 resolve, then the late original POST: 409 PAYMENT_KEY_RESOLVED and 0 payments", async () => {
+      const seeded = await seed("r3");
+      const key = `r3-${randomUUID()}`;
+      expect(await seeded.asTenant(() => statusB.resolve(key, actor))).toEqual({
+        state: "tombstoned",
+      });
+      const late = await seeded
+        .asTenant(() => invoicesA.recordStandalonePayment(seeded.dto, { idempotencyKey: key }))
+        .catch((e: unknown) => e);
+      expect(late).toBeInstanceOf(ConflictException);
+      expect(codeOf(late).code).toBe("PAYMENT_KEY_RESOLVED");
+      expect((await seeded.state()).payments).toHaveLength(0);
+    }, 60_000);
+
+    it("R4 resolve twice: tombstoned both times, one row, one audit row each with the sha256 (never the raw key)", async () => {
+      const seeded = await seed("r4");
+      const key = `r4-${randomUUID()}`;
+      for (let i = 0; i < 2; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        expect(await seeded.asTenant(() => statusB.resolve(key, actor))).toEqual({
+          state: "tombstoned",
+        });
+      }
+      expect((await seeded.state()).keys).toHaveLength(1);
+      const audits = await prismaA.auditLog.findMany({
+        where: { tenantId: seeded.tenant.id, action: "payment-key.resolve" },
+      });
+      expect(audits).toHaveLength(2);
+      for (const row of audits) {
+        expect(row.entityId).toBe(keyHash(key));
+        expect(JSON.stringify(row)).not.toContain(key);
+      }
+    }, 60_000);
+
+    it("R5 a claim held past the 5 s lock_timeout: B's resolve is 409 PAYMENT_KEY_IN_FLIGHT and writes nothing", async () => {
+      const seeded = await seed("r5");
+      const key = `r5-${randomUUID()}`;
+      let claimed!: () => void;
+      const held = new Promise<void>((r) => (claimed = r));
+      const holder = prismaA
+        .$transaction(
+          async (tx) => {
+            await tx.$executeRaw`
+              INSERT INTO "PaymentIdempotencyKey" ("id", "tenantId", "key", "scope", "requestHash", "state", "result")
+              VALUES (${randomUUID()}, ${seeded.tenant.id}, ${key}, 'STANDALONE_PAYMENT'::"PaymentIdempotencyScope", 'h', 'CLAIMED'::"PaymentIdempotencyState", '{}'::jsonb)`;
+            claimed();
+            await new Promise((r) => setTimeout(r, 7_000));
+            throw new Error("holder rolls back");
+          },
+          { timeout: 20_000 },
+        )
+        .catch((e: unknown) => e);
+      await held;
+      const err = await seeded.asTenant(() => statusB.resolve(key, actor)).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(codeOf(err).code).toBe("PAYMENT_KEY_IN_FLIGHT");
+      await holder;
+      expect((await seeded.state()).keys).toHaveLength(0);
+      const audits = await prismaA.auditLog.count({
+        where: { tenantId: seeded.tenant.id, action: "payment-key.resolve" },
+      });
+      expect(audits).toBe(0);
+    }, 60_000);
+
+    it("R6 another tenant's key: 404 from B, B's resolve tombstones only B's namespace, A's row untouched", async () => {
+      const one = await seed("r6a");
+      const two = await seed("r6b");
+      const key = `r6-${randomUUID()}`;
+      const paid: any = await one.asTenant(() =>
+        invoicesA.recordStandalonePayment(one.dto, { idempotencyKey: key }),
+      );
+      const get = await two.asTenant(() => statusB.byKey(key)).catch((e: unknown) => e);
+      expect(get).toBeInstanceOf(NotFoundException);
+      expect(await two.asTenant(() => statusB.resolve(key, actor))).toEqual({
+        state: "tombstoned",
+      });
+
+      const aRows = (await one.state()).keys;
+      expect(aRows.map((k: any) => k.state)).toEqual(["COMPLETED"]);
+      expect((await two.state()).keys.map((k: any) => k.state)).toEqual(["TOMBSTONED"]);
+      const stillFound: any = await one.asTenant(() => statusB.byKey(key));
+      expect(stillFound.state).toBe("found");
+      expect(stillFound.paymentGroupId).toBe(paid.paymentGroupId);
+      expect((await one.state()).payments).toHaveLength(1);
     }, 60_000);
   },
 );

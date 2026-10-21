@@ -2,6 +2,7 @@ import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { createHash, randomUUID } from "crypto";
 import { toCents } from "@routeflow/pricing";
 import { IDEMPOTENCY_KEY_CONFLICT } from "../orders/merge-idempotency";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * SA-824 (row 661 step 1): the ONE claim-in-transaction helper of the customer money-in writers
@@ -22,7 +23,37 @@ import { IDEMPOTENCY_KEY_CONFLICT } from "../orders/merge-idempotency";
  *
  * The store is `PaymentIdempotencyKey` (finance), tenant-scoped, no TTL. The scope enum is the seam
  * the AP writers (vendor-bill payments, supplier payments) reuse in the next PR.
+ *
+ * SA-824 race ruling 1/2: every row carries a distinct `state`. The claim inserts CLAIMED, the settle
+ * marks it COMPLETED (the same transaction, so a committed CLAIMED row never exists in normal
+ * operation), and POST /invoices/payments/by-key/:key/resolve inserts a TOMBSTONED row when nothing
+ * was committed. The replay reads the state FIRST: TOMBSTONED is 409 PAYMENT_KEY_RESOLVED (nothing
+ * written, whatever the body: a tombstone has no hash to compare); then a different scope or hash is
+ * 409 IDEMPOTENCY_KEY_CONFLICT (unchanged); then a committed CLAIMED row is 409 PAYMENT_KEY_IN_FLIGHT
+ * (never a replay of its empty result); only COMPLETED replays.
  */
+export type PaymentKeyState = "CLAIMED" | "COMPLETED" | "TOMBSTONED";
+
+/** The fixed copy of a POST on a tombstoned key (SA-824 race ruling 2), shared with the clients. */
+export const PAYMENT_KEY_RESOLVED_MESSAGE =
+  "This payment attempt was cancelled — nothing was charged. Start a new payment.";
+
+/** 409 PAYMENT_KEY_RESOLVED: the key was resolved to a tombstone; this request wrote nothing. */
+export function paymentKeyResolvedConflict(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.PAYMENT_KEY_RESOLVED,
+    message: PAYMENT_KEY_RESOLVED_MESSAGE,
+  });
+}
+
+/** 409 PAYMENT_KEY_IN_FLIGHT: a payment under the key is not completed yet (retryable, not an answer). */
+export function paymentKeyInFlightConflict(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.PAYMENT_KEY_IN_FLIGHT,
+    message:
+      "A payment under this key is still being recorded. Check its status again in a moment.",
+  });
+}
 export type PaymentKeyScope = "STANDALONE_PAYMENT" | "INVOICE_PAYMENT" | "ADVANCE_PAYMENT";
 
 /** What the request hash covers: the normalized body (ruling 3). */
@@ -162,12 +193,22 @@ export async function withCurrentState(deps: PaymentKeyDeps, scope: PaymentKeySc
   return out;
 }
 
+/** The columns a replay reads (the state first). */
+interface StoredKeyRow {
+  state: string; // a PaymentKeyState; Prisma types it as its enum, raw readers as text
+  scope: string | null;
+  requestHash: string | null;
+  result: unknown;
+}
+
 async function replay(
   deps: PaymentKeyDeps,
-  row: { scope: string; requestHash: string; result: unknown } | null,
+  row: StoredKeyRow | null,
   scope: PaymentKeyScope,
   requestHash: string,
 ) {
+  // TOMBSTONED first: it has no scope or hash, so the mismatch check below would misreport it.
+  if (row?.state === "TOMBSTONED") throw paymentKeyResolvedConflict();
   if (!row || row.scope !== scope || row.requestHash !== requestHash) {
     throw new ConflictException({
       code: IDEMPOTENCY_KEY_CONFLICT,
@@ -176,6 +217,7 @@ async function replay(
         "Idempotency-Key was already used for a different payment request. That payment may already be recorded; this request wrote nothing.",
     });
   }
+  if (row.state !== "COMPLETED") throw paymentKeyInFlightConflict(); // CLAIMED: never its empty result
   return { ...(await withCurrentState(deps, scope, row.result)), replayed: true as const };
 }
 
@@ -198,7 +240,7 @@ export async function withPaymentKey<T>(
   const stored = () =>
     deps.forTenant().paymentIdempotencyKey.findFirst({
       where: { key },
-      select: { scope: true, requestHash: true, result: true },
+      select: { state: true, scope: true, requestHash: true, result: true },
     });
 
   const held = await stored();
@@ -209,8 +251,8 @@ export async function withPaymentKey<T>(
     return await write({
       claim: async (tx) => {
         const rows: unknown[] = await tx.$queryRaw`
-          INSERT INTO "PaymentIdempotencyKey" ("id", "tenantId", "key", "scope", "requestHash", "result")
-          VALUES (${id}, ${tenantId}, ${key}, ${scope}::"PaymentIdempotencyScope", ${requestHash}, '{}'::jsonb)
+          INSERT INTO "PaymentIdempotencyKey" ("id", "tenantId", "key", "scope", "requestHash", "state", "result")
+          VALUES (${id}, ${tenantId}, ${key}, ${scope}::"PaymentIdempotencyScope", ${requestHash}, 'CLAIMED'::"PaymentIdempotencyState", '{}'::jsonb)
           ON CONFLICT ("tenantId", "key") DO NOTHING
           RETURNING "id"`;
         if (rows.length === 0) throw new PaymentKeyTaken();
@@ -219,7 +261,8 @@ export async function withPaymentKey<T>(
         const refs = keyRefs(scope, result, writerRefs);
         await tx.$executeRaw`
           UPDATE "PaymentIdempotencyKey"
-          SET "result" = ${JSON.stringify(result)}::jsonb,
+          SET "state" = 'COMPLETED'::"PaymentIdempotencyState",
+              "result" = ${JSON.stringify(result)}::jsonb,
               "paymentGroupId" = ${refs.paymentGroupId},
               "advancePaymentId" = ${refs.advancePaymentId}
           WHERE "id" = ${id} AND "tenantId" = ${tenantId}`;

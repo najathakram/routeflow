@@ -26,6 +26,8 @@ export const AUDIT_ACTIONS = {
   PRODUCT_PRICES_SAVED: "product.prices-saved",
   /** Units v2 (SA-799 b): the Undo of a PRODUCT_PRICES_SAVED row; meta {undoes, revisionBefore, revisionAfter, actor}. */
   PRODUCT_PRICES_UNDONE: "product.prices-undone",
+  /** SA-824 race ruling 4: one POST /invoices/payments/by-key/:key/resolve; meta {keyHash (sha256, never the raw key), outcome found|tombstoned, scope, invoiceId, customerId, paymentGroupId, advancePaymentId}. */
+  PAYMENT_KEY_RESOLVE: "payment-key.resolve",
 } as const;
 
 export type AuditActionName = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

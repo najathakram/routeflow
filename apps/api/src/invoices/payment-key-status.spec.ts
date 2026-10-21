@@ -8,7 +8,14 @@ import { PaymentKeyStatusService } from "./payment-key-status.service";
  * payment Idempotency-Key after a lost response: the stored result with CURRENT statuses, or 404
  * PAYMENT_KEY_NOT_FOUND (nothing recorded). Tenant-scoped and read-only.
  */
-type Row = { tenantId: string; key: string; scope: string; result: Record<string, unknown> };
+type Row = {
+  tenantId: string;
+  key: string;
+  scope: string | null;
+  result: Record<string, unknown>;
+  /** SA-824 race ruling 1 (absent = COMPLETED, the only committed state before the ruling). */
+  state?: "CLAIMED" | "COMPLETED" | "TOMBSTONED";
+};
 
 function build(tenant: string | null, rows: Row[]) {
   const writes = {
@@ -27,7 +34,9 @@ function build(tenant: string | null, rows: Row[]) {
     paymentIdempotencyKey: {
       findFirst: jest.fn(async (a: { where: { key: string } }) => {
         const r = rows.find((x) => x.tenantId === tenant && x.key === a.where.key);
-        return r ? { scope: r.scope, requestHash: "h", result: r.result } : null;
+        return r
+          ? { scope: r.scope, requestHash: "h", result: r.result, state: r.state ?? "COMPLETED" }
+          : null;
       }),
       ...writes,
     },
@@ -36,7 +45,8 @@ function build(tenant: string | null, rows: Row[]) {
     advancePayment: { findFirst: jest.fn(async () => live.advance), ...writes },
   };
   const prisma = { getTenantId: () => tenant, forTenant: () => scoped, ...writes };
-  const service = new PaymentKeyStatusService(prisma as never);
+  const audit = { log: jest.fn() };
+  const service = new (PaymentKeyStatusService as any)(prisma, audit) as PaymentKeyStatusService;
   return { service, controller: new PaymentKeyStatusController(service), writes, scoped };
 }
 
@@ -55,6 +65,21 @@ describe("SA-824 GET /invoices/payments/by-key/:key", () => {
     expect(out.payments[0].status).toBe("VOIDED");
     expect(out.replayed).toBe(true);
     expect(out.scope).toBe("STANDALONE_PAYMENT");
+    expect(out.state).toBe("found"); // SA-824 race ruling: the same body the resolve answers
+  });
+
+  it("a TOMBSTONED key (closed by resolve): { state: 'tombstoned' }, never a payment and never a 404", async () => {
+    const row: Row = { tenantId: "tA", key: "k-t", scope: null, result: {}, state: "TOMBSTONED" };
+    expect(await build("tA", [row]).controller.byKey("k-t")).toEqual({ state: "tombstoned" });
+  });
+
+  it("a committed CLAIMED row (never settled): 409 PAYMENT_KEY_IN_FLIGHT, never 'found' with an empty result", async () => {
+    const row: Row = { ...standalone, result: {}, state: "CLAIMED" };
+    const err: any = await build("tA", [row])
+      .controller.byKey("k-1")
+      .catch((e) => e);
+    expect(err?.getStatus?.()).toBe(409);
+    expect(err.getResponse().code).toBe("PAYMENT_KEY_IN_FLIGHT");
   });
 
   it("found (invoice scope): the invoice's current status and paidAt overlay the stored one", async () => {

@@ -51,9 +51,11 @@ interface KeyRow {
   id: string;
   tenantId: string;
   key: string;
-  scope: string;
-  requestHash: string;
+  scope: string | null;
+  requestHash: string | null;
   result: unknown;
+  /** SA-824 race ruling 1: CLAIMED / COMPLETED / TOMBSTONED (read off the SQL the writer sends). */
+  state?: string;
   paymentGroupId?: string | null;
   advancePaymentId?: string | null;
 }
@@ -90,7 +92,8 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
         const [id, tenantId, key, scope, requestHash] = v;
         const all = [...ledger.keys, ...(stage?.keys ?? [])];
         if (all.some((k) => k.tenantId === tenantId && k.key === key)) return [];
-        stage!.keys.push({ id, tenantId, key, scope, requestHash, result: {} });
+        const state = sqlOf(strings).includes("'CLAIMED'") ? "CLAIMED" : undefined;
+        stage!.keys.push({ id, tenantId, key, scope, requestHash, result: {}, state });
         return [{ id }];
       }),
       $executeRaw: jest.fn(async (strings: TemplateStringsArray, ...v: any[]) => {
@@ -99,6 +102,7 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
         const row = stage!.keys.find((k) => k.id === id && k.tenantId === tenantId);
         if (!row) return 0;
         Object.assign(row, { result: JSON.parse(result), paymentGroupId, advancePaymentId });
+        if (sqlOf(strings).includes("'COMPLETED'")) row.state = "COMPLETED";
         return 1;
       }),
     };
@@ -506,6 +510,105 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
       await call(75);
       expect(committed().advs).toHaveLength(2);
       expect(ledger.keys).toHaveLength(0);
+    });
+  });
+  describe("SA-824 race ruling: the key row's state (CLAIMED -> COMPLETED; TOMBSTONED refuses)", () => {
+    const RESOLVED = "PAYMENT_KEY_RESOLVED";
+    const IN_FLIGHT = "PAYMENT_KEY_IN_FLIGHT";
+    const RESOLVED_COPY =
+      "This payment attempt was cancelled — nothing was charged. Start a new payment.";
+    const tombstone = (key: string, tenantId = "tenant-a"): KeyRow => ({
+      id: `tomb-${key}`,
+      tenantId,
+      key,
+      scope: null,
+      requestHash: null,
+      result: {},
+      state: "TOMBSTONED",
+    });
+
+    it("the claim inserts CLAIMED and the settle marks the row COMPLETED in the same transaction", async () => {
+      const raw = (prisma as any).$rawSpy;
+      let claimedState: string | undefined;
+      const settle = raw.$executeRaw.getMockImplementation();
+      raw.$executeRaw.mockImplementation(async (strings: TemplateStringsArray, ...v: any[]) => {
+        if (sqlOf(strings).includes('UPDATE "PaymentIdempotencyKey"')) {
+          claimedState = stage!.keys[0]?.state; // what the claim wrote, before the settle runs
+        }
+        return settle(strings, ...v);
+      });
+      await invoices.recordStandalonePayment(standalone(), keyed("key-state"));
+      expect(claimedState).toBe("CLAIMED");
+      expect(ledger.keys.map((k) => k.state)).toEqual(["COMPLETED"]);
+    });
+
+    it.each([
+      [
+        "recordStandalonePayment",
+        () => invoices.recordStandalonePayment(standalone(), keyed("k-t")),
+      ],
+      [
+        "recordPayment",
+        () =>
+          invoices.recordPayment(
+            "inv-1",
+            { amount: 40, method: "CASH", reference: "chq 1" } as any,
+            keyed("k-t"),
+          ),
+      ],
+      [
+        "createAdvancePayment",
+        () =>
+          (customers as any).createAdvancePayment(
+            "cust-1",
+            { amount: 75, method: "CASH", reference: "adv 1" },
+            { idempotencyKey: "k-t" },
+          ),
+      ],
+    ])(
+      "%s on a TOMBSTONED key: 409 PAYMENT_KEY_RESOLVED with the fixed copy, 0 payments, no claim",
+      async (_name, call) => {
+        ledger.keys.push(tombstone("k-t"));
+        const raw = (prisma as any).$rawSpy;
+        const err: any = await (call as () => Promise<unknown>)().catch((e: unknown) => e);
+        expect(err?.getStatus?.()).toBe(409);
+        expect(err.getResponse()).toMatchObject({ code: RESOLVED, message: RESOLVED_COPY });
+        expect(committed()).toEqual({ pays: [], advs: [] });
+        expect(raw.$queryRaw).not.toHaveBeenCalled();
+        expect(ledger.keys.map((k) => k.state)).toEqual(["TOMBSTONED"]);
+      },
+    );
+
+    it("a claim lost to a tombstone committed after the pre-read: 409 PAYMENT_KEY_RESOLVED, no money", async () => {
+      ledger.keys.push(tombstone("k-late"));
+      const keyStore = prisma.forTenant().paymentIdempotencyKey;
+      keyStore.findFirst.mockResolvedValueOnce(null); // the pre-read ran before the resolve committed
+      const err: any = await invoices
+        .recordStandalonePayment(standalone(), keyed("k-late"))
+        .catch((e) => e);
+      expect(err.getResponse()).toMatchObject({ code: RESOLVED });
+      expect(committed()).toEqual({ pays: [], advs: [] });
+    });
+
+    it("another tenant's tombstone never refuses this tenant's payment", async () => {
+      ledger.keys.push(tombstone("k-x", "tenant-b"));
+      const out: any = await invoices.recordStandalonePayment(standalone(), keyed("k-x"));
+      expect(out.replayed).toBeUndefined();
+      expect(committed().pays).toHaveLength(1);
+    });
+
+    it("a committed CLAIMED row: the same request is 409 PAYMENT_KEY_IN_FLIGHT, a different one keeps 409 IDEMPOTENCY_KEY_CONFLICT", async () => {
+      await invoices.recordStandalonePayment(standalone(), keyed("k-c"));
+      ledger.keys[0].state = "CLAIMED"; // never settled (defence in depth: no writer commits this)
+      const same: any = await invoices
+        .recordStandalonePayment(standalone(), keyed("k-c"))
+        .catch((e) => e);
+      expect(same.getResponse()).toMatchObject({ code: IN_FLIGHT });
+      const other: any = await invoices
+        .recordStandalonePayment(standalone({ totalAmount: 160 }), keyed("k-c"))
+        .catch((e) => e);
+      expect(other.getResponse()).toMatchObject({ code: CONFLICT });
+      expect(committed().pays).toHaveLength(1);
     });
   });
 });
