@@ -26,7 +26,8 @@ const SKIP_REASON_LABELS: Record<ConfigSnapshotSkipReason, string> = {
   CARRIER_IN_TRANSIT: "Orders are with the carrier",
   FULFILMENT_MODE_NEEDS_FLEET: "Own delivery needs a fleet module",
   // Row 640: a restored grant that nothing pays for, or whose prerequisite is missing.
-  ADDON_NOT_PAID: "Add-on is not paid for or included in the plan",
+  ADDON_NOT_PAID:
+    "Add-on isn't paid for or included in the plan. Restore again once the add-on is billed.",
   REQUIRES_UNMET: "A required feature is missing",
 };
 
@@ -37,7 +38,8 @@ const HELD_FEATURE_LABELS: Record<string, string> = { fulfilment_model: "Deliver
 const HELD_REASON_TEXT: Record<ConfigSnapshotHeld["reason"], string> = {
   CARRIER_IN_TRANSIT: "orders are with the carrier",
   FULFILMENT_MODE_NEEDS_FLEET: "own delivery needs a fleet module",
-  ADDON_NOT_PAID: "the add-on is not paid for or included in the plan",
+  ADDON_NOT_PAID:
+    "the add-on isn't paid for or included in the plan; restore again once it is billed",
   REQUIRES_UNMET: "a required feature is missing",
 };
 

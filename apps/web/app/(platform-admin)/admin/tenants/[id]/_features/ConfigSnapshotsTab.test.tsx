@@ -233,7 +233,7 @@ describe("ConfigSnapshotsTab", () => {
       });
       const text = await confirm();
       expect(text).toContain(
-        "OCR document scanning: held while the add-on is not paid for or included in the plan",
+        "OCR document scanning: held while the add-on isn't paid for or included in the plan; restore again once it is billed",
       );
       expect(text).toContain("Driver payments: held while a required feature is missing");
       expect(text).not.toContain("ocr:");
