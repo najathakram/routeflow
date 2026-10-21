@@ -266,11 +266,11 @@ describe("ImportCsvPanel: a queued apply", () => {
   it("maps the read-only code to fixed copy", async () => {
     await startApply();
     get.mockResolvedValueOnce({
-      data: { id: "job-1", state: "failed", progress: 0, errorCode: "WORKSPACE_READ_ONLY" },
+      data: { id: "job-1", state: "failed", progress: 0, errorCode: "READ_ONLY" },
     });
     await tick();
     expect(screen.getByTestId(`${P}-job`)).toHaveTextContent(
-      "This workspace is read-only right now, so the import didn't run.",
+      "This workspace can't make changes right now, so the import didn't run.",
     );
   });
 

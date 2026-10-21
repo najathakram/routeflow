@@ -65,9 +65,9 @@ describe("product import background job", () => {
       expect(failed).toMatchObject({ state: "failed", errorCode: "IMPORT_JOB_FAILED" });
       expect(JSON.stringify(failed)).not.toContain("boom");
       queue.getJob.mockResolvedValue(
-        job({ getState: async () => "failed", failedReason: "WORKSPACE_READ_ONLY" }),
+        job({ getState: async () => "failed", failedReason: "READ_ONLY" }),
       );
-      expect(await svc.status("7")).toMatchObject({ errorCode: "WORKSPACE_READ_ONLY" });
+      expect(await svc.status("7")).toMatchObject({ errorCode: "READ_ONLY" });
       queue.getJob.mockResolvedValue(job({ getState: async () => "waiting" }));
       expect((await svc.status("7")).state).toBe("queued");
     });
@@ -173,7 +173,7 @@ describe("product import background job", () => {
       "a %s workspace gets no writes: the job fails before importProducts runs",
       async (status) => {
         const { proc, importService } = build(status);
-        await expect(proc.handle(jobWith() as never)).rejects.toThrow(/^WORKSPACE_READ_ONLY$/);
+        await expect(proc.handle(jobWith() as never)).rejects.toThrow(/^READ_ONLY$/);
         expect(importService.importProducts).not.toHaveBeenCalled();
       },
     );
