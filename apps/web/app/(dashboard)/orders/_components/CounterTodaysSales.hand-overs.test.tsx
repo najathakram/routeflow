@@ -156,7 +156,6 @@ it("lists each hand-over under the Summary with order link, customer, tender, ti
 it("the Summary carries a Pickup hand-overs line with the count, the money and the already-included note", async () => {
   serve(page({ count: 2, total: 45 }, TWO));
   const dialog = await openSheet();
-  fireEvent.click(await within(dialog).findByRole("button", { name: "Show all figures" }));
   const line = await within(dialog).findByTestId("today-hand-overs");
   expect(line).toHaveTextContent("Pickup hand-overs");
   expect(line).toHaveTextContent("2 · $45.00");
@@ -167,26 +166,26 @@ it("the Summary carries a Pickup hand-overs line with the count, the money and t
   expect(summaryEl).toContainElement(line);
 });
 
-it("no hand-overs: the section is hidden and the Summary has no hand-overs row (a $0 row is dropped, R7b 2.4)", async () => {
+it("no hand-overs: the section is hidden and the Summary row is a $0 row, behind Show all figures", async () => {
   serve(page({ count: 0, total: 0 }, []));
   const dialog = await openSheet();
-  fireEvent.click(await within(dialog).findByRole("button", { name: "Show all figures" }));
+  await within(dialog).findByTestId("today-summary");
   expect(within(dialog).queryByTestId("today-hand-overs")).toBeNull();
+  fireEvent.click(await within(dialog).findByRole("button", { name: "Show all figures" }));
+  expect(within(dialog).getByTestId("today-hand-overs")).toHaveTextContent("0 · $0.00");
   expect(within(dialog).queryByRole("heading", { name: /Pickup hand-overs/ })).toBeNull();
   expect(within(dialog).queryByRole("list", { name: "Pickup hand-overs" })).toBeNull();
 });
 
-it("hand-overs with a $0.00 total still show the row (count > 0)", async () => {
+it("hand-overs with a $0.00 total still show the row by default (count > 0)", async () => {
   serve(page({ count: 2, total: 0 }, TWO));
   const dialog = await openSheet();
-  fireEvent.click(await within(dialog).findByRole("button", { name: "Show all figures" }));
   expect(await within(dialog).findByTestId("today-hand-overs")).toHaveTextContent("2 · $0.00");
 });
 
 it("an older API (no handOverRows): no section, the Summary line still shows the count and total", async () => {
   serve(page({ count: 2, total: 45 }));
   const dialog = await openSheet();
-  fireEvent.click(await within(dialog).findByRole("button", { name: "Show all figures" }));
   const line = await within(dialog).findByTestId("today-hand-overs");
   expect(line).toHaveTextContent("2 · $45.00");
   expect(within(dialog).queryByRole("heading", { name: /Pickup hand-overs/ })).toBeNull();

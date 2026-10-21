@@ -115,8 +115,8 @@ interface SummaryRow {
 
 /**
  * Server numbers only: nothing here adds, subtracts or derives a figure. With `collapsible` (the Today view) it leads with
- * the header and three rows (Money in, On account, Cash expected) and keeps every OTHER non-zero row behind a "Show all
- * figures" disclosure (a $0 row is never rendered); the week view lists every row, unchanged.
+ * the header, the three anchor rows (Money in, On account, Cash expected: even at $0.00) and every other row that is non-zero
+ * to the cent; a "Show all figures" disclosure reveals only the $0.00 rows. The week view lists every row, unchanged.
  */
 function Summary({
   s,
@@ -137,7 +137,7 @@ function Summary({
   cashExpectedSuffix?: string;
   /** the "already counted" note under the hand-overs line (the per-day week blocks leave it to the total) */
   handOverNote?: boolean;
-  /** the Today view: default rows + a remembered "Show all figures" disclosure, $0 extras dropped */
+  /** the Today view: every non-zero row + the anchors; a remembered "Show all figures" reveals the $0.00 rows */
   collapsible?: boolean;
 }) {
   const [showAll, setShowAll] = React.useState(false);
@@ -206,13 +206,11 @@ function Summary({
       { always: true },
     ),
   ];
-  // The week view lists every row as before. The Today view drops a row that is $0 to the cent, unless it is a default row.
-  const extras = collapsible
-    ? rows.filter((x) => !x.always && (x.keep || roundMoney(x.amount) !== 0))
-    : [];
-  const shown = collapsible
-    ? rows.filter((x) => x.always || (showAll && extras.includes(x)))
-    : rows;
+  // The week view lists every row as before. The Today view always shows the anchor rows and every row that is non-zero to
+  // the cent (a refund or a card takings never hides); "Show all figures" reveals only the $0.00 rows.
+  const isZero = (x: SummaryRow) => !x.always && !x.keep && roundMoney(x.amount) === 0;
+  const zeros = collapsible ? rows.filter(isZero) : [];
+  const shown = collapsible ? rows.filter((x) => !isZero(x) || showAll) : rows;
   return (
     <section
       aria-label={label}
@@ -228,7 +226,7 @@ function Summary({
           <Stat key={x.key} label={x.label} value={x.value} testId={x.testId} note={x.note} />
         ))}
       </dl>
-      {collapsible && extras.length > 0 ? (
+      {collapsible && zeros.length > 0 ? (
         <button
           type="button"
           className="mt-2 min-h-11 text-sm font-medium text-navy underline"

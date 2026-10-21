@@ -119,8 +119,7 @@ it("every control of the Today's sales sheet that existed before day close is st
   expect(within(dialog).getByRole("button", { name: "Close" })).toBeInTheDocument();
   // the summary and every figure on it
   const summary = await within(dialog).findByTestId("today-summary");
-  // the disclosure keeps every figure one tap away
-  fireEvent.click(within(summary).getByRole("button", { name: "Show all figures" }));
+  // every figure here is non-zero, so every figure shows by default (no disclosure)
   for (const id of [
     "today-in-cash",
     "today-in-card",
