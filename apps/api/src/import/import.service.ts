@@ -26,6 +26,7 @@ import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
 import {
   ProductFamilyImportService,
+  type FamilyDecision,
   type FamilyPlan,
   type FamilyRowInput,
 } from "./product-family-import.service";
@@ -2556,7 +2557,6 @@ export class ImportService {
     const hasFamilyColumn = !!resolved.byField.family;
     if (hasFamilyColumn) {
       if (!this.familyImport) throw new Error("ProductFamilyImportService is not available");
-      await this.familyImport.assertAllowed(rawRows.length);
     }
 
     let created = 0,
@@ -2585,10 +2585,10 @@ export class ImportService {
     const familyRowNumbers = new Set<number>();
     let famPlan: FamilyPlan | null = null;
     if (hasFamilyColumn) {
+      const familyImport = this.familyImport!;
       const inputs: FamilyRowInput[] = [];
       parsedRows.forEach((p, i) => {
         if (p.badCells.length > 0 || !famCells[i].family) return;
-        familyRowNumbers.add(i + 1);
         inputs.push({
           index: i,
           rowNumber: i + 1,
@@ -2601,14 +2601,34 @@ export class ImportService {
           values: p.values,
         });
       });
-      famPlan = await this.familyImport!.planRows(inputs);
+      // An old export round trip: a Family cell equal to the product's CURRENT family is a no-op. The row loses the cell
+      // and updates exactly as it always did (no key needed, never a skip).
+      const noops = await familyImport.currentFamilyNoops(inputs);
+      for (const i of noops) famCells[i].family = undefined;
+      const real = inputs.filter((r) => !noops.has(r.index));
+      for (const r of real) familyRowNumbers.add(r.rowNumber);
+      if (real.length > 0) {
+        // The cap and the pricing 409 apply only to a file that really regroups or creates (SA-823 section 4/5).
+        familyImport.assertRowCap(rawRows.length);
+        famPlan = await familyImport.planRows(real);
+        const changesFamily = (d: FamilyDecision) =>
+          d.skip === undefined &&
+          (!d.existing ||
+            d.target.id === null ||
+            d.existing.parentProductId !== d.target.id ||
+            d.existing.name !== d.label);
+        if ([...famPlan.decisions.values()].some(changesFamily)) {
+          await familyImport.assertPricingOff();
+        }
+      }
     }
     const nameCounts = new Map<string, number>();
     for (const [idx, p] of parsedRows.entries()) {
       if (p.badCells.length > 0) continue;
       const sku = (p.values.sku as string | undefined)?.trim();
       const barcode = (p.values.barcode as string | undefined)?.trim();
-      if (sku || barcode || famCells[idx].id) continue;
+      // a Family row's label is scoped to its family, so a keyless one is never name-ambiguous
+      if (sku || barcode || famCells[idx].id || famCells[idx].family) continue;
       const name = (p.values.name as string | undefined)?.trim();
       if (!name) continue;
       const key = normalizeNameKey(name);
@@ -2626,6 +2646,8 @@ export class ImportService {
     const claimedKeys = new Map<string, number>();
     const claimedNames = new Map<string, { row: number; sku: string | null }>();
     const claimedProductIds = new Map<string, number>();
+    // new families this file creates, by lower-cased name: the name is claimed once, for the family's own rows
+    const claimedFamilies = new Set<string>();
     let anyWrite = false;
 
     for (let i = 0; i < rawRows.length; i++) {
@@ -2678,7 +2700,7 @@ export class ImportService {
         continue;
       }
 
-      if (!sku && !barcode && !famCell.id && name) {
+      if (!sku && !barcode && !famCell.id && !famCell.family && name) {
         const norm = normalizeNameKey(name);
         const count = nameCounts.get(norm) ?? 0;
         if (count >= 2) {
@@ -2699,6 +2721,17 @@ export class ImportService {
         if (fam.skip !== undefined) {
           skipRow(fam.skip);
           continue;
+        }
+        if (fam.target.state === "new") {
+          // a new family takes a root name: a product (or another family) of that name earlier in the file already holds it
+          const familyKey = normalizeNameKey(fam.target.name);
+          const holder = claimedNames.get(familyKey);
+          if (holder && !claimedFamilies.has(familyKey)) {
+            skipRow(`duplicate of row ${holder.row}`);
+            continue;
+          }
+          if (!holder) claimedNames.set(familyKey, { row: rowNumber, sku: null });
+          claimedFamilies.add(familyKey);
         }
         existing = fam.existing;
         keyMatched = true;
@@ -3036,14 +3069,21 @@ export class ImportService {
     // SA-823: an empty family this run created is deactivated in the same run and reported.
     let families: ImportFamilySummary | undefined;
     if (famPlan && this.familyImport) {
-      const deactivated = dryRun ? [] : await this.familyImport.deactivateEmpty(famPlan);
-      for (const d of deactivated) {
+      const cleanup = dryRun
+        ? { deactivated: [], cleanupFailed: [] }
+        : await this.familyImport.deactivateEmpty(famPlan);
+      for (const d of cleanup.deactivated) {
         warnings.push(
           `Family "${d.name}" was created and then deactivated: none of its rows could be saved.`,
         );
       }
+      for (const d of cleanup.cleanupFailed) {
+        warnings.push(
+          `Family "${d.name}" was created but could not be removed after none of its rows could be saved. Remove it in the product editor.`,
+        );
+      }
       if (famPlan.created.size > 0) anyWrite = true;
-      families = this.familyImport.summarize(rowPlans, familyRowNumbers, deactivated);
+      families = this.familyImport.summarize(rowPlans, familyRowNumbers, cleanup);
     }
     // SA-823 section 4: ONE import.products.applied summary row per apply (every product import, Family columns or not).
     if (!dryRun && this.familyImport) {

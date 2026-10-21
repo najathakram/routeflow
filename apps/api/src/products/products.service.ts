@@ -1849,7 +1849,7 @@ export class ProductsService {
         name: variantName,
       } as UpdateProductDto,
       {
-        packPrecondition: "internal", // a family assignment writes no pack field
+        packPrecondition: "internal", // the move itself writes no pack field; extraChanges (the import) may carry unitsPerBox, a trusted internal write
         reparentVia: opts.via,
         suppressEmit: opts.suppressEmit,
         actorId: opts.actorId ?? null,

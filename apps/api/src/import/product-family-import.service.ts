@@ -6,6 +6,7 @@ import {
   Logger,
   Optional,
 } from "@nestjs/common";
+import type { Prisma, Product } from "@prisma/client";
 import type {
   ImportFamilyMatchKey,
   ImportFamilyRowInfo,
@@ -15,13 +16,14 @@ import { roundMoney } from "@routeflow/pricing";
 import { AuditService } from "../audit/audit.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { isTobaccoCategoryName, TOBACCO_CATEGORY_NAME } from "../common/tobacco-category";
 import { productCategoryViolation, productNameViolation } from "../common/text-cell-guards";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { PrismaService } from "../prisma/prisma.service";
 import { readFamilyPriceMode } from "../products/family-price";
 import { productDisplayName } from "../products/product-display-name";
 import { ProductFamiliesService } from "../products/product-families.service";
-import { assertValidParent, HAS_VARIANTS_MESSAGE } from "../products/product-parent";
+import { assertValidParent, HAS_VARIANTS_MESSAGE, type ParentDb } from "../products/product-parent";
 import { bareVariantLabel } from "../products/product-variant-name";
 import type { CatalogTx } from "../products/product-catalog-sync";
 import { ProductsService } from "../products/products.service";
@@ -41,6 +43,8 @@ export interface FamilyTarget {
   name: string;
   id: string | null;
   state: "existing" | "new";
+  /** An INACTIVE, empty family an earlier import made: a re-run reactivates it on the first row that needs it. */
+  reactivate?: boolean;
 }
 
 /** One file row that carries a Family cell, as the planner needs it. */
@@ -61,7 +65,7 @@ export type FamilyDecision =
   | { skip: string }
   | {
       skip?: undefined;
-      existing: any;
+      existing: Product | null;
       target: FamilyTarget;
       label: string;
       info: ImportFamilyRowInfo;
@@ -80,10 +84,13 @@ export interface FamilyPlan {
   created: Map<string, { id: string; name: string; assigned: number }>;
 }
 
+type RegClass = { isTobacco: boolean; tracked: string | null };
+type FamilyResolution = { skip: string } | { target: FamilyTarget };
+
 /**
  * SA-823 (row 655 PR-2): the Family / Variant name / Product ID columns of the product import. This service only
  * READS (every lookup is forTenant()) and creates / retires the empty family container; every product write goes
- * through ProductsService (assignToParent / create / remove) and the one family creator
+ * through ProductsService (assignToParent / create / update / remove) and the one family creator
  * (ProductFamiliesService.createFamilyContainer), so no new writer of a parent link, a FAMILY row or a ProductUnit
  * exists here (family-writers-tripwire.spec.ts pins it).
  */
@@ -105,11 +112,8 @@ export class ProductFamilyImportService {
     return t;
   }
 
-  /**
-   * File-level gates, identical in preview and apply, before any lookup: the row cap (400) and family pricing (409).
-   * With `mixed_packs` ON an adoption would overwrite the product's five price columns, so the whole file is refused.
-   */
-  async assertAllowed(rowCount: number): Promise<void> {
+  /** The 400 for a file with a regrouping Family column over the row cap (identical in preview and apply). */
+  assertRowCap(rowCount: number): void {
     if (rowCount > IMPORT_FAMILY_MAX_ROWS) {
       throw new BadRequestException({
         code: API_ERROR_CODES.IMPORT_FAMILY_TOO_MANY_ROWS,
@@ -118,6 +122,13 @@ export class ProductFamilyImportService {
         rows: rowCount,
       });
     }
+  }
+
+  /**
+   * The 409 for a regrouping file while family pricing (`mixed_packs`) is ON: an adoption would overwrite the product's
+   * five price columns, so the whole file is refused before any write.
+   */
+  async assertPricingOff(): Promise<void> {
     const mode = await readFamilyPriceMode(this.featureConfig, this.tenant());
     if (mode === "on") {
       throw new ConflictException({
@@ -125,6 +136,57 @@ export class ProductFamilyImportService {
         message: PRICING_ON_MESSAGE,
       });
     }
+  }
+
+  /**
+   * An old products export carries Family = the product's CURRENT parent. Such a cell is a no-op, not a regroup: it
+   * needs no key and never skips, and the row updates as it always did. Returns the row indexes whose Family cell
+   * equals the current family (id, SKU, barcode, then a name that is unique).
+   */
+  async currentFamilyNoops(
+    rows: Array<{
+      index: number;
+      family: string;
+      variantCell?: string;
+      nameCell?: string;
+      id?: string;
+      sku?: string;
+      barcode?: string;
+    }>,
+  ): Promise<Set<number>> {
+    const db = this.prisma.forTenant().product;
+    const select = { parentProductId: true } as const;
+    const parentNames = new Map<string, string | null>();
+    const out = new Set<number>();
+    for (const r of rows) {
+      // A Variant Name cell states a label (a regroup file, not an export round trip): that row stays a Family row.
+      if (r.variantCell) continue;
+      let hit: { parentProductId: string | null } | null = null;
+      if (r.id) hit = await db.findFirst({ where: { id: r.id }, select });
+      else {
+        if (r.sku) hit = await db.findFirst({ where: { sku: r.sku }, select });
+        if (!hit && r.barcode) hit = await db.findFirst({ where: { barcode: r.barcode }, select });
+        if (!hit && r.nameCell) {
+          const byName = await db.findMany({
+            where: { name: { equals: r.nameCell, mode: "insensitive" } },
+            select,
+            take: 2,
+          });
+          if (byName.length === 1) hit = byName[0];
+        }
+      }
+      const parentId = hit?.parentProductId;
+      if (!parentId) continue;
+      if (!parentNames.has(parentId)) {
+        const p = await db.findFirst({ where: { id: parentId }, select: { name: true } });
+        parentNames.set(parentId, p?.name ?? null);
+      }
+      const parentName = parentNames.get(parentId);
+      if (parentName && parentName.trim().toLowerCase() === r.family.trim().toLowerCase()) {
+        out.add(r.index);
+      }
+    }
+    return out;
   }
 
   /**
@@ -136,7 +198,7 @@ export class ProductFamilyImportService {
     const tenantId = this.tenant();
     const db = this.prisma.forTenant().product;
     const plan: FamilyPlan = { decisions: new Map(), newFamilies: new Map(), created: new Map() };
-    const familyCache = new Map<string, Promise<{ skip: string } | { target: FamilyTarget }>>();
+    const familyCache = new Map<string, Promise<FamilyResolution>>();
     const parentNames = new Map<string, string>();
 
     const resolveFamily = (name: string) => {
@@ -151,9 +213,7 @@ export class ProductFamilyImportService {
     const parentName = async (id: string): Promise<string> => {
       let n = parentNames.get(id);
       if (n === undefined) {
-        const p = (await db.findFirst({ where: { id }, select: { name: true } })) as {
-          name: string;
-        } | null;
+        const p = await db.findFirst({ where: { id }, select: { name: true } });
         n = p?.name ?? "another family";
         parentNames.set(id, n);
       }
@@ -183,16 +243,16 @@ export class ProductFamilyImportService {
       }
     }
 
-    // A3: one regulated class per family (SEAM: relax with a compliance ruling)
-    const classRef = new Map<string, { isTobacco: boolean; tracked: string | null } | null>();
+    // A3: one regulated class per family (SEAM: relax with a compliance ruling). A row's class is what the writer will
+    // leave it with: an existing product keeps its own; a NEW variant is created by create(), which takes the parent's.
+    const classRef = new Map<string, RegClass | null>();
+    const cache = this.classCache();
     for (const r of rows) {
       const d = plan.decisions.get(r.index)!;
       if (d.skip !== undefined) continue;
-      const cell = r.values.isTobacco;
-      const cls = {
-        isTobacco: typeof cell === "boolean" ? cell : (d.existing?.isTobacco ?? false),
-        tracked: (d.existing?.trackedCategoryId as string | null | undefined) ?? null,
-      };
+      const cls = d.existing
+        ? await this.existingClass(r, d.existing, cache)
+        : await this.newVariantClass(r, d.target, cache);
       let ref = classRef.get(d.target.key);
       if (ref === undefined) {
         ref = d.target.id ? await this.siblingClass(d.target.id) : undefined;
@@ -205,19 +265,30 @@ export class ProductFamilyImportService {
       if (ref === undefined) classRef.set(d.target.key, cls);
     }
 
-    // A4: what a NEW family is created with (the category of its first row; the lowest row price, display only)
+    // A4: what a NEW family is created with, from the rows the apply will ACCEPT: the category of the first such row, the
+    // lowest price among them (display only). A row the writer is certain to refuse does not count: a new product with no
+    // Rate, or a SKU / barcode an earlier row of the file already claimed.
+    const claimed = new Set<string>();
     for (const r of rows) {
       const d = plan.decisions.get(r.index)!;
+      const keys = [
+        ...(r.sku ? [`sku:${r.sku.toLowerCase()}`] : []),
+        ...(r.barcode ? [`barcode:${r.barcode.toLowerCase()}`] : []),
+      ];
+      const repeats = keys.some((k) => claimed.has(k));
+      for (const k of keys) claimed.add(k);
       if (d.skip !== undefined || d.target.state !== "new") continue;
+      const cell = r.values.pricePerUnit;
+      if (repeats || (!d.existing && typeof cell !== "number")) continue;
       const nf = plan.newFamilies.get(d.target.key) ?? {
         name: d.target.name,
         category: null,
         price: null,
       };
       const cat = (r.values.category as string | undefined) ?? d.existing?.category ?? null;
-      if (nf.category === null && typeof cat === "string" && cat.trim() !== "")
+      if (nf.category === null && typeof cat === "string" && cat.trim() !== "") {
         nf.category = cat.trim();
-      const cell = r.values.pricePerUnit;
+      }
       const price =
         typeof cell === "number" ? cell : d.existing ? Number(d.existing.pricePerUnit) : null;
       if (price !== null && Number.isFinite(price) && (nf.price === null || price < nf.price)) {
@@ -225,17 +296,108 @@ export class ProductFamilyImportService {
       }
       plan.newFamilies.set(d.target.key, nf);
     }
+    // a new family whose rows were all refused above still needs its entry (its name): the first accepted decision
+    for (const r of rows) {
+      const d = plan.decisions.get(r.index)!;
+      if (d.skip !== undefined || d.target.state !== "new" || plan.newFamilies.has(d.target.key)) {
+        continue;
+      }
+      plan.newFamilies.set(d.target.key, { name: d.target.name, category: null, price: null });
+    }
     return plan;
+  }
+
+  /** Per-plan lookups of the regulated pair, so a 2,500-row file asks each question once. */
+  private classCache() {
+    const parents = new Map<
+      string,
+      Promise<Pick<Product, "isTobacco" | "trackedCategoryId"> | null>
+    >();
+    const names = new Map<string, Promise<string | null>>();
+    let tobacco: Promise<string | null> | undefined;
+    const db = this.prisma.forTenant();
+    return {
+      parent: (id: string) => {
+        let hit = parents.get(id);
+        if (!hit) {
+          hit = db.product.findFirst({
+            where: { id },
+            select: { isTobacco: true, trackedCategoryId: true },
+          });
+          parents.set(id, hit);
+        }
+        return hit;
+      },
+      categoryName: (id: string) => {
+        let hit = names.get(id);
+        if (!hit) {
+          hit = db.trackedCategory
+            .findFirst({ where: { id }, select: { name: true } })
+            .then((c) => c?.name ?? null);
+          names.set(id, hit);
+        }
+        return hit;
+      },
+      /** The tenant's Tobacco type, or null when create() would have to seed it. */
+      tobaccoId: () => {
+        tobacco ??= db.trackedCategory
+          .findFirst({
+            where: { name: { equals: TOBACCO_CATEGORY_NAME, mode: "insensitive" } },
+            select: { id: true },
+          })
+          .then((c) => c?.id ?? null);
+        return tobacco;
+      },
+    };
+  }
+
+  /** An existing product keeps its own pair; a Tobacco=Yes cell files it in the Tobacco type (update() does the same). */
+  private async existingClass(
+    r: FamilyRowInput,
+    existing: Product,
+    cache: ReturnType<ProductFamilyImportService["classCache"]>,
+  ): Promise<RegClass> {
+    const cell = r.values.isTobacco;
+    if (cell === true && !existing.trackedCategoryId) {
+      return { isTobacco: true, tracked: (await cache.tobaccoId()) ?? "new:tobacco" };
+    }
+    return {
+      isTobacco: typeof cell === "boolean" ? cell : !!existing.isTobacco,
+      tracked: existing.trackedCategoryId ?? null,
+    };
+  }
+
+  /**
+   * The pair ProductsService.create() will give a NEW variant under `target` (products.service.ts, "Compliance-pack
+   * sync"): a parent with a Tobacco-type / tracked category passes it on (isTobacco follows that category); else a
+   * Tobacco=Yes cell files the row in the Tobacco type; else the cell, else the parent's flag, with no type.
+   */
+  private async newVariantClass(
+    r: FamilyRowInput,
+    target: FamilyTarget,
+    cache: ReturnType<ProductFamilyImportService["classCache"]>,
+  ): Promise<RegClass> {
+    const cell = r.values.isTobacco;
+    const parent = target.id ? await cache.parent(target.id) : null;
+    if (parent?.trackedCategoryId) {
+      return {
+        isTobacco: isTobaccoCategoryName(await cache.categoryName(parent.trackedCategoryId)),
+        tracked: parent.trackedCategoryId,
+      };
+    }
+    if (cell === true)
+      return { isTobacco: true, tracked: (await cache.tobaccoId()) ?? "new:tobacco" };
+    return { isTobacco: typeof cell === "boolean" ? cell : !!parent?.isTobacco, tracked: null };
   }
 
   private async decide(
     r: FamilyRowInput,
     tenantId: string,
-    resolveFamily: (name: string) => Promise<{ skip: string } | { target: FamilyTarget }>,
+    resolveFamily: (name: string) => Promise<FamilyResolution>,
     parentName: (id: string) => Promise<string>,
   ): Promise<FamilyDecision> {
     const db = this.prisma.forTenant().product;
-    let existing: any = null;
+    let existing: Product | null = null;
     let matchedBy: ImportFamilyMatchKey | null = null;
     // The stable keys only: id, then SKU, then barcode. A name never regroups (bare labels collide globally).
     if (r.id) {
@@ -280,19 +442,22 @@ export class ProductFamilyImportService {
     const fam = await resolveFamily(r.family);
     if ("skip" in fam) return { skip: fam.skip };
     const target = fam.target;
-    if (!target.id && existing) {
-      // a NEW family has no row to ask assertValidParent about, but the rule on the product itself still applies
+    if ((!target.id || target.reactivate) && existing) {
+      // a NEW (or not yet reactivated) family has no usable row to ask assertValidParent about, but the rule on the
+      // product itself still applies
       const kids = await db.count({ where: { parentProductId: existing.id } });
       if (kids > 0) return { skip: HAS_VARIANTS_MESSAGE };
     }
-    if (target.id && existing) {
+    if (target.id && !target.reactivate && existing) {
       // The writer's own parent rules, asked read-only so the preview agrees with the apply.
+      const parentDb: ParentDb = {
+        product: {
+          findFirst: (args) => db.findFirst(args as Prisma.ProductFindFirstArgs),
+          count: (args) => db.count(args as Prisma.ProductCountArgs),
+        },
+      };
       try {
-        await assertValidParent(this.prisma.forTenant() as never, {
-          tenantId,
-          id: existing.id,
-          parentId: target.id,
-        });
+        await assertValidParent(parentDb, { tenantId, id: existing.id, parentId: target.id });
       } catch (e) {
         return {
           skip: e instanceof HttpException ? e.message : "This product can't join that family.",
@@ -318,13 +483,13 @@ export class ProductFamilyImportService {
       (target.state === "new" ? productNameViolation({ name: target.name }) : null) ??
       productCategoryViolation(
         r.values.category as string | undefined,
-        existing ? ((existing.category as string | null) ?? null) : undefined,
+        existing ? (existing.category ?? null) : undefined,
       );
     if (violation) return { skip: violation };
 
     let movesFrom: string | null = null;
     if (existing?.parentProductId && existing.parentProductId !== target.id) {
-      movesFrom = await parentName(existing.parentProductId as string);
+      movesFrom = await parentName(existing.parentProductId);
     }
     const stock = existing && existing.currentStock != null ? Number(existing.currentStock) : null;
     return {
@@ -347,14 +512,28 @@ export class ProductFamilyImportService {
   }
 
   /** SA-823 section 2 (a)-(d): the family a name resolves to among the tenant's root products. */
-  private async resolveFamily(name: string): Promise<{ skip: string } | { target: FamilyTarget }> {
+  private async resolveFamily(name: string): Promise<FamilyResolution> {
     const db = this.prisma.forTenant().product;
-    const roots = (await db.findMany({
+    const roots = await db.findMany({
       where: { name: { equals: name, mode: "insensitive" }, parentProductId: null },
-    })) as Array<{ id: string; name: string; kind: string; isActive: boolean }>;
+    });
     const active = roots.filter((p) => p.isActive);
     if (active.length === 0) {
       if (roots.length > 0) {
+        // A re-run after an all-failed run: the empty family THAT import made is reused, not a dead end.
+        for (const old of roots) {
+          if (await this.isReusableImportFamily(old)) {
+            return {
+              target: {
+                key: `id:${old.id}`,
+                name: old.name,
+                id: old.id,
+                state: "existing",
+                reactivate: true,
+              },
+            };
+          }
+        }
         return { skip: `${roots[0].name} is inactive. Reactivate it, or use another family name.` };
       }
       return { target: { key: `new:${name.toLowerCase()}`, name, id: null, state: "new" } };
@@ -374,14 +553,29 @@ export class ProductFamilyImportService {
     };
   }
 
+  /** An INACTIVE FAMILY root with no members, no order history, that an import run created (its audit row says so). */
+  private async isReusableImportFamily(old: Product): Promise<boolean> {
+    if (old.kind !== "FAMILY") return false;
+    const scoped = this.prisma.forTenant();
+    if ((await scoped.product.count({ where: { parentProductId: old.id } })) > 0) return false;
+    if ((await scoped.orderItem.count({ where: { productId: old.id } })) > 0) return false;
+    const made = await this.prisma.auditLog.findFirst({
+      where: {
+        tenantId: this.tenant(),
+        action: AUDIT_ACTIONS.IMPORT_FAMILY_CREATED,
+        entityId: old.id,
+      },
+      select: { id: true },
+    });
+    return made !== null;
+  }
+
   /** The regulated class the family's active items share; `undefined` = no items yet; `null` = a legacy mix (no constraint). */
-  private async siblingClass(
-    familyId: string,
-  ): Promise<{ isTobacco: boolean; tracked: string | null } | null | undefined> {
-    const sibs = (await this.prisma.forTenant().product.findMany({
+  private async siblingClass(familyId: string): Promise<RegClass | null | undefined> {
+    const sibs = await this.prisma.forTenant().product.findMany({
       where: { parentProductId: familyId, isActive: true },
       select: { isTobacco: true, trackedCategoryId: true },
-    })) as Array<{ isTobacco: boolean; trackedCategoryId: string | null }>;
+    });
     if (sibs.length === 0) return undefined;
     const first = { isTobacco: !!sibs[0].isTobacco, tracked: sibs[0].trackedCategoryId ?? null };
     const uniform = sibs.every(
@@ -392,12 +586,19 @@ export class ProductFamilyImportService {
 
   /**
    * APPLY only: the id of the family a row goes under, creating the container on the first row that needs it (name
-   * lock + root-name check, then the one FAMILY creator, in one transaction).
+   * lock + root-name check, then the one FAMILY creator, in one transaction), or reactivating the empty family an
+   * earlier import made.
    */
   async ensureFamily(plan: FamilyPlan, target: FamilyTarget, actorId: string): Promise<string> {
-    if (target.id) return target.id;
     const done = plan.created.get(target.key);
     if (done) return done.id;
+    if (target.id) {
+      if (target.reactivate) {
+        await this.families.reactivateFamilyContainer(target.id, actorId);
+        plan.created.set(target.key, { id: target.id, name: target.name, assigned: 0 });
+      }
+      return target.id;
+    }
     const nf = plan.newFamilies.get(target.key);
     if (!nf) throw new BadRequestException("This family isn't part of the plan.");
     const tenantId = this.tenant();
@@ -414,6 +615,15 @@ export class ProductFamilyImportService {
       });
     });
     plan.created.set(target.key, { id: family.id, name: nf.name, assigned: 0 });
+    // The mark a re-run reads to know this empty family was an import's (isReusableImportFamily).
+    await this.audit.log({
+      tenantId,
+      userId: actorId,
+      action: AUDIT_ACTIONS.IMPORT_FAMILY_CREATED,
+      entityType: "Product",
+      entityId: family.id,
+      meta: { name: nf.name },
+    });
     return family.id;
   }
 
@@ -423,20 +633,26 @@ export class ProductFamilyImportService {
     if (made) made.assigned++;
   }
 
-  /** An empty family this run created is deactivated in the same run (SA-823 section 5). */
-  async deactivateEmpty(plan: FamilyPlan): Promise<{ name: string }[]> {
-    const out: { name: string }[] = [];
+  /**
+   * An empty family this run created (or reactivated) is deactivated in the same run (SA-823 section 5). A cleanup that
+   * fails is reported as not removed, never as deactivated.
+   */
+  async deactivateEmpty(
+    plan: FamilyPlan,
+  ): Promise<{ deactivated: { name: string }[]; cleanupFailed: { name: string }[] }> {
+    const deactivated: { name: string }[] = [];
+    const cleanupFailed: { name: string }[] = [];
     for (const made of plan.created.values()) {
       if (made.assigned > 0) continue;
       try {
         await this.productsService.remove(made.id);
-        out.push({ name: made.name });
+        deactivated.push({ name: made.name });
       } catch (e) {
         this.logger.warn(`could not deactivate empty family ${made.id}: ${(e as Error).message}`);
-        out.push({ name: made.name });
+        cleanupFailed.push({ name: made.name });
       }
     }
-    return out;
+    return { deactivated, cleanupFailed };
   }
 
   /** The header block of the preview / result, derived from the final row plans (so a later skip is counted as one). */
@@ -449,7 +665,7 @@ export class ProductFamilyImportService {
       family?: ImportFamilyRowInfo;
     }>,
     familyRows: Set<number>,
-    deactivated: { name: string }[],
+    cleanup: { deactivated: { name: string }[]; cleanupFailed: { name: string }[] },
   ): ImportFamilySummary {
     const toCreate = new Map<string, { name: string; rows: number }>();
     const skips = new Map<string, number>();
@@ -482,7 +698,8 @@ export class ProductFamilyImportService {
       skipsByReason: [...skips.entries()]
         .map(([reason, count]) => ({ reason, count }))
         .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason)),
-      deactivated,
+      deactivated: cleanup.deactivated,
+      cleanupFailed: cleanup.cleanupFailed,
     };
   }
 

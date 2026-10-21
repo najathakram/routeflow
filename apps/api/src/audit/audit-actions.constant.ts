@@ -30,6 +30,8 @@ export const AUDIT_ACTIONS = {
   PRODUCT_FAMILY_ASSIGNED: "product.family_assigned",
   /** SA-823 (row 655 PR-2): one summary row per apply of a product import that carried Family columns; meta {fileName, created, updated, unchanged, skipped, familiesCreated, grouped, moves, familiesDeactivated, actor}. */
   IMPORT_PRODUCTS_APPLIED: "import.products.applied",
+  /** SA-823 (row 655 PR-2): the product import created an empty family container; the mark a re-run reads to reuse it if every row failed; entityId = the family, meta {name}. */
+  IMPORT_FAMILY_CREATED: "import.family.created",
 } as const;
 
 export type AuditActionName = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

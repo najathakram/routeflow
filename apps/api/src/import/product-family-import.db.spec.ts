@@ -190,7 +190,7 @@ describeDb("SA-823 PR-2: family import columns (real Postgres)", () => {
     // R7: a move to another family carries from / to in the audit row
     const moveFile = `Item Name,SKU,Family,Variant Name\n,${RUN}-A1,${RUN} Cola Max,12oz\n`;
     const moved = await run(moveFile);
-    expect(moved.families?.moves).toBe(0); // the target is new, the product leaves the old family
+    expect(moved.families?.moves).toBe(1); // lead ruling: a move = the product leaves a previous family, new target or not
     const move = await prisma.auditLog.findFirst({
       where: { tenantId, action: "product.family_assigned", entityId: p1.id },
       orderBy: { createdAt: "desc" },

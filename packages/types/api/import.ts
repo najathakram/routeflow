@@ -162,4 +162,6 @@ export interface ImportFamilySummary {
   skipsByReason: { reason: string; count: number }[];
   /** Families this run created and then deactivated because none of their rows could be assigned (apply only). */
   deactivated: { name: string }[];
+  /** Families this run created whose cleanup failed: they were NOT removed and need removing in the product editor (apply only). */
+  cleanupFailed: { name: string }[];
 }

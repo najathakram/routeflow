@@ -30,9 +30,9 @@ const HOOKED: Record<string, { writes: number; syncs: number; via: string }> = {
     via: "create (dto.category / parent's), update (dto.category / structured-subcategory mirror), importProducts (item.category)",
   },
   "products/product-families.service.ts": {
-    writes: 5,
+    writes: 6,
     syncs: 1,
-    via: "createFamily: the family row's category (variants copy none)",
+    via: "createFamily: the family row's category (variants copy none); reactivateFamilyContainer writes isActive only (no category text moves, so no sync)",
   },
   "inventory/inventory.service.ts": {
     writes: 12,

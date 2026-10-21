@@ -93,7 +93,9 @@ describe("ImportService — commercial columns (B858/B859)", () => {
         {
           provide: ProductFamilyImportService,
           useValue: {
-            assertAllowed: jest.fn().mockResolvedValue(undefined),
+            currentFamilyNoops: jest.fn().mockResolvedValue(new Set()),
+            assertRowCap: jest.fn(),
+            assertPricingOff: jest.fn().mockResolvedValue(undefined),
             planRows: jest.fn().mockResolvedValue({
               decisions: new Map(),
               newFamilies: new Map(),

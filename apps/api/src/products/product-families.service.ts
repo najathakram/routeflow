@@ -257,6 +257,33 @@ export class ProductFamiliesService {
     return family;
   }
 
+  /**
+   * SA-823 (PR-2): reactivate an EMPTY family container (the import's re-run reuse of the family an earlier, all-failed run
+   * made). House lock order: the name lock first, then the row; refused when it has members or the name is taken again.
+   */
+  async reactivateFamilyContainer(familyId: string, _actorId: string | null): Promise<void> {
+    const tenantId = this.tenant();
+    await this.prisma.tenantTransaction(async (tx: CatalogTx) => {
+      const probe = await tx.product.findFirst({
+        where: { id: familyId, tenantId, parentProductId: null },
+        select: { name: true },
+      });
+      if (!probe) throw new NotFoundException("Family not found");
+      const conflicts = await this.reserveFamilyName(tx, tenantId, probe.name);
+      if (conflicts.length > 0) throw this.rowsConflict(conflicts);
+      await lockProductRow(tx, tenantId, familyId);
+      const row = await tx.product.findFirst({
+        where: { id: familyId, tenantId },
+        select: { kind: true },
+      });
+      const members = await tx.product.count({ where: { parentProductId: familyId, tenantId } });
+      if (!row || row.kind !== "FAMILY" || members > 0) {
+        throw new ConflictException("Only an empty family can be reactivated here.");
+      }
+      await tx.product.update({ where: { id: familyId }, data: { isActive: true } });
+    });
+  }
+
   /** POST /products/families */
   async createFamily(dto: CreateFamilyDto, actorId: string | null) {
     const tenantId = this.tenant();

@@ -98,7 +98,11 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
   let trackedCategories: Array<{ id: string; name: string }>;
   let priorAudits: Array<{ action: string; entityId: string }>;
   let productsService: Record<string, jest.Mock>;
-  let families: { reserveFamilyName: jest.Mock; createFamilyContainer: jest.Mock };
+  let families: {
+    reserveFamilyName: jest.Mock;
+    createFamilyContainer: jest.Mock;
+    reactivateFamilyContainer: jest.Mock;
+  };
   let featureConfig: { getEffectiveMode: jest.Mock };
   let auditService: { log: jest.Mock };
 
@@ -229,6 +233,11 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
     };
     families = {
       reserveFamilyName: jest.fn().mockResolvedValue([]),
+      reactivateFamilyContainer: jest.fn(async (id: string) => {
+        const row = rows.find((r) => r.id === id && r.tenantId === TENANT)!;
+        row.isActive = true;
+        return row;
+      }),
       createFamilyContainer: jest.fn(async (_tx: unknown, input: any) => {
         const row = mk({
           id: `fam-${++seq}`,
@@ -606,6 +615,20 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
     ]);
   });
 
+  it("a move INTO A NEW family counts as a move: the product leaves its previous family (lead ruling)", async () => {
+    rows.push(mk({ id: "f1", name: "Old Family", kind: "FAMILY" }));
+    rows.push(mk({ id: "v1", name: "Zero", sku: "S1", kind: "VARIANT", parentProductId: "f1" }));
+    const preview = await run(csv(",S1,,,Brand New Fam,Zero,,"), true);
+    expect(byRow(preview, 1).family).toMatchObject({ state: "new", movesFrom: "Old Family" });
+    expect(preview.families.moves).toBe(1);
+    expect(preview.families.familiesToCreate).toEqual([{ name: "Brand New Fam", rows: 1 }]);
+    const real = await run(csv(",S1,,,Brand New Fam,Zero,,"));
+    expect(real.families.moves).toBe(1);
+    expect(famAudits()).toEqual([
+      expect.objectContaining({ productId: "v1", fromParentId: "f1", via: "import" }),
+    ]);
+  });
+
   it("a variant already in the family with the right label is unchanged and not re-assigned", async () => {
     rows.push(mk({ id: "f1", name: "Acme Cola", kind: "FAMILY" }));
     rows.push(
@@ -905,11 +928,7 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
       const r = await run(csv(",S1,,,Ghost Family,X,,"));
       expect(r.skipped).toBe(0);
       expect(families.createFamilyContainer).not.toHaveBeenCalled();
-      expect(productsService.update).toHaveBeenCalledWith(
-        "old",
-        expect.objectContaining({ isActive: true }),
-        expect.anything(),
-      );
+      expect(families.reactivateFamilyContainer).toHaveBeenCalledWith("old", "user-1");
       expect(productsService.assignToParent).toHaveBeenCalledWith(
         "p1",
         "old",
@@ -924,7 +943,7 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
       rows.push(mk({ id: "p1", name: "P1", sku: "S1" }));
       const r = await run(csv(",S1,,,Ghost Family,X,,"), true);
       expect(byRow(r, 1).action).toBe("update");
-      expect(productsService.update).not.toHaveBeenCalled();
+      expect(families.reactivateFamilyContainer).not.toHaveBeenCalled();
     });
 
     it("an inactive family that was NOT made by an import, or that has members, still skips", async () => {
@@ -1012,7 +1031,7 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
     });
 
     it("the row cap does not apply to a round-trip file", async () => {
-      for (let i = 0; i < IMPORT_FAMILY_MAX_ROWS; i++) {
+      for (let i = 0; i < IMPORT_FAMILY_MAX_ROWS + 1; i++) {
         rows.push(
           mk({
             id: `rt${i}`,
@@ -1024,7 +1043,7 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
         );
       }
       const lines = Array.from(
-        { length: IMPORT_FAMILY_MAX_ROWS },
+        { length: IMPORT_FAMILY_MAX_ROWS + 1 },
         (_, i) => `Item ${i},RT${i},Acme Cola`,
       );
       const r = await service.importProducts(
@@ -1078,7 +1097,7 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/(^|[^:])\/\/.*$/gm, "$1");
     expect(src).not.toMatch(/\bproductUnit\b/);
-    expect(src.replace(/this\.productsService\.update\(/g, "")).not.toMatch(
+    expect(src).not.toMatch(
       /\.(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/,
     );
     expect(src).not.toMatch(/\$executeRaw|\$queryRaw/);

@@ -237,9 +237,11 @@ describe("SA-823: one family creator, one reparent path, units v2 untouched", ()
     ]);
     const imp = srcOf("import/product-family-import.service.ts");
     expect(imp).not.toMatch(/productUnit/);
+    // ANY write verb on ANY receiver (db., tx., an alias of forTenant()): the import service holds no write at all
     expect(imp).not.toMatch(
-      /\.product\s*\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/,
+      /\.\s*(?:create|createMany|createManyAndReturn|update|updateMany|upsert|delete|deleteMany)\s*\(/,
     );
+    expect(imp).not.toMatch(/\$executeRaw|\$queryRaw|\$transaction/);
     expect(imp).not.toMatch(/kind\s*:\s*"FAMILY"/);
   });
 
