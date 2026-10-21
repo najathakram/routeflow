@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { BACKORDER_TAG_LABEL, type LineComponentView } from "@routeflow/types";
+import type { LineComponentView } from "@routeflow/types";
+import { backorderTagText } from "@/lib/backorder-tag-text";
 import { ComponentSubLines } from "./ComponentSubLines";
 import { Package } from "lucide-react";
 import { Badge, cn, type BadgeStatus } from "@routeflow/ui/web";
@@ -198,7 +199,7 @@ export function LineItemRowReadOnly({
             title={`${backorderPieces} pcs sold past stock`}
             className="mt-1 inline-flex rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200"
           >
-            {BACKORDER_TAG_LABEL}
+            {backorderTagText(backorderPieces)}
           </span>
         )}
         {custom && (

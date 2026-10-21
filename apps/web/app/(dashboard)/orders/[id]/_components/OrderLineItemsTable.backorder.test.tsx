@@ -60,3 +60,24 @@ describe("Backorder tag, card renderer", () => {
     expect(lineRowProps(line({ backorderedPieces: "3" }), "CANCELLED").backorderPieces).toBe(0);
   });
 });
+
+describe("F02 / F30: the reason is visible text, not hover-only", () => {
+  it("table renderer: 'Backorder · 3 pcs past stock'", () => {
+    table(line({ backorderedPieces: "3" }));
+    expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent(
+      "Backorder · 3 pcs past stock",
+    );
+  });
+  it("card renderer says the same", () => {
+    render(<LineItemRowReadOnly {...lineRowProps(line({ backorderedPieces: "3" }), "PENDING")} />);
+    expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent(
+      "Backorder · 3 pcs past stock",
+    );
+  });
+  it("one piece reads singular", () => {
+    table(line({ backorderedPieces: "1" }));
+    expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent(
+      "Backorder · 1 pc past stock",
+    );
+  });
+});
