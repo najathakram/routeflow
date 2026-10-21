@@ -2383,8 +2383,8 @@ export default function ProductDetailPage() {
             }
             bottom={
               <>
-                {!cardRo && (
-                  <ProductUnitsCard product={product} hideAddForm={v2} readOnly={cardRo} />
+                {!cardRo && !(v2 && isFamily) && (
+                  <ProductUnitsCard product={product} hideAddForm={v2} />
                 )}
 
                 {/* Sales demand — real data from invoiced sales. In its own file (unlike

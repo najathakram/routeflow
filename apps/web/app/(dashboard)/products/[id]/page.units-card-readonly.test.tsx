@@ -183,6 +183,14 @@ describe("page wiring: the Units & prices card reads only where the grid owns th
     expect(cardProps).not.toHaveBeenCalled();
   });
 
+  it("K14 M1: v2 on + a FAMILY product never shows the old units card (nor its New unit form)", async () => {
+    kind = "FAMILY";
+    renderWithProviders(<ProductDetailPage />);
+    await screen.findByTestId("product-details-card");
+    expect(screen.queryByTestId("units-card")).toBeNull();
+    expect(cardProps).not.toHaveBeenCalled();
+  });
+
   it("v2 on but the units plan is off: the card keeps its controls", async () => {
     unitsOn = false;
     await renderPage();
