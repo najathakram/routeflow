@@ -69,6 +69,31 @@ export function useEditLeaveGuard(
   const [pending, setPending] = React.useState<(() => void) | null>(null);
   const live = React.useRef({ onDiscard, onNoPreviousPage });
   live.current = { onDiscard, onNoPreviousPage };
+  const wasDirty = React.useRef(false);
+  const popping = React.useRef(false);
+  const viaLink = React.useRef(false);
+
+  /** Row 604 S2: walk off the extra sentinel entry once, so the next Back goes where the person expects. */
+  const popSentinel = React.useCallback((then?: () => void) => {
+    if (popping.current || !window.history.state?.[SENTINEL]) return false;
+    popping.current = true;
+    window.addEventListener(
+      "popstate",
+      () => {
+        popping.current = false;
+        then?.();
+      },
+      { once: true },
+    );
+    window.history.back();
+    return true;
+  }, []);
+
+  React.useEffect(() => {
+    // Declared before the listener effect: React runs all cleanups first, so `onPop` is already detached here.
+    if (wasDirty.current && !dirty && typeof window !== "undefined") popSentinel();
+    wasDirty.current = dirty;
+  }, [dirty, popSentinel]);
 
   React.useEffect(() => {
     if (!dirty || typeof window === "undefined") return;
@@ -80,6 +105,8 @@ export function useEditLeaveGuard(
       );
     }
     const onPop = () => {
+      if (popping.current) return;
+      viaLink.current = false;
       window.history.pushState(
         { ...window.history.state, [SENTINEL]: true },
         "",
@@ -106,6 +133,7 @@ export function useEditLeaveGuard(
   const requestLeave = React.useCallback(
     (proceed: () => void) => {
       if (!dirty) return false;
+      viaLink.current = true;
       setPending(() => proceed);
       return true;
     },
@@ -120,6 +148,7 @@ export function useEditLeaveGuard(
         const go = pending;
         setPending(null);
         live.current.onDiscard();
+        if (go && viaLink.current && popSentinel(go)) return;
         go?.();
       }}
       title="Discard your changes?"
