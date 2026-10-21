@@ -120,6 +120,9 @@ export const OWNER_TYPES: ReadonlySet<string> = new Set([
 
 const BODY_LIMIT = 16 * 1024;
 const LOGIN_LIMIT = 4 * 1024;
+/** Row 684: a refused sign-out (plain text; you are still signed in). */
+export const BLOCKED_SIGN_OUT =
+  "This sign-out was blocked because the request didn't come from this page. You are still signed in; reload the page and try again.";
 /** Row 684: the 403 sign-in page's message (fixed copy, never request data). */
 export const BLOCKED_SIGN_IN =
   "This sign-in was blocked because the request didn't come from this page. Reload the page and try again.";
@@ -798,7 +801,8 @@ export function createControlServer(deps: ControlDeps): ControlApp {
 
   route(table, "POST", "/logout", (req, res) => {
     if (!cfg.local && !sessionOf(req)) return unauth(res);
-    if (!originOk(req)) return refuseForm(res);
+    // A refused sign-out must not look like a sign-in page: the session is still valid (#3557 review).
+    if (!originOk(req)) return send(res, 403, BLOCKED_SIGN_OUT, "text/plain; charset=utf-8");
     redirect(res, "/login", { "Set-Cookie": CLEAR_COOKIE(secure) }, 303);
   });
 

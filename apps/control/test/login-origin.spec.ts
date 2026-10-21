@@ -1,5 +1,6 @@
 import { startServer, PASSWORD } from "./helpers/start-server";
 import type { Harness } from "./helpers/start-server";
+import { loginPage } from "../src/http/auth";
 
 /**
  * Row 684: the login form must work under the page's own referrer policy. A same-origin form POST under
@@ -49,6 +50,10 @@ describe("row 684: control login under the page's referrer policy", () => {
     ],
     ["a foreign Origin", { origin: "https://evil.example", "sec-fetch-site": "cross-site" }],
     ["no Origin but the browser says cross-site", { "sec-fetch-site": "cross-site" }],
+    [
+      "a foreign Origin with no Sec-Fetch-Site (the origin-mismatch branch alone)",
+      { origin: "https://evil.example" },
+    ],
   ])("%s is refused with a 403 page and no session", async (_label, headers) => {
     const r = await post(h, "/login", headers as Record<string, string>);
     expect(r.status).toBe(403);
@@ -73,5 +78,25 @@ describe("row 684: control login under the page's referrer policy", () => {
       headers: { cookie, origin: "null", "sec-fetch-site": "same-origin" },
     });
     expect(ok.status).toBe(303);
+  });
+
+  it("review nit: a refused logout is a plain 403, never the sign-in page (the session is still valid)", async () => {
+    const login = await post(h, "/login", { origin: h.origin, "sec-fetch-site": "same-origin" });
+    const cookie = String(login.headers["set-cookie"]).split(";")[0];
+    const r = await h.req("POST", "/logout", {
+      headers: { cookie, origin: "https://evil.example", "sec-fetch-site": "cross-site" },
+    });
+    expect(r.status).toBe(403);
+    expect(String(r.headers["content-type"])).toMatch(/^text\/plain/);
+    expect(r.text).toMatch(/sign-out was blocked/i);
+    expect(r.text).not.toMatch(/action="\/login"/);
+  });
+});
+
+describe("review nit: loginPage escapes its message", () => {
+  it("HTML in the error is escaped, never rendered", () => {
+    const page = loginPage('<img src=x onerror="alert(1)">');
+    expect(page).not.toContain("<img");
+    expect(page).toContain("&lt;img");
   });
 });
