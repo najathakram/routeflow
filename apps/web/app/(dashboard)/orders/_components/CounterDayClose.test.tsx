@@ -636,6 +636,13 @@ describe("CounterDayClose: loading and failure", () => {
     expect(await screen.findByRole("button", { name: "Close day" })).toBeInTheDocument();
   });
 
+  it("Close day is a secondary button", async () => {
+    await openSheet();
+    const btn = await screen.findByRole("button", { name: "Close day" });
+    expect(btn.className).toContain("bg-paper");
+    expect(btn.className).not.toContain("bg-accent-strong");
+  });
+
   it("places Close day above the Summary", async () => {
     await openSheet();
     const btn = await screen.findByRole("button", { name: "Close day" });

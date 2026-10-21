@@ -5,7 +5,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { cashierNameOf } from "@routeflow/pricing";
+import { cashierNameOf, roundMoney } from "@routeflow/pricing";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 import { useOrder } from "@/lib/api/orders";
@@ -84,7 +84,38 @@ function Stat({
   );
 }
 
-/** Server numbers only: nothing here adds, subtracts or derives a figure. */
+const SHOW_ALL_KEY = "rf:counter:summary:showAll";
+const readShowAll = (): boolean => {
+  try {
+    return window.localStorage.getItem(SHOW_ALL_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
+const writeShowAll = (on: boolean) => {
+  try {
+    window.localStorage.setItem(SHOW_ALL_KEY, on ? "1" : "0");
+  } catch {
+    /* storage unavailable: the choice just is not remembered */
+  }
+};
+
+/** One summary figure. `amount` is the number the zero test reads; `always` rows show even at $0.00. */
+interface SummaryRow {
+  key: string;
+  label: string;
+  amount: number;
+  value: string;
+  testId: string;
+  always?: boolean;
+  note?: boolean;
+}
+
+/**
+ * Server numbers only: nothing here adds, subtracts or derives a figure. With `collapsible` (the Today view) it leads with
+ * the header and three rows (Money in, On account, Cash expected) and keeps every OTHER non-zero row behind a "Show all
+ * figures" disclosure (a $0 row is never rendered); the week view lists every row, unchanged.
+ */
 function Summary({
   s,
   label = "Today's summary",
@@ -92,6 +123,7 @@ function Summary({
   prefix = "today",
   cashExpectedSuffix = "",
   handOverNote = true,
+  collapsible = false,
 }: {
   s: TodaysSalesSummary;
   /** the region's accessible name */
@@ -103,12 +135,79 @@ function Summary({
   cashExpectedSuffix?: string;
   /** the "already counted" note under the hand-overs line (the per-day week blocks leave it to the total) */
   handOverNote?: boolean;
+  /** the Today view: default rows + a remembered "Show all figures" disclosure, $0 extras dropped */
+  collapsible?: boolean;
 }) {
+  const [showAll, setShowAll] = React.useState(false);
+  React.useEffect(() => setShowAll(readShowAll()), []);
   const r = s.refunds;
   // SA-740r2: a window can hold refunds with a recorded method AND refunds without one (the tender is optional on STANDARD
   // refunds until the mobile minimum moves): then the breakdown shows and the labels say which figure lacks a method. A
   // comparison only; no figure is derived here.
   const someTenderRecorded = !r.tenderKnown && (r.cash > 0 || r.card > 0 || r.check > 0);
+  const ho = s.handOvers ?? { count: 0, total: 0 };
+  const row = (
+    key: string,
+    label: string,
+    amount: number,
+    extra: Partial<SummaryRow> = {},
+  ): SummaryRow => ({
+    key,
+    label,
+    amount,
+    value: money(amount),
+    testId: `${prefix}-${key}`,
+    ...extra,
+  });
+  const rows: SummaryRow[] = [
+    row("in-cash", "Cash in", s.moneyIn.cash),
+    row("in-card", "Card in", s.moneyIn.card),
+    row("in-check", "Check in", s.moneyIn.check),
+    row("in-other", "Other in", s.moneyIn.other),
+    row("in-total", "Money in", s.moneyIn.total, { always: true }),
+    row("hand-overs", "Pickup hand-overs", ho.total, {
+      value: handOverFigure(ho),
+      note: handOverNote && ho.count > 0,
+    }),
+    row("store-credit-used", "Store credit used", s.storeCreditUsed),
+    row("on-account", "On account", s.onAccount, { always: true }),
+    row(
+      "refunds",
+      r.tenderKnown
+        ? "Refunds"
+        : someTenderRecorded
+          ? "Refunds (some without a recorded method)"
+          : "Refunds (method not recorded)",
+      r.total,
+    ),
+    ...(r.tenderKnown || someTenderRecorded
+      ? [
+          row("refunds-cash", "Cash refunds", r.cash),
+          row("refunds-card", "Card refunds", r.card),
+          row("refunds-check", "Check refunds", r.check),
+          row("refunds-other", "Other refunds", r.other),
+        ]
+      : []),
+    row("store-credit-issued", "Store credit issued", s.storeCreditIssued.amount),
+    row("net-collected", "Net collected", s.netCollected),
+    row(
+      "cash-expected",
+      `${
+        r.tenderKnown
+          ? "Cash expected in drawer"
+          : someTenderRecorded
+            ? "Cash expected, before refunds with no method recorded"
+            : "Cash expected, before refunds"
+      }${cashExpectedSuffix}`,
+      s.cashExpectedInDrawer,
+      { always: true },
+    ),
+  ];
+  // The week view lists every row as before. The Today view drops a row that is $0 to the cent, unless it is a default row.
+  const extras = collapsible ? rows.filter((x) => !x.always && roundMoney(x.amount) !== 0) : [];
+  const shown = collapsible
+    ? rows.filter((x) => x.always || (showAll && extras.includes(x)))
+    : rows;
   return (
     <section
       aria-label={label}
@@ -120,64 +219,23 @@ function Summary({
         <span className="tabular-nums">{money(s.sales.total)}</span>
       </p>
       <dl className="mt-2 space-y-1">
-        <Stat label="Cash in" value={money(s.moneyIn.cash)} testId={`${prefix}-in-cash`} />
-        <Stat label="Card in" value={money(s.moneyIn.card)} testId={`${prefix}-in-card`} />
-        <Stat label="Check in" value={money(s.moneyIn.check)} testId={`${prefix}-in-check`} />
-        <Stat label="Other in" value={money(s.moneyIn.other)} testId={`${prefix}-in-other`} />
-        <Stat label="Money in" value={money(s.moneyIn.total)} testId={`${prefix}-in-total`} />
-        <Stat
-          label="Pickup hand-overs"
-          value={handOverFigure(s.handOvers ?? { count: 0, total: 0 })}
-          testId={`${prefix}-hand-overs`}
-          note={handOverNote && (s.handOvers?.count ?? 0) > 0}
-        />
-        <Stat
-          label="Store credit used"
-          value={money(s.storeCreditUsed)}
-          testId={`${prefix}-store-credit-used`}
-        />
-        <Stat label="On account" value={money(s.onAccount)} testId={`${prefix}-on-account`} />
-        <Stat
-          label={
-            r.tenderKnown
-              ? "Refunds"
-              : someTenderRecorded
-                ? "Refunds (some without a recorded method)"
-                : "Refunds (method not recorded)"
-          }
-          value={money(r.total)}
-          testId={`${prefix}-refunds`}
-        />
-        {r.tenderKnown || someTenderRecorded ? (
-          <>
-            <Stat label="Cash refunds" value={money(r.cash)} testId={`${prefix}-refunds-cash`} />
-            <Stat label="Card refunds" value={money(r.card)} testId={`${prefix}-refunds-card`} />
-            <Stat label="Check refunds" value={money(r.check)} testId={`${prefix}-refunds-check`} />
-            <Stat label="Other refunds" value={money(r.other)} testId={`${prefix}-refunds-other`} />
-          </>
-        ) : null}
-        <Stat
-          label="Store credit issued"
-          value={money(s.storeCreditIssued.amount)}
-          testId={`${prefix}-store-credit-issued`}
-        />
-        <Stat
-          label="Net collected"
-          value={money(s.netCollected)}
-          testId={`${prefix}-net-collected`}
-        />
-        <Stat
-          label={`${
-            r.tenderKnown
-              ? "Cash expected in drawer"
-              : someTenderRecorded
-                ? "Cash expected, before refunds with no method recorded"
-                : "Cash expected, before refunds"
-          }${cashExpectedSuffix}`}
-          value={money(s.cashExpectedInDrawer)}
-          testId={`${prefix}-cash-expected`}
-        />
+        {shown.map((x) => (
+          <Stat key={x.key} label={x.label} value={x.value} testId={x.testId} note={x.note} />
+        ))}
       </dl>
+      {collapsible && extras.length > 0 ? (
+        <button
+          type="button"
+          className="mt-2 min-h-11 text-sm font-medium text-navy underline"
+          aria-expanded={showAll}
+          onClick={() => {
+            writeShowAll(!showAll);
+            setShowAll(!showAll);
+          }}
+        >
+          {showAll ? "Show fewer figures" : "Show all figures"}
+        </button>
+      ) : null}
     </section>
   );
 }
@@ -558,7 +616,7 @@ export function CounterTodaysSales() {
             </div>
             {view === "week" ? null : <CounterDayClose />}
             {view === "week" && tenantDay ? <WeekReport today={tenantDay} /> : null}
-            {view === "week" ? null : summary ? <Summary s={summary} /> : null}
+            {view === "week" ? null : summary ? <Summary s={summary} collapsible /> : null}
             {view === "week" || !summary ? null : (
               <HandOverRows
                 rows={q.data?.pages[0]?.handOverRows}

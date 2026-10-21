@@ -672,7 +672,12 @@ export function CounterDayClose() {
         </p>
       ) : null}
       {offerClose ? (
-        <Button ref={openerRef} className="min-h-[44px] w-full sm:w-auto" onClick={openForm}>
+        <Button
+          ref={openerRef}
+          variant="secondary"
+          className="min-h-[44px] w-full sm:w-auto"
+          onClick={openForm}
+        >
           {closed ? "Close again" : "Close day"}
         </Button>
       ) : null}

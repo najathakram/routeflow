@@ -148,3 +148,33 @@ test("R7b 2.2: the Void dialog title names the sale total", async ({ page, conte
     .click();
   await expect(page.getByRole("dialog", { name: /Void sale/ })).toContainText("$");
 });
+
+test("R7b 2.4: on a day with 7 sales the first sale row is visible without scrolling at 390", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await setTenantCookie(context, baseURL ?? "");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const rows = Array.from({ length: 7 }, (_, i) => ({
+    ...ROW,
+    orderId: `e2e-d${i + 1}`,
+    orderNumber: `ORD-E2E-D${i + 1}`,
+    voided: false,
+  }));
+  await page.route(/\/api\/v1\/orders\/counter-sale\/today/, (r) =>
+    r.fulfill({
+      json: {
+        ...PAGE1,
+        data: rows,
+        meta: { ...PAGE1.meta, total: 7 },
+        summary: { ...PAGE1.summary, sales: { count: 7, total: 157.5 } },
+      },
+    }),
+  );
+  await page.goto("/orders/counter-sale");
+  await page.getByRole("button", { name: "Today's sales" }).click();
+  await expect(page.getByTestId("today-summary")).toBeVisible();
+  await expect(page.getByTestId("today-row-e2e-d1")).toBeInViewport();
+  await expect(page.getByRole("button", { name: "Show all figures" })).toBeVisible();
+});
