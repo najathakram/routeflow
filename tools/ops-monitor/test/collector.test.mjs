@@ -1574,3 +1574,43 @@ test("parseIncidents: ids are date + index only (no file-name slug, dated or not
   assert.doesNotMatch(dated.title, /acme/i, "no fragment of the name survives the cut");
   assert.match(dated.title, /a live/);
 });
+
+// ---------- cloud: bounded git forks, honest spawn errors ----------
+
+test("cloud bugs: ONE prefetch fetch + ONE cat-file for N files; no per-blob fan-out", async () => {
+  const byBlob = Object.fromEntries(
+    BUG_FILES.map((f, i) => [String(i + 1).repeat(40), bugText(f)]),
+  );
+  void byBlob;
+  const { c, calls } = mk(
+    { cloud: true },
+    { "git cat-file --batch": () => ({ code: 0, stdout: "", stderr: "" }) },
+  );
+  await c.runOnce("bugs");
+  const gits = calls.filter((x) => x.cmd === "git");
+  assert.equal(gits.filter((x) => x.line.startsWith("git fetch")).length, 1);
+  assert.equal(gits.filter((x) => x.line.startsWith("git cat-file")).length, 1);
+  assert.equal(gits.filter((x) => x.line.startsWith("git cat-file blob")).length, 0);
+  assert.ok(gits.length <= 7, "bounded git spawns: " + gits.length);
+  const fetch = gits.find((x) => x.line.startsWith("git fetch"));
+  for (let i = 1; i <= BUG_FILES.length; i++) assert.ok(fetch.args.includes(String(i).repeat(40)));
+});
+
+test("bugs: a git spawn failure surfaces as such, never as 'registry not found'", async () => {
+  for (const msg of ["git spawn failed: EAGAIN", "git timed out after 120000ms"]) {
+    const { c } = mk(
+      {},
+      {
+        "git rev-parse origin/master:.claude/campaign/bugs": () => ({
+          code: 1,
+          stdout: "",
+          stderr: msg,
+        }),
+      },
+    );
+    await c.runOnce("bugs");
+    assert.equal(c.sources.bugs.ok, false);
+    assert.ok(c.sources.bugs.error.includes(msg), c.sources.bugs.error);
+    assert.ok(!/not found/.test(c.sources.bugs.error), c.sources.bugs.error);
+  }
+});

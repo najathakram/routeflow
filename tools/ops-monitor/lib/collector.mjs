@@ -364,6 +364,10 @@ export function parseLedgerText(text) {
   return rows;
 }
 
+// Text store.exec / git-exec put in stderr when git could not run at all (not a git error).
+const GIT_FAILURE_RE = /git spawn failed|git timed out/;
+// Cloud blob prefetch: one `git fetch` per this many blob shas.
+const PREFETCH_CHUNK = 250;
 const fileNo = (p) => Number(/F(\d+)[^/]*$/i.exec(p)?.[1] ?? 1e9);
 
 /**
@@ -1006,8 +1010,11 @@ export function createCollector({
         .split(/\r?\n/)
         .map((x) => x.trim())
         .filter((x) => /^\S+$/.test(x)); // stdout carries only resolved shas (errors go to stderr)
-      if (!shas.length)
+      if (!shas.length) {
+        // A spawn failure / timeout is NOT a missing registry; say what really happened.
+        if (GIT_FAILURE_RE.test(tree.stderr)) fail(tree.stderr.trim().slice(0, 200));
         fail(`bug registry not found on origin/master: ${tree.stderr.trim().slice(0, 200)}`);
+      }
       const treeSha = shas[0];
       const ledgerTree = tree.code === 0 && shas.length > 1 ? shas[1] : null;
       const key = `${treeSha}:${ledgerTree}`;
@@ -1040,6 +1047,23 @@ export function createCollector({
       const have = (sha) =>
         (!needBug.includes(sha) || bugBlobCache.has(sha)) &&
         (!needLedger.includes(sha) || ledgerBlobCache.has(sha));
+      if (need.length && cloud) {
+        // The cloud clone is BLOBLESS: every blob cat-file lacks triggers its own lazy https fetch
+        // (a git-remote-https child each). Fetch all missing blobs up front, ONE fetch per chunk,
+        // so the forks per poll are bounded by ceil(N / PREFETCH_CHUNK) instead of by N.
+        for (let i = 0; i < need.length; i += PREFETCH_CHUNK) {
+          const f = await git([
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-write-fetch-head",
+            "--recurse-submodules=no",
+            "origin",
+            ...need.slice(i, i + PREFETCH_CHUNK),
+          ]);
+          if (f.code !== 0) fail(`blob prefetch failed: ${(f.stderr || "").trim().slice(0, 200)}`);
+        }
+      }
       if (need.length) {
         // One batched read when exec supports stdin (opts.input); otherwise (or if it returned
         // nothing) fall back to one `git cat-file blob` per unseen blob, 8 at a time.
@@ -1049,7 +1073,8 @@ export function createCollector({
         });
         if (r.code === 0)
           for (const { sha, content } of parseCatFileBatch(r.stdout)) ingest(sha, content);
-        const left = need.filter((x) => !have(x));
+        // Cloud never fans out per blob: a blob the one batch could not read is an error below.
+        const left = cloud ? [] : need.filter((x) => !have(x));
         for (let i = 0; i < left.length; i += 8) {
           await Promise.all(
             left.slice(i, i + 8).map(async (sha) => {

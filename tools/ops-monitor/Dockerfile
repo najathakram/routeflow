@@ -3,7 +3,9 @@
 # the read-only clones made at boot.
 FROM node:20-alpine
 
-RUN apk add --no-cache git
+# tini is PID 1: node never reaps the orphaned git grandchildren (git-remote-https, lazy-fetch
+# children), and unreaped zombies fill the container PID limit ("cannot fork()").
+RUN apk add --no-cache git tini
 
 WORKDIR /app
 COPY --chown=node:node . /app/tools/ops-monitor/
@@ -19,4 +21,5 @@ ENV NODE_ENV=production \
 # Secrets (set in the Railway dashboard, never here): GITHUB_TOKEN (read-only),
 # RAILWAY_API_TOKEN, OPS_PASSWORD_HASH, OPS_SESSION_SECRET, GITHUB_WEBHOOK_SECRET,
 # CLIENT_NAMES_JSON (a JSON array of live-client names to mask; the cloud refuses to start without it).
+ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "tools/ops-monitor/server.mjs", "--cloud"]
