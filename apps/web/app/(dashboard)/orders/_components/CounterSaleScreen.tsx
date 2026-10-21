@@ -81,7 +81,12 @@ import { CounterReceiptBody } from "./CounterReceiptBody";
 import { CounterCustomerCredit } from "./CounterCustomerCredit";
 import { CounterGateOffline } from "./CounterGateOffline";
 import { CounterCustomerMatches } from "./CounterCustomerMatches";
-import { CounterLastSale, useLastSaleNote } from "./CounterLastSale";
+import {
+  CounterLastSale,
+  lastSaleNoteFrom,
+  useLastSaleNote,
+  type LastSaleNote,
+} from "./CounterLastSale";
 import { useCounterLineUndo } from "./useCounterLineUndo";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
@@ -668,7 +673,9 @@ export function CounterSaleScreen() {
     setSending(true); // from here to the answer the cart is frozen (a validation refusal never reaches this point)
     liveCart.beginSend(); // the stored cart goes NOW, before the POST can leave: a refresh mid-send must not bring it back
     try {
-      const res = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
+      const sent = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
+      // The method the cashier chose, if the server's answer does not echo it (captured before the screen resets).
+      const res = { ...sent, method: sent.method ?? attempt.dto.payment.method };
       attemptRef.current = null;
       offlineKeyRef.current = null;
       clearHeldAttempt(heldKey);
@@ -791,11 +798,11 @@ export function CounterSaleScreen() {
     const startFresh = next && !unpaid && !figuresDiffer;
     if (autoPrint) {
       // D6: the RECEIPT is rendered first, then printed once (the effect below), and only then does "next" reset.
-      printAfterRenderRef.current = { reset: startFresh, orderNumber: res.orderNumber };
+      printAfterRenderRef.current = { reset: startFresh, note: lastSaleNoteFrom(res) };
       setReceipt(res);
     } else if (startFresh) {
       resetSale();
-      setLastSale(res.orderNumber); // CQ-17: after the reset, so the fresh sale names the one just finished
+      setLastSale(lastSaleNoteFrom(res)); // CQ-17: after the reset, so the fresh sale names the one just finished
     } else setReceipt(res);
   };
 
@@ -880,15 +887,15 @@ export function CounterSaleScreen() {
   };
 
   // Auto-print: runs after the receipt has committed to the DOM, so the page printed IS the receipt.
-  const printAfterRenderRef = React.useRef<{ reset: boolean; orderNumber?: string } | null>(null);
+  const printAfterRenderRef = React.useRef<{ reset: boolean; note?: LastSaleNote } | null>(null);
   React.useEffect(() => {
     if (!receipt || !printAfterRenderRef.current) return;
-    const { reset, orderNumber } = printAfterRenderRef.current;
+    const { reset, note } = printAfterRenderRef.current;
     printAfterRenderRef.current = null;
     window.print(); // once per completed sale
     if (reset) {
       resetSale();
-      if (orderNumber) setLastSale(orderNumber);
+      if (note) setLastSale(note);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [receipt]);
@@ -994,7 +1001,7 @@ export function CounterSaleScreen() {
         ) : null}
       </div>
 
-      {lastSale ? <CounterLastSale orderNumber={lastSale} /> : null}
+      {lastSale ? <CounterLastSale note={lastSale} /> : null}
 
       <div
         className="flex flex-col gap-4 [&>*]:min-w-0 md:grid md:grid-cols-[minmax(0,1fr)_320px] md:items-start xl:grid-cols-[minmax(0,1fr)_380px]"

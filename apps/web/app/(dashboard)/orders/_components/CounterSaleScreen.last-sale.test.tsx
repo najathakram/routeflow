@@ -14,10 +14,21 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
 const COLA = { id: "p-cola", name: "Cola", pricePerUnit: 2.5, unit: "each", unitsPerBox: null };
+const CRATE = {
+  id: "p-crate",
+  name: "Crate",
+  pricePerUnit: 17.22,
+  unit: "each",
+  unitsPerBox: null,
+};
 jest.mock("@/lib/barcode-resolve", () => ({
   ...jest.requireActual("@/lib/barcode-resolve"),
   resolveProductByCode: async (code: string) =>
-    code === "COLA" ? { product: COLA, source: "sku" } : { notFound: true },
+    code === "COLA"
+      ? { product: COLA, source: "sku" }
+      : code === "CRATE"
+        ? { product: CRATE, source: "sku" }
+        : { notFound: true },
 }));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: [] } }),
@@ -107,6 +118,42 @@ describe("CounterSaleScreen: the finished sale's order number (CQ-17)", () => {
     } finally {
       Element.prototype.scrollIntoView = original;
     }
+  });
+
+  it("Complete & next sale keeps the change due in the note until the next line", async () => {
+    mutateAsync.mockResolvedValue({
+      ...SALE,
+      total: 17.22,
+      paid: 17.22,
+      change: 2.78,
+      method: "CASH",
+    });
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("CRATE", "Crate");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete & next sale" }));
+    const note = await screen.findByTestId("counter-last-sale");
+    expect(note).toHaveTextContent("Sale ORD-1042 completed");
+    expect(note).toHaveTextContent("Change due $2.78");
+    await scan("COLA");
+    await waitFor(() => expect(screen.queryByTestId("counter-last-sale")).toBeNull());
+  });
+
+  it("a card sale's note names the method, not change", async () => {
+    mutateAsync.mockResolvedValue({
+      ...SALE,
+      total: 2.5,
+      paid: 2.5,
+      change: undefined,
+      method: "CARD",
+    });
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & next sale" }));
+    const note = await screen.findByTestId("counter-last-sale");
+    expect(note).toHaveTextContent("Paid by card");
+    expect(note).not.toHaveTextContent("Change due");
   });
 
   it("Complete & show receipt shows the receipt, not the note", async () => {
