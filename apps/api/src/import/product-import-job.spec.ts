@@ -125,7 +125,7 @@ describe("product import background job", () => {
       )(importService, tenantCtx, prisma);
       return { proc, importService, seen, prisma };
     };
-    const jobWith = (over: Record<string, unknown> = {}) => ({
+    const jobWith = (over: Record<string, unknown> = {}): any => ({
       ...job({ progress: jest.fn(), update: jest.fn(async () => undefined) }),
       data: {
         tenantId: "tenant-a",

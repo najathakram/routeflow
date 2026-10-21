@@ -288,7 +288,7 @@ function JobBanner({
 }: {
   job: JobView;
   testIdPrefix: string;
-  bannerRef: React.RefObject<HTMLDivElement>;
+  bannerRef: React.RefObject<HTMLDivElement | null>;
 }) {
   if (job.state === "done") return null;
   const so_far = job.counts ? summarize(job.counts) : null;
