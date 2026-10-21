@@ -190,7 +190,8 @@ describe("RegulatedLedgerService: rotated invoice item (SA-789 F1)", () => {
         creditNoteId: null,
         lineId: "oi-gone",
         saleEntryId: "sale-1",
-        qty: 75,
+        qty: 10,
+        unbookedByProduct: { p1: 10 },
         period: expect.stringMatching(periodRe),
       });
     });
@@ -231,6 +232,122 @@ describe("RegulatedLedgerService: rotated invoice item (SA-789 F1)", () => {
         qty: 10,
         period: expect.stringMatching(periodRe),
       });
+    });
+  });
+
+  describe("generations of one order line (SA-835 review)", () => {
+    it("MUST-1: a return books against the LIVE generation, never an earlier one already offset by a resync", async () => {
+      // SALE A (old id, stale, offset by a REVERSAL of 75) + SALE B (live id): the return must hit B.
+      const a = staleSale({ id: "sale-A", createdAt: new Date("2026-10-01T00:00:00Z") });
+      const b = staleSale({
+        id: "sale-B",
+        invoiceItemId: "ii-new",
+        createdAt: new Date("2026-10-08T00:00:00Z"),
+      });
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([a, b])
+        .mockResolvedValueOnce([
+          {
+            invoiceItemId: "ii-old",
+            orderItemId: "oi-1",
+            qty: -75,
+            unitBasisQty: -75,
+            netSales: -87.5,
+            categoryTax: 0,
+          },
+        ]);
+      prisma.invoiceItem.findMany.mockResolvedValue([{ ...orderItem({ id: "ii-new" }) }]);
+      prisma.orderItem.findMany.mockResolvedValue([orderItem()]);
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", unitsPerBox: 1 }]);
+
+      await service.reverseReturnEntries({
+        returnId: "ret-3",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 10]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+
+      const [row] = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
+      expect(row).toMatchObject({ invoiceItemId: "ii-new", qty: -10 });
+    });
+
+    it("MUST-2: a credit on the rotated line is stamped with the SALE's invoice item id, so a later void nets it", async () => {
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          id: "cni-1",
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          invoiceItemId: "ii-new",
+          amount: 11.67,
+          qty: 10,
+          categoryTax: 0,
+        },
+      ]);
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        { id: "ii-new", orderItemId: "oi-1", invoiceId: "inv-1" },
+      ]);
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([staleSale()])
+        .mockResolvedValueOnce([staleSale()]);
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+      const [credit] = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
+      expect(credit.invoiceItemId).toBe("ii-old");
+
+      // The invoice is then voided: SALE 87.50 and the credit -11.67 net to 75.83 outstanding.
+      prisma.regulatedSalesLedger.createMany.mockClear();
+      prisma.regulatedSalesLedger.findMany.mockReset();
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue([staleSale(), credit]);
+      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      const voided = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
+      const net = voided.reduce((n: number, r: any) => n + Number(r.netSales), 0);
+      expect(net).toBeCloseTo(-75.83, 2);
+    });
+
+    it("SHOULD-2: a SALE row of another invoice on the same order line is not matched to the credited item", async () => {
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          id: "cni-1",
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          invoiceItemId: "ii-new",
+          amount: 11.67,
+          qty: 10,
+          categoryTax: 0,
+        },
+      ]);
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        { id: "ii-new", orderItemId: "oi-1", invoiceId: "inv-1" },
+      ]);
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([staleSale({ invoiceId: "inv-OTHER" })])
+        .mockResolvedValueOnce([]);
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("SHOULD-1: no notice for an unresolvable row when the return books everything it returned", async () => {
+      const live = staleSale({ id: "sale-live", invoiceItemId: "ii-live", orderItemId: "oi-live" });
+      const gone = staleSale({ id: "sale-gone", invoiceItemId: "ii-gone", orderItemId: "oi-gone" });
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([live, gone])
+        .mockResolvedValueOnce([]);
+      prisma.invoiceItem.findMany.mockResolvedValue([orderItem({ id: "ii-live" })]);
+      prisma.orderItem.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", unitsPerBox: 1 }]);
+      await service.reverseReturnEntries({
+        returnId: "ret-4",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 10]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(1);
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
     });
   });
 });

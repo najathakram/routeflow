@@ -266,6 +266,10 @@ export class RegulatedReportService {
         orderItemId: r.orderItemId,
       })),
     );
+    // Limitation (SA-835): for a row resolved through its order line the case/unit split uses the ORDER
+    // line's qty / boxes / pieces, not the re-created invoice line's. Product, unit of measure and item
+    // type (what the row was missing) are exact; a split line whose invoiced qty differs from its ordered
+    // qty can split cases/units proportionally off the ordered figures.
     const linesById = new Map<string, TxLineInfo>();
     ledgerRows.forEach((r, i) => {
       const hit = resolved.get(String(i));

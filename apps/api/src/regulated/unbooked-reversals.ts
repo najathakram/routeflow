@@ -16,6 +16,8 @@ export interface UnbookedReversalMeta {
   lineId: string | null;
   saleEntryId: string;
   qty: number;
+  /** Return path: the returned units still unbooked after the walk, per product id. */
+  unbookedByProduct?: Record<string, number>;
   /** "YYYY-MM" the reversal would have booked into. */
   period: string;
 }
@@ -28,6 +30,7 @@ export function unbookedReversalMeta(m: UnbookedReversalMeta): Record<string, un
     lineId: m.lineId,
     saleEntryId: m.saleEntryId,
     qty: m.qty,
+    ...(m.unbookedByProduct ? { unbookedByProduct: m.unbookedByProduct } : {}),
     period: m.period,
   };
 }
