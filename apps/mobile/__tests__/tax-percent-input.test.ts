@@ -14,6 +14,12 @@ describe("taxPercentInputError", () => {
     expect(taxPercentInputError(t)).toBe(TAX_PERCENT_PRECISION_MESSAGE);
   });
 
+  it("Q5: an unchanged stored rate passes whatever its decimals; a CHANGED one is still capped", () => {
+    expect(taxPercentInputError("8.87501", 8.87501)).toBeNull();
+    expect(taxPercentInputError("8.87501", "8.87501")).toBeNull();
+    expect(taxPercentInputError("8.87502", 8.87501)).toBe(TAX_PERCENT_PRECISION_MESSAGE);
+  });
+
   it("leaves a non-number to the server's own 400 (not a precision problem)", () => {
     expect(taxPercentInputError("abc")).toBeNull();
   });

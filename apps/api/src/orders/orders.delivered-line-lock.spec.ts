@@ -38,7 +38,8 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { UserRole } from "@prisma/client";
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { BadRequestException } from "@nestjs/common";
+import { lockRowsNoWait } from "../common/db-locks";
 
 const LOCKED = { response: { code: "LINE_ALREADY_DELIVERED" }, status: 409 };
 
@@ -504,12 +505,20 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
       nothingWritten();
     });
 
-    it("SA-833: a contended invoice row (NOWAIT) is a retryable 409 INVOICE_BUSY and nothing is written", async () => {
+    it("SA-833: a contended invoice row (NOWAIT) is a retryable 409 CONCURRENT_UPDATE / INVOICE_BUSY and nothing is written", async () => {
       const a = line({ id: "li-a", position: 0, qty: 5 });
       seed("CONFIRMED", [a, OPEN_LINE]);
+      // The REAL NOWAIT lock (common/db-locks.ts) over a client whose statement hits SQLSTATE 55P03.
+      const contended = {
+        $executeRaw: async () => {
+          throw Object.assign(new Error("could not obtain lock on row"), {
+            meta: { code: "55P03" },
+          });
+        },
+      };
       invoices.revertLinkedInvoicesForOrderEdit.mockImplementation(
         async (_id: string, tx?: unknown) => {
-          if (tx) throw new ConflictException({ code: "INVOICE_BUSY", message: "busy" });
+          if (tx) await lockRowsNoWait(contended, "Invoice", ["inv-1"], "INVOICE_BUSY");
           return [];
         },
       );
@@ -519,7 +528,10 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
           { items: [{ id: "li-a", action: "UPDATE", qty: 4 }] } as any,
           operator,
         ),
-      ).rejects.toMatchObject({ status: 409, response: { code: "INVOICE_BUSY" } });
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: "CONCURRENT_UPDATE", reason: "INVOICE_BUSY", retryable: true },
+      });
       nothingWritten();
     });
 

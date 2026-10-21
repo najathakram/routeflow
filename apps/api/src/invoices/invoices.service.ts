@@ -152,8 +152,12 @@ import {
   preflightBulkPriceAdjustment,
   priceAdjustmentTaxState,
 } from "./price-adjustment-ledger";
-import { countOrdersInvoices, guardItemsEditTaxState } from "./stored-tax-state";
-import { duplicateLineData } from "./duplicate-line-data";
+import {
+  countOrdersInvoices,
+  guardItemsEditTaxState,
+  tenantPreferredRate,
+} from "./stored-tax-state";
+import { buildInvoiceEmailPayload, buildReminderEmailPayload } from "./invoice-email-payload";
 import { retakeDuplicateTaxRates } from "./duplicate-tax-rates";
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -3150,7 +3154,8 @@ export class InvoicesService {
           warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
           override,
         });
-        guardItemsEditTaxState({ locked, items, matches, editLines }); // SA-814 R5-2
+        const preferredRate = await tenantPreferredRate(tx); // the tenant rate wins the inference when it reproduces the tax
+        guardItemsEditTaxState({ locked: { ...locked, preferredRate }, items, matches, editLines }); // SA-814 R5-2
         const itemsData = editLines.map((l) => l.data);
         // B1026: the SAME discount-exceeds-line guard create() runs, over the lines THIS edit writes
         // (changed or new), before any write; a stored line the edit leaves verbatim is not re-judged.
@@ -3683,49 +3688,17 @@ export class InvoicesService {
     // price a tenant deliberately configured away.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
 
-    // Built as a variable (not an inline literal) so the extra totalPaid/
-    // balanceDue fields don't trip TS's excess-property check ahead of the F03
-    // batch's matching email.service.ts `sendInvoice` param-type update (a
-    // different file/package in this same campaign batch) — the runtime call
-    // carries them either way, which is what email.service.spec.ts and the
-    // T-B102 caller-leg assertion here both need.
-    const emailPayload = {
-      to: recipientEmail,
-      customerName: inv.customer?.businessName ?? "Customer",
-      invoiceNumber: inv.invoiceNumber,
-      invoiceId: inv.id,
-      issueDate: formatDate(inv.issueDate),
-      dueDate: formatDate(inv.dueDate),
-      paymentTermsLabel: inv.paymentTermsLabel ?? undefined,
-      total: Number(inv.total),
+    const emailPayload = buildInvoiceEmailPayload(inv, {
+      recipientEmail,
       totalPaid,
       creditApplied,
       advanceApplied,
       creditNoteNumbers,
       balanceDue,
-      items: inv.items.map((it: any) => ({
-        description: it.description,
-        qty: Number(it.qty),
-        unitPrice: Number(it.unitPrice),
-        subtotal: Number(it.subtotal),
-        msrp: it.msrp != null ? Number(it.msrp) : null,
-        // F03/R9: without these, buildInvoiceEmail's strike/"N free" note and a BOGO line's reduced subtotal read as a pricing error.
-        originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
-        priceType: it.priceType ?? null,
-        promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
-        ...invoiceItemQtyFields(it),
-      })),
       pdfUrl,
       attachment,
-      isReminder: false,
-      hideTerms: isPaidAtSale(inv),
       hideOriginalPrice,
-      // Deposit schedule (display-only): derive with the same read-time math the
-      // detail endpoint uses; null when the invoice carries no deposit.
-      depositAmount: computeDepositFields(inv as any, 0, new Date().toISOString().slice(0, 10))
-        .depositAmount,
-      depositDueDate: inv.depositDueDate ? formatDate(inv.depositDueDate) : null,
-    };
+    });
     await this.assertSendableUnderLock(id, inv.orderId); // SA-404a: VOID now ⇒ 400, no email
     const sendResult = await this.emailService.sendInvoice(emailPayload);
 
@@ -3850,41 +3823,17 @@ export class InvoicesService {
     // table, so it honours the same hide-original-price setting.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
 
-    // See sendEmail's matching comment: a variable, not an inline literal, so the
-    // extra fields don't trip TS's excess-property check ahead of email.service.ts's
-    // param-type update landing in this same campaign batch.
-    const reminderPayload = {
-      to: recipientEmail,
-      customerName: inv.customer?.businessName ?? "Customer",
-      invoiceNumber: inv.invoiceNumber,
-      invoiceId: inv.id,
-      issueDate: formatDate(inv.issueDate),
-      dueDate: formatDate(inv.dueDate),
-      paymentTermsLabel: inv.paymentTermsLabel ?? undefined,
-      total: Number(inv.total),
+    const reminderPayload = buildReminderEmailPayload(inv, {
+      recipientEmail,
       totalPaid,
       creditApplied,
       advanceApplied,
       creditNoteNumbers,
       balanceDue,
-      items: inv.items.map((it: any) => ({
-        description: it.description,
-        qty: Number(it.qty),
-        unitPrice: Number(it.unitPrice),
-        subtotal: Number(it.subtotal),
-        msrp: it.msrp != null ? Number(it.msrp) : null,
-        // F03/R9: see sendEmail's matching comment — a reminder renders the same
-        // item table, so it needs the same promo scalars.
-        originalPrice: it.originalPrice != null ? Number(it.originalPrice) : null,
-        priceType: it.priceType ?? null,
-        promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
-        ...invoiceItemQtyFields(it),
-      })),
       pdfUrl,
       attachment,
-      isReminder: true,
       hideOriginalPrice,
-    };
+    });
     const sendResult = await this.emailService.sendInvoice(reminderPayload);
 
     if (!sendResult.delivered) {
@@ -4261,7 +4210,45 @@ export class InvoicesService {
 
     // Duplicate carries each line's already-correct stored subtotal + boxes/pieces
     // split verbatim (recomputing qty*unitPrice would over-charge boxed lines).
-    const itemsData = duplicateLineData(inv.items, this.prisma.getTenantId());
+    const itemsData = inv.items.map((i) => ({
+      description: i.description,
+      productId: i.productId,
+      qty: i.qty,
+      unitPrice: i.unitPrice,
+      discount: i.discount,
+      taxRate: isNsfLine(i) ? 0 : i.taxRate, // #2656: the NSF line is never taxed, even when copied
+      boxes: (i as any).boxes ?? null,
+      pieces: (i as any).pieces ?? null,
+      // The sale-time box size travels with the boxes/pieces: without it the copy depends on the LIVE
+      // pack, and a client that rebuilds the line from it re-prices per piece (B644 sibling).
+      unitsPerBox: (i as any).unitsPerBox ?? null,
+      // Price markers and the per-line note travel too (a copy must not reset DISCOUNTED to STANDARD).
+      originalPrice: (i as any).originalPrice != null ? Number((i as any).originalPrice) : null,
+      priceType: (i as any).priceType ?? undefined, // undefined -> the schema default (STANDARD)
+      overrideReason: (i as any).overrideReason ?? null, // H3b: travels with the override price
+      overriddenBy: (i as any).overriddenBy ?? null,
+      notes: (i as any).notes ?? null,
+      // BUY_N_GET_M snapshot travels with the copy — the subtotal is verbatim, and
+      // without the snapshot the copy's first edit would re-price the line to full.
+      promoFreeUnits: (i as any).promoFreeUnits ?? null,
+      // MSRP is copied VERBATIM, not re-resolved — a duplicate must show what the
+      // source line showed, never a live re-read of the (possibly since-changed)
+      // product/customer MSRP.
+      msrp: (i as any).msrp != null ? Number((i as any).msrp) : null,
+      subtotal: roundMoney(Number(i.subtotal)),
+      // RF-4/B297: category tax + regulated snapshots (incl. the rate trio) travel to the copy.
+      trackedCategoryId: (i as any).trackedCategoryId ?? null,
+      trackedSubcategoryId: (i as any).trackedSubcategoryId ?? null,
+      categoryTaxAmount: roundMoney(Number((i as any).categoryTaxAmount ?? 0)),
+      categoryTaxType: (i as any).categoryTaxType ?? null,
+      categoryTaxRate:
+        (i as any).categoryTaxRate != null ? Number((i as any).categoryTaxRate) : null,
+      categoryPriceIncludesTax: (i as any).categoryPriceIncludesTax ?? null,
+      // #2169 (SA-395): a duplicated NSF fee line is still a real system-written NSF line —
+      // carried verbatim, like every other snapshot column above.
+      systemKind: i.systemKind ?? null,
+      tenantId: this.prisma.getTenantId(),
+    }));
     const isTaxExempt = !!(customer as any)?.isTaxExempt; // the CURRENT customer: a duplicate is a new invoice
     // Row 588: a legacy 0 / 4-dp-rounded rate is re-taken (verified inference, else the tenant rate), never copied.
     const src = { subtotal: inv.subtotal, taxAmount: inv.taxAmount, isTaxExempt };
@@ -5767,7 +5754,8 @@ export class InvoicesService {
       // B662: item writes, invoice totals and the regulated-ledger sync commit or fail TOGETHER.
       await this.prisma.tenantTransaction(async (tx: any) => {
         const live = await lockInvoiceForPriceAdjustment(tx, inv); // Invoice FIRST, then its rows
-        const { restampRate } = priceAdjustmentTaxState(live, isTaxExempt); // SA-814 R5-2 (409 if unverifiable)
+        const tenantRate = await tenantPreferredRate(tx); // the tenant rate wins the inference when it reproduces the tax
+        const { restampRate } = priceAdjustmentTaxState(live, isTaxExempt, tenantRate); // SA-814 R5-2 (409 if unverifiable)
         const { categoriesById, unitsPerBoxByProduct } = await loadPriceAdjustmentReference(
           tx,
           live.items,

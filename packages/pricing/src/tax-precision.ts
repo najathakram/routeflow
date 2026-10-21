@@ -19,17 +19,24 @@ export function sameRateAtLegacyPrecision(
   configuredFraction: number,
 ): boolean {
   const scale = 10 ** TAX_PERCENT_DECIMALS;
-  return Math.round(storedFraction * scale) === Math.round(configuredFraction * scale);
+  // Snap the product to 6 places BEFORE rounding: 8.625 / 100 * 1e4 is 862.4999999999999 in float, but the legacy
+  // column (Decimal(5,4)) rounds the true half up and holds 0.0863 (863).
+  const snap = (x: number) => Math.round(Number((x * scale).toFixed(6)));
+  return snap(storedFraction) === snap(configuredFraction);
 }
 
 /**
  * The refusal copy when a typed percent carries more than 4 decimals, else null. Silent about everything another
- * validator owns (not a number, out of 0..100, blank): it judges precision only.
+ * validator owns (not a number, out of 0..100, blank): it judges precision only. `stored` is the tenant's current
+ * value: a CHANGED rate is held to 4 decimals, an unchanged one is not.
  */
-export function taxPercentPrecisionError(percent: unknown): string | null {
+export function taxPercentPrecisionError(percent: unknown, stored?: unknown): string | null {
   if (percent === null || percent === undefined || percent === "") return null;
   const n = Number(percent);
   if (!Number.isFinite(n)) return null;
+  // Review Q5 (lead ruling): a rate equal to the tenant's STORED one is accepted whatever its decimals - saving the
+  // phone number must not fail on an old 5-decimal rate. EXACT equality (same decimal), never a rounded comparison.
+  if (stored !== null && stored !== undefined && stored !== "" && Number(stored) === n) return null;
   const scaled = n * 10 ** TAX_PERCENT_DECIMALS;
   return Math.abs(scaled - Math.round(scaled)) > 1e-6 ? TAX_PERCENT_PRECISION_MESSAGE : null;
 }

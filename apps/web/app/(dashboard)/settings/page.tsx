@@ -122,20 +122,21 @@ const profileShape = {
   city: z.string().min(1, "Required"),
   state: z.string().optional(),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
-  taxRate: z.coerce
-    .number()
-    .min(0)
-    .max(100)
-    .refine((v) => taxPercentPrecisionError(v) === null, TAX_PERCENT_PRECISION_MESSAGE),
+  taxRate: z.coerce.number().min(0).max(100),
   // Plain text, counted in characters like the API does (SA-762r F6).
   receiptFooter: z.string().refine((v) => Array.from(v).length <= RECEIPT_FOOTER_MAX_CHARS, {
     message: `Keep the footer to ${RECEIPT_FOOTER_MAX_CHARS} characters or fewer`,
   }),
 };
 /** The zone is validated only when the viewer can edit it, so a hidden field can never block a save. */
-const profileSchemaFor = (canEditTimeZone: boolean) =>
+const profileSchemaFor = (canEditTimeZone: boolean, savedTaxRate?: unknown) =>
   z.object({
     ...profileShape,
+    // Review Q5: the 4-decimal cap holds a CHANGED rate only; the tenant's stored rate passes as it is.
+    taxRate: profileShape.taxRate.refine(
+      (v) => taxPercentPrecisionError(v, savedTaxRate) === null,
+      TAX_PERCENT_PRECISION_MESSAGE,
+    ),
     timezone: canEditTimeZone
       ? z.string().refine((v) => isValidTimeZone(v), TIME_ZONE_REQUIRED_COPY)
       : z.string().optional(),
@@ -233,7 +234,7 @@ function BusinessProfileTab() {
   // tax rate; a field the user edits, or clears, is still checked. With nothing edited, the whole form is checked.
   const dirtyRef = React.useRef<Record<string, unknown>>({});
   const profileResolver = React.useMemo<Resolver<ProfileFormValues>>(() => {
-    const schema = profileSchemaFor(canEditTimeZone);
+    const schema = profileSchemaFor(canEditTimeZone, savedSettings?.taxRate);
     return async (values, context, options) => {
       const mask: Record<string, true> = {};
       for (const key of Object.keys(schema.shape)) if (dirtyRef.current[key]) mask[key] = true;
@@ -245,7 +246,7 @@ function BusinessProfileTab() {
         ? { values: { ...values, ...res.values }, errors: {} }
         : res;
     };
-  }, [canEditTimeZone]);
+  }, [canEditTimeZone, savedSettings?.taxRate]);
 
   const {
     register,

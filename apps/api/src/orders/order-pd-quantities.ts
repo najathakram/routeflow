@@ -23,6 +23,7 @@ import { BadRequestException, ConflictException, NotFoundException } from "@nest
 import { OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { deliveredBasisByLine } from "../invoices/delivered-basis-by-line";
+import { officeRowNote } from "./office-evidence-completion";
 import {
   deliveredQtyRecompute,
   fetchEvidenceByLine,
@@ -134,7 +135,7 @@ async function writeOfficeDeliveries(
         driverId: null,
         type: q + EPS >= remaining ? "DELIVERED" : "PARTIAL",
         quantityDelivered: q,
-        note: d.note ?? "OFFICE_MARKED",
+        note: officeRowNote(d.note),
       },
     });
     touched.push(item.id);

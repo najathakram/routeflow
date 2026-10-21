@@ -1,5 +1,6 @@
 import { roundMoney } from "./pricing";
-import { TAX_RATE_FRACTION_DECIMALS } from "./tax-precision";
+import { sumInvoiceTotals } from "./invoice-totals";
+import { TAX_PERCENT_DECIMALS, TAX_RATE_FRACTION_DECIMALS } from "./tax-precision";
 
 /**
  * B294 (SA-141): the ONE rule for recovering a legacy invoice's flat sales-tax rate, shared by
@@ -23,8 +24,16 @@ export interface InferredFlatRate {
   rate: number;
   /** The header's REGULAR tax: taxAmount minus the lines' category (excise) tax. */
   regularTax: number;
-  /** roundMoney(subtotal * rate) === regularTax: the rate reproduces the tax exactly. */
+  /** The invoice-totals builder (sumInvoiceTotals) gives `regularTax` at this rate to the cent. */
   verified: boolean;
+}
+
+export interface InferredFlatRateOptions {
+  /**
+   * The tenant's configured rate (a fraction). It wins when it reproduces the stored tax; otherwise it is ignored.
+   * Without it the first verified of the 4-dp rate, then the 6-dp rate is returned (else the 6-dp rate, unverified).
+   */
+  preferredRate?: number | null;
 }
 
 /**
@@ -36,11 +45,14 @@ export interface InferredFlatRate {
  * `verified` is false when the rounded rate does not reproduce the stored tax to the cent. Callers
  * must not stamp an unverified rate (the backfill sends it to REVIEW).
  */
-export function inferredFlatRate(invoice: {
-  subtotal: unknown;
-  taxAmount: unknown;
-  lines: ReadonlyArray<{ taxRate?: unknown; categoryTaxAmount?: unknown }>;
-}): InferredFlatRate | null {
+export function inferredFlatRate(
+  invoice: {
+    subtotal: unknown;
+    taxAmount: unknown;
+    lines: ReadonlyArray<{ taxRate?: unknown; categoryTaxAmount?: unknown }>;
+  },
+  opts: InferredFlatRateOptions = {},
+): InferredFlatRate | null {
   if (invoice.lines.length === 0) return null;
   if (invoice.lines.some((l) => Number(l.taxRate ?? 0) !== 0)) return null;
   const categoryTax = invoice.lines.reduce((s, l) => s + Number(l.categoryTaxAmount ?? 0), 0);
@@ -48,6 +60,18 @@ export function inferredFlatRate(invoice: {
   const subtotal = Number(invoice.subtotal) || 0;
   if (!(regularTax > 0) || !(subtotal > 0)) return null;
   const scale = 10 ** TAX_RATE_FRACTION_DECIMALS; // 6 dp: a percent to 4 dp (8.875% = 0.08875)
-  const rate = Math.round(flatRateFromTotals(regularTax, subtotal) * scale) / scale;
-  return { rate, regularTax, verified: roundMoney(subtotal * rate) === regularTax };
+  // "Reproduces" = the ONE invoice-totals builder gives this regular tax to the cent (review MUST-1, SA).
+  const reproduces = (r: number) =>
+    sumInvoiceTotals([{ subtotal, taxRate: r }]).regularTax === regularTax;
+  // The tenant's own rate wins when it reproduces the stored tax: it is the rate the invoice was most likely taxed at.
+  const preferred = Number(opts.preferredRate ?? 0);
+  if (preferred > 0 && reproduces(preferred))
+    return { rate: preferred, regularTax, verified: true };
+  const raw = flatRateFromTotals(regularTax, subtotal);
+  // First VERIFIED of: the legacy 4-dp rate (the round tenant-style one: 0.0825), then the 6-dp rate (0.08875).
+  const legacyScale = 10 ** TAX_PERCENT_DECIMALS;
+  const legacy = Math.round(raw * legacyScale) / legacyScale;
+  if (reproduces(legacy)) return { rate: legacy, regularTax, verified: true };
+  const rate = Math.round(raw * scale) / scale;
+  return { rate, regularTax, verified: reproduces(rate) };
 }

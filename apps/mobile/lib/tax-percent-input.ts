@@ -5,7 +5,8 @@ import { taxPercentPrecisionError } from "@routeflow/pricing";
  * PERCENT with at most 4 decimals (the 6-dp line fraction). Returns the refusal copy, or null when the text is
  * blank, not a number (the server's own 400 owns that) or within the cap.
  */
-export function taxPercentInputError(text: string): string | null {
+export function taxPercentInputError(text: string, stored?: unknown): string | null {
   const t = text.trim();
-  return t === "" ? null : taxPercentPrecisionError(t);
+  // `stored` (review Q5): the tenant's current rate passes unchanged whatever its decimals; only a CHANGED one is capped.
+  return t === "" ? null : taxPercentPrecisionError(t, stored);
 }

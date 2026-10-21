@@ -159,7 +159,7 @@ export default function EditInvoiceScreen() {
     hydratedFor.current = invoice.id;
     openedUpdatedAt.current = invoice.updatedAt;
     // B294 (SA-141): a legacy invoice's 0-rate lines load at its verified inferred rate.
-    const lineTax = hydratedLineTax(invoice);
+    const lineTax = hydratedLineTax(invoice, tenantTaxRate); // the tenant rate wins when it reproduces the tax
     const hydratedLines = (invoice.items ?? []).map((it, i) => ({
       key: newKey(),
       id: it.id,

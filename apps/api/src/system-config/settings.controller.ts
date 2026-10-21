@@ -162,7 +162,11 @@ export class SettingsController {
         throw new BadRequestException("Tax rate must be between 0 and 100 (percent)");
       }
       // R5-1 (SA-814 §3): a percent carries at most 4 decimals (the 6-dp line fraction), 400 beyond that.
-      const precision = taxPercentPrecisionError(dto.taxRate);
+      // Review Q5: a rate equal to the tenant's stored one passes whatever its decimals; only a CHANGED rate is capped.
+      const precision =
+        taxPercentPrecisionError(dto.taxRate) === null
+          ? null
+          : taxPercentPrecisionError(dto.taxRate, await this.svc.get("settings.taxRate"));
       if (precision) throw new BadRequestException(precision);
     }
 

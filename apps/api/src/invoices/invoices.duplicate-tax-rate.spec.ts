@@ -137,7 +137,8 @@ describe("InvoicesService.duplicate — the copy's tax rate (row 588)", () => {
     await service.duplicate("inv-1");
     const data = created();
     const lines = data.items.create;
-    expect(Number(lines[0].taxRate)).toBe(0.088752); // the verified 6-dp inference
+    // 1234.56 x 0.08875 (the tenant's rate, the inference's preferred rate) = 109.5672 -> 109.57: it reproduces the tax
+    expect(Number(lines[0].taxRate)).toBe(0.08875);
     const fresh = sumInvoiceTotalsStrict(lines, {
       discount: data.discount,
       shipping: data.shippingFee,
@@ -167,11 +168,37 @@ describe("InvoicesService.duplicate — the copy's tax rate (row 588)", () => {
     expect(created().taxAmount).toBe(88.75);
   });
 
-  it("an untaxed source (no tax, all lines 0) stays untaxed: no rate is invented", async () => {
+  it("lead ruling (review): an untaxed source (no tax, all goods at 0) copied for a CURRENTLY TAXABLE customer takes the tenant rate", async () => {
     prisma.invoice.findUnique.mockResolvedValue(source({ taxAmount: 0, total: 1000 }));
+    await service.duplicate("inv-1");
+    expect(Number(created().items.create[0].taxRate)).toBe(0.08875); // master: 0
+    expect(created().taxAmount).toBe(88.75);
+    expect(created().total).toBe(1088.75);
+  });
+
+  it("an untaxed source copied for a customer who is EXEMPT now stays $0 (the copy follows the current customer)", async () => {
+    prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: true });
+    prisma.invoice.findUnique.mockResolvedValue(source({ taxAmount: 0, total: 1000 }));
+    await service.duplicate("inv-1");
+    expect(created().taxAmount).toBe(0);
+    expect(created().total).toBe(1000);
+  });
+
+  it("an untaxed source for a tenant with no configured rate stays untaxed: no rate is invented", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(source({ taxAmount: 0, total: 1000 }));
+    tenantRate(null);
     await service.duplicate("inv-1");
     expect(Number(created().items.create[0].taxRate)).toBe(0);
     expect(created().taxAmount).toBe(0);
+  });
+
+  it("the tenant rate is the preferred rate of the inference: a legacy 0 whose tax it reproduces takes the TENANT's rate", async () => {
+    // 1000 x 0.088751 = 88.751 -> 88.75 = the stored tax; the bare inference would say 0.08875
+    prisma.invoice.findUnique.mockResolvedValue(source());
+    tenantRate("8.8751");
+    await service.duplicate("inv-1");
+    expect(Number(created().items.create[0].taxRate)).toBe(0.088751);
+    expect(created().taxAmount).toBe(88.75);
   });
 
   it("a tenant with no configured rate leaves an unverifiable legacy 0 as it was", async () => {
