@@ -16,8 +16,8 @@ import {
  * invoices.service.stored-tax-state.spec.ts.
  */
 const base = { canRestamp: true };
-// $10,000 at 8.875%: the inferred rate rounds to 0.0888, and 10000 x 0.0888 = 888.00 != 887.50.
-const UNVERIFIABLE = { subtotal: 10000, taxAmount: 887.5 };
+// $100,000 with a tax of $8,875.55: the inferred rate rounds to 0.088755 (6 dp), and 100000 x 0.088755 = 8875.50 != 8875.55.
+const UNVERIFIABLE = { subtotal: 100000, taxAmount: 8875.55 };
 const VERIFIED = { subtotal: 100, taxAmount: 7.5 };
 const zero = (subtotal: number) => ({ subtotal, taxRate: 0, categoryTaxAmount: 0 });
 
@@ -53,7 +53,7 @@ describe("assertTaxStateRecomputable", () => {
 
   it("every-line-zero with a real header tax that does NOT verify is a 409 INVOICE_TAX_STATE_STALE", () => {
     const run = () =>
-      assertTaxStateRecomputable({ ...base, invoice: UNVERIFIABLE, storedLines: [zero(10000)] });
+      assertTaxStateRecomputable({ ...base, invoice: UNVERIFIABLE, storedLines: [zero(100000)] });
     expect(run).toThrow(ConflictException);
     try {
       run();
@@ -72,7 +72,7 @@ describe("assertTaxStateRecomputable", () => {
         assertTaxStateRecomputable({
           ...base,
           invoice: { ...UNVERIFIABLE, ...inv },
-          storedLines: [zero(10000)],
+          storedLines: [zero(100000)],
         });
       } catch (e) {
         return (e as ConflictException).getResponse() as { path: string; message: string };
@@ -213,7 +213,7 @@ describe("guardItemsEditTaxState (the DRAFT items edit)", () => {
   });
 
   it("the web re-send of a stored rate 0 on an unverifiable invoice is a 409", () => {
-    const r = row("a", 10000, 0);
+    const r = row("a", 100000, 0);
     expect(() =>
       guardItemsEditTaxState({
         locked: lockedOf(UNVERIFIABLE, [r]),
@@ -226,7 +226,7 @@ describe("guardItemsEditTaxState (the DRAFT items edit)", () => {
   });
 
   it("a kept line whose payload rate differs from the stored one is the user's own change: proceeds", () => {
-    const r = row("a", 10000, 0);
+    const r = row("a", 100000, 0);
     expect(() =>
       guardItemsEditTaxState({
         locked: lockedOf(UNVERIFIABLE, [r]),
@@ -238,7 +238,7 @@ describe("guardItemsEditTaxState (the DRAFT items edit)", () => {
   });
 
   it("no stored line kept (a full rewrite) proceeds", () => {
-    const r = row("a", 10000, 0);
+    const r = row("a", 100000, 0);
     expect(() =>
       guardItemsEditTaxState({
         locked: lockedOf(UNVERIFIABLE, [r]),
@@ -260,8 +260,8 @@ describe("guardItemsEditTaxState (the DRAFT items edit)", () => {
       matches: [{ row: a }, { row: b }, { row: nsf }, { row: null }],
       editLines: lines,
     });
-    // goods are 75 of the 100 subtotal: 5.63 / 75 = 0.0751 verifies (75 x 0.0751 = 5.6325 -> 5.63)
-    expect(lines.map((l) => l.data.taxRate)).toEqual([0.0751, 0.0751, 0, 0]);
+    // goods are 75 of the 100 subtotal: 5.63 / 75 = 0.075067 (6 dp) verifies (75 x 0.075067 = 5.630025 -> 5.63)
+    expect(lines.map((l) => l.data.taxRate)).toEqual([0.075067, 0.075067, 0, 0]);
   });
 });
 

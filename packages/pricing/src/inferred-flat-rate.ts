@@ -1,4 +1,5 @@
 import { roundMoney } from "./pricing";
+import { TAX_RATE_FRACTION_DECIMALS } from "./tax-precision";
 
 /**
  * B294 (SA-141): the ONE rule for recovering a legacy invoice's flat sales-tax rate, shared by
@@ -18,7 +19,7 @@ export function flatRateFromTotals(tax: unknown, subtotal: unknown): number {
 }
 
 export interface InferredFlatRate {
-  /** The flat rate, at InvoiceItem.taxRate's own precision (Decimal(5, 4)). */
+  /** The flat rate, at InvoiceItem.taxRate's own precision (Decimal(9, 6) since the B296 widen). */
   rate: number;
   /** The header's REGULAR tax: taxAmount minus the lines' category (excise) tax. */
   regularTax: number;
@@ -46,6 +47,7 @@ export function inferredFlatRate(invoice: {
   const regularTax = roundMoney(Number(invoice.taxAmount ?? 0) - categoryTax);
   const subtotal = Number(invoice.subtotal) || 0;
   if (!(regularTax > 0) || !(subtotal > 0)) return null;
-  const rate = Math.round(flatRateFromTotals(regularTax, subtotal) * 10_000) / 10_000;
+  const scale = 10 ** TAX_RATE_FRACTION_DECIMALS; // 6 dp: a percent to 4 dp (8.875% = 0.08875)
+  const rate = Math.round(flatRateFromTotals(regularTax, subtotal) * scale) / scale;
   return { rate, regularTax, verified: roundMoney(subtotal * rate) === regularTax };
 }

@@ -42,6 +42,7 @@ import {
   packFromOwnSplit,
   customerLinePrice,
   isNsfLine,
+  TAX_RATE_FRACTION_DECIMALS,
 } from "@routeflow/pricing";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1059,7 +1060,7 @@ export default function EditInvoicePage() {
                   )}
                   <MobileField label="Tax %">
                     <DecimalInput
-                      decimals={4}
+                      decimals={TAX_RATE_FRACTION_DECIMALS}
                       min={0}
                       max={1}
                       value={isNsfLine(item) ? 0 : item.taxRate}

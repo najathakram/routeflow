@@ -45,6 +45,7 @@ import {
 import { registerPushToken, deregisterPushToken } from "../../../lib/auth";
 import { showToast } from "../../../lib/toast";
 import { alertInfo } from "../../../lib/confirm";
+import { taxPercentInputError } from "../../../lib/tax-percent-input";
 
 // ─── Ordering (out-of-stock) ──────────────────────────────────────────────────
 
@@ -195,6 +196,12 @@ function GeneralTab() {
   }
 
   const save = () => {
+    // R5-1: the same 4-decimal cap as web and the API, refused before the request.
+    const taxError = taxPercentInputError(taxRate);
+    if (taxError) {
+      showToast(taxError);
+      return;
+    }
     update.mutate(
       {
         phone: phone.trim() || undefined,

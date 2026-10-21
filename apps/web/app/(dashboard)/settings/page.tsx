@@ -97,6 +97,7 @@ import { useFulfilmentSettings } from "@/lib/api/fulfilment-settings";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { describeSaveError } from "@/lib/reason-copy";
+import { TAX_PERCENT_PRECISION_MESSAGE, taxPercentPrecisionError } from "@routeflow/pricing";
 import { isInShell } from "@/lib/in-shell";
 import { TimeZoneDatalist } from "@/components/TimeZoneInput";
 import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
@@ -121,7 +122,11 @@ const profileShape = {
   city: z.string().min(1, "Required"),
   state: z.string().optional(),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
-  taxRate: z.coerce.number().min(0).max(100),
+  taxRate: z.coerce
+    .number()
+    .min(0)
+    .max(100)
+    .refine((v) => taxPercentPrecisionError(v) === null, TAX_PERCENT_PRECISION_MESSAGE),
   // Plain text, counted in characters like the API does (SA-762r F6).
   receiptFooter: z.string().refine((v) => Array.from(v).length <= RECEIPT_FOOTER_MAX_CHARS, {
     message: `Keep the footer to ${RECEIPT_FOOTER_MAX_CHARS} characters or fewer`,
@@ -474,7 +479,7 @@ function BusinessProfileTab() {
             <Input
               label="Default Tax Rate"
               type="number"
-              step="0.01"
+              step="0.0001"
               min="0"
               max="100"
               register={register("taxRate")}

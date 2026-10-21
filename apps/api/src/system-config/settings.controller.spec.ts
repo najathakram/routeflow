@@ -66,6 +66,23 @@ describe("SettingsController — PATCH /settings taxRate validation", () => {
     expect(svc.set).not.toHaveBeenCalled();
   });
 
+  // R5-1 (SA-814 §3): a percent has at most 4 decimals (6-dp fraction on the line column), 400 beyond that.
+  it.each(["8.875", 8.875, "7.0625", "8.8750", "0.0001"])(
+    "accepts a taxRate with at most 4 decimals of percent (%p)",
+    async (v) => {
+      await controller.updateSettings({ taxRate: v });
+      expect(svc.set).toHaveBeenCalledWith("settings.taxRate", String(v));
+    },
+  );
+
+  it.each(["8.87501", 8.12345, "0.00001"])(
+    "rejects a taxRate with more than 4 decimals of percent (%p) with a 400 and does not write it",
+    async (v) => {
+      await expect(controller.updateSettings({ taxRate: v })).rejects.toThrow(BadRequestException);
+      expect(svc.set).not.toHaveBeenCalled();
+    },
+  );
+
   it("leaves a non-taxRate key (logoUrl) writing unchanged", async () => {
     await controller.updateSettings({ logoUrl: "https://example.com/logo.png" });
     expect(svc.set).toHaveBeenCalledWith("settings.logoUrl", "https://example.com/logo.png");
