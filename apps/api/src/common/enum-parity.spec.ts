@@ -278,7 +278,10 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // immediately as `TAX_RATE_SOURCE_VALUES` / `INVOICE_ORDER_BILLING_ROLE_VALUES` + their `ENUM_TABLE` rows above. Derived
 // from the merged schema folder (`grep -h "^enum " apps/api/prisma/schema/*.prisma | wc -l`: 114 on master af182eaad,
 // 116 with the bundle), not hand-picked (114 → 116).
-const PINNED_PRISMA_ENUM_COUNT = 116;
+// Triage for PaymentIdempotencyScope (SA-824, migration 20261021090000_payment_idempotency_key): a brand-new
+// Prisma enum, explicitly LEFT UNMIRRORED: server-only (the scope of a PaymentIdempotencyKey row); no web or mobile
+// code reads or sends it, the clients only send the Idempotency-Key header (116 → 117).
+const PINNED_PRISMA_ENUM_COUNT = 117;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

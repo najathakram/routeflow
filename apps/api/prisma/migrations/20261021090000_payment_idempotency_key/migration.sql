@@ -8,7 +8,7 @@
 -- NEW OBJECTS ONLY: a new type, a new empty table and its index. No existing table is altered, scanned or locked.
 -- LOCK PROFILE: ONE transaction; the only locks are on the new objects. `SET LOCAL lock_timeout = '5s'` bounds each
 -- wait anyway (the house rule); a timeout rolls the whole file back (recorded FAILED; recover with
--- `prisma migrate resolve --rolled-back 20261020120000_payment_idempotency_key` from apps/api, then re-run;
+-- `prisma migrate resolve --rolled-back 20261021090000_payment_idempotency_key` from apps/api, then re-run;
 -- NEVER `--applied`).
 -- ADDITIVE ONLY, no data writes. DEPLOY ORDER (L-184): apply to prod (fresh backup, `prod-migrate.mjs`),
 -- `schema-drift.mjs` exit 0, and ONLY THEN merge the code that reads or writes this table (SA-824 ruling 5).
