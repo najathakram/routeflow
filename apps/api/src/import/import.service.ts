@@ -2502,7 +2502,11 @@ export class ImportService {
       /** The HTTP apply sets this: a regrouping apply over IMPORT_FAMILY_SYNC_MAX_ROWS is queued instead of run inline. */
       allowBackground?: boolean;
       /** Rows walked so far / total (the background job reports it as progress). */
-      onProgress?: (done: number, total: number) => void;
+      onProgress?: (
+        done: number,
+        total: number,
+        counts: { created: number; updated: number; unchanged: number; skipped: number },
+      ) => void;
     },
   ): Promise<{
     imported: number;
@@ -2598,6 +2602,37 @@ export class ImportService {
     const familyRowNumbers = new Set<number>();
     let famRegroups = 0;
     let famPlan: FamilyPlan | null = null;
+    // SA-823 section 5: a big regrouping apply (~95 ms a row measured) runs as a background job. The HTTP apply decides
+    // from a CHEAP count of rows with a Family or Variant Name cell and queues at once: the job re-plans from the stored
+    // file and enforces every gate (row cap, family pricing). The preview is always synchronous.
+    const famCellCount = famCells.filter((c) => c.family || c.variantName).length;
+    if (
+      !dryRun &&
+      opts?.allowBackground &&
+      hasFamilyColumn &&
+      famCellCount > IMPORT_FAMILY_SYNC_MAX_ROWS &&
+      this.productImportJobs
+    ) {
+      const { jobId } = await this.productImportJobs.enqueue({
+        userId,
+        fileName: opts.fileName,
+        buffer,
+      });
+      return {
+        imported: 0,
+        created: 0,
+        updated: 0,
+        unchanged: 0,
+        skipped: 0,
+        errors: [],
+        rows: [],
+        skippedRows: [],
+        warnings: [],
+        unknownColumns: resolved.unknownColumns,
+        dryRun: false,
+        queued: { jobId, rows: famCellCount },
+      };
+    }
     if (hasFamilyColumn) {
       const familyImport = this.familyImport!;
       const inputs: FamilyRowInput[] = [];
@@ -2637,34 +2672,6 @@ export class ImportService {
         }
       }
     }
-    // SA-823 section 5: a big regrouping apply (~95 ms a row measured) runs as a background job; the gates above already
-    // answered synchronously, the preview is always synchronous, and the job re-plans live from the stored file.
-    if (
-      !dryRun &&
-      opts?.allowBackground &&
-      famRegroups > IMPORT_FAMILY_SYNC_MAX_ROWS &&
-      this.productImportJobs
-    ) {
-      const { jobId } = await this.productImportJobs.enqueue({
-        userId,
-        fileName: opts.fileName,
-        buffer,
-      });
-      return {
-        imported: 0,
-        created: 0,
-        updated: 0,
-        unchanged: 0,
-        skipped: 0,
-        errors: [],
-        rows: [],
-        skippedRows: [],
-        warnings: [],
-        unknownColumns: resolved.unknownColumns,
-        dryRun: false,
-        queued: { jobId, rows: famRegroups },
-      };
-    }
     const nameCounts = new Map<string, number>();
     for (const [idx, p] of parsedRows.entries()) {
       if (p.badCells.length > 0) continue;
@@ -2694,7 +2701,7 @@ export class ImportService {
     let anyWrite = false;
 
     for (let i = 0; i < rawRows.length; i++) {
-      opts?.onProgress?.(i, rawRows.length);
+      opts?.onProgress?.(i, rawRows.length, { created, updated, unchanged, skipped });
       const rowNumber = i + 1;
       const parsed = parsedRows[i];
       const name = (parsed.values.name as string | undefined)?.trim();
@@ -3110,7 +3117,7 @@ export class ImportService {
       }
     }
 
-    opts?.onProgress?.(rawRows.length, rawRows.length);
+    opts?.onProgress?.(rawRows.length, rawRows.length, { created, updated, unchanged, skipped });
     // SA-823: an empty family this run created is deactivated in the same run and reported.
     let families: ImportFamilySummary | undefined;
     if (famPlan && this.familyImport) {

@@ -48,6 +48,11 @@ describe("product import background job", () => {
       );
     });
 
+    it("retains a failed job for 48 hours, not 7 days", async () => {
+      await svc.enqueue({ userId: "user-1", buffer: Buffer.from("a") });
+      expect(queue.add.mock.calls[0][2].removeOnFail).toEqual({ age: 48 * 3600 });
+    });
+
     it("status maps the Bull state and carries progress, the result and the failure", async () => {
       expect(await svc.status("7")).toMatchObject({ id: "7", state: "running", progress: 42 });
       queue.getJob.mockResolvedValue(
@@ -58,6 +63,21 @@ describe("product import background job", () => {
       expect(await svc.status("7")).toMatchObject({ state: "failed", error: "boom" });
       queue.getJob.mockResolvedValue(job({ getState: async () => "waiting" }));
       expect((await svc.status("7")).state).toBe("queued");
+    });
+
+    it("status carries the running counts from the progress data, so a failed job shows them", async () => {
+      queue.getJob.mockResolvedValue(
+        job({
+          getState: async () => "failed",
+          failedReason: "boom",
+          progress: () => ({ percent: 60, created: 3, updated: 20, unchanged: 1, skipped: 2 }),
+        }),
+      );
+      expect(await svc.status("7")).toMatchObject({
+        state: "failed",
+        progress: 60,
+        counts: { created: 3, updated: 20, unchanged: 1, skipped: 2 },
+      });
     });
 
     it("status is tenant-scoped: another tenant's job, or no job, is a 404", async () => {
@@ -73,37 +93,88 @@ describe("product import background job", () => {
   });
 
   describe("ProductImportProcessor", () => {
-    it("runs the apply inside the job's tenant context, without background routing, and reports progress", async () => {
+    const build = (status: string | null = "ACTIVE") => {
       const tenantCtx = new TenantContextService();
-      let seenTenant: string | null = null;
+      const seen: { tenant: string | null } = { tenant: null };
       const importService = {
         importProducts: jest.fn(async (_b: Buffer, _u: string, opts: any) => {
-          seenTenant = tenantCtx.getOrNull();
-          opts.onProgress?.(5, 10);
+          seen.tenant = tenantCtx.getOrNull();
+          opts.onProgress?.(0, 200, { created: 0, updated: 0, unchanged: 0, skipped: 0 });
+          opts.onProgress?.(1, 200, { created: 0, updated: 1, unchanged: 0, skipped: 0 });
+          opts.onProgress?.(2, 200, { created: 0, updated: 2, unchanged: 0, skipped: 0 });
+          opts.onProgress?.(100, 200, { created: 1, updated: 99, unchanged: 0, skipped: 0 });
           return { created: 1 };
         }),
       };
-      const progress = jest.fn();
+      const prisma = {
+        tenant: { findUnique: jest.fn(async () => (status ? { status } : null)) },
+      };
       const proc = new (
-        ProductImportProcessor as unknown as new (i: unknown, t: unknown) => ProductImportProcessor
-      )(importService, tenantCtx);
-      const out = await proc.handle({
-        ...job({ progress }),
-        data: {
-          tenantId: "tenant-a",
-          userId: "user-1",
-          fileName: "f.csv",
-          fileBase64: Buffer.from("x").toString("base64"),
-        },
-      } as never);
+        ProductImportProcessor as unknown as new (
+          i: unknown,
+          t: unknown,
+          p: unknown,
+        ) => ProductImportProcessor
+      )(importService, tenantCtx, prisma);
+      return { proc, importService, seen, prisma };
+    };
+    const jobWith = (over: Record<string, unknown> = {}) => ({
+      ...job({ progress: jest.fn(), update: jest.fn(async () => undefined) }),
+      data: {
+        tenantId: "tenant-a",
+        userId: "user-1",
+        fileName: "f.csv",
+        fileBase64: Buffer.from("x").toString("base64"),
+      },
+      ...over,
+    });
+
+    it("runs the apply inside the job's tenant context, without background routing", async () => {
+      const { proc, importService, seen } = build();
+      const j = jobWith();
+      const out = await proc.handle(j as never);
       expect(out).toEqual({ created: 1 });
-      expect(seenTenant).toBe("tenant-a");
+      expect(seen.tenant).toBe("tenant-a");
       const opts = importService.importProducts.mock.calls[0][2];
       expect(opts.allowBackground).toBeUndefined();
       expect(opts.dryRun).toBeFalsy();
       expect(opts.fileName).toBe("f.csv");
       expect(importService.importProducts.mock.calls[0][0].toString()).toBe("x");
-      expect(progress).toHaveBeenCalledWith(50);
+    });
+
+    it("reports progress only when the percent moves (every 1%), with the running counts", async () => {
+      const { proc } = build();
+      const j = jobWith();
+      await proc.handle(j as never);
+      // 0/200 = 0%, 1/200 = 1% (0.5 rounds to 1), 2/200 = 1% again (skipped), 100/200 = 50%
+      const calls = (j.progress as jest.Mock).mock.calls.map((c) => c[0]);
+      expect(calls).toEqual([
+        { percent: 0, created: 0, updated: 0, unchanged: 0, skipped: 0 },
+        { percent: 1, created: 0, updated: 1, unchanged: 0, skipped: 0 },
+        { percent: 50, created: 1, updated: 99, unchanged: 0, skipped: 0 },
+      ]);
+    });
+
+    it("clears the stored file once the job completes", async () => {
+      const { proc } = build();
+      const j = jobWith();
+      await proc.handle(j as never);
+      expect(j.update).toHaveBeenCalledWith(expect.objectContaining({ fileBase64: "" }));
+    });
+
+    it.each(["SUSPENDED", "CANCELLED", "READ_ONLY"])(
+      "a %s workspace gets no writes: the job fails before importProducts runs",
+      async (status) => {
+        const { proc, importService } = build(status);
+        await expect(proc.handle(jobWith() as never)).rejects.toThrow(/can't make changes/i);
+        expect(importService.importProducts).not.toHaveBeenCalled();
+      },
+    );
+
+    it("a missing tenant row gets no writes either", async () => {
+      const { proc, importService } = build(null);
+      await expect(proc.handle(jobWith() as never)).rejects.toThrow();
+      expect(importService.importProducts).not.toHaveBeenCalled();
     });
   });
 });

@@ -34,6 +34,7 @@ export const IMPORT_FAMILY_MAX_ROWS = 2500;
 export const IMPORT_FAMILY_NAME_ONLY_REASON =
   "Add the product's id, SKU or barcode to move it into a family.";
 export const IMPORT_FAMILY_CLASS_REASON = "A family's items must share their regulated category.";
+export const IMPORT_FAMILY_TOBACCO_HINT = "Set Tobacco to Yes to add this to a tobacco family.";
 const PRICING_ON_MESSAGE =
   "Family pricing is on, so grouping would change these products' prices. Turn family pricing off, or group them in the product editor.";
 
@@ -259,7 +260,12 @@ export class ProductFamilyImportService {
         if (ref !== undefined) classRef.set(d.target.key, ref);
       }
       if (ref && (ref.isTobacco !== cls.isTobacco || ref.tracked !== cls.tracked)) {
-        plan.decisions.set(r.index, { skip: IMPORT_FAMILY_CLASS_REASON });
+        // a new plain item meeting a tobacco family: the fix is one cell, so say so
+        const plainIntoTobacco =
+          !d.existing && ref.isTobacco && !cls.isTobacco && r.values.isTobacco !== true;
+        plan.decisions.set(r.index, {
+          skip: plainIntoTobacco ? IMPORT_FAMILY_TOBACCO_HINT : IMPORT_FAMILY_CLASS_REASON,
+        });
         continue;
       }
       if (ref === undefined) classRef.set(d.target.key, cls);
