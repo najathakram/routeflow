@@ -1065,6 +1065,8 @@ describe("TenantConfigSnapshotService — restored GRANT overrides (row 640)", (
       coverage: {
         priceOf: (sku: string) => (cov.priced && sku === OCR_SKU ? PRICE : null),
         includedAt: (sku: string) => !!cov.included && sku === OCR_SKU,
+        planFlags: new Set<string>(),
+        grantsFlagsOf: () => [] as string[],
       },
     });
   const billedRow = (over: Record<string, unknown> = {}) => ({

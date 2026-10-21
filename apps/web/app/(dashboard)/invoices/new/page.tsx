@@ -1562,10 +1562,29 @@ export default function NewInvoicePage() {
         // The same flattening the dropdown uses, so Enter adds what it WILL show first (M3 review).
         matches = sellableFlat<any>(res?.data ?? []);
       }
-      const skuExact = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
+      // Identity, not ranking: a full-string SKU / barcode match, case-insensitive.
+      const lc = code.toLowerCase();
+      const isCodeOf = (p: any) =>
+        [
+          p.sku,
+          p.barcode,
+          p.unitSku,
+          ...((p.barcodes as { code?: string }[] | undefined) ?? []).map((b) => b?.code),
+        ]
+          .filter((c): c is string => typeof c === "string" && c !== "")
+          .some((c) => c.toLowerCase() === lc);
+      const codeMatches = matches.filter(isCodeOf);
+      // A settled list keeps the old rule (an exact SKU among the shown rows wins, else the first shown).
+      // A PENDING answer is added only when exactly ONE product owns the code (SA, row 671).
+      const skuExact = shown
+        ? codeMatches[0]
+        : codeMatches.length === 1
+          ? codeMatches[0]
+          : undefined;
       // Row 671: with no settled list (shown undefined) the fetched answer is PENDING - never on
-      // screen - so only a code-exact SKU may be added from it. Anything else keeps the text and waits
-      // for the dropdown to settle, so Enter can only ever add a row the operator was shown.
+      // screen - so only a code-exact identity (ONE product) may be added from it. Anything else keeps
+      // the typed text and waits for the dropdown to settle, so Enter can only ever add a row that was
+      // on screen.
       if (!shown && !skuExact && matches.length > 0) {
         setScanQuery(code);
         setDebouncedScanQuery(code);

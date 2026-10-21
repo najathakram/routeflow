@@ -218,4 +218,35 @@ describe("new invoice scan bar - Enter adds the row that is shown (M3)", () => {
     await user.type(bar(), "1{Enter}");
     await waitFor(() => expect(lineNames()).toEqual(["Distilled Water 1 Gallon"]));
   });
+
+  it("row 671 (SA): an exact SKU matches case-insensitively against exactly ONE product - added", async () => {
+    mockSearchProducts = [SPRING_FAMILY];
+    mockRawSearch = [SPRING_FAMILY, DISTILLED];
+    const user = await openBuilder();
+    await typeAndWaitForDropdown(user, "dw-");
+    await user.type(bar(), "1{Enter}");
+    await waitFor(() => expect(lineNames()).toEqual(["Distilled Water 1 Gallon"]));
+  });
+
+  it("row 671 (SA): two products sharing the typed code - nothing is added, the text is kept", async () => {
+    mockSearchProducts = [SPRING_FAMILY];
+    mockRawSearch = [DISTILLED, { ...DISTILLED, id: "p-distilled-2", name: "Distilled Water 2" }];
+    const user = await openBuilder();
+    await typeAndWaitForDropdown(user, "DW-");
+    await user.type(bar(), "1{Enter}");
+    await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/products"));
+    expect(lineNames()).toEqual([]);
+    expect(bar()).toHaveValue("DW-1");
+  });
+
+  it("row 671 (SA): a prefix of a SKU is not identity - nothing is added", async () => {
+    mockSearchProducts = [SPRING_FAMILY];
+    mockRawSearch = [DISTILLED];
+    const user = await openBuilder();
+    await typeAndWaitForDropdown(user, "D");
+    await user.type(bar(), "W{Enter}");
+    await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/products"));
+    expect(lineNames()).toEqual([]);
+    expect(bar()).toHaveValue("DW");
+  });
 });
