@@ -1625,10 +1625,23 @@ export function CounterSaleScreen() {
                 <span>{money(c.amount)}</span>
               </div>
             ))}
-            <div className="flex justify-between text-lg font-semibold" data-testid="running-total">
-              <span>Estimated total</span>
-              <span>{money(totals.total)}</span>
-            </div>
+            {/* R7b ruling: for cash, "Amount due" below already reads the total; the row hides while the two are equal to
+                the cent (a tender in progress, a card sale or a differing figure shows it as before). The figure stays in
+                the DOM, visually hidden, for assistive tech and for the tests that read it. */}
+            {method === "CASH" &&
+            roundMoney(totals.total) === roundMoney(amountDue(totals.total, tenderedNum)) ? (
+              <span className="sr-only" data-testid="running-total">
+                Total {money(totals.total)}
+              </span>
+            ) : (
+              <div
+                className="flex justify-between text-lg font-semibold"
+                data-testid="running-total"
+              >
+                <span>Estimated total</span>
+                <span>{money(totals.total)}</span>
+              </div>
+            )}
 
             {method === "CASH" ? (
               <p className="text-3xl font-bold" data-testid="change-due" role="status">

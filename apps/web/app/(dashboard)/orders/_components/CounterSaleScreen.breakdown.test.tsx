@@ -196,3 +196,27 @@ describe("R7b 1.4: a licence-needing line says so at add, for a walk-in", () => 
     expect(screen.queryByTestId("line-license-note")).toBeNull();
   });
 });
+
+describe("R7b ruling: the Estimated total row hides when it equals Amount due", () => {
+  it("hides Estimated total when it equals Amount due", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
+    // cash, nothing tendered yet: Amount due is the total, to the cent
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $10.");
+    expect(screen.queryByText("Estimated total")).toBeNull();
+  });
+
+  it("shows Estimated total when it differs from Amount due", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "4" } });
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $6.");
+    expect(screen.getByText("Estimated total")).toBeInTheDocument();
+    expect(text("running-total")).toContain("$10.");
+    // a card sale has no Amount due line, so the total keeps its row
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    expect(screen.getByText("Estimated total")).toBeInTheDocument();
+  });
+});
