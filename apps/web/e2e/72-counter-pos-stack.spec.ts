@@ -304,3 +304,57 @@ test.describe("POS stack counter: ring the sale @ 1440", () => {
     await expect(page.getByTestId("receipt-line-note")).toHaveText("smoke note");
   });
 });
+
+/**
+ * R7b batch 1 "say the money at the till". Written against the real stack like the rest of this file; the lead runs it on the
+ * one proof stack (it is not run in the build lane). Each test rings at most one cash sale on the approved test tenant.
+ */
+test.describe("R7b till: change due note and the keyboard path to pay", () => {
+  for (const width of [1280, 390]) {
+    test(`Complete & next sale keeps Change due in the note @ ${width}`, async ({
+      page,
+      context,
+    }) => {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+      await setTenantCookie(context, BASE);
+      const { products } = await discover(page);
+      await page.goto("/orders/counter-sale");
+      const scanField = page.getByLabel("Scan or search items");
+      await expect(scanField).toBeVisible({ timeout: 15_000 });
+      await scanField.fill(String(products[0].sku));
+      await scanField.press("Enter");
+      await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
+        timeout: 15_000,
+      });
+      await page.getByLabel("Amount tendered").fill("1000");
+      await page.getByRole("button", { name: "Complete & next sale" }).click();
+      await expect(page.getByTestId("counter-last-sale")).toContainText("Change due", {
+        timeout: 20_000,
+      });
+    });
+  }
+
+  test("keyboard only: scan, Enter, type the tender, Enter shows the receipt @ 1280", async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await setTenantCookie(context, BASE);
+    const { products } = await discover(page);
+    await page.goto("/orders/counter-sale");
+    const scanField = page.getByLabel("Scan or search items");
+    await expect(scanField).toBeVisible({ timeout: 15_000 });
+    for (const p of products) {
+      await scanField.fill(String(p.sku));
+      await scanField.press("Enter");
+    }
+    await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(2, {
+      timeout: 15_000,
+    });
+    await scanField.press("Enter"); // empty scan box with lines: focus moves to the payment
+    await expect(page.getByLabel("Amount tendered")).toBeFocused();
+    await page.keyboard.type("1000");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("counter-sale-receipt")).toBeVisible({ timeout: 20_000 });
+  });
+});

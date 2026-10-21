@@ -329,7 +329,7 @@ describe("Park", () => {
     await scan("COLA");
     await scan("COLA");
     await pickAcme();
-    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Check" }));
     fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
     let answer: (v: unknown) => void = () => undefined;
     post.mockImplementationOnce(() => new Promise((r) => (answer = r)));
@@ -361,7 +361,7 @@ describe("Park", () => {
     answer({ data: { id: body.id } });
     await waitFor(() => expect(itemNames().join(" ")).toContain("No items yet."));
     expect(screen.getByText("Walk-in customer")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Cash" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("radio", { name: "Cash" })).toHaveAttribute("aria-checked", "true");
     expect(total()).toHaveTextContent("$0.00");
     await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
   });
@@ -427,7 +427,7 @@ describe("Park", () => {
     fireEvent.click(parkBtn());
     await waitFor(() => expect(parkCalls()).toHaveLength(1));
     // the payment side stays editable during the request: change it, then let the park answer
-    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Check" }));
     fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "999" } });
     answer({ data: { id: "x" } });
     const note = await screen.findByTestId("counter-park-error");
@@ -522,7 +522,7 @@ describe("Resume with an empty cart", () => {
     await waitFor(() => expect(itemNames().join(" ")).toContain("Cola"));
     expect(itemNames().join(" ")).toContain("2");
     expect(screen.getByText("Acme Cafe", { selector: "span.font-medium" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Check" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("radio", { name: "Check" })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByLabelText("Check number")).toHaveValue("1042");
     // parked at 2.50, Acme's tier-2 price is 2.00: the DISPLAY follows the customer
     await waitFor(() => expect(total()).toHaveTextContent("$4.00"));

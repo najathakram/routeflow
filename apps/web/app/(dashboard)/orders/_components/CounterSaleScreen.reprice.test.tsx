@@ -226,7 +226,7 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
     await scanBoth();
     pickAcme();
     await waitFor(() => expect(total()).toHaveTextContent("$11.00"));
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(completeBtn());
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     const { dto } = mutateAsync.mock.calls[0][0];

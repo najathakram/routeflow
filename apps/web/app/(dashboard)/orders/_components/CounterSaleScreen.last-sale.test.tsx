@@ -149,7 +149,7 @@ describe("CounterSaleScreen: the finished sale's order number (CQ-17)", () => {
     });
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(screen.getByRole("button", { name: "Complete & next sale" }));
     const note = await screen.findByTestId("counter-last-sale");
     expect(note).toHaveTextContent("Paid by card");

@@ -110,8 +110,8 @@ describe("CounterSaleScreen", () => {
   it("defaults to a Walk-in customer, with On account disabled and the scan field focused", () => {
     renderWithProviders(<CounterSaleScreen />);
     expect(screen.getByText("Walk-in customer")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "On account" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cash" })).not.toBeDisabled();
+    expect(screen.getByRole("radio", { name: "On account" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Cash" })).not.toBeDisabled();
     expect(screen.getByLabelText("Scan or search items")).toHaveFocus();
   });
 
@@ -837,7 +837,9 @@ describe("CounterSaleScreen: API contract wiring", () => {
         expect(screen.getByLabelText("Amount tendered")).toBeDisabled();
         expect(screen.getByRole("button", { name: "Remove Cola" })).toBeDisabled();
         for (const name of ["Cash", "Card", "Check", "Exact", "$20", "$50", "$100"])
-          expect(screen.getByRole("button", { name })).toBeDisabled();
+          expect(
+            screen.getByRole(/^(Cash|Card|Check)$/.test(name) ? "radio" : "button", { name }),
+          ).toBeDisabled();
         expect(screen.getByRole("button", { name: "Complete & show receipt" })).toBeDisabled();
         expect(screen.getByRole("button", { name: /Complete & next sale/ })).toBeDisabled();
       },
@@ -975,7 +977,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
             expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"),
           );
           fireEvent.click(
-            screen.getByRole("button", { name: method === "CARD" ? "Card" : "Check" }),
+            screen.getByRole("radio", { name: method === "CARD" ? "Card" : "Check" }),
           );
           if (method === "CHECK")
             fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1001" } });
@@ -1150,7 +1152,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
           mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
           renderWithProviders(<CounterSaleScreen />);
           await fillCola();
-          if (method) fireEvent.click(screen.getByRole("button", { name: method }));
+          if (method) fireEvent.click(screen.getByRole("radio", { name: method }));
           fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
           await screen.findByTestId("counter-outcome-unknown");
           lookupAsync.mockResolvedValueOnce({ ...sale, ...body });
@@ -1254,7 +1256,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
           await waitFor(() =>
             expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"),
           );
-          fireEvent.click(screen.getByRole("button", { name: "On account" }));
+          fireEvent.click(screen.getByRole("radio", { name: "On account" }));
           fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
           await screen.findByTestId("counter-outcome-unknown");
           lookupAsync.mockResolvedValueOnce({
@@ -1575,7 +1577,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       renderWithProviders(<CounterSaleScreen />);
       await scan("012345678905");
       await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
-      fireEvent.click(screen.getByRole("button", { name: "Card" }));
+      fireEvent.click(screen.getByRole("radio", { name: "Card" }));
       mutateAsync.mockResolvedValue({
         orderId: "o1",
         orderNumber: "ORD-1",
@@ -1829,15 +1831,17 @@ describe("CounterSaleScreen: API contract wiring", () => {
       await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
       const names = ["Cash", "Card", "Check", "Exact", "$20", "$50", "$100"];
       for (const n of names) {
-        expect(screen.getByRole("button", { name: n }).tagName).toBe("BUTTON");
+        const role = /^(Cash|Card|Check)$/.test(n) ? "radio" : "button";
+        expect(screen.getByRole(role, { name: n }).tagName).toBe("BUTTON");
       }
-      screen.getByRole("button", { name: "Cash" }).focus();
+      // The methods are one radiogroup (roving tabindex): Tab visits the chosen method only, arrows move between them.
+      screen.getByRole("radio", { name: "Cash" }).focus();
       const seen: string[] = ["Cash"];
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 4; i++) {
         await user.tab();
         seen.push(document.activeElement?.textContent ?? "");
       }
-      expect(seen).toEqual(["Cash", "Card", "Check", "Exact", "$20", "$50", "$100"]);
+      expect(seen).toEqual(["Cash", "Exact", "$20", "$50", "$100"]);
       await user.tab();
       expect(screen.getByLabelText("Amount tendered")).toHaveFocus();
     });

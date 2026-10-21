@@ -80,7 +80,7 @@ import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
 import { CounterReceiptBody } from "./CounterReceiptBody";
 import { CounterCustomerCredit } from "./CounterCustomerCredit";
 import { CounterGateOffline } from "./CounterGateOffline";
-import { CounterCustomerMatches } from "./CounterCustomerMatches";
+import { CounterCustomerMatches, useCustomerListbox } from "./CounterCustomerMatches";
 import {
   CounterLastSale,
   lastSaleNoteFrom,
@@ -414,6 +414,17 @@ export function CounterSaleScreen() {
     search: customerSearch.trim() || undefined,
   });
   const matches = customerSearch.trim() ? (customersData?.data ?? []).slice(0, 6) : [];
+  const pickCustomer = (c: PickedCustomer) => {
+    if (lineLocked || saleInFlight()) return;
+    setCustomer(c);
+    setCustomerSearch("");
+    refocus();
+  };
+  const customerListbox = useCustomerListbox(
+    matches as PickedCustomer[],
+    customerSearch,
+    pickCustomer,
+  );
 
   // The fulfilment pre-selection for "Ship this order instead": the customer's own path first, then the staff default.
   const shipPreselected = preselectFulfilment(customer?.fulfillPath, gate.capability) === "SHIP";
@@ -555,6 +566,36 @@ export function CounterSaleScreen() {
     void runShip(customer, lines);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shipIntent, locked, scanBusy, reprice.blocked, customer, lines, createSale.isPending]);
+
+  // R7b 1.2 (a): Enter in an EMPTY scan box with lines in the cart moves to the payment (a scanner never sends an empty Enter).
+  const tenderRef = React.useRef<HTMLInputElement>(null);
+  // The ONE place the payment area takes focus (Enter in an empty scan box, and the tender radiogroup's arrow keys).
+  const focusNode = (el: HTMLElement | null | undefined) => el?.focus();
+  const focusPayment = () =>
+    focusNode(
+      method === "CASH" && tenderRef.current
+        ? tenderRef.current
+        : document.querySelector<HTMLButtonElement>(
+            '[data-testid="counter-checkout-actions"] button',
+          ),
+    );
+  // R7b 1.2 (b): the tender methods are a WAI-ARIA radiogroup: Left/Right (and Up/Down) move to the next enabled method.
+  const onTenderKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const dir =
+      e.key === "ArrowRight" || e.key === "ArrowDown"
+        ? 1
+        : e.key === "ArrowLeft" || e.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (!dir || locked) return;
+    const options = paymentMethodOptions(isWalkIn).filter((m) => !m.disabled);
+    const at = options.findIndex((m) => m.method === method);
+    const next = options[(at + dir + options.length) % options.length];
+    if (!next) return;
+    e.preventDefault();
+    setMethod(next.method);
+    focusNode(e.currentTarget.querySelector<HTMLButtonElement>(`[data-method="${next.method}"]`));
+  };
 
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -1029,6 +1070,7 @@ export function CounterSaleScreen() {
               ) : null}
             </div>
             <input
+              {...customerListbox.inputProps}
               ref={customerFindRef}
               aria-label="Find a customer"
               className="min-h-[44px] w-full rounded border px-3 py-2 text-sm"
@@ -1077,16 +1119,12 @@ export function CounterSaleScreen() {
               </p>
             ) : null}
             <CounterCustomerMatches
+              listbox={customerListbox.listbox}
               search={customerSearch}
               matches={matches as PickedCustomer[]}
               answered={customersData !== undefined && !customersFetching}
               disabled={lineLocked}
-              onPick={(c) => {
-                if (lineLocked || saleInFlight()) return;
-                setCustomer(c);
-                setCustomerSearch("");
-                refocus();
-              }}
+              onPick={pickCustomer}
             />
           </section>
 
@@ -1123,6 +1161,10 @@ export function CounterSaleScreen() {
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !scanText && undo) {
                   e.preventDefault();
                   undoRemove();
+                }
+                if (e.key === "Enter" && !scanText.trim() && lines.length > 0 && !lineLocked) {
+                  e.preventDefault(); // no empty scan; the next keys are the payment
+                  focusPayment();
                 }
               }}
               onBlur={(e) => {
@@ -1291,13 +1333,22 @@ export function CounterSaleScreen() {
         >
           {/* payment on the same screen */}
           <section aria-label="Payment" className="space-y-3">
-            <div className="flex flex-wrap gap-2">
+            <div
+              className="flex flex-wrap gap-2"
+              role="radiogroup"
+              aria-label="Payment method"
+              data-testid="counter-tender-methods"
+              onKeyDown={onTenderKeyDown}
+            >
               {paymentMethodOptions(isWalkIn).map((m) => (
                 <button
                   key={m.method}
                   type="button"
+                  role="radio"
                   disabled={m.disabled || locked}
-                  aria-pressed={method === m.method}
+                  aria-checked={method === m.method}
+                  tabIndex={method === m.method ? 0 : -1}
+                  data-method={m.method}
                   className={cn(
                     TAP_TARGET,
                     "rounded border px-3 text-sm disabled:opacity-40",
@@ -1335,6 +1386,7 @@ export function CounterSaleScreen() {
                 <label className="block text-sm">
                   Amount tendered
                   <input
+                    ref={tenderRef}
                     aria-label="Amount tendered"
                     inputMode="decimal"
                     className="mt-1 min-h-[44px] w-full rounded border px-3 py-2"

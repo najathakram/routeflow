@@ -100,7 +100,11 @@ const scan = async (text: string) => {
   fireEvent.submit(field.closest("form")!);
   await waitFor(() => expect((field as HTMLInputElement).value).toBe(""));
 };
-const click = (name: string | RegExp) => fireEvent.click(screen.getByRole("button", { name }));
+const TENDERS = /^(Cash|Card|Check|On account)$/;
+const click = (name: string | RegExp) =>
+  fireEvent.click(
+    screen.getByRole(typeof name === "string" && TENDERS.test(name) ? "radio" : "button", { name }),
+  );
 const total = () => screen.getByTestId("running-total");
 const rows = () => within(screen.getByRole("list", { name: "Items" })).getAllByRole("listitem");
 const colaRow = () => rows().find((r) => /Cola/.test(r.textContent ?? ""))!;
