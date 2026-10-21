@@ -193,6 +193,7 @@ function authHarness(opts = {}) {
     auth: { passwordHash: HASH, sessionSecret: SECRET, ...(opts.auth ?? {}) },
     webhook: { secret: WH_SECRET, onEvent: (name, payload) => events.push([name, payload]) },
     cloud: opts.cloud ?? false,
+    ...(opts.log ? { log: opts.log } : {}),
   });
   return { server, events };
 }
@@ -489,7 +490,7 @@ test("security headers on every response, including redirects, errors and the SS
     ];
     for (const r of responses) {
       assert.equal(r.headers["x-content-type-options"], "nosniff", String(r.status));
-      assert.equal(r.headers["referrer-policy"], "no-referrer");
+      assert.equal(r.headers["referrer-policy"], "same-origin");
       assert.equal(r.headers["x-frame-options"], "DENY");
       assert.equal(r.headers["content-security-policy"], CSP);
       assert.equal(r.headers["x-robots-tag"], "noindex, nofollow");
@@ -741,4 +742,75 @@ test("session: cookie is 30 days and re-issued only once under 15 days remain", 
     const again = await call(port, "/api/snapshot", { headers: { cookie: cookieOf(late) } });
     assert.equal(again.status, 200);
   });
+});
+
+test("login outcomes are logged (ok | wrong | rate-limited | bad-request) without any secret", async () => {
+  const lines = [];
+  const h = authHarness({ log: (m) => lines.push(m) });
+  await withServer(h, async (port) => {
+    await login(port, "nope-nope-secret-typo");
+    await login(port);
+    await login(port, PASSWORD, { origin: "https://evil.example" });
+    for (let i = 0; i < 10; i++) await login(port, "wrong-again-" + i);
+    await login(port);
+  });
+  const outcomes = lines.map((l) => /login (ok|wrong|rate-limited|bad-request)/.exec(l)?.[1]);
+  assert.equal(outcomes[0], "wrong");
+  assert.equal(outcomes[1], "ok");
+  assert.equal(outcomes[2], "bad-request");
+  assert.equal(outcomes[outcomes.length - 1], "rate-limited");
+  assert.match(lines[0], /client [0-9a-f]{8}/);
+  const dump = lines.join("\n");
+  assert.ok(!dump.includes("nope-nope-secret-typo"));
+  assert.ok(!dump.includes("wrong-again-"));
+  assert.ok(!dump.includes(PASSWORD));
+  assert.ok(!dump.includes(HASH));
+  assert.ok(!/ops_session|127.0.0.1/.test(dump));
+});
+
+// ---------- login origin under Referrer-Policy: same-origin ----------
+
+test("login: GET /login sends referrer-policy same-origin", async () => {
+  const h = authHarness();
+  await withServer(h, async (port) => {
+    const r = await call(port, "/login");
+    assert.equal(r.headers["referrer-policy"], "same-origin");
+  });
+});
+
+test("login origin: null + sec-fetch-site same-origin signs in; other combinations are refused", async () => {
+  const lines = [];
+  const h = authHarness({ log: (m) => lines.push(m) });
+  await withServer(h, async (port) => {
+    const ok = await login(port, PASSWORD, { origin: "null", "sec-fetch-site": "same-origin" });
+    assert.equal(ok.status, 303);
+    assert.equal(ok.headers.location, "/");
+    assert.ok(ok.headers["set-cookie"]);
+
+    const cross = await login(port, PASSWORD, {
+      origin: "https://evil.example",
+      "sec-fetch-site": "cross-site",
+    });
+    assert.equal(cross.status, 403);
+    assert.match(cross.headers["content-type"], /text\/html/);
+    assert.match(cross.body, /somewhere the monitor doesn/);
+    assert.match(cross.body, /<form/);
+
+    const nullNoFetch = await login(port, PASSWORD, { origin: "null" });
+    assert.equal(nullNoFetch.status, 403);
+
+    const nullCross = await login(port, PASSWORD, {
+      origin: "null",
+      "sec-fetch-site": "cross-site",
+    });
+    assert.equal(nullCross.status, 403);
+
+    const wrong = await login(port, "nope-nope", {
+      origin: `http://127.0.0.1:${port}`,
+      "sec-fetch-site": "same-origin",
+    });
+    assert.equal(wrong.status, 303);
+    assert.equal(wrong.headers.location, "/login?e=1");
+  });
+  assert.ok(lines.some((l) => /login bad-request origin-mismatch client [0-9a-f]{8}/.test(l)));
 });

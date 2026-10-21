@@ -11,9 +11,11 @@ import http from "node:http";
 import { networkInterfaces } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { randomBytes } from "node:crypto";
 import {
   COOKIE_NAME,
   SESSION_MAX_AGE_S,
+  authFromEnv,
   clearCookie,
   clientIp,
   createFailureLimiter,
@@ -50,6 +52,8 @@ const ICONS = {
 };
 const iconCache = new Map();
 const LOGIN_FILE = "login.html";
+const ORIGIN_REFUSED =
+  "This sign-in came from somewhere the monitor doesn&#39;t recognise. Open the monitor&#39;s address directly and try again.";
 const ERROR_MARKER = "<!--login-error-->";
 const LOGIN_ERRORS = {
   1: "Incorrect password. Try again.",
@@ -93,6 +97,7 @@ export function createMonitorServer({
   auth = null,
   webhook = null,
   cloud = false,
+  log = (m) => console.error(`[ops-monitor] ${m}`),
 }) {
   const now = auth?.now ?? Date.now;
   // Failures only: 10 per client IP per 15 min, plus a coarse global cap of 300 in case the
@@ -141,10 +146,16 @@ export function createMonitorServer({
       req.on("close", () => resolveBody({ tooLarge: true, body: Buffer.alloc(0) }));
     });
 
-  // Cross-site form posts: if the browser sent an Origin it must be this host.
+  // Cross-site form posts. An Origin must name this host. "Origin: null" (what browsers send for a
+  // same-origin POST under Referrer-Policy: no-referrer) is accepted only when the browser-set
+  // Sec-Fetch-Site says same-origin. A request with no Origin at all (curl, tests) is allowed
+  // unless a browser's Sec-Fetch-Site marks it as coming from elsewhere.
   const sameOrigin = (req) => {
     const origin = req.headers.origin;
-    if (origin === undefined) return true;
+    const site = req.headers["sec-fetch-site"];
+    if (origin === undefined)
+      return site === undefined || site === "same-origin" || site === "none";
+    if (origin === "null") return site === "same-origin";
     try {
       return new URL(origin).host === req.headers.host;
     } catch {
@@ -152,23 +163,39 @@ export function createMonitorServer({
     }
   };
 
+  // One line per login attempt. The client tag is a short non-reversible hash of the IP with a
+  // per-boot random salt; nothing else about the request (and never the password) is logged.
+  const loginSalt = randomBytes(16);
+  const clientTag = (ip) =>
+    createHash("sha256").update(loginSalt).update(String(ip)).digest("hex").slice(0, 8);
+  const loginLog = (outcome, ip) => log(`login ${outcome} client ${clientTag(ip)}`);
+
   async function handleLogin(req, res) {
-    if (!sameOrigin(req)) return text(res, 403, "forbidden");
-    const { tooLarge, body } = await readBody(req, LOGIN_BODY_MAX);
-    if (tooLarge) return text(res, 413, "request too large", { connection: "close" });
-    const t = now();
     const ip = clientIp(req, { cloud });
+    if (!sameOrigin(req)) {
+      loginLog("bad-request origin-mismatch", ip);
+      return loginPage(res, "", { status: 403, message: ORIGIN_REFUSED });
+    }
+    const { tooLarge, body } = await readBody(req, LOGIN_BODY_MAX);
+    if (tooLarge) {
+      loginLog("bad-request", ip);
+      return text(res, 413, "request too large", { connection: "close" });
+    }
+    const t = now();
     // A blocked client never reaches scrypt; only failures are counted.
     if (limiter.blocked(ip, t) || globalLimiter.blocked("*", t)) {
+      loginLog("rate-limited", ip);
       return redirect(res, 303, "/login?e=2");
     }
     const password = new URLSearchParams(body.toString("utf8")).get("password") ?? "";
     if (!verifyPassword(password, auth.passwordHash)) {
       limiter.fail(ip, t);
       globalLimiter.fail("*", t);
+      loginLog("wrong", ip);
       return redirect(res, 303, "/login?e=1");
     }
     limiter.reset(ip);
+    loginLog("ok", ip);
     const token = signSession({ exp: t + SESSION_MAX_AGE_S * 1000 }, auth.sessionSecret);
     return redirect(res, 303, "/", {
       "set-cookie": sessionCookie(token, { secure: isHttps(req) }),
@@ -196,19 +223,19 @@ export function createMonitorServer({
     return undefined;
   }
 
-  async function loginPage(res, query) {
+  async function loginPage(res, query, { status = 200, message } = {}) {
     const e = new URLSearchParams(query).get("e");
     let html = await readFile(join(publicDir, LOGIN_FILE), "utf8");
-    const msg = Object.hasOwn(LOGIN_ERRORS, e) ? LOGIN_ERRORS[e] : null;
+    const msg = message ?? (Object.hasOwn(LOGIN_ERRORS, e) ? LOGIN_ERRORS[e] : null);
     html = html.replace(ERROR_MARKER, msg ? `<p class="login-error" role="alert">${msg}</p>` : "");
-    return send(res, 200, "text/html; charset=utf-8", html);
+    return send(res, status, "text/html; charset=utf-8", html);
   }
 
   return http.createServer(async (req, res) => {
     try {
       // Headers on every response; writeHead later merges its own on top.
       res.setHeader("x-content-type-options", "nosniff");
-      res.setHeader("referrer-policy", "no-referrer");
+      res.setHeader("referrer-policy", "same-origin");
       res.setHeader("x-frame-options", "DENY");
       res.setHeader("content-security-policy", CSP);
       res.setHeader("x-robots-tag", "noindex, nofollow");
@@ -494,9 +521,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     lan: opts.host !== "127.0.0.1" && opts.host !== "localhost",
   });
   if (!check.ok) throw new StartupError(check.errors.join("\n"));
-  const auth = env.OPS_PASSWORD_HASH
-    ? { passwordHash: env.OPS_PASSWORD_HASH, sessionSecret: env.OPS_SESSION_SECRET }
-    : null;
+  const auth = authFromEnv(env);
 
   // Client names are masked in every snapshot (SSE, /api/snapshot, last-snapshot.json, views).
   const nameLoader = createNameLoader({ env });
