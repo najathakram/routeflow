@@ -52,7 +52,7 @@ export const CLOSED_HANDLERS = [
     "stripe-connect/stripe-connect.controller.ts",
     { method: "disconnect" },
   ),
-  // data import (13)
+  // data import (14)
   h("import.importContacts", "POST", "/import/contacts", "import/import.controller.ts"),
   h("import.importInvoices", "POST", "/import/invoices", "import/import.controller.ts"),
   h("import.importPayments", "POST", "/import/payments", "import/import.controller.ts"),
@@ -71,6 +71,7 @@ export const CLOSED_HANDLERS = [
     "import/import.controller.ts",
   ),
   h("import.importProducts", "POST", "/import/products", "import/import.controller.ts"),
+  h("import.productImportJob", "GET", "/import/products/jobs/:id", "import/import.controller.ts"),
   h("import.importInventory", "POST", "/import/inventory", "import/import.controller.ts"),
   h(
     "import.importExpenseSuppliers",
