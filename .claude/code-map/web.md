@@ -31,6 +31,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-10-20-bo-train-g1.md](web/landing-2026-10-20-bo-train-g1.md) | Landing 2026-10-20 bo-train/G1 (#3551): Capabilities card, activation add-on checklist, till permissions, SendInvoiceModal |
 | [web/landing-2026-10-20-r5.md](web/landing-2026-10-20-r5.md) | Landing 2026-10-20 R5 (#3552): vendor-bill move-to-credit modal, coded bill toast copy, header-only edit |
 | [web/landing-2026-10-21-w1.md](web/landing-2026-10-21-w1.md) | Landing 2026-10-21 window 1 (#3555): order draft autosave + resume, submit key per draft, sign-out guard |
+| [web/landing-2026-10-21-w2-r5p2.md](web/landing-2026-10-21-w2-r5p2.md) | Landing 2026-10-21 R5 part 2 (#3558): held-override tab, scan Enter, buyer cache clear |
 | [web/landing-2026-10-17-units-v2-3.md](web/landing-2026-10-17-units-v2-3.md) | Landing 2026-10-17 units-v2-3: price layer, units settings, K-cards, product image actions |
 | [web/landing-2026-10-12-r52.md](web/landing-2026-10-12-r52.md) | Landing 2026-10-12 Release 5.2: edit rebase on 409, read-only gate and copy, billing card, counter QA polish, paid-at-sale |
 | [web/landing-2026-10-12-r51-r42.md](web/landing-2026-10-12-r51-r42.md) | Landing 2026-10-12 Release 5.1 + 4.2: READ_ONLY refusal copy, hand-over stamp and rows, day close and Z wording, store-only header, edit log |

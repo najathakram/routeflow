@@ -647,3 +647,9 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 
 - `packages/types/draft-submit-key.ts`: `DRAFT_SUBMIT_KEY_FIELD` (`_submitKey`), `isDraftSubmitKey`, `readDraftSubmitKey`, `withDraftSubmitKey` (one submit key per draft, SA-817 A).
 - `packages/types/api/misc.ts`: `expectedUpdatedAt` on the draft save request. `packages/types/api/error-codes.ts`: `DRAFT_CHANGED`.
+
+## Window 2 and R5 part 2 (2026-10-21, #3557, #3550, #3558)
+
+- `packages/pricing/src/tax-precision.ts`: `TAX_RATE_FRACTION_DECIMALS` (6), `TAX_PERCENT_DECIMALS` (4), `TAX_PERCENT_PRECISION_MESSAGE`, `sameRateAtLegacyPrecision(stored, configured)` (snaps the product before rounding), `taxPercentPrecisionError(percent, stored?)`. Exported from `index.ts`; used by api DTOs/settings, web and mobile.
+- `packages/pricing/src/inferred-flat-rate.ts`: `inferredFlatRate(invoice, opts?: InferredFlatRateOptions)`; `preferredRate` (tenant) wins when the single totals builder reproduces the stored tax, else the first verified of 4 dp then 6 dp. `explained-tax-rate.ts`, `nsf-line.ts` follow the widen.
+- `packages/types/api/config-snapshots.ts`: `ConfigSnapshotHeldFulfilment` / `ConfigSnapshotHeldOverride` (discriminated by `kind`), hold reasons `ADDON_NOT_PAID`, `REQUIRES_UNMET`. `regulated.ts`: unbooked-reversal warning field.
