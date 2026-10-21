@@ -369,7 +369,7 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     expect(prisma.order.findMany).toHaveBeenCalledTimes(1);
   });
 
-  it("the page query selects (never includes) and carries no line items or cost fields", async () => {
+  it("the page query selects (never includes) and carries no cost fields (item names only)", async () => {
     const { prisma, call } = setup([]);
     await call({}, NOW);
     const args = prisma.order.findMany.mock.calls[0][0];

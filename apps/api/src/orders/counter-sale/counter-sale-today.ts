@@ -365,7 +365,7 @@ export function windowReturnsWhere(
 
 /**
  * The page query, ONE definition: the service sends it and the EXPLAIN spec captures the SQL of exactly it.
- * `select`, never `include`: no line items, no cost or margin field.
+ * `select`, never `include`: only each line's description and qty (the row's item names), no cost or margin field.
  */
 export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: number) {
   return {
@@ -396,8 +396,12 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           },
           // the stored line rates the sale's tax rate is read from (pricing's storedTaxRatePercent), and the
           // levy each line billed with its category (CQ-03: named charges on the reprint)
+          // R7b 2.1: description + qty name the sale on its row (the snapshot taken at sale time); the fold keeps the first few.
+          // No `take` here: the same items feed the tax-rate and levy reads above, which need every line.
           items: {
             select: {
+              description: true,
+              qty: true,
               taxRate: true,
               categoryTaxAmount: true,
               trackedCategoryId: true,
@@ -429,7 +433,7 @@ const num = (v: unknown): number => (v == null ? 0 : Number(v));
 
 // ─── Row ──────────────────────────────────────────────────────────────────────────────────────
 
-/** The page query's row, read with `select` (no line items, no cost / margin fields). */
+/** The page query's row, read with `select` (line descriptions and qty only; no cost / margin fields). */
 export interface TodayOrderRecord {
   id: string;
   orderNumber: string | null;
@@ -449,6 +453,9 @@ export interface TodayOrderRecord {
     payments: Array<{ method: string; amount: unknown; status: string }>;
     /** SA-764: each line's stored tax rate (a fraction, 0.0825); CQ-03: its billed levy and category */
     items?: Array<{
+      /** R7b 2.1: the line's snapshotted description and qty (the row's item names) */
+      description?: string | null;
+      qty?: unknown;
       taxRate: unknown;
       categoryTaxAmount?: unknown;
       trackedCategoryId?: string | null;
@@ -558,6 +565,7 @@ export function toTodaysSaleRow(
   else returnState = total > 0 && returnedAmount >= total ? "FULL" : "PARTLY";
 
   const shown = live[0] ?? o.invoices[0];
+  const names = itemNamesOf(live.flatMap((i) => i.items ?? []));
   return {
     orderId: o.id,
     orderNumber: o.orderNumber ?? "",
@@ -585,6 +593,26 @@ export function toTodaysSaleRow(
     charges: billedChargeLines(live.flatMap((i) => i.items ?? [])),
     returned: { amount: returnedAmount, state: returnState, returns },
     voided,
+    ...names,
+  };
+}
+
+/** R7b 2.1: how many item names a row carries (the screen shows two and "+n more"; one spare lets it say so). */
+const ROW_ITEM_NAMES_MAX = 3;
+
+/** The first few line names + qty and the line count; `{}` when the record carries no item lines (hand-built / older select). */
+function itemNamesOf(lines: ReadonlyArray<{ description?: string | null; qty?: unknown }>): {
+  items?: Array<{ name: string; qty: number }>;
+  itemCount?: number;
+} {
+  const named = lines.filter((l) => typeof l.description === "string" && l.description.trim());
+  if (named.length === 0) return {};
+  return {
+    items: named.slice(0, ROW_ITEM_NAMES_MAX).map((l) => ({
+      name: (l.description as string).trim(),
+      qty: num(l.qty),
+    })),
+    itemCount: named.length,
   };
 }
 

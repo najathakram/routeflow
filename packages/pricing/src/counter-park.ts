@@ -302,6 +302,9 @@ export interface ParkedCartListItem {
   customerName?: string;
   /** Row 330e: the lines' pricing inputs (the LIST sends them; the park answer does not). Absent = no total shown. */
   priceLines?: ParkedPriceLine[];
+  /** R7b 2.1: the first few line names and qty, and the line count (the LIST sends them). Absent = no names shown. */
+  items?: Array<{ name: string; qty: number }>;
+  itemCount?: number;
 }
 
 export interface ParkCartResponse extends ParkedCartListItem {

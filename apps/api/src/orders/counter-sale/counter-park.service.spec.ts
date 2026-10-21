@@ -19,7 +19,7 @@ import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { LOCK_FAMILIES } from "../../common/db-locks";
 import { createMockPrisma, type MockPrisma } from "../../testing/prisma-mock";
 import { CounterParkService } from "./counter-park.service";
-import { priceLinesOf } from "./counter-park";
+import { itemSummaryOf, priceLinesOf } from "./counter-park";
 import { FakeParkDb } from "./counter-park.fixtures";
 
 /**
@@ -455,7 +455,6 @@ describe("CounterParkService.list", () => {
     expect(res.data[1]).toMatchObject({ lineCount: 1, customerName: "Acme Foods" });
     expect(res.data[0]).not.toHaveProperty("customerName");
     for (const r of res.data) expect(r).not.toHaveProperty("payload");
-    expect(JSON.stringify(res)).not.toContain("Acme Widget");
   });
 
   it("row 330e: each row carries the pricing inputs of its lines (and nothing else of them), so the screen can total it", async () => {
@@ -483,7 +482,28 @@ describe("CounterParkService.list", () => {
       { unitPrice: 4, qty: 1 },
     ]);
     expect(JSON.stringify(res)).not.toContain("keep cold");
-    expect(JSON.stringify(res)).not.toContain("Acme Widget");
+  });
+
+  it("the list item carries its item names", async () => {
+    const t = setup();
+    await t.park({
+      id: id(1),
+      payload: payload({
+        lines: [
+          line({ name: "Cola 12oz Can", qty: 2 }),
+          line({ tempId: "t-2", name: "Ice Bag 10lb", qty: 1 }),
+          line({ tempId: "t-3", name: "Chips", qty: 1 }),
+        ],
+      }),
+    });
+    const res = await t.service.list({ page: 1, pageSize: 20 }, NOW);
+    expect(res.data[0].items).toEqual([
+      { name: "Cola 12oz Can", qty: 2 },
+      { name: "Ice Bag 10lb", qty: 1 },
+      { name: "Chips", qty: 1 },
+    ]);
+    expect(res.data[0].itemCount).toBe(3);
+    expect(itemSummaryOf({ lines: "nope" })).toEqual({});
   });
 
   it("row 330e: priceLinesOf drops a line with no finite price or qty and reads a non-array as none", () => {

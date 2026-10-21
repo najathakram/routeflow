@@ -87,6 +87,28 @@ export function priceLinesOf(payload: unknown): ParkedPriceLine[] {
   return out;
 }
 
+/**
+ * R7b 2.1: the first few line names (+ qty) of a stored payload and its named-line count, for the list row. No query
+ * change: the list already reads `payload->'lines'`. A non-array / nameless payload yields `{}`.
+ */
+export function itemSummaryOf(payload: unknown): {
+  items?: Array<{ name: string; qty: number }>;
+  itemCount?: number;
+} {
+  const lines = (payload as { lines?: unknown } | null)?.lines;
+  if (!Array.isArray(lines)) return {};
+  const named: Array<{ name: string; qty: number }> = [];
+  for (const l of lines) {
+    if (!l || typeof l !== "object") continue;
+    const r = l as Record<string, unknown>;
+    const name = typeof r.name === "string" ? r.name.trim() : "";
+    const qty = Number(r.qty);
+    if (name) named.push({ name, qty: Number.isFinite(qty) ? qty : 0 });
+  }
+  if (named.length === 0) return {};
+  return { items: named.slice(0, 3), itemCount: named.length };
+}
+
 /** The customer's business name of a stored payload, when it has one. */
 export function customerNameOf(payload: unknown): string | undefined {
   const name = (payload as { customer?: { businessName?: unknown } | null } | null)?.customer

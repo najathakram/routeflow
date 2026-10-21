@@ -247,6 +247,12 @@ export interface TodaysSaleRow {
   };
   /** the order is CANCELLED, or it has invoices and every one is VOID / WRITTEN_OFF */
   voided: boolean;
+  /**
+   * The first few line names and qty (the invoice line's description, snapshotted at sale time) and the total line count, so a
+   * row says what was sold. Omitted by an older server: then no names line shows.
+   */
+  items?: Array<{ name: string; qty: number }>;
+  itemCount?: number;
 }
 
 export interface TodaysSalesSummary {
