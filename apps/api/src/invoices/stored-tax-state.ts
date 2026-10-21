@@ -194,6 +194,20 @@ export function taxStateOf(args: TaxStateArgs): TaxStateVerdict {
 }
 
 /**
+ * The duplicate's inference (`retakeDuplicateTaxRates`): the ONE other API door to `inferredGoodsFlatRate`, kept in this
+ * guard's file so SA-816 (d)2 still holds - a stored non-finite levy on the source lines is refused (400
+ * MONEY_INVARIANT) by `sumInvoiceTotalsStrict` BEFORE any rate is inferred from them.
+ */
+export function inferredGoodsRateForCopy(
+  invoice: { subtotal: unknown; taxAmount: unknown; lines: ReadonlyArray<any> },
+  opts?: { preferredRate?: number | null },
+) {
+  sumInvoiceTotalsStrict(invoice.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? 0 })));
+
+  return inferredGoodsFlatRate(invoice, opts);
+}
+
+/**
  * The guard: throws 409 INVOICE_TAX_STATE_STALE when the stored lines cannot reproduce the stored tax and no
  * verified re-stamp is possible; otherwise returns the verdict (a verified `restampRate` is the caller's
  * to stamp, then it proceeds).

@@ -225,6 +225,17 @@ describe("InvoicesService.duplicate — the copy's tax rate (row 588)", () => {
     expect(created().total).toBe(1000);
   });
 
+  it("SA-816 (d)2 / MUST-C: a stored non-finite levy on the source is refused 400 MONEY_INVARIANT before any rate is inferred", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(
+      source({ items: [line({ categoryTaxAmount: "NaN" })] }),
+    );
+    await expect(service.duplicate("inv-1")).rejects.toMatchObject({
+      status: 400,
+      response: { code: "MONEY_INVARIANT" },
+    });
+    expect(prisma.invoice.create).not.toHaveBeenCalled();
+  });
+
   it("the NSF fee line is never stamped with a rate", async () => {
     prisma.invoice.findUnique.mockResolvedValue(
       source({

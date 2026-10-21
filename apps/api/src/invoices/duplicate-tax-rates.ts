@@ -16,12 +16,8 @@
  * exemption is read from the current customer: a duplicate is a new invoice). The tenant rate is read lazily, only on
  * the paths that need it, and is the `preferredRate` of the inference (it wins when it reproduces the stored tax).
  */
-import {
-  inferredGoodsFlatRate,
-  isNsfLine,
-  roundMoney,
-  sameRateAtLegacyPrecision,
-} from "@routeflow/pricing";
+import { isNsfLine, roundMoney, sameRateAtLegacyPrecision } from "@routeflow/pricing";
+import { inferredGoodsRateForCopy } from "./stored-tax-state";
 
 const EPS = 1e-9;
 const to6 = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
@@ -38,8 +34,8 @@ export async function retakeDuplicateTaxRates(
   if (source.isTaxExempt) return;
   const goods = (i: number) => !isNsfLine(fromLines[i] as never);
   const infer = (preferredRate?: number) =>
-    inferredGoodsFlatRate(
-      { subtotal: source.subtotal, taxAmount: source.taxAmount, lines: fromLines as never },
+    inferredGoodsRateForCopy(
+      { subtotal: source.subtotal, taxAmount: source.taxAmount, lines: fromLines },
       { preferredRate },
     );
   const stampZero = (rate: number) =>

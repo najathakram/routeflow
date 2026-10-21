@@ -3,7 +3,6 @@ import { makeStampDb } from "../common/testing/delivered-stamp-fake-db";
 import { deliveredBasisByLine, deliveredQtyFromBasis } from "../invoices/delivered-basis-by-line";
 import { updateStatusWithShipMarker } from "./order-ship-state";
 import { assertOrderStatusTransition } from "./order-status-transitions";
-import { isOfficeRowNote, officeRowNote } from "./office-evidence-completion";
 import { buildStatusUpdateData } from "./order-status-claim";
 
 /**
@@ -214,34 +213,28 @@ describe("row 587: PD -> DELIVERED completes the office-evidenced lines", () => 
 });
 
 describe("row 587 review folds", () => {
-  it("MUST-5: an evidence row of unknown origin (no OFFICE marker, no stop: as the DB lane seeds a route line) keeps its figure", async () => {
+  it("MUST-5: a route row (it always carries its stop, as the DB lane seeds a route line) keeps its figure", async () => {
     const db = makeStampDb({
       status: "PARTIALLY_DELIVERED",
       lines: [{ id: "a", qty: 10, deliveredQty: 6 }],
-      mutations: [{ orderItemId: "a", type: "PARTIAL", quantityDelivered: 6 }],
+      mutations: [
+        { orderItemId: "a", type: "PARTIAL", quantityDelivered: 6, routeRunStopId: "stop-1" },
+      ],
     });
     await deliver(db, OrderStatus.PARTIALLY_DELIVERED);
-    expect(db.line("a").deliveredQty).toBe(6); // master of this fold: 10
+    expect(db.line("a").deliveredQty).toBe(6);
     expect(db.committed.mutations).toHaveLength(1);
     expect(db.committed.audits).toHaveLength(0);
   });
 
-  it("an office row that carries the clerk's own note still counts as an office row", async () => {
+  it('an office row that carries the clerk\'s own note ("rest Friday") still completes: origin is the null stop, not the text', async () => {
     const db = makeStampDb({
       status: "PARTIALLY_DELIVERED",
       lines: [{ id: "a", qty: 10, deliveredQty: 6 }],
-      mutations: [{ ...officeRow("a", 6), note: officeRowNote("left at the gate") }],
+      mutations: [{ ...officeRow("a", 6), note: "rest Friday" }], // the clerk's own text replaces the default note
     });
     await deliver(db, OrderStatus.PARTIALLY_DELIVERED);
     expect(db.line("a").deliveredQty).toBe(10);
-  });
-
-  it("the office note is the marker plus the clerk's text, and only that is recognised", () => {
-    expect(officeRowNote()).toBe("OFFICE_MARKED");
-    expect(officeRowNote("gate")).toBe("OFFICE_MARKED: gate");
-    expect(isOfficeRowNote("OFFICE_MARKED: gate")).toBe(true);
-    expect(isOfficeRowNote("gate")).toBe(false);
-    expect(isOfficeRowNote(null)).toBe(false);
   });
 
   it("MUST-4 (SA-833 1b): PD -> DELIVERED never leaves an office line short; DELIVERED -> CONFIRMED with a reason is the only closed-short exit", async () => {
