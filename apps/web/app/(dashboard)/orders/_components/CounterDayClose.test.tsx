@@ -22,6 +22,16 @@ jest.mock("@/lib/api-client", () => ({
   },
 }));
 let role: string | undefined = "OPERATOR";
+let tenantSlug: string | null = "acme";
+jest.mock("@/components/tenant-provider", () => ({
+  ...jest.requireActual("@/components/tenant-provider"),
+  useTenant: () => ({
+    slug: tenantSlug,
+    branding: null,
+    isLoading: false,
+    refresh: async () => {},
+  }),
+}));
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => true }));
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
@@ -169,6 +179,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   window.sessionStorage.clear(); // a kept count draft must not leak into the next test
   role = "OPERATOR";
+  tenantSlug = "acme";
   dayState = stateOf();
   serve();
 });
@@ -700,6 +711,18 @@ describe("CounterDayClose: the drawer count survives a dismissed dialog (R7b 2.3
     expect(draftKeys()).toHaveLength(0);
   });
 
+  it("with no tenant known there is no draft: nothing is written under a made-up tenant (N5)", async () => {
+    tenantSlug = null;
+    await openForm();
+    setCount("$20 bill", 2);
+    await new Promise((r) => setTimeout(r, 450));
+    expect(draftKeys()).toHaveLength(0);
+    pressEscape();
+    fireEvent.click(await screen.findByRole("button", { name: "Keep" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    expect(draftKeys()).toHaveLength(0);
+  });
+
   it("a clean form closes with no question and writes no draft", async () => {
     await openForm();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -774,7 +797,7 @@ describe("CounterDayClose: the drawer count survives a dismissed dialog (R7b 2.3
 
   it("restored counts follow the input's rule: whole, not negative, capped (M3)", async () => {
     window.sessionStorage.setItem(
-      "rf:dayclose:draft:tenant:main:2026-10-07",
+      "rf:dayclose:draft:acme:main:2026-10-07",
       JSON.stringify({
         v: 1,
         floatText: "100.00",

@@ -21,12 +21,14 @@ export interface DayCloseDraft {
   notes: string;
 }
 
+/** The draft key, or null when no tenant is known (then nothing is read or written: never a made-up tenant). */
 export function dayCloseDraftKey(
   tenant: string | null | undefined,
   registerKey: string | null | undefined,
   tenantDay: string,
-): string {
-  return `${DAY_CLOSE_DRAFT_PREFIX}${tenant || "tenant"}:${registerKey || "main"}:${tenantDay}`;
+): string | null {
+  if (!tenant) return null;
+  return `${DAY_CLOSE_DRAFT_PREFIX}${tenant}:${registerKey || "main"}:${tenantDay}`;
 }
 
 export function readDayCloseDraft(key: string): DayCloseDraft | null {

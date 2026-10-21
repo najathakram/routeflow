@@ -447,6 +447,7 @@ function SaleRow({
   }, [focusReprint, onFocused]);
   const who = row.isWalkIn ? "Walk-in" : (row.customerName ?? "Customer");
   const methods = row.methods.map((m) => METHOD_LABEL[m.method]).join(" + ");
+  const itemNames = itemNamesLine(row.items, row.itemCount);
   const returnLabel = row.voided ? null : RETURN_LABEL[row.returned.state];
   const router = useRouter();
   return (
@@ -466,9 +467,9 @@ function SaleRow({
           <span data-testid="today-row-cashier"> · Cashier: {row.cashierName}</span>
         ) : null}
       </p>
-      {itemNamesLine(row.items, row.itemCount) ? (
+      {itemNames ? (
         <p data-testid="today-row-items" className="truncate text-xs text-navy/70">
-          {itemNamesLine(row.items, row.itemCount)}
+          {itemNames}
         </p>
       ) : null}
       <div className="flex flex-wrap gap-1">
