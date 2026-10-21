@@ -40,6 +40,9 @@ import { tierLabel } from "../../../lib/tier-label";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 import { paymentMayBeRecordedCopy, usePaymentSubmitKey } from "../../../lib/payment-submit-key";
+import { usePaymentStatusCheck } from "../../../lib/use-payment-status-check";
+import { PaymentStatusNotice } from "../../../components/PaymentStatusNotice";
+import { PAYMENT_STATUS_COPY } from "../../../lib/payment-status-check";
 import { useRecordReturn } from "../../../hooks/useRecordReturn";
 
 function fmt(n: number | string | null | undefined): string {
@@ -508,6 +511,11 @@ function RecordAdvanceModal({
 }) {
   const mut = useCreateAdvancePayment();
   const paymentKey = usePaymentSubmitKey(); // SA-824: one Idempotency-Key per open (mounted per open)
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
+  const statusCheck = usePaymentStatusCheck(paymentKey, () => {
+    showToast(PAYMENT_STATUS_COPY.recorded);
+    onClose();
+  });
   const [method, setMethod] = useState<SelectablePaymentMethod>("CASH");
   const [amount, setAmount] = useState<number | null>(null);
   const [reference, setReference] = useState("");
@@ -549,6 +557,7 @@ function RecordAdvanceModal({
           <Text style={styles.advBody}>
             A pre-payment from {customerName} that can be applied to future invoices.
           </Text>
+          <PaymentStatusNotice status={statusCheck} />
           <View style={styles.advChips}>
             {SELECTABLE_METHOD_OPTIONS.map((m) => (
               <Pressable
@@ -596,8 +605,11 @@ function RecordAdvanceModal({
               <Text style={styles.advBtnGhostText}>Cancel</Text>
             </Pressable>
             <Pressable
-              style={[styles.advBtnFill, mut.isPending && { opacity: 0.6 }]}
-              disabled={mut.isPending}
+              style={[
+                styles.advBtnFill,
+                (mut.isPending || statusCheck.unknown) && { opacity: 0.6 },
+              ]}
+              disabled={mut.isPending || statusCheck.unknown}
               onPress={submit}
             >
               <Text style={styles.advBtnFillText}>{mut.isPending ? "Saving…" : "Record"}</Text>

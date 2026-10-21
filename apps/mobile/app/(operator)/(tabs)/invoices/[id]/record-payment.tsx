@@ -23,6 +23,9 @@ import {
   paymentMayBeRecordedCopy,
   usePaymentSubmitKey,
 } from "../../../../../lib/payment-submit-key";
+import { usePaymentStatusCheck } from "../../../../../lib/use-payment-status-check";
+import { PaymentStatusNotice } from "../../../../../components/PaymentStatusNotice";
+import { PAYMENT_STATUS_COPY } from "../../../../../lib/payment-status-check";
 
 // Advance / Credit-Note are intentionally excluded: the server rejects them here
 // ("use the dedicated Apply Credit Note / Apply Advance actions") so offering
@@ -41,6 +44,11 @@ export default function RecordPaymentScreen() {
   const { data: invoice } = useAdminInvoice(id ?? "");
   const mut = useRecordInvoicePayment();
   const paymentKey = usePaymentSubmitKey(); // SA-824: one Idempotency-Key per open (mounted per open)
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
+  const statusCheck = usePaymentStatusCheck(paymentKey, () => {
+    showToast(PAYMENT_STATUS_COPY.recorded);
+    router.back();
+  });
   const uploadImageMut = useUploadPaymentImage();
 
   const balance = invoice?.balanceDue ?? invoice?.total ?? 0;
@@ -108,8 +116,10 @@ export default function RecordPaymentScreen() {
       subtitle={invoice?.invoiceNumber}
       submitLabel={mut.isPending ? "Saving…" : "Record"}
       submitting={mut.isPending}
+      submitDisabled={statusCheck.unknown}
       onSubmit={submit}
     >
+      <PaymentStatusNotice status={statusCheck} />
       <FormSection title="Method">
         <View style={styles.chips}>
           {METHODS.map((m) => {

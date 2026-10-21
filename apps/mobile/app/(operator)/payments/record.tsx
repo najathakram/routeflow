@@ -31,6 +31,9 @@ import { fmtCalendarDate } from "../../../lib/format-date";
 import { hasUnsavedPayment } from "../../../lib/discard-guard";
 import { isOpenInvoiceStatus } from "../../../lib/invoices-logic";
 import { paymentMayBeRecordedCopy, usePaymentSubmitKey } from "../../../lib/payment-submit-key";
+import { usePaymentStatusCheck } from "../../../lib/use-payment-status-check";
+import { PaymentStatusNotice } from "../../../components/PaymentStatusNotice";
+import { PAYMENT_STATUS_COPY } from "../../../lib/payment-status-check";
 
 /**
  * Standalone payment with multi-invoice allocation — one check at the door
@@ -151,6 +154,11 @@ function PaymentForm({
 }) {
   const mut = useRecordPaymentStandalone();
   const paymentKey = usePaymentSubmitKey(); // SA-824: one Idempotency-Key per open (mounted per open)
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
+  const statusCheck = usePaymentStatusCheck(paymentKey, () => {
+    showToast(PAYMENT_STATUS_COPY.recorded);
+    onDone();
+  });
   const uploadImageMut = useUploadPaymentImage();
   const { data: invoicesData } = useAdminInvoices({ customerId, limit: 50 });
 
@@ -293,8 +301,10 @@ function PaymentForm({
         photos,
         asDraft,
       })}
+      submitDisabled={statusCheck.unknown}
       onSubmit={submit}
     >
+      <PaymentStatusNotice status={statusCheck} />
       <Pressable style={styles.changeCustomer} onPress={onChangeCustomer} hitSlop={6}>
         <Ionicons name="person-outline" size={14} color={ios.brand} />
         <Text style={styles.changeCustomerText}>{customerName}</Text>
