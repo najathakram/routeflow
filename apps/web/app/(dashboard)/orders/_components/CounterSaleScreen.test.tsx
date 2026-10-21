@@ -2,7 +2,7 @@ import * as React from "react";
 import { roundMoney } from "@routeflow/pricing";
 import userEvent from "@testing-library/user-event";
 import { act } from "@testing-library/react";
-import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { CounterSaleScreen, lineQtyLabel, toSaleItem } from "./CounterSaleScreen";
 import {
   cancelCounterLeave,
@@ -165,6 +165,46 @@ describe("CounterSaleScreen", () => {
     expect(screen.getByTestId("counter-checkout-bar")).toContainElement(
       screen.getByTestId("change-due"),
     );
+  });
+
+  describe("R7b 1.3: the sticky bar names the chosen tender (below md)", () => {
+    it("below md the checkout bar names the chosen tender and amount", async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("012345678905");
+      await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+      const bar = screen.getByTestId("counter-checkout-bar");
+      const row = within(bar).getByTestId("counter-bar-tender");
+      expect(row).toHaveTextContent("Cash");
+      fireEvent.click(screen.getByRole("button", { name: "$20" }));
+      expect(row).toHaveTextContent("Cash · tendered $20.00");
+      fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+      expect(row).toHaveTextContent("Card");
+      expect(row).not.toHaveTextContent("tendered");
+      fireEvent.click(screen.getByRole("radio", { name: "Check" }));
+      fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1001" } });
+      expect(row).toHaveTextContent("Check #1001");
+      // md and up the row is not shown (the Payment column is beside the cart there)
+      expect(row.className).toMatch(/md:hidden/);
+    });
+
+    it("Change payment brings the Payment section into view", async () => {
+      const scrollIntoView = jest.fn();
+      const original = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = scrollIntoView;
+      try {
+        renderWithProviders(<CounterSaleScreen />);
+        await scan("012345678905");
+        await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+        fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+        scrollIntoView.mockClear();
+        fireEvent.click(screen.getByRole("button", { name: /Change payment/ }));
+        const section = screen.getByRole("region", { name: "Payment" });
+        expect(scrollIntoView.mock.contexts).toContain(section);
+        expect(screen.getByRole("radio", { name: "Card" })).toHaveFocus();
+      } finally {
+        Element.prototype.scrollIntoView = original;
+      }
+    });
   });
 
   it("the scan field is short enough for a phone and carries the multiply tip as a hint below it", async () => {

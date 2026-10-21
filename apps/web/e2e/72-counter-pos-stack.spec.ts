@@ -357,4 +357,32 @@ test.describe("R7b till: change due note and the keyboard path to pay", () => {
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("counter-sale-receipt")).toBeVisible({ timeout: 20_000 });
   });
+
+  for (const width of [390, 768]) {
+    test(`the checkout bar names the chosen tender below md only @ ${width}`, async ({
+      page,
+      context,
+    }) => {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 1024 });
+      await setTenantCookie(context, BASE);
+      const { products } = await discover(page);
+      await page.goto("/orders/counter-sale");
+      const scanField = page.getByLabel("Scan or search items");
+      await expect(scanField).toBeVisible({ timeout: 15_000 });
+      await scanField.fill(String(products[0].sku));
+      await scanField.press("Enter");
+      await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
+        timeout: 15_000,
+      });
+      const row = page.getByTestId("counter-bar-tender");
+      if (width < 768) {
+        await expect(row).toBeVisible();
+        await expect(row).toContainText("Cash");
+        await row.click(); // Change payment: the Payment section scrolls into view
+        await expect(page.getByRole("radio", { name: "Cash" })).toBeFocused();
+      } else {
+        await expect(row).toBeHidden(); // md: the static column, nothing changes
+      }
+    });
+  }
 });

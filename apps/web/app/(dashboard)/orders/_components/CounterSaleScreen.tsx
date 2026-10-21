@@ -597,6 +597,32 @@ export function CounterSaleScreen() {
     focusNode(e.currentTarget.querySelector<HTMLButtonElement>(`[data-method="${next.method}"]`));
   };
 
+  // R7b 1.3: the tender(s) the sale will be paid with, as a list (split tender will add entries; today it holds one).
+  const barTenders: { method: CounterSalePaymentMethod; text: string }[] = [
+    {
+      method,
+      text:
+        method === "CASH"
+          ? tenderedNum > 0
+            ? `Cash · tendered ${money(roundMoney(tenderedNum))}`
+            : "Cash"
+          : method === "CHECK"
+            ? reference.trim()
+              ? `Check #${reference.trim()}`
+              : "Check"
+            : method === "CARD"
+              ? "Card"
+              : "On account",
+    },
+  ];
+  const paymentRef = React.useRef<HTMLElement>(null);
+  const bringPaymentIntoView = () => {
+    const section = paymentRef.current;
+    if (!section) return;
+    section.scrollIntoView?.({ block: "start" });
+    focusNode(section.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]'));
+  };
+
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (lineLocked || saleInFlight()) return; // frozen while the sale POST is in flight: a mid-POST scan would miss the sale
@@ -1147,7 +1173,7 @@ export function CounterSaleScreen() {
             <input
               ref={scanRef}
               aria-label="Scan or search items"
-              className="min-h-[44px] w-full rounded border px-3 py-2 text-base"
+              className="min-h-[44px] w-full text-ellipsis rounded border px-3 py-2 text-base"
               placeholder="Scan or type an item"
               aria-describedby="counter-scan-hint"
               value={scanText}
@@ -1332,7 +1358,7 @@ export function CounterSaleScreen() {
           data-testid="counter-payment-column"
         >
           {/* payment on the same screen */}
-          <section aria-label="Payment" className="space-y-3">
+          <section ref={paymentRef} aria-label="Payment" className="space-y-3">
             <div
               className="flex flex-wrap gap-2"
               role="radiogroup"
@@ -1542,6 +1568,23 @@ export function CounterSaleScreen() {
             className="sticky bottom-0 z-20 space-y-2 border-t bg-white pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-2 max-md:bottom-[calc(-1*var(--counter-main-pb,0px))] md:static md:border-t-0 md:py-0"
             data-testid="counter-checkout-bar"
           >
+            {/* R7b 1.3: below md the Payment section sits above the bar, out of sight: the bar names the chosen tender, from a
+                LIST of tenders (one today; the split-tender seam), and "Change payment" brings the section back. */}
+            <button
+              type="button"
+              className={cn(
+                TAP_TARGET,
+                "flex w-full items-center justify-between gap-2 rounded border px-3 text-left text-sm md:hidden",
+              )}
+              data-testid="counter-bar-tender"
+              disabled={locked}
+              onClick={bringPaymentIntoView}
+            >
+              <span className="min-w-0 truncate font-medium">
+                {barTenders.map((t) => t.text).join(" + ")}
+              </span>
+              <span className="shrink-0 text-brand-700 underline">Change payment</span>
+            </button>
             {/* CQ-08: the number explains itself, in the receipt's order: Subtotal at the system prices, Discounts, Tax,
                 each named regulated charge, then the total. Every figure is the one the receipt prints. */}
             <div className="flex justify-between text-sm" data-testid="running-subtotal">

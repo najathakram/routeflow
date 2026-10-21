@@ -325,7 +325,7 @@ export function CounterLineRow({
           type="text"
           maxLength={NOTE_MAX}
           aria-label={`Note for ${l.name}`}
-          className="min-h-[44px] w-full rounded border px-2 py-1 text-sm"
+          className="min-h-[44px] w-full text-ellipsis rounded border px-2 py-1 text-sm"
           placeholder="Flavor or note for this item (prints on invoice)"
           disabled={locked}
           value={l.note ?? ""}
