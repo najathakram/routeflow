@@ -35,7 +35,7 @@ describe("product page parity inventory (T38)", () => {
     expect(page).not.toMatch(/const v2Family/);
     // K10d: the v2 flag also drops the old always-open Add form (the shell's Add a unit replaces it)
     expect(page).toMatch(
-      /\{!cardRo && \(\s*<ProductUnitsCard product=\{product\} hideAddForm=\{v2\} readOnly=\{cardRo\} \/>\s*\)\}/,
+      /\{!cardRo && !\(v2 && isFamily\) && \(\s*<ProductUnitsCard product=\{product\} hideAddForm=\{v2\} \/>\s*\)\}/,
     );
   });
 
@@ -47,7 +47,7 @@ describe("product page parity inventory (T38)", () => {
     expect(page).toMatch(/const pricingSplit = v2 && product\.kind !== "FAMILY";/);
     // the old card's gate never mentions v2 except to hide it for a v2 FAMILY
     const oldGate = page.match(/\{([^{}]*)<ProductUnitsCard/);
-    expect(oldGate?.[1].replace(/\s+/g, " ")).toBe("!cardRo && ( ");
+    expect(oldGate?.[1].replace(/\s+/g, " ")).toBe("!cardRo && !(v2 && isFamily) && ( ");
   });
 
   it("the v2 shell is mounted exactly once, only behind the flag", () => {

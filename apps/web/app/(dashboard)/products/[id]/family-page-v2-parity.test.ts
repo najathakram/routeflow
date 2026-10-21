@@ -3,7 +3,7 @@ import * as path from "path";
 
 /**
  * Units v2 parity: with the flag on, a FAMILY product page loses ONLY "Family page tiers",
- * "units card" and "Create an order". Every other family-page control keeps its home.
+ * the old "units card" (gated `!(v2 && isFamily)`, K14) and "Create an order". Every other family-page control keeps its home.
  * Source pin: the page is too large to mount for a render-gate check.
  */
 const src = fs.readFileSync(path.join(__dirname, "page.tsx"), "utf8");
@@ -31,10 +31,10 @@ describe("family page with units v2 on: parity", () => {
     );
   });
 
-  it("v2 removes the units card (K14 owner ruling; a v2 family never had one) (K11-25: the create-an-order link is hidden on EVERY family, in FamilySalesCards)", () => {
+  it("v2 never shows the old units card on a family (K14: `!(v2 && isFamily)`; rendered case in page.units-card-readonly.test.tsx) (K11-25: the create-an-order link is hidden on EVERY family, in FamilySalesCards)", () => {
     const uses = src.split("\n").filter((l) => l.includes("v2Family"));
     expect(uses).toHaveLength(0);
-    expect(src).toMatch(/\{!cardRo && \(\s*<ProductUnitsCard/);
+    expect(src).toMatch(/\{!cardRo && !\(v2 && isFamily\) && \(\s*<ProductUnitsCard/);
     const cards = fs.readFileSync(path.join(__dirname, "FamilySalesCards.tsx"), "utf8");
     expect(cards).toMatch(
       /<SalesHistoryCard productId=\{productId\} hideCreateOrder compactEmpty \/>/,
@@ -72,8 +72,10 @@ describe("family page with units v2 on: parity", () => {
       "<ProductHeaderLine product={product} currentStock={currentStock} pricesV2={v2} />",
       '{v2 && product.kind !== "FAMILY" ? <ProductJumpLinks reserveSpace /> : null}',
       "pricesV2={v2}",
+      // K14: the old Units card is absent where the v2 grid owns the controls, and on every v2 family
+      "{!cardRo && !(v2 && isFamily) && (",
       // K10d: the v2 flag drops the old Units card's always-open Add form (the shell's Add a unit replaces it)
-      "<ProductUnitsCard product={product} hideAddForm={v2} readOnly={cardRo} />",
+      "<ProductUnitsCard product={product} hideAddForm={v2} />",
     ]);
   });
 });
