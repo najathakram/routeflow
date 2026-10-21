@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { formatReceiptMoney } from "@/lib/counter-receipt";
+import { formatReceiptMoney } from "@routeflow/pricing";
 
 /**
  * CQ-17: after "Complete & next sale" the screen is a fresh sale at once, so the clerk would otherwise never see which order
