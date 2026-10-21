@@ -33,6 +33,10 @@ export const PRODUCT_PARENT_REASONS = {
   HAS_VARIANTS: "HAS_VARIANTS",
 } as const;
 
+/** The sentence of the HAS_VARIANTS refusal (the import preview names the same rule without a parent to ask). */
+export const HAS_VARIANTS_MESSAGE =
+  "This product has variants of its own, so it cannot become a variant";
+
 export type ProductParentReason =
   (typeof PRODUCT_PARENT_REASONS)[keyof typeof PRODUCT_PARENT_REASONS];
 
@@ -91,10 +95,7 @@ export async function assertValidParent(
   if (id) {
     const children = await db.product.count({ where: { parentProductId: id, tenantId } });
     if (children > 0) {
-      throw parentInvalid(
-        PRODUCT_PARENT_REASONS.HAS_VARIANTS,
-        "This product has variants of its own, so it cannot become a variant",
-      );
+      throw parentInvalid(PRODUCT_PARENT_REASONS.HAS_VARIANTS, HAS_VARIANTS_MESSAGE);
     }
   }
   return { parentKind };
@@ -178,4 +179,9 @@ export interface ReparentOptions {
   actorId?: string | null;
   actorName?: string | null;
   suppressEmit?: boolean;
+  /**
+   * SA-823 (PR-2): other UpdateProductDto fields to write in the SAME update() as the move (the import's price / cost
+   * cells on a regrouped row), so the row is all-or-nothing. assignToParent's own parent / name / variantName win.
+   */
+  extraChanges?: Record<string, unknown>;
 }

@@ -28,6 +28,8 @@ export const AUDIT_ACTIONS = {
   PRODUCT_PRICES_UNDONE: "product.prices-undone",
   /** SA-823 R11: a product moved under (or out of) a family; meta {productId, fromParentId, toParentId, variantName, via}. Written in the reparent's own transaction. */
   PRODUCT_FAMILY_ASSIGNED: "product.family_assigned",
+  /** SA-823 (row 655 PR-2): one summary row per apply of a product import that carried Family columns; meta {fileName, created, updated, unchanged, skipped, familiesCreated, grouped, moves, familiesDeactivated, actor}. */
+  IMPORT_PRODUCTS_APPLIED: "import.products.applied",
 } as const;
 
 export type AuditActionName = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

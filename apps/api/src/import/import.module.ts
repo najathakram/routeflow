@@ -12,6 +12,7 @@ import { ProductAliasService } from "./product-alias.service";
 import { DuplicateMatchModule } from "./duplicate-match.module";
 import { VariantResolutionService } from "./variant-resolution.service";
 import { MigrationService } from "./migration.service";
+import { ProductFamilyImportService } from "./product-family-import.service";
 import { BatchImportService } from "./batch-import.service";
 import { SourceConnectorRegistry } from "./connectors/source-connectors";
 import { PrismaModule } from "../prisma/prisma.module";
@@ -53,6 +54,7 @@ import { SellingRestrictionsModule } from "../selling-restrictions/selling-restr
   ],
   providers: [
     ImportService,
+    ProductFamilyImportService,
     ExternalRefService,
     ProductAliasService,
     VariantResolutionService,

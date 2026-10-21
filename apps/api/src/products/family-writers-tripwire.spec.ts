@@ -225,6 +225,24 @@ describe("SA-823: one family creator, one reparent path, units v2 untouched", ()
     expect(methodBody(ps, "unlinkFromParent")).toMatch(/this\.update\(/);
   });
 
+  it("T13 (PR-2): createFamilyContainer is called only by createFamily and the import's ensureFamily; the import family branch writes no productUnit and no Product row itself", () => {
+    const CALL = /createFamilyContainer\(/g;
+    const callers = files
+      .filter((f) => count(CALL, f.src) > 0)
+      .map((f) => [f.rel, count(CALL, f.src)])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    expect(callers).toEqual([
+      ["import/product-family-import.service.ts", 1],
+      ["products/product-families.service.ts", 2], // its definition and the createFamily call
+    ]);
+    const imp = srcOf("import/product-family-import.service.ts");
+    expect(imp).not.toMatch(/productUnit/);
+    expect(imp).not.toMatch(
+      /\.product\s*\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/,
+    );
+    expect(imp).not.toMatch(/kind\s*:\s*"FAMILY"/);
+  });
+
   it("T12: no productUnit write in the family service, product-parent.ts or the reparent paths of ProductsService", () => {
     const UNIT_WRITE =
       /\bproductUnit\s*\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/;

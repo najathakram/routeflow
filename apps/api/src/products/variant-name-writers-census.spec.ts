@@ -62,6 +62,8 @@ const ROUTED: Record<string, string> = {
 
 /** Files that match the scan but never write a variant label, each with the reason. */
 const ALLOWED: Record<string, string> = {
+  "import/import.service.ts":
+    "SA-823 PR-2: a Family row's new variant is built as a create() dto (name = variantName = the bare label from the planner) and handed to ProductsService.create; it writes no Product row itself",
   "buyer/buyer-catalog-where.ts": "a search filter on variantName (read)",
   "common/safe-text-cell.ts": "the field-label map for the formula-lead refusal copy",
   "common/text-cell-guards.ts": "the formula-lead guard: reads the candidate name, writes nothing",
@@ -74,6 +76,8 @@ const ALLOWED: Record<string, string> = {
   "products/dto/bulk-assign-parent.dto.ts": "the request DTO (validated, then handed to update())",
   "products/product-parent.ts":
     "writeFamilyAssigned: variantName is AUDIT META on product.family_assigned (SA-823b); writes no product row",
+  "import/product-family-import.service.ts":
+    "SA-823 PR-2: plans the import's Family rows read-only; the label comes from bareVariantLabel (the one normaliser) and is handed to assignToParent / create, so it writes no product row of its own",
   "products/family-price.ts":
     "propagates PRICE columns to a family's variants (where: parentProductId); writes no name",
 };

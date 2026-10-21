@@ -72,6 +72,19 @@ export const PRODUCT_IMPORT_COLUMNS: ImportColumnAlias[] = [
     aliases: ["Reorder Point", "Reorder Level"],
   },
   { field: "reorderQty", canonical: "Reorder Qty", aliases: ["Reorder Qty"] },
+  // SA-823 (row 655): the optional family columns. `id` is the product id from the products export (the stable key
+  // a Family cell needs); `family` names the family to group the row under; `variantName` is the label it carries.
+  { field: "id", canonical: "Product ID", aliases: ["Product ID", "RouteFlow ID"] },
+  {
+    field: "family",
+    canonical: "Family",
+    aliases: ["Family", "Family Name", "Family / Variant of (parent product name)"],
+  },
+  {
+    field: "variantName",
+    canonical: "Variant Name",
+    aliases: ["Variant Name", "Variant", "Variant Label"],
+  },
 ];
 
 export const CUSTOMER_IMPORT_COLUMNS: ImportColumnAlias[] = [
@@ -117,3 +130,36 @@ export const CUSTOMER_IMPORT_COLUMNS: ImportColumnAlias[] = [
   { field: "smsConsent", canonical: "SMS Consent", aliases: ["SMS Consent"] },
   { field: "waConsent", canonical: "WhatsApp Consent", aliases: ["WhatsApp Consent"] },
 ];
+
+/** SA-823 (row 655): the key a Family row matched its existing product by (`null` = a new variant is created). */
+export type ImportFamilyMatchKey = "id" | "sku" | "barcode";
+
+/** Per-row family detail on a product-import plan row (preview and apply return the same shape). */
+export interface ImportFamilyRowInfo {
+  matchedBy: ImportFamilyMatchKey | null;
+  /** The family the row is grouped under. */
+  name: string;
+  /** `existing`: the family is already there. `new`: this import creates it. */
+  state: "existing" | "new";
+  /** The bare variant label the product will carry. */
+  variantName: string;
+  /** "{Family} - {Variant}", as the product reads everywhere. */
+  displayName: string;
+  /** The family the product leaves, when the row moves it between families. */
+  movesFrom: string | null;
+  /** Current stock of the matched product, shown for information (grouping moves no stock). */
+  stock: number | null;
+}
+
+/** The header of a product-import preview / result for a file with Family columns. */
+export interface ImportFamilySummary {
+  familiesToCreate: { name: string; rows: number }[];
+  /** Existing products that join a family (moves included). */
+  grouped: number;
+  /** New variants created under a family. */
+  newVariants: number;
+  moves: number;
+  skipsByReason: { reason: string; count: number }[];
+  /** Families this run created and then deactivated because none of their rows could be assigned (apply only). */
+  deactivated: { name: string }[];
+}

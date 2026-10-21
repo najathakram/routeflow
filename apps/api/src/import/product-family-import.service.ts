@@ -1,19 +1,96 @@
-import { Injectable, Optional } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  HttpException,
+  Injectable,
+  Logger,
+  Optional,
+} from "@nestjs/common";
+import type {
+  ImportFamilyMatchKey,
+  ImportFamilyRowInfo,
+  ImportFamilySummary,
+} from "@routeflow/types";
+import { roundMoney } from "@routeflow/pricing";
 import { AuditService } from "../audit/audit.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { productCategoryViolation, productNameViolation } from "../common/text-cell-guards";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { PrismaService } from "../prisma/prisma.service";
+import { readFamilyPriceMode } from "../products/family-price";
+import { productDisplayName } from "../products/product-display-name";
 import { ProductFamiliesService } from "../products/product-families.service";
+import { assertValidParent, HAS_VARIANTS_MESSAGE } from "../products/product-parent";
+import { bareVariantLabel } from "../products/product-variant-name";
+import type { CatalogTx } from "../products/product-catalog-sync";
 import { ProductsService } from "../products/products.service";
 
 /** SA-823 section 5: the most rows a file with a Family column may carry (it fits the largest known catalog, 2,202). */
 export const IMPORT_FAMILY_MAX_ROWS = 2500;
 
+export const IMPORT_FAMILY_NAME_ONLY_REASON =
+  "Add the product's id, SKU or barcode to move it into a family.";
+export const IMPORT_FAMILY_CLASS_REASON = "A family's items must share their regulated category.";
+const PRICING_ON_MESSAGE =
+  "Family pricing is on, so grouping would change these products' prices. Turn family pricing off, or group them in the product editor.";
+
+/** The family a row groups under: an existing container (`id` set) or one this import creates (`id` null). */
+export interface FamilyTarget {
+  key: string;
+  name: string;
+  id: string | null;
+  state: "existing" | "new";
+}
+
+/** One file row that carries a Family cell, as the planner needs it. */
+export interface FamilyRowInput {
+  index: number;
+  rowNumber: number;
+  family: string;
+  variantCell?: string;
+  nameCell?: string;
+  id?: string;
+  sku?: string;
+  barcode?: string;
+  /** The row's parsed product cells (category, pricePerUnit, isTobacco ...). */
+  values: Record<string, unknown>;
+}
+
+export type FamilyDecision =
+  | { skip: string }
+  | {
+      skip?: undefined;
+      existing: any | null;
+      target: FamilyTarget;
+      label: string;
+      info: ImportFamilyRowInfo;
+    };
+
+interface NewFamily {
+  name: string;
+  category: string | null;
+  price: number | null;
+}
+
+/** The run's family state: the row decisions plus the families this run creates (lazily, on apply). */
+export interface FamilyPlan {
+  decisions: Map<number, FamilyDecision>;
+  newFamilies: Map<string, NewFamily>;
+  created: Map<string, { id: string; name: string; assigned: number }>;
+}
+
 /**
- * SA-823 (row 655 PR-2): the Family / Variant name columns of the product import. Skeleton: the planning and apply
- * steps land with the implementation commit.
+ * SA-823 (row 655 PR-2): the Family / Variant name / Product ID columns of the product import. This service only
+ * READS (every lookup is forTenant()) and creates / retires the empty family container; every product write goes
+ * through ProductsService (assignToParent / create / remove) and the one family creator
+ * (ProductFamiliesService.createFamilyContainer), so no new writer of a parent link, a FAMILY row or a ProductUnit
+ * exists here (family-writers-tripwire.spec.ts pins it).
  */
 @Injectable()
 export class ProductFamilyImportService {
+  private readonly logger = new Logger(ProductFamilyImportService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly productsService: ProductsService,
@@ -21,4 +98,415 @@ export class ProductFamilyImportService {
     private readonly audit: AuditService,
     @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
+
+  private tenant(): string {
+    const t = this.prisma.getTenantId();
+    if (!t) throw new BadRequestException("No tenant context");
+    return t;
+  }
+
+  /**
+   * File-level gates, identical in preview and apply, before any lookup: the row cap (400) and family pricing (409).
+   * With `mixed_packs` ON an adoption would overwrite the product's five price columns, so the whole file is refused.
+   */
+  async assertAllowed(rowCount: number): Promise<void> {
+    if (rowCount > IMPORT_FAMILY_MAX_ROWS) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.IMPORT_FAMILY_TOO_MANY_ROWS,
+        message: `A file with a Family column can have at most ${IMPORT_FAMILY_MAX_ROWS} rows (this one has ${rowCount}). Split it into smaller files.`,
+        max: IMPORT_FAMILY_MAX_ROWS,
+        rows: rowCount,
+      });
+    }
+    const mode = await readFamilyPriceMode(this.featureConfig, this.tenant());
+    if (mode === "on") {
+      throw new ConflictException({
+        code: API_ERROR_CODES.IMPORT_FAMILY_PRICING_ON,
+        message: PRICING_ON_MESSAGE,
+      });
+    }
+  }
+
+  /**
+   * Decide every Family row before the first write (read-only): the match key (id, then SKU, then barcode; a name never
+   * matches), the family (SA-823 section 2 a-d), the variant label, and the in-file guards (a duplicate label skips BOTH rows;
+   * the first row of a family sets its regulated class). The preview and the apply run this same method.
+   */
+  async planRows(rows: FamilyRowInput[]): Promise<FamilyPlan> {
+    const tenantId = this.tenant();
+    const db = this.prisma.forTenant().product;
+    const plan: FamilyPlan = { decisions: new Map(), newFamilies: new Map(), created: new Map() };
+    const familyCache = new Map<string, Promise<{ skip: string } | { target: FamilyTarget }>>();
+    const parentNames = new Map<string, string>();
+
+    const resolveFamily = (name: string) => {
+      const key = name.toLowerCase();
+      let hit = familyCache.get(key);
+      if (!hit) {
+        hit = this.resolveFamily(name);
+        familyCache.set(key, hit);
+      }
+      return hit;
+    };
+    const parentName = async (id: string): Promise<string> => {
+      let n = parentNames.get(id);
+      if (n === undefined) {
+        const p = (await db.findFirst({ where: { id }, select: { name: true } })) as {
+          name: string;
+        } | null;
+        n = p?.name ?? "another family";
+        parentNames.set(id, n);
+      }
+      return n;
+    };
+
+    // A1: per-row resolution
+    for (const r of rows) {
+      plan.decisions.set(r.index, await this.decide(r, tenantId, resolveFamily, parentName));
+    }
+
+    // A2: two rows giving one family the same label are BOTH skipped
+    const byLabel = new Map<string, number[]>();
+    for (const r of rows) {
+      const d = plan.decisions.get(r.index)!;
+      if (d.skip !== undefined) continue;
+      const k = `${d.target.key}\u0000${d.label.toLowerCase()}`;
+      byLabel.set(k, [...(byLabel.get(k) ?? []), r.index]);
+    }
+    for (const indexes of byLabel.values()) {
+      if (indexes.length < 2) continue;
+      for (const i of indexes) {
+        const d = plan.decisions.get(i) as Extract<FamilyDecision, { target: FamilyTarget }>;
+        plan.decisions.set(i, {
+          skip: `Another row gives ${d.target.name} the same variant name (${d.label}). Give each item in a family its own variant name.`,
+        });
+      }
+    }
+
+    // A3: one regulated class per family (SEAM: relax with a compliance ruling)
+    const classRef = new Map<string, { isTobacco: boolean; tracked: string | null } | null>();
+    for (const r of rows) {
+      const d = plan.decisions.get(r.index)!;
+      if (d.skip !== undefined) continue;
+      const cell = r.values.isTobacco;
+      const cls = {
+        isTobacco: typeof cell === "boolean" ? cell : (d.existing?.isTobacco ?? false),
+        tracked: (d.existing?.trackedCategoryId as string | null | undefined) ?? null,
+      };
+      let ref = classRef.get(d.target.key);
+      if (ref === undefined) {
+        ref = d.target.id ? await this.siblingClass(d.target.id) : undefined;
+        if (ref !== undefined) classRef.set(d.target.key, ref);
+      }
+      if (ref && (ref.isTobacco !== cls.isTobacco || ref.tracked !== cls.tracked)) {
+        plan.decisions.set(r.index, { skip: IMPORT_FAMILY_CLASS_REASON });
+        continue;
+      }
+      if (ref === undefined) classRef.set(d.target.key, cls);
+    }
+
+    // A4: what a NEW family is created with (the category of its first row; the lowest row price, display only)
+    for (const r of rows) {
+      const d = plan.decisions.get(r.index)!;
+      if (d.skip !== undefined || d.target.state !== "new") continue;
+      const nf = plan.newFamilies.get(d.target.key) ?? {
+        name: d.target.name,
+        category: null,
+        price: null,
+      };
+      const cat = (r.values.category as string | undefined) ?? d.existing?.category ?? null;
+      if (nf.category === null && typeof cat === "string" && cat.trim() !== "")
+        nf.category = cat.trim();
+      const cell = r.values.pricePerUnit;
+      const price =
+        typeof cell === "number" ? cell : d.existing ? Number(d.existing.pricePerUnit) : null;
+      if (price !== null && Number.isFinite(price) && (nf.price === null || price < nf.price)) {
+        nf.price = price;
+      }
+      plan.newFamilies.set(d.target.key, nf);
+    }
+    return plan;
+  }
+
+  private async decide(
+    r: FamilyRowInput,
+    tenantId: string,
+    resolveFamily: (name: string) => Promise<{ skip: string } | { target: FamilyTarget }>,
+    parentName: (id: string) => Promise<string>,
+  ): Promise<FamilyDecision> {
+    const db = this.prisma.forTenant().product;
+    let existing: any = null;
+    let matchedBy: ImportFamilyMatchKey | null = null;
+    // The stable keys only: id, then SKU, then barcode. A name never regroups (bare labels collide globally).
+    if (r.id) {
+      existing = await db.findFirst({ where: { id: r.id } });
+      if (!existing) {
+        return {
+          skip: "That Product ID isn't in this business. Check the Product ID column, or use the SKU.",
+        };
+      }
+      matchedBy = "id";
+    } else {
+      if (r.sku) {
+        existing = await db.findFirst({ where: { sku: r.sku } });
+        if (existing) matchedBy = "sku";
+      }
+      if (!existing && r.barcode) {
+        existing = await db.findFirst({ where: { barcode: r.barcode } });
+        if (existing) {
+          if (r.sku && existing.sku && existing.sku !== r.sku) {
+            return {
+              skip: "SKU differs from the product matched by barcode; change SKUs in the product editor",
+            };
+          }
+          matchedBy = "barcode";
+        }
+      }
+    }
+    if (!existing && r.nameCell) {
+      const byName = await db.findMany({
+        where: { name: { equals: r.nameCell, mode: "insensitive" } },
+        take: 1,
+      });
+      if (byName.length > 0) return { skip: IMPORT_FAMILY_NAME_ONLY_REASON };
+    }
+    if (existing?.kind === "FAMILY") {
+      return { skip: `${existing.name} is a family, not a product, so it can't be grouped.` };
+    }
+    if (existing?.kind === "RECIPE") {
+      return { skip: `${existing.name} is a recipe, so it can't be grouped into a family.` };
+    }
+
+    const fam = await resolveFamily(r.family);
+    if ("skip" in fam) return { skip: fam.skip };
+    const target = fam.target;
+    if (!target.id && existing) {
+      // a NEW family has no row to ask assertValidParent about, but the rule on the product itself still applies
+      const kids = await db.count({ where: { parentProductId: existing.id } });
+      if (kids > 0) return { skip: HAS_VARIANTS_MESSAGE };
+    }
+    if (target.id && existing) {
+      // The writer's own parent rules, asked read-only so the preview agrees with the apply.
+      try {
+        await assertValidParent(this.prisma.forTenant() as never, {
+          tenantId,
+          id: existing.id,
+          parentId: target.id,
+        });
+      } catch (e) {
+        return {
+          skip: e instanceof HttpException ? e.message : "This product can't join that family.",
+        };
+      }
+    }
+
+    const raw = (r.variantCell ?? r.nameCell ?? existing?.name ?? "").trim();
+    if (!raw) return { skip: "Name is required" };
+    let label: string;
+    try {
+      label = bareVariantLabel(raw, target.name).trim();
+    } catch (e) {
+      return { skip: e instanceof HttpException ? e.message : "That variant name can't be used." };
+    }
+    const violation =
+      productNameViolation(
+        { name: label, variantName: label },
+        existing
+          ? { name: existing.name, variantName: existing.variantName ?? undefined }
+          : undefined,
+      ) ??
+      (target.state === "new" ? productNameViolation({ name: target.name }) : null) ??
+      productCategoryViolation(
+        r.values.category as string | undefined,
+        existing ? ((existing.category as string | null) ?? null) : undefined,
+      );
+    if (violation) return { skip: violation };
+
+    let movesFrom: string | null = null;
+    if (existing?.parentProductId && existing.parentProductId !== target.id) {
+      movesFrom = await parentName(existing.parentProductId as string);
+    }
+    const stock = existing && existing.currentStock != null ? Number(existing.currentStock) : null;
+    return {
+      existing,
+      target,
+      label,
+      info: {
+        matchedBy,
+        name: target.name,
+        state: target.state,
+        variantName: label,
+        displayName: productDisplayName(
+          { name: label, variantName: label, parentProductId: target.id ?? "new" },
+          target.name,
+        ),
+        movesFrom,
+        stock,
+      },
+    };
+  }
+
+  /** SA-823 section 2 (a)-(d): the family a name resolves to among the tenant's root products. */
+  private async resolveFamily(name: string): Promise<{ skip: string } | { target: FamilyTarget }> {
+    const db = this.prisma.forTenant().product;
+    const roots = (await db.findMany({
+      where: { name: { equals: name, mode: "insensitive" }, parentProductId: null },
+    })) as Array<{ id: string; name: string; kind: string; isActive: boolean }>;
+    const active = roots.filter((p) => p.isActive);
+    if (active.length === 0) {
+      if (roots.length > 0) {
+        return { skip: `${roots[0].name} is inactive. Reactivate it, or use another family name.` };
+      }
+      return { target: { key: `new:${name.toLowerCase()}`, name, id: null, state: "new" } };
+    }
+    const fam = active.find((p) => p.kind === "FAMILY") ?? active[0];
+    const existingTarget = {
+      key: `id:${fam.id}`,
+      name: fam.name,
+      id: fam.id,
+      state: "existing" as const,
+    };
+    if (fam.kind === "FAMILY") return { target: existingTarget };
+    const kids = await db.count({ where: { parentProductId: fam.id } });
+    if (kids > 0) return { target: existingTarget }; // (b) a legacy parent that already has variants
+    return {
+      skip: `${fam.name} is a product, not a family. Rename one of them, or make ${fam.name} a family first.`,
+    };
+  }
+
+  /** The regulated class the family's active items share; `undefined` = no items yet; `null` = a legacy mix (no constraint). */
+  private async siblingClass(
+    familyId: string,
+  ): Promise<{ isTobacco: boolean; tracked: string | null } | null | undefined> {
+    const sibs = (await this.prisma.forTenant().product.findMany({
+      where: { parentProductId: familyId, isActive: true },
+      select: { isTobacco: true, trackedCategoryId: true },
+    })) as Array<{ isTobacco: boolean; trackedCategoryId: string | null }>;
+    if (sibs.length === 0) return undefined;
+    const first = { isTobacco: !!sibs[0].isTobacco, tracked: sibs[0].trackedCategoryId ?? null };
+    const uniform = sibs.every(
+      (s) => !!s.isTobacco === first.isTobacco && (s.trackedCategoryId ?? null) === first.tracked,
+    );
+    return uniform ? first : null;
+  }
+
+  /**
+   * APPLY only: the id of the family a row goes under, creating the container on the first row that needs it (name
+   * lock + root-name check, then the one FAMILY creator, in one transaction).
+   */
+  async ensureFamily(plan: FamilyPlan, target: FamilyTarget, actorId: string): Promise<string> {
+    if (target.id) return target.id;
+    const done = plan.created.get(target.key);
+    if (done) return done.id;
+    const nf = plan.newFamilies.get(target.key);
+    if (!nf) throw new BadRequestException("This family isn't part of the plan.");
+    const tenantId = this.tenant();
+    const family = await this.prisma.tenantTransaction(async (tx: CatalogTx) => {
+      const conflicts = await this.families.reserveFamilyName(tx, tenantId, nf.name);
+      if (conflicts.length > 0) {
+        throw new ConflictException(`A product named "${nf.name}" already exists`);
+      }
+      return this.families.createFamilyContainer(tx, {
+        name: nf.name,
+        category: nf.category,
+        pricePerUnit: roundMoney(nf.price ?? 0).toFixed(2),
+        actorId,
+      });
+    });
+    plan.created.set(target.key, { id: family.id, name: nf.name, assigned: 0 });
+    return family.id;
+  }
+
+  /** A row was written under `target`: the family this run created is not empty. */
+  markAssigned(plan: FamilyPlan, target: FamilyTarget): void {
+    const made = plan.created.get(target.key);
+    if (made) made.assigned++;
+  }
+
+  /** An empty family this run created is deactivated in the same run (SA-823 section 5). */
+  async deactivateEmpty(plan: FamilyPlan): Promise<{ name: string }[]> {
+    const out: { name: string }[] = [];
+    for (const made of plan.created.values()) {
+      if (made.assigned > 0) continue;
+      try {
+        await this.productsService.remove(made.id);
+        out.push({ name: made.name });
+      } catch (e) {
+        this.logger.warn(`could not deactivate empty family ${made.id}: ${(e as Error).message}`);
+        out.push({ name: made.name });
+      }
+    }
+    return out;
+  }
+
+  /** The header block of the preview / result, derived from the final row plans (so a later skip is counted as one). */
+  summarize(
+    plans: Array<{
+      row: number;
+      action: string;
+      reason?: string;
+      changes?: Record<string, unknown>;
+      family?: ImportFamilyRowInfo;
+    }>,
+    familyRows: Set<number>,
+    deactivated: { name: string }[],
+  ): ImportFamilySummary {
+    const toCreate = new Map<string, { name: string; rows: number }>();
+    const skips = new Map<string, number>();
+    let grouped = 0;
+    let newVariants = 0;
+    let moves = 0;
+    for (const p of plans) {
+      if (p.action === "skip") {
+        if (familyRows.has(p.row) && p.reason) skips.set(p.reason, (skips.get(p.reason) ?? 0) + 1);
+        continue;
+      }
+      if (!p.family) continue;
+      if (p.family.state === "new") {
+        const k = p.family.name.toLowerCase();
+        const cur = toCreate.get(k) ?? { name: p.family.name, rows: 0 };
+        cur.rows++;
+        toCreate.set(k, cur);
+      }
+      if (p.action === "create") newVariants++;
+      else if (p.changes && "family" in p.changes) {
+        grouped++;
+        if (p.family.movesFrom) moves++;
+      }
+    }
+    return {
+      familiesToCreate: [...toCreate.values()],
+      grouped,
+      newVariants,
+      moves,
+      skipsByReason: [...skips.entries()]
+        .map(([reason, count]) => ({ reason, count }))
+        .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason)),
+      deactivated,
+    };
+  }
+
+  /** One `import.products.applied` row per apply of a file with Family columns (SA-823 section 4). */
+  async recordApplied(input: {
+    actorId: string;
+    fileName?: string;
+    counts: Record<string, number>;
+    summary: ImportFamilySummary;
+  }): Promise<void> {
+    await this.audit.log({
+      tenantId: this.tenant(),
+      userId: input.actorId,
+      action: AUDIT_ACTIONS.IMPORT_PRODUCTS_APPLIED,
+      entityType: "Product",
+      meta: {
+        fileName: input.fileName ?? null,
+        ...input.counts,
+        familiesCreated: input.summary.familiesToCreate.length,
+        grouped: input.summary.grouped,
+        moves: input.summary.moves,
+        familiesDeactivated: input.summary.deactivated.length,
+        actor: input.actorId,
+      },
+    });
+  }
 }

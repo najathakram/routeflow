@@ -5,7 +5,9 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import type { ImportFamilyRowInfo, ImportFamilySummary } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { calendarStampFromInput } from "../common/calendar-date";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
@@ -22,6 +24,11 @@ import {
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
+import {
+  ProductFamilyImportService,
+  type FamilyPlan,
+  type FamilyRowInput,
+} from "./product-family-import.service";
 import { roundMoney, roundUnitCost } from "@routeflow/pricing";
 import {
   ImportRowRefused,
@@ -91,6 +98,8 @@ export interface ImportRowPlan {
   changes?: Record<string, { from: unknown; to: unknown }>;
   reason?: string;
   warnings?: string[];
+  /** SA-823: the family detail of a row that carried a Family cell. */
+  family?: ImportFamilyRowInfo;
 }
 import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -225,6 +234,8 @@ export class ImportService {
     private readonly externalRefs: ExternalRefService,
     private readonly productsService: ProductsService,
     private readonly sellingRestrictions: SellingRestrictionsService,
+    // SA-823 (row 655): the Family / Variant name / Product ID columns of the product import.
+    @Optional() private readonly familyImport?: ProductFamilyImportService,
   ) {}
 
   private parseCsv(buffer: Buffer): any[] {
@@ -2493,6 +2504,8 @@ export class ImportService {
     warnings: string[];
     unknownColumns: string[];
     dryRun: boolean;
+    /** SA-823: the family header block, present only when the file has a Family column. */
+    families?: ImportFamilySummary;
   }> {
     const dryRun = !!opts?.dryRun;
     const rawRows = this.parseCsv(buffer);
@@ -2539,6 +2552,13 @@ export class ImportService {
       }
     }
 
+    // SA-823: a Family column is refused for the WHOLE file (too many rows, or family pricing on) before any lookup.
+    const hasFamilyColumn = !!resolved.byField.family;
+    if (hasFamilyColumn) {
+      if (!this.familyImport) throw new Error("ProductFamilyImportService is not available");
+      await this.familyImport.assertAllowed(rawRows.length);
+    }
+
     let created = 0,
       updated = 0,
       unchanged = 0,
@@ -2550,12 +2570,45 @@ export class ImportService {
 
     // Parse every row up front so an in-file name-ambiguity pre-scan can run before matching.
     const parsedRows = rawRows.map((raw) => parseRow(raw, resolved, PRODUCT_COLUMNS));
+    // SA-823: the id / Family / Variant name cells steer matching and grouping; they are never product fields to diff.
+    const famCells = parsedRows.map((p) => {
+      const cells = {
+        id: p.values.id as string | undefined,
+        family: p.values.family as string | undefined,
+        variantName: p.values.variantName as string | undefined,
+      };
+      delete p.values.id;
+      delete p.values.family;
+      delete p.values.variantName;
+      return cells;
+    });
+    const familyRowNumbers = new Set<number>();
+    let famPlan: FamilyPlan | null = null;
+    if (hasFamilyColumn) {
+      const inputs: FamilyRowInput[] = [];
+      parsedRows.forEach((p, i) => {
+        if (p.badCells.length > 0 || !famCells[i].family) return;
+        familyRowNumbers.add(i + 1);
+        inputs.push({
+          index: i,
+          rowNumber: i + 1,
+          family: famCells[i].family as string,
+          variantCell: famCells[i].variantName,
+          nameCell: (p.values.name as string | undefined)?.trim() || undefined,
+          id: famCells[i].id,
+          sku: (p.values.sku as string | undefined)?.trim() || undefined,
+          barcode: (p.values.barcode as string | undefined)?.trim() || undefined,
+          values: p.values,
+        });
+      });
+      famPlan = await this.familyImport!.planRows(inputs);
+    }
     const nameCounts = new Map<string, number>();
-    for (const p of parsedRows) {
+    for (const [idx, p] of parsedRows.entries()) {
       if (p.badCells.length > 0) continue;
       const sku = (p.values.sku as string | undefined)?.trim();
       const barcode = (p.values.barcode as string | undefined)?.trim();
-      if (sku || barcode) continue;
+      if (sku || barcode || famCells[idx].id) continue;
       const name = (p.values.name as string | undefined)?.trim();
       if (!name) continue;
       const key = normalizeNameKey(name);
@@ -2582,6 +2635,8 @@ export class ImportService {
       const sku = (parsed.values.sku as string | undefined)?.trim();
       const barcode = (parsed.values.barcode as string | undefined)?.trim();
       const label = name || sku || `row ${rowNumber}`;
+      const fam = famPlan?.decisions.get(i);
+      const famCell = famCells[i];
 
       const skipRow = (reason: string) => {
         skipped++;
@@ -2609,6 +2664,10 @@ export class ImportService {
         continue;
       }
 
+      if (famCell.variantName && !famCell.family) {
+        warnings.push(`Row ${rowNumber} (${label}): Variant Name is ignored without a Family.`);
+      }
+
       const rowKeys = [
         ...(sku ? [`sku:${sku.toLowerCase()}`] : []),
         ...(barcode ? [`barcode:${barcode.toLowerCase()}`] : []),
@@ -2619,7 +2678,7 @@ export class ImportService {
         continue;
       }
 
-      if (!sku && !barcode && name) {
+      if (!sku && !barcode && !famCell.id && name) {
         const norm = normalizeNameKey(name);
         const count = nameCounts.get(norm) ?? 0;
         if (count >= 2) {
@@ -2633,10 +2692,30 @@ export class ImportService {
       // Matching: exact trimmed SKU → exact barcode → normalized name.
       // SKU and barcode are unique per tenant as stored (case-sensitive), so they match exactly.
       let existing: any = null;
-      if (sku) {
+      // SA-823: a Family row was matched by id / SKU / barcode in the planner (a name never regroups); a Product ID
+      // cell is the strongest key on any row. Either way the SKU / barcode / name fallbacks below are bypassed.
+      let keyMatched = false;
+      if (fam) {
+        if (fam.skip !== undefined) {
+          skipRow(fam.skip);
+          continue;
+        }
+        existing = fam.existing;
+        keyMatched = true;
+      } else if (famCell.id) {
+        existing = await this.prisma.forTenant().product.findFirst({ where: { id: famCell.id } });
+        if (!existing) {
+          skipRow(
+            "That Product ID isn't in this business. Check the Product ID column, or use the SKU.",
+          );
+          continue;
+        }
+        keyMatched = true;
+      }
+      if (!keyMatched && sku) {
         existing = await this.prisma.forTenant().product.findFirst({ where: { sku } });
       }
-      if (!existing && barcode) {
+      if (!keyMatched && !existing && barcode) {
         existing = await this.prisma.forTenant().product.findFirst({ where: { barcode } });
         // W1 (mirrors I1): the row's SKU missed, and the product its barcode found carries a
         // DIFFERENT SKU — rewriting it would be an identity change, never an import update.
@@ -2647,7 +2726,7 @@ export class ImportService {
           continue;
         }
       }
-      if (!existing && name) {
+      if (!keyMatched && !existing && name) {
         const claimedName = claimedNames.get(normalizeNameKey(name));
         if (claimedName) {
           if (sku && claimedName.sku && claimedName.sku !== sku) {
@@ -2689,7 +2768,7 @@ export class ImportService {
           const key = value ? `${kind}:${String(value).toLowerCase()}` : null;
           if (key && !claimedKeys.has(key)) claimedKeys.set(key, rowNumber);
         }
-        const nameAfter = name || existing.name;
+        const nameAfter = fam ? fam.label : name || existing.name;
         if (nameAfter) {
           claimedNames.set(normalizeNameKey(nameAfter), {
             row: rowNumber,
@@ -2761,13 +2840,30 @@ export class ImportService {
           skipRow(packSkipReason);
           continue;
         }
+        // SA-823: on a Family row the variant label (not the Item Name cell) is what the name becomes.
+        if (fam) delete changes.name;
+        const regroup =
+          !!fam &&
+          !(
+            fam.target.id !== null &&
+            existing.parentProductId === fam.target.id &&
+            existing.name === fam.label
+          );
 
         for (const w of rowWarnings) warnings.push(`Row ${rowNumber} (${label}): ${w}`);
         const withWarnings = rowWarnings.length > 0 ? { warnings: rowWarnings } : {};
+        const withFamily = fam ? { family: fam.info } : {};
 
-        if (Object.keys(changes).length === 0) {
+        if (Object.keys(changes).length === 0 && !regroup) {
           unchanged++;
-          rowPlans.push({ row: rowNumber, label, action: "update", changes: {}, ...withWarnings });
+          rowPlans.push({
+            row: rowNumber,
+            label,
+            action: "update",
+            changes: {},
+            ...withWarnings,
+            ...withFamily,
+          });
           continue;
         }
 
@@ -2798,12 +2894,19 @@ export class ImportService {
         for (const [field, to] of Object.entries(changes)) {
           plannedChanges[field] = { from: (existing as any)[field] ?? null, to };
         }
+        if (fam && regroup) {
+          if (existing.name !== fam.label) {
+            plannedChanges.name = { from: existing.name ?? null, to: fam.label };
+          }
+          plannedChanges.family = { from: fam.info.movesFrom, to: fam.target.name };
+        }
         const updatePlan: ImportRowPlan = {
           row: rowNumber,
           label,
           action: "update",
           changes: plannedChanges,
           ...withWarnings,
+          ...withFamily,
         };
         rowPlans.push(updatePlan);
         try {
@@ -2813,13 +2916,30 @@ export class ImportService {
             // report is a skip in the preview too.
             await this.productsService.assertIdentityAvailable(
               {
-                name: changes.name as string | undefined,
-                parentProductId: existing.parentProductId ?? null,
+                // SA-823: a regroup checks the label under the TARGET family (a new family has no siblings yet)
+                name: fam
+                  ? regroup && fam.target.id
+                    ? fam.label
+                    : undefined
+                  : (changes.name as string | undefined),
+                parentProductId:
+                  fam && regroup ? fam.target.id : (existing.parentProductId ?? null),
                 sku: changes.sku as string | undefined,
                 barcode: changes.barcode as string | undefined,
               },
               existing.id,
             );
+          } else if (fam && regroup) {
+            // The move and the row's other cells are ONE update() (assignToParent): all-or-nothing, one audit row.
+            const familyId = await this.familyImport!.ensureFamily(famPlan!, fam.target, userId);
+            await this.productsService.assignToParent(existing.id, familyId, fam.label, {
+              via: "import",
+              actorId: userId,
+              suppressEmit: true,
+              extraChanges: changes,
+            });
+            this.familyImport!.markAssigned(famPlan!, fam.target);
+            anyWrite = true;
           } else {
             await this.productsService.update(existing.id, changes as any, {
               packPrecondition: "internal",
@@ -2839,10 +2959,12 @@ export class ImportService {
       // M3: a blank name would otherwise reach `productsService.create({ name: undefined })` —
       // either a bogus "A product named ... already exists" (nameTaken lookup with
       // `equals: undefined`) or a raw TypeError off `dto.name.replace`. Check before Rate.
-      if (!name) {
+      if (!name && !fam) {
         skipRow("Name is required");
         continue;
       }
+      // SA-823: a new variant is stored under its bare label
+      const createName = fam ? fam.label : (name as string);
       if (parsed.values.pricePerUnit === undefined) {
         skipRow("Rate is required for a new product");
         continue;
@@ -2850,14 +2972,14 @@ export class ImportService {
       // B964-2: a formula-led NEW name is a skip in BOTH modes, decided before the dry-run split: create() would refuse it in a
       // real run, so a preview that says "create" would disagree with what the import then does.
       const nameViolation =
-        productNameViolation({ name }) ??
+        productNameViolation({ name: createName }) ??
         productCategoryViolation(parsed.values.category as string | undefined); // B990: the category cell too
       if (nameViolation) {
         skipRow(nameViolation);
         continue;
       }
       const dto: Record<string, unknown> = {
-        name,
+        name: createName,
         unit: (parsed.values.unit as string | undefined) || "unit",
       };
       for (const [k, v] of Object.entries(parsed.values)) {
@@ -2867,28 +2989,40 @@ export class ImportService {
 
       // I1: a later row's name lookup sees this planned create in dryRun too (nothing is in the
       // DB yet in a preview) — keeps preview and real run identical.
-      claimedNames.set(normalizeNameKey(name), { row: rowNumber, sku: sku || null });
+      claimedNames.set(normalizeNameKey(createName), { row: rowNumber, sku: sku || null });
 
       const createdPlan: Record<string, { from: unknown; to: unknown }> = {};
       for (const [field, to] of Object.entries(dto)) {
         if (to !== undefined) createdPlan[field] = { from: null, to };
       }
+      if (fam) createdPlan.family = { from: null, to: fam.target.name };
       const createPlan: ImportRowPlan = {
         row: rowNumber,
-        label,
+        label: name || createName,
         action: "create",
         changes: createdPlan,
+        ...(fam ? { family: fam.info } : {}),
       };
       rowPlans.push(createPlan);
       try {
         if (dryRun) {
           // W3: create()'s own read-only identity checks, asked without writing.
           await this.productsService.assertIdentityAvailable({
-            name,
-            parentProductId: null,
+            // a new variant's label is judged under its family (a new family has no siblings yet)
+            name: fam && !fam.target.id ? undefined : createName,
+            parentProductId: fam ? fam.target.id : null,
             sku: sku || undefined,
             barcode: barcode || undefined,
           });
+        } else if (fam) {
+          dto.parentProductId = await this.familyImport!.ensureFamily(famPlan!, fam.target, userId);
+          dto.variantName = fam.label;
+          await this.productsService.create(dto as any, {
+            suppressEmit: true,
+            reparentVia: "import",
+          });
+          this.familyImport!.markAssigned(famPlan!, fam.target);
+          anyWrite = true;
         } else {
           await this.productsService.create(dto as any, { suppressEmit: true });
           anyWrite = true;
@@ -2896,6 +3030,27 @@ export class ImportService {
         created++;
       } catch (e: unknown) {
         failPlan(createPlan, e);
+      }
+    }
+
+    // SA-823: an empty family this run created is deactivated in the same run and reported.
+    let families: ImportFamilySummary | undefined;
+    if (famPlan && this.familyImport) {
+      const deactivated = dryRun ? [] : await this.familyImport.deactivateEmpty(famPlan);
+      for (const d of deactivated) {
+        warnings.push(
+          `Family "${d.name}" was created and then deactivated: none of its rows could be saved.`,
+        );
+      }
+      if (famPlan.created.size > 0) anyWrite = true;
+      families = this.familyImport.summarize(rowPlans, familyRowNumbers, deactivated);
+      if (!dryRun) {
+        await this.familyImport.recordApplied({
+          actorId: userId,
+          fileName: opts?.fileName,
+          counts: { created, updated, unchanged, skipped },
+          summary: families,
+        });
       }
     }
 
@@ -2914,6 +3069,7 @@ export class ImportService {
       warnings,
       unknownColumns: resolved.unknownColumns,
       dryRun,
+      ...(families ? { families } : {}),
     };
   }
 

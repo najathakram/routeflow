@@ -1842,6 +1842,7 @@ export class ProductsService {
     return this.update(
       id,
       {
+        ...(opts.extraChanges ?? {}),
         parentProductId,
         variantName,
         // Variants store JUST the variant name in `name` (PR #44).
