@@ -92,6 +92,24 @@ describe("overrideRestoreVerdict (row 640)", () => {
     expect(v).toBeNull();
   });
 
+  it("a PENDING add-on key covers a non-COMP GRANT for payment only never (the row it writes may be a trial row at price 0), yet still counts for requires", async () => {
+    const ocr = grant("ocr", "TRIAL");
+    for (const pending of ["ocr", "OCR_PACK_250"]) {
+      expect(
+        await overrideRestoreVerdict(TX, "t", ocr, ctx({ pendingAddonKeys: [pending] }, cov())),
+      ).toBe("ADDON_NOT_PAID");
+    }
+    // requires: the feature is on while its row exists, so a pending fleet key still satisfies it
+    expect(
+      await overrideRestoreVerdict(
+        TX,
+        "t",
+        grant("driver_payments"),
+        ctx({ pendingAddonKeys: ["order_delivery"] }, cov()),
+      ),
+    ).toBeNull();
+  });
+
   it("coverageOf prices from the supplied map (pinned, else published) and judges inclusion on the target version", () => {
     const c = coverageOf(
       {
