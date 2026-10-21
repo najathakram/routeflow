@@ -4,6 +4,8 @@
  * description snapshotted at sale time), never a live product name. Absent names -> null, so an older server's row shows
  * nothing (callers keep their own fallback).
  */
+import { round4 } from "@routeflow/pricing";
+
 export const COUNTER_ROW_ITEM_NAMES = 2;
 
 export interface CounterItemName {
@@ -11,7 +13,7 @@ export interface CounterItemName {
   qty: number;
 }
 
-const qtyText = (qty: number): string => String(Math.round(qty * 1000) / 1000);
+const qtyText = (qty: number): string => String(round4(qty));
 
 export function itemNamesLine(
   items: readonly CounterItemName[] | null | undefined,
