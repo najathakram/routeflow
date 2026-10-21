@@ -73,7 +73,7 @@ describe("counter scan focus has one owner (SA-762r)", () => {
     const src = stripComments(fs.readFileSync(path.join(DIR, "CounterSaleScreen.tsx"), "utf8"));
     expect(src).toMatch(/const focusPaymentControl = /);
     expect(src).not.toMatch(/focusNode\b/);
-    for (const m of src.matchAll(/focusPaymentControl\(([^;]*?)\);/gs)) {
+    for (const m of src.matchAll(/focusPaymentControl\(([\s\S]*?)\);/g)) {
       expect(m[1]).not.toMatch(/scanRef/);
     }
   });
