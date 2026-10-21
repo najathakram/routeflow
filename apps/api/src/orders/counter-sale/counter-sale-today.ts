@@ -565,7 +565,8 @@ export function toTodaysSaleRow(
   else returnState = total > 0 && returnedAmount >= total ? "FULL" : "PARTLY";
 
   const shown = live[0] ?? o.invoices[0];
-  const names = itemNamesOf(live.flatMap((i) => i.items ?? []));
+  // a voided sale has no live invoice: its names still come from the invoices it had (tax and levy reads stay on live)
+  const names = itemNamesOf((live.length > 0 ? live : o.invoices).flatMap((i) => i.items ?? []));
   return {
     orderId: o.id,
     orderNumber: o.orderNumber ?? "",

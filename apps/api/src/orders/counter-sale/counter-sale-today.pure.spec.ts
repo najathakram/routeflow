@@ -82,6 +82,26 @@ describe("toTodaysSaleRow: item names (R7b 2.1)", () => {
     expect(row.itemCount).toBe(4);
   });
 
+  it("a voided row (no live invoice) still carries its item names", () => {
+    const row = toTodaysSaleRow(
+      order({
+        invStatus: "VOID",
+        invoices: [
+          {
+            id: "i-1",
+            invoiceNumber: "INV-1",
+            status: "VOID",
+            payments: [],
+            items: [{ taxRate: 0, description: "Cola 12oz Can", qty: 2 }],
+          },
+        ],
+      }),
+    );
+    expect(row.voided).toBe(true);
+    expect(row.items).toEqual([{ name: "Cola 12oz Can", qty: 2 }]);
+    expect(row.itemCount).toBe(1);
+  });
+
   it("a record with no item lines carries no names", () => {
     const row = toTodaysSaleRow(order({ payments: [pay("CASH", "24.50")] }));
     expect(row.items).toBeUndefined();
