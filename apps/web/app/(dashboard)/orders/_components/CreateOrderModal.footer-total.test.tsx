@@ -105,7 +105,7 @@ describe("CreateOrderModal footer total (O3, P01/P02)", () => {
     expect(footerRow.lastElementChild).toBe(total);
     // From sm it is reordered between Minimize and the action row.
     expect(total).toHaveClass("sm:order-1");
-    const actions = screen.getByRole("button", { name: /^cancel$/i }).parentElement!;
+    const actions = screen.getByText("Close", { selector: "button" }).parentElement!;
     expect(actions).toHaveClass("sm:order-2");
   });
 

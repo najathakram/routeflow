@@ -1469,7 +1469,23 @@ export function CreateOrderModal({
     }
     const ok = await parkDraft();
     if (ok) {
-      toast({ title: "Order saved as draft", variant: "success" });
+      const parkedId = autosave.draftId;
+      toast({
+        title: "Draft saved",
+        description: "Find it in the drafts dock to resume.",
+        variant: "success",
+        ...(parkedId
+          ? {
+              action: {
+                label: "Discard",
+                onClick: () =>
+                  deleteDraft.mutate(parkedId, {
+                    onSuccess: () => toast({ title: "Draft discarded", variant: "success" }),
+                  }),
+              },
+            }
+          : {}),
+      });
       onClose();
     } else {
       toast({
@@ -2172,7 +2188,7 @@ export function CreateOrderModal({
           <div className="flex flex-wrap items-center justify-end gap-2 sm:order-2 sm:gap-3">
             {/* Row 344: the footer actions are 44 px tap targets below sm (they were 34 px at 390). */}
             <Button variant="ghost" type="button" className="max-sm:h-11" onClick={handleDismiss}>
-              Cancel
+              Close
             </Button>
             <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
             {priceLayer.enabled && priceLayer.failed ? (
