@@ -24,7 +24,14 @@ jest.mock("@/lib/api/returns", () => ({
   useCreateReturn: () => ({ mutate: jest.fn(), isPending: false }),
 }));
 jest.mock("@/lib/api/customers", () => ({
-  useCustomers: () => ({ data: { data: [{ id: "c-acme", businessName: "Acme Deli" }] } }),
+  useCustomers: () => ({
+    data: {
+      data: [
+        { id: "c-acme", businessName: "Acme Deli" },
+        { id: "c-beta", businessName: "Beta Mart" },
+      ],
+    },
+  }),
 }));
 
 const WALKIN_ORDER = {
@@ -32,18 +39,36 @@ const WALKIN_ORDER = {
   orderNumber: "ORD-00001",
   customerId: "c-walk",
   customer: { id: "c-walk", businessName: "Walk-in", isWalkIn: true },
+  status: "DELIVERED",
   lineItems: [],
 };
+const ACME_ORDER = {
+  id: "o-acme",
+  orderNumber: "ORD-00003",
+  customerId: "c-acme",
+  customer: { id: "c-acme", businessName: "Acme Deli" },
+  status: "DELIVERED",
+  lineItems: [],
+};
+const PENDING_ORDER = {
+  ...WALKIN_ORDER,
+  id: "o-pend",
+  orderNumber: "ORD-00002",
+  status: "PENDING",
+};
+let mockAddon = true;
 const mockUseOrders = jest.fn();
 jest.mock("@/lib/api/orders", () => ({
   useOrders: (...a: unknown[]) => mockUseOrders(...a),
-  useOrder: (id: string) => ({ data: id === "o-walk" ? WALKIN_ORDER : undefined }),
+  useOrder: (id: string) => ({
+    data: [WALKIN_ORDER, PENDING_ORDER, ACME_ORDER].find((o) => o.id === id),
+  }),
 }));
 const mockUseInvoices = jest.fn();
 jest.mock("@/lib/api/invoices", () => ({
   useInvoices: (...a: unknown[]) => mockUseInvoices(...a),
 }));
-jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => true }));
+jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => mockAddon }));
 jest.mock("@/lib/api/addons", () => ({ ORDERS_INLINE_RETURNS_ADDON: "orders_inline_returns" }));
 jest.mock("./_components/RecordInlineReturnDialog", () => ({
   RecordInlineReturnDialog: (p: {
@@ -60,11 +85,14 @@ jest.mock("./_components/RecordInlineReturnDialog", () => ({
 }));
 
 beforeEach(() => {
+  mockAddon = true;
   mockUseOrders.mockReset();
   mockUseInvoices.mockReset();
   mockUseOrders.mockImplementation((params?: { search?: string }) => ({
     data: {
-      data: params?.search?.toUpperCase() === "ORD-00001" ? [WALKIN_ORDER] : [],
+      data: [WALKIN_ORDER, PENDING_ORDER, ACME_ORDER].filter(
+        (o) => o.orderNumber === params?.search?.toUpperCase(),
+      ),
     },
     isLoading: false,
   }));
@@ -121,5 +149,41 @@ describe("New Return: find the sale by order or invoice number (B1264)", () => {
     await openNewReturn();
     expect(screen.getByRole("option", { name: "Acme Deli" })).toBeInTheDocument();
     expect(screen.getByText("Select customer…")).toBeInTheDocument();
+  });
+});
+
+const find = (n: string) => {
+  fireEvent.change(screen.getByLabelText(/find by order or invoice number/i), {
+    target: { value: n },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Find" }));
+};
+const selects = () => screen.getAllByRole("combobox") as HTMLSelectElement[];
+const customerSelect = () =>
+  selects().find((s) => s.value === "" || s.querySelector("option[value='c-beta']"))!;
+const orderSelect = () => selects().find((s) => s.textContent?.includes("delivered order"))!;
+
+describe("New Return without the inline-returns add-on (M2, M3)", () => {
+  beforeEach(() => {
+    mockAddon = false;
+  });
+
+  it("M3: a walk-in sale found by number fills customer and order in the old form", async () => {
+    await openNewReturn();
+    find("ORD-00001");
+    await waitFor(() => expect(orderSelect().value).toBe("o-walk"));
+    expect(customerSelect().value).toBe("c-walk");
+    expect(screen.queryByTestId("inline-return")).toBeNull();
+  });
+
+  it("M2: finding the already-selected customer's order sets it, and changing customer clears it", async () => {
+    await openNewReturn();
+    fireEvent.change(customerSelect(), { target: { value: "c-acme" } });
+    find("ORD-00003");
+    await waitFor(() => expect(orderSelect().value).toBe("o-acme"));
+    fireEvent.change(customerSelect(), { target: { value: "c-beta" } });
+    // no stale order id survives the change: submitting asks for an order
+    fireEvent.click(screen.getByRole("button", { name: "Create Return" }));
+    expect(await screen.findByText("Select an order.")).toBeInTheDocument();
   });
 });

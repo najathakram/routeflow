@@ -141,6 +141,7 @@ function CreateReturnModal({
       setReturnItems([]);
       setErrors({});
       setFoundOrder(null);
+      pendingOrderId.current = "";
     }
   }, [isOpen]);
 
@@ -158,11 +159,16 @@ function CreateReturnModal({
       }
       // no inline return flow: fill the customer + order of this form
       setFoundOrder(order);
-      pendingOrderId.current = order.id;
-      setCustomerId(order.customerId);
+      if (order.customerId === customerId) {
+        // same customer: the customer effect will not re-run, so set the order directly and leave nothing pending
+        pendingOrderId.current = "";
+      } else {
+        pendingOrderId.current = order.id;
+        setCustomerId(order.customerId);
+      }
       setOrderId(order.id);
     },
-    [onFoundSale],
+    [onFoundSale, customerId],
   );
 
   React.useEffect(() => {
