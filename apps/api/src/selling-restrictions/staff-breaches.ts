@@ -117,10 +117,12 @@ function breachOf(
       unknownProduct: false,
     };
   }
-  // The engine allows a customer with no state where EVERY matched STATE rule is a portal-only limit (owner ruling 2).
+  // The engine allows a customer with no state where EVERY matched STATE rule is a portal-only limit (owner ruling 2),
+  // except on a sale judged at the STORE (L8 `storeJudged`): a missing store state is INDETERMINATE for those too.
   // `stateRules` omits malformed rules, which cannot be here (they would have blocked above).
   const allStateRules = allMatched.filter((r) => r.jurisdiction === "STATE");
-  if (allStateRules.length === 0 || allStateRules.every((r) => !isLegal(r))) return null;
+  if (allStateRules.length === 0) return null;
+  if (!input.storeJudged && allStateRules.every((r) => !isLegal(r))) return null;
   const pending = allStateRules.map((r) => ruleDetail(r, "STATE_UNRESOLVED"));
   return {
     ...base,
