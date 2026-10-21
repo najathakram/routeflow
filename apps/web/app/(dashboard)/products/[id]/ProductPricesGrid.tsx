@@ -564,7 +564,19 @@ function PricesGridBody({
     return <GridSkeleton count={seenRowCount.get(product.id) ?? estimateRowCount(product)} />;
   }
   if (grid.isError || !grid.data) {
-    return <p className="text-sm text-red-600">Prices could not be loaded.</p>;
+    // K14 S1: the old units card is gone under v2, so a failed load needs its own way forward.
+    return (
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-sm text-red-600">Prices could not be loaded.</p>
+        <button
+          type="button"
+          onClick={() => void grid.refetch?.()}
+          className="min-h-11 rounded px-2 text-sm font-medium text-brand-600 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
+        >
+          Retry
+        </button>
+      </div>
+    );
   }
 
   if (grid.data.rows.length === 0) {
