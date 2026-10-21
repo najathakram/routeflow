@@ -41,6 +41,8 @@ export const PRODUCTS_EXPORT_HEADER = [
   "Units sold",
   "Net sales",
   "Last sold date",
+  // SA-823 (row 655): the stable key the product import's Family columns match on.
+  "Product ID",
 ];
 
 const num = (v: unknown) => (v == null ? null : Number(v));
@@ -193,6 +195,7 @@ export class ProductsExportService {
               roundQty(s?.pieces ?? 0),
               roundMoney((s?.gross ?? 0) - (credits.get(r.id) ?? 0)),
               s?.lastSold ? s.lastSold.toISOString().slice(0, 10) : null,
+              r.id,
             ]);
           }
           yield chunk;
