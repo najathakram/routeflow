@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
-import { createLimiter, runGit, gitLimiter } from "../lib/git-exec.mjs";
+import { createLimiter, runGit, gitLimiter, DEFAULT_GIT_CONCURRENCY } from "../lib/git-exec.mjs";
 import { exec } from "../lib/store.mjs";
 
 const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..");
@@ -87,7 +87,8 @@ test("limiter: a rejected task frees its slot; the shared git limiter is capped 
   const lim = createLimiter(1);
   await assert.rejects(lim.run(() => Promise.reject(new Error("x"))));
   assert.equal(await lim.run(async () => 7), 7);
-  assert.equal(gitLimiter.max, 2);
+  assert.equal(DEFAULT_GIT_CONCURRENCY, 2);
+  assert.equal(gitLimiter.max, Number(process.env.OPS_GIT_CONCURRENCY) || 2);
 });
 
 test("limiter warns once when the backlog exceeds the threshold", async () => {

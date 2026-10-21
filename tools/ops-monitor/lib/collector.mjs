@@ -1052,15 +1052,27 @@ export function createCollector({
         // (a git-remote-https child each). Fetch all missing blobs up front, ONE fetch per chunk,
         // so the forks per poll are bounded by ceil(N / PREFETCH_CHUNK) instead of by N.
         for (let i = 0; i < need.length; i += PREFETCH_CHUNK) {
-          const f = await git([
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            "--no-write-fetch-head",
-            "--recurse-submodules=no",
-            "origin",
-            ...need.slice(i, i + PREFETCH_CHUNK),
-          ]);
+          // negotiationAlgorithm=noop (as git's own lazy fetch): no negotiation against the clone.
+          const f = await exec(
+            "git",
+            [
+              "fetch",
+              "--quiet",
+              "--no-tags",
+              "--no-write-fetch-head",
+              "--recurse-submodules=no",
+              "origin",
+              ...need.slice(i, i + PREFETCH_CHUNK),
+            ],
+            {
+              cwd: repoRoot,
+              env: {
+                GIT_CONFIG_COUNT: "1",
+                GIT_CONFIG_KEY_0: "fetch.negotiationAlgorithm",
+                GIT_CONFIG_VALUE_0: "noop",
+              },
+            },
+          );
           if (f.code !== 0) fail(`blob prefetch failed: ${(f.stderr || "").trim().slice(0, 200)}`);
         }
       }

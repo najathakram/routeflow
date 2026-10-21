@@ -1593,6 +1593,7 @@ test("cloud bugs: ONE prefetch fetch + ONE cat-file for N files; no per-blob fan
   assert.equal(gits.filter((x) => x.line.startsWith("git cat-file blob")).length, 0);
   assert.ok(gits.length <= 7, "bounded git spawns: " + gits.length);
   const fetch = gits.find((x) => x.line.startsWith("git fetch"));
+  assert.equal(fetch.opts.env.GIT_CONFIG_VALUE_0, "noop");
   for (let i = 1; i <= BUG_FILES.length; i++) assert.ok(fetch.args.includes(String(i).repeat(40)));
 });
 

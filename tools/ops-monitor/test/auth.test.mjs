@@ -250,3 +250,24 @@ test("authFromEnv trims env whitespace; the typed password is never trimmed", ()
   assert.equal(verifyPassword("spaced pass", a.passwordHash), false);
   assert.equal(authFromEnv({}), null);
 });
+
+test("hashPasswordCli: a multi-line piped paste is refused, not hashed", async () => {
+  const out = sink();
+  const err = sink();
+  const prev = process.exitCode;
+  const h = await hashPasswordCli({
+    stdin: Readable.from([
+      Buffer.from(
+        "first line pw" + String.fromCharCode(10) + "second line" + String.fromCharCode(10),
+      ),
+    ]),
+    stdout: out,
+    stderr: err,
+  });
+  const code = process.exitCode;
+  process.exitCode = prev;
+  assert.equal(h, null);
+  assert.equal(code, 1);
+  assert.deepEqual(out.o, []);
+  assert.match(err.o.join(""), /more than one line/);
+});

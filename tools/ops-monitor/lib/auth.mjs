@@ -231,6 +231,12 @@ export async function hashPasswordCli({
     return null;
   }
   pw = pw.replace(/\r?\n$/, "");
+  if (/[\r\n]/.test(pw)) {
+    stderr.write("Input has more than one line; nothing was hashed. Type one password.");
+    stderr.write(String.fromCharCode(10));
+    process.exitCode = 1;
+    return null;
+  }
   if (pw === "") {
     stderr.write("Password must not be empty.\n");
     process.exitCode = 1;

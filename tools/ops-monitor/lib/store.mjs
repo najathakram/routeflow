@@ -27,7 +27,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Runs a command without a shell. Never rejects; a missing binary resolves to code 127. */
 export function exec(cmd, args = [], opts = {}) {
   const { cwd, timeoutMs = 60000, env, input, gitRun = limitedGit } = opts;
-  // Every git call: process-group timeout, global concurrency cap, non-interactive env.
+  // Every git call: process-group timeout, global concurrency cap, non-interactive env. The 60 s
+  // default below is for non-git commands only; git uses the caller's timeoutMs, else
+  // OPS_GIT_TIMEOUT_MS (default 120 s) from git-exec.
   if (cmd === "git") {
     return gitRun(args, { cwd, env, input, timeoutMs: opts.timeoutMs }).catch((e) => ({
       code: 1,
