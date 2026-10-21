@@ -2883,6 +2883,11 @@ export default function OrderDetailPage() {
                               updateStatus.mutate(
                                 { id: order!.id, status: "PENDING" as any },
                                 {
+                                  // Row 604 M1: the publish latch is held from the first tap
+                                  // until the status write settles (save-then-publish included).
+                                  onSettled: () => {
+                                    saveLatchRef.current = false;
+                                  },
                                   onSuccess: () => {
                                     setLocalStatus("PENDING");
                                     setIsEditing(false);
@@ -2906,13 +2911,13 @@ export default function OrderDetailPage() {
                             const saveThenPublish = () => {
                               // Row 698: same one-write latch as handleSaveItems.
                               if (saveLatchRef.current) return;
+                              saveLatchRef.current = true;
                               if (
                                 updates.length > 0 ||
                                 feeChanged ||
                                 creditsTouched ||
                                 inlineReturn
                               ) {
-                                saveLatchRef.current = true;
                                 updateItems.mutate(
                                   {
                                     id: order!.id,
@@ -2934,14 +2939,14 @@ export default function OrderDetailPage() {
                                     ...(inlineReturn ? { inlineReturn } : {}),
                                   },
                                   {
-                                    onSettled: () => {
-                                      saveLatchRef.current = false;
-                                    },
                                     onSuccess: () => (returnSave.onSuccess(), doPublish()),
-                                    onError: returnSave.chainError(
-                                      inlineReturn,
-                                      guardError(() => saveThenPublish()),
-                                    ),
+                                    onError: (err: unknown) => {
+                                      saveLatchRef.current = false;
+                                      returnSave.chainError(
+                                        inlineReturn,
+                                        guardError(() => saveThenPublish()),
+                                      )(err);
+                                    },
                                   },
                                 );
                               } else {
