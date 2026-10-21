@@ -275,6 +275,16 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     : { keeps: unpatchedKeeps, asPatches: [] };
   const count = patches.length + unpatchedKeeps.length + customerMoves.length;
   const dirty = count > 0 || problems.length > 0 || conflicts.length > 0;
+  // K14 F02: a reload or close with unsaved price edits asks the browser to confirm; clean, nothing is registered.
+  React.useEffect(() => {
+    if (!dirty) return undefined;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
   const sig = JSON.stringify([patches, customerMoves, unpatchedKeeps]);
   React.useEffect(() => {
     if (applied && applied.sig === null)
