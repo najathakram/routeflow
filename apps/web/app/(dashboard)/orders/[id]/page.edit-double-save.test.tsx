@@ -103,4 +103,26 @@ describe("double Save on Edit Items (F23 / row 698)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^save changes$/i }));
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
   });
+
+  it("Publish Order on a draft is latched too: two quick clicks send ONE write", async () => {
+    patch.mockImplementation(() => new Promise(() => undefined));
+    get.mockImplementation((url: string) => {
+      if (url === "/orders/o1") return Promise.resolve({ data: { ...baseOrder, status: "DRAFT" } });
+      if (url === "/tenants/me/addons") return Promise.resolve({ data: { addons: [] } });
+      return Promise.resolve({ data: [] });
+    });
+    render(
+      <Providers>
+        <OrderDetailPage />
+      </Providers>,
+    );
+    await screen.findByRole("button", { name: /^publish order$/i });
+    fireEvent.change(qty(), { target: { value: "7" } });
+    const publish = screen.getByRole("button", { name: /^publish order$/i });
+    await act(async () => {
+      publish.click();
+      publish.click();
+    });
+    expect(patch).toHaveBeenCalledTimes(1);
+  });
 });

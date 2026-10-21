@@ -2870,12 +2870,15 @@ export default function OrderDetailPage() {
                             const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
                             if (inlineReturn === null) return;
                             const saveThenPublish = () => {
+                              // Row 698: same one-write latch as handleSaveItems.
+                              if (saveLatchRef.current) return;
                               if (
                                 updates.length > 0 ||
                                 feeChanged ||
                                 creditsTouched ||
                                 inlineReturn
                               ) {
+                                saveLatchRef.current = true;
                                 updateItems.mutate(
                                   {
                                     id: order!.id,
@@ -2897,6 +2900,9 @@ export default function OrderDetailPage() {
                                     ...(inlineReturn ? { inlineReturn } : {}),
                                   },
                                   {
+                                    onSettled: () => {
+                                      saveLatchRef.current = false;
+                                    },
                                     onSuccess: () => (returnSave.onSuccess(), doPublish()),
                                     onError: returnSave.chainError(
                                       inlineReturn,
