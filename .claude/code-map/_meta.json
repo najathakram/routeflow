@@ -1,6 +1,6 @@
 {
   "mappedSha": "af182eaadf5814ec751d9407005cce1d3621cf3b",
-  "generatedAt": "2026-10-20T21:18:18.794Z",
+  "generatedAt": "2026-10-21T04:24:29.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1141,
-  "notes": "**2026-10-20 — Bookkeeping for the R5 train (#3552, merge `7c210b24a`; docs-only, Option B follow-up).** New `api/`, `web/` and `mobile/landing-2026-10-20-r5.md` (TOC row in each area file) and a packages.md section: sitting-4 migrations (`restriction_overrides`, `sales_tax_snapshot`, `invoice_tax_rate_widen` DECIMAL(9,6) retiring the B296 edge, `invoice_order_billing_role`, `numeric_not_nan_checks` SA-816), the `stored-tax-state.ts` guard, `IsOptionalNotNull` money DTOs, `finiteStoredMoney`, `assertFiniteMoney` plus the `script-money-writers` pin, B288 `bill-cash-guard.ts` (`BILL_HAS_PAYMENTS`, move-to-supplier-credit), `bill-lines-total.ts`, web `MovePaymentModal`. Lessons L-326, L-327; L-314, L-319 archived. mappedSha stays af182eaad (not advanced): #3551 and #3552 are mapped but about 125 earlier commits since `af182eaad` are NOT."
+  "notes": "**2026-10-21 \u2014 Bookkeeping for window 1 (train/w1-1021 #3555, merge `0026769a0`; docs-only, Option B follow-up).** New `api/`, `web/` and `mobile/landing-2026-10-21-w1.md` (TOC row in each area file) and a packages.md section: #3526 order resume (SA-817 A: `lib/order-draft/*` engine, IndexedDB mirror, resume prompt, fresh prices, sign-out guard; drafts `expectedUpdatedAt` compare-and-set with 409 `DRAFT_CHANGED`; one submit key per draft `DRAFT_SUBMIT_KEY_FIELD`) and #3553 (row 667 mobile vendor bill refused void + move to supplier credit, `vendor-bill-payments-logic.ts`; row 608 copy; B296 comment). Lessons L-328, L-329. mappedSha stays af182eaad (not advanced): #3555 is mapped but earlier commits since af182eaad are NOT. History: CHANGELOG.md."
 }
