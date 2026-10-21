@@ -100,6 +100,15 @@ export function PriceEditRow({
   // `overridden` alone (showing "was $10.00" when the price literally is $10.00 would
   // be nonsensical).
 
+  // F14: under half or over twice the list price is far more often a slip (3.00 typed into a $6.99 line) than a deal.
+  // Display only - nothing blocks.
+  const farFromList =
+    basePrice > 0 && unitPrice >= 0 && (unitPrice < basePrice * 0.5 || unitPrice > basePrice * 2)
+      ? unitPrice < basePrice
+        ? `${Math.round((1 - unitPrice / basePrice) * 100)}% below list (${"$"}${basePrice.toFixed(2)})`
+        : `${Math.round((unitPrice / basePrice - 1) * 100)}% above list (${"$"}${basePrice.toFixed(2)})`
+      : null;
+
   return (
     <div className="ml-11 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
       <label className="flex items-center gap-1.5 text-navy/70">
@@ -116,6 +125,11 @@ export function PriceEditRow({
             reason and margin-floor rules key off the price that results). */}
         {history && <PriceHistoryButton {...history} onUsePrice={commitPrice} />}
       </label>
+      {farFromList && (
+        <span data-testid="price-far-from-list" className="text-amber-700">
+          {farFromList}
+        </span>
+      )}
       <label className="flex items-center gap-1.5 text-navy/70">
         <span>$ off / unit</span>
         <span className="flex items-center rounded border border-surface-border bg-white px-1.5 focus-within:ring-1 focus-within:ring-brand-500">
