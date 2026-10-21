@@ -149,7 +149,9 @@ export function createMonitorServer({
   // Cross-site form posts. An Origin must name this host. "Origin: null" (what browsers send for a
   // same-origin POST under Referrer-Policy: no-referrer) is accepted only when the browser-set
   // Sec-Fetch-Site says same-origin. A request with no Origin at all (curl, tests) is allowed
-  // unless a browser's Sec-Fetch-Site marks it as coming from elsewhere.
+  // unless a browser's Sec-Fetch-Site marks it as coming from elsewhere. That allowance is safe
+  // only because the session cookie is SameSite=Lax (pinned by a test): do not loosen the cookie
+  // to None without tightening this check.
   const sameOrigin = (req) => {
     const origin = req.headers.origin;
     const site = req.headers["sec-fetch-site"];

@@ -814,3 +814,25 @@ test("login origin: null + sec-fetch-site same-origin signs in; other combinatio
   });
   assert.ok(lines.some((l) => /login bad-request origin-mismatch client [0-9a-f]{8}/.test(l)));
 });
+
+test("login: the no-Origin allowance relies on a SameSite=Lax session cookie", async () => {
+  const h = authHarness();
+  await withServer(h, async (port) => {
+    const ok = await login(port);
+    assert.equal(ok.status, 303); // no Origin and no Sec-Fetch-Site: allowed (non-browser client)
+    assert.match(ok.headers["set-cookie"][0], /; SameSite=Lax;/);
+    const cross = await login(port, PASSWORD, { "sec-fetch-site": "cross-site" });
+    assert.equal(cross.status, 403);
+  });
+});
+
+test("login: the no-Origin allowance relies on a SameSite=Lax session cookie", async () => {
+  const h = authHarness();
+  await withServer(h, async (port) => {
+    const ok = await login(port);
+    assert.equal(ok.status, 303); // no Origin and no Sec-Fetch-Site: allowed (non-browser client)
+    assert.match(ok.headers["set-cookie"][0], /; SameSite=Lax;/);
+    const cross = await login(port, PASSWORD, { "sec-fetch-site": "cross-site" });
+    assert.equal(cross.status, 403);
+  });
+});
