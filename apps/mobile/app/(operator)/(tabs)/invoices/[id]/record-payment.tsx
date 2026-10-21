@@ -19,7 +19,10 @@ import {
 } from "../../../../../lib/payment-methods";
 import { productImageFile } from "../../../../../lib/product-image";
 import { showToast } from "../../../../../lib/toast";
-import { usePaymentSubmitKey } from "../../../../../lib/payment-submit-key";
+import {
+  paymentMayBeRecordedCopy,
+  usePaymentSubmitKey,
+} from "../../../../../lib/payment-submit-key";
 
 // Advance / Credit-Note are intentionally excluded: the server rejects them here
 // ("use the dedicated Apply Credit Note / Apply Advance actions") so offering
@@ -92,7 +95,10 @@ export default function RecordPaymentScreen() {
         }
         router.back();
       },
-      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) =>
+        showToast(
+          paymentMayBeRecordedCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+        ),
     });
   };
 

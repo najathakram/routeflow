@@ -1,7 +1,12 @@
 import * as React from "react";
 import { createPaymentKeyHolder, type PaymentKeyHolder } from "@routeflow/types/payment-submit-key";
 
-export { sendWithPaymentKey, type PaymentKeyHolder } from "@routeflow/types/payment-submit-key";
+export {
+  PAYMENT_MAY_BE_RECORDED_COPY,
+  paymentMayBeRecordedCopy,
+  sendWithPaymentKey,
+  type PaymentKeyHolder,
+} from "@routeflow/types/payment-submit-key";
 
 /**
  * SA-824: the Idempotency-Key of one record-payment dialog (customer Record Payment, Payments page,

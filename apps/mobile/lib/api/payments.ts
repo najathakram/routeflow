@@ -231,7 +231,14 @@ export function useRecordPaymentStandalone() {
     mutationFn: ({ submitKey, ...dto }) =>
       sendWithPaymentKey(
         submitKey,
-        { amount: dto.totalAmount, method: dto.method, allocations: dto.allocations },
+        {
+          amount: dto.totalAmount,
+          method: dto.method,
+          allocations: dto.allocations,
+          status: dto.status,
+          bankCharges: dto.bankCharges,
+          settledAt: dto.settledAt,
+        },
         (config) => apiClient.post("/invoices/payments/record", dto, ...config).then((r) => r.data),
       ),
     onSuccess: () => {

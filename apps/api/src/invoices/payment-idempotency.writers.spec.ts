@@ -279,6 +279,36 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
       expect(committed().advs).toHaveLength(before.advs.length);
     });
 
+    it("(c) the same key saved as DRAFT then recorded as PAID is 409 IDEMPOTENCY_KEY_CONFLICT and writes nothing", async () => {
+      await invoices.recordStandalonePayment(standalone({ status: "DRAFT" }), keyed("key-status"));
+      const before = committed();
+
+      const err: any = await invoices
+        .recordStandalonePayment(standalone({ status: "PAID" }), keyed("key-status"))
+        .catch((e) => e);
+
+      expect(err?.getStatus?.()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: CONFLICT });
+      expect(committed()).toEqual(before);
+      // A pure retry of the same status still replays.
+      const again: any = await invoices.recordStandalonePayment(
+        standalone({ status: "DRAFT" }),
+        keyed("key-status"),
+      );
+      expect(again.replayed).toBe(true);
+    });
+
+    it("(c) the same key with a different bank date or bank charges is 409 and writes nothing", async () => {
+      await invoices.recordStandalonePayment(standalone(), keyed("key-bank"));
+      for (const over of [{ settledAt: "2026-10-25" }, { bankCharges: 2.5 }]) {
+        const err: any = await invoices
+          .recordStandalonePayment(standalone(over), keyed("key-bank"))
+          .catch((e) => e);
+        expect(err?.getStatus?.()).toBe(409);
+      }
+      expect(committed().pays).toHaveLength(1);
+    });
+
     it("(c) the same key on a different writer (scope) is 409 IDEMPOTENCY_KEY_CONFLICT and writes nothing", async () => {
       await invoices.recordStandalonePayment(standalone(), keyed("key-scope"));
       const before = committed();
@@ -419,6 +449,15 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
         .catch((e) => e);
       expect(err?.getStatus?.()).toBe(409);
       expect(err.getResponse()).toMatchObject({ code: CONFLICT });
+      expect(committed().pays).toHaveLength(1);
+    });
+
+    it("(c) the same key saved as DRAFT then recorded as PAID is 409 and writes nothing", async () => {
+      await invoices.recordPayment("inv-1", { ...dto(), status: "DRAFT" }, keyed("inv-key-s"));
+      const err: any = await invoices
+        .recordPayment("inv-1", { ...dto(), status: "PAID" }, keyed("inv-key-s"))
+        .catch((e) => e);
+      expect(err?.getStatus?.()).toBe(409);
       expect(committed().pays).toHaveLength(1);
     });
 

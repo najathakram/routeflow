@@ -3,6 +3,9 @@ import { createPaymentKeyHolder, type PaymentKeyHolder } from "@routeflow/types/
 
 export {
   createPaymentKeyHolder,
+  isPaymentKeyConflict,
+  PAYMENT_MAY_BE_RECORDED_COPY,
+  paymentMayBeRecordedCopy,
   paymentSubmitFingerprint,
   sendWithPaymentKey,
   type PaymentKeyHolder,

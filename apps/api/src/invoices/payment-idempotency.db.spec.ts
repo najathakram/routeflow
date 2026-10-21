@@ -224,15 +224,21 @@ describeDb(
       );
       await winnerHoldsKey;
       // B starts while A's claim is uncommitted: its pre-read sees nothing, its claim WAITS on the index.
-      const loser = asTenant(() => invoicesB.recordStandalonePayment(dto, { idempotencyKey: key }));
+      let loserDoneAt = 0;
+      const loser = asTenant(() =>
+        invoicesB.recordStandalonePayment(dto, { idempotencyKey: key }).then((r) => {
+          loserDoneAt = Date.now(); // the loser's OWN resolve time, not the Promise.all's
+          return r;
+        }),
+      );
 
       const [w, l]: any[] = await Promise.all([winner, loser]);
-      const loserDoneAt = Date.now();
 
       expect(w.replayed).toBeUndefined();
       expect(l.replayed).toBe(true);
       expect(l.paymentGroupId).toBe(w.paymentGroupId);
-      expect(loserDoneAt).toBeGreaterThanOrEqual(releasedAt);
+      expect(releasedAt).toBeGreaterThan(0);
+      expect(loserDoneAt).toBeGreaterThanOrEqual(releasedAt); // it waited for the winner's commit
       const after = await state();
       expect(after.payments).toHaveLength(1);
       expect(after.payments[0].paymentGroupId).toBe(w.paymentGroupId);

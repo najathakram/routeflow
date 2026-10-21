@@ -29,7 +29,17 @@ describe("SA-824 payment Idempotency-Key helpers", () => {
   });
 
   describe("paymentRequestHash", () => {
-    const base = {
+    const base: {
+      customerId: string;
+      totalAmount: number;
+      method: string;
+      paidAt: string;
+      reference: string;
+      allocations: Array<{ invoiceId: string; amount: number }>;
+      status?: string;
+      bankCharges?: number;
+      settledAt?: string;
+    } = {
       customerId: "c1",
       totalAmount: 100,
       method: "CASH",
@@ -47,6 +57,8 @@ describe("SA-824 payment Idempotency-Key helpers", () => {
       expect(h({ allocations: [...base.allocations].reverse() })).toBe(h());
       expect(h({ totalAmount: 100.004 })).toBe(h());
       expect(h({ paidAt: "2026-10-20T09:00:00.000Z" })).toBe(h());
+      expect(h({ reference: "  r1 " })).toBe(h());
+      expect(h({ status: "PAID" })).toBe(h()); // absent = PAID, the writers' default
     });
 
     it("changes with the amount (in cents), method, paid date, reference, customer or an allocation", () => {
@@ -57,6 +69,9 @@ describe("SA-824 payment Idempotency-Key helpers", () => {
         h({ reference: "r2" }),
         h({ customerId: "c2" }),
         h({ allocations: [{ invoiceId: "i1", amount: 100 }] }),
+        h({ status: "DRAFT" }),
+        h({ bankCharges: 1.5 }),
+        h({ settledAt: "2026-10-25" }),
       ];
       expect(new Set([h(), ...variants]).size).toBe(variants.length + 1);
     });

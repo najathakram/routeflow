@@ -2,8 +2,11 @@ import { renderHook } from "@testing-library/react";
 import {
   createPaymentKeyHolder,
   paymentSubmitFingerprint,
+  PAYMENT_MAY_BE_RECORDED_COPY,
+  paymentMayBeRecordedCopy,
 } from "@routeflow/types/payment-submit-key";
 import { sendWithPaymentKey, usePaymentSubmitKey } from "./payment-submit-key";
+import { genericToastCopy } from "./generic-toast-copy";
 
 /**
  * SA-824: the record-payment dialogs' Idempotency-Key rule (the shared
@@ -51,6 +54,30 @@ describe("SA-824 payment submit key (web)", () => {
         allocations: [{ invoiceId: "i2", amount: 99 }],
       }),
     ).toBe("key-4");
+  });
+
+  it("a changed DRAFT/PAID status with nothing pending re-mints", () => {
+    const h = createPaymentKeyHolder(mintSeq());
+    expect(h.keyFor({ ...pay, status: "DRAFT" })).toBe("key-1");
+    expect(h.keyFor({ ...pay, status: "PAID" })).toBe("key-2");
+  });
+
+  it("a 409 payment key conflict KEEPS the key (a payment may already exist under it), even after an edit", () => {
+    const h = createPaymentKeyHolder(mintSeq());
+    h.keyFor(pay);
+    const conflict = err(409, { code: "IDEMPOTENCY_KEY_CONFLICT", reason: "PAYMENT_MISMATCH" });
+    h.settle({ ok: false, error: conflict });
+    expect(h.peek()).toBe("key-1");
+    expect(h.keyFor({ ...pay, amount: 90 })).toBe("key-1");
+    expect(paymentMayBeRecordedCopy(conflict)).toBe(PAYMENT_MAY_BE_RECORDED_COPY);
+    expect(PAYMENT_MAY_BE_RECORDED_COPY).toBe(
+      "This payment may already be recorded. Check the customer's payments before trying again.",
+    );
+    expect(paymentMayBeRecordedCopy(err(409, { code: "OTHER" }))).toBeNull();
+    expect(paymentMayBeRecordedCopy(err(503))).toBeNull();
+    // Every dialog's toast (and the app-wide one) shows the recovery copy, never a "nothing recorded" line.
+    expect(genericToastCopy(conflict)).toBe(PAYMENT_MAY_BE_RECORDED_COPY);
+    expect(h.mayBeRecorded()).toBe(true);
   });
 
   it("reset() (a fresh open) forgets the key and any unknown outcome", () => {

@@ -1,4 +1,9 @@
-import { createSaleKeyHolder, mintSaleKey } from "./sale-attempt";
+import {
+  isDefinitiveSaleRefusal,
+  mintSaleKey,
+  saleAttemptKey,
+  type HeldSaleKey,
+} from "./sale-attempt";
 
 /**
  * SA-824 (row 661 step 1): the Idempotency-Key a record-payment dialog sends on the customer
@@ -7,8 +12,8 @@ import { createSaleKeyHolder, mintSaleKey } from "./sale-attempt";
  * replays the stored result on a same-key retry, so a double click or a lost-response retry records
  * the payment ONCE.
  *
- * The rule is the shared submit-key rule of the sale ring (row 485, `createSaleKeyHolder`), keyed on
- * what the server hashes that a dialog edits: the amount, the method and the allocations.
+ * The rule builds on the shared submit-key rule of the sale ring (row 485, `saleAttemptKey`), keyed on
+ * what the server hashes that a dialog edits: amount, method, allocations, status and the bank fields.
  *  - One key per dialog open: create the holder when the dialog opens (or call `reset()` on open).
  *  - Kept across retries: an unknown outcome (no response, a timeout, a 5xx) keeps the key, even if
  *    the form is then edited, so the server's replay or its 409 answers.
@@ -20,32 +25,107 @@ export interface PaymentSubmitShape {
   amount: number;
   method: string;
   allocations?: ReadonlyArray<{ invoiceId: string; amount: number }>;
+  /** DRAFT or PAID (absent = PAID): a draft retried as a payment is a NEW attempt. */
+  status?: string | null;
+  bankCharges?: number | null;
+  settledAt?: string | null;
 }
 
-/** The form identity of one payment attempt: amount and allocations to the cent, method, sorted allocations. */
+/**
+ * The form identity of one payment attempt: amount, allocations and bank charges to the cent, method,
+ * status, bank date, sorted allocations.
+ */
 export function paymentSubmitFingerprint(p: PaymentSubmitShape): string {
   const money = (n: number) => (Number.isFinite(n) ? n.toFixed(2) : "NaN");
   const allocations = (p.allocations ?? [])
     .map((a) => `${a.invoiceId}:${money(a.amount)}`)
     .sort()
     .join(",");
-  return `${money(p.amount)}|${p.method}|${allocations}`;
+  const charges = p.bankCharges == null ? "" : money(p.bankCharges);
+  return [
+    money(p.amount),
+    p.method,
+    allocations,
+    p.status ?? "PAID",
+    charges,
+    p.settledAt ?? "",
+  ].join("|");
 }
 
-/** The holder a record-payment dialog keeps for one open. */
+/**
+ * The 409 the payment writers send when this Idempotency-Key already recorded a DIFFERENT request
+ * (`IDEMPOTENCY_KEY_CONFLICT`, reason `PAYMENT_MISMATCH`). It proves a payment already exists under the
+ * key (an earlier attempt whose response was lost), so it is never a "nothing was recorded" refusal.
+ */
+export function isPaymentKeyConflict(err: unknown): boolean {
+  const res = (
+    err as { response?: { status?: unknown; data?: { code?: unknown; reason?: unknown } } }
+  )?.response;
+  return (
+    res?.status === 409 &&
+    res.data?.code === "IDEMPOTENCY_KEY_CONFLICT" &&
+    res.data?.reason === "PAYMENT_MISMATCH"
+  );
+}
+
+/** The ONE recovery copy for that 409, shared by the web and mobile record-payment dialogs. */
+export const PAYMENT_MAY_BE_RECORDED_COPY =
+  "This payment may already be recorded. Check the customer's payments before trying again.";
+
+/** The recovery copy for a payment key conflict, or null for any other error. */
+export function paymentMayBeRecordedCopy(err: unknown): string | null {
+  return isPaymentKeyConflict(err) ? PAYMENT_MAY_BE_RECORDED_COPY : null;
+}
+
+/**
+ * The holder a record-payment dialog keeps for one open: the sale-attempt rule (`saleAttemptKey`,
+ * `isDefinitiveSaleRefusal`) plus two payment rules.
+ *  - A payment key conflict (`isPaymentKeyConflict`) proves a payment may already exist under the key:
+ *    the key is KEPT and locked (never re-minted), and `mayBeRecorded()` turns true for the dialog copy.
+ *  - A 4xx on a RETRY after an unknown outcome proves only that the retry wrote nothing: the key is kept
+ *    (the web orders submit-key rule). Only a 2xx, or a 4xx with nothing unknown pending, re-mints.
+ */
 export function createPaymentKeyHolder(mint: () => string = mintSaleKey) {
-  const holder = createSaleKeyHolder(mint);
+  let held: HeldSaleKey | null = null;
+  let locked = false;
+  let mayBeRecorded = false;
   return {
-    /** The key to send for this submit (the held one while the attempt is the same or unknown). */
+    /** The key to send for this submit: the held one while the attempt is the same, or locked. */
     keyFor(p: PaymentSubmitShape): string {
-      return holder.keyFor(paymentSubmitFingerprint(p));
+      const fingerprint = paymentSubmitFingerprint(p);
+      held = locked && held ? held : saleAttemptKey(held, fingerprint, mint);
+      return held.key;
     },
-    /** Apply the outcome: a success or a definitive refusal drops the key; anything else keeps it. */
-    settle: holder.settle,
+    /** Apply the outcome (see above). */
+    settle(outcome: { ok: true } | { ok: false; error: unknown }): void {
+      if (!held) return;
+      if (outcome.ok) {
+        held = null;
+        locked = false;
+        mayBeRecorded = false;
+      } else if (isPaymentKeyConflict(outcome.error)) {
+        locked = true;
+        mayBeRecorded = true;
+      } else if (isDefinitiveSaleRefusal(outcome.error)) {
+        if (!locked) held = null;
+      } else {
+        locked = true;
+      }
+    },
+    /** True after a payment key conflict: show PAYMENT_MAY_BE_RECORDED_COPY, never "nothing recorded". */
+    mayBeRecorded(): boolean {
+      return mayBeRecorded;
+    },
     /** The key currently held, or null. */
-    peek: holder.peek,
+    peek(): string | null {
+      return held ? held.key : null;
+    },
     /** A fresh dialog open: forget the held key and any unknown outcome. */
-    reset: holder.startNew,
+    reset(): void {
+      held = null;
+      locked = false;
+      mayBeRecorded = false;
+    },
   };
 }
 

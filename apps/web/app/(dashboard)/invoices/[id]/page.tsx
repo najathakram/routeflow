@@ -111,7 +111,7 @@ import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
-import { usePaymentSubmitKey } from "@/lib/payment-submit-key";
+import { paymentMayBeRecordedCopy, usePaymentSubmitKey } from "@/lib/payment-submit-key";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -1838,7 +1838,11 @@ export default function InvoiceDetailPage() {
         onError: (err: any) => {
           toast({
             title: "Failed to record payment",
-            description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
+            description:
+              paymentMayBeRecordedCopy(err) ??
+              dayClosedCopy(err) ??
+              err?.response?.data?.message ??
+              "Please try again.",
             variant: "error",
           });
         },

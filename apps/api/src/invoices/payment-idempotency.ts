@@ -34,6 +34,11 @@ export interface PaymentKeyRequest {
   paidAt?: string | null;
   reference?: string | null;
   allocations?: ReadonlyArray<{ invoiceId: string; amount: number }>;
+  /** DRAFT or PAID (absent = PAID, the writers' default); null for an advance, which has none. */
+  status?: string | null;
+  bankCharges?: number | null;
+  /** The bank landing date (hashed as a date). */
+  settledAt?: string | null;
 }
 
 /** The hooks a keyed writer runs inside its own money transaction. */
@@ -73,19 +78,27 @@ export interface PaymentKeyDeps {
 
 const centsOrNull = (v: number | null | undefined) => (v == null ? null : toCents(v));
 
-/** sha256 of the normalized body: ids, amounts in cents, method, paid DATE, reference, sorted allocations. */
+/**
+ * sha256 of the normalized body: ids, amounts in cents, method, paid DATE, trimmed reference, sorted
+ * allocations, status, bank charges in cents and the bank DATE.
+ */
 export function paymentRequestHash(req: PaymentKeyRequest): string {
   const allocations = (req.allocations ?? [])
     .map((a) => `${a.invoiceId}:${toCents(a.amount)}`)
     .sort();
+  const day = (v: string | null | undefined) => (v ? String(v).slice(0, 10) : null);
   const body = {
     customerId: req.customerId ?? null,
     invoiceId: req.invoiceId ?? null,
     amountCents: centsOrNull(req.amount),
     method: req.method,
-    paidAt: req.paidAt ? String(req.paidAt).slice(0, 10) : null,
-    reference: req.reference ?? null,
+    paidAt: day(req.paidAt),
+    reference: req.reference?.trim() || null,
     allocations,
+    // SA-824 review: a DRAFT retried as PAID (or a changed bank date / charge) is a different request.
+    status: req.status ?? null,
+    bankChargesCents: centsOrNull(req.bankCharges),
+    settledAt: day(req.settledAt),
   };
   return createHash("sha256").update(JSON.stringify(body)).digest("hex");
 }
@@ -160,7 +173,7 @@ async function replay(
       code: IDEMPOTENCY_KEY_CONFLICT,
       reason: "PAYMENT_MISMATCH",
       message:
-        "Idempotency-Key was already used for a different payment. Nothing was recorded by this request.",
+        "Idempotency-Key was already used for a different payment request. That payment may already be recorded; this request wrote nothing.",
     });
   }
   return { ...(await withCurrentState(deps, scope, row.result)), replayed: true as const };
@@ -240,14 +253,28 @@ export function keyedPayment<T, O extends KeyedWriterOpts<T>>(
 }
 
 /** The keyed request of each writer (the hash input), so the services stay one line per call. */
-export const standalonePaymentKey = (dto: {
-  customerId: string;
-  totalAmount: number;
-  method: string;
-  paidAt?: string;
-  reference?: string;
-  allocations: ReadonlyArray<{ invoiceId: string; amount: number }>;
-}): KeyedPayment => ({
+/** What the standalone and per-invoice hashes add: status (absent = PAID) and the bank fields. */
+interface SettlementFields {
+  status?: string;
+  bankCharges?: number | null;
+  settledAt?: string | null;
+}
+const settlement = (dto: SettlementFields) => ({
+  status: dto.status ?? "PAID",
+  bankCharges: dto.bankCharges ?? null,
+  settledAt: dto.settledAt ?? null,
+});
+
+export const standalonePaymentKey = (
+  dto: SettlementFields & {
+    customerId: string;
+    totalAmount: number;
+    method: string;
+    paidAt?: string;
+    reference?: string;
+    allocations: ReadonlyArray<{ invoiceId: string; amount: number }>;
+  },
+): KeyedPayment => ({
   scope: "STANDALONE_PAYMENT",
   req: {
     customerId: dto.customerId,
@@ -256,12 +283,13 @@ export const standalonePaymentKey = (dto: {
     paidAt: dto.paidAt,
     reference: dto.reference,
     allocations: dto.allocations,
+    ...settlement(dto),
   },
 });
 
 export const invoicePaymentKey = (
   invoiceId: string,
-  dto: { amount: number; method: string; paidAt?: string; reference?: string },
+  dto: SettlementFields & { amount: number; method: string; paidAt?: string; reference?: string },
 ): KeyedPayment => ({
   scope: "INVOICE_PAYMENT",
   req: {
@@ -270,6 +298,7 @@ export const invoicePaymentKey = (
     method: dto.method,
     paidAt: dto.paidAt,
     reference: dto.reference,
+    ...settlement(dto),
   },
 });
 
