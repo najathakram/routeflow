@@ -2,7 +2,8 @@
  * SA-823 section 5 (row 655, R7a PR-2 fold cc3cb510d): a regrouping product-import apply over
  * IMPORT_FAMILY_SYNC_MAX_ROWS is queued on a REAL Bull queue (Redis) and processed by the REAL
  * ProductImportProcessor. The queued apply returns {queued:{jobId}}; the job completes with the same counts a
- * synchronous apply of an equal file gives; the job's status is tenant-scoped (another tenant's id is a 404).
+ * synchronous apply of an equal file gives; the job's status is tenant-scoped (another tenant's id is a 404); a
+ * workspace that takes no writes (SUSPENDED) gets a failed job with the plain message and nothing written.
  *
  * Needs Postgres AND Redis: set REDIS_URL (local, e.g. redis://127.0.0.1:6390). CI's DB lane runs Postgres only, so
  * without REDIS_URL this suite is skipped there. The base jest config mocks `ioredis`, so Bull gets the real
@@ -149,7 +150,7 @@ describeQueue(
         ],
       }).compile();
       importService = module.get(ImportService);
-      const processor = new ProductImportProcessor(importService, tenantCtx);
+      const processor = new ProductImportProcessor(importService, tenantCtx, prisma);
       void queue.process("apply", (job: unknown) => processor.handle(job as never));
     }, 120_000);
 
@@ -266,6 +267,43 @@ describeQueue(
         NotFoundException,
       );
       expect((await waitDone(jobId)).state).toBe("done");
+    }, 300_000);
+
+    it("REG: a SUSPENDED workspace's queued apply fails with the plain message and writes nothing", async () => {
+      const lines = Array.from({ length: N }, (_, i) => `,${RUN}-U${i},,${RUN} U Family,V${i}`);
+      for (let i = 0; i < N; i++) {
+        await prisma.product.create({
+          data: {
+            tenantId,
+            name: `${RUN} U ${i}`,
+            sku: `${RUN}-U${i}`,
+            unit: "each",
+            pricePerUnit: "5.00",
+          } as never,
+        });
+      }
+      const familiesBefore = await prisma.product.count({ where: { tenantId, kind: "FAMILY" } });
+      // suspended BEFORE the enqueue: the processor picks a job up at once
+      await prisma.tenant.update({ where: { id: tenantId }, data: { status: "SUSPENDED" } });
+      try {
+        const q: any = await tenantCtx.run(tenantId, () =>
+          importService.importProducts(
+            Buffer.from(`Item Name,SKU,Rate,Family,Variant Name\n${lines.join("\n")}\n`),
+            "user-1",
+            { fileName: "fam-u.csv", allowBackground: true },
+          ),
+        );
+        const s = await waitDone(q.queued.jobId);
+        expect(s.state).toBe("failed");
+        expect(s.error).toBe(
+          "This workspace can't make changes right now, so the import didn't run.",
+        );
+        expect(await prisma.product.count({ where: { tenantId, kind: "FAMILY" } })).toBe(
+          familiesBefore,
+        );
+      } finally {
+        await prisma.tenant.update({ where: { id: tenantId }, data: { status: "TRIAL" } });
+      }
     }, 300_000);
   },
 );
