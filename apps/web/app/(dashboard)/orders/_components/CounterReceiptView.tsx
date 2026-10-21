@@ -186,9 +186,16 @@ export function CounterReceiptView({
           </div>
         ) : null}
         {m.showPaid ? (
-          <div className="flex justify-between">
+          <div className="flex justify-between" data-testid="receipt-paid">
             <dt>Paid</dt>
             <dd>{money(m.paid)}</dd>
+          </div>
+        ) : null}
+        {m.returned ? (
+          // B1262: the return is its own line (a sale's own return credit is not a tender, so it is never in Paid)
+          <div className="flex justify-between" data-testid="receipt-returned">
+            <dt>{m.returnedLabel ?? "Returned"}</dt>
+            <dd>−{money(m.returned)}</dd>
           </div>
         ) : null}
         {m.showBalance ? (

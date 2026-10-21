@@ -178,3 +178,47 @@ test("R7b 2.4: on a day with 7 sales the first sale row is visible without scrol
   await expect(page.getByTestId("today-row-e2e-d1")).toBeInViewport();
   await expect(page.getByRole("button", { name: "Show all figures" })).toBeVisible();
 });
+
+test("R7b 3.3 (B1262): a reprint of a sale with a return says Returned at 390", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await setTenantCookie(context, baseURL ?? "");
+  await page.setViewportSize({ width: 390, height: 844 });
+  // an on-account sale whose only credit is its own return (SA-838): the credit is in `paid`, not in the tender split
+  const returnedRow = {
+    ...ROW,
+    paid: 6.25,
+    balanceDue: 16.25,
+    methods: [{ method: "STORE_CREDIT", amount: 6.25 }],
+    tenderPaid: 0,
+    returnCredit: 6.25,
+    tenderMethods: [],
+    returned: {
+      amount: 6.25,
+      state: "PARTLY",
+      returns: [
+        {
+          id: "e2e-r1",
+          returnNumber: "R-1",
+          status: "PROCESSED",
+          resolution: "STORE_CREDIT",
+          amount: 6.25,
+        },
+      ],
+    },
+  };
+  await page.route(/\/api\/v1\/orders\/counter-sale\/today/, (r) =>
+    r.fulfill({ json: { ...PAGE1, data: [returnedRow], meta: { ...PAGE1.meta, total: 1 } } }),
+  );
+  await page.route(/\/api\/v1\/orders\/e2e-o1$/, (r) => r.fulfill({ json: ORDER }));
+  await page.goto("/orders/counter-sale");
+  await page.getByRole("button", { name: "Today's sales" }).click();
+  await page.getByTestId("today-row-e2e-o1").getByRole("button", { name: "Reprint" }).click();
+  await expect(page.getByTestId("receipt-reprint")).toBeVisible();
+  await expect(page.getByTestId("receipt-returned")).toContainText("Returned");
+  await expect(page.getByTestId("receipt-returned")).toContainText("6.25");
+  await expect(page.getByTestId("counter-on-account")).toContainText("On account");
+  await expect(page.getByTestId("receipt-reprint")).not.toContainText("Store credit");
+});

@@ -163,3 +163,115 @@ describe("counter receipt files never inject markup (SA-762r F6)", () => {
     expect(src).not.toMatch(/dangerouslySetInnerHTML|innerHTML/);
   });
 });
+
+describe("reprint after a return (B1262 / SA-838): the paper", () => {
+  type Sale = Parameters<typeof receiptModelFromOrder>[0]["sale"];
+  /** the money rows below Total, as the paper reads them, top to bottom: "Label value" per line */
+  const paper = (over: Partial<Sale>) => {
+    const model = receiptModelFromOrder({
+      order: {
+        orderNumber: "ORD-1",
+        total: 12.5,
+        tax: 0,
+        lineItems: [{ id: "l1", name: "Cola", qty: 5, unitPrice: 2.5 }],
+      },
+      sale: {
+        invoiceId: "i1",
+        invoiceNumber: "INV-1",
+        paid: 12.5,
+        balanceDue: 0,
+        methods: [],
+        createdAt: "2026-10-07T15:15:00.000Z",
+        ...over,
+      },
+      profile: null,
+    });
+    const { container } = render(<CounterReceiptView model={model} />);
+    const rows = Array.from(container.querySelectorAll("dl > div")).map((r) =>
+      Array.from(r.children)
+        .map((c) => c.textContent)
+        .join(" "),
+    );
+    return rows.slice(rows.findIndex((r) => r.startsWith("Total")) + 1);
+  };
+
+  it("(a) prints Payment method Cash, Paid $6.25, Returned −$6.25 (no Store credit, no Balance due)", () => {
+    expect(
+      paper({
+        methods: [
+          { method: "CASH", amount: 6.25 },
+          { method: "STORE_CREDIT", amount: 6.25 },
+        ],
+        tenderPaid: 6.25,
+        tenderMethods: [{ method: "CASH", amount: 6.25 }],
+        returned: { amount: 6.25, returns: [{ resolution: "STORE_CREDIT" }] },
+      }),
+    ).toEqual(["Payment method Cash", "Paid $6.25", "Returned −$6.25"]);
+  });
+
+  it("(b) prints Payment method Advance + Cash, Paid $12.50, Refunded −$2.50", () => {
+    expect(
+      paper({
+        methods: [
+          { method: "ADVANCE", amount: 5 },
+          { method: "CASH", amount: 7.5 },
+        ],
+        tenderPaid: 12.5,
+        tenderMethods: [
+          { method: "ADVANCE", amount: 5 },
+          { method: "CASH", amount: 7.5 },
+        ],
+        returned: { amount: 2.5, returns: [{ resolution: "REFUND" }] },
+      }),
+    ).toEqual(["Payment method Advance + Cash", "Paid $12.50", "Refunded −$2.50"]);
+  });
+
+  it("(c) prints Payment method Advance, Paid $12.50, Returned −$3.00", () => {
+    expect(
+      paper({
+        methods: [{ method: "ADVANCE", amount: 12.5 }],
+        tenderPaid: 12.5,
+        tenderMethods: [{ method: "ADVANCE", amount: 12.5 }],
+        returned: { amount: 3, returns: [{ resolution: "STORE_CREDIT" }] },
+      }),
+    ).toEqual(["Payment method Advance", "Paid $12.50", "Returned −$3.00"]);
+  });
+
+  it("(d) another order's store credit prints as the tender Store credit", () => {
+    expect(
+      paper({
+        methods: [{ method: "STORE_CREDIT", amount: 12.5 }],
+        tenderPaid: 12.5,
+        tenderMethods: [{ method: "STORE_CREDIT", amount: 12.5 }],
+        returned: { amount: 0, returns: [] },
+      }),
+    ).toEqual(["Payment method Store credit", "Paid $12.50"]);
+  });
+
+  it("an on-account sale with only its own return credit prints Returned −$6.25 and Balance due $6.25", () => {
+    expect(
+      paper({
+        paid: 6.25,
+        balanceDue: 6.25,
+        methods: [{ method: "STORE_CREDIT", amount: 6.25 }],
+        tenderPaid: 0,
+        tenderMethods: [],
+        returned: { amount: 6.25, returns: [{ resolution: "STORE_CREDIT" }] },
+      }),
+    ).toEqual(["Returned −$6.25", "Balance due $6.25"]);
+  });
+
+  it("(g) an old server prints master's wording, byte for byte, return on the row or not", () => {
+    const oldRow = {
+      paid: 6.25,
+      balanceDue: 6.25,
+      methods: [{ method: "STORE_CREDIT" as const, amount: 6.25 }],
+    };
+    const master = ["Payment method Store credit", "Paid $6.25", "Balance due $6.25"];
+    expect(paper(oldRow)).toEqual(master);
+    document.body.innerHTML = "";
+    expect(
+      paper({ ...oldRow, returned: { amount: 6.25, returns: [{ resolution: "STORE_CREDIT" }] } }),
+    ).toEqual(master);
+  });
+});

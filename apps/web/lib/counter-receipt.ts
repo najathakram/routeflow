@@ -14,6 +14,7 @@ import type {
   ReceiptLine,
   ReceiptModel,
   TodaysSaleMethod,
+  TodaysSaleReturnResolution,
 } from "@routeflow/types";
 import { displayProductName } from "./product-display";
 
@@ -67,7 +68,15 @@ export interface ReceiptBusinessProfile {
  * the rule for naming a rate are `@routeflow/pricing`'s (`explainedTaxRatePercent`), shared with the emailed receipt.
  */
 export type CounterReceiptLine = ReceiptLine;
-export type CounterReceiptModel = ReceiptModel;
+/**
+ * The reprint of a sale that had a return also carries `returned` (the amount, positive; absent or null when nothing was) and
+ * `returnedLabel`: the view prints `Returned −$x`, or `Refunded −$x` when every return went out as a refund. Only a server that
+ * sends the tender split (`ReprintSaleFacts.tenderPaid`) sets them; an older one reprints exactly as before.
+ */
+export type CounterReceiptModel = ReceiptModel & {
+  returned?: number | null;
+  returnedLabel?: "Returned" | "Refunded";
+};
 
 /**
  * The ONE formatter of the Tax row's label, live and reprint alike: "Tax (8.25%)" when one rate explains the tax, else
@@ -320,6 +329,18 @@ export interface ReprintSaleFacts {
   customerName?: string | null;
   /** IANA zone the sale time is read in (the server's `meta.timezone`) */
   timezone?: string;
+  /**
+   * B1262 / SA-838, the server's split of `paid` (the row's `tenderPaid` / `tenderMethods`, `@routeflow/pricing`
+   * `counterTenderSplit`): what was TENDERED, without the sale's own return credit. Used as given, never re-derived. Present:
+   * Paid and the payment method read these, and `returned` prints. Absent (an older server): `paid` / `methods` as before.
+   */
+  tenderPaid?: number;
+  tenderMethods?: ReadonlyArray<{ method: ReprintTender; amount: number }>;
+  /** the row's `returned` (the amount returned and how each return was settled); read only with `tenderPaid` */
+  returned?: {
+    amount: number;
+    returns: ReadonlyArray<{ resolution: TodaysSaleReturnResolution }>;
+  } | null;
 }
 
 /** The tender of a today's-sales row (the shared POS-7b-1 type; never hand-typed here). */
@@ -428,8 +449,16 @@ export function receiptModelFromOrder(input: {
     });
   const netSubtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
   const discounts = roundMoney(rows.reduce((sum, r) => sum + r.discount, 0));
-  const hasTender = sale.methods.length > 0;
-  const { paid, balanceDue } = sale;
+  // B1262 / SA-838: a server that sends the tender split has already taken the sale's own return credit out of what was paid
+  // and out of the methods (an unproven store credit stays a tender there), so they are read as given. An older server sends
+  // neither: master's reading of `paid` / `methods`, and no Returned line.
+  const split = sale.tenderPaid !== undefined;
+  const tenders = split ? (sale.tenderMethods ?? sale.methods) : sale.methods;
+  const hasTender = tenders.length > 0;
+  const paid = split ? sale.tenderPaid! : sale.paid;
+  const { balanceDue } = sale;
+  const returnedAmount = split ? roundMoney(num(sale.returned?.amount)) : 0;
+  const returns = sale.returned?.returns ?? [];
   const onAccount = !hasTender && balanceDue > 0;
   const orderTotal = num(order.total);
   const { tax, charges, adjustments } = receiptFigures({
@@ -465,9 +494,16 @@ export function receiptModelFromOrder(input: {
     paymentNotRecorded: false,
     showPaid: hasTender,
     showBalance: onAccount || balanceDue > 0,
-    methodLabel: hasTender
-      ? sale.methods.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ")
-      : null,
+    methodLabel: hasTender ? tenders.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ") : null,
+    ...(split
+      ? {
+          returned: returnedAmount > 0 ? returnedAmount : null,
+          // "Refunded" only when every return went out as a refund; a store-credit or still-pending one reads "Returned"
+          returnedLabel: (returns.length > 0 && returns.every((r) => r.resolution === "REFUND")
+            ? "Refunded"
+            : "Returned") as "Returned" | "Refunded",
+        }
+      : {}),
     tendered,
     tenderedAsEntered: false,
     // the server's figure (the row's `change`, servedChange), shown as given: the client recomputes nothing
