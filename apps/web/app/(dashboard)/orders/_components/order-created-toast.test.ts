@@ -1,4 +1,4 @@
-import { orderCreatedToast } from "./order-created-toast";
+import { orderCreatedToast, showOrderCreatedToast } from "./order-created-toast";
 import { wasCreatedHere } from "@/lib/order-created-echo";
 
 describe("orderCreatedToast", () => {
@@ -63,5 +63,18 @@ describe("orderCreatedToast", () => {
     });
     expect(wasCreatedHere("ORD-9")).toBe(true);
     expect(wasCreatedHere("ORD-10")).toBe(false);
+  });
+  it("row 604 S6: a new order-created toast replaces the previous one instead of stacking", () => {
+    let n = 0;
+    const api = { toast: jest.fn(() => `t${++n}`), dismiss: jest.fn() };
+    showOrderCreatedToast(api, { asDraft: false, created: { id: "o1", orderNumber: "ORD-1" } });
+    expect(api.dismiss).not.toHaveBeenCalled();
+    showOrderCreatedToast(api, { asDraft: false, created: { id: "o2", orderNumber: "ORD-2" } });
+    expect(api.dismiss).toHaveBeenCalledTimes(1);
+    expect(api.dismiss).toHaveBeenCalledWith("t1");
+    expect(api.toast).toHaveBeenCalledTimes(2);
+    // the echo dedupe still runs for every order
+    expect(wasCreatedHere("ORD-1")).toBe(true);
+    expect(wasCreatedHere("ORD-2")).toBe(true);
   });
 });

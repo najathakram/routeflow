@@ -43,7 +43,7 @@ import { useUnsentOrderResume } from "./use-unsent-order-resume";
 import { ResumeUnsentOrderDialog } from "./ResumeUnsentOrderDialog";
 import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
-import { orderCreatedToast } from "./order-created-toast";
+import { showOrderCreatedToast } from "./order-created-toast";
 import {
   mergePieceIntoLine,
   mergeQtyIntoLine,
@@ -280,7 +280,8 @@ export function CreateOrderModal({
   initialFulfillPath,
   onViewOrder,
 }: CreateOrderModalProps) {
-  const { toast } = useToast();
+  const { toast, dismiss: dismissToast } = useToast();
+  const toastApi = { toast, dismiss: dismissToast };
   const createOrder = useCreateOrder({ localErrorToast: true });
   const pos = usePosMode(); // SA-763r P-2: server-backed preference, never localStorage
   const { user: posUser } = useAuth();
@@ -1845,7 +1846,7 @@ export function CreateOrderModal({
                 mergeChoice === "merge" ? { fromStatus: mergePrompt?.status } : undefined,
               );
             } else {
-              toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
+              showOrderCreatedToast(toastApi, { mergeChoice, asDraft, created, onViewOrder });
             }
             // The parked draft has become a real order — clear it from the dock.
             // SA-817: the order exists - stop autosave, drop the local copy, delete the bound server draft (once a create in flight lands).

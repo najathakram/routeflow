@@ -54,3 +54,20 @@ export function orderCreatedToast({
     ...(action ? { duration: ACTION_TOAST_MS } : {}),
   };
 }
+
+/** The id of the order-created toast still on screen, so the next one can replace it (row 604 S6). */
+let lastOrderCreatedToastId: string | null = null;
+
+/**
+ * Shows the order-created toast, replacing the previous one rather than stacking a 24 h toast per order.
+ * The echo dedupe (`markOrderCreatedHere`) still runs for every order, inside `orderCreatedToast`.
+ */
+export function showOrderCreatedToast(
+  api: { toast: (data: Omit<ToastData, "id">) => string; dismiss: (id: string) => void },
+  input: OrderCreatedToastInput,
+): string {
+  const data = orderCreatedToast(input);
+  if (lastOrderCreatedToastId) api.dismiss(lastOrderCreatedToastId);
+  lastOrderCreatedToastId = api.toast(data);
+  return lastOrderCreatedToastId;
+}
