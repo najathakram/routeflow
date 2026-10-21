@@ -60,7 +60,7 @@ describe("CounterCustomerMatches keyboard", () => {
   it("a click still picks a match", () => {
     const onPick = jest.fn();
     render(<Harness onPick={onPick} />);
-    fireEvent.click(screen.getByRole("button", { name: "Acme Supply" }));
+    fireEvent.click(screen.getByRole("option", { name: "Acme Supply" }));
     expect(onPick).toHaveBeenCalledWith(MATCHES[1]);
   });
 });

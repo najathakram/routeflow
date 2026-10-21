@@ -99,7 +99,7 @@ const scan = async (text: string) => {
 };
 const pick = (name: string) => {
   fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "cafe" } });
-  fireEvent.click(screen.getByRole("button", { name }));
+  fireEvent.click(screen.getByRole("option", { name }));
 };
 const text = (id: string) => screen.getByTestId(id).textContent ?? "";
 /** The total a SIGHTED user reads: the visible Estimated-total row when it shows, else the Amount due status. */

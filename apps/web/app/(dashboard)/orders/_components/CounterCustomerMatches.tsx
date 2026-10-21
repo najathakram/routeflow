@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { cn } from "@routeflow/ui/web";
 
 /** CQ-11: the customer search came back empty (a typed search with no match), instead of a blank dropdown. */
 export const COUNTER_NO_CUSTOMERS_COPY = "No customers found";
@@ -103,17 +104,17 @@ export function CounterCustomerMatches<C extends CustomerMatch>({
             role={listbox ? "option" : undefined}
             id={listbox?.optionId(i)}
             aria-selected={listbox ? listbox.active === i : undefined}
-            className={listbox?.active === i ? "bg-gray-100" : undefined}
+            aria-disabled={disabled || undefined}
+            className={cn(
+              "min-h-[44px] w-full px-3 py-2 text-left",
+              disabled ? "opacity-40" : "cursor-pointer hover:bg-gray-50",
+              listbox?.active === i && "bg-gray-100",
+            )}
+            onClick={() => {
+              if (!disabled) onPick(c);
+            }}
           >
-            <button
-              type="button"
-              tabIndex={listbox ? -1 : undefined}
-              className="min-h-[44px] w-full px-3 py-2 text-left hover:bg-gray-50"
-              disabled={disabled}
-              onClick={() => onPick(c)}
-            >
-              {c.businessName}
-            </button>
+            {c.businessName}
           </li>
         ))}
       </ul>

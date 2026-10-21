@@ -102,7 +102,7 @@ const lines = () =>
     .filter((li) => li.textContent !== "No items yet.");
 const pickAcme = () => {
   fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-  fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+  fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
 };
 const shipBtn = () => screen.getByRole("button", { name: "Ship this order instead" });
 
@@ -322,7 +322,7 @@ describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     fireEvent.click(shipBtn());
     // the customer pick that would let an armed hand-off run is itself frozen while the sale posts
-    expect(screen.queryByRole("button", { name: "Acme Co" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Acme Co" })).toBeNull();
     await new Promise((r) => setTimeout(r, 30));
     expect(createDraft).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();

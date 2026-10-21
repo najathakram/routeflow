@@ -251,7 +251,7 @@ for (const vp of VIEWPORTS) {
           .getByLabel("Find a customer")
           .fill(String(fx.customer.businessName).slice(0, 12));
         await page
-          .getByRole("button", { name: String(fx.customer.businessName) })
+          .getByRole("option", { name: String(fx.customer.businessName) })
           .first()
           .click();
         const note = page.getByTestId("counter-reprice-note");

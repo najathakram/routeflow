@@ -217,7 +217,7 @@ const itemNames = () =>
   );
 async function pickAcme() {
   fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-  fireEvent.click(screen.getByRole("button", { name: "Acme Cafe" }));
+  fireEvent.click(screen.getByRole("option", { name: "Acme Cafe" }));
   await waitFor(() => expect(screen.queryByTestId("counter-reprice-busy")).toBeNull());
 }
 async function openList(count?: number) {

@@ -695,7 +695,7 @@ describe("CounterSaleScreen", () => {
     };
     renderWithProviders(<CounterSaleScreen />);
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-    fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+    fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
     fireEvent.click(screen.getByRole("button", { name: "Ship this order instead" }));
     expect(push).toHaveBeenCalledWith("/orders?action=new&ship=1&preselect=SHIP");
   });
@@ -707,7 +707,7 @@ describe("CounterSaleScreen", () => {
     customersFor = [{ id: "c1", businessName: "Walk-in customer", ...flag }];
     renderWithProviders(<CounterSaleScreen />);
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "walk" } });
-    fireEvent.click(screen.getByRole("button", { name: "Walk-in customer" }));
+    fireEvent.click(screen.getByRole("option", { name: "Walk-in customer" }));
     await scan("012345678905");
     await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
     fireEvent.click(screen.getByRole("button", { name: "$20" }));
@@ -1291,7 +1291,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
           mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
           renderWithProviders(<CounterSaleScreen />);
           fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-          fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+          fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
           await scan("012345678905");
           await waitFor(() =>
             expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"),
@@ -2528,7 +2528,7 @@ describe("digital receipt on the live receipt (SA-751r)", () => {
     ];
     renderWithProviders(<CounterSaleScreen />);
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-    fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+    fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
     await finishCashSale();
     fireEvent.click(screen.getByRole("button", { name: "Email receipt" }));
     expect((screen.getByRole("textbox", { name: "Email address" }) as HTMLInputElement).value).toBe(
@@ -2549,7 +2549,7 @@ describe("digital receipt on the live receipt (SA-751r)", () => {
     ];
     renderWithProviders(<CounterSaleScreen />);
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-    fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+    fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
     await finishCashSale();
     fireEvent.click(screen.getByRole("button", { name: "Email receipt" }));
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -2573,7 +2573,7 @@ describe("digital receipt on the live receipt (SA-751r)", () => {
     ];
     renderWithProviders(<CounterSaleScreen />);
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-    fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+    fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
     await finishCashSale();
     fireEvent.click(screen.getByRole("button", { name: "Email receipt" }));
     expect((screen.getByRole("textbox", { name: "Email address" }) as HTMLInputElement).value).toBe(

@@ -144,7 +144,7 @@ describe("counter sale: nothing changes while the sale request is in flight", ()
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA", "Cola");
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-    fireEvent.click(btn("Acme Co"));
+    fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
     fireEvent.click(btn("Exact"));
     fireEvent.click(btn("Complete & next sale"));
     await waitFor(() => expect(sendSale).toHaveBeenCalledTimes(1));
@@ -180,7 +180,7 @@ describe("counter sale: nothing changes while the sale request is in flight", ()
     expect(itemCount()).toBe(1);
     expect(screen.getByText(/Cola · × 1/)).toBeInTheDocument();
     expect(screen.queryByText("Acme Co")).toBeNull(); // still the walk-in
-    expect(screen.queryByRole("button", { name: "Acme Co" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Acme Co" })).toBeNull();
 
     post.resolve(SALE);
     await screen.findByTestId("counter-sale-receipt");

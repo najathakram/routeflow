@@ -128,7 +128,7 @@ const scan = async (text: string) => {
 const total = () => screen.getByTestId("running-total");
 const pickAcme = async () => {
   fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-  fireEvent.click(screen.getByRole("button", { name: "Acme Cafe" }));
+  fireEvent.click(screen.getByRole("option", { name: "Acme Cafe" }));
   await waitFor(() => expect(screen.queryByTestId("counter-reprice-busy")).toBeNull());
 };
 const completeBtn = () => screen.getByRole("button", { name: "Complete & show receipt" });

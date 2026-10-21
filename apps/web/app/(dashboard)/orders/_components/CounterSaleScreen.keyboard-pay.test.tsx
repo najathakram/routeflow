@@ -156,7 +156,7 @@ describe("CounterSaleScreen: keyboard path to pay (R7b 1.2)", () => {
   it("the tender group keeps one enabled tab stop after a walk-in switch disables the checked method", async () => {
     renderWithProviders(<CounterSaleScreen />);
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-    fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+    fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
     fireEvent.click(screen.getByRole("radio", { name: "On account" }));
     fireEvent.click(screen.getByRole("button", { name: "Use Walk-in customer" }));
     expect(screen.getByRole("radio", { name: "On account" })).toBeDisabled();

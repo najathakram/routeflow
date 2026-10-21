@@ -110,7 +110,7 @@ const rows = () => within(screen.getByRole("list", { name: "Items" })).getAllByR
 const colaRow = () => rows().find((r) => /Cola/.test(r.textContent ?? ""))!;
 const pickAcme = () => {
   fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-  click("Acme Cafe");
+  fireEvent.click(screen.getByRole("option", { name: "Acme Cafe" }));
 };
 const undoRemoved = () =>
   fireEvent.click(
@@ -240,7 +240,7 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
     pickAcme();
     await waitFor(() => expect(screen.getByTestId("counter-reprice-note")).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-    const result = screen.getAllByRole("button", { name: "Acme Cafe" });
+    const result = screen.getAllByRole("option", { name: "Acme Cafe" });
     pending = true;
     click("Card"); // any state change re-reads the flag
     expect(screen.getByLabelText("Find a customer")).toBeDisabled();
@@ -248,7 +248,7 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
     expect(
       within(screen.getByTestId("counter-reprice-note")).getByRole("button", { name: "Undo" }),
     ).toBeDisabled();
-    for (const r of result) expect(r).toBeDisabled();
+    for (const r of result) expect(r).toHaveAttribute("aria-disabled", "true");
   });
 
   it("the scan field is disabled during the POST", async () => {
