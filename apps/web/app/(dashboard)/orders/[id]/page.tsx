@@ -782,7 +782,10 @@ export function EditableLineItems({
   customer,
   orderId,
   lockedLineIds,
+  focusFirstQty = false,
 }: {
+  /** F08: edit opened from the keyboard - focus the first quantity instead of the scan bar. */
+  focusFirstQty?: boolean;
   items: EditItemState[];
   onChange: (items: EditItemState[]) => void;
   onAdd: (item: EditItemState) => void;
@@ -841,6 +844,7 @@ export function EditableLineItems({
   const [customError, setCustomError] = React.useState("");
   const addRef = React.useRef<HTMLDivElement>(null);
   const addInputRef = React.useRef<HTMLInputElement>(null);
+  const linesRef = React.useRef<HTMLDivElement>(null);
   // Digit runs that look like a scanned code query the candidate-aware
   // `scanCode` search — a suffix-less wedge scan lands here via the dropdown,
   // and the raw decode contains-misses when the camera's digit count differs
@@ -868,9 +872,15 @@ export function EditableLineItems({
       if (!el || el.disabled) return;
       const active = document.activeElement;
       if (active && active !== document.body && active !== el) return;
-      el.focus();
+      // F08: a keyboard open lands on the first quantity (a person who types straight away); mouse, touch and
+      // scanners keep the scan bar (B62). preventScroll either way (F26: the page used to jump to the bottom).
+      const firstQty = focusFirstQty
+        ? linesRef.current?.querySelector<HTMLInputElement>("input[type=number]:not(:disabled)")
+        : null;
+      (firstQty ?? el).focus({ preventScroll: true });
     }, 100);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pricingReady]);
 
   React.useEffect(() => {
@@ -1067,7 +1077,7 @@ export function EditableLineItems({
   }
 
   return (
-    <div className="space-y-2">
+    <div ref={linesRef} className="space-y-2">
       {items.map((item) => (
         <div
           key={item.id}
@@ -1754,6 +1764,7 @@ export default function OrderDetailPage() {
   });
   const savingItems = updateItems.isPending;
   const saveLatchRef = React.useRef(false);
+  const [focusFirstQty, setFocusFirstQty] = React.useState(false);
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
   // S19b M3: while this customer's prices are unconfirmed (layer pending / failed / this product missing from an incomplete
   // layer) the edit cannot be saved or published; flag off nothing is read, so this is false.
@@ -2394,7 +2405,10 @@ export default function OrderDetailPage() {
                 size="sm"
                 variant="secondary"
                 leftIcon={<Pencil className="h-4 w-4" />}
-                onClick={enterEditMode}
+                onClick={(e) => {
+                  setFocusFirstQty(e.detail === 0);
+                  enterEditMode();
+                }}
               >
                 {isPos ? "Edit order" : "Edit Items"}
               </WriteButton>
@@ -2740,6 +2754,7 @@ export default function OrderDetailPage() {
                 {stale.node}
                 <InvoicedEditNotice invoices={order.invoices} />
                 <EditableLineItems
+                  focusFirstQty={focusFirstQty}
                   items={editItems}
                   onChange={setEditItems}
                   onAdd={(item) => setEditItems((prev) => [...prev, item])}
