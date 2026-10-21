@@ -757,6 +757,23 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
     });
   });
 
+  it("BENCH (orchestration only, fakes for every writer): the 2,500-row cap plans and applies without per-row blow-up", async () => {
+    rows.push(mk({ id: "fam", name: "Acme Cola", kind: "FAMILY" }));
+    const N = IMPORT_FAMILY_MAX_ROWS;
+    for (let i = 0; i < N; i++) rows.push(mk({ id: `b${i}`, name: `Bulk ${i}`, sku: `K${i}` }));
+    const file = csv(...Array.from({ length: N }, (_, i) => `,K${i},,,Acme Cola,V${i},,`));
+    const t0 = Date.now();
+    const r = await run(file);
+    const ms = Date.now() - t0;
+    // eslint-disable-next-line no-console
+    console.log(
+      `family import orchestration: ${N} rows in ${ms} ms = ${(ms / N).toFixed(2)} ms/row (writers faked)`,
+    );
+    expect(r.updated).toBe(N);
+    expect(r.skipped).toBe(0);
+    expect(ms / N).toBeLessThan(10);
+  }, 120_000);
+
   it("the family import branch calls no productUnit writer and no Prisma write (units v2 stays untouched)", () => {
     const src = readFileSync(join(__dirname, "product-family-import.service.ts"), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")
