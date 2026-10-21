@@ -75,7 +75,7 @@ import { useOrderStaleRevision } from "./_components/OrderStaleNotice";
 import { rebaseOnReload } from "./_components/order-edit-rebase";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
-import { formatMoney, formatQty } from "@/lib/format";
+import { formatMoney } from "@/lib/format";
 import { OrderRevisionLog } from "./_components/OrderRevisionLog";
 import { SendInvoiceModal, type InvoiceModalData } from "./_components/SendInvoiceModal";
 import {
@@ -147,6 +147,7 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { PriceEditRow } from "./price-edit-row";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { summarizeQtyByUnit } from "@/lib/order-qty-summary";
 import { isEditDirty, useEditLeaveGuard } from "./edit-leave-guard";
 import { AppliedCreditsPanel, appliedOnOrderRows } from "./AppliedCreditsPanel";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
@@ -3204,7 +3205,7 @@ export default function OrderDetailPage() {
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Total quantity</dt>
                 <dd className="mono font-medium text-navy">
-                  {formatQty(summaryLineItems.reduce((s, li) => s + Number(li.qty), 0))}
+                  {summarizeQtyByUnit(summaryLineItems)}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3">
