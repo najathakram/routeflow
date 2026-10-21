@@ -455,9 +455,7 @@ export function CounterTodaysSales() {
   const [open, setOpen] = React.useState(false);
   const [reprint, setReprint] = React.useState<TodaysSaleRow | null>(null);
   // SA-762r: the sale being voided. The dialog sits here (not on the row) so it outlives the row turning Voided.
-  const [voidRow, setVoidRow] = React.useState<{ orderId: string; orderNumber: string } | null>(
-    null,
-  );
+  const [voidRow, setVoidRow] = React.useState<TodaysSaleRow | null>(null);
   // "today" = the live list; "week" = the last-7-days report
   const [view, setView] = React.useState<"today" | "week">("today");
   // the row whose Reprint button gets focus back after "Back to sales"
@@ -581,7 +579,7 @@ export function CounterTodaysSales() {
                     focusReprint={refocusId === r.orderId}
                     onFocused={clearRefocus}
                     onReprint={() => setReprint(r)}
-                    onVoid={() => setVoidRow({ orderId: r.orderId, orderNumber: r.orderNumber })}
+                    onVoid={() => setVoidRow(r)}
                     onDone={refetchList}
                   />
                 ))}
@@ -605,6 +603,10 @@ export function CounterTodaysSales() {
           open
           orderId={voidRow.orderId}
           orderNumber={voidRow.orderNumber}
+          total={voidRow.total}
+          methodsText={voidRow.methods.map((m) => METHOD_LABEL[m.method]).join(" + ")}
+          items={voidRow.items}
+          itemCount={voidRow.itemCount}
           onClose={() => setVoidRow(null)}
           onVoided={refetchList}
         />

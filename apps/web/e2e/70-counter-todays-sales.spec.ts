@@ -137,3 +137,14 @@ test("reprint prints on 80 mm paper with no Tendered or Change", async ({
   await expect(page.getByRole("button", { name: /^Complete/ })).toHaveCount(0);
   await expect(root).toBeVisible();
 });
+
+test("R7b 2.2: the Void dialog title names the sale total", async ({ page, context, baseURL }) => {
+  await setTenantCookie(context, baseURL ?? "");
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await openSheet(page);
+  await page
+    .getByTestId("today-row-e2e-o1")
+    .getByRole("button", { name: /^Void sale/ })
+    .click();
+  await expect(page.getByRole("dialog", { name: /Void sale/ })).toContainText("$");
+});

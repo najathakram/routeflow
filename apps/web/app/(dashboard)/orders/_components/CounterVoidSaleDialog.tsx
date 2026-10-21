@@ -17,6 +17,8 @@ import {
 } from "@/lib/counter-void-copy";
 import { counterVoidErrorCopy, voidErrorCode } from "@/lib/counter-void-error";
 import { useReadOnlyGate } from "@/lib/read-only-gate";
+import { formatReceiptMoney } from "@/lib/counter-receipt";
+import { itemNamesLine, type CounterItemName } from "@/lib/counter-item-names";
 
 type Done = { handBack: CounterSaleVoidResponse["handBack"] | null; alreadyVoided: boolean };
 
@@ -24,12 +26,22 @@ export function CounterVoidSaleDialog({
   open,
   orderId,
   orderNumber,
+  total,
+  methodsText,
+  items,
+  itemCount,
   onClose,
   onVoided,
 }: {
   open: boolean;
   orderId: string;
   orderNumber: string;
+  /** R7b 2.2: the sale's total (the row's `total`), named in the title before the irreversible tap */
+  total: number;
+  /** how it was paid, already worded ("Cash + Card"); empty = not shown */
+  methodsText?: string;
+  items?: readonly CounterItemName[];
+  itemCount?: number;
   onClose: () => void;
   /** the sale is voided (a fresh void, a repeat, or one already voided): the sheet refetches so the row reads Voided */
   onVoided: () => void;
@@ -71,12 +83,13 @@ export function CounterVoidSaleDialog({
     }
   };
 
+  const summary = [methodsText, itemNamesLine(items, itemCount)].filter(Boolean).join(" · ");
   const lines = done ? handBackLines(done.handBack) : [];
   return (
     <Modal
       open={open}
       onClose={close}
-      title={`Void sale ${orderNumber}`}
+      title={`Void sale ${orderNumber} · ${formatReceiptMoney(total)}`}
       className="max-w-md"
       footer={
         done ? (
@@ -124,6 +137,11 @@ export function CounterVoidSaleDialog({
         </div>
       ) : (
         <form id="counter-void-form" className="space-y-3 text-sm" onSubmit={submit} noValidate>
+          {summary ? (
+            <p data-testid="counter-void-summary" className="text-navy/70">
+              {summary}
+            </p>
+          ) : null}
           <p>
             This cancels the sale, puts its items back in stock and voids its payments. You
             can&apos;t undo this.
