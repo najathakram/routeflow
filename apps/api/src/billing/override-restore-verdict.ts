@@ -7,8 +7,9 @@
  *  - a NON-COMP GRANT on a billable add-on-keyed key (one with catalog SKUs) is held ADDON_NOT_PAID
  *    unless the key is COVERED at restore time: (a) an ACTIVE `TenantAddon` row for the key's SKU that
  *    passes `isStripeBillableAddonRow` (the exact billed-row predicate, never `isPayingRow`), or (b) the
- *    tenant's plan version includes that SKU (`includedAt`, the inclusion resolver), or (c) the same
- *    transaction activates the add-on (a checkout's pending key, paid in that checkout). NEVER
+ *    tenant's plan version includes that SKU (`includedAt`, the inclusion resolver). A PENDING key (an
+ *    add-on the same transaction activates) does NOT cover payment: its row may be a trial row at price
+ *    0, so the grant is held and "Restore now" judges it once the row exists. NEVER
  *    `planAllows`: it treats every add-on-keyed key as allowed, which is the bug itself;
  *  - non-add-on keys are only requires-checked; a DENY is never judged.
  *
@@ -52,7 +53,7 @@ export interface AddonRowForVerdict {
 
 export interface OverrideVerdictContext {
   planAllows?: RestorePlanAllows;
-  /** Add-on keys the SAME transaction activates after the restore (paid in that checkout). */
+  /** Add-on codes the SAME transaction activates after the restore: they count for `requires`, never for payment. */
   pendingAddonKeys: readonly string[];
   /** Override effects in force after the restore (current active + this restore's own creates). */
   effects: readonly (readonly [string, "GRANT" | "DENY"])[];
@@ -79,6 +80,10 @@ export async function overrideRestoreVerdict(
 ): Promise<OverrideHoldReason | null> {
   if (override.effect !== "GRANT") return null;
   const def = featureDefByKey(override.featureKey);
+  // A key the registry no longer has gets NO verdict (null = neither held nor covered). This is the
+  // right answer and normally unreachable: `planRestore` already moves an unknown feature to `skipped`
+  // (UNKNOWN_FEATURE) before this runs, so it never reaches `overrides.create`. Holding it here would
+  // only mislabel it ADDON_NOT_PAID / REQUIRES_UNMET and keep the snapshot claimable forever.
   if (!def) return null;
 
   const rows =
@@ -91,9 +96,15 @@ export async function overrideRestoreVerdict(
     const decided = new Map<string, "GRANT" | "DENY">(ctx.effects);
     const allows = ctx.planAllows ?? (() => true);
     const coverage = ctx.planAllows?.coverage;
+    // Pending keys are SKU codes ("OCR_PACK_250") or legacy add-on keys; either names its registry key.
+    const pendingNames = (k: string) =>
+      ctx.pendingAddonKeys.some(
+        (p) =>
+          p === k || registryKeyOf(p) === k || (featureDefByKey(k)?.billing.skus ?? []).includes(p),
+      );
+    // `requires` counts a pending key (the feature is on while its row exists); PAYMENT does not (below).
     const hasRow = (k: string) =>
-      rows.some((r) => registryKeyOf(r.addonKey) === k && r.active !== false) ||
-      ctx.pendingAddonKeys.some((p) => registryKeyOf(p) === k);
+      rows.some((r) => registryKeyOf(r.addonKey) === k && r.active !== false) || pendingNames(k);
     // Flags the tenant holds AFTER the restore: the plan's own, plus what its ACTIVE (or same-transaction
     // pending) add-on SKUs grant - never every SKU in the version (that is what `planAllows` over-counts).
     const heldFlags = new Set<string>(coverage?.planFlags ?? []);
@@ -131,7 +142,10 @@ export async function overrideRestoreVerdict(
   ) {
     const coverage = ctx.planAllows?.coverage;
     const skus = def.billing.skus;
-    if (ctx.pendingAddonKeys.some((p) => registryKeyOf(p) === override.featureKey)) return null;
+    // A PENDING key never covers payment: `pendingAddonKeys` is the plan-change payload's add-on codes, and
+    // the row the checkout writes can be a trial row at price 0 / unbilled (subscription-mutation.service.ts,
+    // "price 0 and unbilled, until that checkout"). Its price is not known at hook time, so the grant is held
+    // (the snapshot stays claimable) and "Restore now" judges it once the row exists and is billed.
     const billed = rows.some((r) => {
       if (registryKeyOf(r.addonKey) !== override.featureKey) return false;
       const sku = r.sku ?? skus[0];
