@@ -1,4 +1,5 @@
 import { importJobErrorCopy, importRefusalCopy, IMPORT_JOB_FALLBACK_COPY } from "./import-job-copy";
+import { API_ERROR_CODES } from "@routeflow/types";
 
 describe("import job copy (B980: codes in, fixed words out)", () => {
   it("maps the closed set of codes to fixed sentences", () => {
@@ -22,9 +23,7 @@ describe("import job copy (B980: codes in, fixed words out)", () => {
 
 describe("the read-only job code is the existing READ_ONLY (never redeclared)", () => {
   it("API_ERROR_CODES has no WORKSPACE_READ_ONLY", () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { API_ERROR_CODES } = require("@routeflow/types");
-    expect(API_ERROR_CODES.WORKSPACE_READ_ONLY).toBeUndefined();
+    expect(Object.keys(API_ERROR_CODES)).not.toContain("WORKSPACE_READ_ONLY");
     expect(API_ERROR_CODES.READ_ONLY).toBe("READ_ONLY");
   });
 });
