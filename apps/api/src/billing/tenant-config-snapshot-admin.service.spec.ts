@@ -574,7 +574,14 @@ describe("TenantConfigSnapshotAdminService — a held delivery method (BO-13)", 
     const res = await svc.restoreNow("t1", "s1", "admin-1", NOW);
 
     expect(res.held).toEqual([
-      { featureKey: FM, from: "delivery", to: "ship", reason: "CARRIER_IN_TRANSIT", count: 2 },
+      {
+        kind: "fulfilment",
+        featureKey: FM,
+        from: "delivery",
+        to: "ship",
+        reason: "CARRIER_IN_TRANSIT",
+        count: 2,
+      },
     ]);
     expect(state.configs.find((c) => c.id === "c-fm")!.mode).toBe("delivery");
     expect(state.configs.find((c) => c.id === "c-other")!.mode).not.toBe("stale");
@@ -582,7 +589,10 @@ describe("TenantConfigSnapshotAdminService — a held delivery method (BO-13)", 
     expect(state.audits).toHaveLength(1);
     expect(state.audits[0]).toMatchObject({
       action: "CONFIG_SNAPSHOT_RESTORE_HELD",
-      meta: { report: { skipped: 1 }, held: [{ featureKey: FM, reason: "CARRIER_IN_TRANSIT" }] },
+      meta: {
+        report: { skipped: 1 },
+        held: [{ kind: "fulfilment", featureKey: FM, reason: "CARRIER_IN_TRANSIT" }],
+      },
     });
   });
 

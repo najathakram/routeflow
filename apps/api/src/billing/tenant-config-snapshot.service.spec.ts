@@ -30,8 +30,8 @@ function fakeTx(
     snapshots?: any[];
     /** BO-13: carrier orders in flight (what `order.count` answers). */
     inTransit?: number;
-    /** BO-13: active TenantAddon keys. */
-    addons?: string[];
+    /** BO-13: active TenantAddon keys (or full rows, for the row 640 billed-row predicate). */
+    addons?: Array<string | Record<string, unknown>>;
   } = {},
 ) {
   const state = {
@@ -46,7 +46,11 @@ function fakeTx(
   const tx = {
     order: { count: jest.fn(async () => state.inTransit) },
     tenantAddon: {
-      findMany: jest.fn(async () => state.addons.map((addonKey) => ({ addonKey }))),
+      findMany: jest.fn(async () =>
+        state.addons.map((a) =>
+          typeof a === "string" ? { addonKey: a } : { active: true, isComp: false, ...a },
+        ),
+      ),
     },
     tenantFeatureConfig: {
       findMany: async () => state.configs.map((r) => ({ ...r })),
@@ -780,7 +784,14 @@ describe("TenantConfigSnapshotService — held fulfilment_model (BO-13)", () => 
     const res = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW);
 
     expect(res!.held).toEqual([
-      { featureKey: FM, from: "delivery", to: "ship", reason: "CARRIER_IN_TRANSIT", count: 2 },
+      {
+        kind: "fulfilment",
+        featureKey: FM,
+        from: "delivery",
+        to: "ship",
+        reason: "CARRIER_IN_TRANSIT",
+        count: 2,
+      },
     ]);
     expect(t.state.configs.find((c) => c.featureKey === FM)!.mode).toBe("delivery");
     expect(t.state.configs.find((c) => c.featureKey === CONFIG_KEY)!.settings).toEqual({ x: 1 });
@@ -852,7 +863,13 @@ describe("TenantConfigSnapshotService — held fulfilment_model (BO-13)", () => 
     const res = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW);
 
     expect(res!.held).toEqual([
-      { featureKey: FM, from: "ship", to: "delivery", reason: "FULFILMENT_MODE_NEEDS_FLEET" },
+      {
+        kind: "fulfilment",
+        featureKey: FM,
+        from: "ship",
+        to: "delivery",
+        reason: "FULFILMENT_MODE_NEEDS_FLEET",
+      },
     ]);
     expect(t.state.configs.find((c) => c.featureKey === FM)!.mode).toBe("ship");
     expect(t.state.configs.find((c) => c.featureKey === CONFIG_KEY)!.settings).toEqual({ x: 1 });
@@ -1031,5 +1048,146 @@ describe("TenantConfigSnapshotService — held fulfilment_model (BO-13)", () => 
       expect(await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW)).toBeNull();
       expect(JSON.stringify(t.state.configs)).toBe(writes);
     });
+  });
+});
+
+// ─── Row 640 (SA-834): a restored GRANT override is judged by ONE verdict, in preview and in apply.
+// COMP = as-was (only requires-unmet holds it); a NON-COMP GRANT on a billable add-on-keyed key is held
+// ADDON_NOT_PAID unless the key is COVERED (an active billed row, or the plan includes the SKU).
+describe("TenantConfigSnapshotService — restored GRANT overrides (row 640)", () => {
+  const svc = new TenantConfigSnapshotService();
+  const OCR = "ocr";
+  const OCR_SKU = "OCR_PACK_250";
+  const PRICE = 19;
+  /** planAllows as the transition service builds it: a function carrying the catalog coverage. */
+  const allowsWith = (cov: { priced?: boolean; included?: boolean } = {}) =>
+    Object.assign(() => true, {
+      coverage: {
+        priceOf: (sku: string) => (cov.priced && sku === OCR_SKU ? PRICE : null),
+        includedAt: (sku: string) => !!cov.included && sku === OCR_SKU,
+      },
+    });
+  const billedRow = (over: Record<string, unknown> = {}) => ({
+    addonKey: OCR,
+    sku: OCR_SKU,
+    active: true,
+    isComp: false,
+    priceSnapshot: PRICE,
+    ...over,
+  });
+
+  async function seeded(
+    overrides: any[],
+    target: Parameters<typeof fakeTx>[0] = {},
+  ): Promise<{ t: ReturnType<typeof fakeTx>; id: string }> {
+    const src = fakeTx({ overrides });
+    await svc.snapshot(src.tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    const t = fakeTx(target);
+    src.state.snapshots[0].id = "snap-1";
+    t.state.snapshots.push(...src.state.snapshots);
+    return { t, id: "snap-1" };
+  }
+  const grant = (kind: string, featureKey = OCR) =>
+    ovrRow({ id: `o-${featureKey}`, featureKey, kind, effect: "GRANT" });
+  const liveKeys = (t: ReturnType<typeof fakeTx>) =>
+    t.state.overrides.filter((o) => o.revokedAt === null).map((o) => o.featureKey);
+
+  it("a non-COMP GRANT on ocr with no billed row is HELD ADDON_NOT_PAID, not restored (master restored it)", async () => {
+    const { t, id } = await seeded([grant("PILOT")]);
+    const res = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW, allowsWith());
+    expect(res!.held).toEqual([
+      { kind: "override", featureKey: OCR, overrideKind: "PILOT", reason: "ADDON_NOT_PAID" },
+    ]);
+    expect(liveKeys(t)).toEqual([]);
+    expect(t.state.snapshots[0].restoredAt).toBeNull(); // partial: stays claimable
+  });
+
+  it("the same GRANT with an ACTIVE billed row for OCR_PACK_250 is restored", async () => {
+    const { t, id } = await seeded([grant("TRIAL")], { addons: [billedRow()] });
+    const res = await svc.restoreSnapshot(
+      t.tx,
+      TENANT,
+      id,
+      HIGH,
+      NOW,
+      allowsWith({ priced: true }),
+    );
+    expect(res!.held).toEqual([]);
+    expect(liveKeys(t)).toEqual([OCR]);
+  });
+
+  it("a row at the wrong price, a comp row or an unpriced row does not cover it (isStripeBillableAddonRow)", async () => {
+    for (const row of [
+      billedRow({ priceSnapshot: PRICE + 1 }),
+      billedRow({ isComp: true }),
+      billedRow({ priceSnapshot: 0 }),
+    ]) {
+      const { t, id } = await seeded([grant("SUPPORT")], { addons: [row] });
+      const res = await svc.restoreSnapshot(
+        t.tx,
+        TENANT,
+        id,
+        HIGH,
+        NOW,
+        allowsWith({ priced: true }),
+      );
+      expect(res!.held.map((h) => h.reason)).toEqual(["ADDON_NOT_PAID"]);
+    }
+  });
+
+  it("the same GRANT when the tenant's plan version INCLUDES the SKU is restored", async () => {
+    const { t, id } = await seeded([grant("GRANDFATHER")]);
+    const res = await svc.restoreSnapshot(
+      t.tx,
+      TENANT,
+      id,
+      HIGH,
+      NOW,
+      allowsWith({ included: true }),
+    );
+    expect(res!.held).toEqual([]);
+    expect(liveKeys(t)).toEqual([OCR]);
+  });
+
+  it("a COMP GRANT on ocr, unpaid, is restored AS-WAS", async () => {
+    const { t, id } = await seeded([grant("COMP")]);
+    const res = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW, allowsWith());
+    expect(res!.held).toEqual([]);
+    expect(liveKeys(t)).toEqual([OCR]);
+  });
+
+  it("a key whose `requires` is unmet is HELD REQUIRES_UNMET (even a COMP); met by an active fleet row, it restores", async () => {
+    const KEY = "driver_payments"; // requires anyOf [recurring_routes, order_delivery]
+    const a = await seeded([grant("COMP", KEY)]);
+    const held = await svc.restoreSnapshot(a.t.tx, TENANT, a.id, HIGH, NOW, allowsWith());
+    expect(held!.held).toEqual([
+      { kind: "override", featureKey: KEY, overrideKind: "COMP", reason: "REQUIRES_UNMET" },
+    ]);
+    expect(liveKeys(a.t)).toEqual([]);
+
+    const b = await seeded([grant("COMP", KEY)], { addons: ["order_delivery"] });
+    const ok = await svc.restoreSnapshot(b.t.tx, TENANT, b.id, HIGH, NOW, allowsWith());
+    expect(ok!.held).toEqual([]);
+    expect(liveKeys(b.t)).toEqual([KEY]);
+  });
+
+  it("a DENY override is never judged (denying has no prerequisite)", async () => {
+    const { t, id } = await seeded([ovrRow({ featureKey: OCR, effect: "DENY", kind: "PILOT" })]);
+    const res = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW, allowsWith());
+    expect(res!.held).toEqual([]);
+    expect(liveKeys(t)).toEqual([OCR]);
+  });
+
+  it("preview and apply agree: the same fixture gives the same held list", async () => {
+    const { t, id } = await seeded([grant("PILOT"), grant("COMP", "driver_payments")]);
+    const allows = allowsWith();
+    const pre = await svc.previewRestore(t.tx, TENANT, id, NOW, allows);
+    const res = await svc.restoreSnapshot(t.tx, TENANT, id, HIGH, NOW, allows);
+    expect(pre!.held).toHaveLength(2);
+    expect(res!.held).toEqual(pre!.held);
+    expect(pre!.plan!.overrides.skipped.map((s) => s.reason).sort()).toEqual([
+      "ADDON_NOT_PAID",
+      "REQUIRES_UNMET",
+    ]);
   });
 });

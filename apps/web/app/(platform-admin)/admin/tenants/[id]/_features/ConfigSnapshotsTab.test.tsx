@@ -171,6 +171,7 @@ describe("ConfigSnapshotsTab", () => {
         ...RESULT,
         held: [
           {
+            kind: "fulfilment",
             featureKey: "fulfilment_model",
             from: "ship",
             to: "delivery",
@@ -190,17 +191,42 @@ describe("ConfigSnapshotsTab", () => {
         ...RESULT,
         held: [
           {
+            kind: "fulfilment",
             featureKey: "fulfilment_model",
             from: "ship",
             to: "delivery",
             reason: "CARRIER_IN_TRANSIT",
           },
-          { featureKey: "other_key", from: "a", to: "b", reason: "FULFILMENT_MODE_NEEDS_FLEET" },
+          {
+            kind: "fulfilment",
+            featureKey: "other_key",
+            from: "a",
+            to: "b",
+            reason: "FULFILMENT_MODE_NEEDS_FLEET",
+          },
         ],
       });
       const text = await confirm();
       expect(text).toContain("Delivery model: held while orders are with the carrier");
       expect(text).toContain("other_key: held while own delivery needs a fleet module");
+    });
+
+    it("row 640: a held GRANT override names the key and says it is not paid for", async () => {
+      mockRestore.mockResolvedValue({
+        ...RESULT,
+        held: [
+          { kind: "override", featureKey: "ocr", overrideKind: "PILOT", reason: "ADDON_NOT_PAID" },
+          {
+            kind: "override",
+            featureKey: "driver_payments",
+            overrideKind: "COMP",
+            reason: "REQUIRES_UNMET",
+          },
+        ],
+      });
+      const text = await confirm();
+      expect(text).toContain("ocr: held while the add-on is not paid for or included in the plan");
+      expect(text).toContain("driver_payments: held while a required feature is missing");
     });
 
     it("an empty held list is a plain restore (no 'except')", async () => {
