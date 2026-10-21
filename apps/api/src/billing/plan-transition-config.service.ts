@@ -13,6 +13,8 @@ import {
 import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { findPlanDefinition, planRank } from "./plan-catalog.constants";
+import { coverageOf, type RestorePlanAllows } from "./override-restore-verdict";
+import { pricedAddonSku } from "./plan-version-pin";
 import {
   RestoreBudgetExceededError,
   TenantConfigSnapshotService,
@@ -53,7 +55,7 @@ export interface PreparedPlanTransition {
    *  consistent answer for the whole plan change). */
   enabled: boolean;
   /** null = restore is skipped for this change (flag off, not an upgrade, or the catalog read failed). */
-  planAllows: ((featureKey: string) => boolean) | null;
+  planAllows: RestorePlanAllows | null;
 }
 
 /**
@@ -197,7 +199,7 @@ export class PlanTransitionConfigService implements OnModuleInit {
   private async restoreWithoutBlocking(
     tx: Prisma.TransactionClient,
     t: PlanTransition,
-    planAllows: (featureKey: string) => boolean,
+    planAllows: RestorePlanAllows,
     now: Date,
   ): Promise<PlanTransitionOutcome> {
     try {
@@ -263,7 +265,13 @@ export class PlanTransitionConfigService implements OnModuleInit {
       } else if (restore) {
         this.logger.warn(
           `Config restore for tenant ${t.tenantId} (${t.fromPlanKey} -> ${t.toPlanKey}) HELD ` +
-            `${held.map((h) => `${h.featureKey} ${h.from}->${h.to} (${h.reason})`).join(", ")}; ` +
+            `${held
+              .map((h) =>
+                h.kind === "override"
+                  ? `${h.featureKey} GRANT/${h.overrideKind} (${h.reason})`
+                  : `${h.featureKey} ${h.from}->${h.to} (${h.reason})`,
+              )
+              .join(", ")}; ` +
             `snapshot ${restore.snapshotId} stays restorable — "Restore now" once cleared`,
         );
       }
@@ -384,12 +392,10 @@ export class PlanTransitionConfigService implements OnModuleInit {
    * bridge ∪ default-granted ∪ addon-keyed gates. A plan-bundled flag the new plan lacks and no SKU
    * grants is skipped and reported by `planRestore`.
    */
-  async planAllowsFor(
-    planKey: string,
-    planVersionId: string | null,
-  ): Promise<(featureKey: string) => boolean> {
+  async planAllowsFor(planKey: string, planVersionId: string | null): Promise<RestorePlanAllows> {
     const version = await this.catalog.getVersionForTenant(planVersionId);
-    const flags = new Set(findPlanDefinition(version.definitions, planKey)?.featureFlags ?? []);
+    const planFlags = [...(findPlanDefinition(version.definitions, planKey)?.featureFlags ?? [])];
+    const flags = new Set(planFlags);
     for (const sku of version.addonSkus) for (const g of sku.grantsFlags ?? []) flags.add(g);
     const allowed = new Set<string>();
     for (const f of FEATURE_REGISTRY) {
@@ -403,6 +409,21 @@ export class PlanTransitionConfigService implements OnModuleInit {
         allowed.add(f.key);
       }
     }
-    return (featureKey) => allowed.has(featureKey);
+    // Row 640: the same version's SKU prices and inclusion, for the restored-GRANT verdict (NOT part of
+    // `allowed`: planAllows treats every add-on-keyed key as allowed, which is the bug the verdict avoids).
+    // Prices: the ONE rule (`pricedAddonSku`) - this version's own SKU price, else the published one - for
+    // every SKU a registry key can name plus every SKU this version lists.
+    const priceBySku = new Map<string, number>();
+    const skuCodes = new Set([
+      ...version.addonSkus.map((s) => s.sku),
+      ...FEATURE_REGISTRY.flatMap((f) => f.billing.skus),
+    ]);
+    for (const sku of skuCodes) {
+      const def = await pricedAddonSku(this.catalog, version, sku);
+      if (def) priceBySku.set(sku, Number(def.monthlyPrice));
+    }
+    return Object.assign((featureKey: string) => allowed.has(featureKey), {
+      coverage: coverageOf({ addonSkus: version.addonSkus, planFlags, priceBySku }, planKey),
+    });
   }
 }
