@@ -88,7 +88,7 @@ describe("Edit Items initial focus (F08 / F26)", () => {
     await openEdit(1);
     await waitFor(() => expect(scanBox()).toHaveFocus(), { timeout: 3000 });
     expect(qty()).not.toHaveFocus();
-    const scanCall = focus.mock.instances.findIndex((el) => el === scanBox());
+    const scanCall = focus.mock.instances.findIndex((el) => (el as unknown) === scanBox());
     expect(focus.mock.calls[scanCall][0]).toEqual({ preventScroll: true });
   });
 });
