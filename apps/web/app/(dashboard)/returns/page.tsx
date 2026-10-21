@@ -112,6 +112,7 @@ function CreateReturnModal({
   // B1264: a sale found by number may belong to the walk-in, which the customer list never offers
   const [foundOrder, setFoundOrder] = React.useState<Order | null>(null);
   const pendingOrderId = React.useRef("");
+  const [foundNotice, setFoundNotice] = React.useState("");
   const customers =
     foundOrder?.customer && !listedCustomers.some((c) => c.id === foundOrder.customerId)
       ? [
@@ -142,6 +143,7 @@ function CreateReturnModal({
       setErrors({});
       setFoundOrder(null);
       pendingOrderId.current = "";
+      setFoundNotice("");
     }
   }, [isOpen]);
 
@@ -157,7 +159,12 @@ function CreateReturnModal({
         onFoundSale(order);
         return;
       }
-      // no inline return flow: fill the customer + order of this form
+      // no inline return flow: fill the customer + order of this form, but only a DELIVERED sale (the form's own rule)
+      if (order.status !== "DELIVERED") {
+        setFoundNotice(`This sale can't be returned yet (status ${order.status}).`);
+        return;
+      }
+      setFoundNotice("");
       setFoundOrder(order);
       if (order.customerId === customerId) {
         // same customer: the customer effect will not re-run, so set the order directly and leave nothing pending
@@ -272,6 +279,11 @@ function CreateReturnModal({
     >
       <form id="create-return-form" onSubmit={handleSubmit} noValidate className="space-y-4">
         <FindSaleByNumber onFound={found} />
+        {foundNotice ? (
+          <p className="-mt-2 text-xs text-danger" role="status">
+            {foundNotice}
+          </p>
+        ) : null}
 
         {/* Customer */}
         <div>

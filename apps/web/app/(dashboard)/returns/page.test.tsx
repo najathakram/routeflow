@@ -176,6 +176,16 @@ describe("New Return without the inline-returns add-on (M2, M3)", () => {
     expect(screen.queryByTestId("inline-return")).toBeNull();
   });
 
+  it("M3: a sale that is not DELIVERED says so and is not injected", async () => {
+    await openNewReturn();
+    find("ORD-00002");
+    expect(
+      await screen.findByText(/This sale can't be returned yet \(status PENDING\)/),
+    ).toBeInTheDocument();
+    expect(customerSelect().value).toBe("");
+    expect(orderSelect().value).toBe("");
+  });
+
   it("M2: finding the already-selected customer's order sets it, and changing customer clears it", async () => {
     await openNewReturn();
     fireEvent.change(customerSelect(), { target: { value: "c-acme" } });
