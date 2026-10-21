@@ -22,6 +22,7 @@ function importFailureCopy(err: unknown): string {
 import { Upload, AlertCircle, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 import { cn, useToast } from "@routeflow/ui/web";
 import type { ImportColumnAlias } from "@routeflow/types";
+import type { ImportFamilyRowInfo, ImportFamilySummary } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 
 interface ImportRowPlan {
@@ -32,7 +33,42 @@ interface ImportRowPlan {
   changes?: Record<string, { from: unknown; to: unknown }>;
   reason?: string;
   warnings?: string[];
+  /** SA-823: the family detail of a row that carried a Family cell. */
+  family?: ImportFamilyRowInfo;
 }
+
+/** The running counts a queued import keeps in its progress data. */
+interface JobCounts {
+  created: number;
+  updated: number;
+  unchanged: number;
+  skipped: number;
+}
+
+/** GET /import/products/jobs/:id */
+interface JobStatus {
+  id: string;
+  state: "queued" | "running" | "done" | "failed";
+  progress: number;
+  counts?: JobCounts;
+  result?: ImportCsvResult;
+  error?: string;
+}
+
+/** What the panel shows for a large apply that the server queued (SA-823 section 5). */
+interface JobView {
+  jobId: string;
+  rows: number;
+  state: JobStatus["state"];
+  progress: number;
+  counts?: JobCounts;
+  error?: string;
+}
+
+/** How often a queued import is asked how far it got. */
+const JOB_POLL_MS = 2000;
+/** Poll failures in a row before the page stops waiting. */
+const JOB_MAX_MISSES = 5;
 
 export interface ImportCsvResult {
   imported?: number;
@@ -46,6 +82,10 @@ export interface ImportCsvResult {
   warnings: string[];
   unknownColumns: string[];
   dryRun: boolean;
+  /** SA-823: the family block of a file with a Family column. */
+  families?: ImportFamilySummary;
+  /** SA-823: set INSTEAD of a result when the server queued a large apply. */
+  queued?: { jobId: string; rows: number };
 }
 
 export interface ImportCsvPanelProps {
@@ -69,7 +109,9 @@ function slugify(s: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-function summarize(result: ImportCsvResult): string {
+function summarize(
+  result: Pick<ImportCsvResult, "created" | "updated" | "unchanged" | "skipped" | "imported">,
+): string {
   const parts: string[] = [];
   if (result.created !== undefined) parts.push(`${result.created} created`);
   if (result.updated !== undefined) parts.push(`${result.updated} updated`);
@@ -128,6 +170,141 @@ function ChangesCell({ changes }: { changes?: Record<string, { from: unknown; to
   );
 }
 
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** The family part of the preview and of the result: what groups, what is new, what moves, what was left out. */
+function FamilyBlock({
+  summary,
+  done,
+  testIdPrefix,
+}: {
+  summary: ImportFamilySummary;
+  done: boolean;
+  testIdPrefix: string;
+}) {
+  const lines: string[] = [];
+  if (summary.grouped > 0) {
+    lines.push(
+      done
+        ? `${plural(summary.grouped, "product joined", "products joined")} a family`
+        : `${plural(summary.grouped, "product", "products")} will join a family`,
+    );
+  }
+  if (summary.newVariants > 0) {
+    lines.push(
+      done
+        ? `${plural(summary.newVariants, "new item was", "new items were")} added to families`
+        : `${plural(summary.newVariants, "new item", "new items")} will be added to families`,
+    );
+  }
+  if (summary.moves > 0) {
+    lines.push(
+      done
+        ? `${plural(summary.moves, "product moved", "products moved")} to another family`
+        : `${plural(summary.moves, "product", "products")} will move to another family`,
+    );
+  }
+  const removed = summary.deactivated ?? [];
+  const stuck = summary.cleanupFailed ?? [];
+  const nothing =
+    lines.length === 0 &&
+    summary.familiesToCreate.length === 0 &&
+    summary.skipsByReason.length === 0 &&
+    removed.length === 0 &&
+    stuck.length === 0;
+  if (nothing) return null;
+  return (
+    <div
+      data-testid={`${testIdPrefix}-families`}
+      className="rounded-lg border border-surface-border bg-white px-3 py-2 text-xs text-navy/80"
+    >
+      <p className="font-medium text-navy">Families</p>
+      {summary.familiesToCreate.length > 0 && (
+        <p data-testid={`${testIdPrefix}-families-new`} className="mt-1">
+          {done ? "New families: " : "New families to create: "}
+          {summary.familiesToCreate
+            .map((f) => `${f.name} (${plural(f.rows, "item", "items")})`)
+            .join(", ")}
+        </p>
+      )}
+      {lines.length > 0 && (
+        <ul className="mt-1 space-y-0.5">
+          {lines.map((l) => (
+            <li key={l}>{l}</li>
+          ))}
+        </ul>
+      )}
+      {summary.skipsByReason.length > 0 && (
+        <div data-testid={`${testIdPrefix}-families-skips`} className="mt-1">
+          <p className="text-navy/70">Left out:</p>
+          <ul className="space-y-0.5">
+            {summary.skipsByReason.map((s) => (
+              <li key={s.reason}>
+                {s.reason} ({s.count})
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {removed.length > 0 && (
+        <p data-testid={`${testIdPrefix}-families-removed`} className="mt-1 text-warning">
+          No item could be saved, so we took these new families out again:{" "}
+          {removed.map((f) => f.name).join(", ")}
+        </p>
+      )}
+      {stuck.length > 0 && (
+        <p data-testid={`${testIdPrefix}-families-stuck`} role="alert" className="mt-1 text-danger">
+          These families were created but couldn&apos;t be removed. Remove them in the product
+          editor: {stuck.map((f) => f.name).join(", ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** A queued import: how far it got while it runs, and what it did if it stopped. */
+function JobBanner({ job, testIdPrefix }: { job: JobView; testIdPrefix: string }) {
+  if (job.state === "done") return null;
+  const so_far = job.counts ? summarize(job.counts) : null;
+  if (job.state === "failed") {
+    return (
+      <div
+        data-testid={`${testIdPrefix}-job`}
+        role="alert"
+        className="rounded-lg border border-danger/40 bg-danger-bg/50 px-3 py-2.5 text-sm text-danger"
+      >
+        <p className="font-medium">The import stopped before it finished.</p>
+        {job.error && <p className="mt-0.5">{job.error}</p>}
+        {so_far && <p className="mt-0.5">Saved before it stopped: {so_far}.</p>}
+        <p className="mt-0.5">Re-running the same file is safe.</p>
+      </div>
+    );
+  }
+  return (
+    <div
+      data-testid={`${testIdPrefix}-job`}
+      className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5 text-sm text-brand-700"
+    >
+      <p className="font-medium">Importing {plural(job.rows, "row", "rows")} in the background</p>
+      <div
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={job.progress}
+        className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white"
+      >
+        <div className="h-full bg-brand-500 transition-all" style={{ width: `${job.progress}%` }} />
+      </div>
+      <p className="mt-1 text-xs">
+        {job.progress}% done{so_far ? ` · ${so_far} so far` : ""}
+      </p>
+      <p className="mt-0.5 text-xs text-brand-700/80">
+        This can take a few minutes. Keep this page open to see the result.
+      </p>
+    </div>
+  );
+}
+
 function ResultTable({ result, testIdPrefix }: { result: ImportCsvResult; testIdPrefix: string }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-surface-border">
@@ -148,8 +325,14 @@ function ResultTable({ result, testIdPrefix }: { result: ImportCsvResult; testId
           {result.rows.map((r) => (
             <tr key={r.row} data-testid={`${testIdPrefix}-row-${r.row}`}>
               <td className="px-3 py-2 font-mono text-navy/50">{r.row}</td>
-              <td className="max-w-[180px] truncate px-3 py-2 text-navy" title={r.label}>
-                {r.label}
+              <td className="max-w-[180px] px-3 py-2 text-navy" title={r.label}>
+                <span className="block truncate">{r.label}</span>
+                {r.family && (
+                  <span className="block truncate text-[11px] text-navy/50">
+                    {r.family.displayName}
+                    {r.family.movesFrom ? ` · moves from ${r.family.movesFrom}` : ""}
+                  </span>
+                )}
               </td>
               <td className="px-3 py-2">
                 <ActionBadge action={r.action} />
@@ -189,7 +372,12 @@ export function ImportCsvPanel({
   const [final, setFinal] = React.useState<ImportCsvResult | null>(null);
   const [loading, setLoading] = React.useState<"preview" | "import" | null>(null);
   const [gateError, setGateError] = React.useState<string | null>(null);
+  const [job, setJob] = React.useState<JobView | null>(null);
   const [showColumns, setShowColumns] = React.useState(false);
+  const jobRunning = job !== null && (job.state === "queued" || job.state === "running");
+  // the polling loop reads the latest callbacks without restarting
+  const latest = React.useRef({ onImported, toast, title, endpoint });
+  latest.current = { onImported, toast, title, endpoint };
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const pickFile = (f: File | null | undefined) => {
@@ -198,6 +386,7 @@ export function ImportCsvPanel({
     setPreview(null);
     setFinal(null);
     setGateError(null);
+    setJob(null);
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -211,6 +400,7 @@ export function ImportCsvPanel({
     setPreview(null);
     setFinal(null);
     setGateError(null);
+    setJob(null);
     if (inputRef.current) inputRef.current.value = "";
   };
 
@@ -228,6 +418,9 @@ export function ImportCsvPanel({
       const data = res.data as ImportCsvResult;
       if (dryRun) {
         setPreview(data);
+      } else if (data.queued) {
+        // a large apply: the server queued it; the polling effect below follows it to the end
+        setJob({ jobId: data.queued.jobId, rows: data.queued.rows, state: "queued", progress: 0 });
       } else {
         setFinal(data);
         onImported?.(data);
@@ -250,6 +443,57 @@ export function ImportCsvPanel({
       setLoading(null);
     }
   };
+
+  React.useEffect(() => {
+    if (!job || !jobRunning) return undefined;
+    const jobId = job.jobId;
+    let cancelled = false;
+    let misses = 0;
+    const tick = async () => {
+      try {
+        const res = await apiClient.get(`${latest.current.endpoint}/jobs/${jobId}`);
+        if (cancelled) return;
+        misses = 0;
+        const status = res.data as JobStatus;
+        if (status.state === "done" && status.result) {
+          const result = status.result;
+          setJob((j) => (j ? { ...j, state: "done", progress: 100 } : j));
+          setFinal(result);
+          latest.current.onImported?.(result);
+          latest.current.toast({
+            title: `${latest.current.title} imported`,
+            description: summarize(result),
+            variant: "success",
+          });
+        } else {
+          setJob((j) =>
+            j
+              ? {
+                  ...j,
+                  state: status.state,
+                  progress: status.progress,
+                  counts: status.counts ?? j.counts,
+                  error: status.state === "failed" ? status.error : undefined,
+                }
+              : j,
+          );
+        }
+      } catch {
+        if (cancelled) return;
+        misses += 1;
+        if (misses >= JOB_MAX_MISSES) {
+          setJob((j) =>
+            j ? { ...j, state: "failed", error: "We lost contact with the import." } : j,
+          );
+        }
+      }
+    };
+    const timer = setInterval(() => void tick(), JOB_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [job?.jobId, jobRunning]);
 
   const active = final ?? preview;
 
@@ -342,10 +586,10 @@ export function ImportCsvPanel({
           type="button"
           data-testid={`${prefix}-import-button`}
           onClick={() => run(false)}
-          disabled={!file || loading !== null || !preview || !!gateError || !!final}
+          disabled={!file || loading !== null || !preview || !!gateError || !!final || jobRunning}
           className="flex-1 rounded-lg bg-brand-500 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
         >
-          {loading === "import" ? "Importing…" : `Import ${title}`}
+          {loading === "import" ? "Importing…" : jobRunning ? "Importing…" : `Import ${title}`}
         </button>
         {(final || gateError) && (
           <button
@@ -371,6 +615,8 @@ export function ImportCsvPanel({
         </div>
       )}
 
+      {job && <JobBanner job={job} testIdPrefix={prefix} />}
+
       {/* Summary */}
       {active && (
         <div
@@ -388,6 +634,10 @@ export function ImportCsvPanel({
             {summarize(active)}
           </span>
         </div>
+      )}
+
+      {active?.families && (
+        <FamilyBlock summary={active.families} done={!!final} testIdPrefix={prefix} />
       )}
 
       {/* Unknown columns — "not imported" */}

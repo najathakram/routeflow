@@ -4,6 +4,7 @@ import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   PRODUCT_IMPORT_QUEUE,
+  type ProductImportJobCounts,
   type ProductImportJobData,
   type ProductImportJobState,
   type ProductImportJobStatus,
@@ -42,8 +43,9 @@ export class ProductImportJobService {
         fileName: input.fileName,
         fileBase64: input.buffer.toString("base64"),
       },
-      // one attempt: a retry would re-plan live and re-apply a half-done file
-      { attempts: 1, removeOnComplete: { age: 24 * 3600 }, removeOnFail: { age: 7 * 24 * 3600 } },
+      // attempts 1: an error is not retried. Bull still re-runs a STALLED job once; that is safe because the apply
+      // re-plans live from the file and is idempotent (a re-run shows the finished rows as unchanged).
+      { attempts: 1, removeOnComplete: { age: 24 * 3600 }, removeOnFail: { age: 48 * 3600 } },
     );
     return { jobId: String(job.id) };
   }
@@ -56,11 +58,25 @@ export class ProductImportJobService {
     }
     const bull = await job.getState();
     const state = STATE[bull] ?? "queued";
-    const progress = job.progress();
+    const progress = job.progress() as unknown;
+    const data =
+      progress !== null && typeof progress === "object"
+        ? (progress as { percent?: number } & Partial<ProductImportJobCounts>)
+        : null;
     return {
       id: String(job.id),
       state,
-      progress: typeof progress === "number" ? progress : 0,
+      progress: typeof progress === "number" ? progress : (data?.percent ?? 0),
+      ...(data
+        ? {
+            counts: {
+              created: data.created ?? 0,
+              updated: data.updated ?? 0,
+              unchanged: data.unchanged ?? 0,
+              skipped: data.skipped ?? 0,
+            },
+          }
+        : {}),
       ...(state === "done" ? { result: job.returnvalue as unknown } : {}),
       ...(state === "failed" ? { error: job.failedReason ?? "import failed" } : {}),
     };

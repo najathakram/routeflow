@@ -4,7 +4,6 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { ImportService } from "./import.service";
 import {
-  IMPORT_FAMILY_CLASS_REASON,
   IMPORT_FAMILY_MAX_ROWS,
   ProductFamilyImportService,
 } from "./product-family-import.service";
@@ -108,6 +107,7 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
   let featureConfig: { getEffectiveMode: jest.Mock };
   let auditService: { log: jest.Mock };
   let jobs: { enqueue: jest.Mock };
+  let forTenantCalls = 0;
 
   const tenantProduct = () => ({
     findFirst: jest.fn(async (a: any) => {
@@ -156,6 +156,12 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
         }),
       },
       tenantTransaction: async (cb: (tx: unknown) => unknown) => cb({}),
+    };
+    forTenantCalls = 0;
+    const realForTenant = prisma.forTenant;
+    prisma.forTenant = () => {
+      forTenantCalls++;
+      return realForTenant();
     };
     const find = (id: string) => rows.find((r) => r.id === id && r.tenantId === TENANT);
     productsService = {
@@ -910,7 +916,10 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
         }),
       );
       const r = await run(csv("Mint,,,6,Acme Cola,Mint,,"));
-      expect(byRow(r, 1)).toMatchObject({ action: "skip", reason: IMPORT_FAMILY_CLASS_REASON });
+      expect(byRow(r, 1)).toMatchObject({
+        action: "skip",
+        reason: "Set Tobacco to Yes to add this to a tobacco family.",
+      });
     });
   });
 
@@ -1103,6 +1112,8 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
       for (let i = 0; i < n; i++) rows.push(mk({ id: `bg${i}`, name: `Bg ${i}`, sku: `BG${i}` }));
       return csv(...Array.from({ length: n }, (_, i) => `,BG${i},,,Acme Cola,V${i},,`));
     };
+    const regroupFile2 = (n: number) =>
+      csv(...Array.from({ length: n }, (_, i) => `,BG${i},,,Acme Cola,V${i},,`));
     const apply = (b: Buffer, opts: Record<string, unknown> = {}) =>
       service.importProducts(b, "user-1", { fileName: "f.csv", allowBackground: true, ...opts });
 
@@ -1144,12 +1155,28 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
       expect(r.updated).toBe(IMPORT_FAMILY_SYNC_MAX_ROWS + 1);
     });
 
-    it("the file-level gates are still answered synchronously: family pricing ON is a 409, nothing queued", async () => {
-      featureConfig.getEffectiveMode.mockResolvedValue("on");
-      await expect(apply(regroupFile(IMPORT_FAMILY_SYNC_MAX_ROWS + 1))).rejects.toBeInstanceOf(
-        ConflictException,
+    it("MUST-A: the HTTP apply decides from a cheap count and queues BEFORE any lookup or planning", async () => {
+      const r: any = await apply(regroupFile(IMPORT_FAMILY_SYNC_MAX_ROWS + 1));
+      expect(r.queued).toEqual({ jobId: "job-1", rows: IMPORT_FAMILY_SYNC_MAX_ROWS + 1 });
+      expect(forTenantCalls).toBe(0);
+    });
+
+    it("rows with only a Variant Name cell count toward the threshold too", async () => {
+      const lines = Array.from(
+        { length: IMPORT_FAMILY_SYNC_MAX_ROWS + 1 },
+        (_, i) => `,BG${i},,,,V${i},,`,
       );
-      expect(jobs.enqueue).not.toHaveBeenCalled();
+      const r: any = await apply(csv(...lines));
+      expect(r.queued?.jobId).toBe("job-1");
+    });
+
+    it("the job's own run enforces the gates: family pricing ON is the 409 there (the request already queued)", async () => {
+      featureConfig.getEffectiveMode.mockResolvedValue("on");
+      const queued: any = await apply(regroupFile(IMPORT_FAMILY_SYNC_MAX_ROWS + 1));
+      expect(queued.queued).toBeDefined();
+      await expect(
+        service.importProducts(regroupFile2(IMPORT_FAMILY_SYNC_MAX_ROWS + 1), "user-1", {}),
+      ).rejects.toBeInstanceOf(ConflictException);
     });
 
     it("onProgress is called with rows done and total", async () => {

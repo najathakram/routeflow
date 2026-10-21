@@ -16,6 +16,13 @@ export interface ProductImportJobData {
   fileBase64: string;
 }
 
+export interface ProductImportJobCounts {
+  created: number;
+  updated: number;
+  unchanged: number;
+  skipped: number;
+}
+
 export type ProductImportJobState = "queued" | "running" | "done" | "failed";
 
 export interface ProductImportJobStatus {
@@ -23,6 +30,8 @@ export interface ProductImportJobStatus {
   state: ProductImportJobState;
   /** 0-100, rows walked so far. */
   progress: number;
+  /** Rows created / updated / unchanged / skipped so far (kept in the progress data, so a failed job still shows them). */
+  counts?: ProductImportJobCounts;
   /** The same body a synchronous apply returns (counts, rows, skippedRows, warnings, families), when done. */
   result?: unknown;
   error?: string;

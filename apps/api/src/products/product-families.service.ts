@@ -44,6 +44,7 @@ import {
   type FamilyPriceColumn,
 } from "./family-price";
 import { UnitsPricesV2FlagCache, variantTierValue } from "./new-product-tiers";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { writeFamilyAssigned } from "./product-parent";
 import { lockProductName } from "./product-name-rules";
 import { bareRowNames } from "./product-variant-name";
@@ -261,7 +262,7 @@ export class ProductFamiliesService {
    * SA-823 (PR-2): reactivate an EMPTY family container (the import's re-run reuse of the family an earlier, all-failed run
    * made). House lock order: the name lock first, then the row; refused when it has members or the name is taken again.
    */
-  async reactivateFamilyContainer(familyId: string, _actorId: string | null): Promise<void> {
+  async reactivateFamilyContainer(familyId: string, actorId: string | null): Promise<void> {
     const tenantId = this.tenant();
     await this.prisma.tenantTransaction(async (tx: CatalogTx) => {
       const probe = await tx.product.findFirst({
@@ -281,6 +282,16 @@ export class ProductFamiliesService {
         throw new ConflictException("Only an empty family can be reactivated here.");
       }
       await tx.product.update({ where: { id: familyId }, data: { isActive: true } });
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId: actorId,
+          action: AUDIT_ACTIONS.PRODUCT_FAMILY_REACTIVATED,
+          entityType: "Product",
+          entityId: familyId,
+          meta: { reason: "import re-run" },
+        },
+      });
     });
   }
 

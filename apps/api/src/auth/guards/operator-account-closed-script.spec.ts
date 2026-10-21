@@ -154,9 +154,9 @@ const flat = (list: [Ctl, string[]][]) =>
 
 describe("operator permissions PR1: account endpoints are TENANT_ADMIN-only", () => {
   it("pins the report's list: 53 entries, 52 of them role-decorated handlers (a typo in a method name would shrink it silently)", () => {
-    expect(ALL_HANDLERS).toHaveLength(53);
+    expect(ALL_HANDLERS).toHaveLength(54);
     expect(ALL_HANDLERS.filter((x) => BODY_ENFORCED.includes(x.id))).toHaveLength(1);
-    expect(CLOSED).toHaveLength(52);
+    expect(CLOSED).toHaveLength(53);
     for (const [ctl, m, handler] of CLOSED) {
       expect({ id: handler.id, resolved: ctl !== undefined }).toEqual({
         id: handler.id,
