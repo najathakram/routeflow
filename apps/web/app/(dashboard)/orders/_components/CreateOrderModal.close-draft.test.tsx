@@ -191,8 +191,24 @@ describe("CreateOrderModal - Close parks a draft and offers Discard (F15 / row 6
     const saved = mockToast.mock.calls.map((c) => c[0]).find((t) => /draft saved/i.test(t.title));
     expect(saved).toBeDefined();
     expect(saved.action?.label).toBe("Discard");
-    saved.action.onClick();
+    act(() => saved.action.onClick());
+    // Row 604 S5: a confirm step, as the drafts dock has, before anything is deleted.
+    expect(mockDeleteDraft).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: /^discard$/i }));
     expect(mockDeleteDraft).toHaveBeenCalledWith("d1", expect.anything());
+  });
+
+  it("Close that itself creates the draft still offers Discard (row 604 S5)", async () => {
+    mockCreateDraft.mockResolvedValue({ id: "d9", updatedAt: "2026-10-19T10:00:00.000Z" });
+    const onClose = jest.fn();
+    renderWithProviders(<CreateOrderModal isOpen onClose={onClose} />);
+    await pickCustomerAndScan();
+    // No wait for autosave: the draft row does not exist until Close flushes it.
+    expect(mockCreateDraft).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Close", { selector: "button" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    const saved = mockToast.mock.calls.map((c) => c[0]).find((t) => /draft saved/i.test(t.title));
+    expect(saved.action?.label).toBe("Discard");
   });
 
   it("Close on an empty order closes at once with no toast", async () => {

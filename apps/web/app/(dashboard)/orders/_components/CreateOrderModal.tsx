@@ -65,6 +65,7 @@ import {
 } from "@/lib/staff-price-override";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -1388,6 +1389,8 @@ export function CreateOrderModal({
   });
   // Only an EXPLICIT park (Minimize / dismiss) disables the buttons; a background autosave never does.
   const [savingDraft, setSavingDraft] = React.useState(false);
+  // Row 604 S5: the toast's Discard asks first (same wording as the drafts dock).
+  const [discardDraftId, setDiscardDraftId] = React.useState<string | null>(null);
 
   // Park the current builder state into the draft (the dock): save it now, creating the row if autosave has not yet.
   // Returns whether the save succeeded.
@@ -1469,7 +1472,8 @@ export function CreateOrderModal({
     }
     const ok = await parkDraft();
     if (ok) {
-      const parkedId = autosave.draftId;
+      // Row 604 S5: read the engine's id NOW - when Close itself created the draft, the render-time id is still null.
+      const parkedId = autosave.getDraftId();
       toast({
         title: "Draft saved",
         description: "Find it in the drafts dock to resume.",
@@ -1478,10 +1482,7 @@ export function CreateOrderModal({
           ? {
               action: {
                 label: "Discard",
-                onClick: () =>
-                  deleteDraft.mutate(parkedId, {
-                    onSuccess: () => toast({ title: "Draft discarded", variant: "success" }),
-                  }),
+                onClick: () => setDiscardDraftId(parkedId),
               },
             }
           : {}),
@@ -3151,6 +3152,21 @@ export function CreateOrderModal({
   return (
     <>
       {dialog}
+      <ConfirmDialog
+        open={discardDraftId !== null}
+        onClose={() => setDiscardDraftId(null)}
+        onConfirm={() => {
+          const id = discardDraftId;
+          setDiscardDraftId(null);
+          if (!id) return;
+          deleteDraft.mutate(id, {
+            onSuccess: () => toast({ title: "Draft discarded", variant: "success" }),
+          });
+        }}
+        title="Discard this draft?"
+        description="The parked order and everything in it will be removed. This cannot be undone."
+        confirmLabel="Discard"
+      />
       {scanV2 && (
         <ScanOrderScreen
           open={isOpen && scanScreenOpen}
