@@ -474,7 +474,6 @@ export default function ProductDetailPage() {
   const priceNumber = parseFloat(String(product.pricePerUnit));
   const currentStock = Number(product.currentStock ?? 0);
   const stockStatus = getStockStatus(currentStock, product.isActive, product.kind);
-  const v2Family = v2 && product.kind === "FAMILY";
   /** K11-23: the prices region is its own grid item, right after Details in the DOM. */
   const pricingSplit = v2 && product.kind !== "FAMILY";
   // K11-20c: on a product whose prices the window can edit (not a family, recipe or variant), Details shows its
@@ -1853,27 +1852,29 @@ export default function ProductDetailPage() {
                         )}
                       </>
                     ) : (
-                      <p className="text-sm text-navy/30">—</p>
+                      <p className="text-sm text-navy/60">Not set</p>
                     )}
                   </div>
 
-                  <div className="mt-5 border-t border-surface-border pt-4">
-                    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                      Description
-                    </p>
-                    {isEditing ? (
-                      <textarea
-                        value={(editDraft.description as string) ?? ""}
-                        onChange={(e) =>
-                          setEditDraft((d) => ({ ...d, description: e.target.value }))
-                        }
-                        rows={3}
-                        className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      />
-                    ) : (
-                      <p className="text-sm text-navy/80">{product.description}</p>
-                    )}
-                  </div>
+                  {(isEditing || product.description) && (
+                    <div className="mt-5 border-t border-surface-border pt-4">
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                        Description
+                      </p>
+                      {isEditing ? (
+                        <textarea
+                          value={(editDraft.description as string) ?? ""}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({ ...d, description: e.target.value }))
+                          }
+                          rows={3}
+                          className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      ) : (
+                        <p className="text-sm text-navy/80">{product.description}</p>
+                      )}
+                    </div>
+                  )}
                   {!isFamily && merchandising}
                 </DetailsMore>
               </div>
@@ -2382,7 +2383,7 @@ export default function ProductDetailPage() {
             }
             bottom={
               <>
-                {!v2Family && (
+                {!cardRo && (
                   <ProductUnitsCard product={product} hideAddForm={v2} readOnly={cardRo} />
                 )}
 

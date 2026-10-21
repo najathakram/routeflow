@@ -352,7 +352,9 @@ describe("K14 F09 + P11: focus follows Choose another customer, and never scroll
     fireEvent.click(screen.getByTestId(T.result("c1")));
     const chosen = await screen.findByTestId(T.chosen);
     await waitFor(() => expect(document.activeElement).toBe(chosen));
-    const call = focus.mock.instances.findIndex((el) => el === chosen);
+    const call = (focus.mock.instances as unknown as HTMLElement[]).findIndex(
+      (el) => el === chosen,
+    );
     expect(focus.mock.calls[call]?.[0]).toBeUndefined();
     focus.mockRestore();
   });

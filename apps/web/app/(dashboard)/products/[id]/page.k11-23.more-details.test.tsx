@@ -22,7 +22,7 @@ const PRODUCT = {
   priceTier5: "0",
   msrp: "0.5",
   category: "Misc",
-  description: null,
+  description: "A fine product",
   isActive: true,
   kind: "STANDALONE",
   currentStock: 5,
@@ -155,6 +155,7 @@ describe("K11-23 More details disclosure (below sm)", () => {
     expect(toggle()).toHaveAttribute("aria-expanded", "true");
     expect(panel().className).not.toMatch(/max-sm:invisible/);
     const box = within(panel()).getByRole("textbox");
+    await user.clear(box);
     await user.type(box, "typed note");
     await user.click(toggle());
     expect(panel().className).toMatch(/max-sm:invisible/);

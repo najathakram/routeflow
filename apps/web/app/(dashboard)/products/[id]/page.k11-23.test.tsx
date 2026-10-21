@@ -22,7 +22,7 @@ const PRODUCT = {
   priceTier5: "0",
   msrp: "0.5",
   category: "Misc",
-  description: null,
+  description: "A fine product",
   isActive: true,
   kind: "STANDALONE",
   currentStock: 5,

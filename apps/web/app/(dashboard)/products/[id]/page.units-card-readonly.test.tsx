@@ -176,9 +176,11 @@ beforeEach(() => {
 });
 
 describe("page wiring: the Units & prices card reads only where the grid owns the controls", () => {
-  it("v2 on, an operator with the units plan on an editable product: readOnly", async () => {
-    await renderPage();
-    expect(lastProps()).toMatchObject({ hideAddForm: true, readOnly: true });
+  it("K14 (owner: Remove it): v2 on, an operator with the units plan on an editable product: no card at all", async () => {
+    renderWithProviders(<ProductDetailPage />);
+    await screen.findByTestId("product-details-card");
+    expect(screen.queryByTestId("units-card")).toBeNull();
+    expect(cardProps).not.toHaveBeenCalled();
   });
 
   it("v2 on but the units plan is off: the card keeps its controls", async () => {

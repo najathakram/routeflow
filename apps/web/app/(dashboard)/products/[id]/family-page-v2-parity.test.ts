@@ -31,13 +31,10 @@ describe("family page with units v2 on: parity", () => {
     );
   });
 
-  it("v2Family removes exactly the units card (K11-25: the create-an-order link is hidden on EVERY family, in FamilySalesCards)", () => {
-    const uses = src
-      .split("\n")
-      .filter((l) => l.includes("v2Family") && !l.includes("const v2Family"));
-    expect(uses).toHaveLength(1);
-    expect(uses[0]).toMatch(/!v2Family && /);
-    expect(src).toMatch(/\{!v2Family && \(\s*<ProductUnitsCard/);
+  it("v2 removes the units card (K14 owner ruling; a v2 family never had one) (K11-25: the create-an-order link is hidden on EVERY family, in FamilySalesCards)", () => {
+    const uses = src.split("\n").filter((l) => l.includes("v2Family"));
+    expect(uses).toHaveLength(0);
+    expect(src).toMatch(/\{!cardRo && \(\s*<ProductUnitsCard/);
     const cards = fs.readFileSync(path.join(__dirname, "FamilySalesCards.tsx"), "utf8");
     expect(cards).toMatch(
       /<SalesHistoryCard productId=\{productId\} hideCreateOrder compactEmpty \/>/,

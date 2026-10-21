@@ -31,15 +31,15 @@ describe("product page parity inventory (T38)", () => {
     expect(fs.existsSync(path.join(__dirname, file))).toBe(true);
   });
 
-  it("the old Units card stays mounted whenever the page is not a v2 family", () => {
-    expect(page).toMatch(/const v2Family = v2 && product\.kind === "FAMILY";/);
+  it("K14 (owner: Remove it): the old Units card is absent when the v2 grid owns the controls (cardRo)", () => {
+    expect(page).not.toMatch(/const v2Family/);
     // K10d: the v2 flag also drops the old always-open Add form (the shell's Add a unit replaces it)
     expect(page).toMatch(
-      /\{!v2Family && \(\s*<ProductUnitsCard product=\{product\} hideAddForm=\{v2\} readOnly=\{cardRo\} \/>\s*\)\}/,
+      /\{!cardRo && \(\s*<ProductUnitsCard product=\{product\} hideAddForm=\{v2\} readOnly=\{cardRo\} \/>\s*\)\}/,
     );
   });
 
-  it("with the flag on and a non-FAMILY product, the v2 grid AND the old units card both render", () => {
+  it("with the flag on and a non-FAMILY product, the v2 grid renders and the old units card does not", () => {
     // K11-20c: the section sits in ProductPricingRegion (the inline edit mode's full-width wrapper)
     expect(page).toMatch(
       /\{pricingSplit \? \(\s*<div[^>]*>\s*<ProductPricingRegion>\s*<ProductPricingV2 product=\{product\} \/>\s*<\/ProductPricingRegion>\s*<\/div>\s*\) : null\}/,
@@ -47,7 +47,7 @@ describe("product page parity inventory (T38)", () => {
     expect(page).toMatch(/const pricingSplit = v2 && product\.kind !== "FAMILY";/);
     // the old card's gate never mentions v2 except to hide it for a v2 FAMILY
     const oldGate = page.match(/\{([^{}]*)<ProductUnitsCard/);
-    expect(oldGate?.[1].replace(/\s+/g, " ")).toBe("!v2Family && ( ");
+    expect(oldGate?.[1].replace(/\s+/g, " ")).toBe("!cardRo && ( ");
   });
 
   it("the v2 shell is mounted exactly once, only behind the flag", () => {
