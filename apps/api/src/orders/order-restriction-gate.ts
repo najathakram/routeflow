@@ -112,7 +112,10 @@ export function whole(a: {
     lines: a.lines.flatMap((l) =>
       l.productId ? [{ productId: l.productId, lineKey: `l:${l.id}` }] : [],
     ),
-    fulfilmentKind: saleFulfilmentKind(a.order), // the path switch passes the path switched TO
+    fulfilmentKind: saleFulfilmentKind({
+      counterSale: a.order.counterSale,
+      fulfillPath: a.order.fulfillPath,
+    }), // the path switch passes the path switched TO
     principal: a.user,
     ack: a.dto,
     held: a.allLive ? a.lines.map((l) => ({ ...l, status: null })) : a.lines,
@@ -146,7 +149,10 @@ export function editPlan(
     items: a.dto.items ?? [],
     mode: orderEditMode(a.user?.role, a.dto.replaceAll, a.isDiffPayload),
     principal: a.user,
-    fulfilmentKind: saleFulfilmentKind(a.order),
+    fulfilmentKind: saleFulfilmentKind({
+      counterSale: a.order.counterSale,
+      fulfillPath: a.order.fulfillPath,
+    }),
     ack: a.dto,
   });
 }
@@ -161,7 +167,8 @@ export function crPlan(a: {
     counterSale?: boolean | null;
   };
   cr: ChangeRequestFacts & { id: string };
-  user: User;
+  /** The resolver, or the BUYER channel when the requester is the stricter side (F1 i: `leastPrivilegedPrincipal`). */
+  user: User | { type: "BUYER" };
   ack?: Ack;
 }): CrPlan {
   return planChangeRequestRestrictions({
@@ -170,7 +177,10 @@ export function crPlan(a: {
     existing: a.order.lineItems ?? [],
     cr: a.cr,
     principal: a.user,
-    fulfilmentKind: saleFulfilmentKind(a.order),
+    fulfilmentKind: saleFulfilmentKind({
+      counterSale: a.order.counterSale,
+      fulfillPath: a.order.fulfillPath,
+    }),
     ack: a.ack,
   });
 }
