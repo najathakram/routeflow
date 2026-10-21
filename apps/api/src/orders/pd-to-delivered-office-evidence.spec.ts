@@ -2,6 +2,8 @@ import { OrderStatus } from "@prisma/client";
 import { makeStampDb } from "../common/testing/delivered-stamp-fake-db";
 import { deliveredBasisByLine, deliveredQtyFromBasis } from "../invoices/delivered-basis-by-line";
 import { updateStatusWithShipMarker } from "./order-ship-state";
+import { assertOrderStatusTransition } from "./order-status-transitions";
+import { isOfficeRowNote, officeRowNote } from "./office-evidence-completion";
 import { buildStatusUpdateData } from "./order-status-claim";
 
 /**
@@ -208,5 +210,64 @@ describe("row 587: PD -> DELIVERED completes the office-evidenced lines", () => 
     expect(db.committed.mutations).toHaveLength(1);
     expect(db.committed.audits).toHaveLength(0);
     expect(db.line("a").deliveredQty).toBe(6);
+  });
+});
+
+describe("row 587 review folds", () => {
+  it("MUST-5: an evidence row of unknown origin (no OFFICE marker, no stop: as the DB lane seeds a route line) keeps its figure", async () => {
+    const db = makeStampDb({
+      status: "PARTIALLY_DELIVERED",
+      lines: [{ id: "a", qty: 10, deliveredQty: 6 }],
+      mutations: [{ orderItemId: "a", type: "PARTIAL", quantityDelivered: 6 }],
+    });
+    await deliver(db, OrderStatus.PARTIALLY_DELIVERED);
+    expect(db.line("a").deliveredQty).toBe(6); // master of this fold: 10
+    expect(db.committed.mutations).toHaveLength(1);
+    expect(db.committed.audits).toHaveLength(0);
+  });
+
+  it("an office row that carries the clerk's own note still counts as an office row", async () => {
+    const db = makeStampDb({
+      status: "PARTIALLY_DELIVERED",
+      lines: [{ id: "a", qty: 10, deliveredQty: 6 }],
+      mutations: [{ ...officeRow("a", 6), note: officeRowNote("left at the gate") }],
+    });
+    await deliver(db, OrderStatus.PARTIALLY_DELIVERED);
+    expect(db.line("a").deliveredQty).toBe(10);
+  });
+
+  it("the office note is the marker plus the clerk's text, and only that is recognised", () => {
+    expect(officeRowNote()).toBe("OFFICE_MARKED");
+    expect(officeRowNote("gate")).toBe("OFFICE_MARKED: gate");
+    expect(isOfficeRowNote("OFFICE_MARKED: gate")).toBe(true);
+    expect(isOfficeRowNote("gate")).toBe(false);
+    expect(isOfficeRowNote(null)).toBe(false);
+  });
+
+  it("MUST-4 (SA-833 1b): PD -> DELIVERED never leaves an office line short; DELIVERED -> CONFIRMED with a reason is the only closed-short exit", async () => {
+    const db = makeStampDb({
+      status: "PARTIALLY_DELIVERED",
+      lines: [
+        { id: "a", qty: 10, deliveredQty: 6 },
+        { id: "b", qty: 4, deliveredQty: 1 },
+      ],
+      mutations: [officeRow("a", 6), officeRow("b", 1)],
+    });
+    await deliver(db, OrderStatus.PARTIALLY_DELIVERED);
+    // no DELIVERED order carries an office line below its qty
+    for (const l of db.committed.lines) expect(db.line(l.id).deliveredQty).toBe(l.qty);
+    // the only exits from DELIVERED, and both demand a reason
+    expect(() => assertOrderStatusTransition("DELIVERED", "CONFIRMED", undefined)).toThrow(
+      /reason is required/,
+    );
+    expect(() => assertOrderStatusTransition("DELIVERED", "PARTIALLY_DELIVERED", " ")).toThrow(
+      /reason is required/,
+    );
+    expect(() => assertOrderStatusTransition("DELIVERED", "OUT_FOR_DELIVERY", "x")).toThrow(
+      /Cannot transition/,
+    );
+    expect(
+      assertOrderStatusTransition("DELIVERED", "CONFIRMED", "customer refused").isDeliveredDemotion,
+    ).toBe(true);
   });
 });

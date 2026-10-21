@@ -9,8 +9,9 @@
  * column), lifts `deliveredQty` to qty, and writes one AuditLog row per completed line ("line X: 6 -> 10, office
  * completion"), all in the caller's transaction. It returns the completed lines so the status response can name them.
  *
- * Only OFFICE-evidenced lines: every qualifying row of the line has no route stop, no driver, and a DELIVERED or
- * PARTIAL type. A line with any route-stop row keeps its route figure (SA-814 R4-3 note: a separate row), a
+ * Only OFFICE-evidenced lines: every qualifying row of the line is positively marked as an office row (the
+ * OFFICE_MARKED note `writeOfficeDeliveries` stamps), has no route stop, no driver, and a DELIVERED or PARTIAL type.
+ * A row of unknown origin (no marker) is treated as route evidence and keeps its figure. A line with any route-stop row keeps its route figure (SA-814 R4-3 note: a separate row), a
  * REFUSED row is a resolved outcome, never a partial figure, a CANCELLED line is not delivered at all, and an order
  * that rode a route stop is never touched (as the stamp). Idempotent: a completed line has no remainder.
  * The only "closed short" exit stays DELIVERED -> CONFIRMED with its required reason (SA-814h #1).
@@ -22,6 +23,12 @@ const EPS = 0.0005;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 const OFFICE_ROW_TYPES: readonly string[] = ["DELIVERED", "PARTIAL"];
 export const OFFICE_MARKED_NOTE = "OFFICE_MARKED";
+/** The note an office-recorded delivery row carries: the marker, then the clerk's own text when there is one. */
+export const officeRowNote = (note?: string | null): string =>
+  note ? `${OFFICE_MARKED_NOTE}: ${note}` : OFFICE_MARKED_NOTE;
+/** An office row is POSITIVELY marked (no route stop and no driver is not enough: other writers leave those null too). */
+export const isOfficeRowNote = (note: unknown): boolean =>
+  typeof note === "string" && note.startsWith(OFFICE_MARKED_NOTE);
 
 /** Who wrote the DELIVERED status, for the audit rows. */
 export interface OfficeCompletionActor {
@@ -65,6 +72,7 @@ export async function completeOfficeEvidencedLines(
     quantityDelivered: unknown;
     routeRunStopId?: string | null;
     driverId?: string | null;
+    note?: string | null;
   }> = await tx.deliveryMutation.findMany({
     where: { orderId },
     select: {
@@ -73,6 +81,7 @@ export async function completeOfficeEvidencedLines(
       quantityDelivered: true,
       routeRunStopId: true,
       driverId: true,
+      note: true,
     },
   });
   const byLine = new Map<string, { sum: number; office: boolean }>();
@@ -80,7 +89,12 @@ export async function completeOfficeEvidencedLines(
     if (!m.orderItemId) continue;
     const e = byLine.get(m.orderItemId) ?? { sum: 0, office: true };
     e.sum = r3(e.sum + (m.type === "REFUSED" ? 0 : Number(m.quantityDelivered)));
-    if (m.routeRunStopId != null || m.driverId != null || !OFFICE_ROW_TYPES.includes(m.type)) {
+    if (
+      m.routeRunStopId != null ||
+      m.driverId != null ||
+      !OFFICE_ROW_TYPES.includes(m.type) ||
+      !isOfficeRowNote(m.note)
+    ) {
       e.office = false;
     }
     byLine.set(m.orderItemId, e);
