@@ -26,6 +26,10 @@ import {
 } from "@/lib/api/returns";
 import { useCustomers } from "@/lib/api/customers";
 import { useOrders, type Order } from "@/lib/api/orders";
+import { useHasAddon } from "@/lib/api/tobacco";
+import { ORDERS_INLINE_RETURNS_ADDON } from "@/lib/api/addons";
+import { FindSaleByNumber } from "./_components/FindSaleByNumber";
+import { RecordInlineReturnDialog } from "./_components/RecordInlineReturnDialog";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -79,7 +83,16 @@ interface ReturnItemRow {
   notes: string;
 }
 
-function CreateReturnModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+function CreateReturnModal({
+  isOpen,
+  onClose,
+  onFoundSale,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  /** a sale found by its number, when the inline return flow can take it (the page opens it) */
+  onFoundSale?: (order: Order) => void;
+}) {
   const { toast } = useToast();
   const createReturn = useCreateReturn();
 
@@ -94,13 +107,29 @@ function CreateReturnModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
   const { data: customersData } = useCustomers(
     customerSearch ? { search: customerSearch } : { search: "" },
   );
-  const customers: Array<{ id: string; businessName: string }> =
+  const listedCustomers: Array<{ id: string; businessName: string }> =
     (customersData as any)?.data ?? customersData ?? [];
+  // B1264: a sale found by number may belong to the walk-in, which the customer list never offers
+  const [foundOrder, setFoundOrder] = React.useState<Order | null>(null);
+  const pendingOrderId = React.useRef("");
+  const customers =
+    foundOrder?.customer && !listedCustomers.some((c) => c.id === foundOrder.customerId)
+      ? [
+          ...listedCustomers,
+          { id: foundOrder.customerId, businessName: foundOrder.customer.businessName },
+        ]
+      : listedCustomers;
 
   const { data: ordersData, isLoading: ordersLoading } = useOrders(
     customerId ? { customerId, status: "DELIVERED" } : undefined,
   );
-  const orders: Order[] = (ordersData as any)?.data ?? [];
+  const listedOrders: Order[] = (ordersData as any)?.data ?? [];
+  const orders =
+    foundOrder &&
+    foundOrder.customerId === customerId &&
+    !listedOrders.some((o) => o.id === foundOrder.id)
+      ? [...listedOrders, foundOrder]
+      : listedOrders;
 
   React.useEffect(() => {
     if (isOpen) {
@@ -111,13 +140,30 @@ function CreateReturnModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
       setNotes("");
       setReturnItems([]);
       setErrors({});
+      setFoundOrder(null);
     }
   }, [isOpen]);
 
   React.useEffect(() => {
-    setOrderId("");
+    setOrderId(pendingOrderId.current);
+    pendingOrderId.current = "";
     setReturnItems([]);
   }, [customerId]);
+
+  const found = React.useCallback(
+    (order: Order) => {
+      if (onFoundSale) {
+        onFoundSale(order);
+        return;
+      }
+      // no inline return flow: fill the customer + order of this form
+      setFoundOrder(order);
+      pendingOrderId.current = order.id;
+      setCustomerId(order.customerId);
+      setOrderId(order.id);
+    },
+    [onFoundSale],
+  );
 
   React.useEffect(() => {
     if (!orderId) {
@@ -219,6 +265,8 @@ function CreateReturnModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
       }
     >
       <form id="create-return-form" onSubmit={handleSubmit} noValidate className="space-y-4">
+        <FindSaleByNumber onFound={found} />
+
         {/* Customer */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy">
@@ -390,6 +438,9 @@ export default function ReturnsPage() {
   const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [page, setPage] = useUrlPage();
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
+  // B1264: a sale found by its number opens the same inline return flow the receipt and the order page use
+  const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
+  const [inlineOrder, setInlineOrder] = React.useState<Order | null>(null);
   const LIMIT = 20;
 
   const { data, isLoading, isError, refetch } = useReturns({
@@ -718,7 +769,29 @@ export default function ReturnsPage() {
         </div>
       )}
 
-      <CreateReturnModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
+      <CreateReturnModal
+        isOpen={isCreateOpen}
+        onClose={() => setIsCreateOpen(false)}
+        onFoundSale={
+          hasInlineReturns
+            ? (order) => {
+                setIsCreateOpen(false);
+                setInlineOrder(order);
+              }
+            : undefined
+        }
+      />
+      {inlineOrder ? (
+        <RecordInlineReturnDialog
+          open
+          onClose={() => setInlineOrder(null)}
+          customerId={inlineOrder.customerId}
+          customerName={inlineOrder.customer?.businessName}
+          orderId={inlineOrder.id}
+          sourceOrderId={inlineOrder.id}
+          allowRefund
+        />
+      ) : null}
     </div>
   );
 }
