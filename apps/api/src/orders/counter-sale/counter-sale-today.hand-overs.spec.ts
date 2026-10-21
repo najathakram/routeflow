@@ -310,9 +310,9 @@ describe("toHandOverRows", () => {
         paidAt: "2026-10-07T15:30:00.000Z",
         amount: 15,
         methods: [
+          { method: "ADVANCE", amount: 5 }, // prepaid money lists first, like the receipt
           { method: "CASH", amount: 0.3 }, // 0.1 + 0.2 is float noise unrounded
           { method: "CARD", amount: 9.7 },
-          { method: "STORE_CREDIT", amount: 5 },
         ],
         registerKey: "reg-2",
         handedOverBy: "pat",

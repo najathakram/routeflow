@@ -11,6 +11,7 @@ import { formatReceiptMoney as money } from "@/lib/counter-receipt";
 import { guardCounterLeave } from "@/lib/counter-cart-signal";
 
 export const METHOD_LABEL: Record<TodaysSaleMethod, string> = {
+  ADVANCE: "Advance",
   CASH: "Cash",
   CARD: "Card",
   CHECK: "Check",

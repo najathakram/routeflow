@@ -326,6 +326,7 @@ export interface ReprintSaleFacts {
 export type ReprintTender = TodaysSaleMethod;
 
 const REPRINT_METHOD_LABEL: Record<ReprintTender, string> = {
+  ADVANCE: "Advance",
   CASH: "Cash",
   CARD: "Card",
   CHECK: "Check",

@@ -179,8 +179,20 @@ export interface PickupCompleteResponse {
 // row each (no line items), plus a whole-day summary on page 1. Read-only; the server owns the day window, the
 // web formats times in `meta.timezone` and does no money math.
 
-/** How a sale's money reached the till: "STORE_CREDIT" is a credit-note / advance application, never money in. */
-export type TodaysSaleMethod = "CASH" | "CARD" | "CHECK" | "OTHER" | "STORE_CREDIT";
+/**
+ * How a sale's money reached the till, in the order a receipt lists them. "STORE_CREDIT" is a credit-note application and
+ * "ADVANCE" an application of the customer's prepaid advance (SA-838: its own label, no longer folded into store credit);
+ * neither is money in. The API keeps a twin list (`METHOD_ORDER`), pinned set- and order-equal to this by a parity spec.
+ */
+export const TODAYS_SALE_METHOD_VALUES = [
+  "ADVANCE",
+  "CASH",
+  "CARD",
+  "CHECK",
+  "OTHER",
+  "STORE_CREDIT",
+] as const;
+export type TodaysSaleMethod = (typeof TODAYS_SALE_METHOD_VALUES)[number];
 export type TodaysSalePaymentState = "PAID" | "PARTLY_PAID" | "ON_ACCOUNT" | "UNPAID";
 export type TodaysSaleReturnState = "NONE" | "PARTLY" | "FULL" | "PENDING";
 /** null = settled with no stored resolution (a legacy return with neither a refund method nor a credit note). */
@@ -229,6 +241,17 @@ export interface TodaysSaleRow {
   paid: number;
   balanceDue: number;
   methods: Array<{ method: TodaysSaleMethod; amount: number }>;
+  /**
+   * B1262 / SA-838, the split of `paid` into what the customer TENDERED and the credit the sale's OWN return applied back to
+   * its invoice (`@routeflow/pricing` `counterTenderSplit`, the one home): `tenderPaid + returnCredit === paid`. Own return
+   * credit is the return settling the invoice, not new money, so a reprint prints `tenderPaid` / `tenderMethods` as Paid and
+   * the payment method and the return as its own Returned line. A credit the server cannot prove is the sale's own stays a
+   * tender. All three are omitted by an older server: the reprint then falls back to `paid` / `methods` as before.
+   */
+  tenderPaid?: number;
+  returnCredit?: number;
+  /** `methods` without the own-return credit */
+  tenderMethods?: Array<{ method: TodaysSaleMethod; amount: number }>;
   paymentState: TodaysSalePaymentState;
   /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
   cashTendered: number | null;
