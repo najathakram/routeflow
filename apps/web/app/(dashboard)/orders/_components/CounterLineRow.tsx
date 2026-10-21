@@ -3,7 +3,13 @@ import { TAP_TARGET, cn } from "@routeflow/ui/web";
 import { formatReceiptMoney as money, unitWords } from "@routeflow/pricing";
 import { priceUnitWord } from "@/lib/product-unit-label";
 import { cartTotals } from "@/lib/counter-sale";
-import { NOTE_MAX, isBoxedLine, lineQtyLabel, type TypedQty } from "./counter-sale-line-edit";
+import {
+  NOTE_MAX,
+  isBoxedLine,
+  registerPriceLabel,
+  registerQtyLabel,
+  type TypedQty,
+} from "./counter-sale-line-edit";
 import { qtyRefusalMessage, type QtyFieldKind } from "./counter-qty-refusal";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceEdit";
@@ -240,7 +246,7 @@ export function CounterLineRow({
     <li className="flex flex-col gap-2 p-3 text-sm">
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0 break-words">
-          {l.name} · {lineQtyLabel(l)}
+          {l.name} · {registerQtyLabel(l, UW)}
           <span className="block text-xs text-navy/70">
             {cartStrikesList(l, hideOriginalPrice) ? (
               <s className="mr-1 tabular-nums text-navy/50" data-testid="line-unit-price-was">
@@ -248,10 +254,7 @@ export function CounterLineRow({
               </s>
             ) : null}
             <span className="tabular-nums" data-testid="line-unit-price">
-              {money(l.unitPrice)}{" "}
-              {isBoxedLine(l)
-                ? `/ ${UW.pack.lower}`
-                : `/ ${l.unit ? priceUnitWord(l.unit) : UW.base.lower}`}
+              {registerPriceLabel(l, UW, money, priceUnitWord)}
             </span>
           </span>
         </span>

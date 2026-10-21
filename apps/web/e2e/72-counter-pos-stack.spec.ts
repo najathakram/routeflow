@@ -417,4 +417,28 @@ test.describe("R7b till: change due note and the keyboard path to pay", () => {
     });
     await expect(page.getByTestId("counter-license-note")).toHaveCount(1);
   });
+
+  test("a boxed product's register line names the pack size and the price each @ 1280", async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await setTenantCookie(context, BASE);
+    const { api, headers } = await discover(page);
+    const prods: any = await (
+      await page.request.get(`${api}/products`, { headers, params: { limit: "100" } })
+    ).json();
+    const boxed = (prods?.data ?? []).find(
+      (p: any) => p?.isActive !== false && Number(p?.unitsPerBox) > 1 && p?.sku,
+    );
+    test.skip(!boxed, "the test tenant has no active boxed product with a SKU");
+    await page.goto("/orders/counter-sale");
+    const scanField = page.getByLabel("Scan or search items");
+    await expect(scanField).toBeVisible({ timeout: 15_000 });
+    await scanField.fill(String(boxed.sku));
+    await scanField.press("Enter");
+    const row = page.getByRole("list", { name: "Items" }).getByRole("listitem").first();
+    await expect(row).toContainText(`of ${Number(boxed.unitsPerBox)}`, { timeout: 15_000 });
+    await expect(page.getByTestId("line-unit-price")).toContainText("each");
+  });
 });
