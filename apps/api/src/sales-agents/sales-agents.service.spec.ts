@@ -221,6 +221,23 @@ describe("SalesAgentsService", () => {
   });
 
   describe("addCustomerRate", () => {
+    it("rejects a reference from another business (no rate written)", async () => {
+      models.salesAgent.findUnique.mockResolvedValue({
+        id: "a1",
+        status: "ACTIVE",
+        deletedAt: null,
+      });
+      prisma.customer.findMany.mockResolvedValue([]); // the customer is not in this tenant
+      await expect(
+        service.addCustomerRate("a1", {
+          customerId: "other-biz-customer",
+          ratePct: 10,
+          effectiveFrom: new Date().toISOString(),
+        }),
+      ).rejects.toThrow(/not found/i);
+      expect(models.customerCommissionRate.create).not.toHaveBeenCalled();
+    });
+
     it("triggers a customer-scoped recompute for a backdated customer rate", async () => {
       models.salesAgent.findUnique.mockResolvedValue({
         id: "a1",

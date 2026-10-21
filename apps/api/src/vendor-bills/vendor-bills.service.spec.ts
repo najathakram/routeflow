@@ -1020,6 +1020,14 @@ describe("VendorBillsService", () => {
       prisma.vendorBill.create.mockResolvedValue(bill());
     });
 
+    it("rejects a reference from another business (no bill written)", async () => {
+      prisma.supplier.findMany.mockResolvedValue([]); // not this tenant's supplier
+      await expect(
+        service.create({ supplierId: "other-biz-supplier", items: [], totalOwed: 5 }),
+      ).rejects.toThrow(/not found/i);
+      expect(prisma.vendorBill.create).not.toHaveBeenCalled();
+    });
+
     it("B1236: refuses with missingProductIds when the catalog read returns fewer ids than the lines name, and writes nothing", async () => {
       prisma.product.findMany.mockResolvedValue([{ id: "prod-1" }]);
       const items = [

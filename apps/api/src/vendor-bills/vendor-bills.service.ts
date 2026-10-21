@@ -1,4 +1,5 @@
 import { STOCK_TX_OPTIONS, setStockLockTimeout } from "../common/product-locks";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { retryStockTx } from "../common/tx-retry";
 import {
   BadRequestException,
@@ -455,6 +456,7 @@ export class VendorBillsService {
       }
     }
     const supplierId = dto.supplierId && dto.supplierId.trim() ? dto.supplierId.trim() : null;
+    await assertRefsInTenant(this.prisma, { supplierIds: [supplierId] });
     await this.assertLineProductsInCatalog(dto.items);
 
     // Calculate totalOwed from line items if provided, otherwise use dto.totalOwed
