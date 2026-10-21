@@ -1547,7 +1547,8 @@ export default function NewInvoicePage() {
       // not found by barcode — fall through to SKU/name search
     }
     // 2) SKU / name search; prefer exact SKU, else the first row the operator was shown (M3).
-    // Without a shown list (a scan sent before the dropdown rendered) fetch the search instead.
+    // Without a shown list (a scan sent before the dropdown rendered) fetch the search instead:
+    // only an exact SKU is added from it (row 671).
     try {
       let matches: any[];
       if (shown) {
@@ -1562,7 +1563,16 @@ export default function NewInvoicePage() {
         matches = sellableFlat<any>(res?.data ?? []);
       }
       const skuExact = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
-      const toAdd = skuExact ?? (shown ? shown.first : matches[0]);
+      // Row 671: with no settled list (shown undefined) the fetched answer is PENDING - never on
+      // screen - so only a code-exact SKU may be added from it. Anything else keeps the text and waits
+      // for the dropdown to settle, so Enter can only ever add a row the operator was shown.
+      if (!shown && !skuExact && matches.length > 0) {
+        setScanQuery(code);
+        setDebouncedScanQuery(code);
+        scheduleScannerRefocus(scanInputRef, 30);
+        return;
+      }
+      const toAdd = skuExact ?? (shown ? shown.first : undefined);
       if (toAdd) {
         addProductFromCatalog(toAdd, scanLevelForHit(code, toAdd), {
           startOnDefaultUnit: matches.length > 1 || scanCodeIsShared(code, toAdd),

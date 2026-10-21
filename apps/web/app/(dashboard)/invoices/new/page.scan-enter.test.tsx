@@ -195,17 +195,27 @@ describe("new invoice scan bar - Enter adds the row that is shown (M3)", () => {
     await waitFor(() => expect(lineNames()).toEqual(["Distilled Water 1 Gallon"]));
   });
 
-  it("Enter typed before the dropdown catches up takes the fetch path, ordered like the dropdown will be", async () => {
+  it("row 671: Enter typed before the dropdown catches up never adds from the pending result - it waits for the list to settle", async () => {
     // The open list was built from an OLDER query ("wat": Distilled only); the API now answers "water"
-    // with the family first. Enter must not add the stale first row, and must add what the dropdown WILL
-    // show first (the family's first variant), never sellableOnly's first standalone.
+    // with the family first. That answer is PENDING (not shown yet): Enter must not add it, nor the
+    // stale first row. The text stays in the bar so Enter works once the list has settled.
     mockSearchProducts = [DISTILLED];
     mockRawSearch = [SPRING_FAMILY, DISTILLED];
     const user = await openBuilder();
     await typeAndWaitForDropdown(user, "wat");
     expect(options()[0]).toHaveTextContent("Distilled Water 1 Gallon");
     await user.type(bar(), "er{Enter}");
-    await waitFor(() => expect(lineNames()).toEqual(["Spring Water - 12 Pack"]));
-    expect(mockGet).toHaveBeenCalledWith("/products");
+    await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/products"));
+    expect(lineNames()).toEqual([]);
+    expect(bar()).toHaveValue("water");
+  });
+
+  it("row 671: an exact SKU typed before the dropdown catches up is still added (the code names it)", async () => {
+    mockSearchProducts = [SPRING_FAMILY];
+    mockRawSearch = [SPRING_FAMILY, DISTILLED];
+    const user = await openBuilder();
+    await typeAndWaitForDropdown(user, "DW-");
+    await user.type(bar(), "1{Enter}");
+    await waitFor(() => expect(lineNames()).toEqual(["Distilled Water 1 Gallon"]));
   });
 });
