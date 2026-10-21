@@ -1753,6 +1753,7 @@ export default function OrderDetailPage() {
     localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
   });
   const savingItems = updateItems.isPending;
+  const saveLatchRef = React.useRef(false);
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
   // S19b M3: while this customer's prices are unconfirmed (layer pending / failed / this product missing from an incomplete
   // layer) the edit cannot be saved or published; flag off nothing is read, so this is false.
@@ -1990,6 +1991,9 @@ export default function OrderDetailPage() {
   }
 
   function handleSaveItems() {
+    // Row 698 (F23): ONE write per Save. `isPending` is stale for the second tap of a double tap, so a synchronous latch
+    // holds until the write settles; a replayed second write would be judged against the revision the first just moved.
+    if (saveLatchRef.current) return;
     if (refuseLockedUnitLineEdit()) return;
     // B465: refuse client-side before the server has to — a SPECIAL-tier line
     // whose price was overridden with no reason would otherwise round-trip a
@@ -2032,6 +2036,7 @@ export default function OrderDetailPage() {
     // id). F30/R10 (B198) made the flag explicit-only, so omitting it would merge
     // too; sending false states the intent at the call site rather than relying on
     // the server default.
+    saveLatchRef.current = true;
     updateItems.mutate(
       {
         id: order!.id,
@@ -2046,6 +2051,9 @@ export default function OrderDetailPage() {
         ...(inlineReturn ? { inlineReturn } : {}),
       },
       {
+        onSettled: () => {
+          saveLatchRef.current = false;
+        },
         onSuccess: () => {
           setIsEditing(false);
           setEditItems([]);
