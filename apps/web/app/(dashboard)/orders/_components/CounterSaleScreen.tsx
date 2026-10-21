@@ -850,6 +850,13 @@ export function CounterSaleScreen() {
       isWalkIn,
     });
     if (problem) {
+      // B1181: On account is refused for a walk-in, so it can no longer be the checked tender (its radio is disabled): fall
+      // back to Cash with a clean amount and reference. The cart and the refusal copy stay.
+      if (problem === "WALK_IN_ON_ACCOUNT") {
+        setMethod("CASH");
+        setTendered("");
+        setReference("");
+      }
       setError(paymentProblemCopy(problem, totals.total));
       return null;
     }
