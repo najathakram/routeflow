@@ -251,6 +251,8 @@ export function InlineReturnSection({
     unitsPerBox?: number | null;
   }) {
     if (lines.some((l) => l.productId === product.id)) return;
+    // the product sits in the Undo slot: adding it again replaces that, so it is never in the list twice
+    if (removed?.line.productId === product.id) clearRemoved();
     setLines((prev) => [
       ...prev,
       {

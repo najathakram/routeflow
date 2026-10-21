@@ -498,6 +498,19 @@ describe("InlineReturnSection — Remove offers Undo, counter reason labels (R7b
     );
   });
 
+  it("adding a product that sits in the Undo slot discards the slot and adds it once", async () => {
+    mockEntryOrder = COUNTER_ORDER;
+    productResults = [{ id: "prod-1", name: "Cola 12oz Can", unit: "each", unitsPerBox: null }];
+    renderSection({ entryOrderId: "order-c" });
+    await screen.findByText("Cola 12oz Can");
+    fireEvent.click(screen.getAllByRole("button", { name: /^remove$/i })[0]);
+    expect(screen.getByRole("button", { name: /^undo$/i })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "col" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Cola 12oz Can" }));
+    expect(screen.queryByRole("button", { name: /^undo$/i })).toBeNull();
+    expect(screen.getAllByText("Cola 12oz Can")).toHaveLength(1);
+  });
+
   it("a counter-sale return shows counter reason labels", async () => {
     mockEntryOrder = COUNTER_ORDER;
     renderSection({ entryOrderId: "order-c" });
