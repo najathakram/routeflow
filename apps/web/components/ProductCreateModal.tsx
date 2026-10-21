@@ -384,7 +384,9 @@ export function ProductCreateModal({
     let pieceTo: number | null = null;
     if (showPiecePrice && form.pricePerPiece.trim() !== "") {
       if (piecesPerPack < 2) {
-        setPieceError("Enter Units per box (2 or more) to price a single piece.");
+        setPieceError(
+          `Enter Units per ${w.pack.lower} (2 or more) to price a single ${w.base.lower}.`,
+        );
         return;
       }
       const checked = validateSetPrice(form.pricePerPiece);
