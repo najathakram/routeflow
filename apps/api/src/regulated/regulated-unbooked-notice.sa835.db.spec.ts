@@ -1,7 +1,8 @@
 /**
  * SA-835 (row 558, builder C fold 1791fe249) real-Postgres twins: the unbooked-reversal notice is written ONCE
  * per (return, sale entry) even when the return is retried (a JSON-path lookup on AuditLog.meta, real
- * Postgres only), and the period count is tenant-scoped and counts distinct returns, not notice rows.
+ * Postgres only), and the period count is tenant-scoped and counts distinct returns, not notice rows. The
+ * period is part of the dedupe key (19b05ebe5): a return re-received unreversed in a later month notices again.
  *
  * Collected only by `jest.db.config.js` (`.db.spec.ts$`), run via `npm run local:test:db`.
  * SAFETY: a throwaway `qa-sa789-<run>` tenant (`assertTestTenant`); `afterAll` deletes exactly the rows
@@ -313,6 +314,37 @@ describeDb(
         [f.sale.id, b.sale.id].sort(),
       );
       expect((await count()) - before).toBe(1);
+    }, 60_000);
+
+    it("REG: noticed in month M, re-received unreversed in M+1 → a second notice in M+1, and M+1 counts 1", async () => {
+      const now = new Date();
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const prevStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+      const nextStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+      const prevMid = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15));
+      const f = await rotatedSale("months", { deleteOrderLine: true });
+      const ret = await newReturn(f.order.id);
+      await reverse(ret.id, f.order.id, new Map([[f.product.id, 10]]));
+      // Month M: move that notice to the previous month, as if it had been written then.
+      const [first] = await noticesFor(ret.id);
+      const prevPeriod = prevMid.toISOString().slice(0, 7);
+      await raw.auditLog.update({
+        where: { id: first.id },
+        data: { createdAt: prevMid, meta: { ...(first.meta as object), period: prevPeriod } },
+      });
+      const countIn = (from: Date, toExclusive: Date) =>
+        tenantCtx.run(tenantId, () =>
+          countUnbookedReversals(prisma.forTenant(), { from, toExclusive }, tenantId),
+        );
+      const thisMonthBefore = await countIn(monthStart, nextStart);
+      // Month M+1 (now): the same return is re-received, still unreversed.
+      await reverse(ret.id, f.order.id, new Map([[f.product.id, 10]]));
+      const notices = await noticesFor(ret.id);
+      expect(notices.map((n) => (n.meta as any)?.period).sort()).toEqual(
+        [prevPeriod, now.toISOString().slice(0, 7)].sort(),
+      );
+      expect((await countIn(monthStart, nextStart)) - thisMonthBefore).toBe(1);
+      expect(await countIn(prevStart, monthStart)).toBe(1);
     }, 60_000);
   },
 );
