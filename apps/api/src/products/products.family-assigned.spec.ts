@@ -18,6 +18,7 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import { FeatureConfigService } from "../billing/feature-config.service";
 
 jest.mock("../product-labels/keep-labels-on-reparent", () => ({
   ...jest.requireActual("../product-labels/keep-labels-on-reparent"),
@@ -40,6 +41,7 @@ describe("ProductsService: a parent change writes one product.family_assigned ro
   /** The transaction object handed to the tx callback: DISTINCT from `prisma`, so a write on `this.prisma` is visible. */
   let tx: any;
   let committed: boolean;
+  let featureMode: jest.Mock;
 
   const PRODUCT = {
     id: "prod-1",
@@ -61,6 +63,7 @@ describe("ProductsService: a parent change writes one product.family_assigned ro
   const FAMILY = { id: "fam", isActive: true, kind: "FAMILY", parentProductId: null };
 
   beforeEach(async () => {
+    featureMode = jest.fn().mockResolvedValue("off");
     prisma = createMockPrisma();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -85,6 +88,7 @@ describe("ProductsService: a parent change writes one product.family_assigned ro
           useValue: { upgradeTargetForFlag: jest.fn().mockResolvedValue(null) },
         },
         { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
+        { provide: FeatureConfigService, useValue: { getEffectiveMode: featureMode } },
       ],
     }).compile();
     service = module.get(ProductsService);
@@ -234,6 +238,27 @@ describe("ProductsService: a parent change writes one product.family_assigned ro
       expect((prisma.productUnit as any)[m]).not.toHaveBeenCalled();
       expect((prisma.stockMovement as any)[m]).not.toHaveBeenCalled();
     }
+  });
+
+  it("SA-823: the import door re-reads family pricing inside the transaction: ON since the plan was made refuses the move and writes nothing", async () => {
+    seed(null);
+    // the pre-transaction read (plan time) says off; the read after the locks says on
+    featureMode.mockResolvedValueOnce("off").mockResolvedValue("on");
+    await expect(
+      service.assignToParent("prod-1", "fam", "Mint", { via: "import", actorId: "u1" }),
+    ).rejects.toMatchObject({
+      response: { code: "IMPORT_FAMILY_PRICING_ON" },
+    });
+    expect(committed).toBe(false);
+    // the throw leaves the transaction uncommitted, so the row write and the audit row roll back together
+    expect(familyRows()).toEqual([]);
+  });
+
+  it("the other doors are not affected by the import's pricing re-read", async () => {
+    seed(null);
+    featureMode.mockResolvedValueOnce("off").mockResolvedValue("off");
+    await service.assignToParent("prod-1", "fam", "Mint", { via: "bulk_assign" });
+    expect(committed).toBe(true);
   });
 
   it("T16: update() throws a plain Error when parentProductId changes without reparentVia, and writes no row", async () => {

@@ -20,11 +20,11 @@ import { isTobaccoCategoryName, TOBACCO_CATEGORY_NAME } from "../common/tobacco-
 import { productCategoryViolation, productNameViolation } from "../common/text-cell-guards";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { PrismaService } from "../prisma/prisma.service";
-import { readFamilyPriceMode } from "../products/family-price";
+import { IMPORT_FAMILY_PRICING_ON_MESSAGE, readFamilyPriceMode } from "../products/family-price";
 import { productDisplayName } from "../products/product-display-name";
 import { ProductFamiliesService } from "../products/product-families.service";
 import { assertValidParent, HAS_VARIANTS_MESSAGE, type ParentDb } from "../products/product-parent";
-import { bareVariantLabel } from "../products/product-variant-name";
+import { bareVariantLabel, stripParentPrefix } from "../products/product-variant-name";
 import type { CatalogTx } from "../products/product-catalog-sync";
 import { ProductsService } from "../products/products.service";
 
@@ -35,8 +35,6 @@ export const IMPORT_FAMILY_NAME_ONLY_REASON =
   "Add the product's id, SKU or barcode to move it into a family.";
 export const IMPORT_FAMILY_CLASS_REASON = "A family's items must share their regulated category.";
 export const IMPORT_FAMILY_TOBACCO_HINT = "Set Tobacco to Yes to add this to a tobacco family.";
-const PRICING_ON_MESSAGE =
-  "Family pricing is on, so grouping would change these products' prices. Turn family pricing off, or group them in the product editor.";
 
 /** The family a row groups under: an existing container (`id` set) or one this import creates (`id` null). */
 export interface FamilyTarget {
@@ -134,7 +132,7 @@ export class ProductFamilyImportService {
     if (mode === "on") {
       throw new ConflictException({
         code: API_ERROR_CODES.IMPORT_FAMILY_PRICING_ON,
-        message: PRICING_ON_MESSAGE,
+        message: IMPORT_FAMILY_PRICING_ON_MESSAGE,
       });
     }
   }
@@ -168,8 +166,10 @@ export class ProductFamilyImportService {
         if (r.sku) hit = await db.findFirst({ where: { sku: r.sku }, select });
         if (!hit && r.barcode) hit = await db.findFirst({ where: { barcode: r.barcode }, select });
         if (!hit && r.nameCell) {
+          // an export writes a variant's Item Name bare, but a hand-edited file may carry "{Family} - "
+          const bare = stripParentPrefix(r.nameCell, r.family);
           const byName = await db.findMany({
-            where: { name: { equals: r.nameCell, mode: "insensitive" } },
+            where: { name: { equals: bare, mode: "insensitive" } },
             select,
             take: 2,
           });
@@ -715,6 +715,8 @@ export class ProductFamilyImportService {
     fileName?: string;
     counts: Record<string, number>;
     summary?: ImportFamilySummary;
+    /** false when the run crashed part-way: the counts are the ones reached so far. */
+    completed?: boolean;
   }): Promise<void> {
     await this.audit.log({
       tenantId: this.tenant(),
@@ -723,6 +725,7 @@ export class ProductFamilyImportService {
       entityType: "Product",
       meta: {
         fileName: input.fileName ?? null,
+        completed: input.completed ?? true,
         ...input.counts,
         familiesCreated: input.summary?.familiesToCreate.length ?? 0,
         grouped: input.summary?.grouped ?? 0,

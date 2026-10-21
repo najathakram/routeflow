@@ -16,6 +16,10 @@ import { lockProductRow, type CatalogTx } from "./product-catalog-sync";
  */
 export const MIXED_PACKS_KEY = "mixed_packs";
 
+/** SA-823: why the product import refuses to regroup while family pricing is on (the 409 body message). */
+export const IMPORT_FAMILY_PRICING_ON_MESSAGE =
+  "Family pricing is on, so grouping would change these products' prices. Turn family pricing off, or group them in the product editor.";
+
 /** The five columns `getTierPrice` reads, in ladder order. */
 export const FAMILY_PRICE_COLUMNS = [
   "pricePerUnit",

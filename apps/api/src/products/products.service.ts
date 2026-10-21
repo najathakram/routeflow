@@ -118,6 +118,7 @@ import {
   lockFamilyRow,
   propagateFamilyPrice,
   readFamilyPriceMode,
+  IMPORT_FAMILY_PRICING_ON_MESSAGE,
 } from "./family-price";
 import {
   assertValidParent,
@@ -1668,6 +1669,17 @@ export class ProductsService {
           throw new Error(
             "ProductsService.update changed parentProductId without options.reparentVia",
           );
+        }
+        // SA-823: the product import never re-prices. Family pricing turned ON since the import was planned (a queued
+        // apply can run minutes later) refuses the move here, after the locks; the throw rolls the whole move back.
+        if (
+          via === "import" &&
+          (await readFamilyPriceMode(this.featureConfig, tenantId)) === "on"
+        ) {
+          throw new ConflictException({
+            code: API_ERROR_CODES.IMPORT_FAMILY_PRICING_ON,
+            message: IMPORT_FAMILY_PRICING_ON_MESSAGE,
+          });
         }
         await writeFamilyAssigned(tx, {
           tenantId,
