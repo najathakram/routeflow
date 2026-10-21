@@ -451,6 +451,43 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
   } satisfies Prisma.OrderFindManyArgs;
 }
 
+/**
+ * B1262 / SA-838 (e): the returns behind the page's credit-note payments, ONE batched read after the page query. Neither
+ * `Return.creditNoteId` nor `ReturnItem.sourceOrderId` has a Prisma relation, so an INLINE return carried on ANOTHER order and
+ * sold on a page sale is only reachable by the credit note it made. The ids list must be a real, non-empty array: an
+ * undefined `in` would be dropped by Prisma and widen this to every return of the tenant.
+ */
+export function carriedReturnWhere(tenantId: string, creditNoteIds: readonly string[]) {
+  if (!creditNoteIds || creditNoteIds.length === 0) {
+    throw new Error("carriedReturnWhere needs at least one credit note id");
+  }
+  return { tenantId, creditNoteId: { in: [...creditNoteIds] } };
+}
+
+export const carriedReturnSelect = {
+  id: true,
+  creditNoteId: true,
+  orderId: true,
+  kind: true,
+  status: true,
+  refundMethod: true,
+  refundedAt: true,
+  items: {
+    select: { sourceOrderId: true, subtotal: true, taxAmount: true, categoryTax: true },
+  },
+} satisfies Prisma.ReturnSelect;
+
+/** The distinct credit note ids the page's PAID-or-not payments applied (dead invoices included: provenance decides). */
+export function pageCreditNoteIds(rows: readonly TodayOrderRecord[]): string[] {
+  const ids = new Set<string>();
+  for (const o of rows) {
+    for (const i of o.invoices) {
+      for (const p of i.payments) if (p.creditNoteId) ids.add(p.creditNoteId);
+    }
+  }
+  return [...ids];
+}
+
 const num = (v: unknown): number => (v == null ? 0 : Number(v));
 
 // ─── Row ──────────────────────────────────────────────────────────────────────────────────────

@@ -15,6 +15,8 @@ import { PrismaService } from "../../prisma/prisma.service";
 import type { CounterSaleTodayDto } from "./counter-sale-today.dto";
 import {
   TODAYS_SALES_DEFAULT_LIMIT,
+  carriedReturnSelect,
+  carriedReturnWhere,
   counterSalesWhere,
   creditNotesInWindowWhere,
   foldSummary,
@@ -22,6 +24,7 @@ import {
   handOverCandidatesWhere,
   handOverPayments,
   liveCounterSalesWhere,
+  pageCreditNoteIds,
   pageQuery,
   paidOnDaysSalesWhere,
   salePaymentSelect,
@@ -29,6 +32,7 @@ import {
   toHandOverRows,
   toTodaysSaleRow,
   windowReturnsWhere,
+  type ReturnProvenance,
   type TodayOrderRecord,
 } from "./counter-sale-today";
 import { groupWindowPayments } from "./window-payment-groups";
@@ -56,7 +60,8 @@ const badDay = (message: string) =>
  * `invoicePayment.aggregate` (paid on the day's own sales), `creditNote.findMany` (ids created in the window),
  * `invoicePayment.findMany` (the day's POS-mode hand-over candidates, v5-filtered in code; the same rows feed
  * the summary's hand-over line and `handOverRows`, so the rows add no query) and `return.findMany` (a day's few
- * returns). No per-row call.
+ * returns). No per-row call. Plus ONE more read, after the page, only when a page payment applied a credit note: the returns
+ * behind those notes (`carriedReturnWhere`), so an INLINE return carried on another order is found (SA-838 e).
  * Rows and summary are two reads, not one transaction: a sale rung between them can show in one and not the other
  * until the next refetch (accepted; the web refetches both together).
  */
@@ -92,8 +97,19 @@ export class CounterSaleTodayService {
       configuredTaxRatePercent(this.prisma),
     ]);
 
+    // B1262 / SA-838 (e): ONE batched read of the returns behind the page's credit-note payments (an INLINE return carried
+    // on another order is reachable only by its credit note); skipped when no payment applied a credit note
+    const creditNoteIds = pageCreditNoteIds(rows);
+    const carriedReturns: ReturnProvenance[] =
+      creditNoteIds.length === 0
+        ? []
+        : await db.return.findMany({
+            where: carriedReturnWhere(tenantId, creditNoteIds),
+            select: carriedReturnSelect,
+          });
+
     return {
-      data: rows.map((r) => toTodaysSaleRow(r, configuredTaxPercent)),
+      data: rows.map((r) => toTodaysSaleRow(r, configuredTaxPercent, carriedReturns)),
       meta: {
         total,
         page,
