@@ -281,7 +281,10 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for PaymentIdempotencyScope (SA-824, migration 20261021090000_payment_idempotency_key): a brand-new
 // Prisma enum, explicitly LEFT UNMIRRORED: server-only (the scope of a PaymentIdempotencyKey row); no web or mobile
 // code reads or sends it, the clients only send the Idempotency-Key header (116 → 117).
-const PINNED_PRISMA_ENUM_COUNT = 117;
+// Triage for PaymentIdempotencyState (SA-824 race ruling 1, the same unapplied migration folder): a brand-new Prisma
+// enum, explicitly LEFT UNMIRRORED: server-only (CLAIMED / COMPLETED / TOMBSTONED of a key row); the clients read the
+// resolve / by-key body's lowercase `state` ("found" | "tombstoned"), never this enum (117 → 118).
+const PINNED_PRISMA_ENUM_COUNT = 118;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
