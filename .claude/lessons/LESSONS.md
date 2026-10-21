@@ -119,19 +119,19 @@
 
 ## tooling
 
+### L-329 · 2026-10-21 · tooling · an Expo web export can reuse a shared Metro cache and bake another build's EXPO_PUBLIC_* values; export with --clear and assert the bundle
+
+- **Symptom:** a phone proof build for #3553 from a fresh worktree, with `EXPO_PUBLIC_API_URL` and `EXPO_PUBLIC_BUILD_SHA` exported, came out pointing at another lane's API (`localhost:3000`) with an empty build sha.
+- **Root cause:** Metro's transform cache is shared across worktrees on one machine, and a cached transform with an earlier inlined env was reused. The export itself succeeded with no warning.
+- **Lesson:** **Every Expo web export used for a proof or a deploy runs `npx expo export --platform web --clear`, then greps `dist/_expo/static/js/web/*.js` for the exact API base URL and the full build sha before any capture. A substring check like "3310" is not proof: grep the whole value.**
+- **Guard:** none automatic; the sign-in screen's `build <sha7>` (`lib/build-info.ts`) is the on-screen check. Cf. [[L-265]] (stale build output in a proof).
+
 ### L-321 · 2026-10-20 · tooling · `npm ci` rewrites the shared hooks path for every worktree: install with HUSKY=0 and set the hooks path per worktree
 
 - **Symptom:** after an `npm ci` in one worktree, commits and pushes in OTHER worktrees ran the wrong hooks (or none), because `core.hooksPath` pointed at the installing tree.
 - **Root cause:** the `prepare` script (husky) writes `core.hooksPath` into the repository-wide git config, which every linked worktree shares.
 - **Lesson:** **Install in a worktree with `HUSKY=0 npm ci`, and set the hooks path for that tree with `git config --worktree core.hooksPath <dir>` (needs `extensions.worktreeConfig`). Never run a bare `npm ci` or `npx husky` in a linked worktree; read `git config core.hooksPath` back in each tree before the first commit.** `HUSKY=0` is acceptable only as a one-command prefix on the install, never exported (an exported HUSKY=0 disables every hook); `npm ci --ignore-scripts` is equivalent and preferred, and the shared path must read back as the absolute shim.
 - **Guard:** `scripts/check-git-hooks.mjs`; the install line in the lane runbook. Refines archived L-274 and L-254 (their `--ignore-scripts` advice stays valid; this adds the per-worktree fix). Cf. [[L-262]].
-
-### L-316 · 2026-10-18 · tooling · a script whose stdout can be piped ends by setting process.exitCode, never process.exit()
-
-- **Symptom:** `db-lane-script.spec.ts` case 16 failed only on Linux CI (the fixes-4 train): the FULL listing was cut off after 173 of about 307 spec lines with no final `DB-LANE FULL (ratio ...)` line. It passed on Windows.
-- **Root cause:** `scripts/db-lane.mjs` ended with `process.exit(main())`. A Windows pipe writes synchronously; a Linux pipe is asynchronous, so exiting right after `console.log` killed the child with output still buffered. The test's own ratio logic was fine.
-- **Lesson:** **A script whose stdout may be piped (a CLI a spec or another script spawns) sets `process.exitCode = main()` and lets the event loop drain; `process.exit()` right after printing truncates large output on Linux. Prove such a script with an output larger than a 64 KB pipe buffer; a Windows run cannot show the failure.**
-- **Guard:** `db-lane-script.spec.ts` case 12b (a 1,700-spec FULL listing must end with its summary line); it can only fail on Linux CI.
 
 ### L-309 · 2026-10-16 · tooling · a worktree git calls clean can still hold gitignored valuables; check `git status --ignored` before removing it
 
@@ -396,13 +396,6 @@
 - **Lesson:** **Before replacing a fetch-all with a narrower read, list every consumer of that data on the page and name what each needs (distinct values, a few rows, the full set). Swap only where the narrow read serves all of them; keep a deliberate fetch-all with a comment naming the consumer, and give each swap its own revert-able commit.**
 - **Guard:** none automatic; the remaining fetch-alls carry a DELIBERATE comment naming their consumer (products, promotions, purchase-orders, suppliers pages). Cf. [[L-167]].
 
-### L-318 · 2026-10-18 · domain · one editor for a value shown in several places; the other displays are read-only figures that open it
-
-- **Symptom:** a stale Details save restored the old case price after the price grid had saved a new one: two editors wrote the same price from two drafts.
-- **Root cause:** the product page offered the price in the grid, in Details and on the legacy units card, each with its own editable draft, so any of them could write a value it loaded before another saved.
-- **Lesson:** **A value that appears in several places has exactly ONE editor and one draft. Every other appearance is a read-only figure from the served data that opens that editor (a button, plain text when it cannot be edited). Then a stale write cannot happen by construction, and "which place saved last" is not a question.**
-- **Guard:** `units-v2-details-stale-price.spec.ts` (e2e), `k11-l3-floating-editor.spec.ts` (e2e). Cf. [[L-300]].
-
 ### L-310 · 2026-10-16 · domain · every path that destroys a row holding booked stock settles that stock through the cancel's own unwind
 
 - **Symptom:** deleting a live order (pending, confirmed, out for delivery, part delivered), or deleting or purging a customer that owned such orders, left the shelf count down for good; a cancel credited it back, a delete did not.
@@ -493,6 +486,13 @@
 - **Guard:** #2186: `subscribe()` (`subscription-mutation.service.ts` :395-421 at review) was the writer the sweep missed and now calls `emitAddonDelta`. On master, `ADDON_ENABLED/DISABLED` is emitted only in `billing/addon-ledger.ts`. No structural pin yet; propose one beside `mrr-paying-predicate.parity.spec.ts`.
 
 ## security
+
+### L-328 · 2026-10-21 · security · a same-origin form POST under `Referrer-Policy: no-referrer` sends `Origin: null`; an Origin-equals-Host check then refuses every login
+
+- **Symptom:** after the control dashboard set `Referrer-Policy: no-referrer`, every login was refused with 403, although the page and the form were on the same host.
+- **Root cause:** browsers send `Origin: null` on a form POST when the referrer policy is `no-referrer`. The CSRF check compared the `Origin` header with the served host, so the literal "null" never matched (`apps/control/src/http/headers.ts:13`, `originOk` before `POST /login` in `apps/control/src/http/server.ts`).
+- **Lesson:** **A strict Referrer-Policy changes what `Origin` a form POST carries. An Origin-equals-Host check must either accept `Origin: null` only when `Sec-Fetch-Site: same-origin` is also present, or the page must not use `no-referrer` for its own forms. Test the real form submit in a browser, never a hand-built request with a correct Origin.**
+- **Guard:** none automatic yet; prove any CSRF or header change with a browser form submit.
 
 ### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
 
