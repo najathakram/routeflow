@@ -1,4 +1,4 @@
-import { NotFoundException } from "@nestjs/common";
+import { ConflictException, NotFoundException } from "@nestjs/common";
 import { ProductImportJobService } from "./product-import-job.service";
 import { ProductImportProcessor } from "./product-import.processor";
 import { PRODUCT_IMPORT_QUEUE } from "./product-import-job";
@@ -60,7 +60,14 @@ describe("product import background job", () => {
       );
       expect(await svc.status("7")).toMatchObject({ state: "done", result: { created: 1 } });
       queue.getJob.mockResolvedValue(job({ getState: async () => "failed", failedReason: "boom" }));
-      expect(await svc.status("7")).toMatchObject({ state: "failed", error: "boom" });
+      // a code, never the raw message: an unknown reason is the generic code
+      const failed = await svc.status("7");
+      expect(failed).toMatchObject({ state: "failed", errorCode: "IMPORT_JOB_FAILED" });
+      expect(JSON.stringify(failed)).not.toContain("boom");
+      queue.getJob.mockResolvedValue(
+        job({ getState: async () => "failed", failedReason: "WORKSPACE_READ_ONLY" }),
+      );
+      expect(await svc.status("7")).toMatchObject({ errorCode: "WORKSPACE_READ_ONLY" });
       queue.getJob.mockResolvedValue(job({ getState: async () => "waiting" }));
       expect((await svc.status("7")).state).toBe("queued");
     });
@@ -166,10 +173,30 @@ describe("product import background job", () => {
       "a %s workspace gets no writes: the job fails before importProducts runs",
       async (status) => {
         const { proc, importService } = build(status);
-        await expect(proc.handle(jobWith() as never)).rejects.toThrow(/can't make changes/i);
+        await expect(proc.handle(jobWith() as never)).rejects.toThrow(/^WORKSPACE_READ_ONLY$/);
         expect(importService.importProducts).not.toHaveBeenCalled();
       },
     );
+
+    it("a refusal from the import (an HTTP exception with a code) fails the job with THAT code, not its text", async () => {
+      const { proc, importService } = build();
+      importService.importProducts.mockRejectedValueOnce(
+        new ConflictException({ code: "IMPORT_FAMILY_PRICING_ON", message: "raw sentence" }),
+      );
+      await expect(proc.handle(jobWith() as never)).rejects.toThrow(/^IMPORT_FAMILY_PRICING_ON$/);
+    });
+
+    it("any other failure is the generic code and never leaks its message", async () => {
+      const { proc, importService } = build();
+      importService.importProducts.mockRejectedValueOnce(new Error("secret db text"));
+      await expect(proc.handle(jobWith() as never)).rejects.toThrow(/^IMPORT_JOB_FAILED$/);
+    });
+
+    it("a failed job.update (the file clean-up) does not fail an applied job", async () => {
+      const { proc } = build();
+      const j = jobWith({ update: jest.fn().mockRejectedValue(new Error("redis down")) });
+      await expect(proc.handle(j as never)).resolves.toEqual({ created: 1 });
+    });
 
     it("a missing tenant row gets no writes either", async () => {
       const { proc, importService } = build(null);

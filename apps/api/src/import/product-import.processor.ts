@@ -5,7 +5,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { acceptsAutomatedWrites } from "../tenant/tenant-automation";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { ImportService } from "./import.service";
-import type { ProductImportJobData } from "./product-import-job";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { productImportJobErrorCode, type ProductImportJobData } from "./product-import-job";
 
 /**
  * SA-823 section 5: runs a queued family-import apply. It calls the SAME importProducts a synchronous apply does, under the
@@ -36,23 +37,37 @@ export class ProductImportProcessor {
     });
     if (!tenant || !acceptsAutomatedWrites(tenant.status)) {
       this.logger.warn(`Refusing product-import job ${job.id}: tenant ${tenantId} takes no writes`);
-      throw new Error("This workspace can't make changes right now, so the import didn't run.");
+      throw new Error(API_ERROR_CODES.WORKSPACE_READ_ONLY);
     }
     // report only when the percent moves (every 1%), with the running counts, so a failed job still shows how far it got
     let lastPercent = -1;
-    const result = await this.tenantCtx.run(tenantId, () =>
-      this.importService.importProducts(Buffer.from(fileBase64, "base64"), userId, {
-        fileName,
-        onProgress: (done, total, counts) => {
-          const percent = total > 0 ? Math.round((done * 100) / total) : 100;
-          if (percent === lastPercent) return;
-          lastPercent = percent;
-          void job.progress({ percent, ...counts });
-        },
-      }),
-    );
-    // the file is no longer needed once the job is done; keep the result, drop the bytes
-    await job.update({ ...job.data, fileBase64: "" });
+    let result: unknown;
+    try {
+      result = await this.tenantCtx.run(tenantId, () =>
+        this.importService.importProducts(Buffer.from(fileBase64, "base64"), userId, {
+          fileName,
+          onProgress: (done, total, counts) => {
+            const percent = total > 0 ? Math.round((done * 100) / total) : 100;
+            if (percent === lastPercent) return;
+            lastPercent = percent;
+            void job.progress({ percent, ...counts });
+          },
+        }),
+      );
+    } catch (e) {
+      // B980: the job fails with a CODE the page can map to fixed copy; the message stays in the log
+      this.logger.warn(`product-import job ${job.id} failed: ${(e as Error).message}`);
+      throw new Error(productImportJobErrorCode(e));
+    }
+    // the file is no longer needed once the job is done; keep the result, drop the bytes. A Redis error here must not
+    // turn an applied job into a failed one.
+    try {
+      await job.update({ ...job.data, fileBase64: "" });
+    } catch (e) {
+      this.logger.warn(
+        `product-import job ${job.id}: could not clear the stored file: ${(e as Error).message}`,
+      );
+    }
     return result;
   }
 }

@@ -48,6 +48,8 @@ export const API_ERROR_CODES = {
   FAMILY_NOT_FOUND: "FAMILY_NOT_FOUND",
   IMPORT_FAMILY_PRICING_ON: "IMPORT_FAMILY_PRICING_ON",
   IMPORT_FAMILY_TOO_MANY_ROWS: "IMPORT_FAMILY_TOO_MANY_ROWS",
+  WORKSPACE_READ_ONLY: "WORKSPACE_READ_ONLY",
+  IMPORT_JOB_FAILED: "IMPORT_JOB_FAILED",
   /** 409 from DELETE /products/bulk and /products/clear-all: a unique violation while deleting; nothing was deleted, reload and retry. */
   PRODUCT_DELETE_CONFLICT: "PRODUCT_DELETE_CONFLICT",
   /** 409 from PATCH/DELETE /products/:id: a family still has ACTIVE variants; body carries `variantCount`. Resend with `confirmCascade: true` to deactivate them with it. */
