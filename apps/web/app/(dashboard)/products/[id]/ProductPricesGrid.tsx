@@ -61,6 +61,44 @@ export function useContainsColumn(): boolean {
   }, []);
   return wide;
 }
+/**
+ * K14 FE1: the grid loads after the page, and "Loading prices…" was one line: when the rows arrived the card grew by
+ * ~870 px at 390 and pushed everything below it (CLS 0.11). While loading it holds roughly its final height instead:
+ * one placeholder per unit (the count the page already knows: the piece, plus the pack when the product has one; the
+ * count of the last load of this product when we have one), a phone card below md and a table row from md.
+ */
+const seenRowCount = new Map<string, number>();
+const estimateRowCount = (p: { unitsPerBox?: number | null }) =>
+  p.unitsPerBox != null && p.unitsPerBox > 1 ? 2 : 1;
+
+function GridSkeleton({ count }: { count: number }) {
+  const n = Array.from({ length: count }, (_, i) => i);
+  return (
+    <div role="status" aria-busy="true">
+      <span className="sr-only">Loading prices…</span>
+      <div className="space-y-3 md:hidden" aria-hidden="true">
+        {n.map((i) => (
+          <div
+            key={i}
+            data-testid="prices-skeleton-card"
+            className={`h-[17.5rem] rounded-lg border bg-surface-raised/60 ${FRAME_BORDER}`}
+          />
+        ))}
+      </div>
+      <div className={`hidden rounded-lg border md:block ${FRAME_BORDER}`} aria-hidden="true">
+        <div className="h-9 border-b border-surface-border" />
+        {n.map((i) => (
+          <div
+            key={i}
+            data-testid="prices-skeleton-table"
+            className="h-[4.75rem] border-b border-surface-border bg-surface-raised/40 last:border-b-0"
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // K11-10: the pinned Unit column. Bounded, so a long reason cannot widen it; a hairline shows while the table is scrolled.
 const UNIT_CELL =
   "sticky left-0 z-10 min-w-[7rem] max-w-[10rem] whitespace-normal bg-white px-2 text-left group-data-[scrolled=true]:shadow-[inset_-1px_0_0_rgba(15,23,42,0.15)]";
@@ -523,11 +561,7 @@ function PricesGridBody({
   const showMsrp = product.msrp != null && product.msrp !== "" && hasMsrp;
 
   if (grid.isLoading) {
-    return (
-      <p role="status" className="text-sm text-navy/60">
-        Loading prices…
-      </p>
-    );
+    return <GridSkeleton count={seenRowCount.get(product.id) ?? estimateRowCount(product)} />;
   }
   if (grid.isError || !grid.data) {
     return <p className="text-sm text-red-600">Prices could not be loaded.</p>;
@@ -538,6 +572,7 @@ function PricesGridBody({
   }
 
   const served = grid.data.rows;
+  seenRowCount.set(product.id, served.length);
   const rows = [...(edit?.rows ?? served)].sort((a, b) => b.factor - a.factor);
   const ascending = [...rows].reverse();
   const baseLabel = grid.data.rows.find((x) => x.kind === "base")?.label;
