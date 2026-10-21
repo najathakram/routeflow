@@ -31,6 +31,8 @@ import {
   type FamilyRowInput,
 } from "./product-family-import.service";
 import { roundMoney, roundUnitCost } from "@routeflow/pricing";
+import { ProductImportJobService } from "./product-import-job.service";
+import { IMPORT_FAMILY_SYNC_MAX_ROWS } from "./product-import-job";
 import {
   ImportRowRefused,
   importPaymentRefusal,
@@ -237,6 +239,8 @@ export class ImportService {
     private readonly sellingRestrictions: SellingRestrictionsService,
     // SA-823 (row 655): the Family / Variant name / Product ID columns of the product import.
     @Optional() private readonly familyImport?: ProductFamilyImportService,
+    // SA-823 section 5: the queue a large family-import apply runs on (absent in specs that never regroup in bulk).
+    @Optional() private readonly productImportJobs?: ProductImportJobService,
   ) {}
 
   private parseCsv(buffer: Buffer): any[] {
@@ -2492,7 +2496,14 @@ export class ImportService {
   async importProducts(
     buffer: Buffer,
     userId: string,
-    opts?: { dryRun?: boolean; fileName?: string },
+    opts?: {
+      dryRun?: boolean;
+      fileName?: string;
+      /** The HTTP apply sets this: a regrouping apply over IMPORT_FAMILY_SYNC_MAX_ROWS is queued instead of run inline. */
+      allowBackground?: boolean;
+      /** Rows walked so far / total (the background job reports it as progress). */
+      onProgress?: (done: number, total: number) => void;
+    },
   ): Promise<{
     imported: number;
     created: number;
@@ -2507,6 +2518,8 @@ export class ImportService {
     dryRun: boolean;
     /** SA-823: the family header block, present only when the file has a Family column. */
     families?: ImportFamilySummary;
+    /** SA-823 section 5: set INSTEAD of a result when the apply was queued; poll GET /import/products/jobs/:id. */
+    queued?: { jobId: string; rows: number };
   }> {
     const dryRun = !!opts?.dryRun;
     const rawRows = this.parseCsv(buffer);
@@ -2583,6 +2596,7 @@ export class ImportService {
       return cells;
     });
     const familyRowNumbers = new Set<number>();
+    let famRegroups = 0;
     let famPlan: FamilyPlan | null = null;
     if (hasFamilyColumn) {
       const familyImport = this.familyImport!;
@@ -2617,10 +2631,39 @@ export class ImportService {
             d.target.id === null ||
             d.existing.parentProductId !== d.target.id ||
             d.existing.name !== d.label);
-        if ([...famPlan.decisions.values()].some(changesFamily)) {
+        famRegroups = [...famPlan.decisions.values()].filter(changesFamily).length;
+        if (famRegroups > 0) {
           await familyImport.assertPricingOff();
         }
       }
+    }
+    // SA-823 section 5: a big regrouping apply (~95 ms a row measured) runs as a background job; the gates above already
+    // answered synchronously, the preview is always synchronous, and the job re-plans live from the stored file.
+    if (
+      !dryRun &&
+      opts?.allowBackground &&
+      famRegroups > IMPORT_FAMILY_SYNC_MAX_ROWS &&
+      this.productImportJobs
+    ) {
+      const { jobId } = await this.productImportJobs.enqueue({
+        userId,
+        fileName: opts.fileName,
+        buffer,
+      });
+      return {
+        imported: 0,
+        created: 0,
+        updated: 0,
+        unchanged: 0,
+        skipped: 0,
+        errors: [],
+        rows: [],
+        skippedRows: [],
+        warnings: [],
+        unknownColumns: resolved.unknownColumns,
+        dryRun: false,
+        queued: { jobId, rows: famRegroups },
+      };
     }
     const nameCounts = new Map<string, number>();
     for (const [idx, p] of parsedRows.entries()) {
@@ -2651,6 +2694,7 @@ export class ImportService {
     let anyWrite = false;
 
     for (let i = 0; i < rawRows.length; i++) {
+      opts?.onProgress?.(i, rawRows.length);
       const rowNumber = i + 1;
       const parsed = parsedRows[i];
       const name = (parsed.values.name as string | undefined)?.trim();
@@ -3066,6 +3110,7 @@ export class ImportService {
       }
     }
 
+    opts?.onProgress?.(rawRows.length, rawRows.length);
     // SA-823: an empty family this run created is deactivated in the same run and reported.
     let families: ImportFamilySummary | undefined;
     if (famPlan && this.familyImport) {

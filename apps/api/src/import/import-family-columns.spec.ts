@@ -8,6 +8,8 @@ import {
   IMPORT_FAMILY_MAX_ROWS,
   ProductFamilyImportService,
 } from "./product-family-import.service";
+import { ProductImportJobService } from "./product-import-job.service";
+import { IMPORT_FAMILY_SYNC_MAX_ROWS } from "./product-import-job";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
@@ -105,6 +107,7 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
   };
   let featureConfig: { getEffectiveMode: jest.Mock };
   let auditService: { log: jest.Mock };
+  let jobs: { enqueue: jest.Mock };
 
   const tenantProduct = () => ({
     findFirst: jest.fn(async (a: any) => {
@@ -253,6 +256,7 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
     };
     featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("off") };
     auditService = { log: jest.fn().mockResolvedValue(undefined) };
+    jobs = { enqueue: jest.fn(async () => ({ jobId: "job-1" })) };
 
     const mod = await Test.createTestingModule({
       providers: [
@@ -267,6 +271,7 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
         { provide: ProductFamiliesService, useValue: families },
         { provide: FeatureConfigService, useValue: featureConfig },
         { provide: AuditService, useValue: auditService },
+        { provide: ProductImportJobService, useValue: jobs },
         { provide: SellingRestrictionsService, useValue: {} },
       ],
     }).compile();
@@ -1089,6 +1094,70 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
     expect(families.createFamilyContainer.mock.calls[0][1]).toMatchObject({
       category: "Beta Cat",
       pricePerUnit: "2.00",
+    });
+  });
+
+  describe("SA-823 section 5: a large regrouping apply runs as a background job (MUST-2, measured ~95 ms/row)", () => {
+    const regroupFile = (n: number) => {
+      rows.push(mk({ id: "fam", name: "Acme Cola", kind: "FAMILY" }));
+      for (let i = 0; i < n; i++) rows.push(mk({ id: `bg${i}`, name: `Bg ${i}`, sku: `BG${i}` }));
+      return csv(...Array.from({ length: n }, (_, i) => `,BG${i},,,Acme Cola,V${i},,`));
+    };
+    const apply = (b: Buffer, opts: Record<string, unknown> = {}) =>
+      service.importProducts(b, "user-1", { fileName: "f.csv", allowBackground: true, ...opts });
+
+    it("an apply over the sync threshold returns a job, not a result, and writes nothing", async () => {
+      const r: any = await apply(regroupFile(IMPORT_FAMILY_SYNC_MAX_ROWS + 1));
+      expect(r.queued).toEqual({ jobId: "job-1", rows: IMPORT_FAMILY_SYNC_MAX_ROWS + 1 });
+      expect(r.dryRun).toBe(false);
+      expect(r.created + r.updated + r.skipped).toBe(0);
+      expect(jobs.enqueue).toHaveBeenCalledTimes(1);
+      expect(jobs.enqueue.mock.calls[0][0]).toMatchObject({ userId: "user-1", fileName: "f.csv" });
+      expect(Buffer.isBuffer(jobs.enqueue.mock.calls[0][0].buffer)).toBe(true);
+      expect(productsService.assignToParent).not.toHaveBeenCalled();
+      expect(auditService.log).not.toHaveBeenCalled();
+    });
+
+    it("the preview of the same file stays synchronous", async () => {
+      const r: any = await apply(regroupFile(IMPORT_FAMILY_SYNC_MAX_ROWS + 1), { dryRun: true });
+      expect(r.queued).toBeUndefined();
+      expect(r.rows).toHaveLength(IMPORT_FAMILY_SYNC_MAX_ROWS + 1);
+      expect(jobs.enqueue).not.toHaveBeenCalled();
+    });
+
+    it("an apply at the threshold runs inside the request", async () => {
+      const r: any = await apply(regroupFile(IMPORT_FAMILY_SYNC_MAX_ROWS));
+      expect(r.queued).toBeUndefined();
+      expect(r.updated).toBe(IMPORT_FAMILY_SYNC_MAX_ROWS);
+      expect(jobs.enqueue).not.toHaveBeenCalled();
+    });
+
+    it("the job's own run (no allowBackground) applies a large file in one go", async () => {
+      const r: any = await service.importProducts(
+        regroupFile(IMPORT_FAMILY_SYNC_MAX_ROWS + 1),
+        "user-1",
+        {
+          fileName: "f.csv",
+        },
+      );
+      expect(r.queued).toBeUndefined();
+      expect(r.updated).toBe(IMPORT_FAMILY_SYNC_MAX_ROWS + 1);
+    });
+
+    it("the file-level gates are still answered synchronously: family pricing ON is a 409, nothing queued", async () => {
+      featureConfig.getEffectiveMode.mockResolvedValue("on");
+      await expect(apply(regroupFile(IMPORT_FAMILY_SYNC_MAX_ROWS + 1))).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(jobs.enqueue).not.toHaveBeenCalled();
+    });
+
+    it("onProgress is called with rows done and total", async () => {
+      const seen: Array<[number, number]> = [];
+      await service.importProducts(regroupFile(3), "user-1", {
+        onProgress: (done: number, total: number) => seen.push([done, total]),
+      });
+      expect(seen[seen.length - 1]).toEqual([3, 3]);
     });
   });
 
