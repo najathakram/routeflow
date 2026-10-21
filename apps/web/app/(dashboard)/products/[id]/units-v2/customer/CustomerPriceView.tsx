@@ -263,11 +263,21 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
   React.useEffect(() => {
     if (!focusChosen.current || !chosenRef.current) return;
     focusChosen.current = false;
-    chosenRef.current.focus({ preventScroll: true });
+    chosenRef.current.focus();
+  });
+  // K14 F09: after Choose another customer the picker is new; focus its search so typing continues.
+  const focusSearch = React.useRef(false);
+  React.useEffect(() => {
+    if (!focusSearch.current) return;
+    const el = document.getElementById("units-v2-cust-search");
+    if (!el) return;
+    focusSearch.current = false;
+    el.focus();
   });
 
   const choose = (c: { id: string; name: string } | null) => {
     focusChosen.current = c !== null;
+    focusSearch.current = c === null;
     lastChoice = c;
     setPicked(c);
     setPage(1);

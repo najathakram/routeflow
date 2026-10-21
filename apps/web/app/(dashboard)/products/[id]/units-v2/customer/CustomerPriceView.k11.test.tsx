@@ -332,3 +332,28 @@ describe("K14 F12: a pick leaves focus on the chosen customer, with a visible ri
     expect(document.activeElement).not.toBe(screen.getByTestId(T.chosen));
   });
 });
+
+describe("K14 F09 + P11: focus follows Choose another customer, and never scrolls under the strip", () => {
+  it("Choose another customer puts focus in the customer search, with a visible ring", async () => {
+    at("/products/p1?customer=c1");
+    render(<CustomerPriceView productId="p1" />);
+    fireEvent.click(screen.getByTestId(T.change));
+    const search = await screen.findByTestId(T.search);
+    await waitFor(() => expect(document.activeElement).toBe(search));
+    expect(search.className).toContain("focus-visible:outline");
+  });
+
+  it("the chosen line is focused WITHOUT preventScroll (scroll-margin keeps it below the strip)", async () => {
+    at("/products/p1");
+    const focus = jest.spyOn(HTMLElement.prototype, "focus");
+    render(<CustomerPriceView productId="p1" />);
+    act(() => screen.getByTestId(T.search).focus());
+    focus.mockClear();
+    fireEvent.click(screen.getByTestId(T.result("c1")));
+    const chosen = await screen.findByTestId(T.chosen);
+    await waitFor(() => expect(document.activeElement).toBe(chosen));
+    const call = focus.mock.instances.findIndex((el) => el === chosen);
+    expect(focus.mock.calls[call]?.[0]).toBeUndefined();
+    focus.mockRestore();
+  });
+});
