@@ -22,6 +22,11 @@ describe("summarizeQtyByUnit", () => {
     expect(summarizeQtyByUnit([])).toBe("0");
   });
   it("a named unit line (Pallet) keeps its own label", () => {
-    expect(summarizeQtyByUnit([{ qty: 2, unitLabel: "Pallet" }])).toBe("2 Pallets");
+    expect(
+      summarizeQtyByUnit([
+        // Real stored shape (unit-line-build.ts): boxes = count, pieces = 0, qty = count x factor.
+        { qty: 96, boxes: 2, pieces: 0, unitsPerBox: 48, unitLabel: "Pallet" },
+      ]),
+    ).toBe("2 Pallets");
   });
 });
