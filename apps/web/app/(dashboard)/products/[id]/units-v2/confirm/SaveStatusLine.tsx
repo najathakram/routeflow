@@ -110,10 +110,10 @@ function reduce(s: State, a: Action): State {
  * left/width and the gap under the shell's scroller.
  */
 const PINNED_CLASS =
-  "fixed z-30 flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-white/95 px-4 py-3 text-[13px] text-navy backdrop-blur focus:outline-none";
+  "fixed z-30 flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-white/95 px-4 py-3 text-[13px] text-navy backdrop-blur outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500";
 const FADING_CLASS = " opacity-0 transition-opacity duration-150 motion-reduce:transition-none";
 const SETTLED_CLASS =
-  "mt-2 flex flex-wrap items-center gap-2 rounded-ctl border border-line bg-surface-raised px-3 py-2 text-[13px] text-navy focus:outline-none";
+  "mt-2 flex flex-wrap items-center gap-2 rounded-ctl border border-line bg-surface-raised px-3 py-2 text-[13px] text-navy outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500";
 
 interface PinnedBox {
   bottom: number;
