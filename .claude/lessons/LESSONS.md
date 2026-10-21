@@ -123,7 +123,7 @@
 
 - **Symptom:** after an `npm ci` in one worktree, commits and pushes in OTHER worktrees ran the wrong hooks (or none), because `core.hooksPath` pointed at the installing tree.
 - **Root cause:** the `prepare` script (husky) writes `core.hooksPath` into the repository-wide git config, which every linked worktree shares.
-- **Lesson:** **Install in a worktree with `HUSKY=0 npm ci`, and set the hooks path for that tree with `git config --worktree core.hooksPath <dir>` (needs `extensions.worktreeConfig`). Never run a bare `npm ci` or `npx husky` in a linked worktree; read `git config core.hooksPath` back in each tree before the first commit.**
+- **Lesson:** **Install in a worktree with `HUSKY=0 npm ci`, and set the hooks path for that tree with `git config --worktree core.hooksPath <dir>` (needs `extensions.worktreeConfig`). Never run a bare `npm ci` or `npx husky` in a linked worktree; read `git config core.hooksPath` back in each tree before the first commit.** `HUSKY=0` is acceptable only as a one-command prefix on the install, never exported (an exported HUSKY=0 disables every hook); `npm ci --ignore-scripts` is equivalent and preferred, and the shared path must read back as the absolute shim.
 - **Guard:** `scripts/check-git-hooks.mjs`; the install line in the lane runbook. Refines archived L-274 and L-254 (their `--ignore-scripts` advice stays valid; this adds the per-worktree fix). Cf. [[L-262]].
 
 ### L-316 · 2026-10-18 · tooling · a script whose stdout can be piped ends by setting process.exitCode, never process.exit()
