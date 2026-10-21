@@ -176,6 +176,13 @@ it("no hand-overs: the section is hidden and the Summary has no hand-overs row (
   expect(within(dialog).queryByRole("list", { name: "Pickup hand-overs" })).toBeNull();
 });
 
+it("hand-overs with a $0.00 total still show the row (count > 0)", async () => {
+  serve(page({ count: 2, total: 0 }, TWO));
+  const dialog = await openSheet();
+  fireEvent.click(await within(dialog).findByRole("button", { name: "Show all figures" }));
+  expect(await within(dialog).findByTestId("today-hand-overs")).toHaveTextContent("2 · $0.00");
+});
+
 it("an older API (no handOverRows): no section, the Summary line still shows the count and total", async () => {
   serve(page({ count: 2, total: 45 }));
   const dialog = await openSheet();

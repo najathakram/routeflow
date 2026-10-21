@@ -108,6 +108,8 @@ interface SummaryRow {
   value: string;
   testId: string;
   always?: boolean;
+  /** a row that is not an amount (hand-overs): shown while it has any count, even at $0.00 */
+  keep?: boolean;
   note?: boolean;
 }
 
@@ -167,6 +169,7 @@ function Summary({
     row("in-total", "Money in", s.moneyIn.total, { always: true }),
     row("hand-overs", "Pickup hand-overs", ho.total, {
       value: handOverFigure(ho),
+      keep: ho.count > 0,
       note: handOverNote && ho.count > 0,
     }),
     row("store-credit-used", "Store credit used", s.storeCreditUsed),
@@ -204,7 +207,9 @@ function Summary({
     ),
   ];
   // The week view lists every row as before. The Today view drops a row that is $0 to the cent, unless it is a default row.
-  const extras = collapsible ? rows.filter((x) => !x.always && roundMoney(x.amount) !== 0) : [];
+  const extras = collapsible
+    ? rows.filter((x) => !x.always && (x.keep || roundMoney(x.amount) !== 0))
+    : [];
   const shown = collapsible
     ? rows.filter((x) => x.always || (showAll && extras.includes(x)))
     : rows;
