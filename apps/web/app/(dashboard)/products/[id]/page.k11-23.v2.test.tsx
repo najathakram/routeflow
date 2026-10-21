@@ -54,6 +54,7 @@ jest.mock("@/lib/api/products", () => ({
 jest.mock("@/lib/api/units-v2", () => ({
   ...jest.requireActual("@/lib/api/units-v2"),
   usePricesV2Enabled: () => true,
+  usePricesV2Pending: () => false,
 }));
 jest.mock("@/lib/api/cost-history", () => ({ useCostHistory: () => ({ data: [] }) }));
 jest.mock("@/lib/api/tracked-categories", () => ({

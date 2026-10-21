@@ -76,7 +76,7 @@ import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { PackSizePrompt } from "@/components/PackSizePrompt";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
-import { usePricesV2Enabled } from "@/lib/api/units-v2";
+import { usePricesV2Enabled, usePricesV2Pending } from "@/lib/api/units-v2";
 import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
 import { ProductImagesEmpty } from "./ProductImagesEmpty";
@@ -409,6 +409,7 @@ export default function ProductDetailPage() {
   const hasTobaccoAddon = useHasAddon(TOBACCO_ADDON);
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
   const v2 = usePricesV2Enabled({ enabled: isStaff }) && isStaff;
+  const v2Pending = usePricesV2Pending({ enabled: isStaff });
   // The grid shell mounts the default order unit, Name / Contains, Add and Remove only where this is true; only there does
   // the Units & prices card stop editing (read-only), so no role or product is left without a control.
   const unitStructure = useUnitStructureAllowed(product ?? {});
@@ -455,7 +456,7 @@ export default function ProductDetailPage() {
     setTitle(product?.name ?? "Product");
   }, [setTitle, product?.name]);
 
-  if (isLoading) {
+  if (isLoading || v2Pending) {
     return <div className="flex items-center justify-center p-12 text-navy/70">Loading...</div>;
   }
 
@@ -473,7 +474,6 @@ export default function ProductDetailPage() {
   const priceNumber = parseFloat(String(product.pricePerUnit));
   const currentStock = Number(product.currentStock ?? 0);
   const stockStatus = getStockStatus(currentStock, product.isActive, product.kind);
-  const v2Family = v2 && product.kind === "FAMILY";
   /** K11-23: the prices region is its own grid item, right after Details in the DOM. */
   const pricingSplit = v2 && product.kind !== "FAMILY";
   // K11-20c: on a product whose prices the window can edit (not a family, recipe or variant), Details shows its
@@ -1852,27 +1852,29 @@ export default function ProductDetailPage() {
                         )}
                       </>
                     ) : (
-                      <p className="text-sm text-navy/30">—</p>
+                      <p className="text-sm text-navy/60">Not set</p>
                     )}
                   </div>
 
-                  <div className="mt-5 border-t border-surface-border pt-4">
-                    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                      Description
-                    </p>
-                    {isEditing ? (
-                      <textarea
-                        value={(editDraft.description as string) ?? ""}
-                        onChange={(e) =>
-                          setEditDraft((d) => ({ ...d, description: e.target.value }))
-                        }
-                        rows={3}
-                        className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      />
-                    ) : (
-                      <p className="text-sm text-navy/80">{product.description}</p>
-                    )}
-                  </div>
+                  {(isEditing || product.description) && (
+                    <div className="mt-5 border-t border-surface-border pt-4">
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                        Description
+                      </p>
+                      {isEditing ? (
+                        <textarea
+                          value={(editDraft.description as string) ?? ""}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({ ...d, description: e.target.value }))
+                          }
+                          rows={3}
+                          className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      ) : (
+                        <p className="text-sm text-navy/80">{product.description}</p>
+                      )}
+                    </div>
+                  )}
                   {!isFamily && merchandising}
                 </DetailsMore>
               </div>
@@ -2381,7 +2383,7 @@ export default function ProductDetailPage() {
             }
             bottom={
               <>
-                {!v2Family && (
+                {!cardRo && (
                   <ProductUnitsCard product={product} hideAddForm={v2} readOnly={cardRo} />
                 )}
 

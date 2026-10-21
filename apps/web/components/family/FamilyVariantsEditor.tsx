@@ -196,7 +196,9 @@ export function FamilyVariantsEditor({
       data-testid="family-variants-editor"
     >
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-navy">Variants</h3>
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+          Variants
+        </h3>
         {canEdit && !editing && (
           <Button size="sm" variant="secondary" onClick={begin}>
             Edit variants

@@ -169,7 +169,7 @@ export function PriceEditBar({
       className={
         windowed
           ? "bg-white"
-          : `sticky z-30 mt-4 rounded-lg border bg-white/95 px-4 py-3 backdrop-blur ${FRAME_BORDER}`
+          : `sticky z-30 mt-4 rounded-lg border bg-white px-4 py-3 shadow-card ${FRAME_BORDER}`
       }
     >
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -193,7 +193,9 @@ export function PriceEditBar({
           ) : (
             // K11-18: the wider "Finish Change prices first." link would squeeze this onto two lines at phone width
             // (+4 px of bar height); beside the open panel it is stale anyway, so below sm it is read, not shown.
-            <span className={changePricesOpen ? "max-sm:sr-only" : undefined}>
+            // K14 P08: while Change prices is open its own panel and the inline hint carry the status, so the bar
+            // does not add a third "Nothing changed yet".
+            <span className={changePricesOpen ? "sr-only" : undefined}>
               {d.count === 0
                 ? "Nothing changed yet"
                 : countLine(d.count, d.appliedLead, d.appliedFollows)}
@@ -261,7 +263,7 @@ export function PriceEditBar({
             <button
               type="button"
               onClick={() => document.getElementById(`change-panel${sfx}`)?.focus()}
-              className="rounded text-sm font-medium text-navy hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
+              className="rounded text-sm font-normal text-navy/80 hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
             >
               {FINISH_FIRST}
             </button>

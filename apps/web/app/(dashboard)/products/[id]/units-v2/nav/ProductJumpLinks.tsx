@@ -241,7 +241,17 @@ export function ProductJumpLinks({ reserveSpace = false }: { reserveSpace?: bool
         if (heldRef.current) return;
         const on = sections.find((s) => visible.get(s.hrefId));
         if (on) setCurrent(on.id);
-        else if ([...visible.values()].every((v) => !v)) setCurrent(null);
+        else if ([...visible.values()].every((v) => !v)) {
+          // K14 P14: no heading is inside the band, but a long section is still in view once its heading has scrolled
+          // above the strip: the last heading passed keeps its pill. Nothing passed yet (page top) = no pill.
+          const bandTop =
+            (document.getElementById("main-content")?.getBoundingClientRect().top ?? 0) + stripH;
+          const passed = sections.filter((s) => {
+            const el = document.getElementById(s.hrefId);
+            return el ? el.getBoundingClientRect().top < bandTop : false;
+          });
+          setCurrent(passed.length ? passed[passed.length - 1].id : null);
+        }
       },
       // The page scrolls inside #main-content, so that is the observer's root (null, the viewport, without it).
       { root: document.getElementById("main-content"), rootMargin: `${-stripH}px 0px -60% 0px` },
@@ -466,7 +476,7 @@ export function ProductJumpLinks({ reserveSpace = false }: { reserveSpace?: bool
       ref={navRef}
       data-testid="units-v2-jump"
       aria-label="On this page"
-      className="sticky top-0 z-10 w-full border-b border-surface-border bg-surface"
+      className="sticky top-0 z-20 w-full border-b border-surface-border bg-surface"
     >
       <style>{SCOPED_CSS}</style>
       <div

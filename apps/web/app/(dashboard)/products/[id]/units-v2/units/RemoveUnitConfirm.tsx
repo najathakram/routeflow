@@ -165,7 +165,7 @@ export function RemoveUnitControl({
         {`Remove ${unit.label}`}
       </Button>
       {dirty && (
-        <p id={hintId} className="text-xs text-navy/70">
+        <p id={hintId} className="sr-only">
           {DIRTY_HINT}
         </p>
       )}

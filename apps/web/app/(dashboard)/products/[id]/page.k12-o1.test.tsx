@@ -94,6 +94,7 @@ jest.mock("@/lib/auth-context", () => ({
 jest.mock("@/lib/api/units-v2", () => ({
   ...jest.requireActual("@/lib/api/units-v2"),
   usePricesV2Enabled: () => flagOn,
+  usePricesV2Pending: () => false,
 }));
 jest.mock("@/lib/api/products", () => {
   const idle = () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false });
