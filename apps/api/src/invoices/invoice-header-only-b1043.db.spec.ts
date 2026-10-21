@@ -399,9 +399,12 @@ describeDb("header-only invoice PATCH on the one builder - real Postgres (B1043/
     expect(after.map((r) => r.id)).toEqual([ledger.id]);
   });
 
-  it("B296 pin (Lead ruling B): a fresh draft with a >4-decimal rate is 409 on a header-only PATCH, never a silent re-tax; re-saving its lines recovers it", async () => {
-    // create() taxes with the UNROUNDED rate (0.08875 -> 88.75 on $1,000) while InvoiceItem.taxRate is
-    // Decimal(5,4) (0.0888 -> 88.80). SA-761 T-1 (sitting 4) widens the column and retires this pin.
+  it("B296 pin (SA-814 §3, post-widen): a fresh draft with a >4-decimal rate keeps it on the line and BOTH recomputes reproduce the stored tax", async () => {
+    // Before the sitting-4 widen InvoiceItem.taxRate was Decimal(5,4) (0.08875 -> 0.0888 -> 88.80), so the lines
+    // could not reproduce the unrounded 88.75 create() stores and the one guard (stored-tax-state.ts) refused
+    // every recompute with 409 INVOICE_TAX_STATE_STALE. 20261020090200_invoice_tax_rate_widen makes it
+    // DECIMAL(9,6): the line keeps 0.08875, reproduces 88.75, and neither recompute is refused or re-taxes.
+    // Asserts the stored values, never message text.
     const s = await seed("b296");
     const created: any = await run(s.tenantId, () =>
       invoicesService.create({
@@ -411,15 +414,18 @@ describeDb("header-only invoice PATCH on the one builder - real Postgres (B1043/
     );
     const stored = await reload(created.id);
     expect(Number(stored!.taxAmount)).toBe(88.75);
+    expect(Number(stored!.total)).toBe(1088.75);
     const line = (await prisma.invoiceItem.findMany({ where: { invoiceId: created.id } }))[0];
-    expect(Number(line.taxRate)).toBe(0.0888);
+    expect(Number(line.taxRate)).toBe(0.08875);
 
-    await expect(
-      run(s.tenantId, () => invoicesService.update(created.id, { discount: 1 })),
-    ).rejects.toMatchObject({ status: 409, response: { code: "INVOICE_TAX_STATE_STALE" } });
-    expect(Number((await reload(created.id))!.discount)).toBe(0);
+    // A header-only PATCH: accepted; only discount and total move, the tax stays the stored 88.75.
+    await run(s.tenantId, () => invoicesService.update(created.id, { discount: 1 }));
+    const afterHeader = await reload(created.id);
+    expect(Number(afterHeader!.taxAmount)).toBe(88.75);
+    expect(Number(afterHeader!.discount)).toBe(1);
+    expect(Number(afterHeader!.total)).toBe(1087.75);
 
-    // The recovery the 409 asks for: re-save the lines (the stored rate comes back from the column).
+    // An items re-save with the rate unchanged (the stored rate back from the column): accepted, no re-tax.
     await run(s.tenantId, () =>
       invoicesService.update(created.id, {
         items: [
@@ -433,10 +439,11 @@ describeDb("header-only invoice PATCH on the one builder - real Postgres (B1043/
         ],
       } as any),
     );
-    expect(Number((await reload(created.id))!.taxAmount)).toBe(88.8);
-    await run(s.tenantId, () => invoicesService.update(created.id, { discount: 1 }));
-    const after = await reload(created.id);
-    expect(Number(after!.discount)).toBe(1);
-    expect(Number(after!.total)).toBe(1087.8);
+    const afterItems = await reload(created.id);
+    expect(Number(afterItems!.taxAmount)).toBe(88.75);
+    expect(Number(afterItems!.discount)).toBe(1);
+    expect(Number(afterItems!.total)).toBe(1087.75);
+    const lineAfter = (await prisma.invoiceItem.findMany({ where: { invoiceId: created.id } }))[0];
+    expect(Number(lineAfter.taxRate)).toBe(0.08875);
   });
 });

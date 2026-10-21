@@ -100,7 +100,12 @@ class LicenceDto {
 }
 
 export class IntakeTaxComplianceDto {
-  @IsOptional() @IsNumber({ maxDecimalPlaces: 4 }) @Min(0) @Max(30) salesTaxRatePercent?: number;
+  // No in-repo caller; an external form may send a blank as null — null = absent (stored as null, never 0).
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  @Max(30)
+  salesTaxRatePercent?: number;
   @IsOptional()
   @Matches(/^\d{2}-?\d{7}$/, { message: "federalEin must look like 12-3456789" })
   federalEin?: string;
@@ -129,6 +134,7 @@ export class IntakeInvoicingDto {
   @IsOptional() @IsString() @MaxLength(S) paymentTermsOther?: string;
   @IsOptional() @IsString() @MaxLength(L) invoiceFooterText?: string;
   @IsBoolean() takesDeposits!: boolean;
+  // Null = absent (see salesTaxRatePercent above).
   @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(100) depositPercent?: number;
   @IsArray()
   @ArrayMaxSize(6)

@@ -1,9 +1,15 @@
 import { BadRequestException, ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
-import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { sumConfirmed } from "./payment-predicates";
+import {
+  assertTaxStateRecomputable,
+  countOrderInvoices,
+  orderSiblingCountOf,
+  stalePathOf,
+  staleTaxStateError,
+} from "./stored-tax-state";
 
 /**
  * B1043 (SA-742r2 INV-A): the ONE locked read both branches of `InvoicesService.update()` start from,
@@ -26,6 +32,8 @@ export interface LockedInvoiceForEdit {
   isTaxExempt: boolean;
   /** Its payment rows (amount + status), read under the lock for the B1046 overpayment guard. */
   payments: Array<{ amount: unknown; status: unknown }>;
+  /** SA-814e: non-VOID invoices sharing the invoice's order, counted under the same lock (null = no order). */
+  orderInvoiceCount?: number | null;
 }
 
 /**
@@ -75,7 +83,14 @@ export async function loadLockedInvoiceForEdit(
     where: { invoiceId: id },
     select: { amount: true, status: true },
   });
-  return { invoice, storedRows, isTaxExempt: !!customer?.isTaxExempt, payments: payments ?? [] };
+  const orderInvoiceCount = invoice.orderId ? await countOrderInvoices(tx, invoice.orderId) : null;
+  return {
+    invoice,
+    storedRows,
+    isTaxExempt: !!customer?.isTaxExempt,
+    payments: payments ?? [],
+    orderInvoiceCount,
+  };
 }
 
 /**
@@ -181,31 +196,33 @@ const differs = (a: unknown, b: unknown): boolean => roundMoney(Number(a) - Numb
  *  - An EXEMPT customer whose row still carries a levy snapshot (categoryTaxAmount != 0) is stale even when
  *    the stored tax is 0: the items branch would zero the snapshot and resync the regulated ledger, this
  *    branch cannot, so the two must not disagree. Re-saving the lines cleans both (census reason 4).
- *  - B296: create() taxes with the UNROUNDED line rate while InvoiceItem.taxRate is Decimal(5,4), so a fresh
- *    draft with a rate such as 0.08875 can be 409 INVOICE_TAX_STATE_STALE on its first header-only PATCH.
- *    That is a 409 (re-save the lines), never a silent re-tax. Do NOT round the rate in create(): it would
- *    change the money charged. SA-761 T-1 (sitting 4) widens InvoiceItem.taxRate and retires this edge.
+ *  - B296 (SA-814 §3): create() taxes with the UNROUNDED line rate. Since the sitting-4 widen
+ *    (20261020090200_invoice_tax_rate_widen, InvoiceItem.taxRate DECIMAL(9,6)) a fresh draft with a rate such
+ *    as 0.08875 keeps it on the line and reproduces its stored tax, so it is NOT stale. Only a legacy row whose
+ *    rate was truncated by the old Decimal(5,4) column still fails to reproduce: that is a 409
+ *    INVOICE_TAX_STATE_STALE (re-save the lines), never a silent re-tax. Do NOT round the rate in create(): it
+ *    would change the money charged.
  */
 export function planHeaderOnlyTotals(
   locked: LockedInvoiceForEdit,
   dto: { discount?: number; shippingFee?: number },
 ): { discount: number; shippingFee: number; total: number; subtotal: number } {
-  const { invoice, storedRows, isTaxExempt } = locked;
+  const { invoice, storedRows, isTaxExempt, orderInvoiceCount } = locked;
   const discount = intakeMoney(dto.discount, invoice.discount);
   const shippingFee = intakeMoney(dto.shippingFee, invoice.shippingFee);
-  const t = sumInvoiceTotalsStrict(storedRows, { discount, shipping: shippingFee, isTaxExempt });
-  const exemptWithLevy =
-    isTaxExempt && storedRows.some((r) => differs(r.categoryTaxAmount ?? 0, 0));
-  if (
-    exemptWithLevy ||
-    differs(t.subtotal, invoice.subtotal) ||
-    differs(t.tax, invoice.taxAmount)
-  ) {
-    throw new ConflictException({
-      code: API_ERROR_CODES.INVOICE_TAX_STATE_STALE,
-      message:
-        "This invoice's subtotal or tax no longer matches its lines, so the discount or shipping change can't be priced. Re-save the invoice lines, then try again.",
-    });
+  // SA-814 R5-2: the tax half is the ONE recompute guard (stored-tax-state.ts); this path cannot stamp a rate.
+  const t = assertTaxStateRecomputable({
+    invoice,
+    storedLines: storedRows,
+    canRestamp: false,
+    isTaxExempt,
+    refuseExemptLevy: true,
+    orderSiblingCount: orderSiblingCountOf({ orderId: invoice.orderId, orderInvoiceCount }),
+    discount,
+    shipping: shippingFee,
+  }).totals;
+  if (differs(t.subtotal, invoice.subtotal)) {
+    throw staleTaxStateError(stalePathOf(invoice));
   }
   return { discount, shippingFee, total: t.total, subtotal: t.subtotal };
 }

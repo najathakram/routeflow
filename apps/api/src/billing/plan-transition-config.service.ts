@@ -7,6 +7,8 @@ import { FEATURE_REGISTRY } from "./feature-registry";
 import {
   CONFIG_SNAPSHOT_RESTORED_ACTION,
   CONFIG_SNAPSHOT_RESTORE_FAILED_ACTION,
+  CONFIG_SNAPSHOT_RESTORE_HELD_ACTION,
+  heldAuditMeta,
 } from "./config-snapshot-audit.constants";
 import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
 import { PlanCatalogService } from "./plan-catalog.service";
@@ -30,6 +32,15 @@ export interface PlanTransition {
    */
   toPlanVersionId: string | null;
   actor?: SnapshotActor;
+  /**
+   * BO-13: add-on keys the caller's transaction activates AFTER `onPlanChange` (a checkout's purchased
+   * add-ons), so the restore's fleet check judges the transaction's END state. No self-service SKU is a
+   * fleet module today (Routes and Order delivery are not sold through checkout), so this cannot change a
+   * fleet answer yet: it keeps the check correct if one ever is. They are SKU codes compared with add-on
+   * keys; a bridged pair (a SKU code that differs from its add-on key) would need mapping first. Only
+   * `restoreLatest` reads them.
+   */
+  pendingAddonKeys?: readonly string[];
 }
 
 /**
@@ -210,7 +221,13 @@ export class PlanTransitionConfigService implements OnModuleInit {
         t.toPlanKey,
         now,
         planAllows,
+        undefined,
+        t.pendingAddonKeys,
       );
+      // BO-13: a HELD row (a delivery-method change under a shipment, or own delivery with no fleet) makes
+      // the restore partial. The upgrade still proceeds; the snapshot stays claimable (not stamped), and
+      // the partial run is its own audit action so the list keeps one RESTORED row per restored snapshot.
+      const held = restore?.held ?? [];
       if (restore) {
         // The report goes into the existing audit trail (no migration), in the SAME savepoint as
         // the restore. The admin list reads the counts from here.
@@ -218,7 +235,9 @@ export class PlanTransitionConfigService implements OnModuleInit {
           data: {
             tenantId: t.tenantId,
             userId: t.actor?.id ?? null,
-            action: CONFIG_SNAPSHOT_RESTORED_ACTION,
+            action: held.length
+              ? CONFIG_SNAPSHOT_RESTORE_HELD_ACTION
+              : CONFIG_SNAPSHOT_RESTORED_ACTION,
             entityType: "tenant",
             entityId: t.tenantId,
             meta: {
@@ -230,15 +249,22 @@ export class PlanTransitionConfigService implements OnModuleInit {
               restoredToPlanKey: t.toPlanKey,
               report: { ...restore.report },
               supersededSnapshots: restore.supersededSnapshots,
+              ...heldAuditMeta(held),
             },
           },
         });
       }
       await tx.$executeRaw`RELEASE SAVEPOINT config_snapshot_restore`;
-      if (restore) {
+      if (restore && held.length === 0) {
         this.logger.log(
           `Restored tenant ${t.tenantId} feature config from snapshot ${restore.snapshotId} on ` +
             `${t.fromPlanKey} -> ${t.toPlanKey}: ${JSON.stringify(restore.report)}`,
+        );
+      } else if (restore) {
+        this.logger.warn(
+          `Config restore for tenant ${t.tenantId} (${t.fromPlanKey} -> ${t.toPlanKey}) HELD ` +
+            `${held.map((h) => `${h.featureKey} ${h.from}->${h.to} (${h.reason})`).join(", ")}; ` +
+            `snapshot ${restore.snapshotId} stays restorable — "Restore now" once cleared`,
         );
       }
       return { action: "restore", restore };

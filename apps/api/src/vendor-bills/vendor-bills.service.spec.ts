@@ -784,6 +784,25 @@ describe("VendorBillsService", () => {
       expect(productArgs.currentStock).toEqual({ decrement: D(5) });
     });
 
+    it("row 647: a STANDARD product keeps its operator-set cost through a revert", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
+      );
+      prisma.product.findFirst.mockResolvedValue({
+        currentStock: D(15),
+        averageCost: D(2.5),
+        costingMethod: "STANDARD",
+      });
+      prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(5) }]);
+
+      await service.revertToDraft("bill-1");
+
+      const productArgs = prisma.product.update.mock.calls[0][0].data;
+      expect(productArgs.averageCost).toBeUndefined();
+      expect(productArgs.currentStock).toEqual({ decrement: D(5) });
+    });
+
     it("KEEPS the average when the revert empties stock (no more zeroing)", async () => {
       prisma.vendorBill.findUnique.mockResolvedValue(
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
@@ -900,17 +919,21 @@ describe("VendorBillsService", () => {
   // ─── voidBill ───────────────────────────────────────────────────────────────
 
   describe("voidBill", () => {
-    it("writes a costed compensating ADJUSTMENT with snapshots and keeps avg on stock-empty", async () => {
+    it("appends a costed signed PURCHASE reversal with snapshots and keeps avg on stock-empty", async () => {
       prisma.vendorBill.findUnique.mockResolvedValue(
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
       prisma.product.findFirst.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(5) }]);
 
       await service.voidBill("bill-1", "user-1");
 
+      // B846 sibling: PURCHASE (what the tobacco filing sums), dated at the receipt, paired by note.
       const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
-      expect(movementArgs.type).toBe("ADJUSTMENT");
+      expect(movementArgs.type).toBe("PURCHASE");
+      expect(movementArgs.notes).toBe("BILL_REVERTED — reverses mv-1");
+      expect(movementArgs.effectiveAt).toEqual(new Date("2026-06-01"));
       expect(movementArgs.quantity.toString()).toBe("-5");
       expect(movementArgs.unitCost.toString()).toBe("3.5");
       // Reversal empties stock → average carried forward, not zeroed
@@ -920,6 +943,28 @@ describe("VendorBillsService", () => {
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost).toBeUndefined();
+    });
+
+    it("row 647: a STANDARD product keeps its operator-set cost through a void (receive never moved it)", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
+      );
+      // 15 on hand at an operator-set 2.50: an average reversal would write (15 * 2.5 - 5 * 3.5) / 10 = 2.
+      prisma.product.findFirst.mockResolvedValue({
+        currentStock: D(15),
+        averageCost: D(2.5),
+        costingMethod: "STANDARD",
+      });
+      prisma.stockLot.findMany.mockResolvedValue([]);
+      receiptRows(prisma, [{ qty: D(5) }]);
+
+      await service.voidBill("bill-1", "user-1");
+
+      const productArgs = prisma.product.update.mock.calls[0][0].data;
+      expect(productArgs.averageCost).toBeUndefined();
+      expect(productArgs.currentStock).toEqual({ decrement: D(5) });
+      // The reversing row records the unchanged average, not a reversed one.
+      expect(prisma.stockMovement.create.mock.calls[0][0].data.avgCostAfter.toString()).toBe("2.5");
     });
 
     it("G1: voiding a PAID-but-never-received bill skips the stock reversal", async () => {

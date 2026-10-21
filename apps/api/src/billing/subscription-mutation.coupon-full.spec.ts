@@ -189,7 +189,11 @@ describe("B1079 A - couponFull + a live Stripe subscription: add-ons are UNBILLE
     expect(getRow()).toMatchObject({ quantity: 2, priceSnapshot: 0 });
     // Only the withdrawal of the stale 12 is booked (12 x 1 -> 0 x 2): never an enable.
     expect(enabledDeltas(events)).toEqual([]);
-    expect(events.emit.mock.calls.map((c: any[]) => c[3]?.amountDelta)).toEqual([-12]);
+    expect(
+      events.emit.mock.calls
+        .filter((c: any[]) => c[1] !== "addon.state_changed")
+        .map((c: any[]) => c[3]?.amountDelta),
+    ).toEqual([-12]);
   });
 
   it("the billing mode, and the preview's refusal on an ANNUAL coupon subscription, agree with enable", async () => {
@@ -294,7 +298,10 @@ describe("B1079 D - disable on a couponFull tenant", () => {
     await svc.disableAddon("t1", "CUSTOMER_PACK_100", "u1");
     expect(stripeClient.subscriptionItems.del).not.toHaveBeenCalled();
     expect(getRow()).toMatchObject({ active: false, stripeItemId: null });
-    expect(events.emit).not.toHaveBeenCalled(); // a $0 row reverses nothing
+    // a $0 row reverses nothing (the audit record is not a ledger event)
+    expect(
+      events.emit.mock.calls.filter((c: any[]) => c[1] !== "addon.state_changed"),
+    ).toHaveLength(0);
   });
 
   it("a row that ALREADY carries a Stripe item (billed before the coupon) still has it removed - nothing keeps billing", async () => {

@@ -40,7 +40,9 @@ jest.mock("@/lib/api/addons", () => ({
   useDeliveryAccess: () => ({ enabled: false, resolved: true }),
 }));
 let gate: Record<string, unknown> = {};
-jest.mock("@/lib/api/counter-sale", () => ({ useCounterSaleGate: () => gate }));
+jest.mock("@/lib/api/counter-sale", () => ({
+  useCounterSaleGate: () => ({ permsKnown: true, ...gate }),
+}));
 jest.mock("./_components/CreateOrderModal", () => ({
   CreateOrderModal: ({ isOpen }: { isOpen: boolean }) =>
     isOpen ? <div data-testid="order-builder-open" /> : null,

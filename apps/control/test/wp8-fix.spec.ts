@@ -208,43 +208,48 @@ describe("5 flag parsing and 7 lane use", () => {
 });
 
 describe("6 adopt is atomic across a failed second push", () => {
-  it("a retry reuses the minted task instead of minting RF-(n+1)", async () => {
-    world = makeWorld();
-    const files = baseState(0);
-    files["events/lane-u.jsonl"] = jl({
-      seq: 1,
-      ts: "2026-01-10T09:00:00Z",
-      lane: "lane-u",
-      type: "task.proposed",
-      by: "agent",
-      tmpId: "lane-u.1",
-      title: "acme: proposed thing",
-      kind: "feature",
-      areas: ["apps/api/src/x/**"],
-    });
-    world.seedBranch("ctl/state", files);
-    // pre-receive: let push 1 through, reject pushes 2..7 (the whole retry budget)
-    const cnt = path.join(world.root, "push-count");
-    const hook = path.join(world.originDir, "hooks", "pre-receive");
-    fs.mkdirSync(path.dirname(hook), { recursive: true });
-    fs.writeFileSync(
-      hook,
-      `#!/bin/sh\nn=$(cat "${cnt}" 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > "${cnt}"\n` +
-        `[ $n -ge 2 ] && [ $n -le 7 ] && exit 1\nexit 0\n`,
-    );
-    fs.chmodSync(hook, 0o755);
+  it(
+    "a retry reuses the minted task instead of minting RF-(n+1)",
+    async () => {
+      world = makeWorld();
+      const files = baseState(0);
+      files["events/lane-u.jsonl"] = jl({
+        seq: 1,
+        ts: "2026-01-10T09:00:00Z",
+        lane: "lane-u",
+        type: "task.proposed",
+        by: "agent",
+        tmpId: "lane-u.1",
+        title: "acme: proposed thing",
+        kind: "feature",
+        areas: ["apps/api/src/x/**"],
+      });
+      world.seedBranch("ctl/state", files);
+      // pre-receive: let push 1 through, reject pushes 2..7 (the whole retry budget)
+      const cnt = path.join(world.root, "push-count");
+      const hook = path.join(world.originDir, "hooks", "pre-receive");
+      fs.mkdirSync(path.dirname(hook), { recursive: true });
+      fs.writeFileSync(
+        hook,
+        `#!/bin/sh\nn=$(cat "${cnt}" 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > "${cnt}"\n` +
+          `[ $n -ge 2 ] && [ $n -le 7 ] && exit 1\nexit 0\n`,
+      );
+      fs.chmodSync(hook, 0o755);
 
-    const r1 = await runCli(world, ["adopt", "lane-u.1"], { lane: "lead", timeoutMs: 80_000 });
-    expect(r1.code).toBe(5);
-    fs.rmSync(hook);
-    const r2 = await runCli(world, ["adopt", "lane-u.1"], { lane: "lead" });
-    expect(r2.code).toBe(0);
+      // 240 s (was 80 s): the full push-retry budget ran past 80 s under a loaded pre-push verify.
+      const r1 = await runCli(world, ["adopt", "lane-u.1"], { lane: "lead", timeoutMs: 240_000 });
+      expect(r1.code).toBe(5);
+      fs.rmSync(hook);
+      const r2 = await runCli(world, ["adopt", "lane-u.1"], { lane: "lead" });
+      expect(r2.code).toBe(0);
 
-    const lead = world.remoteLines("lead");
-    const created = lead.filter((l) => l.type === "task.created" && l.id !== "RF-1");
-    expect(created.map((l) => l.id)).toEqual(["RF-2"]);
-    expect(lead.filter((l) => l.type === "task.adopted")).toHaveLength(1);
-  });
+      const lead = world.remoteLines("lead");
+      const created = lead.filter((l) => l.type === "task.created" && l.id !== "RF-1");
+      expect(created.map((l) => l.id)).toEqual(["RF-2"]);
+      expect(lead.filter((l) => l.type === "task.adopted")).toHaveLength(1);
+    },
+    scaled(300_000),
+  );
 });
 
 describe("round 3", () => {

@@ -104,7 +104,13 @@ describe("FeatureConfigService: a hand-set delivery/both mode needs a fleet key"
         {
           provide: PrismaService,
           useValue: {
-            tenantFeatureConfig: { upsert, deleteMany: jest.fn() },
+            // BO-04: set() reads the stored fulfilment_model row and counts carrier orders in transit
+            tenantFeatureConfig: {
+              upsert,
+              deleteMany: jest.fn(),
+              findUnique: jest.fn().mockResolvedValue(null),
+            },
+            order: { count: jest.fn().mockResolvedValue(0) },
             tenant: { findUnique: jest.fn().mockResolvedValue({ id: "t1" }) },
           },
         },
@@ -263,7 +269,9 @@ describe("one fleet resolver: the capability and the 409 agree", () => {
         {
           provide: PrismaService,
           useValue: {
-            tenantFeatureConfig: { upsert },
+            // BO-04: set() reads the stored fulfilment_model row and counts carrier orders in transit
+            tenantFeatureConfig: { upsert, findUnique: jest.fn().mockResolvedValue(null) },
+            order: { count: jest.fn().mockResolvedValue(0) },
             tenant: { findUnique: jest.fn().mockResolvedValue({ id: "t1" }) },
           },
         },

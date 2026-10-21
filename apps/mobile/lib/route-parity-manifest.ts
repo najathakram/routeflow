@@ -31,6 +31,9 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   // ─── Operator dashboard: orders, dispatch, routes (plan §1.3) ───
   "(dashboard)/dashboard": { mobile: ["(operator)/(tabs)/home"] },
   "(dashboard)/getting-started": { mobile: ["(operator)/getting-started"] },
+  "(dashboard)/get-the-app": {
+    webOnly: "install links for the native app; the app itself never shows them",
+  },
   "(dashboard)/orders/[id]": { mobile: ["(operator)/(tabs)/orders/[id]"] },
   "(dashboard)/orders": { mobile: ["(operator)/(tabs)/orders/index"] },
   "(dashboard)/orders/new": {

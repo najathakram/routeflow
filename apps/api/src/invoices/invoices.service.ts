@@ -17,6 +17,7 @@ import {
   assertFiniteInvoiceInput,
   assertInvoiceTotalsSane,
   assertNoNegativeLineSubtotal,
+  finiteStoredLevy,
   storedInvoiceTotals,
   sumInvoiceTotalsStrict,
 } from "../common/money-invariants.util";
@@ -39,7 +40,6 @@ import {
   roundMoney,
   normalizeBoxesPieces,
   remainingCapacity,
-  inferredGoodsFlatRate,
   OVERPAID_EPSILON,
   isPaidAtSale,
 } from "@routeflow/pricing";
@@ -52,6 +52,7 @@ import {
   stampHandedOverBy,
 } from "../orders/handover-stamp";
 import { aggregateInvoiceLines } from "./order-backsync-aggregate";
+import { preflightOrderSiblings } from "./order-backsync-preflight";
 import { orderLineShape, orderLineUnchanged, SALE_NEUTRAL_COLUMNS } from "./order-backsync-lines";
 import {
   buildEditedLines,
@@ -149,7 +150,9 @@ import {
   loadPriceAdjustmentReference,
   lockInvoiceForPriceAdjustment,
   preflightBulkPriceAdjustment,
+  priceAdjustmentTaxState,
 } from "./price-adjustment-ledger";
+import { countOrdersInvoices, guardItemsEditTaxState } from "./stored-tax-state";
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -210,6 +213,7 @@ import {
 import { buildManualInvoiceLines } from "./manual-invoice-lines";
 import { loadOverride, type ManualInvoiceDto } from "./invoice-line-override";
 import {
+  allocateOrderRegularTax,
   foldCategoryTax,
   loadManualLineContext,
   regularTaxShare,
@@ -267,6 +271,9 @@ export { addCalendarDays } from "../common/calendar-date";
 // `no-runtime-workspace-imports.spec.ts`), so it keeps a local copy instead — pinned value-equal
 // to the canonical export by `check-transitions-parity.spec.ts`. See that file's own doc for the
 // V1-only rule (no `CHECK_TRANSITIONS_V2` here — a later PR owns that).
+
+/** What `recordStandalonePayment` returns, and hands its `opts.inTx` hook (SA-818). */
+export type StandalonePaymentResult = { payments: any[]; paymentGroupId: string; excess: number };
 
 @Injectable()
 export class InvoicesService {
@@ -923,8 +930,8 @@ export class InvoicesService {
     // RF-4: prorate the line's snapshotted category tax the SAME telescoping way as
     // the subtotal, so a partial / delivered-basis bill collects only its share and
     // Σ(partials) == the order line's full category tax. A full bill from scratch
-    // (prior 0, billQty = orderQty) copies the stored amount verbatim.
-    const storedCategoryTax = Number(li.categoryTaxAmount ?? 0);
+    // (prior 0, billQty = orderQty) copies the stored amount verbatim. SA-816: non-finite = 400.
+    const storedCategoryTax = finiteStoredLevy(li, "Order line category tax");
     const categoryTaxAmount =
       storedCategoryTax === 0 || orderQty <= 0
         ? storedCategoryTax
@@ -1113,7 +1120,6 @@ export class InvoicesService {
       },
     );
     const orderSubtotal = Number(order.subtotal) || 1;
-    const orderTax = Number(order.tax) || 0;
 
     const groupData = groups.map((g) => {
       const pids = new Set(g.items.map(({ li }: any) => li.productId));
@@ -1154,31 +1160,16 @@ export class InvoicesService {
     }
 
     const totalSubtotal = roundMoney(groupData.reduce((s, gd) => s + gd.subtotal, 0));
-    const totalRegularTax = isTaxExempt
-      ? 0
-      : roundMoney(orderTax * (totalSubtotal / orderSubtotal));
-    // Allocate the order's regular tax proportionally by subtotal, then give the
-    // rounding remainder to the LARGEST-subtotal group — never a tiny trailing
-    // group, which could otherwise round to a NEGATIVE tax. Σ(group tax) still
-    // equals the single-invoice tax exactly, so siblings sum to the order total.
-    if (isTaxExempt) {
-      groupData.forEach((gd) => {
-        gd.regularTax = 0;
-      });
-    } else {
-      let allocated = 0;
-      groupData.forEach((gd) => {
-        gd.regularTax = roundMoney(orderTax * (gd.subtotal / orderSubtotal));
-        allocated = roundMoney(allocated + gd.regularTax);
-      });
-      const remainder = roundMoney(totalRegularTax - allocated);
-      if (remainder !== 0 && groupData.length > 0) {
-        let maxIdx = 0;
-        for (let i = 1; i < groupData.length; i++)
-          if (groupData[i].subtotal > groupData[maxIdx].subtotal) maxIdx = i;
-        groupData[maxIdx].regularTax = roundMoney(groupData[maxIdx].regularTax + remainder);
-      }
-    }
+    // Allocate the order's regular tax proportionally by subtotal; the rounding remainder goes to the
+    // LARGEST-subtotal group (allocateOrderRegularTax, the one allocator).
+    const regularTaxes = allocateOrderRegularTax(
+      order,
+      groupData.map((gd) => gd.subtotal),
+      isTaxExempt,
+    );
+    groupData.forEach((gd, i) => {
+      gd.regularTax = regularTaxes[i];
+    });
     // Order-level discount: allocate proportionally by subtotal — SAME shape as
     // the regular-tax allocator above (never invent a new scheme) — so a fully
     // discounted order zeroes its invoice(s) and a split order's sibling
@@ -1189,7 +1180,7 @@ export class InvoicesService {
     const orderDiscount = roundMoney(Number((order as any).discountAmount ?? 0));
     if (orderDiscount > 0 && groupData.length > 0) {
       // The remainder is measured against the discount owed on the portion being
-      // BILLED (totalSubtotal / orderSubtotal), exactly like totalRegularTax above —
+      // BILLED (totalSubtotal / orderSubtotal), exactly like the regular tax above —
       // never against the full order discount. A second-pass generation bills only
       // `qty − invoicedQty`, so an unscaled target would force the entire order
       // discount onto that invoice (double-counted across siblings, and a total
@@ -1982,8 +1973,6 @@ export class InvoicesService {
       select: { isTaxExempt: true },
     });
     const isTaxExempt = !!customer?.isTaxExempt;
-    const orderSubtotal = Number(order.subtotal) || 1;
-    const orderTax = Number(order.tax) || 0;
     // SA-113a/B785: same evidence basis and reader as reconcileOrderDraftInvoice — one
     // derivation. Fetched once per order, not per draft/line.
     const evidenceBasis = basis === "delivered" ? await deliveredBasisByLine(db, order.id) : null;
@@ -2023,22 +2012,14 @@ export class InvoicesService {
       await this.applyMsrpSnapshots(db, order.customerId, pd.itemsData);
     }
 
-    if (!isTaxExempt && orderTax !== 0) {
-      const totalSubtotal = roundMoney(perDraft.reduce((s, pd) => s + pd.subtotal, 0));
-      const totalTax = roundMoney(orderTax * (totalSubtotal / orderSubtotal));
-      let allocated = 0;
-      perDraft.forEach((pd) => {
-        pd.regularTax = roundMoney(orderTax * (pd.subtotal / orderSubtotal));
-        allocated = roundMoney(allocated + pd.regularTax);
-      });
-      const remainder = roundMoney(totalTax - allocated);
-      if (remainder !== 0 && perDraft.length > 0) {
-        let maxIdx = 0;
-        for (let i = 1; i < perDraft.length; i++)
-          if (perDraft[i].subtotal > perDraft[maxIdx].subtotal) maxIdx = i;
-        perDraft[maxIdx].regularTax = roundMoney(perDraft[maxIdx].regularTax + remainder);
-      }
-    }
+    const draftTaxes = allocateOrderRegularTax(
+      order,
+      perDraft.map((pd) => pd.subtotal),
+      isTaxExempt,
+    );
+    perDraft.forEach((pd, i) => {
+      pd.regularTax = draftTaxes[i];
+    });
     // Sibling fee placement. If the current sibling fees already sum to the order
     // fee, keep each sibling's own placement (an operator may have moved the fee
     // to a specific sibling via an invoice edit — that edit back-synced the order,
@@ -3084,7 +3065,9 @@ export class InvoicesService {
 
     // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
     // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
-    if (dto.items || dto.discount !== undefined || dto.shippingFee !== undefined) {
+    // Row 603: a null figure is ABSENT (intakeMoney keeps the stored value), so it triggers neither rewrite path.
+    const figureSent = dto.discount != null || dto.shippingFee != null;
+    if (dto.items || figureSent) {
       await unitAware.assertInvoiceRewriteAllowed(this.prisma.forTenant(), inv);
     }
 
@@ -3121,6 +3104,8 @@ export class InvoicesService {
         const locked = await loadLockedInvoiceForEdit(tx, id, dto.expectedUpdatedAt, warnNoToken);
         assertStillDraft(locked.invoice); // r87: DRAFT re-checked under the lock
         assertSameOrderLink(locked.invoice, inv); // the pre-read order is the one we locked
+        // SA-816: a NaN sibling refuses BEFORE any write; A's own surviving columns are guarded in buildEditedLines.
+        await preflightOrderSiblings(tx, inv.orderId, id);
         // SA-674b / SA-689 a: with the carrier, the shipment invoice keeps its lines and quantities. Read
         // UNDER the row locks (an order shipped since the pre-reads is refused), never before the tx.
         const carrierLocked = await invoiceOrderWithCarrier(
@@ -3163,6 +3148,7 @@ export class InvoicesService {
           warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
           override,
         });
+        guardItemsEditTaxState({ locked, items, matches, editLines }); // SA-814 R5-2
         const itemsData = editLines.map((l) => l.data);
         // B1026: the SAME discount-exceeds-line guard create() runs, over the lines THIS edit writes
         // (changed or new), before any write; a stored line the edit leaves verbatim is not re-judged.
@@ -3257,7 +3243,7 @@ export class InvoicesService {
     }
 
     // RF-012 / B1043: a discount or shippingFee change re-prices the total from the stored lines.
-    const needsRecalc = dto.discount !== undefined || dto.shippingFee !== undefined;
+    const needsRecalc = figureSent;
     const headerData = {
       ...(due.dueDate && { dueDate: due.dueDate }),
       ...(issueDate && { issueDate }),
@@ -3291,6 +3277,7 @@ export class InvoicesService {
           const locked = await loadLockedInvoiceForEdit(tx, id, dto.expectedUpdatedAt, warnNoToken);
           assertStillDraft(locked.invoice); // r87
           assertSameOrderLink(locked.invoice, inv);
+          await preflightOrderSiblings(tx, inv.orderId, null); // SA-816: A's stored rows persist, so judge A too
           const { subtotal, ...totals } = planHeaderOnlyTotals(locked, dto);
           assertInvoiceTotalsSane(
             { discount: totals.discount, subtotal, total: totals.total },
@@ -5303,6 +5290,13 @@ export class InvoicesService {
       assertAllocationsWithinBalance?: boolean;
       /** The operator's user id, for the deliberate-overpayment audit row. */
       actor?: string | null;
+      /**
+       * SA-818 (row 615): runs INSIDE this payment transaction, after the payment rows (and any
+       * excess AdvancePayment) are written and before commit. A caller that must decide something
+       * atomically with the money (the cash approval's PENDING -> APPROVED claim + link) does it
+       * here: a throw rolls the money back with it. Absent -> behaviour is unchanged.
+       */
+      inTx?: (tx: any, result: StandalonePaymentResult) => Promise<void>;
     },
   ) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
@@ -5445,7 +5439,13 @@ export class InvoicesService {
           });
         }
 
-        return { payments, paymentGroupId, excess: Math.max(0, excess) };
+        const result: StandalonePaymentResult = {
+          payments,
+          paymentGroupId,
+          excess: Math.max(0, excess),
+        };
+        await opts?.inTx?.(tx, result);
+        return result;
       }),
     );
   }
@@ -5795,7 +5795,7 @@ export class InvoicesService {
       // B662: item writes, invoice totals and the regulated-ledger sync commit or fail TOGETHER.
       await this.prisma.tenantTransaction(async (tx: any) => {
         const live = await lockInvoiceForPriceAdjustment(tx, inv); // Invoice FIRST, then its rows
-        const inferred = inferredGoodsFlatRate({ ...live, lines: live.items }); // #2656: goods only
+        const { restampRate } = priceAdjustmentTaxState(live, isTaxExempt); // SA-814 R5-2 (409 if unverifiable)
         const { categoriesById, unitsPerBoxByProduct } = await loadPriceAdjustmentReference(
           tx,
           live.items,
@@ -5810,11 +5810,11 @@ export class InvoicesService {
           invoiceStatus: live.status,
           warn: (m) => this.logger.warn(m),
         });
-        assertAdjustedTotalsSane(live, itemUpdates); // B1031: totals stay sane, before any write
-        if (inferred?.verified) {
+        assertAdjustedTotalsSane(live, itemUpdates, isTaxExempt); // B1031: totals stay sane, before any write
+        if (restampRate != null) {
           await tx.invoiceItem.updateMany({
             where: { invoiceId: inv.id, taxRate: 0, AND: [notNsfLineWhere] }, // #2243: NSF stays 0
-            data: { taxRate: inferred.rate },
+            data: { taxRate: restampRate },
           });
         }
         for (const u of itemUpdates)
@@ -5824,6 +5824,7 @@ export class InvoicesService {
           itemUpdates,
           auditLine,
           tx,
+          isTaxExempt,
           recomputeStatus: (p, t, d, st) => statusFromPayments(p, t, d, st, tz, "NOT_PAID"),
           ledger: this.ledger,
           resync: (...a) => this.resyncInvoiceLedger(...a),
@@ -5839,6 +5840,9 @@ export class InvoicesService {
     };
 
     if (dto.scope === "SINGLE") {
+      // SA-816: a NaN on the order's invoices (A included, its un-repriced lines persist) refuses BEFORE any write.
+      // Read without the lock (before the price-adjust tx): the in-tx order sync stays the backstop.
+      await preflightOrderSiblings(this.prisma.forTenant(), (invoice as any).orderId, null);
       await applyToInvoice(invoice, priceMap);
     } else {
       // ALL_CUSTOMER_SINCE: find all invoices for the same customer on or after sinceDate
@@ -5876,7 +5880,11 @@ export class InvoicesService {
         if (localMap.size > 0) plans.push({ inv, localMap });
       }
       // B1031/B1058: judge every target (bad line, totals, overpayment) BEFORE writing any.
-      await preflightBulkPriceAdjustment(plans, isTaxExempt, this.prisma.forTenant());
+      const orderCounts = await countOrdersInvoices(
+        this.prisma.forTenant(),
+        plans.map((p) => p.inv.orderId),
+      ); // SA-814e: the guard's per-order allocation tolerance
+      await preflightBulkPriceAdjustment(plans, isTaxExempt, this.prisma.forTenant(), orderCounts);
       // SA-651 MED-1: each tx re-judges under its own lock; a race refusal is named, and a partial batch is reported.
       await applyBulkPriceAdjustment(plans, applyToInvoice);
     }

@@ -16,6 +16,12 @@ export const AUDIT_ACTIONS = {
   INVOICE_DELIBERATE_OVERPAYMENT: "invoice.deliberate-overpayment",
   /** SA-778: a support-session request refused by @NoImpersonation before the handler ran; meta {superAdminId, tenantId, method, route}. */
   IMPERSONATION_ACTION_REFUSED: "impersonation.action-refused",
+  /** SA-808b: a void degraded — stock with no receipt record adjusted, or a bill lot it could not identify left standing; meta {billNumber, products[{productId, found[], noReceiptQty}], lotsLeft[{productId, name, lotIds[], remainingQty}], receiptRowsOnOtherProducts[]}. */
+  VENDOR_BILL_VOID_NO_RECEIPT: "vendor-bill.void-without-receipt",
+  /** SA-808c: a void or revert refused because a product's receipt rows exceed what the bill received; the repair census reads it; meta {billNumber, productId, posted, received, action}. */
+  VENDOR_BILL_LEDGER_EXCESS: "vendor-bill.ledger-excess",
+  /** B288 (SA-814 R5-3): a cash payment moved off a vendor bill into a supplier credit dated at the payment; meta {billNumber, paymentId, supplierCreditId, amount, paidAt, method, statusBefore, statusAfter}. */
+  VENDOR_BILL_PAYMENT_MOVED_TO_CREDIT: "vendor-bill.payment-moved-to-credit",
   /** Units v2 (SA-799 b): one price Save; meta {request, undo, revisionBefore, revisionAfter, actor}. Undoable once. */
   PRODUCT_PRICES_SAVED: "product.prices-saved",
   /** Units v2 (SA-799 b): the Undo of a PRODUCT_PRICES_SAVED row; meta {undoes, revisionBefore, revisionAfter, actor}. */
