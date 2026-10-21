@@ -272,13 +272,40 @@ describe("B1262 / SA-838: an advance application is a tender on the email as on 
         { method: "ADVANCE", amount: "5.00" },
       ],
     });
-    expect(emailModel.methodLabel).toBe("Advance + Cash");
+    expect(emailModel.methodLabel).toBe("Advance $5.00 + Cash $7.50");
     expect(emailModel.paid).toBe(12.5);
     expect(emailModel.onAccount).toBe(false);
-    // the reprint adds each tender's amount (two tenders); the same methods in the same order, Paid and On account
+    // the SAME Payment method line on both, amounts included (SA-751r: a figure is never on one receipt and not the other)
     expect(reprint.methodLabel).toBe("Advance $5.00 + Cash $7.50");
-    expect(reprint.methodLabel?.replace(/ \$[\d.]+/g, "")).toBe(emailModel.methodLabel);
+    expect(reprint.methodLabel).toBe(emailModel.methodLabel);
     expect(moneyRows(emailModel)).toEqual(moneyRows(reprint));
+  });
+
+  it("two tenders and a part-tender both print amounts, on the email and the reprint alike", () => {
+    const two = build({
+      total: "28.62",
+      tax: "2.12",
+      payments: [
+        { method: "CASH", amount: "20.00" },
+        { method: "CREDIT_CARD", amount: "8.62" },
+      ],
+    });
+    expect(two.emailModel.methodLabel).toBe("Cash $20.00 + Card $8.62");
+    expect(two.reprint.methodLabel).toBe(two.emailModel.methodLabel);
+    const part = build({
+      total: "28.62",
+      tax: "2.12",
+      payments: [{ method: "CASH", amount: "10.00" }],
+    });
+    expect(part.emailModel.methodLabel).toBe("Cash $10.00");
+    expect(part.reprint.methodLabel).toBe(part.emailModel.methodLabel);
+    const whole = build({
+      total: "28.62",
+      tax: "2.12",
+      payments: [{ method: "CASH", amount: "28.62" }],
+    });
+    expect(whole.emailModel.methodLabel).toBe("Cash");
+    expect(whole.reprint.methodLabel).toBe("Cash");
   });
 
   it("the email lists methods in the ONE shared order and labels (no hand-typed copy)", () => {

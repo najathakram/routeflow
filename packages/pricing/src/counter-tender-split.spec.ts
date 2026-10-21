@@ -1,4 +1,4 @@
-import { counterTenderSplit } from "./counter-tender-split";
+import { counterMethodLine, counterTenderSplit } from "./counter-tender-split";
 
 /**
  * B1262 / SA-838: the ONE split of a counter sale's PAID payments into what the customer TENDERED and the credit the
@@ -132,5 +132,32 @@ describe("counterTenderSplit (SA-838)", () => {
       returnCredit: 0,
       methods: [],
     });
+  });
+});
+
+describe("counterMethodLine (the ONE Payment method line, email and reprint)", () => {
+  it("two or more tenders carry their amounts", () => {
+    expect(
+      counterMethodLine(
+        [
+          { method: "ADVANCE", amount: 5 },
+          { method: "CASH", amount: 7.5 },
+        ],
+        12.5,
+      ),
+    ).toBe("Advance $5.00 + Cash $7.50");
+  });
+
+  it("a single tender that differs from the sale total carries its amount", () => {
+    expect(counterMethodLine([{ method: "CASH", amount: 6.25 }], 12.5)).toBe("Cash $6.25");
+  });
+
+  it("a single tender equal to the total reads the label only (compared in cents)", () => {
+    expect(counterMethodLine([{ method: "ADVANCE", amount: 12.5 }], 12.5)).toBe("Advance");
+    expect(counterMethodLine([{ method: "CARD", amount: 0.1 + 0.2 }], 0.3)).toBe("Card");
+  });
+
+  it("no tenders is an empty line", () => {
+    expect(counterMethodLine([], 12.5)).toBe("");
   });
 });

@@ -1,5 +1,6 @@
 import {
   COUNTER_METHOD_LABEL,
+  counterMethodLine,
   dayCloseDateLabel,
   explainedTaxRatePercent,
   formatReceiptMoney,
@@ -349,26 +350,6 @@ export type ReprintTender = TodaysSaleMethod;
 const REPRINT_METHOD_LABEL = COUNTER_METHOD_LABEL;
 
 /**
- * The Payment method row. An older server: the labels joined, as ever. With the server's tender split (B1262 / SA-838) each
- * tender carries its amount ("Advance $5.00 + Cash $7.50") when there are two or more, or when the single tender is not the whole
- * sale ("Cash $6.25" on a $12.50 sale that was partly returned); a single tender that IS the total reads label only.
- */
-function tenderMethodLabel(
-  tenders: ReadonlyArray<{ method: ReprintTender; amount: number }>,
-  orderTotal: number,
-  split: boolean,
-): string {
-  const withAmounts = split && (tenders.length > 1 || tenders[0]?.amount !== orderTotal);
-  return tenders
-    .map((m) =>
-      withAmounts
-        ? `${REPRINT_METHOD_LABEL[m.method]} ${formatReceiptMoney(m.amount)}`
-        : REPRINT_METHOD_LABEL[m.method],
-    )
-    .join(" + ");
-}
-
-/**
  * "Oct 7, 2026, 11:15 AM" in the given zone (the sale's own zone, not the browser's). The tenant timezone is a free
  * string: a value Intl does not know would throw a RangeError and break the receipt, so it falls back to UTC.
  * An absent zone is UTC too (never the browser's zone, SA-738).
@@ -507,7 +488,12 @@ export function receiptModelFromOrder(input: {
     paymentNotRecorded: false,
     showPaid: hasTender,
     showBalance: onAccount || balanceDue > 0,
-    methodLabel: hasTender ? tenderMethodLabel(tenders, orderTotal, split) : null,
+    // the split path prints pricing's ONE Payment method line (the emailed receipt's too); an older server keeps master's labels
+    methodLabel: hasTender
+      ? split
+        ? counterMethodLine(tenders, orderTotal)
+        : tenders.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ")
+      : null,
     ...(split
       ? {
           returned: returnedAmount > 0 ? returnedAmount : null,

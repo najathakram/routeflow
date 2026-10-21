@@ -1,5 +1,6 @@
 import type { TodaysSaleMethod } from "@routeflow/types";
 import { CONFIRMED_STATUS } from "./payment-confirmation";
+import { formatReceiptMoney } from "./receipt-line-detail";
 import { roundMoney } from "./pricing";
 
 /**
@@ -25,6 +26,28 @@ export const COUNTER_METHOD_LABEL: Record<TodaysSaleMethod, string> = {
   OTHER: "Other",
   STORE_CREDIT: "Store credit",
 };
+
+/**
+ * The Payment method row of a receipt, ONE formatter for the emailed receipt and the reprint (SA-751r: a figure is never on one
+ * and not the other). Each tender carries its amount ("Advance $5.00 + Cash $7.50") when there are two or more, or when the single
+ * tender is not the whole sale ("Cash $6.25" on a $12.50 sale); a single tender that IS the total reads label only ("Advance").
+ * The caller uses it where it has the tender split; the no-split (older server) reprint keeps the labels joined as ever.
+ */
+export function counterMethodLine(
+  tenders: ReadonlyArray<{ method: TodaysSaleMethod; amount: number }>,
+  saleTotal: number,
+): string {
+  const withAmounts =
+    tenders.length > 1 ||
+    (tenders.length === 1 && roundMoney(tenders[0]!.amount) !== roundMoney(saleTotal));
+  return tenders
+    .map((t) =>
+      withAmounts
+        ? `${COUNTER_METHOD_LABEL[t.method]} ${formatReceiptMoney(t.amount)}`
+        : COUNTER_METHOD_LABEL[t.method],
+    )
+    .join(" + ");
+}
 
 export interface CounterTenderPayment<M extends string = string> {
   /** the DISPLAY method the till names the payment by (the caller maps the stored method) */

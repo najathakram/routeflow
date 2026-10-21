@@ -2,7 +2,7 @@ import { InvoiceStatus } from "@prisma/client";
 import {
   cashierNameOf,
   billedChargeLines,
-  COUNTER_METHOD_LABEL,
+  counterMethodLine,
   explainedTaxRatePercent,
   formatReceiptMoney,
   receiptFigures,
@@ -233,8 +233,11 @@ export function buildReceiptModel(
       ),
     );
   // the till's ONE method order and labels (an ADVANCE application is a tender here exactly as on the print: SA-838)
-  const methods = TODAYS_SALE_METHOD_ORDER.filter((method) => appliedBy(method) > 0);
-  const hasTender = methods.length > 0;
+  const tenders = TODAYS_SALE_METHOD_ORDER.map((method) => ({
+    method,
+    amount: appliedBy(method),
+  })).filter((t) => t.amount > 0);
+  const hasTender = tenders.length > 0;
   const onAccount = !hasTender && balanceDue > 0;
   // CQ-03: the levy the live invoices billed is its own named charge; Tax is the regular tax only; Adjustments the rest
   const { tax, charges, adjustments } = receiptFigures({
@@ -287,7 +290,8 @@ export function buildReceiptModel(
     paymentNotRecorded: false,
     showPaid: hasTender,
     showBalance: onAccount || balanceDue > 0,
-    methodLabel: hasTender ? methods.map((m) => COUNTER_METHOD_LABEL[m]).join(" + ") : null,
+    // the reprint prints this very line (pricing's counterMethodLine), amounts and all
+    methodLabel: hasTender ? counterMethodLine(tenders, total) : null,
     tendered,
     tenderedAsEntered: false,
     change: servedChange(order.counterCashTendered, livePayments, balanceDue),
