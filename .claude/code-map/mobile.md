@@ -50,6 +50,7 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 | [mobile/landing-2026-10-08-w21a.md](mobile/landing-2026-10-08-w21a.md) | Landing 2026-10-08 W21a (mobile): credits-pending saved order (B1205), neutral scan prompt, oversell visibility |
 | [mobile/landing-2026-10-06-w4-w10.md](mobile/landing-2026-10-06-w4-w10.md) | Landing 2026-10-06 (mobile): buyer submit key (B1094), types mock mirrors, B1117 gap |
 | [mobile/landing-2026-10-01-w12-w27.md](mobile/landing-2026-10-01-w12-w27.md) | Landing 2026-10-01 (mobile): scan level by code, aim box + Hold to scan, credit-note edit UI, `defaultUnitValue` |
+| [mobile/landing-2026-10-20-r5.md](mobile/landing-2026-10-20-r5.md) | Landing 2026-10-20 R5 (#3552, mobile): fixed stale-tax-state copy on the invoice edit screen |
 | [mobile/landing-2026-09-30-w9-w11.md](mobile/landing-2026-09-30-w9-w11.md) | Landing 2026-09-30 (mobile): PO receive stored pack (#2781), socket bulk invalidation pins, M3 sub-lines |
 | [mobile/landing-2026-09-30-drift-c38f2b0.md](mobile/landing-2026-09-30-drift-c38f2b0.md) | Landing 2026-09-30 (earlier drift, mobile): applied-credit wording, credit createdAt, Google mismatch message |
 | [mobile/landing-2026-09-28-late.md](mobile/landing-2026-09-28-late.md) | Landing 2026-09-28 late: buyer custom lines skipped (B889), useNewUi flag, one-unit-sold surfaces, return-only-bought guard |
