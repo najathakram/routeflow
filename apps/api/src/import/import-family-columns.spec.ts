@@ -4,6 +4,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { ImportService } from "./import.service";
 import {
+  IMPORT_FAMILY_CLASS_REASON,
   IMPORT_FAMILY_MAX_ROWS,
   ProductFamilyImportService,
 } from "./product-family-import.service";
@@ -94,6 +95,8 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
   let service: ImportService;
   let rows: Row[];
   let audits: Array<Record<string, unknown>>;
+  let trackedCategories: Array<{ id: string; name: string }>;
+  let priorAudits: Array<{ action: string; entityId: string }>;
   let productsService: Record<string, jest.Mock>;
   let families: { reserveFamilyName: jest.Mock; createFamilyContainer: jest.Mock };
   let featureConfig: { getEffectiveMode: jest.Mock };
@@ -116,9 +119,35 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
     seq = 0;
     rows = [];
     audits = [];
+    trackedCategories = [];
+    priorAudits = [];
     const prisma = {
       getTenantId: () => TENANT,
-      forTenant: () => ({ product: tenantProduct() }),
+      forTenant: () => ({
+        product: tenantProduct(),
+        trackedCategory: {
+          findFirst: jest.fn(async (a: any) => {
+            const w = a?.where ?? {};
+            return (
+              trackedCategories.find(
+                (c) =>
+                  (w.id === undefined || c.id === w.id) &&
+                  (w.name === undefined ||
+                    c.name.toLowerCase() === String(w.name.equals ?? w.name).toLowerCase()),
+              ) ?? null
+            );
+          }),
+        },
+        orderItem: { count: jest.fn(async () => 0) },
+      }),
+      auditLog: {
+        findFirst: jest.fn(async (a: any) => {
+          const w = a?.where ?? {};
+          return (
+            priorAudits.find((x) => x.action === w.action && x.entityId === w.entityId) ?? null
+          );
+        }),
+      },
       tenantTransaction: async (cb: (tx: unknown) => unknown) => cb({}),
     };
     const find = (id: string) => rows.find((r) => r.id === id && r.tenantId === TENANT);
@@ -790,12 +819,266 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
     });
   });
 
+  describe("Opus fold: MUST-1 a new variant's regulated class is planned the way create() sets it", () => {
+    beforeEach(() => {
+      trackedCategories.push({ id: "cat-t", name: "Tobacco" });
+    });
+
+    it("a legacy tobacco parent: the new variant inherits the parent's class and is created, not skipped", async () => {
+      rows.push(
+        mk({
+          id: "legacy",
+          name: "Acme Cola",
+          isTobacco: true,
+          trackedCategoryId: "cat-t",
+        }),
+      );
+      rows.push(
+        mk({
+          id: "kid",
+          name: "Classic",
+          kind: "VARIANT",
+          parentProductId: "legacy",
+          isTobacco: true,
+          trackedCategoryId: "cat-t",
+        }),
+      );
+      const r = await run(csv("Mint,,,6,Acme Cola,Mint,,"));
+      expect(r.skipped).toBe(0);
+      expect(r.created).toBe(1);
+      expect(productsService.create.mock.calls[0][0]).toMatchObject({
+        parentProductId: "legacy",
+        name: "Mint",
+      });
+    });
+
+    it("a family container with tobacco members and a Tobacco=Yes cell: create() files it in the Tobacco type, so it joins", async () => {
+      rows.push(mk({ id: "fam", name: "Acme Cola", kind: "FAMILY" }));
+      rows.push(
+        mk({
+          id: "kid",
+          name: "Classic",
+          kind: "VARIANT",
+          parentProductId: "fam",
+          isTobacco: true,
+          trackedCategoryId: "cat-t",
+        }),
+      );
+      const r = await run(csv("Mint,,,6,Acme Cola,Mint,,Yes"));
+      expect(r.skipped).toBe(0);
+      expect(r.created).toBe(1);
+    });
+
+    it("a family container with tobacco members and NO Tobacco cell: create() makes a plain item, so the row is skipped", async () => {
+      rows.push(mk({ id: "fam", name: "Acme Cola", kind: "FAMILY" }));
+      rows.push(
+        mk({
+          id: "kid",
+          name: "Classic",
+          kind: "VARIANT",
+          parentProductId: "fam",
+          isTobacco: true,
+          trackedCategoryId: "cat-t",
+        }),
+      );
+      const r = await run(csv("Mint,,,6,Acme Cola,Mint,,"));
+      expect(byRow(r, 1)).toMatchObject({ action: "skip", reason: IMPORT_FAMILY_CLASS_REASON });
+    });
+  });
+
+  it("SHOULD-1: a failed cleanup remove() is reported as could not be removed, never as deactivated", async () => {
+    rows.push(mk({ id: "p1", name: "P1", sku: "S1" }));
+    productsService.assignToParent.mockRejectedValue(new BadRequestException("boom"));
+    productsService.remove.mockRejectedValue(new Error("db down"));
+    const r = await run(csv(",S1,,,Ghost Family,X,,"));
+    expect(r.families.deactivated).toEqual([]);
+    expect(r.families.cleanupFailed).toEqual([{ name: "Ghost Family" }]);
+    expect(r.warnings.join(" ")).toMatch(/could not be removed/);
+    expect(r.warnings.join(" ")).not.toMatch(/deactivated/);
+  });
+
+  describe("SHOULD-2: the re-run trap", () => {
+    it("an INACTIVE, empty, import-created family root is reused (reactivated) by a re-run", async () => {
+      rows.push(mk({ id: "old", name: "Ghost Family", kind: "FAMILY", isActive: false }));
+      priorAudits.push({ action: "import.family.created", entityId: "old" });
+      rows.push(mk({ id: "p1", name: "P1", sku: "S1" }));
+      const r = await run(csv(",S1,,,Ghost Family,X,,"));
+      expect(r.skipped).toBe(0);
+      expect(families.createFamilyContainer).not.toHaveBeenCalled();
+      expect(productsService.update).toHaveBeenCalledWith(
+        "old",
+        expect.objectContaining({ isActive: true }),
+        expect.anything(),
+      );
+      expect(productsService.assignToParent).toHaveBeenCalledWith(
+        "p1",
+        "old",
+        "X",
+        expect.anything(),
+      );
+    });
+
+    it("the preview shows the reuse without writing", async () => {
+      rows.push(mk({ id: "old", name: "Ghost Family", kind: "FAMILY", isActive: false }));
+      priorAudits.push({ action: "import.family.created", entityId: "old" });
+      rows.push(mk({ id: "p1", name: "P1", sku: "S1" }));
+      const r = await run(csv(",S1,,,Ghost Family,X,,"), true);
+      expect(byRow(r, 1).action).toBe("update");
+      expect(productsService.update).not.toHaveBeenCalled();
+    });
+
+    it("an inactive family that was NOT made by an import, or that has members, still skips", async () => {
+      rows.push(mk({ id: "mine", name: "Hand Made", kind: "FAMILY", isActive: false }));
+      rows.push(mk({ id: "used", name: "Used Family", kind: "FAMILY", isActive: false }));
+      priorAudits.push({ action: "import.family.created", entityId: "used" });
+      rows.push(
+        mk({ id: "m", name: "M", kind: "VARIANT", parentProductId: "used", isActive: false }),
+      );
+      rows.push(mk({ id: "p1", name: "P1", sku: "S1" }));
+      rows.push(mk({ id: "p2", name: "P2", sku: "S2" }));
+      const r = await run(csv(",S1,,,Hand Made,X,,", ",S2,,,Used Family,Y,,"));
+      expect(byRow(r, 1).reason).toMatch(/inactive/i);
+      expect(byRow(r, 2).reason).toMatch(/inactive/i);
+    });
+
+    it("an all-failing reused family is deactivated again", async () => {
+      rows.push(mk({ id: "old", name: "Ghost Family", kind: "FAMILY", isActive: false }));
+      priorAudits.push({ action: "import.family.created", entityId: "old" });
+      rows.push(mk({ id: "p1", name: "P1", sku: "S1" }));
+      productsService.assignToParent.mockRejectedValue(new BadRequestException("boom"));
+      const r = await run(csv(",S1,,,Ghost Family,X,,"));
+      expect(productsService.remove).toHaveBeenCalledWith("old");
+      expect(r.families.deactivated).toEqual([{ name: "Ghost Family" }]);
+    });
+  });
+
+  it("SHOULD-3: a standalone product and a new family with one name in one file are caught in the PREVIEW (second row skips)", async () => {
+    rows.push(mk({ id: "p1", name: "P1", sku: "S1" }));
+    const file = csv("Acme Cola,SN1,,3,,,,", ",S1,,,Acme Cola,X,,");
+    const preview = await run(file, true);
+    expect(byRow(preview, 1).action).toBe("create");
+    expect(byRow(preview, 2)).toMatchObject({ action: "skip" });
+    expect(byRow(preview, 2).reason).toMatch(/row 1/);
+    const real = await run(file);
+    expect(real.rows.map((p: any) => [p.row, p.action])).toEqual(
+      preview.rows.map((p: any) => [p.row, p.action]),
+    );
+    const reverse = await run(csv(",S1,,,Acme Cola,X,,", "Acme Cola,SN2,,3,,,,"), true);
+    expect(byRow(reverse, 2).action).toBe("skip");
+  });
+
+  describe("SHOULD-4: an export round trip with Family cells unchanged applies exactly as before", () => {
+    beforeEach(() => {
+      featureConfig.getEffectiveMode.mockResolvedValue("on");
+      rows.push(mk({ id: "fam", name: "Acme Cola", kind: "FAMILY" }));
+      rows.push(
+        mk({
+          id: "v1",
+          name: "Zero",
+          sku: "S1",
+          kind: "VARIANT",
+          parentProductId: "fam",
+          pricePerUnit: 5,
+        }),
+      );
+    });
+
+    it("by SKU: no 409 under mixed_packs ON, no regroup, a plain price update", async () => {
+      const r = await service.importProducts(
+        Buffer.from("Item Name,SKU,Rate,Family\nZero,S1,6,acme cola\n"),
+        "user-1",
+      );
+      expect(r.skipped).toBe(0);
+      expect(r.updated).toBe(1);
+      expect(productsService.assignToParent).not.toHaveBeenCalled();
+      expect(productsService.update).toHaveBeenCalledWith(
+        "v1",
+        { pricePerUnit: 6 },
+        expect.anything(),
+      );
+    });
+
+    it("keyless: the row still updates by name as before", async () => {
+      const r = await service.importProducts(
+        Buffer.from("Item Name,Rate,Family\nZero,6,Acme Cola\n"),
+        "user-1",
+      );
+      expect(r.skipped).toBe(0);
+      expect(productsService.update).toHaveBeenCalledWith(
+        "v1",
+        { pricePerUnit: 6 },
+        expect.anything(),
+      );
+    });
+
+    it("the row cap does not apply to a round-trip file", async () => {
+      for (let i = 0; i < IMPORT_FAMILY_MAX_ROWS; i++) {
+        rows.push(
+          mk({
+            id: `rt${i}`,
+            name: `Item ${i}`,
+            sku: `RT${i}`,
+            kind: "VARIANT",
+            parentProductId: "fam",
+          }),
+        );
+      }
+      const lines = Array.from(
+        { length: IMPORT_FAMILY_MAX_ROWS },
+        (_, i) => `Item ${i},RT${i},Acme Cola`,
+      );
+      const r = await service.importProducts(
+        Buffer.from(["Item Name,SKU,Family", ...lines].join("\n") + "\n"),
+        "user-1",
+        { dryRun: true },
+      );
+      expect(r.skipped).toBe(0);
+    }, 120_000);
+
+    it("a real regroup in the same file still trips the 409", async () => {
+      rows.push(mk({ id: "p9", name: "P9", sku: "S9" }));
+      await expect(
+        service.importProducts(
+          Buffer.from("Item Name,SKU,Family\nZero,S1,Acme Cola\n,S9,Acme Cola\n"),
+          "user-1",
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  it("SHOULD-5: keyless Family rows are not name-ambiguous: Small under Cola and Small under Juice both apply", async () => {
+    rows.push(mk({ id: "cola", name: "Cola", kind: "FAMILY" }));
+    rows.push(mk({ id: "juice", name: "Juice", kind: "FAMILY" }));
+    const r = await run(csv("Small,,,3,Cola,,,", "Small,,,3,Juice,,,"));
+    expect(r.skipped).toBe(0);
+    expect(r.created).toBe(2);
+  });
+
+  it("SHOULD-9: a new family's category and lowest price come from the rows that are accepted", async () => {
+    const r = await service.importProducts(
+      Buffer.from(
+        [
+          "Item Name,SKU,Rate,Category,Family,Variant Name",
+          "Alpha,SA1,,Zeta,New Fam,A", // no Rate: a new product needs one, so this row is refused
+          "Beta,SB1,2,Beta Cat,New Fam,B",
+          "",
+        ].join("\n"),
+      ),
+      "user-1",
+    );
+    expect(r.created).toBe(1);
+    expect(families.createFamilyContainer.mock.calls[0][1]).toMatchObject({
+      category: "Beta Cat",
+      pricePerUnit: "2.00",
+    });
+  });
+
   it("the family import branch calls no productUnit writer and no Prisma write (units v2 stays untouched)", () => {
     const src = readFileSync(join(__dirname, "product-family-import.service.ts"), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/(^|[^:])\/\/.*$/gm, "$1");
     expect(src).not.toMatch(/\bproductUnit\b/);
-    expect(src).not.toMatch(
+    expect(src.replace(/this\.productsService\.update\(/g, "")).not.toMatch(
       /\.(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/,
     );
     expect(src).not.toMatch(/\$executeRaw|\$queryRaw/);
