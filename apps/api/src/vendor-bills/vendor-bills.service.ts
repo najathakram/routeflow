@@ -2147,7 +2147,7 @@ export class VendorBillsService {
           where: { id: lot.id },
           data: {
             remainingQty: 0,
-            notes: `${lot.notes ? `${lot.notes} ` : ""}(bill reversed; ${consumed.toString()} already consumed)`,
+            notes: `${lot.notes ? `${lot.notes} ` : ""}(bill reversed; up to ${consumed.toString()} already consumed)`,
           },
         });
       }

@@ -608,7 +608,7 @@ describe("B846 / SA-808 — revertToDraft appends reversal rows and never delete
     expect(h.prisma.stockLot.delete).not.toHaveBeenCalled();
     expect(h.lots).toHaveLength(1);
     expect(h.lots[0].remainingQty).toBe(0);
-    expect(h.lots[0].notes).toMatch(/\(bill reversed; 4 already consumed\)/);
+    expect(h.lots[0].notes).toMatch(/\(bill reversed; up to 4 already consumed\)/);
   });
 
   it("lots: a bill that never made a lot reverts fine — movement reversed, no lot touched", async () => {
