@@ -1982,13 +1982,31 @@ export default function OrderDetailPage() {
   }
 
   function handleDeleteItem(id: string) {
-    const item = editItems.find((it) => it.id === id);
+    const index = editItems.findIndex((it) => it.id === id);
+    const item = editItems[index];
     if (!item) return;
     setEditItems((prev) => prev.filter((it) => it.id !== id));
     if (!item.isNew) {
       // Existing saved line — queue a DELETE action on save (falls back to CANCEL if invoiced).
       setPendingDeletes((prev) => [...prev, id]);
     }
+    // F22: the DELETE is deferred to Save, so Undo is a display change: put the line back where it was.
+    toast({
+      title: `Removed ${item.productName || "item"}`,
+      variant: "info",
+      duration: 8000,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          setPendingDeletes((prev) => prev.filter((x) => x !== id));
+          setEditItems((prev) => {
+            if (prev.some((it) => it.id === id)) return prev;
+            const at = Math.min(index, prev.length);
+            return [...prev.slice(0, at), item, ...prev.slice(at)];
+          });
+        },
+      },
+    });
   }
 
   /** SA-388: refuse visibly, sending nothing, a save editing a LOCKED line (both save paths). */
