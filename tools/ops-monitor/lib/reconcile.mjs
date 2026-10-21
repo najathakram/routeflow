@@ -99,6 +99,33 @@ export function landedAt(p, merged) {
   return hit ?? { at: null, via: null };
 }
 
+/** An open incident file counts as current only when it changed within this many days. */
+export const INCIDENT_FRESH_DAYS = 7;
+const DAY = 24 * HOUR;
+
+/** When an incident file last changed (git commit time), else its filename date; ms or null. */
+export function incidentChangedMs(inc) {
+  const c = toMs(inc?.changedAt);
+  if (c !== null) return c;
+  return inc?.date ? toMs(`${inc.date}T00:00:00Z`) : null;
+}
+
+/**
+ * Where an incident file belongs on the page (lead ruling 10-19): `hurting` = status open and
+ * the file changed within INCIDENT_FRESH_DAYS; `stale` = open but older, or no Status line at all
+ * (a drift alarm either way); `mitigated`; `unverified` (suspected / unverified); `hidden`
+ * (closed / resolved). Pure.
+ */
+export function incidentBucket(inc, now) {
+  const s = String(inc?.status ?? "unknown").toLowerCase();
+  if (s === "closed" || s === "resolved") return "hidden";
+  if (s === "mitigated") return "mitigated";
+  if (s === "suspected" || s === "unverified") return "unverified";
+  if (s !== "open") return "stale";
+  const at = incidentChangedMs(inc);
+  return at !== null && now - at <= INCIDENT_FRESH_DAYS * DAY ? "hurting" : "stale";
+}
+
 const CLOSED_BUG_STATES = new Set([
   "done",
   "proven",
@@ -146,6 +173,7 @@ export function reconcile({
   bugIds,
   laneActivity,
   register,
+  incidents,
 }) {
   const alarms = [];
   const th = {
@@ -389,6 +417,34 @@ export function reconcile({
       for (const id of fixLinksFor({ branch: b.branch }, knownIds).filter((x) => /^B\d/.test(x)))
         flag(id, { branch: b.branch }, `Branch ${b.branch}`);
     }
+  }
+
+  // unknown-status: the register said a status word the monitor does not know (item reads planned).
+  for (const it of state.items.values()) {
+    // Only while the item still reads "planned": a later status, or a done item, settles it.
+    if (!it.statusText || it.status !== "planned" || DONE_STATUSES.includes(it.status)) continue;
+    add({
+      kind: "unknown-status",
+      severity: "info",
+      message: `Row ${it.id} has status '${it.statusText}' the monitor does not know`,
+      item: it.id,
+    });
+  }
+
+  // incident-stale: incident files are snapshots, so an open one with no recent change (or no
+  // Status line) cannot be trusted as a live problem. The team sets the Status: line.
+  for (const inc of incidents ?? []) {
+    if (incidentBucket(inc, now) !== "stale") continue;
+    const at = incidentChangedMs(inc);
+    add({
+      kind: "incident-stale",
+      severity: "warn",
+      message:
+        at === null
+          ? `Incident '${inc.title}' has no status update; set its **Status:** line`
+          : `Incident '${inc.title}' has no status update for ${Math.max(0, Math.floor((now - at) / DAY))} days; set its **Status:** line`,
+      _target: inc.id,
+    });
   }
 
   // claim-conflict

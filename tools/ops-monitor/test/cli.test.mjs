@@ -440,3 +440,35 @@ test(
     }
   },
 );
+
+test(
+  "X1 item edit --harm sets live|latent|none, none/null clears, junk is refused",
+  T,
+  async () => {
+    let r = await rf(
+      "item",
+      "new",
+      "--title",
+      "Acme harm check",
+      "--type",
+      "bug",
+      "--priority",
+      "P2",
+      "--json",
+    );
+    assert.equal(r.code, 0, r.stderr);
+    const id = JSON.parse(r.stdout).events[0].item;
+    r = await rf("item", "edit", id, "--harm", "latent", "--json");
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).events[0].data.fields.harm, "latent");
+    r = await rf("item", "show", id, "--json");
+    assert.equal(JSON.parse(r.stdout).harm, "latent");
+    r = await rf("item", "edit", id, "--harm", "none", "--json");
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).events[0].data.fields.harm, "none");
+    r = await rf("item", "edit", id, "--harm", "null", "--json");
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).events[0].data.fields.harm, null);
+    assert.notEqual((await rf("item", "edit", id, "--harm", "bogus")).code, 0);
+  },
+);

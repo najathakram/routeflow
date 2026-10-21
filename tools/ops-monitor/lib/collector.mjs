@@ -364,6 +364,10 @@ export function parseLedgerText(text) {
   return rows;
 }
 
+// Text store.exec / git-exec put in stderr when git could not run at all (not a git error).
+const GIT_FAILURE_RE = /git spawn failed|git timed out/;
+// Cloud blob prefetch: one `git fetch` per this many blob shas.
+const PREFETCH_CHUNK = 250;
 const fileNo = (p) => Number(/F(\d+)[^/]*$/i.exec(p)?.[1] ?? 1e9);
 
 /**
@@ -423,12 +427,36 @@ export function parseHandoffLog(text) {
   return [...by].map(([file, at]) => ({ file, at }));
 }
 
+/** `git log --format=%x00%cI --name-only -- incidents` -> { basename: newest commit ISO }. */
+export function parseIncidentLog(text) {
+  const out = {};
+  for (const c of parseGitLogNames(text)) {
+    for (const f of c.files) {
+      if (!f.startsWith("incidents/")) continue;
+      const file = f.slice(f.lastIndexOf("/") + 1);
+      if (!out[file] || c.at > out[file]) out[file] = c.at;
+    }
+  }
+  return out;
+}
+
+const INCIDENT_STATUS_WORDS = [
+  "open",
+  "mitigated",
+  "closed",
+  "resolved",
+  "suspected",
+  "unverified",
+];
+
 /**
- * incidents/*.md [{ file, text }] -> [{ id, file, title, status, date }]. README is skipped.
- * status = the word after `Status:` when it is open | mitigated | closed, else open. The id is
+ * incidents/*.md [{ file, text }] -> [{ id, file, title, status, date, changedAt }]. README is
+ * skipped. status = the first word after `Status:` when it is open | mitigated | closed | resolved |
+ * suspected | unverified, else `unknown` (no Status line is never silently open). `changedAt` =
+ * the file's newest commit time from `changedByFile` (parseIncidentLog), else null. The id is
  * DERIVED (INC-MMDD + a letter in file order); it is never stored anywhere.
  */
-export function parseIncidents(files) {
+export function parseIncidents(files, changedByFile = {}, mask = (t) => t) {
   const out = [];
   const perDay = new Map();
   const list = files
@@ -437,21 +465,21 @@ export function parseIncidents(files) {
   for (const f of list) {
     const d = /^(\d{4})-(\d{2})-(\d{2})-/.exec(f.file);
     const slug = f.file.replace(/\.md$/i, "").replace(/^\d{4}-\d{2}-\d{2}-/, "");
-    let id;
-    if (d) {
-      const k = `${d[2]}${d[3]}`;
-      const n = perDay.get(k) ?? 0;
-      perDay.set(k, n + 1);
-      id = `INC-${k}${String.fromCharCode(97 + (n % 26))}`;
-    } else id = `INC-${slug.slice(0, 24)}`;
-    const title = /^#\s+(.+?)\s*$/m.exec(f.text)?.[1] ?? slug;
+    // The id is date + index only (never a file-name slug: those carry client words).
+    const k = d ? `${d[2]}${d[3]}` : "0000";
+    const n = perDay.get(k) ?? 0;
+    perDay.set(k, n + 1);
+    const id = `INC-${k}${String.fromCharCode(97 + (n % 26))}`;
+    // Masked BEFORE the cut, so a name never survives as a fragment.
+    const title = mask(/^#\s+(.+?)\s*$/m.exec(f.text)?.[1] ?? slug);
     const word = /^[\s>*_-]*status[\s*_]*[:.][\s*_]*([A-Za-z]+)/im.exec(f.text)?.[1]?.toLowerCase();
     out.push({
       id,
       file: f.file,
       title: title.slice(0, 300),
-      status: ["open", "mitigated", "closed"].includes(word) ? word : "open",
+      status: INCIDENT_STATUS_WORDS.includes(word) ? word : "unknown",
       date: d ? `${d[1]}-${d[2]}-${d[3]}` : null,
+      changedAt: changedByFile?.[f.file] ?? null,
     });
   }
   return out;
@@ -512,7 +540,12 @@ export function parseOwnerQueueRows(md) {
  * priorities/OWNER-QUEUE.md and ONE `git log` for the lane handoff commit times. Never throws;
  * every failure is listed in `errors` (a missing piece is data, not a crash).
  */
-export async function readSpecsExtras({ dir, exec, fs = { readdirSync, readFileSync } }) {
+export async function readSpecsExtras({
+  dir,
+  exec,
+  fs = { readdirSync, readFileSync },
+  mask = (t) => t,
+}) {
   const errors = [];
   let incidents = [];
   let ownerQueueRows = null;
@@ -525,7 +558,19 @@ export async function readSpecsExtras({ dir, exec, fs = { readdirSync, readFileS
       .readdirSync(d)
       .filter((f) => /\.md$/i.test(f))
       .map((f) => ({ file: f, text: fs.readFileSync(join(d, f), "utf8") }));
-    incidents = parseIncidents(files);
+    // ONE git log gives every incident file's last commit time (a failure leaves them null).
+    let changed = {};
+    try {
+      const r = await exec("git", ["log", "--format=%x00%cI", "--name-only", "--", "incidents"], {
+        cwd: dir,
+      });
+      if (r.code !== 0)
+        throw new Error(`git log failed (${r.code}): ${(r.stderr || "").trim().slice(0, 100)}`);
+      changed = parseIncidentLog(r.stdout);
+    } catch (e) {
+      errors.push(`incident times: ${String(e?.message ?? e).slice(0, 120)}`);
+    }
+    incidents = parseIncidents(files, changed, mask);
   } catch (e) {
     errors.push(`incidents: ${String(e?.message ?? e).slice(0, 120)}`);
   }
@@ -748,6 +793,7 @@ export function createCollector({
   deps = {},
   cloud = false,
   fetch: fetchFn = globalThis.fetch,
+  mask = (t) => t,
 } = {}) {
   // Cloud never writes git: every git call goes through the read-only allow-list.
   const guardedExec = cloud ? readOnlyExec(exec) : exec;
@@ -810,7 +856,7 @@ export function createCollector({
       // here is listed in extrasErrors and never fails the source (the events are what matters).
       let extras;
       try {
-        extras = await (deps.specsExtras ?? readSpecsExtras)({ dir: specsDir, exec });
+        extras = await (deps.specsExtras ?? readSpecsExtras)({ dir: specsDir, exec, mask });
       } catch (e) {
         extras = { errors: [`extras: ${String(e?.message ?? e).slice(0, 160)}`] };
       }
@@ -964,8 +1010,11 @@ export function createCollector({
         .split(/\r?\n/)
         .map((x) => x.trim())
         .filter((x) => /^\S+$/.test(x)); // stdout carries only resolved shas (errors go to stderr)
-      if (!shas.length)
+      if (!shas.length) {
+        // A spawn failure / timeout is NOT a missing registry; say what really happened.
+        if (GIT_FAILURE_RE.test(tree.stderr)) fail(tree.stderr.trim().slice(0, 200));
         fail(`bug registry not found on origin/master: ${tree.stderr.trim().slice(0, 200)}`);
+      }
       const treeSha = shas[0];
       const ledgerTree = tree.code === 0 && shas.length > 1 ? shas[1] : null;
       const key = `${treeSha}:${ledgerTree}`;
@@ -998,6 +1047,35 @@ export function createCollector({
       const have = (sha) =>
         (!needBug.includes(sha) || bugBlobCache.has(sha)) &&
         (!needLedger.includes(sha) || ledgerBlobCache.has(sha));
+      if (need.length && cloud) {
+        // The cloud clone is BLOBLESS: every blob cat-file lacks triggers its own lazy https fetch
+        // (a git-remote-https child each). Fetch all missing blobs up front, ONE fetch per chunk,
+        // so the forks per poll are bounded by ceil(N / PREFETCH_CHUNK) instead of by N.
+        for (let i = 0; i < need.length; i += PREFETCH_CHUNK) {
+          // negotiationAlgorithm=noop (as git's own lazy fetch): no negotiation against the clone.
+          const f = await exec(
+            "git",
+            [
+              "fetch",
+              "--quiet",
+              "--no-tags",
+              "--no-write-fetch-head",
+              "--recurse-submodules=no",
+              "origin",
+              ...need.slice(i, i + PREFETCH_CHUNK),
+            ],
+            {
+              cwd: repoRoot,
+              env: {
+                GIT_CONFIG_COUNT: "1",
+                GIT_CONFIG_KEY_0: "fetch.negotiationAlgorithm",
+                GIT_CONFIG_VALUE_0: "noop",
+              },
+            },
+          );
+          if (f.code !== 0) fail(`blob prefetch failed: ${(f.stderr || "").trim().slice(0, 200)}`);
+        }
+      }
       if (need.length) {
         // One batched read when exec supports stdin (opts.input); otherwise (or if it returned
         // nothing) fall back to one `git cat-file blob` per unseen blob, 8 at a time.
@@ -1007,7 +1085,8 @@ export function createCollector({
         });
         if (r.code === 0)
           for (const { sha, content } of parseCatFileBatch(r.stdout)) ingest(sha, content);
-        const left = need.filter((x) => !have(x));
+        // Cloud never fans out per blob: a blob the one batch could not read is an error below.
+        const left = cloud ? [] : need.filter((x) => !have(x));
         for (let i = 0; i < left.length; i += 8) {
           await Promise.all(
             left.slice(i, i + 8).map(async (sha) => {
