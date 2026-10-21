@@ -1,6 +1,7 @@
 import * as React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BUYER_KEYS } from "./auth-keys";
 import type { BuyerSeller } from "./buyer-auth";
 
@@ -27,11 +28,16 @@ function makeSeller(linkId: string, slug: string): BuyerSeller {
   };
 }
 
+let switchTarget: BuyerSeller | null = null;
+
 function ActiveSellerProbe() {
-  const { activeSeller, refreshSellers } = useBuyerAuth();
+  const { activeSeller, refreshSellers, setActiveSeller } = useBuyerAuth();
   return (
     <div>
       <div data-testid="active-seller">{activeSeller?.linkId ?? "none"}</div>
+      <button type="button" onClick={() => switchTarget && setActiveSeller(switchTarget)}>
+        switch
+      </button>
       <button type="button" onClick={() => void refreshSellers()}>
         refresh
       </button>
@@ -39,11 +45,15 @@ function ActiveSellerProbe() {
   );
 }
 
+const testQueryClient = new QueryClient();
+
 function renderProvider() {
   return render(
-    <BuyerAuthProvider>
-      <ActiveSellerProbe />
-    </BuyerAuthProvider>,
+    <QueryClientProvider client={testQueryClient}>
+      <BuyerAuthProvider>
+        <ActiveSellerProbe />
+      </BuyerAuthProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -132,5 +142,48 @@ describe("BuyerAuthProvider — activeSeller reconciliation (B141)", () => {
     await waitFor(() => expect(getBuyerSellers).toHaveBeenCalledTimes(2));
     expect(screen.getByTestId("active-seller")).toHaveTextContent("link-removed");
     expect(localStorage.getItem(BUYER_KEYS.activeSeller)).not.toBeNull();
+  });
+});
+
+describe("BuyerAuthProvider: clears cached buyer data on seller switch", () => {
+  const sellerA = makeSeller("link-a", "acme");
+  const sellerB = makeSeller("link-b", "globex");
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    localStorage.clear();
+    testQueryClient.clear();
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("clears cached buyer data on seller switch", async () => {
+    localStorage.setItem(BUYER_KEYS.activeSeller, JSON.stringify(sellerA));
+    (getBuyerSellers as jest.Mock).mockResolvedValue([sellerA, sellerB]);
+    testQueryClient.setQueryData(["buyer", "dashboard"], { seller: "A" });
+    switchTarget = sellerB;
+
+    renderProvider();
+    await waitFor(() => expect(screen.getByTestId("active-seller")).toHaveTextContent("link-a"));
+    expect(testQueryClient.getQueryData(["buyer", "dashboard"])).toEqual({ seller: "A" });
+
+    await userEvent.click(screen.getByRole("button", { name: "switch" }));
+
+    await waitFor(() => expect(screen.getByTestId("active-seller")).toHaveTextContent("link-b"));
+    expect(testQueryClient.getQueryData(["buyer", "dashboard"])).toBeUndefined();
+  });
+
+  it("clears cached buyer data when the active seller is dropped", async () => {
+    localStorage.setItem(BUYER_KEYS.activeSeller, JSON.stringify(sellerA));
+    (getBuyerSellers as jest.Mock).mockResolvedValueOnce([sellerA, sellerB]);
+    testQueryClient.setQueryData(["buyer", "dashboard"], { seller: "A" });
+
+    renderProvider();
+    await waitFor(() => expect(screen.getByTestId("active-seller")).toHaveTextContent("link-a"));
+
+    (getBuyerSellers as jest.Mock).mockResolvedValueOnce([sellerB]);
+    await userEvent.click(screen.getByRole("button", { name: "refresh" }));
+
+    await waitFor(() => expect(screen.getByTestId("active-seller")).toHaveTextContent("none"));
+    expect(testQueryClient.getQueryData(["buyer", "dashboard"])).toBeUndefined();
   });
 });
