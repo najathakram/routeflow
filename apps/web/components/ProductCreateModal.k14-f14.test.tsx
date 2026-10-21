@@ -36,5 +36,6 @@ describe("New product: nothing hides behind the pinned footer", () => {
     expect(fade.className).toContain("bottom-0");
     expect(fade.className).toContain("pointer-events-none");
     expect(fade.className).toContain("bg-gradient-to-t");
+    expect(fade.className).toContain("h-12");
   });
 });

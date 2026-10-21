@@ -1128,7 +1128,7 @@ export function ProductCreateModal({
         <div
           data-scroll-fade
           aria-hidden="true"
-          className="pointer-events-none sticky bottom-0 -mb-20 h-6 bg-gradient-to-t from-white to-transparent"
+          className="pointer-events-none sticky bottom-0 -mb-20 h-12 bg-gradient-to-t from-white to-transparent"
         />
       </form>
     </Modal>
