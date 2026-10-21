@@ -111,6 +111,7 @@ import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
+import { usePaymentSubmitKey } from "@/lib/payment-submit-key";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -1438,6 +1439,7 @@ export default function InvoiceDetailPage() {
   );
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
+  const paymentKey = usePaymentSubmitKey(isPaymentOpen); // SA-824: one Idempotency-Key per open
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
   // Payment row whose "Remove credit" was clicked — confirm before un-applying.
   const [removingCreditPayment, setRemovingCreditPayment] = React.useState<InvoicePayment | null>(
@@ -1806,6 +1808,7 @@ export default function InvoiceDetailPage() {
         settledAt: data.settledAt || undefined,
         reference: data.reference.trim() || undefined,
         notes: data.notes.trim() || undefined,
+        submitKey: paymentKey,
       },
       {
         onSuccess: (updated) => {

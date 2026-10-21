@@ -19,6 +19,7 @@ import {
 } from "../../../../../lib/payment-methods";
 import { productImageFile } from "../../../../../lib/product-image";
 import { showToast } from "../../../../../lib/toast";
+import { usePaymentSubmitKey } from "../../../../../lib/payment-submit-key";
 
 // Advance / Credit-Note are intentionally excluded: the server rejects them here
 // ("use the dedicated Apply Credit Note / Apply Advance actions") so offering
@@ -36,6 +37,7 @@ export default function RecordPaymentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: invoice } = useAdminInvoice(id ?? "");
   const mut = useRecordInvoicePayment();
+  const paymentKey = usePaymentSubmitKey(); // SA-824: one Idempotency-Key per open (mounted per open)
   const uploadImageMut = useUploadPaymentImage();
 
   const balance = invoice?.balanceDue ?? invoice?.total ?? 0;
@@ -80,6 +82,7 @@ export default function RecordPaymentScreen() {
       bankCharges: bankCharges.trim() ? Number(bankCharges) || undefined : undefined,
       paidAt: paidAt.trim() || undefined,
       settledAt: settledAt.trim() || undefined,
+      submitKey: paymentKey,
     };
     mut.mutate(dto, {
       onSuccess: (result) => {

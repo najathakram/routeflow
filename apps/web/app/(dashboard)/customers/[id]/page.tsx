@@ -169,6 +169,7 @@ import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { focusRefusedContactField } from "@/lib/refused-text-field";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, WriteLink } from "@/lib/read-only-gate";
+import { usePaymentSubmitKey } from "@/lib/payment-submit-key";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -2158,6 +2159,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
 
   // Advance payment
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
+  const advanceKey = usePaymentSubmitKey(isAdvanceOpen); // SA-824: one Idempotency-Key per open
   const [advanceForm, setAdvanceForm] = React.useState<{
     method: SelectablePaymentMethod;
     amount: string;
@@ -3870,6 +3872,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         amount: amt,
                         reference: advanceForm.reference || undefined,
                         notes: advanceForm.notes || undefined,
+                        submitKey: advanceKey,
                       },
                       { onSuccess: () => setIsAdvanceOpen(false) },
                     );

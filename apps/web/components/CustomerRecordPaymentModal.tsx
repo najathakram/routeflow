@@ -13,6 +13,7 @@ import {
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { fmt } from "@/lib/formatting";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
+import { usePaymentSubmitKey } from "@/lib/payment-submit-key";
 import { clampAllocationInput } from "@/lib/payment-allocation";
 import {
   SELECTABLE_PAYMENT_METHODS,
@@ -62,6 +63,7 @@ export function CustomerRecordPaymentModal({
 }: CustomerRecordPaymentModalProps) {
   const { toast } = useToast();
   const record = useRecordPaymentStandalone();
+  const paymentKey = usePaymentSubmitKey(true); // SA-824: one Idempotency-Key per open (mounted per open)
   const uploadPaymentImage = useUploadPaymentImage();
   const [totalAmount, setTotalAmount] = React.useState("");
   const [bankCharges, setBankCharges] = React.useState("");
@@ -154,7 +156,7 @@ export function CustomerRecordPaymentModal({
       })),
     };
     try {
-      const res = await record.mutateAsync(dto);
+      const res = await record.mutateAsync({ ...dto, submitKey: paymentKey });
       toast({
         title: `Payment ${status === "DRAFT" ? "saved as draft" : "recorded"}`,
         variant: "success",

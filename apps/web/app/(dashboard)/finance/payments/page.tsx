@@ -33,6 +33,7 @@ import {
   type SelectablePaymentMethod,
 } from "@/lib/payment-methods";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { usePaymentSubmitKey } from "@/lib/payment-submit-key";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -65,6 +66,7 @@ interface Allocation {
 function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const { toast } = useToast();
   const record = useRecordPaymentStandalone();
+  const paymentKey = usePaymentSubmitKey(true); // SA-824: one Idempotency-Key per open (mounted per open)
   const uploadPaymentImage = useUploadPaymentImage();
   const { data: customersData } = useCustomers({ limit: 200 });
   const [customerId, setCustomerId] = React.useState("");
@@ -175,7 +177,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       })),
     };
     try {
-      const res = await record.mutateAsync(dto);
+      const res = await record.mutateAsync({ ...dto, submitKey: paymentKey });
       toast({
         title: `Payment ${status === "DRAFT" ? "saved as draft" : "recorded"}`,
         variant: "success",

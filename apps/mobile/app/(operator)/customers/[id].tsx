@@ -39,6 +39,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { tierLabel } from "../../../lib/tier-label";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { usePaymentSubmitKey } from "../../../lib/payment-submit-key";
 import { useRecordReturn } from "../../../hooks/useRecordReturn";
 
 function fmt(n: number | string | null | undefined): string {
@@ -506,6 +507,7 @@ function RecordAdvanceModal({
   onClose: () => void;
 }) {
   const mut = useCreateAdvancePayment();
+  const paymentKey = usePaymentSubmitKey(); // SA-824: one Idempotency-Key per open (mounted per open)
   const [method, setMethod] = useState<SelectablePaymentMethod>("CASH");
   const [amount, setAmount] = useState<number | null>(null);
   const [reference, setReference] = useState("");
@@ -524,6 +526,7 @@ function RecordAdvanceModal({
         method,
         ...(reference.trim() ? { reference: reference.trim() } : {}),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
+        submitKey: paymentKey,
       },
       {
         onSuccess: () => {

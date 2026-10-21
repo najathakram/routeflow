@@ -30,6 +30,7 @@ import { showToast } from "../../../lib/toast";
 import { fmtCalendarDate } from "../../../lib/format-date";
 import { hasUnsavedPayment } from "../../../lib/discard-guard";
 import { isOpenInvoiceStatus } from "../../../lib/invoices-logic";
+import { usePaymentSubmitKey } from "../../../lib/payment-submit-key";
 
 /**
  * Standalone payment with multi-invoice allocation — one check at the door
@@ -149,6 +150,7 @@ function PaymentForm({
   onChangeCustomer: () => void;
 }) {
   const mut = useRecordPaymentStandalone();
+  const paymentKey = usePaymentSubmitKey(); // SA-824: one Idempotency-Key per open (mounted per open)
   const uploadImageMut = useUploadPaymentImage();
   const { data: invoicesData } = useAdminInvoices({ customerId, limit: 50 });
 
@@ -253,6 +255,7 @@ function PaymentForm({
         ...(reference.trim() ? { reference: reference.trim() } : {}),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
         status: asDraft ? "DRAFT" : "PAID",
+        submitKey: paymentKey,
       },
       {
         onSuccess: (res) => {
