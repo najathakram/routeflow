@@ -331,3 +331,21 @@ test("checkCloudEnv: --views and --lan need a readable, non-empty client-name li
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("checkCloudEnv: a trailing newline on the hash / secret does not make them invalid", () => {
+  const hash = hashPassword("a long enough pw");
+  const secret = "ab".repeat(32);
+  const r = checkCloudEnv(
+    {
+      OPS_PASSWORD_HASH: hash + "\n",
+      OPS_SESSION_SECRET: secret + "\r\n",
+      GITHUB_TOKEN: "t",
+      CLIENT_NAMES_JSON: '["Acme"]',
+    },
+    { cloud: true },
+  );
+  assert.deepEqual(
+    r.errors.filter((e) => /OPS_(PASSWORD|SESSION)/.test(e)),
+    [],
+  );
+});

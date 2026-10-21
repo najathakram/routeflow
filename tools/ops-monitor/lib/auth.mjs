@@ -33,6 +33,16 @@ function parseStored(stored) {
 
 export const isWellFormedHash = (stored) => parseStored(stored) !== null;
 
+/**
+ * The login pair from env, whitespace-trimmed (a pasted Railway value often carries a trailing
+ * newline). null when no hash is set. The typed password is never trimmed.
+ */
+export function authFromEnv(env = process.env) {
+  const passwordHash = env.OPS_PASSWORD_HASH?.trim();
+  if (!passwordHash) return null;
+  return { passwordHash, sessionSecret: env.OPS_SESSION_SECRET?.trim() };
+}
+
 /** Constant-time check. A malformed stored hash is simply false. */
 export function verifyPassword(password, stored) {
   const p = parseStored(stored);
@@ -173,9 +183,9 @@ async function readAll(stream) {
 }
 
 // Reads one line from a TTY without echoing it.
-function readHidden(stdin, stderr) {
+function readHidden(stdin, stderr, prompt = "Password: ") {
   return new Promise((resolve, reject) => {
-    stderr.write("Password (input hidden): ");
+    stderr.write(prompt);
     stdin.setRawMode(true);
     stdin.resume();
     stdin.setEncoding("utf8");
@@ -209,14 +219,29 @@ export async function hashPasswordCli({
   stderr = process.stderr,
 } = {}) {
   let pw;
+  let again = null;
   try {
-    pw = stdin.isTTY ? await readHidden(stdin, stderr) : await readAll(stdin);
+    if (stdin.isTTY) {
+      pw = await readHidden(stdin, stderr, "Password: ");
+      again = await readHidden(stdin, stderr, "Again: ");
+    } else pw = await readAll(stdin);
   } catch (e) {
     stderr.write(`${e?.message ?? "could not read password"}\n`);
     process.exitCode = 1;
     return null;
   }
   pw = pw.replace(/\r?\n$/, "");
+  if (pw === "") {
+    stderr.write("Password must not be empty.\n");
+    process.exitCode = 1;
+    return null;
+  }
+  // A hidden prompt hides typos too: it is typed twice and a mismatch hashes nothing.
+  if (again !== null && again.replace(/\r?\n$/, "") !== pw) {
+    stderr.write("The two entries do not match; nothing was hashed. Run it again.\n");
+    process.exitCode = 1;
+    return null;
+  }
   if (pw.length < MIN_PASSWORD_LEN) {
     stderr.write(`Password must be at least ${MIN_PASSWORD_LEN} characters.\n`);
     process.exitCode = 1;

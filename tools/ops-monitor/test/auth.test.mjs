@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import {
   COOKIE_NAME,
@@ -9,6 +10,7 @@ import {
   createFailureLimiter,
   createRateLimiter,
   hashPassword,
+  authFromEnv,
   hashPasswordCli,
   isWellFormedHash,
   parseCookies,
@@ -173,4 +175,78 @@ test("hashPasswordCli: reads stdin, prints only the hash, rejects short password
   assert.deepEqual(out2, []);
   assert.match(err2.join(""), /at least 8/);
   assert.doesNotMatch(err2.join(""), /short/);
+});
+
+// A TTY stand-in: each time a hidden prompt starts listening it "types" the next line.
+function fakeTty(lines) {
+  const e = new EventEmitter();
+  e.isTTY = true;
+  e.setRawMode = () => {};
+  e.resume = () => {};
+  e.pause = () => {};
+  e.setEncoding = () => {};
+  const on = e.on.bind(e);
+  e.on = (ev, fn) => {
+    on(ev, fn);
+    if (ev === "data") setImmediate(() => e.emit("data", lines.shift() + "\r"));
+    return e;
+  };
+  return e;
+}
+const sink = () => {
+  const o = [];
+  return { o, write: (s) => o.push(s) };
+};
+
+test("hashPasswordCli (TTY): asks twice, a mismatch is refused with a non-zero exit", async () => {
+  const out = sink();
+  const err = sink();
+  const prev = process.exitCode;
+  const h = await hashPasswordCli({
+    stdin: fakeTty(["a long enough pw", "a long enough pW"]),
+    stdout: out,
+    stderr: err,
+  });
+  const code = process.exitCode;
+  process.exitCode = prev;
+  assert.equal(h, null);
+  assert.equal(code, 1);
+  assert.deepEqual(out.o, []);
+  assert.match(err.o.join(""), /Password:/);
+  assert.match(err.o.join(""), /Again:/);
+  assert.match(err.o.join(""), /do not match/);
+  assert.doesNotMatch(err.o.join(""), /long enough/);
+});
+
+test("hashPasswordCli (TTY): matching entries produce a hash that verifies; empty is refused", async () => {
+  const out = sink();
+  const h = await hashPasswordCli({
+    stdin: fakeTty(["a long enough pw", "a long enough pw"]),
+    stdout: out,
+    stderr: sink(),
+  });
+  assert.match(h, /^scrypt[$]/);
+  assert.equal(out.o.join(""), h + "\n");
+  assert.equal(verifyPassword("a long enough pw", h), true);
+
+  const err = sink();
+  const prev = process.exitCode;
+  const none = await hashPasswordCli({ stdin: fakeTty(["", ""]), stdout: sink(), stderr: err });
+  const code = process.exitCode;
+  process.exitCode = prev;
+  assert.equal(none, null);
+  assert.equal(code, 1);
+  assert.match(err.o.join(""), /empty/);
+});
+
+test("authFromEnv trims env whitespace; the typed password is never trimmed", () => {
+  const h = hashPassword(" spaced pass ");
+  const a = authFromEnv({
+    OPS_PASSWORD_HASH: h + "\r\n",
+    OPS_SESSION_SECRET: "  " + SECRET + "\n",
+  });
+  assert.equal(a.sessionSecret, SECRET);
+  assert.equal(verifyPassword(" spaced pass ", a.passwordHash), true);
+  assert.equal(verifyPassword("spaced pass", a.passwordHash), false);
+  assert.equal(authFromEnv({}), null);
 });

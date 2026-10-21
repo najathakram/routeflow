@@ -41,8 +41,8 @@ export function checkCloudEnv(
   { cloud = false, views = false, lan = false, home } = {},
 ) {
   const errors = [];
-  const hash = env.OPS_PASSWORD_HASH;
-  const secret = env.OPS_SESSION_SECRET;
+  const hash = env.OPS_PASSWORD_HASH?.trim();
+  const secret = env.OPS_SESSION_SECRET?.trim();
   if (cloud && !hash) {
     errors.push(
       "OPS_PASSWORD_HASH is not set (make one with `rf hash-password`); refusing to serve the board without a login.",
