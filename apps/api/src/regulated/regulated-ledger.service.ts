@@ -410,6 +410,20 @@ export class RegulatedLedgerService {
     db: any,
     n: { tenantId: string; message: string; meta: Record<string, unknown> },
   ): Promise<void> {
+    // One notice per (return | credit note, sale entry): a retried call must not write it again.
+    const field = n.meta.returnId ? "returnId" : "creditNoteId";
+    const already = await db.auditLog.findFirst({
+      where: {
+        tenantId: n.tenantId,
+        action: AdminAuditAction.REGULATED_REVERSAL_UNBOOKED,
+        AND: [
+          { meta: { path: [field], equals: n.meta[field] } },
+          { meta: { path: ["saleEntryId"], equals: n.meta.saleEntryId } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (already) return;
     this.logger.error(`regulated reversal unbooked: ${JSON.stringify(n.meta)}`);
     await writeAdminNotice(db, {
       tenantId: n.tenantId,

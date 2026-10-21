@@ -350,4 +350,42 @@ describe("RegulatedLedgerService: rotated invoice item (SA-789 F1)", () => {
       expect(prisma.auditLog.create).not.toHaveBeenCalled();
     });
   });
+
+  describe("a notice is written once per reversal (SA-835)", () => {
+    const arrangeUnresolvable = () => {
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([staleSale({ orderItemId: "oi-gone" })])
+        .mockResolvedValueOnce([]);
+      prisma.invoiceItem.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([]);
+    };
+    const runReturn = () =>
+      service.reverseReturnEntries({
+        returnId: "ret-9",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 10]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+
+    it("a retried return that booked nothing does not write the notice again", async () => {
+      // The first call finds no notice; the retry finds the one the first wrote.
+      prisma.auditLog.findFirst.mockResolvedValueOnce(null).mockResolvedValue({ id: "n1" });
+      arrangeUnresolvable();
+      await runReturn();
+      arrangeUnresolvable();
+      await runReturn();
+      expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("looks for an existing notice by (return, sale entry) before writing", async () => {
+      arrangeUnresolvable();
+      await runReturn();
+      const where = prisma.auditLog.findFirst.mock.calls[0][0].where;
+      expect(JSON.stringify(where)).toContain("ret-9");
+      expect(JSON.stringify(where)).toContain("sale-1");
+    });
+  });
 });

@@ -213,7 +213,11 @@ export class RegulatedReportService {
       );
     }
     // SA-835: a reversal the ledger could not book is counted from its notices, so the period never looks clean.
-    const unbooked = await countUnbookedReversals(db, { from: fromDate, toExclusive });
+    const unbooked = await countUnbookedReversals(
+      db,
+      { from: fromDate, toExclusive },
+      category.tenantId ?? this.prisma.getTenantId(),
+    );
     const unbookedWarning = unbookedReversalsWarning(unbooked);
     if (unbookedWarning) {
       report.warnings.unshift(unbookedWarning);

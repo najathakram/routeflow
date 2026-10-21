@@ -232,7 +232,10 @@ describe("RegulatedReportService", () => {
     });
 
     it("shows how many reversals could not be booked in the period, counted from the notices", async () => {
-      prisma.auditLog.count.mockResolvedValue(1);
+      prisma.auditLog.findMany.mockResolvedValue([
+        { meta: { returnId: "r1", saleEntryId: "s1" } },
+        { meta: { returnId: "r1", saleEntryId: "s2" } }, // same return, a second notice row: one reversal
+      ]);
       const report = await service.buildReport({
         category: "cat-tx",
         from: "2026-07-01",
@@ -243,14 +246,15 @@ describe("RegulatedReportService", () => {
         code: "UNBOOKED_REVERSALS",
         message: "1 reversals could not be booked; contact support.",
       });
-      const where = prisma.auditLog.count.mock.calls[0][0].where;
+      const where = prisma.auditLog.findMany.mock.calls[0][0].where;
+      expect(where.tenantId).toBe("test-tenant");
       expect(where.action).toBe("REGULATED_REVERSAL_UNBOOKED");
       expect(where.createdAt.gte).toEqual(new Date("2026-07-01T00:00:00.000Z"));
       expect(where.createdAt.lt).toEqual(new Date("2026-08-01T00:00:00.000Z"));
     });
 
     it("a period with no unbooked notices carries no such warning or field", async () => {
-      prisma.auditLog.count.mockResolvedValue(0);
+      prisma.auditLog.findMany.mockResolvedValue([]);
       const report = await service.buildReport({
         category: "cat-tx",
         from: "2026-07-01",

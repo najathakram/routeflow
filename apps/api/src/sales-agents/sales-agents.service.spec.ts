@@ -279,6 +279,21 @@ describe("SalesAgentsService", () => {
     });
   });
 
+  describe("bulk assignments reject a reference from another business", () => {
+    it("addAssignmentsBulk refuses when one customer is not this tenant's, with no write", async () => {
+      models.salesAgent.findUnique.mockResolvedValue({
+        id: "a1",
+        status: "ACTIVE",
+        deletedAt: null,
+      });
+      prisma.customer.findMany.mockResolvedValue([{ id: "c1" }]); // c2 is another business's
+      await expect(
+        service.addAssignmentsBulk("a1", { customerIds: ["c1", "other-biz-customer"] }),
+      ).rejects.toThrow(/not found/i);
+      expect(models.agentAssignment.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe("assignment interval guard", () => {
     const activeAgent = { id: "a1", status: "ACTIVE", deletedAt: null };
 
