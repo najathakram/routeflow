@@ -114,7 +114,7 @@ export function CustomerPicker({ onPick }: { onPick: (c: { id: string; name: str
         }}
         onKeyDown={onKeyDown}
         placeholder="Find a customer by name"
-        className="h-11 rounded-md border border-surface-border bg-white px-3 text-sm text-navy"
+        className="h-11 scroll-mt-[var(--jump-offset,0px)] rounded-md border border-surface-border bg-white px-3 text-sm text-navy"
       />
       {expanded ? (
         <ul

@@ -317,7 +317,7 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
               ref={chosenRef}
               tabIndex={-1}
               data-testid={T.chosen}
-              className="rounded-sm font-medium text-navy focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+              className="scroll-mt-[var(--jump-offset,0px)] rounded-sm font-medium text-navy focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
             >
               {customerName || "Loading customer\u2026"}
             </span>
