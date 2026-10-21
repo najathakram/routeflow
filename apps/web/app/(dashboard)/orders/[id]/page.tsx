@@ -1827,7 +1827,15 @@ export default function OrderDetailPage() {
   // Floating invoice-preview popup (from the Invoices card).
   const [previewInvoiceId, setPreviewInvoiceId] = React.useState<string | null>(null);
 
-  const { toast } = useToast();
+  const { toast, dismiss } = useToast();
+  // Row 604 nit: Undo toasts of the current edit session; dismissed when it ends (an Undo would be a no-op).
+  const undoToastIds = React.useRef<string[]>([]);
+  React.useEffect(() => {
+    const ids = undoToastIds.current;
+    return () => {
+      for (const id of ids.splice(0)) dismiss(id);
+    };
+  }, [isEditing, dismiss]);
 
   React.useEffect(() => {
     if (order) {
@@ -1998,7 +2006,7 @@ export default function OrderDetailPage() {
       setPendingDeletes((prev) => [...prev, id]);
     }
     // F22: the DELETE is deferred to Save, so Undo is a display change: put the line back where it was.
-    toast({
+    const toastId = toast({
       title: `Removed ${item.productName || "item"}`,
       variant: "info",
       duration: 8000,
@@ -2015,6 +2023,7 @@ export default function OrderDetailPage() {
         },
       },
     });
+    undoToastIds.current.push(toastId);
   }
 
   /** SA-388: refuse visibly, sending nothing, a save editing a LOCKED line (both save paths). */

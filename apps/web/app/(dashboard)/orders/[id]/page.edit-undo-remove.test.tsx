@@ -6,7 +6,8 @@ import OrderDetailPage from "./page";
 
 /** F22: trashing a line toasts Removed with Undo, which restores it in place. */
 const get = jest.fn();
-const mockToast = jest.fn();
+const mockToast = jest.fn((_t?: any) => "toast-1");
+const mockDismiss = jest.fn();
 const patch = jest.fn();
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: "o1" }),
@@ -20,7 +21,7 @@ jest.mock("@/components/ReAuthProvider", () => ({
 jest.mock("@/components/PlanGateNotice", () => ({ PlanGateNotice: () => null }));
 jest.mock("@routeflow/ui/web", () => ({
   ...jest.requireActual("@routeflow/ui/web"),
-  useToast: () => ({ toast: mockToast }),
+  useToast: () => ({ toast: mockToast, dismiss: mockDismiss }),
 }));
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
@@ -84,6 +85,13 @@ describe("Removing a line offers Undo (F22)", () => {
     expect(removed?.action?.label).toBe("Undo");
     act(() => removed.action.onClick());
     expect(screen.getByRole("spinbutton", { name: /qty/i })).toHaveValue(10);
+  });
+  it("the Removed toast is dismissed when its edit session ends (row 604 nit)", async () => {
+    await openEdit();
+    fireEvent.click(screen.getByTitle("Delete item"));
+    expect(mockDismiss).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    await waitFor(() => expect(mockDismiss).toHaveBeenCalledWith("toast-1"));
   });
   it("an Undo from before a Save is dropped: it never re-adds the saved-away line in a later edit (row 604 S4)", async () => {
     const twoLines = {
