@@ -410,7 +410,7 @@ export class RegulatedLedgerService {
     db: any,
     n: { tenantId: string; message: string; meta: Record<string, unknown> },
   ): Promise<void> {
-    // One notice per (return | credit note, sale entry): a retried call must not write it again.
+    // One notice per (return | credit note, sale entry, period): a retried call must not write it again.
     const field = n.meta.returnId ? "returnId" : "creditNoteId";
     const already = await db.auditLog.findFirst({
       where: {
@@ -419,6 +419,9 @@ export class RegulatedLedgerService {
         AND: [
           { meta: { path: [field], equals: n.meta[field] } },
           { meta: { path: ["saleEntryId"], equals: n.meta.saleEntryId } },
+          // The period is part of the key: a return still unreversed when it is re-received in a
+          // later month writes its notice in that month, so that month's report warns too.
+          { meta: { path: ["period"], equals: n.meta.period } },
         ],
       },
       select: { id: true },

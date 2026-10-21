@@ -388,4 +388,46 @@ describe("RegulatedLedgerService: rotated invoice item (SA-789 F1)", () => {
       expect(JSON.stringify(where)).toContain("sale-1");
     });
   });
+
+  describe("the notice dedupe key includes the period (SA-835)", () => {
+    // An auditLog.findFirst that reads the AND clauses like Postgres would, against one stored notice.
+    const storeWith = (stored: Record<string, unknown>) =>
+      prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+        (where.AND as any[]).every((c) => stored[c.meta.path[0]] === c.meta.equals)
+          ? { id: "n1" }
+          : null,
+      );
+    const arrange = () => {
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([staleSale({ orderItemId: "oi-gone" })])
+        .mockResolvedValueOnce([]);
+      prisma.invoiceItem.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([]);
+    };
+    const run = () =>
+      service.reverseReturnEntries({
+        returnId: "ret-9",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 10]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+
+    it("a notice from an earlier month does not suppress the notice in a later month", async () => {
+      storeWith({ returnId: "ret-9", saleEntryId: "sale-1", period: "1999-01" });
+      arrange();
+      await run();
+      expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("a notice already written for the same period is not written again", async () => {
+      const period = new Date().toISOString().slice(0, 7);
+      storeWith({ returnId: "ret-9", saleEntryId: "sale-1", period });
+      arrange();
+      await run();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+  });
 });
