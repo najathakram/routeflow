@@ -236,3 +236,31 @@ describe("OrderLineItemsTable — line total and status", () => {
     expect(within(rowFor("Sample Cola 12oz")).getByText("Delivered")).toBeInTheDocument();
   });
 });
+
+describe("OrderLineItemsTable — the unit price says its unit (B1261)", () => {
+  it("a boxed line sold in pieces shows '/ box' and the price each", () => {
+    renderTable(
+      [line({ unitPrice: 18, unitsPerBox: 24, boxes: 0, pieces: 2, qty: 2, subtotal: 1.5 })],
+      "CONFIRMED",
+      1.5,
+    );
+    const cell = within(rowFor("Sample Cola 12oz"))
+      .getByText("$18.00")
+      .closest("td") as HTMLElement;
+    expect(cell).toHaveTextContent("/ box");
+    expect(cell).toHaveTextContent("$0.75 each");
+  });
+
+  it("a boxed line sold in whole boxes shows '/ box' and no price each", () => {
+    renderTable(
+      [line({ unitPrice: 18, unitsPerBox: 24, boxes: 2, pieces: 0, qty: 48, subtotal: 36 })],
+      "CONFIRMED",
+      36,
+    );
+    const cell = within(rowFor("Sample Cola 12oz"))
+      .getByText("$18.00")
+      .closest("td") as HTMLElement;
+    expect(cell).toHaveTextContent("/ box");
+    expect(cell).not.toHaveTextContent("each");
+  });
+});
