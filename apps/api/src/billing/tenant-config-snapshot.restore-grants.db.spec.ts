@@ -5,7 +5,11 @@
  * `PlanTransitionConfigService.planAllowsFor`, never a stub, so the catalog's prices and plan inclusion decide.
  *  - a non-COMP GRANT on an add-on key with no billed TenantAddon is held ADDON_NOT_PAID in preview AND apply;
  *  - a billed active row (price equal to the catalog's) restores it; so does a plan that includes the SKU;
- *  - a COMP GRANT is restored as-was.
+ *  - a COMP GRANT is restored as-was;
+ *  - a tenant pinned to an older version that predates the SKU, holding a row billed at the PUBLISHED price,
+ *    restores it (the price is pinned-else-published, `pricedAddonSku`). No shipped version predates
+ *    OCR_PACK_250 (v8 has it; v11+ retire it), so the pinned version is a spec-made SUPERSEDED copy of the
+ *    published one without REGULATED_ITEMS, deleted in afterAll.
  * Throwaway `qa-r640-*` tenants. Collected only by `jest.db.config.js`.
  */
 import { randomUUID } from "crypto";
@@ -34,6 +38,7 @@ describeDb(
     const tenants: string[] = [];
     let seq = 0;
     let skuPrice = 0;
+    const versions: string[] = [];
 
     beforeAll(async () => {
       requireLocalDatabaseUrl();
@@ -77,6 +82,12 @@ describeDb(
           console.error(`row 640 cleanup failed for ${tenantId}:`, e);
         });
       }
+      for (const id of versions)
+        // eslint-disable-next-line no-await-in-loop
+        await prisma.planVersion.delete({ where: { id } }).catch((e: unknown) => {
+          // eslint-disable-next-line no-console
+          console.error(`row 640 cleanup failed for plan version ${id}:`, e);
+        });
       await prisma.$disconnect();
     });
 
@@ -91,12 +102,16 @@ describeDb(
       return tenantId;
     }
     /** Snapshot on `plan`, lose the override, then preview and apply a restore to `plan` with the REAL coverage. */
-    async function snapshotLoseRestore(tenantId: string, plan: string) {
+    async function snapshotLoseRestore(
+      tenantId: string,
+      plan: string,
+      planVersionId: string | null = null,
+    ) {
       await prisma.$transaction((tx) =>
         svc.snapshot(tx, tenantId, plan, "DOWNGRADE", { id: null, name: "spec" }),
       );
       await prisma.tenantFeatureOverride.deleteMany({ where: { tenantId } });
-      const planAllows = await transition.planAllowsFor(plan, null);
+      const planAllows = await transition.planAllowsFor(plan, planVersionId);
       const snap = await prisma.tenantFeatureConfigSnapshot.findFirstOrThrow({
         where: { tenantId },
       });
@@ -110,6 +125,31 @@ describeDb(
         where: { tenantId, featureKey: KEY, revokedAt: null },
       });
       return { preview, applied, grant };
+    }
+    /** A SUPERSEDED copy of the published catalog WITHOUT `SKU`: a version that predates the add-on. */
+    async function versionWithoutSku(): Promise<string> {
+      const published = await prisma.planVersion.findFirstOrThrow({
+        where: { status: "PUBLISHED" },
+        include: { definitions: true, addonSkus: true },
+      });
+      const strip = <T extends { id: string; planVersionId: string }>({
+        id: _id,
+        planVersionId: _v,
+        ...rest
+      }: T) => rest;
+      const created = await prisma.planVersion.create({
+        data: {
+          version: 900_000 + Math.floor(Math.random() * 99_999),
+          status: "SUPERSEDED",
+          notes: `row 640 spec ${RUN}: published minus ${SKU}`,
+          definitions: { create: published.definitions.map(strip) },
+          addonSkus: { create: published.addonSkus.filter((s) => s.sku !== SKU).map(strip) },
+        } as never,
+      });
+      versions.push(created.id);
+      const pinned = await catalog.getVersionById(created.id);
+      expect(pinned?.addonSkus.some((s) => s.sku === SKU)).toBe(false);
+      return created.id;
     }
     const heldReasons = (
       held: readonly { kind: string; featureKey: string; reason: string }[] | undefined,
@@ -172,6 +212,25 @@ describeDb(
       expect(heldReasons(preview?.held)).toEqual([]);
       expect(heldReasons(applied?.held)).toEqual([]);
       expect(grant).toMatchObject({ featureKey: KEY, effect: "GRANT", kind: "COMP" });
+    });
+
+    it("REG (B fold): pinned to a version that predates the SKU, a row billed at the PUBLISHED price restores it", async () => {
+      const pinnedVersionId = await versionWithoutSku();
+      const t = await world("pinned-old");
+      await prisma.tenant.update({ where: { id: t }, data: { planVersionId: pinnedVersionId } });
+      await prisma.tenantAddon.create({
+        data: {
+          tenantId: t,
+          addonKey: KEY,
+          sku: SKU,
+          priceSnapshot: skuPrice,
+          active: true,
+        } as never,
+      });
+      const { preview, applied, grant } = await snapshotLoseRestore(t, "GROWTH", pinnedVersionId);
+      expect(heldReasons(preview?.held)).toEqual([]);
+      expect(heldReasons(applied?.held)).toEqual([]);
+      expect(grant).toMatchObject({ featureKey: KEY, effect: "GRANT", kind: "SUPPORT" });
     });
   },
 );

@@ -1,7 +1,7 @@
 /**
  * Row 645 follow-up (R5 part 2, builder B) against real Postgres: since #3487 a sale never lowers
  * `StockLot.remainingQty`, so a bill revert reads "how much was used" from the LEDGER. A received lot whose
- * goods were sold is zeroed with "(bill reversed; N already consumed)", never deleted; a second bill for the
+ * goods were sold is zeroed with "(bill reversed; up to N already consumed)", never deleted; a second bill for the
  * same product does not inflate N; an untouched lot is still deleted. Throwaway `qa-r645-*` tenants.
  *
  * Collected only by `jest.db.config.js` (`.db.spec.ts$`). Run with `npm run local:test:db`.
@@ -244,7 +244,7 @@ describeDb(
       expect(after).toHaveLength(1);
       expect(after[0].id).toBe(lot.id);
       expect(Number(after[0].remainingQty)).toBe(0);
-      expect(after[0].notes ?? "").toContain("(bill reversed; 3 already consumed)");
+      expect(after[0].notes ?? "").toContain("(bill reversed; up to 3 already consumed)");
     });
 
     it("an untouched lot (nothing sold after the receipt) is still deleted on revert", async () => {
@@ -266,7 +266,7 @@ describeDb(
       const zeroed = lots.find((l) => Number(l.qty) === 10)!;
       const other = lots.find((l) => Number(l.qty) === 5)!;
       expect(Number(zeroed.remainingQty)).toBe(0);
-      expect(zeroed.notes ?? "").toContain("(bill reversed; 3 already consumed)");
+      expect(zeroed.notes ?? "").toContain("(bill reversed; up to 3 already consumed)");
       expect(Number(other.remainingQty)).toBe(5);
 
       await revert(w, second);
@@ -282,7 +282,7 @@ describeDb(
       await revert(w, id);
       const [lot] = await lotsOf(w);
       expect(Number(lot.remainingQty)).toBe(0);
-      expect(lot.notes ?? "").toContain("(bill reversed; 4 already consumed)");
+      expect(lot.notes ?? "").toContain("(bill reversed; up to 4 already consumed)");
     });
   },
 );
