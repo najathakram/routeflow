@@ -188,6 +188,10 @@ function ProductBlock({
                 <td className="py-2 pr-3 align-top">
                   <div className="text-navy">{row.label}</div>
                   {row.code ? <div className="text-xs text-navy/60">{row.code}</div> : null}
+                  {/* K14 P13: the list-price column is hidden below sm; keep it as a muted second line there */}
+                  <div className="mt-0.5 text-xs text-navy/60 sm:hidden">
+                    {`${listName} ${formatMoney(row.listPrice)}`}
+                  </div>
                 </td>
                 <td className="py-2 pr-3 align-top">
                   <PriceCell row={row} />

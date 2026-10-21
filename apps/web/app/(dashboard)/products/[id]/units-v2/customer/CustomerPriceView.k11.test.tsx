@@ -359,3 +359,15 @@ describe("K14 F09 + P11: focus follows Choose another customer, and never scroll
     focus.mockRestore();
   });
 });
+
+describe("K14 P13: the list price stays visible below sm", () => {
+  it("shows the list name and price as a muted second line that only the sm+ column replaces", () => {
+    at("/products/p1?customer=c1");
+    render(<CustomerPriceView productId="p1" />);
+    const lines = Array.from(document.querySelectorAll("td div")).filter((d) =>
+      /(^| )sm:hidden( |$)/.test(d.className),
+    );
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines[0].textContent).toMatch(/^Retail \$/);
+  });
+});
