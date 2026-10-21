@@ -5,7 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { acceptsAutomatedWrites } from "../tenant/tenant-automation";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { ImportService } from "./import.service";
-import { PRODUCT_IMPORT_QUEUE, type ProductImportJobData } from "./product-import-job";
+import type { ProductImportJobData } from "./product-import-job";
 
 /**
  * SA-823 section 5: runs a queued family-import apply. It calls the SAME importProducts a synchronous apply does, under the
@@ -16,7 +16,8 @@ import { PRODUCT_IMPORT_QUEUE, type ProductImportJobData } from "./product-impor
  * cancelled or read-only one gets none (the job fails with a plain message the page shows).
  */
 @Injectable()
-@Processor(PRODUCT_IMPORT_QUEUE)
+// the queue name is a literal so the SA-776 job pin can read it (product-import-job.spec.ts pins it equal to PRODUCT_IMPORT_QUEUE)
+@Processor("product-import")
 export class ProductImportProcessor {
   private readonly logger = new Logger(ProductImportProcessor.name);
 
