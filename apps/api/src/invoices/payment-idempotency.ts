@@ -108,7 +108,7 @@ export function withKeyHooks<T, O extends KeyedWriterOpts<T>>(
   const inner = opts?.inTx;
   return {
     ...(opts as O),
-    claim: hooks.claim,
+    claim: (tx: any) => hooks.claim(tx),
     inTx: async (tx: any, result: T, refs?: PaymentKeyRefs) => {
       await inner?.(tx, result, refs);
       await hooks.settle(tx, result, refs);
