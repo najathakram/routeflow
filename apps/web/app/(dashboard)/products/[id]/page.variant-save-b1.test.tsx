@@ -168,3 +168,9 @@ describe("B1: product detail variant save sends the bare name", () => {
     ]);
   });
 });
+
+// K14 FE1: the page waits for the units v2 flag; these tests are flag-off, so it is known.
+jest.mock("@/lib/api/units-v2", () => ({
+  ...jest.requireActual("@/lib/api/units-v2"),
+  usePricesV2Pending: () => false,
+}));

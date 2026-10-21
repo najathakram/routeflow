@@ -76,7 +76,7 @@ import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { PackSizePrompt } from "@/components/PackSizePrompt";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
-import { usePricesV2Enabled } from "@/lib/api/units-v2";
+import { usePricesV2Enabled, usePricesV2Pending } from "@/lib/api/units-v2";
 import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
 import { ProductImagesEmpty } from "./ProductImagesEmpty";
@@ -409,6 +409,7 @@ export default function ProductDetailPage() {
   const hasTobaccoAddon = useHasAddon(TOBACCO_ADDON);
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
   const v2 = usePricesV2Enabled({ enabled: isStaff }) && isStaff;
+  const v2Pending = usePricesV2Pending({ enabled: isStaff });
   // The grid shell mounts the default order unit, Name / Contains, Add and Remove only where this is true; only there does
   // the Units & prices card stop editing (read-only), so no role or product is left without a control.
   const unitStructure = useUnitStructureAllowed(product ?? {});
@@ -455,7 +456,7 @@ export default function ProductDetailPage() {
     setTitle(product?.name ?? "Product");
   }, [setTitle, product?.name]);
 
-  if (isLoading) {
+  if (isLoading || v2Pending) {
     return <div className="flex items-center justify-center p-12 text-navy/70">Loading...</div>;
   }
 
