@@ -14,6 +14,7 @@ import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { findPlanDefinition, planRank } from "./plan-catalog.constants";
 import { coverageOf, type RestorePlanAllows } from "./override-restore-verdict";
+import { pricedAddonSku } from "./plan-version-pin";
 import {
   RestoreBudgetExceededError,
   TenantConfigSnapshotService,
@@ -393,7 +394,8 @@ export class PlanTransitionConfigService implements OnModuleInit {
    */
   async planAllowsFor(planKey: string, planVersionId: string | null): Promise<RestorePlanAllows> {
     const version = await this.catalog.getVersionForTenant(planVersionId);
-    const flags = new Set(findPlanDefinition(version.definitions, planKey)?.featureFlags ?? []);
+    const planFlags = [...(findPlanDefinition(version.definitions, planKey)?.featureFlags ?? [])];
+    const flags = new Set(planFlags);
     for (const sku of version.addonSkus) for (const g of sku.grantsFlags ?? []) flags.add(g);
     const allowed = new Set<string>();
     for (const f of FEATURE_REGISTRY) {
@@ -409,8 +411,19 @@ export class PlanTransitionConfigService implements OnModuleInit {
     }
     // Row 640: the same version's SKU prices and inclusion, for the restored-GRANT verdict (NOT part of
     // `allowed`: planAllows treats every add-on-keyed key as allowed, which is the bug the verdict avoids).
+    // Prices: the ONE rule (`pricedAddonSku`) - this version's own SKU price, else the published one - for
+    // every SKU a registry key can name plus every SKU this version lists.
+    const priceBySku = new Map<string, number>();
+    const skuCodes = new Set([
+      ...version.addonSkus.map((s) => s.sku),
+      ...FEATURE_REGISTRY.flatMap((f) => f.billing.skus),
+    ]);
+    for (const sku of skuCodes) {
+      const def = await pricedAddonSku(this.catalog, version, sku);
+      if (def) priceBySku.set(sku, Number(def.monthlyPrice));
+    }
     return Object.assign((featureKey: string) => allowed.has(featureKey), {
-      coverage: coverageOf(version.addonSkus, planKey),
+      coverage: coverageOf({ addonSkus: version.addonSkus, planFlags, priceBySku }, planKey),
     });
   }
 }

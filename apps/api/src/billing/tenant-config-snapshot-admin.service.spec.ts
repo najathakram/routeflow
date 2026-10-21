@@ -286,6 +286,27 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     });
   });
 
+  it("row 640: the allow-list is built on the SUBSCRIPTION pin when it has one, else the tenant pin", async () => {
+    const pinned = build({
+      tenant: {
+        plan: "STARTER",
+        planVersionId: "v-tenant",
+        subscription: { planKey: HIGH, planVersionId: "v-sub" },
+      },
+    });
+    await pinned.svc.preview("t1", "s1");
+    expect(pinned.transitions.planAllowsFor).toHaveBeenCalledWith(HIGH, "v-sub");
+    const unpinned = build({
+      tenant: {
+        plan: "STARTER",
+        planVersionId: "v-tenant",
+        subscription: { planKey: HIGH, planVersionId: null },
+      },
+    });
+    await unpinned.svc.preview("t1", "s1");
+    expect(unpinned.transitions.planAllowsFor).toHaveBeenCalledWith(HIGH, "v-tenant");
+  });
+
   it("a tenant with no subscription planKey is judged on its legacy Tenant.plan", async () => {
     const { svc, transitions } = build({
       tenant: { plan: "STARTER", planVersionId: null, subscription: null },

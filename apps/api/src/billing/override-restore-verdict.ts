@@ -19,7 +19,7 @@
 import type { Prisma } from "@prisma/client";
 import type { ConfigSnapshotSkipReason } from "@routeflow/types";
 import { includedAtPlanVerdict } from "./addon-catalog-invalid";
-import { isStripeBillableAddonRow } from "./addon-row";
+import { addonCodeOf, isStripeBillableAddonRow } from "./addon-row";
 import {
   ADDON_KEY_TO_REGISTRY_KEY,
   checkFeatureRequires,
@@ -33,6 +33,10 @@ export interface AddonCoverage {
   priceOf(sku: string): number | null;
   /** Is `sku` bundled at the tenant's plan (the inclusion resolver's INCLUDED verdict)? */
   includedAt(sku: string): boolean;
+  /** The plan's OWN feature flags, apart from any a SKU grants (a tenant holds a SKU's flags only with the SKU). */
+  planFlags: ReadonlySet<string>;
+  /** The plan flags `sku` grants to a tenant on any plan (`grantsFlags`). */
+  grantsFlagsOf(sku: string): readonly string[];
 }
 
 /** `planAllows` as the plan-change wiring builds it: a predicate that also carries the catalog coverage. */
@@ -86,15 +90,36 @@ export async function overrideRestoreVerdict(
     const effective = new Set<string>();
     const decided = new Map<string, "GRANT" | "DENY">(ctx.effects);
     const allows = ctx.planAllows ?? (() => true);
+    const coverage = ctx.planAllows?.coverage;
     const hasRow = (k: string) =>
       rows.some((r) => registryKeyOf(r.addonKey) === k && r.active !== false) ||
       ctx.pendingAddonKeys.some((p) => registryKeyOf(p) === k);
+    // Flags the tenant holds AFTER the restore: the plan's own, plus what its ACTIVE (or same-transaction
+    // pending) add-on SKUs grant - never every SKU in the version (that is what `planAllows` over-counts).
+    const heldFlags = new Set<string>(coverage?.planFlags ?? []);
+    if (coverage) {
+      for (const r of rows) {
+        if (r.active === false) continue;
+        for (const f of coverage.grantsFlagsOf(r.sku ?? addonCodeOf(r.addonKey))) heldFlags.add(f);
+      }
+      for (const p of ctx.pendingAddonKeys)
+        for (const f of coverage.grantsFlagsOf(addonCodeOf(p))) heldFlags.add(f);
+    }
+    const flagHeld = (k: string): boolean => {
+      if (!coverage) return allows(k);
+      const key = featureDefByKey(k);
+      return (
+        heldFlags.has(k) ||
+        (key?.billing.catalogFlag !== undefined && heldFlags.has(key.billing.catalogFlag)) ||
+        key?.defaultGranted === true
+      );
+    };
     const wanted = [...(def.requires.allOf ?? []), ...(def.requires.anyOf ?? [])];
     for (const k of wanted) {
       const d = decided.get(k);
       if (d === "GRANT") effective.add(k);
       else if (d === "DENY") continue;
-      else if (isAddonKeyed(k) ? hasRow(k) : allows(k)) effective.add(k);
+      else if (isAddonKeyed(k) ? hasRow(k) : flagHeld(k)) effective.add(k);
     }
     if (!checkFeatureRequires(def.requires, effective).satisfied) return "REQUIRES_UNMET";
   }
@@ -119,23 +144,33 @@ export async function overrideRestoreVerdict(
   return null;
 }
 
-/** The catalog coverage of one plan version, for a plan key (the SKU's `includedAtPlan` verdict). */
+/**
+ * The catalog coverage for one restore: inclusion and granted flags are the TARGET version's
+ * (`addonSkus`); a SKU's price comes from `priceBySku`, which the caller builds with `pricedAddonSku`
+ * (the tenant's pinned version, else the published one) so a pin that predates a SKU still prices it.
+ */
 export function coverageOf(
-  addonSkus: readonly {
-    sku: string;
-    monthlyPrice: unknown;
-    includedAtPlan?: string | null;
-  }[],
+  input: {
+    addonSkus: readonly {
+      sku: string;
+      monthlyPrice: unknown;
+      includedAtPlan?: string | null;
+      grantsFlags?: readonly string[] | null;
+    }[];
+    planFlags: Iterable<string>;
+    priceBySku: ReadonlyMap<string, number>;
+  },
   planKey: string,
 ): AddonCoverage {
+  const { addonSkus, priceBySku } = input;
+  const planFlags = new Set(input.planFlags);
   return {
-    priceOf: (sku) => {
-      const def = addonSkus.find((s) => s.sku === sku);
-      return def ? Number(def.monthlyPrice) : null;
-    },
+    priceOf: (sku) => priceBySku.get(sku) ?? null,
     includedAt: (sku) => {
       const def = addonSkus.find((s) => s.sku === sku);
       return !!def && includedAtPlanVerdict(def, planKey).kind === "INCLUDED";
     },
+    planFlags,
+    grantsFlagsOf: (sku) => addonSkus.find((s) => s.sku === sku)?.grantsFlags ?? [],
   };
 }
