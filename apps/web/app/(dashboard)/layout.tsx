@@ -61,6 +61,7 @@ import { useExpiringAuthorizations, type ExpiringAuthorization } from "@/lib/api
 import { usePendingPortalApprovals } from "@/lib/api/portal-approvals";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
+import { useGuardedSignOut } from "@/components/SignOutUnsentGuard";
 import { useHasAddon, useTenantAddons } from "@/lib/api/tobacco";
 import { useRoutesAccess, useDeliveryAccess, SALES_AGENTS_ADDON } from "@/lib/api/addons";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
@@ -534,6 +535,8 @@ function HeaderTools({
   clerkTestId?: string;
 }) {
   const { user, logout } = useAuth();
+  // SA-817 A8: an explicit sign-out with unsent orders on this device asks first; a session expiry never comes through here.
+  const { requestSignOut, dialog: signOutDialog } = useGuardedSignOut(() => void logout(), user);
   const { locale, setLocale, t } = useI18n();
   const pathname = usePathname();
   const router = useGuardedRouter();
@@ -887,8 +890,8 @@ function HeaderTools({
               <DropdownMenu.Item
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
                 onSelect={() => {
-                  if (guardCounterLeave(() => void logout())) return;
-                  void logout();
+                  if (guardCounterLeave(requestSignOut)) return;
+                  requestSignOut();
                 }}
               >
                 <LogOut className="h-4 w-4" />
@@ -898,6 +901,7 @@ function HeaderTools({
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
+      {signOutDialog}
     </div>
   );
 }

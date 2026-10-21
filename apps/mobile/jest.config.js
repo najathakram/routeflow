@@ -68,6 +68,8 @@ module.exports = {
     "^@routeflow/types/sale-attempt$": "<rootDir>/../../packages/types/sale-attempt.ts",
     // M8: the shared shipment save rule + not-shipped line (pure, no imports), same subpath trick.
     "^@routeflow/types/shipment-save$": "<rootDir>/../../packages/types/shipment-save.ts",
+    // SA-817 A: the one persisted-submit-key rule for a draft (pure, no imports), same subpath trick.
+    "^@routeflow/types/draft-submit-key$": "<rootDir>/../../packages/types/draft-submit-key.ts",
     // Row 505: the fulfilment capability shape + UNSET fallback (pure, no imports), same subpath trick.
     "^@routeflow/types/api/fulfilment$": "<rootDir>/../../packages/types/api/fulfilment.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",

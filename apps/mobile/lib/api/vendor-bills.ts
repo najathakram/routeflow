@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { API_ERROR_CODES } from "@routeflow/types";
+import { moveToCreditRequest } from "../vendor-bill-payments-logic";
 import type {
   CheckVendorBillDuplicateDto,
   DuplicateVendorBillError,
@@ -38,6 +39,23 @@ export interface VendorBillItem {
   lineTotal: number;
 }
 
+/**
+ * One payment on a bill (`GET /vendor-bills/:id` includes them). Mirrors web `VendorBillPayment`
+ * (apps/web/lib/api/vendor-bills.ts); `method` is the full Prisma PaymentMethod string.
+ */
+export interface VendorBillPayment {
+  id: string;
+  amount: number | string;
+  method: string;
+  reference?: string;
+  notes?: string;
+  /** Set only on a draw of on-account supplier credit (a CREDIT_NOTE row); cash payments leave it null. */
+  supplierCreditId?: string | null;
+  /** The date the money went out (the credit created by move-to-credit carries it). */
+  paidAt?: string;
+  createdAt: string;
+}
+
 export interface VendorBill {
   id: string;
   billNumber?: string;
@@ -50,6 +68,7 @@ export interface VendorBill {
   supplierId?: string;
   supplier?: { id: string; name: string };
   items?: VendorBillItem[];
+  payments?: VendorBillPayment[];
   createdAt: string;
 }
 
@@ -244,6 +263,26 @@ export function useVoidVendorBill() {
       qc.invalidateQueries({ queryKey: ["products"] });
       qc.invalidateQueries({ queryKey: ["inventory"] });
       qc.invalidateQueries({ queryKey: ["admin", "products"] }); // SA-543a: operator product lists
+    },
+  });
+}
+
+/**
+ * B288 (mirrors web `useMoveVendorBillPaymentToCredit`): the exit for a void refused with 409
+ * BILL_HAS_PAYMENTS — holds one cash payment as a supplier credit dated at the payment. The request
+ * (method + path) is built by the pure `moveToCreditRequest` so a test pins it.
+ */
+export function useMoveVendorBillPaymentToCredit() {
+  const qc = useQueryClient();
+  return useMutation<{ bill: VendorBill }, Error, { billId: string; paymentId: string }>({
+    mutationFn: ({ billId, paymentId }) =>
+      apiClient.post(moveToCreditRequest(billId, paymentId).url).then((r) => r.data),
+    onSettled: (_d, _e, { billId }) => {
+      qc.invalidateQueries({ queryKey: ["vendor-bills"] });
+      qc.invalidateQueries({ queryKey: ["vendor-bills", billId] });
+      // The supplier statement / credit balance live under ["suppliers", id, ...]; the mutation does
+      // not know the supplier id, so invalidate the prefix (as web does).
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
     },
   });
 }
