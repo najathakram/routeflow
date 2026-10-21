@@ -586,6 +586,12 @@ export function CounterSaleScreen() {
           ),
     );
   // R7b 1.2 (b): the tender methods are a WAI-ARIA radiogroup: Left/Right (and Up/Down) move to the next enabled method.
+  // The radiogroup always has ONE tab stop: the checked method, or the first enabled one when the checked one is disabled.
+  const tenderOptions = paymentMethodOptions(isWalkIn);
+  const tabStopMethod = (
+    tenderOptions.find((m) => m.method === method && !m.disabled) ??
+    tenderOptions.find((m) => !m.disabled)
+  )?.method;
   const onTenderKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const dir =
       e.key === "ArrowRight" || e.key === "ArrowDown"
@@ -1385,7 +1391,7 @@ export function CounterSaleScreen() {
                   role="radio"
                   disabled={m.disabled || locked}
                   aria-checked={method === m.method}
-                  tabIndex={method === m.method ? 0 : -1}
+                  tabIndex={m.method === tabStopMethod ? 0 : -1}
                   data-method={m.method}
                   className={cn(
                     TAP_TARGET,

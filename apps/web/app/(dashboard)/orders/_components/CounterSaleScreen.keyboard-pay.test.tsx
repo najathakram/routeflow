@@ -24,7 +24,7 @@ jest.mock("@/lib/barcode-resolve", () => ({
     code === "COLA" ? { product: COLA, source: "sku" } : { notFound: true },
 }));
 jest.mock("@/lib/api/customers", () => ({
-  useCustomers: () => ({ data: { data: [] } }),
+  useCustomers: () => ({ data: { data: [{ id: "c1", businessName: "Acme Co", pricingTier: 1 }] } }),
   useCustomerPrices: () => ({
     data: [],
     isSuccess: true,
@@ -130,5 +130,18 @@ describe("CounterSaleScreen: keyboard path to pay (R7b 1.2)", () => {
     expect(card).toHaveFocus();
     fireEvent.keyDown(card, { key: "ArrowLeft" });
     expect(screen.getByRole("radio", { name: "Cash" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("the tender group keeps one enabled tab stop after a walk-in switch disables the checked method", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+    fireEvent.click(screen.getByRole("radio", { name: "On account" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use Walk-in customer" }));
+    expect(screen.getByRole("radio", { name: "On account" })).toBeDisabled();
+    const stops = screen.getAllByRole("radio").filter((r) => r.getAttribute("tabindex") === "0");
+    expect(stops).toHaveLength(1);
+    expect(stops[0]).toBeEnabled();
+    expect(stops[0]).toHaveAccessibleName("Cash");
   });
 });
