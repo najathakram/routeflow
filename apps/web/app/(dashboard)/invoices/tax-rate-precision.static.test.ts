@@ -16,7 +16,7 @@ describe("tax rate precision on the web inputs", () => {
     const input = tax.slice(0, tax.indexOf("</MobileField>"));
     expect(input).toMatch(/decimals=\{TAX_RATE_FRACTION_DECIMALS\}/);
     expect(input).not.toMatch(/decimals=\{4\}/);
-    expect(edit).toMatch(/TAX_RATE_FRACTION_DECIMALS[^;]*from "@routeflow\/pricing"/s);
+    expect(edit).toMatch(/TAX_RATE_FRACTION_DECIMALS,[\s\S]*?from "@routeflow\/pricing"/);
   });
 
   it("the settings default tax rate accepts 4 decimals of percent and refuses a 5th", () => {
