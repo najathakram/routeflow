@@ -4,8 +4,15 @@
  * every figure on close. Keyed by tenant + register + tenant day (not by user, so a second cashier finishing the count sees
  * it). Every storage access is in try/catch: storage is a convenience and the form works without it.
  */
+import { DAY_CLOSE_MAX_COUNT } from "@routeflow/pricing";
+
 export const DAY_CLOSE_DRAFT_PREFIX = "rf:dayclose:draft:";
 const DRAFT_VERSION = 1;
+
+/** The ONE rule for a denomination count: a whole number, not negative, capped. The input and a restored draft both use it. */
+export function clampDayCloseCount(n: number): number {
+  return Math.min(DAY_CLOSE_MAX_COUNT, Math.max(0, Math.trunc(n)));
+}
 
 export interface DayCloseDraft {
   v: number;
@@ -37,7 +44,8 @@ export function readDayCloseDraft(key: string): DayCloseDraft | null {
     if (!d.counts || typeof d.counts !== "object") return null;
     const counts: Record<string, number> = {};
     for (const [k, n] of Object.entries(d.counts)) {
-      if (typeof n === "number" && Number.isFinite(n) && n > 0) counts[k] = n;
+      if (typeof n === "number" && Number.isFinite(n) && clampDayCloseCount(n) > 0)
+        counts[k] = clampDayCloseCount(n);
     }
     return { v: DRAFT_VERSION, floatText: d.floatText, counts, notes: d.notes };
   } catch {

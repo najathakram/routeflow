@@ -33,6 +33,7 @@ import {
 import { useOptionalAuth } from "@/lib/auth-context";
 import { useTenant } from "@/components/tenant-provider";
 import {
+  clampDayCloseCount,
   clearDayCloseDraft,
   dayCloseDraftKey,
   readDayCloseDraft,
@@ -130,7 +131,12 @@ function DayCloseForm({
 }) {
   // R7b 2.3: the typed count is a form draft (sessionStorage), keyed tenant + register + tenant day
   const tenant = useTenant().slug;
-  const draftKey = dayCloseDraftKey(tenant, state.registerKey, dayIn(new Date(), state.zone));
+  // keyed on the tenant day of the window being closed (the preview's windowStart), never on the clock: a count typed
+  // before midnight must still be found after it. No preview yet = no key = no draft read or written.
+  const windowStart = state.preview?.windowStart;
+  const draftKey = windowStart
+    ? dayCloseDraftKey(tenant, state.registerKey, dayIn(new Date(windowStart), state.zone))
+    : null;
   // the body reports whether it holds a typed count; a dirty dismissal asks Keep or Discard first
   const dirtyRef = React.useRef(false);
   const [confirming, setConfirming] = React.useState(false);
@@ -180,7 +186,7 @@ function DayCloseForm({
               variant="secondary"
               className="min-h-[44px]"
               onClick={() => {
-                clearDayCloseDraft(draftKey);
+                if (draftKey) clearDayCloseDraft(draftKey);
                 dirtyRef.current = false;
                 setConfirming(false);
                 onClose();
@@ -220,7 +226,7 @@ function DayCloseFormBody({
 }: {
   state: DayCloseState;
   editing: DayCloseSnapshot | null;
-  draftKey: string;
+  draftKey: string | null;
   /** set here each render: true while a typed count would be lost by closing */
   dirtyRef: React.MutableRefObject<boolean>;
   /** leaves the form now (a successful close) */
@@ -236,7 +242,7 @@ function DayCloseFormBody({
     () => editing ?? (lastClose?.reopenedAt ? lastClose : null),
   );
   // R7b 2.3: a kept draft of this tenant + register + day is the starting state when there is no stored close to continue
-  const [draft] = React.useState(() => (seed ? null : readDayCloseDraft(draftKey)));
+  const [draft] = React.useState(() => (seed || !draftKey ? null : readDayCloseDraft(draftKey)));
   const suggestedFloat = preview.suggestedOpeningFloat.toFixed(2);
   const [floatText, setFloatText] = React.useState(() =>
     seed ? seed.openingFloat.toFixed(2) : (draft?.floatText ?? suggestedFloat),
@@ -271,7 +277,7 @@ function DayCloseFormBody({
   const shownTotals = editing ? editing.totals : preview.totals;
   const refunds = shownTotals.refunds;
   const setCount = (key: string, n: number) =>
-    setCounts((c) => ({ ...c, [key]: Math.min(DAY_CLOSE_MAX_COUNT, Math.max(0, n)) }));
+    setCounts((c) => ({ ...c, [key]: clampDayCloseCount(n) }));
   const canSubmit = openingFloat !== null && !pending && online;
 
   // R7b 2.3: the draft follows the typed state (debounced 300 ms) and is flushed when the form unmounts (Today's sales
@@ -285,9 +291,10 @@ function DayCloseFormBody({
   const latest = React.useRef({ floatText, counts, notes });
   latest.current = { floatText, counts, notes };
   const persist = React.useCallback(() => {
+    if (!draftKey || seed) return; // a seeded form (Edit count / reopened) never touches the draft
     if (dirtyRef.current) writeDayCloseDraft(draftKey, latest.current);
     else clearDayCloseDraft(draftKey);
-  }, [dirtyRef, draftKey]);
+  }, [dirtyRef, draftKey, seed]);
   React.useEffect(() => {
     const t = window.setTimeout(persist, 300);
     return () => window.clearTimeout(t);
@@ -295,9 +302,9 @@ function DayCloseFormBody({
   // unmount: keep what is typed (Discard and a successful close set dirtyRef false first, so they write nothing)
   React.useEffect(
     () => () => {
-      if (dirtyRef.current) writeDayCloseDraft(draftKey, latest.current);
+      if (draftKey && !seed && dirtyRef.current) writeDayCloseDraft(draftKey, latest.current);
     },
-    [dirtyRef, draftKey],
+    [dirtyRef, draftKey, seed],
   );
 
   const submit = async (e: React.FormEvent) => {
@@ -331,7 +338,7 @@ function DayCloseFormBody({
       inFlight.current = false;
       setPending(false);
       // the server has the count now: the draft is spent
-      clearDayCloseDraft(draftKey);
+      if (draftKey && !seed) clearDayCloseDraft(draftKey);
       dirtyRef.current = false;
       onClose();
     } catch (err) {
