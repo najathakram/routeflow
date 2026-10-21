@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { lockBillRows } from "../vendor-bills/bill-locks";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -518,6 +519,12 @@ export class BookkeepingService implements OnModuleInit {
     // sub-cent rate still lands off-cent in float either way).
     computedAmount = roundMoney(Number(computedAmount));
 
+    await assertRefsInTenant(this.prisma, {
+      expenseCategoryIds: [rest.categoryId],
+      supplierIds: [rest.supplierId],
+      customerIds: [rest.customerId],
+    });
+
     const expense = await this.prisma.forTenant().expense.create({
       data: {
         categoryId: rest.categoryId ?? null,
@@ -573,6 +580,7 @@ export class BookkeepingService implements OnModuleInit {
     if (!existing) throw new NotFoundException("Expense not found");
 
     const statusPatch = this.buildStatusPatch(existing, dto);
+    await assertRefsInTenant(this.prisma, { expenseCategoryIds: [dto.categoryId] });
 
     const updated = await this.prisma.forTenant().expense.update({
       where: { id },
