@@ -1,4 +1,9 @@
-import { COUNTER_PARK_LABEL_MAX, type ParkedPriceLine } from "@routeflow/pricing";
+import {
+  COUNTER_PARK_LABEL_MAX,
+  ROW_ITEM_NAMES_MAX,
+  foldItemNames,
+  type ParkedPriceLine,
+} from "@routeflow/pricing";
 import type { LockFamily } from "../../common/db-locks";
 
 /** Advisory-lock family of the parked-cart cap: keyed on the tenant id (one lock covers the per-register and tenant-wide caps). */
@@ -91,22 +96,8 @@ export function priceLinesOf(payload: unknown): ParkedPriceLine[] {
  * R7b 2.1: the first few line names (+ qty) of a stored payload and its named-line count, for the list row. No query
  * change: the list already reads `payload->'lines'`. A non-array / nameless payload yields `{}`.
  */
-export function itemSummaryOf(payload: unknown): {
-  items?: Array<{ name: string; qty: number }>;
-  itemCount?: number;
-} {
-  const lines = (payload as { lines?: unknown } | null)?.lines;
-  if (!Array.isArray(lines)) return {};
-  const named: Array<{ name: string; qty: number }> = [];
-  for (const l of lines) {
-    if (!l || typeof l !== "object") continue;
-    const r = l as Record<string, unknown>;
-    const name = typeof r.name === "string" ? r.name.trim() : "";
-    const qty = Number(r.qty);
-    if (name) named.push({ name, qty: Number.isFinite(qty) ? qty : 0 });
-  }
-  if (named.length === 0) return {};
-  return { items: named.slice(0, 3), itemCount: named.length };
+export function itemSummaryOf(payload: unknown): ReturnType<typeof foldItemNames> {
+  return foldItemNames((payload as { lines?: unknown } | null)?.lines, ROW_ITEM_NAMES_MAX);
 }
 
 /** The customer's business name of a stored payload, when it has one. */

@@ -506,6 +506,18 @@ describe("CounterParkService.list", () => {
     expect(itemSummaryOf({ lines: "nope" })).toEqual({});
   });
 
+  it("a parked boxed line names its quantity as boxes, not pieces (N4)", async () => {
+    const t = setup();
+    await t.park({
+      id: id(1),
+      payload: payload({
+        lines: [line({ name: "Cola 12oz Can", qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 })],
+      }),
+    });
+    const res = await t.service.list({ page: 1, pageSize: 20 }, NOW);
+    expect(res.data[0].items).toEqual([{ name: "Cola 12oz Can", qty: 24, qtyText: "2 boxes" }]);
+  });
+
   it("row 330e: priceLinesOf drops a line with no finite price or qty and reads a non-array as none", () => {
     expect(
       priceLinesOf({ lines: [{ unitPrice: "x", qty: 1 }, { unitPrice: 1 }, null, 7] }),

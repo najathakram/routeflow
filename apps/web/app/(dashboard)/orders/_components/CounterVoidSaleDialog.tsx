@@ -18,7 +18,8 @@ import {
 import { counterVoidErrorCopy, voidErrorCode } from "@/lib/counter-void-error";
 import { useReadOnlyGate } from "@/lib/read-only-gate";
 import { formatReceiptMoney } from "@/lib/counter-receipt";
-import { itemNamesLine, type CounterItemName } from "@/lib/counter-item-names";
+import { itemNamesLine } from "@/lib/counter-item-names";
+import type { CounterItemName } from "@routeflow/types";
 
 type Done = { handBack: CounterSaleVoidResponse["handBack"] | null; alreadyVoided: boolean };
 

@@ -51,7 +51,15 @@ const ret = (over: Partial<Ret> = {}): Ret => ({
 });
 
 describe("toTodaysSaleRow: item names (R7b 2.1)", () => {
-  const withItems = (items: Array<{ description: string | null; qty: unknown }>) =>
+  const withItems = (
+    items: Array<{
+      description: string | null;
+      qty: unknown;
+      boxes?: number | null;
+      pieces?: number | null;
+      unitLabel?: string | null;
+    }>,
+  ) =>
     order({
       payments: [pay("CASH", "24.50")],
       invoices: [
@@ -80,6 +88,21 @@ describe("toTodaysSaleRow: item names (R7b 2.1)", () => {
       { name: "Chips", qty: 3 },
     ]);
     expect(row.itemCount).toBe(4);
+  });
+
+  it("a boxed line sold as 2 cases carries the receipt's quantity text (N4)", () => {
+    const row = toTodaysSaleRow(
+      withItems([
+        {
+          description: "Cola 12oz Can",
+          qty: 24,
+          boxes: 2,
+          pieces: 0,
+          unitLabel: "Case",
+        },
+      ]),
+    );
+    expect(row.items).toEqual([{ name: "Cola 12oz Can", qty: 24, qtyText: "2 Cases" }]);
   });
 
   it("a voided row (no live invoice) still carries its item names", () => {
