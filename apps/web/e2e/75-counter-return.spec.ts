@@ -65,3 +65,26 @@ test("B1261: the order page's Unit Price cell names its unit and the price each 
   await expect(cell).toContainText("/ box");
   await expect(cell).toContainText("each");
 });
+
+test("R7b 3.1: Remove then Undo brings the return line back (390)", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await setTenantCookie(context, baseURL ?? "");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route(/\/api\/v1\/tenants\/me\/addons/, (r) =>
+    r.fulfill({ json: { addons: ["orders_inline_returns"] } }),
+  );
+  await page.route(/\/api\/v1\/orders\/e2e-r1$/, (r) => r.fulfill({ json: WALKIN_ORDER }));
+  await page.goto("/orders/e2e-r1");
+  await page.getByRole("button", { name: /record return|return items/i }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Cola 12oz Can");
+  await dialog.getByLabel(/^pieces$/i).fill("1");
+  await dialog.getByRole("button", { name: "Remove" }).click();
+  await expect(dialog).toContainText("Removed Cola 12oz Can");
+  await dialog.getByRole("button", { name: "Undo" }).click();
+  await expect(dialog).toContainText("Cola 12oz Can");
+  await expect(dialog.getByLabel(/^pieces$/i)).toHaveValue("1");
+});

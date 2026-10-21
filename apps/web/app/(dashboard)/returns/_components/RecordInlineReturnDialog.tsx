@@ -58,6 +58,8 @@ import {
 } from "./refund-copy";
 import { InlineReturnSection, type InlineReturnSectionState } from "./InlineReturnSection";
 
+const REASON_HINT_ID = "return-reason-hint";
+
 function money(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
@@ -446,6 +448,7 @@ export function RecordInlineReturnDialog({
         </div>
       )}
       <InlineReturnSection
+        reasonHintId={REASON_HINT_ID}
         hidden={phase !== "capture"}
         customerId={customerId}
         entryOrderId={orderId}
@@ -523,28 +526,36 @@ export function RecordInlineReturnDialog({
               <Button onClick={handleClose}>Close</Button>
             )
           ) : (
-            <Button
-              disabled={
-                refunding ||
-                requoting ||
-                requoteMutation.isPending ||
-                !sectionState.captureReason ||
-                // B961: staff must give a reason for every "already returned or credited" product (the server refuses otherwise)
-                (!!sectionState.quote &&
-                  canOverrideReturnCredit(role) &&
-                  missingAlreadyReturnedReasons(sectionState.lines, sectionState.quote).length > 0)
-              }
-              loading={captureMutation.isPending}
-              onClick={handleConfirm}
-            >
-              {!showChoice
-                ? "Issue credit note and receive goods"
-                : refunding
-                  ? "Refunding…"
-                  : effResolution === "REFUND"
-                    ? `Return & refund ${money(shownAmount)}`
-                    : "Return & issue store credit"}
-            </Button>
+            <>
+              {!sectionState.captureReason ? (
+                <p id={REASON_HINT_ID} className="self-center text-sm text-navy/70">
+                  Choose a reason to continue
+                </p>
+              ) : null}
+              <Button
+                disabled={
+                  refunding ||
+                  requoting ||
+                  requoteMutation.isPending ||
+                  !sectionState.captureReason ||
+                  // B961: staff must give a reason for every "already returned or credited" product (the server refuses otherwise)
+                  (!!sectionState.quote &&
+                    canOverrideReturnCredit(role) &&
+                    missingAlreadyReturnedReasons(sectionState.lines, sectionState.quote).length >
+                      0)
+                }
+                loading={captureMutation.isPending}
+                onClick={handleConfirm}
+              >
+                {!showChoice
+                  ? "Issue credit note and receive goods"
+                  : refunding
+                    ? "Refunding…"
+                    : effResolution === "REFUND"
+                      ? `Return & refund ${money(shownAmount)}`
+                      : "Return & issue store credit"}
+              </Button>
+            </>
           )
         }
         onQuoteRefused={(message) => {
