@@ -82,7 +82,7 @@ import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { stampMsrpSnapshots } from "./msrp-snapshots";
-import { effectiveTaxRateFromTotals } from "../common/tax-rate";
+import { configuredTaxRateFraction, effectiveTaxRateFromTotals } from "../common/tax-rate";
 import {
   checkOrderCoverage,
   bumpRevisionIfSaleMoved,
@@ -154,6 +154,7 @@ import {
 } from "./price-adjustment-ledger";
 import { countOrdersInvoices, guardItemsEditTaxState } from "./stored-tax-state";
 import { duplicateLineData } from "./duplicate-line-data";
+import { retakeDuplicateTaxRates } from "./duplicate-tax-rates";
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -4261,7 +4262,12 @@ export class InvoicesService {
     // Duplicate carries each line's already-correct stored subtotal + boxes/pieces
     // split verbatim (recomputing qty*unitPrice would over-charge boxed lines).
     const itemsData = duplicateLineData(inv.items, this.prisma.getTenantId());
-    const isTaxExempt = !!(customer as any)?.isTaxExempt;
+    const isTaxExempt = !!(customer as any)?.isTaxExempt; // the CURRENT customer: a duplicate is a new invoice
+    // Row 588: a legacy 0 / 4-dp-rounded rate is re-taken (verified inference, else the tenant rate), never copied.
+    const src = { subtotal: inv.subtotal, taxAmount: inv.taxAmount, isTaxExempt };
+    await retakeDuplicateTaxRates(src, inv.items, itemsData, () =>
+      configuredTaxRateFraction(this.prisma),
+    );
     // RF-4: exempt → $0 of BOTH taxes (zeroed snapshots); the totals come from the ONE builder (B1043).
     zeroExemptCategoryTax(itemsData, isTaxExempt);
     const invDiscount = Number(inv.discount ?? 0);

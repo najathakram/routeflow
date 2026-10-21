@@ -5,7 +5,7 @@
  */
 import { isNsfLine, roundMoney } from "@routeflow/pricing";
 
-export function duplicateLineData(items: ReadonlyArray<any>, tenantId: string) {
+export function duplicateLineData(items: ReadonlyArray<any>, tenantId: string | null) {
   return items.map((i) => ({
     description: i.description,
     productId: i.productId,
