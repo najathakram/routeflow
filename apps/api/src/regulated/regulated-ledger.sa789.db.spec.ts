@@ -236,7 +236,7 @@ describeDb(
 
     it("a return of an unresolvable SALE row succeeds, writes the notice, and the period count rises by 1", async () => {
       const before = await tenantCtx.run(tenantId, () =>
-        countUnbookedReversals(prisma.forTenant(), dayRange()),
+        countUnbookedReversals(prisma.forTenant(), dayRange(), tenantId),
       );
       const f = await rotatedSale("r3", { deleteOrderLine: true });
       const ret = await raw.return.create({
@@ -266,7 +266,7 @@ describeDb(
       });
       expect(notices.some((n) => (n.meta as any)?.returnId === ret.id)).toBe(true);
       const after = await tenantCtx.run(tenantId, () =>
-        countUnbookedReversals(prisma.forTenant(), dayRange()),
+        countUnbookedReversals(prisma.forTenant(), dayRange(), tenantId),
       );
       expect(after - before).toBe(1);
     }, 60_000);
