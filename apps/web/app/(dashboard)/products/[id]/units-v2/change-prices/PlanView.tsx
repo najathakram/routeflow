@@ -154,7 +154,7 @@ export function PlanView({
       data-testid={T.cellPlan}
       role="region"
       aria-labelledby={headingId}
-      className="rounded-lg border border-l-4 border-surface-border border-l-accent bg-white p-3"
+      className="rounded-lg bg-surface-raised p-3"
     >
       <h4 id={headingId} className={heading ? "text-sm font-semibold text-navy" : "sr-only"}>
         {heading ?? "What else changes"}
