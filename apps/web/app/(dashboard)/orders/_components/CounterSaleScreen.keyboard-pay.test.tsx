@@ -75,8 +75,17 @@ const scan = async (text: string, name = "Cola") => {
   await screen.findByRole("button", { name: `Remove ${name}` });
 };
 
-const pressEnterInScan = () =>
+let clock = 1000;
+beforeEach(() => {
+  clock = 1000;
+  jest.spyOn(performance, "now").mockImplementation(() => clock);
+});
+afterEach(() => jest.restoreAllMocks());
+/** Enter in the empty scan box, a person's pause (200 ms) after the last scan activity unless `after` says otherwise. */
+const pressEnterInScan = (after = 200) => {
+  clock += after;
   fireEvent.keyDown(screen.getByLabelText("Scan or search items"), { key: "Enter" });
+};
 
 describe("CounterSaleScreen: keyboard path to pay (R7b 1.2)", () => {
   it("Enter on an empty scan box with lines focuses Amount tendered (cash)", async () => {
@@ -115,6 +124,18 @@ describe("CounterSaleScreen: keyboard path to pay (R7b 1.2)", () => {
     fireEvent.keyDown(tender, { key: "Enter" });
     await screen.findByTestId("counter-sale-receipt");
     expect(mutateAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it("an Enter 20 ms after a scan submit does not move focus; one 200 ms after does", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    const field = screen.getByLabelText("Scan or search items");
+    field.focus();
+    pressEnterInScan(20); // a scanner's CR+LF tail
+    await new Promise((r) => setTimeout(r, 20));
+    expect(field).toHaveFocus();
+    pressEnterInScan(200);
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveFocus());
   });
 
   it("arrow keys move between tender methods", async () => {

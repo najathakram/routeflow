@@ -137,6 +137,9 @@ interface PickedCustomer {
 
 export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
 
+/** An empty Enter in the scan box moves to the payment only this long after the last scan submit or scan-box keystroke. */
+export const EMPTY_ENTER_QUIET_MS = 150;
+
 export function CounterSaleScreen() {
   const readOnlyGate = useReadOnlyGate();
   const router = useRouter();
@@ -635,8 +638,11 @@ export function CounterSaleScreen() {
     focusNode(section.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]'));
   };
 
+  // A scanner may end a read with CR+LF (or a double Enter): the empty Enter only counts after a human pause.
+  const lastScanActivityRef = React.useRef(Number.NEGATIVE_INFINITY);
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
+    lastScanActivityRef.current = performance.now();
     if (lineLocked || saleInFlight()) return; // frozen while the sale POST is in flight: a mid-POST scan would miss the sale
     const text = scanText;
     setScanText("");
@@ -1192,6 +1198,7 @@ export function CounterSaleScreen() {
               disabled={lineLocked}
               onChange={(e) => {
                 if (lineLocked || saleInFlight()) return;
+                lastScanActivityRef.current = performance.now();
                 setScanText(e.target.value);
               }}
               onKeyDown={(e) => {
@@ -1200,9 +1207,15 @@ export function CounterSaleScreen() {
                   e.preventDefault();
                   undoRemove();
                 }
-                if (e.key === "Enter" && !scanText.trim() && lines.length > 0 && !lineLocked) {
-                  e.preventDefault(); // no empty scan; the next keys are the payment
-                  focusPayment();
+                if (e.key === "Enter" && !scanText.trim()) {
+                  e.preventDefault(); // an empty Enter is never a scan
+                  if (
+                    lines.length > 0 &&
+                    !lineLocked &&
+                    !scanBusyRef.current &&
+                    performance.now() - lastScanActivityRef.current >= EMPTY_ENTER_QUIET_MS
+                  )
+                    focusPayment(); // the next keys are the payment
                 }
               }}
               onBlur={(e) => {
