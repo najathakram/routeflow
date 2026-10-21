@@ -83,6 +83,21 @@ describe("SettingsController — PATCH /settings taxRate validation", () => {
     },
   );
 
+  // Review Q5 (lead ruling): an unchanged rate is never held to the cap, so an old 5-decimal rate does not block a save.
+  it("accepts a taxRate equal to the stored one whatever its decimals (200, written as it was)", async () => {
+    svc.get.mockResolvedValue("8.87501");
+    await controller.updateSettings({ taxRate: 8.87501 });
+    expect(svc.set).toHaveBeenCalledWith("settings.taxRate", "8.87501");
+  });
+
+  it("still rejects a CHANGED rate beyond 4 decimals when another is stored", async () => {
+    svc.get.mockResolvedValue("8.87501");
+    await expect(controller.updateSettings({ taxRate: "8.87502" })).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(svc.set).not.toHaveBeenCalled();
+  });
+
   it("leaves a non-taxRate key (logoUrl) writing unchanged", async () => {
     await controller.updateSettings({ logoUrl: "https://example.com/logo.png" });
     expect(svc.set).toHaveBeenCalledWith("settings.logoUrl", "https://example.com/logo.png");

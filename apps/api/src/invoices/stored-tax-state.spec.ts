@@ -21,6 +21,38 @@ const UNVERIFIABLE = { subtotal: 100000, taxAmount: 8875.55 };
 const VERIFIED = { subtotal: 100, taxAmount: 7.5 };
 const zero = (subtotal: number) => ({ subtotal, taxRate: 0, categoryTaxAmount: 0 });
 
+describe("assertTaxStateRecomputable: the tenant rate is the preferred rate of the re-stamp (review MUST-1)", () => {
+  const inv = { subtotal: 1000, taxAmount: 88.75 };
+
+  it("without a preferred rate the inferred rate is stamped", () => {
+    expect(
+      assertTaxStateRecomputable({ ...base, invoice: inv, storedLines: [zero(1000)] }).restampRate,
+    ).toBe(0.08875);
+  });
+
+  it("the tenant's rate wins when it reproduces the stored tax (1000 x 0.088751 -> 88.75)", () => {
+    expect(
+      assertTaxStateRecomputable({
+        ...base,
+        invoice: inv,
+        storedLines: [zero(1000)],
+        preferredRate: 0.088751,
+      }).restampRate,
+    ).toBe(0.088751);
+  });
+
+  it("a tenant rate that does not reproduce the tax is ignored", () => {
+    expect(
+      assertTaxStateRecomputable({
+        ...base,
+        invoice: inv,
+        storedLines: [zero(1000)],
+        preferredRate: 0.09,
+      }).restampRate,
+    ).toBe(0.08875);
+  });
+});
+
 describe("assertTaxStateRecomputable", () => {
   it("lines that reproduce the stored tax pass, with nothing to re-stamp", () => {
     const v = assertTaxStateRecomputable({
@@ -260,8 +292,8 @@ describe("guardItemsEditTaxState (the DRAFT items edit)", () => {
       matches: [{ row: a }, { row: b }, { row: nsf }, { row: null }],
       editLines: lines,
     });
-    // goods are 75 of the 100 subtotal: 5.63 / 75 = 0.075067 (6 dp) verifies (75 x 0.075067 = 5.630025 -> 5.63)
-    expect(lines.map((l) => l.data.taxRate)).toEqual([0.075067, 0.075067, 0, 0]);
+    // goods are 75 of the 100 subtotal: 5.63 / 75 = 0.0751 verifies (75 x 0.0751 = 5.6325 -> 5.63)
+    expect(lines.map((l) => l.data.taxRate)).toEqual([0.0751, 0.0751, 0, 0]);
   });
 });
 

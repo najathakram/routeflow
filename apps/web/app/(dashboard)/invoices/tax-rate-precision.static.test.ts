@@ -25,6 +25,8 @@ describe("tax rate precision on the web inputs", () => {
     expect(input).toMatch(/step="0\.0001"/);
     expect(input).not.toMatch(/step="0\.01"/);
     expect(settings).toMatch(/taxPercentPrecisionError/);
-    expect(settings).toMatch(/taxRate: z\.coerce[\s\S]{0,200}taxPercentPrecisionError/);
+    // review Q5: the cap holds a CHANGED rate only; the stored one is handed to the check
+    expect(settings).toMatch(/taxPercentPrecisionError\(v, savedTaxRate\)/);
+    expect(settings).toMatch(/profileSchemaFor\(canEditTimeZone, savedSettings\?\.taxRate\)/);
   });
 });

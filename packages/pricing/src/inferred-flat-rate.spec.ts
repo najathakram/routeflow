@@ -12,10 +12,10 @@ describe("B294 — inferredFlatRate", () => {
     });
   });
 
-  it("recovers a rate that reproduces the tax (8.07 on $97.77 → 0.082541 at 6 dp, verified)", () => {
-    // R5-1: at 4 dp this read 0.0825; the 6-dp rate is the closest one that reproduces the stored tax.
+  it("recovers a 4-decimal rate exactly (8.25% on $97.77 → 8.07): the 4-dp rate is tried FIRST", () => {
+    // R5-1 review MUST-1: 0.082541 (6 dp) also reproduces 8.07, but the round tenant-style rate wins when it verifies.
     expect(inferredFlatRate({ subtotal: 97.77, taxAmount: 8.07, lines: [line(0)] })).toMatchObject({
-      rate: 0.082541,
+      rate: 0.0825,
       verified: true,
     });
   });
@@ -53,6 +53,32 @@ describe("B294 — inferredFlatRate", () => {
       regularTax: 88.75,
       verified: true,
     });
+  });
+
+  it("an unverifiable ratio returns the 6-dp rate, unverified", () => {
+    expect(
+      inferredFlatRate({ subtotal: 100_000, taxAmount: 8875.55, lines: [line(0)] }),
+    ).toMatchObject({
+      rate: 0.088755,
+      verified: false,
+    });
+  });
+
+  it("preferredRate (the tenant rate) wins when it reproduces the stored tax, even over a verified computed rate", () => {
+    const inv = { subtotal: 1000, taxAmount: 88.75, lines: [line(0)] };
+    expect(inferredFlatRate(inv)).toMatchObject({ rate: 0.08875, verified: true });
+    expect(inferredFlatRate(inv, { preferredRate: 0.088751 })).toEqual({
+      rate: 0.088751, // 1000 x 0.088751 = 88.751 -> 88.75
+      regularTax: 88.75,
+      verified: true,
+    });
+  });
+
+  it("a preferredRate that does NOT reproduce the tax is ignored", () => {
+    const inv = { subtotal: 1000, taxAmount: 88.75, lines: [line(0)] };
+    expect(inferredFlatRate(inv, { preferredRate: 0.09 })).toMatchObject({ rate: 0.08875 });
+    expect(inferredFlatRate(inv, { preferredRate: null })).toMatchObject({ rate: 0.08875 });
+    expect(inferredFlatRate(inv, { preferredRate: 0 })).toMatchObject({ rate: 0.08875 });
   });
 
   it("recovers a 3-decimal rate on an awkward subtotal ($109.57 on $1,234.56 -> 0.088752, verified)", () => {

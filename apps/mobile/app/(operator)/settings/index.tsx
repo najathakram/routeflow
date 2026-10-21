@@ -197,7 +197,7 @@ function GeneralTab() {
 
   const save = () => {
     // R5-1: the same 4-decimal cap as web and the API, refused before the request.
-    const taxError = taxPercentInputError(taxRate);
+    const taxError = taxPercentInputError(taxRate, data?.taxRate);
     if (taxError) {
       showToast(taxError);
       return;

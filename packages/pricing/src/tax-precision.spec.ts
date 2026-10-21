@@ -39,6 +39,29 @@ describe("tax rate precision", () => {
     expect(sameRateAtLegacyPrecision(0.0625, 0.08875)).toBe(false);
   });
 
+  // R5-1 review MUST-2: x * 1e4 lands a hair under the half (8.625 / 100 * 1e4 = 862.4999...), but the legacy 4-dp
+  // column (Decimal(5,4), rounds half up) holds 0.0863. Snap before rounding.
+  it.each([
+    [0.0863, 8.625],
+    [0.0713, 7.125],
+    [0.0998, 9.975],
+    [0.0473, 4.725],
+  ])(
+    "sameRateAtLegacyPrecision: the column's %p agrees with a half-way tenant %p%%",
+    (stored, percent) => {
+      expect(sameRateAtLegacyPrecision(stored, percent / 100)).toBe(true);
+    },
+  );
+
+  it("Q5: a rate equal to the stored one passes whatever its decimals; only a CHANGED rate is held to 4 decimals", () => {
+    expect(taxPercentPrecisionError("8.87501", "8.87501")).toBeNull();
+    expect(taxPercentPrecisionError(8.87501, "8.87501")).toBeNull();
+    expect(taxPercentPrecisionError("8.87502", "8.87501")).toBe(TAX_PERCENT_PRECISION_MESSAGE);
+    // exact equality, not a rounded comparison: 8.87501 is not "close enough" to a stored 8.875
+    expect(taxPercentPrecisionError("8.87501", "8.875")).toBe(TAX_PERCENT_PRECISION_MESSAGE);
+    expect(taxPercentPrecisionError("8.87501", null)).toBe(TAX_PERCENT_PRECISION_MESSAGE);
+  });
+
   it("is silent about values other validators own (not a number, out of range)", () => {
     expect(taxPercentPrecisionError("abc")).toBeNull();
     expect(taxPercentPrecisionError(150)).toBeNull();
