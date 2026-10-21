@@ -147,6 +147,7 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { PriceEditRow } from "./price-edit-row";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { isEditDirty, useEditLeaveGuard } from "./edit-leave-guard";
 import { AppliedCreditsPanel, appliedOnOrderRows } from "./AppliedCreditsPanel";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
@@ -1769,6 +1770,18 @@ export default function OrderDetailPage() {
   // (undefined on the wire = leave the server's stored intents untouched).
   const [editCredits, setEditCredits] = React.useState<CreditSelection[]>([]);
   const [creditsTouched, setCreditsTouched] = React.useState(false);
+  // Row 604 F24: Back / tab close / the Orders link ask before unsaved edits are dropped.
+  const editDirty =
+    isEditing &&
+    !!order &&
+    isEditDirty(
+      {
+        items: order.lineItems.filter((li) => li.status !== "CANCELLED").map(buildEditItemFromLine),
+        shippingFee: Number(order.shippingFee ?? 0),
+      },
+      { items: editItems, pendingDeletes, shippingFee: editShippingFee, creditsTouched },
+    );
+  const leaveGuard = useEditLeaveGuard(editDirty, cancelEditMode, () => router.push("/orders"));
   // #2406: an inline return started in edit mode, folded into the SAME updateOrderItems write.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
   const returnSave = useOrderInlineReturnSave(returnsRef, (why) =>
@@ -2307,6 +2320,9 @@ export default function OrderDetailPage() {
       {/* Back */}
       <Link
         href="/orders"
+        onClick={(e) => {
+          if (leaveGuard.requestLeave(() => router.push("/orders"))) e.preventDefault();
+        }}
         className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -3338,6 +3354,8 @@ export default function OrderDetailPage() {
         invoiceId={previewInvoiceId ?? ""}
         orderTotal={Number(order.total)}
       />
+
+      {leaveGuard.dialog}
 
       {/* Cancel confirmation */}
       <ConfirmDialog
