@@ -369,6 +369,12 @@ export const API_ERROR_CODES = {
    */
   COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
   /**
+   * 404 from GET /invoices/payments/by-key/:key (SA-824): NO payment, advance or invoice payment is recorded
+   * under this Idempotency-Key in this tenant. A server-definitive "nothing recorded": the dialog may release
+   * the key and take a fresh one.
+   */
+  PAYMENT_KEY_NOT_FOUND: "PAYMENT_KEY_NOT_FOUND",
+  /**
    * 409 from GET /orders/counter-sale/by-key/:key: the sale's PENDING or DELIVERED order exists but has NO invoice
    * rows at all (a half-written sale: the first attempt stopped before the invoice step). Re-POST with the same
    * Idempotency-Key to finish it. A voided or cancelled sale is COUNTER_SALE_VOIDED, never this.

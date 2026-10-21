@@ -130,7 +130,7 @@ export function withKeyHooks<T, O extends KeyedWriterOpts<T>>(
 }
 
 /** Overlay each payment's CURRENT status (and the invoice's / advance's live figures) on a stored result. */
-async function withCurrentState(deps: PaymentKeyDeps, scope: PaymentKeyScope, stored: any) {
+export async function withCurrentState(deps: PaymentKeyDeps, scope: PaymentKeyScope, stored: any) {
   const db = deps.forTenant();
   const out = { ...stored };
   if (Array.isArray(out.payments) && out.payments.length > 0) {
