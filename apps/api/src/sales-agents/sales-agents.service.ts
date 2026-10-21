@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import type { AgentAssignment } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -228,6 +229,7 @@ export class SalesAgentsService {
   async addCustomerRate(agentId: string, dto: AddCustomerCommissionRateDto) {
     await this.ensureActiveAgent(agentId);
     const effectiveFrom = new Date(dto.effectiveFrom);
+    await assertRefsInTenant(this.prisma, { customerIds: [dto.customerId] });
     let rate;
     try {
       rate = await this.prisma.forTenant().customerCommissionRate.create({
@@ -270,6 +272,7 @@ export class SalesAgentsService {
 
   async addAssignment(agentId: string, dto: AddAgentAssignmentDto) {
     await this.ensureActiveAgent(agentId);
+    await assertRefsInTenant(this.prisma, { customerIds: [dto.customerId] });
     const effectiveFrom = dto.effectiveFrom ? new Date(dto.effectiveFrom) : new Date();
     let assignment;
     try {
@@ -306,6 +309,7 @@ export class SalesAgentsService {
 
   async addAssignmentsBulk(agentId: string, dto: BulkAgentAssignmentDto) {
     await this.ensureActiveAgent(agentId);
+    await assertRefsInTenant(this.prisma, { customerIds: dto.customerIds });
     const effectiveFrom = dto.effectiveFrom ? new Date(dto.effectiveFrom) : new Date();
     const assignments = await this.prisma.tenantTransaction(async (tx) => {
       const created: AgentAssignment[] = [];

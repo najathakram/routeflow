@@ -89,8 +89,8 @@ describe("the order-allocation tolerance", () => {
       storedLines: [{ subtotal: 1234.56, taxRate: 0.0888 }], // the column kept 4 places: 109.63, a 6 cent drift
     };
     const allZero = {
-      invoice: { subtotal: 10000, taxAmount: 887.5 }, // legacy rows at rate 0; 0.0888 does not verify
-      storedLines: [{ subtotal: 10000, taxRate: 0 }],
+      invoice: { subtotal: 100000, taxAmount: 8875.55 }, // legacy rows at rate 0; no 6-dp rate verifies
+      storedLines: [{ subtotal: 100000, taxRate: 0 }],
     };
 
     it.each([

@@ -14,7 +14,11 @@
  * member of `INVOICE_ITEM_SYSTEM_KIND_VALUES`, which enum-parity.spec pins to the Prisma enum.
  */
 
-import { inferredFlatRate, type InferredFlatRate } from "./inferred-flat-rate";
+import {
+  inferredFlatRate,
+  type InferredFlatRate,
+  type InferredFlatRateOptions,
+} from "./inferred-flat-rate";
 import { roundMoney } from "./pricing";
 
 /** The InvoiceItem.systemKind value that stamps the NSF fee line (Prisma `InvoiceItemSystemKind`). */
@@ -62,19 +66,25 @@ export function isNsfLine(line: NsfLineFactsInput): boolean {
  * the truth. The API's applyPriceAdjustment, mobile's invoice edit and the b294 backfill all call
  * this; app source never calls `inferredFlatRate` directly (no-mirrors-nsf.spec).
  */
-export function inferredGoodsFlatRate(invoice: {
-  subtotal: unknown;
-  taxAmount: unknown;
-  lines: ReadonlyArray<
-    NsfLineFactsInput & { taxRate?: unknown; categoryTaxAmount?: unknown; subtotal?: unknown }
-  >;
-}): InferredFlatRate | null {
+export function inferredGoodsFlatRate(
+  invoice: {
+    subtotal: unknown;
+    taxAmount: unknown;
+    lines: ReadonlyArray<
+      NsfLineFactsInput & { taxRate?: unknown; categoryTaxAmount?: unknown; subtotal?: unknown }
+    >;
+  },
+  opts: InferredFlatRateOptions = {},
+): InferredFlatRate | null {
   const lines = invoice.lines ?? [];
   const nsf = lines.map((l) => isNsfLine(l));
   const fees = lines.reduce((s, l, i) => (nsf[i] ? s + (Number(l.subtotal) || 0) : s), 0);
-  return inferredFlatRate({
-    subtotal: roundMoney((Number(invoice.subtotal) || 0) - fees),
-    taxAmount: invoice.taxAmount,
-    lines: lines.filter((_, i) => !nsf[i]),
-  });
+  return inferredFlatRate(
+    {
+      subtotal: roundMoney((Number(invoice.subtotal) || 0) - fees),
+      taxAmount: invoice.taxAmount,
+      lines: lines.filter((_, i) => !nsf[i]),
+    },
+    opts,
+  );
 }

@@ -16,10 +16,42 @@ import {
  * invoices.service.stored-tax-state.spec.ts.
  */
 const base = { canRestamp: true };
-// $10,000 at 8.875%: the inferred rate rounds to 0.0888, and 10000 x 0.0888 = 888.00 != 887.50.
-const UNVERIFIABLE = { subtotal: 10000, taxAmount: 887.5 };
+// $100,000 with a tax of $8,875.55: the inferred rate rounds to 0.088755 (6 dp), and 100000 x 0.088755 = 8875.50 != 8875.55.
+const UNVERIFIABLE = { subtotal: 100000, taxAmount: 8875.55 };
 const VERIFIED = { subtotal: 100, taxAmount: 7.5 };
 const zero = (subtotal: number) => ({ subtotal, taxRate: 0, categoryTaxAmount: 0 });
+
+describe("assertTaxStateRecomputable: the tenant rate is the preferred rate of the re-stamp (review MUST-1)", () => {
+  const inv = { subtotal: 1000, taxAmount: 88.75 };
+
+  it("without a preferred rate the inferred rate is stamped", () => {
+    expect(
+      assertTaxStateRecomputable({ ...base, invoice: inv, storedLines: [zero(1000)] }).restampRate,
+    ).toBe(0.08875);
+  });
+
+  it("the tenant's rate wins when it reproduces the stored tax (1000 x 0.088751 -> 88.75)", () => {
+    expect(
+      assertTaxStateRecomputable({
+        ...base,
+        invoice: inv,
+        storedLines: [zero(1000)],
+        preferredRate: 0.088751,
+      }).restampRate,
+    ).toBe(0.088751);
+  });
+
+  it("a tenant rate that does not reproduce the tax is ignored", () => {
+    expect(
+      assertTaxStateRecomputable({
+        ...base,
+        invoice: inv,
+        storedLines: [zero(1000)],
+        preferredRate: 0.09,
+      }).restampRate,
+    ).toBe(0.08875);
+  });
+});
 
 describe("assertTaxStateRecomputable", () => {
   it("lines that reproduce the stored tax pass, with nothing to re-stamp", () => {
@@ -53,7 +85,7 @@ describe("assertTaxStateRecomputable", () => {
 
   it("every-line-zero with a real header tax that does NOT verify is a 409 INVOICE_TAX_STATE_STALE", () => {
     const run = () =>
-      assertTaxStateRecomputable({ ...base, invoice: UNVERIFIABLE, storedLines: [zero(10000)] });
+      assertTaxStateRecomputable({ ...base, invoice: UNVERIFIABLE, storedLines: [zero(100000)] });
     expect(run).toThrow(ConflictException);
     try {
       run();
@@ -72,7 +104,7 @@ describe("assertTaxStateRecomputable", () => {
         assertTaxStateRecomputable({
           ...base,
           invoice: { ...UNVERIFIABLE, ...inv },
-          storedLines: [zero(10000)],
+          storedLines: [zero(100000)],
         });
       } catch (e) {
         return (e as ConflictException).getResponse() as { path: string; message: string };
@@ -213,7 +245,7 @@ describe("guardItemsEditTaxState (the DRAFT items edit)", () => {
   });
 
   it("the web re-send of a stored rate 0 on an unverifiable invoice is a 409", () => {
-    const r = row("a", 10000, 0);
+    const r = row("a", 100000, 0);
     expect(() =>
       guardItemsEditTaxState({
         locked: lockedOf(UNVERIFIABLE, [r]),
@@ -226,7 +258,7 @@ describe("guardItemsEditTaxState (the DRAFT items edit)", () => {
   });
 
   it("a kept line whose payload rate differs from the stored one is the user's own change: proceeds", () => {
-    const r = row("a", 10000, 0);
+    const r = row("a", 100000, 0);
     expect(() =>
       guardItemsEditTaxState({
         locked: lockedOf(UNVERIFIABLE, [r]),
@@ -238,7 +270,7 @@ describe("guardItemsEditTaxState (the DRAFT items edit)", () => {
   });
 
   it("no stored line kept (a full rewrite) proceeds", () => {
-    const r = row("a", 10000, 0);
+    const r = row("a", 100000, 0);
     expect(() =>
       guardItemsEditTaxState({
         locked: lockedOf(UNVERIFIABLE, [r]),

@@ -36,8 +36,8 @@ import { isNsfLine } from "./nsf-line";
  *
  * The invoice's lines live in memory below, so the stamp and the recompute are real, not echoed.
  *
- * UNVERIFIABLE: $10,000.00 at 8.875%. The header tax is $887.50 but the inferred rate rounds to the column's
- * four places (0.0888), and 10000 x 0.0888 = 888.00 != 887.50, so no rate can be stamped.
+ * UNVERIFIABLE: $100,000.00 with a header tax of $8,875.55. The inferred rate rounds to the column's six places
+ * (0.088755), and 100000 x 0.088755 = 8875.50 != 8875.55, so no rate can be stamped.
  * VERIFIED: $100.00 at 7.5% (the REG-B294 pin in invoices.service.b294-adjust.spec.ts: -> $95 = $102.13).
  */
 describe("SA-814 R5-2 — one recompute guard for stored tax state", () => {
@@ -165,7 +165,7 @@ describe("SA-814 R5-2 — one recompute guard for stored tax state", () => {
     unitPrice,
     taxRate,
   });
-  const UNVERIFIABLE = { subtotal: 10000, taxAmount: 887.5, total: 10887.5 };
+  const UNVERIFIABLE = { subtotal: 100000, taxAmount: 8875.55, total: 108875.55 };
   const VERIFIED = { subtotal: 100, taxAmount: 7.5, total: 107.5 };
   const invoiceWrite = () => prisma.invoice.update.mock.calls[0][0].data;
   const nothingWritten = () => {
@@ -178,17 +178,17 @@ describe("SA-814 R5-2 — one recompute guard for stored tax state", () => {
 
   describe("price adjustment", () => {
     it("(a) a legacy all-zero-rate invoice whose rate does NOT verify is 409 INVOICE_TAX_STATE_STALE and its tax is unchanged", async () => {
-      withInvoice(UNVERIFIABLE, [line("li-1", 10000, 0)]);
+      withInvoice(UNVERIFIABLE, [line("li-1", 100000, 0)]);
 
       // Master: resolves, writes taxAmount 0 and total 9000 ($887.50 of tax silently dropped).
       await expect(
         service.applyPriceAdjustment("inv-1", {
-          items: [{ itemId: "li-1", newUnitPrice: 9000 }],
+          items: [{ itemId: "li-1", newUnitPrice: 90000 }],
           scope: "SINGLE",
         }),
       ).rejects.toMatchObject(STALE);
       nothingWritten();
-      expect(rows[0]).toMatchObject({ unitPrice: 10000, subtotal: 10000, taxRate: 0 });
+      expect(rows[0]).toMatchObject({ unitPrice: 100000, subtotal: 100000, taxRate: 0 });
     });
 
     it("(c) a VERIFIED legacy invoice still adjusts with its tax kept: $100 at 7.5% -> $95 = $102.13 (the REG-B294 pin)", async () => {
@@ -318,34 +318,34 @@ describe("SA-814 R5-2 — one recompute guard for stored tax state", () => {
     const draft = { status: InvoiceStatus.DRAFT };
 
     it("(b) re-saving the unverifiable legacy invoice with a changed price is 409 INVOICE_TAX_STATE_STALE and writes nothing", async () => {
-      withInvoice({ ...draft, ...UNVERIFIABLE }, [line("li-1", 10000, 0)]);
+      withInvoice({ ...draft, ...UNVERIFIABLE }, [line("li-1", 100000, 0)]);
 
       // Master: resolves, writes taxAmount 0 and total 9000.
       await expect(
-        service.update("inv-1", { items: [payloadLine("li-1", 9000, 0)] }),
+        service.update("inv-1", { items: [payloadLine("li-1", 90000, 0)] }),
       ).rejects.toMatchObject(STALE);
       nothingWritten();
     });
 
     it("(b2) a re-save that changes nothing but a note is refused the same way (the recompute still runs)", async () => {
-      withInvoice({ ...draft, ...UNVERIFIABLE }, [line("li-1", 10000, 0)]);
+      withInvoice({ ...draft, ...UNVERIFIABLE }, [line("li-1", 100000, 0)]);
 
       await expect(
-        service.update("inv-1", { items: [payloadLine("li-1", 10000, 0)], notes: "n" }),
+        service.update("inv-1", { items: [payloadLine("li-1", 100000, 0)], notes: "n" }),
       ).rejects.toMatchObject(STALE);
       nothingWritten();
     });
 
     it("(f) a deliberate rate change on a kept line is NOT a silent drop: the user's 8.88% is taxed", async () => {
-      withInvoice({ ...draft, ...UNVERIFIABLE }, [line("li-1", 10000, 0)]);
+      withInvoice({ ...draft, ...UNVERIFIABLE }, [line("li-1", 100000, 0)]);
 
-      await service.update("inv-1", { items: [payloadLine("li-1", 10000, 0.0888)] });
+      await service.update("inv-1", { items: [payloadLine("li-1", 100000, 0.0888)] });
 
-      expect(invoiceWrite()).toMatchObject({ subtotal: 10000, taxAmount: 888, total: 10888 });
+      expect(invoiceWrite()).toMatchObject({ subtotal: 100000, taxAmount: 8880, total: 108880 });
     });
 
     it("(g) every stored line replaced by new ones is a full rewrite, not a re-tax of the stored lines", async () => {
-      withInvoice({ ...draft, ...UNVERIFIABLE }, [line("li-1", 10000, 0)]);
+      withInvoice({ ...draft, ...UNVERIFIABLE }, [line("li-1", 100000, 0)]);
 
       await service.update("inv-1", {
         items: [{ description: "New", qty: 1, unitPrice: 50, taxRate: 0.0888 }],

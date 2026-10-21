@@ -15,6 +15,7 @@ import { FeatureConfigStore } from "./feature-config.store";
 import { FeatureOverrideService } from "./feature-override.service";
 import { normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import { resolvePlanVersionId } from "./plan-version-pin";
 import type { RestorePlan, SkippedEntry } from "./tenant-config-snapshot";
 import {
   TenantConfigSnapshotService,
@@ -248,12 +249,16 @@ export class TenantConfigSnapshotAdminService {
       select: {
         plan: true,
         planVersionId: true,
-        subscription: { select: { planKey: true } },
+        subscription: { select: { planKey: true, planVersionId: true } },
       },
     });
     if (!tenant) throw new NotFoundException("Tenant not found");
     const planKey = normalizePlanKey(tenant.subscription?.planKey) ?? planKeyFromEnum(tenant.plan);
-    const planAllows = await this.transitions.planAllowsFor(planKey, tenant.planVersionId ?? null);
+    // The ONE pin rule: the subscription's pin, else the tenant's, else null (= the published version).
+    const planAllows = await this.transitions.planAllowsFor(
+      planKey,
+      resolvePlanVersionId(tenant.subscription, tenant),
+    );
     return { planKey, planAllows };
   }
 }

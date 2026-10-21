@@ -140,6 +140,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/stock-ledger-gap.mjs": "read-only",
   "apps/api/scripts/report-sa740-walkin-return-source.mjs": "read-only",
   "apps/api/scripts/report-sitting4-sizing.mjs": "read-only", // SA-772 §4 step 5 + SA-814 §3 C1-C4
+  "apps/api/scripts/report-640-restored-grants.mjs": "read-only", // row 640 census: read-only counts, no writes
   "apps/api/scripts/t6-backfill-census.mjs": "read-only",
   "apps/api/scripts/t6-drop-guards.mjs": "schema-only",
   "apps/api/scripts/t6-null-census.mjs": "read-only",
