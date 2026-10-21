@@ -4137,11 +4137,13 @@ export class InvoicesService {
    * opt-in because only a caller already inside a transaction can hold it usefully, and because
    * the row is then held for the rest of that tx — the caller owns keeping Invoice last in the
    * lock order (`lockRowsNoWait`). Contention surfaces as a retryable 409 (NOWAIT), not a wait.
+   * `opts.preflightOnly` (row 586, SA-814a item 4): only the payment-block throw, nothing written, so a caller outside
+   * a transaction can refuse a paid mirror early without committing a revert a later binding 409 cannot undo.
    */
   async revertLinkedInvoicesForOrderEdit(
     orderId: string,
     tx?: any,
-    opts?: { lockRows?: boolean },
+    opts?: { lockRows?: boolean; preflightOnly?: boolean },
   ): Promise<string[]> {
     const db = tx ?? this.prisma.forTenant();
     // #2178: the ONE selection (incl. the exempt deposit mirror, which stays SENT) — shared with the
@@ -4166,6 +4168,7 @@ export class InvoicesService {
             `Void the invoice or remove its payments first.`,
         );
       }
+      if (opts?.preflightOnly) continue; // row 586: the read-only pre-tx check; the revert runs in the edit tx
       const auditLine = `[${new Date().toLocaleDateString()} — reverted to Draft: source order edited]`;
       await db.invoice.update({
         where: { id: inv.id },
