@@ -1,4 +1,5 @@
 import type { ToastData } from "@routeflow/ui/web";
+import { markOrderCreatedHere } from "@/lib/order-created-echo";
 
 export interface OrderCreatedToastInput {
   /** The operator's answer to the merge prompt ("merge" folds the lines into an open order). */
@@ -17,8 +18,8 @@ export interface OrderCreatedToastInput {
  * redirect would fight rapid multi-order entry, so this offers a one-click "View Order" action
  * on the toast instead of navigating on its own.
  */
-/** Long enough to reach for the action (the provider default is 4s). */
-const ACTION_TOAST_MS = 8000;
+/** F28: with an action the toast stays until dismissed (the X), so a glance away never loses "View Order". */
+const ACTION_TOAST_MS = 24 * 60 * 60 * 1000;
 
 export function orderCreatedToast({
   mergeChoice,
@@ -26,6 +27,8 @@ export function orderCreatedToast({
   created,
   onViewOrder,
 }: OrderCreatedToastInput): Omit<ToastData, "id"> {
+  // F17: record this tab's own order so the realtime echo does not toast it a second time.
+  markOrderCreatedHere(created?.orderNumber);
   const merged = mergeChoice === "merge";
   const orderId = created?.id ?? null;
   const action =
