@@ -6,6 +6,13 @@ import { ConfigSnapshotsTab } from "./ConfigSnapshotsTab";
 const mockList = jest.fn();
 const mockPreview = jest.fn();
 const mockRestore = jest.fn();
+jest.mock("@/lib/platform-admin/features", () => ({
+  fetchFeatureRegistry: () =>
+    Promise.resolve([
+      { key: "ocr", label: "OCR document scanning" },
+      { key: "driver_payments", label: "Driver payments" },
+    ]),
+}));
 jest.mock("@/lib/platform-admin/config-snapshots", () => ({
   fetchConfigSnapshots: (t: string) => mockList(t),
   previewConfigSnapshotRestore: (t: string, s: string) => mockPreview(t, s),
@@ -225,8 +232,11 @@ describe("ConfigSnapshotsTab", () => {
         ],
       });
       const text = await confirm();
-      expect(text).toContain("ocr: held while the add-on is not paid for or included in the plan");
-      expect(text).toContain("driver_payments: held while a required feature is missing");
+      expect(text).toContain(
+        "OCR document scanning: held while the add-on is not paid for or included in the plan",
+      );
+      expect(text).toContain("Driver payments: held while a required feature is missing");
+      expect(text).not.toContain("ocr:");
     });
 
     it("an empty held list is a plain restore (no 'except')", async () => {

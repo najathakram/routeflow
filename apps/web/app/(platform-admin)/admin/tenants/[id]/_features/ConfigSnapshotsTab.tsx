@@ -8,6 +8,7 @@ import type {
   ConfigSnapshotRestoreResult,
   ConfigSnapshotSkipReason,
 } from "@routeflow/types";
+import { fetchFeatureRegistry } from "@/lib/platform-admin/features";
 import {
   fetchConfigSnapshots,
   previewConfigSnapshotRestore,
@@ -83,6 +84,13 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
   const [preview, setPreview] = React.useState<ConfigSnapshotPreview | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [restoring, setRestoring] = React.useState(false);
+  // Registry labels for held keys (best effort: a failed read falls back to the raw key).
+  const [labels, setLabels] = React.useState<Record<string, string>>({});
+  React.useEffect(() => {
+    fetchFeatureRegistry()
+      .then((rows) => setLabels(Object.fromEntries(rows.map((r) => [r.key, r.label]))))
+      .catch(() => undefined);
+  }, []);
 
   const load = React.useCallback(() => {
     setLoading(true);
@@ -126,7 +134,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
           : `Restored, except ${held
               .map(
                 (h) =>
-                  `${HELD_FEATURE_LABELS[h.featureKey] ?? h.featureKey}: held while ${HELD_REASON_TEXT[h.reason]}`,
+                  `${HELD_FEATURE_LABELS[h.featureKey] ?? labels[h.featureKey] ?? h.featureKey}: held while ${HELD_REASON_TEXT[h.reason]}`,
               )
               .join("; ")}. The ${fmt(res.takenAt)} snapshot: ${report}`,
       );
