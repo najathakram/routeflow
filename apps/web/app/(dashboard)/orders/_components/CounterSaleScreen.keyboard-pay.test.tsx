@@ -165,4 +165,19 @@ describe("CounterSaleScreen: keyboard path to pay (R7b 1.2)", () => {
     expect(stops[0]).toBeEnabled();
     expect(stops[0]).toHaveAccessibleName("Cash");
   });
+
+  const walkInAfterOnAccount = () => {
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
+    fireEvent.click(screen.getByRole("radio", { name: "On account" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use Walk-in customer" }));
+  };
+
+  it("Change payment focuses the tab-stop radio when the checked method is disabled", async () => {
+    walkInAfterOnAccount();
+    await scan("COLA");
+    fireEvent.click(screen.getByRole("button", { name: /Change payment/ }));
+    expect(screen.getByRole("radio", { name: "Cash" })).toHaveFocus();
+  });
 });

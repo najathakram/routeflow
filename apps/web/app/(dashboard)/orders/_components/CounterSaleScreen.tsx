@@ -637,7 +637,8 @@ export function CounterSaleScreen() {
     const section = paymentRef.current;
     if (!section) return;
     section.scrollIntoView?.({ block: "start" });
-    focusPaymentControl(section.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]'));
+    // the tab-stop radio: the checked one, or the first enabled one when the checked method is disabled
+    focusPaymentControl(section.querySelector<HTMLElement>('[role="radio"][tabindex="0"]'));
   };
 
   // A scanner may end a read with CR+LF (or a double Enter): the empty Enter only counts after a human pause.
