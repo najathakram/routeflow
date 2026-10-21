@@ -486,12 +486,12 @@ export class ProductFamilyImportService {
     };
   }
 
-  /** One `import.products.applied` row per apply of a file with Family columns (SA-823 section 4). */
+  /** One `import.products.applied` summary row per apply of a product import (SA-823 section 4); `summary` is absent without Family columns. */
   async recordApplied(input: {
     actorId: string;
     fileName?: string;
     counts: Record<string, number>;
-    summary: ImportFamilySummary;
+    summary?: ImportFamilySummary;
   }): Promise<void> {
     await this.audit.log({
       tenantId: this.tenant(),
@@ -501,10 +501,10 @@ export class ProductFamilyImportService {
       meta: {
         fileName: input.fileName ?? null,
         ...input.counts,
-        familiesCreated: input.summary.familiesToCreate.length,
-        grouped: input.summary.grouped,
-        moves: input.summary.moves,
-        familiesDeactivated: input.summary.deactivated.length,
+        familiesCreated: input.summary?.familiesToCreate.length ?? 0,
+        grouped: input.summary?.grouped ?? 0,
+        moves: input.summary?.moves ?? 0,
+        familiesDeactivated: input.summary?.deactivated.length ?? 0,
         actor: input.actorId,
       },
     });

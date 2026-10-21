@@ -3044,14 +3044,15 @@ export class ImportService {
       }
       if (famPlan.created.size > 0) anyWrite = true;
       families = this.familyImport.summarize(rowPlans, familyRowNumbers, deactivated);
-      if (!dryRun) {
-        await this.familyImport.recordApplied({
-          actorId: userId,
-          fileName: opts?.fileName,
-          counts: { created, updated, unchanged, skipped },
-          summary: families,
-        });
-      }
+    }
+    // SA-823 section 4: ONE import.products.applied summary row per apply (every product import, Family columns or not).
+    if (!dryRun && this.familyImport) {
+      await this.familyImport.recordApplied({
+        actorId: userId,
+        fileName: opts?.fileName,
+        counts: { created, updated, unchanged, skipped },
+        summary: families,
+      });
     }
 
     // One bulk catalog-changed emission per file, never per row (SA-284 / cause-ruling.md §2.B).

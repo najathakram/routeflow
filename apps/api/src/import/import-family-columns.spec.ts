@@ -774,6 +774,22 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
     expect(ms / N).toBeLessThan(10);
   }, 120_000);
 
+  it("an apply of a file WITHOUT Family columns also writes one import.products.applied row; a preview none", async () => {
+    rows.push(mk({ id: "p1", name: "P1", sku: "S1", pricePerUnit: 5 }));
+    const plain = Buffer.from(`Item Name,SKU,Rate
+,S1,6
+`);
+    await service.importProducts(plain, "user-1", { dryRun: true, fileName: "plain.csv" });
+    expect(auditService.log).not.toHaveBeenCalled();
+    await service.importProducts(plain, "user-1", { fileName: "plain.csv" });
+    expect(auditService.log).toHaveBeenCalledTimes(1);
+    expect(auditService.log.mock.calls[0][0]).toMatchObject({
+      tenantId: TENANT,
+      action: "import.products.applied",
+      meta: expect.objectContaining({ fileName: "plain.csv", updated: 1, familiesCreated: 0 }),
+    });
+  });
+
   it("the family import branch calls no productUnit writer and no Prisma write (units v2 stays untouched)", () => {
     const src = readFileSync(join(__dirname, "product-family-import.service.ts"), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")

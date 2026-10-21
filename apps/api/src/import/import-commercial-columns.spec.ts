@@ -27,6 +27,7 @@
 import { Test } from "@nestjs/testing";
 import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { ImportService } from "./import.service";
+import { ProductFamilyImportService } from "./product-family-import.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
@@ -88,6 +89,21 @@ describe("ImportService — commercial columns (B858/B859)", () => {
           },
         },
         ImportService,
+        // SA-823: the all-columns fixture now carries Family / Variant Name / Product ID (blank); no Family row exists.
+        {
+          provide: ProductFamilyImportService,
+          useValue: {
+            assertAllowed: jest.fn().mockResolvedValue(undefined),
+            planRows: jest.fn().mockResolvedValue({
+              decisions: new Map(),
+              newFamilies: new Map(),
+              created: new Map(),
+            }),
+            deactivateEmpty: jest.fn().mockResolvedValue([]),
+            summarize: jest.fn().mockReturnValue({}),
+            recordApplied: jest.fn().mockResolvedValue(undefined),
+          },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: VendorBillsService, useValue: { create: jest.fn(), receive: jest.fn() } },
         { provide: CustomersService, useValue: customers },
