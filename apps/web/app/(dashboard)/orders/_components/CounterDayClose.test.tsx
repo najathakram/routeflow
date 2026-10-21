@@ -691,6 +691,15 @@ describe("CounterDayClose: the drawer count survives a dismissed dialog (R7b 2.3
     expect(screen.getByLabelText("$5 bill count")).toHaveValue("0");
   });
 
+  it("typing the suggested float as 100 (not 100.00) is not dirty: no prompt on close (N1)", async () => {
+    await openForm();
+    setFloat("100");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    expect(screen.queryByText("Keep your count for later?")).toBeNull();
+    expect(draftKeys()).toHaveLength(0);
+  });
+
   it("a clean form closes with no question and writes no draft", async () => {
     await openForm();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));

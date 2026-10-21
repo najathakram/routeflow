@@ -53,6 +53,13 @@ function denominationLabel(d: { kind: "bill" | "coin"; value: number }): string 
   return d.kind === "bill" ? `$${d.value} bill` : `$${d.value.toFixed(2)} coin`;
 }
 
+/** Two float texts are the same amount when they agree to the cent ("100" and "100.00"); an unparseable one is never the same. */
+function sameFloat(a: string, b: string): boolean {
+  const x = parseFloatInput(a);
+  const y = parseFloatInput(b);
+  return x !== null && y !== null && roundMoney(x) === roundMoney(y);
+}
+
 /** The opening float as typed: whole cents, or null while it is empty / not a valid amount. */
 function parseFloatInput(raw: string): number | null {
   const t = raw.trim();
@@ -284,7 +291,7 @@ function DayCloseFormBody({
   // closing included). A seeded form (a reopened or edited close) keeps no draft.
   const dirty =
     !seed &&
-    (floatText !== suggestedFloat ||
+    (!sameFloat(floatText, suggestedFloat) ||
       Object.values(counts).some((n) => n > 0) ||
       notes.trim() !== "");
   dirtyRef.current = dirty;
