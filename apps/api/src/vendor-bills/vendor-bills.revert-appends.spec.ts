@@ -45,6 +45,7 @@ function matches(row: Row, where: Row | undefined): boolean {
   if (!where) return true;
   return Object.entries(where).every(([key, cond]) => {
     if (key === "OR") return (cond as Row[]).some((w) => matches(row, w));
+    if (key === "NOT") return !matches(row, cond as Row);
     const v = row[key];
     if (cond === undefined) return true;
     if (cond === null) return v == null;
@@ -584,6 +585,30 @@ describe("B846 / SA-808 — revertToDraft appends reversal rows and never delete
     await revert(h, 10);
 
     expect(h.lots).toHaveLength(0); // not left behind as a phantom FIFO lot
+  });
+
+  it("row 645 follow-up: a revert after a sale zeroes the lot and its note states the units really consumed (the lot never moves on a sale)", async () => {
+    const h = await harness();
+    await receive(h, 10);
+    // #3487: a sale writes a SALE row and never lowers the lot's remainingQty
+    h.rows.push({
+      id: "mv-sale",
+      productId: "prod-1",
+      type: "SALE",
+      quantity: D(-4),
+      reference: "ORD-1",
+      notes: null,
+      effectiveAt: new Date("2026-09-20T00:00:00.000Z"),
+      createdAt: new Date("2026-09-20T00:00:00.000Z"),
+    });
+    expect(h.lots[0].remainingQty.toString()).toBe("10");
+
+    await revert(h, 10);
+
+    expect(h.prisma.stockLot.delete).not.toHaveBeenCalled();
+    expect(h.lots).toHaveLength(1);
+    expect(h.lots[0].remainingQty).toBe(0);
+    expect(h.lots[0].notes).toMatch(/\(bill reversed; 4 already consumed\)/);
   });
 
   it("lots: a bill that never made a lot reverts fine — movement reversed, no lot touched", async () => {

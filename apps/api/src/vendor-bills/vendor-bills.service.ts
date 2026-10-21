@@ -18,8 +18,14 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { Prisma, MovementType, PaymentMethod } from "@prisma/client";
 import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/costing";
-import { billReceiptNote, billReversalNote, pairedReceiptIds } from "../inventory/bill-revert";
+import {
+  BILL_VOID_SHORTFALL_NOTE,
+  billReceiptNote,
+  billReversalNote,
+  pairedReceiptIds,
+} from "../inventory/bill-revert";
 import { documentStockDate, type DocumentStockDate } from "../inventory/stock-write-date";
+import { qtyUsedSinceReceipt } from "../inventory/po-use-since-receipt";
 import { assertBillWithinPo, type BillLinePieces } from "./po-bill-match";
 import { assertPackSizeKnownOrLog } from "./pack-size-gate";
 import { roundMoney } from "@routeflow/pricing";
@@ -133,6 +139,8 @@ interface LiveBillReceipt {
   unitCost: Prisma.Decimal | null;
   effectiveAt: Date;
   supplierId: string | null;
+  /** Insertion time (the ledger's tiebreak clock); absent on a synthetic shortfall receipt. */
+  createdAt?: Date;
 }
 
 /** What a bill-stock reversal is for: revert refuses a ledger it cannot explain; void degrades. */
@@ -1588,7 +1596,14 @@ export class VendorBillsService {
           quantity: { gt: 0 },
         },
         orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
-        select: { id: true, quantity: true, unitCost: true, effectiveAt: true, supplierId: true },
+        select: {
+          id: true,
+          quantity: true,
+          unitCost: true,
+          effectiveAt: true,
+          createdAt: true,
+          supplierId: true,
+        },
       })) as LiveBillReceipt[];
       const rows = receipts.filter((r) => !paired.has(r.id));
       const posted = rows.reduce((t, r) => t.add(r.quantity), new Prisma.Decimal(0));
@@ -1789,7 +1804,7 @@ export class VendorBillsService {
             stockAfter,
             supplierId: bill.supplierId ?? null,
             reference: bill.billNumber,
-            notes: `Void of vendor bill ${bill.billNumber}: ${shortfall.toString()} had no receipt record`,
+            notes: `${BILL_VOID_SHORTFALL_NOTE}${bill.billNumber}: ${shortfall.toString()} had no receipt record`,
             performedById: performedById ?? null,
             effectiveAt: when.effectiveAt,
           },
@@ -2100,12 +2115,34 @@ export class VendorBillsService {
         });
       }
     }
-    for (const lot of lots) {
+    // Row 645 follow-up: since #3487 a sale never lowers a lot, so `qty - remainingQty` is always 0.
+    // The ledger still moves: the units that left each product after the bill's receipt are shared
+    // across that product's lots (oldest first, capped at the lot's size) for the note.
+    const ledgerLeft = await qtyUsedSinceReceipt(
+      tx,
+      receipts.map((r) => ({
+        productId: r.productId,
+        effectiveAt: r.effectiveAt,
+        createdAt: r.createdAt ?? r.effectiveAt,
+      })),
+    );
+    const byAge = [...lots].sort(
+      (a, b) => Number(a.purchaseDate ?? 0) - Number(b.purchaseDate ?? 0),
+    );
+    for (const lot of byAge) {
       const remaining = new Prisma.Decimal(lot.remainingQty);
-      if (remaining.gte(new Prisma.Decimal(lot.qty))) {
+      const lotQty = new Prisma.Decimal(lot.qty);
+      const budget = ledgerLeft.get(lot.productId) ?? new Prisma.Decimal(0);
+      const fromLedger = Prisma.Decimal.min(budget, lotQty);
+      const lotSays = lotQty.sub(remaining);
+      const consumed = Prisma.Decimal.max(lotSays, fromLedger);
+      ledgerLeft.set(
+        lot.productId,
+        Prisma.Decimal.max(budget.sub(consumed), new Prisma.Decimal(0)),
+      );
+      if (consumed.lte(0)) {
         await tx.stockLot.delete({ where: { id: lot.id } });
       } else {
-        const consumed = new Prisma.Decimal(lot.qty).sub(remaining);
         await tx.stockLot.update({
           where: { id: lot.id },
           data: {
