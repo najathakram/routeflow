@@ -388,6 +388,31 @@ describe("CounterTodaysSales", () => {
     expect(screen.getByRole("dialog").className).not.toContain("print:[&>div:first-child]:hidden");
   });
 
+  it("a row names its items; an old server's row shows none", async () => {
+    serve({
+      1: page1([
+        row({
+          orderId: "o1",
+          items: [
+            { name: "Cola 12oz Can", qty: 2 },
+            { name: "Ice Bag 10lb", qty: 1 },
+            { name: "Chips", qty: 1 },
+          ],
+          itemCount: 3,
+        }),
+        row({ orderId: "o2", orderNumber: "ORD-2" }),
+      ]),
+    });
+    await open();
+    const r1 = await screen.findByTestId("today-row-o1");
+    expect(within(r1).getByTestId("today-row-items")).toHaveTextContent(
+      "Cola 12oz Can ×2, Ice Bag 10lb +1 more",
+    );
+    expect(
+      within(await screen.findByTestId("today-row-o2")).queryByTestId("today-row-items"),
+    ).toBeNull();
+  });
+
   it("row 317: a row names its cashier; an old row (no stored cashier) names none", async () => {
     serve({
       1: page1([

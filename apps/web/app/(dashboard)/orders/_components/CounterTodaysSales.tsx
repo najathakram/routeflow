@@ -16,6 +16,7 @@ import {
   useCounterSaleWeek,
 } from "@/lib/api/counter-sale-today";
 import { lastDays, sumWeek, weekCsv } from "@/lib/counter-week";
+import { itemNamesLine } from "@/lib/counter-item-names";
 import { useTenant } from "@/components/tenant-provider";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { guardCounterLeave } from "@/lib/counter-cart-signal";
@@ -404,6 +405,11 @@ function SaleRow({
           <span data-testid="today-row-cashier"> · Cashier: {row.cashierName}</span>
         ) : null}
       </p>
+      {itemNamesLine(row.items, row.itemCount) ? (
+        <p data-testid="today-row-items" className="truncate text-xs text-navy/70">
+          {itemNamesLine(row.items, row.itemCount)}
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-1">
         {row.voided ? (
           <span className={cn(BADGE, "bg-red-100 text-red-700")}>Voided</span>

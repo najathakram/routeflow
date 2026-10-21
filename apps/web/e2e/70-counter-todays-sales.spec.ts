@@ -21,6 +21,12 @@ const ROW = {
   status: "DELIVERED",
   paymentState: "PAID",
   methods: [{ method: "CASH", amount: 22.5 }],
+  items: [
+    { name: "Cola 12oz Can", qty: 2 },
+    { name: "Ice Bag 10lb", qty: 1 },
+    { name: "Chips", qty: 1 },
+  ],
+  itemCount: 3,
   returned: { amount: 0, state: "NONE", returns: [] },
   voided: false,
 };
@@ -89,6 +95,10 @@ for (const [name, width, height] of [
       const box = await row.getByRole("button", { name }).boundingBox();
       expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
     }
+    // R7b 2.1: the row names what was sold, on one line, with no horizontal overflow (checked above)
+    await expect(row.getByTestId("today-row-items")).toHaveText(
+      "Cola 12oz Can ×2, Ice Bag 10lb +1 more",
+    );
     const link = await row.getByRole("link", { name: "View order" }).boundingBox();
     expect(link?.height ?? 0).toBeGreaterThanOrEqual(44);
     await expect(page.getByTestId("today-row-e2e-o2").getByText("Voided")).toBeVisible();
