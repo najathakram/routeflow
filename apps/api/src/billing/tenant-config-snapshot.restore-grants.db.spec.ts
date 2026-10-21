@@ -9,7 +9,9 @@
  *  - a tenant pinned to an older version that predates the SKU, holding a row billed at the PUBLISHED price,
  *    restores it (the price is pinned-else-published, `pricedAddonSku`). No shipped version predates
  *    OCR_PACK_250 (v8 has it; v11+ retire it), so the pinned version is a spec-made SUPERSEDED copy of the
- *    published one without REGULATED_ITEMS, deleted in afterAll.
+ *    published one without REGULATED_ITEMS, deleted in afterAll;
+ *  - a trial plan change naming the add-on (a same-transaction PENDING key) whose checkout writes a price-0
+ *    trial row does NOT cover payment: the GRANT is held ADDON_NOT_PAID (B fold d19ef19d6).
  * Throwaway `qa-r640-*` tenants. Collected only by `jest.db.config.js`.
  */
 import { randomUUID } from "crypto";
@@ -18,7 +20,11 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
-import { TenantConfigSnapshotService } from "./tenant-config-snapshot.service";
+import {
+  AUTO_RESTORE_MAX_ROWS,
+  AUTO_RESTORE_TIME_BUDGET_MS,
+  TenantConfigSnapshotService,
+} from "./tenant-config-snapshot.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -232,5 +238,47 @@ describeDb(
       expect(heldReasons(applied?.held)).toEqual([]);
       expect(grant).toMatchObject({ featureKey: KEY, effect: "GRANT", kind: "SUPPORT" });
     });
+
+    // The payload may name the add-on by its SKU code or its legacy add-on key; before d19ef19d6 the key form covered.
+    it.each([
+      ["SKU code", SKU],
+      ["add-on key", KEY],
+    ])(
+      "REG (B fold 2): a trial plan change naming the add-on (%s) at price 0 holds a restored non-COMP GRANT",
+      async (_form, pending) => {
+        const t = await world(`trial-pending-${pending === SKU ? "sku" : "key"}`);
+        await prisma.$transaction((tx) =>
+          svc.snapshot(tx, t, "GROWTH", "DOWNGRADE", { id: null, name: "spec" }),
+        );
+        await prisma.tenantFeatureOverride.deleteMany({ where: { tenantId: t } });
+        const planAllows = await transition.planAllowsFor("GROWTH", null);
+        // The plan-change transaction: the restore runs with the payload's add-on as a PENDING key, then the
+        // checkout writes the add-on's TRIAL row (price 0, unbilled until that checkout).
+        const applied = await prisma.$transaction(async (tx) => {
+          const r = await svc.restoreLatest(
+            tx,
+            t,
+            "GROWTH",
+            new Date(),
+            planAllows,
+            { maxRows: AUTO_RESTORE_MAX_ROWS, timeBudgetMs: AUTO_RESTORE_TIME_BUDGET_MS },
+            [pending],
+          );
+          await tx.tenantAddon.create({
+            data: { tenantId: t, addonKey: KEY, sku: SKU, priceSnapshot: 0, active: true } as never,
+          });
+          return r;
+        });
+        expect(heldReasons(applied?.held)).toEqual(["ADDON_NOT_PAID"]);
+        const grants = await prisma.tenantFeatureOverride.findMany({
+          where: { tenantId: t, revokedAt: null },
+        });
+        expect(grants).toEqual([]);
+        const addons = await prisma.tenantAddon.findMany({ where: { tenantId: t } });
+        expect(addons.map((a) => [a.addonKey, a.sku, Number(a.priceSnapshot), a.active])).toEqual([
+          [KEY, SKU, 0, true],
+        ]);
+      },
+    );
   },
 );
