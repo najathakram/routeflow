@@ -6,6 +6,7 @@ import {
   paymentRequestHash,
   standalonePaymentKey,
   withKeyHooks,
+  type KeyedWriterOpts,
 } from "./payment-idempotency";
 
 /** SA-824: the header normaliser and the request hash the payment replay compares on. */
@@ -86,7 +87,7 @@ describe("SA-824 payment Idempotency-Key helpers", () => {
 
   describe("withKeyHooks", () => {
     it("no hooks: the caller's opts pass through untouched", () => {
-      const opts = { actor: "u1" };
+      const opts: KeyedWriterOpts<unknown> & { actor: string } = { actor: "u1" };
       expect(withKeyHooks(opts, undefined)).toBe(opts);
     });
 

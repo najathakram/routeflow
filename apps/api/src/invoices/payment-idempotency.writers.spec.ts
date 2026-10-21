@@ -140,7 +140,10 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
         return row ? { ...row } : null;
       }),
     };
-    prisma.forTenant.mockImplementation(() => ({ ...prisma, paymentIdempotencyKey: keyStore }));
+    prisma.forTenant.mockImplementation((() => ({
+      ...prisma,
+      paymentIdempotencyKey: keyStore,
+    })) as unknown as typeof prisma.forTenant);
   }
 
   /** Payment rows / advances committed for the current tenant. */
