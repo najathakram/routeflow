@@ -369,17 +369,7 @@ function UnitRowReadOnly({
   );
 }
 
-/**
- * K14 P05 (fallback of P02): under units v2 (the page passes hideAddForm) this card repeats the grid, so it steps aside
- * while the grid is edited inline and returns on Save or Cancel. Nothing is removed; flag off it always renders.
- */
-export function ProductUnitsCard(props: React.ComponentProps<typeof ProductUnitsCardBody>) {
-  const editingInline = usePriceDraftOptional()?.editingIn === "inline";
-  if (props.hideAddForm && editingInline) return null;
-  return <ProductUnitsCardBody {...props} />;
-}
-
-function ProductUnitsCardBody({
+export function ProductUnitsCard({
   product,
   hideAddForm = false,
   readOnly = false,
