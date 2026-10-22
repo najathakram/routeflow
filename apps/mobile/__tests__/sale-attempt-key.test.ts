@@ -106,8 +106,9 @@ describe("the invoice composer's sale path uses it", () => {
 
   it("mints the key from the cart, sends it, and settles on both outcomes", () => {
     expect(src).toMatch(/useState\(createSaleAttemptKey\)/);
-    expect(src).toMatch(/saleKey\.keyFor\(JSON\.stringify\(saleDto\)\)/);
-    expect(src).toMatch(/createSaleMut\.mutate\(\s*\{ \.\.\.saleDto, idempotencyKey \}/);
+    // row 510: the key is minted from the body AFTER the restriction ack is attached (a new payload, a new key)
+    expect(src).toMatch(/saleKey\.keyFor\(JSON\.stringify\(body\)\)/);
+    expect(src).toMatch(/createSaleMut\.mutate\(\s*\{ \.\.\.body, idempotencyKey \}/);
     expect(src).toMatch(/saleKey\.settle\(\{ ok: true \}\)/);
     expect(src).toMatch(/saleKey\.settle\(\{ ok: false, error: err \}\)/);
   });
