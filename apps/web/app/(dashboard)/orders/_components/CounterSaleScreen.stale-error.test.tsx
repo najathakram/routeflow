@@ -112,7 +112,7 @@ describe("CounterSaleScreen: a refusal goes when the cart changes (CQ-18)", () =
   it("without an edit the refusal stays put", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await refused();
-    fireEvent.click(screen.getByRole("button", { name: "Cash" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Cash" }));
     expect(screen.getByRole("alert")).toHaveTextContent(CHANGED);
   });
 });

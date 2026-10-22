@@ -5,6 +5,35 @@
  */
 import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
+import { apiBase } from "./helpers/api";
+import { isLocalOnlyLane } from "../lib/local-fulfilment-guard";
+import {
+  applyBusinessProfile,
+  localTarget,
+  restoreFulfilmentConfig,
+  snapshotFulfilmentConfig,
+  type FulfilmentSnapshot,
+} from "./helpers/local-fulfilment-profile";
+
+// Counter sales are opt-in per business and the e2e tenant has them off: on a local target, turn the counter on exactly as
+// spec 72 does and put the tenant's config back row for row afterwards. Elsewhere (a deployed tenant) nothing is written.
+const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "";
+const LOCAL = isLocalOnlyLane(process.env);
+let before: FulfilmentSnapshot | null = null;
+const target = () => localTarget(apiBase(BASE));
+
+test.beforeAll(async () => {
+  if (!LOCAL) return;
+  before = await snapshotFulfilmentConfig(target());
+  await applyBusinessProfile(target(), before, "in_store_shipping_retailer");
+});
+
+test.afterAll(async () => {
+  if (!LOCAL || !before) return;
+  test.setTimeout(120_000);
+  const restored = await restoreFulfilmentConfig(target(), before);
+  expect(restored, "the tenant's fulfilment config is back exactly as it was").toBe(true);
+});
 
 const ROW = {
   orderId: "e2e-o1",
@@ -71,6 +100,10 @@ async function openSheet(page: Page) {
   await page.goto("/orders/counter-sale");
   await page.getByRole("button", { name: "Today's sales" }).click();
   await expect(page.getByTestId("today-summary")).toBeVisible();
+  // measure after the sheet's open animation settles (a mid-scale box reads < 44 px)
+  await page.waitForFunction(() =>
+    document.getAnimations().every((a) => a.playState !== "running"),
+  );
 }
 
 for (const [name, width, height] of [

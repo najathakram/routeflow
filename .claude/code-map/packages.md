@@ -653,3 +653,9 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 - `packages/pricing/src/tax-precision.ts`: `TAX_RATE_FRACTION_DECIMALS` (6), `TAX_PERCENT_DECIMALS` (4), `TAX_PERCENT_PRECISION_MESSAGE`, `sameRateAtLegacyPrecision(stored, configured)` (snaps the product before rounding), `taxPercentPrecisionError(percent, stored?)`. Exported from `index.ts`; used by api DTOs/settings, web and mobile.
 - `packages/pricing/src/inferred-flat-rate.ts`: `inferredFlatRate(invoice, opts?: InferredFlatRateOptions)`; `preferredRate` (tenant) wins when the single totals builder reproduces the stored tax, else the first verified of 4 dp then 6 dp. `explained-tax-rate.ts`, `nsf-line.ts` follow the widen.
 - `packages/types/api/config-snapshots.ts`: `ConfigSnapshotHeldFulfilment` / `ConfigSnapshotHeldOverride` (discriminated by `kind`), hold reasons `ADDON_NOT_PAID`, `REQUIRES_UNMET`. `regulated.ts`: unbooked-reversal warning field.
+
+## Window 3 (2026-10-21, #3561, #3566)
+
+- `packages/pricing/src/unit-levels.ts`: `derivedPiece(pack, n)` -> `{ price, derived: { n, packPrice, exact } }` (the one derived-Piece definition; web `unit-options.ts` imports it, K14 S2).
+- `packages/pricing/src/counter-park.ts`: `ROW_ITEM_NAMES_MAX` (3), `ItemNameLine`, `foldItemNames(lines, cap)` -> `{ items?, itemCount? }` (the ONE fold of a row's item names for Today's sales and the parked list; a boxed or unit line carries `qtyText` from `invoiceLineQtyText`). `ParkedCartListItem` gains `items?`, `itemCount?`.
+- `packages/types/api/counter-sale.ts`: `CounterItemName { name, qty, qtyText? }`; `TodaysSaleRow` gains `items?`, `itemCount?` (absent from an older server: no names line).

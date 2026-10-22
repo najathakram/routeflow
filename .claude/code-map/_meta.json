@@ -1,6 +1,6 @@
 {
-  "mappedSha": "130484a633a5092c74d73b48376c87011fd3e032",
-  "generatedAt": "2026-10-21T09:26:38.317Z",
+  "mappedSha": "b977de134b67fb5ea89307ed87a03f56a82551b6",
+  "generatedAt": "2026-10-21T23:56:36.218Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 27,
-    "web": 23,
+    "api": 28,
+    "web": 24,
     "mobile": 15,
     "packages": 0
   },
-  "fileCount": 1144,
-  "notes": "**2026-10-21 — Bookkeeping for window 2 and R5 part 2 (#3557 `f0a5dab0e`, #3550 `86f28d4eb`, #3558 merge `130484a63`; docs-only, Option B follow-up).** New `api/`, `web/` and `mobile/landing-2026-10-21-w2-r5p2.md` (TOC row in each area file) and a packages.md section: control login origin check (Origin null only with Sec-Fetch-Site same-origin), ops-monitor `git-exec`/`mask`/`icon`; R5 part 2: regulated `sale-line-resolver`/`unbooked-reversals` (row 558), `assertRefsInTenant` (R5-5), restore GRANT verdict `override-restore-verdict.ts` (row 640), PO use guard `po-use-since-receipt.ts` (row 645), `office-evidence-completion.ts` (row 587), `duplicate-tax-rates.ts` (row 588), `tax-precision.ts` + tenant-preferred rate inference (R5-1). Lessons L-330, L-331 added; L-262, L-290, L-323, L-328 extended; L-310, L-165 archived. mappedSha advanced to 130484a63. History: CHANGELOG.md."
+  "fileCount": 1146,
+  "notes": "**2026-10-21 — Bookkeeping for window 3 (#3560 `6196ac6e2`, #3561 `67b76cb7d`, #3564 `253fc687c`, #3566 `c0f4ea574`, #3565 `b977de134`; docs-only, Option B follow-up).** New `api/` and `web/landing-2026-10-21-w3.md` (TOC row in each area file) and a packages.md section: row 623 `PaidReturnNotice` outcome wording from the server billing state; R3 product page train (`ProductLowerColumns`, `DetailsMore`, `UnitsBesideGrid`, `useDefaultOrderUnit`, `usePricesV2Pending`, grid placeholder height, row 630 `storedPackBasis`/`ownPack`, `derivedPiece` in pricing); row 688 `SoldUnitQty` plus boxed-line split on save; R7b batch 2 (`foldItemNames`, `itemSummaryOf`, `counter-item-names.ts`, `counter-day-close-draft.ts`, collapsible Today summary); row 705 `CapabilitiesCard` notice derived in render. Lessons L-332 to L-334 added; L-320, L-321, L-325 archived. mappedSha advanced to b977de134. History: CHANGELOG.md."
 }
