@@ -795,9 +795,10 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
       return ordersService;
     };
     const folded = (svc: any) => svc.updateOrderItems.mock.calls[0][1].items[0];
+    // reads the FOLDED line's own price: a dropped stored price (the price half of B207) turns these red
     const dollars = (l: any) =>
       computeLineSubtotal({
-        unitPrice: 10,
+        unitPrice: l.unitPrice,
         qty: l.qty,
         boxes: l.boxes,
         pieces: l.pieces,
@@ -811,12 +812,14 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
       );
       // the pack map is read for the stored and the incoming products, inside the same lock
       expect(svc.liveUnitsPerBoxByProduct).toHaveBeenCalledWith(["prod-1", "prod-1"]);
+      // the stored $10 box price survives the conversion (it IS the box price at the line's own pack)
       expect(folded(svc)).toMatchObject({
         productId: "prod-1",
         qty: 24,
         boxes: 2,
         pieces: 0,
         unitsPerBox: 12,
+        unitPrice: 10,
       });
       expect(dollars(folded(svc))).toBe(20);
     });
@@ -826,7 +829,13 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
         { qty: 2, boxes: null, pieces: null, unitsPerBox: null },
         { qty: 18, boxes: 1, pieces: 6 },
       );
-      expect(folded(svc)).toMatchObject({ qty: 42, boxes: 3, pieces: 6, unitsPerBox: 12 });
+      expect(folded(svc)).toMatchObject({
+        qty: 42,
+        boxes: 3,
+        pieces: 6,
+        unitsPerBox: 12,
+        unitPrice: 10,
+      });
       expect(dollars(folded(svc))).toBe(35);
     });
 
@@ -835,11 +844,17 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
         { qty: 2, boxes: null, pieces: null, unitsPerBox: null },
         { qty: 1 },
       );
-      expect(folded(svc)).toMatchObject({ qty: 25, boxes: 2, pieces: 1, unitsPerBox: 12 });
+      expect(folded(svc)).toMatchObject({
+        qty: 25,
+        boxes: 2,
+        pieces: 1,
+        unitsPerBox: 12,
+        unitPrice: 10,
+      });
       expect(dollars(folded(svc))).toBe(20.83);
     });
 
-    it("G2: a 12-pack split line, product now a 6-pack, + a scanned 6-pack box is refused 409 MERGE_PACK_MISMATCH, never re-split at 6", async () => {
+    it("B776 refusal (unit lane; the ruling's G2 runs in the DB lane): a 12-pack split line + a scanned 6-pack box is refused 409 MERGE_PACK_MISMATCH, never re-split at 6", async () => {
       await expect(
         staffMerge(
           { qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 },

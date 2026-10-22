@@ -551,7 +551,8 @@ describe("merge-items — B776 (SA-101(1)(d)): a genuine pack disagreement REFUS
 
   it("SA-841 (B207): a box-unaware existing line is a box count at the live pack: 2 boxes + a scanned box = 3 boxes, never 2 pieces + 1 box", () => {
     const existingLines: MergeLineSnapshot[] = [
-      { productId: "prod-1", qty: 2, unitPrice: 36 }, // box-unaware, boxes/pieces both null
+      // box-unaware (boxes/pieces both null); MANUAL so R0 keeps the price and this pins the denomination half
+      { productId: "prod-1", qty: 2, unitPrice: 36, priceType: "MANUAL" },
     ];
     const incoming: MergeIncomingItem[] = [{ productId: "prod-1", qty: 12, boxes: 1, pieces: 0 }];
 
@@ -559,8 +560,15 @@ describe("merge-items — B776 (SA-101(1)(d)): a genuine pack disagreement REFUS
       liveUnitsPerBoxByProductId: new Map([["prod-1", 12]]),
       bare: "pieces",
     });
-    // the stored box price survives: the line was converted at its own pack, so price and split agree
-    expect(folded[0]).toMatchObject({ qty: 36, boxes: 3, pieces: 0, unitsPerBox: 12 });
+    // the stored $36 BOX price survives: the line was converted at its own pack, so price and split agree (the old
+    // re-denomination dropped it, the price half of B207)
+    expect(folded[0]).toMatchObject({
+      qty: 36,
+      boxes: 3,
+      pieces: 0,
+      unitsPerBox: 12,
+      unitPrice: 36,
+    });
   });
 
   it("SA-841 / SA-104a(1): with NO pack anywhere (live pack unknown), a scanned whole box into a box-unaware line is refused, never folded as pieces", () => {
