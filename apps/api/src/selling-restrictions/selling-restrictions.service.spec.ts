@@ -1574,6 +1574,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       prisma.sellingRestriction.findMany.mockResolvedValue([dbRule()]);
       withAddresses([addr({ stateCode: null })]); // state not backfilled yet
       const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+        channel: "BUYER_PORTAL",
         fulfilmentKind: "DELIVERY",
         at: NOW,
       });
