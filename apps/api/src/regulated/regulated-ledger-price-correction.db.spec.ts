@@ -168,7 +168,7 @@ describeDb("B662 ledger price correction — real Postgres", () => {
     await correct(330, 82.5);
     expect(await sums(tenantId)).toEqual({ net: 330, tax: 82.5, qty: 72 });
 
-    await ledger.reverseInvoiceEntries({
+    await ledger["reverseInvoiceEntries"]({
       invoiceId: ids.invoiceId,
       db: prisma,
       preserveReturns: true,
