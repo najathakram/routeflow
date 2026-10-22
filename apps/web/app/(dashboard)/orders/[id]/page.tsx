@@ -2130,8 +2130,9 @@ export default function OrderDetailPage() {
         ...(inlineReturn ? { inlineReturn } : {}),
       },
       {
-        onSettled: () => {
-          saveLatchRef.current = false;
+        // The latch is held through the own-replay re-read below, so a third click cannot send another write.
+        onSettled: (_data, err) => {
+          if (!err) saveLatchRef.current = false;
         },
         onSuccess: onSaved,
         onError: (err) => {
@@ -2145,7 +2146,10 @@ export default function OrderDetailPage() {
               fee: feeChanged ? editShippingFee : undefined,
               unverifiable: creditsTouched || !!inlineReturn,
             })
-            .then((mine) => (mine ? onSaved() : fail(err)));
+            .then((mine) => (mine ? onSaved() : fail(err)))
+            .finally(() => {
+              saveLatchRef.current = false;
+            });
         },
       },
     );

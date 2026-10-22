@@ -38,15 +38,16 @@ jest.mock("@/lib/api-client", () => ({
   },
 }));
 
-const line = (qty: number) => ({
+const line = (qty: number, extra: Record<string, unknown> = {}) => ({
   id: "li-1",
   productId: "p1",
   product: { id: "p1", name: "Widget", unit: "each", unitsPerBox: null },
   qty,
   unitPrice: 2,
   status: "CONFIRMED",
+  ...extra,
 });
-const order = (qty: number, revisionNumber: number) => ({
+const order = (qty: number, revisionNumber: number, lineExtra: Record<string, unknown> = {}) => ({
   id: "o1",
   orderNumber: "ORD-1",
   customerId: "c1",
@@ -58,7 +59,7 @@ const order = (qty: number, revisionNumber: number) => ({
   tax: 0,
   total: qty * 2,
   revisionNumber,
-  lineItems: [line(qty)],
+  lineItems: [line(qty, lineExtra)],
 });
 const stale409 = () =>
   Object.assign(new Error("Request failed with status code 409"), {
@@ -150,5 +151,54 @@ describe("Save on Edit Items never reports your own save as a conflict (row 698)
     server = order(10, 2); // unchanged qty, newer revision (e.g. a price/note edit by someone else)
     fireEvent.click(saveBtn());
     await waitFor(() => expect(conflictNotice()).not.toBeNull());
+  });
+
+  it("REAL concurrent change: the other user ALSO set qty 7 but changed the PRICE => conflict, never success", async () => {
+    patch.mockRejectedValueOnce(stale409());
+    await openEdit();
+    fireEvent.change(qty(), { target: { value: "7" } });
+    server = order(7, 2, { unitPrice: 2.5 });
+    fireEvent.click(saveBtn());
+    await waitFor(() => expect(conflictNotice()).not.toBeNull());
+    expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ title: "Order updated" }));
+  });
+
+  it("REAL concurrent change: the other user ALSO set qty 7 but changed the NOTE => conflict, never success", async () => {
+    patch.mockRejectedValueOnce(stale409());
+    await openEdit();
+    fireEvent.change(qty(), { target: { value: "7" } });
+    server = order(7, 2, { notes: "leave at back door" });
+    fireEvent.click(saveBtn());
+    await waitFor(() => expect(conflictNotice()).not.toBeNull());
+    expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ title: "Order updated" }));
+  });
+
+  it("a click on Save DURING the own-replay re-read sends no further write", async () => {
+    patch.mockRejectedValueOnce(lostReply()).mockRejectedValueOnce(stale409());
+    await openEdit();
+    fireEvent.change(qty(), { target: { value: "7" } });
+    fireEvent.click(saveBtn());
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(saveBtn()).toBeEnabled());
+    server = order(7, 2);
+    // Hold the re-read (the refetch of the order) open.
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const inner = get.getMockImplementation()!;
+    get.mockImplementation((url: string) =>
+      url === "/orders/o1" ? gate.then(() => inner(url)) : inner(url),
+    );
+    fireEvent.click(saveBtn());
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^save changes$/i }));
+      fireEvent.keyDown(qty(), { key: "Enter", ctrlKey: true });
+    });
+    expect(patch).toHaveBeenCalledTimes(2);
+    await act(async () => release());
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: "Order updated" })),
+    );
+    expect(patch).toHaveBeenCalledTimes(2);
   });
 });
