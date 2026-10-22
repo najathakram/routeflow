@@ -1440,50 +1440,50 @@ export default function OrdersPage() {
               <table className="w-full text-sm">
                 <thead className="border-b border-surface-border bg-surface-raised">
                   <tr>
-                    {selectMode && <th className="w-10 px-3 py-3" />}
-                    <th className="w-4 px-3 py-3" />
+                    {selectMode && <th className="w-10 whitespace-nowrap px-3 py-3" />}
+                    <th className="w-4 whitespace-nowrap px-3 py-3" />
                     <th
-                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                       onClick={() => toggleSort("orderNumber")}
                     >
                       Order # <SortIcon col="orderNumber" />
                     </th>
                     <th
-                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                       onClick={() => toggleSort("customer")}
                     >
                       Customer <SortIcon col="customer" />
                     </th>
-                    <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70">
+                    <th className="whitespace-nowrap px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 max-lg:hidden">
                       Items
                     </th>
                     <th
-                      className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                       onClick={() => toggleSort("total")}
                     >
                       Total <SortIcon col="total" />
                     </th>
                     <th
-                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                       onClick={() => toggleSort("status")}
                     >
                       Status <SortIcon col="status" />
                     </th>
                     {showDelivery && (
                       <th
-                        className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                        className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                         onClick={() => toggleSort("deliveryDate")}
                       >
                         Delivery Date <SortIcon col="deliveryDate" />
                       </th>
                     )}
                     <th
-                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                       onClick={() => toggleSort("createdAt")}
                     >
                       Created <SortIcon col="createdAt" />
                     </th>
-                    <th className="w-10 px-3 py-3" />
+                    <th className="w-10 whitespace-nowrap px-3 py-3" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-border bg-white">
@@ -1511,7 +1511,7 @@ export default function OrdersPage() {
                     >
                       {selectMode && (
                         <td
-                          className="px-3 py-3"
+                          className="whitespace-nowrap px-3 py-3"
                           onClick={(e) => {
                             e.stopPropagation();
                             toggleSelect(order.id);
@@ -1529,25 +1529,31 @@ export default function OrdersPage() {
                           />
                         </td>
                       )}
-                      <td className="px-3 py-3">
+                      <td className="whitespace-nowrap px-3 py-3">
                         {order.urgent && <AlertTriangle className="h-4 w-4 text-danger" />}
                       </td>
-                      <td className="px-4 py-3 font-mono text-xs font-semibold text-ink-900">
+                      <td className="whitespace-nowrap px-4 py-3 max-lg:px-3 font-mono text-xs font-semibold text-ink-900">
                         {order.orderNumber}
                       </td>
-                      <td className="px-4 py-3 font-medium text-navy">
-                        {order.customer?.businessName ?? "—"}
+                      <td className="whitespace-nowrap px-4 py-3 max-lg:px-3 font-medium text-navy">
+                        {/* r5 (768 table): one line; a long name truncates, the title keeps all of it. */}
+                        <span
+                          title={order.customer?.businessName ?? undefined}
+                          className="block max-w-[12rem] truncate lg:max-w-xs"
+                        >
+                          {order.customer?.businessName ?? "—"}
+                        </span>
                       </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums text-navy/70">
+                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono tabular-nums text-navy/70 max-lg:hidden">
                         {order.lineItems.length}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums font-medium text-ink-900">
+                      <td className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-right font-mono tabular-nums font-medium text-ink-900">
                         $
                         {Number(order.total).toLocaleString("en-US", {
                           minimumFractionDigits: 2,
                         })}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="whitespace-nowrap px-4 py-3 max-lg:px-3">
                         <div className="flex items-center gap-1.5">
                           <Badge
                             status={order.status}
@@ -1578,7 +1584,7 @@ export default function OrdersPage() {
                         </div>
                       </td>
                       {showDelivery && (
-                        <td className="px-4 py-3 text-sm">
+                        <td className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-sm">
                           {order.requestedDeliveryDate ? (
                             <span className="text-navy/70">
                               {formatDateOnly(order.requestedDeliveryDate)}
@@ -1588,10 +1594,13 @@ export default function OrdersPage() {
                           )}
                         </td>
                       )}
-                      <td className="px-4 py-3 text-sm text-navy/70">
+                      <td className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-sm text-navy/70">
                         <OrderDateCell order={order} />
                       </td>
-                      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <td
+                        className="whitespace-nowrap px-3 py-3"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <button
                           title="View order"
                           aria-label="View order details"
