@@ -21,6 +21,10 @@ export interface RecordReturnActionProps {
   size?: "sm" | "md" | "lg";
   /** POS-4b: offer refund-vs-store-credit in the dialog (order detail only; customer detail omits it). */
   allowRefund?: boolean;
+  /** Controlled by a menu item elsewhere (the order page's phone "More actions"): the dialog opens from `open`
+   *  and there is no button of its own. Omit both for the usual button + dialog. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 /** Renders nothing when the tenant lacks the orders_inline_returns add-on. */
@@ -30,8 +34,13 @@ export function RecordReturnAction({
   orderId,
   size = "sm",
   allowRefund = false,
+  open: controlledOpen,
+  onOpenChange,
 }: RecordReturnActionProps) {
-  const [open, setOpen] = React.useState(false);
+  const [ownOpen, setOwnOpen] = React.useState(false);
+  const controlled = onOpenChange !== undefined;
+  const open = controlled ? !!controlledOpen : ownOpen;
+  const setOpen = controlled ? onOpenChange : setOwnOpen;
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   // SA-740: a WALK-IN's return must name its sale (the one shared walk-in customer would otherwise match any receipt), so
   // the order this was opened from is that sale. A named customer's return may spill across orders: nothing is pinned.
@@ -42,14 +51,16 @@ export function RecordReturnAction({
 
   return (
     <>
-      <Button
-        variant="secondary"
-        size={size}
-        leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
-        onClick={() => setOpen(true)}
-      >
-        Record return
-      </Button>
+      {!controlled && (
+        <Button
+          variant="secondary"
+          size={size}
+          leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
+          onClick={() => setOpen(true)}
+        >
+          Record return
+        </Button>
+      )}
       <RecordInlineReturnDialog
         open={open}
         onClose={() => setOpen(false)}
