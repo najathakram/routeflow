@@ -414,7 +414,7 @@
   "lib/api/restriction-warning.ts": {
     "count": 1,
     "permanent": true,
-    "why": "lookup: parseRestrictionHardBlock accepts the 409 only when its message is one of the closed OVERRIDE_BLOCK_MESSAGES sentences (anything else → null), so no free server text is rendered"
+    "why": "lookup: parseRestrictionHardBlock accepts the 409 only when its message is one of the closed OVERRIDE_BLOCK_MESSAGES sentences (anything else → null) and returns the matching CLIENT constant, never the response string, so no server text is rendered"
   },
   "lib/password-policy.ts": {
     "count": 1,

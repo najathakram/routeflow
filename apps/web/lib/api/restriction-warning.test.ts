@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   API_ERROR_CODES,
   DRIVER_RESTRICTION_BLOCK_MESSAGE,
@@ -339,5 +341,17 @@ describe("lineRuleRows: the displayed rule lines of one product (display-only de
       },
     ]);
     expect(rows[0].items).toEqual([{ text: "This product is banned in CA by law.", legal: true }]);
+  });
+});
+
+describe("parseRestrictionHardBlock never hands the server's text onward (B986 allowlist claim)", () => {
+  it("returns the CLIENT constant it matched, not the response string", () => {
+    const src = readFileSync(join(__dirname, "restriction-warning.ts"), "utf8");
+    const fn = src.slice(
+      src.indexOf("export function parseRestrictionHardBlock"),
+      src.indexOf("export interface BlockRow"),
+    );
+    expect(fn).not.toMatch(/return \{ message,/);
+    expect(fn).toMatch(/OVERRIDE_BLOCK_MESSAGES\.find\(/);
   });
 });

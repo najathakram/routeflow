@@ -58,22 +58,23 @@ const OVERRIDE_BLOCK_MESSAGES: readonly string[] = [
 /**
  * The hard block a principal who can't override gets (409 SELLING_RESTRICTED with one of the two fixed sentences: a
  * DRIVER's "Ask the office to approve this sale", or a support session's "Ask the account admin"): no override exists.
- * `message` echoes the server's sentence, which the modal titles itself with.
+ * `message` is the matching CLIENT sentence (never the response string), which the modal titles itself with.
  */
 export function parseRestrictionHardBlock(
   err: unknown,
 ): { message: string; lines: BlockedLine[]; ruleLines: RestrictionWarningLine[] } | null {
   const res = (err as AxiosLike)?.response;
   if (res?.status !== 409 || res.data?.code !== API_ERROR_CODES.SELLING_RESTRICTED) return null;
-  const message = res.data.message;
-  if (typeof message !== "string" || !OVERRIDE_BLOCK_MESSAGES.includes(message)) return null;
+  // The server string only SELECTS one of the two client sentences; what is returned (and rendered) is the client constant.
+  const known = OVERRIDE_BLOCK_MESSAGES.find((m) => m === res.data?.message);
+  if (known === undefined) return null;
   const lines = Array.isArray(res.data.blockedLines)
     ? (res.data.blockedLines as BlockedLine[])
     : [];
   const ruleLines = Array.isArray(res.data.lines)
     ? (res.data.lines as RestrictionWarningLine[])
     : [];
-  return { message, lines, ruleLines };
+  return { message: known, lines, ruleLines };
 }
 
 export interface BlockRow {
