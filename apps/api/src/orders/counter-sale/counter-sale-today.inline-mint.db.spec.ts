@@ -156,7 +156,7 @@ describeDb(
         prisma,
         gateway: { emitCreditNoteCreated: jest.fn() },
         ledger: new RegulatedLedgerService(prisma),
-        commissionEngine: {},
+        commissionEngine: { syncInvoiceCommissionSafe: async () => undefined },
         numbering,
         logger: new Logger(CreditNotesService.name),
       });
