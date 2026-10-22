@@ -3,10 +3,11 @@
 import * as React from "react";
 import { Package } from "lucide-react";
 import { Badge, cn } from "@routeflow/ui/web";
-import { computeLineSubtotal, perUnitPrice, unitWords } from "@routeflow/pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
 import { BACKORDER_TAG_LABEL, lineBackorderPieces } from "@routeflow/types";
 import { invoiceLineQtyText, isUnitLine } from "@/lib/invoice-line-unit";
 import { formatMoney } from "@/lib/format";
+import { unitPriceNote } from "@/lib/line-unit-price-note";
 import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
 import { displayLineStatus } from "./line-status";
@@ -18,23 +19,6 @@ import { ComponentSubLines } from "@/components/ComponentSubLines";
  * painted by `before:`), because the 5-column table ran Line Total / Status past a 390px
  * screen. Every class below is `max-md:`-scoped, so from md up the table is untouched.
  */
-const UW = unitWords();
-
-/**
- * B1261: the unit word and, for a boxed line sold in pieces, the price each. The pack word is the
- * line's own unit label when it was sold by a named unit; the per-piece figure is the display-only
- * `perUnitPrice` (never fed back into money math). Null for a plain single-unit line.
- */
-function unitPriceNote(li: OrderItem): { per: string; each: string | null } | null {
-  const upb = Number(li.unitsPerBox ?? li.product?.unitsPerBox ?? 0);
-  if (!(upb > 1)) return null;
-  const unitLabel = (li.unitLabel ?? "").trim();
-  const per = unitLabel ? unitLabel.toLowerCase() : UW.pack.lower;
-  const each = perUnitPrice(Number(li.unitPrice), upb);
-  const inPieces = !unitLabel && Number(li.pieces ?? 0) > 0;
-  return { per, each: inPieces && each != null ? `${formatMoney(each)} each` : null };
-}
-
 const CARD_CELL =
   "max-md:block max-md:p-0 max-md:text-left max-md:before:mb-0.5 max-md:before:block max-md:before:text-xs max-md:before:font-medium max-md:before:text-navy/70 max-md:before:content-[attr(data-label)]";
 
@@ -196,11 +180,15 @@ export function OrderLineItemsTable({
                     <span className="money text-navy/70">{formatMoney(li.unitPrice)}</span>
                   )}
                   {(() => {
-                    const note = unitPriceNote(li);
+                    const note = unitPriceNote({
+                      unitPrice: li.unitPrice,
+                      unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox,
+                      unitLabel: li.unitLabel,
+                      pieces: li.pieces,
+                    });
                     return note ? (
                       <span className="text-xs text-navy/60" data-testid="line-unit-price-unit">
-                        / {note.per}
-                        {note.each ? ` · ${note.each}` : ""}
+                        {note.text}
                       </span>
                     ) : null;
                   })()}

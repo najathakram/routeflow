@@ -61,7 +61,7 @@ test("B1261: the order page's Unit Price cell names its unit and the price each 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route(/\/api\/v1\/orders\/e2e-r1$/, (r) => r.fulfill({ json: WALKIN_ORDER }));
   await page.goto("/orders/e2e-r1");
-  const cell = page.locator('td[data-label="Unit Price"]').first();
+  const cell = page.getByTestId("line-unit-price-unit").first();
   await expect(cell).toContainText("/ box");
   await expect(cell).toContainText("each");
 });
