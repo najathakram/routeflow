@@ -23,30 +23,36 @@ export function SoldUnitQty({
   const split = normalizeBoxesPieces({ qty, unitsPerBox });
   const boxes = split.boxes ?? 0;
   const pieces = split.pieces ?? 0;
+  // Row 711: Boxes over Pieces, stacked, so both fit the 70 px Qty column with their labels. Side by side they
+  // overflowed under Unit Price and Pieces could not be reached by mouse.
   return (
-    <div className="flex items-center gap-1">
-      <DecimalInput
-        aria-label="Boxes"
-        decimals={0}
-        min={0}
-        value={boxes}
-        onChange={(v) => onQtyChange(Math.trunc(v ?? 0) * unitsPerBox + pieces)}
-        className={inputClassName}
-      />
-      <span className="text-xs text-navy/60">box</span>
-      <DecimalInput
-        aria-label="Pieces"
-        decimals={0}
-        min={0}
-        // Row 708: loose pieces cap at pack - 1 (mobile's stepper max), so typing never rolls them into a box.
-        max={unitsPerBox - 1}
-        value={pieces}
-        onChange={(v) => onQtyChange(boxes * unitsPerBox + Math.trunc(v ?? 0))}
-        className={inputClassName}
-      />
-      <span className="text-xs text-navy/60" title={`${unitsPerBox} pieces per box`}>
-        pcs
-      </span>
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-w-0 items-center gap-1">
+        <DecimalInput
+          aria-label="Boxes"
+          decimals={0}
+          min={0}
+          value={boxes}
+          onChange={(v) => onQtyChange(Math.trunc(v ?? 0) * unitsPerBox + pieces)}
+          className={inputClassName}
+        />
+        <span className="shrink-0 text-xs text-navy/60">box</span>
+      </div>
+      <div className="flex min-w-0 items-center gap-1">
+        <DecimalInput
+          aria-label="Pieces"
+          decimals={0}
+          min={0}
+          // Row 708: loose pieces cap at pack - 1 (mobile's stepper max), so typing never rolls them into a box.
+          max={unitsPerBox - 1}
+          value={pieces}
+          onChange={(v) => onQtyChange(boxes * unitsPerBox + Math.trunc(v ?? 0))}
+          className={inputClassName}
+        />
+        <span className="shrink-0 text-xs text-navy/60" title={`${unitsPerBox} pieces per box`}>
+          pcs
+        </span>
+      </div>
     </div>
   );
 }

@@ -562,6 +562,14 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── Row 711: a boxed invoice line's Boxes / Pieces / Unit Price each hit-test to themselves (spec 78).
+    {
+      name: "invoice-edit-boxed-qty-hit",
+      testMatch: /78-invoice-edit-boxed-qty-hit\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── B1188: Settings invoice-numbering card, preview + confirm copy (spec 67). READ-ONLY:
     // never clicks Confirm; asserts no write request leaves the page.
     {
