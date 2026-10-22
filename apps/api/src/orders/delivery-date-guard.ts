@@ -3,7 +3,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   calendarDateFromIso,
   calendarStampFromInput,
-  startOfCalendarDay,
+  tenantTodayDay,
 } from "../common/calendar-date";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 
@@ -39,10 +39,8 @@ export interface DeliveryDateGuardOptions {
   now?: Date;
 }
 
-/** The tenant's calendar day (YYYY-MM-DD) at `now` in `zone` (UTC when the zone is null). */
-export function tenantTodayDay(zone: string | null | undefined, now: Date = new Date()): string {
-  return calendarDateFromIso(startOfCalendarDay(now, zone));
-}
+/** Re-exported: the one tenant-today reader lives in common/calendar-date. */
+export { tenantTodayDay };
 
 /** The calendar day a stored or sent date names: a sent string by its literal first ten characters (the house rule), a stored instant by its UTC day. */
 function dayOf(value: Date | string): string {

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
 import { COUNTER_OFFLINE_COPY } from "@/lib/counter-sale";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -103,7 +104,7 @@ const ringCola = async () => {
 describe("CounterSaleScreen: offline at Complete (CQ-29)", () => {
   it("says there is no connection in the checkout bar and leaves the form usable", async () => {
     mutateAsync.mockRejectedValueOnce({ code: "ERR_NETWORK", message: "Network Error" });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await ringCola();
     setOnline(false);
     fireEvent.click(complete());
@@ -129,7 +130,7 @@ describe("CounterSaleScreen: offline at Complete (CQ-29)", () => {
 
   it("the retry reuses the Idempotency-Key, even after the clerk changed the cart, and then succeeds", async () => {
     mutateAsync.mockRejectedValueOnce({ code: "ERR_NETWORK", message: "Network Error" });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await ringCola();
     setOnline(false);
     fireEvent.click(complete());
@@ -147,7 +148,7 @@ describe("CounterSaleScreen: offline at Complete (CQ-29)", () => {
 
   it("the offline message clears when the next attempt starts", async () => {
     mutateAsync.mockRejectedValueOnce({ code: "ERR_NETWORK", message: "Network Error" });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await ringCola();
     setOnline(false);
     fireEvent.click(complete());
@@ -161,7 +162,7 @@ describe("CounterSaleScreen: offline at Complete (CQ-29)", () => {
 
   it("a network failure while the browser believed it was ONLINE stays an unknown outcome (locked, never 'nothing was charged')", async () => {
     mutateAsync.mockRejectedValueOnce(new Error("Network Error"));
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await ringCola();
     fireEvent.click(complete());
     expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
@@ -171,7 +172,7 @@ describe("CounterSaleScreen: offline at Complete (CQ-29)", () => {
 
   it("offline with an answer (a 503) is still an unknown outcome", async () => {
     mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await ringCola();
     setOnline(false);
     fireEvent.click(complete());

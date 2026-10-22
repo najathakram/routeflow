@@ -1,6 +1,7 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -144,7 +145,7 @@ describe("B1206: a FIFO scan queue (no scan is dropped)", () => {
     listFor["200000000001"] = () => colaReply.promise.then((p) => [p]);
     barcodeFor["200000000002"] = () => chipsReply.promise;
     listFor["200000000002"] = () => chipsReply.promise.then((p) => [p]);
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
 
     await scan("3"); // quantity prefix for the NEXT scan only
     await scan("200000000001"); // lookup 1 still in flight ...
@@ -164,7 +165,7 @@ describe("B1206: a FIFO scan queue (no scan is dropped)", () => {
 describe("B1207: the exact product, a picker on ambiguity, an error that is not 'not found'", () => {
   it("two codes sharing an 11-digit prefix: the SECOND code adds the second product, not row 0 of the list", async () => {
     listFor["200000000002"] = () => [COLA, CHIPS]; // fuzzy contains-search: name-sorted, the wrong one first
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("200000000002");
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(lines()[0]).toHaveTextContent("Sample Chips");
@@ -173,7 +174,7 @@ describe("B1207: the exact product, a picker on ambiguity, an error that is not 
 
   it("an ambiguous code opens a picker and adds NOTHING until one is chosen", async () => {
     listFor["COLA"] = () => [COLA, CHIPS]; // a name search with two sellable hits and no exact code
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     const picker = await screen.findByTestId("counter-scan-picker");
     expect(lines()).toHaveLength(0);
@@ -188,7 +189,7 @@ describe("B1207: the exact product, a picker on ambiguity, an error that is not 
     let healthy = false;
     barcodeFor["200000000001"] = () =>
       healthy ? COLA : Promise.reject({ response: { status: 503, data: {} } });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("200000000001");
     const alert = await screen.findByTestId("counter-scan-error");
     expect(alert).toHaveTextContent(/couldn't look up/i);
@@ -200,10 +201,10 @@ describe("B1207: the exact product, a picker on ambiguity, an error that is not 
     expect(screen.queryByTestId("counter-scan-error")).toBeNull();
   });
 
-  it("a genuine miss still reads 'No product found for that code.'", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+  it("a genuine miss names the rejected text", async () => {
+    renderTill(<CounterSaleScreen />);
     await scan("999999999999");
-    expect(await screen.findByText("No product found for that code.")).toBeInTheDocument();
+    expect(await screen.findByText("No product for '999999999999'")).toBeInTheDocument();
   });
 });
 
@@ -214,7 +215,7 @@ describe("B1208: the scanned level decides the line", () => {
   });
 
   it("a UNIT-code scan on a 24-pack at 30.00 is ONE piece at 1.25 (not a 30.00 box)", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("400500600028");
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(lines()[0]).toHaveTextContent("0 boxes + 1 pcs");
@@ -229,7 +230,7 @@ describe("B1208: the scanned level decides the line", () => {
   });
 
   it("a second UNIT scan merges as a piece (2 pcs, 2.50); a BOX scan then adds a whole box", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("400500600028");
     await scan("400500600028");
     await waitFor(() => expect(lines()[0]).toHaveTextContent("0 boxes + 2 pcs"));
@@ -240,14 +241,14 @@ describe("B1208: the scanned level decides the line", () => {
   });
 
   it("a BOX-code scan is one whole box at 30.00", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("400500600011");
     await waitFor(() => expect(lines()[0]).toHaveTextContent("1 box"));
     expect(screen.getByTestId("running-total")).toHaveTextContent("$30.00");
   });
 
   it("a box/piece stepper on the till line adjusts the split and the price; it never steps to zero", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("400500600011"); // 1 box = 30.00
     await waitFor(() => expect(lines()).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "Add a piece to Sample Cola 24pk" }));
@@ -271,7 +272,7 @@ describe("B1208: the scanned level decides the line", () => {
 
   it("a plain (not boxed) line gets a +/- quantity stepper", async () => {
     barcodeFor["200000000001"] = () => COLA;
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("200000000001");
     await waitFor(() => expect(lines()).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "Add one Sample Cola" }));
@@ -287,7 +288,7 @@ describe("B1206 extra: the SAME code scanned twice quickly counts both", () => {
   it("two quick scans of one code are quantity 2 (identical lookups must not collapse into one add)", async () => {
     const reply = deferred<unknown>();
     barcodeFor["200000000001"] = () => reply.promise;
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("200000000001");
     await scan("200000000001");
     reply.resolve(COLA);
@@ -300,7 +301,7 @@ describe("B1206 extra: the SAME code scanned twice quickly counts both", () => {
     const reply = deferred<unknown>();
     barcodeFor["200000000001"] = () => reply.promise;
     barcodeFor["200000000002"] = () => CHIPS;
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("200000000001");
     await scan("4");
     await scan("200000000002");
@@ -314,7 +315,7 @@ describe("B1206 extra: the SAME code scanned twice quickly counts both", () => {
 describe("D5: a 1-3 digit entry is a code FIRST when a product matches it exactly", () => {
   it("'42' that is a product's exact PLU adds that product (not a x42 multiplier)", async () => {
     barcodeFor["42"] = () => COLA;
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("42");
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(lines()[0]).toHaveTextContent("Sample Cola");
@@ -323,7 +324,7 @@ describe("D5: a 1-3 digit entry is a code FIRST when a product matches it exactl
 
   it("'3' with no exact match is still a quantity for the next scan", async () => {
     barcodeFor["200000000001"] = () => COLA;
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("3");
     expect(screen.getByTestId("pending-qty")).toHaveTextContent("×3");
     await scan("200000000001");
@@ -333,7 +334,7 @@ describe("D5: a 1-3 digit entry is a code FIRST when a product matches it exactl
 
   it("a fuzzy (name/sku substring) hit for '3' is NOT exact: it stays a quantity", async () => {
     listFor["3"] = () => [{ ...CHIPS, name: "Sample 3-pack Chips" }];
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("3");
     await waitFor(() => expect(screen.getByTestId("pending-qty")).toHaveTextContent("×3"));
     expect(lines()).toHaveLength(0);
@@ -342,7 +343,7 @@ describe("D5: a 1-3 digit entry is a code FIRST when a product matches it exactl
 
   it("a lookup ERROR on a short entry says it could not look up the code (never 'No product found')", async () => {
     barcodeFor["42"] = () => Promise.reject({ response: { status: 500, data: {} } });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("42");
     expect(await screen.findByTestId("counter-scan-error")).toHaveTextContent(/couldn't look up/i);
     expect(screen.queryByText(/No product found/)).toBeNull();
@@ -369,7 +370,7 @@ describe("D6: the receipt is on screen BEFORE it prints", () => {
     });
   });
   const ring = async (name: string | RegExp) => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await waitFor(() => expect(screen.getByLabelText("Print receipt automatically")).toBeChecked());
     await scan("200000000001");
     await waitFor(() => expect(lines()).toHaveLength(1));
@@ -408,7 +409,7 @@ describe("pay guard: a sale never posts without the last scanned item", () => {
   it("(a) scan then immediately Pay: no POST until the lookup resolves, and the POST includes that line", async () => {
     const reply = deferred<unknown>();
     barcodeFor["200000000001"] = () => reply.promise;
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("200000000001");
     expect(screen.getByTestId("counter-scan-busy")).toHaveTextContent("Adding scanned items");
     completeBtns().forEach((b) => expect(b).toBeDisabled());
@@ -432,7 +433,7 @@ describe("pay guard: a sale never posts without the last scanned item", () => {
     let healthy = false;
     barcodeFor["200000000001"] = () =>
       healthy ? COLA : Promise.reject({ response: { status: 503, data: {} } });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     const alert = await (async () => {
       await scan("200000000001");
       return screen.findByTestId("counter-scan-error");
@@ -452,7 +453,7 @@ describe("pay guard: a sale never posts without the last scanned item", () => {
 
   it("an open picker blocks Pay until a product is chosen or the picker is cancelled", async () => {
     listFor["COLA"] = () => [COLA, CHIPS];
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     const picker = await screen.findByTestId("counter-scan-picker");
     completeBtns().forEach((b) => expect(b).toBeDisabled());
@@ -467,7 +468,7 @@ describe("B1208 nit: a UNIT multiplier at or over the pack size is labelled norm
   });
 
   it("x30 UNIT scans on a 24-pack read '1 box + 6 pcs' (not '0 boxes + 30 pcs') and post the normalized split", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("30"); // a quantity for the next scan
     await scan("400500600028");
     await waitFor(() => expect(lines()).toHaveLength(1));
@@ -493,7 +494,7 @@ describe("B1219 on the counter: a fuzzy scan asks 'Did you mean ...?' and never 
 
   it("ONE fuzzy hit: 'Did you mean <name>?' with Add and Cancel; nothing is added and Pay is blocked", async () => {
     listFor["COLA"] = () => [COLA];
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     const group = await picker();
     expect(group).toHaveTextContent("Did you mean Sample Cola?");
@@ -506,7 +507,7 @@ describe("B1219 on the counter: a fuzzy scan asks 'Did you mean ...?' and never 
 
   it("Add confirms the suggestion: one line, the picker is gone, Pay is back", async () => {
     listFor["COLA"] = () => [COLA];
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     fireEvent.click(within(await picker()).getByRole("button", { name: "Add" }));
     await waitFor(() => expect(lines()).toHaveLength(1));
@@ -517,7 +518,7 @@ describe("B1219 on the counter: a fuzzy scan asks 'Did you mean ...?' and never 
 
   it("Cancel and Escape both add nothing and release Pay", async () => {
     listFor["COLA"] = () => [COLA];
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     fireEvent.click(within(await picker()).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(payButtons()[0]).toBeEnabled());
@@ -533,7 +534,7 @@ describe("B1219 on the counter: a fuzzy scan asks 'Did you mean ...?' and never 
 
   it("SEVERAL hits: 'Did you mean one of these?' lists every match, one Add each; Pay is blocked", async () => {
     listFor["COLA"] = () => [COLA, CHIPS];
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     const group = await picker();
     expect(group).toHaveTextContent("Did you mean one of these?");
@@ -547,7 +548,7 @@ describe("B1219 on the counter: a fuzzy scan asks 'Did you mean ...?' and never 
 
   it("an exact code still adds at once, with no picker", async () => {
     barcodeFor["200000000001"] = () => COLA;
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("200000000001");
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull();
@@ -558,7 +559,7 @@ describe("scan queue: edge cases around the picker and removal", () => {
   it("a scan while the picker is open waits behind it (Pay stays blocked), then lands once the picker is resolved", async () => {
     listFor["COLA"] = () => [COLA];
     barcodeFor["200000000002"] = () => CHIPS;
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await screen.findByRole("group", { name: /did you mean/i });
     await scan("200000000002"); // arrives while the picker is open
@@ -583,7 +584,7 @@ describe("scan queue: edge cases around the picker and removal", () => {
     barcodeFor["200000000001"] = () => COLA;
     barcodeFor["200000000002"] = () => chipsReply.promise;
     listFor["200000000002"] = () => chipsReply.promise.then((p) => [p]);
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("200000000001");
     await waitFor(() => expect(lines()).toHaveLength(1));
     await scan("200000000002"); // pending
@@ -600,7 +601,7 @@ describe("scan queue: edge cases around the picker and removal", () => {
   it("removing the line a pending scan is for: the scan re-adds it fresh (no stale merge into a ghost line)", async () => {
     const colaReply = deferred<unknown>();
     barcodeFor["200000000001"] = () => COLA;
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("200000000001");
     await waitFor(() => expect(lines()).toHaveLength(1));
     barcodeFor["200000000001"] = () => colaReply.promise;

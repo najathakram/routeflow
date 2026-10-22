@@ -170,6 +170,11 @@ export function startOfCalendarDay(
   );
 }
 
+/** The tenant's calendar day (YYYY-MM-DD) at `now` in `zone` (UTC when the zone is null): the ONE tenant-today reader. */
+export function tenantTodayDay(zone: string | null | undefined, now: Date = new Date()): string {
+  return calendarDateFromIso(startOfCalendarDay(now, zone));
+}
+
 /**
  * A CLIENT-supplied calendar-date field (e.g. invoice `issueDate`) → the
  * UTC-midnight SYMBOLIC stamp of the literal day it names (#2197): its first
