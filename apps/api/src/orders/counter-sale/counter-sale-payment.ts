@@ -1,7 +1,12 @@
 import { BadRequestException } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
-import { parseCalendarDay } from "../../common/calendar-date";
+import {
+  calendarDateFromIso,
+  parseCalendarDay,
+  startOfCalendarDay,
+} from "../../common/calendar-date";
+import { resolveZone } from "../../common/tenant-time-zone";
 
 /**
  * Counter sale payment rules. Two stages, because the sale's total is computed by create() (tax,
@@ -55,6 +60,20 @@ export function assertCheckNotPostdated(payment: CounterPaymentInput, today: str
       "Post-dated check: put this sale on account and record the check when it clears.",
     );
   }
+}
+
+/**
+ * The tender paths' one call: resolves the TENANT's zone (one read, and only when a CHECK states a date), takes its calendar
+ * day at `now`, and applies `assertCheckNotPostdated`. The counter sale and the pickup hand-over both run it before any write.
+ */
+export async function assertCheckNotPostdatedForTenant(
+  prisma: Parameters<typeof resolveZone>[0] & { getTenantId(): string | null | undefined },
+  payment: CounterPaymentInput,
+  now: Date = new Date(),
+): Promise<void> {
+  if (payment.method !== "CHECK" || payment.checkDate == null) return;
+  const { zone } = await resolveZone(prisma, { tenantId: prisma.getTenantId() ?? "" });
+  assertCheckNotPostdated(payment, calendarDateFromIso(startOfCalendarDay(now, zone)));
 }
 
 /**
