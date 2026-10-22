@@ -94,7 +94,7 @@ describe("RecurringInvoicesService — Run now takes the ack, scheduled runs ski
         customerId: "c1",
         channel: "STAFF",
         document: "INVOICE",
-        path: "DELIVERY",
+        fulfilmentKind: "DELIVERY",
         principal: operator,
         ack,
         lines: [

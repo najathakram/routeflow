@@ -59,6 +59,7 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
     principal: OPERATOR,
     document: "ORDER",
     at: NOW,
+    fulfilmentKind: "DELIVERY",
     ...over,
   });
   const reject = async (p: SellableLinesParams) => {
@@ -218,7 +219,7 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
     it("a PICKUP sale to a customer in an ALLOWED state is judged by the store: banned there, so it warns", async () => {
       customerIn("TX");
       storeIn("CA");
-      const e = await reject(args({ path: "PICKUP" }));
+      const e = await reject(args({ fulfilmentKind: "PICKUP" }));
       const body = e.getResponse() as any;
       expect(body.code).toBe("RESTRICTION_WARNING");
       expect(body.lines[0].rules[0].reasonText).toBe("This product is banned in CA by law.");
@@ -227,14 +228,18 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
     it("the same customer on a DELIVERY is judged at their own address: TX is allowed, nothing to warn", async () => {
       customerIn("TX");
       storeIn("CA");
-      expect((await service.assertLinesSellable(args({ path: "DELIVERY" }))).stamps).toEqual([]);
+      expect(
+        (await service.assertLinesSellable(args({ fulfilmentKind: "DELIVERY" }))).stamps,
+      ).toEqual([]);
     });
 
     it("a customer in the BANNED state who picks up at a store in an allowed state is NOT warned", async () => {
       customerIn("CA");
       storeIn("TX");
-      expect((await service.assertLinesSellable(args({ path: "PICKUP" }))).stamps).toEqual([]);
-      expect((await reject(args({ path: "SHIP" }))).getResponse()).toMatchObject({
+      expect(
+        (await service.assertLinesSellable(args({ fulfilmentKind: "PICKUP" }))).stamps,
+      ).toEqual([]);
+      expect((await reject(args({ fulfilmentKind: "DELIVERY" }))).getResponse()).toMatchObject({
         code: "RESTRICTION_WARNING",
       });
     });
@@ -242,7 +247,7 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
     it("a counter sale to a NAMED customer is judged by the store, never reads the customer's address", async () => {
       customerIn("TX");
       storeIn("CA");
-      expect((await reject(args({ path: "COUNTER" }))).getResponse()).toMatchObject({
+      expect((await reject(args({ fulfilmentKind: "COUNTER" }))).getResponse()).toMatchObject({
         code: "RESTRICTION_WARNING",
       });
       expect(prisma.customer.findFirst).not.toHaveBeenCalled();
@@ -250,7 +255,7 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
 
     it("a store with no usable business state is INDETERMINATE (warned), and says so about the STORE", async () => {
       storeIn(null);
-      const body = (await reject(args({ path: "PICKUP" }))).getResponse() as any;
+      const body = (await reject(args({ fulfilmentKind: "PICKUP" }))).getResponse() as any;
       expect(body.lines[0]).toMatchObject({ outcome: "INDETERMINATE" });
       expect(body.lines[0].rules[0].reasonText).toMatch(/store's state can't be determined/);
     });
@@ -258,18 +263,20 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
     it("the warning's hash differs between a store basis and a customer basis (a path switch re-warns)", async () => {
       customerIn("CA");
       storeIn("CA");
-      const a = ((await reject(args({ path: "DELIVERY" }))).getResponse() as any).warningHash;
-      const b = ((await reject(args({ path: "PICKUP" }))).getResponse() as any).warningHash;
+      const a = ((await reject(args({ fulfilmentKind: "DELIVERY" }))).getResponse() as any)
+        .warningHash;
+      const b = ((await reject(args({ fulfilmentKind: "PICKUP" }))).getResponse() as any)
+        .warningHash;
       expect(a).not.toBe(b);
     });
   });
 
   it("judgeStaffWrite lists the breaches and the basis, and never throws for a business outcome", async () => {
-    const judged = await service.judgeStaffWrite(args({ path: "PICKUP" }));
+    const judged = await service.judgeStaffWrite(args({ fulfilmentKind: "PICKUP" }));
     expect(judged.basis).toBe("STORE");
     expect(judged.breaches).toEqual([expect.objectContaining({ outcome: "INDETERMINATE" })]); // no store state
     storeIn("CA");
-    const j2 = await service.judgeStaffWrite(args({ path: "PICKUP" }));
+    const j2 = await service.judgeStaffWrite(args({ fulfilmentKind: "PICKUP" }));
     expect(j2.outcome).toBe("BLOCK");
     expect(j2.breaches[0]).toMatchObject({ productId: "p1", ruleIds: ["r-ca"], state: "CA" });
   });

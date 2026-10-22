@@ -158,7 +158,6 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
           { productId: "p-banned", lineKey: "n:0" },
           { productId: "p-ok", lineKey: "n:1" },
         ],
-        path: "DELIVERY",
         principal: undefined,
         ack: undefined,
         document: "ORDER",

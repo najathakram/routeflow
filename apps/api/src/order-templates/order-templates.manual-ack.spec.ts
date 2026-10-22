@@ -19,6 +19,7 @@ jest.mock("../common/db-locks", () => ({
  *  - the SCHEDULED 06:00 run never asks for an acknowledgement and never stamps: it follows #2093 (skip the banned line,
  *    order the rest, notify once, suspend the template line), and a template line carries no override forward.
  */
+import { RegulatedVisibilityService } from "../buyer/regulated-visibility.service";
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test } from "@nestjs/testing";
 import { ConflictException } from "@nestjs/common";
@@ -106,6 +107,11 @@ describe("OrderTemplatesService — a manual STAFF run warns and takes the ack (
         { provide: NotificationsService, useValue: notifications },
         { provide: SellingRestrictionsService, useValue: restrictions },
         { provide: AuditService, useValue: audit },
+        // master's regulated-category gate (a constructor dependency): nothing locked here
+        {
+          provide: RegulatedVisibilityService,
+          useValue: { computeGate: jest.fn(async () => ({ hiddenIds: new Set(), locked: [] })) },
+        },
       ],
     }).compile();
     service = mod.get(OrderTemplatesService);
@@ -128,7 +134,7 @@ describe("OrderTemplatesService — a manual STAFF run warns and takes the ack (
         { productId: "p-banned", lineKey: "n:0" },
         { productId: "p-ok", lineKey: "n:1" },
       ],
-      path: "DELIVERY",
+      fulfilmentKind: "DELIVERY",
       principal: operator,
       ack,
       document: "ORDER",
@@ -163,16 +169,16 @@ describe("OrderTemplatesService — a manual STAFF run warns and takes the ack (
     expect(prisma.orderTemplate.update).not.toHaveBeenCalled();
   });
 
-  it("a PICKUP customer's standing order is judged at the STORE (path PICKUP)", async () => {
+  it("a PICKUP customer's standing order is judged at the STORE (fulfilmentKind PICKUP)", async () => {
     prisma.customer.findFirst.mockResolvedValue({ fulfillPath: "PICKUP" });
     await service.generateOrderForUser("t1", operator, ack);
-    expect(restrictions.assertLinesSellable.mock.calls[0][0].path).toBe("PICKUP");
+    expect(restrictions.assertLinesSellable.mock.calls[0][0].fulfilmentKind).toBe("PICKUP");
   });
 
-  it("a SHIP customer's standing order is judged at the customer's address (path SHIP)", async () => {
+  it("a SHIP customer's standing order is judged at the customer's address (a SHIP customer is a DELIVERY kind)", async () => {
     prisma.customer.findFirst.mockResolvedValue({ fulfillPath: "SHIP" });
     await service.generateOrderForUser("t1", operator);
-    expect(restrictions.assertLinesSellable.mock.calls[0][0].path).toBe("SHIP");
+    expect(restrictions.assertLinesSellable.mock.calls[0][0].fulfilmentKind).toBe("DELIVERY");
   });
 
   it("a buyer's Reorder keeps the BUYER_PORTAL channel and carries NO actor and NO ack, even if the body sent one", async () => {
@@ -212,6 +218,6 @@ describe("OrderTemplatesService — a manual STAFF run warns and takes the ack (
     prisma.orderTemplate.count.mockResolvedValue(0);
     prisma.order.findFirst.mockResolvedValue(null);
     await service.generateDailyOrders();
-    expect(restrictions.checkLinesSellable.mock.calls[0][0].path).toBe("PICKUP");
+    expect(restrictions.checkLinesSellable.mock.calls[0][0].fulfilmentKind).toBe("PICKUP");
   });
 });

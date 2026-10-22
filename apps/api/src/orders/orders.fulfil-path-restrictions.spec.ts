@@ -11,7 +11,12 @@ import { buildOrdersService, operatorPayload } from "./testing/orders-service-ha
 describe("OrdersService.updateFulfillPath: selling restrictions (L8)", () => {
   let h: Awaited<ReturnType<typeof buildOrdersService>>;
   const operator = { ...operatorPayload, tenantId: "t-1" } as never;
-  const lines = [{ productId: "prod-1" }, { productId: null }, { productId: "prod-2" }];
+  // Row 510: the switch reads the order's live lines itself (judgeFulfilSwitch), keyed `l:<lineId>`.
+  const lines = [
+    { id: "li-1", productId: "prod-1", status: "PENDING" },
+    { id: "li-n", productId: null, status: "PENDING" },
+    { id: "li-2", productId: "prod-2", status: "PENDING" },
+  ];
   const open = (extra: Record<string, unknown> = {}) =>
     h.prisma.order.findFirst.mockResolvedValue({
       id: "ord-1",
@@ -25,7 +30,6 @@ describe("OrdersService.updateFulfillPath: selling restrictions (L8)", () => {
       routeRunStop: null,
       routeRun: null,
       customer: { addresses: [{ id: "a1" }] },
-      lineItems: lines,
       ...extra,
     });
   const switchTo = (fulfillPath: string) =>
@@ -41,6 +45,7 @@ describe("OrdersService.updateFulfillPath: selling restrictions (L8)", () => {
 
   beforeEach(async () => {
     h = await buildOrdersService();
+    h.prisma.orderItem.findMany.mockResolvedValue(lines);
     // BO-07: an OPERATOR switching to PICKUP is judged on the live user row; this one denies nothing.
     h.prisma.user.findFirst.mockResolvedValue({
       deniedPermissionGroups: [],
@@ -55,13 +60,19 @@ describe("OrdersService.updateFulfillPath: selling restrictions (L8)", () => {
   it("delivery -> pickup judges the order's catalog lines on the PICKUP kind (the store's state)", async () => {
     open();
     await switchTo("PICKUP");
-    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith({
-      tenantId: "t-1",
-      customerId: "cust-1",
-      lines: [{ productId: "prod-1" }, { productId: "prod-2" }],
-      channel: "STAFF",
-      fulfilmentKind: "PICKUP",
-    });
+    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "t-1",
+        customerId: "cust-1",
+        lines: [
+          { productId: "prod-1", lineKey: "l:li-1" },
+          { productId: "prod-2", lineKey: "l:li-2" },
+        ],
+        channel: "STAFF",
+        fulfilmentKind: "PICKUP",
+        document: "ORDER", // row 510: an acknowledged override is stamped on the order's lines
+      }),
+    );
   });
 
   it.each(["ROUTE", "SHIP"])(
@@ -126,7 +137,8 @@ describe("OrdersService.updateFulfillPath: selling restrictions (L8)", () => {
 
   describe("controls", () => {
     it("an order with no catalog lines asks nothing and the switch succeeds", async () => {
-      open({ lineItems: [{ productId: null }] });
+      open();
+      h.prisma.orderItem.findMany.mockResolvedValue([{ id: "li-n", productId: null }]);
       await expect(switchTo("PICKUP")).resolves.toBeDefined();
       expect(h.restrictions.assertLinesSellable).not.toHaveBeenCalled();
     });

@@ -136,7 +136,7 @@ describe("one jurisdiction source (L8)", () => {
       .filter((f) => /saleFulfilmentKind|orderFulfilmentKind/.test(fs.readFileSync(f, "utf8")))
       .map(rel);
     for (const must of [
-      "orders/orders.service.ts",
+      "orders/default-sale-fulfilment.ts", // orders.service reaches the helper through it
       "orders/fulfil-path-restrictions.ts",
       "invoices/invoices.service.ts",
       "order-templates/order-templates.service.ts",

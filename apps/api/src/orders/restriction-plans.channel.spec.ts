@@ -23,7 +23,7 @@ describe("planOrderEditRestrictions: every channel is planned", () => {
     items: [{ productId: "p1", qty: 2 }],
     mode: { kind: "merge" as const },
     principal: who(channel),
-    path: "DELIVERY" as const,
+    fulfilmentKind: "DELIVERY" as const,
   });
 
   it("STAFF: planned, the line keyed by its payload index", async () => {
@@ -47,7 +47,7 @@ describe("planChangeRequestRestrictions: every channel is planned", () => {
     existing: [],
     cr: { id: "cr1", type: "ADD_ITEM", productId: "p1" },
     principal: who(channel),
-    path: "DELIVERY" as const,
+    fulfilmentKind: "DELIVERY" as const,
   });
 
   it("STAFF: planned, the line keyed by the change request", () => {

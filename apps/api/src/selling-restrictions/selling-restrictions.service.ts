@@ -319,7 +319,7 @@ export class SellingRestrictionsService {
   }> {
     assertAmbientTenant(this.prisma, tenantId, "SellingRestrictionsService"); // before ANY read, as getPolicy did
     const channel = options?.channel ?? "BUYER_PORTAL"; // fail closed: the channel that binds more
-    const storeJudged = judgedAtStore(options.fulfilmentKind);
+    const storeJudged = judgedAtStore(options?.fulfilmentKind); // a JS caller with no options: DELIVERY
     let basis: JurisdictionBasis = storeJudged ? "STORE" : "CUSTOMER";
     const allowed = { evaluation: { outcome: "ALLOW" as const, reasons: [] }, input: null, basis };
 
