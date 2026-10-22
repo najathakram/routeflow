@@ -233,6 +233,20 @@ const ACTION_LABEL = { order: "new order", delivery: "delivery" } as const;
 /** What an ENFORCED denial tells someone who may not see the customer's figures (a buyer). */
 const GENERIC_DENIAL = "This order can't be placed right now. Please contact your account manager.";
 
+/**
+ * The amount the B585 credit gate judges for a NEW order: the server total less what this request pays
+ * at the till (S1, C42). Whole cents; the paid part is clamped to [0, total], so the projection is never
+ * negative and never above the total (a garbage `creditPaidNow` cannot loosen the gate beyond the total).
+ */
+export function creditProjectedTotal(
+  total: number,
+  options: { creditPaidNow?: (total: number) => number },
+): number {
+  const paid = options.creditPaidNow?.(total) ?? 0;
+  const safePaid = Number.isFinite(paid) ? Math.min(Math.max(paid, 0), total) : 0;
+  return roundMoney(total - safePaid);
+}
+
 /** One enforcement point's facts (the tenant is added by the caller's own client). */
 export interface CreditPointParams {
   customerId: string;

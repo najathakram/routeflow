@@ -1,5 +1,4 @@
 import { BadRequestException } from "@nestjs/common";
-import { roundMoney } from "@routeflow/pricing";
 import type { FulfillPath } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { SourceLines } from "./source-line";
@@ -60,17 +59,6 @@ export interface CreateOrderOptions {
   onReplay?: (order: ReplayedOrder) => void;
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;
   creditPaidNow?: (total: number) => number;
-}
-
-/**
- * The amount the B585 credit gate judges for a NEW order: the server total less what this request pays
- * at the till (S1, C42). Whole cents; the paid part is clamped to [0, total], so the projection is never
- * negative and never above the total (a garbage `creditPaidNow` cannot loosen the gate beyond the total).
- */
-export function creditProjectedTotal(total: number, options: CreateOrderOptions): number {
-  const paid = options.creditPaidNow?.(total) ?? 0;
-  const safePaid = Number.isFinite(paid) ? Math.min(Math.max(paid, 0), total) : 0;
-  return roundMoney(total - safePaid);
 }
 
 /**

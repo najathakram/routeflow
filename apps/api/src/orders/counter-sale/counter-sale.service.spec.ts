@@ -1768,7 +1768,7 @@ describe("CounterSaleService.ring", () => {
 });
 
 describe("CounterSaleService.ring: S1 credit gate sees only what stays owed", () => {
-  it("hands createSale a creditPaidNow that clears CASH/CARD at the server total and nothing for a post-dated CHECK or ON_ACCOUNT; a same-day CHECK counts like cash", async () => {
+  it("hands createSale a creditPaidNow that clears CASH/CARD at the server total and nothing for ON_ACCOUNT; a same-day CHECK counts like cash", async () => {
     const paidNow = async (payment: any) => {
       const prisma = createMockPrisma();
       const createSale = jest.fn(async () => ({ id: "inv-1", orderId: "ord-1" }));
@@ -1806,9 +1806,8 @@ describe("CounterSaleService.ring: S1 credit gate sees only what stays owed", ()
     expect(
       await paidNow({ method: "CHECK", amount: 50, reference: "12", checkDate: "2000-01-01" }),
     ).toBe(50);
-    expect(
-      await paidNow({ method: "CHECK", amount: 50, reference: "12", checkDate: "2999-01-01" }),
-    ).toBe(0);
+    // A post-dated CHECK never reaches createSale since the till guard (PR-A) refuses it first; its 0 is
+    // pinned on counterCreditPaidNow itself (credit-limit-counter-tender.spec.ts).
     expect(await paidNow({ method: "ON_ACCOUNT" })).toBe(0);
   });
 });

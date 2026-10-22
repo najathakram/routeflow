@@ -67,11 +67,7 @@ import {
   CHANGE_WINDOW_RUN_NOT_ACTIVE,
 } from "./at-stop-conflicts";
 import { sourceLineFor } from "./source-line";
-import {
-  assertCustomerMayNotDraft,
-  creditProjectedTotal,
-  type CreateOrderOptions,
-} from "./order-create-options";
+import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-create-options";
 import { checkQtySplitConsistency, warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
 import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
 import { loadLiveUnitsPerBoxByProduct } from "./live-pack-map";
@@ -223,6 +219,7 @@ import {
 import {
   assertCreditAtEnforcementPoint,
   assertWithinCreditLimit,
+  creditProjectedTotal,
   isCreditLimitCheckEnabled,
   type CreditPointParams,
 } from "./credit-limit-guard";
@@ -1944,13 +1941,8 @@ export class OrdersService implements OnApplicationBootstrap {
         channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
         fulfilmentKind: saleFulfilmentKind({ counterSale: options.counterSale, fulfillPath }),
       });
-      // B585: credit check for a NEW order (nothing runs unless the tenant switch is set).
-      // S1 (C42): only what stays owed after this request's tender (the counter sale passes `creditPaidNow`).
-      await this.creditGate({
-        customerId,
-        projectedTotal: creditProjectedTotal(total, options),
-        principal: user,
-      });
+      const projectedTotal = creditProjectedTotal(total, options); // S1: net of the till tender
+      await this.creditGate({ customerId, projectedTotal, principal: user }); // B585: NEW order
     }
 
     // WS9: the oversell policy is resolved ONCE, here, before the transaction (so before any

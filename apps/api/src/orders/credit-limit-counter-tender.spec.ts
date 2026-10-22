@@ -1,8 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import fs from "node:fs";
 import path from "node:path";
-import { assertCreditAtEnforcementPoint } from "./credit-limit-guard";
-import { creditProjectedTotal } from "./order-create-options";
+import { assertCreditAtEnforcementPoint, creditProjectedTotal } from "./credit-limit-guard";
 import { counterCreditPaidNow } from "./counter-sale/counter-sale-payment";
 
 // S1 (C42): the credit gate at order create counts only what STAYS OWED after this request's tender.
@@ -179,7 +178,7 @@ describe("S1 wiring pins", () => {
   const src = (f: string) => fs.readFileSync(path.join(__dirname, f), "utf8");
   it("create() hands the B585 gate creditProjectedTotal(total, options), not the bare total", () => {
     expect(src("orders.service.ts")).toMatch(
-      /projectedTotal:\s*creditProjectedTotal\(total,\s*options\)/,
+      /const projectedTotal = creditProjectedTotal\(total,\s*options\);[^\n]*\n\s*await this\.creditGate\(\{ customerId, projectedTotal,/,
     );
   });
   it("only the counter sale sets creditPaidNow (repo-wide scan of apps/api/src, specs excluded)", () => {
