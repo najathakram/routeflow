@@ -107,6 +107,7 @@ export function OrderLineItemsTable({
                     {lineBackorderPieces(li, orderStatus) > 0 && (
                       <BackorderTag
                         pieces={lineBackorderPieces(li, orderStatus)}
+                        soldPieces={Number(li.qty)}
                         // The stored facts the line was sold by, never the live product's (L-332).
                         unit={{
                           boxes: li.boxes,
