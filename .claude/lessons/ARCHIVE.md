@@ -4226,3 +4226,26 @@ citations, closed-out with its own post-init assertion guard).
   other parallel worker touching the same path.
 - **Guard:** code review should flag any `Date.now()`-delta or directory-listing-count assertion
   in a spec touching a spawned process or shared tmp path — no automated lint yet.
+
+## Archived 2026-10-21 — headroom for L-332, L-333 and L-334 (bookkeeping, window 3)
+
+### L-320 · 2026-10-18 · testing · pin the mouse path of a button inside a clipped scroll wrapper, not only the keyboard path
+
+- **Symptom:** K11-16: saving with a real mouse click at desktop width left the saved-line 64 px short of its place, while Ctrl+S and Enter, which never move the pointer, looked correct.
+- **Root cause:** a real click focuses and scrolls its button into view; inside an `overflow: hidden` wrapper the browser can still scroll that wrapper, which the keyboard path never triggers. An unit test with `fireEvent.click` does neither.
+- **Lesson:** **For a control inside an overflow-hidden or sticky region, the e2e drives the REAL mouse click and asserts the scroll offset and the position of what the action reveals, in addition to the keyboard path. A synthetic click proves the handler, not the layout.**
+- **Guard:** `k11-l2-saved-line.spec.ts` (mouse Save at 1440; currently marked `test.fail` until the fix lands).
+
+### L-321 · 2026-10-20 · tooling · `npm ci` rewrites the shared hooks path for every worktree: install with HUSKY=0 and set the hooks path per worktree
+
+- **Symptom:** after an `npm ci` in one worktree, commits and pushes in OTHER worktrees ran the wrong hooks (or none), because `core.hooksPath` pointed at the installing tree.
+- **Root cause:** the `prepare` script (husky) writes `core.hooksPath` into the repository-wide git config, which every linked worktree shares.
+- **Lesson:** **Install in a worktree with `HUSKY=0 npm ci`, and set the hooks path for that tree with `git config --worktree core.hooksPath <dir>` (needs `extensions.worktreeConfig`). Never run a bare `npm ci` or `npx husky` in a linked worktree; read `git config core.hooksPath` back in each tree before the first commit.** `HUSKY=0` is acceptable only as a one-command prefix on the install, never exported (an exported HUSKY=0 disables every hook); `npm ci --ignore-scripts` is equivalent and preferred, and the shared path must read back as the absolute shim.
+- **Guard:** `scripts/check-git-hooks.mjs`; the install line in the lane runbook. Refines archived L-274 and L-254 (their `--ignore-scripts` advice stays valid; this adds the per-worktree fix). Cf. [[L-262]].
+
+### L-325 · 2026-10-20 · process · every jest, type-check or DB run on a shared machine goes through the FIFO heavy slot with capped workers
+
+- **Symptom:** subagents each ran their own jest and check-types (unit specs included), and together they pushed the PC past the 95% CPU and RAM cap.
+- **Root cause:** the slot was treated as a rule for the big gates only; a "small" unit run still starts one worker per core, and several at once overload the machine.
+- **Lesson:** **Every jest, check-types or DB run, unit ones too, goes through `scripts/heavy-slot.mjs` with a capped worker count. Put this in every subagent brief; a subagent that runs a test outside the slot is a defect in the brief.**
+- **Guard:** `scripts/heavy-slot.mjs` (FIFO); none automatic for a bare `npx jest`.
