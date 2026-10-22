@@ -76,7 +76,7 @@ import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
-import { usePhoneWidth } from "./_components/use-phone-width";
+import { useBelowBreakpoint } from "@/lib/hooks/useBelowBreakpoint";
 import { useScrollAfterSave } from "./_components/use-scroll-after-save";
 import { phoneActionItems } from "./_components/phone-action-items";
 import { useInvoiceDraftNotice } from "./_components/use-invoice-draft-notice";
@@ -267,7 +267,7 @@ export default function OrderDetailPage() {
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const [commissionEditOpen, setCommissionEditOpen] = React.useState(false);
   // apple-ux r4: phone width folds the action bar into one row + a More menu; Record return then opens from that menu.
-  const phone = usePhoneWidth();
+  const phone = useBelowBreakpoint("sm");
   const returnAvailable = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   const [returnOpen, setReturnOpen] = React.useState(false);
   const readOnlyGate = useReadOnlyGate();

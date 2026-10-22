@@ -43,7 +43,7 @@ import { useShippedWeek } from "@/lib/tenant-timezone";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
-import { useBelowMd } from "@/lib/hooks/useBelowMd";
+import { useBelowBreakpoint } from "@/lib/hooks/useBelowBreakpoint";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { downloadCsv, csvDate } from "@/lib/export";
 import { apiClient } from "@/lib/api-client";
@@ -277,6 +277,7 @@ function DeliveryRange({
           stacked && "ml-auto",
         )}
         title="Clear dates"
+        aria-label="Clear dates"
       >
         <X className="h-3.5 w-3.5" />
       </button>
@@ -453,8 +454,12 @@ export default function OrdersPage() {
   const [sortCol, setSortCol] = React.useState<string>("createdAt");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
   // Below md the secondary filters live behind one "Filters" button (orders apple-ux r4 Q01); md+ keeps them inline.
-  const narrow = useBelowMd();
+  const narrow = useBelowBreakpoint("md");
   const [filtersOpen, setFiltersOpen] = React.useState(false);
+  // Widening past md swaps the Filters panel for the inline controls: reset it, so narrowing again later does not reopen it.
+  React.useEffect(() => {
+    if (!narrow) setFiltersOpen(false);
+  }, [narrow]);
   const filtersButtonRef = React.useRef<HTMLButtonElement>(null);
 
   const toggleSort = (col: string) => {
@@ -1175,7 +1180,7 @@ export default function OrdersPage() {
             aria-haspopup="dialog"
             aria-label={secondaryActive > 0 ? `Filters, ${secondaryActive} active` : "Filters"}
             className={cn(
-              "flex h-10 shrink-0 items-center gap-2 rounded-ctl border px-3 text-sm font-medium transition-colors",
+              "flex h-11 shrink-0 items-center gap-2 rounded-ctl border px-3 text-sm font-medium transition-colors",
               secondaryActive > 0
                 ? "border-brand-200 bg-brand-50 text-brand-700"
                 : "border-line-strong bg-white text-navy/70 hover:text-navy",
