@@ -74,7 +74,7 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
   let prisma: ReturnType<typeof createMockPrisma>;
   let creditNotes: { settleOrderCreditsInTx: jest.Mock; autoApplyOldestCreditsInTx: jest.Mock };
   let email: { isEmailConfigured: jest.Mock; sendInvoice: jest.Mock };
-  let ledger: { reverseInvoiceEntries: jest.Mock };
+  let ledger: { reverseInvoiceEntries: jest.Mock; settleRegulatedLedger: jest.Mock };
   let callLog: string[];
 
   beforeEach(async () => {
@@ -84,7 +84,10 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
       isEmailConfigured: jest.fn().mockResolvedValue(true),
       sendInvoice: jest.fn().mockResolvedValue({ delivered: true }),
     };
-    ledger = { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) };
+    ledger = {
+      reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+    };
 
     creditNotes = {
       settleOrderCreditsInTx: jest.fn().mockImplementation(async () => {

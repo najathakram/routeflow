@@ -65,7 +65,11 @@ describe("foldMergeItems splits the added quantity when the existing line's trio
     r.items.map((i: any) => [i.sourceLineId ?? "NEW", i.qty]);
 
   it("12 @ 0.05, rate -> 0.08, +8 scanned: 12 on the old line (carried) + 8 on a NEW live line", () => {
-    const r = foldMergeItems([line()], [{ productId: "p1", qty: 8 }], undefined, live(0.08));
+    const r = foldMergeItems([line()], [{ productId: "p1", qty: 8 }], {
+      liveUnitsPerBoxByProductId: new Map(),
+      bare: "pieces",
+      liveTrioByProductId: live(0.08),
+    });
     expect(qtyOf(r)).toEqual([
       ["li-1", 12],
       ["NEW", 8],
@@ -83,8 +87,7 @@ describe("foldMergeItems splits the added quantity when the existing line's trio
         }),
       ],
       [{ productId: "p1", qty: 8 }],
-      undefined,
-      live(0.05),
+      { liveUnitsPerBoxByProductId: new Map(), bare: "pieces", liveTrioByProductId: live(0.05) },
     );
     expect(qtyOf(r)).toEqual([
       ["li-1", 12],
@@ -93,7 +96,11 @@ describe("foldMergeItems splits the added quantity when the existing line's trio
   });
 
   it("the same trio adds to the one line (12 + 8 = 20), as today", () => {
-    const r = foldMergeItems([line()], [{ productId: "p1", qty: 8 }], undefined, live(0.05));
+    const r = foldMergeItems([line()], [{ productId: "p1", qty: 8 }], {
+      liveUnitsPerBoxByProductId: new Map(),
+      bare: "pieces",
+      liveTrioByProductId: live(0.05),
+    });
     expect(qtyOf(r)).toEqual([["li-1", 20]]);
   });
 
@@ -104,8 +111,7 @@ describe("foldMergeItems splits the added quantity when the existing line's trio
         { productId: "p1", qty: 8 },
         { productId: "p1", qty: 2 },
       ],
-      undefined,
-      live(0.08),
+      { liveUnitsPerBoxByProductId: new Map(), bare: "pieces", liveTrioByProductId: live(0.08) },
     );
     expect(qtyOf(r)).toEqual([
       ["li-1", 12],
@@ -114,7 +120,14 @@ describe("foldMergeItems splits the added quantity when the existing line's trio
   });
 
   it("without a live trio supplied every fold adds (unchanged behaviour)", () => {
-    expect(qtyOf(foldMergeItems([line()], [{ productId: "p1", qty: 8 }]))).toEqual([["li-1", 20]]);
+    expect(
+      qtyOf(
+        foldMergeItems([line()], [{ productId: "p1", qty: 8 }], {
+          liveUnitsPerBoxByProductId: new Map(),
+          bare: "pieces",
+        }),
+      ),
+    ).toEqual([["li-1", 20]]);
   });
 });
 
@@ -318,9 +331,13 @@ describe("MED-A/MED-B (review): clustering and pack refusal under a split", () =
     };
     const r = foldMergeItems(
       [stale12, live6],
-      [{ productId: "p1", qty: 12, boxes: 1, pieces: 0 }], // a 12-pack scan
-      undefined,
-      new Map([["p1", T(0.08)]]),
+      [{ productId: "p1", qty: 12, boxes: 1, pieces: 0 }],
+      // a 12-pack scan
+      {
+        liveUnitsPerBoxByProductId: new Map(),
+        bare: "pieces",
+        liveTrioByProductId: new Map([["p1", T(0.08)]]),
+      },
     );
     expect(r.items.map((i: any) => [i.sourceLineId ?? "NEW", i.unitsPerBox, i.qty])).toEqual([
       ["e1", 12, 24],

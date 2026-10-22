@@ -113,4 +113,33 @@ describe("VoidCreditNoteDialog (#2418 U1)", () => {
       expect(screen.queryByText(/RAW SERVER TEXT/)).not.toBeInTheDocument();
     },
   );
+  it("SA-839 §3: a void whose reversal sat in a filed month adds the amended-month line to the toast", async () => {
+    voidMutate.mockImplementation((_v: unknown, opts: any) =>
+      opts.onSuccess({
+        creditNote: { id: "cn-1" },
+        reopened: [],
+        amendedPeriod: { periodKey: "2026-09", status: "GENERATED", trackedCategoryId: "cat-1" },
+      }),
+    );
+    const user = userEvent.setup();
+    openDialog();
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Void credit note" }));
+    expect(
+      await screen.findByText(
+        /CN-2026-0007 has been voided\. This credit note was in the September 2026 filing/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("SA-839 §3: no amended-month line when nothing filed was corrected", async () => {
+    voidMutate.mockImplementation((_v: unknown, opts: any) =>
+      opts.onSuccess({ creditNote: { id: "cn-1" }, reopened: [], amendedPeriod: null }),
+    );
+    const user = userEvent.setup();
+    openDialog();
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Void credit note" }));
+    expect(await screen.findByText("CN-2026-0007 has been voided.")).toBeInTheDocument();
+  });
 });

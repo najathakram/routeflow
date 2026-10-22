@@ -95,13 +95,16 @@ describe("CustomersService", () => {
   let catalog: { getPublishedVersion: jest.Mock };
   let authority: { can: jest.Mock };
   let configGet: jest.Mock;
-  let ledger: { reverseInvoiceEntries: jest.Mock };
+  let ledger: { reverseInvoiceEntries: jest.Mock; settleRegulatedLedger: jest.Mock };
   let email: { send: jest.Mock };
   const originalFetch = global.fetch;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    ledger = { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) };
+    ledger = {
+      reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+    };
     // Defaults to "no key configured" so geocoding is a no-op (returns null without
     // calling fetch) for every pre-existing test — narrow it per-test to exercise
     // the geocode-on-create paths below.

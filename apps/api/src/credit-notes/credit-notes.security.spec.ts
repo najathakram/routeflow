@@ -43,6 +43,7 @@ describe("CreditNotesService — F10-003 findOneForUser role gate", () => {
           useValue: {
             reverseCreditNoteEntries: jest.fn(),
             unreverseCreditNoteEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {

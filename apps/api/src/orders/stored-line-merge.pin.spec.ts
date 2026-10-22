@@ -25,7 +25,6 @@ const CORES = [
 
 /** SHRINKING: cores still on their own arithmetic, each with the PR that moves it onto the helper. */
 const PENDING_CORES: Record<string, string> = {
-  "orders/merge-items.ts": "SA-841 PR-2 (P2 staff scan-merge B207 + P3 buyer merge)",
   "orders/buyer-merge-pricing.ts":
     "SA-841 PR-3 (P4/P5 pending-order merge + force consolidate, money-identical)",
 };

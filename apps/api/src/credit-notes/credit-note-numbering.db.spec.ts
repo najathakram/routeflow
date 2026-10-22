@@ -88,6 +88,7 @@ describeDb(
     const mockLedger = {
       reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
       unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
     };
     const mockCommissionEngine = {
       syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
