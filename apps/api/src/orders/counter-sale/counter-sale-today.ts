@@ -722,7 +722,7 @@ export function toTodaysSaleRow(
         noteStatus.set(p.creditNoteId, p.creditNote.status);
     }
   }
-  const provenance = dedupeById([
+  const provenance = dedupeById<ReturnProvenance>([
     ...o.returns.map((r) => ({ ...r, orderId: o.id, amount: returnAmount(r) })),
     ...carriedReturns,
   ]).map((r) => ({
