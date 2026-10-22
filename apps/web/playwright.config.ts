@@ -1000,6 +1000,18 @@ export default defineConfig({
       },
     },
 
+    // Row 492: the invoice form's bottom action bar wraps at 1440/768/390 and never clips Save and Send.
+    // Read-only (nothing is saved or sent). WITHOUT THIS ENTRY THE SPEC NEVER RUNS.
+    {
+      name: "invoice-action-bar",
+      testMatch: /77-invoice-action-bar\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // Customers list UX (spec 65). Operator auth, same shape as "orders" et al.
     // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
     // header for the precedent.
