@@ -1,4 +1,4 @@
-import { duplicateRefPrompt } from "../lib/duplicate-payment-ref";
+import { duplicateRefChoice, duplicateRefPrompt } from "../lib/duplicate-payment-ref";
 import {
   RECORD_ANYWAY_LABEL,
   duplicatePaymentRefBody,
@@ -81,5 +81,27 @@ describe("the resend body", () => {
   it("reads the body of a 409 DUPLICATE_PAYMENT_REF only", () => {
     expect(duplicatePaymentRefBody(dup())?.existingPayment.id).toBe("pay-1");
     expect(duplicatePaymentRefBody(undefined)).toBeNull();
+  });
+});
+
+describe("duplicateRefChoice (review I1: chooseAction works on RN Web, a multi-button Alert does not)", () => {
+  it("staff: Cancel and Record anyway, which runs the resend", () => {
+    const resend = jest.fn();
+    const c = duplicateRefChoice(duplicateRefPrompt(dup(), "OPERATOR")!, resend);
+    expect(c.title).toBe("Possible duplicate payment");
+    expect(c.message).toContain("INV-0042");
+    expect(c.actions.map((a) => [a.label, a.style ?? "default"])).toEqual([
+      ["Cancel", "cancel"],
+      ["Record anyway", "default"],
+    ]);
+    c.actions[1].onPress?.();
+    expect(resend).toHaveBeenCalledTimes(1);
+  });
+
+  it("a role that may not use the flag is offered only a way to close the dialog", () => {
+    const resend = jest.fn();
+    const c = duplicateRefChoice(duplicateRefPrompt(dup(), "DRIVER")!, resend);
+    expect(c.actions.map((a) => a.label)).toEqual(["Cancel"]);
+    expect(resend).not.toHaveBeenCalled();
   });
 });

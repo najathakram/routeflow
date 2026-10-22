@@ -15,6 +15,8 @@ const mockEvents: string[] = [];
 const mockHeld: string[] = [];
 /** SA-837b item 4: how many of the next lock attempts abort with a Postgres deadlock (40P01). */
 let mockLockFailures = 0;
+/** How many of the next transactions fail AT COMMIT with a Postgres deadlock (40P01), after their body ran (rolled back). */
+let mockCommitFailures = 0;
 jest.mock("../common/db-locks", () => ({
   ...jest.requireActual("../common/db-locks"),
   withAdvisoryLock: jest.fn(async (opts: { family: string; key: string }, fn: () => unknown) => {
@@ -119,6 +121,7 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
     rawLog.length = 0;
     mockHeld.length = 0;
     mockLockFailures = 0;
+    mockCommitFailures = 0;
     invoiceDir = {
       "inv-1": { customerId: "cust-1", invoiceNumber: "INV-0001" },
       "inv-2": { customerId: "cust-1", invoiceNumber: "INV-0002" },
@@ -152,6 +155,10 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
       stage = { pays: [], advs: [], keys: [], audits: [] };
       try {
         const out = await fn({ ...prisma, ...raw });
+        if (mockCommitFailures > 0) {
+          mockCommitFailures -= 1;
+          throw Object.assign(new Error("deadlock detected at commit"), { code: "40P01" });
+        }
         ledger.pays.push(...stage.pays);
         ledger.advs.push(...stage.advs);
         ledger.keys.push(...stage.keys);
@@ -195,7 +202,8 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
               ? a.where.OR.some(
                   (c: any) =>
                     (c.amount !== undefined && Number(p.amount) === Number(c.amount)) ||
-                    (c.paymentGroupId !== undefined && p.paymentGroupId != null),
+                    (c.paymentGroupId !== undefined && p.paymentGroupId != null) ||
+                    (c.reference !== undefined && p.reference === c.reference),
                 )
               : true),
         )
@@ -210,8 +218,14 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
       ),
     );
     prisma.advancePayment.findFirst.mockImplementation(async (a: any) => {
-      const row = ledger.advs.find((r) => r.id === a?.where?.id && r.tenantId === tenant);
-      return row ? { balance: row.balance } : null;
+      const row = ledger.advs.find(
+        (r) =>
+          r.tenantId === tenant &&
+          (a?.where?.id !== undefined
+            ? r.id === a.where.id
+            : r.customerId === a?.where?.customerId && r.reference === a?.where?.reference),
+      );
+      return row ? { id: row.id, balance: row.balance } : null;
     });
     const keyStore = {
       findFirst: jest.fn(async (a: any) => {
@@ -631,6 +645,104 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
       await invoices.recordStandalonePayment(card({ reference: "pi_new" }), opts as any);
       expect(committed().pays).toHaveLength(1);
       expect(suspectAudits()).toHaveLength(0);
+      expect(opts.capturedExternally.suspects).toHaveLength(0);
+    });
+
+    it("m1: a rolled-back attempt's suspect never survives a retry: the caller sees exactly the committed one", async () => {
+      await invoices.recordStandalonePayment(card(), {} as any); // the payment the capture repeats
+      mockCommitFailures = 1; // the first attempt flags a suspect, then the commit is aborted by a deadlock
+      const opts = capture("pi_3Abc");
+      await invoices.recordStandalonePayment(card({ reference: "pi_3Abc" }), opts as any);
+      expect(committed().pays).toHaveLength(2);
+      expect(suspectAudits()).toHaveLength(1);
+      expect(opts.capturedExternally.suspects).toHaveLength(1); // not 2: the rolled-back attempt's is gone
+    });
+
+    it("m1: a stale suspect left on the capture is cleared by the next check", async () => {
+      const opts = capture("pi_clean");
+      opts.capturedExternally.suspects.push({
+        paymentIds: ["old"],
+        invoiceId: "x",
+        duplicateOfPaymentId: "y",
+      });
+      await invoices.recordStandalonePayment(card({ reference: "pi_clean" }), opts as any);
+      expect(opts.capturedExternally.suspects).toHaveLength(0);
+    });
+
+    it("m2: an all-excess charge (an AdvancePayment with the source reference) is not booked a second time", async () => {
+      // the first delivery booked ONLY an advance (no open invoice): there is no InvoicePayment row to dedupe against
+      ledger.advs.push({
+        id: "adv-old",
+        tenantId: tenant,
+        customerId: "cust-1",
+        method: "CREDIT_CARD",
+        reference: "pi_adv",
+        amount: 100,
+        balance: 100,
+      });
+      const err: any = await invoices
+        .recordStandalonePayment(
+          card({ reference: "pi_adv", allocations: [] }),
+          capture("pi_adv") as any,
+        )
+        .catch((e) => e);
+      expect(err?.name).toBe("PaymentAlreadyRecordedError");
+      expect(committed().advs).toHaveLength(1);
+    });
+
+    it("m2: the advance match is the EXACT source reference, for this customer", async () => {
+      ledger.advs.push({
+        id: "adv-other",
+        tenantId: tenant,
+        customerId: "cust-2",
+        method: "CREDIT_CARD",
+        reference: "pi_adv",
+        amount: 100,
+        balance: 100,
+      });
+      await invoices.recordStandalonePayment(
+        card({ reference: "pi_adv", allocations: [] }),
+        capture("pi_adv") as any,
+      );
+      expect(committed().advs.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("m3: the same charge recorded earlier at a DIFFERENT amount is still the same charge: already recorded, nothing booked", async () => {
+      const first: any = await invoices.recordStandalonePayment(
+        card({ reference: "pi_same" }),
+        capture("pi_same") as any,
+      );
+      const err: any = await invoices
+        .recordStandalonePayment(
+          card({
+            reference: "pi_same",
+            totalAmount: 150,
+            allocations: [{ invoiceId: "inv-1", amount: 100 }],
+          }),
+          capture("pi_same") as any,
+        )
+        .catch((e) => e);
+      expect(err?.name).toBe("PaymentAlreadyRecordedError");
+      expect(err.paymentGroupId).toBe(first.paymentGroupId);
+      expect(committed().pays).toHaveLength(1);
+    });
+
+    it("m3: ... even when another candidate event is the amount hit", async () => {
+      await invoices.recordStandalonePayment(card({ reference: " PI_SAME " }), {} as any); // a manual 100, normalises equal
+      await invoices.recordStandalonePayment(
+        card({
+          reference: "pi_same",
+          totalAmount: 60,
+          allocations: [{ invoiceId: "inv-1", amount: 60 }],
+        }),
+        capture("pi_same") as any,
+      );
+      const opts = capture("pi_same");
+      const err: any = await invoices
+        .recordStandalonePayment(card({ reference: "pi_same" }), opts as any)
+        .catch((e) => e);
+      // the amount hit is the manual 100 (a suspect), but the exact-reference 60 proves this charge is already on the ledger
+      expect(err?.name).toBe("PaymentAlreadyRecordedError");
       expect(opts.capturedExternally.suspects).toHaveLength(0);
     });
 
