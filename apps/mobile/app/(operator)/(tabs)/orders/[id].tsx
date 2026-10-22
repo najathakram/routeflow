@@ -1,7 +1,6 @@
 import { useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Linking,
   Platform,
   Pressable,
@@ -54,7 +53,7 @@ import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
 import { shipmentSaveDecision } from "@routeflow/types/shipment-save";
 import { lineBackorderPieces } from "@routeflow/types/order-line-backorder";
 import { useOfflineQueue } from "../../../../store/offlineQueue";
-import { alertInfo, confirm } from "../../../../lib/confirm";
+import { alertInfo, chooseAction, confirm } from "../../../../lib/confirm";
 import { invoiceLineQtyText } from "@routeflow/pricing";
 import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../../lib/invoice-line-display";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
@@ -1319,17 +1318,19 @@ export default function OrderDetailScreen() {
                 setHandOverOwed(d.owed);
                 setHandOverError(d.message);
                 refetch();
-                Alert.alert(d.title, d.message, [
-                  { text: "Cancel", style: "cancel" },
-                  ...(d.recordAnywayLabel
+                chooseAction(
+                  d.title,
+                  d.message,
+                  d.recordAnywayLabel
                     ? [
+                        { label: "Cancel", style: "cancel" },
                         {
-                          text: d.recordAnywayLabel,
+                          label: d.recordAnywayLabel,
                           onPress: () => submitHandOver(withPickupRecordAnyway(body)),
                         },
                       ]
-                    : []),
-                ]);
+                    : [{ label: "Cancel", style: "cancel" }],
+                );
                 return;
               }
               releasePickupKey(order.id);

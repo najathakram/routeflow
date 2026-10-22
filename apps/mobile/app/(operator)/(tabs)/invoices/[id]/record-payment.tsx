@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { ios } from "@routeflow/ui/tokens";
@@ -18,9 +18,10 @@ import {
   type SelectablePaymentMethod,
 } from "../../../../../lib/payment-methods";
 import { productImageFile } from "../../../../../lib/product-image";
+import { chooseAction } from "../../../../../lib/confirm";
 import { showToast } from "../../../../../lib/toast";
 import { useAuthStore } from "../../../../../lib/auth-store";
-import { duplicateRefPrompt } from "../../../../../lib/duplicate-payment-ref";
+import { duplicateRefChoice, duplicateRefPrompt } from "../../../../../lib/duplicate-payment-ref";
 import {
   forgetPaymentProof,
   paymentKeyRefusalCopy,
@@ -125,12 +126,8 @@ export default function RecordPaymentScreen() {
         // Row 498: a duplicate reference names the existing payment; staff may "Record anyway".
         const dup = duplicateRefPrompt(e, role);
         if (dup) {
-          Alert.alert(dup.title, dup.message, [
-            { text: "Cancel", style: "cancel" },
-            ...(dup.recordAnywayLabel
-              ? [{ text: dup.recordAnywayLabel, onPress: () => submit(true) }]
-              : []),
-          ]);
+          const c = duplicateRefChoice(dup, () => submit(true));
+          chooseAction(c.title, c.message, c.actions);
           return;
         }
         showToast(

@@ -1,3 +1,4 @@
+import type { ConfirmAction } from "./confirm-store";
 import {
   RECORD_ANYWAY_LABEL,
   canRecordAnyway,
@@ -33,5 +34,26 @@ export function duplicateRefPrompt(
     title: "Possible duplicate payment",
     message: duplicatePaymentRefCopy(body.existingPayment, { date: fmtDate, money: fmtMoney }),
     recordAnywayLabel: canRecordAnyway(role) ? RECORD_ANYWAY_LABEL : null,
+  };
+}
+
+/**
+ * The dialog for a duplicate-reference refusal as `chooseAction` input: Cancel, and for a staff role "Record anyway", which
+ * runs `resend`. Built as data so every screen uses the cross-platform `chooseAction` (RN Web's `Alert.alert` drops
+ * multi-button alerts, so a plain Alert showed nothing on the Expo web build).
+ */
+export function duplicateRefChoice(
+  prompt: DuplicateRefPrompt,
+  resend: () => void,
+): { title: string; message: string; actions: ConfirmAction[] } {
+  return {
+    title: prompt.title,
+    message: prompt.message,
+    actions: [
+      { label: "Cancel", style: "cancel" },
+      ...(prompt.recordAnywayLabel
+        ? [{ label: prompt.recordAnywayLabel, style: "default" as const, onPress: resend }]
+        : []),
+    ],
   };
 }

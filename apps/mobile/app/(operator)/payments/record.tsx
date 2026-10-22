@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -27,9 +27,10 @@ import {
 } from "../../../lib/payment-methods";
 import { roundMoney } from "@routeflow/pricing";
 import { productImageFile } from "../../../lib/product-image";
+import { chooseAction } from "../../../lib/confirm";
 import { showToast } from "../../../lib/toast";
 import { useAuthStore } from "../../../lib/auth-store";
-import { duplicateRefPrompt } from "../../../lib/duplicate-payment-ref";
+import { duplicateRefChoice, duplicateRefPrompt } from "../../../lib/duplicate-payment-ref";
 import { fmtCalendarDate } from "../../../lib/format-date";
 import { hasUnsavedPayment } from "../../../lib/discard-guard";
 import { isOpenInvoiceStatus } from "../../../lib/invoices-logic";
@@ -306,12 +307,9 @@ function PaymentForm({
           // Row 498: a duplicate reference names the existing payment; staff may "Record anyway".
           const dup = duplicateRefPrompt(e, role);
           if (dup) {
-            Alert.alert(dup.title, dup.message, [
-              { text: "Cancel", style: "cancel" },
-              ...(dup.recordAnywayLabel
-                ? [{ text: dup.recordAnywayLabel, onPress: () => submit(true) }]
-                : []),
-            ]);
+            const c = duplicateRefChoice(dup, () => submit(true));
+            chooseAction(c.title, c.message, c.actions);
+            setError(dup.message); // review I1: also inline, so the sentence is never only in a dialog
             return;
           }
           showToast(
