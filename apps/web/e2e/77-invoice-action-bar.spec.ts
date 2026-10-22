@@ -32,7 +32,16 @@ for (const vp of VIEWPORTS) {
       expect(overflow, `bar scrolls ${overflow}px horizontally`).toBeLessThanOrEqual(0);
 
       // Clearance: scrolled to the bottom, the last form control (in DOM order) ends above the bar's top edge.
-      await page.evaluate(() => window.scrollTo(0, document.scrollingElement!.scrollHeight));
+      // The dashboard does not scroll the window: <main id="main-content"> is the scroll container.
+      const scrolled = await page.evaluate(() => {
+        const m = document.getElementById("main-content")!;
+        m.scrollTop = m.scrollHeight;
+        return m.scrollTop;
+      });
+      expect(
+        scrolled,
+        "main-content did not scroll, so the clearance check would prove nothing",
+      ).toBeGreaterThan(0);
       await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
       const clearance = await page.evaluate(() => {
         const barEl = document.querySelector('[data-testid="invoice-action-bar"]')!;
