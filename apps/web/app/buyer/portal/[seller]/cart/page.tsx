@@ -95,7 +95,9 @@ export default function BuyerCartPage() {
   // The server folds a buyer cart only into an order on the SAME fulfil path, so with a path being
   // sent a differing active order is not a merge target. No path sent => today's rule.
   const pathMatches = !fulfillPath || activeOrder?.fulfillPath === fulfillPath;
-  const mergeable = activeOrder != null && pathMatches;
+  // "No open order" arrives as an empty body (read client-side as ""), not null, so test truthiness:
+  // this ONE value drives the banner, the submit path and the button label, so they cannot disagree.
+  const mergeable = Boolean(activeOrder) && pathMatches;
   const willMerge = !forceNew && mergeable;
 
   // Resolve prices for exactly the cart's products. This MUST be an id filter:
@@ -417,7 +419,7 @@ export default function BuyerCartPage() {
             className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
             onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
           >
-            <Store className="mr-1.5 h-4 w-4" /> Browse Products
+            <Store className="mr-1.5 h-4 w-4" /> Browse products
           </Button>
         </div>
       </div>
@@ -686,7 +688,7 @@ export default function BuyerCartPage() {
               <span className="text-navy/70">Calculated at checkout</span>
             </div>
             <div className="border-t border-surface-border pt-3 flex justify-between">
-              <span className="text-sm font-semibold text-navy">Estimated Total</span>
+              <span className="text-sm font-semibold text-navy">Estimated total</span>
               <span className="text-lg font-bold text-navy">{fmt(subtotal)}</span>
             </div>
             {unresolvedCount > 0 && (

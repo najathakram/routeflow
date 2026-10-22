@@ -127,7 +127,7 @@ describe("buyer shop to cart to checkout keeps the quantity honest", () => {
 
       wrap(<BuyerCartPage />);
       // what the cart told the buyer they will pay, read BEFORE the order clears it
-      const shownTotal = screen.getByText("Estimated Total").nextElementSibling!.textContent;
+      const shownTotal = screen.getByText("Estimated total").nextElementSibling!.textContent;
       await act(async () => {
         fireEvent.click(screen.getByRole("button", { name: /place order/i }));
       });
@@ -354,7 +354,7 @@ describe("R1-b: a catalog row that is no longer boxed prices what the server bil
     wrap(<BuyerCartPage />);
     const row = screen.getAllByRole("row")[1];
     // 24 pieces x $15.60 each, exactly what create() bills for qty 24 on an unboxed product; NOT 2 x $15.60
-    const shownTotal = screen.getByText("Estimated Total").nextElementSibling!.textContent;
+    const shownTotal = screen.getByText("Estimated total").nextElementSibling!.textContent;
     expect(shownTotal).toBe("$374.40");
     expect(within(row).getByText("$374.40")).toBeInTheDocument();
     expect(within(row).queryByTestId("cart-line-unit")).toBeNull(); // no Case / Each toggle on a plain line
