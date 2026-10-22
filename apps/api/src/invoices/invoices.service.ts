@@ -412,10 +412,7 @@ export class InvoicesService {
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
   /** RF-026: concurrent creates racing on the invoice number (Prisma P2002) get a 409, not a 500. */
-  /**
-   * SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. `actor` (HTTP
-   * only): the H3b price-override author (`actor.sub`) and the row-510 restriction-override principal.
-   */
+  /** SA-135: internal lines may carry `packSnapshot`. `actor` (HTTP only): H3b author + row-510 principal. */
   async create(dto: ManualInvoiceDto, actor?: JwtPayload) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
@@ -1009,7 +1006,10 @@ export class InvoicesService {
       categoryTaxType: li.categoryTaxType ?? null, // B297: COPY verbatim, never a live fallback.
       categoryTaxRate: li.categoryTaxRate != null ? Number(li.categoryTaxRate) : null,
       categoryPriceIncludesTax: li.categoryPriceIncludesTax ?? null,
-      ...iGate.carryOverrideStamp(li), // row 510: the staff override travels
+      restrictionOverrideReason: li.restrictionOverrideReason ?? null, // row 510: the staff override travels
+      restrictionOverrideBy: li.restrictionOverrideBy ?? null,
+      restrictionOverrideAt: li.restrictionOverrideAt ?? null,
+      restrictionOverrideRuleIds: li.restrictionOverrideRuleIds ?? [],
       ...(tenantId ? { tenantId } : {}),
       // #2717 M3: FIXED provenance + frozen component rows for THIS bill; {} on a plain line.
       ...invoiceCompositionFields(li, billQty, prior, subtotal, tenantId),
@@ -2352,7 +2352,10 @@ export class InvoicesService {
             authorChannel: "STAFF",
             invoicedQty: shape.qty,
             status: "PENDING",
-            ...iGate.carryOverrideStamp(agg.sample), // row 510: carried back
+            restrictionOverrideReason: agg.sample?.restrictionOverrideReason ?? null, // row 510: carried back
+            restrictionOverrideBy: agg.sample?.restrictionOverrideBy ?? null,
+            restrictionOverrideAt: agg.sample?.restrictionOverrideAt ?? null,
+            restrictionOverrideRuleIds: agg.sample?.restrictionOverrideRuleIds ?? [],
             ...(tenantId ? { tenantId } : {}),
           },
         });

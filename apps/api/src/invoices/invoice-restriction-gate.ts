@@ -26,7 +26,6 @@ import { addedRestrictionLinesWithHeld } from "./invoice-restriction-lines";
  */
 
 export { stampOverrideNames } from "../common/restriction-override-names";
-export { carryOverrideStamp } from "../common/restriction-override-columns";
 export type Decision = StaffWriteDecision;
 export type Ack = SellableLinesParams["ack"];
 type Actor = Pick<JwtPayload, "sub" | "role" | "impersonatedBy"> | undefined;
