@@ -8,6 +8,7 @@ import {
   parsePlanTrains,
   parseRegisterReport,
   pickLatestPlan,
+  trainMembers,
   planFamilies,
 } from "../lib/backfill.mjs";
 import { planSync } from "../lib/sync.mjs";
@@ -84,8 +85,16 @@ test("pickLatestPlan: newest date, highest -vN, skips superseded, ignores other 
     "PLAN-2026-10-23-v10.md",
   );
   assert.equal(
-    pickLatestPlan(["PLAN-2026-10-23.md"], () => "SUPERSEDED"),
+    pickLatestPlan(["PLAN-2026-10-23.md"], () => "SUPERSEDED BY PLAN-2026-10-24.md"),
     null,
+  );
+  // only "superseded by" retires a plan, not any mention of the word
+  assert.equal(
+    pickLatestPlan(
+      ["PLAN-2026-10-23.md"],
+      () => "# Plan (supersedes PLAN-10-21; nothing superseded here)",
+    ),
+    "PLAN-2026-10-23.md",
   );
 });
 
@@ -297,20 +306,55 @@ test("snapshot: late past the earliest unfinished part's due date; dropped stays
   assert.equal(trainOf(later, "T4").stateText, "Dropped");
 });
 
-test("snapshot: a release marked live with unfinished members never reads Shipped/Fixed (R3 regression)", () => {
+test("snapshot: only current-plan releases are derived; R1-R5 set live by the lead stay live (history)", () => {
   const members = Array.from({ length: 11 }, (_, i) => String(100 + i));
   const s = snap([
     ...members.map((m) => bug(m, "planned")),
-    mk("item.new", "R3", { title: "Product page", type: "release", status: "verified", members }),
+    ...["R1", "R2", "R3", "R4", "R5"].map((id) =>
+      mk("item.new", id, { title: `Old ${id}`, type: "release", status: "live", members }),
+    ),
     rel("T9", [part("T9a", "U", members)], { status: "verified" }),
   ]);
-  for (const id of ["R3", "T9"]) {
-    const t = trainOf(s, id);
-    assert.notEqual(t.stateText, "Shipped");
-    assert.notEqual(t.status, "verified");
-    assert.notEqual(t.status, "live");
+  for (const id of ["R1", "R2", "R3", "R4", "R5"]) {
+    assert.equal(trainOf(s, id).status, "live", id);
+    assert.notEqual(trainOf(s, id).stateText, `In progress 0 of 11 items`);
   }
-  assert.equal(trainOf(s, "T9").stateText, "In progress 0 of 1 parts");
+  // a current-plan release never reads Shipped/Fixed with unfinished parts
+  const t9 = trainOf(s, "T9");
+  assert.notEqual(t9.stateText, "Shipped");
+  assert.equal(t9.status, "building");
+  assert.equal(t9.stateText, "In progress 0 of 1 parts");
+});
+
+test("snapshot: a part with no linked items is not done and blocks Shipped", () => {
+  const s = snap([
+    bug("1", "live"),
+    rel("T14", [part("T14a", "A2", ["1"]), part("T14b", "A3", [])]),
+    rel("T16", [part("T16", "A3", [])]),
+  ]);
+  const t14 = trainOf(s, "T14");
+  assert.equal(t14.stateText, "In progress 1 of 2 parts");
+  assert.equal(t14.parts.find((p) => p.id === "T14b").stateText, "no items linked");
+  assert.notEqual(trainOf(s, "T16").stateText, "Shipped");
+  assert.equal(trainOf(s, "T16").parts[0].stateText, "no items linked");
+});
+
+test("trainMembers bare: known bare numbers count; PRs, dates, decimals and counts do not", () => {
+  const known = new Set(["740", "741", "551", "26", "27", "683"]);
+  assert.deepEqual(
+    trainMembers("740 · 741 · 551 · (27 rows) on 10-26, #3597, budget 1.4; row 683", known, {
+      bare: true,
+    }),
+    ["683", "740", "741", "551"],
+  );
+  // without bare, only "row N" forms count
+  assert.deepEqual(trainMembers("740 · 741 · row 683", known), ["683"]);
+});
+
+test("tagWords: ranges show both ends", () => {
+  assert.equal(tagWords("A1-A2"), "weeks of 10-26 to 11-02");
+  assert.equal(tagWords("A2-A3"), "week of 11-02 or later");
+  assert.equal(tagWords("U"), "before 10-26");
 });
 
 test("snapshot: releases order by earliest part tag, then id; tag words", () => {

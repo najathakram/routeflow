@@ -707,8 +707,10 @@ export function buildSnapshot({
   for (const d of [...incidentItems, ...bugItems]) items.push(d);
 
   // ---- release state, DERIVED from its parts (display only, never written as events) ----
+  // Only releases of the CURRENT plan (the ones carrying parts) are derived. A release that is not
+  // in the current plan keeps its last explicit status (live / verified / dropped) as history.
   // A part is done when all its counting members (not dropped / parked) are live or verified; a
-  // part with no members at all is done. A release is Shipped only when EVERY part is done.
+  // part with no linked items is NOT done ("no items linked") and blocks Shipped.
   const statusOf = new Map(items.map((x) => [x.id, x.status]));
   const countOf = (ids) => {
     const counting = ids.filter((m) => !["dropped", "parked"].includes(statusOf.get(m)));
@@ -716,7 +718,8 @@ export function buildSnapshot({
     return {
       total: counting.length,
       done: done.length,
-      isDone: ids.length === 0 || (counting.length > 0 && done.length === counting.length),
+      empty: ids.length === 0,
+      isDone: counting.length > 0 && done.length === counting.length,
     };
   };
   for (const t of trains) {
@@ -731,26 +734,17 @@ export function buildSnapshot({
         itemsDone: c.done,
         itemsTotal: c.total,
         state: c.isDone ? "done" : late ? "late" : "progress",
-        stateText: c.isDone ? "Done" : late ? "Late" : `${c.done} of ${c.total} items`,
+        stateText: c.isDone
+          ? "Done"
+          : late
+            ? "Late"
+            : c.empty
+              ? "no items linked"
+              : `${c.done} of ${c.total} items`,
         status: c.isDone ? "live" : "building",
       };
     });
-    if (!parts.length) {
-      // An old release without parts only loses a "done" status its members do not back up.
-      const c = countOf(t.members);
-      if (
-        t.members.length &&
-        DONE_STATUSES.includes(t.status) &&
-        t.status !== "dropped" &&
-        !c.isDone
-      ) {
-        t.itemStatus = t.status;
-        t.status = "building";
-        t.state = "progress";
-        t.stateText = `In progress ${c.done} of ${c.total} items`;
-      }
-      continue;
-    }
+    if (!parts.length) continue; // not in the current plan: its explicit status stands
     if (t.status === "dropped") {
       t.parts = parts;
       continue;

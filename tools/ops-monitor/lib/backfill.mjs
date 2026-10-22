@@ -257,7 +257,11 @@ export function planFamilies(rows, { known = null, extraMembers = () => [] } = {
   };
   return [...fams].map(([id, list]) => {
     const parts = list.map((r) => {
-      const p = { id: r.id, goal: clip(r.title, 200), members: trainMembers(r.membersText, known) };
+      const p = {
+        id: r.id,
+        goal: clip(r.title, 200),
+        members: trainMembers(r.membersText, known, { bare: true }),
+      };
       put(p, "tag", /^(?:U|A\d)(?:-A\d)?/i.exec(r.tag)?.[0] ?? r.tag, 20);
       put(p, "lane", r.lane, 60);
       put(p, "budget", r.budget, 40);
@@ -289,7 +293,7 @@ export function pickLatestPlan(fileNames, readHead = () => "") {
       .split(/\r?\n/)
       .slice(0, 10)
       .join("\n");
-    if (/superseded/i.test(head)) continue;
+    if (/superseded by/i.test(head)) continue;
     ranked.push({ name, key: `${m[1]}-${String(m[2] ?? 1).padStart(4, "0")}` });
   }
   ranked.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
@@ -300,7 +304,7 @@ export function pickLatestPlan(fileNames, readHead = () => "") {
  * Item ids mentioned in free text: `row 593`, `rows 555/556`, `rows 1, 2` and `B###`. Numeric ids
  * are kept only when in `knownIds` (when given); B ids are always kept. Order of appearance.
  */
-export function trainMembers(text, knownIds = null) {
+export function trainMembers(text, knownIds = null, { bare = false } = {}) {
   const out = [];
   const add = (id) => {
     if (!out.includes(id)) out.push(id);
@@ -312,6 +316,14 @@ export function trainMembers(text, knownIds = null) {
       for (const n of m[1].split(/\s*[/,]\s*/)) {
         if (!knownIds || knownIds.has(n)) add(n);
       }
+  }
+  // Plan cells also list rows as bare numbers ("740 · 741 · 551"). With `bare` and a known-id set,
+  // a standalone 2-4 digit number that is a known item id counts too; never a PR (#3597), a date
+  // (10-26), a decimal (1.4), a money amount or a count ("27 rows").
+  if (bare && knownIds) {
+    const bareRe =
+      /(?<![\w#$.,/:-])(\d{2,4})(?![\w.,/:%-]|\s+(?:rows?|items?|high|PRs?|days?|min|bugs?)\b)/g;
+    for (const m of String(text ?? "").matchAll(bareRe)) if (knownIds.has(m[1])) add(m[1]);
   }
   return out;
 }

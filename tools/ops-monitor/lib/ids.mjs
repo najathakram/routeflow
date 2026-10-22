@@ -122,6 +122,15 @@ const tagKey = (tag) => /^(U|A\d)/i.exec(String(tag ?? "").trim())?.[1]?.toUpper
 /** "A1" -> "week of 10-26"; an unknown tag is returned as it is; empty -> "". */
 export function tagWords(tag) {
   const t = String(tag ?? "").trim();
+  // A range shows both ends: "A1-A2" -> "weeks of 10-26 to 11-02"; "A2-A3" -> "week of 11-02 or later".
+  const range = /^(U|A\d)-(A\d)/i.exec(t);
+  if (range) {
+    const [a, b] = [range[1].toUpperCase(), range[2].toUpperCase()];
+    if (b === "A3") return `${TAG_WORDS[a] ?? a} or later`;
+    if (a !== "U" && TAG_WORDS[a] && TAG_WORDS[b])
+      return `weeks of ${TAG_WORDS[a].replace("week of ", "")} to ${TAG_WORDS[b].replace("week of ", "")}`;
+    return `${TAG_WORDS[a] ?? a} to ${TAG_WORDS[b] ?? b}`;
+  }
   return TAG_WORDS[tagKey(t)] ?? t;
 }
 
