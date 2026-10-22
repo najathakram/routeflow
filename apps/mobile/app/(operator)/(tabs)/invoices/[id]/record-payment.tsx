@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { ios } from "@routeflow/ui/tokens";
@@ -19,6 +19,8 @@ import {
 } from "../../../../../lib/payment-methods";
 import { productImageFile } from "../../../../../lib/product-image";
 import { showToast } from "../../../../../lib/toast";
+import { useAuthStore } from "../../../../../lib/auth-store";
+import { duplicateRefPrompt } from "../../../../../lib/duplicate-payment-ref";
 import {
   forgetPaymentProof,
   paymentKeyRefusalCopy,
@@ -45,6 +47,7 @@ export default function RecordPaymentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: invoice } = useAdminInvoice(id ?? "");
   const mut = useRecordInvoicePayment();
+  const role = useAuthStore((s) => s.user?.role);
   // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
   const keyScope = paymentKeyScope.invoice(id ?? "");
   const paymentKey = usePaymentSubmitKey(keyScope);
@@ -87,7 +90,7 @@ export default function RecordPaymentScreen() {
     }
   };
 
-  const submit = () => {
+  const submit = (recordAnyway = false) => {
     if (!id) return;
     if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
     const n = Number(amount);
@@ -106,6 +109,7 @@ export default function RecordPaymentScreen() {
       paidAt: paidAt.trim() || undefined,
       settledAt: settledAt.trim() || undefined,
       submitKey: paymentKey,
+      ...(recordAnyway ? { recordAnyway: true } : {}),
     };
     rememberPaymentProof(keyScope, photos[0] ?? null); // so a status check that finds it can attach it
     mut.mutate(dto, {
@@ -117,10 +121,22 @@ export default function RecordPaymentScreen() {
         }
         router.back();
       },
-      onError: (e: any) =>
+      onError: (e: any) => {
+        // Row 498: a duplicate reference names the existing payment; staff may "Record anyway".
+        const dup = duplicateRefPrompt(e, role);
+        if (dup) {
+          Alert.alert(dup.title, dup.message, [
+            { text: "Cancel", style: "cancel" },
+            ...(dup.recordAnywayLabel
+              ? [{ text: dup.recordAnywayLabel, onPress: () => submit(true) }]
+              : []),
+          ]);
+          return;
+        }
         showToast(
           paymentKeyRefusalCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
-        ),
+        );
+      },
     });
   };
 
@@ -131,7 +147,7 @@ export default function RecordPaymentScreen() {
       submitLabel={mut.isPending ? "Saving…" : "Record"}
       submitting={mut.isPending}
       submitDisabled={statusCheck.unknown}
-      onSubmit={submit}
+      onSubmit={() => submit()}
     >
       <PaymentStatusNotice status={statusCheck} />
       <FormSection title="Method">
