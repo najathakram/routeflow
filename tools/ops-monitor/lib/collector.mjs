@@ -552,6 +552,7 @@ export async function readSpecsExtras({
   let laneHandoffs = [];
   let registerRowIds = null;
   let registerDuplicateIds = [];
+  let registerChangedAt = null;
   try {
     const d = join(dir, "incidents");
     const files = fs
@@ -595,6 +596,19 @@ export async function readSpecsExtras({
   } catch (e) {
     if (e?.code !== "ENOENT") errors.push(`register: ${String(e?.message ?? e).slice(0, 120)}`);
   }
+  // When the register file last changed (its last commit), so the snapshot can tell when the work
+  // items (events) have fallen behind it.
+  try {
+    const r = await exec("git", ["log", "-1", "--format=%cI", "--", "register/WORK-REGISTER.md"], {
+      cwd: dir,
+    });
+    if (r.code !== 0)
+      throw new Error(`git log failed (${r.code}): ${(r.stderr || "").trim().slice(0, 100)}`);
+    const t = Date.parse(r.stdout.trim());
+    registerChangedAt = Number.isFinite(t) ? t : null;
+  } catch (e) {
+    errors.push(`register time: ${String(e?.message ?? e).slice(0, 120)}`);
+  }
   try {
     const r = await exec(
       "git",
@@ -613,6 +627,7 @@ export async function readSpecsExtras({
     laneHandoffs,
     registerRowIds,
     registerDuplicateIds,
+    registerChangedAt,
     errors,
   };
 }
@@ -860,6 +875,27 @@ export function createCollector({
       } catch (e) {
         extras = { errors: [`extras: ${String(e?.message ?? e).slice(0, 160)}`] };
       }
+      // What a register sync would still append (dry, read-only): the items-stale alarm needs it.
+      let registerPending = null;
+      try {
+        const read = (rel) => {
+          try {
+            return (deps.readFile ?? readFileSync)(join(specsDir, ...rel), "utf8");
+          } catch {
+            return "";
+          }
+        };
+        const { pendingRegisterChanges } = await import("./sync.mjs");
+        registerPending = pendingRegisterChanges({
+          events,
+          registerMd: read(["register", "WORK-REGISTER.md"]),
+          ownerQueueMd: read(["priorities", "OWNER-QUEUE.md"]),
+          config,
+          mask,
+        });
+      } catch (e) {
+        (extras.errors ??= []).push(`register pending: ${String(e?.message ?? e).slice(0, 120)}`);
+      }
       return {
         events,
         config,
@@ -868,6 +904,8 @@ export function createCollector({
         laneHandoffs: extras.laneHandoffs ?? [],
         registerRowIds: extras.registerRowIds ?? null,
         registerDuplicateIds: extras.registerDuplicateIds ?? [],
+        registerChangedAt: extras.registerChangedAt ?? null,
+        registerPending,
         extrasErrors: extras.errors ?? [],
       };
     },

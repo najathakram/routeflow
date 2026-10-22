@@ -102,6 +102,7 @@ export function fold(events, { bugs = new Map() } = {}) {
     eventCount: 0,
     lastEventAt: null,
     machines: {},
+    sessions: new Map(), // session id -> latest heartbeat { ...data, lane, ts }
   };
   const anomaly = (kind, eventId, item, detail, ts = null) =>
     state.anomalies.push({
@@ -139,7 +140,7 @@ export function fold(events, { bugs = new Map() } = {}) {
   });
 
   const touchLane = (ev, ts) => {
-    if (!ev.lane) return;
+    if (!ev.lane || ev.kind === "heartbeat") return; // heartbeats set lane activity themselves
     let l = state.lanes.get(ev.lane);
     if (!l) {
       l = { id: ev.lane, lastEventAt: null, lastEventKind: null, claims: [] };
@@ -369,6 +370,28 @@ export function fold(events, { bugs = new Map() } = {}) {
           if (it.type === "decision") setStatus(it, "verified");
         }
         touched = !!it;
+        break;
+      }
+      case "heartbeat": {
+        // Lane activity = when the session was last active (not when the sync wrote the event).
+        const active = Date.parse(d.lastActiveAt);
+        if (ev.lane) {
+          let l = state.lanes.get(ev.lane);
+          if (!l) {
+            l = { id: ev.lane, lastEventAt: null, lastEventKind: null, claims: [] };
+            state.lanes.set(ev.lane, l);
+          }
+          if (l.lastEventAt === null || active > l.lastEventAt) {
+            l.lastEventAt = active;
+            l.lastEventKind = ev.kind;
+          }
+        }
+        state.sessions.set(d.session, {
+          ...d,
+          machine: d.machine ?? ev.machine,
+          lane: ev.lane,
+          ts,
+        });
         break;
       }
       case "note": {

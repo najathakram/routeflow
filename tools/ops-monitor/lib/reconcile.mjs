@@ -7,6 +7,8 @@ import { isLegacyMonitorItem, isRegisterOwned } from "./sync.mjs";
 
 const SEV_ORDER = { error: 0, warn: 1, info: 2 };
 const HOUR = 3600_000;
+// Events older than the register's last change by more than this mean the register sync is behind.
+export const ITEMS_STALE_MS = 15 * 60_000;
 const BEHIND_STATUSES = ["idea", "planned", "spec", "building", "review"];
 
 const toMs = (v) => {
@@ -21,6 +23,15 @@ function ago(ms) {
   if (m < 60) return `${m}m`;
   const h = Math.round(m / 60);
   return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`;
+}
+
+/** "5 minutes", "3 hours", "2 days": plain words for the stale-items banner. */
+export function agoWords(ms) {
+  const m = Math.max(0, Math.round(ms / 60000));
+  const unit = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  if (m < 60) return unit(m, "minute");
+  const h = Math.round(m / 60);
+  return h < 48 ? unit(h, "hour") : unit(Math.round(h / 24), "day");
 }
 
 const BUG_TEXT_RE = /(?<![A-Za-z0-9])b(\d{1,5})(?![A-Za-z0-9])/gi;
@@ -517,6 +528,25 @@ export function reconcile({
       kind: "register-duplicate-rows",
       severity: "error",
       message: `The register has duplicate row ids (${dupIds.join(", ")}); the monitor ignores register changes until it is repaired`,
+      source: "register",
+    });
+  }
+
+  // items-stale: a dry register sync would still append events (rows or edits the board lacks) and
+  // the register's last commit is older than ITEMS_STALE_MS, so the PC register sync has stalled.
+  // A register commit that syncs to nothing never fires it; other lanes' events never hide it.
+  const regAt = register?.changedAt;
+  const pending = register?.pending;
+  if (
+    Number.isFinite(regAt) &&
+    Number.isFinite(pending) &&
+    pending >= 1 &&
+    now - regAt > ITEMS_STALE_MS
+  ) {
+    add({
+      kind: "items-stale",
+      severity: now - regAt >= 24 * HOUR ? "error" : "warn",
+      message: `Work items are behind the register: ${pending} change${pending === 1 ? "" : "s"} from ${agoWords(now - regAt)} ago ${pending === 1 ? "has" : "have"} not reached the board (the register sync on the PC monitor is behind)`,
       source: "register",
     });
   }

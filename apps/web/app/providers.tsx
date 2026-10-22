@@ -10,6 +10,7 @@ import { ToastProvider, useToast } from "@routeflow/ui/web";
 import { I18nProvider } from "@/lib/i18n";
 import { ReAuthProvider } from "@/components/ReAuthProvider";
 import { PlanGateNotice } from "@/components/PlanGateNotice";
+import { NoWheelNumberInputs } from "@/components/NoWheelNumberInputs";
 import type { SubscriptionView } from "@routeflow/types";
 import { handleMutationError } from "@/lib/mutation-error-toast";
 
@@ -57,6 +58,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <ToastProvider>
       {/* Renders nothing; turns PLAN_GATE 403s on gated GETs into a toast (lib/api-client.ts). */}
       <PlanGateNotice />
+      {/* Row 697: a focused number input never changes on the mouse wheel, app-wide. */}
+      <NoWheelNumberInputs />
       <I18nProvider>
         <ReAuthProvider>
           <QueryProviders>{children}</QueryProviders>

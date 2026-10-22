@@ -730,6 +730,22 @@ export function buildSnapshot({
       evidence: it.harm ? "set by the team (harm: latent)" : (derivedHarm.get(it.id) ?? ""),
     }));
 
+  // ---- machines and lanes: latest heartbeat per session, newest first, <= 3 days old ----
+  const machines = [...state.sessions.values()]
+    .filter((s) => now - Date.parse(s.lastActiveAt) <= 3 * 86400000)
+    .sort((a, b) => Date.parse(b.lastActiveAt) - Date.parse(a.lastActiveAt))
+    .map((s) => ({
+      session: s.session,
+      machine: s.machine ?? null,
+      lane: s.lane ?? null,
+      title: s.title ?? null,
+      branch: s.branch ?? null,
+      pr: s.pr ?? null,
+      head: s.head ?? null,
+      lastActiveAt: s.lastActiveAt,
+      last: s.last ?? null,
+    }));
+
   // ---- lanes ----
   const handoffs = specsData?.laneHandoffs ?? [];
   const prefixes = { ...LANE_HANDOFF_PREFIX, ...(cfg?.laneHandoffPrefixes ?? {}) };
@@ -869,6 +885,8 @@ export function buildSnapshot({
     register: {
       duplicateIds: specsData?.registerDuplicateIds ?? [],
       rowIds: specsData?.registerRowIds ?? null,
+      changedAt: specsData?.registerChangedAt ?? null,
+      pending: specsData?.registerPending ?? null,
     },
     incidents: incidentFiles,
   });
@@ -883,6 +901,7 @@ export function buildSnapshot({
     bugsFixedByNote,
     trains,
     lanes,
+    machines,
     ownerQueue,
     ownerTodos,
     answeredRecently,
