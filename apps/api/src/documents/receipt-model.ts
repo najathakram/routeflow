@@ -291,7 +291,7 @@ export function buildReceiptModel(
     showPaid: hasTender,
     showBalance: onAccount || balanceDue > 0,
     // the reprint prints this very line (pricing's counterMethodLine), amounts and all
-    methodLabel: hasTender ? counterMethodLine(tenders, total) : null,
+    methodLabel: hasTender ? counterMethodLine(tenders) : null,
     tendered,
     tenderedAsEntered: false,
     change: servedChange(order.counterCashTendered, livePayments, balanceDue),

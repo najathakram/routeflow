@@ -40,6 +40,8 @@ const moneyRows = (m: ReceiptModel) => Object.fromEntries(MONEY_ROWS.map((k) => 
 interface Pay {
   method: string;
   amount: string;
+  /** a credit-note application: the note it applied (issued against this sale's invoice) */
+  creditNoteId?: string;
 }
 interface Scenario {
   total: string;
@@ -52,6 +54,8 @@ interface Scenario {
   /** the tenant's `invoice.hideOriginalPrice` */
   hide?: boolean;
   payments?: Pay[];
+  /** the sale's own returns, as the Today's-sales page query reads them (SA-838a) */
+  returns?: TodayOrderRecord["returns"];
   tendered?: string | null;
   /** the stored cashier (`Order.soldBy.username`); omitted = a sale rung before soldById was stamped */
   cashier?: string;
@@ -90,6 +94,9 @@ function build(s: Scenario) {
     method: p.method,
     amount: p.amount,
     status: "PAID",
+    ...(p.creditNoteId
+      ? { creditNoteId: p.creditNoteId, creditNote: { invoiceId: "inv-1", status: "APPLIED" } }
+      : {}),
   }));
   const invoice = {
     id: "inv-1",
@@ -130,7 +137,7 @@ function build(s: Scenario) {
     customer: { businessName: "Acme Test Customer", isWalkIn: false },
     ...(s.cashier ? { soldBy: { username: s.cashier } } : {}),
     invoices: [invoice],
-    returns: [],
+    returns: s.returns ?? [],
   } as unknown as TodayOrderRecord;
   const row = toTodaysSaleRow(record, configured);
   const reprint = receiptModelFromOrder({
@@ -159,10 +166,10 @@ function build(s: Scenario) {
       paid: row.paid,
       balanceDue: row.balanceDue,
       methods: row.methods,
-      // as CounterTodaysSales hands the row over: the server's tender split and own-return figure (B1262 / SA-838)
+      // as CounterTodaysSales hands the row over: the server's tender split and return lines (SA-838a)
       tenderPaid: row.tenderPaid,
       tenderMethods: row.tenderMethods,
-      ownReturned: row.ownReturned,
+      returnLines: row.returnLines,
       createdAt: row.createdAt,
       cashTendered: row.cashTendered,
       change: row.change,
@@ -253,7 +260,7 @@ describe("B1262 / SA-838: an advance application is a tender on the email as on 
       tax: "0.00",
       payments: [{ method: "ADVANCE", amount: "12.50" }],
     });
-    expect(emailModel.methodLabel).toBe("Advance");
+    expect(emailModel.methodLabel).toBe("Advance $12.50");
     expect(emailModel.showPaid).toBe(true);
     expect(emailModel.onAccount).toBe(false);
     expect(emailModel.paid).toBe(12.5);
@@ -281,7 +288,7 @@ describe("B1262 / SA-838: an advance application is a tender on the email as on 
     expect(moneyRows(emailModel)).toEqual(moneyRows(reprint));
   });
 
-  it("two tenders and a part-tender both print amounts, on the email and the reprint alike", () => {
+  it("two tenders, a part-tender and a whole-sale tender all print amounts, on the email and the reprint alike", () => {
     const two = build({
       total: "28.62",
       tax: "2.12",
@@ -304,14 +311,173 @@ describe("B1262 / SA-838: an advance application is a tender on the email as on 
       tax: "2.12",
       payments: [{ method: "CASH", amount: "28.62" }],
     });
-    expect(whole.emailModel.methodLabel).toBe("Cash");
-    expect(whole.reprint.methodLabel).toBe("Cash");
+    // SA-838a: every method carries its amount, a tender that is the whole sale included
+    expect(whole.emailModel.methodLabel).toBe("Cash $28.62");
+    expect(whole.reprint.methodLabel).toBe("Cash $28.62");
   });
 
   it("the email lists methods in the ONE shared order and labels (no hand-typed copy)", () => {
     const src = readFileSync(join(__dirname, "receipt-model.ts"), "utf8");
     expect(src).not.toMatch(/const METHOD_ORDER\s*=/);
     expect(src).toMatch(/TODAYS_SALE_METHOD_ORDER/);
+  });
+});
+
+describe("SA-838a: a sale with its own return reads the same rows on the reprint (the email's return rows land with N1)", () => {
+  type Ret = TodayOrderRecord["returns"][number];
+  const ret = (over: Partial<Ret> = {}): Ret => ({
+    id: "r-1",
+    returnNumber: "RET-1",
+    status: "PROCESSED",
+    refundMethod: "CREDIT_NOTE",
+    refundedAt: null,
+    creditNoteId: "cn-1",
+    refundAmount: null,
+    creditSubtotal: "2.50",
+    creditTax: "0.00",
+    creditCategoryTax: "0.00",
+    kind: "STANDARD",
+    items: [],
+    ...over,
+  });
+  const refunded = ret({
+    status: "REFUNDED",
+    refundMethod: "EXTERNAL_REFUND",
+    refundedAt: new Date("2026-10-22T10:00:00Z"),
+    creditNoteId: null,
+  });
+  const pending = ret({ status: "PENDING", refundMethod: null, creditNoteId: null });
+  const sale = (payments: Pay[], returns: Ret[]) =>
+    build({ total: "12.50", tax: "0.00", payments, returns });
+  /** the rows below Total that the return changes, from the shared model */
+  const rows = (m: ReturnType<typeof build>["reprint"]) => ({
+    method: m.methodLabel,
+    paid: m.paid,
+    returned: m.returned ?? null,
+    refunded: m.refunded ?? null,
+    creditKept: m.creditKept ?? null,
+    balanceDue: m.balanceDue,
+    pending: m.returnPending ?? false,
+  });
+
+  it("(1a) refund done: Cash $5.00, Paid 5.00, Refunded 2.50, Balance due 7.50; the email's money rows agree", () => {
+    const { reprint, emailModel } = sale([{ method: "CASH", amount: "5.00" }], [refunded]);
+    expect(rows(reprint)).toEqual({
+      method: "Cash $5.00",
+      paid: 5,
+      returned: null,
+      refunded: 2.5,
+      creditKept: null,
+      balanceDue: 7.5,
+      pending: false,
+    });
+    expect(moneyRows(emailModel)).toEqual(moneyRows(reprint));
+    expect(emailModel.methodLabel).toBe(reprint.methodLabel);
+  });
+
+  it("(1b) credit kept: Cash $5.00, Paid 5.00, Credit kept 2.50, Balance due 7.50; the email's money rows agree", () => {
+    const { reprint, emailModel } = sale([{ method: "CASH", amount: "5.00" }], [ret()]);
+    expect(rows(reprint)).toMatchObject({ paid: 5, creditKept: 2.5, balanceDue: 7.5 });
+    expect(rows(reprint).returned).toBeNull();
+    expect(moneyRows(emailModel)).toEqual(moneyRows(reprint));
+  });
+
+  it("(1c) credit applied: Cash $5.00, Paid 5.00, Returned 2.50, Balance due 5.00", () => {
+    const { reprint } = sale(
+      [
+        { method: "CASH", amount: "5.00" },
+        { method: "CREDIT_NOTE", amount: "2.50", creditNoteId: "cn-1" },
+      ],
+      [ret()],
+    );
+    expect(rows(reprint)).toEqual({
+      method: "Cash $5.00",
+      paid: 5,
+      returned: 2.5,
+      refunded: null,
+      creditKept: null,
+      balanceDue: 5,
+      pending: false,
+    });
+  });
+
+  it("(2) pending: Cash $5.00, Paid 5.00, Balance due 7.50, Return in progress; the email's money rows agree", () => {
+    const { reprint, emailModel } = sale([{ method: "CASH", amount: "5.00" }], [pending]);
+    expect(rows(reprint)).toEqual({
+      method: "Cash $5.00",
+      paid: 5,
+      returned: null,
+      refunded: null,
+      creditKept: null,
+      balanceDue: 7.5,
+      pending: true,
+    });
+    expect(moneyRows(emailModel)).toEqual(moneyRows(reprint));
+  });
+
+  it("(a) Cash $6.25, Paid 6.25, Returned 6.25 (credit applied, balance 0)", () => {
+    const { reprint } = sale(
+      [
+        { method: "CASH", amount: "6.25" },
+        { method: "CREDIT_NOTE", amount: "6.25", creditNoteId: "cn-1" },
+      ],
+      [ret({ creditSubtotal: "6.25" })],
+    );
+    expect(rows(reprint)).toMatchObject({ method: "Cash $6.25", paid: 6.25, returned: 6.25 });
+    expect(reprint.balanceDue).toBe(0);
+  });
+
+  it("(b) Advance $5.00 + Cash $7.50, Paid 12.50, Refunded 2.50; the email agrees on every money row", () => {
+    const { reprint, emailModel } = sale(
+      [
+        { method: "ADVANCE", amount: "5.00" },
+        { method: "CASH", amount: "7.50" },
+      ],
+      [refunded],
+    );
+    expect(rows(reprint)).toMatchObject({
+      method: "Advance $5.00 + Cash $7.50",
+      paid: 12.5,
+      refunded: 2.5,
+    });
+    expect(emailModel.methodLabel).toBe(reprint.methodLabel);
+    expect(moneyRows(emailModel)).toEqual(moneyRows(reprint));
+  });
+
+  it("(c) Advance $12.50, Paid 12.50, Credit kept 3.00; the email agrees on every money row", () => {
+    const { reprint, emailModel } = sale(
+      [{ method: "ADVANCE", amount: "12.50" }],
+      [ret({ creditSubtotal: "3.00" })],
+    );
+    expect(rows(reprint)).toMatchObject({
+      method: "Advance $12.50",
+      paid: 12.5,
+      creditKept: 3,
+      returned: null,
+    });
+    expect(emailModel.methodLabel).toBe(reprint.methodLabel);
+    expect(moneyRows(emailModel)).toEqual(moneyRows(reprint));
+  });
+
+  it("the invariant on every pinned sale: Balance due = Total - Paid - Returned, in cents", () => {
+    const cents = (n: number) => Math.round(n * 100);
+    const cases = [
+      sale([{ method: "CASH", amount: "5.00" }], [refunded]),
+      sale([{ method: "CASH", amount: "5.00" }], [ret()]),
+      sale(
+        [
+          { method: "CASH", amount: "5.00" },
+          { method: "CREDIT_NOTE", amount: "2.50", creditNoteId: "cn-1" },
+        ],
+        [ret()],
+      ),
+      sale([{ method: "CASH", amount: "5.00" }], [pending]),
+    ];
+    for (const { reprint } of cases) {
+      expect(cents(reprint.balanceDue)).toBe(
+        cents(reprint.total) - cents(reprint.paid) - cents(reprint.returned ?? 0),
+      );
+    }
   });
 });
 
