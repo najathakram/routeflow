@@ -92,13 +92,13 @@ describe("R3: backorder pill in the line's own unit, on its own line", () => {
   it("a case line says cases, not the pieces behind them (table)", () => {
     table(caseLine());
     expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent(
-      /^Backorder · 2 cases \(0 in stock\)$/,
+      /^Backorder · 2 cases \(0 in stock when ordered\)$/,
     );
   });
   it("a case line says cases (card renderer)", () => {
     render(<LineItemRowReadOnly {...lineRowProps(caseLine(), "PENDING")} />);
     expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent(
-      /^Backorder · 2 cases \(0 in stock\)$/,
+      /^Backorder · 2 cases \(0 in stock when ordered\)$/,
     );
   });
   it("the meaning is visible text beside the pill, not only a hover title (table)", () => {
@@ -133,23 +133,23 @@ describe("R3: backorder pill in the line's own unit, on its own line", () => {
 });
 
 describe("Backorder tag says why (N06)", () => {
-  it("table: a fully backordered line reads (0 in stock)", () => {
+  it("table: a fully backordered line reads (0 in stock when ordered)", () => {
     table(line({ qty: 8, backorderedPieces: "8" }));
     expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent(
-      "Backorder · 8 pcs (0 in stock)",
+      "Backorder · 8 pcs (0 in stock when ordered)",
     );
   });
   it("table: a part-backordered line names what was in stock", () => {
     table(line({ qty: 8, backorderedPieces: "3" }));
     expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent(
-      "Backorder · 3 pcs (5 pcs in stock)",
+      "Backorder · 3 pcs (5 pcs in stock when ordered)",
     );
   });
   it("card: the row carries the sold qty so the same reason shows", () => {
     const props = lineRowProps(line({ qty: 8, backorderedPieces: "3" }), "PENDING");
     render(<LineItemRowReadOnly {...props} />);
     expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent(
-      "Backorder · 3 pcs (5 pcs in stock)",
+      "Backorder · 3 pcs (5 pcs in stock when ordered)",
     );
   });
 });
