@@ -47,6 +47,112 @@
   const safeUrl = (u) => (typeof u === "string" && /^https:\/\//.test(u) ? u : null);
   const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
+  // ---------- pure decision logic (no DOM; unit-tested through the seam below) ----------
+  // U1: a band shows at most `cap` entries; the rest sit behind "Show all N".
+  const BAND_CAP = 5;
+  function capEntries(entries, cap = BAND_CAP) {
+    const list = Array.isArray(entries) ? entries : [];
+    const n = Math.max(0, cap);
+    return { shown: list.slice(0, n), hidden: list.slice(n) };
+  }
+
+  // U8: bug-state tokens in the owner's words. The data value itself is never changed.
+  const PLAIN_WORD = { uncampaigned: "not yet scheduled" };
+  function plainWord(token) {
+    const t = String(token ?? "");
+    return PLAIN_WORD[t.toLowerCase()] ?? t;
+  }
+
+  // U3: the long panels start collapsed, with a count line so the size is still visible.
+  const COLLAPSED_BY_DEFAULT = new Set(["alarms", "map", "tree"]);
+  const panelCollapsedByDefault = (key) => COLLAPSED_BY_DEFAULT.has(key);
+  const PANEL_TITLE = { alarms: "Drift & problems", map: "System map", tree: "Item tree" };
+  function panelCountLine(key, s) {
+    const title = PANEL_TITLE[key];
+    if (!title) return null;
+    if (key === "alarms") {
+      const alarms = s?.alarms ?? [];
+      const errs = alarms.filter((a) => a.severity === "error").length;
+      return `${title} (${alarms.length})` + (errs ? ` · ${plural(errs, "error")}` : "");
+    }
+    if (key === "map") return `${title} (${plural((s?.map?.domains ?? []).length, "area")})`;
+    return `${title} (${plural((s?.items ?? []).length, "item")})`;
+  }
+
+  // U4: alarms grouped by kind, worst first.
+  const ALARM_KIND_LABEL = {
+    "status-behind-merge": "PR merged but the item was not moved on",
+    "bug-fixed-still-open": "Bug fixed on master but still open in the register",
+    "bug-unowned-backlog": "Open bugs nobody owns (backlog by severity and area)",
+    "bug-unowned": "Bug nobody owns",
+    "building-stale": "Marked as being built, but no recent activity",
+    "incident-stale": "Incident not updated lately",
+    "lane-silent": "Lane holding work has gone quiet",
+    "past-eta": "Past the promised date",
+    "stale-source": "Data source is out of date",
+    "untracked-pr": "Pull request not linked to any item",
+    "unknown-status": "Item has a status the monitor does not know",
+    "untracked-branch": "Branch not linked to any item",
+  };
+  const kindLabel = (kind) => ALARM_KIND_LABEL[kind] ?? String(kind ?? "other").replace(/-/g, " ");
+  const SEV_RANK = { error: 0, warn: 1, info: 2 };
+  const sevRank = (s) => SEV_RANK[s] ?? 2;
+  function groupAlarms(alarms) {
+    const byKind = new Map();
+    for (const a of Array.isArray(alarms) ? alarms : []) {
+      const kind = String(a?.kind ?? "other");
+      let g = byKind.get(kind);
+      if (!g) {
+        g = { kind, label: kindLabel(kind), severity: "info", alarms: [], commands: [] };
+        g.severity = a?.severity ?? "info";
+        byKind.set(kind, g);
+      }
+      if (sevRank(a?.severity) < sevRank(g.severity)) g.severity = a.severity;
+      g.alarms.push(a);
+      // One line per distinct command: a constant suggestion (e.g. a claim) is listed once, not per alarm.
+      const cmd = typeof a?.suggest === "string" ? a.suggest.trim() : "";
+      if (cmd && !g.commands.includes(cmd)) g.commands.push(cmd);
+    }
+    return [...byKind.values()].sort(
+      (x, y) =>
+        sevRank(x.severity) - sevRank(y.severity) ||
+        y.alarms.length - x.alarms.length ||
+        (x.kind < y.kind ? -1 : x.kind > y.kind ? 1 : 0),
+    );
+  }
+
+  // U6: one short sentence when something meaningful changed between two digests, else null.
+  // A digest is { alarms, errors, conn }. No previous digest, or a first "connecting", is silent.
+  function announceText(prev, next) {
+    if (!prev || !next) return null;
+    const parts = [];
+    if (prev.conn !== next.conn && prev.conn !== "connecting" && next.conn)
+      parts.push(`Connection ${next.conn}.`);
+    if (prev.alarms !== next.alarms || prev.errors !== next.errors)
+      parts.push(
+        `Drift now shows ${plural(next.alarms, "alarm")}, ${plural(next.errors, "error")}.`,
+      );
+    return parts.length ? parts.join(" ") : null;
+  }
+  const ANNOUNCE_GAP_MS = 60000;
+  const announceDue = (lastAt, nowMs) => lastAt === null || nowMs - lastAt >= ANNOUNCE_GAP_MS;
+
+  const UI = {
+    capEntries,
+    groupAlarms,
+    kindLabel,
+    plainWord,
+    panelCollapsedByDefault,
+    panelCountLine,
+    announceText,
+    announceDue,
+  };
+  // Under node (the unit tests) there is no document: hand the pure functions out and stop.
+  if (typeof document === "undefined") {
+    globalThis.__opsUi = UI;
+    return;
+  }
+
   // ---------- plain-language labels (business layer) ----------
   const STATUS_WORD = {
     idea: "Idea",
@@ -62,9 +168,9 @@
     dropped: "Dropped",
   };
   const PRIO_WORD = { P0: "Urgent", P1: "High", P2: "Normal", P3: "Low" };
-  const statusWord = (s) => STATUS_WORD[s] ?? String(s ?? "");
+  const statusWord = (s) => STATUS_WORD[s] ?? plainWord(s);
   // The owner-facing word for an item: the server's label (Answered/Booked for decisions) wins.
-  const itemStatus = (it) => it?.statusLabel ?? statusWord(it?.status);
+  const itemStatus = (it) => plainWord(it?.statusLabel ?? statusWord(it?.status));
   const prioWord = (p) => PRIO_WORD[p] ?? String(p ?? "");
   const MONTHS = [
     "Jan",
@@ -205,7 +311,19 @@
   const nav = document.getElementById("nav");
   function makePanel(key, title, cls, sources, navLabel, blurb) {
     const age = el("span", { class: "age", "data-srcs": sources.join(",") });
-    const body = el("div", { class: "pbody" });
+    const body = el("div", { class: "pbody", id: `pb-${key}` });
+    // The long panels fold: a count line and a toggle stand in for the body until it is opened.
+    const foldable = panelCollapsedByDefault(key);
+    const count = foldable ? el("div", { class: "pcount" }) : null;
+    const toggle = foldable
+      ? el("button", {
+          type: "button",
+          class: "btn ptoggle",
+          "aria-controls": `pb-${key}`,
+          "aria-expanded": "false",
+          onclick: () => setPanelOpen(key, panels[key].sec.classList.contains("collapsed"), true),
+        })
+      : null;
     const sec = el(
       "section",
       { class: `panel ${cls ?? ""}`, id: `p-${key}`, "aria-labelledby": `h-${key}` },
@@ -216,14 +334,46 @@
           el("h2", { id: `h-${key}`, text: title }),
           el("span", { class: "blurb", text: blurb }),
           age,
+          toggle,
         ),
+        count,
         body,
       ],
     );
-    nav.append(el("a", { class: "navlink", href: `#p-${key}`, text: navLabel }));
-    panels[key] = { sec, body, age, sources };
+    nav.append(
+      el("a", {
+        class: "navlink",
+        href: `#p-${key}`,
+        text: navLabel,
+        // A tab for a folded panel opens it first, so the jump lands on something visible.
+        onclick: () => setPanelOpen(key, true, true),
+      }),
+    );
+    panels[key] = { sec, body, age, sources, count, toggle, title };
     main.append(sec);
+    if (foldable) {
+      const saved = storage("get", `rf-ops-panel-${key}`);
+      setPanelOpen(key, saved ? saved === "open" : !panelCollapsedByDefault(key), false);
+    }
     return panels[key];
+  }
+  // Open or fold a foldable panel. Returns true when it was folded and is now open.
+  function setPanelOpen(key, open, persist) {
+    const p = panels[key];
+    if (!p?.toggle) return false;
+    const wasFolded = p.sec.classList.contains("collapsed");
+    p.sec.classList.toggle("collapsed", !open);
+    p.body.hidden = !open;
+    p.count.hidden = open;
+    p.toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    p.toggle.setAttribute("aria-label", `${open ? "Hide" : "Show"} ${p.title}`);
+    p.toggle.textContent = open ? "Hide" : "Show";
+    if (persist) storage("set", `rf-ops-panel-${key}`, open ? "open" : "closed");
+    return wasFolded && open;
+  }
+  function renderPanelCounts() {
+    for (const [key, p] of Object.entries(panels))
+      if (p.count) p.count.textContent = panelCountLine(key, snap) ?? "";
   }
   clear(main);
   makePanel(
@@ -385,7 +535,8 @@
           ? pill("private", "ok")
           : pill("visibility ?", "warn"),
     );
-    if (snap.machine) meta.append(el("span", { class: "muted", text: `on ${snap.machine}` }));
+    if (snap.machine)
+      meta.append(el("span", { class: "muted hdr-machine", text: `on ${snap.machine}` }));
 
     const chips = clear(document.getElementById("chips"));
     for (const name of Object.keys(snap.sources ?? {})) {
@@ -449,15 +600,32 @@
       note ? el("span", { class: "bnote", text: note }) : null,
     );
   }
+  // Which bands the owner expanded ("Show all N"); survives the re-render each snapshot causes.
+  const bandOpen = {};
   function bandColumn(kind, title, blurb, entries, emptyText) {
+    const { shown, hidden } = capEntries(entries);
+    const open = bandOpen[kind] === true;
     return el(
       "section",
       { class: `bcol ${kind}`, "aria-label": title },
       el("h2", { text: title }),
       el("p", { class: "bblurb", text: blurb }),
       entries.length
-        ? el("div", { class: "blist" }, entries)
+        ? el("div", { class: "blist" }, open ? entries : shown)
         : el("p", { class: "bempty", text: emptyText }),
+      hidden.length
+        ? el("button", {
+            type: "button",
+            class: "btn bmore",
+            "aria-expanded": open ? "true" : "false",
+            text: open ? "Show fewer" : `Show all ${entries.length}`,
+            onclick: () => {
+              bandOpen[kind] = !open;
+              renderSummary();
+              document.querySelector(`.bcol.${kind} .bmore`)?.focus();
+            },
+          })
+        : null,
     );
   }
 
@@ -617,18 +785,18 @@
           "Nothing urgent right now.",
         ),
         bandColumn(
-          "next",
-          "Shipping next",
-          "What the next releases fix or add",
-          nextEntries,
-          "No release is planned.",
-        ),
-        bandColumn(
           "ask",
           "Waiting on you",
           "Decisions only you can make",
           askEntries,
           "Nothing needs you right now.",
+        ),
+        bandColumn(
+          "next",
+          "Shipping next",
+          "What the next releases fix or add",
+          nextEntries,
+          "No release is planned.",
         ),
       ),
     );
@@ -653,6 +821,8 @@
         {
           class: `healthline ${errs ? "err" : warns || behind ? "warn" : "ok"}`,
           href: "#p-alarms",
+          // Same-hash clicks fire no hashchange: open a re-folded Drift panel here, then let the link scroll.
+          onclick: () => setPanelOpen("alarms", true, true),
         },
         el("i", { class: "dot" }),
         parts.join(" \u00B7 "),
@@ -690,12 +860,12 @@
   }
 
   // ---------- copy button ----------
-  function copyButton(text) {
+  function copyButton(text, label = "Copy", aria = `Copy command ${text}`) {
     const b = el("button", {
       type: "button",
       class: "btn",
-      "aria-label": `Copy command ${text}`,
-      text: "Copy",
+      "aria-label": aria,
+      text: label,
     });
     b.addEventListener("click", async () => {
       let ok = false;
@@ -715,7 +885,7 @@
         }
       }
       b.textContent = ok ? "Copied" : "Copy failed";
-      setTimeout(() => (b.textContent = "Copy"), 1500);
+      setTimeout(() => (b.textContent = label), 1500);
     });
     return b;
   }
@@ -738,30 +908,63 @@
     return d;
   }
 
+  // Which alarm groups the viewer opened or closed; survives the re-render each snapshot causes.
+  const alarmGroupOpen = new Map();
   function renderAlarms() {
     const body = clear(panels.alarms.body);
     const items = byId();
     const alarms = snap.alarms ?? [];
     if (!alarms.length) body.append(el("div", { class: "empty", text: "No drift detected." }));
-    for (const sev of ["error", "warn", "info"]) {
-      const list = alarms.filter((a) => a.severity === sev);
-      if (!list.length) continue;
-      body.append(el("div", { class: "subhead", text: `${sevLabel(sev)} (${list.length})` }));
-      for (const a of list) {
-        body.append(
+    if (alarms.length) {
+      // One summary line, then the alarms grouped by kind: errors first, biggest groups first.
+      const counts = ["error", "warn", "info"]
+        .map((sev) => [sev, alarms.filter((a) => a.severity === sev).length])
+        .filter(([, n]) => n)
+        .map(([sev, n]) => `${sevLabel(sev)} (${n})`);
+      body.append(el("div", { class: "subhead", text: counts.join(" \u00B7 ") }));
+    }
+    for (const g of groupAlarms(alarms)) {
+      const open = alarmGroupOpen.has(g.kind) ? alarmGroupOpen.get(g.kind) : g.severity !== "info";
+      const det = el(
+        "details",
+        {
+          class: `agroup ${g.severity}`,
+          open: open || null,
+          ontoggle: (e) => alarmGroupOpen.set(g.kind, e.currentTarget.open),
+        },
+        el(
+          "summary",
+          null,
+          pill(`${sevGlyph(g.severity)} ${sevLabel(g.severity)}`, sevKind(g.severity)),
+          el("span", { class: "gname", text: `${g.label} \u00B7 ${g.alarms.length}` }),
+        ),
+      );
+      if (g.commands.length)
+        det.append(
+          el(
+            "div",
+            { class: "gcopy" },
+            // Visible, so a command with a placeholder (<id>, <loser>) is read and edited, never pasted blind.
+            el("div", { class: "gcmds" }, ...g.commands.map((c) => el("code", { text: c }))),
+            copyButton(
+              g.commands.join("\n"),
+              `Copy ${plural(g.commands.length, "command")}`,
+              `Copy ${plural(g.commands.length, "command")} for ${g.label}`,
+            ),
+          ),
+        );
+      for (const a of g.alarms) {
+        det.append(
           el(
             "div",
             { class: "alarm" },
-            pill(`${sevGlyph(a.severity)} ${sevLabel(a.severity)}`, sevKind(a.severity)),
-            el("div", { class: "msg", text: a.message }),
-            a.suggest
-              ? el("div", { class: "cmd" }, el("code", { text: a.suggest }), copyButton(a.suggest))
-              : null,
+            el("div", { class: "msg" }, a.message),
             // Aggregated alarms (e.g. unowned bug backlog by severity x area) carry the ids.
             Array.isArray(a.items) && a.items.length ? alarmDrill(a.items) : null,
           ),
         );
       }
+      body.append(det);
     }
     body.append(
       el("div", { class: "subhead", text: `Live problems (${(snap.problems ?? []).length})` }),
@@ -936,20 +1139,14 @@
     for (const d of snap.map?.domains ?? []) {
       const tile = el("div", { class: "tile" });
       const totals = d.areas.reduce((n, a) => n + a.items + a.prs + a.branches, 0);
+      tile.append(el("h3", { text: d.label }));
       tile.append(
-        el(
-          "h3",
-          null,
-          d.label,
-          el("span", {
-            class: "pill info badge",
-            title: "Items attached to this domain without a specific area",
-            text: `${d.items} domain-level`,
-          }),
-        ),
-      );
-      tile.append(
-        el("div", { class: "muted", text: `${plural(d.areas.length, "area")}, ${totals} active` }),
+        el("div", {
+          class: "muted",
+          text:
+            `${plural(d.areas.length, "area")}, ${totals} active` +
+            (d.items ? ` \u00B7 ${plural(d.items, "item")} not in an area` : ""),
+        }),
       );
       for (const [layer, label] of LAYERS) {
         const areas = d.areas.filter((a) => a.layer === layer);
@@ -1163,6 +1360,26 @@
           isSilent ? pill(`SILENT ${silent}m`, "warn", "Holds work but has been quiet") : null,
         ),
       );
+      // Expects lane.lastPushAt / lane.lastPrAt (ISO strings); not in the snapshot yet, so nothing shows.
+      const recent = [
+        l.lastPushAt ? ["push", l.lastPushAt] : null,
+        l.lastPrAt ? ["PR", l.lastPrAt] : null,
+      ].filter(Boolean);
+      if (recent.length) {
+        const line = el("div", { class: "muted lane-recent" });
+        recent.forEach(([what, at], i) => {
+          if (i) line.append(" \u00B7 ");
+          line.append(
+            `${i ? "last" : "Last"} ${what} `,
+            el("span", {
+              "data-sw": at,
+              title: localStamp(at),
+              text: sinceWords(now() - Date.parse(at)),
+            }),
+          );
+        });
+        box.append(line);
+      }
       const nowList = el("ul");
       for (const id of l.now ?? []) {
         const it = items.get(id);
@@ -1582,7 +1799,7 @@
       title: b.title,
       priority: pr[b.severity] ?? "P2",
       status: b.ledgerState ?? b.state,
-      statusLabel: b.ledgerState ?? b.state,
+      statusLabel: plainWord(b.ledgerState ?? b.state),
       area: b.area,
       domain: b.domain,
       links: { prs: [], branches: [], urls: [] },
@@ -2068,7 +2285,7 @@
     row("Id", code(it.id));
     row("Type", it.type);
     row("Priority", `${prioWord(it.priority)} (${it.priority})`);
-    row("Status", `${itemStatus(it)} (${it.status})`);
+    row("Status", `${itemStatus(it)} (${plainWord(it.status)})`);
     row(
       "Register status word",
       it.statusText ? `${it.statusText} (not known to the monitor)` : null,
@@ -2328,6 +2545,9 @@
   }
 
   function syncHash() {
+    // Arriving with a panel's hash opens a folded panel first, then scrolls to it.
+    const pm = /^#p-([a-z]+)$/.exec(location.hash);
+    if (pm && setPanelOpen(pm[1], true, true)) panels[pm[1]].sec.scrollIntoView();
     const m = /^#item=(.+)$/.exec(location.hash);
     if (m) {
       let id = m[1];
@@ -2406,7 +2626,9 @@
     }
     renderTree();
     renderBugs();
+    renderPanelCounts();
     tickAges();
+    fadeChips();
   }
 
   function apply(next) {
@@ -2420,6 +2642,7 @@
     document.querySelector(".logout")?.toggleAttribute("hidden", authEnabled !== true);
     snap = next;
     renderAll();
+    maybeAnnounce();
     if (!hashHandled) {
       hashHandled = true;
       syncHash();
@@ -2428,10 +2651,57 @@
 
   // ---------- transport ----------
   const conn = document.getElementById("conn");
+  let connText = "connecting";
   function setConn(kind, text) {
     conn.className = `conn ${kind}`;
     conn.querySelector("span").textContent = text;
+    connText = text;
+    maybeAnnounce();
   }
+  // The one polite live region: a short sentence when the alarm count, the error count or the
+  // connection changes, at most once a minute. (The "updated Ns ago" ticker is never announced.)
+  const live = document.getElementById("live");
+  let lastDigest = null;
+  let lastAnnounceAt = null;
+  let announceTimer = null;
+  function maybeAnnounce() {
+    if (!snap || !live) return;
+    const alarms = snap.alarms ?? [];
+    const digest = {
+      alarms: alarms.length,
+      errors: alarms.filter((a) => a.severity === "error").length,
+      conn: connText,
+    };
+    if (!lastDigest) {
+      lastDigest = digest;
+      return;
+    }
+    const text = announceText(lastDigest, digest);
+    if (!text) return;
+    if (!announceDue(lastAnnounceAt, Date.now())) {
+      // Throttled: re-check once when the gap ends, so a quiet stream still announces the change.
+      if (!announceTimer) {
+        announceTimer = setTimeout(
+          () => {
+            announceTimer = null;
+            maybeAnnounce();
+          },
+          Math.max(0, lastAnnounceAt + ANNOUNCE_GAP_MS - Date.now()),
+        );
+      }
+      return;
+    }
+    live.textContent = text;
+    lastAnnounceAt = Date.now();
+    lastDigest = digest;
+  }
+  // Phone: a soft edge on the chip row, shown only while more chips sit off-screen to the right.
+  function fadeChips() {
+    const c = document.getElementById("chips");
+    c.classList.toggle("more", c.scrollWidth - c.scrollLeft - c.clientWidth > 2);
+  }
+  document.getElementById("chips").addEventListener("scroll", fadeChips, { passive: true });
+  addEventListener("resize", fadeChips);
   let pollTimer = null;
   // A 401 means the session ended (or never began): the login page is the only way back in.
   function toLogin() {
