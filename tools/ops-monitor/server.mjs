@@ -436,8 +436,6 @@ function lanUrls(port) {
 
 const REGISTER_SYNC_MS = 300_000;
 const REGISTER_SYNC_FIRST_MS = 60_000;
-// The collector holds the specs lock for every 30-second pull; the timer waits this long for it.
-const REGISTER_SYNC_LOCK_WAIT_MS = 45_000;
 
 /**
  * The register sync (hand-kept register + owner queue rows -> events) runs only on the single
@@ -445,6 +443,33 @@ const REGISTER_SYNC_LOCK_WAIT_MS = 45_000;
  */
 export function shouldRunRegisterSync(opts) {
   return Boolean(opts.views && !opts.cloud && !opts.once && !opts.fixture);
+}
+
+/**
+ * A rate-limited step for the collector's specs pass (`afterSpecsPull`): the first `run()` is due
+ * `firstMs` after creation, then every `intervalMs`; calls in between return at once. `onDone`
+ * gets a result that appended events; errors are logged and never thrown (the step is retried
+ * after the next interval). `now` is injectable for tests.
+ */
+export function makeSpecsPassStep({
+  run,
+  onDone = () => {},
+  log = () => {},
+  firstMs = REGISTER_SYNC_FIRST_MS,
+  intervalMs = REGISTER_SYNC_MS,
+  now = Date.now,
+}) {
+  let due = now() + firstMs;
+  return async () => {
+    if (now() < due) return;
+    due = now() + intervalMs;
+    try {
+      const res = await run();
+      if (res?.appended > 0) onDone(res);
+    } catch (err) {
+      log(`register sync failed: ${err?.message ?? err}`);
+    }
+  };
 }
 
 /**
@@ -648,8 +673,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     let refused = null;
     let viewsTimer = null;
     let snapTimer = null;
-    let stopRegisterSync = () => {};
-    let stopStatusSync = () => {};
+    let pullHook = null; // set once the register/status syncs are wired (local --views only)
     let lastViewsHash = null;
     let collector = null;
     const rebuild = () => {
@@ -732,6 +756,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       cloud: opts.cloud,
       mask: maskOne,
       log: (m) => console.error(`[ops-monitor] ${m}`),
+      afterSpecsPull: (a) => pullHook?.(a),
       onUpdate: () => {
         try {
           publish(rebuild());
@@ -769,74 +794,65 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     }
     collector.start();
     if (shouldRunRegisterSync(opts)) {
-      // Lane status files -> heartbeat events every 2 min; logs only when something was appended.
+      // Both syncs ride the collector's specs pass: it already holds the specs lock and has just
+      // pulled, so they can never lose the lock to their own process (a timer did, on a slow box).
+      // The pass re-reads the events right after the hook, so appended events show up at once.
       const { runStatusSync } = await import("./lib/status-sync.mjs");
-      let lastStatusNote = "";
-      let statusBusyRuns = 0;
-      stopStatusSync = startRegisterSync({
-        run: async () => {
-          const res = await runStatusSync({
-            dir: specs,
-            home: cfg.opsHome(env),
-            env,
-            lockWaitMs: REGISTER_SYNC_LOCK_WAIT_MS,
-          });
-          statusBusyRuns = res?.ran === false && res.reason === "busy" ? statusBusyRuns + 1 : 0;
-          const step = registerSyncLog(lastStatusNote, res, { busyRuns: statusBusyRuns });
-          lastStatusNote = step.note;
-          if (step.log)
-            console.error(
-              `[ops-monitor] ${step.log
-                .replace("register sync", "status sync")
-                .replace("register and events agree", "no heartbeat changes")}`,
-            );
-          if (res?.capped)
-            console.error(`[ops-monitor] status sync capped: ${res.capped} left for the next pass`);
-          return res;
-        },
-        onDone: (res) =>
-          console.error(`[ops-monitor] status sync appended ${res.appended} heartbeat(s)`),
-        log: (m) => console.error(`[ops-monitor] ${m.replace("register sync", "status sync")}`),
-        firstDelayMs: 30_000,
-        intervalMs: 120_000,
-      });
       const { runSync } = await import("./lib/sync.mjs");
       const { loadBugIds } = await import("./lib/store.mjs");
+      const home = cfg.opsHome(env);
+      // Same fail-closed masker as the snapshot (falls back when the client-name list is missing).
+      const mask = maskOne;
+      const say = (m) => console.error(`[ops-monitor] ${m}`);
+      let lastStatusNote = "";
+      const statusStep = makeSpecsPassStep({
+        firstMs: 30_000,
+        intervalMs: 120_000,
+        run: async () => {
+          const res = await runStatusSync({ dir: specs, home, env, lockHeld: true });
+          const step = registerSyncLog(lastStatusNote, res);
+          lastStatusNote = step.note;
+          if (step.log)
+            say(
+              step.log
+                .replace("register sync", "status sync")
+                .replace("register and events agree", "no heartbeat changes"),
+            );
+          if (res?.capped) say(`status sync capped: ${res.capped} left for the next pass`);
+          return res;
+        },
+        onDone: (res) => say(`status sync appended ${res.appended} heartbeat(s)`),
+        log: (m) => say(m.replace("register sync", "status sync")),
+      });
       let lastRegisterNote = "";
-      let busyRuns = 0;
-      console.error(
-        `[ops-monitor] register sync on: first pass in ${REGISTER_SYNC_FIRST_MS / 1000} s, then every ${REGISTER_SYNC_MS / 60000} min (waits up to ${REGISTER_SYNC_LOCK_WAIT_MS / 1000} s for the specs lock)`,
-      );
-      stopRegisterSync = startRegisterSync({
+      const registerStep = makeSpecsPassStep({
         run: async () => {
           const res = await runSync({
             dir: specs,
-            home: cfg.opsHome(env),
+            home,
             env,
-            mask: maskOne,
+            mask,
             bugIds: await loadBugIds(repoRoot),
-            lockWaitMs: REGISTER_SYNC_LOCK_WAIT_MS,
+            lockHeld: true,
           });
-          busyRuns = res?.ran === false && res.reason === "busy" ? busyRuns + 1 : 0;
-          const step = registerSyncLog(lastRegisterNote, res, {
-            busyRuns,
-            mask: maskOne,
-          });
+          const step = registerSyncLog(lastRegisterNote, res, { mask });
           lastRegisterNote = step.note;
-          if (step.log) console.error(`[ops-monitor] ${step.log}`);
+          if (step.log) say(step.log);
           return res;
         },
-        onDone: (res) => {
-          console.error(`[ops-monitor] register sync appended ${res.appended} event(s)`);
-          collector.runOnce("specs").catch(() => {});
-        },
-        log: (m) => console.error(`[ops-monitor] ${m}`),
+        onDone: (res) => say(`register sync appended ${res.appended} event(s)`),
+        log: say,
       });
+      say(
+        `register sync on: inside the specs pass (holds the specs lock already), first in ${REGISTER_SYNC_FIRST_MS / 1000} s, then every ${REGISTER_SYNC_MS / 60000} min`,
+      );
+      pullHook = async () => {
+        await statusStep();
+        await registerStep();
+      };
     }
     stopCollector = () => {
       collector.stop();
-      stopRegisterSync();
-      stopStatusSync();
       if (viewsTimer) clearTimeout(viewsTimer);
       if (snapTimer) clearTimeout(snapTimer);
     };

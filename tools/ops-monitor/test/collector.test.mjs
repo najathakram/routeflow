@@ -497,6 +497,66 @@ test("specs: the sync runs under tryWithSpecsLock; when the lock is busy it is s
   ]);
 });
 
+test("specs: afterSpecsPull runs inside the lock hold after syncSpecs; its failure never fails the source; never in cloud", async () => {
+  const seen = [];
+  const mkDeps = () => ({
+    store: {
+      tryWithSpecsLock: async (fn) => {
+        seen.push("lock-in");
+        try {
+          return { ran: true, value: await fn() };
+        } finally {
+          seen.push("lock-out");
+        }
+      },
+      ensureClone: async () => {},
+      syncSpecs: async () => {
+        seen.push("sync-start");
+        await new Promise((r) => setTimeout(r, 200));
+        seen.push("sync-end");
+      },
+      readAllEvents: async () => (seen.push("read"), []),
+    },
+    config: { specsRemote: () => "remote" },
+    loadConfig: (d) => ({ dir: d }),
+  });
+  const hookArgs = [];
+  const ok = mk({
+    deps: mkDeps(),
+    afterSpecsPull: async (a) => {
+      hookArgs.push(a);
+      seen.push("hook");
+    },
+  });
+  await ok.c.runOnce("specs");
+  assert.deepEqual(seen, ["lock-in", "sync-start", "sync-end", "hook", "lock-out", "read"]);
+  assert.deepEqual(hookArgs, [{ specsDir: "/specs" }]);
+
+  seen.length = 0;
+  const bad = mk({
+    deps: mkDeps(),
+    afterSpecsPull: async () => {
+      throw new Error("boom");
+    },
+  });
+  await bad.c.runOnce("specs");
+  assert.equal(bad.c.sources.specs.ok, true, bad.c.sources.specs.error);
+  assert.deepEqual(
+    seen.filter((x) => x.startsWith("lock")),
+    ["lock-in", "lock-out"],
+  );
+
+  seen.length = 0;
+  let cloudCalls = 0;
+  const cloud = mk({
+    cloud: true,
+    deps: { ...mkDeps(), cloudSyncSpecs: async () => ({ ok: true }) },
+    afterSpecsPull: async () => void cloudCalls++,
+  });
+  await cloud.c.runOnce("specs");
+  assert.equal(cloudCalls, 0);
+});
+
 test("start/stop: timers run each source once immediately and stop cleanly", async () => {
   const { c, updates } = mk();
   c.start();

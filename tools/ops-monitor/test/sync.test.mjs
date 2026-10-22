@@ -516,6 +516,40 @@ test(
   },
 );
 
+test(
+  "runSync with lockHeld: appends while the caller's own lock hold is active and skips the pull",
+  { timeout: 600000 },
+  async () => {
+    const r = mkRepo("held");
+    try {
+      // a register row lands on the remote AFTER the clone: only a pull would see it
+      const seed = join(r.tmp, "seed");
+      writeFileSync(
+        join(seed, "register", "WORK-REGISTER.md"),
+        register(row(201, { eta: "10-19" }), row(202), row(203)),
+      );
+      git(seed, "commit", "--quiet", "-am", "row 203");
+      git(seed, "push", "--quiet");
+      const common = { dir: r.dir, home: r.home, machine: "pc", env: {}, now: NOW + 3600000 };
+      await withSpecsLock(
+        async () => {
+          const res = await runSync({ ...common, lockHeld: true, push: false });
+          assert.equal(res.ran, true, "no busy skip: the caller says it holds the lock");
+          assert.equal(
+            res.appended,
+            2,
+            "rows 201 and 202 only: 203 needs a pull, which is skipped",
+          );
+          assert.equal(res.pullError, null);
+        },
+        { home: r.home, heartbeatMs: 3600000 },
+      );
+    } finally {
+      rmSync(r.tmp, { recursive: true, force: true });
+    }
+  },
+);
+
 test("describeSyncOutcome: every pass that appends nothing says why; an appending pass is null", () => {
   assert.equal(
     describeSyncOutcome({ ran: false, reason: "busy" }),
@@ -613,6 +647,7 @@ import {
   registerSyncLog,
   resolveListenOptions,
   shouldRunRegisterSync,
+  makeSpecsPassStep,
   startRegisterSync,
 } from "../server.mjs";
 
@@ -649,6 +684,42 @@ function fakeTimers() {
     live: () => pending.filter((x) => x.live).length,
   };
 }
+
+test("makeSpecsPassStep: first run after firstMs, then at most once per interval; errors are logged, not thrown", async () => {
+  let t = 0;
+  let runs = 0;
+  const logs = [];
+  const done = [];
+  const step = makeSpecsPassStep({
+    now: () => t,
+    firstMs: 60,
+    intervalMs: 300,
+    run: async () => {
+      runs++;
+      if (runs === 2) throw new Error("boom");
+      return { appended: runs };
+    },
+    onDone: (r) => done.push(r.appended),
+    log: (m) => logs.push(m),
+  });
+  for (t = 0; t < 60; t += 30) await step(); // passes every 30 before the first-run time
+  assert.equal(runs, 0);
+  t = 60;
+  await step();
+  for (t = 90; t < 360; t += 30) await step(); // several passes inside the interval
+  assert.equal(runs, 1);
+  t = 360;
+  await step(); // throws: logged, not thrown
+  assert.equal(runs, 2);
+  assert.match(logs[0], /boom/);
+  t = 659;
+  await step();
+  assert.equal(runs, 2);
+  t = 660;
+  await step();
+  assert.equal(runs, 3);
+  assert.deepEqual(done, [1, 3]);
+});
 
 test("startRegisterSync: first run after the delay, then every interval; errors never stop it", async () => {
   const t = fakeTimers();

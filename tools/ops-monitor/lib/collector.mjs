@@ -819,6 +819,7 @@ export function createCollector({
   cloud = false,
   fetch: fetchFn = globalThis.fetch,
   mask = (t) => t,
+  afterSpecsPull = null, // local only: runs inside the specs-lock hold, right after the pull
 } = {}) {
   // Cloud never writes git: every git call goes through the read-only allow-list.
   const guardedExec = cloud ? readOnlyExec(exec) : exec;
@@ -873,6 +874,15 @@ export function createCollector({
             });
           }
           await store.syncSpecs(specsDir);
+          // Piggyback on the lock this pass already holds (a timer would lose to us). A failing
+          // hook never fails the source; the lock is released by underLock's finally.
+          if (afterSpecsPull) {
+            try {
+              await afterSpecsPull({ specsDir });
+            } catch (e) {
+              log(`after-pull hook failed: ${String(e?.message ?? e).slice(0, 160)}`);
+            }
+          }
         });
       }
       const events = await store.readAllEvents(specsDir);
