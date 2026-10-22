@@ -356,4 +356,54 @@ describeDb("row 498 payment reference dedupe — real Postgres", () => {
     expect(again.createdPaymentId).toBe(first.createdPaymentId);
     expect(await s.payments()).toHaveLength(1);
   }, 60_000);
+
+  it("D8 a Stripe-captured payment that repeats an existing normalised reference + amount is recorded, never 409, and flagged once", async () => {
+    const s = await seed("d8");
+    const manual = (ref: string) => ({
+      customerId: s.customer.id,
+      totalAmount: 100,
+      method: "CREDIT_CARD",
+      reference: ref,
+      paidAt: "2026-10-01",
+      allocations: [{ invoiceId: s.invs[0].id, amount: 100 }],
+    });
+    await s.asTenant(() =>
+      invoicesA.recordStandalonePayment(manual(" PI_3ABC ") as any, {} as any),
+    );
+    const capture = { source: "STRIPE" as const, sourceRef: "pi_3Abc", suspects: [] as any[] };
+    const res: any = await s.asTenant(() =>
+      invoicesB.recordStandalonePayment(
+        { ...manual("pi_3Abc"), allocations: [{ invoiceId: s.invs[1].id, amount: 100 }] } as any,
+        { capturedExternally: capture } as any,
+      ),
+    );
+    expect(res.paymentGroupId).toBeTruthy();
+    expect(await s.payments()).toHaveLength(2);
+    const audits = await prismaA.auditLog.findMany({
+      where: { tenantId: s.tenant.id, action: "payment.ref-duplicate-suspect" },
+    });
+    expect(audits).toHaveLength(1);
+    expect(audits[0].meta).toMatchObject({ source: "STRIPE", paymentIntentId: "pi_3Abc" });
+    expect(capture.suspects).toHaveLength(1);
+  }, 60_000);
+
+  it("D9 the same payment intent offered twice records once: a PaymentAlreadyRecordedError names the first group", async () => {
+    const s = await seed("d9");
+    const dto = {
+      customerId: s.customer.id,
+      totalAmount: 100,
+      method: "CREDIT_CARD",
+      reference: "pi_same",
+      allocations: [{ invoiceId: s.invs[0].id, amount: 100 }],
+    } as any;
+    const cap = () =>
+      ({ capturedExternally: { source: "STRIPE", sourceRef: "pi_same", suspects: [] } }) as any;
+    const first: any = await s.asTenant(() => invoicesA.recordStandalonePayment(dto, cap()));
+    const err: any = await s
+      .asTenant(() => invoicesB.recordStandalonePayment(dto, cap()))
+      .catch((e) => e);
+    expect(err.name).toBe("PaymentAlreadyRecordedError");
+    expect(err.paymentGroupId).toBe(first.paymentGroupId);
+    expect(await s.payments()).toHaveLength(1);
+  }, 60_000);
 });
