@@ -7,10 +7,12 @@ import {
 } from "@routeflow/types/payment-submit-key";
 
 export {
+  PAYMENT_KEY_RESOLVED_COPY,
   PAYMENT_MAY_BE_RECORDED_COPY,
   PAYMENT_PHOTO_LATER_COPY,
   finishFoundPayment,
   forgetPaymentProof,
+  paymentKeyRefusalCopy,
   paymentMayBeRecordedCopy,
   rememberPaymentProof,
   sendWithPaymentKey,

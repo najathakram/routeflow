@@ -85,7 +85,7 @@ describe("SA-824 payment submit key (mobile)", () => {
     h.reset();
     expect(h.hasUnknown()).toBe(true);
     expect(h.keyFor({ ...pay, amount: 1 })).toBe("key-1");
-    h.resolveFromStatus({ kind: "notFound" });
+    h.resolveFromStatus({ kind: "tombstoned" });
     h.keyFor(pay);
     h.settle({ ok: true });
     h.reset();

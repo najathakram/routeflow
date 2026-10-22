@@ -96,7 +96,7 @@ describe("SA-824 payment submit key (web)", () => {
     expect(h.hasUnknown()).toBe(true);
     expect(h.peek()).toBe("key-1");
     expect(h.keyFor({ ...pay, amount: 1 })).toBe("key-1");
-    h.resolveFromStatus({ kind: "notFound" }); // released
+    h.resolveFromStatus({ kind: "tombstoned" }); // released
     h.keyFor(pay);
     h.settle({ ok: true });
     h.reset();
@@ -175,7 +175,7 @@ describe("SA-824 payment submit key (web)", () => {
     const c = renderHook(() => usePaymentSubmitKey(true, "s:other"));
     expect(c.result.current.hasUnknown()).toBe(false);
     // after a release, the next open is fresh
-    b.result.current.resolveFromStatus({ kind: "notFound" });
+    b.result.current.resolveFromStatus({ kind: "tombstoned" });
     b.unmount();
     const d = renderHook(() => usePaymentSubmitKey(true, "s:b"));
     expect(d.result.current.hasUnknown()).toBe(false);

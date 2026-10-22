@@ -21,7 +21,7 @@ import { productImageFile } from "../../../../../lib/product-image";
 import { showToast } from "../../../../../lib/toast";
 import {
   forgetPaymentProof,
-  paymentMayBeRecordedCopy,
+  paymentKeyRefusalCopy,
   rememberPaymentProof,
   usePaymentSubmitKey,
 } from "../../../../../lib/payment-submit-key";
@@ -118,7 +118,7 @@ export default function RecordPaymentScreen() {
       },
       onError: (e: any) =>
         showToast(
-          paymentMayBeRecordedCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+          paymentKeyRefusalCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
         ),
     });
   };

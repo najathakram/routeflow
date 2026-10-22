@@ -2,6 +2,7 @@ import { API_ERROR_CODES } from "./api/error-codes";
 import {
   isDefinitiveSaleRefusal,
   mintSaleKey,
+  namesCommittedSale,
   saleAttemptKey,
   type HeldSaleKey,
 } from "./sale-attempt";
@@ -78,18 +79,40 @@ export function paymentMayBeRecordedCopy(err: unknown): string | null {
   return isPaymentKeyConflict(err) ? PAYMENT_MAY_BE_RECORDED_COPY : null;
 }
 
+type CodedError = { response?: { status?: unknown; data?: { code?: unknown } } } | null | undefined;
+const is409 = (err: unknown, code: string) => {
+  const res = (err as CodedError)?.response;
+  return res?.status === 409 && res.data?.code === code;
+};
+
 /**
- * True only for the server-definitive "nothing recorded for this key": 404 PAYMENT_KEY_NOT_FOUND from
- * GET /invoices/payments/by-key/:key. Any other failure of that read is NOT an answer.
+ * 409 PAYMENT_KEY_RESOLVED (SA-824 race ruling 2): a Save under a key "Check payment status" already resolved
+ * to a tombstone. Nothing was recorded under the key and nothing was written: the key is released.
  */
-export function isPaymentKeyNotFound(err: unknown): boolean {
-  const res = (err as { response?: { status?: unknown; data?: { code?: unknown } } })?.response;
-  return res?.status === 404 && res.data?.code === API_ERROR_CODES.PAYMENT_KEY_NOT_FOUND;
+export function isPaymentKeyResolved(err: unknown): boolean {
+  return is409(err, API_ERROR_CODES.PAYMENT_KEY_RESOLVED);
 }
 
-/** What "Check payment status" learned: the stored payment, nothing recorded, or no answer. */
+/**
+ * 409 PAYMENT_KEY_IN_FLIGHT (SA-824 race ruling 3): the resolve waited out its lock behind an uncommitted
+ * payment under the key. NOT an answer: the payment may still commit, so the key stays locked (retryable).
+ */
+export function isPaymentKeyInFlight(err: unknown): boolean {
+  return is409(err, API_ERROR_CODES.PAYMENT_KEY_IN_FLIGHT);
+}
+
+/** The ONE copy for a Save refused 409 PAYMENT_KEY_RESOLVED (the ruling's fixed copy, web and mobile). */
+export const PAYMENT_KEY_RESOLVED_COPY =
+  "This payment attempt was cancelled — nothing was charged. Start a new payment.";
+
+/** What "Check payment status" learned: the stored payment, a tombstone, still in flight, or no answer. */
 export type PaymentStatusOutcome<T = unknown> =
-  { kind: "found"; payment: T } | { kind: "notFound" } | { kind: "error" };
+  | { kind: "found"; payment: T }
+  | { kind: "tombstoned" }
+  | { kind: "inFlight" }
+  | { kind: "error" }
+  /** Nothing unknown was held: no call was made. */
+  | { kind: "idle" };
 
 /** The fixed copy of the status check (web and mobile): never a raw server message. */
 export const PAYMENT_STATUS_COPY = {
@@ -97,6 +120,10 @@ export const PAYMENT_STATUS_COPY = {
   checking: "Checking...",
   recorded: "This payment was recorded.",
   notRecorded: "Nothing was recorded. You can try again.",
+  /** The resolve closed the key: the ruling's fixed copy. */
+  tombstoned: PAYMENT_KEY_RESOLVED_COPY,
+  /** 409 PAYMENT_KEY_IN_FLIGHT: retryable. */
+  inFlight: "This payment is still being recorded. Check its status again in a moment.",
   error: "We couldn't check right now. Try again in a moment.",
   /** Shown while the outcome is unknown, beside the action that replaces Record. */
   unknownHint:
@@ -104,31 +131,74 @@ export const PAYMENT_STATUS_COPY = {
 } as const;
 
 export function paymentStatusCopy(outcome: PaymentStatusOutcome): string {
-  return outcome.kind === "found"
-    ? PAYMENT_STATUS_COPY.recorded
-    : outcome.kind === "notFound"
-      ? PAYMENT_STATUS_COPY.notRecorded
-      : PAYMENT_STATUS_COPY.error;
+  switch (outcome.kind) {
+    case "found":
+      return PAYMENT_STATUS_COPY.recorded;
+    case "tombstoned":
+      return PAYMENT_STATUS_COPY.tombstoned;
+    case "inFlight":
+      return PAYMENT_STATUS_COPY.inFlight;
+    case "idle":
+      return PAYMENT_STATUS_COPY.notRecorded;
+    default:
+      return PAYMENT_STATUS_COPY.error;
+  }
+}
+
+/**
+ * The fixed copy for a Save refused by the payment key rule (web and mobile, and the app-wide toast): a key
+ * conflict (may be recorded), a resolved key (cancelled, nothing charged), a key still in flight. Null for any
+ * other error, so the surface keeps its own copy.
+ */
+export function paymentKeyRefusalCopy(err: unknown): string | null {
+  if (isPaymentKeyResolved(err)) return PAYMENT_KEY_RESOLVED_COPY;
+  if (isPaymentKeyInFlight(err)) return PAYMENT_STATUS_COPY.inFlight;
+  return paymentMayBeRecordedCopy(err);
+}
+
+/**
+ * True for a payment-writer 4xx that PROVES nothing was written: the sale-attempt rule, plus the coded
+ * end-of-day refusal COUNTER_SALE_DAY_CLOSED. A counter SALE commits before its tender (so for a sale that
+ * code means "exists"), but the payment writers throw it INSIDE the money transaction after the key claim, so
+ * the claim and every payment row roll back with it. A body naming a committed order or invoice is still
+ * unknown; 409 PAYMENT_KEY_IN_FLIGHT never is definitive.
+ */
+function isDefinitivePaymentRefusal(err: unknown): boolean {
+  if (isPaymentKeyInFlight(err)) return false;
+  if (is409(err, API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)) return !namesCommittedSale(err);
+  return isDefinitiveSaleRefusal(err);
+}
+
+/** The answer of POST /invoices/payments/by-key/:key/resolve, read strictly: anything else is no answer. */
+function resolvedOutcome<T>(body: T): PaymentStatusOutcome<T> {
+  const state = (body as { state?: unknown } | null)?.state;
+  if (state === "found") return { kind: "found", payment: body };
+  if (state === "tombstoned") return { kind: "tombstoned" };
+  return { kind: "error" };
 }
 
 /**
  * The holder a record-payment dialog keeps for one open: the sale-attempt rule (`saleAttemptKey`,
- * `isDefinitiveSaleRefusal`) plus two payment rules.
+ * `isDefinitiveSaleRefusal`, widened by `isDefinitivePaymentRefusal`) plus the payment rules.
  *  - A payment key conflict (`isPaymentKeyConflict`) proves a payment may already exist under the key:
  *    the key is KEPT and locked (never re-minted), and `mayBeRecorded()` turns true for the dialog copy.
  *  - A 4xx on a RETRY after an unknown outcome proves only that the retry wrote nothing: the key is kept
  *    (the web orders submit-key rule). Only a 2xx, or a 4xx with nothing unknown pending, re-mints.
+ *  - SA-824 race ruling: 409 PAYMENT_KEY_RESOLVED releases the key even while locked (the key is a tombstone:
+ *    nothing is or ever will be recorded under it); 409 PAYMENT_KEY_IN_FLIGHT keeps it locked.
  */
 export function createPaymentKeyHolder(mint: () => string = mintSaleKey) {
   let held: HeldSaleKey | null = null;
   let locked = false;
   let mayBeRecorded = false;
+  const release = () => {
+    held = null;
+    locked = false;
+    mayBeRecorded = false;
+  };
+  // Race ruling 5: ONLY a found payment or a tombstone releases; in flight, an error or a 404 never does.
   const resolveStatus = <T>(outcome: PaymentStatusOutcome<T>): PaymentStatusOutcome<T> => {
-    if (outcome.kind !== "error") {
-      held = null;
-      locked = false;
-      mayBeRecorded = false;
-    }
+    if (outcome.kind === "found" || outcome.kind === "tombstoned") release();
     return outcome;
   };
   return {
@@ -141,14 +211,12 @@ export function createPaymentKeyHolder(mint: () => string = mintSaleKey) {
     /** Apply the outcome (see above). */
     settle(outcome: { ok: true } | { ok: false; error: unknown }): void {
       if (!held) return;
-      if (outcome.ok) {
-        held = null;
-        locked = false;
-        mayBeRecorded = false;
+      if (outcome.ok || isPaymentKeyResolved(outcome.error)) {
+        release();
       } else if (isPaymentKeyConflict(outcome.error)) {
         locked = true;
         mayBeRecorded = true;
-      } else if (isDefinitiveSaleRefusal(outcome.error)) {
+      } else if (isDefinitivePaymentRefusal(outcome.error)) {
         if (!locked) held = null;
       } else {
         locked = true;
@@ -159,21 +227,23 @@ export function createPaymentKeyHolder(mint: () => string = mintSaleKey) {
       return locked;
     },
     /**
-     * Apply a status read (condition a): found settles as a success (key released), a server-definitive
-     * "nothing recorded" releases the key, an error changes nothing (still unknown and locked).
+     * Apply a status answer (race ruling 5): found settles as a success and a tombstone releases the key;
+     * in flight or an error changes nothing (still unknown and locked).
      */
     resolveFromStatus: resolveStatus,
     /**
-     * "Check payment status": read the payment by the HELD key (`fetch` is a GET by key that rejects
-     * with the HTTP error) and apply the answer. Nothing held = nothing unknown: "notFound", no call.
+     * "Check payment status": RESOLVE the HELD key (`resolve` is POST /invoices/payments/by-key/:key/resolve,
+     * rejecting with the HTTP error) and apply the answer: { state: "found" } or { state: "tombstoned" }
+     * releases; 409 PAYMENT_KEY_IN_FLIGHT is "inFlight"; anything else (a 404 included) is "error". Both keep
+     * the key locked. Nothing held = nothing unknown: "idle", no call.
      */
-    async checkStatus<T>(fetch: (key: string) => Promise<T>): Promise<PaymentStatusOutcome<T>> {
-      if (!held || !locked) return { kind: "notFound" };
+    async checkStatus<T>(resolve: (key: string) => Promise<T>): Promise<PaymentStatusOutcome<T>> {
+      if (!held || !locked) return { kind: "idle" };
       try {
-        return resolveStatus({ kind: "found", payment: await fetch(held.key) });
+        return resolveStatus(resolvedOutcome(await resolve(held.key)));
       } catch (error) {
         return resolveStatus<T>(
-          isPaymentKeyNotFound(error) ? { kind: "notFound" } : { kind: "error" },
+          isPaymentKeyInFlight(error) ? { kind: "inFlight" } : { kind: "error" },
         );
       }
     },

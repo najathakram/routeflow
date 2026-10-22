@@ -25,7 +25,7 @@ import { safeTextErrorCopy } from "./safe-text-error-copy";
 import { sellerUnavailableCopy } from "./seller-unavailable";
 import { sellingRestrictedCopy } from "./selling-restricted-copy";
 import { RULE_ERROR_COPY } from "./restriction-rule-errors";
-import { paymentMayBeRecordedCopy } from "@routeflow/types/payment-submit-key";
+import { paymentKeyRefusalCopy } from "@routeflow/types/payment-submit-key";
 
 /**
  * B980 (owner rule: no raw strings in the UI): the app-wide mutation error toast shows FIXED copy,
@@ -448,8 +448,9 @@ export function codedToastCopy(err: unknown): string | null {
 }
 
 export function genericToastCopy(err: unknown, surfaceRefusal?: string): string {
-  // SA-824: a payment key conflict means the payment may already be recorded (never "nothing saved").
-  const recorded = paymentMayBeRecordedCopy(err);
+  // SA-824: a payment key conflict means the payment may already be recorded (never "nothing saved"); a
+  // resolved key was cancelled with nothing charged; a key in flight is retryable. Fixed copy, by code.
+  const recorded = paymentKeyRefusalCopy(err);
   if (recorded) return recorded;
   const coded = codedToastCopy(err);
   if (coded) return coded;

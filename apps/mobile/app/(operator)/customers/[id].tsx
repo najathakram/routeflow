@@ -39,7 +39,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { tierLabel } from "../../../lib/tier-label";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
-import { paymentMayBeRecordedCopy, usePaymentSubmitKey } from "../../../lib/payment-submit-key";
+import { paymentKeyRefusalCopy, usePaymentSubmitKey } from "../../../lib/payment-submit-key";
 import { usePaymentStatusCheck } from "../../../lib/use-payment-status-check";
 import { PaymentStatusNotice } from "../../../components/PaymentStatusNotice";
 import { useRecordReturn } from "../../../hooks/useRecordReturn";
@@ -548,7 +548,7 @@ function RecordAdvanceModal({
         },
         onError: (e: any) =>
           showToast(
-            paymentMayBeRecordedCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+            paymentKeyRefusalCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
           ),
       },
     );

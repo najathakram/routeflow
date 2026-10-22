@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { paymentStatusCopy, type PaymentStatusOutcome } from "@routeflow/types/payment-submit-key";
-import { fetchPaymentByKey } from "./api/payment-by-key";
+import { resolvePaymentByKey } from "./api/payment-by-key";
 import { checkPaymentStatus } from "./payment-status-check";
 import type { PaymentKeyHolder } from "./payment-submit-key";
 
@@ -26,7 +26,7 @@ export function usePaymentStatusCheck(
       const { outcome, message } = await checkPaymentStatus(
         holder,
         scope,
-        fetchPaymentByKey,
+        resolvePaymentByKey,
         upload,
       );
       setAnswer(outcome);
@@ -41,9 +41,12 @@ export function usePaymentStatusCheck(
     }
   }, [holder, scope, upload, qc, onRecorded]);
   const unknown = holder.hasUnknown();
-  // The last answer's fixed line; a newer unknown outcome hides a stale "nothing was recorded".
+  // The last answer's fixed line; while unknown only a no-answer line shows (error, in flight), so a newer
+  // unknown outcome hides a stale "cancelled" or "recorded".
   const message =
-    answer && (!unknown || answer.kind === "error") ? paymentStatusCopy(answer) : null;
+    answer && (!unknown || answer.kind === "error" || answer.kind === "inFlight")
+      ? paymentStatusCopy(answer)
+      : null;
   return { unknown, checking, check, message };
 }
 

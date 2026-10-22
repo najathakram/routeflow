@@ -9,14 +9,16 @@ import {
 import InvoiceDetailPage from "./page";
 
 /**
- * SA-824 (SA conditions a/b): the invoice page's Record Payment dialog. After an unknown outcome it offers
- * "Check payment status" (a GET by key) before any new attempt, Record is off meanwhile, and a Cancel ->
- * reopen keeps the same key. Found closes like a 2xx (and attaches the proof photo); a 404
- * PAYMENT_KEY_NOT_FOUND releases the key; any other error stays locked. The REAL payment hooks run.
+ * SA-824 (SA conditions a/b + race ruling 5): the invoice page's Record Payment dialog. After an unknown
+ * outcome it offers "Check payment status" (POST .../by-key/:key/resolve) before any new attempt, Record is off
+ * meanwhile, and a Cancel -> reopen keeps the same key. Found closes like a 2xx (and attaches the proof photo);
+ * a tombstone releases the key; a 404, PAYMENT_KEY_IN_FLIGHT or any other error stays locked. A Save refused
+ * 409 PAYMENT_KEY_RESOLVED releases the key with the ruling's copy. The REAL payment hooks run.
  */
 const mockToast = jest.fn();
 const mockPost = jest.fn();
 const mockGet = jest.fn();
+const mockResolve = jest.fn();
 jest.mock("@routeflow/ui/web", () => ({
   ...jest.requireActual("@routeflow/ui/web"),
   useToast: () => ({ toast: mockToast }),
@@ -30,7 +32,9 @@ jest.mock("next/navigation", () => ({
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
     get: (...a: unknown[]) => mockGet(...a),
-    post: (...a: unknown[]) => mockPost(...a),
+    // the by-key resolve is its own mock so the payment POSTs keep their call indices
+    post: (url: string, ...a: unknown[]) =>
+      url.includes("/payments/by-key/") ? mockResolve(url, ...a) : mockPost(url, ...a),
     patch: jest.fn(),
     delete: jest.fn(),
   },
@@ -92,10 +96,9 @@ const keyOf = (call: unknown[]) =>
   ((call[2] as { headers: Record<string, string> }).headers as Record<string, string>)[
     "Idempotency-Key"
   ];
-const byKey = (answer: () => unknown) => async (url: string) => {
-  if (url.includes("/payments/by-key/")) return answer();
-  return { data: {} };
-};
+const resolveUrl = (key: string) => `/invoices/payments/by-key/${encodeURIComponent(key)}/resolve`;
+const RESOLVED_COPY =
+  "This payment attempt was cancelled — nothing was charged. Start a new payment.";
 
 // the sidebar / banner Button (the toolbar trigger is a dropdown)
 const openDialog = () =>
@@ -121,7 +124,8 @@ describe("invoices/[id] Record Payment: Check payment status (SA-824)", () => {
     jest.clearAllMocks();
     clearPaymentKeyRegistry();
     seedSession("OPERATOR");
-    mockGet.mockImplementation(byKey(() => ({ data: {} })));
+    mockGet.mockResolvedValue({ data: {} });
+    mockResolve.mockResolvedValue({ data: {} });
   });
   afterEach(() => seedSession(null));
 
@@ -140,13 +144,13 @@ describe("invoices/[id] Record Payment: Check payment status (SA-824)", () => {
     fireEvent.click(record());
     await screen.findByRole("button", { name: "Check payment status" });
     const sent = keyOf(mockPost.mock.calls[0]);
-    mockGet.mockImplementation(
-      byKey(() => ({ data: { scope: "INVOICE_PAYMENT", id: "inv-1", createdPaymentId: "p7" } })),
-    );
+    mockResolve.mockResolvedValue({
+      data: { state: "found", scope: "INVOICE_PAYMENT", id: "inv-1", createdPaymentId: "p7" },
+    });
     mockPost.mockResolvedValue({ data: { url: "u" } });
     fireEvent.click(checkBtn());
     await waitFor(() => expect(form()).toBeNull());
-    expect(mockGet).toHaveBeenCalledWith(`/invoices/payments/by-key/${encodeURIComponent(sent)}`);
+    expect(mockResolve).toHaveBeenCalledWith(resolveUrl(sent));
     expect(mockPost.mock.calls.map((c) => c[0])).toContain("/invoices/payments/p7/image");
     expect(mockToast).toHaveBeenCalledWith(
       expect.objectContaining({ title: "This payment was recorded." }),
@@ -162,9 +166,9 @@ describe("invoices/[id] Record Payment: Check payment status (SA-824)", () => {
     });
     fireEvent.click(record());
     await screen.findByRole("button", { name: "Check payment status" });
-    mockGet.mockImplementation(
-      byKey(() => ({ data: { scope: "INVOICE_PAYMENT", id: "inv-1", payments: [{ id: "old" }] } })),
-    );
+    mockResolve.mockResolvedValue({
+      data: { state: "found", scope: "INVOICE_PAYMENT", id: "inv-1", payments: [{ id: "old" }] },
+    });
     fireEvent.click(checkBtn());
     await waitFor(() =>
       expect(mockToast).toHaveBeenCalledWith(
@@ -174,17 +178,64 @@ describe("invoices/[id] Record Payment: Check payment status (SA-824)", () => {
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
-  it("not found (404 PAYMENT_KEY_NOT_FOUND): released, Record is back, the next attempt has a NEW key", async () => {
+  it("tombstoned: released with the ruling's copy, Record is back, the next attempt has a NEW key", async () => {
     await goUnknown();
     const first = keyOf(mockPost.mock.calls[0]);
-    mockGet.mockImplementation(
-      byKey(() => {
-        throw httpErr(404, { code: "PAYMENT_KEY_NOT_FOUND", message: "RAW SERVER TEXT" });
-      }),
+    mockResolve.mockResolvedValue({ data: { state: "tombstoned" } });
+    fireEvent.click(checkBtn());
+    expect(await screen.findByText(RESOLVED_COPY)).toBeTruthy();
+    expect(record()).not.toBeDisabled();
+    mockPost.mockRejectedValueOnce(httpErr(400));
+    fireEvent.click(record());
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(2));
+    expect(keyOf(mockPost.mock.calls[1])).not.toBe(first);
+  });
+
+  it("a 404 (even PAYMENT_KEY_NOT_FOUND) never releases (race ruling 5): still unknown, Record stays off", async () => {
+    await goUnknown();
+    mockResolve.mockRejectedValue(
+      httpErr(404, { code: "PAYMENT_KEY_NOT_FOUND", message: "RAW SERVER TEXT" }),
     );
     fireEvent.click(checkBtn());
-    expect(await screen.findByText("Nothing was recorded. You can try again.")).toBeTruthy();
+    expect(
+      await screen.findByText("We couldn't check right now. Try again in a moment."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Nothing was recorded. You can try again.")).toBeNull();
+    expect(record()).toBeDisabled();
+    expect(checkBtn()).toBeTruthy();
+  });
+
+  it("409 PAYMENT_KEY_IN_FLIGHT: the fixed retry copy, still unknown, the check still offered", async () => {
+    await goUnknown();
+    mockResolve.mockRejectedValue(
+      httpErr(409, { code: "PAYMENT_KEY_IN_FLIGHT", message: "RAW SERVER TEXT" }),
+    );
+    fireEvent.click(checkBtn());
+    expect(
+      await screen.findByText(
+        "This payment is still being recorded. Check its status again in a moment.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/RAW SERVER TEXT/)).toBeNull();
+    expect(record()).toBeDisabled();
+    expect(checkBtn()).toBeTruthy();
+  });
+
+  it("a Save refused 409 PAYMENT_KEY_RESOLVED: the ruling's copy, the key released, the next Save has a NEW key", async () => {
+    mockPost.mockRejectedValueOnce(
+      httpErr(409, { code: "PAYMENT_KEY_RESOLVED", message: "RAW SERVER TEXT" }),
+    );
+    renderWithProviders(<InvoiceDetailPage />);
+    openDialog();
+    fireEvent.click(record());
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({ description: RESOLVED_COPY }),
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "Check payment status" })).toBeNull();
     expect(record()).not.toBeDisabled();
+    const first = keyOf(mockPost.mock.calls[0]);
     mockPost.mockRejectedValueOnce(httpErr(400));
     fireEvent.click(record());
     await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(2));
@@ -193,11 +244,7 @@ describe("invoices/[id] Record Payment: Check payment status (SA-824)", () => {
 
   it("error: the fixed copy (never the raw message), still unknown, Record stays off", async () => {
     await goUnknown();
-    mockGet.mockImplementation(
-      byKey(() => {
-        throw httpErr(500, { message: "RAW SERVER TEXT" });
-      }),
-    );
+    mockResolve.mockRejectedValue(httpErr(500, { message: "RAW SERVER TEXT" }));
     fireEvent.click(checkBtn());
     expect(
       await screen.findByText("We couldn't check right now. Try again in a moment."),
@@ -216,9 +263,7 @@ describe("invoices/[id] Record Payment: Check payment status (SA-824)", () => {
     expect(checkBtn()).toBeTruthy();
     expect(record()).toBeDisabled();
     fireEvent.click(checkBtn());
-    await waitFor(() =>
-      expect(mockGet).toHaveBeenCalledWith(`/invoices/payments/by-key/${encodeURIComponent(sent)}`),
-    );
+    await waitFor(() => expect(mockResolve).toHaveBeenCalledWith(resolveUrl(sent)));
   });
 
   it("submitting the form while unknown (Enter) sends nothing", async () => {

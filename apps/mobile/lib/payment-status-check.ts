@@ -15,26 +15,27 @@ export { PAYMENT_STATUS_COPY };
 export const PAYMENT_PHOTO_FAILED_COPY = "Payment recorded, but the photo failed to upload.";
 
 /**
- * SA-824: `GET /invoices/payments/by-key/:key`, the "Check payment status" read. 200 = the stored payment;
- * 404 PAYMENT_KEY_NOT_FOUND = nothing recorded under the key (the server-definitive answer).
+ * SA-824 race ruling 3/5: `POST /invoices/payments/by-key/:key/resolve`, the "Check payment status" call.
+ * 200 { state: "found", ... } = the stored payment; 200 { state: "tombstoned" } = nothing was recorded and the
+ * key is closed; 409 PAYMENT_KEY_IN_FLIGHT = still committing (retryable). Only found / tombstoned release.
  */
-export const paymentByKeyPath = (key: string) =>
-  `/invoices/payments/by-key/${encodeURIComponent(key)}`;
+export const paymentResolvePath = (key: string) =>
+  `/invoices/payments/by-key/${encodeURIComponent(key)}/resolve`;
 
 /**
- * Run the check against the holder (the shared rule: found releases the key, 404 PAYMENT_KEY_NOT_FOUND
- * releases it, anything else stays unknown) and pair the outcome with its FIXED line. On "found" the
+ * Run the check against the holder (the shared rule: found or a tombstone releases the key; in flight, a 404
+ * or any other error stays unknown) and pair the outcome with its FIXED line. On "found" the
  * receipt photo remembered for `scope` is attached to the found payment with `upload` (the same call the
  * 2xx path makes); a photo that cannot be attached is never lost silently (its own fixed line).
  */
 export async function checkPaymentStatus(
   holder: PaymentKeyHolder,
   scope: string,
-  fetch: (key: string) => Promise<unknown>,
+  resolve: (key: string) => Promise<unknown>,
   upload: (paymentId: string, photoUri: string) => Promise<unknown>,
 ): Promise<{ outcome: PaymentStatusOutcome; message: string; photo: FoundPhotoOutcome }> {
-  const outcome = await holder.checkStatus(fetch);
-  if (outcome.kind === "notFound") forgetPaymentProof(scope);
+  const outcome = await holder.checkStatus(resolve);
+  if (outcome.kind === "tombstoned") forgetPaymentProof(scope); // nothing recorded: the photo has no payment
   if (outcome.kind !== "found")
     return { outcome, message: paymentStatusCopy(outcome), photo: "none" };
   const photo = await finishFoundPayment<string>(scope, outcome.payment, upload);

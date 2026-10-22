@@ -115,7 +115,7 @@ import {
   PAYMENT_PHOTO_LATER_COPY,
   finishFoundPayment,
   forgetPaymentProof,
-  paymentMayBeRecordedCopy,
+  paymentKeyRefusalCopy,
   rememberPaymentProof,
   usePaymentSubmitKey,
 } from "@/lib/payment-submit-key";
@@ -1891,7 +1891,7 @@ export default function InvoiceDetailPage() {
           toast({
             title: "Failed to record payment",
             description:
-              paymentMayBeRecordedCopy(err) ??
+              paymentKeyRefusalCopy(err) ??
               dayClosedCopy(err) ??
               err?.response?.data?.message ??
               "Please try again.",

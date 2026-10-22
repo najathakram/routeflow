@@ -32,7 +32,7 @@ import { hasUnsavedPayment } from "../../../lib/discard-guard";
 import { isOpenInvoiceStatus } from "../../../lib/invoices-logic";
 import {
   forgetPaymentProof,
-  paymentMayBeRecordedCopy,
+  paymentKeyRefusalCopy,
   rememberPaymentProof,
   usePaymentSubmitKey,
 } from "../../../lib/payment-submit-key";
@@ -296,7 +296,7 @@ function PaymentForm({
         },
         onError: (e: any) =>
           showToast(
-            paymentMayBeRecordedCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+            paymentKeyRefusalCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
           ),
       },
     );
