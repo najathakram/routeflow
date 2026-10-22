@@ -56,6 +56,10 @@ export function itemIdsFromBranch(branch, knownIds = new Set()) {
     else if (/^\d{3,5}$/.test(tok) && knownIds.has(tok)) id = tok;
     if (id && !out.includes(id)) out.push(id);
   }
+  // rNNN / rowNNN / row-NNN (fix/r704-x, feat/row688, fix/row-688-y): word-bounded, and never
+  // next to a "." (a version like v1.r2.0), only for known item ids.
+  for (const m of branch.matchAll(/(?<![A-Za-z0-9.])(?:r|row)-?(\d{1,5})(?![A-Za-z0-9.])/gi))
+    if (knownIds.has(m[1]) && !out.includes(m[1])) out.push(m[1]);
   return out;
 }
 
