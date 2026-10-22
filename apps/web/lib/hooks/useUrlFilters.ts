@@ -7,6 +7,13 @@ type FilterValue = string | boolean | undefined;
 type FilterState = Record<string, FilterValue>;
 
 /**
+ * How long a write we made is trusted as "the URL" before it has shown up in `useSearchParams()`. `router.replace` commits
+ * asynchronously (a second or two at worst on a slow device), so a write made in that window must build on the previous
+ * write, not on the render's stale snapshot (row 729: two filter writes < ~150 ms apart lost the first).
+ */
+const PENDING_WRITE_MS = 1500;
+
+/**
  * Syncs a set of named filter values to URL search params.
  * Boolean true becomes "1", false/undefined removes the param.
  *
@@ -26,6 +33,29 @@ export function useUrlFilters<T extends FilterState>(
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  // Every write starts from the latest URL we know of: the one in `searchParams` as of the LATEST render (a handler can
+  // hold an older `setFilter`), or the last write still on its way there. Row 729.
+  const latestParams = React.useRef(searchParams);
+  latestParams.current = searchParams;
+  const pendingWrite = React.useRef<{ query: string; at: number } | null>(null);
+  const baseParams = React.useCallback(() => {
+    const current = latestParams.current.toString();
+    const pending = pendingWrite.current;
+    if (pending && pending.query !== current && Date.now() - pending.at < PENDING_WRITE_MS) {
+      return new URLSearchParams(pending.query);
+    }
+    return new URLSearchParams(current);
+  }, []);
+  const write = React.useCallback(
+    (params: URLSearchParams) => {
+      // Always reset to page 1 when filter changes
+      params.delete("page");
+      const query = params.toString();
+      pendingWrite.current = { query, at: Date.now() };
+      router.replace(`${pathname}?${query}`, { scroll: false });
+    },
+    [router, pathname],
+  );
 
   // Read current state from URL, falling back to defaults
   const state = React.useMemo<T>(() => {
@@ -45,7 +75,7 @@ export function useUrlFilters<T extends FilterState>(
 
   const setFilter = React.useCallback(
     (key: keyof T, value: FilterValue) => {
-      const params = new URLSearchParams(searchParams.toString());
+      const params = baseParams();
       // Remove keys that are empty / false / undefined
       if (value === undefined || value === "" || value === false) {
         params.delete(key as string);
@@ -54,25 +84,21 @@ export function useUrlFilters<T extends FilterState>(
       } else {
         params.set(key as string, value);
       }
-      // Always reset to page 1 when filter changes
-      params.delete("page");
-      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+      write(params);
     },
-    [router, pathname, searchParams],
+    [baseParams, write],
   );
 
   /**
    * Set several filters in ONE write.
    *
-   * Calling `setFilter` twice in a row does NOT apply both: each call builds its
-   * query from the URL as it was before the handler ran (`router.replace`
-   * commits asynchronously, so the first write is not visible to the second),
-   * and the last replace wins — silently discarding the earlier keys. Any
-   * handler changing more than one filter must use this.
+   * One write is still the cleanest way to change several filters at once. (Successive
+   * `setFilter` calls now do compose, since each starts from the latest write, but they
+   * would still replace the URL once per call.)
    */
   const setFilters = React.useCallback(
     (next: Partial<Record<keyof T, FilterValue>>) => {
-      const params = new URLSearchParams(searchParams.toString());
+      const params = baseParams();
       for (const key in next) {
         const value = next[key];
         if (value === undefined || value === "" || value === false) {
@@ -83,21 +109,19 @@ export function useUrlFilters<T extends FilterState>(
           params.set(key as string, value as string);
         }
       }
-      params.delete("page");
-      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+      write(params);
     },
-    [router, pathname, searchParams],
+    [baseParams, write],
   );
 
   const clearAll = React.useCallback(() => {
     // Remove all known filter keys, keep unrelated params (e.g. action)
-    const params = new URLSearchParams(searchParams.toString());
+    const params = baseParams();
     for (const key in defaults) {
       params.delete(key as string);
     }
-    params.delete("page");
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [router, pathname, searchParams, defaults]);
+    write(params);
+  }, [baseParams, write, defaults]);
 
   return [state, setFilter, clearAll, setFilters];
 }
