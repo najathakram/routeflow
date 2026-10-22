@@ -351,6 +351,8 @@ test.describe("R7b till: change due note and the keyboard path to pay", () => {
     await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(2, {
       timeout: 15_000,
     });
+    // a cashier pauses; a scanner's CR+LF inside the window is swallowed by design (EMPTY_ENTER_QUIET_MS = 150)
+    await page.waitForTimeout(250);
     await scanField.press("Enter"); // empty scan box with lines: focus moves to the payment
     await expect(page.getByLabel("Amount tendered")).toBeFocused();
     await page.keyboard.type("1000");
