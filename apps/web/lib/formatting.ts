@@ -95,6 +95,13 @@ export function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** Today's date in the browser's LOCAL calendar (YYYY-MM-DD) - what a date <input> shows as today. */
+export function todayLocalIso(): string {
+  const d = new Date();
+  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+  return `${pad(d.getFullYear(), 4)}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 /**
  * Whole calendar days from the viewer's LOCAL today until a stored
  * UTC-midnight calendar date. Negative = that many days overdue. The due
