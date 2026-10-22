@@ -1,5 +1,6 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -84,7 +85,7 @@ const scan = async (text: string, name = "Cola") => {
 
 describe("CounterSaleScreen: the finished sale's order number (CQ-17)", () => {
   it("Complete & next sale names the order just completed, until the next sale has a line", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     fireEvent.click(screen.getByRole("button", { name: "$20" }));
     fireEvent.click(screen.getByRole("button", { name: "Complete & next sale" }));
@@ -102,7 +103,7 @@ describe("CounterSaleScreen: the finished sale's order number (CQ-17)", () => {
     const original = Element.prototype.scrollIntoView;
     Element.prototype.scrollIntoView = scrollIntoView;
     try {
-      renderWithProviders(<CounterSaleScreen />);
+      renderTill(<CounterSaleScreen />);
       await scan("COLA");
       fireEvent.click(screen.getByRole("button", { name: "$20" }));
       scrollIntoView.mockClear(); // the scan field's own focus handling may call it too
@@ -128,7 +129,7 @@ describe("CounterSaleScreen: the finished sale's order number (CQ-17)", () => {
       change: 2.78,
       method: "CASH",
     });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("CRATE", "Crate");
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "20" } });
     fireEvent.click(screen.getByRole("button", { name: "Complete & next sale" }));
@@ -147,7 +148,7 @@ describe("CounterSaleScreen: the finished sale's order number (CQ-17)", () => {
       change: undefined,
       method: "CARD",
     });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(screen.getByRole("button", { name: "Complete & next sale" }));
@@ -157,7 +158,7 @@ describe("CounterSaleScreen: the finished sale's order number (CQ-17)", () => {
   });
 
   it("Complete & show receipt shows the receipt, not the note", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     fireEvent.click(screen.getByRole("button", { name: "$20" }));
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));

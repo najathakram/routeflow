@@ -4,6 +4,7 @@ import type { CreateOrderOptions, ReplayedOrder } from "./order-create-options";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { CreateSaleDto } from "./dto/create-sale.dto";
 import { parseOrderDate } from "./order-parsers";
+import { calendarDateFromIso, startOfCalendarDay } from "../common/calendar-date";
 
 /**
  * INTERNAL options of `OrdersService.createSale` (SA-655): the counter sale threads these through the
@@ -29,32 +30,32 @@ export interface SaleOptions {
  * present — past/today is a (back)dated delivered sale, a future date is a scheduled deliver-later
  * order carrying that requested date. `deliveredNow` is still honoured alone for older clients; when
  * both are sent, `deliveredOn` wins. Extracted verbatim from createSale.
+ *
+ * Row 735b: "today" is the TENANT's calendar day in `zone` (`TenantConfig.timezone`, UTC when null/invalid - the
+ * `calendar-date.ts` contract and the same helpers as the past-date guard), not the UTC day. The day the picker
+ * sent is read by its literal first ten characters (the house rule) and compared as a day: later than the tenant's
+ * today is a scheduled order, today and earlier a delivered sale. `now` is the clock (tests).
  */
-export function resolveSaleDelivery(dto: CreateSaleDto, user: JwtPayload) {
+export function resolveSaleDelivery(
+  dto: CreateSaleDto,
+  user: JwtPayload,
+  zone?: string | null,
+  now: Date = new Date(),
+) {
   let deliveredNow = dto.deliveredNow;
   let deliveredAt = parseOrderDate(dto.orderDate, user.role);
   let requestedDeliveryDate = dto.requestedDeliveryDate;
   if (dto.deliveredOn != null) {
     const parsed = new Date(dto.deliveredOn);
     if (Number.isNaN(parsed.getTime())) throw new BadRequestException("Invalid delivery date");
-    const now = new Date();
-    const endOfToday = Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      23,
-      59,
-      59,
-      999,
-    );
-    if (parsed.getTime() > endOfToday) {
+    if (dto.deliveredOn.slice(0, 10) > calendarDateFromIso(startOfCalendarDay(now, zone))) {
       deliveredNow = false;
       requestedDeliveryDate = dto.deliveredOn;
     } else {
       // Past/today: the sale happened on that day, so it goes through the same
       // staff-only gate and 2-year floor backdating has always had.
       deliveredNow = true;
-      deliveredAt = parseOrderDate(dto.deliveredOn, user.role);
+      deliveredAt = parseOrderDate(dto.deliveredOn, user.role, { zone, now });
     }
   }
   return { deliveredNow, deliveredAt, requestedDeliveryDate };

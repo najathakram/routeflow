@@ -112,3 +112,36 @@ export function parseEta(text, now = Date.now()) {
   if (new Date(ms).getUTCDate() !== day) return null;
   return ms;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Plan-train tags (the plan's Tag column): when a train lands, in the owner's words.
+const TAG_WORDS = { U: "before 10-26", A1: "week of 10-26", A2: "week of 11-02", A3: "later" };
+const TAG_RANK = { U: 0, A1: 1, A2: 2, A3: 3 };
+const tagKey = (tag) => /^(U|A\d)/i.exec(String(tag ?? "").trim())?.[1]?.toUpperCase() ?? null;
+
+/** "A1" -> "week of 10-26"; an unknown tag is returned as it is; empty -> "". */
+export function tagWords(tag) {
+  const t = String(tag ?? "").trim();
+  // A range shows both ends: "A1-A2" -> "weeks of 10-26 to 11-02"; "A2-A3" -> "week of 11-02 or later".
+  const range = /^(U|A\d)-(A\d)/i.exec(t);
+  if (range) {
+    const [a, b] = [range[1].toUpperCase(), range[2].toUpperCase()];
+    if (b === "A3") return `${TAG_WORDS[a] ?? a} or later`;
+    if (a !== "U" && TAG_WORDS[a] && TAG_WORDS[b])
+      return `weeks of ${TAG_WORDS[a].replace("week of ", "")} to ${TAG_WORDS[b].replace("week of ", "")}`;
+    return `${TAG_WORDS[a] ?? a} to ${TAG_WORDS[b] ?? b}`;
+  }
+  return TAG_WORDS[tagKey(t)] ?? t;
+}
+
+/** Sort rank of a tag: earliest first; unknown or empty last. */
+export const tagRank = (tag) => TAG_RANK[tagKey(tag)] ?? 9;
+
+/** When each tag is due (one place to change): U = the reset, A1/A2 = the end of that week. */
+const TAG_DUE = { U: "2026-10-26", A1: "2026-11-01", A2: "2026-11-08" };
+
+/** The due time (end of that UTC day, ms) of a plan tag; null for A3, unknown or empty tags. */
+export function tagDue(tag) {
+  const d = TAG_DUE[tagKey(tag)];
+  return d ? Date.parse(`${d}T23:59:59Z`) : null;
+}

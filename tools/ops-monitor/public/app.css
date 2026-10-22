@@ -1881,3 +1881,14 @@ details.answered {
     font-size: 12px;
   }
 }
+
+.tpart {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.tpart .ptitle {
+  flex: 1 1 12rem;
+}

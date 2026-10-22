@@ -1,5 +1,6 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { getCounterCartBusy, setCounterCartBusy } from "@/lib/counter-cart-signal";
 
@@ -108,7 +109,7 @@ const shipBtn = () => screen.getByRole("button", { name: "Ship this order instea
 
 describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
   it("2 lines + a customer: POST /drafts with the mapped payload, then the builder resumes it", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     pickAcme();
     await scan("COLA");
     await scan("WATER");
@@ -149,7 +150,7 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
 
   it("a successful hand-off leaves NO stored live cart behind, even when the screen unmounts at once (SA-748 HIGH)", async () => {
     const LIVE_KEY = "rf.counterSale.liveCart:acme:u-a";
-    const view = renderWithProviders(<CounterSaleScreen />);
+    const view = renderTill(<CounterSaleScreen />);
     pickAcme();
     await scan("COLA");
     await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull()); // the cart is saved
@@ -165,7 +166,7 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
   it("the cart is cleared only AFTER the draft exists", async () => {
     const reply = deferred<{ id: string }>();
     createDraft.mockReturnValue(reply.promise);
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     pickAcme();
     await scan("COLA");
     await waitFor(() => expect(lines()).toHaveLength(1));
@@ -181,7 +182,7 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
   it("a ship hand-off never navigates after the counter has been left (unmounted)", async () => {
     const draft = deferred<{ id: string }>();
     createDraft.mockReturnValue(draft.promise);
-    const view = renderWithProviders(<CounterSaleScreen />);
+    const view = renderTill(<CounterSaleScreen />);
     pickAcme();
     await scan("COLA");
     await waitFor(() => expect(lines()).toHaveLength(1));
@@ -194,7 +195,7 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
   });
 
   it("publishes busy while the ship draft is saving", async () => {
-    const view = renderWithProviders(<CounterSaleScreen />);
+    const view = renderTill(<CounterSaleScreen />);
     draftPending = true;
     view.rerender(<CounterSaleScreen />);
     await waitFor(() => expect(getCounterCartBusy()).toBe(true));
@@ -207,7 +208,7 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
   it("a double click is ONE draft", async () => {
     const reply = deferred<{ id: string }>();
     createDraft.mockReturnValue(reply.promise);
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     pickAcme();
     await scan("COLA");
     await waitFor(() => expect(lines()).toHaveLength(1));
@@ -220,7 +221,7 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
 
   it("a POST failure keeps the cart and the customer, shows the copy, and Ship works again", async () => {
     createDraft.mockRejectedValueOnce({ response: { status: 500 } });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     pickAcme();
     await scan("COLA");
     await scan("WATER");
@@ -242,7 +243,7 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
   });
 
   it("a walk-in cart: focuses the customer field with the caption, makes NO draft until a pick, then continues on its own", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await waitFor(() => expect(lines()).toHaveLength(1));
     fireEvent.click(shipBtn());
@@ -263,7 +264,7 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
 
   it("a scan still resolving is not lost: the hand-off waits for it", async () => {
     const reply = deferred<unknown>();
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     pickAcme();
     await scan("COLA");
     await waitFor(() => expect(lines()).toHaveLength(1));
@@ -277,7 +278,7 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
   });
 
   it("an empty cart keeps the old URL hand-off (nothing to carry): no draft", () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     pickAcme();
     fireEvent.click(shipBtn());
     expect(createDraft).not.toHaveBeenCalled();
@@ -286,7 +287,7 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
 
   it("the button keeps its place and label, and is disabled while the outcome is unknown (locked)", async () => {
     mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await waitFor(() => expect(lines()).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "$20" }));
@@ -314,7 +315,7 @@ describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
   it("Complete, then Ship while the sale POST is in flight: no draft, no navigation, the sale is untouched", async () => {
     const post = deferred<typeof SALE>();
     mutateAsync.mockReturnValue(post.promise);
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await waitFor(() => expect(lines()).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "Exact" }));
@@ -334,7 +335,7 @@ describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
 
   it("a pending ship continues once a sale POST that held it back ends (a clean 4xx writes nothing)", async () => {
     const scanDone = deferred<unknown>();
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     pickAcme();
     resolveHook = () => scanDone.promise;
     const field = screen.getByLabelText("Scan or search items");
@@ -353,7 +354,7 @@ describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
   });
 
   it("the Ship button is disabled while the sale POST is pending", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     salePending = true;
     fireEvent.click(screen.getByRole("radio", { name: "Card" })); // any state change re-reads the flag
@@ -363,7 +364,7 @@ describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
   it("Ship, then Enter in the cash field while the draft saves: no sale POST", async () => {
     const draft = deferred<{ id: string }>();
     createDraft.mockReturnValue(draft.promise);
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     pickAcme();
     await scan("COLA");
     await waitFor(() => expect(lines()).toHaveLength(1));
@@ -381,7 +382,7 @@ describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
   });
 
   it("both Complete buttons are disabled while the draft saves", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     draftPending = true;
     fireEvent.click(screen.getByRole("radio", { name: "Card" }));
