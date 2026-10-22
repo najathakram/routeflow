@@ -19,7 +19,7 @@ export interface OrderCreatedToastInput {
  * on the toast instead of navigating on its own.
  */
 /** F28: with an action the toast stays until dismissed (the X), so a glance away never loses "View Order". */
-const ACTION_TOAST_MS = 24 * 60 * 60 * 1000;
+export const ACTION_TOAST_MS = 24 * 60 * 60 * 1000;
 
 export function orderCreatedToast({
   mergeChoice,

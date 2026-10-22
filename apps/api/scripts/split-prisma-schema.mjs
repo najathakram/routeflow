@@ -223,6 +223,7 @@ const MODEL_DOMAIN = {
   InvoiceScan: "finance",
   SupplierStatementScan: "finance",
   AdvancePayment: "finance",
+  PaymentIdempotencyKey: "finance",
   SupplierCredit: "finance",
   RecurringInvoice: "finance",
   RecurringInvoiceItem: "finance",

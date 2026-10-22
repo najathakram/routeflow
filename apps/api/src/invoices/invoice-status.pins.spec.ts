@@ -98,7 +98,8 @@ describe("statusFromPayments: one body, one deliberate PAID caller (SA-763r P-3)
     expect(bad).toEqual([]);
   });
 
-  it('the literal "PAID" is passed at exactly ONE call site: recordStandalonePayment', () => {
+  // SA-824: recordStandalonePayment is now the Idempotency-Key entry point; its body is writeStandalonePayment.
+  it('the literal "PAID" is passed at exactly ONE call site: writeStandalonePayment', () => {
     const paid: string[] = [];
     for (const { rel, src } of sources) {
       for (const c of statusCalls(src)) {
@@ -109,10 +110,10 @@ describe("statusFromPayments: one body, one deliberate PAID caller (SA-763r P-3)
         }
       }
     }
-    expect(paid).toEqual(["invoices/invoices.service.ts#recordStandalonePayment"]);
+    expect(paid).toEqual(["invoices/invoices.service.ts#writeStandalonePayment"]);
     // and that site writes the audit row in the same transaction
     const svc = sources.find((s) => s.rel === "invoices/invoices.service.ts")!.src;
-    const at = svc.indexOf("async recordStandalonePayment(");
+    const at = svc.indexOf("async writeStandalonePayment(");
     const body = svc.slice(at, svc.indexOf("\n  }\n", at));
     expect(body).toContain("auditDeliberateOverpayment(");
   });

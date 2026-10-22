@@ -186,15 +186,46 @@ export function CounterReceiptView({
           </div>
         ) : null}
         {m.showPaid ? (
-          <div className="flex justify-between">
+          <div className="flex justify-between" data-testid="receipt-paid">
             <dt>Paid</dt>
             <dd>{money(m.paid)}</dd>
+          </div>
+        ) : null}
+        {m.returned ? (
+          // SA-838a: credit applied to this sale is its own line (never in Paid, the only return figure Balance due subtracts)
+          <div className="flex justify-between" data-testid="receipt-returned">
+            <dt>Returned</dt>
+            <dd>−{money(m.returned)}</dd>
+          </div>
+        ) : null}
+        {m.refunded ? (
+          // an info line: money handed back outside RouteFlow, never subtracted
+          <div data-testid="receipt-refunded">
+            <dt>Refunded {money(m.refunded)} (returned items)</dt>
+          </div>
+        ) : null}
+        {m.creditKept ? (
+          // an info line: credit left on the customer's account, never subtracted
+          <div data-testid="receipt-credit-kept">
+            <dt>Credit kept {money(m.creditKept)} (returned items)</dt>
+          </div>
+        ) : null}
+        {m.creditUsed ? (
+          // an info line: credit the return made that was spent on another order, never subtracted here
+          <div data-testid="receipt-credit-used">
+            <dt>Credit used {money(m.creditUsed)} (returned items)</dt>
           </div>
         ) : null}
         {m.showBalance ? (
           <div className="flex justify-between">
             <dt>Balance due</dt>
             <dd>{money(m.balanceDue)}</dd>
+          </div>
+        ) : null}
+        {m.returnPending ? (
+          // a return that is not settled yet: no amount, nothing subtracted
+          <div data-testid="receipt-return-pending">
+            <dt>Return in progress</dt>
           </div>
         ) : null}
         {m.tendered != null ? (

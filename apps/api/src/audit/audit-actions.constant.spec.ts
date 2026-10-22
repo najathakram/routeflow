@@ -2,6 +2,10 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AUDIT_ACTIONS } from "./audit-actions.constant";
 
 describe("AUDIT_ACTIONS", () => {
+  it("pins the family-assigned action name", () => {
+    expect(AUDIT_ACTIONS.PRODUCT_FAMILY_ASSIGNED).toBe("product.family_assigned");
+  });
+
   it("pins the counter-sale void action name", () => {
     expect(AUDIT_ACTIONS.COUNTER_SALE_VOIDED).toBe("counter-sale.voided");
   });

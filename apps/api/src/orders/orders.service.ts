@@ -68,7 +68,8 @@ import {
 } from "./at-stop-conflicts";
 import { sourceLineFor } from "./source-line";
 import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-create-options";
-import { warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
+import { checkQtySplitConsistency, warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
+import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
 import {
   oldestFirst,
   resolveSaleDelivery,
@@ -4866,25 +4867,60 @@ export class OrdersService implements OnApplicationBootstrap {
           // B135 (REG-B135): pick the merge target from the row held under the Order FOR UPDATE
           // lock, then read its authoritative qty/price through the tx — the pre-tx snapshot can
           // name a line a concurrent edit has since cancelled, delivered or re-quantified.
-          const heldMatch = heldItems.find(
-            (h: any) =>
-              h.productId === product.id &&
-              h.status !== "CANCELLED" &&
-              Number(h.deliveredQty) === 0,
+          // SA-841 / SA-124b: by product, then unit, then the resolved pack the add was filed at
+          const heldMatch = pickHeldMergeTarget(
+            heldItems as any[],
+            product.id,
+            payload as any,
+            upb,
           );
           const existing = heldMatch
             ? await tx.orderItem.findUnique({ where: { id: heldMatch.id } })
             : null;
           if (existing) {
-            // Same product already on the order → increase THAT line at its
-            // stored (agreed) unitPrice; the agreed price always wins.
-            const lineUpb = Number((existing as any).unitsPerBox ?? upb);
-            const wasBoxSplit = existing.boxes != null;
-            const newQty = Number(existing.qty) + addQty;
-            const split =
-              wasBoxSplit && lineUpb > 1
-                ? normalizeBoxesPieces({ qty: newQty, unitsPerBox: lineUpb })
-                : { qty: newQty, boxes: null as number | null, pieces: null as number | null };
+            // Same product already on the order → increase THAT line at its stored (agreed) unitPrice.
+            // SA-841 (B753): both sides in pieces at the line's OWN pack through the one helper; a box-unaware
+            // line stays box-unaware (`keep`); a pack the door cannot reconcile is refused, nothing written.
+            const lineShape = {
+              qty: Number(existing.qty),
+              boxes: existing.boxes,
+              pieces: existing.pieces,
+              unitsPerBox: (existing as any).unitsPerBox ?? null,
+            };
+            // row 531: the add's own qty-vs-split check first (a buyer's is refused, staff/driver warn)
+            checkQtySplitConsistency({
+              mode: cr.requestedByRole === UserRole.CUSTOMER ? "enforce" : "warn",
+              path: "orders.cr.add.merge",
+              items: [{ ...payload, productId: product.id, qty: addQty } as QtySplitLine],
+              // the add was filed at the LIVE pack; a repacked line is the helper's 409, never a split 400
+              upbFor: () => upb,
+              tenantId: this.prisma?.getTenantId?.(),
+              logger: this.logger,
+            });
+            const merged = mergeIntoStoredLine({
+              line: lineShape,
+              add: { qty: addQty, boxes: payload.boxes ?? null, pieces: payload.pieces ?? null },
+              bare: "sellingUnits",
+              output: "keep",
+              livePack: upb,
+            });
+            if (!merged.ok) {
+              throw new ConflictException({
+                code: API_ERROR_CODES.MERGE_PACK_MISMATCH,
+                message: `This add can't be merged into the ${merged.linePack}-pack line on this order${
+                  merged.addPack ? ` (it is sold as a ${merged.addPack}-pack now)` : ""
+                }: decline it, or approve it for the next delivery.`,
+                productId: product.id,
+                existingPacks: [merged.linePack],
+                incomingPack: merged.addPack,
+              });
+            }
+            if (merged.usedLivePack)
+              this.logger.warn(
+                `orders.cr.add.merge used the live pack ${upb} for line ${existing.id}`,
+              );
+            const lineUpb = merged.pack;
+            const split = { qty: merged.qty, boxes: merged.boxes, pieces: merged.pieces };
             const unitPrice = Number(existing.unitPrice);
             // Agreed price wins (never re-runs applyBestPromotion for the unit
             // price) — but the bigger quantity earns its OWN free units, so they
@@ -4906,7 +4942,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 ...authorship.raisedBy(crAuthor, existing.qty, split.qty), // SA ruling #3418: a buyer's raise is BUYER
                 boxes: split.boxes,
                 pieces: split.pieces,
-                unitsPerBox: split.boxes != null && lineUpb > 1 ? lineUpb : null,
+                unitsPerBox: merged.unitsPerBox,
                 subtotal: computeLineSubtotal({
                   unitPrice,
                   qty: split.qty,
@@ -4925,8 +4961,8 @@ export class OrdersService implements OnApplicationBootstrap {
             mutationRow = {
               orderItemId: existing.id,
               productId: product.id,
-              qty: addQty,
-              note: `Added ${addQty} at the door via approved change request ${cr.id}`,
+              qty: merged.addInLineUnit, // SA-104a(6): in the line's own unit
+              note: `Added ${merged.addInLineUnit} at the door via approved change request ${cr.id}`,
             };
           } else {
             // New line → the CUSTOMER's effective price (tier → sticky upsell →

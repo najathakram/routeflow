@@ -525,22 +525,6 @@ export function useVoidAdminInvoice() {
   });
 }
 
-export function useRecordAdminPayment() {
-  const qc = useQueryClient();
-  return useMutation<
-    AdminInvoice,
-    Error,
-    { id: string; amount: number; method: string; reference?: string }
-  >({
-    mutationFn: ({ id, ...dto }) =>
-      apiClient.post(`/invoices/${id}/payments`, dto).then((r) => r.data),
-    onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
-      qc.invalidateQueries({ queryKey: ["admin", "invoices", id] });
-    },
-  });
-}
-
 // ─── Products (Admin) ─────────────────────────────────────────────────────────
 
 /**

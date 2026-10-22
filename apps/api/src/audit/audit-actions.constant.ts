@@ -33,6 +33,16 @@ export const AUDIT_ACTIONS = {
    * `ruleId:STATE` keys). A carried stamp writes none.
    */
   SELLING_RESTRICTION_OVERRIDDEN: "selling_restriction.overridden",
+  /** SA-823 R11: a product moved under (or out of) a family; meta {productId, fromParentId, toParentId, variantName, via}. Written in the reparent's own transaction. */
+  PRODUCT_FAMILY_ASSIGNED: "product.family_assigned",
+  /** SA-823 (row 655 PR-2): one summary row per apply of a product import that carried Family columns; meta {fileName, created, updated, unchanged, skipped, familiesCreated, grouped, moves, familiesDeactivated, actor}. */
+  IMPORT_PRODUCTS_APPLIED: "import.products.applied",
+  /** SA-823 (row 655 PR-2): the product import created an empty family container; the mark a re-run reads to reuse it if every row failed; entityId = the family, meta {name}. */
+  IMPORT_FAMILY_CREATED: "import.family.created",
+  /** SA-823 (row 655 PR-2): an import re-run reactivated the empty family an earlier import made; meta {reason}. Written in the reactivation's own transaction. */
+  PRODUCT_FAMILY_REACTIVATED: "product.family.reactivated",
+  /** SA-824 race ruling 4: one POST /invoices/payments/by-key/:key/resolve; meta {keyHash (sha256, never the raw key), outcome found|tombstoned, scope, invoiceId, customerId, paymentGroupId, advancePaymentId}. */
+  PAYMENT_KEY_RESOLVE: "payment-key.resolve",
   /** Row 587 (SA-833): PARTIALLY_DELIVERED -> DELIVERED completed an office-evidenced line; meta {orderId, lineId, from, to, summary}. */
   ORDER_LINE_OFFICE_COMPLETED: "order.line-office-completed",
 } as const;

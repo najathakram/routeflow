@@ -4,6 +4,7 @@ import { keptDraftInvoiceId } from "../kept-draft-invoice";
 import type { InvoicePdfVariant } from "../invoice-pdf-variant";
 import type { OverrideStampView, PaymentMethod, RestrictionAck } from "@routeflow/types";
 import { splitIdAck, type IdWithAck } from "../restriction-warning";
+import { sendWithPaymentKey, type PaymentKeyHolder } from "../payment-submit-key";
 import type {
   CreateInvoiceItem,
   CreatePartialInvoiceDto,
@@ -134,6 +135,8 @@ export interface RecordPaymentDto {
   paidAt?: string;
   /** Bank landing date. May be in the future; omit when unknown. */
   settledAt?: string | null;
+  /** SA-824: the screen's Idempotency-Key holder (never sent in the body). */
+  submitKey?: PaymentKeyHolder;
 }
 
 export function useRecordInvoicePayment() {
@@ -141,8 +144,10 @@ export function useRecordInvoicePayment() {
   // Backend returns the updated Invoice (not InvoicePayment), plus the id of
   // the payment row it just created — needed to attach a receipt photo.
   return useMutation<Invoice & { createdPaymentId?: string }, Error, RecordPaymentDto>({
-    mutationFn: ({ invoiceId, ...body }) =>
-      apiClient.post(`/invoices/${invoiceId}/payments`, body).then((r) => r.data),
+    mutationFn: ({ invoiceId, submitKey, ...body }) =>
+      sendWithPaymentKey(submitKey, body, (config) =>
+        apiClient.post(`/invoices/${invoiceId}/payments`, body, ...config).then((r) => r.data),
+      ),
     onSuccess: (_, { invoiceId }) => {
       qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });
       qc.invalidateQueries({ queryKey: ["invoices", "mine"] });

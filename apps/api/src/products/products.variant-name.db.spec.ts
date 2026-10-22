@@ -111,6 +111,7 @@ describeDb("B1 variant name is stored bare: real Postgres", () => {
     inTenant(tenantId, () =>
       service.create({ name, unit: "each", pricePerUnit: "1.00", ...extra } as never, {
         actorId: null,
+        reparentVia: "editor",
       }),
     );
   const patch = (tenantId: string, id: string, dto: Record<string, unknown>) =>

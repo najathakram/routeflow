@@ -14,6 +14,18 @@ import { calendarDayBounds } from "../common/calendar-date";
 import { taxRatePercentFrom } from "../common/tax-rate";
 import { resolveZone } from "../common/tenant-time-zone";
 import { EmailService } from "../email/email.service";
+import {
+  carriedReturnSelect,
+  carriedReturnWhere,
+  creditNoteFacts,
+  creditNoteIdsToRead,
+  creditNoteReadSelect,
+  creditNoteReadWhere,
+  orderReturnSelect,
+  pageCreditNoteIds,
+  type ReturnProvenance,
+  type TodayOrderRecord,
+} from "../orders/counter-sale/counter-sale-today";
 import { PrismaService } from "../prisma/prisma.service";
 import { RECEIPT_CHANNELS } from "./receipt-channels";
 import {
@@ -25,7 +37,12 @@ import {
   RECEIPT_EMAIL_PER_TENANT_PER_DAY_KEY,
   resolveReceiptLimit,
 } from "./receipt-limits";
-import { isLiveInvoice, type ReceiptBranding, type ReceiptPaymentInput } from "./receipt-model";
+import {
+  isLiveInvoice,
+  type ReceiptBranding,
+  type ReceiptPaymentInput,
+  type ReceiptReturnData,
+} from "./receipt-model";
 import { renderOrderReceipt } from "./render-order-receipt";
 import type { SendReceiptDto } from "./send-receipt.dto";
 
@@ -145,7 +162,9 @@ export class ReceiptService {
             // in the order they were taken: the first stored tender decides whether change is served
             payments: {
               orderBy: { createdAt: "asc" },
-              select: { method: true, amount: true, status: true },
+              // SA-838: the credit note each payment applied (a scalar column: no relation, no extra query for ANY order).
+              // The invoice that NOTE was issued against comes from a counter sale's one credit-note read.
+              select: { method: true, amount: true, status: true, creditNoteId: true },
             },
           },
         },
@@ -253,8 +272,14 @@ export class ReceiptService {
         method: p.method,
         amount: p.amount,
         status: p.status,
+        creditNoteId: p.creditNoteId,
       })),
     );
+    // A COUNTER sale prints the reprint's return lines (SA-838a): the same reads the Today's-sales page makes, for this one order.
+    // Any other order reads nothing and prints what it always did (R7b is counter-only).
+    const counter = order.counterSale
+      ? await this.readReturnData(tenantId, db, order.id, payments)
+      : null;
     const branding: ReceiptBranding = {
       businessName: config?.businessName || settings["settings.businessName"],
       street: config?.addressLine1 ?? settings["settings.street"],
@@ -266,7 +291,14 @@ export class ReceiptService {
       configuredTaxPercent: taxRatePercentFrom(settings["settings.taxRate"]),
       hideOriginalPrice: settings["invoice.hideOriginalPrice"] === "true",
     };
-    const { subject, html, text } = renderOrderReceipt(order, invoices, payments, branding, zone);
+    const { subject, html, text } = renderOrderReceipt(
+      order,
+      invoices,
+      counter?.payments ?? payments,
+      branding,
+      zone,
+      counter?.returnData,
+    );
 
     try {
       await RECEIPT_CHANNELS[dto.channel](
@@ -290,5 +322,51 @@ export class ReceiptService {
       });
     }
     return { channel: dto.channel, to };
+  }
+
+  /**
+   * The reads a COUNTER sale's return split needs, by the Today's-sales read shapes; none for any other order. The order's own
+   * returns (`orderReturnSelect`, by `orderId`), ONE batched read of the returns carried elsewhere (`carriedReturnWhere`, the
+   * Today page's own where: behind a payment's credit note, or with an item sold on this order), and ONE read of every credit note
+   * the payments and those returns name (status, the invoice it was issued against, and the PAID amount applied anywhere).
+   * Tenant-scoped, one id list each, never per payment. The notes' invoice links also complete the payments (link 2 of the
+   * provenance: a payment is the sale's own return credit only when its note was issued against one of this order's invoices).
+   */
+  private async readReturnData(
+    tenantId: string,
+    db: ReturnType<PrismaService["forTenant"]>,
+    orderId: string,
+    payments: ReceiptPaymentInput[],
+  ): Promise<{ returnData: ReceiptReturnData; payments: ReceiptPaymentInput[] }> {
+    const returns: TodayOrderRecord["returns"] = await db.return.findMany({
+      where: { tenantId, orderId },
+      select: orderReturnSelect,
+    });
+    const paymentNoteIds = pageCreditNoteIds([{ invoices: [{ payments }] }]);
+    const carriedReturns: ReturnProvenance[] = await db.return.findMany({
+      where: carriedReturnWhere(tenantId, paymentNoteIds, [orderId]),
+      select: carriedReturnSelect,
+    });
+    const noteIds = creditNoteIdsToRead([{ invoices: [{ payments }], returns }], carriedReturns);
+    const noteRows =
+      noteIds.length === 0
+        ? []
+        : await db.creditNote.findMany({
+            where: creditNoteReadWhere(tenantId, noteIds),
+            select: creditNoteReadSelect,
+          });
+    const invoiceOfNote = new Map(
+      noteRows.map((n: { id: string; invoiceId: string | null }) => [n.id, n.invoiceId]),
+    );
+    return {
+      returnData: { returns, carriedReturns, creditNotes: creditNoteFacts(noteRows) },
+      // a payment whose note the read did not return has no invoice link: it stays a tender
+      payments: payments.map((p) => ({
+        ...p,
+        creditNote: p.creditNoteId
+          ? { invoiceId: invoiceOfNote.get(p.creditNoteId) ?? null }
+          : null,
+      })),
+    };
   }
 }

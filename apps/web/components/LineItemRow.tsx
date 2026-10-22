@@ -202,6 +202,9 @@ export function LineItemRow({
 }: LineItemRowProps) {
   const qtyLocked = !!pendingUnit;
   const w = unitWords({ packLabel: li.packLabel, baseUnitLabel: li.baseLabel });
+  // F15/Q12: a pack line's price is per PACK, so its suffix is the same pack word as the toggle and the qty
+  // (not the product's stored unit, e.g. "case" beside a "Box" toggle). A named-unit or single-unit line keeps its own unit.
+  const priceUnit = li.unitsPerBox && li.unitsPerBox > 1 && !li.unitLabel ? w.pack.lower : li.unit;
   const historyButton = customerPriceHistory && !li.isUnlisted && (
     <PriceHistoryButton
       customerId={customerPriceHistory.customerId}
@@ -286,7 +289,7 @@ export function LineItemRow({
                   ${li.listPrice.toFixed(2)}
                 </span>
                 <span className="text-xs font-medium text-emerald-600">
-                  ${li.unitPrice.toFixed(2)} / {li.unit}
+                  ${li.unitPrice.toFixed(2)} / {priceUnit}
                 </span>
                 <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
                   Special price
@@ -298,7 +301,7 @@ export function LineItemRow({
                   ${li.listPrice.toFixed(2)}
                 </span>
                 <span className="text-xs font-medium text-amber-600">
-                  ${li.unitPrice.toFixed(2)} / {li.unit}
+                  ${li.unitPrice.toFixed(2)} / {priceUnit}
                 </span>
                 <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
                   Discounted
@@ -309,7 +312,7 @@ export function LineItemRow({
                 {/* Upsell (sold above list). Operator-only green badge;
                     no strikethrough — the base is never shown to the buyer. */}
                 <span className="text-xs font-medium text-emerald-600">
-                  ${li.unitPrice.toFixed(2)} / {li.unit}
+                  ${li.unitPrice.toFixed(2)} / {priceUnit}
                 </span>
                 <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
                   Upsell
@@ -317,7 +320,7 @@ export function LineItemRow({
               </>
             ) : (
               <span className="text-xs text-navy/70">
-                ${li.unitPrice.toFixed(2)} / {li.unit}
+                ${li.unitPrice.toFixed(2)} / {priceUnit}
               </span>
             )}
             {onTapPrice && (

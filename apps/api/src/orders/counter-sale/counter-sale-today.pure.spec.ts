@@ -172,13 +172,13 @@ describe("toTodaysSaleRow: payments and state (test 8)", () => {
     expect(row.paymentState).toBe("PAID");
   });
 
-  it("an ADVANCE application is store credit too; ACH / ZELLE / OTHER read as OTHER", () => {
+  it("an ADVANCE application is its own method (SA-838), not store credit; ACH / ZELLE / OTHER read as OTHER", () => {
     const row = toTodaysSaleRow(
       order({ payments: [pay("ADVANCE", "10.00"), pay("ZELLE", "10.00"), pay("ACH", "4.50")] }),
     );
     expect(row.methods).toEqual([
+      { method: "ADVANCE", amount: 10 },
       { method: "OTHER", amount: 14.5 },
-      { method: "STORE_CREDIT", amount: 10 },
     ]);
   });
 
@@ -577,10 +577,11 @@ describe("the payment-method fold (ON_ACCOUNT pin)", () => {
     expect(Object.values(PaymentMethod)).not.toContain("ON_ACCOUNT");
   });
 
-  it("every stored method maps to a till label; STORE_CREDIT is CREDIT_NOTE / ADVANCE only, never CASH / CARD / CHECK", () => {
+  it("every stored method maps to a till label; STORE_CREDIT is CREDIT_NOTE only and ADVANCE its own label, never CASH / CARD / CHECK", () => {
     for (const m of Object.values(PaymentMethod)) {
       const label = todaysMethodOf(m);
-      expect(label === "STORE_CREDIT").toBe(m === "CREDIT_NOTE" || m === "ADVANCE");
+      expect(label === "STORE_CREDIT").toBe(m === "CREDIT_NOTE");
+      expect(label === "ADVANCE").toBe(m === "ADVANCE");
     }
     expect(todaysMethodOf("CASH")).toBe("CASH");
     expect(todaysMethodOf("CREDIT_CARD")).toBe("CARD");

@@ -17,6 +17,7 @@ import {
 import { activationEndedCopy, activationOverlapsPaidCopy } from "./activation-error-copy";
 import { creditLimitSentence } from "./credit-limit-copy";
 import { COUNTER_VOID_ERROR_COPY } from "./counter-void-copy";
+import { IMPORT_REFUSAL_COPY } from "./import-job-copy";
 import { COUNTER_SALE_DAY_CLOSED_COPY, DAY_CLOSED_FOR_PAYMENT_DATE_COPY } from "./day-closed-copy";
 import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
 import { ORDER_OVERPAY_GENERIC_COPY } from "./order-overpay";
@@ -25,6 +26,7 @@ import { safeTextErrorCopy } from "./safe-text-error-copy";
 import { sellerUnavailableCopy } from "./seller-unavailable";
 import { sellingRestrictedCopy } from "./selling-restricted-copy";
 import { RULE_ERROR_COPY } from "./restriction-rule-errors";
+import { paymentKeyRefusalCopy } from "@routeflow/types/payment-submit-key";
 
 /**
  * B980 (owner rule: no raw strings in the UI): the app-wide mutation error toast shows FIXED copy,
@@ -50,6 +52,8 @@ const CODE_COPY: Record<string, string> = {
     "Some items are restricted. Review them and add a reason to sell them anyway.",
   [API_ERROR_CODES.RESTRICTION_OVERRIDE_REASON_INVALID]:
     "Give a reason of 3 to 200 characters to sell a restricted item.",
+  // SA-823 (row 655): the product import refuses a whole file with a Family column (fixed copy, B980).
+  ...IMPORT_REFUSAL_COPY,
   // SA-804 (1): FIFO and LIFO costing are retired; the picker no longer offers them, so this is an old client or a direct API call.
   [API_ERROR_CODES.COSTING_METHOD_RETIRED]:
     "FIFO and LIFO costing are retired. Pick average cost, standard cost or last cost.",
@@ -453,6 +457,10 @@ export function codedToastCopy(err: unknown): string | null {
 }
 
 export function genericToastCopy(err: unknown, surfaceRefusal?: string): string {
+  // SA-824: a payment key conflict means the payment may already be recorded (never "nothing saved"); a
+  // resolved key was cancelled with nothing charged; a key in flight is retryable. Fixed copy, by code.
+  const recorded = paymentKeyRefusalCopy(err);
+  if (recorded) return recorded;
   const coded = codedToastCopy(err);
   if (coded) return coded;
   if (!err || typeof err !== "object") return GENERIC_COPY;

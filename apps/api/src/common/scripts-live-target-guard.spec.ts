@@ -119,6 +119,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-b961-already-returned-inline.mjs": "read-only",
   "apps/api/scripts/report-b965-mixed-unit-returns.mjs": "read-only",
   "apps/api/scripts/report-escaped-entities.mjs": "read-only",
+  "apps/api/scripts/report-orphaned-delivery-evidence.mjs": "read-only", // SA-842 §5: SELECT/SHOW in a READ ONLY tx
   "apps/api/scripts/report-orphaned-order-docs-b1053.mjs": "read-only",
   "apps/api/scripts/report-profile-grant-overrides.mjs": "read-only",
   "apps/api/scripts/report-receiving-unit-drift.mjs": "read-only",
