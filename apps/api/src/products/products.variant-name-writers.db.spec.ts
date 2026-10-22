@@ -130,6 +130,7 @@ describeDb("B1 every variant-name writer stores the bare label: real Postgres", 
     inTenant(tenantId, () =>
       products.create({ name, unit: "each", pricePerUnit: "1.00", ...extra } as never, {
         actorId: null,
+        reparentVia: "editor",
       }),
     );
   const patch = (tenantId: string, id: string, dto: Record<string, unknown>) =>

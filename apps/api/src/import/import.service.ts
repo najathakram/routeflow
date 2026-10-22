@@ -5,7 +5,9 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import type { ImportFamilyRowInfo, ImportFamilySummary } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { calendarStampFromInput } from "../common/calendar-date";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
@@ -22,7 +24,16 @@ import {
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
+import {
+  ProductFamilyImportService,
+  type FamilyDecision,
+  type FamilyPlan,
+  type FamilyRowInput,
+} from "./product-family-import.service";
 import { roundMoney, roundUnitCost } from "@routeflow/pricing";
+import { stripParentPrefix } from "../products/product-variant-name";
+import { ProductImportJobService } from "./product-import-job.service";
+import { IMPORT_FAMILY_SYNC_MAX_ROWS } from "./product-import-job";
 import {
   ImportRowRefused,
   importPaymentRefusal,
@@ -91,6 +102,8 @@ export interface ImportRowPlan {
   changes?: Record<string, { from: unknown; to: unknown }>;
   reason?: string;
   warnings?: string[];
+  /** SA-823: the family detail of a row that carried a Family cell. */
+  family?: ImportFamilyRowInfo;
 }
 import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -225,6 +238,10 @@ export class ImportService {
     private readonly externalRefs: ExternalRefService,
     private readonly productsService: ProductsService,
     private readonly sellingRestrictions: SellingRestrictionsService,
+    // SA-823 (row 655): the Family / Variant name / Product ID columns of the product import.
+    @Optional() private readonly familyImport?: ProductFamilyImportService,
+    // SA-823 section 5: the queue a large family-import apply runs on (absent in specs that never regroup in bulk).
+    @Optional() private readonly productImportJobs?: ProductImportJobService,
   ) {}
 
   private parseCsv(buffer: Buffer): any[] {
@@ -2480,7 +2497,18 @@ export class ImportService {
   async importProducts(
     buffer: Buffer,
     userId: string,
-    opts?: { dryRun?: boolean; fileName?: string },
+    opts?: {
+      dryRun?: boolean;
+      fileName?: string;
+      /** The HTTP apply sets this: a regrouping apply over IMPORT_FAMILY_SYNC_MAX_ROWS is queued instead of run inline. */
+      allowBackground?: boolean;
+      /** Rows walked so far / total (the background job reports it as progress). */
+      onProgress?: (
+        done: number,
+        total: number,
+        counts: { created: number; updated: number; unchanged: number; skipped: number },
+      ) => void;
+    },
   ): Promise<{
     imported: number;
     created: number;
@@ -2493,6 +2521,10 @@ export class ImportService {
     warnings: string[];
     unknownColumns: string[];
     dryRun: boolean;
+    /** SA-823: the family header block, present only when the file has a Family column. */
+    families?: ImportFamilySummary;
+    /** SA-823 section 5: set INSTEAD of a result when the apply was queued; poll GET /import/products/jobs/:id. */
+    queued?: { jobId: string; rows: number };
   }> {
     const dryRun = !!opts?.dryRun;
     const rawRows = this.parseCsv(buffer);
@@ -2539,6 +2571,12 @@ export class ImportService {
       }
     }
 
+    // SA-823: a Family column is refused for the WHOLE file (too many rows, or family pricing on) before any lookup.
+    const hasFamilyColumn = !!resolved.byField.family;
+    if (hasFamilyColumn) {
+      if (!this.familyImport) throw new Error("ProductFamilyImportService is not available");
+    }
+
     let created = 0,
       updated = 0,
       unchanged = 0,
@@ -2550,12 +2588,107 @@ export class ImportService {
 
     // Parse every row up front so an in-file name-ambiguity pre-scan can run before matching.
     const parsedRows = rawRows.map((raw) => parseRow(raw, resolved, PRODUCT_COLUMNS));
+    // SA-823: the id / Family / Variant name cells steer matching and grouping; they are never product fields to diff.
+    const famCells = parsedRows.map((p) => {
+      const cells = {
+        id: p.values.id as string | undefined,
+        family: p.values.family as string | undefined,
+        variantName: p.values.variantName as string | undefined,
+      };
+      delete p.values.id;
+      delete p.values.family;
+      delete p.values.variantName;
+      return cells;
+    });
+    const familyRowNumbers = new Set<number>();
+    let famRegroups = 0;
+    let famPlan: FamilyPlan | null = null;
+    // SA-823 section 5: a big regrouping apply (~95 ms a row measured) runs as a background job. The HTTP apply decides
+    // from a CHEAP count of rows with a Family or Variant Name cell and queues at once: the job re-plans from the stored
+    // file and enforces every gate (row cap, family pricing). The preview is always synchronous.
+    const famCellCount = famCells.filter((c) => c.family || c.variantName).length;
+    if (
+      !dryRun &&
+      opts?.allowBackground &&
+      hasFamilyColumn &&
+      famCellCount > IMPORT_FAMILY_SYNC_MAX_ROWS &&
+      this.productImportJobs
+    ) {
+      const { jobId } = await this.productImportJobs.enqueue({
+        userId,
+        fileName: opts.fileName,
+        buffer,
+      });
+      return {
+        imported: 0,
+        created: 0,
+        updated: 0,
+        unchanged: 0,
+        skipped: 0,
+        errors: [],
+        rows: [],
+        skippedRows: [],
+        warnings: [],
+        unknownColumns: resolved.unknownColumns,
+        dryRun: false,
+        queued: { jobId, rows: famCellCount },
+      };
+    }
+    if (hasFamilyColumn) {
+      const familyImport = this.familyImport!;
+      const inputs: FamilyRowInput[] = [];
+      parsedRows.forEach((p, i) => {
+        if (p.badCells.length > 0 || !famCells[i].family) return;
+        inputs.push({
+          index: i,
+          rowNumber: i + 1,
+          family: famCells[i].family as string,
+          variantCell: famCells[i].variantName,
+          nameCell: (p.values.name as string | undefined)?.trim() || undefined,
+          id: famCells[i].id,
+          sku: (p.values.sku as string | undefined)?.trim() || undefined,
+          barcode: (p.values.barcode as string | undefined)?.trim() || undefined,
+          values: p.values,
+        });
+      });
+      // An old export round trip: a Family cell equal to the product's CURRENT family is a no-op. The row loses the cell
+      // and updates exactly as it always did (no key needed, never a skip).
+      const noops = await familyImport.currentFamilyNoops(inputs);
+      for (const i of noops) {
+        // a no-op row loses the Family cell and updates as before; a "{Family} - " prefix on its Item Name is stripped
+        // first, so the diff against the stored (bare) name is still empty
+        const familyName = famCells[i].family as string;
+        const itemName = parsedRows[i].values.name;
+        if (typeof itemName === "string") {
+          parsedRows[i].values.name = stripParentPrefix(itemName, familyName);
+        }
+        famCells[i].family = undefined;
+      }
+      const real = inputs.filter((r) => !noops.has(r.index));
+      for (const r of real) familyRowNumbers.add(r.rowNumber);
+      if (real.length > 0) {
+        // The cap and the pricing 409 apply only to a file that really regroups or creates (SA-823 section 4/5).
+        familyImport.assertRowCap(rawRows.length);
+        famPlan = await familyImport.planRows(real);
+        const changesFamily = (d: FamilyDecision) =>
+          d.skip === undefined &&
+          (!d.existing ||
+            d.target.id === null ||
+            d.existing.parentProductId !== d.target.id ||
+            d.existing.name !== d.label);
+        famRegroups = [...famPlan.decisions.values()].filter(changesFamily).length;
+        if (famRegroups > 0) {
+          await familyImport.assertPricingOff();
+        }
+      }
+    }
     const nameCounts = new Map<string, number>();
-    for (const p of parsedRows) {
+    for (const [idx, p] of parsedRows.entries()) {
       if (p.badCells.length > 0) continue;
       const sku = (p.values.sku as string | undefined)?.trim();
       const barcode = (p.values.barcode as string | undefined)?.trim();
-      if (sku || barcode) continue;
+      // a Family row's label is scoped to its family, so a keyless one is never name-ambiguous
+      if (sku || barcode || famCells[idx].id || famCells[idx].family) continue;
       const name = (p.values.name as string | undefined)?.trim();
       if (!name) continue;
       const key = normalizeNameKey(name);
@@ -2573,330 +2706,484 @@ export class ImportService {
     const claimedKeys = new Map<string, number>();
     const claimedNames = new Map<string, { row: number; sku: string | null }>();
     const claimedProductIds = new Map<string, number>();
+    // new families this file creates, by lower-cased name: the name is claimed once, for the family's own rows
+    const claimedFamilies = new Set<string>();
     let anyWrite = false;
 
-    for (let i = 0; i < rawRows.length; i++) {
-      const rowNumber = i + 1;
-      const parsed = parsedRows[i];
-      const name = (parsed.values.name as string | undefined)?.trim();
-      const sku = (parsed.values.sku as string | undefined)?.trim();
-      const barcode = (parsed.values.barcode as string | undefined)?.trim();
-      const label = name || sku || `row ${rowNumber}`;
-
-      const skipRow = (reason: string) => {
-        skipped++;
-        skippedRows.push({ row: rowNumber, label, reason });
-        errors.push(`${label}: ${reason}`);
-        rowPlans.push({ row: rowNumber, label, action: "skip", reason });
-      };
-      // I4/W3: a write (real run) or the service's own read-only identity check (preview) that
-      // throws turns this row's already-pushed plan into a skip with the service's reason —
-      // identical wording in both modes.
-      const failPlan = (plan: ImportRowPlan, e: unknown) => {
-        const reason = e instanceof HttpException ? e.message : "import failed";
-        if (e instanceof HttpException) errors.push(`${label}: ${reason}`);
-        else this.pushRowError(errors, label, e);
-        skipped++;
-        skippedRows.push({ row: rowNumber, label, reason });
-        plan.action = "skip";
-        plan.reason = reason;
-        delete plan.changes;
-      };
-
-      if (parsed.badCells.length > 0) {
-        const first = parsed.badCells[0];
-        skipRow(`${first.column}: ${first.reason}`);
-        continue;
-      }
-
-      const rowKeys = [
-        ...(sku ? [`sku:${sku.toLowerCase()}`] : []),
-        ...(barcode ? [`barcode:${barcode.toLowerCase()}`] : []),
-      ];
-      const claimedBy = rowKeys.map((k) => claimedKeys.get(k)).find((r) => r !== undefined);
-      if (claimedBy !== undefined) {
-        skipRow(`duplicate of row ${claimedBy}`);
-        continue;
-      }
-
-      if (!sku && !barcode && name) {
-        const norm = normalizeNameKey(name);
-        const count = nameCounts.get(norm) ?? 0;
-        if (count >= 2) {
-          skipRow(`ambiguous name (${count} matches)`);
-          continue;
-        }
-      }
-
-      for (const k of rowKeys) claimedKeys.set(k, rowNumber);
-
-      // Matching: exact trimmed SKU → exact barcode → normalized name.
-      // SKU and barcode are unique per tenant as stored (case-sensitive), so they match exactly.
-      let existing: any = null;
-      if (sku) {
-        existing = await this.prisma.forTenant().product.findFirst({ where: { sku } });
-      }
-      if (!existing && barcode) {
-        existing = await this.prisma.forTenant().product.findFirst({ where: { barcode } });
-        // W1 (mirrors I1): the row's SKU missed, and the product its barcode found carries a
-        // DIFFERENT SKU — rewriting it would be an identity change, never an import update.
-        if (existing && sku && existing.sku && existing.sku !== sku) {
-          skipRow(
-            "SKU differs from the product matched by barcode; change SKUs in the product editor",
+    // SA-823: the end of a run, shared by the normal path and the crash path: an empty family this run created is
+    // deactivated in the same run and reported, then ONE import.products.applied summary row is written.
+    const finishRun = async (ok: boolean): Promise<ImportFamilySummary | undefined> => {
+      let summary: ImportFamilySummary | undefined;
+      if (famPlan && this.familyImport) {
+        const cleanup = dryRun
+          ? { deactivated: [], cleanupFailed: [] }
+          : await this.familyImport.deactivateEmpty(famPlan);
+        for (const d of cleanup.deactivated) {
+          warnings.push(
+            `Family "${d.name}" was created and then deactivated: none of its rows could be saved.`,
           );
-          continue;
         }
+        for (const d of cleanup.cleanupFailed) {
+          warnings.push(
+            `Family "${d.name}" was created but could not be removed after none of its rows could be saved. Remove it in the product editor.`,
+          );
+        }
+        if (famPlan.created.size > 0) anyWrite = true;
+        summary = this.familyImport.summarize(rowPlans, familyRowNumbers, cleanup);
       }
-      if (!existing && name) {
-        const claimedName = claimedNames.get(normalizeNameKey(name));
-        if (claimedName) {
-          if (sku && claimedName.sku && claimedName.sku !== sku) {
-            skipRow(`SKU ${sku} not found; name matches a product with SKU ${claimedName.sku}`);
-          } else {
-            skipRow(`duplicate of row ${claimedName.row}`);
-          }
-          continue;
-        }
-        // A name is only a key when exactly one product carries it (variants can share one).
-        const byName = await this.prisma.forTenant().product.findMany({
-          where: { name: { equals: name, mode: "insensitive" } },
-          take: 2,
+      // SA-823 section 4: ONE import.products.applied summary row per apply (every product import, Family columns or not).
+      if (!dryRun && this.familyImport) {
+        await this.familyImport.recordApplied({
+          actorId: userId,
+          fileName: opts?.fileName,
+          counts: { created, updated, unchanged, skipped },
+          summary,
+          completed: ok,
         });
-        if (byName.length > 1) {
-          skipRow(`ambiguous name (${byName.length}+ products match)`);
-          continue;
-        }
-        const nameMatch = byName[0] ?? null;
-        // I1: a row whose SKU is present but unmatched must NOT silently rewrite a DIFFERENT
-        // product's SKU via a name fallback — that is an identity change, not an update.
-        if (nameMatch && sku && nameMatch.sku && nameMatch.sku !== sku) {
-          skipRow(`SKU ${sku} not found; name matches a product with SKU ${nameMatch.sku}`);
-          continue;
-        }
-        existing = nameMatch;
       }
+      return summary;
+    };
+    let completed = false;
+    try {
+      for (let i = 0; i < rawRows.length; i++) {
+        opts?.onProgress?.(i, rawRows.length, { created, updated, unchanged, skipped });
+        const rowNumber = i + 1;
+        const parsed = parsedRows[i];
+        const name = (parsed.values.name as string | undefined)?.trim();
+        const sku = (parsed.values.sku as string | undefined)?.trim();
+        const barcode = (parsed.values.barcode as string | undefined)?.trim();
+        const label = name || sku || `row ${rowNumber}`;
+        const fam = famPlan?.decisions.get(i);
+        const famCell = famCells[i];
 
-      if (existing) {
-        if (claimedProductIds.has(existing.id)) {
-          skipRow(`duplicate of row ${claimedProductIds.get(existing.id)}`);
-          continue;
-        }
-        claimedProductIds.set(existing.id, rowNumber);
-        for (const [kind, value] of [
-          ["sku", existing.sku],
-          ["barcode", existing.barcode],
-        ] as const) {
-          const key = value ? `${kind}:${String(value).toLowerCase()}` : null;
-          if (key && !claimedKeys.has(key)) claimedKeys.set(key, rowNumber);
-        }
-        const nameAfter = name || existing.name;
-        if (nameAfter) {
-          claimedNames.set(normalizeNameKey(nameAfter), {
-            row: rowNumber,
-            sku: sku || existing.sku || null,
-          });
-        }
-        // ── Update: diff only fields with a DEFINED, DIFFERING parsed value ──────────────────
-        const changes: Record<string, unknown> = {};
-        const rowWarnings: string[] = [];
-        let packSkipReason: string | null = null;
-        for (const field of Object.keys(parsed.values)) {
-          const newVal = parsed.values[field];
-          if (newVal === undefined) continue;
-          if (field === "unitsPerBox") {
-            const existingVal = existing.unitsPerBox;
-            if (existingVal === null || existingVal === undefined) {
-              changes.unitsPerBox = newVal;
-            } else if (Number(existingVal) !== Number(newVal)) {
-              // SA-284 (d): a differing pack size skips the WHOLE row, never a partial update.
-              packSkipReason = "pack changes are made in the product editor";
-              break;
-            }
-            continue;
-          }
-          if (field === "msrp") {
-            // M1: mirror `normalizeMsrpForWrite` (products.service.ts) BEFORE diffing — a ≤0
-            // MSRP is never actually written (it's normalized to null there), so treating it as
-            // "different from null" here would call update() every re-import for no real change.
-            const normalizedNew = Number(newVal) > 0 ? (newVal as number) : undefined;
-            if (normalizedNew === undefined) continue;
-            const existingMsrp = existing.msrp;
-            const msrpDiffers =
-              existingMsrp == null ||
-              roundMoney(Number(existingMsrp)) !== roundMoney(Number(normalizedNew));
-            if (msrpDiffers) changes.msrp = normalizedNew;
-            continue;
-          }
-          if (field === "category" && existing.trackedSubcategoryId != null) {
-            // W2: update() forces a regulated product's category back to its subcategory's
-            // name, so never PLAN a change it would override — warn on the cell instead.
-            const current = typeof existing.category === "string" ? existing.category.trim() : "";
-            if (current !== (newVal as string).trim()) {
-              rowWarnings.push("category is set by its regulated subcategory");
-            }
-            continue;
-          }
-          const existingVal = (existing as any)[field];
-          let differs: boolean;
-          if (field === "standardCost") {
-            // M2: standardCost is Decimal(10,4) — compare at 4dp, never `roundMoney` (2dp/cents),
-            // which would silently drop the 3rd/4th digit and mask a real cost change.
-            differs =
-              existingVal == null ||
-              roundUnitCost(Number(existingVal)) !== roundUnitCost(Number(newVal as number));
-          } else if (PRODUCT_MONEY_FIELDS.has(field)) {
-            // a null money column (no MSRP/cost yet) differs from any value, 0 included
-            differs =
-              existingVal == null ||
-              roundMoney(Number(existingVal)) !== roundMoney(Number(newVal as number));
-          } else if (typeof newVal === "string") {
-            differs = (typeof existingVal === "string" ? existingVal.trim() : "") !== newVal.trim();
-          } else {
-            differs = existingVal !== newVal;
-          }
-          if (differs) changes[field] = newVal;
-        }
-
-        if (packSkipReason) {
-          skipRow(packSkipReason);
-          continue;
-        }
-
-        for (const w of rowWarnings) warnings.push(`Row ${rowNumber} (${label}): ${w}`);
-        const withWarnings = rowWarnings.length > 0 ? { warnings: rowWarnings } : {};
-
-        if (Object.keys(changes).length === 0) {
-          unchanged++;
-          rowPlans.push({ row: rowNumber, label, action: "update", changes: {}, ...withWarnings });
-          continue;
-        }
-
-        // B964-2: a RENAME to a formula-led name is a skip in BOTH modes, decided before the dry-run split (update() would refuse
-        // it in a real run). `changes.name` is already a DIFFERING value, so this is change-only against the stored name.
-        if (typeof changes.name === "string" || typeof changes.category === "string") {
-          const renameViolation =
-            (typeof changes.name === "string"
-              ? productNameViolation(
-                  { name: changes.name },
-                  { name: existing.name as string | null },
-                )
-              : null) ??
-            // B990: a changed category cell is a DIFFERING value already; refused change-only against the stored text
-            (typeof changes.category === "string"
-              ? productCategoryViolation(
-                  changes.category,
-                  (existing.category as string | null) ?? null,
-                )
-              : null);
-          if (renameViolation) {
-            skipRow(renameViolation);
-            continue;
-          }
-        }
-
-        const plannedChanges: Record<string, { from: unknown; to: unknown }> = {};
-        for (const [field, to] of Object.entries(changes)) {
-          plannedChanges[field] = { from: (existing as any)[field] ?? null, to };
-        }
-        const updatePlan: ImportRowPlan = {
-          row: rowNumber,
-          label,
-          action: "update",
-          changes: plannedChanges,
-          ...withWarnings,
+        const skipRow = (reason: string) => {
+          skipped++;
+          skippedRows.push({ row: rowNumber, label, reason });
+          errors.push(`${label}: ${reason}`);
+          rowPlans.push({ row: rowNumber, label, action: "skip", reason });
         };
-        rowPlans.push(updatePlan);
+        // I4/W3: a write (real run) or the service's own read-only identity check (preview) that
+        // throws turns this row's already-pushed plan into a skip with the service's reason —
+        // identical wording in both modes.
+        const failPlan = (plan: ImportRowPlan, e: unknown) => {
+          const reason = e instanceof HttpException ? e.message : "import failed";
+          if (e instanceof HttpException) errors.push(`${label}: ${reason}`);
+          else this.pushRowError(errors, label, e);
+          skipped++;
+          skippedRows.push({ row: rowNumber, label, reason });
+          plan.action = "skip";
+          plan.reason = reason;
+          delete plan.changes;
+        };
+
+        if (parsed.badCells.length > 0) {
+          const first = parsed.badCells[0];
+          skipRow(`${first.column}: ${first.reason}`);
+          continue;
+        }
+
+        if (famCell.variantName && !famCell.family) {
+          warnings.push(`Row ${rowNumber} (${label}): Variant Name is ignored without a Family.`);
+        }
+
+        const rowKeys = [
+          ...(sku ? [`sku:${sku.toLowerCase()}`] : []),
+          ...(barcode ? [`barcode:${barcode.toLowerCase()}`] : []),
+        ];
+        const claimedBy = rowKeys.map((k) => claimedKeys.get(k)).find((r) => r !== undefined);
+        if (claimedBy !== undefined) {
+          skipRow(`duplicate of row ${claimedBy}`);
+          continue;
+        }
+
+        if (!sku && !barcode && !famCell.id && !famCell.family && name) {
+          const norm = normalizeNameKey(name);
+          const count = nameCounts.get(norm) ?? 0;
+          if (count >= 2) {
+            skipRow(`ambiguous name (${count} matches)`);
+            continue;
+          }
+        }
+
+        for (const k of rowKeys) claimedKeys.set(k, rowNumber);
+
+        // Matching: exact trimmed SKU → exact barcode → normalized name.
+        // SKU and barcode are unique per tenant as stored (case-sensitive), so they match exactly.
+        let existing: any = null;
+        // SA-823: a Family row was matched by id / SKU / barcode in the planner (a name never regroups); a Product ID
+        // cell is the strongest key on any row. Either way the SKU / barcode / name fallbacks below are bypassed.
+        let keyMatched = false;
+        if (fam) {
+          if (fam.skip !== undefined) {
+            skipRow(fam.skip);
+            continue;
+          }
+          if (fam.target.state === "new") {
+            // a new family takes a root name: a product (or another family) of that name earlier in the file already holds it
+            const familyKey = normalizeNameKey(fam.target.name);
+            const holder = claimedNames.get(familyKey);
+            if (holder && !claimedFamilies.has(familyKey)) {
+              skipRow(`duplicate of row ${holder.row}`);
+              continue;
+            }
+            if (!holder) claimedNames.set(familyKey, { row: rowNumber, sku: null });
+            claimedFamilies.add(familyKey);
+          }
+          existing = fam.existing;
+          keyMatched = true;
+        } else if (famCell.id) {
+          existing = await this.prisma.forTenant().product.findFirst({ where: { id: famCell.id } });
+          if (!existing) {
+            skipRow(
+              "That Product ID isn't in this business. Check the Product ID column, or use the SKU.",
+            );
+            continue;
+          }
+          keyMatched = true;
+        }
+        if (!keyMatched && sku) {
+          existing = await this.prisma.forTenant().product.findFirst({ where: { sku } });
+        }
+        if (!keyMatched && !existing && barcode) {
+          existing = await this.prisma.forTenant().product.findFirst({ where: { barcode } });
+          // W1 (mirrors I1): the row's SKU missed, and the product its barcode found carries a
+          // DIFFERENT SKU — rewriting it would be an identity change, never an import update.
+          if (existing && sku && existing.sku && existing.sku !== sku) {
+            skipRow(
+              "SKU differs from the product matched by barcode; change SKUs in the product editor",
+            );
+            continue;
+          }
+        }
+        if (!keyMatched && !existing && name) {
+          const claimedName = claimedNames.get(normalizeNameKey(name));
+          if (claimedName) {
+            if (sku && claimedName.sku && claimedName.sku !== sku) {
+              skipRow(`SKU ${sku} not found; name matches a product with SKU ${claimedName.sku}`);
+            } else {
+              skipRow(`duplicate of row ${claimedName.row}`);
+            }
+            continue;
+          }
+          // A name is only a key when exactly one product carries it (variants can share one).
+          const byName = await this.prisma.forTenant().product.findMany({
+            where: { name: { equals: name, mode: "insensitive" } },
+            take: 2,
+          });
+          if (byName.length > 1) {
+            skipRow(`ambiguous name (${byName.length}+ products match)`);
+            continue;
+          }
+          const nameMatch = byName[0] ?? null;
+          // I1: a row whose SKU is present but unmatched must NOT silently rewrite a DIFFERENT
+          // product's SKU via a name fallback — that is an identity change, not an update.
+          if (nameMatch && sku && nameMatch.sku && nameMatch.sku !== sku) {
+            skipRow(`SKU ${sku} not found; name matches a product with SKU ${nameMatch.sku}`);
+            continue;
+          }
+          existing = nameMatch;
+        }
+
+        if (existing) {
+          if (claimedProductIds.has(existing.id)) {
+            skipRow(`duplicate of row ${claimedProductIds.get(existing.id)}`);
+            continue;
+          }
+          claimedProductIds.set(existing.id, rowNumber);
+          for (const [kind, value] of [
+            ["sku", existing.sku],
+            ["barcode", existing.barcode],
+          ] as const) {
+            const key = value ? `${kind}:${String(value).toLowerCase()}` : null;
+            if (key && !claimedKeys.has(key)) claimedKeys.set(key, rowNumber);
+          }
+          const nameAfter = fam ? fam.label : name || existing.name;
+          if (nameAfter) {
+            claimedNames.set(normalizeNameKey(nameAfter), {
+              row: rowNumber,
+              sku: sku || existing.sku || null,
+            });
+          }
+          // ── Update: diff only fields with a DEFINED, DIFFERING parsed value ──────────────────
+          const changes: Record<string, unknown> = {};
+          const rowWarnings: string[] = [];
+          let packSkipReason: string | null = null;
+          for (const field of Object.keys(parsed.values)) {
+            const newVal = parsed.values[field];
+            if (newVal === undefined) continue;
+            if (field === "unitsPerBox") {
+              const existingVal = existing.unitsPerBox;
+              if (existingVal === null || existingVal === undefined) {
+                changes.unitsPerBox = newVal;
+              } else if (Number(existingVal) !== Number(newVal)) {
+                // SA-284 (d): a differing pack size skips the WHOLE row, never a partial update.
+                packSkipReason = "pack changes are made in the product editor";
+                break;
+              }
+              continue;
+            }
+            if (field === "msrp") {
+              // M1: mirror `normalizeMsrpForWrite` (products.service.ts) BEFORE diffing — a ≤0
+              // MSRP is never actually written (it's normalized to null there), so treating it as
+              // "different from null" here would call update() every re-import for no real change.
+              const normalizedNew = Number(newVal) > 0 ? (newVal as number) : undefined;
+              if (normalizedNew === undefined) continue;
+              const existingMsrp = existing.msrp;
+              const msrpDiffers =
+                existingMsrp == null ||
+                roundMoney(Number(existingMsrp)) !== roundMoney(Number(normalizedNew));
+              if (msrpDiffers) changes.msrp = normalizedNew;
+              continue;
+            }
+            if (field === "category" && existing.trackedSubcategoryId != null) {
+              // W2: update() forces a regulated product's category back to its subcategory's
+              // name, so never PLAN a change it would override — warn on the cell instead.
+              const current = typeof existing.category === "string" ? existing.category.trim() : "";
+              if (current !== (newVal as string).trim()) {
+                rowWarnings.push("category is set by its regulated subcategory");
+              }
+              continue;
+            }
+            const existingVal = (existing as any)[field];
+            let differs: boolean;
+            if (field === "standardCost") {
+              // M2: standardCost is Decimal(10,4) — compare at 4dp, never `roundMoney` (2dp/cents),
+              // which would silently drop the 3rd/4th digit and mask a real cost change.
+              differs =
+                existingVal == null ||
+                roundUnitCost(Number(existingVal)) !== roundUnitCost(Number(newVal as number));
+            } else if (PRODUCT_MONEY_FIELDS.has(field)) {
+              // a null money column (no MSRP/cost yet) differs from any value, 0 included
+              differs =
+                existingVal == null ||
+                roundMoney(Number(existingVal)) !== roundMoney(Number(newVal as number));
+            } else if (typeof newVal === "string") {
+              differs =
+                (typeof existingVal === "string" ? existingVal.trim() : "") !== newVal.trim();
+            } else {
+              differs = existingVal !== newVal;
+            }
+            if (differs) changes[field] = newVal;
+          }
+
+          if (packSkipReason) {
+            skipRow(packSkipReason);
+            continue;
+          }
+          // SA-823: on a Family row the variant label (not the Item Name cell) is what the name becomes.
+          if (fam) delete changes.name;
+          const regroup =
+            !!fam &&
+            !(
+              fam.target.id !== null &&
+              existing.parentProductId === fam.target.id &&
+              existing.name === fam.label
+            );
+
+          for (const w of rowWarnings) warnings.push(`Row ${rowNumber} (${label}): ${w}`);
+          const withWarnings = rowWarnings.length > 0 ? { warnings: rowWarnings } : {};
+          const withFamily = fam ? { family: fam.info } : {};
+
+          if (Object.keys(changes).length === 0 && !regroup) {
+            unchanged++;
+            rowPlans.push({
+              row: rowNumber,
+              label,
+              action: "update",
+              changes: {},
+              ...withWarnings,
+              ...withFamily,
+            });
+            continue;
+          }
+
+          // B964-2: a RENAME to a formula-led name is a skip in BOTH modes, decided before the dry-run split (update() would refuse
+          // it in a real run). `changes.name` is already a DIFFERING value, so this is change-only against the stored name.
+          if (typeof changes.name === "string" || typeof changes.category === "string") {
+            const renameViolation =
+              (typeof changes.name === "string"
+                ? productNameViolation(
+                    { name: changes.name },
+                    { name: existing.name as string | null },
+                  )
+                : null) ??
+              // B990: a changed category cell is a DIFFERING value already; refused change-only against the stored text
+              (typeof changes.category === "string"
+                ? productCategoryViolation(
+                    changes.category,
+                    (existing.category as string | null) ?? null,
+                  )
+                : null);
+            if (renameViolation) {
+              skipRow(renameViolation);
+              continue;
+            }
+          }
+
+          const plannedChanges: Record<string, { from: unknown; to: unknown }> = {};
+          for (const [field, to] of Object.entries(changes)) {
+            plannedChanges[field] = { from: (existing as any)[field] ?? null, to };
+          }
+          if (fam && regroup) {
+            if (existing.name !== fam.label) {
+              plannedChanges.name = { from: existing.name ?? null, to: fam.label };
+            }
+            plannedChanges.family = { from: fam.info.movesFrom, to: fam.target.name };
+          }
+          const updatePlan: ImportRowPlan = {
+            row: rowNumber,
+            label,
+            action: "update",
+            changes: plannedChanges,
+            ...withWarnings,
+            ...withFamily,
+          };
+          rowPlans.push(updatePlan);
+          try {
+            if (dryRun) {
+              // W3: the preview asks update()'s own read-only identity questions (name under the
+              // parent, sku/barcode vs other products' codes), so a collision the real run would
+              // report is a skip in the preview too.
+              await this.productsService.assertIdentityAvailable(
+                {
+                  // SA-823: a regroup checks the label under the TARGET family (a new family has no siblings yet)
+                  name: fam
+                    ? regroup && fam.target.id
+                      ? fam.label
+                      : undefined
+                    : (changes.name as string | undefined),
+                  parentProductId:
+                    fam && regroup ? fam.target.id : (existing.parentProductId ?? null),
+                  sku: changes.sku as string | undefined,
+                  barcode: changes.barcode as string | undefined,
+                },
+                existing.id,
+              );
+            } else if (fam && regroup) {
+              // The move and the row's other cells are ONE update() (assignToParent): all-or-nothing, one audit row.
+              const familyId = await this.familyImport!.ensureFamily(famPlan!, fam.target, userId);
+              await this.productsService.assignToParent(existing.id, familyId, fam.label, {
+                via: "import",
+                actorId: userId,
+                suppressEmit: true,
+                extraChanges: changes,
+              });
+              this.familyImport!.markAssigned(famPlan!, fam.target);
+              anyWrite = true;
+            } else {
+              await this.productsService.update(existing.id, changes as any, {
+                packPrecondition: "internal",
+                reparentVia: "import",
+                suppressEmit: true,
+              });
+              anyWrite = true;
+            }
+            updated++;
+          } catch (e: unknown) {
+            failPlan(updatePlan, e);
+          }
+          continue;
+        }
+
+        // ── Create ──────────────────────────────────────────────────────────────────────────────
+        // M3: a blank name would otherwise reach `productsService.create({ name: undefined })` —
+        // either a bogus "A product named ... already exists" (nameTaken lookup with
+        // `equals: undefined`) or a raw TypeError off `dto.name.replace`. Check before Rate.
+        if (!name && !fam) {
+          skipRow("Name is required");
+          continue;
+        }
+        // SA-823: a new variant is stored under its bare label
+        const createName = fam ? fam.label : (name as string);
+        if (parsed.values.pricePerUnit === undefined) {
+          skipRow("Rate is required for a new product");
+          continue;
+        }
+        // B964-2: a formula-led NEW name is a skip in BOTH modes, decided before the dry-run split: create() would refuse it in a
+        // real run, so a preview that says "create" would disagree with what the import then does.
+        const nameViolation =
+          productNameViolation({ name: createName }) ??
+          productCategoryViolation(parsed.values.category as string | undefined); // B990: the category cell too
+        if (nameViolation) {
+          skipRow(nameViolation);
+          continue;
+        }
+        const dto: Record<string, unknown> = {
+          name: createName,
+          unit: (parsed.values.unit as string | undefined) || "unit",
+        };
+        for (const [k, v] of Object.entries(parsed.values)) {
+          if (k === "name" || k === "unit") continue;
+          dto[k] = v;
+        }
+
+        // I1: a later row's name lookup sees this planned create in dryRun too (nothing is in the
+        // DB yet in a preview) — keeps preview and real run identical.
+        claimedNames.set(normalizeNameKey(createName), { row: rowNumber, sku: sku || null });
+
+        const createdPlan: Record<string, { from: unknown; to: unknown }> = {};
+        for (const [field, to] of Object.entries(dto)) {
+          if (to !== undefined) createdPlan[field] = { from: null, to };
+        }
+        if (fam) createdPlan.family = { from: null, to: fam.target.name };
+        const createPlan: ImportRowPlan = {
+          row: rowNumber,
+          label: name || createName,
+          action: "create",
+          changes: createdPlan,
+          ...(fam ? { family: fam.info } : {}),
+        };
+        rowPlans.push(createPlan);
         try {
           if (dryRun) {
-            // W3: the preview asks update()'s own read-only identity questions (name under the
-            // parent, sku/barcode vs other products' codes), so a collision the real run would
-            // report is a skip in the preview too.
-            await this.productsService.assertIdentityAvailable(
-              {
-                name: changes.name as string | undefined,
-                parentProductId: existing.parentProductId ?? null,
-                sku: changes.sku as string | undefined,
-                barcode: changes.barcode as string | undefined,
-              },
-              existing.id,
-            );
-          } else {
-            await this.productsService.update(existing.id, changes as any, {
-              packPrecondition: "internal",
-              suppressEmit: true,
+            // W3: create()'s own read-only identity checks, asked without writing.
+            await this.productsService.assertIdentityAvailable({
+              // a new variant's label is judged under its family (a new family has no siblings yet)
+              name: fam && !fam.target.id ? undefined : createName,
+              parentProductId: fam ? fam.target.id : null,
+              sku: sku || undefined,
+              barcode: barcode || undefined,
             });
+          } else if (fam) {
+            dto.parentProductId = await this.familyImport!.ensureFamily(
+              famPlan!,
+              fam.target,
+              userId,
+            );
+            dto.variantName = fam.label;
+            await this.productsService.create(dto as any, {
+              suppressEmit: true,
+              reparentVia: "import",
+              actorId: userId,
+            });
+            this.familyImport!.markAssigned(famPlan!, fam.target);
+            anyWrite = true;
+          } else {
+            await this.productsService.create(dto as any, { suppressEmit: true });
             anyWrite = true;
           }
-          updated++;
+          created++;
         } catch (e: unknown) {
-          failPlan(updatePlan, e);
+          failPlan(createPlan, e);
         }
-        continue;
       }
 
-      // ── Create ──────────────────────────────────────────────────────────────────────────────
-      // M3: a blank name would otherwise reach `productsService.create({ name: undefined })` —
-      // either a bogus "A product named ... already exists" (nameTaken lookup with
-      // `equals: undefined`) or a raw TypeError off `dto.name.replace`. Check before Rate.
-      if (!name) {
-        skipRow("Name is required");
-        continue;
-      }
-      if (parsed.values.pricePerUnit === undefined) {
-        skipRow("Rate is required for a new product");
-        continue;
-      }
-      // B964-2: a formula-led NEW name is a skip in BOTH modes, decided before the dry-run split: create() would refuse it in a
-      // real run, so a preview that says "create" would disagree with what the import then does.
-      const nameViolation =
-        productNameViolation({ name }) ??
-        productCategoryViolation(parsed.values.category as string | undefined); // B990: the category cell too
-      if (nameViolation) {
-        skipRow(nameViolation);
-        continue;
-      }
-      const dto: Record<string, unknown> = {
-        name,
-        unit: (parsed.values.unit as string | undefined) || "unit",
-      };
-      for (const [k, v] of Object.entries(parsed.values)) {
-        if (k === "name" || k === "unit") continue;
-        dto[k] = v;
-      }
-
-      // I1: a later row's name lookup sees this planned create in dryRun too (nothing is in the
-      // DB yet in a preview) — keeps preview and real run identical.
-      claimedNames.set(normalizeNameKey(name), { row: rowNumber, sku: sku || null });
-
-      const createdPlan: Record<string, { from: unknown; to: unknown }> = {};
-      for (const [field, to] of Object.entries(dto)) {
-        if (to !== undefined) createdPlan[field] = { from: null, to };
-      }
-      const createPlan: ImportRowPlan = {
-        row: rowNumber,
-        label,
-        action: "create",
-        changes: createdPlan,
-      };
-      rowPlans.push(createPlan);
-      try {
-        if (dryRun) {
-          // W3: create()'s own read-only identity checks, asked without writing.
-          await this.productsService.assertIdentityAvailable({
-            name,
-            parentProductId: null,
-            sku: sku || undefined,
-            barcode: barcode || undefined,
-          });
-        } else {
-          await this.productsService.create(dto as any, { suppressEmit: true });
-          anyWrite = true;
+      completed = true;
+    } finally {
+      // MUST-2: a crash mid-apply still cleans up the empty families this run made and still writes the summary
+      // (completed:false, the counts so far). The original error is the one the caller sees.
+      if (!completed && !dryRun) {
+        try {
+          await finishRun(false);
+        } catch (e) {
+          this.logger.error(
+            `product import: could not finish after a crash: ${(e as Error).message}`,
+          );
         }
-        created++;
-      } catch (e: unknown) {
-        failPlan(createPlan, e);
       }
     }
+    opts?.onProgress?.(rawRows.length, rawRows.length, { created, updated, unchanged, skipped });
+    const families = await finishRun(true);
 
     // One bulk catalog-changed emission per file, never per row (SA-284 / cause-ruling.md §2.B).
     if (!dryRun && anyWrite) this.productsService.emitCatalogBulkChanged();
@@ -2913,6 +3200,7 @@ export class ImportService {
       warnings,
       unknownColumns: resolved.unknownColumns,
       dryRun,
+      ...(families ? { families } : {}),
     };
   }
 

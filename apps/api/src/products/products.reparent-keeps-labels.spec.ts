@@ -128,7 +128,10 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
     seedVariant("old");
     plan.mockRejectedValue(new ProductChainUnreadableError());
     const err = await service
-      .update("prod-1", { parentProductId: "fam" } as never, { packPrecondition: "internal" })
+      .update("prod-1", { parentProductId: "fam" } as never, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+      })
       .then(
         () => null,
         (e: unknown) => e,
@@ -162,6 +165,7 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
     });
     const out = await service.update("prod-1", { parentProductId: "fam" } as never, {
       packPrecondition: "internal",
+      reparentVia: "editor",
       actorId: "u1",
       actorName: "Ann",
     });
@@ -186,6 +190,7 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
     keep.mockResolvedValue({ keptLabels: ["NY ban"] });
     const out = await service.update("prod-1", { parentProductId: null } as never, {
       packPrecondition: "internal",
+      reparentVia: "editor",
     });
     expect(keep).toHaveBeenCalledWith(
       expect.anything(),
@@ -211,7 +216,9 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
       } as never,
       { packPrecondition: "internal" },
     );
-    await service.update("prod-1", { description: "y" } as never, { packPrecondition: "internal" });
+    await service.update("prod-1", { description: "y" } as never, {
+      packPrecondition: "internal",
+    });
     expect(keep).not.toHaveBeenCalled();
     expect(echo).not.toHaveProperty("keptLabels");
   });
@@ -223,6 +230,7 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
     await expect(
       service.update("prod-1", { parentProductId: "fam" } as never, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       }),
     ).rejects.toThrow("materialise failed");
     expect(prisma.tenantTransaction).toHaveBeenCalled();
@@ -234,6 +242,7 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
     prisma.product.update.mockResolvedValue({ ...PRODUCT, parentProductId: null });
     await service.update("prod-1", { parentProductId: null } as never, {
       packPrecondition: "internal",
+      reparentVia: "editor",
     });
     const data = prisma.product.update.mock.calls[0][0].data as Record<string, unknown>;
     expect(data).toMatchObject({ parentProductId: null, kind: "STANDARD" });
@@ -265,6 +274,7 @@ describe("ProductsService: a reparent keeps the labels the variant carried (H2)"
     await expect(
       service.update("prod-1", { parentProductId: "fam" } as never, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       }),
     ).rejects.toThrow("materialise failed");
     expect(prisma.product.update).toHaveBeenCalledTimes(1);

@@ -65,7 +65,10 @@ describe("label sync hooks: families and stock-transfer variants", () => {
 
   it("createVariantRowInTx syncs the category the new variant copied from its parent", async () => {
     const created = { id: "v1", category: "Snacks" };
-    const tx = { product: { create: jest.fn().mockResolvedValue(created) } };
+    const tx = {
+      product: { create: jest.fn().mockResolvedValue(created) },
+      auditLog: { create: jest.fn() },
+    };
     const service = new InventoryService({ getTenantId: () => T } as never, {} as never);
     const money = new Prisma.Decimal(1);
     const parent = {
