@@ -2107,6 +2107,15 @@ export default function OrderDetailPage() {
     // too; sending false states the intent at the call site rather than relying on
     // the server default.
     saveLatchRef.current = true;
+    const onSaved = () => {
+      setIsEditing(false);
+      setEditItems([]);
+      setEditCredits([]);
+      setCreditsTouched(false);
+      returnSave.onSuccess();
+      // r4 F16: the page used to return to the detail with only a small "Edited 1×" chip.
+      toast({ title: "Order updated", variant: "success" });
+    };
     updateItems.mutate(
       {
         id: order!.id,
@@ -2121,22 +2130,27 @@ export default function OrderDetailPage() {
         ...(inlineReturn ? { inlineReturn } : {}),
       },
       {
-        onSettled: () => {
-          saveLatchRef.current = false;
+        // The latch is held through the own-replay re-read below, so a third click cannot send another write.
+        onSettled: (_data, err) => {
+          if (!err) saveLatchRef.current = false;
         },
-        onSuccess: () => {
-          setIsEditing(false);
-          setEditItems([]);
-          setEditCredits([]);
-          setCreditsTouched(false);
-          returnSave.onSuccess();
-          // r4 F16: the page used to return to the detail with only a small "Edited 1×" chip.
-          toast({ title: "Order updated", variant: "success" });
+        onSuccess: onSaved,
+        onError: (err) => {
+          const fail = returnSave.chainError(
+            inlineReturn,
+            guardError(() => handleSaveItems()),
+          );
+          // Row 698: a stale 409 about a save that already landed (its reply was lost) is success, not a conflict.
+          void stale
+            .isOwnReplay(err, updates, {
+              fee: feeChanged ? editShippingFee : undefined,
+              unverifiable: creditsTouched || !!inlineReturn,
+            })
+            .then((mine) => (mine ? onSaved() : fail(err)))
+            .finally(() => {
+              saveLatchRef.current = false;
+            });
         },
-        onError: returnSave.chainError(
-          inlineReturn,
-          guardError(() => handleSaveItems()),
-        ),
       },
     );
   }
