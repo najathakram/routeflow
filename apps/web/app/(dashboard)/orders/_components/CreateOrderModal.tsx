@@ -43,7 +43,8 @@ import { useUnsentOrderResume } from "./use-unsent-order-resume";
 import { ResumeUnsentOrderDialog } from "./ResumeUnsentOrderDialog";
 import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
-import { showOrderCreatedToast } from "./order-created-toast";
+import { todayLocalIso } from "@/lib/formatting";
+import { ACTION_TOAST_MS, showOrderCreatedToast } from "./order-created-toast";
 import {
   mergePieceIntoLine,
   mergeQtyIntoLine,
@@ -1326,6 +1327,12 @@ export function CreateOrderModal({
   }, [backdateOpen]);
   // The server's upper bound is the end of the current UTC day (parseOrderDate).
   const maxOrderDate = new Date().toISOString().slice(0, 10);
+  // F13: a requested delivery day before today (the browser's local day) is refused next to the field. Derived in the render,
+  // never mirrored into state (L-333). POS mode steps the field aside and sends no delivery date, so it never blocks there.
+  const deliveryDateMin = todayLocalIso();
+  const deliveryDatePast =
+    !posMode && requestedDeliveryDate !== "" && requestedDeliveryDate < deliveryDateMin;
+  const deliveryDateRef = React.useRef<HTMLInputElement>(null);
 
   // Staff-only per-order commission override (0 = exempt; null = agent/customer
   // default). Gated on role + the sales_agents addon — server re-checks both.
@@ -1732,6 +1739,8 @@ export function CreateOrderModal({
           title: finish === "invoice" ? POS_COPY.confirmedInvoiced : POS_COPY.confirmedOnly,
           variant: "success",
           action,
+          // F17: a toast that carries View Order stays until used (the 4 s default is gone before a click lands).
+          ...(action ? { duration: ACTION_TOAST_MS } : {}),
         });
       })
       .catch((err: unknown) => {
@@ -1745,6 +1754,7 @@ export function CreateOrderModal({
                 : POS_COPY.confirmMissing,
           variant: "warning",
           action,
+          ...(action ? { duration: ACTION_TOAST_MS } : {}),
         });
       })
       // POS mode lands on the new order's page (Hand over / Print live there), never back on the list.
@@ -1946,6 +1956,10 @@ export function CreateOrderModal({
       setCustomerError("Select a customer");
       return;
     }
+    if (deliveryDatePast) {
+      deliveryDateRef.current?.focus();
+      return;
+    }
     // Read Notes from react-hook-form (the <Textarea> renders id="notes", so the
     // old getElementById("order-notes") always missed and dropped typed notes).
     const data: FormValues = {
@@ -1973,6 +1987,10 @@ export function CreateOrderModal({
     }
     if (lineItems.some((li) => li.qty <= 0)) {
       setLineItemsError("All items must have a quantity greater than zero");
+      hasErrors = true;
+    }
+    if (deliveryDatePast) {
+      deliveryDateRef.current?.focus();
       hasErrors = true;
     }
     if (hasErrors) return;
@@ -2429,6 +2447,37 @@ export function CreateOrderModal({
               </>
             )}
 
+            {/* F09/F12: the delivery day is set right after the customer, so it is on screen once lines are added. */}
+            {!posMode && (
+              <div className="space-y-1 sm:max-w-[16rem]">
+                <label className="block text-xs font-medium text-navy/70" htmlFor="delivery-date">
+                  Requested Delivery Date{" "}
+                  <span className="font-normal text-navy/70">(optional)</span>
+                </label>
+                <input
+                  id="delivery-date"
+                  ref={deliveryDateRef}
+                  type="date"
+                  min={deliveryDateMin}
+                  value={requestedDeliveryDate}
+                  onChange={(e) => setRequestedDeliveryDate(e.target.value)}
+                  aria-invalid={deliveryDatePast || undefined}
+                  aria-describedby={deliveryDatePast ? "delivery-date-error" : undefined}
+                  className={cn(
+                    "h-10 w-full rounded border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2",
+                    deliveryDatePast
+                      ? "border-amber-500 focus:ring-amber-500"
+                      : "border-surface-border focus:ring-brand-500",
+                  )}
+                />
+                {deliveryDatePast && (
+                  <p id="delivery-date-error" className="text-xs font-medium text-amber-700">
+                    That day has passed. Pick today or a later date.
+                  </p>
+                )}
+              </div>
+            )}
+
             {selectedCustomer && (
               <OrderSuggestionsBar
                 suggestions={orderSuggestions}
@@ -2868,21 +2917,6 @@ export function CreateOrderModal({
 
             {/* Dates */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {!posMode && (
-                <div className="space-y-1">
-                  <label className="block text-xs font-medium text-navy/70" htmlFor="delivery-date">
-                    Requested Delivery Date{" "}
-                    <span className="font-normal text-navy/70">(optional)</span>
-                  </label>
-                  <input
-                    id="delivery-date"
-                    type="date"
-                    value={requestedDeliveryDate}
-                    onChange={(e) => setRequestedDeliveryDate(e.target.value)}
-                    className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-              )}
               {showOrderDate ? (
                 <div className="space-y-1">
                   <label className="block text-xs font-medium text-navy/70" htmlFor="order-date">
