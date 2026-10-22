@@ -135,10 +135,59 @@ export function assertInvoiceCurrent(
 
 /** H4: its own channel, so the count of token-less invoice saves is one grep before the token is required. */
 const staleTokenLogger = new Logger("InvoiceStaleToken");
-export const noTokenWarner = (id: string) => () =>
-  staleTokenLogger.warn(
-    `PATCH /invoices/${id} without expectedUpdatedAt (H4: last-writer save accepted)`,
-  );
+
+export type InvoiceEditClient = "web" | "mobile" | "unknown";
+
+/** The request headers that identify an editing client (all optional; none is trusted for anything but this log). */
+export interface InvoiceEditHeaders {
+  xClient?: string;
+  userAgent?: string;
+  appVersion?: string;
+}
+
+/**
+ * SA-837 row 500: who sent a token-less edit. `x-client` (web | mobile, sent by both apps' one HTTP
+ * client) decides first; anything else is ignored. The User-Agent is only the fallback for builds that
+ * predate the header (an RN build is okhttp on Android, CFNetwork/Darwin on iOS; the web app is a
+ * browser). Mobile also ships as an Expo web export with a browser UA, so only the header is reliable.
+ * The app version is the `x-app-version` header, trimmed and capped, else "unknown".
+ */
+export function classifyInvoiceEditClient(h: InvoiceEditHeaders): {
+  client: InvoiceEditClient;
+  appVersion: string;
+} {
+  const ua = h.userAgent ?? "";
+  const declared = h.xClient?.trim().toLowerCase();
+  const client: InvoiceEditClient =
+    declared === "web" || declared === "mobile"
+      ? declared
+      : /okhttp|CFNetwork|Darwin|Expo|ReactNative/i.test(ua)
+        ? "mobile"
+        : /Mozilla|Chrome|Safari|Firefox|Edg\//i.test(ua)
+          ? "web"
+          : "unknown";
+  return { client, appVersion: h.appVersion?.trim().slice(0, 32) || "unknown" };
+}
+
+/** Step 1 (dark): ONE structured warn per request, no PII, the edit proceeds exactly as before. */
+export const noTokenWarner = (
+  id: string,
+  tenantId: string | null | undefined,
+  headers: InvoiceEditHeaders = {},
+) => {
+  let warned = false;
+  return () => {
+    if (warned) return;
+    warned = true;
+    staleTokenLogger.warn({
+      event: "INVOICE_EDIT_TOKEN_MISSING",
+      route: "PATCH /invoices/:id",
+      invoiceId: id,
+      tenantId: tenantId ?? null,
+      ...classifyInvoiceEditClient(headers),
+    });
+  };
+};
 
 /**
  * H4: the header-only save that touches no totals. Without a token it stays one unlocked update (legacy);

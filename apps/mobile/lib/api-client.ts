@@ -4,6 +4,7 @@ import { useOfflineQueue } from "../store/offlineQueue";
 import { ONLINE_REQUIRED_MESSAGE, isOfflineQueueable } from "./offline-allowlist";
 import { OP_KEYS, DRIVER_KEYS, CURRENT_ROLE_KEY, type CurrentRole } from "./auth-keys";
 import { toSecureStoreKey } from "./secure-key";
+import { BUILD_SHA } from "./build-info";
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
 
@@ -79,6 +80,10 @@ apiClient.interceptors.request.use(async (config) => {
   const [token, tenantSlug] = await Promise.all([getActiveAccessToken(), storageGet("tenantSlug")]);
   if (token) config.headers.Authorization = `Bearer ${token}`;
   if (tenantSlug) config.headers["X-Tenant-Slug"] = tenantSlug;
+  // Row 500 (SA-837): the API's missing-token warn reads these. Mobile also ships as an Expo web export
+  // (a browser User-Agent), so x-client is the only reliable way to tell it from the web app.
+  config.headers["x-client"] = "mobile";
+  config.headers["x-app-version"] = BUILD_SHA || "unknown";
   return config;
 });
 

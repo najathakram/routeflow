@@ -10,6 +10,7 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "./audit-actions.constant";
 import { PlatformAdminService } from "./platform-admin.service";
 import { RfInvoiceIssuerService } from "../billing/rf-invoice/rf-invoice-issuer.service";
+import { nextBillingWindow } from "../billing/rf-invoice/calendar-windows";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -390,11 +391,13 @@ describeDb("manual activation auto-void (DB)", () => {
         where: { tenantId, periodStart: new Date(P.getTime() + 30 * DAY) },
       });
       expect(next).toHaveLength(1);
-      // the issuer aligns a window end to the calendar anchor (the 1st at 12:00Z), no later than P+60d
+      // the window end is EXACTLY what the production calendar helper gives for the period after the
+      // subscription's end (P+30d), the same helper the issuer and rollCycles use (SA-837 row 499)
       const end = next[0].periodEnd!;
+      const expected = nextBillingWindow(new Date(P.getTime() + 30 * DAY), "MONTHLY");
+      expect(end.toISOString()).toBe(expected.periodEnd.toISOString());
+      // and the independent shape check, so a helper bug cannot make the exact check agree with itself
       expect([end.getUTCDate(), end.getUTCHours()]).toEqual([1, 12]);
-      expect(end.getTime()).toBeGreaterThan(P.getTime() + 30 * DAY);
-      expect(end.getTime()).toBeLessThanOrEqual(P.getTime() + 60 * DAY);
       expect(next[0].status).toBe("OPEN");
     });
 
