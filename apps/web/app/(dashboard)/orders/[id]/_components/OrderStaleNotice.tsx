@@ -4,6 +4,7 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@routeflow/ui/web";
 import { API_ERROR_CODES } from "@routeflow/types";
+import { serverHoldsWhatWasSent, type SentLine, type ServerOrder } from "./own-replay";
 
 /** Fixed copy: what happened and the next step. The server's own sentence is never shown. */
 export const ORDER_STALE_COPY = "This order changed since you opened it. Reload to see the latest.";
@@ -89,6 +90,25 @@ export function useOrderStaleRevision<L extends { id: string } = { id: string }>
   /** `meta.localErrorToast` predicate: skip the global toast when the notice shows. */
   const ownsToast = (err: unknown): boolean => editing && isStale(err);
 
+  /**
+   * Row 698: a stale 409 on a Save may be the user's OWN earlier save (its reply was lost, it was applied).
+   * Re-reads the order and answers true only when the server already holds exactly what `sent` carried
+   * (see own-replay.ts); then the caller treats the Save as done. False on any other error or any doubt.
+   */
+  const isOwnReplay = async (
+    err: unknown,
+    sent: SentLine[],
+    opts: { fee?: number; unverifiable?: boolean } = {},
+  ): Promise<boolean> => {
+    if (!order || !editing || !isStale(err) || opts.unverifiable) return false;
+    try {
+      await qc.invalidateQueries({ queryKey: ["orders", order.id] });
+    } catch {
+      return false;
+    }
+    return serverHoldsWhatWasSent(sent, qc.getQueryData<ServerOrder>(["orders", order.id]), opts);
+  };
+
   const reload = async () => {
     if (!order) return;
     await qc.invalidateQueries({ queryKey: ["orders", order.id] });
@@ -113,5 +133,5 @@ export function useOrderStaleRevision<L extends { id: string } = { id: string }>
     </div>
   ) : null;
 
-  return { expected, baseLines, baseFee, feeChanged, capture, ownsToast, node };
+  return { expected, baseLines, baseFee, feeChanged, capture, ownsToast, isOwnReplay, node };
 }
