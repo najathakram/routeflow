@@ -355,6 +355,90 @@ describe("SA-839: regulated ledger void / unvoid / undo (unit lane, real ledger)
     );
   });
 
+  it("A1 (review): R4 then unvoid — the cancel's re-zero row never hides the void's own FILED month", async () => {
+    w.seedSale();
+    w.addReturn("r1");
+    w.seedReturnRow("r1"); // 2026-10
+    w.addFiling("2026-10", "GENERATED");
+    at("2026-10-15T12:00:00Z");
+    await voidInv(); // the void's row books in the filed 2026-10
+    at("2026-11-04T12:00:00Z");
+    await returns.cancel("r1", OPERATOR); // counter-entry + a re-zero row (no pointers) in 2026-11
+    at("2026-12-03T12:00:00Z");
+    const res: any = await unvoid();
+
+    expect(w.sum()).toEqual(FULL);
+    expect(res.amendedPeriod).toEqual(
+      expect.objectContaining({ periodKey: "2026-10", status: "GENERATED" }),
+    );
+  });
+
+  it("A1 (review): a void in an UNFILED month, re-zeroed later, still flags nothing", async () => {
+    w.seedSale();
+    w.addReturn("r1");
+    w.seedReturnRow("r1");
+    at("2026-10-15T12:00:00Z");
+    await voidInv();
+    at("2026-11-04T12:00:00Z");
+    await returns.cancel("r1", OPERATOR);
+    at("2026-12-03T12:00:00Z");
+    const res: any = await unvoid();
+    expect(res.amendedPeriod).toBeNull();
+  });
+
+  describe("A2 (review): an undo that counters a FILED month's row says so to its caller (§3)", () => {
+    const filedOct = expect.objectContaining({
+      periodKey: "2026-10",
+      status: "GENERATED",
+      trackedCategoryId: "cat-A",
+    });
+
+    it("STANDARD return cancel returns amendedPeriod (and null when the month is open)", async () => {
+      w.seedSale();
+      w.addReturn("r1");
+      w.seedReturnRow("r1"); // 2026-10
+      w.addReturn("r2");
+      w.seedReturnRow("r2", { periodBucket: "2026-11", soldAt: new Date("2026-11-02T00:00:00Z") });
+      w.addFiling("2026-10", "GENERATED");
+      at("2026-11-04T12:00:00Z");
+      const filed: any = await returns.cancel("r1", OPERATOR);
+      expect(filed.status).toBe("CANCELLED");
+      expect(filed.amendedPeriod).toEqual(filedOct);
+      const open: any = await returns.cancel("r2", OPERATOR);
+      expect(open.amendedPeriod).toBeNull();
+    });
+
+    it("INLINE return cancel returns amendedPeriod", async () => {
+      w.seedSale();
+      w.addReturn("r1", { kind: "INLINE" });
+      w.seedReturnRow("r1");
+      w.addFiling("2026-10", "GENERATED");
+      at("2026-11-04T12:00:00Z");
+      const res: any = await inline.cancel("r1", OPERATOR);
+      expect(res.amendedPeriod).toEqual(filedOct);
+    });
+
+    it("credit-note void-with-reversal returns amendedPeriod", async () => {
+      w.seedSale();
+      w.addCreditNote("cn-1", { status: "ISSUED", amount: 30, amountUsed: 0 });
+      w.addRow({
+        entryType: "REVERSAL",
+        creditNoteId: "cn-1",
+        qty: -3,
+        unitBasisQty: -3,
+        netSales: -30,
+        categoryTax: -6,
+        soldAt: new Date(Date.UTC(2026, 9, 2)),
+        periodBucket: "2026-10",
+      });
+      w.addFiling("2026-10", "GENERATED");
+      at("2026-11-04T12:00:00Z");
+      const res: any = await notes.voidWithReversal("cn-1", "user-op-1");
+      expect(res.creditNote.status).toBe("VOID");
+      expect(res.amendedPeriod).toEqual(filedOct);
+    });
+  });
+
   it("R14: a credit-note void AFTER the invoice void (the note capped APPLIED by the void) leaves the line at 0", async () => {
     w.seedSale({ qty: 5, net: 25, tax: 2 });
     // used 3 of 10: the invoice void caps it to APPLIED and leaves its reversal standing

@@ -1,4 +1,23 @@
-import { unvoidAmendedPeriodNote } from "@routeflow/types";
+import { undoAmendedPeriodNote, unvoidAmendedPeriodNote } from "@routeflow/types";
+
+describe("undoAmendedPeriodNote: SA-839 §3, a cancelled return / voided note that corrects a filed month", () => {
+  it("names the filed month and the month the correction is booked in (UTC)", () => {
+    expect(
+      undoAmendedPeriodNote(
+        { periodKey: "2026-09", status: "LOCKED", trackedCategoryId: "cat-1" },
+        "return",
+        new Date("2026-11-03T12:00:00Z"),
+      ),
+    ).toBe(
+      "This return was in the September 2026 filing, which is already filed. The correction is booked in November 2026; an amended return for September 2026 may be needed.",
+    );
+  });
+
+  it("null when nothing filed was corrected", () => {
+    expect(undoAmendedPeriodNote(null, "credit note")).toBeNull();
+    expect(undoAmendedPeriodNote(undefined, "return")).toBeNull();
+  });
+});
 
 describe("unvoidAmendedPeriodNote: SA-839 §3, the unvoid toast's filed-month line", () => {
   it("names the void's filed month and the month the sale is booked in (UTC)", () => {

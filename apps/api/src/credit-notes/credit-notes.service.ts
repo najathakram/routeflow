@@ -11,7 +11,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { statusFromPayments } from "../invoices/invoice-status";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
-import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { RegulatedLedgerService, type FiledPeriod } from "../regulated/regulated-ledger.service";
 import { roundMoney, sumConfirmed, remainingCapacity } from "@routeflow/pricing";
 import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
@@ -1080,7 +1080,10 @@ export class CreditNotesService {
    * through some path this couldn't find and restore, which must block the cancel rather than
    * silently void a note that's still "used" on paper (m-5's "restore < amountUsed" case).
    */
-  async cancelStandaloneInTx(tx: any, creditNoteId: string): Promise<{ restored: number }> {
+  async cancelStandaloneInTx(
+    tx: any,
+    creditNoteId: string,
+  ): Promise<{ restored: number; amendedPeriod?: FiledPeriod | null }> {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     // scan-ok: draft-payment-not-void — a CREDIT_NOTE-method InvoicePayment is an
     // internal ledger write this service itself creates atomically as CONFIRMED;
@@ -1115,8 +1118,13 @@ export class CreditNotesService {
       data: { status: "VOID" },
     });
     if (flipped.count > 0) {
-      // SA-839: counter-entries for this note's rows (the caller holds their Orders and Invoices).
-      await this.ledger.settleRegulatedLedger(tx, { kind: "ADJUSTMENT_UNDONE", creditNoteId });
+      // SA-839: counter-entries for this note's rows (the caller holds their Orders and Invoices);
+      // §3: `amendedPeriod` when one of them corrected a filed month.
+      const settled = await this.ledger.settleRegulatedLedger(tx, {
+        kind: "ADJUSTMENT_UNDONE",
+        creditNoteId,
+      });
+      return { restored, amendedPeriod: settled?.amendedPeriod ?? null };
     }
     return { restored };
   }
@@ -1342,7 +1350,10 @@ export class CreditNotesService {
       );
     }
     // SA-839 (B705 twin): counter-entries for the note's rows; a VOID or deleted invoice is re-zeroed.
-    await this.ledger.settleRegulatedLedger(tx, { kind: "ADJUSTMENT_UNDONE", creditNoteId: id });
+    const settled = await this.ledger.settleRegulatedLedger(tx, {
+      kind: "ADJUSTMENT_UNDONE",
+      creditNoteId: id,
+    });
     await tx.auditLog.create({
       data: {
         tenantId: this.prisma.getTenantId(),
@@ -1354,7 +1365,8 @@ export class CreditNotesService {
       },
     });
     const voided = await tx.creditNote.findUnique({ where: { id } });
-    return { creditNote: voided, reopened };
+    // SA-839 §3: the void corrected a row of a FILED month (the correction books now).
+    return { creditNote: voided, reopened, amendedPeriod: settled?.amendedPeriod ?? null };
   }
 
   /**

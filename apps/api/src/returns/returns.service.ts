@@ -29,7 +29,7 @@ import type { UnbilledReturnItem } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
-import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { RegulatedLedgerService, type FiledPeriod } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import {
   addCredits,
@@ -1472,6 +1472,7 @@ export class ReturnsService {
       // one of THOSE must still undo its stock/ledger effects. Restored unconditionally rather
       // than gated on a prod check — retire this arm only after a prod
       // `GROUP BY status` count shows zero PROCESSED rows.
+      let amendedPeriod: FiledPeriod | null = null; // SA-839 §3: the undo corrected a filed month
       if (fresh.status === "RECEIVED" || fresh.status === "PROCESSED") {
         const returnRef = `RET-${fresh.id.slice(0, 8)}`;
         // A restock still parked for this return is void once the return is cancelled.
@@ -1527,12 +1528,14 @@ export class ReturnsService {
         // so a finalized reversal is never touched. SA-839 (B705): counter-entries for this
         // return's rows (the claim above already flipped it), and a VOID or deleted source
         // invoice is netted to 0 again.
-        await this.ledger.settleRegulatedLedger(tx, {
+        const settled = await this.ledger.settleRegulatedLedger(tx, {
           kind: "ADJUSTMENT_UNDONE",
           returnId: fresh.id,
         });
+        amendedPeriod = settled?.amendedPeriod ?? null;
       }
-      return tx.return.findUnique({ where: { id } });
+      const cancelled = await tx.return.findUnique({ where: { id } });
+      return cancelled ? { ...cancelled, amendedPeriod } : cancelled;
     });
   }
 

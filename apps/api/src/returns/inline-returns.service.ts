@@ -40,7 +40,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
-import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { RegulatedLedgerService, type FiledPeriod } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import { NumberingService } from "../import/numbering.service";
@@ -1810,6 +1810,7 @@ export class InlineReturnsService {
       // and any other REJECTED/CANCELLED shape are likewise never applied.
       const wasApplied =
         fresh.status === "REFUNDED" || (fresh.status === "RECEIVED" && !fresh.holdReason);
+      let amendedPeriod: FiledPeriod | null = null;
       if (wasApplied) {
         for (const item of fresh.items as any[]) {
           if (!item.restock) continue;
@@ -1842,10 +1843,11 @@ export class InlineReturnsService {
         }
         // SA-839 (B705): counter-entries for this return's rows (claimed CANCELLED above); a VOID or
         // deleted source invoice is netted to 0 again.
-        await this.ledger.settleRegulatedLedger(tx, {
+        const settled = await this.ledger.settleRegulatedLedger(tx, {
           kind: "ADJUSTMENT_UNDONE",
           returnId: fresh.id,
         });
+        amendedPeriod = settled?.amendedPeriod ?? null;
       }
 
       if (fresh.status === "REFUNDED" && fresh.creditNoteId) {
@@ -1853,13 +1855,16 @@ export class InlineReturnsService {
         // sweeps a DIFFERENT credit note that happens to sit on the same order/invoice.
         // Throws RETURN_CREDIT_CONSUMED if some of its `amountUsed` can't be traced back to a
         // restorable payment (m-5: "restore < amountUsed").
-        await this.creditNotes.cancelStandaloneInTx(tx, fresh.creditNoteId);
+        const voided = await this.creditNotes.cancelStandaloneInTx(tx, fresh.creditNoteId);
+        amendedPeriod ??= voided?.amendedPeriod ?? null;
         await tx.orderCreditNote.deleteMany({
           where: { orderId: fresh.orderId, creditNoteId: fresh.creditNoteId },
         });
       }
 
-      return tx.return.findUnique({ where: { id } });
+      // SA-839 §3: the undo corrected a row of a FILED month (the correction books now).
+      const cancelled = await tx.return.findUnique({ where: { id } });
+      return cancelled ? { ...cancelled, amendedPeriod } : cancelled;
     });
   }
 }

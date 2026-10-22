@@ -36,3 +36,19 @@ export function unvoidAmendedPeriodNote(
   const bookedMonth = monthLabel(now.getUTCFullYear(), now.getUTCMonth());
   return `Restored. The void was in ${voidMonth}, which is already filed. This sale is booked in ${bookedMonth}; an amended return for ${voidMonth} may be needed.`;
 }
+
+/**
+ * SA-839 §3, the undo twin: a cancelled return or a voided credit note whose regulated reversal sat in
+ * a FILED month. The correction books in the current month; the response carries `amendedPeriod`.
+ */
+export function undoAmendedPeriodNote(
+  amendedPeriod: FiledPeriod | null | undefined,
+  what: "return" | "credit note",
+  now: Date = new Date(),
+): string | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(amendedPeriod?.periodKey ?? "");
+  if (!m) return null;
+  const filedMonth = monthLabel(Number(m[1]), Number(m[2]) - 1);
+  const bookedMonth = monthLabel(now.getUTCFullYear(), now.getUTCMonth());
+  return `This ${what} was in the ${filedMonth} filing, which is already filed. The correction is booked in ${bookedMonth}; an amended return for ${filedMonth} may be needed.`;
+}

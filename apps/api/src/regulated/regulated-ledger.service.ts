@@ -574,20 +574,25 @@ export class RegulatedLedgerService {
   }
 
   /**
-   * §3: the filed period of the void an unvoid restores — per line, the newest void-signature REVERSAL
-   * (no return, no credit note, no correction); the first of those whose month is filed, or null.
+   * §3: the filed period of the void an unvoid restores. Per line, the void is the FIRST void-signature
+   * REVERSAL (no return, no credit note, no correction) after the line's newest base SALE: a later row
+   * with the same signature is an ADJUSTMENT_UNDONE re-zero of the VOID invoice (a return cancelled
+   * after the void) and must never hide the void's own month (review A1). The first of those voids
+   * whose month is filed, or null.
    */
   private async filedVoidPeriod(db: any, invoiceId: string): Promise<FiledPeriod | null> {
     const rows: any[] =
       (await db.regulatedSalesLedger.findMany({
         where: {
           invoiceId,
-          entryType: "REVERSAL",
-          returnId: null,
-          creditNoteId: null,
           correctsEntryId: null,
+          OR: [
+            { entryType: "SALE" },
+            { entryType: "REVERSAL", returnId: null, creditNoteId: null },
+          ],
         },
         select: {
+          entryType: true,
           invoiceItemId: true,
           trackedCategoryId: true,
           periodBucket: true,
@@ -595,19 +600,31 @@ export class RegulatedLedgerService {
           createdAt: true,
         },
       })) ?? [];
-    const at = (r: any) => [
-      new Date(r.soldAt ?? 0).getTime(),
-      new Date(r.createdAt ?? 0).getTime(),
-    ];
-    const newestByLine = new Map<string, any>();
+    // (soldAt, createdAt): later-than on the pair.
+    const later = (a: any, b: any) => {
+      const sa = new Date(a.soldAt ?? 0).getTime();
+      const sb = new Date(b.soldAt ?? 0).getTime();
+      if (sa !== sb) return sa > sb;
+      return new Date(a.createdAt ?? 0).getTime() > new Date(b.createdAt ?? 0).getTime();
+    };
+    const newestSale = new Map<string, any>();
     for (const r of rows) {
+      if (r.entryType !== "SALE") continue;
       const key = r.invoiceItemId ?? "";
-      const cur = newestByLine.get(key);
-      const [s, c] = at(r);
-      if (!cur || s > at(cur)[0] || (s === at(cur)[0] && c > at(cur)[1])) newestByLine.set(key, r);
+      const cur = newestSale.get(key);
+      if (!cur || later(r, cur)) newestSale.set(key, r);
+    }
+    const voidByLine = new Map<string, any>();
+    for (const r of rows) {
+      if (r.entryType !== "REVERSAL") continue;
+      const key = r.invoiceItemId ?? "";
+      const sale = newestSale.get(key);
+      if (sale && !later(r, sale)) continue; // an earlier billing cycle, or a resync's own reversal
+      const cur = voidByLine.get(key);
+      if (!cur || later(cur, r)) voidByLine.set(key, r); // keep the FIRST one after the sale
     }
     const current = periodBucketOf(new Date());
-    const candidates = [...newestByLine.values()]
+    const candidates = [...voidByLine.values()]
       .filter((r) => r.trackedCategoryId && r.periodBucket && r.periodBucket !== current)
       .sort((a, b) => String(a.periodBucket).localeCompare(String(b.periodBucket)));
     for (const r of candidates) {

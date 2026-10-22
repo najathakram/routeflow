@@ -425,6 +425,37 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
     expect(Number(line!.invoicedQty)).toBe(0);
   });
 
+  it("A2 (review): a STANDARD cancel whose return row sat in a FILED month answers amendedPeriod", async () => {
+    const s = await seedSale();
+    const r1 = await seedReturn(s);
+    // the return was booked in 2026-09, a month whose filing is already GENERATED
+    await prisma.regulatedSalesLedger.updateMany({
+      where: { returnId: r1 },
+      data: { periodBucket: "2026-09", soldAt: new Date("2026-09-20T00:00:00Z") },
+    });
+    await prisma.regulatedFiling.create({
+      data: {
+        tenantId,
+        trackedCategoryId: categoryId,
+        reportTemplate: "GENERIC",
+        periodKey: "2026-09",
+        periodStart: new Date("2026-09-01T00:00:00Z"),
+        periodEnd: new Date("2026-10-01T00:00:00Z"),
+        status: "GENERATED",
+        rows: [],
+      } as any,
+    });
+    const res: any = await as(() => returns.cancel(r1, operator()));
+    expect(res.status).toBe("CANCELLED");
+    expect(res.amendedPeriod).toMatchObject({ periodKey: "2026-09", status: "GENERATED" });
+    // the counter-entry itself books now, never into the filed month
+    const counters = await prisma.regulatedSalesLedger.findMany({
+      where: { returnId: r1, correctsEntryId: { not: null } },
+    });
+    expect(counters.length).toBeGreaterThan(0);
+    expect(counters.every((c) => c.periodBucket !== "2026-09")).toBe(true);
+  });
+
   it("R14: a credit-note void AFTER the invoice void (the note capped APPLIED by the void) leaves the line at 0", async () => {
     const s = await seedSale();
     seq += 1;
@@ -493,16 +524,27 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
       (v) => ({ ok: true as const, v }),
       (e) => ({ ok: false as const, e }),
     );
-  /** Waits until at least `n` backends of this database wait on a lock (Prisma's tx budget is 5 s). */
-  async function waitForLockWaiters(c: any, n: number): Promise<boolean> {
+  const backendPid = async (c: any): Promise<number> =>
+    (await c.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+  /**
+   * The pid of the ONE backend (other than `exclude`) that Postgres reports blocked by `blocker`
+   * (`pg_blocking_pids`), or null after ~4 s (Prisma's interactive tx budget is 5 s). Keyed on the
+   * pids under test, never a database-wide count, so an unrelated waiter can neither satisfy nor mask it.
+   */
+  async function waitForBlockedBy(
+    c: any,
+    blocker: number,
+    exclude: number[] = [],
+  ): Promise<number | null> {
     for (let i = 0; i < 160; i++) {
       const r = await c.query(
-        `SELECT count(*)::int n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+        `SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) AND NOT (pid = ANY($2::int[]))`,
+        [blocker, exclude],
       );
-      if (r.rows[0].n >= n) return true;
+      if (r.rows.length > 0) return r.rows[0].pid;
       await new Promise((x) => setTimeout(x, 25));
     }
-    return false;
+    return null;
   }
 
   it("R15 (a): void first, the cancel waiting on the Return lock commits SECOND: the VOID line ends at 0", async () => {
@@ -513,8 +555,9 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
     try {
       await holder.query("BEGIN");
       await holder.query(`SELECT id FROM "Return" WHERE id = $1 FOR UPDATE`, [r1]);
+      const holderPid = await backendPid(holder);
       const cancel = settle(as(() => returns.cancel(r1, operator())));
-      expect(await waitForLockWaiters(holder, 1)).toBe(true); // the cancel waits on the Return
+      expect(await waitForBlockedBy(holder, holderPid)).not.toBeNull(); // the cancel waits on the Return
       await as(() => invoices.voidInvoice(s.invoiceId)); // the void commits while the cancel waits
       await holder.query("COMMIT");
       const r = await cancel;
@@ -535,13 +578,16 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
     let voided: Promise<any> | null = null;
     try {
       await holder.query("BEGIN");
-      // the Invoice row: a cancel that locks Order -> Invoice stops here holding the Order
+      // The Invoice row: a cancel that locks Order -> Invoice must stop HERE, already holding the Order.
       await holder.query(`SELECT id FROM "Invoice" WHERE id = $1 FOR UPDATE`, [s.invoiceId]);
+      const holderPid = await backendPid(holder);
       cancel = settle(as(() => returns.cancel(r1, operator())));
-      const cancelWaits = await waitForLockWaiters(holder, 1);
+      // No fallback: a cancel that does not lock the Invoice never waits on the holder, and this fails.
+      const cancelPid = await waitForBlockedBy(holder, holderPid);
+      expect(cancelPid).not.toBeNull();
       voided = settle(as(() => invoices.voidInvoice(s.invoiceId)));
-      // the void's snapshot is taken at its first statement, which now waits (on the Order or Invoice)
-      expect(await waitForLockWaiters(holder, cancelWaits ? 2 : 1)).toBe(true);
+      // The void (its snapshot already taken) waits on the Order the CANCEL holds.
+      expect(await waitForBlockedBy(holder, cancelPid!, [holderPid])).not.toBeNull();
       await holder.query("COMMIT");
       const [rc, rv] = await Promise.all([cancel, voided]);
       expect(rc.ok).toBe(true);

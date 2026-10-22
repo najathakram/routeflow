@@ -44,8 +44,9 @@ export async function ledgerDocumentTargets(
  * Lock the Orders, then the Invoices, each in id order (FOR UPDATE, tenant-scoped like
  * `credit-note-locks.ts`), then bump each Invoice's row version.
  *
- * WHY THE BUMP: a void / delete runs Serializable, and its snapshot is taken at its FIRST statement,
- * which is the Order lock it then WAITS on. If this undo holds that lock and commits first, the void
+ * WHY THE BUMP: a void / delete runs Serializable, and its snapshot is taken at its FIRST statement
+ * (tenantTransaction's `set_config`), i.e. BEFORE the Order lock it then WAITS on. If this undo holds
+ * that lock and commits first, the void
  * wakes up on a snapshot that cannot see the undo's counter-entries (a lock alone raises no conflict)
  * and nets the line from stale rows (+3 left on a VOID invoice, R15 b). Updating the Invoice row (to
  * its own `updatedAt`, so the edit token is unchanged) makes the void's Invoice lock raise 40001, and
