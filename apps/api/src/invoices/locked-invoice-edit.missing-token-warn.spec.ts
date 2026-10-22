@@ -14,12 +14,7 @@ describe("row 500 step 1 - missing expectedUpdatedAt is reported, never refused"
   });
   afterEach(() => warn.mockRestore());
 
-  const ctx = {
-    route: "PATCH /invoices/:id",
-    tenantId: "t-1",
-    client: "web" as const,
-    appVersion: "unknown",
-  };
+  const hdrs = { xClient: "web", userAgent: undefined, appVersion: undefined };
   const mk = () => {
     const tx = {
       $executeRaw: jest.fn().mockResolvedValue(1),
@@ -44,7 +39,7 @@ describe("row 500 step 1 - missing expectedUpdatedAt is reported, never refused"
       {},
       { notes: "n" },
       {},
-      noTokenWarner("inv-1", ctx),
+      noTokenWarner("inv-1", "t-1", hdrs),
     );
     expect(result).toEqual({ id: "inv-1" });
     expect(plain.invoice.update).toHaveBeenCalledTimes(1);
@@ -62,7 +57,7 @@ describe("row 500 step 1 - missing expectedUpdatedAt is reported, never refused"
   });
 
   it("a warner invoked twice in one request still logs once", () => {
-    const warner = noTokenWarner("inv-1", ctx);
+    const warner = noTokenWarner("inv-1", "t-1", hdrs);
     warner();
     warner();
     expect(warn).toHaveBeenCalledTimes(1);
@@ -76,36 +71,54 @@ describe("row 500 step 1 - missing expectedUpdatedAt is reported, never refused"
       { expectedUpdatedAt: AT.toISOString() },
       {},
       {},
-      noTokenWarner("inv-1", ctx),
+      noTokenWarner("inv-1", "t-1", hdrs),
     );
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("names the client from the user agent and the app version from its header", () => {
-    expect(
-      classifyInvoiceEditClient("Mozilla/5.0 (Macintosh) Chrome/130 Safari/537", undefined),
-    ).toEqual({ client: "web", appVersion: "unknown" });
-    expect(classifyInvoiceEditClient("okhttp/4.12.0", "2.4.1")).toEqual({
+  it("x-client wins over the user agent; only web or mobile is accepted; the UA is the fallback", () => {
+    const browserUa = "Mozilla/5.0 (iPhone) AppleWebKit Safari/604";
+    // an Expo web export is a browser, so the header is the only signal
+    expect(classifyInvoiceEditClient({ xClient: "mobile", userAgent: browserUa })).toEqual({
       client: "mobile",
-      appVersion: "2.4.1",
-    });
-    expect(
-      classifyInvoiceEditClient("RouteFlow/312 CFNetwork/1568 Darwin/24.0", undefined),
-    ).toEqual({ client: "mobile", appVersion: "unknown" });
-    expect(classifyInvoiceEditClient(undefined, undefined)).toEqual({
-      client: "unknown",
       appVersion: "unknown",
     });
+    expect(classifyInvoiceEditClient({ xClient: "web", userAgent: "okhttp/4.12.0" }).client).toBe(
+      "web",
+    );
+    expect(classifyInvoiceEditClient({ xClient: "toaster", userAgent: browserUa }).client).toBe(
+      "web",
+    );
+    expect(classifyInvoiceEditClient({ xClient: "toaster" }).client).toBe("unknown");
+    expect(classifyInvoiceEditClient({ userAgent: "okhttp/4.12.0" }).client).toBe("mobile");
+    expect(classifyInvoiceEditClient({ userAgent: "CFNetwork/1568 Darwin/24" }).client).toBe(
+      "mobile",
+    );
+    expect(classifyInvoiceEditClient({}).client).toBe("unknown");
+  });
+
+  it("the app version is the trimmed, capped x-app-version, else unknown", () => {
+    expect(classifyInvoiceEditClient({ appVersion: "  abc123  " }).appVersion).toBe("abc123");
+    expect(classifyInvoiceEditClient({ appVersion: "x".repeat(80) }).appVersion).toHaveLength(32);
+    expect(classifyInvoiceEditClient({ appVersion: "  " }).appVersion).toBe("unknown");
   });
 
   it("the controller hands the service the client identity from the request headers", async () => {
     const service = { update: jest.fn() };
     const controller = new InvoicesController(service as never, {} as never);
     const dto = { items: [] } as never;
-    await controller.update("inv-1", dto, { sub: "user-1" } as never, "okhttp/4.12.0", "2.4.1");
+    await controller.update(
+      "inv-1",
+      dto,
+      { sub: "user-1" } as never,
+      "okhttp/4.12.0",
+      "2.4.1",
+      "mobile",
+    );
     expect(service.update).toHaveBeenCalledWith("inv-1", dto, "user-1", {
       userAgent: "okhttp/4.12.0",
       appVersion: "2.4.1",
+      xClient: "mobile",
     });
   });
 });

@@ -231,11 +231,11 @@ import {
   assertStillDraft,
   intakeMoney,
   loadLockedInvoiceForEdit,
-  classifyInvoiceEditClient,
   noTokenWarner,
   updateHeaderOnly,
   planHeaderOnlyTotals,
 } from "./locked-invoice-edit";
+import type { InvoiceEditHeaders } from "./locked-invoice-edit";
 import { resolveLineUnits } from "../products/line-units";
 import { assertUnitLineSplit } from "../orders/unit-line-split";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
@@ -3052,19 +3052,9 @@ export class InvoicesService {
     });
   }
 
-  async update(
-    id: string,
-    dto: UpdateInvoiceDto,
-    actorId?: string,
-    clientHeaders?: { userAgent?: string; appVersion?: string },
-  ) {
+  async update(id: string, dto: UpdateInvoiceDto, actorId?: string, hdrs?: InvoiceEditHeaders) {
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
-    // H4 + SA-837 row 500 step 1: a token-less edit is accepted, and reported once with who sent it.
-    const warnNoToken = noTokenWarner(id, {
-      route: "PATCH /invoices/:id",
-      tenantId: this.prisma.getTenantId() ?? null,
-      ...classifyInvoiceEditClient(clientHeaders?.userAgent, clientHeaders?.appVersion),
-    });
+    const warnNoToken = noTokenWarner(id, this.prisma.getTenantId(), hdrs); // H4 + SA-837 row 500 step 1
     assertNoDuplicateLineIds(dto.items, { keys: ["id"] }); // F3: the invoice line id only (orderItemId = source line)
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1 (VU-4a, D3): a unit line is accepted only on an order-LESS DRAFT (resolveLineUnits below);

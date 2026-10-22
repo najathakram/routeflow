@@ -177,9 +177,10 @@ export class InvoicesController {
     @CurrentUser() user: JwtPayload,
     @Headers("user-agent") userAgent?: string,
     @Headers("x-app-version") appVersion?: string,
+    @Headers("x-client") xClient?: string,
   ) {
     // SA-837 row 500 step 1: the client identity only feeds the missing-token warn log.
-    return this.invoicesService.update(id, dto, user.sub, { userAgent, appVersion });
+    return this.invoicesService.update(id, dto, user.sub, { userAgent, appVersion, xClient });
   }
 
   /**

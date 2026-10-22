@@ -138,44 +138,53 @@ const staleTokenLogger = new Logger("InvoiceStaleToken");
 
 export type InvoiceEditClient = "web" | "mobile" | "unknown";
 
-/**
- * SA-837 row 500: who sent a token-less edit. No client sends an identity header today, so the
- * User-Agent decides (an RN/Expo build is okhttp on Android, CFNetwork/Darwin on iOS; the web app is a
- * browser) and the app version is the `x-app-version` header when one exists, else "unknown".
- */
-export function classifyInvoiceEditClient(
-  userAgent: string | undefined | null,
-  appVersion: string | undefined | null,
-): { client: InvoiceEditClient; appVersion: string } {
-  const ua = userAgent ?? "";
-  const client: InvoiceEditClient = /okhttp|CFNetwork|Darwin|Expo|ReactNative/i.test(ua)
-    ? "mobile"
-    : /Mozilla|Chrome|Safari|Firefox|Edg\//i.test(ua)
-      ? "web"
-      : "unknown";
-  return { client, appVersion: appVersion?.trim().slice(0, 32) || "unknown" };
+/** The request headers that identify an editing client (all optional; none is trusted for anything but this log). */
+export interface InvoiceEditHeaders {
+  xClient?: string;
+  userAgent?: string;
+  appVersion?: string;
 }
 
-export interface NoTokenWarnContext {
-  route: string;
-  tenantId: string | null;
+/**
+ * SA-837 row 500: who sent a token-less edit. `x-client` (web | mobile, sent by both apps' one HTTP
+ * client) decides first; anything else is ignored. The User-Agent is only the fallback for builds that
+ * predate the header (an RN build is okhttp on Android, CFNetwork/Darwin on iOS; the web app is a
+ * browser). Mobile also ships as an Expo web export with a browser UA, so only the header is reliable.
+ * The app version is the `x-app-version` header, trimmed and capped, else "unknown".
+ */
+export function classifyInvoiceEditClient(h: InvoiceEditHeaders): {
   client: InvoiceEditClient;
   appVersion: string;
+} {
+  const ua = h.userAgent ?? "";
+  const declared = h.xClient?.trim().toLowerCase();
+  const client: InvoiceEditClient =
+    declared === "web" || declared === "mobile"
+      ? declared
+      : /okhttp|CFNetwork|Darwin|Expo|ReactNative/i.test(ua)
+        ? "mobile"
+        : /Mozilla|Chrome|Safari|Firefox|Edg\//i.test(ua)
+          ? "web"
+          : "unknown";
+  return { client, appVersion: h.appVersion?.trim().slice(0, 32) || "unknown" };
 }
 
 /** Step 1 (dark): ONE structured warn per request, no PII, the edit proceeds exactly as before. */
-export const noTokenWarner = (id: string, ctx?: NoTokenWarnContext) => {
+export const noTokenWarner = (
+  id: string,
+  tenantId: string | null | undefined,
+  headers: InvoiceEditHeaders = {},
+) => {
   let warned = false;
   return () => {
     if (warned) return;
     warned = true;
     staleTokenLogger.warn({
       event: "INVOICE_EDIT_TOKEN_MISSING",
-      route: ctx?.route ?? "PATCH /invoices/:id",
+      route: "PATCH /invoices/:id",
       invoiceId: id,
-      tenantId: ctx?.tenantId ?? null,
-      client: ctx?.client ?? "unknown",
-      appVersion: ctx?.appVersion ?? "unknown",
+      tenantId: tenantId ?? null,
+      ...classifyInvoiceEditClient(headers),
     });
   };
 };

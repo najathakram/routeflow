@@ -91,6 +91,21 @@ describe("api-client", () => {
     expect(result.headers["X-Tenant-Slug"]).toBe("acme");
   });
 
+  it("row 500: every request names its client and build (x-client web, x-app-version the release sha)", async () => {
+    process.env.NEXT_PUBLIC_RELEASE_SHA = "abc123deadbeef";
+    loadApiClient();
+    const result = await requestHandler({ headers: {} });
+    expect(result.headers["x-client"]).toBe("web");
+    expect(result.headers["x-app-version"]).toBe("abc123deadbeef");
+  });
+
+  it("row 500: with no release sha baked in, x-app-version falls back to the package version", async () => {
+    delete process.env.NEXT_PUBLIC_RELEASE_SHA;
+    loadApiClient();
+    const result = await requestHandler({ headers: {} });
+    expect(result.headers["x-app-version"]).toBe("0.1.0");
+  });
+
   it("a 401 on a normal request triggers exactly one refresh call and replays the original request with the new token", async () => {
     localStorage.setItem(OP_KEYS.accessToken, "old-token");
     localStorage.setItem(OP_KEYS.refreshToken, "refresh-token");

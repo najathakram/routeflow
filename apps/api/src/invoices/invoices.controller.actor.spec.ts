@@ -25,6 +25,7 @@ describe("InvoicesController — the acting user reaches create/update (H3b)", (
     expect(service.update).toHaveBeenCalledWith("inv-1", dto, "user-1", {
       userAgent: undefined,
       appVersion: undefined,
+      xClient: undefined,
     });
   });
 });
