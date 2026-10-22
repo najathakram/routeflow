@@ -7,6 +7,7 @@
  */
 
 import { PriceType } from "@prisma/client";
+import { mergeIntoStoredLine, type StoredLineShape } from "./stored-line-merge";
 import {
   applyBestPromotion,
   computeLineSubtotal,
@@ -162,11 +163,29 @@ export function mergeBoxedContributions(
   storedFreeUnits: number;
 } {
   const upb = Number(unitsPerBox ?? 0);
-  const totalPieces = contributions.reduce((sum, c) => {
-    const q = Number(c.qty);
+  // SA-841 PR-3: every contribution folds through the one stored-line rule, into an EMPTY line at the group's own
+  // pack (money-identical to the old Σ). A box-split / pieces-only contribution's qty is pieces; a bare boxed
+  // contribution (the box-unaware mobile cart) is selling units at the group pack. A zero contribution adds nothing.
+  let merged: StoredLineShape =
+    upb > 1
+      ? { qty: 0, boxes: 0, pieces: 0, unitsPerBox: upb }
+      : { qty: 0, boxes: null, pieces: null, unitsPerBox: null };
+  for (const c of contributions) {
     const sellingUnit = upb > 1 && c.boxes == null && c.pieces == null;
-    return sum + (sellingUnit ? q * upb : q);
-  }, 0);
+    const r = mergeIntoStoredLine({
+      line: merged,
+      add: { qty: Number(c.qty) },
+      bare: sellingUnit ? "sellingUnits" : "pieces",
+      output: "split",
+      livePack: upb,
+    });
+    if (r.ok) merged = { qty: r.qty, boxes: r.boxes, pieces: r.pieces, unitsPerBox: r.unitsPerBox };
+    else if (r.reason !== "EMPTY_ADD") {
+      // unreachable for a pack group (the empty line carries the group pack and every add is bare): fail loudly
+      throw new Error(`mergeBoxedContributions: ${r.reason} folding a contribution at pack ${upb}`);
+    }
+  }
+  const totalPieces = merged.qty;
   // Free-unit snapshots and the whole selling units they were earned at. A
   // box-split line counts its BOXES (its `qty` is pieces); every other shape
   // already stores selling units in `qty`.
