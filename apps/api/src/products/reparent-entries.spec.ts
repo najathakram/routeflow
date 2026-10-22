@@ -20,7 +20,7 @@ const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:]
 describe("every reparent entry names its door (SA-823 R11)", () => {
   it("editor: PATCH /products/:id passes reparentVia editor", async () => {
     const productsService = { update: jest.fn().mockResolvedValue({ id: "p1" }) };
-    const c = new ProductsController(productsService as never, {} as never);
+    const c = new ProductsController(productsService as never, {} as never, {} as never);
     await c.update("p1", { parentProductId: "fam" } as never, user, "ua");
     expect(productsService.update).toHaveBeenCalledWith(
       "p1",
@@ -31,7 +31,7 @@ describe("every reparent entry names its door (SA-823 R11)", () => {
 
   it("editor: POST /products passes reparentVia editor (a product created under a parent)", async () => {
     const productsService = { create: jest.fn().mockResolvedValue({ id: "p1" }) };
-    const c = new ProductsController(productsService as never, {} as never);
+    const c = new ProductsController(productsService as never, {} as never, {} as never);
     await c.create({ name: "x" } as never, user);
     expect(productsService.create).toHaveBeenCalledWith(
       { name: "x" },

@@ -1370,16 +1370,20 @@ test("A2 readSpecsExtras: reads incidents/ and priorities/OWNER-QUEUE.md, ONE gi
     const calls = [];
     const exec = async (cmd, args, opts) => {
       calls.push({ line: `${cmd} ${args.join(" ")}`, cwd: opts?.cwd });
+      if (args.includes("register/WORK-REGISTER.md"))
+        return { code: 0, stdout: "2026-10-22T10:27:28-05:00\n", stderr: "" };
       return { code: 0, stdout: read("a2-gitlog-handoff.txt"), stderr: "" };
     };
     const x = await COL.readSpecsExtras({ dir, exec });
     assert.equal(x.incidents.length, 5);
     assert.equal(x.ownerQueueRows.length, 11);
     assert.equal(x.laneHandoffs.length, 4);
+    assert.equal(x.registerChangedAt, Date.parse("2026-10-22T15:27:28Z"));
     assert.deepEqual(x.errors, []);
-    // ONE git log for the handoff times and ONE for the incident files' last commit times
-    assert.equal(calls.length, 2);
+    // ONE git log each: the handoff times, the incident files' last commit times, the register's
+    assert.equal(calls.length, 3);
     const lines = calls.map((c) => c.line);
+    assert.ok(lines.includes("git log -1 --format=%cI -- register/WORK-REGISTER.md"));
     assert.ok(
       lines.includes("git log --since=7.days --format=%x00%cI --name-only -- handoff/lanes"),
     );
@@ -1395,6 +1399,7 @@ test("A2 readSpecsExtras: reads incidents/ and priorities/OWNER-QUEUE.md, ONE gi
       assert.deepEqual(y.incidents, []);
       assert.equal(y.ownerQueueRows, null);
       assert.deepEqual(y.laneHandoffs, []);
+      assert.equal(y.registerChangedAt, null);
       assert.ok(y.errors.length >= 2);
     } finally {
       rmSync(empty, { recursive: true, force: true });
