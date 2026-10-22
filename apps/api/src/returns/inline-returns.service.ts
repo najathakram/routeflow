@@ -40,7 +40,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
-import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { RegulatedLedgerService, type FiledPeriod } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import { NumberingService } from "../import/numbering.service";
@@ -89,6 +89,7 @@ import {
 } from "./refund-tender";
 import { selectEditRevertedInvoices } from "../invoices/order-edit-revert-set";
 import { uniqueViolationOn } from "../common/prisma-unique";
+import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledger-locks";
 
 /** design.md §8 — the ONE gate every money-writing method here re-checks itself,
  * regardless of the registry's rollout state (the `AddonGuard` on the controller courtesy-
@@ -1788,8 +1789,18 @@ export class InlineReturnsService {
       }
 
       // m-5 order: the carrying order is locked before any credit pull-back below touches
-      // its invoices.
-      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${fresh.orderId} FOR UPDATE`;
+      // its invoices. SA-839 F3: with every SOURCE order this return's ledger rows sit on (PR-1a
+      // multi-order) and the credit note's, in one id-sorted set, then their invoices (Return ->
+      // Order -> Invoice), so a concurrent void of a source invoice serialises with this undo.
+      const ret = await ledgerDocumentTargets(tx, { returnId: id });
+      const note =
+        fresh.status === "REFUNDED" && fresh.creditNoteId
+          ? await ledgerDocumentTargets(tx, { creditNoteId: fresh.creditNoteId })
+          : { orderIds: [], invoiceIds: [] };
+      await lockLedgerDocumentRows(tx, tenantId, {
+        orderIds: [fresh.orderId, ...ret.orderIds, ...note.orderIds],
+        invoiceIds: [...ret.invoiceIds, ...note.invoiceIds],
+      });
 
       // HIGH-4: "applied" (restocked + regulated-ledger reversed) is no longer just
       // `status IN (RECEIVED, REFUNDED)` — a RECEIVED row still carrying `DRIVER_CAP` in
@@ -1799,6 +1810,7 @@ export class InlineReturnsService {
       // and any other REJECTED/CANCELLED shape are likewise never applied.
       const wasApplied =
         fresh.status === "REFUNDED" || (fresh.status === "RECEIVED" && !fresh.holdReason);
+      let amendedPeriod: FiledPeriod | null = null;
       if (wasApplied) {
         for (const item of fresh.items as any[]) {
           if (!item.restock) continue;
@@ -1829,7 +1841,13 @@ export class InlineReturnsService {
             },
           });
         }
-        await this.ledger.unreverseReturnEntries({ returnId: fresh.id, db: tx });
+        // SA-839 (B705): counter-entries for this return's rows (claimed CANCELLED above); a VOID or
+        // deleted source invoice is netted to 0 again.
+        const settled = await this.ledger.settleRegulatedLedger(tx, {
+          kind: "ADJUSTMENT_UNDONE",
+          returnId: fresh.id,
+        });
+        amendedPeriod = settled?.amendedPeriod ?? null;
       }
 
       if (fresh.status === "REFUNDED" && fresh.creditNoteId) {
@@ -1837,13 +1855,16 @@ export class InlineReturnsService {
         // sweeps a DIFFERENT credit note that happens to sit on the same order/invoice.
         // Throws RETURN_CREDIT_CONSUMED if some of its `amountUsed` can't be traced back to a
         // restorable payment (m-5: "restore < amountUsed").
-        await this.creditNotes.cancelStandaloneInTx(tx, fresh.creditNoteId);
+        const voided = await this.creditNotes.cancelStandaloneInTx(tx, fresh.creditNoteId);
+        amendedPeriod ??= voided?.amendedPeriod ?? null;
         await tx.orderCreditNote.deleteMany({
           where: { orderId: fresh.orderId, creditNoteId: fresh.creditNoteId },
         });
       }
 
-      return tx.return.findUnique({ where: { id } });
+      // SA-839 §3: the undo corrected a row of a FILED month (the correction books now).
+      const cancelled = await tx.return.findUnique({ where: { id } });
+      return cancelled ? { ...cancelled, amendedPeriod } : cancelled;
     });
   }
 }

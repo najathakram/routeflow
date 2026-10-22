@@ -3,6 +3,7 @@ import { apiClient } from "../api-client";
 import type {
   CreditNoteStatus,
   CreditNoteVoidPreview,
+  FiledPeriod,
   ReissueCreditNoteInput,
   ReissueCreditNoteResult,
 } from "@routeflow/types";
@@ -198,6 +199,8 @@ export function useVoidWithReversal() {
     {
       creditNote: CreditNote;
       reopened: Array<{ invoiceId: string; invoiceNumber: string; amount: number }>;
+      /** SA-839 §3: the filed month the void's ledger correction answers (null when none). */
+      amendedPeriod?: FiledPeriod | null;
     },
     Error,
     { id: string; reason?: string }

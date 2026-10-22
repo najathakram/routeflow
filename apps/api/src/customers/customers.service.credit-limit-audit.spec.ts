@@ -48,7 +48,10 @@ describe("CustomersService.update credit limit: clear + audit old to new (B1018,
         entitlementAuthorityFromEntitlements, // #2241
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         { provide: EmailService, useValue: { send: jest.fn() } },
         { provide: AuditService, useValue: audit },

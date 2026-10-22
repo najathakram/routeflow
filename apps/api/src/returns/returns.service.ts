@@ -29,7 +29,7 @@ import type { UnbilledReturnItem } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
-import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { RegulatedLedgerService, type FiledPeriod } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import {
   addCredits,
@@ -75,6 +75,7 @@ import {
 } from "./returns-pieces.util";
 import { restockReturnItems } from "./returns-restock.util";
 import { standardRestockResolver, type ProductPackBasis } from "./returns-restock-pieces";
+import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledger-locks";
 
 /** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
  * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
@@ -1444,6 +1445,14 @@ export class ReturnsService {
       // off `fresh`, never the stale outer `ret`.
       await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} FOR UPDATE`;
       const fresh = await tx.return.findUnique({ where: { id }, include: { items: true } });
+      // SA-839 F3: then the Orders and Invoices this return's ledger rows sit on (Return -> Order ->
+      // Invoice, id order), so a concurrent void of the source invoice serialises with this undo and
+      // the invoice status the ledger settle reads below is the committed one.
+      await lockLedgerDocumentRows(
+        tx,
+        this.prisma.getTenantId(),
+        await ledgerDocumentTargets(tx, { returnId: id }),
+      );
 
       // Concurrency guard: claim the →CANCELLED transition atomically so two
       // concurrent cancels can't both run the stock/ledger undo (double-decrement).
@@ -1463,6 +1472,7 @@ export class ReturnsService {
       // one of THOSE must still undo its stock/ledger effects. Restored unconditionally rather
       // than gated on a prod check — retire this arm only after a prod
       // `GROUP BY status` count shows zero PROCESSED rows.
+      let amendedPeriod: FiledPeriod | null = null; // SA-839 §3: the undo corrected a filed month
       if (fresh.status === "RECEIVED" || fresh.status === "PROCESSED") {
         const returnRef = `RET-${fresh.id.slice(0, 8)}`;
         // A restock still parked for this return is void once the return is cancelled.
@@ -1515,10 +1525,17 @@ export class ReturnsService {
         }
         // W5c: undo the regulated ledger reversal written at receive() (symmetric
         // to reversing the stock movements above). cancel() blocks REFUNDED returns,
-        // so a finalized reversal is never touched.
-        await this.ledger.unreverseReturnEntries({ returnId: fresh.id, db: tx });
+        // so a finalized reversal is never touched. SA-839 (B705): counter-entries for this
+        // return's rows (the claim above already flipped it), and a VOID or deleted source
+        // invoice is netted to 0 again.
+        const settled = await this.ledger.settleRegulatedLedger(tx, {
+          kind: "ADJUSTMENT_UNDONE",
+          returnId: fresh.id,
+        });
+        amendedPeriod = settled?.amendedPeriod ?? null;
       }
-      return tx.return.findUnique({ where: { id } });
+      const cancelled = await tx.return.findUnique({ where: { id } });
+      return cancelled ? { ...cancelled, amendedPeriod } : cancelled;
     });
   }
 

@@ -6,6 +6,7 @@ import { Button, Modal, useToast } from "@routeflow/ui/web";
 import { fmt } from "@/lib/formatting";
 import { creditNoteErrorCopy, refusalCopy } from "@/lib/credit-note-error-copy";
 import { useVoidPreview, useVoidWithReversal } from "@/lib/api/credit-notes";
+import { undoAmendedPeriodNote } from "@routeflow/types";
 
 /**
  * #2418 U1 / SA-436 PR-2: void a credit note AFTER un-applying it everywhere. It shows what the
@@ -38,11 +39,15 @@ export function VoidCreditNoteDialog({
     voidIt.mutate(
       { id: noteId, ...(reason.trim() ? { reason: reason.trim() } : {}) },
       {
-        onSuccess: () => {
+        onSuccess: (res) => {
           onClose();
+          // SA-839 §3: one more line when the note's reversal sat in an already-filed month.
+          const note = undoAmendedPeriodNote(res?.amendedPeriod, "credit note");
           toast({
             title: "Credit note voided",
-            description: `${noteNumber} has been voided.`,
+            description: note
+              ? `${noteNumber} has been voided. ${note}`
+              : `${noteNumber} has been voided.`,
             variant: "info",
           });
         },
