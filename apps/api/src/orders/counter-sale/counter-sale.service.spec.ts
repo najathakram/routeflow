@@ -280,6 +280,22 @@ describe("CounterSaleService.ring", () => {
       expect(createSale).not.toHaveBeenCalled();
     });
 
+    it("the kept walk-in RECORD named by customerId (dto.walkIn false) + ON_ACCOUNT is 400 WALK_IN_NO_ACCOUNT, nothing written", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-w", isWalkIn: true });
+      expect(await codeOf(service.ring(named({ method: "ON_ACCOUNT" }) as never, staff))).toBe(
+        "WALK_IN_NO_ACCOUNT",
+      );
+      expect(createSale).not.toHaveBeenCalled();
+    });
+
+    it("a normal account customer (isWalkIn false or null) may still ring ON_ACCOUNT", async () => {
+      for (const isWalkIn of [false, null]) {
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", isWalkIn });
+        await service.ring(named({ method: "ON_ACCOUNT" }) as never, staff);
+      }
+      expect(createSale).toHaveBeenCalledTimes(2);
+    });
+
     it("another tenant's customer id is a 404 (tenant-scoped lookup) before anything is created", async () => {
       prisma.customer.findFirst.mockResolvedValue(null);
       await expect(service.ring(named({ method: "CASH" }) as never, staff)).rejects.toMatchObject({

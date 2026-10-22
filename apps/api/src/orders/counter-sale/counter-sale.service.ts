@@ -114,7 +114,7 @@ export class CounterSaleService {
     if (!dto.walkIn && !dto.customerId) {
       throw new BadRequestException("Choose a customer or mark the sale as a walk-in");
     }
-    const walkIn = !!dto.walkIn;
+    let walkIn = !!dto.walkIn;
     assertPaymentShape(dto.payment, walkIn);
 
     // 3. Tenant-scoped existence checks (another tenant's ids are simply not found).
@@ -128,10 +128,16 @@ export class CounterSaleService {
     } else {
       const customer = await this.prisma.forTenant().customer.findFirst({
         where: { id: dto.customerId, deletedAt: null },
-        select: { id: true },
+        select: { id: true, isWalkIn: true },
       });
       if (!customer) throw new NotFoundException("Customer not found");
       customerId = customer.id;
+      // The kept walk-in RECORD (park/resume) is a walk-in however the request names it: same refusals,
+      // same tender rule, before any write.
+      if (customer.isWalkIn === true) {
+        walkIn = true;
+        assertPaymentShape(dto.payment, true);
+      }
     }
 
     // 4. The sale. create()'s own refusals propagate untouched.
