@@ -13,7 +13,7 @@ import {
   cashierNameOf,
   counterTenderSplit,
   isOwnReturn,
-  ownReturnedAmount,
+  returnSettlement,
   foldItemNames,
   roundMoney,
   storedTaxRatePercent,
@@ -398,15 +398,18 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           payments: {
             orderBy: { createdAt: "asc" },
             // B1262 / SA-838: the credit note each payment applied and the invoice that NOTE was issued against: the
-            // first link of "this payment is the sale's own return credit" (same query: no extra read)
+            // first link of "this payment is the sale's own return credit" (same query: no extra read). SA-838a: and its status.
             select: {
               method: true,
               amount: true,
               status: true,
               creditNoteId: true,
-              creditNote: { select: { invoiceId: true } },
+              creditNote: { select: { invoiceId: true, status: true } },
             },
           },
+          // SA-838a: the notes issued against this invoice and their status (ISSUED / APPLIED / VOID): the only way a return's
+          // KEPT credit (no payment applied it) says whether it is still a credit. Same query, a nested relation.
+          creditNotes: { select: { id: true, status: true } },
           // the stored line rates the sale's tax rate is read from (pricing's storedTaxRatePercent), and the
           // levy each line billed with its category (CQ-03: named charges on the reprint)
           // R7b 2.1: description + qty name the sale on its row (the snapshot taken at sale time); the fold keeps the first few.
@@ -441,7 +444,7 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           creditCategoryTax: true,
           // B1262 / SA-838: the second link. An INLINE return counts as this order's only through an item sold on it.
           kind: true,
-          // plus each item's priced amount: an INLINE return is worth its items (ownReturned), never a proration
+          // plus each item's priced amount: an INLINE return is worth its items (returnSettlement), never a proration
           items: {
             select: { sourceOrderId: true, subtotal: true, taxAmount: true, categoryTax: true },
           },
@@ -515,8 +518,10 @@ export interface TodayOrderRecord {
       status: string;
       /** B1262 / SA-838: the credit note this payment applied, and the invoice that note was issued against */
       creditNoteId?: string | null;
-      creditNote?: { invoiceId: string | null } | null;
+      creditNote?: { invoiceId: string | null; status?: string | null } | null;
     }>;
+    /** SA-838a: the credit notes issued against this invoice (a kept return credit's status is read here) */
+    creditNotes?: Array<{ id: string; status: string }>;
     /** SA-764: each line's stored tax rate (a fraction, 0.0825); CQ-03: its billed levy and category */
     items?: Array<{
       /** R7b 2.1: the line's snapshotted description and qty (the row's item names) */
@@ -624,6 +629,8 @@ export interface ReturnProvenance {
   /** absent on a hand-built record; when set, a return seen twice (the page's own and the batched read) counts once */
   id?: string;
   creditNoteId: string | null;
+  /** SA-838a: that note's status (ISSUED / APPLIED / VOID) when a read could see it; unknown reads as issued */
+  creditNoteStatus?: string | null;
   /** the order the return is filed on (for an INLINE return, the CARRYING order) */
   orderId: string;
   /** STANDARD (absent reads STANDARD) or INLINE */
@@ -705,24 +712,44 @@ export function toTodaysSaleRow(
     return amount > 0 ? [{ method, amount }] : [];
   });
 
-  // B1262 / SA-838: the sale's own return credit is not a tender. One provenance read, then the ONE pricing split.
+  // B1262 / SA-838 + SA-838a: the sale's own return credit is not a tender. One provenance read, ONE settlement per own
+  // return (pricing's returnSettlement), then the ONE pricing split over those settlements. Nothing else derives these figures.
+  const noteStatus = new Map<string, string>();
+  for (const i of o.invoices) {
+    for (const n of i.creditNotes ?? []) noteStatus.set(n.id, n.status);
+    for (const p of i.payments) {
+      if (p.creditNoteId && p.creditNote?.status)
+        noteStatus.set(p.creditNoteId, p.creditNote.status);
+    }
+  }
   const provenance = dedupeById([
     ...o.returns.map((r) => ({ ...r, orderId: o.id, amount: returnAmount(r) })),
     ...carriedReturns,
-  ]);
+  ]).map((r) => ({
+    ...r,
+    creditNoteStatus:
+      r.creditNoteStatus ?? (r.creditNoteId ? noteStatus.get(r.creditNoteId) : null),
+  }));
   const ownCreditNoteIds = ownReturnCreditNoteIds({
     orderId: o.id,
     invoiceIds: o.invoices.map((i) => i.id),
     payments,
     returns: provenance,
   });
-  // review I1: the Returned line is THIS order's own return only (a carrier order holding another sale's INLINE return has none)
-  const ownReturns = provenance.filter((r) => !isDeadReturn(r.status) && isOwnReturn(o.id, r));
+  // the payments PROVEN to be this order's own return credit (both links agree); every other payment is a tender
+  const ownCreditPayments = payments.filter(
+    (p) => !!p.creditNoteId && ownCreditNoteIds.has(p.creditNoteId),
+  );
+  const settlements = provenance
+    .filter((r) => isOwnReturn(o.id, r))
+    .map((r) => returnSettlement(r, ownCreditPayments, o.id));
   const split = counterTenderSplit(
     payments.map((p) => ({ ...p, method: todaysMethodOf(p.method) })),
-    ownCreditNoteIds,
+    settlements,
     METHOD_ORDER,
   );
+  const sumOf = (pick: (s: (typeof settlements)[number]) => number) =>
+    roundMoney(settlements.reduce((t, s) => roundMoney(t + pick(s)), 0));
 
   // Nothing paid: a named customer left it on account by choice; a walk-in must pay, so no tender is the
   // "payment not recorded" case. Something paid but short is partly paid (the receipt makes the same split).
@@ -766,9 +793,11 @@ export function toTodaysSaleRow(
     tenderPaid: split.tenderPaid,
     returnCredit: split.returnCredit,
     tenderMethods: split.methods,
-    ownReturned: {
-      amount: ownReturnedAmount(o.id, ownReturns),
-      allRefunded: ownReturns.length > 0 && ownReturns.every((r) => resolutionOf(r) === "REFUND"),
+    returnLines: {
+      applied: sumOf((s) => s.applied),
+      refunded: sumOf((s) => s.refunded),
+      kept: sumOf((s) => s.kept),
+      pending: settlements.some((s) => s.state === "PENDING"),
     },
     paymentState,
     cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),

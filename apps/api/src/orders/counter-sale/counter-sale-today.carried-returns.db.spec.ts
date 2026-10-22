@@ -4,8 +4,8 @@
  * An INLINE return is filed on a CARRYING order (B) and sold per line on another (A): `Return.orderId = B`,
  * `ReturnItem.sourceOrderId = A`, and its credit note was issued against A's invoice and applied there. Neither
  * `Return.creditNoteId` nor `ReturnItem.sourceOrderId` has a Prisma relation, so only the service's one batched read by credit
- * note id finds it. Expected: A's row has `returnCredit` and `ownReturned` (its tenders exclude the credit); B's row, which holds
- * the return but not the goods, has `ownReturned` zero and shows its own store-credit application as an ordinary tender.
+ * note id finds it. Expected: A's row has `returnCredit` and `returnLines.applied` (its tenders exclude the credit); B's row, which holds
+ * the return but not the goods, has `returnLines` all zero and shows its own store-credit application as an ordinary tender.
  *
  * NOT RUN by the authoring lane (no Postgres here): the DB lane runs it (`npm run local:test:db`, test tenants only,
  * collected only by jest.db.config.js). Placeholders only (acme).
@@ -223,7 +223,7 @@ describeDb(
       await pool?.end();
     }, 120_000);
 
-    it("(e) sale A: its INLINE return carried on B is A's returnCredit and ownReturned; B shows its store credit as a tender", async () => {
+    it("(e) sale A: its INLINE return carried on B is A's returnCredit and returnLines.applied; B shows its store credit as a tender", async () => {
       const res = await tenantCtx.run(tenantId, () =>
         service.today({ day: DAY, page: 1, limit: 100 } as never, NOW),
       );
@@ -234,11 +234,11 @@ describeDb(
       expect(rowA.tenderPaid).toBe(7);
       expect(rowA.returnCredit).toBe(5.5);
       expect(rowA.tenderMethods).toEqual([{ method: "CASH", amount: 7 }]);
-      expect(rowA.ownReturned).toEqual({ amount: 5.5, allRefunded: false });
+      expect(rowA.returnLines).toEqual({ applied: 5.5, refunded: 0, kept: 0, pending: false });
 
       // B holds the return (its `returned` counts it) but not the goods: no Returned line, the credit it used is a tender
       expect(rowB.returned.amount).toBe(5.5);
-      expect(rowB.ownReturned).toEqual({ amount: 0, allRefunded: false });
+      expect(rowB.returnLines).toEqual({ applied: 0, refunded: 0, kept: 0, pending: false });
       expect(rowB.returnCredit).toBe(0);
       expect(rowB.tenderPaid).toBe(12.5);
       expect(rowB.tenderMethods).toEqual([

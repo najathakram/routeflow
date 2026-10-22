@@ -1,5 +1,5 @@
 import { CounterSaleTodayService } from "./counter-sale-today.service";
-import { carriedReturnSelect, carriedReturnWhere } from "./counter-sale-today";
+import { carriedReturnSelect, carriedReturnWhere, pageQuery } from "./counter-sale-today";
 import type { CounterSaleTodayDto } from "./counter-sale-today.dto";
 import { createMockPrisma, type MockPrisma } from "../../testing/prisma-mock";
 
@@ -16,7 +16,7 @@ const payment = (creditNoteId: string | null, method = "CREDIT_NOTE") => ({
   amount: "5.50",
   status: "PAID",
   creditNoteId,
-  creditNote: creditNoteId ? { invoiceId: "i-a" } : null,
+  creditNote: creditNoteId ? { invoiceId: "i-a", status: "APPLIED" } : null,
 });
 
 /** sale A: $12.50, $7 cash + a $5.50 credit-note application */
@@ -83,7 +83,7 @@ describe("CounterSaleTodayService: the batched read of carried returns (SA-838 e
     });
   });
 
-  it("the INLINE return carried on B, sold on A, makes A's credit its own return credit and its ownReturned", async () => {
+  it("the INLINE return carried on B, sold on A, makes A's credit its own return credit and A's returnLines.applied", async () => {
     const a = saleA([{ ...payment(null, "CASH"), amount: "7.00" }, payment("cn-1")]);
     const { call } = setup(
       [a],
@@ -105,7 +105,7 @@ describe("CounterSaleTodayService: the batched read of carried returns (SA-838 e
     expect(row.returnCredit).toBe(5.5);
     expect(row.tenderPaid).toBe(7);
     expect(row.tenderMethods).toEqual([{ method: "CASH", amount: 7 }]);
-    expect(row.ownReturned).toEqual({ amount: 5.5, allRefunded: false });
+    expect(row.returnLines).toEqual({ applied: 5.5, refunded: 0, kept: 0, pending: false });
   });
 
   it("without the batched read's answer, the same credit stays a tender (never hidden)", async () => {
@@ -113,5 +113,23 @@ describe("CounterSaleTodayService: the batched read of carried returns (SA-838 e
     const row = (await call()).data[0]!;
     expect(row.returnCredit).toBe(0);
     expect(row.tenderMethods).toEqual([{ method: "STORE_CREDIT", amount: 5.5 }]);
+  });
+});
+
+describe("the page query carries what SA-838a needs, in the SAME query (no extra read)", () => {
+  it("each payment's credit note names its invoice AND status; each invoice names its notes' status", () => {
+    const q = pageQuery(T, { start: new Date(0), end: new Date(1) }, 1, 50) as any;
+    const invoices = q.select.invoices.select;
+    expect(invoices.payments.select.creditNote).toEqual({
+      select: { invoiceId: true, status: true },
+    });
+    expect(invoices.creditNotes).toEqual({ select: { id: true, status: true } });
+    // the refund the return recorded: method + the moment it was recorded (completion), on the page's own return select
+    expect(q.select.returns.select).toMatchObject({
+      refundMethod: true,
+      refundedAt: true,
+      creditNoteId: true,
+      kind: true,
+    });
   });
 });

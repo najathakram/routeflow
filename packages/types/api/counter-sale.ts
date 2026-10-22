@@ -253,12 +253,14 @@ export interface TodaysSaleRow {
   /** `methods` without the own-return credit */
   tenderMethods?: Array<{ method: TodaysSaleMethod; amount: number }>;
   /**
-   * B1262 review I1: the money of THIS order's own live returns (a STANDARD return filed on it, plus the priced items of INLINE
-   * returns, filed on any order, whose `sourceOrderId` is this order; `@routeflow/pricing` `ownReturnedAmount`) and whether every
-   * one of them was settled as a refund. `returned` also counts an INLINE return merely CARRIED on this order, which is another
-   * sale's goods: the reprint prints its Returned / Refunded line from this field only. Omitted by an older server (no line).
+   * SA-838a, what THIS sale's own returns did on the paper (`@routeflow/pricing` `returnSettlement`, summed; the one home).
+   * `applied` = credit applied to this sale's invoices: the only figure the balance subtracts (it is `returnCredit`, and the
+   * receipt's "Returned" line). `refunded` = money handed back outside RouteFlow (an info line); `kept` = settled credit left on the
+   * customer's account (an info line). `pending` = an own return is not settled yet ("Return in progress", no amount). The
+   * invariant: balanceDue = total - tenderPaid - applied. A carrier order holding another sale's INLINE return has all zeros.
+   * Omitted by an older server: the reprint then prints master's wording and no return line.
    */
-  ownReturned?: { amount: number; allRefunded: boolean };
+  returnLines?: { applied: number; refunded: number; kept: number; pending: boolean };
   paymentState: TodaysSalePaymentState;
   /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
   cashTendered: number | null;
