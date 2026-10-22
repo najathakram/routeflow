@@ -370,8 +370,8 @@ export const API_ERROR_CODES = {
   COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
   /**
    * 404 from GET /invoices/payments/by-key/:key (SA-824): NO payment, advance or invoice payment is recorded
-   * under this Idempotency-Key in this tenant. A server-definitive "nothing recorded": the dialog may release
-   * the key and take a fresh one.
+   * under this Idempotency-Key in this tenant YET. NOT definitive: a payment may still be in flight, so the
+   * dialog never releases on it (SA-824 race ruling 5); only POST …/resolve (found | tombstoned) releases.
    */
   PAYMENT_KEY_NOT_FOUND: "PAYMENT_KEY_NOT_FOUND",
   /**
