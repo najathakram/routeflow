@@ -726,14 +726,14 @@ describe("B1262 follow-up / SA-838b: an INLINE return's credit note has no invoi
     }
   });
 
-  it("an INLINE note stamped with some OTHER invoice id is still own: the note's invoice is no longer the link", () => {
+  it("GUARD: an INLINE note stamped with another order's invoice is never own (fail closed, stays a tender)", () => {
     expect(
       ownReturnCreditNoteIds({
         ...base,
         payments: [creditPay(3, "cn-1", "i-9")],
         returns: [carried({ items: [{ sourceOrderId: "o-1" }] })],
       }).size,
-    ).toBe(1);
+    ).toBe(0);
   });
 
   it("a MIXED inline return (items sold on several orders) falls back to a tender on every order it touches", () => {

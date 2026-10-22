@@ -763,8 +763,9 @@ export interface ReturnProvenance {
  *   2. the second link, by the kind of return:
  *      - STANDARD: that credit note was issued against one of this order's invoices (`CreditNote.invoiceId`).
  *      - INLINE: the real mint writes `CreditNote.invoiceId = NULL` (`mintStandaloneInTx`), so the note's invoice cannot be the
- *        link. Instead EVERY item of the return is sold on this order, and the credit has a PAID application on one of this
- *        order's invoices (`payments` are the payments of this order's own live invoices). A MIXED return (items sold on
+ *        link. A note stamped with ANOTHER order's invoice is never own (fail closed); a NULL one may be. Instead EVERY item
+ *        of the return is sold on this order, and the credit has a PAID application on one of this order's invoices
+ *        (`payments` are the payments of this order's own live invoices). A MIXED return (items sold on
  *        several orders) is not provably this order's alone, so its credit stays a tender (the safe default).
  * A note shared by several live returns (`Return.creditNoteId` is not unique) is own only if EVERY one of them passes; a return
  * sold elsewhere vetoes it. A rejected or cancelled return proves nothing (and vetoes nothing). `Return.creditNoteId` has no
@@ -798,7 +799,8 @@ export function ownReturnCreditNoteIds(input: {
         isOwnReturn(input.orderId, r) &&
         (r.kind === "INLINE"
           ? p.status === CONFIRMED_STATUS &&
-            (r.items ?? []).every((i) => i.sourceOrderId === input.orderId)
+            (r.items ?? []).every((i) => i.sourceOrderId === input.orderId) &&
+            (!invoiceId || noteOnThisOrder)
           : noteOnThisOrder),
     );
     if (proven) own.add(p.creditNoteId);
