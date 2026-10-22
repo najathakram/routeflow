@@ -383,6 +383,11 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     ]);
     await call({ page: 1, limit: 50 }, NOW);
     expect(prisma.return.findMany).toHaveBeenCalledTimes(2);
+    // SA-838a I2: plus exactly ONE batched credit-note read (the summary's read is the other creditNote.findMany)
+    expect(prisma.creditNote.findMany).toHaveBeenCalledTimes(2);
+    expect(
+      (prisma.creditNote.findMany.mock.calls as any[]).filter((c) => c[0]?.select?.invoicePayments),
+    ).toHaveLength(1);
     const batched = (prisma.return.findMany.mock.calls as any[]).filter(
       (c) => c[0]?.where?.creditNoteId,
     );

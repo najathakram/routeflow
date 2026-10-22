@@ -181,7 +181,7 @@ describeDb(
           customerId,
           tenantId,
           reason: "DAMAGED",
-          status: "PROCESSED" as never,
+          status: "REFUNDED" as never,
           kind: "INLINE" as never,
           refundMethod: "CREDIT_NOTE",
           creditNoteId: ids.cnOwn,
@@ -234,11 +234,23 @@ describeDb(
       expect(rowA.tenderPaid).toBe(7);
       expect(rowA.returnCredit).toBe(5.5);
       expect(rowA.tenderMethods).toEqual([{ method: "CASH", amount: 7 }]);
-      expect(rowA.returnLines).toEqual({ applied: 5.5, refunded: 0, kept: 0, pending: false });
+      expect(rowA.returnLines).toEqual({
+        applied: 5.5,
+        refunded: 0,
+        kept: 0,
+        used: 0,
+        pending: false,
+      });
 
       // B holds the return (its `returned` counts it) but not the goods: no Returned line, the credit it used is a tender
       expect(rowB.returned.amount).toBe(5.5);
-      expect(rowB.returnLines).toEqual({ applied: 0, refunded: 0, kept: 0, pending: false });
+      expect(rowB.returnLines).toEqual({
+        applied: 0,
+        refunded: 0,
+        kept: 0,
+        used: 0,
+        pending: false,
+      });
       expect(rowB.returnCredit).toBe(0);
       expect(rowB.tenderPaid).toBe(12.5);
       expect(rowB.tenderMethods).toEqual([

@@ -255,12 +255,13 @@ export interface TodaysSaleRow {
   /**
    * SA-838a, what THIS sale's own returns did on the paper (`@routeflow/pricing` `returnSettlement`, summed; the one home).
    * `applied` = credit applied to this sale's invoices: the only figure the balance subtracts (it is `returnCredit`, and the
-   * receipt's "Returned" line). `refunded` = money handed back outside RouteFlow (an info line); `kept` = settled credit left on the
-   * customer's account (an info line). `pending` = an own return is not settled yet ("Return in progress", no amount). The
-   * invariant: balanceDue = total - tenderPaid - applied. A carrier order holding another sale's INLINE return has all zeros.
-   * Omitted by an older server: the reprint then prints master's wording and no return line.
+   * receipt's "Returned" line). `refunded` = money handed back outside RouteFlow, `kept` = settled credit still on the customer's
+   * account (worth - applied anywhere - refunded), `used` = the part of the credit spent on OTHER orders: info lines, never
+   * subtracted. `pending` = an own return is not settled (or its credit note could not be seen): "Return in progress", no amount.
+   * A VOID credit note with no refund is dead and prints nothing. The invariant: balanceDue = total - tenderPaid - applied. A
+   * carrier order holding another sale's INLINE return has all zeros. Omitted by an older server: master's wording, no return line.
    */
-  returnLines?: { applied: number; refunded: number; kept: number; pending: boolean };
+  returnLines?: { applied: number; refunded: number; kept: number; used: number; pending: boolean };
   paymentState: TodaysSalePaymentState;
   /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
   cashTendered: number | null;

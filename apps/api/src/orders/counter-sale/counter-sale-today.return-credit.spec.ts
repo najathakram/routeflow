@@ -20,29 +20,33 @@ type Pay = {
   amount: unknown;
   status: string;
   creditNoteId?: string | null;
-  creditNote?: { invoiceId: string | null; status?: string } | null;
+  creditNote?: { invoiceId: string | null } | null;
 };
 type Ret = TodayOrderRecord["returns"][number];
 
 const pay = (method: string, amount: number): Pay => ({ method, amount, status: "PAID" });
 /** a credit-note application: the note id and the invoice the NOTE was issued against */
-const creditPay = (
-  amount: number,
-  noteId: string,
-  noteInvoiceId: string | null = "i-1",
-  status = "APPLIED",
-): Pay => ({
+const creditPay = (amount: number, noteId: string, noteInvoiceId: string | null = "i-1"): Pay => ({
   method: "CREDIT_NOTE",
   amount,
   status: "PAID",
   creditNoteId: noteId,
-  creditNote: { invoiceId: noteInvoiceId, status },
+  creditNote: { invoiceId: noteInvoiceId },
 });
+
+/** the batched credit-note read's answer: note id -> [status, PAID amount applied on ANY sale] */
+const notes = (entries: Record<string, [string, number]>) =>
+  new Map(
+    Object.entries(entries).map(([id, [status, appliedAnywhere]]) => [
+      id,
+      { status, appliedAnywhere },
+    ]),
+  );
 
 const ret = (over: Partial<Ret> = {}): Ret => ({
   id: "r-1",
   returnNumber: "RET-1",
-  status: "PROCESSED",
+  status: "REFUNDED",
   refundMethod: "CREDIT_NOTE",
   creditNoteId: "cn-1",
   refundAmount: null,
@@ -71,7 +75,7 @@ const carried = (over: Partial<ReturnProvenance> = {}): ReturnProvenance => ({
   creditNoteId: "cn-1",
   orderId: "o-2",
   kind: "INLINE",
-  status: "PROCESSED",
+  status: "REFUNDED",
   items: [{ sourceOrderId: "o-1" }],
   ...over,
 });
@@ -201,7 +205,7 @@ describe("ownReturnCreditNoteIds (SA-838 provenance: both links, or it is a tend
     creditNoteId: "cn-1",
     orderId: "o-1",
     kind: "STANDARD",
-    status: "PROCESSED",
+    status: "REFUNDED",
     ...over,
   });
 
@@ -298,7 +302,7 @@ describe("toTodaysSaleRow: returnLines, what THIS order's own return did (SA-838
     creditNoteId: "cn-1",
     orderId: "o-b",
     kind: "INLINE",
-    status: "PROCESSED",
+    status: "REFUNDED",
     refundMethod: "CREDIT_NOTE",
     items: [{ sourceOrderId: "o-1", subtotal: "5.00", taxAmount: "0.50", categoryTax: "0.00" }],
     ...over,
@@ -317,24 +321,45 @@ describe("toTodaysSaleRow: returnLines, what THIS order's own return did (SA-838
     });
   const own250 = (over: Partial<Ret> = {}): Ret =>
     ret({ creditSubtotal: "2.50", creditNoteId: "cn-1", ...over });
+  const go = (
+    rec: TodayOrderRecord,
+    seen: ReturnType<typeof notes> = notes({}),
+    carriedRets: ReturnProvenance[] = [],
+  ) => toTodaysSaleRow(rec, null, carriedRets, seen);
   const lines = (r: ReturnType<typeof toTodaysSaleRow>) => r.returnLines;
+  const L = (
+    applied: number,
+    refundedAmt: number,
+    kept: number,
+    used: number,
+    pending: boolean,
+  ) => ({
+    applied,
+    refunded: refundedAmt,
+    kept,
+    used,
+    pending,
+  });
 
   it("(1a) Total 12.50, Cash 5.00, own return 2.50 refunded outside: Refunded 2.50, Balance due 7.50", () => {
-    const row = toTodaysSaleRow(order([pay("CASH", 5)], [refunded()]));
-    expect(lines(row)).toEqual({ applied: 0, refunded: 2.5, kept: 0, pending: false });
+    const row = go(order([pay("CASH", 5)], [refunded()]));
+    expect(lines(row)).toEqual(L(0, 2.5, 0, 0, false));
     expect(row.tenderPaid).toBe(5);
     expect(row.balanceDue).toBe(7.5);
   });
 
   it("(1b) the credit is kept on the account: Credit kept 2.50, Balance due 7.50", () => {
-    const row = toTodaysSaleRow(order([pay("CASH", 5)], [own250()]));
-    expect(lines(row)).toEqual({ applied: 0, refunded: 0, kept: 2.5, pending: false });
+    const row = go(order([pay("CASH", 5)], [own250()]), notes({ "cn-1": ["ISSUED", 0] }));
+    expect(lines(row)).toEqual(L(0, 0, 2.5, 0, false));
     expect(row.balanceDue).toBe(7.5);
   });
 
   it("(1c) the credit is applied to this sale: Returned 2.50, Balance due 5.00", () => {
-    const row = toTodaysSaleRow(order([pay("CASH", 5), creditPay(2.5, "cn-1")], [own250()]));
-    expect(lines(row)).toEqual({ applied: 2.5, refunded: 0, kept: 0, pending: false });
+    const row = go(
+      order([pay("CASH", 5), creditPay(2.5, "cn-1")], [own250()]),
+      notes({ "cn-1": ["APPLIED", 2.5] }),
+    );
+    expect(lines(row)).toEqual(L(2.5, 0, 0, 0, false));
     expect(row.tenderPaid).toBe(5);
     expect(row.returnCredit).toBe(2.5);
     expect(row.balanceDue).toBe(5);
@@ -342,74 +367,104 @@ describe("toTodaysSaleRow: returnLines, what THIS order's own return did (SA-838
 
   it("(2) the return is still pending: nothing subtracted, pending is true", () => {
     for (const status of ["PENDING", "APPROVED", "IN_TRANSIT"]) {
-      const row = toTodaysSaleRow(
+      const row = go(
         order(
           [pay("CASH", 5)],
-          [
-            ret({
-              status,
-              refundMethod: null,
-              creditNoteId: null,
-              creditSubtotal: "2.50",
-            }),
-          ],
+          [ret({ status, refundMethod: null, creditNoteId: null, creditSubtotal: "2.50" })],
         ),
       );
-      expect(lines(row)).toEqual({ applied: 0, refunded: 0, kept: 0, pending: true });
+      expect(lines(row)).toEqual(L(0, 0, 0, 0, true));
       expect(row.balanceDue).toBe(7.5);
     }
   });
 
   it("a refund chosen but not recorded yet is still pending, not Refunded", () => {
-    const row = toTodaysSaleRow(order([pay("CASH", 5)], [refunded({ refundedAt: null })]));
-    expect(lines(row)).toEqual({ applied: 0, refunded: 0, kept: 0, pending: true });
+    const row = go(order([pay("CASH", 5)], [refunded({ refundedAt: null })]));
+    expect(lines(row)).toEqual(L(0, 0, 0, 0, true));
   });
 
   it("(a) on account 12.50, 6.25 returned and applied, 6.25 cash: Returned 6.25, balance 0", () => {
-    const row = toTodaysSaleRow(order([pay("CASH", 6.25), creditPay(6.25, "cn-1")], [ret()]));
-    expect(lines(row)).toEqual({ applied: 6.25, refunded: 0, kept: 0, pending: false });
+    const row = go(
+      order([pay("CASH", 6.25), creditPay(6.25, "cn-1")], [ret()]),
+      notes({ "cn-1": ["APPLIED", 6.25] }),
+    );
+    expect(lines(row)).toEqual(L(6.25, 0, 0, 0, false));
     expect(row.balanceDue).toBe(0);
   });
 
   it("(b) 5.00 advance + 7.50 cash, 2.50 refunded outside: Refunded 2.50, Paid 12.50", () => {
-    const row = toTodaysSaleRow(order([pay("ADVANCE", 5), pay("CASH", 7.5)], [refunded()]));
-    expect(lines(row)).toEqual({ applied: 0, refunded: 2.5, kept: 0, pending: false });
+    const row = go(order([pay("ADVANCE", 5), pay("CASH", 7.5)], [refunded()]));
+    expect(lines(row)).toEqual(L(0, 2.5, 0, 0, false));
     expect(row.tenderPaid).toBe(12.5);
   });
 
   it("(c) paid fully from an advance, 3.00 returned and kept: Credit kept 3.00", () => {
-    const row = toTodaysSaleRow(
+    const row = go(
       order([pay("ADVANCE", 12.5)], [ret({ creditNoteId: "cn-wallet", creditSubtotal: "3.00" })]),
+      notes({ "cn-wallet": ["ISSUED", 0] }),
     );
-    expect(lines(row)).toEqual({ applied: 0, refunded: 0, kept: 3, pending: false });
+    expect(lines(row)).toEqual(L(0, 0, 3, 0, false));
   });
 
   it("a credit partly applied here shows Returned for the part applied and Credit kept for the rest", () => {
-    const row = toTodaysSaleRow(order([pay("CASH", 5), creditPay(1, "cn-1")], [own250()]));
-    expect(lines(row)).toEqual({ applied: 1, refunded: 0, kept: 1.5, pending: false });
+    const row = go(
+      order([pay("CASH", 5), creditPay(1, "cn-1")], [own250()]),
+      notes({ "cn-1": ["APPLIED", 1] }),
+    );
+    expect(lines(row)).toEqual(L(1, 0, 1.5, 0, false));
     expect(row.balanceDue).toBe(6.5);
   });
 
-  it("the credit note's status is read from the invoice's own notes when no payment applied it, and a VOID note is not kept", () => {
-    const withNotes = (status: string) => {
-      const o = order([pay("CASH", 5)], [own250()]);
-      (o.invoices[0] as { creditNotes?: unknown }).creditNotes = [{ id: "cn-1", status }];
-      return toTodaysSaleRow(o);
-    };
-    expect(lines(withNotes("ISSUED"))).toEqual({
-      applied: 0,
-      refunded: 0,
-      kept: 2.5,
-      pending: false,
-    });
-    expect(lines(withNotes("VOID"))).toEqual({ applied: 0, refunded: 0, kept: 0, pending: true });
+  it("(3) I1: sale A 12.50 all cash, its 5.50 credit spent on order B: Credit used 5.50, nothing kept, no balance", () => {
+    const row = go(
+      order([pay("CASH", 12.5)], [ret({ creditSubtotal: "5.50" })]),
+      notes({ "cn-1": ["APPLIED", 5.5] }),
+    );
+    expect(lines(row)).toEqual(L(0, 0, 0, 5.5, false));
+    expect(row.balanceDue).toBe(0);
+    expect(row.tenderPaid).toBe(12.5);
+  });
+
+  it("I1: credit partly used elsewhere: Credit used for the part spent, Credit kept for the rest", () => {
+    const row = go(order([pay("CASH", 5)], [own250()]), notes({ "cn-1": ["APPLIED", 1] }));
+    expect(lines(row)).toEqual(L(0, 0, 1.5, 1, false));
+  });
+
+  it("I2: a note the batched read did not return is not settled: pending, never kept", () => {
+    const row = go(order([pay("CASH", 5)], [own250()]), notes({}));
+    expect(lines(row)).toEqual(L(0, 0, 0, 0, true));
+  });
+
+  it("M1: a VOID note with no refund prints nothing (own return), applied then voided included", () => {
+    const kept = go(order([pay("CASH", 5)], [own250()]), notes({ "cn-1": ["VOID", 0] }));
+    expect(lines(kept)).toEqual(L(0, 0, 0, 0, false));
+    // the PAID application still stands under a VOID note: it stays a tender (never hide money), the balance is the stored one
+    const stood = go(
+      order([pay("CASH", 5), creditPay(2.5, "cn-1")], [own250()]),
+      notes({ "cn-1": ["VOID", 2.5] }),
+    );
+    expect(lines(stood)).toEqual(L(0, 0, 0, 0, false));
+    expect(stood.returnCredit).toBe(0);
+    expect(stood.tenderPaid).toBe(7.5);
+    expect(stood.balanceDue).toBe(5);
+  });
+
+  it("I2: a carried INLINE return whose note is VOID prints nothing", () => {
+    const row = go(
+      order([pay("CASH", 6.25), creditPay(5.5, "cn-1")], []),
+      notes({ "cn-1": ["VOID", 0] }),
+      [inlineOfA()],
+    );
+    expect(lines(row)).toEqual(L(0, 0, 0, 0, false));
   });
 
   it("sale A: its own INLINE return, carried on B, applied here: Returned 5.50", () => {
-    const row = toTodaysSaleRow(order([pay("CASH", 6.25), creditPay(5.5, "cn-1")], []), null, [
-      inlineOfA(),
-    ]);
-    expect(lines(row)).toEqual({ applied: 5.5, refunded: 0, kept: 0, pending: false });
+    const row = go(
+      order([pay("CASH", 6.25), creditPay(5.5, "cn-1")], []),
+      notes({ "cn-1": ["APPLIED", 5.5] }),
+      [inlineOfA()],
+    );
+    expect(lines(row)).toEqual(L(5.5, 0, 0, 0, false));
   });
 
   it("carrier B: holds the INLINE return (row.returned counts it) but returnLines are all zero", () => {
@@ -427,31 +482,44 @@ describe("toTodaysSaleRow: returnLines, what THIS order's own return did (SA-838
         items: [{ sourceOrderId: "o-1", subtotal: "5.00", taxAmount: "0.50", categoryTax: "0.00" }],
       },
     ];
-    const row = toTodaysSaleRow(carrier);
+    const row = go(carrier, notes({ "cn-1": ["ISSUED", 0] }));
     expect(row.returned.amount).toBe(5.5);
-    expect(lines(row)).toEqual({ applied: 0, refunded: 0, kept: 0, pending: false });
+    expect(lines(row)).toEqual(L(0, 0, 0, 0, false));
     expect(row.tenderPaid).toBe(12.5);
     expect(row.returnCredit).toBe(0);
   });
 
   it("one return seen twice (the page's and the batched read) counts once", () => {
-    const row = toTodaysSaleRow(
+    const row = go(
       order([pay("CASH", 6.25), creditPay(6.25, "cn-1")], [ret({ id: "r-1" })]),
-      null,
-      [{ id: "r-1", creditNoteId: "cn-1", orderId: "o-1", kind: "STANDARD", status: "PROCESSED" }],
+      notes({ "cn-1": ["APPLIED", 6.25] }),
+      [{ id: "r-1", creditNoteId: "cn-1", orderId: "o-1", kind: "STANDARD", status: "REFUNDED" }],
     );
-    expect(lines(row)).toEqual({ applied: 6.25, refunded: 0, kept: 0, pending: false });
+    expect(lines(row)).toEqual(L(6.25, 0, 0, 0, false));
+  });
+
+  it("M2: two returns naming ONE note count its application once: returnCredit is the own-credit PAID payments", () => {
+    const row = go(
+      order(
+        [pay("CASH", 5), creditPay(2.5, "cn-1")],
+        [own250({ id: "r-1" }), own250({ id: "r-2" })],
+      ),
+      notes({ "cn-1": ["APPLIED", 2.5] }),
+    );
+    expect(row.returnCredit).toBe(2.5);
+    expect(lines(row)?.applied).toBe(2.5);
+    expect(row.tenderPaid).toBe(5);
   });
 
   it("a rejected or cancelled return is no one's return: DEAD prints nothing", () => {
-    const row = toTodaysSaleRow(order([pay("CASH", 12.5)], [ret({ status: "REJECTED" })]), null, [
+    const row = go(order([pay("CASH", 12.5)], [ret({ status: "REJECTED" })]), notes({}), [
       inlineOfA({ status: "CANCELLED" }),
     ]);
-    expect(lines(row)).toEqual({ applied: 0, refunded: 0, kept: 0, pending: false });
+    expect(lines(row)).toEqual(L(0, 0, 0, 0, false));
   });
 
   it("two own returns add up: one applied, one refunded, one pending", () => {
-    const row = toTodaysSaleRow(
+    const row = go(
       order(
         [pay("CASH", 5), creditPay(2.5, "cn-1")],
         [
@@ -460,8 +528,9 @@ describe("toTodaysSaleRow: returnLines, what THIS order's own return did (SA-838
           ret({ id: "r-3", status: "PENDING", refundMethod: null, creditNoteId: null }),
         ],
       ),
+      notes({ "cn-1": ["APPLIED", 2.5] }),
     );
-    expect(lines(row)).toEqual({ applied: 2.5, refunded: 2.5, kept: 0, pending: true });
+    expect(lines(row)).toEqual(L(2.5, 2.5, 0, 0, true));
   });
 
   it("DEAD_RETURN_STATUS_VALUES (pricing) is the API's DEAD_RETURN_STATUSES, element for element", () => {
@@ -480,39 +549,72 @@ describe("toTodaysSaleRow: the receipt invariant over every fixture (SA-838a, in
     refundedAt: new Date("2026-10-07T19:00:00.000Z"),
   });
   const pendingRet = ret({ status: "PENDING", refundMethod: null, creditNoteId: null });
-  const fixtureRows: Array<[string, TodayOrderRecord, ReturnProvenance[]?]> = [
-    ["1a refunded", order([pay("CASH", 5)], [refundedRet])],
-    ["1b kept", order([pay("CASH", 5)], [ret({ creditSubtotal: "2.50" })])],
+  type Seen = ReturnType<typeof notes>;
+  const inline: ReturnProvenance = {
+    id: "r-inline",
+    creditNoteId: "cn-1",
+    orderId: "o-b",
+    kind: "INLINE",
+    status: "REFUNDED",
+    items: [{ sourceOrderId: "o-1", subtotal: "5.00", taxAmount: "0.50", categoryTax: "0" }],
+  };
+  const fixtures: Array<readonly [string, TodayOrderRecord, Seen, ReturnProvenance[]]> = [
+    ["1a refunded", order([pay("CASH", 5)], [refundedRet]), notes({}), []],
+    [
+      "1b kept",
+      order([pay("CASH", 5)], [ret({ creditSubtotal: "2.50" })]),
+      notes({ "cn-1": ["ISSUED", 0] }),
+      [],
+    ],
     [
       "1c applied",
       order([pay("CASH", 5), creditPay(2.5, "cn-1")], [ret({ creditSubtotal: "2.50" })]),
+      notes({ "cn-1": ["APPLIED", 2.5] }),
+      [],
     ],
-    ["2 pending", order([pay("CASH", 5)], [pendingRet])],
-    ["a", order([pay("CASH", 6.25), creditPay(6.25, "cn-1")], [ret()])],
-    ["b", order([pay("ADVANCE", 5), pay("CASH", 7.5)], [refundedRet])],
-    ["c", order([pay("ADVANCE", 12.5)], [ret({ creditNoteId: "cn-w", creditSubtotal: "3.00" })])],
-    ["d", order([pay("CASH", 8.5), creditPay(4, "cn-other")], [ret()])],
-    ["no return", order([pay("CASH", 5)], [])],
+    ["2 pending", order([pay("CASH", 5)], [pendingRet]), notes({}), []],
+    [
+      "a",
+      order([pay("CASH", 6.25), creditPay(6.25, "cn-1")], [ret()]),
+      notes({ "cn-1": ["APPLIED", 6.25] }),
+      [],
+    ],
+    ["b", order([pay("ADVANCE", 5), pay("CASH", 7.5)], [refundedRet]), notes({}), []],
+    [
+      "c",
+      order([pay("ADVANCE", 12.5)], [ret({ creditNoteId: "cn-w", creditSubtotal: "3.00" })]),
+      notes({ "cn-w": ["ISSUED", 0] }),
+      [],
+    ],
+    [
+      "3 credit used on B",
+      order([pay("CASH", 12.5)], [ret({ creditSubtotal: "5.50" })]),
+      notes({ "cn-1": ["APPLIED", 5.5] }),
+      [],
+    ],
+    [
+      "voided note, application stands",
+      order([pay("CASH", 5), creditPay(2.5, "cn-1")], [ret({ creditSubtotal: "2.50" })]),
+      notes({ "cn-1": ["VOID", 2.5] }),
+      [],
+    ],
+    [
+      "d",
+      order([pay("CASH", 8.5), creditPay(4, "cn-other")], [ret()]),
+      notes({ "cn-1": ["ISSUED", 0] }),
+      [],
+    ],
+    ["no return", order([pay("CASH", 5)], []), notes({}), []],
     [
       "inline",
       order([pay("CASH", 7), creditPay(5.5, "cn-1")], []),
-      [
-        {
-          id: "r-inline",
-          creditNoteId: "cn-1",
-          orderId: "o-b",
-          kind: "INLINE",
-          status: "PROCESSED",
-          items: [{ sourceOrderId: "o-1", subtotal: "5.00", taxAmount: "0.50", categoryTax: "0" }],
-        },
-      ],
+      notes({ "cn-1": ["APPLIED", 5.5] }),
+      [inline],
     ],
   ];
 
-  // jest hands a `done` callback in the slot a 2-tuple leaves empty, so every row carries its carried returns explicitly
-  const fixtures = fixtureRows.map(([n, rec, carriedRets]) => [n, rec, carriedRets ?? []] as const);
-  it.each(fixtures)("%s: Balance due = Total - Paid - Returned", (_n, rec, carriedRets) => {
-    const row = toTodaysSaleRow(rec, null, [...carriedRets]);
+  it.each(fixtures)("%s: Balance due = Total - Paid - Returned", (_n, rec, seen, carriedRets) => {
+    const row = toTodaysSaleRow(rec, null, [...carriedRets], seen);
     const applied = row.returnLines?.applied ?? NaN;
     expect(cents(row.balanceDue)).toBe(cents(row.total) - cents(row.tenderPaid!) - cents(applied));
     expect(cents(row.tenderPaid!) + cents(row.returnCredit!)).toBe(cents(row.paid));

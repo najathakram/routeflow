@@ -25,6 +25,8 @@ import { describeDb, requireLocalDatabaseUrl } from "../../common/testing/db-spe
 import {
   carriedReturnSelect,
   carriedReturnWhere,
+  creditNoteReadSelect,
+  creditNoteReadWhere,
   counterSalesWhere,
   liveCounterSalesWhere,
   pageQuery,
@@ -172,6 +174,23 @@ describeDb(`POS-7b-1 — today's sales query plans (${N} orders)`, () => {
         await raw.return.findMany({
           where: carriedReturnWhere(tenantId, noteIds),
           select: carriedReturnSelect,
+        })
+      ).length;
+    });
+    expect(rows).toBe(0);
+    expect(plans.length).toBeGreaterThan(0);
+  });
+
+  it("credit notes (SA-838a I2): the ONE batched read by note id, with the PAID payments applied anywhere, plan printed", async () => {
+    // CreditNote.id is the primary key and InvoicePayment.creditNoteId is the relation's join column: the plan is evidence
+    // for a human, like the rest. The lane prints it.
+    const noteIds = Array.from({ length: 50 }, () => randomUUID());
+    let rows = -1;
+    const plans = await explain("credit notes", async () => {
+      rows = (
+        await raw.creditNote.findMany({
+          where: creditNoteReadWhere(tenantId, noteIds),
+          select: creditNoteReadSelect,
         })
       ).length;
     });

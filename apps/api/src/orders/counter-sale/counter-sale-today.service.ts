@@ -17,6 +17,10 @@ import {
   TODAYS_SALES_DEFAULT_LIMIT,
   carriedReturnSelect,
   carriedReturnWhere,
+  creditNoteFacts,
+  creditNoteIdsToRead,
+  creditNoteReadSelect,
+  creditNoteReadWhere,
   counterSalesWhere,
   creditNotesInWindowWhere,
   foldSummary,
@@ -61,7 +65,8 @@ const badDay = (message: string) =>
  * `invoicePayment.findMany` (the day's POS-mode hand-over candidates, v5-filtered in code; the same rows feed
  * the summary's hand-over line and `handOverRows`, so the rows add no query) and `return.findMany` (a day's few
  * returns). No per-row call. Plus ONE more read, after the page, only when a page payment applied a credit note: the returns
- * behind those notes (`carriedReturnWhere`), so an INLINE return carried on another order is found (SA-838 e).
+ * behind those notes (`carriedReturnWhere`), so an INLINE return carried on another order is found (SA-838 e). And ONE more,
+ * when the page or its returns name any credit note: the notes themselves with the PAID amount applied anywhere (SA-838a).
  * Rows and summary are two reads, not one transaction: a sale rung between them can show in one and not the other
  * until the next refetch (accepted; the web refetches both together).
  */
@@ -108,8 +113,21 @@ export class CounterSaleTodayService {
             select: carriedReturnSelect,
           });
 
+    // SA-838a I2: ONE batched read of every credit note the page's payments and returns name (status, and the PAID amount
+    // applied to it anywhere); skipped when there are none. A note this read does not return is never claimed as a credit.
+    const noteIds = creditNoteIdsToRead(rows, carriedReturns);
+    const creditNotes =
+      noteIds.length === 0
+        ? new Map()
+        : creditNoteFacts(
+            await db.creditNote.findMany({
+              where: creditNoteReadWhere(tenantId, noteIds),
+              select: creditNoteReadSelect,
+            }),
+          );
+
     return {
-      data: rows.map((r) => toTodaysSaleRow(r, configuredTaxPercent, carriedReturns)),
+      data: rows.map((r) => toTodaysSaleRow(r, configuredTaxPercent, carriedReturns, creditNotes)),
       meta: {
         total,
         page,
