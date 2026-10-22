@@ -73,7 +73,11 @@ import {
   validatePayment,
   writeAutoPrint,
   writeHeldAttempt,
+  COUNTER_CHECK_POSTDATED_COPY,
+  isPostdatedCheck,
+  tenantDayIn,
 } from "@/lib/counter-sale";
+import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { keptSaleHref } from "@/lib/kept-draft-invoice";
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
@@ -121,6 +125,7 @@ import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 import { ParkedSales } from "./ParkedSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
+import { CounterCheckDetails } from "./CounterCheckDetails";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 interface PickedCustomer {
@@ -205,6 +210,7 @@ export function CounterSaleScreen() {
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
   const [tendered, setTendered] = React.useState("");
   const [reference, setReference] = React.useState("");
+  const [checkDate, setCheckDate] = React.useState(""); // "" = today (the business's day)
   const [error, setError] = React.useState("");
   const [receipt, setReceipt] = React.useState<CounterSaleResponse | null>(null);
   // Set only when the receipt came from "Check sale status": the cash the clerk ENTERED on the attempt (the server stores
@@ -271,6 +277,7 @@ export function CounterSaleScreen() {
       setLines([]);
       setCustomer(null);
       setReference("");
+      setCheckDate("");
     },
   });
   const hasLines = lines.length > 0; // POS-7: the register header's Exit asks before discarding a cart with lines
@@ -410,6 +417,10 @@ export function CounterSaleScreen() {
   }, [receipt, refocus]);
 
   const isWalkIn = customer === null;
+  const tenantZone = useTenantTimeZone();
+  const today = tenantDayIn(tenantZone);
+  const checkDateValue = checkDate || (tenantZone ? today : ""); // zone unknown: send no date, the server judges
+  const checkDateBlocksComplete = method === "CHECK" && isPostdatedCheck(checkDateValue, today);
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
     queryKey: ["settings"],
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
@@ -739,6 +750,7 @@ export function CounterSaleScreen() {
     setMethod("CASH");
     setTendered("");
     setReference("");
+    setCheckDate("");
     setError("");
     setReceipt(null);
     setEnteredTender(null);
@@ -873,8 +885,13 @@ export function CounterSaleScreen() {
         setMethod("CASH");
         setTendered("");
         setReference("");
+        setCheckDate("");
       }
       setError(paymentProblemCopy(problem, totals.total));
+      return null;
+    }
+    if (checkDateBlocksComplete) {
+      setError(COUNTER_CHECK_POSTDATED_COPY);
       return null;
     }
     const tenderAmount = roundMoney(tenderedNum);
@@ -885,6 +902,7 @@ export function CounterSaleScreen() {
         method,
         ...(method === "CASH" ? { amount: tenderAmount } : {}),
         ...(reference.trim() ? { reference: reference.trim() } : {}),
+        ...(method === "CHECK" && checkDateValue ? { checkDate: checkDateValue } : {}),
       },
     };
     dropUndo(); // the sale is going out: a removed line can no longer come back
@@ -1496,16 +1514,16 @@ export function CounterSaleScreen() {
             ) : null}
 
             {method === "CHECK" ? (
-              <label className="block text-sm">
-                Check number
-                <input
-                  aria-label="Check number"
-                  className="mt-1 min-h-[44px] w-full rounded border px-3 py-2"
-                  value={reference}
-                  disabled={locked}
-                  onChange={(e) => setReference(e.target.value)}
-                />
-              </label>
+              <CounterCheckDetails
+                reference={reference}
+                onReferenceChange={setReference}
+                checkDate={checkDateValue}
+                onCheckDateChange={setCheckDate}
+                today={today}
+                walkIn={!customer || !!customer.isWalkIn}
+                disabled={locked}
+                onPutOnAccount={() => setMethod("ON_ACCOUNT")}
+              />
             ) : null}
           </section>
 
