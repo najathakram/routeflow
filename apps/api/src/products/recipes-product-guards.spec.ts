@@ -83,7 +83,9 @@ describe("ProductsService recipe guards", () => {
     for (const state of ["DRAFT", "ACTIVE"] as const) {
       recipeInState(state);
       const err = await service
-        .update("prod-1", { trackedCategoryId: null } as any, { packPrecondition: "internal" })
+        .update("prod-1", { trackedCategoryId: null } as any, {
+          packPrecondition: "internal",
+        })
         .catch((e) => e);
       expect(err).toBeInstanceOf(ConflictException);
       expect(err.getResponse()).toMatchObject({ code: "RECIPE_CATEGORY_LOCKED" });
@@ -114,7 +116,9 @@ describe("ProductsService recipe guards", () => {
   });
 
   it("4: an edit that leaves the category alone never consults the recipes", async () => {
-    await service.update("prod-1", { description: "x" } as any, { packPrecondition: "internal" });
+    await service.update("prod-1", { description: "x" } as any, {
+      packPrecondition: "internal",
+    });
     expect(prisma.recipe.findFirst).not.toHaveBeenCalled();
   });
 

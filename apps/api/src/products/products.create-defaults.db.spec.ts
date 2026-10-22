@@ -222,12 +222,15 @@ describeDb("S4 new-product data rules under flag.units_prices_v2 — real Postgr
       });
       // eslint-disable-next-line no-await-in-loop
       const kid = await inTenant(tenantId, () =>
-        products.create({
-          name: "Zero Kid",
-          unit: "each",
-          pricePerUnit: "7",
-          parentProductId: parent.id,
-        } as any),
+        products.create(
+          {
+            name: "Zero Kid",
+            unit: "each",
+            pricePerUnit: "7",
+            parentProductId: parent.id,
+          } as any,
+          { reparentVia: "editor" },
+        ),
       );
       // eslint-disable-next-line no-await-in-loop
       const row = await fresh(kid.id);

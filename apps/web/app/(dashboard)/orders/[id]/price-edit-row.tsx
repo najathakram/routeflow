@@ -2,9 +2,11 @@
 
 import * as React from "react";
 import { roundMoney } from "@routeflow/pricing";
+import { cn } from "@routeflow/ui/web";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
 import { PriceHistoryButton } from "@/components/PriceHistory";
+import { EDIT_CONTROL_H } from "./edit-line-controls";
 
 // ─── Per-line price / discount editor (DRAFT only) ────────────────────────────
 // Single source of truth is the line's `unitPrice`. The "$ off / unit" field is a
@@ -110,15 +112,21 @@ export function PriceEditRow({
       : null;
 
   return (
-    <div className="ml-11 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+    // r4 Q29: the 44px indent (the product-name column) is sm and up; on a phone every row of the card starts at one edge.
+    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs sm:ml-11">
       <label className="flex items-center gap-1.5 text-navy/70">
         <span>Unit price</span>
-        <span className="flex items-center rounded border border-surface-border bg-white px-1.5 focus-within:ring-1 focus-within:ring-brand-500">
+        <span
+          className={cn(
+            EDIT_CONTROL_H,
+            "flex items-center rounded border border-surface-border bg-white px-1.5 focus-within:ring-1 focus-within:ring-brand-500",
+          )}
+        >
           <span className="text-navy/40">$</span>
           <MoneyInput
             value={unitPrice}
             onChange={commitPrice}
-            className="w-16 rounded-none border-0 bg-transparent px-0 py-1 text-right text-xs focus:ring-0"
+            className="h-full w-16 rounded-none border-0 bg-transparent px-0 py-0 text-right text-sm focus:ring-0"
           />
         </span>
         {/* "Use this price" is the SAME path as typing: commitPrice -> onPriceChange (the special-price
@@ -132,13 +140,18 @@ export function PriceEditRow({
       )}
       <label className="flex items-center gap-1.5 text-navy/70">
         <span>$ off / unit</span>
-        <span className="flex items-center rounded border border-surface-border bg-white px-1.5 focus-within:ring-1 focus-within:ring-brand-500">
+        <span
+          className={cn(
+            EDIT_CONTROL_H,
+            "flex items-center rounded border border-surface-border bg-white px-1.5 focus-within:ring-1 focus-within:ring-brand-500",
+          )}
+        >
           <span className="text-navy/40">−$</span>
           <MoneyInput
             value={offValue}
             onChange={commitOff}
             placeholder="0.00"
-            className="w-14 rounded-none border-0 bg-transparent px-0 py-1 text-right text-xs placeholder:text-navy/40 focus:ring-0"
+            className="h-full w-14 rounded-none border-0 bg-transparent px-0 py-0 text-right text-sm placeholder:text-navy/40 focus:ring-0"
           />
         </span>
       </label>

@@ -81,7 +81,7 @@ describe("CreateOrderModal footer total (O3, P01/P02)", () => {
     const total = await screen.findByTestId("create-order-footer-total");
     // The whole string in ONE text node, no truncation.
     expect(within(total).getByText("$12345.67")).toBeInTheDocument();
-    const footerRow = screen.getByRole("button", { name: /minimize/i }).parentElement!;
+    const footerRow = screen.getByTestId("create-order-footer");
     expect(footerRow).toContainElement(total);
     expect(footerRow).toContainElement(screen.getByRole("button", { name: /^create order$/i }));
   });
@@ -95,18 +95,14 @@ describe("CreateOrderModal footer total (O3, P01/P02)", () => {
     expect(total.className).not.toMatch(/truncate|overflow-hidden/);
   });
 
-  it("stacks ABOVE the buttons under sm (DOM-last in the col-reverse row) and sits before them from sm", async () => {
+  it("sits first in the one-row footer, left of the buttons (r4 Q08: no stacking above them)", async () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await addBigLine();
     const total = await screen.findByTestId("create-order-footer-total");
-    const footerRow = screen.getByRole("button", { name: /minimize/i }).parentElement!;
-    expect(footerRow).toHaveClass("flex-col-reverse", "sm:flex-row");
-    // col-reverse: DOM-last renders on top, so the total is the last child.
-    expect(footerRow.lastElementChild).toBe(total);
-    // From sm it is reordered between Minimize and the action row.
-    expect(total).toHaveClass("sm:order-1");
-    const actions = screen.getByText("Close", { selector: "button" }).parentElement!;
-    expect(actions).toHaveClass("sm:order-2");
+    const footerRow = screen.getByTestId("create-order-footer");
+    expect(footerRow.firstElementChild).toBe(total);
+    expect(total).toHaveClass("mr-auto");
+    expect(footerRow.className).not.toMatch(/flex-col/);
   });
 
   it("tracks the body total", async () => {

@@ -1,4 +1,5 @@
 import * as React from "react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import OrdersPage from "./page";
 
@@ -90,8 +91,21 @@ describe("Orders list — SHIP mode wording", () => {
 // column are noise (Mac-mini pixel pass on #3198). Every other account keeps them; a date filter already in
 // the URL keeps them too, so it can still be cleared.
 describe("Orders list — delivery-date UI is fleet-only", () => {
+  const realMatchMedia = window.matchMedia;
+  // below md (768px): jsdom has no matchMedia, which reads as the desktop layout
+  const narrowViewport = () => {
+    window.matchMedia = ((q: string) => ({
+      matches: false,
+      media: q,
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+    })) as unknown as typeof window.matchMedia;
+  };
   beforeEach(() => {
     query = "";
+  });
+  afterEach(() => {
+    window.matchMedia = realMatchMedia;
   });
 
   it("ship-only: no Delivery filter, no Delivery Date column, no Delivery Date sort option", () => {
@@ -101,8 +115,16 @@ describe("Orders list — delivery-date UI is fleet-only", () => {
     expect(screen.queryByText("Delivery:")).not.toBeInTheDocument();
     expect(screen.queryByTitle("Delivery date from")).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: /Delivery Date/ })).not.toBeInTheDocument();
+  });
+
+  // The sort select lives in the phone Filters panel (r4 Q01), so its options are read there.
+  it("ship-only, phone width: the Filters panel's sort has no Delivery Date option, the rest are untouched", async () => {
+    ship = true;
+    narrowViewport();
+    renderWithProviders(<OrdersPage />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Filters" }));
+
     expect(screen.queryByRole("option", { name: "Delivery Date" })).not.toBeInTheDocument();
-    // the rest of the sort options and the Created column are untouched
     expect(screen.getByRole("option", { name: "Created" })).toBeInTheDocument();
   });
 
@@ -112,6 +134,14 @@ describe("Orders list — delivery-date UI is fleet-only", () => {
 
     expect(screen.getAllByText("Delivery:").length).toBeGreaterThanOrEqual(1); // filter label + card line
     expect(screen.getByRole("columnheader", { name: /Delivery Date/ })).toBeInTheDocument();
+  });
+
+  it("not ship-only, phone width: the Filters panel's sort offers Delivery Date", async () => {
+    ship = false;
+    narrowViewport();
+    renderWithProviders(<OrdersPage />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Filters" }));
+
     expect(screen.getByRole("option", { name: "Delivery Date" })).toBeInTheDocument();
   });
 

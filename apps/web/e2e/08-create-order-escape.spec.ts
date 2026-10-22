@@ -361,6 +361,8 @@ test.describe("Operator — Orders list delivery date-range filter, mobile (B506
       timeout: 10_000,
     });
 
+    // r4 Q01: below md the delivery range sits in the Filters panel.
+    await page.getByRole("button", { name: /^Filters/ }).click();
     const from = page.getByTitle("Delivery date from");
     const to = page.getByTitle("Delivery date to");
     await expect(from).toBeVisible();

@@ -22,9 +22,13 @@ let mounted = 0;
 export function StickyEditBar({
   children,
   className,
+  total,
 }: {
   children: React.ReactNode;
   className?: string;
+  /** The figure Save would commit, already formatted ("$30.00"): shown as "New total" beside Save so
+   *  it is on screen at the moment of the tap, not under the bar (apple-ux r3 Q24). */
+  total?: string;
 }) {
   React.useEffect(() => {
     mounted += 1;
@@ -43,6 +47,15 @@ export function StickyEditBar({
       )}
     >
       {children}
+      {total != null && (
+        <p
+          data-testid="edit-bar-total"
+          className="ml-auto flex items-baseline gap-1.5 whitespace-nowrap text-sm text-navy/70"
+        >
+          New total
+          <span className="money text-[15px] font-semibold text-navy">{total}</span>
+        </p>
+      )}
     </div>
   );
 }

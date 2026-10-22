@@ -164,15 +164,17 @@ describeDb(`POS-7b-1 — today's sales query plans (${N} orders)`, () => {
     expect(plans.length).toBeGreaterThan(0);
   });
 
-  it("carried returns (B1262 / SA-838 e): the batched read by the page's credit note ids, plan printed", async () => {
+  it("carried returns (B1262 / SA-838 e): the batched read by the page's credit note ids OR the items sold on its orders, plan printed", async () => {
     // Return.creditNoteId has no index of its own (no schema change in SA-838): the plan reads tenantId's index and filters
     // the note ids. Evidence for a human, like the rest: the lane prints it.
+    // ReturnItem.sourceOrderId has no index either: the items arm is an EXISTS on the returnId index (evidence, no schema change)
     const noteIds = Array.from({ length: 50 }, () => randomUUID());
+    const orderIds = Array.from({ length: 50 }, () => randomUUID());
     let rows = -1;
     const plans = await explain("carried returns", async () => {
       rows = (
         await raw.return.findMany({
-          where: carriedReturnWhere(tenantId, noteIds),
+          where: carriedReturnWhere(tenantId, noteIds, orderIds),
           select: carriedReturnSelect,
         })
       ).length;
