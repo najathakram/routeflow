@@ -195,6 +195,17 @@ export interface TodaysSaleReturn {
   amount: number;
 }
 
+/**
+ * One item name on a Today's-sales or parked row (R7b 2.1): the line's description snapshotted at sale time and its qty.
+ * `qtyText` is the receipt's own quantity text (`invoiceLineQtyText`: "2 Cases") for a boxed or unit line; absent for a plain
+ * line, whose qty reads as is.
+ */
+export interface CounterItemName {
+  name: string;
+  qty: number;
+  qtyText?: string;
+}
+
 export interface TodaysSaleRow {
   orderId: string;
   /** the number printed on the receipt */
@@ -247,6 +258,12 @@ export interface TodaysSaleRow {
   };
   /** the order is CANCELLED, or it has invoices and every one is VOID / WRITTEN_OFF */
   voided: boolean;
+  /**
+   * The first few line names and qty (the invoice line's description, snapshotted at sale time) and the total line count, so a
+   * row says what was sold. Omitted by an older server: then no names line shows.
+   */
+  items?: CounterItemName[];
+  itemCount?: number;
 }
 
 export interface TodaysSalesSummary {

@@ -28,6 +28,7 @@ export const REPORT_WARNING_CODES = [
   "UNLISTED_PRODUCT_LINE",
   "UNCATEGORISED_LINE_IN_RULE_STATE",
   "PARKED_REVERSALS",
+  "UNBOOKED_REVERSALS",
 ] as const;
 
 export type ReportWarningCode = (typeof REPORT_WARNING_CODES)[number];
@@ -53,6 +54,8 @@ export interface ReportColumn {
  * file therefore cannot drift.
  */
 export interface RegulatedReport {
+  /** Reversals of the range the ledger could not book (REGULATED_REVERSAL_UNBOOKED notices). Absent = none. */
+  unbookedReversals?: number;
   /** Unresolved parked return reversals of the range (listed FIRST; not in the figures). Absent = none. */
   parked?: import("./parked-reversals").ParkedReversalRow[];
   /** A stock note: return restocks parked for the same reason. Never blocks. */

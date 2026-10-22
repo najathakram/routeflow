@@ -12,8 +12,8 @@
  * ONE evidence predicate, shared with the counter-sale void's inverse `clearUnevidencedDelivered`). A line
  * with rows keeps its route evidence (the column there is a RECOMPUTE from the rows, routes.service.ts,
  * never an overwrite from here). An order with a `routeRunStopId` (a legacy route delivery) is never
- * touched. A value is never lowered (qty < delivered is legal, B1050). No evidence row is ever written or
- * rewritten from here.
+ * touched. A value is never lowered (qty < delivered is legal, B1050). No existing evidence row is ever rewritten
+ * from here. (Row 587: the status write's office-evidenced lines are completed by office-evidence-completion.ts.)
  *
  * It runs in the CALLER's transaction: the status and the stamp commit together. The route-stop writers
  * (routes.service.ts completeStop / completeWithPayment) already recompute from rows and are allow-listed:

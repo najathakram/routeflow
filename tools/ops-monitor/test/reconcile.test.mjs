@@ -703,3 +703,63 @@ test("register-id-collision: only for a non-legacy monitor item sharing a regist
   assert.equal(a.item, "R2");
   assert.equal(alarms.filter((x) => x.kind === "register-id-collision").length, 1);
 });
+
+// =====================================================================================
+// Accuracy round 2 (X1): unknown status words and incident freshness
+// =====================================================================================
+test("X1 unknown-status: an item whose register word the monitor does not know raises an info alarm", () => {
+  const state = mkState([
+    item("530", { status: "planned", statusText: "triaged (needs info)" }),
+    item("531", { status: "planned" }),
+  ]);
+  const alarms = run({ state });
+  const a = find(alarms, "unknown-status:530");
+  assert.equal(a.severity, "info");
+  assert.equal(a.item, "530");
+  assert.equal(a.message, "Row 530 has status 'triaged (needs info)' the monitor does not know");
+  assert.equal(find(alarms, "unknown-status:531"), undefined);
+});
+
+const inc = (over = {}) => ({
+  id: "INC-1015a",
+  title: "Acme billing stuck",
+  status: "open",
+  date: "2026-10-15",
+  changedAt: ago(2 * 24 * HOUR),
+  ...over,
+});
+
+test("X1 incident-stale: unknown status, or open and unchanged for more than 7 days, warns", () => {
+  const stale = find(
+    run({ incidents: [inc({ changedAt: ago(9 * 24 * HOUR) })] }),
+    "incident-stale:INC-1015a",
+  );
+  assert.equal(stale.severity, "warn");
+  assert.equal(
+    stale.message,
+    "Incident 'Acme billing stuck' has no status update for 9 days; set its **Status:** line",
+  );
+  assert.ok(find(run({ incidents: [inc({ status: "unknown" })] }), "incident-stale:INC-1015a"));
+  // fresh open, mitigated, unverified, closed: no alarm
+  for (const status of ["open", "mitigated", "suspected", "closed", "resolved"]) {
+    const over = status === "open" ? {} : { status, changedAt: ago(30 * 24 * HOUR) };
+    assert.equal(
+      find(run({ incidents: [inc(over)] }), "incident-stale:INC-1015a"),
+      undefined,
+      status,
+    );
+  }
+  assert.equal(REC.INCIDENT_FRESH_DAYS, 7);
+});
+
+test("X1 unknown-status: no alarm once the item has moved past planned or is done", () => {
+  const state = mkState([
+    item("540", { status: "building", statusText: "triaged (needs info)" }),
+    item("541", { status: "verified", statusText: "triaged (needs info)" }),
+    item("542", { status: "planned", statusText: "triaged (needs info)" }),
+  ]);
+  const alarms = run({ state });
+  assert.equal(find(alarms, "unknown-status:540"), undefined, "building: settled");
+  assert.equal(find(alarms, "unknown-status:541"), undefined, "done: settled");
+  assert.ok(find(alarms, "unknown-status:542"), "still planned: alarm stays");
+});

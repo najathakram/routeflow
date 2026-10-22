@@ -196,10 +196,12 @@ const differs = (a: unknown, b: unknown): boolean => roundMoney(Number(a) - Numb
  *  - An EXEMPT customer whose row still carries a levy snapshot (categoryTaxAmount != 0) is stale even when
  *    the stored tax is 0: the items branch would zero the snapshot and resync the regulated ledger, this
  *    branch cannot, so the two must not disagree. Re-saving the lines cleans both (census reason 4).
- *  - B296: create() taxes with the UNROUNDED line rate while InvoiceItem.taxRate is Decimal(5,4), so a fresh
- *    draft with a rate such as 0.08875 can be 409 INVOICE_TAX_STATE_STALE on its first header-only PATCH.
- *    That is a 409 (re-save the lines), never a silent re-tax. Do NOT round the rate in create(): it would
- *    change the money charged. SA-761 T-1 (sitting 4) widens InvoiceItem.taxRate and retires this edge.
+ *  - B296 (SA-814 §3): create() taxes with the UNROUNDED line rate. Since the sitting-4 widen
+ *    (20261020090200_invoice_tax_rate_widen, InvoiceItem.taxRate DECIMAL(9,6)) a fresh draft with a rate such
+ *    as 0.08875 keeps it on the line and reproduces its stored tax, so it is NOT stale. Only a legacy row whose
+ *    rate was truncated by the old Decimal(5,4) column still fails to reproduce: that is a 409
+ *    INVOICE_TAX_STATE_STALE (re-save the lines), never a silent re-tax. Do NOT round the rate in create(): it
+ *    would change the money charged.
  */
 export function planHeaderOnlyTotals(
   locked: LockedInvoiceForEdit,

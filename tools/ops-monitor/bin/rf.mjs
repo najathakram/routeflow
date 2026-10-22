@@ -31,6 +31,7 @@ import { registerModeOf, runSync } from "../lib/sync.mjs";
 import { checkoutRoot, laneForCwd, setLane } from "../lib/lanes-local.mjs";
 import { lastEventId, renderBrief, renderSince, splitAtMarker } from "../lib/brief.mjs";
 import { registerHook } from "../lib/views.mjs";
+import { BRIEF_DISABLED_NOTE, loadClientNames } from "../lib/mask.mjs";
 import {
   appendEvents,
   ensureClone,
@@ -95,7 +96,7 @@ const USAGE = `usage: rf <command> [args]
   item new --title T --type X [--priority P] [--status S] [--lane L] [--train R1] [--area A]
            [--parent ID] [--eta E] [--gate G] [--id ID]
            [--problem "what is wrong"] [--impact "who it hurts, what it costs"] [--solution "how we fix it"]
-           [--owner-ask "what we need from the owner"]   (P0/P1 bug/feature/incident: --problem + --impact required)
+           [--owner-ask "what we need from the owner"] [--harm live|latent|none|null]   (P0/P1 bug/feature/incident: --problem + --impact required)
   item edit <id> [--title ..] [--priority ..] ...   item show <id> [--json]
   ls [--lane L] [--train R] [--status S] [--type T] [--open] [--json]
   sync [--dry] [--no-push]                         turn changed register / owner-queue rows into events
@@ -204,6 +205,9 @@ function itemFields(flags, c) {
   // Business view (owner 2026-10-19): the plain-language story of the item.
   for (const k of ["problem", "impact", "solution"]) if (flags[k] !== undefined) f[k] = flags[k];
   if (flags["owner-ask"] !== undefined) f.ownerAsk = flags["owner-ask"];
+  // Live harm: live | latent | none; "null" or "-" clears it ("none" is itself a harm value).
+  if (flags.harm !== undefined)
+    f.harm = ["null", "-", ""].includes(String(flags.harm)) ? null : String(flags.harm);
   if (flags["train-label"] !== undefined) f.trainLabel = flags["train-label"];
   if (flags.trainLabel !== undefined) f.trainLabel = flags.trainLabel;
   if (flags.lane !== undefined) {
@@ -803,7 +807,14 @@ async function cmdBrief(flags, env) {
   }
   const now = Date.now();
   const utcOffsetMin = -new Date(now).getTimezoneOffset();
-  const text = renderBrief(state, { lane, now, snapshot, config, utcOffsetMin });
+  const { names: clientNames, error: namesError } = loadClientNames({ env, home: ctx.home });
+  if (namesError) {
+    // A broken mask list never prints item text: one note, nothing else.
+    process.stdout.write(`${BRIEF_DISABLED_NOTE}
+`);
+    return 0;
+  }
+  const text = renderBrief(state, { lane, now, snapshot, config, clientNames, utcOffsetMin });
   let since = "";
   if (typeof flags.since === "string") {
     const marker = /^\d{4}-\d\d-\d\d/.test(flags.since)
@@ -812,7 +823,13 @@ async function cmdBrief(flags, env) {
     if (marker.ts !== undefined && !Number.isFinite(marker.ts))
       throw new UsageError(`--since needs an event id or an ISO time, got "${flags.since}"`);
     const { before, sorted } = splitAtMarker(events, marker);
-    since = renderSince(fold(before), fold(sorted), { lane, nowMs: now, utcOffsetMin, config });
+    since = renderSince(fold(before), fold(sorted), {
+      lane,
+      nowMs: now,
+      utcOffsetMin,
+      config,
+      clientNames,
+    });
     if (marker.lastEventId && !sorted.some((e) => e.id === marker.lastEventId))
       throw new UsageError(`--since: no event with id ${marker.lastEventId}`);
   }

@@ -38,6 +38,7 @@ import {
   defaultParkLabel,
   iso,
   isUuid,
+  itemSummaryOf,
   lineCountOf,
   localHm,
   priceLinesOf,
@@ -265,6 +266,7 @@ export class CounterParkService {
       expiresAt: iso(r.expiresAt as Date | string),
       lineCount: Number(r.lineCount ?? 0),
       priceLines: priceLinesOf({ lines: r.lines }),
+      ...itemSummaryOf({ lines: r.lines }),
       ...(r.customerName ? { customerName: r.customerName } : {}),
     }));
     return { data, total: total[0]?.n ?? 0, page, pageSize };

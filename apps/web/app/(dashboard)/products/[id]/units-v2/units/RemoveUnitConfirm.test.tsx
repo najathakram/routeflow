@@ -172,3 +172,15 @@ describe("RemoveUnitControl reveals its confirm when it opens (K10d, under the E
     expect(seen).toEqual([screen.getByTestId("units-v2-remove-panel")]);
   });
 });
+
+describe("K14 F11: the per-row dirty hint does not take layout", () => {
+  it("is screen-reader-only and still described-by the Remove button", () => {
+    render(<RemoveUnitControl productId="p1" unit={UNIT} dirty />);
+    const hint = screen.getByText("Save or discard your price changes first");
+    expect(hint.className).toContain("sr-only");
+    expect(screen.getByRole("button", { name: "Remove Case" })).toHaveAttribute(
+      "aria-describedby",
+      hint.id,
+    );
+  });
+});

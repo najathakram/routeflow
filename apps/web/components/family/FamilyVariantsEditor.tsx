@@ -60,6 +60,11 @@ export function FamilyVariantsEditor({
   const { user } = useAuth();
   const { toast } = useToast();
   const update = useUpdateFamilyVariants(familyId);
+  // K13 F18: /products/<family>?variant=<id> (Create with a parent) brings that variant row into view.
+  const [focusId, setFocusId] = React.useState<string | undefined>();
+  React.useEffect(() => {
+    setFocusId(new URLSearchParams(window.location.search).get("variant") ?? undefined);
+  }, []);
   const live = React.useMemo(
     () => variants.filter((v) => v.isActive !== false).map(variantToRow),
     [variants],
@@ -191,7 +196,9 @@ export function FamilyVariantsEditor({
       data-testid="family-variants-editor"
     >
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-navy">Variants</h3>
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+          Variants
+        </h3>
         {canEdit && !editing && (
           <Button size="sm" variant="secondary" onClick={begin}>
             Edit variants
@@ -229,6 +236,7 @@ export function FamilyVariantsEditor({
         </p>
       )}
       <FamilyVariantsGrid
+        focusId={focusId}
         rows={editing ? rows : live}
         showCostHint={false}
         maxRows={Infinity}

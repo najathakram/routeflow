@@ -62,6 +62,10 @@ describe("SalesAgentsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // R5-5: refs resolve inside the tenant unless a test says otherwise.
+    prisma.customer.findMany.mockImplementation(async (args: any) =>
+      (args?.where?.id?.in ?? []).map((id: string) => ({ id })),
+    );
     models = extendWithSalesAgentModels(prisma);
     commissionEngine = {
       recomputeCommissionRange: jest.fn().mockResolvedValue({ invoicesSynced: 0 }),
@@ -221,7 +225,25 @@ describe("SalesAgentsService", () => {
   });
 
   describe("addCustomerRate", () => {
+    it("rejects a reference from another business (no rate written)", async () => {
+      models.salesAgent.findUnique.mockResolvedValue({
+        id: "a1",
+        status: "ACTIVE",
+        deletedAt: null,
+      });
+      prisma.customer.findMany.mockResolvedValue([]); // the customer is not in this tenant
+      await expect(
+        service.addCustomerRate("a1", {
+          customerId: "other-biz-customer",
+          ratePct: 10,
+          effectiveFrom: new Date().toISOString(),
+        }),
+      ).rejects.toThrow(/not found/i);
+      expect(models.customerCommissionRate.create).not.toHaveBeenCalled();
+    });
+
     it("triggers a customer-scoped recompute for a backdated customer rate", async () => {
+      prisma.customer.findMany.mockResolvedValue([{ id: "c1" }]);
       models.salesAgent.findUnique.mockResolvedValue({
         id: "a1",
         status: "ACTIVE",
@@ -239,6 +261,36 @@ describe("SalesAgentsService", () => {
         { customerId: "c1" },
         past,
       );
+    });
+  });
+
+  describe("assignments reject a reference from another business", () => {
+    it("addAssignment refuses a customer that is not this tenant's, with no write", async () => {
+      models.salesAgent.findUnique.mockResolvedValue({
+        id: "a1",
+        status: "ACTIVE",
+        deletedAt: null,
+      });
+      prisma.customer.findMany.mockResolvedValue([]);
+      await expect(
+        service.addAssignment("a1", { customerId: "other-biz-customer" }),
+      ).rejects.toThrow(/not found/i);
+      expect(models.agentAssignment.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("bulk assignments reject a reference from another business", () => {
+    it("addAssignmentsBulk refuses when one customer is not this tenant's, with no write", async () => {
+      models.salesAgent.findUnique.mockResolvedValue({
+        id: "a1",
+        status: "ACTIVE",
+        deletedAt: null,
+      });
+      prisma.customer.findMany.mockResolvedValue([{ id: "c1" }]); // c2 is another business's
+      await expect(
+        service.addAssignmentsBulk("a1", { customerIds: ["c1", "other-biz-customer"] }),
+      ).rejects.toThrow(/not found/i);
+      expect(models.agentAssignment.create).not.toHaveBeenCalled();
     });
   });
 

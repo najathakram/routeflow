@@ -1,6 +1,7 @@
 // IO for the ops monitor: child processes, the tool-owned routeflow-specs clone, the lock, and
 // appending events (one commit per call, push with rebase retry, item-id collision repair).
 import { execFile } from "node:child_process";
+import { limitedGit } from "./git-exec.mjs";
 import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
@@ -24,7 +25,18 @@ import { REPO_ROOT, loadConfig, opsHome, specsDir } from "./config.mjs";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Runs a command without a shell. Never rejects; a missing binary resolves to code 127. */
-export function exec(cmd, args = [], { cwd, timeoutMs = 60000, env, input } = {}) {
+export function exec(cmd, args = [], opts = {}) {
+  const { cwd, timeoutMs = 60000, env, input, gitRun = limitedGit } = opts;
+  // Every git call: process-group timeout, global concurrency cap, non-interactive env. The 60 s
+  // default below is for non-git commands only; git uses the caller's timeoutMs, else
+  // OPS_GIT_TIMEOUT_MS (default 120 s) from git-exec.
+  if (cmd === "git") {
+    return gitRun(args, { cwd, env, input, timeoutMs: opts.timeoutMs }).catch((e) => ({
+      code: 1,
+      stdout: "",
+      stderr: String(e?.message ?? e),
+    }));
+  }
   return new Promise((resolve) => {
     try {
       const child = execFile(

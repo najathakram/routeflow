@@ -97,6 +97,7 @@ import { useFulfilmentSettings } from "@/lib/api/fulfilment-settings";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { describeSaveError } from "@/lib/reason-copy";
+import { TAX_PERCENT_PRECISION_MESSAGE, taxPercentPrecisionError } from "@routeflow/pricing";
 import { isInShell } from "@/lib/in-shell";
 import { TimeZoneDatalist } from "@/components/TimeZoneInput";
 import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
@@ -128,9 +129,14 @@ const profileShape = {
   }),
 };
 /** The zone is validated only when the viewer can edit it, so a hidden field can never block a save. */
-const profileSchemaFor = (canEditTimeZone: boolean) =>
+const profileSchemaFor = (canEditTimeZone: boolean, savedTaxRate?: unknown) =>
   z.object({
     ...profileShape,
+    // Review Q5: the 4-decimal cap holds a CHANGED rate only; the tenant's stored rate passes as it is.
+    taxRate: profileShape.taxRate.refine(
+      (v) => taxPercentPrecisionError(v, savedTaxRate) === null,
+      TAX_PERCENT_PRECISION_MESSAGE,
+    ),
     timezone: canEditTimeZone
       ? z.string().refine((v) => isValidTimeZone(v), TIME_ZONE_REQUIRED_COPY)
       : z.string().optional(),
@@ -228,7 +234,7 @@ function BusinessProfileTab() {
   // tax rate; a field the user edits, or clears, is still checked. With nothing edited, the whole form is checked.
   const dirtyRef = React.useRef<Record<string, unknown>>({});
   const profileResolver = React.useMemo<Resolver<ProfileFormValues>>(() => {
-    const schema = profileSchemaFor(canEditTimeZone);
+    const schema = profileSchemaFor(canEditTimeZone, savedSettings?.taxRate);
     return async (values, context, options) => {
       const mask: Record<string, true> = {};
       for (const key of Object.keys(schema.shape)) if (dirtyRef.current[key]) mask[key] = true;
@@ -240,7 +246,7 @@ function BusinessProfileTab() {
         ? { values: { ...values, ...res.values }, errors: {} }
         : res;
     };
-  }, [canEditTimeZone]);
+  }, [canEditTimeZone, savedSettings?.taxRate]);
 
   const {
     register,
@@ -474,7 +480,7 @@ function BusinessProfileTab() {
             <Input
               label="Default Tax Rate"
               type="number"
-              step="0.01"
+              step="0.0001"
               min="0"
               max="100"
               register={register("taxRate")}

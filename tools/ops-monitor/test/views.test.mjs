@@ -663,3 +663,49 @@ test("writeViews never writes the register in human (default) or generated mode"
     assert.equal(env.fs.get("/specs/register/WORK-REGISTER.md"), "hand-kept register");
   }
 });
+
+test("writeViews masks client names in the dashboard, the register and the board JSON", async () => {
+  const dash = readFileSync(join(FIX, "dashboard.md"), "utf8");
+  const env = fakeEnv({ "/specs/DASHBOARD.md": dash, "/specs/register/items/12.md": "x" });
+  const snap = snapshot();
+  snap.items[0].title = "Reprice for acme-foods";
+  snap.items[0].gate = "ACME-FOODS sign-off";
+  await writeViews({
+    registerMode: "views",
+    specsDir: "/specs",
+    boardDir: "/board",
+    snapshot: snap,
+    clientNames: ["acme-foods"],
+    push: false,
+    dry: false,
+    deps: env.deps,
+  });
+  assert.ok(env.writes.length >= 3, "dashboard, register and board files were written");
+  for (const path of env.writes) {
+    const text = env.fs.get(path);
+    assert.doesNotMatch(text, /acme-foods/i, path);
+  }
+  const all = env.writes.map((p) => env.fs.get(p)).join("\n");
+  assert.match(all, /Reprice for a live business/);
+  assert.match(JSON.stringify(snap), /acme-foods/, "the caller's snapshot is not mutated");
+});
+
+test("renderGeneratedRegister masks client names (the event-driven register writer)", () => {
+  const e = {
+    v: 1,
+    id: "testbox-1760875200000-0001",
+    ts: "2026-10-19T12:00:00Z",
+    machine: "testbox",
+    actor: "tester",
+    lane: null,
+    kind: "item.new",
+    item: "900",
+    data: { type: "bug", priority: "P1", status: "planned", title: "acme-foods totals wrong" },
+  };
+  const state = fold([e]);
+  const plain = renderGeneratedRegister(state, { clientNames: [] });
+  assert.match(plain, /acme-foods totals wrong/);
+  const masked = renderGeneratedRegister(state, { clientNames: ["acme-foods"] });
+  assert.doesNotMatch(masked, /acme-foods/i);
+  assert.match(masked, /a live business totals wrong/);
+});

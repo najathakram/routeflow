@@ -26,17 +26,18 @@ describe("inferredGoodsFlatRate (#2656)", () => {
     expect(r).toEqual({ rate: 0.075, regularTax: 7.5, verified: true });
   });
 
-  it("ROUNDS subtotal − ΣNSF to cents: fees 25.1 + 0.2 (float 25.300000000000001) read 0.0888, never 0.0887", () => {
+  it("ROUNDS subtotal − ΣNSF to cents: fees 25.1 + 0.2 (float 25.300000000000001) read 0.007813, never 0.007812", () => {
+    // R5-1: the rate is rounded at 6 dp now, so the boundary case moved (16387.54 − 25.3 is 16362.240000000002 in float).
     const lines = [goods(), fee(25.1), fee(0.2)];
-    const r = inferredGoodsFlatRate({ subtotal: 137.3, taxAmount: 9.94, lines });
-    expect(r?.rate).toBe(0.0888);
+    const r = inferredGoodsFlatRate({ subtotal: 16387.54, taxAmount: 127.83, lines });
+    expect(r?.rate).toBe(0.007813);
     // The unrounded shape the mobile/b294 copies computed disagrees — the reason for ONE helper.
     const unrounded = inferredFlatRate({
-      subtotal: 137.3 - (25.1 + 0.2),
-      taxAmount: 9.94,
+      subtotal: 16387.54 - (25.1 + 0.2),
+      taxAmount: 127.83,
       lines: [goods()],
     });
-    expect(unrounded?.rate).toBe(0.0887);
+    expect(unrounded?.rate).toBe(0.007812);
   });
 
   it("recognises a pre-backfill NSF line by its description prefix (the transition leg)", () => {

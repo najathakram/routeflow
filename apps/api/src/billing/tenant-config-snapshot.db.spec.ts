@@ -283,7 +283,14 @@ describeDb("TenantConfigSnapshotService — real Postgres round trip", () => {
       );
 
       expect(first!.held).toEqual([
-        { featureKey: FM, from: "delivery", to: "ship", reason: "CARRIER_IN_TRANSIT", count: 1 },
+        {
+          kind: "fulfilment",
+          featureKey: FM,
+          from: "delivery",
+          to: "ship",
+          reason: "CARRIER_IN_TRANSIT",
+          count: 1,
+        },
       ]);
       expect(first!.report.skipped).toBe(1);
       expect(await modeOf(FM)).toBe("delivery");
@@ -336,7 +343,9 @@ describeDb("TenantConfigSnapshotService — real Postgres round trip", () => {
       expect(out.still).toBe(1);
       expect(out.outcome).toMatchObject({
         action: "restore",
-        restore: { held: [{ featureKey: FM, reason: "CARRIER_IN_TRANSIT", count: 1 }] },
+        restore: {
+          held: [{ kind: "fulfilment", featureKey: FM, reason: "CARRIER_IN_TRANSIT", count: 1 }],
+        },
       });
       expect(await modeOf(FM)).toBe("delivery");
       expect(
@@ -359,7 +368,13 @@ describeDb("TenantConfigSnapshotService — real Postgres round trip", () => {
         svc.restoreSnapshot(tx, tenantId, snap.id, HIGH),
       );
       expect(first!.held).toEqual([
-        { featureKey: FM, from: "ship", to: "delivery", reason: "FULFILMENT_MODE_NEEDS_FLEET" },
+        {
+          kind: "fulfilment",
+          featureKey: FM,
+          from: "ship",
+          to: "delivery",
+          reason: "FULFILMENT_MODE_NEEDS_FLEET",
+        },
       ]);
       expect(await modeOf(FM)).toBe("ship");
       expect(

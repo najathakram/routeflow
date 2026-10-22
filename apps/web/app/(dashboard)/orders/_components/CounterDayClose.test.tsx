@@ -2,6 +2,7 @@ import * as React from "react";
 import { act, renderWithProviders, screen, fireEvent, waitFor, within } from "@/test-utils/render";
 import type { DayCloseSnapshot, DayCloseState, DayCloseTotals } from "@routeflow/types";
 import type { TodaysSaleRow, TodaysSalesResponse, TodaysSalesSummary } from "@routeflow/types";
+import { DAY_CLOSE_MAX_COUNT } from "@routeflow/pricing";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 
 /**
@@ -21,6 +22,16 @@ jest.mock("@/lib/api-client", () => ({
   },
 }));
 let role: string | undefined = "OPERATOR";
+let tenantSlug: string | null = "acme";
+jest.mock("@/components/tenant-provider", () => ({
+  ...jest.requireActual("@/components/tenant-provider"),
+  useTenant: () => ({
+    slug: tenantSlug,
+    branding: null,
+    isLoading: false,
+    refresh: async () => {},
+  }),
+}));
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => true }));
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
@@ -166,7 +177,9 @@ const apiError = (status: number, code: string, message = "server says no") => (
 
 beforeEach(() => {
   jest.clearAllMocks();
+  window.sessionStorage.clear(); // a kept count draft must not leak into the next test
   role = "OPERATOR";
+  tenantSlug = "acme";
   dayState = stateOf();
   serve();
 });
@@ -635,11 +648,178 @@ describe("CounterDayClose: loading and failure", () => {
     expect(await screen.findByRole("button", { name: "Close day" })).toBeInTheDocument();
   });
 
+  it("Close day is a secondary button", async () => {
+    await openSheet();
+    const btn = await screen.findByRole("button", { name: "Close day" });
+    expect(btn.className).toContain("bg-paper");
+    expect(btn.className).not.toContain("bg-accent-strong");
+  });
+
   it("places Close day above the Summary", async () => {
     await openSheet();
     const btn = await screen.findByRole("button", { name: "Close day" });
     const summary = await screen.findByTestId("today-summary");
     expect(btn.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+const draftKeys = () =>
+  Object.keys(window.sessionStorage).filter((k) => k.startsWith("rf:dayclose:draft:"));
+const pressEscape = () =>
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape", code: "Escape" });
+
+describe("CounterDayClose: the drawer count survives a dismissed dialog (R7b 2.3, B1263)", () => {
+  beforeEach(() => window.sessionStorage.clear());
+
+  it("closing the form with a typed count and reopening keeps the float and counts", async () => {
+    await openForm();
+    setFloat("50.00");
+    setCount("$20 bill", 2);
+    fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "short a five" } });
+    pressEscape();
+    fireEvent.click(await screen.findByRole("button", { name: "Keep" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+    await screen.findByTestId("day-close-form");
+    expect(screen.getByLabelText("Opening float")).toHaveValue("50.00");
+    expect(screen.getByLabelText("$20 bill count")).toHaveValue("2");
+    expect(screen.getByLabelText("Notes")).toHaveValue("short a five");
+    expect(draftKeys()).toHaveLength(1);
+    expect(draftKeys()[0]).toMatch(/^rf:dayclose:draft:[^:]+:main:\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("a dirty close asks Keep or Discard; Discard clears the draft", async () => {
+    await openForm();
+    setCount("$5 bill", 4);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByText("Keep your count for later?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    expect(draftKeys()).toHaveLength(0);
+    fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+    await screen.findByTestId("day-close-form");
+    expect(screen.getByLabelText("Opening float")).toHaveValue("100.00");
+    expect(screen.getByLabelText("$5 bill count")).toHaveValue("0");
+  });
+
+  it("typing the suggested float as 100 (not 100.00) is not dirty: no prompt on close (N1)", async () => {
+    await openForm();
+    setFloat("100");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    expect(screen.queryByText("Keep your count for later?")).toBeNull();
+    expect(draftKeys()).toHaveLength(0);
+  });
+
+  it("with no tenant known there is no draft: nothing is written under a made-up tenant (N5)", async () => {
+    tenantSlug = null;
+    await openForm();
+    setCount("$20 bill", 2);
+    await new Promise((r) => setTimeout(r, 450));
+    expect(draftKeys()).toHaveLength(0);
+    pressEscape();
+    fireEvent.click(await screen.findByRole("button", { name: "Keep" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    expect(draftKeys()).toHaveLength(0);
+  });
+
+  it("a clean form closes with no question and writes no draft", async () => {
+    await openForm();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    expect(screen.queryByText("Keep your count for later?")).toBeNull();
+    expect(draftKeys()).toHaveLength(0);
+  });
+
+  it("a successful close clears the draft", async () => {
+    post.mockResolvedValue({ data: snapshot() });
+    await openForm();
+    setCount("$20 bill", 2);
+    await waitFor(() => expect(draftKeys()).toHaveLength(1));
+    fireEvent.click(submitButton());
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(draftKeys()).toHaveLength(0));
+  });
+
+  it("the draft key is the window's tenant day: a count typed before midnight is still there after it (I1)", async () => {
+    jest.useFakeTimers({
+      doNotFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "queueMicrotask"],
+    });
+    try {
+      // 23:58 on Oct 7 in New York = 03:58Z on Oct 8; the preview window started that morning
+      jest.setSystemTime(new Date("2026-10-08T03:58:00.000Z"));
+      await openForm();
+      setCount("$20 bill", 2);
+      pressEscape();
+      fireEvent.click(await screen.findByRole("button", { name: "Keep" }));
+      await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+      jest.setSystemTime(new Date("2026-10-08T04:30:00.000Z")); // 00:30 the next tenant day
+      fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+      await screen.findByTestId("day-close-form");
+      expect(screen.getByLabelText("$20 bill count")).toHaveValue("2");
+      expect(draftKeys()[0]).toContain(":2026-10-07");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("a seeded form (Edit count) never touches the kept draft (M2)", async () => {
+    const first = await openSheet();
+    fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+    await screen.findByTestId("day-close-form");
+    setCount("$20 bill", 2);
+    pressEscape();
+    fireEvent.click(await screen.findByRole("button", { name: "Keep" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    first.unmount();
+    const kept = window.sessionStorage.getItem(draftKeys()[0]!);
+    expect(kept).not.toBeNull();
+    // a fresh sheet whose state is a reopened close: the seeded form opens, then closes
+    dayState = stateOf({ lastClose: snapshot({ reopenedAt: "2026-10-07T16:00:00.000Z" }) });
+    await openSheet();
+    fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+    await screen.findByLabelText("Opening float (kept from the first close)");
+    await new Promise((r) => setTimeout(r, 450)); // long enough for the debounced write to have fired
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByTestId("day-close-form")).toBeNull());
+    expect(window.sessionStorage.getItem(draftKeys()[0]!)).toBe(kept);
+  });
+
+  it("unmounting the sheet under a typed count keeps it, with no confirm (M1)", async () => {
+    const r = await openSheet();
+    fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+    await screen.findByTestId("day-close-form");
+    setCount("$20 bill", 3);
+    r.unmount(); // what closing Today's sales or switching to week does to the form
+    await openForm();
+    expect(screen.getByLabelText("$20 bill count")).toHaveValue("3");
+  });
+
+  it("restored counts follow the input's rule: whole, not negative, capped (M3)", async () => {
+    window.sessionStorage.setItem(
+      "rf:dayclose:draft:acme:main:2026-10-07",
+      JSON.stringify({
+        v: 1,
+        floatText: "100.00",
+        notes: "",
+        counts: { "bill:20": -3, "bill:10": 2.7, "bill:5": 99999999 },
+      }),
+    );
+    await openForm();
+    expect(screen.getByLabelText("$20 bill count")).toHaveValue("0");
+    expect(screen.getByLabelText("$10 bill count")).toHaveValue("2");
+    expect(
+      Number((screen.getByLabelText("$5 bill count") as HTMLInputElement).value),
+    ).toBeLessThanOrEqual(DAY_CLOSE_MAX_COUNT);
+    expect(screen.getByLabelText("$5 bill count")).not.toHaveValue("99999999");
+  });
+
+  it("the form says the Z report is emailed before Close day", async () => {
+    await openForm();
+    const note = screen.getByText("Closing emails the Z report to admins.");
+    expect(
+      note.compareDocumentPosition(submitButton()) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });
 
