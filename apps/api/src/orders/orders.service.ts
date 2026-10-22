@@ -166,6 +166,7 @@ import {
 import { planChangeRequestRestrictions } from "./change-request-restrictions";
 import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
 import { assertDeliveryDateNotPast } from "./delivery-date-guard";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 import { getOrderTracking } from "./order-tracking";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
@@ -2178,7 +2179,16 @@ export class OrdersService implements OnApplicationBootstrap {
     // `2026-02-31`) BEFORE the order is created and stock decremented; the invoice step would
     // otherwise 400 and leave a DELIVERED order with no invoice.
     dueStamp(dto.dueDate, "dueDate");
-    const { deliveredNow, deliveredAt, requestedDeliveryDate } = resolveSaleDelivery(dto, user);
+    // Row 735b: the picker's "today" is the tenant's day. The zone is read only when the picker sent a day.
+    const saleZone =
+      dto.deliveredOn != null
+        ? await tenantTimeZone(this.prisma, { tenantId: user.tenantId })
+        : null;
+    const { deliveredNow, deliveredAt, requestedDeliveryDate } = resolveSaleDelivery(
+      dto,
+      user,
+      saleZone,
+    );
 
     // 1. Create the backing order (reuses pricing tiers/overrides + stock lock/decrement). With an
     //    Idempotency-Key (counter sale only) a replay hands back the ORIGINAL order and `replay` is

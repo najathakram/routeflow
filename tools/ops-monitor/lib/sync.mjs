@@ -7,11 +7,18 @@
 //
 // syncEvents / planSync are pure. runSync does the IO (pull, build, append) and is what
 // `rf sync`, the PC monitor's 5-minute timer and `rf brief --refresh` call.
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { BUG_ID_RE } from "./schema.mjs";
-import { parseRegisterReport, plain, tables } from "./backfill.mjs";
+import { BUG_ID_RE, DONE_STATUSES } from "./schema.mjs";
+import {
+  parsePlanTrains,
+  parseRegisterReport,
+  pickLatestPlan,
+  planFamilies,
+  plain,
+  tables,
+} from "./backfill.mjs";
 import { loadConfig, machineId, specsDir as defaultSpecsDir } from "./config.mjs";
 import { newEventId } from "./ids.mjs";
 import { fold } from "./fold.mjs";
@@ -188,6 +195,8 @@ export function planSync({
   state,
   registerMd = "",
   ownerQueueMd = "",
+  planMd = "",
+  planName = "the plan",
   config,
   machine,
   now,
@@ -200,6 +209,9 @@ export function planSync({
     registerEdits: 0,
     answered: 0,
     dropped: 0,
+    planNew: 0,
+    planEdits: 0,
+    planDropped: 0,
     skipped: [],
     invalid: [],
     renamed: [],
@@ -242,6 +254,51 @@ export function planSync({
   const dupes = duplicateRowIds(allDrafts.map((d) => d.id));
   if (dupes.length) summary.refused = `duplicate register row ids: ${dupes.join(", ")}`;
   const drafts = dupes.length ? [] : allDrafts;
+  // ---- plan trains: one release item per family (T5a + T5b -> T5), BEFORE the register rows so a
+  // row's `train: "T5"` is known in this same batch; old trains absent from the plan are dropped ----
+  const planFams = planMd
+    ? planFamilies(parsePlanTrains(planMd), {
+        known: new Set([...known, ...allDrafts.map((d) => d.id)]),
+        extraMembers: (fid) => allDrafts.filter((d) => d.fields.train === fid).map((d) => d.id),
+      })
+    : [];
+  for (const fam of planFams) {
+    const ex = state.items.get(fam.id);
+    const want = { title: fam.title, members: fam.members, parts: fam.parts };
+    if (!ex) {
+      if (
+        emit("item.new", fam.id, {
+          ...want,
+          type: "release",
+          priority: "P1",
+          status: "planned",
+          source: "plan",
+        })
+      ) {
+        summary.planNew++;
+        releases.add(fam.id);
+        known.add(fam.id);
+      }
+      continue;
+    }
+    if (ex.type !== "release") continue;
+    releases.add(fam.id);
+    const diff = {};
+    for (const [k, v] of Object.entries(want)) if (!same(v, ex[k] ?? [])) diff[k] = v;
+    if (Object.keys(diff).length && emit("item.edit", fam.id, { fields: diff }))
+      summary.planEdits++;
+  }
+  if (planFams.length) {
+    const inPlan = new Set(planFams.map((f) => f.id));
+    for (const it of state.items.values()) {
+      if (it.type !== "release" || inPlan.has(it.id) || DONE_STATUSES.includes(it.status)) continue;
+      const creator = (it.history ?? []).find((h) => h.kind === "item.new")?.actor;
+      if (!["plan", "board"].includes(it.source) && creator !== BACKFILL_ACTOR) continue;
+      if (emit("status", it.id, { status: "dropped", note: `not in ${planName}` }))
+        summary.planDropped++;
+    }
+  }
+
   const renamed = new Map(); // old id -> alias, for the later passes of this same batch
   const idNow = (id) => renamed.get(id) ?? id;
   for (const draft of drafts) {
@@ -398,10 +455,21 @@ export async function runSync({
   }
   if (!pulled.ran) return { ran: false, reason: "busy" };
   const state = fold(store.readAllEvents(dir));
+  const planDir = join(dir, "releases");
+  let planName = null;
+  try {
+    planName = pickLatestPlan(readdirSync(planDir), (f) =>
+      (readText(join(planDir, f)) ?? "").slice(0, 2000),
+    );
+  } catch {
+    // no releases folder: no plan
+  }
   const out = planSync({
     state,
     registerMd: readText(join(dir, "register", "WORK-REGISTER.md")) ?? "",
     ownerQueueMd: readText(join(dir, "priorities", "OWNER-QUEUE.md")) ?? "",
+    planMd: planName ? (readText(join(dir, "releases", planName)) ?? "") : "",
+    planName: planName ?? undefined,
     config,
     machine: machine ?? machineId(config, env),
     now,
@@ -461,6 +529,8 @@ export function pendingRegisterChanges({
   events,
   registerMd = "",
   ownerQueueMd = "",
+  planMd = "",
+  planName,
   config,
   now = Date.now(),
   mask = (t) => t,
@@ -470,6 +540,8 @@ export function pendingRegisterChanges({
     state: fold(events ?? []),
     registerMd,
     ownerQueueMd,
+    planMd,
+    planName,
     config,
     machine: "dry-run",
     now,
