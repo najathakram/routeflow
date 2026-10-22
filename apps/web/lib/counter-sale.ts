@@ -276,6 +276,12 @@ export function paymentProblemCopy(problem: PaymentProblem, total: number): stri
 export const COUNTER_CHECK_POSTDATED_COPY =
   "Post-dated check: put this sale on account and record the check when it clears.";
 
+/** A check can only be dated against the business's day, so until that day is known the till says so and waits. */
+export const COUNTER_CHECK_ZONE_LOADING_COPY =
+  "Still loading the business's day. Try again in a moment.";
+export const COUNTER_CHECK_ZONE_FAILED_COPY =
+  "Couldn't load the business's day, so a check can't be dated yet.";
+
 /** True when `checkDate` names a real YYYY-MM-DD day strictly after `today` (the business's day). Anything else is not post-dated. */
 export function isPostdatedCheck(checkDate: string, today: string): boolean {
   const real = (v: string) => {
@@ -296,13 +302,16 @@ export function isPostdatedCheck(checkDate: string, today: string): boolean {
  * Never the browser's day: a till in one zone for a business in another must agree with the server's day.
  */
 export function tenantDayIn(zone: string | undefined, now: Date = new Date()): string {
-  const fmt = (timeZone: string) =>
-    new Intl.DateTimeFormat("en-CA", {
+  const fmt = (timeZone: string) => {
+    const parts = new Intl.DateTimeFormat("en-US", {
       timeZone,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
-    }).format(now);
+    }).formatToParts(now);
+    const at = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+    return `${at("year")}-${at("month")}-${at("day")}`;
+  };
   try {
     return fmt(zone || "UTC");
   } catch {
@@ -595,6 +604,8 @@ export interface HeldAttemptSnapshot {
   method: string;
   tendered: string;
   reference: string;
+  /** a check's typed date, so a restored held sale shows it (the retry sends the dto's own) */
+  checkDate?: string;
 }
 /** Shown with the Discard button: the unreadable held sale may already have been written. */
 export const COUNTER_DISCARD_COPY =
@@ -683,6 +694,7 @@ const PICKUP_HANDLED_CODES: ReadonlySet<string> = new Set([
   API_ERROR_CODES.PICKUP_NOT_READY,
   API_ERROR_CODES.PICKUP_ONLY,
   API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
+  API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
 ]);
 export function isPickupHandledError(err: unknown): boolean {
   const code = pickupErrorCode(err);

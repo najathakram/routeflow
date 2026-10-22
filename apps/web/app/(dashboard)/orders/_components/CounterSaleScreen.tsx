@@ -74,10 +74,12 @@ import {
   writeAutoPrint,
   writeHeldAttempt,
   COUNTER_CHECK_POSTDATED_COPY,
+  COUNTER_CHECK_ZONE_FAILED_COPY,
+  COUNTER_CHECK_ZONE_LOADING_COPY,
   isPostdatedCheck,
   tenantDayIn,
 } from "@/lib/counter-sale";
-import { useTenantTimeZone } from "@/lib/tenant-timezone";
+import { useTenantTimeZoneQuery } from "@/lib/tenant-timezone";
 import { keptSaleHref } from "@/lib/kept-draft-invoice";
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
@@ -241,6 +243,7 @@ export function CounterSaleScreen() {
     setMethod(held.method as CounterSalePaymentMethod);
     setTendered(held.tendered ?? "");
     setReference(held.reference ?? "");
+    setCheckDate(held.checkDate ?? "");
     setOutcomeUnknown(true);
   }, [heldKey]);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
@@ -263,7 +266,7 @@ export function CounterSaleScreen() {
   const liveCart = useCounterLiveCart({
     storeKey: liveKey,
     heldKey,
-    snapshot: { lines, customer, method, tendered, reference },
+    snapshot: { lines, customer, method, tendered, reference, checkDate },
     suspended: createSale.isPending || outcomeUnknown || receipt !== null,
     canRestore: lines.length === 0 && !receipt,
     onRestore: (snap) => {
@@ -272,6 +275,7 @@ export function CounterSaleScreen() {
       setMethod(snap.method as CounterSalePaymentMethod);
       // The cash is not restored: prices may have moved since it was tapped, so it is entered against today's total.
       setReference(snap.reference);
+      setCheckDate(snap.checkDate ?? "");
     },
     onClearedElsewhere: () => {
       setLines([]);
@@ -417,15 +421,19 @@ export function CounterSaleScreen() {
   }, [receipt, refocus]);
 
   const isWalkIn = customer === null;
-  const tenantZone = useTenantTimeZone();
-  const today = tenantDayIn(tenantZone);
-  const checkDateValue = checkDate || (tenantZone ? today : ""); // zone unknown: send no date, the server judges
-  const checkDateBlocksComplete = method === "CHECK" && isPostdatedCheck(checkDateValue, today);
+  const zoneRead = useTenantTimeZoneQuery();
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
     queryKey: ["settings"],
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
     staleTime: 60_000,
   });
+  // A check is dated against the BUSINESS's day. Until /settings has answered that day is unknown: nothing is judged (never
+  // against UTC), a CHECK sale is refused with its own copy, and a failed read offers a retry.
+  const zoneStatus = settings !== undefined ? "ready" : zoneRead.isError ? "failed" : "loading";
+  const today = zoneStatus === "ready" ? tenantDayIn(zoneRead.zone) : "";
+  const checkDateValue = checkDate || today;
+  const checkDateBlocksComplete =
+    method === "CHECK" && (zoneStatus !== "ready" || isPostdatedCheck(checkDateValue, today));
   const taxRate = (settings?.taxRate ?? 0) / 100;
   // The regulated levy and the exempt customer's $0 tax are in the estimate, so it is the receipt's figure to the cent
   // (CQ-01 / CQ-02 / CQ-28): the same saleTotals the order and invoice sums run.
@@ -776,6 +784,7 @@ export function CounterSaleScreen() {
     setMethod(p.method as CounterSalePaymentMethod);
     setTendered(p.tendered);
     setReference(p.reference);
+    setCheckDate(p.checkDate ?? "");
     setRepriceEpoch((n) => n + 1);
   }
 
@@ -838,6 +847,7 @@ export function CounterSaleScreen() {
           method,
           tendered,
           reference,
+          checkDate,
         });
         // A tender refused for a CLOSED DAY leaves the sale saved but unpaid: say so (the banner below is the generic one).
         setError(isCounterSaleDayClosed(err) ? counterSaleErrorCopy(err) : "");
@@ -891,7 +901,13 @@ export function CounterSaleScreen() {
       return null;
     }
     if (checkDateBlocksComplete) {
-      setError(COUNTER_CHECK_POSTDATED_COPY);
+      setError(
+        zoneStatus === "loading"
+          ? COUNTER_CHECK_ZONE_LOADING_COPY
+          : zoneStatus === "failed"
+            ? COUNTER_CHECK_ZONE_FAILED_COPY
+            : COUNTER_CHECK_POSTDATED_COPY,
+      );
       return null;
     }
     const tenderAmount = roundMoney(tenderedNum);
@@ -1108,7 +1124,7 @@ export function CounterSaleScreen() {
         <h1 className="text-xl font-semibold">Counter sale</h1>
         <CounterTodaysSales />
         <ParkedSales
-          cart={{ lines, customer, method, tendered, reference }}
+          cart={{ lines, customer, method, tendered, reference, checkDate }}
           blocked={
             locked ||
             salePosting ||
@@ -1520,9 +1536,17 @@ export function CounterSaleScreen() {
                 checkDate={checkDateValue}
                 onCheckDateChange={setCheckDate}
                 today={today}
+                zoneStatus={zoneStatus}
+                onRetryZone={zoneRead.retry}
                 walkIn={!customer || !!customer.isWalkIn}
                 disabled={locked}
-                onPutOnAccount={() => setMethod("ON_ACCOUNT")}
+                onPutOnAccount={() => {
+                  setMethod("ON_ACCOUNT");
+                  setError("");
+                  focusPaymentControl(
+                    document.querySelector<HTMLElement>('[data-method="ON_ACCOUNT"]'),
+                  );
+                }}
               />
             ) : null}
           </section>

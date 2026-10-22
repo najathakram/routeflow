@@ -17,6 +17,21 @@ const snap = (customer: Record<string, unknown> | null) =>
 describe("live cart persistence", () => {
   beforeEach(() => window.localStorage.clear());
 
+  it("a refresh round-trip through the real write/read keeps the typed check date", () => {
+    writeLiveCart(
+      KEY,
+      { ...(snap(null) as object), method: "CHECK", checkDate: "2026-10-23" } as never,
+      "u-a",
+    );
+    expect(readLiveCart(KEY)?.checkDate).toBe("2026-10-23");
+  });
+  it("a stored date that is not a real day is dropped on read; no date reads as none", () => {
+    writeLiveCart(KEY, { ...(snap(null) as object), checkDate: "2026-02-31" } as never, "u-a");
+    expect(readLiveCart(KEY)).not.toHaveProperty("checkDate");
+    writeLiveCart(KEY, snap(null), "u-a");
+    expect(readLiveCart(KEY)).not.toHaveProperty("checkDate");
+  });
+
   it("keeps the tax exemption and drops everything else about the customer", () => {
     writeLiveCart(
       KEY,

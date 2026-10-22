@@ -1,3 +1,4 @@
+import { isCalendarDay } from "@routeflow/pricing";
 import { validCustomer, validLine } from "./counter-sale";
 
 /** Bump when the stored shape changes: a cart under any other version is dropped, never half-read. */
@@ -10,6 +11,7 @@ export interface LiveCartSnapshot {
   method: string;
   tendered: string;
   reference: string;
+  checkDate?: string;
 }
 
 export function writeLiveCart(
@@ -63,6 +65,7 @@ export function readLiveCart(storeKey: string | null): LiveCartSnapshot | null {
         method: v!.method!,
         tendered: typeof v!.tendered === "string" ? v!.tendered : "",
         reference: typeof v!.reference === "string" ? v!.reference : "",
+        ...(isCalendarDay(v!.checkDate) ? { checkDate: v!.checkDate } : {}),
       };
     }
     window.localStorage.removeItem(storeKey);

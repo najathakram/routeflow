@@ -510,14 +510,22 @@ test.describe("R7b till: a post-dated check is not tendered", () => {
       const putOnAccount = page.getByRole("button", { name: "Put this sale on account" });
       await expect(putOnAccount).toBeVisible();
       await expect(putOnAccount).toBeDisabled();
-      // Complete is refused with the same sentence, and no sale was rung (the Check radio is still the chosen method)
+      // Complete is refused with the same sentence IN THE CHECKOUT BAR's own alert (not the inline fields' one, which
+      // already shows it), and no POST to the counter-sale endpoint left the page.
+      const counterPosts: string[] = [];
+      page.on("request", (r) => {
+        if (r.method() === "POST" && /\/orders\/counter-sale\/?$/.test(new URL(r.url()).pathname)) {
+          counterPosts.push(r.url());
+        }
+      });
       await page
         .getByRole("button", { name: /^Complete/ })
         .first()
         .click();
-      await expect(
-        page.getByRole("alert").filter({ hasText: POSTDATED_SENTENCE }).first(),
-      ).toBeVisible();
+      await expect(page.getByTestId("counter-checkout-bar").getByRole("alert")).toHaveText(
+        POSTDATED_SENTENCE,
+      );
+      expect(counterPosts).toEqual([]);
       await expect(page.getByRole("radio", { name: "Check" })).toBeChecked();
       await expect(page.getByTestId("counter-last-sale")).toHaveCount(0);
     });

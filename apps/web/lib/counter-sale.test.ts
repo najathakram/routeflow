@@ -827,6 +827,62 @@ describe("isNotSentOffline (CQ-29)", () => {
   });
 });
 
+describe("post-dated check: pins from review round 1", () => {
+  it("the pickup dialog's global toast stays quiet for COUNTER_CHECK_POSTDATED (it answers with fixed copy)", () => {
+    expect(
+      isPickupHandledError({
+        response: { status: 400, data: { code: "COUNTER_CHECK_POSTDATED" } },
+      }),
+    ).toBe(true);
+  });
+  it("tenantDayIn builds YYYY-MM-DD from the parts, not from the locale's string shape", () => {
+    const Real = Intl.DateTimeFormat;
+    // a formatter whose own string shape is NOT year-month-day: only formatToParts can still give the right day
+    const Odd = function (...args: ConstructorParameters<typeof Intl.DateTimeFormat>) {
+      const real = new Real(...args);
+      return {
+        format: () => "22/10/2026, 3:00 AM",
+        formatToParts: (d?: Date) => real.formatToParts(d),
+      };
+    };
+    (Intl as unknown as { DateTimeFormat: unknown }).DateTimeFormat = Odd;
+    try {
+      expect(tenantDayIn("America/Los_Angeles", new Date("2026-10-22T03:00:00Z"))).toBe(
+        "2026-10-21",
+      );
+    } finally {
+      (Intl as unknown as { DateTimeFormat: unknown }).DateTimeFormat = Real;
+    }
+    expect(tenantDayIn("Australia/Sydney", new Date("2026-10-21T21:00:00Z"))).toBe("2026-10-22");
+  });
+  it("a held attempt written and read through the REAL storage keeps its typed check date and its dto's", () => {
+    const SK = "rf.counterSale.heldAttempt:acme:u-a";
+    window.sessionStorage.clear();
+    writeHeldAttempt(SK, {
+      key: "k1",
+      dto: {
+        walkIn: true,
+        items: [],
+        payment: { method: "CHECK", reference: "1", checkDate: "2026-10-20" },
+      },
+      next: false,
+      estimate: { total: 2.5, change: 0 },
+      lines: [{ tempId: "t", productId: "p1", name: "Cola", unitPrice: 2.5, qty: 1 }],
+      customer: null,
+      method: "CHECK",
+      tendered: "",
+      reference: "1",
+      checkDate: "2026-10-20",
+    });
+    const back = readHeldAttempt(SK) as {
+      dto: { payment: { checkDate: string } };
+      checkDate?: string;
+    };
+    expect(back.dto.payment.checkDate).toBe("2026-10-20");
+    expect(back.checkDate).toBe("2026-10-20");
+  });
+});
+
 describe("post-dated check (interim till guard)", () => {
   it("one sentence, shared by the inline message and the refusal", () => {
     expect(COUNTER_CHECK_POSTDATED_COPY).toBe(

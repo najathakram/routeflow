@@ -1,6 +1,12 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
-import { tenantDayIn } from "@/lib/counter-sale";
+import { sanitizeParkedPayload } from "@routeflow/pricing";
+import { apiClient } from "@/lib/api-client";
+import {
+  COUNTER_CHECK_ZONE_FAILED_COPY,
+  COUNTER_CHECK_ZONE_LOADING_COPY,
+  tenantDayIn,
+} from "@/lib/counter-sale";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -31,10 +37,7 @@ jest.mock("@/lib/api/customers", () => ({
   }),
 }));
 jest.mock("@/lib/api-client", () => ({
-  apiClient: {
-    get: jest.fn().mockResolvedValue({ data: { taxRate: 0, timezone: "UTC" } }),
-    post: jest.fn(),
-  },
+  apiClient: { get: jest.fn(), post: jest.fn(), delete: jest.fn() },
 }));
 const mutateAsync = jest.fn();
 jest.mock("@/lib/api/counter-sale", () => ({
@@ -65,10 +68,55 @@ const dayPlus = (n: number) => {
   return d.toISOString().slice(0, 10);
 };
 
+const get = apiClient.get as unknown as jest.Mock;
+const post = apiClient.post as unknown as jest.Mock;
+const PARKED = "/orders/counter-sale/parked";
+let parkedRows: { id: string; label: string; payload: unknown }[];
+const settingsOk = (timezone: string | null = "UTC") =>
+  get.mockImplementation((url: string) => {
+    if (url === "/settings") return Promise.resolve({ data: { taxRate: 0, timezone } });
+    if (url === PARKED)
+      return Promise.resolve({
+        data: {
+          data: parkedRows.map((r) => ({
+            id: r.id,
+            label: r.label,
+            registerKey: "main",
+            createdAt: "2026-10-08T18:41:00.000Z",
+            expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+            lineCount: 1,
+          })),
+          total: parkedRows.length,
+          page: 1,
+          pageSize: 20,
+        },
+      });
+    return Promise.resolve({ data: [] });
+  });
+
 beforeEach(() => {
   jest.clearAllMocks();
   window.localStorage.clear();
   window.sessionStorage.clear();
+  parkedRows = [];
+  settingsOk();
+  // the park "server": stores the body it was sent, and rebuilds it with the REAL shared sanitizer on resume
+  post.mockImplementation((url: string, body?: { id: string; payload: unknown }) => {
+    if (url === PARKED && body) {
+      parkedRows.push({ id: body.id, label: "Hold A", payload: body.payload });
+      return Promise.resolve({ data: { id: body.id } });
+    }
+    const m = /\/parked\/(.+)\/resume$/.exec(url);
+    if (m) {
+      const row = parkedRows.find((r) => r.id === decodeURIComponent(m[1]));
+      parkedRows = parkedRows.filter((r) => r !== row);
+      const clean = sanitizeParkedPayload(row?.payload, ["CASH", "CARD", "CHECK", "ON_ACCOUNT"]);
+      return Promise.resolve({
+        data: { id: row?.id, label: "x", createdAt: "t", payload: clean.ok ? clean.value : null },
+      });
+    }
+    return Promise.reject(new Error(`unexpected POST ${url}`));
+  });
   mutateAsync.mockResolvedValue(SALE);
 });
 
@@ -164,5 +212,172 @@ describe("CounterSaleScreen: post-dated check", () => {
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     await scan("COLA");
     await chooseCheck(); // asserts the date is back to today
+  });
+
+  describe("the business's day is unknown (review round 1: never judged against UTC)", () => {
+    it("zone still loading: Complete is refused with the loading copy, nothing is sent, and the fields say so", async () => {
+      get.mockImplementation(() => new Promise(() => undefined));
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("COLA");
+      fireEvent.click(screen.getByRole("radio", { name: "Check" }));
+      fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
+      expect(screen.getByTestId("counter-check-zone-loading")).toHaveTextContent(
+        COUNTER_CHECK_ZONE_LOADING_COPY,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+      await waitFor(() =>
+        expect(
+          screen
+            .getAllByRole("alert")
+            .some((a) => a.textContent === COUNTER_CHECK_ZONE_LOADING_COPY),
+        ).toBe(true),
+      );
+      expect(mutateAsync).not.toHaveBeenCalled();
+    });
+
+    it("zone read failed: refused with the failed copy and a Retry; a successful retry lets the sale through", async () => {
+      get.mockRejectedValue(new Error("settings down"));
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("COLA");
+      fireEvent.click(screen.getByRole("radio", { name: "Check" }));
+      fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
+      const retry = await screen.findByRole("button", { name: "Retry" });
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+      await waitFor(() =>
+        expect(
+          screen
+            .getAllByRole("alert")
+            .some((a) => a.textContent === COUNTER_CHECK_ZONE_FAILED_COPY),
+        ).toBe(true),
+      );
+      expect(mutateAsync).not.toHaveBeenCalled();
+      settingsOk();
+      fireEvent.click(retry);
+      await waitFor(() => expect(screen.getByLabelText("Check date")).toHaveValue(dayPlus(0)));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+      await screen.findByTestId("counter-sale-receipt");
+      expect(mutateAsync.mock.calls[0][0].dto.payment.checkDate).toBe(dayPlus(0));
+    });
+
+    it("Sydney 08:00 on the 22nd (UTC still the 21st): a check dated the 22nd is the tenant's today and is tendered", async () => {
+      jest.useFakeTimers({
+        now: new Date("2026-10-21T21:00:00Z"),
+        doNotFake: [
+          "hrtime",
+          "nextTick",
+          "performance",
+          "queueMicrotask",
+          "requestAnimationFrame",
+          "cancelAnimationFrame",
+          "requestIdleCallback",
+          "cancelIdleCallback",
+          "setImmediate",
+          "clearImmediate",
+          "setInterval",
+          "clearInterval",
+          "setTimeout",
+          "clearTimeout",
+        ] as never,
+      });
+      try {
+        settingsOk("Australia/Sydney");
+        renderWithProviders(<CounterSaleScreen />);
+        await scan("COLA");
+        fireEvent.click(screen.getByRole("radio", { name: "Check" }));
+        await waitFor(() => expect(screen.getByLabelText("Check date")).toHaveValue("2026-10-22"));
+        fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
+        expect(screen.queryByTestId("counter-check-postdated")).toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+        await screen.findByTestId("counter-sale-receipt");
+        expect(mutateAsync.mock.calls[0][0].dto.payment.checkDate).toBe("2026-10-22");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
+
+  describe("a typed check date survives park / resume, a refresh and a held sale (review round 1)", () => {
+    it("park with a future date -> resume (through the real sanitizer) -> the date is back and Complete is refused", async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("COLA");
+      await chooseCheck();
+      fireEvent.change(screen.getByLabelText("Check date"), { target: { value: dayPlus(1) } });
+      fireEvent.click(screen.getByRole("button", { name: "Park" }));
+      await waitFor(() => expect(parkedRows).toHaveLength(1));
+      expect((parkedRows[0].payload as { checkDate?: string }).checkDate).toBe(dayPlus(1));
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Remove Cola" })).toBeNull());
+      fireEvent.click(await screen.findByRole("button", { name: "Parked (1)" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Resume Hold A" }));
+      await waitFor(() => expect(screen.getByLabelText("Check date")).toHaveValue(dayPlus(1)));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+      await waitFor(() =>
+        expect(screen.getAllByRole("alert").some((a) => a.textContent === SENTENCE)).toBe(true),
+      );
+      expect(mutateAsync).not.toHaveBeenCalled();
+    });
+
+    it("a refresh keeps the typed date (real write, real read) and Complete is still refused", async () => {
+      const view = renderWithProviders(<CounterSaleScreen />);
+      await scan("COLA");
+      await chooseCheck();
+      fireEvent.change(screen.getByLabelText("Check date"), { target: { value: dayPlus(1) } });
+      const KEY = "rf.counterSale.liveCart:acme:u-a";
+      await waitFor(() => {
+        const saved = window.localStorage.getItem(KEY);
+        expect(saved && JSON.parse(saved).checkDate).toBe(dayPlus(1));
+      });
+      view.unmount();
+      renderWithProviders(<CounterSaleScreen />);
+      await screen.findByTestId("counter-cart-restored");
+      await waitFor(() => expect(screen.getByLabelText("Check date")).toHaveValue(dayPlus(1)));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+      await waitFor(() =>
+        expect(screen.getAllByRole("alert").some((a) => a.textContent === SENTENCE)).toBe(true),
+      );
+      expect(mutateAsync).not.toHaveBeenCalled();
+    });
+
+    it("a held (outcome unknown) sale: the retry sends the typed checkDate, and a restored held sale SHOWS it, not today", async () => {
+      mutateAsync.mockRejectedValueOnce(new Error("Network Error"));
+      const view = renderWithProviders(<CounterSaleScreen />);
+      await scan("COLA");
+      await chooseCheck();
+      fireEvent.change(screen.getByLabelText("Check date"), { target: { value: dayPlus(-2) } });
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+      await screen.findByTestId("counter-outcome-unknown");
+      expect(mutateAsync.mock.calls[0][0].dto.payment.checkDate).toBe(dayPlus(-2));
+      view.unmount();
+      renderWithProviders(<CounterSaleScreen />);
+      await screen.findByTestId("counter-outcome-unknown");
+      expect(screen.getByLabelText("Check date")).toHaveValue(dayPlus(-2)); // RED on the old code: it showed today
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+      expect(mutateAsync.mock.calls[1][0].dto.payment.checkDate).toBe(dayPlus(-2)); // guard, green on the old code
+    });
+  });
+
+  it("Put this sale on account clears the post-dated alert and lands focus on the On account tender", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
+    await chooseCheck();
+    fireEvent.change(screen.getByLabelText("Check date"), { target: { value: dayPlus(1) } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole("alert")
+          .some(
+            (a) =>
+              a.textContent === SENTENCE && !a.closest('[data-testid="counter-check-postdated"]'),
+          ),
+      ).toBe(true),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Put this sale on account" }));
+    expect(
+      screen.queryAllByRole("alert", { hidden: true }).some((a) => a.textContent === SENTENCE),
+    ).toBe(false);
+    expect(screen.getByRole("radio", { name: "On account" })).toHaveFocus();
   });
 });

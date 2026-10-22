@@ -82,6 +82,33 @@ describe("CounterCheckDetails", () => {
     expect(screen.getByRole("button", { name: "Put this sale on account" })).toBeDisabled();
   });
 
+  it("zone still loading: no date judged against UTC, a status line, no post-dated message, no button", () => {
+    const p = setup({ today: "", checkDate: "2099-01-01", zoneStatus: "loading" });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Still loading the business's day. Try again in a moment.",
+    );
+    expect(screen.queryByText(SENTENCE)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Put this sale on account" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(p.onPutOnAccount).not.toHaveBeenCalled();
+  });
+
+  it("zone failed: says so and offers Retry, which calls onRetryZone", () => {
+    const onRetryZone = jest.fn();
+    setup({ today: "", checkDate: "", zoneStatus: "failed", onRetryZone });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Couldn't load the business's day, so a check can't be dated yet.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetryZone).toHaveBeenCalledTimes(1);
+  });
+
+  it("zone ready (the default) shows neither", () => {
+    setup({ zoneStatus: "ready" });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
   it("the tenant's day decides, not the date alone: the same date flips with `today`", () => {
     const { rerender } = render(
       <CounterCheckDetails
