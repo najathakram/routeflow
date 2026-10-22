@@ -20,6 +20,7 @@ const settled = (creditNoteId: string, applied: number): ReturnSettlement => ({
   creditNoteId,
   applied,
   refunded: 0,
+  appliedElsewhere: 0,
   kept: 0,
 });
 

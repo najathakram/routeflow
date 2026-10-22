@@ -2,7 +2,7 @@ import type { TodaysSaleMethod } from "@routeflow/types";
 import { CONFIRMED_STATUS } from "./payment-confirmation";
 import { formatReceiptMoney } from "./receipt-line-detail";
 import { roundMoney } from "./pricing";
-import type { ReturnSettlement } from "./return-settlement";
+import { settlementTotals, type ReturnSettlement } from "./return-settlement";
 
 /**
  * The ONE copy of what the till calls each display method (a receipt's Payment method row, the hand-over rows, the emailed
@@ -63,7 +63,7 @@ export interface CounterTenderSplit<M extends string = string> {
  */
 export function counterTenderSplit<M extends string>(
   payments: ReadonlyArray<CounterTenderPayment<M>>,
-  settlements: ReadonlyArray<Pick<ReturnSettlement, "creditNoteId" | "applied">>,
+  settlements: ReadonlyArray<ReturnSettlement>,
   /** the order the methods list in (a receipt's fixed order); omitted: order of first appearance */
   methodOrder?: ReadonlyArray<M>,
 ): CounterTenderSplit<M> {
@@ -84,7 +84,7 @@ export function counterTenderSplit<M extends string>(
   });
   return {
     tenderPaid: sum(tenders),
-    returnCredit: roundMoney(settlements.reduce((s, r) => s + r.applied, 0)),
+    returnCredit: settlementTotals(settlements).applied,
     methods,
   };
 }

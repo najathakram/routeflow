@@ -17,6 +17,13 @@ export const DEAD_RETURN_STATUS_VALUES = ["REJECTED", "CANCELLED"] as const;
 /** The refund method of money returned outside RouteFlow (`Return.refundMethod`; nothing is minted). */
 const EXTERNAL_REFUND = "EXTERNAL_REFUND";
 
+/** A credit note as the caller's ONE batched read saw it: its status and the PAID amount applied to it on ANY sale. */
+export interface SettlementCreditNote {
+  /** ISSUED / APPLIED / VOID */
+  status: string;
+  appliedAnywhere: number;
+}
+
 export interface SettlementReturn extends OwnReturnShape {
   id?: string;
   /** `Return.status`: REJECTED / CANCELLED are dead; every other status is live */
@@ -24,10 +31,10 @@ export interface SettlementReturn extends OwnReturnShape {
   /** the credit note the return minted, when it minted one */
   creditNoteId?: string | null;
   /**
-   * That note's status (ISSUED / APPLIED / VOID) when the caller could read it. A minted note whose status is unknown is
-   * treated as issued: only a VOID note is no longer a credit.
+   * That note as the batched read saw it. A minted note the read did NOT return (absent here) is never claimed as a credit:
+   * the return is not settled (PENDING). A VOID note with no completed refund is DEAD: the credit no longer exists.
    */
-  creditNoteStatus?: string | null;
+  creditNote?: SettlementCreditNote | null;
   /** EXTERNAL_REFUND = money returned outside RouteFlow; `refundedAt` null = chosen but not yet recorded */
   refundMethod?: string | null;
   refundedAt?: Date | string | null;
@@ -44,9 +51,9 @@ export type ReturnSettlementState = "PENDING" | "SETTLED" | "DEAD";
 
 export interface ReturnSettlement {
   /**
-   * SETTLED = the return's credit note is issued and not VOID, or a recorded external refund is complete. PENDING (also
-   * APPROVED / IN_TRANSIT / RECEIVED, and a refund chosen but not recorded) is not settled. DEAD prints nothing: a rejected
-   * or cancelled return, or one that is not this order's own.
+   * SETTLED = the return's credit note was seen and is not VOID, or a recorded external refund is complete. PENDING (also
+   * APPROVED / IN_TRANSIT / RECEIVED, a refund chosen but not recorded, and a note the read could not see) is not settled.
+   * DEAD prints nothing: a rejected or cancelled return, a VOID note with no refund, or a return that is not this order's own.
    */
   state: ReturnSettlementState;
   /** the credit note this settlement spoke for (the split uses it to tell a tender from the return's own credit) */
@@ -55,7 +62,9 @@ export interface ReturnSettlement {
   applied: number;
   /** the completed external refund */
   refunded: number;
-  /** a settled credit neither applied here nor refunded: still the customer's, on their account */
+  /** the part of the credit spent on OTHER orders (an info line, never subtracted): applied anywhere - applied here */
+  appliedElsewhere: number;
+  /** what is still the customer's on account: worth - applied ANYWHERE - refunded */
   kept: number;
 }
 
@@ -64,6 +73,7 @@ const DEAD: ReturnSettlement = {
   creditNoteId: null,
   applied: 0,
   refunded: 0,
+  appliedElsewhere: 0,
   kept: 0,
 };
 
@@ -94,16 +104,57 @@ export function returnSettlement(
       )
     : 0;
   const refundDone = ret.refundMethod === EXTERNAL_REFUND && ret.refundedAt != null;
-  const creditIssued = !!creditNoteId && ret.creditNoteStatus !== "VOID";
-  if (!refundDone && !creditIssued) {
-    // not settled: whatever was applied is still money on the invoice, nothing else is shown
-    return { state: "PENDING", creditNoteId, applied, refunded: 0, kept: 0 };
+  if (!refundDone && creditNoteId && ret.creditNote?.status === "VOID") return DEAD;
+  const creditSeen = !!creditNoteId && !!ret.creditNote;
+  if (!refundDone && !creditSeen) {
+    // not settled (or a note nobody could see): whatever was applied is still money on the invoice, nothing else is shown
+    return { state: "PENDING", creditNoteId, applied, refunded: 0, appliedElsewhere: 0, kept: 0 };
   }
+  // the PAID amount applied to the note on ANY sale; never less than what is applied here
+  const anywhere = refundDone
+    ? 0
+    : Math.max(applied, roundMoney(ret.creditNote?.appliedAnywhere ?? 0));
+  const refunded = refundDone ? worth : 0;
   return {
     state: "SETTLED",
     creditNoteId,
     applied,
-    refunded: refundDone ? worth : 0,
-    kept: refundDone ? 0 : Math.max(0, roundMoney(worth - applied)),
+    refunded,
+    appliedElsewhere: Math.max(0, roundMoney(anywhere - applied)),
+    kept: Math.max(0, roundMoney(worth - anywhere - refunded)),
+  };
+}
+
+export interface SettlementTotals {
+  applied: number;
+  refunded: number;
+  kept: number;
+  /** credit spent on other orders (Credit used) */
+  used: number;
+  /** some own return is not settled yet */
+  pending: boolean;
+}
+
+/**
+ * The row's figures from its settlements, in cents. A credit note is counted ONCE: two returns that name one note (or one
+ * return seen twice) never add its application twice, so `applied` is exactly the own-credit PAID payments.
+ */
+export function settlementTotals(settlements: ReadonlyArray<ReturnSettlement>): SettlementTotals {
+  const seen = new Set<string>();
+  const counted = settlements.filter((s) => {
+    if (s.state === "DEAD") return false;
+    if (!s.creditNoteId) return true;
+    if (seen.has(s.creditNoteId)) return false;
+    seen.add(s.creditNoteId);
+    return true;
+  });
+  const sum = (pick: (s: ReturnSettlement) => number) =>
+    roundMoney(counted.reduce((t, s) => roundMoney(t + pick(s)), 0));
+  return {
+    applied: sum((s) => s.applied),
+    refunded: sum((s) => s.refunded),
+    kept: sum((s) => s.kept),
+    used: sum((s) => s.appliedElsewhere),
+    pending: settlements.some((s) => s.state === "PENDING"),
   };
 }
