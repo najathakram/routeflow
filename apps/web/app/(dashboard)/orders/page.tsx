@@ -915,6 +915,24 @@ export default function OrdersPage() {
           onChange={(e) => setCustomerSearch(e.target.value)}
           className="h-10 w-64 rounded-ctl border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
+        {/* F04: keyboard reach. The sidebar, header, status chips and filters sit before the rows (51 Tabs). One
+            Tab stop after the search box jumps to the first row; Enter on the row then opens it. Only rendered
+            when there is a row to land on (a loading or empty list has nowhere to skip to, so no dead stop).
+            The layout's own "Skip to content" link stays; this one skips the filters within the page. */}
+        {!isLoading && !isError && filtered.length > 0 && (
+          <a
+            href="#orders-list"
+            onClick={(e) => {
+              e.preventDefault();
+              const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-order-row]"));
+              // The card list (below md) and the table (md+) are both in the DOM; focus the one on screen.
+              (rows.find((r) => r.getClientRects().length > 0) ?? rows[0])?.focus();
+            }}
+            className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-50 focus:flex focus:h-11 focus:items-center focus:rounded-ctl focus:bg-white focus:px-4 focus:text-sm focus:font-medium focus:text-navy focus:shadow-card focus:outline-none focus:ring-2 focus:ring-brand-500"
+          >
+            Skip to orders ({filtered.length})
+          </a>
+        )}
         {/* B823 review (Opus): mobile has no way to sort at all — the desktop table's
             sort is column-header clicks, invisible below md. Same sortCol/sortDir/
             toggleSort state; a direction button next to it matches SortIcon's own glyph. */}
@@ -1132,7 +1150,7 @@ export default function OrdersPage() {
           )}
         </div>
       ) : (
-        <>
+        <div id="orders-list" className="contents">
           {/* B823: clearance for the parked-draft dock (see hasDrafts above) — only
               needed below md, where the toolbar leaves no room to keep the dock clear
               of the first rows on its own. */}
@@ -1148,6 +1166,7 @@ export default function OrdersPage() {
                 <div
                   role="link"
                   tabIndex={0}
+                  data-order-row
                   onClick={() => {
                     if (selectMode) toggleSelect(order.id);
                     else router.push(`/orders/${order.id}`);
@@ -1298,6 +1317,7 @@ export default function OrdersPage() {
                       key={order.id}
                       role="link"
                       tabIndex={0}
+                      data-order-row
                       onClick={() => {
                         if (selectMode) toggleSelect(order.id);
                         else router.push(`/orders/${order.id}`);
@@ -1429,7 +1449,7 @@ export default function OrdersPage() {
               </div>
             )}
           </div>
-        </>
+        </div>
       )}
 
       {/* Pager — mobile-only card (see the nested md+ footer above), visible at every
