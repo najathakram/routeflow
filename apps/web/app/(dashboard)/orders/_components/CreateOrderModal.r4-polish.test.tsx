@@ -158,6 +158,16 @@ describe("Q08: one compact footer row; Minimize beside the header X", () => {
     expect(screen.getByRole("button", { name: /minimize/i })).toBeEnabled();
   });
 
+  // r5 row 730: items-center / justify-center only act on a flex box; the X (an inline Dialog.Close) was not one.
+  it("the X is a flex box below lg, so its centring classes take effect", () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    expect(screen.getByRole("button", { name: "Close" })).toHaveClass(
+      "max-lg:flex",
+      "max-lg:items-center",
+      "max-lg:justify-center",
+    );
+  });
+
   it("Minimize is a 44 px target below lg like the X beside it", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     for (const name of [/minimize/i, "Close"]) {
