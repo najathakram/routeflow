@@ -763,3 +763,41 @@ test("X1 unknown-status: no alarm once the item has moved past planned or is don
   assert.equal(find(alarms, "unknown-status:541"), undefined, "done: settled");
   assert.ok(find(alarms, "unknown-status:542"), "still planned: alarm stays");
 });
+
+// ---- items-stale ----
+test("items-stale: events older than the register's last commit by > 15 min raise a plain-words banner alarm", () => {
+  const ev = (ts) => ({
+    v: 1,
+    id: "pc-1790000000000-bbbb",
+    ts: new Date(ts).toISOString(),
+    machine: "pc",
+    actor: "register-sync",
+    lane: null,
+    kind: "item.new",
+    item: "680",
+    data: { title: "Last synced row", type: "feature", status: "planned", source: "register" },
+  });
+  const stale = (lastEventAt, changedAt) =>
+    find(run({ state: fold([ev(lastEventAt)]), register: { changedAt } }), "items-stale:register");
+  // two days behind: an error naming both ages in words
+  const a = stale(NOW - 48 * HOUR, NOW - 10 * 60_000);
+  assert.equal(a.severity, "error");
+  assert.match(
+    a.message,
+    /^Work items last updated 2 days ago; the register changed 10 minutes ago/,
+  );
+  // within the 15-minute grace: nothing
+  assert.equal(stale(NOW - 20 * 60_000, NOW - 6 * 60_000), undefined);
+  // 30 minutes behind, under a day: a warning
+  assert.equal(stale(NOW - 40 * 60_000, NOW - 10 * 60_000).severity, "warn");
+  // events newer than the register, or no register time: nothing
+  assert.equal(stale(NOW - 5 * 60_000, NOW - 60 * 60_000), undefined);
+  assert.equal(stale(NOW - 48 * HOUR, null), undefined);
+});
+
+test("agoWords: minutes, hours and days in words", () => {
+  assert.equal(REC.agoWords(60_000), "1 minute");
+  assert.equal(REC.agoWords(5 * 60_000), "5 minutes");
+  assert.equal(REC.agoWords(3 * HOUR), "3 hours");
+  assert.equal(REC.agoWords(72 * HOUR), "3 days");
+});

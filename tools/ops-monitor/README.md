@@ -35,6 +35,13 @@ npm run ops:test               # node tools/ops-monitor/test/run-all.mjs
 Views are off by default (never in cloud). Exactly one machine, the PC monitor, runs with
 `--views` as the single writer; every other monitor stays read-only. `rf views` stays manual.
 
+The `--views` monitor also runs the register sync (register rows → events): first pass after 60 s,
+then every 5 min. It waits up to 45 s for the specs lock (the collector holds it for each 30-second
+pull), and logs every pass that appends nothing, with the reason (busy, pull failed, generated mode,
+0 changes), once per change. If the events fall more than 15 min behind the register's last commit,
+every monitor (cloud included) raises the `items-stale` alarm and shows a banner: "Work items last
+updated N ago".
+
 The monitor is an always-on process on the PC (owner approved; no scheduled task). Start it in a
 terminal tab and leave it. It needs `git`, `gh` (authenticated) and, optionally, `railway`.
 

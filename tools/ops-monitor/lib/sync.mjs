@@ -16,6 +16,7 @@ import { loadConfig, machineId, specsDir as defaultSpecsDir } from "./config.mjs
 import { newEventId } from "./ids.mjs";
 import { fold } from "./fold.mjs";
 import { validateEvent } from "./schema.mjs";
+import { redact } from "./cloud.mjs";
 
 export const SYNC_ACTOR = "register-sync";
 const BACKFILL_ACTOR = "backfill";
@@ -360,8 +361,10 @@ const readText = (p) => {
 };
 
 /**
- * Pull, build, append: one sync pass over the specs clone. The pull runs under the non-waiting
- * lock, so a busy lock (a lane is writing) skips this pass with `{ ran: false, reason: "busy" }`.
+ * Pull, build, append: one sync pass over the specs clone. The pull runs under the specs lock.
+ * With `lockWaitMs` (the monitor's timer) it waits up to that long for the lock, so the collector's
+ * 30-second specs pass cannot starve it; without it the lock is tried once. A lock still busy skips
+ * this pass with `{ ran: false, reason: "busy" }`.
  * Returns `{ ran, events, appended, pushed, warnings, summary, pullError }`; `dry` builds without
  * appending. In generated register mode nothing runs (the register is an output).
  */
@@ -376,11 +379,23 @@ export async function runSync({
   bugIds,
   rand,
   mask,
+  lockWaitMs = 0,
 } = {}) {
   const store = await import("./store.mjs");
   const config = loadConfig(dir);
   if (registerModeOf(config) === "generated") return { ran: false, reason: "generated" };
-  const pulled = await store.tryWithSpecsLock(() => store.syncSpecs(dir, { bugIds }), { home });
+  const pull = () => store.syncSpecs(dir, { bugIds });
+  let pulled;
+  if (lockWaitMs > 0) {
+    try {
+      pulled = { ran: true, value: await store.withSpecsLock(pull, { home, waitMs: lockWaitMs }) };
+    } catch (err) {
+      if (!/could not acquire specs lock/.test(String(err?.message ?? err))) throw err;
+      pulled = { ran: false };
+    }
+  } else {
+    pulled = await store.tryWithSpecsLock(pull, { home });
+  }
   if (!pulled.ran) return { ran: false, reason: "busy" };
   const state = fold(store.readAllEvents(dir));
   const out = planSync({
@@ -410,4 +425,28 @@ export async function runSync({
   result.pushed = res.pushed;
   result.warnings = res.warnings;
   return result;
+}
+
+/**
+ * One line for a runSync result that appended nothing (the timer logs it once per change), or null
+ * when the pass appended events (the caller logs those). `busyRuns` counts consecutive busy skips.
+ */
+export function describeSyncOutcome(res, { busyRuns = 0 } = {}) {
+  if (!res) return "register sync: no result";
+  if (res.ran === false) {
+    if (res.reason === "busy")
+      return `register sync skipped: busy (specs lock held${busyRuns > 1 ? `, ${busyRuns} in a row` : ""})`;
+    if (res.reason === "generated") return "register sync off: the register is in generated mode";
+    return `register sync did not run: ${res.reason ?? "unknown reason"}`;
+  }
+  if (res.appended > 0) return null;
+  const parts = [];
+  if (res.pullError) parts.push(`pull failed: ${redact(res.pullError).slice(0, 200)}`);
+  if (res.warnings?.length)
+    parts.push(`warnings: ${redact(res.warnings.join("; ")).slice(0, 200)}`);
+  if (res.events?.length && !res.appended)
+    parts.push(`${res.events.length} event(s) planned, none appended`);
+  return parts.length
+    ? `register sync: ${parts.join("; ")}`
+    : "register sync: register and events agree (0 changes)";
 }

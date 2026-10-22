@@ -429,6 +429,8 @@ function lanUrls(port) {
 
 const REGISTER_SYNC_MS = 300_000;
 const REGISTER_SYNC_FIRST_MS = 60_000;
+// The collector holds the specs lock for every 30-second pull; the timer waits this long for it.
+const REGISTER_SYNC_LOCK_WAIT_MS = 45_000;
 
 /**
  * The register sync (hand-kept register + owner queue rows -> events) runs only on the single
@@ -695,9 +697,13 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     }
     collector.start();
     if (shouldRunRegisterSync(opts)) {
-      const { runSync } = await import("./lib/sync.mjs");
+      const { describeSyncOutcome, runSync } = await import("./lib/sync.mjs");
       const { loadBugIds } = await import("./lib/store.mjs");
       let lastRegisterNote = "";
+      let busyRuns = 0;
+      console.error(
+        `[ops-monitor] register sync on: first pass in ${REGISTER_SYNC_FIRST_MS / 1000} s, then every ${REGISTER_SYNC_MS / 60000} min (waits up to ${REGISTER_SYNC_LOCK_WAIT_MS / 1000} s for the specs lock)`,
+      );
       stopRegisterSync = startRegisterSync({
         run: async () => {
           const res = await runSync({
@@ -706,9 +712,14 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
             env,
             mask: (t) => maskText(t, nameLoader.get()),
             bugIds: await loadBugIds(repoRoot),
+            lockWaitMs: REGISTER_SYNC_LOCK_WAIT_MS,
           });
-          // A refused register (duplicate row ids) or refused rows (id collisions): log once per change.
+          busyRuns = res?.ran === false && res.reason === "busy" ? busyRuns + 1 : 0;
+          // Every pass that appends nothing says why (busy lock, pull error, generated mode, no
+          // changes), plus a refused register or refused rows: logged once per change, so a stalled
+          // sync can never be silent again.
           const note = [
+            describeSyncOutcome(res, { busyRuns }),
             res?.refused ? `register refused: ${res.refused}` : null,
             res?.collisions?.length
               ? `register rows refused (id shared with a monitor item): ${res.collisions.join(", ")}`

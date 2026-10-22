@@ -5,7 +5,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { parseOwnerQueueRows, planSync, runSync, syncEvents } from "../lib/sync.mjs";
+import {
+  describeSyncOutcome,
+  parseOwnerQueueRows,
+  planSync,
+  runSync,
+  syncEvents,
+} from "../lib/sync.mjs";
 import { fold } from "../lib/fold.mjs";
 import { validateEvent } from "../lib/schema.mjs";
 import { DEFAULT_CONFIG } from "../lib/config.mjs";
@@ -474,6 +480,80 @@ test(
     }
   },
 );
+
+test(
+  "runSync with lockWaitMs: a lock the collector holds briefly is waited out; one held past the wait skips as busy",
+  { timeout: 600000 },
+  async () => {
+    const r = mkRepo("wait");
+    try {
+      const common = { dir: r.dir, home: r.home, machine: "pc", env: {}, now: NOW + 3600000 };
+      // The collector's 30-second pass holds the lock for ~400 ms: the timer waits and still runs.
+      let release;
+      const held = withSpecsLock(() => new Promise((res) => (release = res)), {
+        home: r.home,
+        heartbeatMs: 3600000,
+      });
+      while (!release) await new Promise((res) => setTimeout(res, 10));
+      setTimeout(() => release(), 400);
+      const waited = await runSync({ ...common, lockWaitMs: 5000 });
+      await held;
+      assert.equal(waited.ran, true);
+      assert.equal(waited.appended, 2, "both register rows appended after the wait");
+
+      // A lock held past the wait: busy, and nothing thrown.
+      await withSpecsLock(
+        async () => {
+          const busy = await runSync({ ...common, now: NOW + 9000000, lockWaitMs: 300 });
+          assert.deepEqual(busy, { ran: false, reason: "busy" });
+        },
+        { home: r.home, heartbeatMs: 3600000 },
+      );
+    } finally {
+      rmSync(r.tmp, { recursive: true, force: true });
+    }
+  },
+);
+
+test("describeSyncOutcome: every pass that appends nothing says why; an appending pass is null", () => {
+  assert.equal(
+    describeSyncOutcome({ ran: false, reason: "busy" }),
+    "register sync skipped: busy (specs lock held)",
+  );
+  assert.equal(
+    describeSyncOutcome({ ran: false, reason: "busy" }, { busyRuns: 3 }),
+    "register sync skipped: busy (specs lock held, 3 in a row)",
+  );
+  assert.match(describeSyncOutcome({ ran: false, reason: "generated" }), /generated mode/);
+  assert.match(
+    describeSyncOutcome({
+      ran: true,
+      appended: 0,
+      events: [],
+      pullError: "fatal: unable to access",
+    }),
+    /^register sync: pull failed: fatal: unable to access/,
+  );
+  assert.equal(
+    describeSyncOutcome({ ran: true, appended: 0, events: [], warnings: [] }),
+    "register sync: register and events agree (0 changes)",
+  );
+  assert.match(
+    describeSyncOutcome({ ran: true, appended: 0, events: [{}, {}], warnings: ["push failed"] }),
+    /warnings: push failed; 2 event\(s\) planned, none appended/,
+  );
+  assert.equal(describeSyncOutcome({ ran: true, appended: 3, events: [{}, {}, {}] }), null);
+  // a token in a pull error never reaches the log
+  assert.doesNotMatch(
+    describeSyncOutcome({
+      ran: true,
+      appended: 0,
+      events: [],
+      pullError: "ghp_abcdefABCDEF123456 denied",
+    }),
+    /ghp_/,
+  );
+});
 
 test("runSync does nothing in generated register mode", { timeout: 600000 }, async () => {
   const r = mkRepo("gen");
