@@ -4,7 +4,6 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   AlertTriangle,
   User,
   Package,
@@ -2425,18 +2424,8 @@ export default function OrderDetailPage() {
 
   return (
     <div className="space-y-5 p-6">
-      {/* Back */}
-      <Link
-        href="/orders"
-        onClick={(e) => {
-          if (leaveGuard.requestLeave(() => router.push("/orders"))) e.preventDefault();
-        }}
-        className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Orders
-      </Link>
-
+      {/* r5 Q23: no in-page "← Orders" link. The dashboard top bar shows a back arrow on every sub-page, and
+          its history Back is held by leaveGuard's sentinel while Edit Items has unsaved edits. */}
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -3366,7 +3355,13 @@ export default function OrderDetailPage() {
                   <dd className="money text-navy">{formatMoney(shippingFee)}</dd>
                 </div>
               )}
-              <div className="flex items-center justify-between gap-3 border-t border-surface-border pt-2.5">
+              {/* r5 Q20: below lg the line-items footer carries the total (this card is stacked under the lines); edit mode has no footer. */}
+              <div
+                className={cn(
+                  "flex items-center justify-between gap-3 border-t border-surface-border pt-2.5",
+                  !isEditing && "max-lg:hidden",
+                )}
+              >
                 <dt className="font-semibold text-navy">
                   {isEditing ? "Saved total" : "Order total"}
                 </dt>

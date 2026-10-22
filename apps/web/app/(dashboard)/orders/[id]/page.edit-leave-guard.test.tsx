@@ -114,13 +114,4 @@ describe("Edit Items leave guard (F24)", () => {
     window.dispatchEvent(dirty);
     expect(dirty.defaultPrevented).toBe(true);
   });
-
-  it("the Orders link asks too when edits are unsaved", async () => {
-    await openEdit();
-    fireEvent.change(qty(), { target: { value: "7" } });
-    fireEvent.click(screen.getByRole("link", { name: /^orders$/i }));
-    expect(
-      await screen.findByRole("dialog", { name: /discard your changes/i }),
-    ).toBeInTheDocument();
-  });
 });
