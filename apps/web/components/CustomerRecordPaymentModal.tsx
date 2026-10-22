@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { useAuth } from "@/lib/auth-context";
+import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { Paperclip, Wallet } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import {
@@ -72,6 +74,7 @@ export function CustomerRecordPaymentModal({
   onSuccess,
 }: CustomerRecordPaymentModalProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const record = useRecordPaymentStandalone();
   const keyScope = paymentKeyScope.standalone(customerId);
   // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
@@ -162,7 +165,7 @@ export function CustomerRecordPaymentModal({
       ),
     );
 
-  const handleSave = async (status: "DRAFT" | "PAID") => {
+  const handleSave = async (status: "DRAFT" | "PAID", recordAnyway = false) => {
     if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
     if (!total || total <= 0) {
       toast({ title: "Enter a valid amount", variant: "error" });
@@ -184,6 +187,7 @@ export function CustomerRecordPaymentModal({
       reference: reference || undefined,
       notes: notes || undefined,
       status,
+      ...(recordAnyway ? { recordAnyway: true } : {}),
       allocations: validAllocs.map((a) => ({
         invoiceId: a.invoiceId,
         amount: parseFloat(a.amount),
@@ -214,6 +218,9 @@ export function CustomerRecordPaymentModal({
       onSuccess?.();
       onClose();
     } catch (err: unknown) {
+      // Row 498: a duplicate reference names the existing payment; staff may "Record anyway".
+      if (toastDuplicatePaymentRef(err, toast, user?.role, () => void handleSave(status, true)))
+        return;
       toast({
         title: "Failed to record payment",
         description: genericToastCopy(err),
