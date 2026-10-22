@@ -7,6 +7,7 @@ import { computeLineSubtotal } from "@routeflow/pricing";
 import { BACKORDER_TAG_LABEL, lineBackorderPieces } from "@routeflow/types";
 import { invoiceLineQtyText, isUnitLine } from "@/lib/invoice-line-unit";
 import { formatMoney } from "@/lib/format";
+import { unitPriceNote } from "@/lib/line-unit-price-note";
 import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
 import { displayLineStatus } from "./line-status";
@@ -178,6 +179,19 @@ export function OrderLineItemsTable({
                   ) : (
                     <span className="money text-navy/70">{formatMoney(li.unitPrice)}</span>
                   )}
+                  {(() => {
+                    const note = unitPriceNote({
+                      unitPrice: li.unitPrice,
+                      unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox,
+                      unitLabel: li.unitLabel,
+                      pieces: li.pieces,
+                    });
+                    return note ? (
+                      <span className="text-xs text-navy/60" data-testid="line-unit-price-unit">
+                        {note.text}
+                      </span>
+                    ) : null;
+                  })()}
                 </div>
               </td>
               <td
