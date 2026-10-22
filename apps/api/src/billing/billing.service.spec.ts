@@ -3396,6 +3396,39 @@ describe("F2: onCheckoutCompleted re-syncs an override saved during the open ses
     expect(sync).toHaveBeenLastCalledWith("t1", { effective: "next_cycle" });
   });
 
+  // SA-832 row 451: the redelivery path (hasAppliedMarker, read on the PRE-check client `prisma`, never the tx) used
+  // to return after syncCoupon alone, so a price push that threw after the first delivery was never retried while the
+  // webhook was acked. The spec above mocks `tx.auditLog.findFirst`, which the pre-check never reads - it false-greens
+  // through the ALREADY_APPLIED branch instead of the early return. These drive the REAL early-return path.
+  it("SA-832 #451: a redelivery caught by the PRE-check applied marker retries the price push (and the coupon sync)", async () => {
+    const { svc, prisma, tx, stripe } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
+    prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+      where.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "a1" } : null,
+    );
+    const sync = jest
+      .spyOn(svc, "syncStripeSubscriptionPrice")
+      .mockResolvedValue({ synced: true, newAmount: 150, oldAmount: 349, proration: "none" });
+    await expect((svc as any).onCheckoutCompleted(session)).resolves.toBeUndefined();
+    // the early return was the one taken: no apply transaction ran
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(sync).toHaveBeenCalledTimes(1);
+    expect(sync).toHaveBeenCalledWith("t1", { effective: "next_cycle" });
+    // the coupon sync is part of the same step (resyncPriceAfterCheckout), once
+    expect(stripe.retrieveSubscriptionWithDiscounts).toHaveBeenCalledTimes(1);
+  });
+
+  it("SA-832 #451: a push that throws on the pre-check redelivery fails the webhook (Stripe redelivers); the coupon sync still ran", async () => {
+    const { svc, prisma, stripe } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
+    prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+      where.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "a1" } : null,
+    );
+    jest.spyOn(svc, "syncStripeSubscriptionPrice").mockRejectedValue(new Error("stripe down"));
+    const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    await expect((svc as any).onCheckoutCompleted(session)).rejects.toThrow("stripe down");
+    err.mockRestore();
+    expect(stripe.retrieveSubscriptionWithDiscounts).toHaveBeenCalledWith("sub_1");
+  });
+
   it("the RESUMED ledger event is emitted EXACTLY ONCE across the redelivery of a completion whose push threw", async () => {
     const { svc, tx, events } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
     jest

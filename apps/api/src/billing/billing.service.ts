@@ -1983,9 +1983,11 @@ export class BillingService {
         stripeSub,
         adoptCtx,
       );
-      // SA-736r F2: the redelivery syncs the coupon too (idempotent), so a sync that threw after the first
-      // delivery's upsert is retried here instead of being lost behind "already applied".
-      await this.syncCoupon(tenantId, subscriptionId, "checkout_completed");
+      // SA-736r F2 + SA-832 row 451: the redelivery re-runs the whole post-apply step - the price push AND the
+      // coupon sync (idempotent: an item already at the resolved price is `unchanged`). A push that threw after
+      // the first delivery's apply is retried here instead of being lost behind "already applied" while the
+      // webhook is acked. A still-failing push throws, so Stripe redelivers again.
+      await this.resyncPriceAfterCheckout(tenantId, session, subscriptionId);
       return;
     }
     const storedSubId: string | null = existingOverride?.stripeSubId ?? null;
