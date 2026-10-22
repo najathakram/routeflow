@@ -88,6 +88,10 @@ const MOCK_CTX = {
   customer: { id: "cust-merge-1", businessName: "Merge Test Buyer" },
 };
 
+// Row 718: a merge refuses a requested day before the tenant's today, so the fixture day is two days ahead of
+// the wall clock (the mock tenant has no zone: UTC), never a fixed calendar date that goes stale.
+const DELIVERY_DAY = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+
 describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", () => {
   let controller: BuyerController;
   let ordersService: {
@@ -400,7 +404,7 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
       items: [{ productId: "prod-plain", qty: 2 }],
       notes: "ring bell",
       urgent: true,
-      requestedDeliveryDate: "2026-09-05",
+      requestedDeliveryDate: DELIVERY_DAY,
     };
 
     await controller.createOrder(dto as any, MOCK_CTX as any);
@@ -410,7 +414,7 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     expect(ordersService.applyBuyerMergeHeader).toHaveBeenCalledTimes(1);
     expect(ordersService.applyBuyerMergeHeader).toHaveBeenCalledWith(
       activeOrder.id,
-      { notes: "ring bell", urgent: true, requestedDeliveryDate: "2026-09-05" },
+      { notes: "ring bell", urgent: true, requestedDeliveryDate: DELIVERY_DAY },
       expect.any(Object),
     );
 
