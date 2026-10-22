@@ -78,6 +78,7 @@ import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
 import { usePhoneWidth } from "./_components/use-phone-width";
+import { useScrollAfterSave } from "./_components/use-scroll-after-save";
 import { phoneActionItems } from "./_components/phone-action-items";
 import { useInvoiceDraftNotice } from "./_components/use-invoice-draft-notice";
 import { SAVE_CHORD_KEYS, saveChordHandler } from "./_components/use-save-chord";
@@ -311,6 +312,7 @@ export default function OrderDetailPage() {
 
   // Item editing
   const [isEditing, setIsEditing] = React.useState(false);
+  const { cardRef: linesCardRef, markSaved: markLinesSaved } = useScrollAfterSave(isEditing);
   const overpay = useOrderOverpayGuard(order, isEditing);
   const stale = useOrderStaleRevision(order, isEditing, (fresh, base) => {
     const n = rebaseOnReload(
@@ -658,6 +660,7 @@ export default function OrderDetailPage() {
     // the server default.
     saveLatchRef.current = true;
     const onSaved = () => {
+      markLinesSaved(); // r5 N10: bring the saved lines into view once the editor closes
       setIsEditing(false);
       setEditItems([]);
       setEditCredits([]);
@@ -1420,7 +1423,11 @@ export default function OrderDetailPage() {
         {/* ── Main content ── */}
         <div className="space-y-5 lg:col-span-2">
           {/* Line items */}
-          <div className="rounded-lg bg-white p-6 shadow-card">
+          <div
+            ref={linesCardRef}
+            data-testid="order-line-items-card"
+            className="scroll-mt-16 rounded-lg bg-white p-6 shadow-card"
+          >
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <h3 className="flex items-center gap-2.5 text-base font-semibold text-navy">
                 Line items
