@@ -766,8 +766,9 @@ export interface ReturnProvenance {
  *        link. Instead EVERY item of the return is sold on this order, and the credit has a PAID application on one of this
  *        order's invoices (`payments` are the payments of this order's own live invoices). A MIXED return (items sold on
  *        several orders) is not provably this order's alone, so its credit stays a tender (the safe default).
- * A rejected or cancelled return proves nothing. `Return.creditNoteId` has no Prisma relation, so the caller supplies the
- * returns (this order's own, plus the INLINE ones the batched read finds).
+ * A note shared by several live returns (`Return.creditNoteId` is not unique) is own only if EVERY one of them passes; a return
+ * sold elsewhere vetoes it. A rejected or cancelled return proves nothing (and vetoes nothing). `Return.creditNoteId` has no
+ * Prisma relation, so the caller supplies the returns (this order's own, plus the INLINE ones the batched read finds).
  */
 export function ownReturnCreditNoteIds(input: {
   orderId: string;
@@ -779,22 +780,26 @@ export function ownReturnCreditNoteIds(input: {
   }>;
   returns: readonly ReturnProvenance[];
 }): Set<string> {
-  const madeByThisOrder = new Map<string, ReturnProvenance[]>();
+  // EVERY live return that names a note: `Return.creditNoteId` is not unique, so one note can be shared by a return of this
+  // order and a return sold only elsewhere. The note is this order's own only if ALL of them pass (a veto, never a `some`).
+  const namingNote = new Map<string, ReturnProvenance[]>();
   for (const r of input.returns) {
-    if (!r.creditNoteId || isDeadReturn(r.status) || !isOwnReturn(input.orderId, r)) continue;
-    madeByThisOrder.set(r.creditNoteId, [...(madeByThisOrder.get(r.creditNoteId) ?? []), r]);
+    if (!r.creditNoteId || isDeadReturn(r.status)) continue;
+    namingNote.set(r.creditNoteId, [...(namingNote.get(r.creditNoteId) ?? []), r]);
   }
   const own = new Set<string>();
   for (const p of input.payments) {
-    const made = p.creditNoteId ? madeByThisOrder.get(p.creditNoteId) : undefined;
+    const made = p.creditNoteId ? namingNote.get(p.creditNoteId) : undefined;
     if (!p.creditNoteId || !made) continue;
     const invoiceId = p.creditNote?.invoiceId;
     const noteOnThisOrder = !!invoiceId && input.invoiceIds.includes(invoiceId);
-    const proven = made.some((r) =>
-      r.kind === "INLINE"
-        ? p.status === CONFIRMED_STATUS &&
-          (r.items ?? []).every((i) => i.sourceOrderId === input.orderId)
-        : noteOnThisOrder,
+    const proven = made.every(
+      (r) =>
+        isOwnReturn(input.orderId, r) &&
+        (r.kind === "INLINE"
+          ? p.status === CONFIRMED_STATUS &&
+            (r.items ?? []).every((i) => i.sourceOrderId === input.orderId)
+          : noteOnThisOrder),
     );
     if (proven) own.add(p.creditNoteId);
   }

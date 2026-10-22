@@ -764,6 +764,43 @@ describe("B1262 follow-up / SA-838b: an INLINE return's credit note has no invoi
     );
   });
 
+  it("a note SHARED by a return sold only on another order is never own (Return.creditNoteId is not unique)", () => {
+    // note cn-1 is named by an all-this-order INLINE return AND by a return whose goods were sold on order o-b only
+    const mine = carried({ id: "r-mine", items: [{ sourceOrderId: "o-1" }] });
+    const theirs = carried({ id: "r-theirs", items: [{ sourceOrderId: "o-b" }] });
+    const payments = [creditPay(3, "cn-1", null)];
+    expect(ownReturnCreditNoteIds({ ...base, payments, returns: [mine] }).size).toBe(1);
+    for (const returns of [
+      [mine, theirs],
+      [theirs, mine],
+    ]) {
+      expect(ownReturnCreditNoteIds({ ...base, payments, returns }).size).toBe(0);
+    }
+    // a STANDARD return of another order naming the same note vetoes it too
+    const otherStandard: ReturnProvenance = {
+      id: "r-std",
+      creditNoteId: "cn-1",
+      orderId: "o-b",
+      kind: "STANDARD",
+      status: "REFUNDED",
+    };
+    expect(ownReturnCreditNoteIds({ ...base, payments, returns: [mine, otherStandard] }).size).toBe(
+      0,
+    );
+    // a DEAD return naming the note proves nothing either way: it does not veto
+    const dead = carried({ id: "r-dead", status: "CANCELLED", items: [{ sourceOrderId: "o-b" }] });
+    expect(ownReturnCreditNoteIds({ ...base, payments, returns: [mine, dead] }).size).toBe(1);
+    // and the row falls back to the Store credit tender
+    const row = toTodaysSaleRow(
+      order([inlineNote(3)], [], "7.50"),
+      null,
+      [mine, theirs],
+      notes({ "cn-1": ["APPLIED", 3, [[3, "i-1"]]] }),
+    );
+    expect(row.returnCredit).toBe(0);
+    expect(row.tenderMethods).toEqual([{ method: "STORE_CREDIT", amount: 3 }]);
+  });
+
   it("a credit applied on ANOTHER order's invoice is never this order's own credit", () => {
     // sale A (o-1) sold the goods, the credit was spent on sale B's invoice: A has no application, so nothing is own on A
     expect(
