@@ -43,7 +43,7 @@ import { useUnsentOrderResume } from "./use-unsent-order-resume";
 import { ResumeUnsentOrderDialog } from "./ResumeUnsentOrderDialog";
 import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
-import { todayLocalIso } from "@/lib/formatting";
+import { useTenantToday } from "@/lib/tenant-timezone";
 import { ACTION_TOAST_MS, addedLineQty, showOrderCreatedToast } from "./order-created-toast";
 import {
   mergePieceIntoLine,
@@ -1420,11 +1420,16 @@ export function CreateOrderModal({
   }, [backdateOpen]);
   // The server's upper bound is the end of the current UTC day (parseOrderDate).
   const maxOrderDate = new Date().toISOString().slice(0, 10);
-  // F13: a requested delivery day before today (the browser's local day) is refused next to the field. Derived in the render,
-  // never mirrored into state (L-333). POS mode steps the field aside and sends no delivery date, so it never blocks there.
-  const deliveryDateMin = todayLocalIso();
+  // F13 + row 735a: a requested delivery day before today ON THE BUSINESS'S CALENDAR (the tenant's zone, the day the API judges
+  // it on; never the browser's) is refused next to the field. Until the zone has loaded nothing is blocked locally: the
+  // server refuses a past day with the tenant's today on the field (below). Derived in the render, never mirrored into state (L-333). POS mode steps the field aside and sends no delivery date, so it never blocks there.
+  const tenantToday = useTenantToday(isOpen);
+  const deliveryDateMin = tenantToday; // undefined until the business's zone is known: no `min`, no local block
   const deliveryDatePast =
-    !posMode && requestedDeliveryDate !== "" && requestedDeliveryDate < deliveryDateMin;
+    !posMode &&
+    requestedDeliveryDate !== "" &&
+    tenantToday !== undefined &&
+    requestedDeliveryDate < tenantToday;
   const deliveryDateRef = React.useRef<HTMLInputElement>(null);
 
   // Staff-only per-order commission override (0 = exempt; null = agent/customer

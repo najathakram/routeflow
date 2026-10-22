@@ -158,3 +158,41 @@ describe("assertDeliveryDateNotPast", () => {
     });
   });
 });
+
+// Row 735(c): the tenant's day for a UTC-10 tenant and across DST transitions.
+describe("assertDeliveryDateNotPast — UTC-10 and DST (row 735)", () => {
+  const ok = (zone: string, raw: string, iso: string) =>
+    expect(
+      assertDeliveryDateNotPast(stubPrisma(zone), raw, { now: new Date(iso) }),
+    ).resolves.toBeUndefined();
+  const refused = async (zone: string, raw: string, iso: string, today: string) => {
+    const e = await refusal(
+      assertDeliveryDateNotPast(stubPrisma(zone), raw, { now: new Date(iso) }),
+    );
+    expect(e.getResponse()).toMatchObject({ code: CODE, today });
+  };
+
+  it("Pacific/Honolulu (UTC-10): 05:00Z on the 22nd is 19:00 on the 21st, so the 21st is today and the 20th is past", async () => {
+    await ok("Pacific/Honolulu", "2026-10-21", "2026-10-22T05:00:00Z");
+    await refused("Pacific/Honolulu", "2026-10-20", "2026-10-22T05:00:00Z", "2026-10-21");
+    // five hours later the tenant is on the 22nd and the 21st has passed
+    await refused("Pacific/Honolulu", "2026-10-21", "2026-10-22T10:00:00Z", "2026-10-22");
+  });
+
+  it("America/Chicago fall-back (2026-11-01 is 25 hours long): the day boundary follows CST, not the CDT offset", async () => {
+    await ok("America/Chicago", "2026-11-01", "2026-11-02T05:30:00Z"); // 23:30 CST on the 1st
+    await refused("America/Chicago", "2026-11-01", "2026-11-02T06:30:00Z", "2026-11-02"); // 00:30 CST on the 2nd
+    await ok("America/Chicago", "2026-11-01", "2026-11-01T06:30:00Z"); // 01:30 CDT
+    await ok("America/Chicago", "2026-11-01", "2026-11-01T07:30:00Z"); // 01:30 CST, the repeated hour
+  });
+
+  it("America/New_York spring-forward (2026-03-08 is 23 hours long): 23:30 EDT is still the 8th, 00:30 EDT the 9th", async () => {
+    await ok("America/New_York", "2026-03-08", "2026-03-09T03:30:00Z");
+    await refused("America/New_York", "2026-03-08", "2026-03-09T04:30:00Z", "2026-03-09");
+  });
+
+  it("America/New_York fall-back (2026-11-01): 23:30 EST on the 1st is 04:30Z on the 2nd", async () => {
+    await ok("America/New_York", "2026-11-01", "2026-11-02T04:30:00Z");
+    await refused("America/New_York", "2026-11-01", "2026-11-02T05:30:00Z", "2026-11-02");
+  });
+});
