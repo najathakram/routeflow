@@ -79,6 +79,7 @@ import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
 import type { LineComponentView } from "@routeflow/types";
 import { CHECK_TRANSITIONS } from "@routeflow/types";
+import { unvoidAmendedPeriodNote, type UnvoidInvoiceResult } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import { InvoiceLineAmount } from "./InvoiceLineAmount";
 import { InvoiceLinePrice } from "./InvoiceLinePrice";
@@ -2991,9 +2992,15 @@ export default function InvoiceDetailPage() {
               variant="primary"
               onClick={() => {
                 unvoid.mutate(invoice.id, {
-                  onSuccess: () => {
+                  onSuccess: (res: UnvoidInvoiceResult | undefined) => {
                     setIsUnvoidOpen(false);
-                    toast({ title: "Invoice unvoided — now in Draft", variant: "success" });
+                    // SA-839 §3: one more line when the void sat in an already-filed month.
+                    const note = unvoidAmendedPeriodNote(res?.amendedPeriod);
+                    toast({
+                      title: "Invoice unvoided — now in Draft",
+                      variant: "success",
+                      ...(note ? { description: note } : {}),
+                    });
                   },
                   onError: (e: any) =>
                     toast({
