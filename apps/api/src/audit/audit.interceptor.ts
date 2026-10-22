@@ -10,7 +10,7 @@ const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
  * SA-824 race ruling 4: the resolve route (POST /invoices/payments/by-key/:key/resolve) writes ONE audit row
  * of its own with the key's sha256. The generic row would be a second one AND carry the RAW key in `action`.
  */
-const SELF_AUDITED_PATH = /\/invoices\/payments\/by-key\/[^/]+\/resolve\/?$/;
+const SELF_AUDITED_PATH = /\/invoices\/payments\/by-key\/[^/]+\/resolve\/?$/i;
 
 /**
  * Global interceptor that logs every mutation request (POST/PUT/PATCH/DELETE)

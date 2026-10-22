@@ -65,4 +65,19 @@ describe("AuditInterceptor: a payment by-key resolve is audited by its handler, 
       "POST /invoices/payments/by-key/K4/other",
     ]);
   });
+
+  it("routing is case-insensitive, so a mixed-case resolve path is skipped too (no raw key in a generic row)", async () => {
+    const audit = { log: jest.fn().mockResolvedValue(undefined) };
+    const req = {
+      method: "POST",
+      url: "/api/v1/INVOICES/payments/By-Key/RAW-KEY-123/RESOLVE",
+      ip: "203.0.113.9",
+      headers: {},
+      socket: {},
+      user: { sub: "u1", tenantId: "t1" },
+    };
+    new AuditInterceptor(audit as any).intercept(makeCtx(req), next());
+    await flush();
+    expect(audit.log).not.toHaveBeenCalled();
+  });
 });
