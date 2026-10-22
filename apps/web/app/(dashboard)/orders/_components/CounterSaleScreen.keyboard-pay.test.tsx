@@ -1,5 +1,6 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /** R7b 1.2: one keyboard path to pay. Enter in an empty scan box moves to the payment; the tender methods are a radiogroup. */
@@ -89,14 +90,14 @@ const pressEnterInScan = (after = 200) => {
 
 describe("CounterSaleScreen: keyboard path to pay (R7b 1.2)", () => {
   it("Enter on an empty scan box with lines focuses Amount tendered (cash)", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     pressEnterInScan();
     await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveFocus());
   });
 
   it("Enter on an empty scan box with lines focuses Complete & show receipt for card", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     pressEnterInScan();
@@ -106,7 +107,7 @@ describe("CounterSaleScreen: keyboard path to pay (R7b 1.2)", () => {
   });
 
   it("Enter on an empty scan box with no lines does nothing", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     const field = screen.getByLabelText("Scan or search items");
     field.focus();
     pressEnterInScan();
@@ -115,7 +116,7 @@ describe("CounterSaleScreen: keyboard path to pay (R7b 1.2)", () => {
   });
 
   it("keyboard only: scan, Enter, type the tender, Enter completes the sale", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     pressEnterInScan();
     const tender = await screen.findByLabelText("Amount tendered");
@@ -127,7 +128,7 @@ describe("CounterSaleScreen: keyboard path to pay (R7b 1.2)", () => {
   });
 
   it("an Enter 20 ms after a scan submit does not move focus; one 200 ms after does", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     const field = screen.getByLabelText("Scan or search items");
     field.focus();
@@ -139,7 +140,7 @@ describe("CounterSaleScreen: keyboard path to pay (R7b 1.2)", () => {
   });
 
   it("arrow keys move between tender methods", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     const group = screen.getByRole("radiogroup", { name: "Payment method" });
     expect(group).toBeInTheDocument();
     const cash = screen.getByRole("radio", { name: "Cash" });
@@ -154,7 +155,7 @@ describe("CounterSaleScreen: keyboard path to pay (R7b 1.2)", () => {
   });
 
   it("the tender group keeps one enabled tab stop after a walk-in switch disables the checked method", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
     fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
     fireEvent.click(screen.getByRole("radio", { name: "On account" }));
@@ -167,7 +168,7 @@ describe("CounterSaleScreen: keyboard path to pay (R7b 1.2)", () => {
   });
 
   const walkInAfterOnAccount = () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
     fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
     fireEvent.click(screen.getByRole("radio", { name: "On account" }));

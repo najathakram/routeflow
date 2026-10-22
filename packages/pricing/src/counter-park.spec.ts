@@ -289,3 +289,20 @@ describe("foldItemNames: the ONE fold of a row's item names (R7b N3, N4)", () =>
     expect(foldItemNames("nope", 3)).toEqual({});
   });
 });
+
+describe("S5: the explicit Walk-in choice rides the payload", () => {
+  it("keeps walkIn: true on a cart with no customer", () => {
+    expect(ok(cart({ walkIn: true })).walkIn).toBe(true);
+  });
+  it("a cart without it stays byte-identical (no walkIn key)", () => {
+    expect(ok(cart())).toEqual(cart());
+    expect("walkIn" in ok(cart())).toBe(false);
+  });
+  it("drops walkIn when a customer is on the cart, and any value that is not true", () => {
+    expect(
+      "walkIn" in ok(cart({ walkIn: true, customer: { id: "c1", businessName: "Acme" } })),
+    ).toBe(false);
+    for (const v of [false, "true", 1, null])
+      expect("walkIn" in ok(cart({ walkIn: v }))).toBe(false);
+  });
+});

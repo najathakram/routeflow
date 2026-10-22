@@ -57,22 +57,19 @@ export function useCounterSaleScan(deps: Deps) {
   // F05: "Added <name>" for the latest scan that landed; it fades by itself and goes at once on a miss.
   const [added, setAdded] = React.useState("");
   const addedTimerRef = React.useRef<number | null>(null);
-  const clearAddedTimer = () => {
+  const clearAdded = React.useCallback(() => {
     if (addedTimerRef.current !== null) window.clearTimeout(addedTimerRef.current);
     addedTimerRef.current = null;
-  };
-  const confirmAdded = (product: any) => {
-    clearAddedTimer();
+    setAdded("");
+  }, []);
+  const confirmAdded = React.useCallback((product: any) => {
+    if (addedTimerRef.current !== null) window.clearTimeout(addedTimerRef.current);
     setAdded(addedCopy(displayProductName(product)));
     addedTimerRef.current = window.setTimeout(() => {
       addedTimerRef.current = null;
       setAdded("");
     }, ADDED_CONFIRMATION_MS);
-  };
-  const clearAdded = () => {
-    clearAddedTimer();
-    setAdded("");
-  };
+  }, []);
   const [picker, setPicker] = React.useState<ScanPicker | null>(null);
   const [failed, setFailed] = React.useState(false);
   const [waiting, setWaiting] = React.useState(0);
@@ -174,7 +171,7 @@ export function useCounterSaleScan(deps: Deps) {
       if (aliveRef.current && !pausedRef.current && queueRef.current.length > 0) void drain();
       else depsRef.current.refocus();
     }
-  }, []);
+  }, [clearAdded, confirmAdded]);
 
   const resume = () => {
     pausedRef.current = false;

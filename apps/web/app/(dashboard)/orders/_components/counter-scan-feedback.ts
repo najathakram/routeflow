@@ -8,7 +8,6 @@ export const SCAN_ECHO_MAX = 24;
 
 /** The rejected text as one short, printable line: control characters gone, runs of space folded, cut with an ellipsis. */
 function echo(text: string): string {
-  // eslint-disable-next-line no-control-regex
   const flat = text
     .replace(/[\u0000-\u001f\u007f]+/g, " ")
     .replace(/\s+/g, " ")

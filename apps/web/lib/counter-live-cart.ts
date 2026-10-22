@@ -10,6 +10,8 @@ export interface LiveCartSnapshot {
   method: string;
   tendered: string;
   reference: string;
+  /** S5: Walk-in was explicitly chosen (a null customer alone is "not asked yet"). Absent in an older save. */
+  walkIn?: boolean;
 }
 
 export function writeLiveCart(
@@ -63,6 +65,7 @@ export function readLiveCart(storeKey: string | null): LiveCartSnapshot | null {
         method: v!.method!,
         tendered: typeof v!.tendered === "string" ? v!.tendered : "",
         reference: typeof v!.reference === "string" ? v!.reference : "",
+        walkIn: v!.walkIn === true && !v!.customer,
       };
     }
     window.localStorage.removeItem(storeKey);

@@ -125,6 +125,11 @@ export interface ParkedCartPayload {
   method: string;
   tendered: string;
   reference: string;
+  /**
+   * S5: the clerk tapped Walk-in for this cart (a null customer alone says nothing, so a resumed cart without it asks
+   * "Who's buying?" again). Only ever `true`, and only with a null customer.
+   */
+  walkIn?: true;
 }
 
 // ─── Moved from the web: the shape checks the held-attempt snapshot and the live cart already use ───────────────────
@@ -266,7 +271,9 @@ export function sanitizeParkedPayload(
   }
   const tendered = str(raw.tendered, 20) ?? "";
   const reference = str(raw.reference, 100) ?? "";
-  return { ok: true, value: { lines, customer, method, tendered, reference } };
+  const value: ParkedCartPayload = { lines, customer, method, tendered, reference };
+  if (raw.walkIn === true && customer === null) value.walkIn = true;
+  return { ok: true, value };
 }
 
 // ─── Requests and responses ──────────────────────────────────────────────────────────────────────────────────────────
