@@ -1150,7 +1150,7 @@ export default function OrdersPage() {
           )}
         </div>
       ) : (
-        <>
+        <div id="orders-list" className="contents">
           {/* B823: clearance for the parked-draft dock (see hasDrafts above) — only
               needed below md, where the toolbar leaves no room to keep the dock clear
               of the first rows on its own. */}
@@ -1449,7 +1449,7 @@ export default function OrdersPage() {
               </div>
             )}
           </div>
-        </>
+        </div>
       )}
 
       {/* Pager — mobile-only card (see the nested md+ footer above), visible at every

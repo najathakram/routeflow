@@ -95,3 +95,16 @@ describe("OrdersPage: skip to orders", () => {
     expect(screen.queryByRole("link", { name: /skip to orders/i })).toBeNull();
   });
 });
+
+describe("OrdersPage: skip to orders target", () => {
+  it("the link's href points at an element that exists and holds the rows", () => {
+    rows = [order({})];
+    renderWithProviders(<OrdersPage />);
+    const link = screen.getByRole("link", { name: "Skip to orders (1)" });
+    const id = link.getAttribute("href")?.replace(/^#/, "") ?? "";
+    const target = document.getElementById(id);
+    expect(target).not.toBeNull();
+    expect(target).toHaveTextContent("ORD-1");
+    expect(target?.querySelectorAll("[data-order-row]").length).toBeGreaterThan(0);
+  });
+});
