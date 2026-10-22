@@ -448,15 +448,19 @@ test.describe("R7b till: toasts clear the sticky bar", () => {
   test("the Counter opened toast does not cover the checkout bar @ 390", async ({
     page,
     context,
-  }) => {
+  }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await setTenantCookie(context, BASE);
     await page.addInitScript(() => window.localStorage.setItem("rf-open-counter", "true"));
     await page.goto("/dashboard");
-    const toast = page.getByText("Counter opened");
+    const toast = page.getByText("Counter opened", { exact: true });
     await expect(toast).toBeVisible({ timeout: 15_000 });
     const bar = page.getByTestId("counter-checkout-bar");
     await expect(bar).toBeVisible({ timeout: 15_000 });
+    await testInfo.attach("toast-390", {
+      body: await page.screenshot({ fullPage: true }),
+      contentType: "image/png",
+    });
     const toastBox = await toast.boundingBox();
     const barBox = await bar.boundingBox();
     expect(toastBox).not.toBeNull();
