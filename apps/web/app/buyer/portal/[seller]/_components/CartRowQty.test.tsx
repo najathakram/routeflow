@@ -112,3 +112,23 @@ describe("CartLineUnit", () => {
     expect(container).toBeEmptyDOMElement();
   });
 });
+
+describe("CartRowQty - neutral stepper (P26)", () => {
+  it("the stepper is neutral chrome, not a green tinted block", () => {
+    render(
+      <CartRowQty
+        item={{ productId: "p1", qty: 2, name: "Widget", unit: "ea" } as never}
+        name="Widget"
+        onCount={jest.fn()}
+        onUnit={jest.fn()}
+        onRemove={jest.fn()}
+      />,
+    );
+    const stepper = screen.getByTestId("cart-row-stepper");
+    expect(stepper.className).not.toMatch(/buyer-\d/);
+    expect(screen.getByRole("button", { name: "Increase Widget" }).className).not.toMatch(
+      /buyer-\d/,
+    );
+    expect(screen.getByRole("spinbutton").className).not.toMatch(/text-buyer-\d/);
+  });
+});
