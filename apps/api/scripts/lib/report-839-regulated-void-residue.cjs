@@ -225,6 +225,9 @@ function classifyLine(rows, invoiceStatus, docStatusById, line = {}) {
   if (standing(total)) {
     const moneyZero = Math.abs(total.netSales) <= EPS && Math.abs(total.categoryTax) <= EPS;
     const statuses = docs.map(([, s]) => s);
+    // Precedence is deliberate: AXIS_ONLY (money exactly 0, pieces standing) is the strictest signature and no
+    // removed return or note row with money could leave it, so it wins over the loose order-level evidence of a
+    // CANCELLED return (RETURN_CANCELLED) or a VOID note (NOTE_VOIDED); RETURN_CANCELLED wins over NOTE_VOIDED.
     let sub;
     if (moneyZero && Math.abs(total.unitBasisQty) > EPS) sub = SUB.AXIS_ONLY;
     else if (statuses.includes("CANCELLED")) sub = SUB.RETURN_CANCELLED;
@@ -476,8 +479,11 @@ function checkArgs(argv) {
       message: `refusing ${hit}: this report is read-only and has no write mode (repair is the owner's decision, SA-839 G10 Q2)`,
     };
   const known = new Set(["--json", "--tenant", "--self-test"]);
+  const hostFlag = argv.filter((a) => a.startsWith("--target-host="));
+  if (hostFlag.length > 1) return { ok: false, message: "--target-host given more than once" };
   const tenantAt = argv.indexOf("--tenant");
   for (const [i, a] of argv.entries()) {
+    if (a.startsWith("--target-host=")) continue;
     if (a.startsWith("--") ? !known.has(a) : argv[i - 1] !== "--tenant")
       return { ok: false, message: `unexpected argument ${a}` };
   }
@@ -489,7 +495,38 @@ function checkArgs(argv) {
     json: argv.includes("--json"),
     selfTest: argv.includes("--self-test"),
     tenant,
+    targetHost: hostFlag.length ? hostFlag[0].slice("--target-host=".length) : null,
   };
+}
+
+/** Host and database name of a postgres URL, for the type-back guard. Never the credentials. */
+function targetOf(url) {
+  const u = new URL(url);
+  return {
+    host: u.hostname,
+    database: decodeURIComponent(u.pathname.replace(/^\//, "")) || "(default)",
+  };
+}
+
+/**
+ * The live-target guard (#3578 pattern): the owner runs once to see the host, then names it with
+ * `--target-host=<host>`. Exit 64 when the flag is missing or empty, 65 when it does not equal the host the URL
+ * resolves to. Pure; the caller prints the target and refuses BEFORE connecting.
+ */
+function guardTarget(targetHost, target) {
+  if (!targetHost)
+    return {
+      ok: false,
+      code: 64,
+      message: "refusing: --target-host=<host> is required (run once without it to see the host)",
+    };
+  if (targetHost !== target.host)
+    return {
+      ok: false,
+      code: 65,
+      message: `refusing: --target-host=${targetHost} does not match the resolved host ${target.host}`,
+    };
+  return { ok: true };
 }
 
 module.exports = {
@@ -523,4 +560,6 @@ module.exports = {
   jsonReport,
   formatReport,
   checkArgs,
+  targetOf,
+  guardTarget,
 };

@@ -12,7 +12,12 @@
  *
  * NEVER RUN FROM AN IMPLEMENTATION SESSION. The owner runs it:
  *
- *   railway run --service postgres node apps/api/scripts/report-839-regulated-void-residue.mjs [--json] [--tenant ID]
+ * Two steps (the live-target guard, as report-orphaned-delivery-evidence): run once to see the host it resolves
+ * to, then name that host.
+ *
+ *   railway run --service postgres node apps/api/scripts/report-839-regulated-void-residue.mjs
+ *   railway run --service postgres node apps/api/scripts/report-839-regulated-void-residue.mjs  *     --target-host=<the host it printed> [--json] [--tenant ID]
+ *
  *   node apps/api/scripts/report-839-regulated-void-residue.mjs --self-test   (no database)
  *
  * Protected tenants (paying, Stripe-linked or named in PROTECTED_TENANT_SLUGS, via the live-target guard) are
@@ -20,6 +25,8 @@
  * set (use "" to state there are none), exactly as for every other script that uses the guard.
  *
  * SAFETY
+ *   - Live-target guard: it prints the DB host and database name and refuses BEFORE connecting unless
+ *     `--target-host=<host>` equals the resolved host (exit 64 when missing, 65 on a mismatch). No credentials.
  *   - The first statement is the session `default_transaction_read_only = on`, then statement / lock / idle
  *     timeouts, then BEGIN TRANSACTION READ ONLY; the report aborts unless SHOW transaction_read_only is `on`.
  *     SELECT / SHOW only; the transaction ends with ROLLBACK.
@@ -126,6 +133,16 @@ export async function selfTest() {
     .catch(() => (aborted = true));
   if (!aborted) throw new Error("self-test: did not abort when transaction_read_only is not on");
 
+  // the live-target guard: host required (64), must match the URL's host (65), never the credentials
+  const t = lib.targetOf("postgresql://u:p%40ss@db.example.test:5432/railway");
+  eq([t.host, t.database], ["db.example.test", "railway"], "targetOf");
+  if (JSON.stringify(t).includes("p%40ss") || JSON.stringify(t).includes("p@ss"))
+    throw new Error("self-test: targetOf leaked the password");
+  eq(lib.guardTarget(null, t).code, 64, "missing --target-host");
+  eq(lib.guardTarget("prod.example.test", t).code, 65, "mismatched --target-host");
+  eq(lib.guardTarget("db.example.test", t).ok, true, "matching --target-host");
+  eq(lib.checkArgs(["--target-host=db.example.test"]).targetHost, "db.example.test", "flag parsed");
+
   // write-shaped flags are refused
   for (const f of lib.WRITE_FLAGS)
     if (lib.checkArgs([f]).ok) throw new Error(`self-test: ${f} accepted`);
@@ -152,6 +169,13 @@ async function main() {
 
   const databaseUrl = resolveReportDbUrl(NAME);
   if (!databaseUrl) process.exit(2);
+  const target = lib.targetOf(databaseUrl);
+  console.error(`${NAME}: DB host ${target.host} · database ${target.database}`);
+  const guard = lib.guardTarget(args.targetHost, target);
+  if (!guard.ok) {
+    console.error(`${NAME}: ${guard.message}`);
+    process.exit(guard.code);
+  }
   let slugs;
   try {
     slugs = loadProtectedSlugs(process.env, databaseUrl);

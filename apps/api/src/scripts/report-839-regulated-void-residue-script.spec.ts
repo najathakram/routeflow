@@ -40,7 +40,7 @@ describe("report-839-regulated-void-residue (spawned)", () => {
   });
 
   it("exits 2 without connecting when no database url is configured", () => {
-    const res = run([], null);
+    const res = run(["--target-host=127.0.0.1"], null);
     expect(res.status).toBe(2);
     expect(res.stdout).toBe("");
   });
@@ -77,7 +77,7 @@ describe("report-839-regulated-void-residue (spawned)", () => {
 
   it("exits 2 on a non-local database when PROTECTED_TENANT_SLUGS is unset, without connecting", () => {
     const env = { DATABASE_URL: "postgresql://u:pw@db.example.test:5432/prod" };
-    const res = spawnSync(process.execPath, [SCRIPT], {
+    const res = spawnSync(process.execPath, [SCRIPT, "--target-host=db.example.test"], {
       encoding: "utf8",
       cwd: API_DIR,
       env: { PATH: process.env.PATH ?? "", ...env },
@@ -87,10 +87,34 @@ describe("report-839-regulated-void-residue (spawned)", () => {
     expect(res.stderr).not.toMatch(/ENOTFOUND|ECONNREFUSED/);
   });
 
+  it("refuses without --target-host (exit 64), after printing the host and database, without connecting", () => {
+    const res = run([], DEAD_URL);
+    expect(res.status).toBe(64);
+    expect(res.stderr).toContain("DB host 127.0.0.1 · database nodb");
+    expect(res.stderr).toContain("--target-host=<host> is required");
+    expect(res.stderr).not.toMatch(/ECONNREFUSED/);
+    expect(res.stdout).toBe("");
+  });
+
+  it("refuses a mismatched --target-host (exit 65) without connecting", () => {
+    const res = run(["--target-host=prod.example.test", "--json"], DEAD_URL);
+    expect(res.status).toBe(65);
+    expect(res.stderr).toContain("does not match the resolved host 127.0.0.1");
+    expect(res.stderr).not.toMatch(/ECONNREFUSED/);
+    expect(res.stdout).toBe("");
+  });
+
+  it("a matching --target-host passes the guard and only then tries to connect (dead port, exit 1)", () => {
+    const res = run(["--target-host=127.0.0.1"], DEAD_URL);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toMatch(/ECONNREFUSED|connect/i);
+    expect(res.stdout).toBe("");
+  });
+
   it("never prints the password", () => {
     const res = run(["--apply"], DEAD_URL);
     expect(res.stderr + res.stdout).not.toContain("pw@");
-    const res2 = run([], DEAD_URL);
+    const res2 = run(["--target-host=127.0.0.1"], DEAD_URL);
     expect(res2.stderr + res2.stdout).not.toContain("pw@");
   });
 });

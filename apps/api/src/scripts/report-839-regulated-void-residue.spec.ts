@@ -147,7 +147,9 @@ describe("classifyLine: sub-classes, edges and clean lines", () => {
     expect(lib.classifyLine(rows, "VOID", {}, LINE)).toEqual([
       { cls: "VOID_RESIDUE", sub: "AXIS_ONLY", bucket: "2026-10" },
     ]);
-    expect(lib.classifyLine(rows, "VOID", { r9: "CANCELLED" }, LINE)[0].sub).toBe("AXIS_ONLY");
+    // precedence is pinned: AXIS_ONLY before RETURN_CANCELLED and before NOTE_VOIDED
+    for (const docs of [{ r9: "CANCELLED" }, { n9: "VOID" }, { r9: "CANCELLED", n9: "VOID" }])
+      expect(lib.classifyLine(rows, "VOID", docs, LINE)[0].sub).toBe("AXIS_ONLY");
   });
 
   it("OTHER: a standing VOID line with no cancelled return and no void note to explain it", () => {
@@ -576,5 +578,34 @@ describe("checkArgs", () => {
     expect(lib.checkArgs(["--tenant", "a b"]).ok).toBe(false);
     expect(lib.checkArgs(["--wat"]).ok).toBe(false);
     expect(lib.checkArgs(["stray"]).ok).toBe(false);
+  });
+});
+
+describe("live-target guard (#3578 pattern)", () => {
+  const target = lib.targetOf("postgresql://u:p%40ss@db.example.test:5432/railway");
+
+  it("targetOf gives host and database, never credentials", () => {
+    expect(target).toEqual({ host: "db.example.test", database: "railway" });
+    expect(JSON.stringify(target)).not.toMatch(/p%40ss|p@ss/);
+    expect(lib.targetOf("postgresql://u:p@localhost:5432/").database).toBe("(default)");
+  });
+
+  it("checkArgs parses --target-host=<host> (once) alongside the other flags", () => {
+    expect(lib.checkArgs(["--target-host=db.example.test", "--json"])).toMatchObject({
+      ok: true,
+      targetHost: "db.example.test",
+      json: true,
+    });
+    expect(lib.checkArgs([])).toMatchObject({ ok: true, targetHost: null });
+    expect(lib.checkArgs(["--target-host=a", "--target-host=b"]).ok).toBe(false);
+    expect(lib.checkArgs(["--target-host=a", "--apply"]).ok).toBe(false);
+  });
+
+  it("refuses a missing or empty host with 64, a mismatch with 65, accepts the exact host", () => {
+    expect(lib.guardTarget(null, target)).toMatchObject({ ok: false, code: 64 });
+    expect(lib.guardTarget("", target)).toMatchObject({ ok: false, code: 64 });
+    expect(lib.guardTarget("prod.example.test", target)).toMatchObject({ ok: false, code: 65 });
+    expect(lib.guardTarget("DB.example.test", target)).toMatchObject({ ok: false, code: 65 });
+    expect(lib.guardTarget("db.example.test", target)).toEqual({ ok: true });
   });
 });
