@@ -1,5 +1,6 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -67,7 +68,7 @@ describe("CounterSaleScreen: the receipt opens at the top (CQ-33)", () => {
     main.id = "main-content";
     document.body.appendChild(main);
     try {
-      renderWithProviders(<CounterSaleScreen />);
+      renderTill(<CounterSaleScreen />);
       const field = screen.getByLabelText("Scan or search items");
       fireEvent.change(field, { target: { value: "COLA" } });
       fireEvent.submit(field.closest("form")!);
