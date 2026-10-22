@@ -69,8 +69,7 @@ import {
 import { sourceLineFor } from "./source-line";
 import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-create-options";
 import { checkQtySplitConsistency, warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
-import { mergeIntoStoredLine } from "./stored-line-merge";
-import { resolveLinePack } from "./merge-pack-resolve";
+import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
 import {
   oldestFirst,
   resolveSaleDelivery,
@@ -4875,11 +4874,12 @@ export class OrdersService implements OnApplicationBootstrap {
           // B135 (REG-B135): pick the merge target from the row held under the Order FOR UPDATE
           // lock, then read its authoritative qty/price through the tx — the pre-tx snapshot can
           // name a line a concurrent edit has since cancelled, delivered or re-quantified.
-          const heldMatch = heldItems.find(
-            (h: any) =>
-              h.productId === product.id &&
-              h.status !== "CANCELLED" &&
-              Number(h.deliveredQty) === 0,
+          // SA-841 / SA-124b: by product, then unit, then the resolved pack the add was filed at
+          const heldMatch = pickHeldMergeTarget(
+            heldItems as any[],
+            product.id,
+            payload as any,
+            upb,
           );
           const existing = heldMatch
             ? await tx.orderItem.findUnique({ where: { id: heldMatch.id } })
@@ -4896,10 +4896,11 @@ export class OrdersService implements OnApplicationBootstrap {
             };
             // row 531: the add's own qty-vs-split check first (a buyer's is refused, staff/driver warn)
             checkQtySplitConsistency({
-              mode: cr.requestedByRole === "CUSTOMER" ? "enforce" : "warn",
+              mode: cr.requestedByRole === UserRole.CUSTOMER ? "enforce" : "warn",
               path: "orders.cr.add.merge",
               items: [{ ...payload, productId: product.id, qty: addQty } as QtySplitLine],
-              upbFor: () => resolveLinePack(lineShape, upb).pack,
+              // the add was filed at the LIVE pack; a repacked line is the helper's 409, never a split 400
+              upbFor: () => upb,
               tenantId: this.prisma?.getTenantId?.(),
               logger: this.logger,
             });

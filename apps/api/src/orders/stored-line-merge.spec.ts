@@ -164,4 +164,39 @@ describe("mergeIntoStoredLine (SA-841)", () => {
       usedLivePack: false,
     });
   });
+
+  it.each([[0], [1]])(
+    "MUST-1 G1 (live pack %i): a non-boxed add filed as {qty 5, boxes 0, pieces 0} adds its qty: 10 + 5 = 15, never 0",
+    (livePack) => {
+      const r = run({ line: boxUnaware(10), add: { qty: 5, boxes: 0, pieces: 0 }, livePack });
+      expect(r).toMatchObject({ ok: true, qty: 15, boxes: null, pieces: null, addInLineUnit: 5 });
+      expect(priced(r, 8.5)).toBe(127.5);
+    },
+  );
+
+  it("MUST-1 G1: a line with a stamped pack <= 1 and an all-zero split add still adds the qty", () => {
+    const r = run({
+      line: { qty: 10, boxes: null, pieces: null, unitsPerBox: 1 },
+      add: { qty: 5, boxes: 0, pieces: 0 },
+      livePack: 0,
+    });
+    expect(r).toMatchObject({ ok: true, qty: 15, addInLineUnit: 5 });
+  });
+
+  it("(c) a unitsPerBox snapshot with boxes null is box-UNAWARE: keep adds whole boxes, never promotes", () => {
+    const r = run({
+      line: { qty: 2, boxes: null, pieces: null, unitsPerBox: 12 },
+      add: { qty: 12, boxes: 1, pieces: 0 },
+    });
+    expect(r).toMatchObject({
+      ok: true,
+      qty: 3,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      pack: 12,
+      addInLineUnit: 1,
+      usedLivePack: false,
+    });
+  });
 });

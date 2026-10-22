@@ -79,8 +79,10 @@ export function mergeIntoStoredLine(args: MergeIntoStoredLineArgs): MergeIntoSto
         return { ok: false, reason: "PACK_MISMATCH", linePack: pack, addPack: filed };
       }
     }
-    // a sent split wins over its qty (the normalizeBoxesPieces contract)
-    addPieces = pack > 1 ? addBoxes * pack + addLoose : addLoose;
+    // the normalizeBoxesPieces contract: a sent split wins over its qty only when there IS a pack; with none, the qty
+    // is the count (the driver app files every non-boxed add as {qty: N, boxes: 0, pieces: 0}; reading its split
+    // would add 0 and bill nothing for N items handed over).
+    addPieces = pack > 1 ? addBoxes * pack + addLoose : Number(add.qty);
   } else if (bare === "sellingUnits") {
     // SA-104a(3): a bare selling unit is a box at the LIVE pack; a box-aware line priced at another pack refuses
     if (pack > 1 && !usedLivePack && livePack !== pack) {
@@ -138,4 +140,31 @@ export function mergeIntoStoredLine(args: MergeIntoStoredLineArgs): MergeIntoSto
   // B661-sweep: SA-841's one box-unaware-line conversion (a replaceAll rebuild re-derives the line anyway)
   const s = normalizeBoxesPieces({ qty: Number(line.qty) * pack + addPieces, unitsPerBox: pack });
   return { ok: true, ...s, unitsPerBox: pack, pack, addInLineUnit: addPieces, usedLivePack };
+}
+
+/**
+ * SA-841 §2 P1 / SA-124b: which held line an at-stop add merges into. Candidates are the product's live, undelivered
+ * lines; the target is picked by unit (a plain add prefers a line with no unit label), then by resolved pack (the line
+ * whose own pack equals the pack the add was filed at), then the first candidate (the helper still refuses a pack it
+ * cannot reconcile, so the fallback fails closed).
+ */
+export function pickHeldMergeTarget<
+  H extends StoredLineShape & {
+    id: string;
+    productId: string | null;
+    status: string;
+    deliveredQty: unknown;
+    unitLabel?: string | null;
+  },
+>(held: readonly H[], productId: string, add: StoredLineAdd, livePack: number): H | undefined {
+  const candidates = held.filter(
+    (h) => h.productId === productId && h.status !== "CANCELLED" && Number(h.deliveredQty) === 0,
+  );
+  if (candidates.length <= 1) return candidates[0];
+  const addPack =
+    packFromOwnSplit({ qty: Number(add.qty), boxes: add.boxes, pieces: add.pieces }) ??
+    (int(livePack) > 1 ? int(livePack) : 0);
+  const sameUnit = candidates.filter((h) => !h.unitLabel);
+  const pool = sameUnit.length > 0 ? sameUnit : candidates;
+  return pool.find((h) => resolveLinePack(h, int(livePack)).pack === addPack) ?? pool[0];
 }

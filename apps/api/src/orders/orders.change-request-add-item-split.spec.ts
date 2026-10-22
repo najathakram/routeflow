@@ -269,4 +269,102 @@ describe("OrdersService.approveChangeRequestAtStop — a door add's box split (B
     expect(h.prisma.orderItem.update).not.toHaveBeenCalled();
     expect(h.prisma.deliveryMutation.create).not.toHaveBeenCalled();
   });
+
+  it("SA-841 MUST-1: a NON-boxed driver add filed as {qty 5, boxes 0, pieces 0} adds 5 (10 + 5 = 15 at $8.50 = $127.50), never $0", async () => {
+    const plain = { ...PRODUCT, name: "Sample Soap", unitsPerBox: null, pricePerUnit: 8.5 };
+    h.prisma.product.findUnique.mockResolvedValue(plain);
+    h.prisma.product.findFirst.mockResolvedValue(plain);
+    h.prisma.changeRequest.findUnique.mockResolvedValue(addItem({ qty: 5, boxes: 0, pieces: 0 }));
+    mergeInto({
+      id: "li-1",
+      orderId: "ord-1",
+      productId: "prod-1",
+      qty: 10,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      unitPrice: 8.5,
+      subtotal: 85,
+      status: "PENDING",
+      deliveredQty: 0,
+    });
+
+    await h.service.approveChangeRequestAtStop("cr-1", driver, null);
+
+    expect(h.prisma.orderItem.update).toHaveBeenCalledWith({
+      where: { id: "li-1" },
+      data: expect.objectContaining({ qty: 15, boxes: null, pieces: null, subtotal: 127.5 }),
+    });
+    expect(h.prisma.deliveryMutation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ orderItemId: "li-1", qty: 5 }),
+    });
+  });
+
+  it("SA-841 (b): a buyer's 1 box filed at the LIVE 6-pack into a 12-pack line is the 409 MERGE_PACK_MISMATCH, never a 400 split mismatch", async () => {
+    h.prisma.product.findUnique.mockResolvedValue({ ...PRODUCT, unitsPerBox: 6 });
+    h.prisma.product.findFirst.mockResolvedValue({ ...PRODUCT, unitsPerBox: 6 });
+    h.prisma.changeRequest.findUnique.mockResolvedValue(
+      addItem({ qty: 6, boxes: 1, pieces: 0 }, "CUSTOMER"),
+    );
+    mergeInto({
+      id: "li-1",
+      orderId: "ord-1",
+      productId: "prod-1",
+      qty: 24,
+      boxes: 2,
+      pieces: 0,
+      unitsPerBox: 12,
+      unitPrice: 40,
+      subtotal: 80,
+      status: "PENDING",
+      deliveredQty: 0,
+    });
+
+    const body = await conflictCode(
+      h.service.approveChangeRequestAtStop("cr-1", operatorPayload as never, null),
+    );
+
+    expect(body.code).toBe("MERGE_PACK_MISMATCH");
+    expect(h.prisma.orderItem.update).not.toHaveBeenCalled();
+  });
+
+  it("SA-841 (a) SA-124b: with a 6-pack line and a 12-pack line of the product, a driver's 12-pack box merges into the 12-pack line", async () => {
+    const six = {
+      id: "li-6",
+      orderId: "ord-1",
+      productId: "prod-1",
+      qty: 12,
+      boxes: 2,
+      pieces: 0,
+      unitsPerBox: 6,
+      unitLabel: null,
+      unitPrice: 20,
+      subtotal: 40,
+      status: "PENDING",
+      deliveredQty: 0,
+    };
+    const twelve = { ...six, id: "li-12", qty: 24, unitsPerBox: 12, unitPrice: 40, subtotal: 80 };
+    h.prisma.changeRequest.findUnique.mockResolvedValue(addItem({ qty: 12, boxes: 1, pieces: 0 }));
+    h.prisma.order.findUnique.mockResolvedValue(order([six, twelve]));
+    h.prisma.orderItem.findMany.mockResolvedValueOnce([]).mockResolvedValue([
+      { ...six, trackedCategoryId: null },
+      { ...twelve, trackedCategoryId: null },
+    ]);
+    h.prisma.orderItem.findUnique.mockImplementation(
+      async ({ where }: { where: { id: string } }) => (where.id === "li-12" ? twelve : six),
+    );
+
+    await h.service.approveChangeRequestAtStop("cr-1", driver, null);
+
+    expect(h.prisma.orderItem.update).toHaveBeenCalledWith({
+      where: { id: "li-12" },
+      data: expect.objectContaining({
+        qty: 36,
+        boxes: 3,
+        pieces: 0,
+        unitsPerBox: 12,
+        subtotal: 120,
+      }),
+    });
+  });
 });
