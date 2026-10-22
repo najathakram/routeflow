@@ -1009,10 +1009,7 @@ export class InvoicesService {
       categoryTaxType: li.categoryTaxType ?? null, // B297: COPY verbatim, never a live fallback.
       categoryTaxRate: li.categoryTaxRate != null ? Number(li.categoryTaxRate) : null,
       categoryPriceIncludesTax: li.categoryPriceIncludesTax ?? null,
-      restrictionOverrideReason: li.restrictionOverrideReason ?? null, // row 510: the staff override travels
-      restrictionOverrideBy: li.restrictionOverrideBy ?? null,
-      restrictionOverrideAt: li.restrictionOverrideAt ?? null,
-      restrictionOverrideRuleIds: li.restrictionOverrideRuleIds ?? [],
+      ...iGate.carryOverrideStamp(li), // row 510: the staff override travels
       ...(tenantId ? { tenantId } : {}),
       // #2717 M3: FIXED provenance + frozen component rows for THIS bill; {} on a plain line.
       ...invoiceCompositionFields(li, billQty, prior, subtotal, tenantId),
@@ -2355,10 +2352,7 @@ export class InvoicesService {
             authorChannel: "STAFF",
             invoicedQty: shape.qty,
             status: "PENDING",
-            restrictionOverrideReason: agg.sample?.restrictionOverrideReason ?? null, // row 510: carried back
-            restrictionOverrideBy: agg.sample?.restrictionOverrideBy ?? null,
-            restrictionOverrideAt: agg.sample?.restrictionOverrideAt ?? null,
-            restrictionOverrideRuleIds: agg.sample?.restrictionOverrideRuleIds ?? [],
+            ...iGate.carryOverrideStamp(agg.sample), // row 510: carried back
             ...(tenantId ? { tenantId } : {}),
           },
         });
