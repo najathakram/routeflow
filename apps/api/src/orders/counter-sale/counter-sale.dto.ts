@@ -10,6 +10,7 @@ import {
   IsString,
   IsUUID,
   Max,
+  Matches,
   MaxLength,
   Min,
   ValidateNested,
@@ -41,6 +42,8 @@ export class CounterSalePaymentDto {
   @IsIn(COUNTER_SALE_METHODS) method: (typeof COUNTER_SALE_METHODS)[number];
   @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1_000_000) amount?: number;
   @IsOptional() @IsString() @MaxLength(100) reference?: string;
+  /** CHECK only: the date written on the check, a strict YYYY-MM-DD. After the tenant's today = 400 COUNTER_CHECK_POSTDATED. */
+  @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/) checkDate?: string;
 }
 
 /** `CounterSaleRequest` of the shared contract (packages/types/api/counter-sale.ts). */

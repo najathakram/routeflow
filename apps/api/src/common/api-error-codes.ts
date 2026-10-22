@@ -332,6 +332,8 @@ export const API_ERROR_CODES = {
   WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
   COUNTER_TENDER_SHORT: "COUNTER_TENDER_SHORT",
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
+  /** 400 from POST /orders/counter-sale: a CHECK dated after the tenant's today cannot be tendered at the till; put the sale on account and record the check when it clears. Nothing is written. */
+  COUNTER_CHECK_POSTDATED: "COUNTER_CHECK_POSTDATED",
   COUNTER_PAYMENT_EXCEEDS_TOTAL: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
   COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
   /**

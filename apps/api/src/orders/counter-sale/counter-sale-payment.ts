@@ -1,6 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { parseCalendarDay } from "../../common/calendar-date";
 
 /**
  * Counter sale payment rules. Two stages, because the sale's total is computed by create() (tax,
@@ -16,6 +17,8 @@ export interface CounterPaymentInput {
   method: CounterPaymentMethod;
   amount?: number;
   reference?: string;
+  /** CHECK only: the date written on the check, YYYY-MM-DD (the DTO pins the shape). */
+  checkDate?: string;
 }
 
 const refuse = (code: string, message: string) => new BadRequestException({ code, message });
@@ -32,6 +35,25 @@ export function assertPaymentShape(payment: CounterPaymentInput, walkIn: boolean
   }
   if (payment.method === "CHECK" && !payment.reference?.trim()) {
     throw refuse(API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED, "Enter the check number");
+  }
+}
+
+/**
+ * Interim till guard (owner P0): a CHECK dated after the TENANT's today is never tendered at the till, because a post-dated
+ * check is not money yet. Refused 400 COUNTER_CHECK_POSTDATED before anything is written. `today` is the tenant's calendar day
+ * ("YYYY-MM-DD", from the tenant's zone, never the server's); YYYY-MM-DD strings order like the days they name. No date, today
+ * or earlier, and every other method pass. A date that names no real day is a plain 400.
+ */
+export function assertCheckNotPostdated(payment: CounterPaymentInput, today: string): void {
+  if (payment.method !== "CHECK" || payment.checkDate == null) return;
+  if (!parseCalendarDay(payment.checkDate)) {
+    throw new BadRequestException("checkDate must be a real calendar day (YYYY-MM-DD)");
+  }
+  if (payment.checkDate > today) {
+    throw refuse(
+      API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
+      "Post-dated check: put this sale on account and record the check when it clears.",
+    );
   }
 }
 

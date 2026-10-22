@@ -11,6 +11,8 @@ import { FulfillPath } from "@prisma/client";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { calendarDateFromIso, startOfCalendarDay } from "../../common/calendar-date";
+import { resolveZone } from "../../common/tenant-time-zone";
 import { configuredTaxRatePercent } from "../../common/tax-rate";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
@@ -38,6 +40,7 @@ import {
 } from "./fulfilment-capability-reader";
 import {
   allocateOldestFirst,
+  assertCheckNotPostdated,
   assertPaymentShape,
   assertWalkInTenderCoversTotal,
   type CounterPaymentMethod,
@@ -115,6 +118,16 @@ export class CounterSaleService {
     }
     const walkIn = !!dto.walkIn;
     assertPaymentShape(dto.payment, walkIn);
+    // Interim till guard: judged on the TENANT's day (one zone read, only when a check states a date), before any write.
+    if (dto.payment.method === "CHECK" && dto.payment.checkDate != null) {
+      const { zone } = await resolveZone(this.prisma, {
+        tenantId: this.prisma.getTenantId() ?? "",
+      });
+      assertCheckNotPostdated(
+        dto.payment,
+        calendarDateFromIso(startOfCalendarDay(new Date(), zone)),
+      );
+    }
 
     // 3. Tenant-scoped existence checks (another tenant's ids are simply not found).
     const packs = await this.assertProductsExist(dto.items.map((i) => i.productId));
