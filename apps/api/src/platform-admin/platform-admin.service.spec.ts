@@ -392,6 +392,23 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(prisma.tenant.update.mock.calls[0][0].data.readOnlyReason).toBe("admin_set");
     });
 
+    // SA-832b: an admin CANCELLED is stamped too, so it is never mistaken for a Stripe churn (stripe_cancelled), which
+    // a payment / the back-office win-back link CAN lift.
+    it("CANCELLED is written with readOnlyReason 'admin_set' (never null, never stripe_cancelled)", async () => {
+      before({ status: "CANCELLED", readOnlyReason: "stripe_cancelled" });
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "CANCELLED",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data).toEqual({
+        status: "CANCELLED",
+        readOnlyReason: "admin_set",
+      });
+    });
+
     it("CANCELLED with a live stripeSubId: 409 TENANT_CANCEL_SUBSCRIPTION_FIRST, nothing written", async () => {
       before({
         subscription: {

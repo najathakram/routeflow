@@ -3372,6 +3372,7 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
   it("REG-B400 resume() with stripeSubId + cancelAtPeriodEnd: true on a READ_ONLY tenant REFUSES — no Stripe call, no local write, no emit", async () => {
     const { svc, tx, events, stripe } = make({
       tenantStatus: "READ_ONLY",
+      readOnlyReason: "trial_expired", // SA-832b: a billing lock (subscribing again WOULD restore it)
       sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: true }),
     });
     await expect(svc.resume("t1", "admin")).rejects.toBeInstanceOf(ConflictException);
@@ -3382,6 +3383,31 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
     expect(mrrEmits(events)).toHaveLength(0);
   });
+
+  // SA-832b (B nit): "subscribe again" is a dead end for a workspace a payment may not reinstate (subscribe() refuses
+  // it with the coded 409), so resume() says so instead - fixed copy that names no cause.
+  it.each([
+    ["READ_ONLY(admin_set)", "READ_ONLY", "admin_set"],
+    ["READ_ONLY(no reason: a legacy admin write)", "READ_ONLY", null],
+    ["SUSPENDED(admin_set)", "SUSPENDED", "admin_set"],
+  ])(
+    "SA-832b: resume() on %s refuses WITHOUT telling the customer to subscribe again",
+    async (_n, tenantStatus, readOnlyReason) => {
+      const { svc, tx, stripe } = make({
+        tenantStatus,
+        readOnlyReason,
+        sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: true }),
+      });
+      const err: any = await svc.resume("t1", "admin").catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(String(err.message)).toBe(
+        "The subscription cannot be resumed while the workspace is locked. Please contact support.",
+      );
+      expect(String(err.message)).not.toMatch(/subscribe again/i);
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    },
+  );
 
   // (14) R4 — documents that a SUSPENDED tenant's cancel() still propagates to Stripe: R1 only
   // narrows resume(), never cancel().

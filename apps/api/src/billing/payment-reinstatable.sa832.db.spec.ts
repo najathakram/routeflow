@@ -40,6 +40,7 @@ const REASONS = [
   "payment_overdue",
   "subscription_cancelled",
   "overdue_payment",
+  "stripe_cancelled",
   "something_new",
 ] as const;
 
@@ -189,7 +190,8 @@ describeDb("SA-832 / 453 - one payment-reinstatable predicate (real Postgres)", 
       ["READ_ONLY(admin_set)", "READ_ONLY", "admin_set"],
       ["READ_ONLY(no reason: a legacy admin write)", "READ_ONLY", null],
       ["SUSPENDED(admin_set)", "SUSPENDED", "admin_set"],
-      ["CANCELLED", "CANCELLED", null],
+      ["CANCELLED (legacy row, no reason)", "CANCELLED", null],
+      ["CANCELLED by an admin", "CANCELLED", "admin_set"],
     ])("%s: untouched, no ledger event", async (_n, status, reason) => {
       const id = await tenantIn(status, reason, true);
       expect(await reinstate(id)).toBe(false);
@@ -202,12 +204,53 @@ describeDb("SA-832 / 453 - one payment-reinstatable predicate (real Postgres)", 
       ["READ_ONLY(trial_expired)", "READ_ONLY", "trial_expired"],
       ["READ_ONLY(payment_overdue)", "READ_ONLY", "payment_overdue"],
       ["SUSPENDED by billing (no reason)", "SUSPENDED", null],
+      ["CANCELLED by a Stripe churn", "CANCELLED", "stripe_cancelled"],
     ])("control: %s lifts exactly once, and the reason is cleared", async (_n, status, reason) => {
       const id = await tenantIn(status, reason, true);
       expect(await reinstate(id)).toBe(true);
       expect(await reinstate(id)).toBe(false); // a second delivery finds it ACTIVE
       expect(await row(id)).toMatchObject({ status: "ACTIVE", readOnlyReason: null });
     });
+  });
+
+  // SA-832b: cancelFromStripe stamps the churn, so the back-office win-back link / a payment can tell it from an admin cancel.
+  describe("a Stripe churn (real cancelFromStripe) is stamped stripe_cancelled", () => {
+    const churn = (id: string) =>
+      (billing as any).cancelFromStripe(
+        {
+          tenantId: id,
+          stripeSubId: "sub_x",
+          planKey: "STARTER",
+          basePriceSnapshot: 99,
+          discount: 0,
+        },
+        "deleted",
+      );
+    it.each([
+      ["ACTIVE", null],
+      ["SUSPENDED", null],
+    ])(
+      "%s -> CANCELLED with readOnlyReason stripe_cancelled, and a payment-reinstating CAS then lifts it",
+      async (status, reason) => {
+        const id = await tenantIn(status, reason, true);
+        await churn(id);
+        expect(await row(id)).toMatchObject({
+          status: "CANCELLED",
+          readOnlyReason: "stripe_cancelled",
+        });
+        expect(
+          await billing.transitionAndEmit(
+            id,
+            { status: { not: "ACTIVE" }, ...paymentReinstatableWhere() },
+            "ACTIVE",
+            1,
+            BILLING_EVENTS.SUBSCRIPTION_RESUMED,
+            { source: "stripe", reason: "checkout_completed" },
+          ),
+        ).toBe(true);
+        expect(await row(id)).toMatchObject({ status: "ACTIVE", readOnlyReason: null });
+      },
+    );
   });
 
   describe("subscribe() (real SubscriptionMutationService)", () => {

@@ -10,6 +10,7 @@ import {
   PAUSE_LOCAL_HOUR,
   paymentReinstatable,
   paymentReinstatableWhere,
+  STRIPE_CANCELLED_REASON,
 } from "./dunning-config";
 
 describe("dunning-config (SA-733r7 PR-B3)", () => {
@@ -66,6 +67,8 @@ describe("paymentReinstatable (SA-832 / row 453)", () => {
     ["READ_ONLY(subscription_cancelled)", "READ_ONLY", "subscription_cancelled"],
     ["SUSPENDED by billing (no reason)", "SUSPENDED", null],
     ["SUSPENDED with a billing reason", "SUSPENDED", "overdue_payment"],
+    // SA-832b: a Stripe churn is NOT an admin lock - the back-office win-back link must still work for it
+    ["CANCELLED by a Stripe churn (stripe_cancelled)", "CANCELLED", "stripe_cancelled"],
   ])("%s: a payment lifts it", (_n, status, reason) => {
     expect(paymentReinstatable(status, reason)).toBe(true);
   });
@@ -75,7 +78,9 @@ describe("paymentReinstatable (SA-832 / row 453)", () => {
     ["READ_ONLY with no reason (a legacy admin write)", "READ_ONLY", null],
     ["READ_ONLY with an unknown reason", "READ_ONLY", "something_new"],
     ["SUSPENDED(admin_set): an admin's suspension", "SUSPENDED", "admin_set"],
-    ["CANCELLED", "CANCELLED", null],
+    // SA-832b: legacy CANCELLED rows carry no reason; they stay REFUSED (safe) until a backfill classifies them
+    ["CANCELLED with no reason (a legacy row: admin or churn, unknowable)", "CANCELLED", null],
+    ["CANCELLED by an admin (admin_set)", "CANCELLED", "admin_set"],
     ["CANCELLED with a stale reason", "CANCELLED", "trial_expired"],
     ["an unknown status", "ARCHIVED", null],
     ["a missing status", undefined, null],
@@ -86,6 +91,7 @@ describe("paymentReinstatable (SA-832 / row 453)", () => {
 
   it("stamps the admin lock with the constant the predicate reads", () => {
     expect(ADMIN_SET_REASON).toBe("admin_set");
+    expect(STRIPE_CANCELLED_REASON).toBe("stripe_cancelled");
   });
 });
 
@@ -113,6 +119,7 @@ describe("paymentReinstatableWhere (SA-832 / row 453): the same predicate as a C
     "payment_overdue",
     "subscription_cancelled",
     "overdue_payment",
+    "stripe_cancelled",
     "zzz",
   ];
 

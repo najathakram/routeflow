@@ -371,7 +371,7 @@ describe("BillingService x dunning wiring (SA-733r7 PR-B3)", () => {
       // the SUSPENDED -> CANCELLED CAS is the only other status write; it finds nothing, and no churn is booked
       expect(prisma.tenant.updateMany).toHaveBeenCalledWith({
         where: { id: "t1", status: "SUSPENDED" },
-        data: { status: "CANCELLED" },
+        data: { status: "CANCELLED", readOnlyReason: "stripe_cancelled" }, // SA-832b
       });
       expect(eventsOfType(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toHaveLength(0);
     });

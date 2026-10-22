@@ -217,7 +217,11 @@ describe("SA-832 / 453: checkout creation refuses an admin-locked tenant", () =>
     ["READ_ONLY(admin_set)", { status: "READ_ONLY", readOnlyReason: "admin_set" }],
     ["READ_ONLY(no reason: a legacy admin write)", { status: "READ_ONLY", readOnlyReason: null }],
     ["SUSPENDED(admin_set)", { status: "SUSPENDED", readOnlyReason: "admin_set" }],
-    ["CANCELLED", { status: "CANCELLED", readOnlyReason: null }],
+    [
+      "CANCELLED (legacy row, no reason: refused until a backfill classifies it)",
+      { status: "CANCELLED", readOnlyReason: null },
+    ],
+    ["CANCELLED by an admin", { status: "CANCELLED", readOnlyReason: "admin_set" }],
   ])(
     "%s: 409 TENANT_ADMIN_LOCKED, no add-on read, no customer, no Stripe session",
     async (_n, tenant) => {
@@ -243,6 +247,8 @@ describe("SA-832 / 453: checkout creation refuses an admin-locked tenant", () =>
     ["READ_ONLY(trial_expired)", { status: "READ_ONLY", readOnlyReason: "trial_expired" }],
     ["READ_ONLY(payment_overdue)", { status: "READ_ONLY", readOnlyReason: "payment_overdue" }],
     ["SUSPENDED by billing", { status: "SUSPENDED", readOnlyReason: null }],
+    // SA-832b: the back-office win-back link for a Stripe-churned tenant (POST /platform-admin/tenants/:id/billing/checkout)
+    ["CANCELLED by a Stripe churn", { status: "CANCELLED", readOnlyReason: "stripe_cancelled" }],
   ])("control: %s checks out normally", async (_n, tenant) => {
     const h = make({ tenant });
     await h.billing.createCheckoutSession("t1", "month");

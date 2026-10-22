@@ -40,6 +40,13 @@ export const PAYMENT_OVERDUE_REASON = "payment_overdue";
 export const ADMIN_SET_REASON = "admin_set";
 /** The `readOnlyReason` a cancel (self-serve, or Stripe's own) leaves a paused tenant on. */
 export const SUBSCRIPTION_CANCELLED_REASON = "subscription_cancelled";
+/**
+ * SA-832b: the `readOnlyReason` a STRIPE churn (customer.subscription.deleted / updated to `canceled`) leaves on a
+ * CANCELLED tenant. A churn is not an admin decision: the back-office win-back checkout link and a payment may bring the
+ * tenant back, so {@link paymentReinstatable} lets it through. An admin's CANCELLED carries {@link ADMIN_SET_REASON}; a
+ * legacy CANCELLED row carries NONE and stays refused (safe) until a backfill classifies it.
+ */
+export const STRIPE_CANCELLED_REASON = "stripe_cancelled";
 /** A lapsed / cancelled trial's READ_ONLY reasons all start with this (`trial_expired`, `trial_cancelled`). */
 export const TRIAL_REASON_PREFIX = "trial_";
 const TRIAL_STATUS = "TRIAL" as const;
@@ -54,10 +61,11 @@ const TRIAL_STATUS = "TRIAL" as const;
  *     takes money it will not honour.
  *
  * Lifts: ACTIVE (nothing to lift: an ordinary renewal), TRIAL, READ_ONLY with a `trial_*`, `payment_overdue` or
- * `subscription_cancelled` reason, and SUSPENDED unless an admin stamped it {@link ADMIN_SET_REASON} (the billing
- * suspensions - Stripe cancelled / overdue - carry no reason).
+ * `subscription_cancelled` reason, SUSPENDED unless an admin stamped it {@link ADMIN_SET_REASON} (the billing
+ * suspensions - Stripe cancelled / overdue - carry no reason), and CANCELLED by a Stripe churn
+ * ({@link STRIPE_CANCELLED_REASON}, SA-832b).
  * Never lifts: READ_ONLY(admin_set), READ_ONLY with no / an unknown reason (a legacy admin write), SUSPENDED(admin_set),
- * CANCELLED, and any unknown or missing status.
+ * any other CANCELLED (an admin's, or a legacy row with no reason), and any unknown or missing status.
  */
 export function paymentReinstatable(
   status: string | null | undefined,
@@ -77,6 +85,8 @@ export function paymentReinstatable(
       );
     case "SUSPENDED":
       return reason !== ADMIN_SET_REASON;
+    case "CANCELLED":
+      return reason === STRIPE_CANCELLED_REASON;
     default:
       return false;
   }
@@ -103,6 +113,7 @@ export function paymentReinstatableWhere(): Prisma.TenantWhereInput {
         status: "SUSPENDED",
         OR: [{ readOnlyReason: null }, { readOnlyReason: { not: ADMIN_SET_REASON } }],
       },
+      { status: "CANCELLED", readOnlyReason: STRIPE_CANCELLED_REASON },
     ],
   };
 }

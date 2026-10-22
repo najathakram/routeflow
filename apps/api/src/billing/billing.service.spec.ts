@@ -288,7 +288,8 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       // Atomic compare-and-swap on status is the idempotency key.
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
         where: { id: "t1", status: "ACTIVE", class: "PRODUCTION" }, // SA-775 S3: the judged class is part of the CAS
-        data: { status: "CANCELLED" },
+        // SA-832b: a Stripe churn is stamped, so the shared payment predicate can tell it from an admin cancel
+        data: { status: "CANCELLED", readOnlyReason: "stripe_cancelled" },
       });
       // −(349 base + 12×2 add-ons − 0 discount) = −373, emitted inside the same tx.
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-373);
@@ -539,7 +540,9 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
           (c: any[]) => c[0].data.action === "PAID_WHILE_ADMIN_LOCKED",
         )?.[0].data;
 
-      it("an alert/audit write that fails is logged and never fails the webhook", async () => {
+      // SA-832b (A nit): a LOST alert is permanent (Stripe is acked), so a failed alert write now fails the webhook and
+      // Stripe redelivers; the redelivery re-runs the same handler and the (deduped) alert is raised then.
+      it("an alert/audit write that fails is logged and FAILS the webhook, so the redelivery raises it", async () => {
         const { svc, prisma } = make({
           transitionCount: 1,
           sub: row({ status: "READ_ONLY", readOnlyReason: "admin_set" }),
@@ -547,10 +550,113 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         prisma.auditLog.create.mockRejectedValue(new Error("db down"));
         const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
         const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
-        await expect((svc as any).onPaymentSucceeded(sub("sub_1"))).resolves.toBeUndefined();
+        await expect((svc as any).onPaymentSucceeded(sub("sub_1"))).rejects.toThrow("db down");
         expect(err).toHaveBeenCalled();
+        // the redelivery: the write works now and the alert lands
+        prisma.auditLog.create.mockResolvedValue({});
+        await (svc as any).onPaymentSucceeded(sub("sub_1"));
+        expect(blockedAudit(prisma)).toBeDefined();
         err.mockRestore();
         warn.mockRestore();
+      });
+
+      // SA-832b (B nit): the first payment of a subscription fires BOTH checkout.session.completed and
+      // invoice.payment_succeeded. Both alert on a locked tenant; they are correlated by the subscription id (and the
+      // invoice id when both carry it) so ops sees ONE row per payment, in either order.
+      describe("SA-832b: one alert per payment across both webhooks", () => {
+        const lockedRow = () => row({ status: "READ_ONLY", readOnlyReason: "admin_set" });
+        const completion = {
+          id: "cs_locked",
+          metadata: { tenantId: "t1" },
+          subscription: "sub_1",
+          customer: "cus_1",
+          invoice: "in_paid",
+          payment_status: "paid",
+          amount_total: 34_900,
+        };
+        const harness = () => {
+          const h = make({ transitionCount: 0, sub: lockedRow() });
+          h.prisma.tenant.findUnique.mockResolvedValue({
+            id: "t1",
+            class: "PRODUCTION",
+            status: "READ_ONLY",
+            readOnlyReason: "admin_set",
+            plan: "STARTER",
+            planVersionId: "v1",
+          });
+          // the audit table as the database: what writeAdminNotice created is what the next lookup finds
+          const rows: any[] = [];
+          h.prisma.auditLog.create.mockImplementation(async ({ data }: any) => {
+            rows.push(data);
+            return {};
+          });
+          h.prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+            where.action === "PAID_WHILE_ADMIN_LOCKED"
+              ? (rows.find((r) => r.action === "PAID_WHILE_ADMIN_LOCKED") ?? null)
+              : null,
+          );
+          const alerts = () => rows.filter((r) => r.action === "PAID_WHILE_ADMIN_LOCKED");
+          jest
+            .spyOn(h.svc, "syncStripeSubscriptionPrice")
+            .mockResolvedValue({ synced: true, unchanged: true });
+          return { ...h, alerts };
+        };
+        const quiet = () => [
+          jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined),
+          jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined),
+        ];
+
+        it.each(["checkout first", "invoice first"])(
+          "%s: ONE PAID_WHILE_ADMIN_LOCKED row",
+          async (order) => {
+            const mocks = quiet();
+            const { svc, alerts } = harness();
+            if (order === "checkout first") {
+              await (svc as any).onCheckoutCompleted(completion);
+              await (svc as any).onPaymentSucceeded(sub("sub_1"));
+            } else {
+              await (svc as any).onPaymentSucceeded(sub("sub_1"));
+              await (svc as any).onCheckoutCompleted(completion);
+            }
+            mocks.forEach((m) => m.mockRestore());
+            expect(alerts()).toHaveLength(1);
+            expect(alerts()[0].meta).toMatchObject({
+              platformAdmin: true,
+              stripeSubId: "sub_1",
+              invoiceId: "in_paid",
+            });
+          },
+        );
+
+        it("the dedupe lookup is keyed by the subscription id, scoped to the tenant", async () => {
+          const mocks = quiet();
+          const { svc, prisma } = harness();
+          await (svc as any).onPaymentSucceeded(sub("sub_1"));
+          mocks.forEach((m) => m.mockRestore());
+          const lookup = prisma.auditLog.findFirst.mock.calls.find(
+            (c: any[]) => c[0].where.action === "PAID_WHILE_ADMIN_LOCKED",
+          )?.[0].where;
+          expect(lookup.tenantId).toBe("t1");
+          expect(JSON.stringify(lookup)).toContain("stripeSubId");
+          expect(JSON.stringify(lookup)).toContain("sub_1");
+        });
+
+        // B nit: the money has been TAKEN on a subscription that keeps billing; refunding the charge is not enough.
+        it("the alert text tells ops to refund AND cancel the Stripe subscription (from either webhook)", async () => {
+          const mocks = quiet();
+          for (const run of [
+            (s: any) => s.onPaymentSucceeded(sub("sub_1")),
+            (s: any) => s.onCheckoutCompleted(completion),
+          ]) {
+            const { svc, alerts } = harness();
+            await run(svc);
+            const message = alerts()[0].meta.message as string;
+            expect(message).toMatch(/refund/i);
+            expect(message).toMatch(/cancel the Stripe subscription sub_1/i);
+            expect(message).toMatch(/every cycle|keeps billing/i);
+          }
+          mocks.forEach((m) => m.mockRestore());
+        });
       });
 
       it.each([
@@ -915,7 +1021,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         expect(alertOf(prisma)).toBeUndefined();
       });
 
-      it("an alert that cannot be written is logged and never fails the webhook (the money is applied)", async () => {
+      it("SA-832b: an alert that cannot be written FAILS the webhook (not a permanent loss); the redelivery raises it", async () => {
         const { svc, prisma } = make({ transitionCount: 0 });
         prisma.tenant.findUnique.mockResolvedValue(lockedTenant("READ_ONLY", "admin_set"));
         // only THIS alert fails (the price push has its own, deliberately throwing, notice)
@@ -925,8 +1031,18 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         });
         const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
         const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
-        await expect((svc as any).onCheckoutCompleted(paidSession)).resolves.toBeUndefined();
+        await expect((svc as any).onCheckoutCompleted(paidSession)).rejects.toThrow("db down");
         expect(err).toHaveBeenCalled();
+        // the redelivery: the apply marker exists, the early-return path re-checks the lock and raises the alert
+        prisma.auditLog.create.mockResolvedValue({});
+        prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+          where.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "a1" } : null,
+        );
+        jest
+          .spyOn(svc, "syncStripeSubscriptionPrice")
+          .mockResolvedValue({ synced: true, unchanged: true });
+        await (svc as any).onCheckoutCompleted(paidSession);
+        expect(alertOf(prisma)).toMatchObject({ meta: { checkoutSessionId: "cs_locked" } });
         err.mockRestore();
         warn.mockRestore();
       });
@@ -2935,7 +3051,7 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       await (svc as any).onSubscriptionDeleted(SUB_EVT);
       expect(prisma.tenant.updateMany.mock.calls[0][0]).toEqual({
         where: { id: "t1", status: "SUSPENDED", class: "PRODUCTION" },
-        data: { status: "CANCELLED" },
+        data: { status: "CANCELLED", readOnlyReason: "stripe_cancelled" }, // SA-832b
       });
       // Suspension (cron or platform admin) already booked the −MRR; cancelling books nothing.
       expect(events.emit).not.toHaveBeenCalled();
@@ -3494,6 +3610,36 @@ describe("F2: onCheckoutCompleted re-syncs an override saved during the open ses
     );
     expect(audit?.[0].data.meta).toMatchObject({ synced: false, reason: "stripe_update_failed" });
     expect(JSON.stringify(audit?.[0].data.meta)).not.toMatch(/price changed/i);
+  });
+
+  // SA-832b (A nit): a TRANSIENT failure is redelivered until it clears; each redelivery used to add another
+  // STRIPE_CHECKOUT_PRICE_RESYNC row. One row per (session, reason); the redelivery still throws until it clears.
+  it("SA-832b: a transient push failure that repeats on redelivery adds ONE audit row, not one per delivery", async () => {
+    const { svc, prisma } = make({ transitionCount: 1, sub: OVERRIDE_SUB });
+    jest
+      .spyOn(svc, "syncStripeSubscriptionPrice")
+      .mockResolvedValue({ synced: false, reason: "stripe_update_failed" });
+    const rows: any[] = [];
+    prisma.auditLog.create.mockImplementation(async ({ data }: any) => {
+      rows.push(data);
+      return {};
+    });
+    prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) => {
+      if (where.action === "STRIPE_CHECKOUT_APPLIED") return rows.length ? { id: "a1" } : null;
+      if (where.action === "STRIPE_CHECKOUT_PRICE_RESYNC")
+        return rows.find((r) => r.action === "STRIPE_CHECKOUT_PRICE_RESYNC") ?? null;
+      return null;
+    });
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const resyncRows = () => rows.filter((r) => r.action === "STRIPE_CHECKOUT_PRICE_RESYNC");
+    await expect((svc as any).onCheckoutCompleted(session)).rejects.toThrow(/price re-sync/i);
+    expect(resyncRows()).toHaveLength(1);
+    // two redeliveries: the apply marker is found, the push still fails
+    rows.push({ action: "STRIPE_CHECKOUT_APPLIED" });
+    await expect((svc as any).onCheckoutCompleted(session)).rejects.toThrow(/price re-sync/i);
+    await expect((svc as any).onCheckoutCompleted(session)).rejects.toThrow(/price re-sync/i);
+    warn.mockRestore();
+    expect(resyncRows()).toHaveLength(1);
   });
 
   it("a replayed (already applied) completion still pushes - a push that threw is retried by the redelivery", async () => {

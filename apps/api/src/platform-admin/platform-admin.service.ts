@@ -788,8 +788,11 @@ export class PlatformAdminService {
                   : {}),
                 // F4: an admin-set READ_ONLY says so (never null), so a renewal can tell it from a lapsed trial.
                 // SA-832 / 453: and so does an admin SUSPENDED (billing's own suspensions carry no reason), so the
-                // shared payment predicate (paymentReinstatable) never lifts it.
-                ...(dto.status === READ_ONLY_STATUS || dto.status === "SUSPENDED"
+                // shared payment predicate (paymentReinstatable) never lifts it. SA-832b: an admin CANCELLED too, so it
+                // is never mistaken for a Stripe churn (stripe_cancelled), which a payment / win-back link CAN lift.
+                ...(dto.status === READ_ONLY_STATUS ||
+                dto.status === "SUSPENDED" ||
+                dto.status === "CANCELLED"
                   ? { readOnlyReason: ADMIN_SET_REASON }
                   : {}),
               },

@@ -1875,7 +1875,7 @@ export class SubscriptionMutationService {
     if (sub.stripeSubId && sub.cancelAtPeriodEnd === true) {
       const tenant = await this.prisma.tenant.findUnique({
         where: { id: tenantId },
-        select: { status: true },
+        select: { status: true, readOnlyReason: true },
       });
       if (tenant?.status === "ACTIVE") {
         try {
@@ -1904,6 +1904,13 @@ export class SubscriptionMutationService {
         // the tenant ACTIVE (and booking a +1 MRR delta) the next time Stripe happens to fire
         // an invoice.payment_succeeded webhook for a subscription it was never told to stop.
         // Refuse instead, mirroring cancel()'s own handling of a state it cannot honour.
+        // SA-832b: "subscribe again" is a dead end for a workspace a payment may not reinstate (subscribe() refuses it
+        // with the coded 409), so say so - fixed copy that names no cause.
+        if (tenant && !paymentReinstatable(tenant.status, tenant.readOnlyReason)) {
+          throw new ConflictException(
+            "The subscription cannot be resumed while the workspace is locked. Please contact support.",
+          );
+        }
         throw new ConflictException(
           "The subscription cannot be resumed while the workspace is read-only; subscribe again to restore service.",
         );
