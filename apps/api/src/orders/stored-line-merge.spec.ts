@@ -261,4 +261,18 @@ describe("mergeIntoStoredLine (SA-841)", () => {
     // never vacuous: the grid must contain real merges, not only refusals
     expect(okCount).toBeGreaterThan(0);
   });
+
+  it.each([[-3], [Number.NaN]])(
+    "a negative or NaN add qty (%s) is EMPTY_ADD, never an ok (callers validate upstream)",
+    (qty) => {
+      expect(run({ line: boxUnaware(10), add: { qty }, livePack: 0 })).toMatchObject({
+        ok: false,
+        reason: "EMPTY_ADD",
+      });
+      expect(run({ line: split(24, 2, 0, 12), add: { qty }, livePack: 12 })).toMatchObject({
+        ok: false,
+        reason: "EMPTY_ADD",
+      });
+    },
+  );
 });
