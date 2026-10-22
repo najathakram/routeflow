@@ -288,6 +288,34 @@ describe("CounterSaleService.ring", () => {
       expect(createSale).not.toHaveBeenCalled();
     });
 
+    it("the kept walk-in RECORD holding open credit is refused 409 WALK_IN_OPEN_CREDIT BEFORE create, like dto.walkIn", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-w", isWalkIn: true });
+      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 4 }]);
+      expect(await codeOf(service.ring(named({ method: "CASH" }) as never, staff))).toBe(
+        "WALK_IN_OPEN_CREDIT",
+      );
+      expect(createSale).not.toHaveBeenCalled();
+    });
+
+    it("the kept walk-in RECORD gets the walk-in tender rule: CASH $20 on $50 is COUNTER_TENDER_SHORT from beforeWrite, nothing recorded", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-w", isWalkIn: true });
+      createSale.mockImplementation(async (_d: any, _u: any, sale: any) => {
+        await sale.beforeWrite?.({ total: 50 });
+        return { id: "inv-1", orderId: "ord-1", invoiceNumber: "INV-1" };
+      });
+      expect(
+        await codeOf(service.ring(named({ method: "CASH", amount: 20 }) as never, staff)),
+      ).toBe("COUNTER_TENDER_SHORT");
+      expect(recordPayment).not.toHaveBeenCalled();
+    });
+
+    it("the kept walk-in RECORD suppresses the INVOICE_SENT email, like dto.walkIn", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-w", isWalkIn: true });
+      await service.ring(named({ method: "CASH" }) as never, staff);
+      expect(createSale.mock.calls[0][2].suppressInvoiceNotify).toBe(true);
+      expect(typeof createSale.mock.calls[0][2].beforeWrite).toBe("function");
+    });
+
     it("a normal account customer (isWalkIn false or null) may still ring ON_ACCOUNT", async () => {
       for (const isWalkIn of [false, null]) {
         prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", isWalkIn });
@@ -1629,7 +1657,7 @@ describe("CounterSaleService.ring", () => {
 });
 
 describe("CounterSaleService.ring: S1 credit gate sees only what stays owed", () => {
-  it("hands createSale a creditPaidNow that clears CASH/CARD at the server total and nothing for CHECK/ON_ACCOUNT", async () => {
+  it("hands createSale a creditPaidNow that clears CASH/CARD at the server total and nothing for a post-dated CHECK or ON_ACCOUNT; a same-day CHECK counts like cash", async () => {
     const paidNow = async (payment: any) => {
       const prisma = createMockPrisma();
       const createSale = jest.fn(async () => ({ id: "inv-1", orderId: "ord-1" }));
@@ -1663,7 +1691,13 @@ describe("CounterSaleService.ring: S1 credit gate sees only what stays owed", ()
     expect(await paidNow({ method: "CARD", amount: 50 })).toBe(50);
     expect(await paidNow({ method: "CASH", amount: 20 })).toBe(20);
     expect(await paidNow({ method: "CASH", amount: 100 })).toBe(50);
-    expect(await paidNow({ method: "CHECK", amount: 50, reference: "12" })).toBe(0);
+    expect(await paidNow({ method: "CHECK", amount: 50, reference: "12" })).toBe(50);
+    expect(
+      await paidNow({ method: "CHECK", amount: 50, reference: "12", checkDate: "2000-01-01" }),
+    ).toBe(50);
+    expect(
+      await paidNow({ method: "CHECK", amount: 50, reference: "12", checkDate: "2999-01-01" }),
+    ).toBe(0);
     expect(await paidNow({ method: "ON_ACCOUNT" })).toBe(0);
   });
 });

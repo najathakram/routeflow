@@ -12,6 +12,8 @@ import { roundMoney, remainingCapacity } from "@routeflow/pricing";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { configuredTaxRatePercent } from "../../common/tax-rate";
+import { tenantTodayDay } from "../../common/calendar-date";
+import { tenantTimeZone } from "../../common/tenant-time-zone";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
@@ -39,6 +41,7 @@ import {
 import {
   allocateOldestFirst,
   assertPaymentShape,
+  type CounterPaymentInput,
   assertWalkInTenderCoversTotal,
   counterCreditPaidNow,
   type CounterPaymentMethod,
@@ -137,7 +140,16 @@ export class CounterSaleService {
       if (customer.isWalkIn === true) {
         walkIn = true;
         assertPaymentShape(dto.payment, true);
+        await this.assertNoOpenCredit(customerId); // the same guard as dto.walkIn: send() would auto-apply it
       }
+    }
+
+    // S1: a CHECK dated after the tenant's today is not paid now; the zone is read only when one is sent.
+    let checkToday: string | undefined;
+    const tender: CounterPaymentInput = dto.payment; // the shape that may carry a checkDate
+    if (tender.method === "CHECK" && tender.checkDate) {
+      const zone = await tenantTimeZone(this.prisma);
+      checkToday = tenantTodayDay(zone, new Date());
     }
 
     // 4. The sale. create()'s own refusals propagate untouched.
@@ -163,7 +175,7 @@ export class CounterSaleService {
           : undefined,
         // S1 (C42): the credit gate counts only what stays owed after this tender (cash/card paid now);
         // a pending check and ON_ACCOUNT count 0. The total is create()'s own, so this is a function of it.
-        creditPaidNow: (total) => counterCreditPaidNow(dto.payment, total),
+        creditPaidNow: (total) => counterCreditPaidNow(tender, total, checkToday),
         // The walk-in has no mailbox: no INVOICE_SENT message (never sendEmail for them either).
         suppressInvoiceNotify: walkIn || undefined,
         onReplay: (existing) => {

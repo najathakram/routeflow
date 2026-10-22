@@ -155,15 +155,19 @@ export async function assertWithinCreditLimit(
     await loadCreditExposure(db, customerId, { excludeOrderId: currentOrderId });
 
   // The edited order counts its still-UNPAID projected total, floored by its unsettled invoices.
-  const exposure = roundMoney(
-    counted +
-      editedOrderContribution(
-        projectedOrderTotal,
-        excludedOrderPaid ?? 0,
-        excludedOrderUnsettledOutstanding ?? 0,
-        invoicesSurviveEdit,
-      ),
+  const contribution = roundMoney(
+    editedOrderContribution(
+      projectedOrderTotal,
+      excludedOrderPaid ?? 0,
+      excludedOrderUnsettledOutstanding ?? 0,
+      invoicesSurviveEdit,
+    ),
   );
+  // S1: an action that adds nothing to what the customer owes is not judged against the limit (a sale
+  // paid in full at the till, a prepaid edit). Only this comparison is skipped; a positive contribution
+  // is still compared exactly as before.
+  if (contribution <= 0) return;
+  const exposure = roundMoney(counted + contribution);
   if (exposure > limit) {
     throw new ConflictException({
       code: API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED,

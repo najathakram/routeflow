@@ -15,8 +15,11 @@ describe("clearedTenderNow (what is paid at the till, for the credit gate)", () 
     expect(roundRemainder(50, clearedTenderNow([{ method: "CASH", amount: 100 }], 50))).toBe(0);
   });
 
-  it("a pending CHECK and ON_ACCOUNT count 0", () => {
-    expect(clearedTenderNow([{ method: "CHECK", amount: 50 }], 50)).toBe(0);
+  it("a same-day CHECK (not flagged pending) counts like cash; a pending (post-dated) CHECK and ON_ACCOUNT count 0", () => {
+    expect(clearedTenderNow([{ method: "CHECK", amount: 50 }], 50)).toBe(50);
+    expect(clearedTenderNow([{ method: "CHECK" }], 50)).toBe(50);
+    expect(clearedTenderNow([{ method: "CHECK", amount: 50, pending: false }], 50)).toBe(50);
+    expect(clearedTenderNow([{ method: "CHECK", amount: 50, pending: true }], 50)).toBe(0);
     expect(clearedTenderNow([{ method: "ON_ACCOUNT" }], 50)).toBe(0);
     expect(clearedTenderNow([{ method: "ON_ACCOUNT", amount: 50 }], 50)).toBe(0);
   });
@@ -26,13 +29,13 @@ describe("clearedTenderNow (what is paid at the till, for the credit gate)", () 
     expect(clearedTenderNow([{ method: "CARD", amount: null }], 12.1)).toBe(12.1);
   });
 
-  it("sums legs in whole cents (split tender slots in), and a check leg adds nothing", () => {
+  it("sums legs in whole cents (split tender slots in), and a pending check leg adds nothing", () => {
     expect(
       clearedTenderNow(
         [
           { method: "CARD", amount: 30.1 },
           { method: "CASH", amount: 10.2 },
-          { method: "CHECK", amount: 5 },
+          { method: "CHECK", amount: 5, pending: true },
         ],
         50,
       ),

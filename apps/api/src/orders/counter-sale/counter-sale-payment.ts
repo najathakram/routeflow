@@ -16,6 +16,8 @@ export interface CounterPaymentInput {
   method: CounterPaymentMethod;
   amount?: number;
   reference?: string;
+  /** A CHECK's date (YYYY-MM-DD, or an ISO string: its first ten characters are the day). Absent = same-day. */
+  checkDate?: string;
 }
 
 const refuse = (code: string, message: string) => new BadRequestException({ code, message });
@@ -101,11 +103,16 @@ export function allocateOldestFirst(
 
 /**
  * S1 (C42): how much of the server `total` this request pays at the till, for the credit gate. The ONE
- * pricing helper does the cents math; the one counter-specific fact is that a CARD or CHECK is never
- * charged over the balance (`planCounterPayment` refuses it, no money is taken), so such a request
- * clears nothing and the gate keeps the whole total.
+ * pricing helper does the cents math. Counter facts: a CARD or CHECK is never charged over the balance
+ * (`planCounterPayment` refuses it, no money is taken), so such a request clears nothing; and a CHECK
+ * dated after the tenant's `today` (a post-dated check) is not money yet, so it counts 0. A CHECK with
+ * no date, or dated today or earlier, counts like cash.
  */
-export function counterCreditPaidNow(payment: CounterPaymentInput, total: number): number {
+export function counterCreditPaidNow(
+  payment: CounterPaymentInput,
+  total: number,
+  today?: string,
+): number {
   if (
     payment.method !== "CASH" &&
     payment.amount != null &&
@@ -113,5 +120,10 @@ export function counterCreditPaidNow(payment: CounterPaymentInput, total: number
   ) {
     return 0;
   }
-  return clearedTenderNow([payment], total);
+  const pending =
+    payment.method === "CHECK" &&
+    !!payment.checkDate &&
+    !!today &&
+    payment.checkDate.slice(0, 10) > today;
+  return clearedTenderNow([{ ...payment, pending }], total);
 }

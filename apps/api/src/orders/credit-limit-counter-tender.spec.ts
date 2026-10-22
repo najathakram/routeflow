@@ -11,14 +11,14 @@ import { counterCreditPaidNow } from "./counter-sale/counter-sale-payment";
 const TENANT = "tenant-1";
 const CUSTOMER = "cust-1";
 
-const deps = (switchValue: string) => {
+const deps = (switchValue: string, invoiceTotal = 90) => {
   const db = {
     customer: { findFirst: jest.fn().mockResolvedValue({ creditLimit: 100 }) },
     invoice: {
       findMany: jest
         .fn()
         .mockResolvedValue([
-          { total: 90, status: "SENT", orderId: null, order: null, payments: [] },
+          { total: invoiceTotal, status: "SENT", orderId: null, order: null, payments: [] },
         ]),
     },
     order: { findMany: jest.fn().mockResolvedValue([]) },
@@ -31,17 +31,21 @@ const deps = (switchValue: string) => {
   };
 };
 
-type Pay = { method: "CASH" | "CARD" | "CHECK" | "ON_ACCOUNT"; amount?: number };
+type Pay = {
+  method: "CASH" | "CARD" | "CHECK" | "ON_ACCOUNT";
+  amount?: number;
+  checkDate?: string;
+};
 
 /** What create() does for a counter sale: the gate judges creditProjectedTotal(total, options). */
-const gate = (d: ReturnType<typeof deps>, payment: Pay, total = 50) =>
+const gate = (d: ReturnType<typeof deps>, payment: Pay, total = 50, today = "2026-10-22") =>
   assertCreditAtEnforcementPoint(
     d as never,
     {
       tenantId: TENANT,
       customerId: CUSTOMER,
       projectedTotal: creditProjectedTotal(total, {
-        creditPaidNow: (t) => counterCreditPaidNow(payment, t),
+        creditPaidNow: (t) => counterCreditPaidNow(payment, t, today),
       }),
       principal: { role: "OPERATOR" },
     } as never,
@@ -72,9 +76,39 @@ describe("S1: the credit gate counts only what stays owed after the tender", () 
     expect(r.exposure).toBe(140);
   });
 
-  it("a pending CHECK does not lower exposure: refused", async () => {
-    const r = await codeOf(gate(deps("true"), { method: "CHECK", amount: 50 }));
+  it("a post-dated CHECK does not lower exposure: refused", async () => {
+    const r = await codeOf(
+      gate(deps("true"), { method: "CHECK", amount: 50, checkDate: "2026-10-23" }),
+    );
     expect(r.exposure).toBe(140);
+  });
+
+  it("a same-day CHECK in full clears the gate, dated today or undated", async () => {
+    await expect(
+      gate(deps("true"), { method: "CHECK", amount: 50, checkDate: "2026-10-22" }),
+    ).resolves.toBeUndefined();
+    await expect(gate(deps("true"), { method: "CHECK", amount: 50 })).resolves.toBeUndefined();
+  });
+
+  describe("an already over-limit customer (exposure 120, limit 100)", () => {
+    it("CASH $50 in full completes (the sale adds nothing owed)", async () => {
+      await expect(
+        gate(deps("true", 120), { method: "CASH", amount: 50 }),
+      ).resolves.toBeUndefined();
+    });
+    it("CASH $20 on $50 is 409 on the $30 remainder (exposure 150)", async () => {
+      const r = await codeOf(gate(deps("true", 120), { method: "CASH", amount: 20 }));
+      expect(r.exposure).toBe(150);
+    });
+    it("a same-day CHECK in full completes; a post-dated CHECK in full is 409", async () => {
+      await expect(
+        gate(deps("true", 120), { method: "CHECK", amount: 50, checkDate: "2026-10-22" }),
+      ).resolves.toBeUndefined();
+      const r = await codeOf(
+        gate(deps("true", 120), { method: "CHECK", amount: 50, checkDate: "2026-10-23" }),
+      );
+      expect(r.exposure).toBe(170);
+    });
   });
 
   it("partial: CASH $20 on a $50 sale, the gate sees $30 (exposure 120)", async () => {
@@ -128,7 +162,20 @@ describe("creditProjectedTotal", () => {
   });
 });
 
+// A setter: `creditPaidNow: ...`, `creditPaidNow = ...`, or the shorthand `{ creditPaidNow }` / `{ creditPaidNow, ...}`.
+const SETTER = /creditPaidNow\s*[:,=}]/;
+
 describe("S1 wiring pins", () => {
+  it("the setter pattern catches the shorthand forms too", () => {
+    for (const hit of [
+      "{ creditPaidNow }",
+      "{ creditPaidNow, x }",
+      "creditPaidNow: f",
+      "creditPaidNow = f",
+    ])
+      expect(SETTER.test(hit)).toBe(true);
+    expect(SETTER.test("options.creditPaidNow?.(total)")).toBe(false);
+  });
   const src = (f: string) => fs.readFileSync(path.join(__dirname, f), "utf8");
   it("create() hands the B585 gate creditProjectedTotal(total, options), not the bare total", () => {
     expect(src("orders.service.ts")).toMatch(
@@ -144,7 +191,7 @@ describe("S1 wiring pins", () => {
         return /\.ts$/.test(e.name) && !/\.spec\.ts$/.test(e.name) ? [full] : [];
       });
     const setters = walk(root)
-      .filter((f) => /creditPaidNow\s*[:,]|creditPaidNow\s*=/.test(fs.readFileSync(f, "utf8")))
+      .filter((f) => SETTER.test(fs.readFileSync(f, "utf8")))
       .map((f) => path.relative(root, f))
       // type/plumbing declarations that only carry the option through
       .filter((f) => !/^orders\/(order-create-options|sale-options)\.ts$/.test(f))
