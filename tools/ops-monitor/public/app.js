@@ -244,6 +244,14 @@
     "Who is doing what, and what is next",
   );
   makePanel(
+    "machines",
+    "Machines and lanes",
+    "",
+    ["specs"],
+    "Machines",
+    "Which session is on which branch, and when it last moved",
+  );
+  makePanel(
     "map",
     "System map",
     "wide",
@@ -1178,6 +1186,47 @@
       body.append(box);
     }
     if (!(snap.lanes ?? []).length) body.append(el("div", { class: "empty", text: "No lanes." }));
+  }
+
+  function renderMachines() {
+    const body = clear(panels.machines.body);
+    const rows = snap.machines ?? [];
+    for (const m of rows) {
+      const box = el("div", { class: "lane" });
+      box.append(
+        el(
+          "div",
+          { class: "lh" },
+          el("span", { class: "title", text: m.lane ?? m.title ?? m.session }),
+          m.machine ? el("span", { class: "muted", text: m.machine }) : null,
+          el(
+            "span",
+            { class: "muted", title: localStamp(m.lastActiveAt) },
+            el("span", {
+              "data-sw": m.lastActiveAt,
+              text: sinceWords(now() - Date.parse(m.lastActiveAt)),
+            }),
+          ),
+        ),
+      );
+      const where = el("div", { class: "muted" });
+      where.append(el("code", { text: m.branch ?? "no branch" }));
+      if (m.head) where.append(" ", el("code", { text: m.head }));
+      if (m.pr)
+        where.append(
+          " ",
+          el("a", {
+            href: `https://github.com/najathakram/routeflow/pull/${m.pr}`,
+            target: "_blank",
+            rel: "noopener noreferrer",
+            text: `PR #${m.pr}`,
+          }),
+        );
+      box.append(where);
+      if (m.last) box.append(el("div", { class: "muted", text: m.last }));
+      body.append(box);
+    }
+    if (!rows.length) body.append(el("div", { class: "empty", text: "No sessions reported yet." }));
   }
 
   function renderOwner() {
@@ -2344,6 +2393,7 @@
     renderAlarms();
     renderCi();
     renderLanes();
+    renderMachines();
     renderMap();
     renderReleases();
     renderOwner();
