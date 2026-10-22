@@ -86,9 +86,12 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx, and attaches the
   // selected proof photo to the found payment (the same upload the 2xx path runs).
   const statusCheck = usePaymentStatusCheck(paymentKey, async (payment) => {
-    const photo = await finishFoundPayment<File>(keyScope ?? "", payment, (paymentId, f) =>
-      uploadPaymentImage.mutateAsync({ paymentId, file: f }),
-    );
+    // No scope (no customer chosen) means no key and no remembered proof: skip the lookup.
+    const photo = keyScope
+      ? await finishFoundPayment<File>(keyScope, payment, (paymentId, f) =>
+          uploadPaymentImage.mutateAsync({ paymentId, file: f }),
+        )
+      : "none";
     toast(
       photo === "later"
         ? { title: PAYMENT_PHOTO_LATER_COPY, variant: "info" }

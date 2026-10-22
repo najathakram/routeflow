@@ -250,6 +250,35 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
+  it("Save X -> Cancel while the POST is pending -> reopen -> pick X again: no new key or POST; the original settling releases it", async () => {
+    let settleOriginal!: (v: unknown) => void;
+    mockPost.mockImplementationOnce(() => new Promise((res) => (settleOriginal = res)));
+    await openModal();
+    save();
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    const k1 = keyOf(mockPost.mock.calls[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getAllByRole("button", { name: /Record Payment/ })[0]);
+    await pickCustomer();
+    // the in-flight request is an unknown outcome: Save is off with its reason, the check is offered
+    expect(checkBtn()).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByText(/Check this payment.s status/)).toBeTruthy();
+    save();
+    await Promise.resolve();
+    // no new key was minted and no second POST went out
+    expect(acquirePaymentKeyHolder("standalone:cust-1").peek()).toBe(k1);
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    // the original request now lands (2xx): the attempt is over, nothing is left unknown
+    await act(async () => {
+      settleOriginal({ data: { id: "p1" } });
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Check payment status" })).toBeNull(),
+    );
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
   it("a lock landing while the dialog is open turns Save off, and a click sends nothing", async () => {
     await openModal();
     const holder = acquirePaymentKeyHolder("standalone:cust-1");
