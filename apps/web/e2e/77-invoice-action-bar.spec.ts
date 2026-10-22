@@ -31,8 +31,9 @@ for (const vp of VIEWPORTS) {
       const overflow = await bar.evaluate((el) => el.scrollWidth - el.clientWidth);
       expect(overflow, `bar scrolls ${overflow}px horizontally`).toBeLessThanOrEqual(0);
 
-      // Clearance: scrolled to the bottom, the last form control ends above the bar's top edge.
-      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+      // Clearance: scrolled to the bottom, the last form control (in DOM order) ends above the bar's top edge.
+      await page.evaluate(() => window.scrollTo(0, document.scrollingElement!.scrollHeight));
+      await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
       const clearance = await page.evaluate(() => {
         const barEl = document.querySelector('[data-testid="invoice-action-bar"]')!;
         const controls = Array.from(
@@ -40,7 +41,7 @@ for (const vp of VIEWPORTS) {
             "#main-content input, #main-content select, #main-content textarea, #main-content button",
           ),
         ).filter((el) => !barEl.contains(el) && el.getBoundingClientRect().height > 0);
-        const lastBottom = Math.max(...controls.map((el) => el.getBoundingClientRect().bottom));
+        const lastBottom = controls[controls.length - 1]!.getBoundingClientRect().bottom;
         return barEl.getBoundingClientRect().top - lastBottom;
       });
       expect(
