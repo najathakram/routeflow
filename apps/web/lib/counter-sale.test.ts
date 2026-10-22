@@ -342,6 +342,16 @@ describe("counterSaleErrorCopy: a license refusal (CQ-06) is never the generic '
   });
 });
 
+describe("counterSaleErrorCopy: a walk-in rung on account", () => {
+  it("WALK_IN_NO_ACCOUNT says what to do, not the generic 400 line", () => {
+    expect(
+      counterSaleErrorCopy({
+        response: { status: 400, data: { code: "WALK_IN_NO_ACCOUNT", message: "RAW" } },
+      }),
+    ).toBe("A walk-in has no account. Pick a customer to put this sale on account.");
+  });
+});
+
 describe("counterSaleErrorCopy: a credit-limit or selling-restriction refusal says what to fix (CQ-06 review)", () => {
   const credit = (data: Record<string, unknown> = {}) => ({
     response: {
