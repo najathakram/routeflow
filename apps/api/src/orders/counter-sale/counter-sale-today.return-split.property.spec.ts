@@ -59,6 +59,8 @@ function sample(): CounterReturnSplitInput {
       returnNumber: `RET-${i}`,
       status: pick(["REFUNDED", "PENDING", "REJECTED", "CANCELLED"]),
       refundMethod: pick(["CREDIT_NOTE", "CREDIT_NOTE", "EXTERNAL_REFUND"]),
+      // an external refund is either chosen-but-not-recorded (null) or complete (a date): the "refunded" path
+      refundedAt: pick([null, new Date(0)]),
       // two own returns may name ONE note (a shared note)
       creditNoteId: next(5) === 0 ? null : pick(NOTES),
       refundAmount: null,
@@ -88,8 +90,9 @@ function sample(): CounterReturnSplitInput {
       ],
     } as ReturnProvenance);
   }
+  // a note the batched read did NOT return is absent from the map: the not-returned path (PENDING, nothing kept)
   const creditNotes = new Map(
-    NOTES.map((id) => {
+    NOTES.filter(() => next(4) !== 0).map((id) => {
       const appliedAnywhere = money();
       return [
         id,
@@ -145,6 +148,95 @@ const cents = (n: number) => Math.round(n * 100);
 const paidSum = (ps: readonly Pay[]) =>
   roundMoney(sumConfirmed(ps.map((p) => ({ amount: p.amount, status: p.status }))));
 
+const EXTERNAL_REFUND = "EXTERNAL_REFUND";
+const refundDone = (r: { refundMethod?: string | null; refundedAt?: Date | null }) =>
+  r.refundMethod === EXTERNAL_REFUND && r.refundedAt != null;
+
+/**
+ * The module docs as an oracle, written from the INPUT alone (it never calls pricing's settlement): the sale's LIVE own
+ * returns are its STANDARD returns not rejected/cancelled, plus the carried INLINE returns with an item sold here (worth =
+ * those items). One note counts once. Per return:
+ *   - a completed external refund: SETTLED, refunded = worth, nothing applied anywhere;
+ *   - else a VOID note: dead (prints nothing);
+ *   - else a note the read returned: SETTLED, kept = max(0, worth - appliedAnywhere - refunded), where appliedAnywhere is
+ *     never less than what sits on this order's invoices (PAID payments of the note, or the read's applications there);
+ *   - else (no note, or a note the read did not return): PENDING, kept 0.
+ */
+function oracle(input: CounterReturnSplitInput) {
+  type Live = { noteId: string | null; worth: number; done: boolean };
+  const live: Live[] = [];
+  for (const r of input.returns) {
+    if (r.status === "REJECTED" || r.status === "CANCELLED") continue;
+    live.push({
+      noteId: r.creditNoteId,
+      worth: roundMoney(Number(r.creditSubtotal)),
+      done: refundDone(r),
+    });
+  }
+  for (const c of input.carriedReturns ?? []) {
+    if (c.status === "REJECTED" || c.status === "CANCELLED") continue;
+    const here = (c.items ?? []).filter((i) => i.sourceOrderId === ORDER);
+    if (here.length === 0) continue;
+    live.push({
+      noteId: c.creditNoteId,
+      worth: roundMoney(here.reduce((s, i) => s + Number(i.subtotal), 0)),
+      done: refundDone(c),
+    });
+  }
+  const onInvoices = (invoiceId: string | null | undefined): boolean =>
+    !!invoiceId && input.invoiceIds.includes(invoiceId);
+  const seen = new Set<string>();
+  let kept = 0;
+  let pending = false;
+  let absent = 0; // live own returns on a note the read did not return
+  let settledKept = 0; // settled returns that keep a positive credit
+  let doneCount = 0; // completed external refunds
+  let voidDead = 0; // live own returns on a VOID note with no completed refund
+  for (const l of live) {
+    const fact = l.noteId ? input.creditNotes?.get(l.noteId) : undefined;
+    if (!l.done && l.noteId && fact?.status === "VOID") {
+      voidDead++;
+      continue;
+    }
+    const settled = l.done || (!!l.noteId && !!fact);
+    if (!settled) {
+      pending = true;
+      if (l.noteId) absent++;
+      continue;
+    }
+    if (l.done) doneCount++;
+    if (l.noteId) {
+      if (seen.has(l.noteId)) continue;
+      seen.add(l.noteId);
+    }
+    const refunded = l.done ? l.worth : 0;
+    const proven = roundMoney(
+      input.payments
+        .filter(
+          (p) =>
+            p.status === "PAID" &&
+            !!l.noteId &&
+            p.creditNoteId === l.noteId &&
+            onInvoices(p.creditNote?.invoiceId),
+        )
+        .reduce((s, p) => s + Number(p.amount), 0),
+    );
+    const onThisOrder = Math.max(
+      proven,
+      roundMoney(
+        (fact?.applications ?? [])
+          .filter((a) => onInvoices(a.invoiceId))
+          .reduce((s, a) => s + Number(a.amount), 0),
+      ),
+    );
+    const appliedAnywhere = l.done ? 0 : Math.max(onThisOrder, fact?.appliedAnywhere ?? 0);
+    const k = Math.max(0, roundMoney(l.worth - appliedAnywhere - refunded));
+    if (k > 0) settledKept++;
+    kept = roundMoney(kept + k);
+  }
+  return { kept, pending, absent, settledKept, doneCount, voidDead };
+}
+
 describe("counterReturnSplit: seeded properties (#3576 review nit)", () => {
   const N = 800;
   const cases = Array.from({ length: N }, () => sample());
@@ -159,12 +251,10 @@ describe("counterReturnSplit: seeded properties (#3576 review nit)", () => {
     }
   });
 
-  it("no money is hidden: tenders + own return credit never exceed what was PAID; return lines are never negative", () => {
+  it("no money is hidden or invented: tenders + own return credit are EXACTLY what was PAID; return lines are never negative", () => {
     for (const input of cases) {
       const r = counterReturnSplit(input);
-      expect(cents(r.tenderPaid) + cents(r.returnCredit)).toBeLessThanOrEqual(
-        cents(paidSum(input.payments)),
-      );
+      expect(cents(r.tenderPaid) + cents(r.returnCredit)).toBe(cents(paidSum(input.payments)));
       const { applied, refunded, kept, used } = r.returnLines;
       expect([applied, refunded, kept, used].every((v) => v >= 0)).toBe(true);
     }
@@ -202,13 +292,31 @@ describe("counterReturnSplit: seeded properties (#3576 review nit)", () => {
     }
   });
 
-  it("an own return whose credit note is VOID (no recorded refund) is dead: dropping it changes nothing", () => {
+  it("an own return whose credit note is VOID (no completed refund) is dead: dropping it changes nothing", () => {
     for (const input of cases) {
       const voidNote = (id: string | null) => !!id && input.creditNotes?.get(id)?.status === "VOID";
-      const alive = input.returns.filter(
-        (r) => !(voidNote(r.creditNoteId) && r.refundMethod === "CREDIT_NOTE"),
-      );
+      // dead = a VOID note with no COMPLETED refund (a recorded external refund keeps the return alive)
+      const alive = input.returns.filter((r) => !(voidNote(r.creditNoteId) && !refundDone(r)));
       expect(counterReturnSplit(input)).toEqual(counterReturnSplit({ ...input, returns: alive }));
+    }
+  });
+
+  it("a settled return keeps max(0, worth - credit applied ANYWHERE - refunded); one note counts once", () => {
+    for (const input of cases) {
+      expect(cents(counterReturnSplit(input).returnLines.kept)).toBe(cents(oracle(input).kept));
+    }
+  });
+
+  it("a returned note the read did not see is PENDING and keeps nothing (never claimed as credit)", () => {
+    for (const input of cases) {
+      const o = oracle(input);
+      const r = counterReturnSplit(input);
+      // PENDING exactly when some live own return has no note, or a note the read did not return
+      expect(r.returnLines.pending).toBe(o.pending);
+      if (o.absent > 0) expect(r.returnLines.pending).toBe(true);
+      // metamorphic: when the read returned NO note at all, only a completed external refund can settle, and it keeps 0
+      const blind = counterReturnSplit({ ...input, creditNotes: new Map() });
+      expect(blind.returnLines.kept).toBe(0);
     }
   });
 
@@ -225,5 +333,35 @@ describe("counterReturnSplit: seeded properties (#3576 review nit)", () => {
     expect(
       cases.filter((c) => c.payments.some((p) => p.creditNote?.invoiceId === "i-other")).length,
     ).toBeGreaterThan(50);
+  });
+
+  it("guard counts: the generator reaches every branch the properties lean on", () => {
+    const os = cases.map((c) => oracle(c));
+    const count = (xs: readonly boolean[]) => xs.filter(Boolean).length;
+    // MUST-2: the not-returned-note path (a live own return on a note the read did not return) and a settled kept > 0
+    expect(count(os.map((o) => o.absent > 0))).toBeGreaterThan(50);
+    expect(count(os.map((o) => o.absent > 0 && o.pending))).toBeGreaterThan(50);
+    expect(count(os.map((o) => o.settledKept > 0))).toBeGreaterThan(20);
+    // a completed external refund (the refunded term of kept)
+    expect(count(os.map((o) => o.doneCount > 0))).toBeGreaterThan(20);
+    // an own return on a VOID note with no completed refund
+    expect(count(os.map((o) => o.voidDead > 0))).toBeGreaterThan(20);
+    // carried INLINE returns: one sold here (own) AND one sold only elsewhere (foreign), in the same run
+    const inlineHere = (c: CounterReturnSplitInput) =>
+      (c.carriedReturns ?? []).some((r) => (r.items ?? []).some((i) => i.sourceOrderId === ORDER));
+    const inlineForeign = (c: CounterReturnSplitInput) =>
+      (c.carriedReturns ?? []).some((r) => (r.items ?? []).every((i) => i.sourceOrderId !== ORDER));
+    expect(count(cases.map(inlineHere))).toBeGreaterThan(50);
+    expect(count(cases.map(inlineForeign))).toBeGreaterThan(50);
+    expect(count(cases.map((c) => inlineHere(c) && inlineForeign(c)))).toBeGreaterThan(10);
+    // non-PAID payments, and a non-PAID credit-note application
+    expect(count(cases.map((c) => c.payments.some((p) => p.status !== "PAID")))).toBeGreaterThan(
+      50,
+    );
+    expect(
+      count(
+        cases.map((c) => c.payments.some((p) => p.status !== "PAID" && p.method === "CREDIT_NOTE")),
+      ),
+    ).toBeGreaterThan(20);
   });
 });
