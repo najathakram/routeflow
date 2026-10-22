@@ -10,13 +10,10 @@ import { buildOrdersService, operatorPayload } from "./testing/orders-service-ha
  * `{ qty: total pieces, boxes, pieces }`.
  *
  * B673 fixed the NEXT-DELIVERY rollover (change-requests.service.ts); these pin the at-stop side
- * of the same payloads. Its new-line branch is correct today. Its MERGE branch is B753: it adds
- * `payload.qty` to `existing.qty` without reading the split, so it mixes axes whenever the two
- * producers (driver: pieces + split; buyer: bare boxes) and the existing line's shape (box-split
- * vs box-unaware) disagree. The two merge cases PIN TODAY'S WRONG VALUES ($520 and $43.33) as plain
- * `it` tests: `it.failing` would pass on ANY error, a broken setup included, so it could not tell
- * the defect from a harness fault. These go RED the day B753 changes that math — whoever fixes
- * B753 then flips each assertion to the correct $80.
+ * of the same payloads. Its MERGE branch was B753: it added `payload.qty` to `existing.qty` without
+ * reading the split. SA-841 routes it through `mergeIntoStoredLine` (stored-line-merge.ts): both
+ * sides in pieces at the line's OWN pack, a box-unaware line kept box-unaware, a pack the door
+ * cannot reconcile refused 409. The two once-pinned wrong values ($520, $43.33) now read $80.
  *
  * Its own file (not orders.service.spec.ts) because that spec is pinned at its size-ratchet
  * ceiling; `buildOrdersService` is the shared at-stop harness.
@@ -110,7 +107,17 @@ describe("OrdersService.approveChangeRequestAtStop — a door add's box split (B
     });
   });
 
-  it("B753(a) — TODAY'S WRONG VALUE, pinned: a driver's 1 box merged into a LEGACY box-unaware line of 1 box bills $520 (correct: $80)", async () => {
+  const conflictCode = async (p: Promise<unknown>) => {
+    try {
+      await p;
+    } catch (e) {
+      return ((e as { getResponse?: () => { code?: string; message?: string } }).getResponse?.() ??
+        {}) as { code?: string; message?: string };
+    }
+    throw new Error("expected a refusal");
+  };
+
+  it("B753(a) / SA-841 F1: a driver's 1 box merged into a box-unaware line of 1 box bills 2 boxes = $80, never $520", async () => {
     h.prisma.changeRequest.findUnique.mockResolvedValue(addItem({ qty: 12, boxes: 1, pieces: 0 }));
     mergeInto({
       id: "li-1",
@@ -130,12 +137,22 @@ describe("OrdersService.approveChangeRequestAtStop — a door add's box split (B
 
     expect(h.prisma.orderItem.update).toHaveBeenCalledWith({
       where: { id: "li-1" },
-      // B753: 13 bare 'boxes' at $40. Correct is 2 boxes = $80.
-      data: expect.objectContaining({ subtotal: 520 }),
+      // SA-104: a box-unaware line is never promoted at the door; it gains whole boxes.
+      data: expect.objectContaining({
+        qty: 2,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        subtotal: 80,
+      }),
+    });
+    // the delivery record is in the line's own unit: 1 box added
+    expect(h.prisma.deliveryMutation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ orderItemId: "li-1", qty: 1 }),
     });
   });
 
-  it("B753(b) — TODAY'S WRONG VALUE, pinned: a buyer's bare 1 (a box) merged into a box-SPLIT line of 1 box bills $43.33 (correct: $80)", async () => {
+  it("B753(b) / SA-841 F2: a buyer's bare 1 (a box) merged into a box-SPLIT line of 1 box bills 2 boxes = $80, never $43.33", async () => {
     h.prisma.changeRequest.findUnique.mockResolvedValue(
       addItem({ qty: 1, boxes: null, pieces: null }, "CUSTOMER"),
     );
@@ -157,8 +174,99 @@ describe("OrdersService.approveChangeRequestAtStop — a door add's box split (B
 
     expect(h.prisma.orderItem.update).toHaveBeenCalledWith({
       where: { id: "li-1" },
-      // B753: 13 pieces = 1 box + 1 piece. Correct is 2 boxes = $80.
-      data: expect.objectContaining({ subtotal: 43.33 }),
+      data: expect.objectContaining({
+        qty: 24,
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: 12,
+        subtotal: 80,
+      }),
     });
+  });
+
+  it("SA-841 R3: a driver's 1 box + 6 into a split line sold as a 12-pack keeps the stored 12, never the live 6 ($140, not $280)", async () => {
+    h.prisma.product.findUnique.mockResolvedValue({ ...PRODUCT, unitsPerBox: 6 }); // repacked since the sale
+    h.prisma.product.findFirst.mockResolvedValue({ ...PRODUCT, unitsPerBox: 6 });
+    h.prisma.changeRequest.findUnique.mockResolvedValue(addItem({ qty: 18, boxes: 1, pieces: 6 }));
+    mergeInto({
+      id: "li-1",
+      orderId: "ord-1",
+      productId: "prod-1",
+      qty: 24, // 2 boxes of 12, pack never stamped: it is recovered from the line's own split
+      boxes: 2,
+      pieces: 0,
+      unitsPerBox: null,
+      unitPrice: 40,
+      subtotal: 80,
+      status: "PENDING",
+      deliveredQty: 0,
+    });
+
+    await h.service.approveChangeRequestAtStop("cr-1", driver, null);
+
+    expect(h.prisma.orderItem.update).toHaveBeenCalledWith({
+      where: { id: "li-1" },
+      data: expect.objectContaining({
+        qty: 42,
+        boxes: 3,
+        pieces: 6,
+        unitsPerBox: 12,
+        subtotal: 140,
+      }),
+    });
+  });
+
+  it("SA-841 R4: a buyer's bare 1 into a 12-pack line of a product repacked to 6 is refused 409 MERGE_PACK_MISMATCH naming both packs, nothing written", async () => {
+    h.prisma.product.findUnique.mockResolvedValue({ ...PRODUCT, unitsPerBox: 6 });
+    h.prisma.product.findFirst.mockResolvedValue({ ...PRODUCT, unitsPerBox: 6 });
+    h.prisma.changeRequest.findUnique.mockResolvedValue(
+      addItem({ qty: 1, boxes: null, pieces: null }, "CUSTOMER"),
+    );
+    mergeInto({
+      id: "li-1",
+      orderId: "ord-1",
+      productId: "prod-1",
+      qty: 24,
+      boxes: 2,
+      pieces: 0,
+      unitsPerBox: 12,
+      unitPrice: 40,
+      subtotal: 80,
+      status: "PENDING",
+      deliveredQty: 0,
+    });
+
+    const body = await conflictCode(
+      h.service.approveChangeRequestAtStop("cr-1", operatorPayload as never, null),
+    );
+
+    expect(body.code).toBe("MERGE_PACK_MISMATCH");
+    expect(body.message).toMatch(/12/);
+    expect(body.message).toMatch(/6/);
+    expect(h.prisma.orderItem.update).not.toHaveBeenCalled();
+    expect(h.prisma.deliveryMutation.create).not.toHaveBeenCalled();
+  });
+
+  it("SA-841 R5: 5 loose pieces into a box-unaware line of 1 box are refused 409, nothing written (SA-104a)", async () => {
+    h.prisma.changeRequest.findUnique.mockResolvedValue(addItem({ qty: 5, boxes: 0, pieces: 5 }));
+    mergeInto({
+      id: "li-1",
+      orderId: "ord-1",
+      productId: "prod-1",
+      qty: 1,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      unitPrice: 40,
+      subtotal: 40,
+      status: "PENDING",
+      deliveredQty: 0,
+    });
+
+    const body = await conflictCode(h.service.approveChangeRequestAtStop("cr-1", driver, null));
+
+    expect(body.code).toBe("MERGE_PACK_MISMATCH");
+    expect(h.prisma.orderItem.update).not.toHaveBeenCalled();
+    expect(h.prisma.deliveryMutation.create).not.toHaveBeenCalled();
   });
 });
