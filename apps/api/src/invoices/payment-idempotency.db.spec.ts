@@ -24,7 +24,14 @@
  *  - R5: A holds a raw claim past the 5 s lock_timeout -> B's resolve is 409 PAYMENT_KEY_IN_FLIGHT, writes
  *        nothing.
  *  - R6: another tenant's key: GET is 404 from tenant B, B's resolve tombstones only B's own namespace and
- *        A's COMPLETED row (and its GET) is untouched.
+ *        A's COMPLETED row (all columns, byte for byte) and its GET are untouched.
+ *  - R7: window (ii): an UNCOMMITTED tombstone on connection B while connection A's POST claims the key -> A
+ *        WAITS, then is refused 409 PAYMENT_KEY_RESOLVED after B commits; 0 payments.
+ *  - R8: a resolve on A conflicts with B's UNCOMMITTED tombstone; B rolls back -> A inserts its OWN
+ *        tombstone -> "tombstoned".
+ *  - R9: tenant X holds key K COMPLETED; tenant Y resolves K -> tombstoned; X's row is deep-equal before and
+ *        after; X's same-key, same-body POST replays its own result (no new payment, no 409); Y's tombstone
+ *        exists only under Y's tenantId.
  *
  * SAFETY: throwaway `qa-sa824-<run>-<n>-<label>` tenants only (`assertTestTenant`); `afterAll`
  * deletes exactly what this run created.
@@ -141,6 +148,8 @@ describeDb(
     let invoicesB: InvoicesService;
     /** The resolve / by-key service on connection B (its own pool), auditing through B. */
     let statusB: PaymentKeyStatusService;
+    /** The same service on connection A (R8). */
+    let statusA: PaymentKeyStatusService;
     const createdTenantIds: string[] = [];
 
     beforeAll(async () => {
@@ -153,6 +162,7 @@ describeDb(
       invoicesA = await buildInvoices(prismaA, tenantCtx);
       invoicesB = await buildInvoices(prismaB, tenantCtx);
       statusB = new PaymentKeyStatusService(prismaB, new AuditService(prismaB));
+      statusA = new PaymentKeyStatusService(prismaA, new AuditService(prismaA));
     });
 
     afterAll(async () => {
@@ -458,6 +468,9 @@ describeDb(
       const paid: any = await one.asTenant(() =>
         invoicesA.recordStandalonePayment(one.dto, { idempotencyKey: key }),
       );
+      const fullRow = (tenantId: string) =>
+        prismaA.paymentIdempotencyKey.findFirstOrThrow({ where: { tenantId, key } });
+      const aBefore = await fullRow(one.tenant.id); // every column: state, scope, requestHash, result, timestamps
       const get = await two.asTenant(() => statusB.byKey(key)).catch((e: unknown) => e);
       expect(get).toBeInstanceOf(NotFoundException);
       expect(await two.asTenant(() => statusB.resolve(key, actor))).toEqual({
@@ -466,11 +479,109 @@ describeDb(
 
       const aRows = (await one.state()).keys;
       expect(aRows.map((k: any) => k.state)).toEqual(["COMPLETED"]);
+      expect(await fullRow(one.tenant.id)).toEqual(aBefore); // byte-unchanged after B's resolve
       expect((await two.state()).keys.map((k: any) => k.state)).toEqual(["TOMBSTONED"]);
       const stillFound: any = await one.asTenant(() => statusB.byKey(key));
       expect(stillFound.state).toBe("found");
       expect(stillFound.paymentGroupId).toBe(paid.paymentGroupId);
       expect((await one.state()).payments).toHaveLength(1);
+    }, 60_000);
+
+    /** An UNCOMMITTED tombstone for (tenantId, key) on connection B, held until `release(outcome)`. */
+    function holdTombstoneOnB(tenantId: string, key: string) {
+      const id = randomUUID();
+      let claimed!: () => void;
+      const held = new Promise<void>((r) => (claimed = r));
+      let release!: (o: "commit" | "rollback") => void;
+      const gate = new Promise<"commit" | "rollback">((r) => (release = r));
+      const done = prismaB
+        .$transaction(
+          async (tx) => {
+            await tx.$executeRaw`
+              INSERT INTO "PaymentIdempotencyKey" ("id", "tenantId", "key", "state", "result")
+              VALUES (${id}, ${tenantId}, ${key}, 'TOMBSTONED'::"PaymentIdempotencyState", '{}'::jsonb)`;
+            claimed();
+            if ((await gate) === "rollback") throw new Error("B rolls back");
+          },
+          { timeout: 20_000 },
+        )
+        .catch((e: unknown) => e);
+      return { id, held, release, done };
+    }
+
+    it("R7 window (ii): B holds an UNCOMMITTED tombstone; A's POST waits, then 409 PAYMENT_KEY_RESOLVED; 0 payments", async () => {
+      const seeded = await seed("r7");
+      const key = `r7-${randomUUID()}`;
+      const b = holdTombstoneOnB(seeded.tenant.id, key);
+      await b.held;
+      let postDoneAt = 0;
+      const posting = seeded
+        .asTenant(() => invoicesA.recordStandalonePayment(seeded.dto, { idempotencyKey: key }))
+        .catch((e: unknown) => e)
+        .then((r) => ((postDoneAt = Date.now()), r));
+      await new Promise((r) => setTimeout(r, 700)); // A's claim is blocked on the unique index
+      expect(postDoneAt).toBe(0);
+      const committedAt = Date.now();
+      b.release("commit");
+      const [, late] = await Promise.all([b.done, posting]);
+
+      expect(late).toBeInstanceOf(ConflictException);
+      expect(codeOf(late).code).toBe("PAYMENT_KEY_RESOLVED");
+      expect(postDoneAt).toBeGreaterThanOrEqual(committedAt);
+      const after = await seeded.state();
+      expect(after.payments).toHaveLength(0);
+      expect(after.keys.map((k: any) => k.state)).toEqual(["TOMBSTONED"]);
+    }, 60_000);
+
+    it("R8 a resolve on A conflicts with B's UNCOMMITTED tombstone; B rolls back -> A inserts its own -> tombstoned", async () => {
+      const seeded = await seed("r8");
+      const key = `r8-${randomUUID()}`;
+      const b = holdTombstoneOnB(seeded.tenant.id, key);
+      await b.held;
+      let resolvedAt = 0;
+      const resolving = seeded
+        .asTenant(() => statusA.resolve(key, actor))
+        .then((r) => ((resolvedAt = Date.now()), r));
+      await new Promise((r) => setTimeout(r, 700));
+      expect(resolvedAt).toBe(0); // blocked behind B's uncommitted tombstone
+      b.release("rollback");
+      const [bErr, out] = await Promise.all([b.done, resolving]);
+
+      expect((bErr as Error).message).toBe("B rolls back");
+      expect(out).toEqual({ state: "tombstoned" });
+      const rows = (await seeded.state()).keys;
+      expect(rows).toHaveLength(1);
+      expect(rows[0].state).toBe("TOMBSTONED");
+      expect(rows[0].id).not.toBe(b.id); // A's OWN tombstone, not the rolled-back one
+    }, 60_000);
+
+    it("R9 cross-tenant: Y's resolve leaves X's COMPLETED row deep-equal, X's same-body POST replays, Y's tombstone is Y's only", async () => {
+      const x = await seed("r9x");
+      const y = await seed("r9y");
+      const key = `r9-${randomUUID()}`;
+      const paid: any = await x.asTenant(() =>
+        invoicesA.recordStandalonePayment(x.dto, { idempotencyKey: key }),
+      );
+      const fullRow = (tenantId: string) =>
+        prismaA.paymentIdempotencyKey.findFirstOrThrow({ where: { tenantId, key } });
+      const xBefore = await fullRow(x.tenant.id);
+      const paymentsBefore = (await x.state()).payments.length;
+
+      expect(await y.asTenant(() => statusB.resolve(key, actor))).toEqual({ state: "tombstoned" });
+      expect(await fullRow(x.tenant.id)).toEqual(xBefore);
+
+      const replay: any = await x
+        .asTenant(() => invoicesB.recordStandalonePayment(x.dto, { idempotencyKey: key }))
+        .catch((e: unknown) => e);
+      expect(replay).not.toBeInstanceOf(ConflictException);
+      expect(replay.replayed).toBe(true);
+      expect(replay.paymentGroupId).toBe(paid.paymentGroupId);
+      expect((await x.state()).payments).toHaveLength(paymentsBefore);
+
+      const tombstones = await prismaA.paymentIdempotencyKey.findMany({
+        where: { key, state: "TOMBSTONED" },
+      });
+      expect(tombstones.map((t: any) => t.tenantId)).toEqual([y.tenant.id]);
     }, 60_000);
   },
 );
