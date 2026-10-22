@@ -228,7 +228,7 @@ test("R7b 3.3 (B1262): a reprint of a sale with a return says Returned at 390", 
     tenderPaid: 0,
     returnCredit: 6.25,
     tenderMethods: [],
-    ownReturned: { amount: 6.25, allRefunded: false },
+    returnLines: { applied: 6.25, refunded: 0, kept: 0, pending: false },
     returned: {
       amount: 6.25,
       state: "PARTLY",
@@ -255,4 +255,45 @@ test("R7b 3.3 (B1262): a reprint of a sale with a return says Returned at 390", 
   await expect(page.getByTestId("receipt-returned")).toContainText("6.25");
   await expect(page.getByTestId("counter-on-account")).toContainText("On account");
   await expect(page.getByTestId("receipt-reprint")).not.toContainText("Store credit");
+});
+
+test("SA-838a: a reprint with a pending, a refunded and a kept return prints the pinned lines at 390", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await setTenantCookie(context, baseURL ?? "");
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Total $12.50, Cash $5.00: balance 7.50 and nothing subtracted for a refunded, kept or pending return
+  const row = (lines: { refunded: number; kept: number; pending: boolean }) => ({
+    ...ROW,
+    paid: 5,
+    balanceDue: 7.5,
+    methods: [{ method: "CASH", amount: 5 }],
+    tenderPaid: 5,
+    returnCredit: 0,
+    tenderMethods: [{ method: "CASH", amount: 5 }],
+    returnLines: { applied: 0, ...lines },
+  });
+  for (const [lines, expected] of [
+    [{ refunded: 2.5, kept: 0, pending: false }, "Refunded $2.50 (returned items)"],
+    [{ refunded: 0, kept: 2.5, pending: false }, "Credit kept $2.50 (returned items)"],
+    [{ refunded: 0, kept: 0, pending: true }, "Return in progress"],
+  ] as const) {
+    await page.route(/\/api\/v1\/orders\/counter-sale\/today/, (r) =>
+      r.fulfill({ json: { ...PAGE1, data: [row(lines)], meta: { ...PAGE1.meta, total: 1 } } }),
+    );
+    await page.route(/\/api\/v1\/orders\/e2e-o1$/, (r) => r.fulfill({ json: ORDER }));
+    await page.goto("/orders/counter-sale");
+    await page.getByRole("button", { name: "Today's sales" }).click();
+    await page.getByTestId("today-row-e2e-o1").getByRole("button", { name: "Reprint" }).click();
+    const paper = page.getByTestId("receipt-reprint");
+    await expect(paper).toContainText("Cash $5.00");
+    await expect(paper).toContainText(expected);
+    await expect(paper).toContainText("Balance due");
+    await expect(paper).toContainText("7.50");
+    await expect(paper.getByTestId("receipt-returned")).toHaveCount(0);
+    await page.unroute(/\/api\/v1\/orders\/counter-sale\/today/);
+    await page.unroute(/\/api\/v1\/orders\/e2e-o1$/);
+  }
 });

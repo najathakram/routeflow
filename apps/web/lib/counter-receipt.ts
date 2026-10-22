@@ -70,13 +70,17 @@ export interface ReceiptBusinessProfile {
  */
 export type CounterReceiptLine = ReceiptLine;
 /**
- * The reprint of a sale that had a return also carries `returned` (the amount, positive; absent or null when nothing was) and
- * `returnedLabel`: the view prints `Returned −$x`, or `Refunded −$x` when every return went out as a refund. Only a server that
- * sends the tender split (`ReprintSaleFacts.tenderPaid`) sets them; an older one reprints exactly as before.
+ * SA-838a: the reprint of a sale that had a return carries the server's `returnLines`, each used as given (the web derives none):
+ * `returned` = credit APPLIED to this sale (the "Returned −$x" line, the only figure the balance subtracts); `refunded` = money
+ * handed back outside RouteFlow and `creditKept` = credit left on the customer's account (info lines, never subtracted);
+ * `returnPending` = a return is not settled yet ("Return in progress", no amount). null = no line. Only a server that sends
+ * `returnLines` sets any of them; an older one reprints exactly as before (none of the keys exist on the model).
  */
 export type CounterReceiptModel = ReceiptModel & {
   returned?: number | null;
-  returnedLabel?: "Returned" | "Refunded";
+  refunded?: number | null;
+  creditKept?: number | null;
+  returnPending?: boolean;
 };
 
 /**
@@ -333,15 +337,15 @@ export interface ReprintSaleFacts {
   /**
    * B1262 / SA-838, the server's split of `paid` (the row's `tenderPaid` / `tenderMethods`, `@routeflow/pricing`
    * `counterTenderSplit`): what was TENDERED, without the sale's own return credit. Used as given, never re-derived. Present:
-   * Paid and the payment method read these, and the Returned line prints. Absent (an older server): `paid` / `methods` as before.
+   * Paid and the payment method read these. Absent (an older server): `paid` / `methods` as before.
    */
   tenderPaid?: number;
   tenderMethods?: ReadonlyArray<{ method: ReprintTender; amount: number }>;
   /**
-   * The row's `ownReturned` (review I1): the money of THIS sale's own returns and whether every one was a refund. A carrier
-   * order holding another sale's INLINE return has 0. Used as given, read only with `tenderPaid`; absent: no Returned line.
+   * SA-838a, the row's `returnLines` (`@routeflow/pricing` `returnSettlement`, summed by the server): applied / refunded / kept
+   * credit of THIS sale's own returns, and whether one is still pending. Used as given. Absent (an older server): no return line.
    */
-  ownReturned?: { amount: number; allRefunded: boolean };
+  returnLines?: { applied: number; refunded: number; kept: number; pending: boolean };
 }
 
 /** The tender of a today's-sales row (the shared POS-7b-1 type; never hand-typed here). */
@@ -451,8 +455,8 @@ export function receiptModelFromOrder(input: {
   const hasTender = tenders.length > 0;
   const paid = split ? sale.tenderPaid! : sale.paid;
   const { balanceDue } = sale;
-  // the server's figures as given (no client rounding of a server field); absent or zero: no Returned line
-  const returnedAmount = split ? (sale.ownReturned?.amount ?? 0) : 0;
+  // the server's return figures as given (no client rounding or derivation of a server field); absent: no return line
+  const lines = split ? sale.returnLines : undefined;
   const onAccount = !hasTender && balanceDue > 0;
   const orderTotal = num(order.total);
   const { tax, charges, adjustments } = receiptFigures({
@@ -491,15 +495,15 @@ export function receiptModelFromOrder(input: {
     // the split path prints pricing's ONE Payment method line (the emailed receipt's too); an older server keeps master's labels
     methodLabel: hasTender
       ? split
-        ? counterMethodLine(tenders, orderTotal)
+        ? counterMethodLine(tenders)
         : tenders.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ")
       : null,
-    ...(split
+    ...(lines
       ? {
-          returned: returnedAmount > 0 ? returnedAmount : null,
-          // "Refunded" only when the server says every own return went out as a refund; else "Returned"
-          returnedLabel: (sale.ownReturned?.allRefunded ? "Refunded" : "Returned") as
-            "Returned" | "Refunded",
+          returned: lines.applied > 0 ? lines.applied : null,
+          refunded: lines.refunded > 0 ? lines.refunded : null,
+          creditKept: lines.kept > 0 ? lines.kept : null,
+          returnPending: lines.pending,
         }
       : {}),
     tendered,

@@ -283,10 +283,10 @@ function Reprint({
             balanceDue: row.balanceDue,
             methods: row.methods,
             createdAt: row.createdAt,
-            // B1262 / SA-838: the server's tender split (absent on an older server) and the return it settled
+            // B1262 / SA-838 + SA-838a: the server's tender split and what the sale's own returns did (absent on an older server)
             tenderPaid: row.tenderPaid,
             tenderMethods: row.tenderMethods,
-            ownReturned: row.ownReturned,
+            returnLines: row.returnLines,
             cashTendered: row.cashTendered,
             change: row.change,
             customerName: receiptCustomerName({

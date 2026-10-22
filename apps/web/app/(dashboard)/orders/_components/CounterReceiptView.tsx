@@ -192,16 +192,34 @@ export function CounterReceiptView({
           </div>
         ) : null}
         {m.returned ? (
-          // B1262: the return is its own line (a sale's own return credit is not a tender, so it is never in Paid)
+          // SA-838a: credit applied to this sale is its own line (never in Paid, the only return figure Balance due subtracts)
           <div className="flex justify-between" data-testid="receipt-returned">
-            <dt>{m.returnedLabel ?? "Returned"}</dt>
+            <dt>Returned</dt>
             <dd>−{money(m.returned)}</dd>
+          </div>
+        ) : null}
+        {m.refunded ? (
+          // an info line: money handed back outside RouteFlow, never subtracted
+          <div data-testid="receipt-refunded">
+            <dt>Refunded {money(m.refunded)} (returned items)</dt>
+          </div>
+        ) : null}
+        {m.creditKept ? (
+          // an info line: credit left on the customer's account, never subtracted
+          <div data-testid="receipt-credit-kept">
+            <dt>Credit kept {money(m.creditKept)} (returned items)</dt>
           </div>
         ) : null}
         {m.showBalance ? (
           <div className="flex justify-between">
             <dt>Balance due</dt>
             <dd>{money(m.balanceDue)}</dd>
+          </div>
+        ) : null}
+        {m.returnPending ? (
+          // a return that is not settled yet: no amount, nothing subtracted
+          <div data-testid="receipt-return-pending">
+            <dt>Return in progress</dt>
           </div>
         ) : null}
         {m.tendered != null ? (

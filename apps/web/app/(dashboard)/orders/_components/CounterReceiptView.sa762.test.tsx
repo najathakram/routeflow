@@ -164,7 +164,7 @@ describe("counter receipt files never inject markup (SA-762r F6)", () => {
   });
 });
 
-describe("reprint after a return (B1262 / SA-838): the paper", () => {
+describe("reprint after a return (SA-838a): the paper", () => {
   type Sale = Parameters<typeof receiptModelFromOrder>[0]["sale"];
   /** the money rows below Total, as the paper reads them, top to bottom: "Label value" per line */
   const paper = (over: Partial<Sale>) => {
@@ -194,6 +194,57 @@ describe("reprint after a return (B1262 / SA-838): the paper", () => {
     );
     return rows.slice(rows.findIndex((r) => r.startsWith("Total")) + 1);
   };
+  const none = { applied: 0, refunded: 0, kept: 0, pending: false };
+  /** Total $12.50, Cash $5.00 */
+  const cash5 = {
+    paid: 5,
+    balanceDue: 7.5,
+    methods: [{ method: "CASH" as const, amount: 5 }],
+    tenderPaid: 5,
+    tenderMethods: [{ method: "CASH" as const, amount: 5 }],
+  };
+
+  it("(1a) refund done: Payment method Cash $5.00, Paid $5.00, Refunded $2.50 (returned items), Balance due $7.50", () => {
+    expect(paper({ ...cash5, returnLines: { ...none, refunded: 2.5 } })).toEqual([
+      "Payment method Cash $5.00",
+      "Paid $5.00",
+      "Refunded $2.50 (returned items)",
+      "Balance due $7.50",
+    ]);
+  });
+
+  it("(1b) credit kept: Payment method Cash $5.00, Paid $5.00, Credit kept $2.50 (returned items), Balance due $7.50", () => {
+    expect(paper({ ...cash5, returnLines: { ...none, kept: 2.5 } })).toEqual([
+      "Payment method Cash $5.00",
+      "Paid $5.00",
+      "Credit kept $2.50 (returned items)",
+      "Balance due $7.50",
+    ]);
+  });
+
+  it("(1c) credit applied: Payment method Cash $5.00, Paid $5.00, Returned −$2.50, Balance due $5.00", () => {
+    expect(
+      paper({
+        ...cash5,
+        paid: 7.5,
+        balanceDue: 5,
+        methods: [
+          { method: "CASH", amount: 5 },
+          { method: "STORE_CREDIT", amount: 2.5 },
+        ],
+        returnLines: { ...none, applied: 2.5 },
+      }),
+    ).toEqual(["Payment method Cash $5.00", "Paid $5.00", "Returned −$2.50", "Balance due $5.00"]);
+  });
+
+  it("(2) pending: Payment method Cash $5.00, Paid $5.00, Balance due $7.50, Return in progress", () => {
+    expect(paper({ ...cash5, returnLines: { ...none, pending: true } })).toEqual([
+      "Payment method Cash $5.00",
+      "Paid $5.00",
+      "Balance due $7.50",
+      "Return in progress",
+    ]);
+  });
 
   it("(a) prints Payment method Cash $6.25, Paid $6.25, Returned −$6.25 (no Store credit, no Balance due)", () => {
     expect(
@@ -204,12 +255,12 @@ describe("reprint after a return (B1262 / SA-838): the paper", () => {
         ],
         tenderPaid: 6.25,
         tenderMethods: [{ method: "CASH", amount: 6.25 }],
-        ownReturned: { amount: 6.25, allRefunded: false },
+        returnLines: { ...none, applied: 6.25 },
       }),
     ).toEqual(["Payment method Cash $6.25", "Paid $6.25", "Returned −$6.25"]);
   });
 
-  it("(b) prints Payment method Advance $5.00 + Cash $7.50, Paid $12.50, Refunded −$2.50", () => {
+  it("(b) prints Payment method Advance $5.00 + Cash $7.50, Paid $12.50, Refunded $2.50 (returned items)", () => {
     expect(
       paper({
         methods: [
@@ -221,20 +272,28 @@ describe("reprint after a return (B1262 / SA-838): the paper", () => {
           { method: "ADVANCE", amount: 5 },
           { method: "CASH", amount: 7.5 },
         ],
-        ownReturned: { amount: 2.5, allRefunded: true },
+        returnLines: { ...none, refunded: 2.5 },
       }),
-    ).toEqual(["Payment method Advance $5.00 + Cash $7.50", "Paid $12.50", "Refunded −$2.50"]);
+    ).toEqual([
+      "Payment method Advance $5.00 + Cash $7.50",
+      "Paid $12.50",
+      "Refunded $2.50 (returned items)",
+    ]);
   });
 
-  it("(c) prints Payment method Advance, Paid $12.50, Returned −$3.00", () => {
+  it("(c) prints Payment method Advance $12.50, Paid $12.50, Credit kept $3.00 (returned items)", () => {
     expect(
       paper({
         methods: [{ method: "ADVANCE", amount: 12.5 }],
         tenderPaid: 12.5,
         tenderMethods: [{ method: "ADVANCE", amount: 12.5 }],
-        ownReturned: { amount: 3, allRefunded: false },
+        returnLines: { ...none, kept: 3 },
       }),
-    ).toEqual(["Payment method Advance", "Paid $12.50", "Returned −$3.00"]);
+    ).toEqual([
+      "Payment method Advance $12.50",
+      "Paid $12.50",
+      "Credit kept $3.00 (returned items)",
+    ]);
   });
 
   it("(d) another order's store credit prints as the tender Store credit", () => {
@@ -243,12 +302,12 @@ describe("reprint after a return (B1262 / SA-838): the paper", () => {
         methods: [{ method: "STORE_CREDIT", amount: 12.5 }],
         tenderPaid: 12.5,
         tenderMethods: [{ method: "STORE_CREDIT", amount: 12.5 }],
-        ownReturned: { amount: 0, allRefunded: false },
+        returnLines: none,
       }),
-    ).toEqual(["Payment method Store credit", "Paid $12.50"]);
+    ).toEqual(["Payment method Store credit $12.50", "Paid $12.50"]);
   });
 
-  it("the carrier order B of sale A's INLINE return prints NO Returned line, and Paid adds up", () => {
+  it("the carrier order B of sale A's INLINE return prints NO return line, and Paid adds up", () => {
     expect(
       paper({
         methods: [
@@ -260,12 +319,12 @@ describe("reprint after a return (B1262 / SA-838): the paper", () => {
           { method: "CASH", amount: 7 },
           { method: "STORE_CREDIT", amount: 5.5 },
         ],
-        ownReturned: { amount: 0, allRefunded: false },
+        returnLines: none,
       }),
     ).toEqual(["Payment method Cash $7.00 + Store credit $5.50", "Paid $12.50"]);
   });
 
-  it("sale A, whose own INLINE return was carried on B, prints its own Returned line", () => {
+  it("sale A, whose own INLINE return was carried on B and applied, prints its own Returned line", () => {
     expect(
       paper({
         methods: [
@@ -274,7 +333,7 @@ describe("reprint after a return (B1262 / SA-838): the paper", () => {
         ],
         tenderPaid: 7,
         tenderMethods: [{ method: "CASH", amount: 7 }],
-        ownReturned: { amount: 5.5, allRefunded: false },
+        returnLines: { ...none, applied: 5.5 },
       }),
     ).toEqual(["Payment method Cash $7.00", "Paid $7.00", "Returned −$5.50"]);
   });
@@ -287,9 +346,48 @@ describe("reprint after a return (B1262 / SA-838): the paper", () => {
         methods: [{ method: "STORE_CREDIT", amount: 6.25 }],
         tenderPaid: 0,
         tenderMethods: [],
-        ownReturned: { amount: 6.25, allRefunded: false },
+        returnLines: { ...none, applied: 6.25 },
       }),
     ).toEqual(["Returned −$6.25", "Balance due $6.25"]);
+  });
+
+  it("two own returns: applied and refunded and pending each print once, in the pinned order", () => {
+    expect(
+      paper({
+        ...cash5,
+        paid: 7.5,
+        balanceDue: 5,
+        methods: [
+          { method: "CASH", amount: 5 },
+          { method: "STORE_CREDIT", amount: 2.5 },
+        ],
+        returnLines: { applied: 2.5, refunded: 1, kept: 0.5, pending: true },
+      }),
+    ).toEqual([
+      "Payment method Cash $5.00",
+      "Paid $5.00",
+      "Returned −$2.50",
+      "Refunded $1.00 (returned items)",
+      "Credit kept $0.50 (returned items)",
+      "Balance due $5.00",
+      "Return in progress",
+    ]);
+  });
+
+  it("the invariant on the paper: Balance due = Total - Paid - Returned for every applied fixture", () => {
+    const cents = (t: string) => Math.round(Number(t.replace(/[^0-9.]/g, "")) * 100);
+    const rows = paper({
+      ...cash5,
+      paid: 7.5,
+      balanceDue: 5,
+      methods: [
+        { method: "CASH", amount: 5 },
+        { method: "STORE_CREDIT", amount: 2.5 },
+      ],
+      returnLines: { ...none, applied: 2.5 },
+    });
+    const get = (label: string) => cents(rows.find((r) => r.startsWith(label))!);
+    expect(get("Balance due")).toBe(1250 - get("Paid") - get("Returned"));
   });
 
   it("(g) an old server prints master's wording, byte for byte (literal text taken from master's behaviour)", () => {
