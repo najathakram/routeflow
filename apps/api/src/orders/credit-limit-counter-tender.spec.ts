@@ -135,10 +135,20 @@ describe("S1 wiring pins", () => {
       /projectedTotal:\s*creditProjectedTotal\(total,\s*options\)/,
     );
   });
-  it("only the counter sale sets creditPaidNow", () => {
-    const hits = ["counter-sale/counter-sale.service.ts", "orders.controller.ts"].map((f) =>
-      /creditPaidNow/.test(src(f)),
-    );
-    expect(hits).toEqual([true, false]);
+  it("only the counter sale sets creditPaidNow (repo-wide scan of apps/api/src, specs excluded)", () => {
+    const root = path.join(__dirname, "..");
+    const walk = (dir: string): string[] =>
+      fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) return e.name === "node_modules" ? [] : walk(full);
+        return /\.ts$/.test(e.name) && !/\.spec\.ts$/.test(e.name) ? [full] : [];
+      });
+    const setters = walk(root)
+      .filter((f) => /creditPaidNow\s*[:,]|creditPaidNow\s*=/.test(fs.readFileSync(f, "utf8")))
+      .map((f) => path.relative(root, f))
+      // type/plumbing declarations that only carry the option through
+      .filter((f) => !/^orders\/(order-create-options|sale-options)\.ts$/.test(f))
+      .sort();
+    expect(setters).toEqual(["orders/counter-sale/counter-sale.service.ts"]);
   });
 });

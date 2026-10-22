@@ -22,6 +22,6 @@ export function creditLimitCounterSentence(limit: unknown, exposure: unknown): s
   const l = usd(limit);
   const e = usd(exposure);
   return l && e
-    ? `Over the credit limit (${e} owed after this sale, limit ${l}): take payment now or choose another customer.`
-    : "Over the credit limit: take payment now or choose another customer.";
+    ? `Over the credit limit (${e} owed after this sale, limit ${l}): take cash or card now or choose another customer.`
+    : "Over the credit limit: take cash or card now or choose another customer.";
 }

@@ -362,13 +362,13 @@ describe("counterSaleErrorCopy: a credit-limit or selling-restriction refusal sa
   it("credit limit: the structured numbers, the next step, and that nothing was charged", () => {
     const copy = counterSaleErrorCopy(credit({ limit: 500, exposure: 640.5 }));
     expect(copy).toBe(
-      "Over the credit limit ($640.50 owed after this sale, limit $500.00): take payment now or choose another customer. Nothing was charged.",
+      "Over the credit limit ($640.50 owed after this sale, limit $500.00): take cash or card now or choose another customer. Nothing was charged.",
     );
   });
   it("credit limit without numbers still names the cause and the way out", () => {
     const copy = counterSaleErrorCopy(credit());
     expect(copy).toBe(
-      "Over the credit limit: take payment now or choose another customer. Nothing was charged.",
+      "Over the credit limit: take cash or card now or choose another customer. Nothing was charged.",
     );
     expect(copy).not.toMatch(/Something changed|RAW SERVER TEXT/);
   });
