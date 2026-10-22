@@ -763,3 +763,37 @@ test("X1 unknown-status: no alarm once the item has moved past planned or is don
   assert.equal(find(alarms, "unknown-status:541"), undefined, "done: settled");
   assert.ok(find(alarms, "unknown-status:542"), "still planned: alarm stays");
 });
+
+// ---- items-stale ----
+test("items-stale: only pending register changes older than 15 min raise it; other events never hide it", () => {
+  const stale = (over) =>
+    find(
+      run({ register: { changedAt: NOW - 16 * 60_000, pending: 1, ...over } }),
+      "items-stale:register",
+    );
+  // 1 pending change + 16 min: a warning naming the count and the age in words
+  const a = stale({});
+  assert.equal(a.severity, "warn");
+  assert.match(
+    a.message,
+    /^Work items are behind the register: 1 change from 16 minutes ago has not reached the board/,
+  );
+  // register changed, 0 pending changes (notes, formatting): no alarm, however old
+  assert.equal(stale({ pending: 0, changedAt: NOW - 72 * HOUR }), undefined);
+  // pending but within the 15-minute grace: nothing yet
+  assert.equal(stale({ changedAt: NOW - 14 * 60_000 }), undefined);
+  // a day behind: an error, plural wording
+  const b = stale({ pending: 3, changedAt: NOW - 48 * HOUR });
+  assert.equal(b.severity, "error");
+  assert.match(b.message, /3 changes from 2 days ago have not reached the board/);
+  // no register time or no dry-run count (generated mode, a read failure): nothing
+  assert.equal(stale({ changedAt: null }), undefined);
+  assert.equal(stale({ pending: null }), undefined);
+});
+
+test("agoWords: minutes, hours and days in words", () => {
+  assert.equal(REC.agoWords(60_000), "1 minute");
+  assert.equal(REC.agoWords(5 * 60_000), "5 minutes");
+  assert.equal(REC.agoWords(3 * HOUR), "3 hours");
+  assert.equal(REC.agoWords(72 * HOUR), "3 days");
+});

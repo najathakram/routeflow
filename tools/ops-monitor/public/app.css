@@ -1415,6 +1415,25 @@ th {
   background: var(--err);
 }
 
+.stale-banner {
+  margin: 12px 16px 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+}
+.stale-banner.err {
+  color: var(--err);
+  background: var(--err-soft);
+  border-color: var(--err);
+}
+.stale-banner[hidden] {
+  display: none;
+}
+
 /* ---- releases in words ---- */
 .train > .thead {
   align-items: center;

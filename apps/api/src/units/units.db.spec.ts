@@ -223,7 +223,7 @@ describeDb("tenant units against real Postgres", () => {
       ],
     }).compile();
     products = moduleRef.get(ProductsService);
-    productsController = new ProductsController(products, {} as never);
+    productsController = new ProductsController(products, {} as never, {} as never);
     productUnits = new ProductUnitsService(prisma);
     inventory = new InventoryService(prisma, {
       fireForProducts: jest.fn().mockResolvedValue(undefined),

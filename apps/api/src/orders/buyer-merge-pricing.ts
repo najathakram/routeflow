@@ -7,6 +7,7 @@
  */
 
 import { PriceType } from "@prisma/client";
+import { mergeIntoStoredLine, type StoredLineShape } from "./stored-line-merge";
 import {
   applyBestPromotion,
   computeLineSubtotal,
@@ -105,6 +106,19 @@ export function isBuyerPricedLine(li: {
   );
 }
 
+/** SA-841 PR-3: the codes `mergeBoxedContributions` refuses with (never a silent drop of a contribution). */
+export const MERGE_CONTRIBUTION_QTY_INVALID = "MERGE_CONTRIBUTION_QTY_INVALID";
+export const MERGE_CONTRIBUTION_REFUSED = "MERGE_CONTRIBUTION_REFUSED";
+export class MergeContributionError extends Error {
+  constructor(
+    readonly code: typeof MERGE_CONTRIBUTION_QTY_INVALID | typeof MERGE_CONTRIBUTION_REFUSED,
+    detail: string,
+  ) {
+    super(`mergeBoxedContributions ${code}: ${detail}`);
+    this.name = "MergeContributionError";
+  }
+}
+
 /**
  * Combine one or more contributing order lines for the SAME product into a
  * single merged line total. Boxed products price by the BOX, so every
@@ -162,11 +176,39 @@ export function mergeBoxedContributions(
   storedFreeUnits: number;
 } {
   const upb = Number(unitsPerBox ?? 0);
-  const totalPieces = contributions.reduce((sum, c) => {
+  // SA-841 PR-3: each contribution's pieces come from the one stored-line rule, read against an EMPTY line at the
+  // group's own pack: a box-split / pieces-only contribution's qty is pieces; a bare boxed contribution (the box-unaware
+  // mobile cart) is selling units at the group pack; a zero contribution adds nothing. The pieces are SUMMED raw and
+  // normalized ONCE below (#3587 MUST-2: qty is Decimal(10,3), so a normalize per contribution would truncate per
+  // step, where the money has always truncated once, after the sum).
+  const empty: StoredLineShape =
+    upb > 1
+      ? { qty: 0, boxes: 0, pieces: 0, unitsPerBox: upb }
+      : { qty: 0, boxes: null, pieces: null, unitsPerBox: null };
+  let totalPieces = 0;
+  for (const c of contributions) {
     const q = Number(c.qty);
+    if (!Number.isFinite(q) || q < 0) {
+      // a stored line's qty is never negative or NaN (numeric_not_nan_checks); refuse loudly, never drop it silently
+      throw new MergeContributionError(
+        MERGE_CONTRIBUTION_QTY_INVALID,
+        `qty ${String(c.qty)} at pack ${upb}`,
+      );
+    }
     const sellingUnit = upb > 1 && c.boxes == null && c.pieces == null;
-    return sum + (sellingUnit ? q * upb : q);
-  }, 0);
+    const r = mergeIntoStoredLine({
+      line: empty,
+      add: { qty: q },
+      bare: sellingUnit ? "sellingUnits" : "pieces",
+      output: "split",
+      livePack: upb,
+    });
+    if (r.ok) totalPieces += r.addInLineUnit;
+    else if (r.reason !== "EMPTY_ADD") {
+      // unreachable for a pack group (the empty line carries the group pack and every add is bare): fail loudly
+      throw new MergeContributionError(MERGE_CONTRIBUTION_REFUSED, `${r.reason} at pack ${upb}`);
+    }
+  }
   // Free-unit snapshots and the whole selling units they were earned at. A
   // box-split line counts its BOXES (its `qty` is pieces); every other shape
   // already stores selling units in `qty`.
