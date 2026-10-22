@@ -974,6 +974,63 @@ describe("CounterDayClose: Edit count (reopen, then close again)", () => {
     expect(await screen.findByTestId("day-close-closed")).toBeInTheDocument();
   });
 
+  // F19 (row 538): after Save count the owner is told, in place, that the count changed and what the SERVER now says the
+  // variance is; the email line repeats only what the close answer's reportSent says.
+  describe("F19: Count updated confirmation", () => {
+    const saveWith = async (reportSent: boolean | null) => {
+      closedWithQuietNextWindow();
+      post.mockImplementation((url: string) => {
+        if (url === REOPEN_URL) {
+          dayState = stateOf({
+            lastClose: snapshot({ reopenedAt: "2026-10-07T16:00:00.000Z" }),
+            salesSince: 0,
+          });
+          return Promise.resolve({ data: {} });
+        }
+        // the server's variance (-38) differs from the form's own preview (-2): the note must quote the server
+        const fixed = snapshot({ countedCash: 92, variance: -38, reportSent });
+        dayState = stateOf({ lastClose: fixed, salesSince: 0 });
+        return Promise.resolve({ data: fixed });
+      });
+      await openEdit();
+      fireEvent.click(screen.getByRole("button", { name: "Save count" }));
+      return screen.findByTestId("day-close-count-updated");
+    };
+
+    it("says the count was updated with the server's variance, and that the corrected report was emailed", async () => {
+      const note = await saveWith(true);
+      expect(note).toHaveAttribute("role", "status");
+      expect(note).toHaveTextContent("Count updated · Short $38.00");
+      expect(note).toHaveTextContent("Corrected Z report emailed to admins");
+      expect(screen.queryByTestId("day-close-form")).toBeNull();
+    });
+
+    it("says plainly when the corrected report did not go out", async () => {
+      const note = await saveWith(false);
+      expect(note).toHaveTextContent("Count updated · Short $38.00");
+      expect(note).toHaveTextContent("The corrected Z report was not sent");
+      expect(note).not.toHaveTextContent("emailed");
+    });
+
+    it("claims nothing about the email when the server did not say", async () => {
+      const note = await saveWith(null);
+      expect(note).toHaveTextContent("Count updated · Short $38.00");
+      expect(note).not.toHaveTextContent(/emailed|not sent|re-sent/i);
+    });
+
+    it("a plain first close shows no 'Count updated' note", async () => {
+      await openSheet();
+      expect(screen.queryByTestId("day-close-count-updated")).toBeNull();
+    });
+
+    it("the note goes away when the owner starts another edit", async () => {
+      await saveWith(true);
+      fireEvent.click(screen.getByRole("button", { name: "Edit count" }));
+      await screen.findByTestId("day-close-form");
+      expect(screen.queryByTestId("day-close-count-updated")).toBeNull();
+    });
+  });
+
   it("posts the reopen and the close once each even when Save count is hit twice", async () => {
     closedWithQuietNextWindow();
     serveEdit();

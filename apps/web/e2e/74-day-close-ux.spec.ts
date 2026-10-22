@@ -327,6 +327,28 @@ for (const v of VIEWS) {
       await expect(z.getByTestId("z-resend-status")).toHaveText("Z report emailed to admins");
     });
 
+    test("F19: Save count on a closed day confirms in place, from the server's answer", async ({
+      page,
+    }) => {
+      await mockCounter(page, "closed");
+      await page.route(/\/api\/v1\/orders\/counter-sale\/day-close\/dc1\/reopen$/, (r) =>
+        r.fulfill({ json: { ...SNAPSHOT, reopenedAt: "2026-10-12T02:00:00.000Z" } }),
+      );
+      await page.goto("/orders/counter-sale");
+      await page.getByRole("button", { name: "Today's sales" }).click();
+      await page
+        .getByTestId("day-close-closed")
+        .getByRole("button", { name: "Edit count" })
+        .click();
+      await page.getByRole("button", { name: "Save count" }).click();
+      // the mocked close answers variance -2.5 and reportSent true: the note quotes exactly that
+      const note = page.getByTestId("day-close-count-updated");
+      await expect(note).toContainText("Count updated · Short $2.50");
+      await expect(note).toContainText("Corrected Z report emailed to admins");
+      await expect(page.getByTestId("day-close-form")).toBeHidden();
+      await page.screenshot({ path: path.join(SHOTS, `count-updated-${v.name}.png`) });
+    });
+
     test("row 342 + 345: the reprint reads Sold <weekday, date, time>", async ({ page }) => {
       await mockCounter(page, "open");
       await page.goto("/orders/counter-sale");
