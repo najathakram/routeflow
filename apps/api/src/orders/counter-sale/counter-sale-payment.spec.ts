@@ -5,6 +5,7 @@ import { CounterSalePaymentDto } from "./counter-sale.dto";
 import {
   allocateOldestFirst,
   assertCheckNotPostdated,
+  assertCheckNotPostdatedForTenant,
   assertPaymentShape,
   planCounterPayment,
   toPrismaMethod,
@@ -199,5 +200,52 @@ describe("CounterSalePaymentDto.checkDate", () => {
     expect(await errs({ method: "CHECK", reference: "1", checkDate: 20261022 })).not.toHaveLength(
       0,
     );
+  });
+});
+
+describe("assertCheckNotPostdatedForTenant (the one tenant-today reader)", () => {
+  const prismaFor = (timezone: string | null, tenantId: string | null = "t-1") => ({
+    getTenantId: () => tenantId,
+    tenantConfig: { findUnique: jest.fn().mockResolvedValue(timezone ? { timezone } : null) },
+  });
+  // 03:00Z on the 23rd: UTC is already the 23rd, Los Angeles is still the 22nd.
+  const now = new Date("2026-10-23T03:00:00.000Z");
+
+  it("tenant today while UTC is already tomorrow: a check dated the tenant's today is ACCEPTED", async () => {
+    await expect(
+      assertCheckNotPostdatedForTenant(
+        prismaFor("America/Los_Angeles"),
+        { method: "CHECK", reference: "1", checkDate: "2026-10-22" },
+        now,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("the same tenant: the UTC day (its tomorrow) is refused", async () => {
+    await expect(
+      assertCheckNotPostdatedForTenant(
+        prismaFor("America/Los_Angeles"),
+        { method: "CHECK", reference: "1", checkDate: "2026-10-23" },
+        now,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("a tenant with no zone falls back to FALLBACK_ZONE (UTC): its UTC today is accepted, UTC tomorrow refused", async () => {
+    const noZone = prismaFor(null);
+    await expect(
+      assertCheckNotPostdatedForTenant(
+        noZone,
+        { method: "CHECK", reference: "1", checkDate: "2026-10-23" },
+        now,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertCheckNotPostdatedForTenant(
+        noZone,
+        { method: "CHECK", reference: "1", checkDate: "2026-10-24" },
+        now,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

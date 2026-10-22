@@ -1,11 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
-import {
-  calendarDateFromIso,
-  parseCalendarDay,
-  startOfCalendarDay,
-} from "../../common/calendar-date";
+import { parseCalendarDay, tenantTodayDay } from "../../common/calendar-date";
 import { resolveZone } from "../../common/tenant-time-zone";
 
 /**
@@ -73,7 +69,7 @@ export async function assertCheckNotPostdatedForTenant(
 ): Promise<void> {
   if (payment.method !== "CHECK" || payment.checkDate == null) return;
   const { zone } = await resolveZone(prisma, { tenantId: prisma.getTenantId() ?? "" });
-  assertCheckNotPostdated(payment, calendarDateFromIso(startOfCalendarDay(now, zone)));
+  assertCheckNotPostdated(payment, tenantTodayDay(zone, now));
 }
 
 /**
