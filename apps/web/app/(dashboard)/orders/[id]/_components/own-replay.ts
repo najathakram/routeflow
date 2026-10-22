@@ -66,8 +66,9 @@ function drift(
 // Keys a plain qty/price/note UPDATE or a CANCEL/DELETE carries; any other key (productId, boxes, unitLabel,
 // substituteProductId, name ...) means a shape this check does not model.
 const PLAIN = new Set(["id", "action", "qty", "unitPrice", "overrideReason", "notes"]);
-// Derived by the server from a changed qty / price: never compared on a line the edit changed.
-const DERIVED = ["boxes", "pieces", "priceType", "originalPrice"];
+// Derived by the server from a SENT price: skipped only when the edit sent unitPrice. boxes / pieces are always
+// compared: a plain qty edit never splits a loose line, so a box split there is another user's change.
+const PRICE_DERIVED = ["priceType", "originalPrice"];
 
 export function serverHoldsWhatWasSent(
   sentLines: SentLine[],
@@ -118,10 +119,11 @@ export function serverHoldsWhatWasSent(
       if (u.unitPrice != null && !eq("money", live.unitPrice, u.unitPrice)) return false;
       if (u.notes != null && text(live.notes) !== text(u.notes)) return false;
       // Fields we did not send must be what the editor opened (another user's price / note / name edit).
-      const skip = new Set<string>(["qty", ...DERIVED]);
+      const skip = new Set<string>(["qty"]);
       if (u.unitPrice != null) {
         skip.add("unitPrice");
         skip.add("overrideReason");
+        for (const f of PRICE_DERIVED) skip.add(f);
       }
       if (u.notes != null) skip.add("notes");
       if (drift(live, b, skip)) return false;

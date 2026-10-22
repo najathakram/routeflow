@@ -67,6 +67,15 @@ describe("serverHoldsWhatWasSent (row 698: only a PROVEN own replay is success)"
       ),
     ).toBe(false);
   });
+  it("false when another user made the same qty a box split, or changed the price type we did not send", () => {
+    const sent = [{ id: "a", action: "UPDATE", qty: 7 }];
+    expect(serverHoldsWhatWasSent(sent, server([L("a", 7, 2, { boxes: 1, pieces: 1 })]), A0)).toBe(
+      false,
+    );
+    expect(serverHoldsWhatWasSent(sent, server([L("a", 7, 2, { priceType: "CUSTOM" })]), A0)).toBe(
+      false,
+    );
+  });
   it("money is compared in cents: 0.01 apart is a difference", () => {
     expect(
       serverHoldsWhatWasSent(
