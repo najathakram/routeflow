@@ -125,3 +125,44 @@ describe("row 498: the InvoicePayment writer census", () => {
     }
   });
 });
+
+/**
+ * SA-837b item 2 / gate G4: the AdvancePayment writers get the same census. A new `advancePayment.create`
+ * anywhere in apps/api/src that is not listed here FAILS the build.
+ */
+const ADVANCE_WRITERS: Record<string, { creates: number; why: string }> = {
+  "customers/customers.service.ts": {
+    creates: 1,
+    why: "GUARDED: createAdvancePayment (POST /customers/:id/advance-payments) runs behind keyedPayment with and without a key (the ADVANCE_PAYMENT scope is no longer skipped), so it repeats neither an advance nor an invoice payment.",
+  },
+  "invoices/invoices.service.ts": {
+    creates: 2,
+    why: "GUARDED VIA PARENT: the standalone payment's excess advance (writeStandalonePayment, behind keyedPayment: its group check counts the advance) and recordDeliveryPaymentInTx's at-door over-collection (a driver's cash: no customer-typed reference, a server RUN:/STOP: reference).",
+  },
+};
+const ADVANCE_RE = /advancePayment\s*\.\s*(?:create|createMany|createManyAndReturn|upsert)\b/g;
+
+describe("SA-837b: the AdvancePayment writer census", () => {
+  it("lists every AdvancePayment writer in apps/api/src, with its count (a new writer fails here)", () => {
+    const actual: Record<string, number> = {};
+    for (const f of walk(SRC)) {
+      const n = (fs.readFileSync(f, "utf8").match(ADVANCE_RE) ?? []).length;
+      if (n) actual[path.relative(SRC, f)] = n;
+    }
+    const expected = Object.fromEntries(
+      Object.entries(ADVANCE_WRITERS).map(([k, v]) => [k, v.creates]),
+    );
+    expect(Object.fromEntries(Object.entries(actual).sort())).toEqual(
+      Object.fromEntries(Object.entries(expected).sort()),
+    );
+  });
+
+  it("the advance writer reaches the guard: keyedPayment no longer skips ADVANCE_PAYMENT", () => {
+    expect(read("invoices/payment-idempotency.ts")).not.toMatch(
+      /scope === "ADVANCE_PAYMENT"\) return write/,
+    );
+    expect(read("customers/customers.service.ts")).toMatch(
+      /keyedPayment\(this\.prisma, advancePaymentKey/,
+    );
+  });
+});

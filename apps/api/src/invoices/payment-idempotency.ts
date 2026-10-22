@@ -1,5 +1,6 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { createHash, randomUUID } from "crypto";
+import type { PaymentMethod } from "@prisma/client";
 import { toCents } from "@routeflow/pricing";
 import { IDEMPOTENCY_KEY_CONFLICT } from "../orders/merge-idempotency";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -69,7 +70,7 @@ export interface PaymentKeyRequest {
   customerId?: string | null;
   invoiceId?: string | null;
   amount: number;
-  method: string;
+  method: PaymentMethod;
   paidAt?: string | null;
   reference?: string | null;
   allocations?: ReadonlyArray<{ invoiceId: string; amount: number }>;
@@ -327,7 +328,6 @@ export function keyedPayment<T, O extends KeyedWriterOpts<T>>(
   write: (opts: O | undefined) => Promise<T>,
 ): Promise<T> {
   return withPaymentKey<T>(deps, opts?.idempotencyKey, keyed.scope, keyed.req, (hooks) => {
-    if (keyed.scope === "ADVANCE_PAYMENT") return write(withKeyHooks<T, O>(opts, hooks)); // not an invoice payment
     const guard = createPaymentRefGuard({
       method: keyed.req.method,
       reference: keyed.req.reference,
@@ -349,7 +349,9 @@ export function keyedPayment<T, O extends KeyedWriterOpts<T>>(
         const ids: string[] =
           keyed.scope === "STANDALONE_PAYMENT"
             ? (r?.payments ?? []).map((p: any) => p?.id)
-            : [r?.createdPaymentId];
+            : keyed.scope === "ADVANCE_PAYMENT"
+              ? [r?.id]
+              : [r?.createdPaymentId];
         await guard.recorded(tx, ids, first);
         await hooks?.settle(tx, result, refs);
       },
@@ -375,7 +377,7 @@ export const standalonePaymentKey = (
   dto: SettlementFields & {
     customerId: string;
     totalAmount: number;
-    method: string;
+    method: PaymentMethod;
     paidAt?: string;
     reference?: string;
     allocations: ReadonlyArray<{ invoiceId: string; amount: number }>;
@@ -395,7 +397,12 @@ export const standalonePaymentKey = (
 
 export const invoicePaymentKey = (
   invoiceId: string,
-  dto: SettlementFields & { amount: number; method: string; paidAt?: string; reference?: string },
+  dto: SettlementFields & {
+    amount: number;
+    method: PaymentMethod;
+    paidAt?: string;
+    reference?: string;
+  },
 ): KeyedPayment => ({
   scope: "INVOICE_PAYMENT",
   req: {
@@ -410,7 +417,7 @@ export const invoicePaymentKey = (
 
 export const advancePaymentKey = (
   customerId: string,
-  dto: { amount: number; method: string; receivedAt?: string; reference?: string },
+  dto: { amount: number; method: PaymentMethod; receivedAt?: string; reference?: string },
 ): KeyedPayment => ({
   scope: "ADVANCE_PAYMENT",
   req: {

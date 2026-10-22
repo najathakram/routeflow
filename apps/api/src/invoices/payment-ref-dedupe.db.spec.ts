@@ -288,8 +288,8 @@ describeDb("row 498 payment reference dedupe — real Postgres", () => {
 
   it("D4 the shared walk-in identity is never deduped", async () => {
     const s = await seed("d4", { walkIn: true });
-    await s.asTenant(() => invoicesA.recordPayment(s.invs[0].id, s.pay({ method: "CARD" })));
-    await s.asTenant(() => invoicesA.recordPayment(s.invs[1].id, s.pay({ method: "CARD" })));
+    await s.asTenant(() => invoicesA.recordPayment(s.invs[0].id, s.pay({ method: "CREDIT_CARD" })));
+    await s.asTenant(() => invoicesA.recordPayment(s.invs[1].id, s.pay({ method: "CREDIT_CARD" })));
     expect(await s.payments()).toHaveLength(2);
   }, 60_000);
 

@@ -1,6 +1,6 @@
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
-import { PaymentStatus } from "@prisma/client";
-import { roundMoney, toCents } from "@routeflow/pricing";
+import type { PaymentMethod } from "@prisma/client";
+import { DEDUPE_STATUSES, roundMoney, toCents } from "@routeflow/pricing";
 import type { DuplicatePaymentRefBody } from "@routeflow/types";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -121,7 +121,8 @@ export interface PaymentRefOpts {
 }
 
 export interface PaymentRefInput {
-  method: string;
+  /** The STORED Prisma method (a till's "CARD" is mapped to CREDIT_CARD by the caller, `toPrismaMethod`). */
+  method: PaymentMethod;
   reference?: string | null;
   /** The payment's amount (a standalone payment: its total, excess included). */
   amount: number;
@@ -136,7 +137,8 @@ interface Existing {
   paymentNumber: string | null;
   paidAt: Date;
   cents: number;
-  invoiceId: string;
+  /** Null for an AdvancePayment. */
+  invoiceId: string | null;
   invoiceNumber: string | null;
   paymentGroupId: string | null;
 }
@@ -168,6 +170,22 @@ export interface PaymentRefGuard {
     paymentIds: ReadonlyArray<string | null | undefined>,
     invoiceId: string | null,
   ): Promise<void>;
+}
+
+/** The earliest row of a payment event, as the `Existing` the refusal names. */
+function existingOf(hit: { rows: any[]; cents: number }): Existing {
+  const first = [...hit.rows].sort(
+    (a, b) => new Date(a.paidAt).getTime() - new Date(b.paidAt).getTime() || (a.id < b.id ? -1 : 1),
+  )[0];
+  return {
+    id: first.id,
+    paymentNumber: first.paymentNumber ?? null,
+    paidAt: new Date(first.paidAt),
+    cents: hit.cents,
+    invoiceId: first.invoiceId,
+    invoiceNumber: first.invoice?.invoiceNumber ?? null,
+    paymentGroupId: first.paymentGroupId ?? null,
+  };
 }
 
 export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
@@ -211,7 +229,7 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
         where: {
           method: p.method,
           // every non-void payment with this ref is a duplicate, in-flight DRAFT/PENDING included
-          status: { in: [PaymentStatus.PAID, PaymentStatus.PENDING, PaymentStatus.DRAFT] },
+          status: { in: [...DEDUPE_STATUSES] },
           reference: { not: null },
           invoice: { customerId },
           // M4: a duplicate is the same amount (one row) or a member of a payment group (summed below); never every
@@ -240,7 +258,6 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
           !(groupId && r.paymentGroupId === groupId) &&
           normalizePaymentRef(r.reference) === norm,
       );
-      if (others.length === 0) return;
       if (captured) {
         // m3: the SAME charge is already on the ledger when ANY candidate carries its exact reference, whatever amount
         // or event the hit below picks; the caller then settles idempotently instead of recording it twice.
@@ -277,25 +294,43 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
         });
         if (hit) hit.cents = target; // the named amount is the whole payment, excess included
       }
-      if (!hit) return;
+      let existing: Existing | null = hit ? existingOf(hit) : null;
+      if (!existing) {
+        // SA-837b item 2 / G4: an AdvancePayment (no status: every row is live) with the same method, normalised
+        // reference and amount is a duplicate too, in BOTH directions with the invoice payments above.
+        const advances: any[] = await tx.advancePayment.findMany({
+          where: {
+            customerId,
+            method: p.method,
+            reference: { not: null },
+            amount: roundMoney(p.amount),
+          },
+          select: { id: true, amount: true, reference: true, receivedAt: true },
+        });
+        const adv = advances.find(
+          (a) =>
+            !attempt?.ids.has(a.id) &&
+            toCents(Number(a.amount)) === target &&
+            normalizePaymentRef(a.reference) === norm,
+        );
+        if (adv) {
+          existing = {
+            id: adv.id,
+            paymentNumber: null,
+            paidAt: new Date(adv.receivedAt),
+            cents: toCents(Number(adv.amount)),
+            invoiceId: null,
+            invoiceNumber: null,
+            paymentGroupId: null,
+          };
+        }
+      }
+      if (!existing) return;
       const customer = await tx.customer.findUnique({
         where: { id: customerId },
         select: { isWalkIn: true },
       });
       if (customer?.isWalkIn) return; // the shared walk-in identity is never deduped
-      const first = [...hit.rows].sort(
-        (a, b) =>
-          new Date(a.paidAt).getTime() - new Date(b.paidAt).getTime() || (a.id < b.id ? -1 : 1),
-      )[0];
-      const existing: Existing = {
-        id: first.id,
-        paymentNumber: first.paymentNumber ?? null,
-        paidAt: new Date(first.paidAt),
-        cents: hit.cents,
-        invoiceId: first.invoiceId,
-        invoiceNumber: first.invoice?.invoiceNumber ?? null,
-        paymentGroupId: first.paymentGroupId ?? null,
-      };
       if (captured) {
         // SA-837b: money already captured is never refused: a repeat that is not the same charge (m3, above) is
         // recorded and flagged.
@@ -344,12 +379,14 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
       if (!anyway) return;
       const actor = p.opts?.refDedupe?.actor ?? null;
       const forInvoice = invoiceId ?? anyway.invoiceId;
+      // An advance duplicate has no invoice: the audit row then names the new advance itself.
+      const entityId = forInvoice ?? paymentIds.find((id) => !!id) ?? anyway.id;
       await tx.auditLog.create({
         data: {
           userId: actor,
           action: AUDIT_ACTIONS.PAYMENT_REF_RECORDED_ANYWAY,
-          entityType: "invoice",
-          entityId: forInvoice,
+          entityType: forInvoice ? "invoice" : "advancePayment",
+          entityId,
           meta: {
             actor,
             invoiceId: forInvoice,
@@ -374,8 +411,10 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
  * be taken, is a retryable 503, never a 500.
  *
  * KNOWN, BOUNDED (review M3): the lock is held across the writer, which may itself wait on the counter close lock or an
- * Invoice row. A wait that Postgres can see as a cycle is aborted by the deadlock detector and retried here; a plain long
- * wait (an office payment behind a close in progress) ends at the 10 s lock wait with the retryable 503.
+ * Invoice row. A wait cycle made only of row/transaction locks is aborted by the deadlock detector (40P01) and retried
+ * here. A cycle through a pending exclusive day-close is NOT seen by the detector (this lock is a session advisory lock
+ * taken on another connection): it ends at the 10 s lock wait with the retryable 503, the payment is not recorded at
+ * the till, and nothing is written.
  */
 export async function withPaymentRefLock<T>(
   deps: { getTenantId(): string | null },

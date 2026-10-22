@@ -13,7 +13,8 @@ export interface DuplicatePaymentRefExisting {
   paymentNumber: string | null;
   paidAt: string;
   amount: number;
-  invoiceId: string;
+  /** Null when the existing payment is an AdvancePayment (it belongs to no invoice). */
+  invoiceId: string | null;
   invoiceNumber: string | null;
 }
 

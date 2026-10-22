@@ -177,7 +177,7 @@ export class AllocationDto {
 export class StandalonePaymentDto {
   @IsString() @IsNotEmpty() customerId: string;
   @IsNumber() @Min(0.01) totalAmount: number;
-  @IsEnum(PaymentMethod) method: string;
+  @IsEnum(PaymentMethod) method: PaymentMethod;
   @IsOptional() @IsDateString() paidAt?: string;
   /** Date the money lands in the bank; applied to every row of the allocation group. */
   @IsOptional() @IsDateString() settledAt?: string | null;

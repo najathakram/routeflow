@@ -1,3 +1,4 @@
+import type { PaymentMethod } from "@prisma/client";
 // Prevent Jest from traversing ESM-only dependencies (mirrors invoices.service.spec.ts).
 jest.mock("./invoice-pdf.service", () => ({
   InvoicePdfService: jest.fn().mockImplementation(() => ({
@@ -487,7 +488,7 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
   });
 
   describe("POST /customers/:id/advance-payments (createAdvancePayment)", () => {
-    const dto = (amount = 75) => ({ amount, method: "CASH", reference: "adv 1" });
+    const dto = (amount = 75) => ({ amount, method: "CASH" as PaymentMethod, reference: "adv 1" });
     const call = (amount: number, key?: string) =>
       key
         ? (customers as any).createAdvancePayment("cust-1", dto(amount), { idempotencyKey: key })

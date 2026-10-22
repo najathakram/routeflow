@@ -14,7 +14,8 @@ import {
   Optional,
 } from "@nestjs/common";
 import * as crypto from "crypto";
-import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
+import { BuyerMergeRequestStatus, MergeInitiator, type PaymentMethod } from "@prisma/client";
+import type { PaymentRefOpts } from "../invoices/payment-ref-dedupe";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
@@ -931,12 +932,12 @@ export class CustomersService {
     customerId: string,
     dto: {
       amount: number;
-      method: string;
+      method: PaymentMethod;
       reference?: string;
       notes?: string;
       receivedAt?: string;
     },
-    opts?: KeyedWriterOpts<any>,
+    opts?: KeyedWriterOpts<any> & PaymentRefOpts,
   ) {
     await this.findCustomerOrThrow(customerId);
     if (roundMoney(dto.amount) <= 0) throw new BadRequestException("Amount must be greater than 0");
@@ -944,14 +945,14 @@ export class CustomersService {
       customerId,
       amount: roundMoney(dto.amount),
       balance: roundMoney(dto.amount), // initial balance equals amount
-      method: dto.method as any,
+      method: dto.method,
       reference: dto.reference,
       notes: dto.notes,
       receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
     };
-    // SA-824: no Idempotency-Key = the single create of today; a key claims as the FIRST statement of
-    // one transaction with the create and its settle, or replays the stored advance.
-    if (!opts?.idempotencyKey) return this.prisma.forTenant().advancePayment.create({ data });
+    // SA-824: a key claims as the FIRST statement of one transaction with the create and its settle, or replays the
+    // stored advance. SA-837b item 2 / G4: with or without a key the create runs behind the ONE payment-reference
+    // predicate and lock (keyedPayment), so an advance repeats neither an advance nor an invoice payment.
     return keyedPayment(this.prisma, advancePaymentKey(customerId, dto), opts, (o) =>
       this.prisma.tenantTransaction(async (tx) => {
         await o?.claim?.(tx);
