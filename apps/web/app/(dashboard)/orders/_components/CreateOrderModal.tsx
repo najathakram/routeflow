@@ -1697,7 +1697,8 @@ export function CreateOrderModal({
     if (!lineItems.some(isPendingDefaultUnit)) return doSubmitOrder(data, options, lineItems);
     if (resolvingRef.current) return; // a double click while the units load must not submit twice
     resolvingRef.current = true;
-    void resolveDefaultUnits(lineItems)
+    // Returned so a Sell-anyway retry keeps its ack until the units have loaded and the request has been built.
+    return resolveDefaultUnits(lineItems)
       .then(({ lines, blocked, folds }) => {
         if (blocked.length) {
           setMergePrompt(null);
@@ -1836,9 +1837,12 @@ export function CreateOrderModal({
     lastSubmitRef.current = { data, options, cartJson: draftPayloadJson };
     // SA-817 A6: the key is DURABLE before it is sent - the local copy (with `_submitKey`) is written and the server copy saved
     // (short budget, never gating the order) before the POST, so a lost response followed by a reload can replay the same key.
+    // Row 510: the Sell-anyway ack is read NOW, synchronously, not inside `send`: the durable write below awaits, and the
+    // retry has returned (so the hook has dropped the ack) before a deferred `attach` would run.
+    const sentBody = rw.attach(payload);
     const send = () =>
       createOrder.mutate(
-        { ...rw.attach(payload), idempotencyKey: attemptKey },
+        { ...sentBody, idempotencyKey: attemptKey },
         {
           onSuccess: (created: any) => {
             submitKey.settle("success");
@@ -1915,7 +1919,8 @@ export function CreateOrderModal({
             }
             if (
               rw.handle(err, () => {
-                submitOrder(data, options); // its boolean result is the submit's, not the retry's
+                const r = submitOrder(data, options); // a boolean is the submit's result, not the retry's
+                return typeof r === "object" ? r : undefined; // the default-unit path: hold the ack until it has built
               })
             )
               return; // row 510
