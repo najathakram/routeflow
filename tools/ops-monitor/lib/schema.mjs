@@ -152,6 +152,20 @@ export const KINDS = {
     },
   },
   note: { needsItem: "optional", data: { text: [str(1000), true] } },
+  // Session heartbeat from a machine's status file (hooks -> `rf status-sync`). Never touches items.
+  heartbeat: {
+    needsItem: "none",
+    data: {
+      session: [str(80), true],
+      machine: [optStr(60), false],
+      title: [optStr(200), false],
+      branch: [optStr(200), false],
+      pr: [(v) => v === undefined || (Number.isInteger(v) && v > 0), false],
+      head: [(v) => v === undefined || (typeof v === "string" && SHA_RE.test(v)), false],
+      lastActiveAt: [(v) => typeof v === "string" && ISO_RE.test(v), true],
+      last: [optStr(300), false],
+    },
+  },
   // Moves an item to a free id (the monitor's own items yield plain numbers to the register).
   "item.rename": {
     needsItem: "required",
