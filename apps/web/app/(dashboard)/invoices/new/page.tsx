@@ -1945,6 +1945,8 @@ export default function NewInvoicePage() {
   ) {
     // Row 510: a resubmit after the restriction warning carries the ack, so it is a new payload (a new key).
     const body = rw.attach(saleDto) as CreateSaleDto & { paymentTermsLabel?: string };
+    // Try again after an unknown outcome must resend exactly what was sent (the ack included), under the held key.
+    if (lastSaleRef.current) lastSaleRef.current = { ...lastSaleRef.current, saleDto: body };
     const idempotencyKey = saleKey.keyFor(JSON.stringify(body));
     createSale.mutate(
       { ...body, idempotencyKey },

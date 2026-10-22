@@ -113,6 +113,10 @@ describe("the invoice composer's sale path uses it", () => {
     expect(src).toMatch(/saleKey\.settle\(\{ ok: false, error: err \}\)/);
   });
 
+  it("Try again resends the exact body that was SENT (ack included), not the pre-ack dto", () => {
+    expect(src).toMatch(/lastSaleRef\.current = body;/);
+  });
+
   it("useCreateSale sends it as the idempotency-key header, not in the body", () => {
     expect(api).toMatch(
       /"\/orders\/sell",\s*dto,\s*idempotencyKey \? \{ headers: \{ "idempotency-key": idempotencyKey \} \}/,
@@ -154,7 +158,6 @@ describe("the unknown-outcome lock (state machine)", () => {
     h.settle({ ok: true });
     expect(h.unknown()).toBeNull();
     h.keyFor("cart-A");
-    h.settle({ ok: false, error: apiError(500) });
     h.settle({ ok: false, error: apiError(400, { message: "no" }) });
     expect(h.unknown()).toBeNull();
   });
@@ -175,6 +178,41 @@ describe("the unknown-outcome lock (state machine)", () => {
     h.settle({ ok: false, error: apiError(500) });
     expect(h.keyFor("cart-A")).toBe(first);
     expect(h.unknown()).not.toBeNull();
+  });
+});
+
+describe("a refusal AFTER an unknown outcome keeps the key (row 510 double-sale guard)", () => {
+  const warning = apiError(409, { code: "RESTRICTION_WARNING" });
+
+  it.each([
+    ["a timeout", new Error("timeout of 30000ms exceeded")],
+    ["a 5xx", apiError(503)],
+  ])("%s then a 409 refusal under the same key does not drop the key or the lock", (_n, first) => {
+    const h = holder();
+    const k = h.keyFor("cart-A");
+    h.settle({ ok: false, error: first });
+    h.settle({ ok: false, error: warning });
+    expect(h.peek()).toBe(k);
+    expect(h.unknown()).not.toBeNull();
+    expect(h.keyFor("cart-A")).toBe(k);
+  });
+
+  it("a refusal with NO earlier unknown outcome still clears (unchanged)", () => {
+    const h = holder();
+    h.keyFor("cart-A");
+    h.settle({ ok: false, error: warning });
+    expect(h.peek()).toBeNull();
+    expect(h.unknown()).toBeNull();
+  });
+
+  it("a success after the unknown outcome still clears", () => {
+    const h = holder();
+    h.keyFor("cart-A");
+    h.settle({ ok: false, error: apiError(500) });
+    h.settle({ ok: false, error: warning });
+    h.settle({ ok: true });
+    expect(h.peek()).toBeNull();
+    expect(h.unknown()).toBeNull();
   });
 });
 

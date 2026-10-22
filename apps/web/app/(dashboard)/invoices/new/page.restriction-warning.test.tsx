@@ -150,6 +150,22 @@ describe("row 510 - New invoice page", () => {
     expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ variant: "error" }));
   });
 
+  it("Try again after a timed-out Sell anyway resends the ACKED body under the SAME key", async () => {
+    const user = await openForm(/new sale/i);
+    await user.click(screen.getByRole("button", { name: /create sale|save draft invoice/i }));
+    await waitFor(() => expect(saleMutate).toHaveBeenCalledTimes(1));
+    act(() => saleMutate.mock.calls[0][1].onError(warning409));
+    await sellAnyway(user);
+    expect(saleMutate).toHaveBeenCalledTimes(2);
+    const acked = saleMutate.mock.calls[1][0];
+    expect(acked.warningHash).toBe(ack.warningHash);
+    act(() => saleMutate.mock.calls[1][1].onError(new Error("timeout of 30000ms exceeded")));
+    await user.click(await screen.findByRole("button", { name: "Try again" }));
+    expect(saleMutate).toHaveBeenCalledTimes(3);
+    expect(saleMutate.mock.calls[2][0]).toEqual(acked);
+    expect(saleMutate.mock.calls[2][0].idempotencyKey).toBe(acked.idempotencyKey);
+  });
+
   it("Go back sends nothing more and raises no error toast", async () => {
     const user = await openForm(/other charge/i);
     await user.click(screen.getByRole("button", { name: /save and send/i }));

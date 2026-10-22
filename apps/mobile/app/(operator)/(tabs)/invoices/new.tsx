@@ -1350,6 +1350,8 @@ function InvoiceComposer({
   const postSale = (saleDto: CreateSaleDto) => {
     // Row 510: a resubmit after the restriction warning carries the ack, so it is a new payload (a new key).
     const body = rw.attach(saleDto) as CreateSaleDto;
+    // Try again after an unknown outcome must resend exactly what was sent (the ack included), under the held key.
+    lastSaleRef.current = body;
     const idempotencyKey = saleKey.keyFor(JSON.stringify(body));
     createSaleMut.mutate(
       { ...body, idempotencyKey },
