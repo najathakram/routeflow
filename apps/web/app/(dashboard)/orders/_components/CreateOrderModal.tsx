@@ -258,6 +258,9 @@ export interface CreateOrderModalProps {
   onViewOrder?: (orderId: string) => void;
 }
 
+/** F13 (row 718): the local copy for a requested delivery day before the browser's today. */
+const DELIVERY_DATE_PAST_COPY = "That day has passed. Pick today or a later date.";
+
 type SubmitOptions = { mergeChoice?: "merge" | "separate"; asDraft?: boolean };
 
 /** A 4xx the modal resolves with the operator and re-submits itself (merge prompt, license capture): the SAME attempt. */
@@ -1941,6 +1944,16 @@ export function CreateOrderModal({
               setMergePrompt(body.activeOrder as ActiveOrderSummary);
               return;
             }
+            // Row 718: the tenant's day called the date past. The refusal is on the date field (above); a merge-or-separate
+            // prompt that led here must not stay over it, so close it (as its onClose does) and put focus on the field.
+            if (body?.code === API_ERROR_CODES.DELIVERY_DATE_IN_PAST) {
+              setMergePrompt(null);
+              pendingFormValuesRef.current = null;
+              pendingAsDraftRef.current = false;
+              // After the prompt's dialog has unmounted: it traps focus while open and restores it to its opener on close.
+              window.setTimeout(() => deliveryDateRef.current?.focus(), 50);
+              return;
+            }
             const restricted = parseSellingRestricted(err);
             if (restricted) {
               setRestrictedBlock(restricted);
@@ -2029,6 +2042,20 @@ export function CreateOrderModal({
     submitOrder(data);
   };
 
+  // Row 718: the server measures the day on the TENANT's calendar, so a browser on another day can pass the local check
+  // and still get 400 DELIVERY_DATE_IN_PAST. The refusal goes next to the date field, worded from the code and the
+  // tenant's `today` it carries (never the raw server message, B986); editing the date clears it.
+  const deliveryDateRefusal: string | null = (() => {
+    const body = (
+      createOrder.error as { response?: { data?: { code?: unknown; today?: unknown } } } | null
+    )?.response?.data;
+    if (body?.code !== API_ERROR_CODES.DELIVERY_DATE_IN_PAST) return null;
+    return typeof body.today === "string" && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(body.today)
+      ? `That day has passed (today is ${body.today} for this business). Pick today or a later date.`
+      : DELIVERY_DATE_PAST_COPY;
+  })();
+  const deliveryDateError = deliveryDatePast ? DELIVERY_DATE_PAST_COPY : deliveryDateRefusal;
+
   // Extract the API's error message from Axios error structure
   const apiError: string | null = (() => {
     const err = createOrder.error as {
@@ -2039,6 +2066,8 @@ export function CreateOrderModal({
     // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
     // admin-written reason) and outlive the dialog's OK.
     if (parseSellingRestricted(err)) return null;
+    // Row 718: the server's past-delivery-day refusal sits on the date field, not in this banner.
+    if (deliveryDateRefusal) return null;
     // B986-7 (Opus): a RECOGNISED refusal (a coded one, a stock shortfall, a credit limit...) is fixed copy; an UNCODED one keeps
     // today's server sentence, which says what to fix (B991 / B987-E mint the codes + fields, then this read goes).
     return (
@@ -2490,19 +2519,26 @@ export function CreateOrderModal({
                   type="date"
                   min={deliveryDateMin}
                   value={requestedDeliveryDate}
-                  onChange={(e) => setRequestedDeliveryDate(e.target.value)}
-                  aria-invalid={deliveryDatePast || undefined}
-                  aria-describedby={deliveryDatePast ? "delivery-date-error" : undefined}
+                  onChange={(e) => {
+                    setRequestedDeliveryDate(e.target.value);
+                    if (deliveryDateRefusal) createOrder.reset();
+                  }}
+                  aria-invalid={deliveryDateError ? true : undefined}
+                  aria-describedby={deliveryDateError ? "delivery-date-error" : undefined}
                   className={cn(
                     "h-10 w-full rounded border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2",
-                    deliveryDatePast
-                      ? "border-amber-500 focus:ring-amber-500"
+                    deliveryDateError
+                      ? "border-danger focus:ring-danger"
                       : "border-surface-border focus:ring-brand-500",
                   )}
                 />
-                {deliveryDatePast && (
-                  <p id="delivery-date-error" className="text-xs font-medium text-amber-700">
-                    That day has passed. Pick today or a later date.
+                {deliveryDateError && (
+                  <p
+                    id="delivery-date-error"
+                    role="alert"
+                    className="text-xs font-medium text-danger"
+                  >
+                    {deliveryDateError}
                   </p>
                 )}
               </div>
