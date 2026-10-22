@@ -300,6 +300,35 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     ]);
   });
 
+  it("row 727: a box-unaware line sold as a 12-pack (own snapshot 12), product now a 6-pack, + a 6-pack box is refused 409, never restamped at 6", async () => {
+    const activeOrder = {
+      id: "order-active-repack",
+      customerId: MOCK_CTX.customerId,
+      lineItems: [
+        {
+          id: "li-own-12",
+          productId: "prod-boxed",
+          qty: 2,
+          boxes: null,
+          pieces: null,
+          unitsPerBox: 12,
+          unitPrice: 36.0,
+          name: null,
+        },
+      ],
+    };
+    ordersService.findActiveOrder.mockResolvedValue(activeOrder);
+    prisma.forTenant().product.findMany.mockResolvedValue([{ id: "prod-boxed", unitsPerBox: 6 }]);
+
+    const dto = { items: [{ productId: "prod-boxed", qty: 6, boxes: 1, pieces: 0 }] };
+
+    // the stored line normalizes at its OWN 12 (row 727), so the live-6 box is a pack the merge cannot reconcile
+    await expect(controller.createOrder(dto as any, MOCK_CTX as any)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "MERGE_PACK_MISMATCH" }),
+    });
+    expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
+  });
+
   it("REG-B47 (T14 companion): a BARE-qty incoming add against a box-SPLIT stored line expands to boxes — 2 boxes + 2 = {qty:48, boxes:4}, never {qty:26, boxes:2, pieces:2}", async () => {
     // The other stored shape. A box-split line's fold accumulator is in PIECES, so
     // the bare buyer qty (SELLING UNITS) does NOT agree with it — the incoming side

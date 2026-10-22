@@ -283,6 +283,25 @@ describe("merge-items — box-unaware snapshot normalization (T-B47 / REG-B47)",
  * loose pieces and under-bills by ~1/unitsPerBox, so the incoming side is expanded
  * instead. Oracles hand-derived: 2 stored boxes + a bare incoming 2 IS 4 boxes.
  */
+describe("merge-items — row 727: a box-unaware line keeps its OWN pack when normalized", () => {
+  it("a box-unaware 2-box line sold as a 12-pack (own snapshot 12), product now a 6-pack, normalizes at 12: 24 pieces, never 12 at 6", () => {
+    const lines: MergeLineSnapshot[] = [
+      { productId: "prod-1", qty: 2, boxes: null, pieces: null, unitsPerBox: 12, unitPrice: 36 },
+    ];
+    const [line] = normalizeBoxUnawareSnapshots(lines, new Map([["prod-1", 6]]));
+    // the line's own snapshot is its pack (resolveLinePack / SA-104a(4)); the live pack is only for a line with none
+    expect(line).toMatchObject({ qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 });
+  });
+
+  it("a box-unaware line with NO own pack still takes the live one (unchanged)", () => {
+    const lines: MergeLineSnapshot[] = [
+      { productId: "prod-1", qty: 2, boxes: null, pieces: null, unitsPerBox: null, unitPrice: 36 },
+    ];
+    const [line] = normalizeBoxUnawareSnapshots(lines, new Map([["prod-1", 6]]));
+    expect(line).toMatchObject({ qty: 12, boxes: 2, pieces: 0, unitsPerBox: 6 });
+  });
+});
+
 describe("merge-items — bare incoming selling-unit expansion (T-B47 / REG-B47)", () => {
   const BOX_SPLIT_LINE: MergeLineSnapshot = {
     productId: "prod-4",
