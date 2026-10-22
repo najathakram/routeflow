@@ -601,6 +601,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     let viewsTimer = null;
     let snapTimer = null;
     let stopRegisterSync = () => {};
+    let stopStatusSync = () => {};
     let lastViewsHash = null;
     let collector = null;
     const rebuild = () => {
@@ -720,6 +721,37 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     }
     collector.start();
     if (shouldRunRegisterSync(opts)) {
+      // Lane status files -> heartbeat events every 2 min; logs only when something was appended.
+      const { runStatusSync } = await import("./lib/status-sync.mjs");
+      let lastStatusNote = "";
+      let statusBusyRuns = 0;
+      stopStatusSync = startRegisterSync({
+        run: async () => {
+          const res = await runStatusSync({
+            dir: specs,
+            home: cfg.opsHome(env),
+            env,
+            lockWaitMs: REGISTER_SYNC_LOCK_WAIT_MS,
+          });
+          statusBusyRuns = res?.ran === false && res.reason === "busy" ? statusBusyRuns + 1 : 0;
+          const step = registerSyncLog(lastStatusNote, res, { busyRuns: statusBusyRuns });
+          lastStatusNote = step.note;
+          if (step.log)
+            console.error(
+              `[ops-monitor] ${step.log
+                .replace("register sync", "status sync")
+                .replace("register and events agree", "no heartbeat changes")}`,
+            );
+          if (res?.capped)
+            console.error(`[ops-monitor] status sync capped: ${res.capped} left for the next pass`);
+          return res;
+        },
+        onDone: (res) =>
+          console.error(`[ops-monitor] status sync appended ${res.appended} heartbeat(s)`),
+        log: (m) => console.error(`[ops-monitor] ${m.replace("register sync", "status sync")}`),
+        firstDelayMs: 30_000,
+        intervalMs: 120_000,
+      });
       const { runSync } = await import("./lib/sync.mjs");
       const { loadBugIds } = await import("./lib/store.mjs");
       let lastRegisterNote = "";
@@ -756,6 +788,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     stopCollector = () => {
       collector.stop();
       stopRegisterSync();
+      stopStatusSync();
       if (viewsTimer) clearTimeout(viewsTimer);
       if (snapTimer) clearTimeout(snapTimer);
     };
