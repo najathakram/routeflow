@@ -3,6 +3,14 @@ import { BaseExceptionFilter } from "@nestjs/core";
 import * as Sentry from "@sentry/node";
 
 /**
+ * Payment Idempotency-Keys are secrets-adjacent identifiers: the `path` tag keeps the shape of a `by-key`
+ * route, never the key (SA-824 review finding 6). The query string goes too.
+ */
+export function redactKeyPath(url: string): string {
+  return url.split("?")[0].replace(/(\/by-key\/)[^/]+/g, "$1:key");
+}
+
+/**
  * Reports unexpected (non-HttpException, or 5xx) errors to Sentry with the
  * tenant tagged, then defers to Nest's default handling. Inert when Sentry
  * is disabled (capture becomes a no-op).
@@ -20,7 +28,7 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
           scope.setTag("tenant", user.tenantSlug ?? user.tenantId!);
         }
         if (user?.sub) scope.setUser({ id: user.sub, username: user.username });
-        scope.setTag("path", req?.originalUrl ?? req?.url ?? "");
+        scope.setTag("path", redactKeyPath(String(req?.originalUrl ?? req?.url ?? "")));
         Sentry.captureException(exception);
       });
     }
