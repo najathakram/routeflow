@@ -40,6 +40,7 @@ import {
   allocateOldestFirst,
   assertPaymentShape,
   assertWalkInTenderCoversTotal,
+  counterCreditPaidNow,
   type CounterPaymentMethod,
   planCounterPayment,
   toPrismaMethod,
@@ -154,6 +155,9 @@ export class CounterSaleService {
         beforeWrite: walkIn
           ? ({ total }) => assertWalkInTenderCoversTotal(dto.payment, total)
           : undefined,
+        // S1 (C42): the credit gate counts only what stays owed after this tender (cash/card paid now);
+        // a pending check and ON_ACCOUNT count 0. The total is create()'s own, so this is a function of it.
+        creditPaidNow: (total) => counterCreditPaidNow(dto.payment, total),
         // The walk-in has no mailbox: no INVOICE_SENT message (never sendEmail for them either).
         suppressInvoiceNotify: walkIn || undefined,
         onReplay: (existing) => {

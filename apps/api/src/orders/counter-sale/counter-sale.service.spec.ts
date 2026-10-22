@@ -1611,3 +1611,43 @@ describe("CounterSaleService.ring", () => {
     });
   });
 });
+
+describe("CounterSaleService.ring: S1 credit gate sees only what stays owed", () => {
+  it("hands createSale a creditPaidNow that clears CASH/CARD at the server total and nothing for CHECK/ON_ACCOUNT", async () => {
+    const paidNow = async (payment: any) => {
+      const prisma = createMockPrisma();
+      const createSale = jest.fn(async () => ({ id: "inv-1", orderId: "ord-1" }));
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([{ id: "p1" }]);
+      prisma.order.findFirst.mockResolvedValue({ id: "ord-1", orderNumber: "ORD-1" });
+      prisma.invoice.findMany.mockResolvedValue([]);
+      const mod = await Test.createTestingModule({
+        providers: [
+          CounterSaleService,
+          { provide: OrdersService, useValue: { createSale } },
+          { provide: InvoicesService, useValue: { recordPayment: jest.fn() } },
+          { provide: WalkInCustomerService, useValue: {} },
+          { provide: PrismaService, useValue: prisma },
+          {
+            provide: FULFILMENT_CAPABILITY_READER,
+            useValue: { get: jest.fn().mockResolvedValue(cap("optional")) },
+          },
+          { provide: AuditService, useValue: { log: jest.fn() } },
+        ],
+      }).compile();
+      await mod
+        .get(CounterSaleService)
+        .ring({ customerId: "cust-1", items: [item], payment } as never, staff)
+        .catch(() => undefined);
+      const sale = (createSale.mock.calls[0] as any[])[2];
+      expect(typeof sale.creditPaidNow).toBe("function");
+      return sale.creditPaidNow(50) as number;
+    };
+    expect(await paidNow({ method: "CASH", amount: 50 })).toBe(50);
+    expect(await paidNow({ method: "CARD", amount: 50 })).toBe(50);
+    expect(await paidNow({ method: "CASH", amount: 20 })).toBe(20);
+    expect(await paidNow({ method: "CASH", amount: 100 })).toBe(50);
+    expect(await paidNow({ method: "CHECK", amount: 50, reference: "12" })).toBe(0);
+    expect(await paidNow({ method: "ON_ACCOUNT" })).toBe(0);
+  });
+});

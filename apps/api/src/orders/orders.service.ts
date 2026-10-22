@@ -67,7 +67,11 @@ import {
   CHANGE_WINDOW_RUN_NOT_ACTIVE,
 } from "./at-stop-conflicts";
 import { sourceLineFor } from "./source-line";
-import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-create-options";
+import {
+  assertCustomerMayNotDraft,
+  creditProjectedTotal,
+  type CreateOrderOptions,
+} from "./order-create-options";
 import { checkQtySplitConsistency, warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
 import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
 import { loadLiveUnitsPerBoxByProduct } from "./live-pack-map";
@@ -1940,7 +1944,12 @@ export class OrdersService implements OnApplicationBootstrap {
         fulfilmentKind: saleFulfilmentKind({ counterSale: options.counterSale, fulfillPath }),
       });
       // B585: credit check for a NEW order (nothing runs unless the tenant switch is set).
-      await this.creditGate({ customerId, projectedTotal: total, principal: user });
+      // S1 (C42): only what stays owed after this request's tender (the counter sale passes `creditPaidNow`).
+      await this.creditGate({
+        customerId,
+        projectedTotal: creditProjectedTotal(total, options),
+        principal: user,
+      });
     }
 
     // WS9: the oversell policy is resolved ONCE, here, before the transaction (so before any

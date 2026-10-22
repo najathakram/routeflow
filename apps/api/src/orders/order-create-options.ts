@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { roundMoney } from "@routeflow/pricing";
 import type { FulfillPath } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { SourceLines } from "./source-line";
@@ -35,6 +36,9 @@ export interface ReplayedOrder {
  *    is no override and passes. `undefined` (every other caller) and `true` change nothing.
  *  - `beforeWrite` (B1209): called with the SERVER-computed order total right after pricing and before any
  *    stock lock or transaction (never on a replay, never for a draft); a throw refuses with nothing written.
+ *  - `creditPaidNow` (S1, C42): ONLY the counter sale sets it: given the SERVER total, how much is paid at the till
+ *    by this request's tender (`clearedTenderNow`). The B585 credit gate then judges `total - paid` (what stays owed),
+ *    not the whole total. Absent (every other caller) = the whole total, unchanged.
  *  - `internalCustomerDraft` (F1 ii): INTERNAL only, never a DTO field. create() refuses a DRAFT from a CUSTOMER
  *    principal (ORDER_DRAFT_STAFF_ONLY); the one caller that drafts under the buyer pseudo-user on purpose is the
  *    not-on-truck change-request approval (a next-delivery draft), which sets this.
@@ -55,6 +59,18 @@ export interface CreateOrderOptions {
   priceEditAllowed?: boolean;
   onReplay?: (order: ReplayedOrder) => void;
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;
+  creditPaidNow?: (total: number) => number;
+}
+
+/**
+ * The amount the B585 credit gate judges for a NEW order: the server total less what this request pays
+ * at the till (S1, C42). Whole cents; the paid part is clamped to [0, total], so the projection is never
+ * negative and never above the total (a garbage `creditPaidNow` cannot loosen the gate beyond the total).
+ */
+export function creditProjectedTotal(total: number, options: CreateOrderOptions): number {
+  const paid = options.creditPaidNow?.(total) ?? 0;
+  const safePaid = Number.isFinite(paid) ? Math.min(Math.max(paid, 0), total) : 0;
+  return roundMoney(total - safePaid);
 }
 
 /**

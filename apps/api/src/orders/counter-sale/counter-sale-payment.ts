@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { roundMoney } from "@routeflow/pricing";
+import { clearedTenderNow, roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 
 /**
@@ -97,4 +97,21 @@ export function allocateOldestFirst(
     left = roundMoney(left - part);
   }
   return out;
+}
+
+/**
+ * S1 (C42): how much of the server `total` this request pays at the till, for the credit gate. The ONE
+ * pricing helper does the cents math; the one counter-specific fact is that a CARD or CHECK is never
+ * charged over the balance (`planCounterPayment` refuses it, no money is taken), so such a request
+ * clears nothing and the gate keeps the whole total.
+ */
+export function counterCreditPaidNow(payment: CounterPaymentInput, total: number): number {
+  if (
+    payment.method !== "CASH" &&
+    payment.amount != null &&
+    roundMoney(payment.amount) > roundMoney(total)
+  ) {
+    return 0;
+  }
+  return clearedTenderNow([payment], total);
 }
