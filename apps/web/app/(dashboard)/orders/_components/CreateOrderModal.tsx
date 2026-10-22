@@ -144,6 +144,7 @@ import {
   isUnknownOutcome,
   useCreateOrderSubmitKey,
 } from "./use-create-order-submit-key";
+import { CREATE_CHORD_KEYS, createChordLabel, createOrderChord } from "./use-create-order-chord";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { useOrderSuggestions } from "@/lib/api/order-suggestions";
 import { mergeOrderedIntoLine, type OrderedAdd } from "./order-again";
@@ -1237,6 +1238,11 @@ export function CreateOrderModal({
     selectedCustomer?.id,
   );
   const [suggestionsMenuOpen, setSuggestionsMenuOpen] = React.useState(false);
+  // r5 N07: which suggestion chips already have a line on the order.
+  const addedProductIds = React.useMemo(
+    () => new Set(lineItems.filter((l) => l.productId).map((l) => l.productId)),
+    [lineItems],
+  );
   const suggestionActions = useOrderSuggestionActions({
     suggestions: orderSuggestions,
     addLine: addLineItem,
@@ -2321,8 +2327,17 @@ export function CreateOrderModal({
                 lineItems.some(isPendingDefaultUnit)
               }
               aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
+              aria-keyshortcuts={CREATE_CHORD_KEYS}
             >
               {posMode ? POS_COPY.confirmAndInvoice : "Create Order"}
+              {/* r5 N04: the chord hint; desktop only (a phone has no keyboard), hidden from the accessible name (aria-keyshortcuts says it). */}
+              <kbd
+                data-testid="create-order-chord-hint"
+                aria-hidden="true"
+                className="ml-2 hidden rounded border border-current/30 px-1 font-sans text-[10px] font-medium opacity-80 md:inline"
+              >
+                {createChordLabel()}
+              </kbd>
             </WriteButton>
           </div>
         </div>
@@ -2338,6 +2353,8 @@ export function CreateOrderModal({
         }}
         noValidate
         onKeyDown={(e) => {
+          // r5 N04: Ctrl/Cmd+Enter presses Create Order (same chord as Edit Items); bare Enter below still never submits.
+          if (createOrderChord(e)) return;
           // A <textarea> (the per-line note) owns Enter for itself — a newline, never a submit.
           // Every other control keeps the no-Enter-submit behavior this form has always had.
           // A result row (button[role=option]) keeps its native Enter-to-pick (PKG-4 F09c).
@@ -2512,6 +2529,7 @@ export function CreateOrderModal({
               <OrderSuggestionsBar
                 suggestions={orderSuggestions}
                 hasLines={lineItems.length > 0}
+                addedProductIds={addedProductIds}
                 onAddProduct={suggestionActions.addProduct}
                 onOrderAgain={(order) => void suggestionActions.orderAgain(order)}
                 error={orderSuggestionsError}
@@ -2545,7 +2563,8 @@ export function CreateOrderModal({
                   // once via the detector (correct, +1) and once here, which (mis)treats it as a
                   // manually-typed SKU and applies whatever is in the Qty field.
                   if (productNav.onKeyDown(e)) return;
-                  if (e.key === "Enter" && !e.defaultPrevented) {
+                  // r5 N04: Ctrl/Cmd+Enter is the Create Order chord (the form handles it), never a search/scan Enter.
+                  if (e.key === "Enter" && !e.defaultPrevented && !e.ctrlKey && !e.metaKey) {
                     e.preventDefault();
                     e.stopPropagation();
                     handleProductSearchEnter();
@@ -2771,7 +2790,7 @@ export function CreateOrderModal({
                       placeholder="e.g. Pallet delivery surcharge"
                       className="h-9 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") {
+                        if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
                           e.preventDefault();
                           addUnlistedItem();
                         }
@@ -2789,7 +2808,7 @@ export function CreateOrderModal({
                       placeholder="0.00"
                       className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") {
+                        if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
                           e.preventDefault();
                           addUnlistedItem();
                         }
@@ -2806,7 +2825,7 @@ export function CreateOrderModal({
                       onChange={(e) => setCustomQty(e.target.value)}
                       className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") {
+                        if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
                           e.preventDefault();
                           addUnlistedItem();
                         }
