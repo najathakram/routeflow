@@ -1,14 +1,9 @@
 import { ArgumentsHost, Catch, HttpException } from "@nestjs/common";
 import { BaseExceptionFilter } from "@nestjs/core";
 import * as Sentry from "@sentry/node";
+import { redactKeyPath } from "./sentry-redact";
 
-/**
- * Payment Idempotency-Keys are secrets-adjacent identifiers: the `path` tag keeps the shape of a `by-key`
- * route, never the key (SA-824 review finding 6). The query string goes too.
- */
-export function redactKeyPath(url: string): string {
-  return url.split("?")[0].replace(/(\/by-key\/)[^/]+/g, "$1:key");
-}
+export { redactKeyPath };
 
 /**
  * Reports unexpected (non-HttpException, or 5xx) errors to Sentry with the
