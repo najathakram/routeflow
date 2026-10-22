@@ -457,7 +457,7 @@ export function CreateOrderModal({
   const promptFooterRef = React.useRef<HTMLDivElement>(null);
   const heldKeysRef = React.useRef<Set<string>>(new Set());
   const staleKeysRef = React.useRef<Set<string>>(new Set());
-  const promptOpenedAtRef = React.useRef(Number.NEGATIVE_INFINITY); // performance.now() when the prompt mounted
+  const promptOpenedAtRef = React.useRef(Number.NEGATIVE_INFINITY); // performance.now() when the prompt mounted (compared with a key event's own timeStamp)
   const mergePromptOpen = mergePrompt !== null;
   React.useEffect(() => {
     if (!isOpen) return;
@@ -468,18 +468,21 @@ export function CreateOrderModal({
     const isActivationKey = (k: string) => k === "Enter" || k === " ";
     // Post-mount guard: the pre-check mounts the prompt inside the click, so an Enter/Space pressed "at once" is a
     // FRESH keydown after the mount that the lineage cannot tell from a deliberate one. A timestamp, not a timer.
-    const inGuardWindow = () =>
-      performance.now() - promptOpenedAtRef.current < MERGE_PROMPT_KEY_GUARD_MS;
+    // Row 744: judged by the key event's OWN timeStamp (the same clock origin as the mount's performance.now()), never by a
+    // clock read while the handler runs: a press queued before the mount but handled after it (a main-thread stall) is still
+    // "before or within the window" (a negative difference is under the limit).
+    const inGuardWindow = (e: KeyboardEvent) =>
+      e.timeStamp - promptOpenedAtRef.current < MERGE_PROMPT_KEY_GUARD_MS;
     const onKeyDown = (e: KeyboardEvent) => {
       held.add(e.key);
       if (!e.repeat) stale.delete(e.key); // a new press started after the open: deliberate once the window is over
       if (!isActivationKey(e.key) || !inPrompt(e.target)) return;
-      if (inGuardWindow()) stale.add(e.key); // a press that began inside the window stays swallowed until its keyup
+      if (inGuardWindow(e)) stale.add(e.key); // a press that began inside the window stays swallowed until its keyup
       if (stale.has(e.key)) e.preventDefault();
     };
     const onKeyUp = (e: KeyboardEvent) => {
       // Space clicks on keyup: cancel it for a stale press and for any key activation inside the window.
-      if (isActivationKey(e.key) && inPrompt(e.target) && (stale.has(e.key) || inGuardWindow()))
+      if (isActivationKey(e.key) && inPrompt(e.target) && (stale.has(e.key) || inGuardWindow(e)))
         e.preventDefault();
       held.delete(e.key);
       stale.delete(e.key);
