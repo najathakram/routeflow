@@ -434,6 +434,67 @@ export function CreateOrderModal({
   const [mergePrompt, setMergePrompt] = React.useState<ActiveOrderSummary | null>(null);
   const mergeChoiceRef = React.useRef<HTMLButtonElement>(null);
   const separateChoiceRef = React.useRef<HTMLButtonElement>(null);
+  // N05: the prompt must not act on a key press that began before it opened. The 409 (or the
+  // pre-check) opens it while the operator's Enter/Space from the Create Order click is still
+  // down, N02 then focuses Merge, and that same press (auto-repeat keydown, keypress, the click the
+  // browser makes from it, or Space's keyup click) would land on it. We note which activation keys
+  // are physically held at the moment of opening ("stale") and swallow only those: until the key's
+  // keyup, or until a fresh non-repeat keydown starts a new press. Native capture listeners, so
+  // they run before React's and before the browser's default action (Enter clicks at keydown/
+  // keypress, Space at keyup). A deliberate press, a pointer click and Tab/Escape are untouched.
+  const promptFooterRef = React.useRef<HTMLDivElement>(null);
+  const heldKeysRef = React.useRef<Set<string>>(new Set());
+  const staleKeysRef = React.useRef<Set<string>>(new Set());
+  const mergePromptOpen = mergePrompt !== null;
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const held = heldKeysRef.current;
+    const stale = staleKeysRef.current;
+    const inPrompt = (t: EventTarget | null) =>
+      t instanceof Node && !!promptFooterRef.current?.contains(t);
+    const onKeyDown = (e: KeyboardEvent) => {
+      held.add(e.key);
+      if (!e.repeat)
+        stale.delete(e.key); // a new press started after the open: it is deliberate
+      else if (stale.has(e.key) && inPrompt(e.target)) e.preventDefault();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (stale.has(e.key) && inPrompt(e.target)) e.preventDefault(); // Space clicks on keyup
+      held.delete(e.key);
+      stale.delete(e.key);
+    };
+    const onClick = (e: MouseEvent) => {
+      // detail 0 = keyboard-made (a pointer click has detail >= 1); only while a stale key is down.
+      if (e.detail === 0 && stale.size > 0 && inPrompt(e.target)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    const onBlur = () => {
+      held.clear();
+      stale.clear();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keyup", onKeyUp, true);
+    document.addEventListener("click", onClick, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("keyup", onKeyUp, true);
+      document.removeEventListener("click", onClick, true);
+      window.removeEventListener("blur", onBlur);
+      held.clear();
+      stale.clear();
+    };
+  }, [isOpen]);
+  // Layout effect: snapshot the held keys before any follow-on event of the press can be dispatched.
+  React.useLayoutEffect(() => {
+    const stale = staleKeysRef.current;
+    stale.clear();
+    if (mergePromptOpen) {
+      for (const k of heldKeysRef.current) if (k === "Enter" || k === " ") stale.add(k);
+    }
+  }, [mergePromptOpen]);
   // The license guard (W6b): categories blocked by a 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   // Selling restrictions: lines the API refused for this customer (shown instead of a raw toast).
@@ -3110,7 +3171,7 @@ export function CreateOrderModal({
         className="max-w-md"
         footer={
           mergePrompt ? (
-            <div className="flex w-full flex-col gap-2">
+            <div ref={promptFooterRef} className="flex w-full flex-col gap-2">
               {priceLayerUnconfirmed ? (
                 <p
                   role="status"
