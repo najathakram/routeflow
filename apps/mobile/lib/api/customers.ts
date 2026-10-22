@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { SelectablePaymentMethod } from "../payment-methods";
 import { shouldRetryCustomerPrices } from "../query-retry-policy";
+import { sendWithPaymentKey, type PaymentKeyHolder } from "../payment-submit-key";
 import type { CustomerComment, CustomerDocument, FulfillPath } from "@routeflow/types";
 export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
@@ -157,14 +158,20 @@ export interface CreateAdvancePaymentDto {
   method: SelectablePaymentMethod;
   reference?: string;
   notes?: string;
+  /** SA-824: the screen's Idempotency-Key holder (never sent in the body). */
+  submitKey?: PaymentKeyHolder;
 }
 
 /** POST /customers/:id/advance-payments — take a deposit into the wallet. */
 export function useCreateAdvancePayment() {
   const qc = useQueryClient();
   return useMutation<AdvancePayment, Error, CreateAdvancePaymentDto>({
-    mutationFn: ({ customerId, ...body }) =>
-      apiClient.post(`/customers/${customerId}/advance-payments`, body).then((r) => r.data),
+    mutationFn: ({ customerId, submitKey, ...body }) =>
+      sendWithPaymentKey(submitKey, body, (config) =>
+        apiClient
+          .post(`/customers/${customerId}/advance-payments`, body, ...config)
+          .then((r) => r.data),
+      ),
     onSuccess: (_, { customerId }) => {
       qc.invalidateQueries({ queryKey: ["customers", customerId] });
       qc.invalidateQueries({ queryKey: ["admin", "customers"] });

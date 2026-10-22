@@ -39,6 +39,11 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
 import {
+  advancePaymentKey,
+  keyedPayment,
+  type KeyedWriterOpts,
+} from "../invoices/payment-idempotency";
+import {
   collectedDateOf,
   CONFIRMED_PAYMENT,
   RECEIVED_METHOD_FILTER,
@@ -930,20 +935,30 @@ export class CustomersService {
       notes?: string;
       receivedAt?: string;
     },
+    opts?: KeyedWriterOpts<any>,
   ) {
     await this.findCustomerOrThrow(customerId);
     if (roundMoney(dto.amount) <= 0) throw new BadRequestException("Amount must be greater than 0");
-    return this.prisma.forTenant().advancePayment.create({
-      data: {
-        customerId,
-        amount: roundMoney(dto.amount),
-        balance: roundMoney(dto.amount), // initial balance equals amount
-        method: dto.method as any,
-        reference: dto.reference,
-        notes: dto.notes,
-        receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
-      },
-    });
+    const data = {
+      customerId,
+      amount: roundMoney(dto.amount),
+      balance: roundMoney(dto.amount), // initial balance equals amount
+      method: dto.method as any,
+      reference: dto.reference,
+      notes: dto.notes,
+      receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
+    };
+    // SA-824: no Idempotency-Key = the single create of today; a key claims as the FIRST statement of
+    // one transaction with the create and its settle, or replays the stored advance.
+    if (!opts?.idempotencyKey) return this.prisma.forTenant().advancePayment.create({ data });
+    return keyedPayment(this.prisma, advancePaymentKey(customerId, dto), opts, (o) =>
+      this.prisma.tenantTransaction(async (tx) => {
+        await o?.claim?.(tx);
+        const created = await tx.advancePayment.create({ data });
+        await o?.inTx?.(tx, created);
+        return created;
+      }),
+    );
   }
 
   async getAdvancePayments(customerId: string) {

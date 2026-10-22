@@ -3,6 +3,7 @@ import {
   COUNTER_PARK_NAME_MAX,
   COUNTER_PARK_NOTE_MAX,
   PARKED_PAYLOAD_RESUME_KEY,
+  foldItemNames,
   hasReservedParkKey,
   sanitizeParkedPayload,
   validCustomer,
@@ -249,5 +250,42 @@ describe("validLine / validCustomer (moved from the web, behaviour unchanged)", 
     expect(validCustomer({ id: "c", businessName: "A" })).toBe(true);
     expect(validCustomer({ id: "c" })).toBe(false);
     expect(validCustomer("c")).toBe(false);
+  });
+});
+
+describe("foldItemNames: the ONE fold of a row's item names (R7b N3, N4)", () => {
+  it("keeps the first `cap` names, trims them, and counts every named line", () => {
+    const out = foldItemNames(
+      [
+        { name: " Cola 12oz Can ", qty: "2.000" },
+        { name: "", qty: 1 },
+        { name: "Ice Bag 10lb", qty: 1 },
+        { name: "Chips", qty: 3 },
+        { name: "Gum", qty: 1 },
+      ],
+      3,
+    );
+    expect(out.items).toEqual([
+      { name: "Cola 12oz Can", qty: 2 },
+      { name: "Ice Bag 10lb", qty: 1 },
+      { name: "Chips", qty: 3 },
+    ]);
+    expect(out.itemCount).toBe(4);
+  });
+
+  it("a boxed line sold as 2 cases carries the receipt's own quantity text, not 24 pieces", () => {
+    const out = foldItemNames(
+      [{ name: "Cola 12oz Can", qty: 24, boxes: 2, pieces: 0, unitLabel: "Case" }],
+      3,
+    );
+    expect(out.items).toEqual([{ name: "Cola 12oz Can", qty: 24, qtyText: "2 Cases" }]);
+  });
+
+  it("a plain line has no quantity text; nothing named is an empty answer", () => {
+    expect(foldItemNames([{ name: "Chips", qty: 3 }], 3).items).toEqual([
+      { name: "Chips", qty: 3 },
+    ]);
+    expect(foldItemNames([{ name: "  ", qty: 3 }, null, 7], 3)).toEqual({});
+    expect(foldItemNames("nope", 3)).toEqual({});
   });
 });

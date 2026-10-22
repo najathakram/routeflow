@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, unitWords } from "@routeflow/pricing";
 import { Modal, Button, useToast } from "@routeflow/ui/web";
 import { previewSplitLineTotal, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import { useCreatePartialInvoiceFromOrder } from "@/lib/api/invoices";
@@ -174,7 +174,9 @@ export function SplitInvoiceModal({
                     <tr key={it.id} className="border-t border-surface-border">
                       <td className="px-3 py-2 text-navy">{it.productName}</td>
                       <td className="px-3 py-2 text-right text-navy/70">
-                        {remaining} {it.unit ?? ""}
+                        {remaining}{" "}
+                        {/* F01: a box-split line counts PIECES (3 cases of 12 = 36), so its unit is the piece word, never the case unit. */}
+                        {it.boxes != null ? unitWords().baseShortFor(remaining) : (it.unit ?? "")}
                       </td>
                       <td className="px-3 py-2 text-right">
                         <input

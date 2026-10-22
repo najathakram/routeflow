@@ -1,4 +1,6 @@
 import {
+  COUNTER_METHOD_LABEL,
+  counterMethodLine,
   dayCloseDateLabel,
   explainedTaxRatePercent,
   formatReceiptMoney,
@@ -67,7 +69,21 @@ export interface ReceiptBusinessProfile {
  * the rule for naming a rate are `@routeflow/pricing`'s (`explainedTaxRatePercent`), shared with the emailed receipt.
  */
 export type CounterReceiptLine = ReceiptLine;
-export type CounterReceiptModel = ReceiptModel;
+/**
+ * SA-838a: the reprint of a sale that had a return carries the server's `returnLines`, each used as given (the web derives none):
+ * `returned` = credit APPLIED to this sale (the "Returned −$x" line, the only figure the balance subtracts); `refunded` = money
+ * handed back outside RouteFlow, `creditKept` = credit left on the customer's account and `creditUsed` = credit spent on OTHER
+ * orders (info lines, never subtracted);
+ * `returnPending` = a return is not settled yet ("Return in progress", no amount). null = no line. Only a server that sends
+ * `returnLines` sets any of them; an older one reprints exactly as before (none of the keys exist on the model).
+ */
+export type CounterReceiptModel = ReceiptModel & {
+  returned?: number | null;
+  refunded?: number | null;
+  creditKept?: number | null;
+  creditUsed?: number | null;
+  returnPending?: boolean;
+};
 
 /**
  * The ONE formatter of the Tax row's label, live and reprint alike: "Tax (8.25%)" when one rate explains the tax, else
@@ -320,18 +336,30 @@ export interface ReprintSaleFacts {
   customerName?: string | null;
   /** IANA zone the sale time is read in (the server's `meta.timezone`) */
   timezone?: string;
+  /**
+   * B1262 / SA-838, the server's split of `paid` (the row's `tenderPaid` / `tenderMethods`, `@routeflow/pricing`
+   * `counterTenderSplit`): what was TENDERED, without the sale's own return credit. Used as given, never re-derived. Present:
+   * Paid and the payment method read these. Absent (an older server): `paid` / `methods` as before.
+   */
+  tenderPaid?: number;
+  tenderMethods?: ReadonlyArray<{ method: ReprintTender; amount: number }>;
+  /**
+   * SA-838a, the row's `returnLines` (`@routeflow/pricing` `returnSettlement`, summed by the server): applied / refunded / kept
+   * credit of THIS sale's own returns, and whether one is still pending. Used as given. Absent (an older server): no return line.
+   */
+  returnLines?: {
+    applied: number;
+    refunded: number;
+    kept: number;
+    used: number;
+    pending: boolean;
+  };
 }
 
 /** The tender of a today's-sales row (the shared POS-7b-1 type; never hand-typed here). */
 export type ReprintTender = TodaysSaleMethod;
 
-const REPRINT_METHOD_LABEL: Record<ReprintTender, string> = {
-  CASH: "Cash",
-  CARD: "Card",
-  CHECK: "Check",
-  OTHER: "Other",
-  STORE_CREDIT: "Store credit",
-};
+const REPRINT_METHOD_LABEL = COUNTER_METHOD_LABEL;
 
 /**
  * "Oct 7, 2026, 11:15 AM" in the given zone (the sale's own zone, not the browser's). The tenant timezone is a free
@@ -427,8 +455,16 @@ export function receiptModelFromOrder(input: {
     });
   const netSubtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
   const discounts = roundMoney(rows.reduce((sum, r) => sum + r.discount, 0));
-  const hasTender = sale.methods.length > 0;
-  const { paid, balanceDue } = sale;
+  // B1262 / SA-838: a server that sends the tender split has already taken the sale's own return credit out of what was paid
+  // and out of the methods (an unproven store credit stays a tender there), so they are read as given. An older server sends
+  // neither: master's reading of `paid` / `methods`, and no Returned line.
+  const split = sale.tenderPaid !== undefined;
+  const tenders = split ? (sale.tenderMethods ?? sale.methods) : sale.methods;
+  const hasTender = tenders.length > 0;
+  const paid = split ? sale.tenderPaid! : sale.paid;
+  const { balanceDue } = sale;
+  // the server's return figures as given (no client rounding or derivation of a server field); absent: no return line
+  const lines = split ? sale.returnLines : undefined;
   const onAccount = !hasTender && balanceDue > 0;
   const orderTotal = num(order.total);
   const { tax, charges, adjustments } = receiptFigures({
@@ -464,9 +500,21 @@ export function receiptModelFromOrder(input: {
     paymentNotRecorded: false,
     showPaid: hasTender,
     showBalance: onAccount || balanceDue > 0,
+    // the split path prints pricing's ONE Payment method line (the emailed receipt's too); an older server keeps master's labels
     methodLabel: hasTender
-      ? sale.methods.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ")
+      ? split
+        ? counterMethodLine(tenders)
+        : tenders.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ")
       : null,
+    ...(lines
+      ? {
+          returned: lines.applied > 0 ? lines.applied : null,
+          refunded: lines.refunded > 0 ? lines.refunded : null,
+          creditKept: lines.kept > 0 ? lines.kept : null,
+          creditUsed: lines.used > 0 ? lines.used : null,
+          returnPending: lines.pending,
+        }
+      : {}),
     tendered,
     tenderedAsEntered: false,
     // the server's figure (the row's `change`, servedChange), shown as given: the client recomputes nothing

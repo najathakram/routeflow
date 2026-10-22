@@ -372,6 +372,31 @@ export const API_ERROR_CODES = {
    */
   COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
   /**
+   * 404 from GET /invoices/payments/by-key/:key (SA-824): NO payment, advance or invoice payment is recorded
+   * under this Idempotency-Key in this tenant YET. NOT definitive: a payment may still be in flight, so the
+   * dialog never releases on it (SA-824 race ruling 5); only POST …/resolve (found | tombstoned) releases.
+   */
+  PAYMENT_KEY_NOT_FOUND: "PAYMENT_KEY_NOT_FOUND",
+  /**
+   * 409 from the customer money-in writers (POST /invoices/payments/record, POST /invoices/:id/payments,
+   * POST /customers/:id/advance-payments) on an Idempotency-Key that "Check payment status" already resolved
+   * to a TOMBSTONE (SA-824 race ruling 2): nothing was recorded under the key and NOTHING was written by this
+   * request. Definitive: the dialog releases the key and starts a new payment.
+   */
+  PAYMENT_KEY_RESOLVED: "PAYMENT_KEY_RESOLVED",
+  /**
+   * 409 from POST /invoices/payments/by-key/:key/resolve (SA-824 race ruling 3) when the resolve waited the
+   * full lock timeout behind an UNCOMMITTED payment under the same key (or meets a key that is claimed and not
+   * yet completed). NOT an answer: the payment may still commit. Retryable; the dialog keeps the key locked.
+   */
+  PAYMENT_KEY_IN_FLIGHT: "PAYMENT_KEY_IN_FLIGHT",
+  /**
+   * The `reason` of the 409 IDEMPOTENCY_KEY_CONFLICT the customer money-in writers send when an Idempotency-Key
+   * already recorded a DIFFERENT payment request (SA-824). It proves a payment may already exist under the key.
+   * Thrown by the server and matched by the clients (`isPaymentKeyConflict`) through this ONE constant.
+   */
+  PAYMENT_MISMATCH: "PAYMENT_MISMATCH",
+  /**
    * 409 from GET /orders/counter-sale/by-key/:key: the sale's PENDING or DELIVERED order exists but has NO invoice
    * rows at all (a half-written sale: the first attempt stopped before the invoice step). Re-POST with the same
    * Idempotency-Key to finish it. A voided or cancelled sale is COUNTER_SALE_VOIDED, never this.

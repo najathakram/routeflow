@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { BACKORDER_TAG_LABEL, type LineComponentView } from "@routeflow/types";
+import type { LineComponentView } from "@routeflow/types";
+import { backorderTagText } from "@/lib/backorder-tag-text";
 import { ComponentSubLines } from "./ComponentSubLines";
 import { Package } from "lucide-react";
 import { Badge, cn, type BadgeStatus } from "@routeflow/ui/web";
@@ -12,6 +13,7 @@ import {
   normalizeBoxesPieces,
 } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
+import { unitPriceNote } from "@/lib/line-unit-price-note";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { splitProductName } from "@/lib/product-display";
 import { linePriceTag } from "./line-price-tag";
@@ -198,7 +200,7 @@ export function LineItemRowReadOnly({
             title={`${backorderPieces} pcs sold past stock`}
             className="mt-1 inline-flex rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200"
           >
-            {BACKORDER_TAG_LABEL}
+            {backorderTagText(backorderPieces)}
           </span>
         )}
         {custom && (
@@ -209,6 +211,17 @@ export function LineItemRowReadOnly({
         <p className="mt-1 text-xs text-navy/70" title={hasSplit ? `${qty} pcs total` : undefined}>
           {qtyPriceLine}
         </p>
+        {(() => {
+          // B1261: a boxed line sold in pieces also says the price each, from the same note the order table uses
+          const note = boxed
+            ? unitPriceNote({ unitPrice, unitsPerBox, unitLabel: boxLabel, pieces })
+            : null;
+          return note?.each ? (
+            <p className="mt-0.5 text-xs text-navy/60" data-testid="line-unit-price-unit">
+              {note.text}
+            </p>
+          ) : null;
+        })()}
         {priceTag && (
           <p
             className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs"

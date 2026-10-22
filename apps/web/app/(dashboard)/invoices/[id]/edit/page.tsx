@@ -30,6 +30,7 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { scanRowQty } from "../../invoice-scan-level";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
+import { SoldUnitQty } from "./SoldUnitQty";
 import { displayProductName } from "@/lib/product-display";
 import { sellableFlat } from "@/lib/product-search-groups";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
@@ -722,8 +723,9 @@ export default function EditInvoicePage() {
             it.discount != null && Number(it.discount) !== 0 ? Number(it.discount) : undefined,
           ...(it.locked
             ? { boxes: it.storedBoxes ?? 0, pieces: it.storedPieces ?? 0 }
-            : it.unitsPerBox && it.productId
-              ? { boxes: boxes ?? 0, pieces: pieces ?? 0 }
+            : // Row 688: any boxed line posts its split, product or not; a bare qty re-bills qty × box price.
+              it.unitsPerBox && boxes != null
+              ? { boxes, pieces: pieces ?? 0 }
               : {}),
           // SA-189: only an operator-attested pack is ever sent.
           ...(it.attestedPack ? { unitsPerBox: it.attestedPack } : {}),
@@ -1014,14 +1016,24 @@ export default function EditInvoicePage() {
                   ) : (
                     <>
                       <MobileField label="Qty">
-                        <DecimalInput
-                          aria-label="Qty"
-                          decimals={3}
-                          min={0}
-                          value={item.qty}
-                          onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
-                          className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                        />
+                        {Number(item.unitsPerBox ?? 0) > 1 ? (
+                          // Row 688: a boxed line edits in its sold unit (boxes + pieces), not total pieces.
+                          <SoldUnitQty
+                            qty={item.qty}
+                            unitsPerBox={Number(item.unitsPerBox)}
+                            onQtyChange={(qty) => updateItem(item.key, { qty })}
+                            inputClassName="h-11 w-full min-w-[44px] rounded border border-surface-border bg-white px-1.5 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          />
+                        ) : (
+                          <DecimalInput
+                            aria-label="Qty"
+                            decimals={3}
+                            min={0}
+                            value={item.qty}
+                            onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
+                            className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          />
+                        )}
                       </MobileField>
                       <MobileField label="Unit Price">
                         <MoneyInput

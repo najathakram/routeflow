@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -17,6 +17,7 @@ import {
 } from "../../../lib/api/payments";
 import {
   allocationTotals,
+  changeCustomerGate,
   oldestInvoicesFirst,
   waterfallAllocations,
 } from "../../../lib/payments-logic";
@@ -30,6 +31,15 @@ import { showToast } from "../../../lib/toast";
 import { fmtCalendarDate } from "../../../lib/format-date";
 import { hasUnsavedPayment } from "../../../lib/discard-guard";
 import { isOpenInvoiceStatus } from "../../../lib/invoices-logic";
+import {
+  forgetPaymentProof,
+  paymentKeyRefusalCopy,
+  rememberPaymentProof,
+  paymentKeyScope,
+  usePaymentSubmitKey,
+} from "../../../lib/payment-submit-key";
+import { usePaymentStatusCheck } from "../../../lib/use-payment-status-check";
+import { PaymentStatusNotice } from "../../../components/PaymentStatusNotice";
 
 /**
  * Standalone payment with multi-invoice allocation — one check at the door
@@ -149,7 +159,27 @@ function PaymentForm({
   onChangeCustomer: () => void;
 }) {
   const mut = useRecordPaymentStandalone();
+  // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
+  const keyScope = paymentKeyScope.standalone(customerId);
+  const paymentKey = usePaymentSubmitKey(keyScope);
+  // An unknown or in-flight attempt for this customer is never re-scoped to another one.
+  const customerGate = changeCustomerGate(paymentKey.hasUnknown());
   const uploadImageMut = useUploadPaymentImage();
+  // Re-encode to JPEG first (iOS HEIC picks aren't decodable once uploaded as-is). Throws on failure.
+  const attachReceiptPhoto = useCallback(
+    async (uri: string, paymentId: string) => {
+      const jpeg = await manipulateAsync(uri, [], { compress: 0.8, format: SaveFormat.JPEG });
+      const file = productImageFile({ uri: jpeg.uri, mimeType: "image/jpeg" });
+      await uploadImageMut.mutateAsync({ paymentId, file });
+    },
+    [uploadImageMut],
+  );
+  // SA-824: an unknown outcome offers "Check payment status"; found attaches the receipt photo and
+  // closes like a 2xx.
+  const statusCheck = usePaymentStatusCheck(paymentKey, keyScope, attachReceiptPhoto, (message) => {
+    showToast(message);
+    onDone();
+  });
   const { data: invoicesData } = useAdminInvoices({ customerId, limit: 50 });
 
   // Open invoices, oldest first — the array order IS the allocation order.
@@ -207,15 +237,14 @@ function PaymentForm({
 
   const uploadReceiptPhoto = async (uri: string, paymentId: string) => {
     try {
-      const jpeg = await manipulateAsync(uri, [], { compress: 0.8, format: SaveFormat.JPEG });
-      const file = productImageFile({ uri: jpeg.uri, mimeType: "image/jpeg" });
-      await uploadImageMut.mutateAsync({ paymentId, file });
+      await attachReceiptPhoto(uri, paymentId);
     } catch {
       showToast("Payment recorded, but the photo failed to upload.");
     }
   };
 
   const submit = () => {
+    if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
     if (amountNum <= 0) {
       setError("Enter a positive amount received.");
       return;
@@ -239,6 +268,7 @@ function PaymentForm({
       .map((inv) => ({ invoiceId: inv.id, amount: allocs[inv.id] ?? 0 }))
       .filter((a) => a.amount > 0)
       .map((a) => ({ ...a, amount: roundMoney(a.amount) }));
+    rememberPaymentProof(keyScope, photos[0] ?? null); // so a status check that finds it can attach it
     mut.mutate(
       {
         customerId,
@@ -253,9 +283,11 @@ function PaymentForm({
         ...(reference.trim() ? { reference: reference.trim() } : {}),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
         status: asDraft ? "DRAFT" : "PAID",
+        submitKey: paymentKey,
       },
       {
         onSuccess: (res) => {
+          forgetPaymentProof(keyScope);
           showToast(
             res.excess > 0.001
               ? `Payment recorded — $${res.excess.toFixed(2)} saved as advance`
@@ -266,7 +298,10 @@ function PaymentForm({
           }
           onDone();
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) =>
+          showToast(
+            paymentKeyRefusalCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+          ),
       },
     );
   };
@@ -287,13 +322,26 @@ function PaymentForm({
         photos,
         asDraft,
       })}
+      submitDisabled={statusCheck.unknown}
       onSubmit={submit}
     >
-      <Pressable style={styles.changeCustomer} onPress={onChangeCustomer} hitSlop={6}>
+      <PaymentStatusNotice status={statusCheck} />
+      <Pressable
+        style={[styles.changeCustomer, customerGate.blocked && { opacity: 0.5 }]}
+        onPress={() => {
+          if (customerGate.blocked) return;
+          onChangeCustomer();
+        }}
+        disabled={customerGate.blocked}
+        hitSlop={6}
+      >
         <Ionicons name="person-outline" size={14} color={ios.brand} />
         <Text style={styles.changeCustomerText}>{customerName}</Text>
         <Text style={styles.changeCustomerAction}>Change</Text>
       </Pressable>
+      {customerGate.reason ? (
+        <Text style={styles.changeCustomerLocked}>{customerGate.reason}</Text>
+      ) : null}
 
       <FormSection title="Method">
         <View style={styles.chips}>
@@ -490,6 +538,12 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: ios.brand,
     flexShrink: 1,
+  },
+  changeCustomerLocked: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginBottom: 8,
   },
   changeCustomerAction: {
     fontSize: 12,

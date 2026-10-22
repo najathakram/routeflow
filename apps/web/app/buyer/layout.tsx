@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { NumberWheelGuard } from "@/components/NumberWheelGuard";
 
 // B481: maximumScale/userScalable previously locked pinch-zoom here, failing WCAG 2.1 §1.4.4
 // (Resize Text) — removed to match the root layout, which deliberately avoids this restriction.
@@ -31,5 +32,10 @@ export const metadata: Metadata = {
 };
 
 export default function BuyerLayout({ children }: { children: ReactNode }) {
-  return <>{children}</>;
+  return (
+    <>
+      <NumberWheelGuard />
+      {children}
+    </>
+  );
 }

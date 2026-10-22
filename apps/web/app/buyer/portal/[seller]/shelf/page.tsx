@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   AlarmClock,
   ArrowRight,
+  Check,
   Loader2,
   Package,
   Plus,
@@ -15,22 +16,15 @@ import {
 } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
+import { useBuyerCart } from "@/lib/buyer-cart";
+import { newCartLine } from "@/lib/buyer-cart-line";
 import {
   useBuyerShelf,
-  useBuyerCreateOrder,
   useSnoozeReplenishment,
   useUnsnoozeReplenishment,
-  useAddAllLow,
   type ShelfEstimate,
 } from "@/lib/api/buyer";
 import { objectPositionForUrl } from "@/lib/image-focal";
-import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
-import { buyerFulfilmentChoice } from "@/lib/buyer-fulfilment";
-import {
-  BUYER_ORDER_CONFLICT_COPY,
-  BUYER_ORDER_CONFLICT_NO_ID_COPY,
-  buyerOrderConflict,
-} from "@/lib/buyer-order-conflict";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -75,14 +69,14 @@ const BAR_COLOR: Record<ShelfEstimate["state"], string> = {
 function ShelfRow({
   e,
   onAdd,
-  addPending,
+  inCart,
   onSnooze,
   onUnsnooze,
   snoozePending,
 }: {
   e: ShelfEstimate;
   onAdd: () => void;
-  addPending: boolean;
+  inCart: boolean;
   onSnooze: () => void;
   onUnsnooze: () => void;
   snoozePending: boolean;
@@ -137,15 +131,11 @@ function ShelfRow({
       <div className="flex shrink-0 items-center gap-2">
         <button
           onClick={onAdd}
-          disabled={addPending}
+          disabled={inCart}
           className="flex items-center gap-1 rounded-lg bg-buyer-500 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-buyer-600 disabled:opacity-50"
         >
-          {addPending ? (
-            <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
-          ) : (
-            <Plus className="h-3.5 w-3.5" />
-          )}
-          Add
+          {inCart ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+          {inCart ? "In cart" : "Add"}
         </button>
         {e.snoozed ? (
           <button
@@ -201,19 +191,15 @@ function Section({
 export default function BuyerShelfPage() {
   const params = useParams();
   const router = useRouter();
-  const { activeSeller, isLoading: authLoading } = useBuyerAuth();
+  const { buyer, activeSeller, isLoading: authLoading } = useBuyerAuth();
   const sellerSlug = params.seller as string;
 
   const { data: shelf, isLoading, isError } = useBuyerShelf();
-  const createOrder = useBuyerCreateOrder();
-  const addAllLow = useAddAllLow();
+  const cart = useBuyerCart(buyer?.id, sellerSlug);
   const snooze = useSnoozeReplenishment();
   const unsnooze = useUnsnoozeReplenishment();
 
-  const [pendingAdd, setPendingAdd] = React.useState<string | null>(null);
   const [pendingSnooze, setPendingSnooze] = React.useState<string | null>(null);
-  // An idempotency refusal means the order already exists: fixed copy, linked when its id is known.
-  const [conflict, setConflict] = React.useState<{ orderId?: string } | null>(null);
 
   React.useEffect(() => {
     if (!authLoading && !activeSeller) router.push("/buyer/portal");
@@ -225,39 +211,23 @@ export default function BuyerShelfPage() {
   const snoozed = estimates.filter((e) => e.snoozed);
   const rest = estimates.filter((e) => e.state === "ok" && !e.snoozed);
 
-  // Order ahead: a quick order carries the seller's default method when it offers one. Loading /
-  // error => no capability => nothing sent (server default).
-  const { data: capability } = useBuyerSellerCapabilities();
-  const quickFulfillPath = buyerFulfilmentChoice(capability).defaultMethod;
+  const inCartIds = new Set(cart.items.map((i) => i.productId));
+  // Row 702: what "Add all low" adds: the running-low items not already in the cart.
+  const lowToAdd = running.filter((e) => !inCartIds.has(e.productId));
 
-  const handleAdd = async (e: ShelfEstimate) => {
-    if (pendingAdd) return;
-    setPendingAdd(e.productId);
-    setConflict(null);
-    try {
-      // Server-side create/merge at the suggested qty — same path as the cart.
-      // For boxed products send a box split so the server prorates by the box:
-      // suggestedQty is a whole-box multiple of PIECES, and a box-unaware boxed
-      // line is ordered/charged as suggestedQty BOXES (unitsPerBox× too much).
-      const upb = e.unitsPerBox;
-      // Row 531: qty is derived FROM the box count, so the pair always agrees (the server refuses a
-      // buyer line whose qty and split differ).
-      const boxes = upb && upb > 1 ? Math.max(1, Math.round(e.suggestedQty / upb)) : 0;
-      await createOrder.mutateAsync({
-        items: [
-          boxes > 0 && upb
-            ? { productId: e.productId, qty: boxes * upb, boxes, pieces: 0 }
-            : { productId: e.productId, qty: e.suggestedQty },
-        ],
-        ...(quickFulfillPath ? { fulfillPath: quickFulfillPath } : {}),
-      });
-    } catch (err) {
-      const existing = buyerOrderConflict(err);
-      if (!existing) throw err;
-      setConflict(existing);
-    } finally {
-      setPendingAdd(null);
-    }
+  // Row 696: Add puts the item in the buyer's cart (the same line the shop's running-low strip
+  // writes), where the cart's Place order owns merge-or-new, fulfilment and the idempotency
+  // refusals. A boxed estimate adds whole Cases (suggestedQty is a piece count); the box split is
+  // derived by the cart line helper, never re-computed here.
+  const handleAdd = (e: ShelfEstimate) => {
+    const upb = e.unitsPerBox && e.unitsPerBox > 1 ? e.unitsPerBox : 0;
+    cart.addItem(
+      newCartLine(
+        { productId: e.productId, name: e.name, unit: e.unit, thumbnailUrl: e.imageUrl },
+        e.unitsPerBox,
+        upb ? Math.max(1, Math.round(e.suggestedQty / upb)) : Math.max(1, e.suggestedQty),
+      ),
+    );
   };
 
   const handleSnooze = async (e: ShelfEstimate) => {
@@ -291,20 +261,6 @@ export default function BuyerShelfPage() {
 
   return (
     <div className="space-y-6 p-6">
-      {conflict && (
-        <div role="alert" className="rounded-lg bg-danger-bg px-4 py-3 text-sm text-danger">
-          {conflict.orderId ? (
-            <Link
-              href={`/buyer/portal/${sellerSlug}/orders/${conflict.orderId}`}
-              className="underline"
-            >
-              {BUYER_ORDER_CONFLICT_COPY}
-            </Link>
-          ) : (
-            BUYER_ORDER_CONFLICT_NO_ID_COPY
-          )}
-        </div>
-      )}
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -315,6 +271,14 @@ export default function BuyerShelfPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          {cart.itemCount > 0 && (
+            <Link
+              href={`/buyer/portal/${sellerSlug}/cart`}
+              className="flex min-h-[44px] items-center gap-2 rounded-xl border border-buyer-200 bg-buyer-50 px-4 py-2 text-sm font-semibold text-buyer-700 hover:border-buyer-300"
+            >
+              <ShoppingCart className="h-4 w-4" /> View cart ({cart.itemCount})
+            </Link>
+          )}
           {/* Open order card (delivery route-day calendar deferred — no schedule model yet) */}
           {shelf?.activeOrder && (
             <Link
@@ -335,17 +299,14 @@ export default function BuyerShelfPage() {
               <ArrowRight className="h-4 w-4 text-buyer-500" />
             </Link>
           )}
+          {/* Row 702: the same cart path as each row's Add (row 696), never a server order. */}
           <Button
-            onClick={() => addAllLow.mutate()}
-            disabled={addAllLow.isPending || running.length === 0}
+            onClick={() => lowToAdd.forEach(handleAdd)}
+            disabled={lowToAdd.length === 0}
             className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
           >
-            {addAllLow.isPending ? (
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-            ) : (
-              <ShoppingCart className="mr-1.5 h-4 w-4" />
-            )}
-            Add all low to cart{running.length > 0 ? ` (${running.length})` : ""}
+            <ShoppingCart className="mr-1.5 h-4 w-4" />
+            Add all low to cart{lowToAdd.length > 0 ? ` (${lowToAdd.length})` : ""}
           </Button>
         </div>
       </div>
@@ -374,7 +335,7 @@ export default function BuyerShelfPage() {
                 key={e.productId}
                 e={e}
                 onAdd={() => handleAdd(e)}
-                addPending={pendingAdd === e.productId}
+                inCart={inCartIds.has(e.productId)}
                 onSnooze={() => handleSnooze(e)}
                 onUnsnooze={() => handleSnooze(e)}
                 snoozePending={pendingSnooze === e.productId}
@@ -388,7 +349,7 @@ export default function BuyerShelfPage() {
                 key={e.productId}
                 e={e}
                 onAdd={() => handleAdd(e)}
-                addPending={pendingAdd === e.productId}
+                inCart={inCartIds.has(e.productId)}
                 onSnooze={() => handleSnooze(e)}
                 onUnsnooze={() => handleSnooze(e)}
                 snoozePending={pendingSnooze === e.productId}
@@ -402,7 +363,7 @@ export default function BuyerShelfPage() {
                 key={e.productId}
                 e={e}
                 onAdd={() => handleAdd(e)}
-                addPending={pendingAdd === e.productId}
+                inCart={inCartIds.has(e.productId)}
                 onSnooze={() => handleSnooze(e)}
                 onUnsnooze={() => handleSnooze(e)}
                 snoozePending={pendingSnooze === e.productId}
@@ -416,7 +377,7 @@ export default function BuyerShelfPage() {
                 key={e.productId}
                 e={e}
                 onAdd={() => handleAdd(e)}
-                addPending={pendingAdd === e.productId}
+                inCart={inCartIds.has(e.productId)}
                 onSnooze={() => handleSnooze(e)}
                 onUnsnooze={() => handleSnooze(e)}
                 snoozePending={pendingSnooze === e.productId}

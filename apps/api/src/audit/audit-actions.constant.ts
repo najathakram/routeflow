@@ -34,6 +34,8 @@ export const AUDIT_ACTIONS = {
   IMPORT_FAMILY_CREATED: "import.family.created",
   /** SA-823 (row 655 PR-2): an import re-run reactivated the empty family an earlier import made; meta {reason}. Written in the reactivation's own transaction. */
   PRODUCT_FAMILY_REACTIVATED: "product.family.reactivated",
+  /** SA-824 race ruling 4: one POST /invoices/payments/by-key/:key/resolve; meta {keyHash (sha256, never the raw key), outcome found|tombstoned, scope, invoiceId, customerId, paymentGroupId, advancePaymentId}. */
+  PAYMENT_KEY_RESOLVE: "payment-key.resolve",
   /** Row 587 (SA-833): PARTIALLY_DELIVERED -> DELIVERED completed an office-evidenced line; meta {orderId, lineId, from, to, summary}. */
   ORDER_LINE_OFFICE_COMPLETED: "order.line-office-completed",
 } as const;

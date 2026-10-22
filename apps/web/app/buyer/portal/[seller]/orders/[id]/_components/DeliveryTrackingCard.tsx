@@ -63,7 +63,7 @@ export function DeliveryTrackingCard({
             Track your delivery
           </h2>
         </div>
-        {!waiting && (
+        {!waiting && view.kind !== "unscheduled" && (
           <Badge variant={STATUS_PILL_VARIANT[view.kind]} data-testid="tracking-status">
             {TRACKING_PILL_LABEL[view.kind]}
           </Badge>

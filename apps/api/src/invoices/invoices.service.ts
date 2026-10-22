@@ -114,11 +114,14 @@ import {
 import type { InvoiceKpiSummary } from "@routeflow/types";
 import { computeInvoiceKpiSummary } from "./invoice-kpi-summary";
 import { CHECK_TRANSITIONS } from "../common/check-transitions";
+import { invoicePaymentKey, keyedPayment, standalonePaymentKey } from "./payment-idempotency";
 import {
   RecordInvoicePaymentDto,
   type RecordPaymentOpts,
   SetCheckStatusDto,
   StandalonePaymentDto,
+  type StandalonePaymentOpts,
+  type StandalonePaymentResult,
   UpdatePaymentDto,
   WriteOffDto,
 } from "./dto/create-invoice.dto";
@@ -235,6 +238,7 @@ import {
   updateHeaderOnly,
   planHeaderOnlyTotals,
 } from "./locked-invoice-edit";
+import type { InvoiceEditHeaders } from "./locked-invoice-edit";
 import { resolveLineUnits } from "../products/line-units";
 import { assertUnitLineSplit } from "../orders/unit-line-split";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
@@ -278,8 +282,8 @@ export { addCalendarDays } from "../common/calendar-date";
 // to the canonical export by `check-transitions-parity.spec.ts`. See that file's own doc for the
 // V1-only rule (no `CHECK_TRANSITIONS_V2` here — a later PR owns that).
 
-/** What `recordStandalonePayment` returns, and hands its `opts.inTx` hook (SA-818). */
-export type StandalonePaymentResult = { payments: any[]; paymentGroupId: string; excess: number };
+/** What `recordStandalonePayment` returns (SA-818); the type lives beside its opts (SA-824). */
+export type { StandalonePaymentResult } from "./dto/create-invoice.dto";
 
 @Injectable()
 export class InvoicesService {
@@ -3051,9 +3055,9 @@ export class InvoicesService {
     });
   }
 
-  async update(id: string, dto: UpdateInvoiceDto, actorId?: string) {
+  async update(id: string, dto: UpdateInvoiceDto, actorId?: string, hdrs?: InvoiceEditHeaders) {
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
-    const warnNoToken = noTokenWarner(id); // H4: one release of grace for token-less clients
+    const warnNoToken = noTokenWarner(id, this.prisma.getTenantId(), hdrs); // H4 + SA-837 row 500 step 1
     assertNoDuplicateLineIds(dto.items, { keys: ["id"] }); // F3: the invoice line id only (orderItemId = source line)
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1 (VU-4a, D3): a unit line is accepted only on an order-LESS DRAFT (resolveLineUnits below);
@@ -4491,7 +4495,18 @@ export class InvoicesService {
 
   // ─── Payment recording ────────────────────────────────────────────────────
 
-  async recordPayment(
+  recordPayment(
+    id: string,
+    dto: RecordInvoicePaymentDto,
+    opts?: RecordPaymentOpts & CounterPayOpts,
+  ) {
+    // SA-824: a keyed call claims in the money tx below (its first statement) or replays the stored result.
+    return keyedPayment(this.prisma, invoicePaymentKey(id, dto), opts, (o) =>
+      this.writeInvoicePayment(id, dto, o),
+    );
+  }
+
+  private async writeInvoicePayment(
     id: string,
     dto: RecordInvoicePaymentDto,
     opts?: RecordPaymentOpts & CounterPayOpts,
@@ -4506,6 +4521,7 @@ export class InvoicesService {
     const { tenantId, tenantShort } = this.requirePaymentTenant();
     const till = await counterPay.scope(this.prisma, id); // SA-750r3: always (the closed-date check runs even when the lock is held)
     return withAfterCommit(this.prisma, async (tx, after) => {
+      await opts?.claim?.(tx); // SA-824: the key claim is the FIRST statement (throws, unwritten, when held)
       // SA-750r3: a counter sale's shared close lock first (the tender/pickup hold it already), then the invoice row
       await counterPay.lock(tx, till, opts?.tillLockHeld);
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
@@ -4608,7 +4624,9 @@ export class InvoicesService {
         total: Number(paid.total),
       });
       await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
-      return { ...paid, createdPaymentId: createdPayment.id };
+      const recorded = { ...paid, createdPaymentId: createdPayment.id };
+      await opts?.inTx?.(tx, recorded); // SA-824: the key's settle, in this transaction
+      return recorded;
     });
   }
 
@@ -5235,29 +5253,14 @@ export class InvoicesService {
 
   // ─── Standalone (bulk-allocation) payment ────────────────────────────────
 
-  async recordStandalonePayment(
-    dto: StandalonePaymentDto,
-    opts?: {
-      /**
-       * Reject any allocation exceeding the invoice's live balance, computed
-       * inside the transaction. Buyer-initiated payments compute their
-       * oldest-first allocation BEFORE this call, outside the row locks, so a
-       * concurrent operator payment can stale the preview — without this check
-       * the stale allocation would overpay an invoice. Operator flows keep the
-       * historical behavior (deliberate overpayment is allowed there).
-       */
-      assertAllocationsWithinBalance?: boolean;
-      /** The operator's user id, for the deliberate-overpayment audit row. */
-      actor?: string | null;
-      /**
-       * SA-818 (row 615): runs INSIDE this payment transaction, after the payment rows (and any
-       * excess AdvancePayment) are written and before commit. A caller that must decide something
-       * atomically with the money (the cash approval's PENDING -> APPROVED claim + link) does it
-       * here: a throw rolls the money back with it. Absent -> behaviour is unchanged.
-       */
-      inTx?: (tx: any, result: StandalonePaymentResult) => Promise<void>;
-    },
-  ) {
+  async recordStandalonePayment(dto: StandalonePaymentDto, opts?: StandalonePaymentOpts) {
+    // SA-824: a keyed call claims in the money tx below (its first statement) or replays the stored result.
+    return keyedPayment(this.prisma, standalonePaymentKey(dto), opts, (o) =>
+      this.writeStandalonePayment(dto, o),
+    );
+  }
+
+  private async writeStandalonePayment(dto: StandalonePaymentDto, opts?: StandalonePaymentOpts) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const paymentGroupId = randomUUID();
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
@@ -5277,6 +5280,7 @@ export class InvoicesService {
     // #2472 (1): a multi-invoice payment can deadlock (40P01) with completeWithPayment — re-run it.
     return retryOnTxConflict(`standalone payment group=${paymentGroupId}`, () =>
       this.prisma.tenantTransaction(async (tx) => {
+        await opts?.claim?.(tx); // SA-824: the key claim is the FIRST statement (throws, unwritten, when held)
         // B311: the buyer/online path's anti-overpay guard reads the invoice's balance and
         // THEN checks it — with no row lock between the two, a concurrent office payment on the
         // same invoice could commit in between, and this check would still pass against the
@@ -5384,8 +5388,9 @@ export class InvoicesService {
         }
 
         // Handle excess amount → create AdvancePayment (rounded up front, SA-112)
-        if (excess > 0.001) {
-          await tx.advancePayment.create({
+        const advance =
+          excess > 0.001 &&
+          (await tx.advancePayment.create({
             data: {
               customerId: dto.customerId,
               amount: excess,
@@ -5395,15 +5400,15 @@ export class InvoicesService {
               notes: dto.notes,
               receivedAt: paidAt,
             },
-          });
-        }
+          }));
 
         const result: StandalonePaymentResult = {
           payments,
           paymentGroupId,
           excess: Math.max(0, excess),
         };
-        await opts?.inTx?.(tx, result);
+        // SA-824: the excess advance's id rides beside the result (the response shape is unchanged).
+        await opts?.inTx?.(tx, result, { advancePaymentId: advance ? advance.id : null });
         return result;
       }),
     );

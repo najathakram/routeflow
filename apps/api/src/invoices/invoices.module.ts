@@ -3,6 +3,8 @@ import { SellingRestrictionsModule } from "../selling-restrictions/selling-restr
 import { InvoicesController } from "./invoices.controller";
 import { InvoicesService } from "./invoices.service";
 import { OverdueSweepService } from "./overdue-sweep.service";
+import { PaymentKeyStatusController } from "./payment-key-status.controller";
+import { PaymentKeyStatusService } from "./payment-key-status.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaModule } from "../prisma/prisma.module";
 import { GatewaysModule } from "../gateways/gateways.module";
@@ -36,8 +38,8 @@ import { NumberingModule } from "../import/numbering.module";
     // shared NumberingService.
     NumberingModule,
   ],
-  controllers: [InvoicesController],
-  providers: [InvoicesService, InvoicePdfService, OverdueSweepService],
+  controllers: [InvoicesController, PaymentKeyStatusController],
+  providers: [InvoicesService, InvoicePdfService, OverdueSweepService, PaymentKeyStatusService],
   exports: [InvoicesService, InvoicePdfService],
 })
 export class InvoicesModule {}

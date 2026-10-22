@@ -357,6 +357,44 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     expect(prisma.customer.findMany).not.toHaveBeenCalled();
   });
 
+  it("B1262 / SA-838 (e): a page WITH credit-note payments makes exactly two return reads, the summary's and the one batched read", async () => {
+    const { prisma, call } = setup([row("2026-10-07T16:00:00.000Z")]);
+    // the page record carries a credit-note payment, so the batched read of the returns behind it runs
+    prisma.order.findMany.mockResolvedValue([
+      {
+        ...pageRecord(row("2026-10-07T16:00:00.000Z")),
+        invoices: [
+          {
+            id: "i-1",
+            invoiceNumber: "INV-1",
+            status: "PAID",
+            payments: [
+              {
+                method: "CREDIT_NOTE",
+                amount: "5.00",
+                status: "PAID",
+                creditNoteId: "cn-1",
+                creditNote: { invoiceId: "i-1" },
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    await call({ page: 1, limit: 50 }, NOW);
+    expect(prisma.return.findMany).toHaveBeenCalledTimes(2);
+    // SA-838a I2: plus exactly ONE batched credit-note read (the summary's read is the other creditNote.findMany)
+    expect(prisma.creditNote.findMany).toHaveBeenCalledTimes(2);
+    expect(
+      (prisma.creditNote.findMany.mock.calls as any[]).filter((c) => c[0]?.select?.invoicePayments),
+    ).toHaveLength(1);
+    const batched = (prisma.return.findMany.mock.calls as any[]).filter(
+      (c) => c[0]?.where?.creditNoteId,
+    );
+    expect(batched).toHaveLength(1);
+    expect(batched[0][0].where).toEqual({ tenantId: T, creditNoteId: { in: ["cn-1"] } });
+  });
+
   it("page 2 runs NO summary query", async () => {
     const { prisma, call } = setup([row("2026-10-07T16:00:00.000Z")]);
     await call({ page: 2, limit: 1 }, NOW);
@@ -369,7 +407,7 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     expect(prisma.order.findMany).toHaveBeenCalledTimes(1);
   });
 
-  it("the page query selects (never includes) and carries no line items or cost fields", async () => {
+  it("the page query selects (never includes) and carries no cost fields (item names only)", async () => {
     const { prisma, call } = setup([]);
     await call({}, NOW);
     const args = prisma.order.findMany.mock.calls[0][0];

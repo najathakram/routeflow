@@ -67,6 +67,7 @@ import { useRoutesAccess, useDeliveryAccess, SALES_AGENTS_ADDON } from "@/lib/ap
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { RegisterHeader } from "@/components/RegisterHeader";
 import { guardCounterLeave } from "@/lib/counter-cart-signal";
+import { NumberWheelGuard } from "@/components/NumberWheelGuard";
 import { useGuardedRouter } from "@/lib/use-guarded-router";
 import { isRegisterPath, recordPreviousPath } from "@/lib/register-mode";
 import { useCounterLanding, useOpenCounterPref } from "@/lib/use-counter-device-pref";
@@ -1496,6 +1497,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <ToastProvider>
+      <NumberWheelGuard />
       <PageTitleProvider>
         <AuthGuard>{children}</AuthGuard>
       </PageTitleProvider>

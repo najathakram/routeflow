@@ -1,4 +1,5 @@
-import { orderCreatedToast } from "./order-created-toast";
+import { orderCreatedToast, showOrderCreatedToast } from "./order-created-toast";
+import { wasCreatedHere } from "@/lib/order-created-echo";
 
 describe("orderCreatedToast", () => {
   const created = { id: "ord-123456789", orderNumber: "ORD-00042" };
@@ -40,9 +41,9 @@ describe("orderCreatedToast", () => {
     expect(t.title).toBe("Merged into order #abcdef");
   });
 
-  it("keeps the toast up longer only when there is an action to reach for", () => {
+  it("F28: with an action the toast stays until dismissed (not 8 s); without one it keeps the default", () => {
     const withAction = orderCreatedToast({ asDraft: false, created, onViewOrder: jest.fn() });
-    expect(withAction.duration).toBe(8000);
+    expect(withAction.duration).toBeGreaterThanOrEqual(60 * 60 * 1000);
     expect(orderCreatedToast({ asDraft: false, created }).duration).toBeUndefined();
   });
 
@@ -52,5 +53,28 @@ describe("orderCreatedToast", () => {
       orderCreatedToast({ asDraft: false, created: {}, onViewOrder: jest.fn() }).action,
     ).toBeUndefined();
     expect(orderCreatedToast({ asDraft: false, onViewOrder: jest.fn() }).action).toBeUndefined();
+  });
+
+  it("F17: building the toast records the order as this tab's own, for the realtime echo", () => {
+    orderCreatedToast({
+      asDraft: false,
+      created: { id: "o9", orderNumber: "ORD-9" },
+      onViewOrder: jest.fn(),
+    });
+    expect(wasCreatedHere("ORD-9")).toBe(true);
+    expect(wasCreatedHere("ORD-10")).toBe(false);
+  });
+  it("row 604 S6: a new order-created toast replaces the previous one instead of stacking", () => {
+    let n = 0;
+    const api = { toast: jest.fn(() => `t${++n}`), dismiss: jest.fn() };
+    showOrderCreatedToast(api, { asDraft: false, created: { id: "o1", orderNumber: "ORD-1" } });
+    expect(api.dismiss).not.toHaveBeenCalled();
+    showOrderCreatedToast(api, { asDraft: false, created: { id: "o2", orderNumber: "ORD-2" } });
+    expect(api.dismiss).toHaveBeenCalledTimes(1);
+    expect(api.dismiss).toHaveBeenCalledWith("t1");
+    expect(api.toast).toHaveBeenCalledTimes(2);
+    // the echo dedupe still runs for every order
+    expect(wasCreatedHere("ORD-1")).toBe(true);
+    expect(wasCreatedHere("ORD-2")).toBe(true);
   });
 });
