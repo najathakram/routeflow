@@ -37,6 +37,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { BuyerCreateOrderDto } from "./dto/buyer-create-order.dto";
 import { UpdateBuyerProfileDto } from "./dto/update-buyer-profile.dto";
 import { OrdersService } from "../orders/orders.service";
+import { assertDeliveryDateNotPast } from "../orders/delivery-date-guard";
 import { ChangeRequestsService } from "../orders/change-requests.service";
 import { CreateChangeRequestDto } from "../orders/dto/create-change-request.dto";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -658,6 +659,14 @@ export class BuyerController {
                 return { orderId: replayed.orderId, replayed: true };
               }
             }
+            // Row 718: the cart's delivery day is a CHANGE of this order's date. A day before the TENANT's today is refused
+            // (400 DELIVERY_DATE_IN_PAST) before anything is folded - applyBuyerMergeHeader below is best-effort by design, so
+            // it cannot carry the refusal - while the order's own date, resent as it is, is not a change. After the replay
+            // branch above, so a retry of a merge that already landed still replays.
+            await assertDeliveryDateNotPast(this.prisma, dto.requestedDeliveryDate, {
+              tenantId: ctx.tenantId,
+              existing: activeOrder.requestedDeliveryDate,
+            });
             // REG-B47: denomination-aware fold (F30's staff exemplar, shared module) over
             // LIVE-normalized snapshots — a box-unaware line of a boxed product counts
             // selling units, so give the fold its real box split before summing.
