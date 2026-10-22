@@ -5,6 +5,7 @@ import {
   PARKED_PAYLOAD_RESUME_KEY,
   foldItemNames,
   hasReservedParkKey,
+  isCalendarDay,
   sanitizeParkedPayload,
   validCustomer,
   validLine,
@@ -287,5 +288,37 @@ describe("foldItemNames: the ONE fold of a row's item names (R7b N3, N4)", () =>
     ]);
     expect(foldItemNames([{ name: "  ", qty: 3 }, null, 7], 3)).toEqual({});
     expect(foldItemNames("nope", 3)).toEqual({});
+  });
+});
+
+describe("checkDate (the typed date of a check tender) survives a park and a resume", () => {
+  it("a real YYYY-MM-DD day is kept, beside the reference", () => {
+    expect(ok(cart({ method: "CHECK", reference: "1042", checkDate: "2026-10-23" }))).toEqual(
+      cart({ method: "CHECK", reference: "1042", checkDate: "2026-10-23" }),
+    );
+  });
+  it("an absent date stays absent (older payloads and every other method)", () => {
+    expect(ok(cart())).not.toHaveProperty("checkDate");
+  });
+  it.each([
+    ["an impossible day", "2026-02-31"],
+    ["a month 13", "2026-13-01"],
+    ["a wrong shape", "2026-1-3"],
+    ["a datetime", "2026-10-23T00:00:00Z"],
+    ["a number", 20261023],
+    ["an empty string", ""],
+    ["an object", { y: 2026 }],
+    ["null", null],
+  ])("%s is dropped, never thrown on, and the rest of the payload stands", (_n, bad) => {
+    const v = ok(cart({ method: "CHECK", checkDate: bad }));
+    expect(v).not.toHaveProperty("checkDate");
+    expect(v.method).toBe("CHECK");
+  });
+  it("isCalendarDay: only a strict day that round-trips through a real date", () => {
+    expect(isCalendarDay("2024-02-29")).toBe(true);
+    expect(isCalendarDay("2026-02-29")).toBe(false);
+    expect(isCalendarDay("2026-04-31")).toBe(false);
+    expect(isCalendarDay("2026-10-23 ")).toBe(false);
+    expect(isCalendarDay(undefined)).toBe(false);
   });
 });

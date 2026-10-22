@@ -83,6 +83,7 @@ export interface ParkCartInput {
   method: string;
   tendered: string;
   reference: string;
+  checkDate?: string;
 }
 
 /**

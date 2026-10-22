@@ -125,9 +125,24 @@ export interface ParkedCartPayload {
   method: string;
   tendered: string;
   reference: string;
+  /** A check tender's typed date (YYYY-MM-DD), kept so a resumed cart is still judged against the business's day. */
+  checkDate?: string;
 }
 
 // ─── Moved from the web: the shape checks the held-attempt snapshot and the live cart already use ───────────────────
+
+/** A strict YYYY-MM-DD that is also a real day (2026-02-31 is not): the only shape a check date may take. */
+export function isCalendarDay(v: unknown): v is string {
+  if (typeof v !== "string") return false;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if (!m) return false;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return (
+    d.getUTCFullYear() === Number(m[1]) &&
+    d.getUTCMonth() === Number(m[2]) - 1 &&
+    d.getUTCDate() === Number(m[3])
+  );
+}
 
 const isNum = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
 const optNum = (n: unknown): boolean => n === undefined || isNum(n);
@@ -266,7 +281,11 @@ export function sanitizeParkedPayload(
   }
   const tendered = str(raw.tendered, 20) ?? "";
   const reference = str(raw.reference, 100) ?? "";
-  return { ok: true, value: { lines, customer, method, tendered, reference } };
+  const checkDate = isCalendarDay(raw.checkDate) ? raw.checkDate : undefined;
+  return {
+    ok: true,
+    value: { lines, customer, method, tendered, reference, ...(checkDate ? { checkDate } : {}) },
+  };
 }
 
 // ─── Requests and responses ──────────────────────────────────────────────────────────────────────────────────────────
