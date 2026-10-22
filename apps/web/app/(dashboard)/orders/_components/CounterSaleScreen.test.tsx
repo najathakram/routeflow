@@ -2598,7 +2598,8 @@ describe("digital receipt on the live receipt (SA-751r)", () => {
   });
 });
 
-describe("CounterSaleScreen: SA-837b the till's Record anyway on a duplicate payment reference", () => {
+describe("CounterSaleScreen: SA-837b the not-recorded state names a duplicate payment reference", () => {
+  // The resend ("Record anyway": same key, same cart, payment.recordAnyway) is CounterPaymentNotRecorded's own test.
   const SENTENCE =
     "A payment with this reference was already recorded on Oct 1, 2026 for $2.50 (INV-0042).";
   const unrecordedDup = {
@@ -2609,7 +2610,7 @@ describe("CounterSaleScreen: SA-837b the till's Record anyway on a duplicate pay
     total: 2.5,
     paid: 0,
     balanceDue: 2.5,
-    method: "CARD",
+    method: "CHECK",
     paymentRecorded: false,
     paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
     paymentCauseCode: "DUPLICATE_PAYMENT_REF",
@@ -2622,59 +2623,34 @@ describe("CounterSaleScreen: SA-837b the till's Record anyway on a duplicate pay
       invoiceNumber: "INV-0042",
     },
   };
-  const ringCard = async () => {
+  const ringCheck = async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("012345678905");
     await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
-    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
-    fireEvent.change(screen.getByLabelText("Reference"), { target: { value: "4242" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Check" }));
+    fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
   };
 
-  it("shows the shared duplicate sentence on the not-recorded state, and Record anyway re-sends the SAME key with payment.recordAnyway", async () => {
+  it("keeps the existing payment-not-recorded panel and adds the shared duplicate sentence beneath it", async () => {
     mutateAsync.mockResolvedValueOnce(unrecordedDup);
-    mutateAsync.mockResolvedValueOnce({
-      ...unrecordedDup,
-      paid: 2.5,
-      balanceDue: 0,
-      paymentRecorded: true,
-      paymentErrorCode: undefined,
-      paymentCauseCode: undefined,
-      existingPayment: undefined,
-      replayed: true,
-    });
-    await ringCard();
-    const panel = await screen.findByTestId("counter-payment-not-recorded");
-    expect(within(panel).getByText(SENTENCE)).toBeInTheDocument();
-
-    fireEvent.click(within(panel).getByRole("button", { name: "Record anyway" }));
-    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
-    const [first, second] = mutateAsync.mock.calls.map((c) => c[0]);
-    expect(second.idempotencyKey).toBe(first.idempotencyKey); // the same sale, never a new one
-    expect(first.dto.payment).not.toHaveProperty("recordAnyway");
-    expect(second.dto.payment).toEqual({ ...first.dto.payment, recordAnyway: true });
-    expect(second.dto.items).toEqual(first.dto.items);
-    await waitFor(() => expect(screen.queryByTestId("counter-payment-not-recorded")).toBeNull());
+    await ringCheck();
+    expect(await screen.findByTestId("counter-payment-not-recorded")).toHaveTextContent(
+      "Sale recorded — payment not recorded",
+    );
+    expect(
+      within(await screen.findByTestId("counter-payment-duplicate")).getByText(SENTENCE),
+    ).toBeInTheDocument();
   });
 
-  it("a role that may not use the flag sees the sentence and no Record anyway", async () => {
-    authUser = { id: "u-a", tenantSlug: "acme", role: "DRIVER" };
-    mutateAsync.mockResolvedValueOnce(unrecordedDup);
-    await ringCard();
-    const panel = await screen.findByTestId("counter-payment-not-recorded");
-    expect(within(panel).getByText(SENTENCE)).toBeInTheDocument();
-    expect(within(panel).queryByRole("button", { name: "Record anyway" })).toBeNull();
-  });
-
-  it("any other not-recorded state keeps the plain panel (no sentence, no Record anyway)", async () => {
+  it("any other not-recorded cause shows no duplicate panel", async () => {
     mutateAsync.mockResolvedValueOnce({
       ...unrecordedDup,
       paymentCauseCode: undefined,
       existingPayment: undefined,
     });
-    await ringCard();
-    const panel = await screen.findByTestId("counter-payment-not-recorded");
-    expect(within(panel).queryByRole("button", { name: "Record anyway" })).toBeNull();
-    expect(within(panel).queryByText(SENTENCE)).toBeNull();
+    await ringCheck();
+    await screen.findByTestId("counter-payment-not-recorded");
+    expect(screen.queryByTestId("counter-payment-duplicate")).toBeNull();
   });
 });

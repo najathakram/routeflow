@@ -89,7 +89,10 @@ describe("finance/payment-requests: a duplicate-reference approval (SA-837b item
     mockPost.mockResolvedValueOnce({ data: { approved: true, paymentGroupId: "g1", excess: 0 } });
     await approveFirst();
 
-    await expectOnlyThePageToasted(mockToast, mockGlobalToast, { description: SENTENCE });
+    await expectOnlyThePageToasted(mockToast, mockGlobalToast, {
+      variant: "warning",
+      description: SENTENCE,
+    });
     const t = mockToast.mock.calls[0][0];
     expect(t.action.label).toBe("Record anyway");
     expect(mockPost.mock.calls[0][1]).toBeUndefined(); // the first approve carries no flag
