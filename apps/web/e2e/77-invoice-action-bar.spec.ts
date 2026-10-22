@@ -3,7 +3,8 @@
  * "Save and Send" is never clipped at phone width. Read-only: nothing is saved or sent. At 1440 / 768 /
  * 390 the bar has no horizontal overflow, every control (Preview, Download, Save as draft, Save and Send,
  * Cancel) is fully inside the viewport and is at least 44 px tall, and a hit-test at each control's
- * centre lands on the control itself (nothing sits over it).
+ * centre lands on the control itself (nothing sits over it). Scrolled to the bottom, the last form control
+ * ends above the bar's top edge (the page pads itself from the measured bar height).
  */
 import { test, expect } from "@playwright/test";
 
@@ -29,6 +30,23 @@ for (const vp of VIEWPORTS) {
 
       const overflow = await bar.evaluate((el) => el.scrollWidth - el.clientWidth);
       expect(overflow, `bar scrolls ${overflow}px horizontally`).toBeLessThanOrEqual(0);
+
+      // Clearance: scrolled to the bottom, the last form control ends above the bar's top edge.
+      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+      const clearance = await page.evaluate(() => {
+        const barEl = document.querySelector('[data-testid="invoice-action-bar"]')!;
+        const controls = Array.from(
+          document.querySelectorAll<HTMLElement>(
+            "#main-content input, #main-content select, #main-content textarea, #main-content button",
+          ),
+        ).filter((el) => !barEl.contains(el) && el.getBoundingClientRect().height > 0);
+        const lastBottom = Math.max(...controls.map((el) => el.getBoundingClientRect().bottom));
+        return barEl.getBoundingClientRect().top - lastBottom;
+      });
+      expect(
+        clearance,
+        `last form control sits ${-clearance}px under the bar`,
+      ).toBeGreaterThanOrEqual(0);
 
       for (const name of CONTROLS) {
         const control = bar.getByRole("button", { name, exact: name !== "Save and Send" });

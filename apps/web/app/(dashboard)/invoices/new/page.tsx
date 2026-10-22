@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useBarHeight } from "./use-bar-height";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -816,6 +817,7 @@ function LevelCount({
 
 export default function NewInvoicePage() {
   const w = unitWords();
+  const [actionBarH, actionBarRef] = useBarHeight();
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
@@ -2062,7 +2064,12 @@ export default function NewInvoicePage() {
   const isSale = basis === "newSale";
 
   return (
-    <div className="pb-24 max-md:pb-44">
+    <div
+      className="pb-24 max-md:pb-[calc(var(--invoice-bar-h,11rem)+1rem)]"
+      style={
+        { "--invoice-bar-h": actionBarH ? `${actionBarH}px` : undefined } as React.CSSProperties
+      }
+    >
       {saleUnknown ? (
         <SaleUnknownPanel
           unknown={saleUnknown}
@@ -3056,6 +3063,7 @@ export default function NewInvoicePage() {
       {/* Sticky bottom bar (Zoho-style) */}
       <div
         data-testid="invoice-action-bar"
+        ref={actionBarRef}
         className="fixed inset-x-0 bottom-0 z-40 border-t border-surface-border bg-white px-4 py-3 shadow-[0_-2px_8px_0_rgb(0,0,0,0.06)] md:px-6"
       >
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2">
