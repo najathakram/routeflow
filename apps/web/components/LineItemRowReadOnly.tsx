@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import type { LineComponentView } from "@routeflow/types";
-import { backorderTagText } from "@/lib/backorder-tag-text";
+import { BackorderTag } from "@/components/BackorderTag";
 import { ComponentSubLines } from "./ComponentSubLines";
 import { Package } from "lucide-react";
 import { Badge, cn, type BadgeStatus } from "@routeflow/ui/web";
@@ -195,13 +195,10 @@ export function LineItemRowReadOnly({
         </p>
         {sku && <p className="mt-0.5 font-mono text-xs text-navy/60">SKU {sku}</p>}
         {backorderPieces != null && backorderPieces > 0 && (
-          <span
-            data-testid="line-backorder-tag"
-            title={`${backorderPieces} pcs sold past stock`}
-            className="mt-1 inline-flex rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200"
-          >
-            {backorderTagText(backorderPieces)}
-          </span>
+          <BackorderTag
+            pieces={backorderPieces}
+            unit={{ boxes, unitsPerBox, unitLabel: boxLabel }}
+          />
         )}
         {custom && (
           <span className="mt-1 inline-flex rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">

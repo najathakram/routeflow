@@ -5,7 +5,7 @@ import { Package } from "lucide-react";
 import { Badge, cn } from "@routeflow/ui/web";
 import { computeLineSubtotal } from "@routeflow/pricing";
 import { lineBackorderPieces } from "@routeflow/types";
-import { backorderTagText } from "@/lib/backorder-tag-text";
+import { BackorderTag } from "@/components/BackorderTag";
 import { invoiceLineQtyText, isUnitLine } from "@/lib/invoice-line-unit";
 import { formatMoney } from "@/lib/format";
 import { unitPriceNote } from "@/lib/line-unit-price-note";
@@ -46,19 +46,34 @@ export function OrderLineItemsTable({
           className="border-b border-surface-border bg-surface-raised max-md:sr-only"
         >
           <tr role="row">
-            <th role="columnheader" className="eyebrow-label px-6 py-2.5 text-left">
+            <th
+              role="columnheader"
+              className="eyebrow-label whitespace-nowrap px-6 py-2.5 text-left"
+            >
               Product
             </th>
-            <th role="columnheader" className="eyebrow-label px-4 py-2.5 text-right">
+            <th
+              role="columnheader"
+              className="eyebrow-label whitespace-nowrap px-4 py-2.5 text-right"
+            >
               Qty
             </th>
-            <th role="columnheader" className="eyebrow-label px-4 py-2.5 text-right">
+            <th
+              role="columnheader"
+              className="eyebrow-label whitespace-nowrap px-4 py-2.5 text-right"
+            >
               Unit Price
             </th>
-            <th role="columnheader" className="eyebrow-label px-4 py-2.5 text-right">
+            <th
+              role="columnheader"
+              className="eyebrow-label whitespace-nowrap px-4 py-2.5 text-right"
+            >
               Line Total
             </th>
-            <th role="columnheader" className="eyebrow-label px-6 py-2.5 text-left">
+            <th
+              role="columnheader"
+              className="eyebrow-label whitespace-nowrap px-6 py-2.5 text-left"
+            >
               Status
             </th>
           </tr>
@@ -92,13 +107,15 @@ export function OrderLineItemsTable({
                       {orderLineName(li) ?? "Custom item"}
                     </span>
                     {lineBackorderPieces(li, orderStatus) > 0 && (
-                      <span
-                        data-testid="line-backorder-tag"
-                        title={`${lineBackorderPieces(li, orderStatus)} pcs sold past stock`}
-                        className="ml-2 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200"
-                      >
-                        {backorderTagText(lineBackorderPieces(li, orderStatus))}
-                      </span>
+                      <BackorderTag
+                        pieces={lineBackorderPieces(li, orderStatus)}
+                        // The stored facts the line was sold by, never the live product's (L-332).
+                        unit={{
+                          boxes: li.boxes,
+                          unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox,
+                          unitLabel: li.unitLabel,
+                        }}
+                      />
                     )}
                     {li.notes && (
                       <p className="mt-0.5 whitespace-pre-line text-xs italic text-navy/60">
@@ -117,7 +134,7 @@ export function OrderLineItemsTable({
               <td
                 role="cell"
                 data-label="Qty"
-                className={cn("px-4 py-3 text-right text-navy/70", CARD_CELL)}
+                className={cn("px-4 py-3 text-right text-navy/70 md:whitespace-nowrap", CARD_CELL)}
               >
                 {li.boxes != null || li.pieces != null ? (
                   <span title={isUnitLine(li) ? undefined : `${Number(li.qty)} pcs total`}>

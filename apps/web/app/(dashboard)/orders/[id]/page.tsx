@@ -1300,7 +1300,7 @@ export function EditableLineItems({
                     </button>
                   )}
                   <button
-                    className="rounded px-2 py-1 text-xs text-danger hover:bg-danger-bg"
+                    className="rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy"
                     onClick={() => update(item.id, { cancelled: true })}
                   >
                     Not available
@@ -1311,6 +1311,7 @@ export function EditableLineItems({
                       "rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors",
                     )}
                     title="Delete item"
+                    aria-label={`Remove ${item.productName?.trim() || "item"}`}
                     onClick={() => onDelete(item.id)}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -2871,7 +2872,7 @@ export default function OrderDetailPage() {
                   refusalReturn={returnSave.refusalReturn}
                 />
 
-                <StickyEditBar>
+                <StickyEditBar total={formatMoney(editTotal)}>
                   <PriceLayerNotice
                     layer={priceLayer}
                     unconfirmed={layerBlocked}
@@ -3274,7 +3275,9 @@ export default function OrderDetailPage() {
                 </div>
               )}
               <div className="flex items-center justify-between gap-3 border-t border-surface-border pt-2.5">
-                <dt className="font-semibold text-navy">Order total</dt>
+                <dt className="font-semibold text-navy">
+                  {isEditing ? "Saved total" : "Order total"}
+                </dt>
                 <dd className="money text-[15px] font-semibold text-navy">{formatMoney(total)}</dd>
               </div>
             </dl>
@@ -3366,8 +3369,18 @@ export default function OrderDetailPage() {
                     </p>
                   ) : null;
                 }
+                // apple-ux r3 Q27: an invoice made now bills the SAVED lines, not the edit in front of the
+                // person. The two actions are held (disabled, with the reason as text they point at)
+                // until the edit is saved or cancelled; a hidden or merely quiet button would still
+                // invite the click, and an invoice cannot be taken back with Undo.
+                const invoiceHold = isEditing ? "invoice-edit-hold" : undefined;
                 return (
                   <div className="mt-3 space-y-2 border-t border-surface-border pt-3">
+                    {isEditing && (
+                      <p id="invoice-edit-hold" className="text-xs text-navy/70">
+                        Save your changes first, then invoice this order.
+                      </p>
+                    )}
                     {hasNoInvoiceYet && (
                       <>
                         <p className="text-xs text-navy/70">
@@ -3375,8 +3388,13 @@ export default function OrderDetailPage() {
                         </p>
                         <Button
                           size="sm"
+                          // One filled primary leads the page: while PENDING that is Confirm Order
+                          // (apple-ux r3 Q16), so invoicing is secondary until the order is confirmed.
+                          variant={localStatus === "PENDING" || isEditing ? "secondary" : "primary"}
                           className="w-full justify-center"
                           leftIcon={<FileText className="h-4 w-4" />}
+                          disabled={isEditing}
+                          aria-describedby={invoiceHold}
                           loading={createInvoiceFromOrder.isPending}
                           onClick={() => {
                             // The invoice-time backstop can 409 on an expired/newly-added
@@ -3396,6 +3414,8 @@ export default function OrderDetailPage() {
                       <Button
                         size="sm"
                         variant="secondary"
+                        disabled={isEditing}
+                        aria-describedby={invoiceHold}
                         onClick={() => setSplitInvoiceOpen(true)}
                       >
                         Split into invoice…
