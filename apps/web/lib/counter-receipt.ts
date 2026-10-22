@@ -72,7 +72,8 @@ export type CounterReceiptLine = ReceiptLine;
 /**
  * SA-838a: the reprint of a sale that had a return carries the server's `returnLines`, each used as given (the web derives none):
  * `returned` = credit APPLIED to this sale (the "Returned −$x" line, the only figure the balance subtracts); `refunded` = money
- * handed back outside RouteFlow and `creditKept` = credit left on the customer's account (info lines, never subtracted);
+ * handed back outside RouteFlow, `creditKept` = credit left on the customer's account and `creditUsed` = credit spent on OTHER
+ * orders (info lines, never subtracted);
  * `returnPending` = a return is not settled yet ("Return in progress", no amount). null = no line. Only a server that sends
  * `returnLines` sets any of them; an older one reprints exactly as before (none of the keys exist on the model).
  */
@@ -80,6 +81,7 @@ export type CounterReceiptModel = ReceiptModel & {
   returned?: number | null;
   refunded?: number | null;
   creditKept?: number | null;
+  creditUsed?: number | null;
   returnPending?: boolean;
 };
 
@@ -345,7 +347,13 @@ export interface ReprintSaleFacts {
    * SA-838a, the row's `returnLines` (`@routeflow/pricing` `returnSettlement`, summed by the server): applied / refunded / kept
    * credit of THIS sale's own returns, and whether one is still pending. Used as given. Absent (an older server): no return line.
    */
-  returnLines?: { applied: number; refunded: number; kept: number; pending: boolean };
+  returnLines?: {
+    applied: number;
+    refunded: number;
+    kept: number;
+    used: number;
+    pending: boolean;
+  };
 }
 
 /** The tender of a today's-sales row (the shared POS-7b-1 type; never hand-typed here). */
@@ -503,6 +511,7 @@ export function receiptModelFromOrder(input: {
           returned: lines.applied > 0 ? lines.applied : null,
           refunded: lines.refunded > 0 ? lines.refunded : null,
           creditKept: lines.kept > 0 ? lines.kept : null,
+          creditUsed: lines.used > 0 ? lines.used : null,
           returnPending: lines.pending,
         }
       : {}),

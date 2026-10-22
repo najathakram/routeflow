@@ -194,7 +194,7 @@ describe("reprint after a return (SA-838a): the paper", () => {
     );
     return rows.slice(rows.findIndex((r) => r.startsWith("Total")) + 1);
   };
-  const none = { applied: 0, refunded: 0, kept: 0, pending: false };
+  const none = { applied: 0, refunded: 0, kept: 0, used: 0, pending: false };
   /** Total $12.50, Cash $5.00 */
   const cash5 = {
     paid: 5,
@@ -296,6 +296,28 @@ describe("reprint after a return (SA-838a): the paper", () => {
     ]);
   });
 
+  it("(3) the own credit spent on order B: Cash $12.50, Paid $12.50, Credit used $5.50, and no Balance due", () => {
+    expect(
+      paper({
+        methods: [{ method: "CASH", amount: 12.5 }],
+        tenderPaid: 12.5,
+        tenderMethods: [{ method: "CASH", amount: 12.5 }],
+        returnLines: { ...none, used: 5.5 },
+      }),
+    ).toEqual(["Payment method Cash $12.50", "Paid $12.50", "Credit used $5.50 (returned items)"]);
+  });
+
+  it("a return whose credit note was voided, or whose settlement is all zero, prints no return line", () => {
+    expect(
+      paper({
+        methods: [{ method: "CASH", amount: 12.5 }],
+        tenderPaid: 12.5,
+        tenderMethods: [{ method: "CASH", amount: 12.5 }],
+        returnLines: none,
+      }),
+    ).toEqual(["Payment method Cash $12.50", "Paid $12.50"]);
+  });
+
   it("(d) another order's store credit prints as the tender Store credit", () => {
     expect(
       paper({
@@ -361,7 +383,7 @@ describe("reprint after a return (SA-838a): the paper", () => {
           { method: "CASH", amount: 5 },
           { method: "STORE_CREDIT", amount: 2.5 },
         ],
-        returnLines: { applied: 2.5, refunded: 1, kept: 0.5, pending: true },
+        returnLines: { applied: 2.5, refunded: 1, kept: 0.5, used: 0.75, pending: true },
       }),
     ).toEqual([
       "Payment method Cash $5.00",
@@ -369,6 +391,7 @@ describe("reprint after a return (SA-838a): the paper", () => {
       "Returned −$2.50",
       "Refunded $1.00 (returned items)",
       "Credit kept $0.50 (returned items)",
+      "Credit used $0.75 (returned items)",
       "Balance due $5.00",
       "Return in progress",
     ]);

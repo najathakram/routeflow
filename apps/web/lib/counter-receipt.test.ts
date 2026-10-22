@@ -259,7 +259,7 @@ describe("reprint after a return (SA-838a): the server's tender split and return
       },
       profile: null,
     });
-  const none = { applied: 0, refunded: 0, kept: 0, pending: false };
+  const none = { applied: 0, refunded: 0, kept: 0, used: 0, pending: false };
 
   it("(1a) Total 12.50, Cash 5.00, own return 2.50 refunded outside: Refunded, nothing subtracted", () => {
     const m = reprint({
@@ -307,6 +307,21 @@ describe("reprint after a return (SA-838a): the server's tender split and return
     expect([m.returned, m.refunded, m.creditKept]).toEqual([2.5, null, null]);
     expect(m.paid).toBe(5);
     expect(m.balanceDue).toBe(5);
+  });
+
+  it("(3) own credit spent on another order: Credit used, nothing subtracted, no Balance due", () => {
+    const m = reprint({
+      paid: 12.5,
+      balanceDue: 0,
+      methods: [{ method: "CASH", amount: 12.5 }],
+      tenderPaid: 12.5,
+      tenderMethods: [{ method: "CASH", amount: 12.5 }],
+      returnLines: { ...none, used: 5.5 },
+    });
+    expect(m.methodLabel).toBe("Cash $12.50");
+    expect([m.returned, m.refunded, m.creditKept, m.creditUsed]).toEqual([null, null, null, 5.5]);
+    expect(m.showBalance).toBe(false);
+    expect(m.paid).toBe(12.5);
   });
 
   it("(2) pending: no amount anywhere, only the note", () => {
@@ -454,7 +469,7 @@ describe("reprint after a return (SA-838a): the server's tender split and return
     expect(m.onAccount).toBe(false);
     expect(m.showBalance).toBe(true);
     expect(m.balanceDue).toBe(6.25);
-    for (const key of ["returned", "refunded", "creditKept", "returnPending", "returnedLabel"]) {
+    for (const key of ["returned", "refunded", "creditKept", "creditUsed", "returnPending"]) {
       expect(key in m).toBe(false);
     }
     // a multi-tender old row keeps master's label-only join

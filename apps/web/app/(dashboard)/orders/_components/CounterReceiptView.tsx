@@ -210,6 +210,12 @@ export function CounterReceiptView({
             <dt>Credit kept {money(m.creditKept)} (returned items)</dt>
           </div>
         ) : null}
+        {m.creditUsed ? (
+          // an info line: credit the return made that was spent on another order, never subtracted here
+          <div data-testid="receipt-credit-used">
+            <dt>Credit used {money(m.creditUsed)} (returned items)</dt>
+          </div>
+        ) : null}
         {m.showBalance ? (
           <div className="flex justify-between">
             <dt>Balance due</dt>

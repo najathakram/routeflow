@@ -228,7 +228,7 @@ test("R7b 3.3 (B1262): a reprint of a sale with a return says Returned at 390", 
     tenderPaid: 0,
     returnCredit: 6.25,
     tenderMethods: [],
-    returnLines: { applied: 6.25, refunded: 0, kept: 0, pending: false },
+    returnLines: { applied: 6.25, refunded: 0, kept: 0, used: 0, pending: false },
     returned: {
       amount: 6.25,
       state: "PARTLY",
@@ -265,7 +265,7 @@ test("SA-838a: a reprint with a pending, a refunded and a kept return prints the
   await setTenantCookie(context, baseURL ?? "");
   await page.setViewportSize({ width: 390, height: 844 });
   // Total $12.50, Cash $5.00: balance 7.50 and nothing subtracted for a refunded, kept or pending return
-  const row = (lines: { refunded: number; kept: number; pending: boolean }) => ({
+  const row = (lines: { refunded: number; kept: number; used?: number; pending: boolean }) => ({
     ...ROW,
     paid: 5,
     balanceDue: 7.5,
@@ -273,11 +273,12 @@ test("SA-838a: a reprint with a pending, a refunded and a kept return prints the
     tenderPaid: 5,
     returnCredit: 0,
     tenderMethods: [{ method: "CASH", amount: 5 }],
-    returnLines: { applied: 0, ...lines },
+    returnLines: { applied: 0, used: 0, ...lines },
   });
   for (const [lines, expected] of [
     [{ refunded: 2.5, kept: 0, pending: false }, "Refunded $2.50 (returned items)"],
     [{ refunded: 0, kept: 2.5, pending: false }, "Credit kept $2.50 (returned items)"],
+    [{ refunded: 0, kept: 0, used: 2.5, pending: false }, "Credit used $2.50 (returned items)"],
     [{ refunded: 0, kept: 0, pending: true }, "Return in progress"],
   ] as const) {
     await page.route(/\/api\/v1\/orders\/counter-sale\/today/, (r) =>
