@@ -117,6 +117,7 @@ import {
   forgetPaymentProof,
   paymentKeyRefusalCopy,
   rememberPaymentProof,
+  paymentKeyScope,
   usePaymentSubmitKey,
 } from "@/lib/payment-submit-key";
 import {
@@ -1463,7 +1464,7 @@ export default function InvoiceDetailPage() {
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
-  const keyScope = `invoice:${id}`;
+  const keyScope = paymentKeyScope.invoice(id);
   const paymentKey = usePaymentSubmitKey(isPaymentOpen, keyScope);
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
   // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx, and attaches the

@@ -18,6 +18,7 @@ import {
   finishFoundPayment,
   forgetPaymentProof,
   rememberPaymentProof,
+  paymentKeyScope,
   usePaymentSubmitKey,
 } from "@/lib/payment-submit-key";
 import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
@@ -72,7 +73,7 @@ export function CustomerRecordPaymentModal({
 }: CustomerRecordPaymentModalProps) {
   const { toast } = useToast();
   const record = useRecordPaymentStandalone();
-  const keyScope = `standalone:${customerId}`;
+  const keyScope = paymentKeyScope.standalone(customerId);
   // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
   const paymentKey = usePaymentSubmitKey(true, keyScope);
   const uploadPaymentImage = useUploadPaymentImage();

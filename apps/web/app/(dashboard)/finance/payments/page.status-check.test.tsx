@@ -62,6 +62,11 @@ async function openModal() {
   });
   fireEvent.change(screen.getAllByPlaceholderText("0.00")[0], { target: { value: "50" } });
 }
+// the scope is the customer (writer + target): a reopened dialog resolves it when the customer is chosen
+const pickCustomer = async () => {
+  await screen.findAllByRole("option", { name: /Acme Foods/ });
+  fireEvent.change(screen.getByDisplayValue("Select customer..."), { target: { value: "cust-1" } });
+};
 const save = () => fireEvent.click(screen.getByRole("button", { name: "Save as Paid" }));
 const checkBtn = () => screen.getByRole("button", { name: "Check payment status" });
 const goUnknown = async () => {
@@ -209,6 +214,7 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("button", { name: "Check payment status" })).toBeNull();
     fireEvent.click(screen.getAllByRole("button", { name: /Record Payment/ })[0]);
+    await pickCustomer();
     expect(checkBtn()).toBeTruthy();
     expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
     fireEvent.click(checkBtn());
@@ -226,7 +232,9 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("heading", { name: "Record Payment" })).toBeNull();
     fireEvent.click(screen.getAllByRole("button", { name: /Record Payment/ })[0]);
-    // the reopened dialog sees the request still out: unknown, so Save is off and the check is offered
+    // the reopened dialog sees the request still out once the customer is chosen: unknown, so Save is off
+    // and the check is offered
+    await pickCustomer();
     expect(checkBtn()).toBeTruthy();
     expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
     // the first request now times out (no response)
@@ -236,18 +244,20 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
     await waitFor(() => expect(mockToast).toHaveBeenCalled());
     expect(checkBtn()).toBeTruthy();
     expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
-    expect(acquirePaymentKeyHolder("standalone:payments-page").peek()).toBe(k1);
+    expect(acquirePaymentKeyHolder("standalone:cust-1").peek()).toBe(k1);
     fireEvent.click(checkBtn());
     await waitFor(() => expect(mockResolve).toHaveBeenCalledWith(resolveUrl(k1)));
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
-  it("the submit handler re-checks the unknown lock (not only the disabled prop)", async () => {
+  it("a lock landing while the dialog is open turns Save off, and a click sends nothing", async () => {
     await openModal();
-    const holder = acquirePaymentKeyHolder("standalone:payments-page");
-    holder.keyFor({ amount: 50, method: "CASH" });
-    holder.settle(holder.peek()!, { ok: false, error: httpErr(503) });
-    expect(screen.getByRole("button", { name: "Save as Paid" })).not.toBeDisabled();
+    const holder = acquirePaymentKeyHolder("standalone:cust-1");
+    act(() => {
+      holder.keyFor({ amount: 50, method: "CASH" });
+      holder.settle(holder.peek()!, { ok: false, error: httpErr(503) });
+    });
+    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
     save();
     await Promise.resolve();
     expect(mockPost).not.toHaveBeenCalled();

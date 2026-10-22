@@ -169,7 +169,7 @@ import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { focusRefusedContactField } from "@/lib/refused-text-field";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, WriteLink } from "@/lib/read-only-gate";
-import { usePaymentSubmitKey } from "@/lib/payment-submit-key";
+import { paymentKeyScope, usePaymentSubmitKey } from "@/lib/payment-submit-key";
 import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
 import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
 import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
@@ -2163,7 +2163,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   // Advance payment
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
   // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
-  const advanceKey = usePaymentSubmitKey(isAdvanceOpen, `advance:${id}`);
+  const advanceKey = usePaymentSubmitKey(isAdvanceOpen, paymentKeyScope.advance(id));
   // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
   const advanceStatus = usePaymentStatusCheck(
     advanceKey,

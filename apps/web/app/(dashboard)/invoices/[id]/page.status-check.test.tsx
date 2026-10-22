@@ -1,10 +1,11 @@
 import * as React from "react";
-import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { act, fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { seedSession } from "@/test-utils/session";
 import {
   acquirePaymentKeyHolder,
   clearPaymentKeyRegistry,
   PAYMENT_PHOTO_LATER_COPY,
+  PAYMENT_STATUS_COPY,
 } from "@routeflow/types/payment-submit-key";
 import InvoiceDetailPage from "./page";
 
@@ -273,15 +274,51 @@ describe("invoices/[id] Record Payment: Check payment status (SA-824)", () => {
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
-  it("the submit handler re-checks the unknown lock when it lands after the last render", async () => {
+  it("the submit handler re-checks the unknown lock (Enter reaches it even with Record off)", async () => {
     renderWithProviders(<InvoiceDetailPage />);
     openDialog();
     const holder = acquirePaymentKeyHolder("invoice:inv-1");
-    holder.keyFor({ amount: 100, method: "ACH" });
-    holder.settle(holder.peek()!, { ok: false, error: httpErr(503) });
-    expect(record()).not.toBeDisabled();
-    fireEvent.click(record());
+    act(() => {
+      holder.keyFor({ amount: 100, method: "ACH" });
+      holder.settle(holder.peek()!, { ok: false, error: httpErr(503) });
+    });
+    fireEvent.submit(form()!);
     await Promise.resolve();
     expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("a stay-mounted dialog reopened during a flight shows the check at once, Record visibly off with its reason", async () => {
+    renderWithProviders(<InvoiceDetailPage />); // mounted, dialog closed
+    const holder = acquirePaymentKeyHolder("invoice:inv-1");
+    let key = "";
+    act(() => {
+      key = holder.keyFor({ amount: 100, method: "ACH" }); // a request out from the closed dialog
+    });
+    openDialog();
+    expect(checkBtn()).toBeTruthy();
+    expect(record()).toBeDisabled();
+    expect(screen.getByText(PAYMENT_STATUS_COPY.unknownHint)).toBeTruthy();
+    act(() => holder.settle(key, { ok: true }));
+    expect(screen.queryByRole("button", { name: "Check payment status" })).toBeNull();
+    expect(record()).not.toBeDisabled();
+  });
+
+  it("a dialog that mounted during someone else's flight is not 'unknown' during its own Save", async () => {
+    const holder = acquirePaymentKeyHolder("invoice:inv-1");
+    let other = "";
+    act(() => {
+      other = holder.keyFor({ amount: 100, method: "ACH" });
+    });
+    renderWithProviders(<InvoiceDetailPage />);
+    act(() => holder.settle(other, { ok: true }));
+    openDialog();
+    let hold!: (v: unknown) => void;
+    mockPost.mockImplementationOnce(() => new Promise((r) => (hold = r)));
+    fireEvent.click(record());
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button", { name: "Check payment status" })).toBeNull();
+    await act(async () => {
+      hold({ data: {} });
+    });
   });
 });

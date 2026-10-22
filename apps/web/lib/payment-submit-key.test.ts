@@ -12,6 +12,7 @@ import {
   paymentSubmitFingerprint,
   PAYMENT_MAY_BE_RECORDED_COPY,
   paymentMayBeRecordedCopy,
+  paymentKeyScope,
 } from "@routeflow/types/payment-submit-key";
 import { sendWithPaymentKey, usePaymentSubmitKey } from "./payment-submit-key";
 import { genericToastCopy } from "./generic-toast-copy";
@@ -338,5 +339,72 @@ describe("SA-824 MUST-1: a request in flight is an unknown outcome (holder)", ()
     act(() => void h.resolveFromStatus({ kind: "found", payment: {} })); // released
     expect(sender.result.current).toBe(false);
     expect(remount.result.current).toBe(false); // no stale lock on the reopened dialog
+  });
+});
+
+describe("SA-824 scope is writer + target; unknown is recomputed on open", () => {
+  beforeEach(() => clearPaymentKeyRegistry());
+
+  it("paymentKeyScope: one scope per writer + target, never the surface", () => {
+    expect(paymentKeyScope.standalone("c1")).toBe("standalone:c1");
+    expect(paymentKeyScope.invoice("i1")).toBe("invoice:i1");
+    expect(paymentKeyScope.advance("c1")).toBe("advance:c1");
+  });
+
+  it("unknown on one surface blocks a new key on another surface for the same customer", () => {
+    const pageModal = renderHook(() => usePaymentSubmitKey(true, paymentKeyScope.standalone("c1")));
+    const k1 = pageModal.result.current.keyFor(pay);
+    act(() => pageModal.result.current.settle(k1, { ok: false, error: err(503) }));
+    pageModal.unmount(); // the surface closes; the unknown outcome stays in the registry
+    const customerModal = renderHook(() =>
+      usePaymentSubmitKey(true, paymentKeyScope.standalone("c1")),
+    );
+    expect(customerModal.result.current.hasUnknown()).toBe(true);
+    expect(customerModal.result.current.keyFor(pay)).toBe(k1); // never a second key
+    // another customer is another target
+    const other = renderHook(() => usePaymentSubmitKey(true, paymentKeyScope.standalone("c2")));
+    expect(other.result.current.hasUnknown()).toBe(false);
+  });
+
+  it("usePaymentSubmitKey(null): an idle private holder, nothing registered; a scope swaps it in", () => {
+    const { result, rerender } = renderHook(
+      ({ scope }: { scope: string | null }) => usePaymentSubmitKey(true, scope),
+      { initialProps: { scope: null as string | null } },
+    );
+    const unscoped = result.current;
+    expect(unscoped.peek()).toBeNull();
+    expect(acquirePaymentKeyHolder("standalone:c1")).not.toBe(unscoped);
+    rerender({ scope: "standalone:c1" });
+    expect(result.current).toBe(acquirePaymentKeyHolder("standalone:c1"));
+  });
+
+  it("useHolderUnknown: a stay-mounted dialog recomputes on open (a request already out is unknown)", () => {
+    const h = createPaymentKeyHolder(mintSeq());
+    const view = renderHook(({ open }) => useHolderUnknown(h, open), {
+      initialProps: { open: false },
+    });
+    expect(view.result.current).toBe(false);
+    act(() => void h.keyFor(pay)); // sent from a dialog that was then closed
+    view.rerender({ open: true });
+    expect(view.result.current).toBe(true);
+  });
+
+  it("useHolderUnknown: 'inherited' ends with the inherited flight; the dialog's own Save is not unknown", () => {
+    const h = createPaymentKeyHolder(mintSeq());
+    let other = "";
+    act(() => {
+      other = h.keyFor(pay);
+    });
+    const view = renderHook(() => useHolderUnknown(h)); // mounted during someone else's flight
+    expect(view.result.current).toBe(true);
+    act(() => h.settle(other, { ok: true }));
+    expect(view.result.current).toBe(false);
+    let own = "";
+    act(() => {
+      own = h.keyFor(pay);
+    });
+    expect(view.result.current).toBe(false); // its own Save reads Saving..., not "couldn't confirm"
+    act(() => h.settle(own, { ok: false, error: err(503) }));
+    expect(view.result.current).toBe(true);
   });
 });

@@ -116,6 +116,21 @@ export type PaymentStatusOutcome<T = unknown> =
   /** Nothing unknown was held: no call was made. */
   | { kind: "idle" };
 
+/**
+ * SA-824 (lead ruling): the holder scope is the WRITER plus its TARGET, never the surface that happens to call
+ * it. Every dialog and screen that hits the same writer for the same target shares one holder, so an unknown
+ * outcome on one surface blocks a new key on the other. One builder per writer; surfaces call these, never a
+ * hand-typed string.
+ *  - standalone: POST /invoices/payments/record, target = the customer
+ *  - invoice:    POST /invoices/:id/payments, target = the invoice
+ *  - advance:    POST /customers/:id/advance-payments, target = the customer
+ */
+export const paymentKeyScope = {
+  standalone: (customerId: string) => `standalone:${customerId}`,
+  invoice: (invoiceId: string) => `invoice:${invoiceId}`,
+  advance: (customerId: string) => `advance:${customerId}`,
+} as const;
+
 /** The fixed copy of the status check (web and mobile): never a raw server message. */
 export const PAYMENT_STATUS_COPY = {
   action: "Check payment status",
@@ -127,6 +142,8 @@ export const PAYMENT_STATUS_COPY = {
   /** 409 PAYMENT_KEY_IN_FLIGHT: retryable. */
   inFlight: "This payment is still being recorded. Check its status again in a moment.",
   error: "We couldn't check right now. Try again in a moment.",
+  /** Beside a customer picker that is off because an attempt for that customer is unknown or in flight. */
+  customerLocked: "Check this payment's status before changing the customer.",
   /** Shown while the outcome is unknown, beside the action that replaces Record. */
   unknownHint:
     "We couldn't confirm this payment. It may already be recorded. Check its status before trying again.",

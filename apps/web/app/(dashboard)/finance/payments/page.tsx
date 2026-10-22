@@ -37,6 +37,7 @@ import {
   PAYMENT_PHOTO_LATER_COPY,
   finishFoundPayment,
   forgetPaymentProof,
+  paymentKeyScope,
   rememberPaymentProof,
   usePaymentSubmitKey,
 } from "@/lib/payment-submit-key";
@@ -75,14 +76,17 @@ interface Allocation {
 function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const { toast } = useToast();
   const record = useRecordPaymentStandalone();
-  // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
-  const keyScope = "standalone:payments-page";
+  const [customerId, setCustomerId] = React.useState("");
+  // SA-824: the holder scope is the writer + target (`standalone:<customerId>`), shared with
+  // CustomerRecordPaymentModal, resolved when the customer is chosen: no key exists before that. One key per
+  // open, kept across a Cancel -> reopen while the outcome is unknown.
+  const keyScope = customerId ? paymentKeyScope.standalone(customerId) : null;
   const paymentKey = usePaymentSubmitKey(true, keyScope);
   const uploadPaymentImage = useUploadPaymentImage();
   // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx, and attaches the
   // selected proof photo to the found payment (the same upload the 2xx path runs).
   const statusCheck = usePaymentStatusCheck(paymentKey, async (payment) => {
-    const photo = await finishFoundPayment<File>(keyScope, payment, (paymentId, f) =>
+    const photo = await finishFoundPayment<File>(keyScope ?? "", payment, (paymentId, f) =>
       uploadPaymentImage.mutateAsync({ paymentId, file: f }),
     );
     toast(
@@ -100,7 +104,8 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
     onClose();
   });
   const { data: customersData } = useCustomers({ limit: 200 });
-  const [customerId, setCustomerId] = React.useState("");
+  // An attempt for this customer is unknown or in flight: never re-scope it to another customer.
+  const customerLocked = paymentKey.hasUnknown();
   const [totalAmount, setTotalAmount] = React.useState("");
   const [bankCharges, setBankCharges] = React.useState("");
   const [paidAt, setPaidAt] = React.useState(new Date().toISOString().split("T")[0]);
@@ -176,7 +181,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
 
   const handleSave = async (status: "DRAFT" | "PAID") => {
     if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
-    if (!customerId) {
+    if (!customerId || !keyScope) {
       toast({ title: "Select a customer", variant: "error" });
       return;
     }
@@ -258,7 +263,11 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
               <label className="mb-1.5 block text-sm font-medium text-navy">Customer *</label>
               <select
                 value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
+                onChange={(e) => {
+                  if (paymentKey.hasUnknown()) return; // SA-824: never re-scope an unknown attempt
+                  setCustomerId(e.target.value);
+                }}
+                disabled={customerLocked}
                 className={fieldCls}
               >
                 <option value="">Select customer...</option>
@@ -268,6 +277,9 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
                   </option>
                 ))}
               </select>
+              {customerLocked && (
+                <p className="mt-1 text-xs text-navy/70">{PAYMENT_STATUS_COPY.customerLocked}</p>
+              )}
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy">

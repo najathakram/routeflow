@@ -6,15 +6,30 @@ import { paymentStatusCopy, type PaymentStatusOutcome } from "@routeflow/types/p
 
 /**
  * Whether the dialog treats the outcome as unknown: the key is locked, or a request is still in flight that this
- * dialog did NOT send itself (it was mounted while the holder already had one out: a Cancel -> reopen). The
- * dialog's own pending Save is not shown as "we couldn't confirm" (its Save button already reads Saving...).
- * Re-renders on every holder change, so a late settle of the first request reaches a remounted dialog.
+ * dialog did NOT send itself (it was opened while the holder already had one out: a Cancel -> reopen, or a
+ * dialog that stays mounted). Its own pending Save is not shown as "we couldn't confirm" (its Save button
+ * already reads Saving...).
+ *  - "Inherited" is decided on every OPEN (`isOpen` false -> true) and whenever the holder changes, never once
+ *    per mount: a dialog that stays mounted must offer "Check payment status" the moment it reopens.
+ *  - It ends with the inherited flight: once nothing is out, a later Save of this dialog is its own.
+ * Re-renders on every holder change, so a late settle of the first request reaches a reopened dialog.
  */
-export function useHolderUnknown(holder: PaymentKeyHolder): boolean {
+export function useHolderUnknown(holder: PaymentKeyHolder, isOpen = true): boolean {
   const [, bump] = React.useReducer((n: number) => n + 1, 0);
-  const inherited = React.useRef<boolean | null>(null);
-  if (inherited.current === null) inherited.current = holder.hasUnknown();
-  React.useEffect(() => holder.subscribe(bump), [holder]);
+  const inherited = React.useRef(false);
+  const seen = React.useRef<{ holder: PaymentKeyHolder; open: boolean } | null>(null);
+  if (!seen.current || seen.current.holder !== holder || (isOpen && !seen.current.open)) {
+    inherited.current = isOpen && holder.inFlight();
+  }
+  seen.current = { holder, open: isOpen };
+  React.useEffect(() => {
+    // the inherited flight may have ended between render and subscribe
+    if (!holder.inFlight()) inherited.current = false;
+    return holder.subscribe(() => {
+      if (!holder.inFlight()) inherited.current = false;
+      bump();
+    });
+  }, [holder]);
   return holder.isLocked() || (holder.inFlight() && inherited.current);
 }
 
@@ -50,7 +65,7 @@ export function usePaymentStatusCheck(
       setChecking(false);
     }
   }, [holder, qc, onRecorded]);
-  const unknown = useHolderUnknown(holder);
+  const unknown = useHolderUnknown(holder, isOpen);
   return {
     /** True while the outcome is unknown: the dialog shows the check and keeps Save off. */
     unknown,

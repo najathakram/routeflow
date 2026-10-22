@@ -1,9 +1,10 @@
 import * as React from "react";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderWithProviders } from "@/test-utils/render";
 import {
   acquirePaymentKeyHolder,
   clearPaymentKeyRegistry,
+  PAYMENT_STATUS_COPY,
 } from "@routeflow/types/payment-submit-key";
 import CustomerDetailPage from "./page";
 
@@ -200,15 +201,35 @@ describe("customers/[id] Record Advance Payment: Check payment status (SA-824)",
     await waitFor(() => expect(mockResolve).toHaveBeenCalledWith(resolveUrl(sent)));
   });
 
-  it("the click handler re-checks the unknown lock when it lands after the last render", async () => {
+  it("a lock landing while the dialog is open turns Record off, and a click sends nothing", async () => {
     await openDialog();
     fireEvent.change(amount(), { target: { value: "25" } });
     const holder = acquirePaymentKeyHolder("advance:c1");
-    holder.keyFor({ amount: 25, method: "ACH" });
-    holder.settle(holder.peek()!, { ok: false, error: httpErr(503) });
-    expect(record()).not.toBeDisabled();
+    act(() => {
+      holder.keyFor({ amount: 25, method: "ACH" });
+      holder.settle(holder.peek()!, { ok: false, error: httpErr(503) });
+    });
+    expect(record()).toBeDisabled();
     fireEvent.click(record());
     await Promise.resolve();
     expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("a stay-mounted dialog reopened during a flight shows the check at once, Record visibly off with its reason", async () => {
+    renderWithProviders(<CustomerDetailPage />); // mounted, dialog closed
+    const opener = await screen.findByRole("button", { name: "Record Advance Payment" });
+    const holder = acquirePaymentKeyHolder("advance:c1");
+    let key = "";
+    act(() => {
+      key = holder.keyFor({ amount: 25, method: "ACH" }); // a request out from the closed dialog
+    });
+    fireEvent.click(opener);
+    await screen.findByRole("dialog");
+    expect(checkBtn()).toBeTruthy();
+    expect(record()).toBeDisabled();
+    expect(within(dialog()).getByText(PAYMENT_STATUS_COPY.unknownHint)).toBeTruthy();
+    act(() => holder.settle(key, { ok: true }));
+    expect(within(dialog()).queryByRole("button", { name: "Check payment status" })).toBeNull();
+    expect(record()).not.toBeDisabled();
   });
 });

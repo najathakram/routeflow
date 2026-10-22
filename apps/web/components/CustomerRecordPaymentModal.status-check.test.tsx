@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { act, fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import {
   acquirePaymentKeyHolder,
   clearPaymentKeyRegistry,
@@ -231,13 +231,14 @@ describe("CustomerRecordPaymentModal: Check payment status (SA-824)", () => {
     expect(keyOf(mockPost.mock.calls[1])).not.toBe(firstKey);
   });
 
-  it("the submit handler re-checks the unknown lock (not only the disabled prop)", async () => {
+  it("a lock landing while the dialog is open turns Save off, and a click sends nothing", async () => {
     open();
-    // The lock lands between render and click (no re-render yet): the button is still enabled.
     const holder = acquirePaymentKeyHolder("standalone:cust-1");
-    holder.keyFor({ amount: 50, method: "CASH" });
-    holder.settle(holder.peek()!, { ok: false, error: httpErr(503) });
-    expect(screen.getByRole("button", { name: "Save as Paid" })).not.toBeDisabled();
+    act(() => {
+      holder.keyFor({ amount: 50, method: "CASH" });
+      holder.settle(holder.peek()!, { ok: false, error: httpErr(503) });
+    });
+    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
     save();
     await Promise.resolve();
     expect(mockPost).not.toHaveBeenCalled();
