@@ -41,4 +41,28 @@ describe("AuditInterceptor: a payment by-key resolve is audited by its handler, 
       expect.objectContaining({ action: "POST /invoices/payments/record" }),
     );
   });
+
+  it("a resolve with a query string is still skipped; any OTHER by-key mutation is still audited", async () => {
+    const audit = { log: jest.fn().mockResolvedValue(undefined) };
+    const mk = (method: string, url: string) => ({
+      method,
+      url,
+      ip: "203.0.113.9",
+      headers: {},
+      socket: {},
+      user: { sub: "u1", tenantId: "t1" },
+    });
+    const i = new AuditInterceptor(audit as any);
+    i.intercept(makeCtx(mk("POST", "/api/v1/invoices/payments/by-key/K1/resolve?x=1")), next());
+    i.intercept(makeCtx(mk("DELETE", "/api/v1/invoices/payments/by-key/K2")), next());
+    i.intercept(makeCtx(mk("POST", "/api/v1/orders/by-key/K3/cancel")), next());
+    i.intercept(makeCtx(mk("POST", "/api/v1/invoices/payments/by-key/K4/other")), next());
+    await flush();
+    const actions = audit.log.mock.calls.map((c) => c[0].action);
+    expect(actions).toEqual([
+      "DELETE /invoices/payments/by-key/K2",
+      "POST /orders/by-key/K3/cancel",
+      "POST /invoices/payments/by-key/K4/other",
+    ]);
+  });
 });
