@@ -33,6 +33,7 @@ import { _resetLockPoolForTests } from "../common/db-locks";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
+import { RegulatedVisibilityService } from "../buyer/regulated-visibility.service";
 import { OrderTemplatesService } from "./order-templates.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
@@ -160,6 +161,7 @@ describeDb(
         { get: jest.fn().mockResolvedValue("0") } as any,
         restrictions,
         { read: async () => "off" } as any,
+        new RegulatedVisibilityService(prismaForService),
       );
     }
 

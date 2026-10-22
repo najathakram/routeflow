@@ -244,9 +244,7 @@ describeDb("L8 store state by fulfilment kind — real Postgres", () => {
       await setStore(null);
       expect(await hidden("ca")).toEqual([productId]);
       // the staff rule also needs the store state here; the point is the pickup portal is reported the same way
-      expect((await as(() => service.getEnableReadiness(tenantId))).businessStateMissing).toBe(
-        true,
-      );
+      expect(await as(() => service.businessStateMissing(tenantId))).toBe(true);
     });
     it("a MIXED pickup+ship tenant keeps the buyer's state: the CA buyer is not hidden from a TX ban, the TX buyer is", async () => {
       await setModel("pickup_ship");

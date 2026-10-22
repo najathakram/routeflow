@@ -45,7 +45,13 @@ describeDb(
     const lines = () => [{ productId, qtyDelta: 1 }];
     const check = (customerId: string) =>
       as(() =>
-        service.checkLinesSellable({ tenantId, customerId, lines: lines(), channel: "STAFF" }),
+        service.checkLinesSellable({
+          tenantId,
+          customerId,
+          lines: lines(),
+          channel: "STAFF",
+          fulfilmentKind: "DELIVERY",
+        }),
       );
 
     async function mkCustomer(
@@ -158,6 +164,7 @@ describeDb(
           customerId: ids["walkin"],
           lines: lines(),
           channel: "STAFF",
+          fulfilmentKind: "DELIVERY",
         }),
       ).catch((e) => e);
       expect(err).toBeInstanceOf(ConflictException);

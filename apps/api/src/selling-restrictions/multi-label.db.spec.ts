@@ -24,7 +24,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { flagRestrictedLines } from "./restricted-lines-flag";
-import { SellingRestrictionsService, SYSTEM_CONFIG_ENABLED } from "./selling-restrictions.service";
+import { SellingRestrictionsService } from "./selling-restrictions.service";
 import type { RestrictionChannel } from "@routeflow/types";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -158,10 +158,6 @@ describeDb(
           isDefault: true,
           addressType: "BILLING",
         },
-      });
-      // The staff channel applies only with the tenant switch on.
-      await prisma.systemConfig.create({
-        data: { tenantId, key: SYSTEM_CONFIG_ENABLED, value: "true" },
       });
       for (const key of ["A", "B", "C"]) {
         c[key] = (
