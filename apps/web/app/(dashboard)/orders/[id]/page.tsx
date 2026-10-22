@@ -97,6 +97,7 @@ import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
 import { usePhoneWidth } from "./_components/use-phone-width";
+import { useScrollAfterSave } from "./_components/use-scroll-after-save";
 import { phoneActionItems } from "./_components/phone-action-items";
 import { useInvoiceDraftNotice } from "./_components/use-invoice-draft-notice";
 import { SAVE_CHORD_KEYS, saveChordHandler } from "./_components/use-save-chord";
@@ -1318,13 +1319,15 @@ export function EditableLineItems({
                   <button
                     className={cn(
                       TAP_TARGET,
-                      "rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors",
+                      "flex items-center gap-1 rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors max-sm:px-2 max-sm:text-navy/70",
                     )}
                     title={`Remove ${item.productName?.trim() || "item"}`}
                     aria-label={`Remove ${item.productName?.trim() || "item"}`}
                     onClick={() => onDelete(item.id)}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    {/* r5 F11: the word on a phone (icon-only from sm up; aria-label still names the line) */}
+                    <span className="text-xs sm:sr-only">Remove</span>
                   </button>
                 </>
               )}
@@ -1463,8 +1466,9 @@ export function EditableLineItems({
           }}
           onError={(message) => toast({ variant: "error", title: message })}
         />
+        {/* r5 N09: below sm the results open ABOVE the field; below it the pinned Save bar hid all but one row. */}
         {addOpen && products.length > 0 && (
-          <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+          <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg max-sm:bottom-full max-sm:top-auto max-sm:mb-1 max-sm:mt-0">
             <ul className="max-h-52 overflow-y-auto py-1">
               {products.map((p: any) => (
                 <li key={p.id}>
@@ -1763,6 +1767,7 @@ export default function OrderDetailPage() {
 
   // Item editing
   const [isEditing, setIsEditing] = React.useState(false);
+  const { cardRef: linesCardRef, markSaved: markLinesSaved } = useScrollAfterSave(isEditing);
   const overpay = useOrderOverpayGuard(order, isEditing);
   const stale = useOrderStaleRevision(order, isEditing, (fresh, base) => {
     const n = rebaseOnReload(
@@ -2125,6 +2130,7 @@ export default function OrderDetailPage() {
           saveLatchRef.current = false;
         },
         onSuccess: () => {
+          markLinesSaved(); // r5 N10: bring the saved lines into view once the editor closes
           setIsEditing(false);
           setEditItems([]);
           setEditCredits([]);
@@ -2851,7 +2857,11 @@ export default function OrderDetailPage() {
         {/* ── Main content ── */}
         <div className="space-y-5 lg:col-span-2">
           {/* Line items */}
-          <div className="rounded-lg bg-white p-6 shadow-card">
+          <div
+            ref={linesCardRef}
+            data-testid="order-line-items-card"
+            className="scroll-mt-16 rounded-lg bg-white p-6 shadow-card"
+          >
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <h3 className="flex items-center gap-2.5 text-base font-semibold text-navy">
                 Line Items
