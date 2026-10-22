@@ -324,8 +324,9 @@ export async function loadLineCredits(
   if (itemless.length > 0) {
     const returns: Array<{ items: Array<{ productId: string; qty: unknown }> }> =
       await db.return.findMany({
-        // keyed on the CN LINK, not the return status: legacy PROCESSED rows exist (SA-628a)
-        where: { creditNoteId: { in: itemless.map((c) => c.id) } },
+        // keyed on the CN LINK, not the return status: legacy PROCESSED rows exist (SA-628a); never an INLINE return
+        // (the inline term above already counts it, so an inline note that carried an invoiceId would count twice; row 747)
+        where: { creditNoteId: { in: itemless.map((c) => c.id) }, kind: { not: "INLINE" } },
         select: { items: { select: { productId: true, qty: true } } },
       });
     const qtyByProduct = new Map<string, number>();

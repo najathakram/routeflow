@@ -176,7 +176,7 @@ describe("loadLineCredits (item-bearing notes + the legacy itemless-refund term)
     const out = await loadLineCredits(db, "inv", [A, B]);
     expect(out.get("a")).toMatchObject({ amount: 100, qty: 1 });
     const where = db.return.findMany.mock.calls[0][0].where;
-    expect(where).toEqual({ creditNoteId: { in: ["cn-old"] } });
+    expect(where).toEqual({ creditNoteId: { in: ["cn-old"] }, kind: { not: "INLINE" } });
     expect(where).not.toHaveProperty("status");
   });
   it("no itemless notes: no return lookup at all", async () => {
@@ -395,5 +395,62 @@ describe("SA-727a: headroom CLAMPS at 0 - a legacy line both refunded and credit
     const out = await loadLineCredits(d, "inv", [A, B]);
     expect(out.get("a")).toMatchObject({ amount: 160, qty: 1.6 }); // the external refund found no room on A: adds 0
     expect(out.get("b")).toBeUndefined();
+  });
+});
+
+describe("row 747: the legacy itemless term never re-counts an INLINE return, whatever its note's invoiceId", () => {
+  // a Return table that honours the `kind: { not }` filter like the DB does
+  type Ret = {
+    creditNoteId: string;
+    kind: string;
+    items: Array<{ productId: string; qty: number }>;
+  };
+  const mkDb = (returns: Ret[], noteIds: string[], inlineItems: unknown[]) => ({
+    creditNoteItem: { findMany: jest.fn().mockResolvedValue([]) },
+    creditNote: { findMany: jest.fn().mockResolvedValue(noteIds.map((id) => ({ id }))) },
+    return: {
+      findMany: jest.fn(async ({ where }: { where: any }) =>
+        returns
+          .filter((r) => where.creditNoteId?.in?.includes(r.creditNoteId))
+          .filter((r) => !where.kind?.not || r.kind !== where.kind.not)
+          .map((r) => ({ items: r.items })),
+      ),
+    },
+    returnItem: { findMany: jest.fn().mockResolvedValue(inlineItems) },
+  });
+  const inlineRet: Ret = {
+    creditNoteId: "cn-inline",
+    kind: "INLINE",
+    items: [{ productId: "pa", qty: 1 }],
+  };
+  const inlineItem = [{ sourceInvoiceItemId: "a", qty: 1, subtotal: 100 }];
+
+  it("an inline note that (hypothetically) carries the invoiceId counts ONCE (1 unit), not twice", async () => {
+    // the inline note is itemless AND carries invoiceId, so the legacy term sees it too
+    // a 2-unit line, so a double count (2) is distinguishable from the single one (1)
+    const two = L("a", 200, 2, "pa");
+    const out = await loadLineCredits(mkDb([inlineRet], ["cn-inline"], inlineItem), "inv", [two]);
+    expect(out.get("a")).toMatchObject({ amount: 100, qty: 1 });
+  });
+  it("the legacy return lookup excludes INLINE returns", async () => {
+    const d = mkDb([inlineRet], ["cn-inline"], inlineItem);
+    await loadLineCredits(d, "inv", [A]);
+    expect(d.return.findMany.mock.calls[0][0].where).toEqual({
+      creditNoteId: { in: ["cn-inline"] },
+      kind: { not: "INLINE" },
+    });
+  });
+  it("today's data (inline note invoiceId NULL: no itemless note found) gives the same headroom", async () => {
+    const out = await loadLineCredits(mkDb([inlineRet], [], inlineItem), "inv", [A]);
+    expect(out.get("a")).toMatchObject({ amount: 100, qty: 1 });
+  });
+  it("a STANDARD itemless legacy note is still counted by the legacy term", async () => {
+    const std: Ret = {
+      creditNoteId: "cn-std",
+      kind: "STANDARD",
+      items: [{ productId: "pb", qty: 1 }],
+    };
+    const out = await loadLineCredits(mkDb([std], ["cn-std"], []), "inv", [A, B]);
+    expect(out.get("b")).toMatchObject({ amount: 100, qty: 1 });
   });
 });
