@@ -445,6 +445,16 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
         expect(res).toMatchObject({ id: "cn-a", status: "VOID" });
         expect(res.creditNote).toBeUndefined();
       });
+      it("SA-839 §3: the kept URL's row also carries the filed month the void's correction answers", async () => {
+        armNote({ status: "ISSUED", amountUsed: 0 });
+        armRestore();
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+        prisma.creditNote.findUnique.mockResolvedValue({ id: "cn-a", status: "VOID" });
+        const filed = { periodKey: "2026-09", status: "GENERATED", trackedCategoryId: "cat-1" };
+        ledger.settleRegulatedLedger.mockResolvedValueOnce({ written: 1, amendedPeriod: filed });
+        const res: any = await door();
+        expect(res).toMatchObject({ id: "cn-a", status: "VOID", amendedPeriod: filed });
+      });
       it("a return-backed note is a 409 CREDIT_NOTE_RETURN_BACKED and NOTHING changes", async () => {
         armNote();
         prisma.return.findFirst.mockResolvedValue({ returnNumber: "RET-9" });
