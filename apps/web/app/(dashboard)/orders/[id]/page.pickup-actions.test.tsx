@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Providers } from "@/app/providers";
 import { seedSession } from "@/test-utils/session";
 import OrderDetailPage from "./page";
@@ -81,8 +81,24 @@ const open = async (role: Role, status: string, extra: Record<string, unknown> =
     </Providers>,
   );
   await screen.findByText(/ORD-1/);
+  // Row 732: the order paints first; the page then settles behind it (the pinned Fulfillment row's effect, the tenant
+  // features and an operator's permissions, which gate the till-only "Picked up" / "Hand over"). Wait for that to land
+  // inside act(), or a presence assertion can run before the gated buttons mount and an absence one pass for nothing.
+  await settle();
 };
 
+/** Let the page's queued effects and query notifications land (RQ notifies on a macrotask), inside act(). */
+const settle = async () => {
+  for (let i = 0; i < 3; i++) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+};
+
+/** Presence: wait for the button (the gate queries may still be resolving). */
+const find = (re: RegExp) => screen.findByRole("button", { name: re });
+/** Absence, once the page has settled (see `open`). */
 const has = (re: RegExp) => !!screen.queryByRole("button", { name: re });
 
 beforeEach(() => jest.clearAllMocks());
@@ -91,22 +107,22 @@ afterEach(() => seedSession(null));
 describe("PICKUP order actions", () => {
   it("CONFIRMED (POS mode, SA-763r): Ready for pickup is secondary, no Out for Delivery; 'Hand over' is offered", async () => {
     await open("OPERATOR", "CONFIRMED", { fulfillPath: "PICKUP" });
-    expect(has(/^Ready for pickup$/)).toBe(true);
+    expect(await find(/^Ready for pickup$/)).toBeInTheDocument();
+    expect(await find(/^Hand over$/)).toBeInTheDocument();
     expect(has(/^Out for Delivery$/)).toBe(false);
     expect(has(/^Mark shipped$/)).toBe(false);
-    expect(has(/^Hand over$/)).toBe(true);
   });
 
   it("a counter sale (counterSale true) keeps the pre-POS CONFIRMED actions", async () => {
     await open("OPERATOR", "CONFIRMED", { fulfillPath: "PICKUP", counterSale: true });
-    expect(has(/^Ready for pickup$/)).toBe(true);
-    expect(has(/^Picked up$/)).toBe(true);
+    expect(await find(/^Ready for pickup$/)).toBeInTheDocument();
+    expect(await find(/^Picked up$/)).toBeInTheDocument();
     expect(has(/^Hand over$/)).toBe(false);
   });
 
   it("OUT_FOR_DELIVERY (Ready for pickup): 'Picked up' is the completion; Mark as Delivered is hidden", async () => {
     await open("OPERATOR", "OUT_FOR_DELIVERY", { fulfillPath: "PICKUP" });
-    expect(has(/^Hand over$/)).toBe(true);
+    expect(await find(/^Hand over$/)).toBeInTheDocument();
     expect(has(/^Mark as Delivered$/)).toBe(false);
     expect(has(/^Mark delivered$/)).toBe(false);
   });
@@ -132,19 +148,19 @@ describe("PICKUP order actions", () => {
 
   it("ROUTE keeps Mark as Delivered and gets no Picked up", async () => {
     await open("OPERATOR", "OUT_FOR_DELIVERY", { fulfillPath: "ROUTE" });
-    expect(has(/^Mark as Delivered$/)).toBe(true);
+    expect(await find(/^Mark as Delivered$/)).toBeInTheDocument();
     expect(has(/^Picked up$/)).toBe(false);
   });
 
   it("SHIP keeps Mark delivered and gets no Picked up", async () => {
     await open("OPERATOR", "OUT_FOR_DELIVERY", { fulfillPath: "SHIP" });
-    expect(has(/^Mark delivered$/)).toBe(true);
+    expect(await find(/^Mark delivered$/)).toBeInTheDocument();
     expect(has(/^Picked up$/)).toBe(false);
   });
 
   it("ROUTE CONFIRMED still reads Out for Delivery", async () => {
     await open("OPERATOR", "CONFIRMED", { fulfillPath: "ROUTE" });
-    expect(has(/^Out for Delivery$/)).toBe(true);
+    expect(await find(/^Out for Delivery$/)).toBeInTheDocument();
     expect(has(/^Ready for pickup$/)).toBe(false);
   });
 });
