@@ -38,6 +38,8 @@ export const AUDIT_ACTIONS = {
   PAYMENT_KEY_RESOLVE: "payment-key.resolve",
   /** Row 498 (SA-837): staff recorded a payment that repeats an existing one's customer, method, normalised reference and amount ("record anyway"); one row per recorded payment; entityId = the invoice, meta {actor, invoiceId, normalisedRef, duplicateOfPaymentId, method, amount}. */
   PAYMENT_REF_RECORDED_ANYWAY: "payment.ref-record-anyway",
+  /** Row 498 (SA-837b): a Stripe-captured payment repeated an existing one's customer, method, normalised reference and amount; recorded anyway and flagged for staff (never refused: the money moved); entityId = the invoice, meta {source, paymentIntentId, invoiceId, paymentIds, normalisedRef, duplicateOfPaymentId, method, amount}. */
+  PAYMENT_REF_DUPLICATE_SUSPECT: "payment.ref-duplicate-suspect",
   /** Row 587 (SA-833): PARTIALLY_DELIVERED -> DELIVERED completed an office-evidenced line; meta {orderId, lineId, from, to, summary}. */
   ORDER_LINE_OFFICE_COMPLETED: "order.line-office-completed",
 } as const;

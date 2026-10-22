@@ -40,9 +40,15 @@ export function withRecordAnyway<T extends object>(body: T): T & { recordAnyway:
 }
 
 /**
+ * The roles that may use "Record anyway": the ONE source. The server ignores the flag from any other role (its literal
+ * copy `RECORD_ANYWAY_ROLES` in apps/api/src/invoices/payment-ref-dedupe.ts is pinned equal to this by a parity spec).
+ */
+export const RECORD_ANYWAY_ROLES = ["SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"] as const;
+
+/**
  * Whether the signed-in role is offered "Record anyway". The server decides (it ignores the flag from any other
  * role); this only keeps the action off screens of roles that could never use it.
  */
 export function canRecordAnyway(role: string | null | undefined): boolean {
-  return role === "SUPER_ADMIN" || role === "TENANT_ADMIN" || role === "OPERATOR";
+  return !!role && (RECORD_ANYWAY_ROLES as readonly string[]).includes(role);
 }

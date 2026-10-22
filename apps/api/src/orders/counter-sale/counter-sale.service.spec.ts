@@ -513,7 +513,7 @@ describe("CounterSaleService.ring", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 37.25 }),
-        { tillLockHeld: true, paymentAttempt: expect.anything() },
+        { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
       );
       expect(r).toMatchObject({
         invoiceId: "inv-1",
@@ -543,7 +543,7 @@ describe("CounterSaleService.ring", () => {
           reference: undefined,
           paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
-        { tillLockHeld: true, paymentAttempt: expect.anything() },
+        { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
       );
       expect(r).toEqual({
         orderId: "ord-1",
@@ -572,7 +572,7 @@ describe("CounterSaleService.ring", () => {
           reference: "auth-77",
           paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
-        { tillLockHeld: true, paymentAttempt: expect.anything() },
+        { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
       );
       expect(r.change).toBeUndefined();
       expect(r.balanceDue).toBe(0);
@@ -595,7 +595,7 @@ describe("CounterSaleService.ring", () => {
           reference: undefined,
           paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
-        { tillLockHeld: true, paymentAttempt: expect.anything() },
+        { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
       );
       expect(r).toMatchObject({
         paid: 20,
@@ -635,6 +635,7 @@ describe("CounterSaleService.ring", () => {
       expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 30 }), {
         tillLockHeld: true,
         paymentAttempt: expect.anything(),
+        refDedupe: expect.anything(),
       });
       expect(r).toMatchObject({ total: 40, paid: 40, balanceDue: 0, paymentRecorded: true });
       // a 30 cash tender on the 30 left after the credit: nothing handed back
@@ -836,6 +837,7 @@ describe("CounterSaleService.ring", () => {
       expect(recordPayment).toHaveBeenCalledWith("inv-2", expect.objectContaining({ amount: 20 }), {
         tillLockHeld: true,
         paymentAttempt: expect.anything(),
+        refDedupe: expect.anything(),
       });
       expect(second).toMatchObject({
         total: 50,

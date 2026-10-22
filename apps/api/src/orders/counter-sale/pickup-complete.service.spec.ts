@@ -48,7 +48,10 @@ import { createMockPrisma } from "../../testing/prisma-mock";
 import { pickupTenderGroupId } from "./pickup-tender-group";
 
 /** SA-763r R7: every hand-over tender is written with the order's v5 group id, in the create. */
-const TENDER_GROUP = { paymentGroupId: pickupTenderGroupId("ord-1") };
+const TENDER_GROUP = {
+  paymentGroupId: pickupTenderGroupId("ord-1"),
+  refDedupe: expect.anything(), // SA-837b: the signed-in user rides every tender (the generic flag)
+};
 
 /**
  * POST /orders/:id/pickup-complete orchestration. Every collaborator is a mock: `changeStatus` (the

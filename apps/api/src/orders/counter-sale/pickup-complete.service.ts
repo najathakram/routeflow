@@ -31,6 +31,8 @@ import {
 } from "./counter-sale-payment";
 import { isHandOverTender, tenderFigures, type InvoiceRow } from "./pickup-tender";
 import { pickupTenderGroupId } from "./pickup-tender-group";
+import type { DuplicatePaymentRefExisting } from "@routeflow/types";
+import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
 import type { PickupCompleteDto } from "./pickup-complete.dto";
 import { counterCloseShared, counterTenderPaidAt, pickupRegisterOf } from "./counter-tender-window";
 
@@ -195,6 +197,7 @@ export class PickupCompleteService {
     const owedNow =
       this.owedBalance(invoices, alreadyPickedUp ? isHandOverTender(handedOverAt) : undefined) > 0;
     let planError: string | undefined;
+    let duplicate: DuplicatePaymentRefExisting | undefined;
     let shown: { method: string; amount?: number } = sent ?? { method: "ON_ACCOUNT" };
     if (!sent && excused) {
       // Excused before the hand-over; never report a forced ON_ACCOUNT as settled when money is owed now.
@@ -212,10 +215,10 @@ export class PickupCompleteService {
             mode: "wait",
             sharedAlso: counterCloseShared(this.prisma.getTenantId(), order, register),
           },
-          () => this.tender(id, sent, handedOverAt, walkIn, order, register),
+          () => this.tender(id, sent, handedOverAt, walkIn, order, register, user),
         );
         if (!locked.acquired) throw new LockTimeoutError("counter-tender", id, 0);
-        ({ invoices, planError } = locked.value);
+        ({ invoices, planError, duplicate } = locked.value);
       } catch (e) {
         // The hand-over is already committed: a contended or unavailable lock must not turn into a 500
         // over a finished hand-over. It reads as an unrecorded payment (the retry finishes it). Errors
@@ -231,7 +234,15 @@ export class PickupCompleteService {
     // neither the register nor the cashier, so a closed day's rows never gain a writer.
     await this.stampSoldBy(id, user);
 
-    return this.respond(order, invoices, shown, handedOverAt, planError, alreadyPickedUp);
+    return this.respond(
+      order,
+      invoices,
+      shown,
+      handedOverAt,
+      planError,
+      alreadyPickedUp,
+      duplicate,
+    );
   }
 
   /**
@@ -376,9 +387,15 @@ export class PickupCompleteService {
     walkIn: boolean,
     till: OrderRow,
     register: string,
-  ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
+    user: JwtPayload,
+  ): Promise<{
+    invoices: InvoiceRow[];
+    planError?: string;
+    duplicate?: DuplicatePaymentRefExisting;
+  }> {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
+    let duplicate: DuplicatePaymentRefExisting | undefined;
     const mine = isHandOverTender(handedOverAt);
     const balances = invoices.map((i) => ({
       id: i.id,
@@ -462,7 +479,11 @@ export class PickupCompleteService {
               reference: payment.reference,
               ...(paidAt ? { paidAt } : {}),
             } as never,
-            { paymentGroupId: pickupTenderGroupId(orderId), tillLockHeld: TILL_LOCK_HELD },
+            {
+              paymentGroupId: pickupTenderGroupId(orderId),
+              tillLockHeld: TILL_LOCK_HELD,
+              refDedupe: tenderRefDedupe(user, payment),
+            },
           );
         }
       } catch (e) {
@@ -470,10 +491,11 @@ export class PickupCompleteService {
           `pickup complete ${orderId}: payment not recorded (${(e as Error)?.message ?? e})`,
         );
         planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+        duplicate = duplicateOf(e) ?? undefined; // WHY, for the dialog's "Record anyway" (SA-837b)
       }
       invoices = await this.readInvoices(orderId);
     }
-    return { invoices, planError };
+    return { invoices, planError, duplicate };
   }
 
   /**
@@ -529,6 +551,7 @@ export class PickupCompleteService {
     handedOverAt: Date | null,
     planError: string | undefined,
     alreadyPickedUp: boolean,
+    duplicate?: DuplicatePaymentRefExisting,
   ): PickupCompleteResponse {
     const first = invoices[0];
     if (!first) {
@@ -543,7 +566,7 @@ export class PickupCompleteService {
       orderNumber: order.orderNumber ?? "",
       invoiceId: first.id,
       invoiceNumber: first.invoiceNumber ?? "",
-      ...tenderFigures(invoices, payment, isHandOverTender(handedOverAt), planError),
+      ...tenderFigures(invoices, payment, isHandOverTender(handedOverAt), planError, duplicate),
       ...(alreadyPickedUp ? { alreadyPickedUp: true } : {}),
     };
   }

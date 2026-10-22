@@ -7,6 +7,7 @@ import type { PaymentKeyScope } from "@routeflow/types";
 import {
   createPaymentRefGuard,
   withPaymentRefLock,
+  type ExternalCapture,
   type PaymentAttempt,
   type RefDedupeOpts,
 } from "./payment-ref-dedupe";
@@ -102,6 +103,8 @@ export interface KeyedWriterOpts<T> {
   refDedupe?: RefDedupeOpts;
   /** Row 498: the payments of ONE logical attempt (a counter tender over sibling invoices); never deduped against each other. */
   paymentAttempt?: PaymentAttempt;
+  /** SA-837b: money already captured by the processor (the Stripe settle path sets it, nothing from a request): recorded and flagged, never refused. */
+  capturedExternally?: ExternalCapture;
   /** The payment group the call writes into (pickup-complete's tender group): its rows are one attempt. */
   paymentGroupId?: string;
   /** Runs inside the writer's transaction after the money is written, before commit. */

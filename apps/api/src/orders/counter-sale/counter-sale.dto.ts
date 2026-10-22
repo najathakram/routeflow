@@ -41,6 +41,8 @@ export class CounterSalePaymentDto {
   @IsIn(COUNTER_SALE_METHODS) method: (typeof COUNTER_SALE_METHODS)[number];
   @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1_000_000) amount?: number;
   @IsOptional() @IsString() @MaxLength(100) reference?: string;
+  /** Row 498 (SA-837b): the staff cashier's resend of a payment refused as a duplicate reference; staff roles only. */
+  @IsOptional() @IsBoolean() recordAnyway?: boolean;
 }
 
 /** `CounterSaleRequest` of the shared contract (packages/types/api/counter-sale.ts). */

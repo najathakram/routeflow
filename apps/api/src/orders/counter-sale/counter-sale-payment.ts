@@ -16,6 +16,7 @@ export interface CounterPaymentInput {
   method: CounterPaymentMethod;
   amount?: number;
   reference?: string;
+  recordAnyway?: boolean;
 }
 
 const refuse = (code: string, message: string) => new BadRequestException({ code, message });

@@ -216,8 +216,11 @@ export class BookkeepingService implements OnModuleInit {
     const till = await counterPay.scope(this.prisma, id);
     const refGuard = createPaymentRefGuard({ ...dto, invoiceId: id, opts });
     return this.prisma.tenantTransaction(async (tx) => {
-      await refGuard.check(tx); // before any lock or money row: a duplicate reference is a 409, nothing written
       await counterPay.lock(tx, till);
+      // Review M5: the reference check comes AFTER the G4 close lock, so the shared close lock stays this transaction's
+      // first statement; it is a read, and the `payment-ref` session lock around this transaction serialises same-reference
+      // recordings, so a duplicate is still a 409 with nothing written.
+      await refGuard.check(tx);
       // SA-404f F1: FIRST lock (Order →) Invoice, so the status read below sees a committed VOID
       // and refuses, instead of writing PAID/PARTIAL back over it.
       await lockInvoicesForPayment(tx, [id]);
