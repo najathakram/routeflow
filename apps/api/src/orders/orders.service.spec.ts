@@ -281,10 +281,10 @@ describe("OrdersService", () => {
           provide: EntitlementsService,
           useValue: { hasFlag: jest.fn().mockResolvedValue(true) },
         },
-        // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
+        // B65 / SA-839: deleteOrder's per-invoice teardown zeroes the regulated ledger (INVOICE_ZEROED).
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: { settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0 }) },
         },
         // B323: sweepAllPendingOrders() re-enters each group's own tenant scope via
         // tenantCtx.run() before calling into anything ambient-scoped.

@@ -79,6 +79,69 @@ export interface SaleLedgerLine {
   categoryTax: number; // computed category tax (0 today — tobacco is rate=0)
 }
 
+/**
+ * SA-839 F2: every whole-invoice transition and every undo of one document, as ONE event for
+ * `settleRegulatedLedger` (the only public way to reverse an invoice or undo a return / credit note):
+ *  - `INVOICE_ZEROED`: the invoice stops billing (void, delete, order delete, customer purge).
+ *  - `INVOICE_BILLED`: the invoice bills `lines` again (unvoid, DRAFT edit, reconcile, price re-sync).
+ *    `restoresVoid` (unvoid only) asks for the filed-period flag of the void being restored (§3).
+ *  - `ADJUSTMENT_UNDONE`: one return was cancelled, or one credit note voided (its status already flipped).
+ * Exhaustive: a new kind does not compile without its branch (`never` default).
+ */
+export type RegulatedSettleEvent =
+  | { kind: "INVOICE_ZEROED"; invoiceId: string }
+  | {
+      kind: "INVOICE_BILLED";
+      invoiceId: string;
+      orderId: string | null;
+      tenantId: string | null;
+      lines: SaleLedgerLine[];
+      restoresVoid?: boolean;
+    }
+  | { kind: "ADJUSTMENT_UNDONE"; returnId: string }
+  | { kind: "ADJUSTMENT_UNDONE"; creditNoteId: string };
+
+export interface RegulatedSettleResult {
+  /** Rows appended (the helper never deletes or updates one). */
+  written: number;
+  /**
+   * SA-839 §3 (the SA-182 shape): set when the row this settle answers sits in a FILED period
+   * (GENERATED or LOCKED): the void an unvoid restores, or the row an undo counters. Everything is
+   * still booked in the current period; an amended return for `periodKey` may be needed.
+   */
+  amendedPeriod: FiledPeriod | null;
+}
+
+/**
+ * SA-839 F1, the derived discriminator (no column, amends SA-500 step 2): a counter-entry is a REVERSAL
+ * that corrects another row AND names its document. Box-axis restatements carry no document id and price
+ * corrections are SALE-typed, so neither matches.
+ */
+export function isCounterEntry(r: {
+  entryType: string;
+  correctsEntryId?: string | null;
+  returnId?: string | null;
+  creditNoteId?: string | null;
+}): boolean {
+  return (
+    r.entryType === "REVERSAL" &&
+    r.correctsEntryId != null &&
+    (r.returnId != null || r.creditNoteId != null)
+  );
+}
+
+/** The ledger's zero test on every axis (the `reverseInvoiceEntries` EPS). */
+const SETTLE_EPS = 0.0005;
+/** The exact signed inverse of a stored figure (never `-0`). */
+const inverse3 = (v: unknown) => {
+  const n = -round3(Number(v));
+  return n === 0 ? 0 : n;
+};
+const inverseMoney = (v: unknown) => {
+  const n = roundMoney(-Number(v));
+  return n === 0 ? 0 : n;
+};
+
 /** One re-priced regulated invoice line, as `correctSaleForPriceChange` needs it (B662). */
 export interface PriceCorrectionLine {
   invoiceItemId: string;
@@ -147,9 +210,9 @@ export class RegulatedLedgerService {
     soldAt: Date;
     lines: SaleLedgerLine[];
     db: any;
-  }): Promise<void> {
+  }): Promise<number> {
     const { tenantId, orderId, invoiceId, soldAt, lines, db } = params;
-    if (!tenantId) return;
+    if (!tenantId) return 0;
     const bucket = periodBucketOf(soldAt);
     const rows = lines
       .filter((l) => l.trackedCategoryId)
@@ -180,8 +243,9 @@ export class RegulatedLedgerService {
           periodBucket: bucket,
         };
       });
-    if (rows.length === 0) return;
+    if (rows.length === 0) return 0;
     await db.regulatedSalesLedger.createMany({ data: rows });
+    return rows.length;
   }
 
   /**
@@ -204,15 +268,19 @@ export class RegulatedLedgerService {
    * a prior re-sync's own REVERSAL (no returnId/creditNoteId) IS counted, so a repeat
    * re-sync finds 0 remaining and skips. Void/delete leave this false → reverse the full
    * net to 0.
+   *
+   * SA-839: private; reached only through `settleRegulatedLedger` (INVOICE_ZEROED, INVOICE_BILLED,
+   * ADJUSTMENT_UNDONE on a dead invoice). Since the helper's sweep counters every dead document's rows
+   * first, "preserve returns" preserves exactly the LIVE returns and credit notes. Returns rows written.
    */
-  async reverseInvoiceEntries(params: {
+  private async reverseInvoiceEntries(params: {
     invoiceId: string;
     db: any;
     preserveReturns?: boolean;
-  }): Promise<void> {
+  }): Promise<number> {
     const { invoiceId, db, preserveReturns = false } = params;
     const all = await db.regulatedSalesLedger.findMany({ where: { invoiceId } });
-    if (all.length === 0) return;
+    if (all.length === 0) return 0;
 
     // Aggregate the remaining net per invoice line; keep a SALE row for its metadata.
     const byItem = new Map<
@@ -287,8 +355,266 @@ export class RegulatedLedgerService {
         periodBucket: bucket,
       });
     }
-    if (rows.length === 0) return;
+    if (rows.length === 0) return 0;
     await db.regulatedSalesLedger.createMany({ data: rows });
+    return rows.length;
+  }
+
+  /**
+   * SA-839 F2: the ONE source of truth for a whole-invoice transition and for the undo of one document,
+   * in the CALLER's transaction, after the caller has flipped the document's state and holds its locks
+   * (Return -> Order -> Invoice; pinned by `sa839-ledger-pins.spec.ts`). Append-only: it never deletes
+   * or updates a row. Every row it writes books `soldAt = now` in the current period (§3).
+   *
+   *  - INVOICE_ZEROED: (a) sweep, (b) reverse each line's full remaining (net 0).
+   *  - INVOICE_BILLED: (a) sweep, (b) refuse a VOID invoice, (c) reverse the remaining sale-record
+   *    (the LIVE returns / credit notes stand), (d) fresh SALE rows from `lines`.
+   *  - ADJUSTMENT_UNDONE: (a) one counter-entry per un-countered row of that document, (b) every
+   *    invoice of those rows that is VOID or gone is zeroed again; a live invoice gets nothing more.
+   *
+   * The sweep: a return (CANCELLED) or credit note (VOID) that is dead but whose rows on this invoice
+   * still net to non-zero gets its counter-entries (heals rows written before this fix, B706 example C).
+   */
+  async settleRegulatedLedger(
+    db: any,
+    event: RegulatedSettleEvent,
+  ): Promise<RegulatedSettleResult> {
+    switch (event.kind) {
+      case "INVOICE_ZEROED": {
+        let written = await this.counterDeadDocuments(db, event.invoiceId);
+        written += await this.reverseInvoiceEntries({ invoiceId: event.invoiceId, db });
+        return { written, amendedPeriod: null };
+      }
+      case "INVOICE_BILLED":
+        return this.settleInvoiceBilled(db, event);
+      case "ADJUSTMENT_UNDONE":
+        return this.settleAdjustmentUndone(db, event);
+      default: {
+        const unknownEvent: never = event;
+        throw new Error(`settleRegulatedLedger: unhandled event ${JSON.stringify(unknownEvent)}`);
+      }
+    }
+  }
+
+  private async settleInvoiceBilled(
+    db: any,
+    e: Extract<RegulatedSettleEvent, { kind: "INVOICE_BILLED" }>,
+  ): Promise<RegulatedSettleResult> {
+    let written = await this.counterDeadDocuments(db, e.invoiceId);
+    const inv = await db.invoice.findUnique({
+      where: { id: e.invoiceId },
+      select: { status: true },
+    });
+    if (inv?.status === "VOID") {
+      // A VOID invoice bills nothing: every caller flips the status BEFORE it settles (SA-839 F2).
+      throw new Error(`settleRegulatedLedger: INVOICE_BILLED on VOID invoice ${e.invoiceId}`);
+    }
+    // Read before (c) books its own void-signature row in the current period.
+    const amendedPeriod = e.restoresVoid ? await this.filedVoidPeriod(db, e.invoiceId) : null;
+    written += await this.reverseInvoiceEntries({
+      invoiceId: e.invoiceId,
+      db,
+      preserveReturns: true,
+    });
+    written += await this.writeSaleEntries({
+      tenantId: e.tenantId,
+      orderId: e.orderId,
+      invoiceId: e.invoiceId,
+      soldAt: new Date(),
+      lines: e.lines,
+      db,
+    });
+    return { written, amendedPeriod };
+  }
+
+  private async settleAdjustmentUndone(
+    db: any,
+    e: Extract<RegulatedSettleEvent, { kind: "ADJUSTMENT_UNDONE" }>,
+  ): Promise<RegulatedSettleResult> {
+    const undone =
+      "returnId" in e
+        ? await this.unreverseReturnEntries({ returnId: e.returnId, db })
+        : await this.unreverseCreditNoteEntries({ creditNoteId: e.creditNoteId, db });
+    let written = undone.written;
+    if (undone.invoiceIds.length > 0) {
+      const live: Array<{ id: string; status: string }> =
+        (await db.invoice.findMany({
+          where: { id: { in: undone.invoiceIds } },
+          select: { id: true, status: true },
+        })) ?? [];
+      const statusById = new Map(live.map((i) => [i.id, i.status]));
+      for (const invoiceId of undone.invoiceIds) {
+        const status = statusById.get(invoiceId);
+        if (status !== undefined && status !== "VOID") continue; // a live invoice keeps the undo
+        written += await this.reverseInvoiceEntries({ invoiceId, db });
+      }
+    }
+    return { written, amendedPeriod: undone.amendedPeriod };
+  }
+
+  /**
+   * SA-839 F1: one counter-entry per REVERSAL row of this document that is not a counter-entry itself
+   * and has none yet (so a retried transaction or a second call writes 0 rows): the exact signed inverse
+   * of the row, the same line pointers and document id, `correctsEntryId` = the row,
+   * `originalSoldAt` = its date, booked now. `invoiceId` limits it to one invoice's rows (the sweep).
+   */
+  private async counterDocumentRows(
+    db: any,
+    doc: { returnId: string } | { creditNoteId: string },
+    invoiceId?: string,
+  ): Promise<{ written: number; invoiceIds: string[]; amendedPeriod: FiledPeriod | null }> {
+    const rows: any[] =
+      (await db.regulatedSalesLedger.findMany({
+        where: { ...doc, entryType: "REVERSAL", ...(invoiceId ? { invoiceId } : {}) },
+      })) ?? [];
+    const invoiceIds = [...new Set(rows.map((r) => r.invoiceId).filter(Boolean))] as string[];
+    const countered = new Set(rows.filter(isCounterEntry).map((r) => r.correctsEntryId as string));
+    const originals = rows.filter((r) => r.correctsEntryId == null && !countered.has(r.id));
+    const now = new Date();
+    const bucket = periodBucketOf(now);
+    const data = originals
+      .map((r) => ({
+        tenantId: r.tenantId,
+        trackedCategoryId: r.trackedCategoryId,
+        trackedSubcategoryId: r.trackedSubcategoryId ?? null,
+        entryType: "REVERSAL" as const,
+        orderId: r.orderId,
+        orderItemId: r.orderItemId,
+        invoiceId: r.invoiceId,
+        invoiceItemId: r.invoiceItemId,
+        returnId: r.returnId ?? null,
+        creditNoteId: r.creditNoteId ?? null,
+        correctsEntryId: r.id,
+        originalSoldAt: r.soldAt,
+        qty: inverse3(r.qty),
+        unitBasisQty: inverse3(r.unitBasisQty),
+        netSales: inverseMoney(r.netSales),
+        categoryTax: inverseMoney(r.categoryTax),
+        soldAt: now,
+        periodBucket: bucket,
+      }))
+      .filter(
+        (d) => d.qty !== 0 || d.unitBasisQty !== 0 || d.netSales !== 0 || d.categoryTax !== 0,
+      );
+    if (data.length > 0) await db.regulatedSalesLedger.createMany({ data });
+
+    // §3: an undo that corrects a row of a FILED month says so (the counter-entry still books now).
+    let amendedPeriod: FiledPeriod | null = null;
+    const filedCandidates = [
+      ...new Map(
+        originals
+          .filter((r) => r.trackedCategoryId && r.periodBucket && r.periodBucket !== bucket)
+          .map((r) => [`${r.periodBucket}|${r.trackedCategoryId}`, r]),
+      ).values(),
+    ].sort((a, b) => String(a.periodBucket).localeCompare(String(b.periodBucket)));
+    for (const r of filedCandidates) {
+      amendedPeriod = await this.findFiledPeriod(db, [r.trackedCategoryId], r.periodBucket);
+      if (amendedPeriod) break;
+    }
+    return { written: data.length, invoiceIds, amendedPeriod };
+  }
+
+  /** The sweep (a): counter-entries for every DEAD document whose rows on this invoice still net non-zero. */
+  private async counterDeadDocuments(db: any, invoiceId: string): Promise<number> {
+    const rows: any[] =
+      (await db.regulatedSalesLedger.findMany({
+        where: {
+          invoiceId,
+          entryType: "REVERSAL",
+          OR: [{ returnId: { not: null } }, { creditNoteId: { not: null } }],
+        },
+        select: {
+          returnId: true,
+          creditNoteId: true,
+          qty: true,
+          unitBasisQty: true,
+          netSales: true,
+          categoryTax: true,
+        },
+      })) ?? [];
+    const sums = new Map<string, { field: "returnId" | "creditNoteId"; id: string; v: number[] }>();
+    for (const r of rows) {
+      const field = r.returnId != null ? "returnId" : "creditNoteId";
+      const id = (r.returnId ?? r.creditNoteId) as string;
+      const cur = sums.get(`${field}:${id}`) ?? { field, id, v: [0, 0, 0, 0] };
+      cur.v[0] += Number(r.qty);
+      cur.v[1] += Number(r.unitBasisQty);
+      cur.v[2] += Number(r.netSales);
+      cur.v[3] += Number(r.categoryTax);
+      sums.set(`${field}:${id}`, cur);
+    }
+    const open = [...sums.values()].filter((s) => s.v.some((x) => Math.abs(x) >= SETTLE_EPS));
+    if (open.length === 0) return 0;
+    const returnIds = open.filter((s) => s.field === "returnId").map((s) => s.id);
+    const noteIds = open.filter((s) => s.field === "creditNoteId").map((s) => s.id);
+    const dead = new Set<string>();
+    if (returnIds.length > 0) {
+      const docs: Array<{ id: string; status: string }> =
+        (await db.return.findMany({
+          where: { id: { in: returnIds } },
+          select: { id: true, status: true },
+        })) ?? [];
+      for (const d of docs) if (d.status === "CANCELLED") dead.add(`returnId:${d.id}`);
+    }
+    if (noteIds.length > 0) {
+      const docs: Array<{ id: string; status: string }> =
+        (await db.creditNote.findMany({
+          where: { id: { in: noteIds } },
+          select: { id: true, status: true },
+        })) ?? [];
+      for (const d of docs) if (d.status === "VOID") dead.add(`creditNoteId:${d.id}`);
+    }
+    let written = 0;
+    for (const s of open) {
+      if (!dead.has(`${s.field}:${s.id}`)) continue;
+      const doc = s.field === "returnId" ? { returnId: s.id } : { creditNoteId: s.id };
+      written += (await this.counterDocumentRows(db, doc, invoiceId)).written;
+    }
+    return written;
+  }
+
+  /**
+   * §3: the filed period of the void an unvoid restores — per line, the newest void-signature REVERSAL
+   * (no return, no credit note, no correction); the first of those whose month is filed, or null.
+   */
+  private async filedVoidPeriod(db: any, invoiceId: string): Promise<FiledPeriod | null> {
+    const rows: any[] =
+      (await db.regulatedSalesLedger.findMany({
+        where: {
+          invoiceId,
+          entryType: "REVERSAL",
+          returnId: null,
+          creditNoteId: null,
+          correctsEntryId: null,
+        },
+        select: {
+          invoiceItemId: true,
+          trackedCategoryId: true,
+          periodBucket: true,
+          soldAt: true,
+          createdAt: true,
+        },
+      })) ?? [];
+    const at = (r: any) => [
+      new Date(r.soldAt ?? 0).getTime(),
+      new Date(r.createdAt ?? 0).getTime(),
+    ];
+    const newestByLine = new Map<string, any>();
+    for (const r of rows) {
+      const key = r.invoiceItemId ?? "";
+      const cur = newestByLine.get(key);
+      const [s, c] = at(r);
+      if (!cur || s > at(cur)[0] || (s === at(cur)[0] && c > at(cur)[1])) newestByLine.set(key, r);
+    }
+    const current = periodBucketOf(new Date());
+    const candidates = [...newestByLine.values()]
+      .filter((r) => r.trackedCategoryId && r.periodBucket && r.periodBucket !== current)
+      .sort((a, b) => String(a.periodBucket).localeCompare(String(b.periodBucket)));
+    for (const r of candidates) {
+      const filed = await this.findFiledPeriod(db, [r.trackedCategoryId], r.periodBucket);
+      if (filed) return filed;
+    }
+    return null;
   }
 
   /**
@@ -1052,30 +1378,27 @@ export class RegulatedLedgerService {
   }
 
   /**
-   * Undo a return's REVERSAL rows when the return is CANCELLED before being
-   * refunded (symmetric to cancel() deleting the return's stock movements). A
-   * delete — not a counter-entry — keeps the `returnId` idempotency guard clean so
-   * the order can be legitimately returned again later.
+   * Undo a return's REVERSAL rows when the return is CANCELLED (symmetric to cancel() appending the
+   * stock movements' reversing rows). SA-839 F1 (B705): a COUNTER-ENTRY per row, never a delete — a
+   * void that already netted the line absorbed this return's share, so deleting the row put that share
+   * back on a VOID invoice, and the delete removed a row from the month it was booked in (a filed
+   * month changed). Private: `settleRegulatedLedger({ kind: "ADJUSTMENT_UNDONE", returnId })`, which
+   * then re-zeroes a VOID or deleted invoice.
+   *
+   * A REVERSAL that SA-089's resolveParkedReversal booked against this return carries its `returnId`, so
+   * it is countered too (the return is undone); the resolved `RegulatedLedgerParkedReversal` row keeps
+   * its `resolvedEntryId`, which now points at a row that still exists. The resolution's restatement
+   * corrections (the SALE's basis fix and each earlier box-axis reversal's own correction) carry no
+   * `returnId` and are not touched: the SALE stays classified piece-axis whatever happens to this return.
+   * The `(returnId, orderId)` guard of `reverseReturnEntries` is unaffected: a CANCELLED return is never
+   * received again.
    */
-  async unreverseReturnEntries(params: { returnId: string; db: any }): Promise<void> {
+  private async unreverseReturnEntries(params: {
+    returnId: string;
+    db: any;
+  }): Promise<{ written: number; invoiceIds: string[]; amendedPeriod: FiledPeriod | null }> {
     const { returnId, db } = params;
-    // Opus review (B660 PR B, #1324) caught this comment describing the WRONG thing: this
-    // delete is unconditional on `entryType: "REVERSAL"` for the returnId, with no
-    // `resolvedAt` filter — so it DOES undo a REVERSAL that SA-089's resolveParkedReversal
-    // booked against this exact return (that booked row carries this `returnId`, same as any
-    // other reversal). Cancelling a return after its parked reversal was resolved therefore:
-    // (1) deletes the booked REVERSAL row itself — correct, the return is undone, so nothing
-    // should remain reversed against it; (2) leaves the `RegulatedLedgerParkedReversal` row
-    // itself alone (its own delete below is `resolvedAt: null`-scoped, so an already-resolved
-    // row survives) — but that row's `resolvedEntryId` now DANGLES, pointing at a row that no
-    // longer exists; nothing currently reads `resolvedEntryId` back out expecting it to
-    // resolve, so this is a known, accepted gap rather than a live bug. (3) leaves both kinds
-    // of restatement correction rows the resolution wrote (the SALE's basis fix and each
-    // earlier box-axis reversal's own correction) untouched — they deliberately carry no
-    // `returnId` (they restate historical fact, not this-return-specific fact), so neither
-    // delete below can touch them, and the SALE stays correctly classified piece-axis forever
-    // after regardless of what happens to this one return.
-    await db.regulatedSalesLedger.deleteMany({ where: { returnId, entryType: "REVERSAL" } });
+    const countered = await this.counterDocumentRows(db, { returnId });
     // B681/SA-067(4): a return this guard parked (because its sale row's box/piece axis
     // couldn't be classified) leaves a RegulatedLedgerParkedReversal row blocking its period's
     // filing. Without this, cancelling that return before the park is ever resolved leaves the
@@ -1083,7 +1406,9 @@ export class RegulatedLedgerService {
     // there is nothing left to resolve it against. Only this return's UNRESOLVED rows: a row
     // already resolved (resolvedAt set) recorded a real filing decision (see above) and must
     // survive as a record, even though its resolvedEntryId now dangles.
+    // (A work-queue row, not a filing row: SA-067(4), kept by SA-839 F1.)
     await db.regulatedLedgerParkedReversal.deleteMany({ where: { returnId, resolvedAt: null } });
+    return countered;
   }
 
   /**
@@ -1389,8 +1714,14 @@ export class RegulatedLedgerService {
             where: { entryType: "REVERSAL", OR: lineOrs },
           })
         ).filter((r: any) => builtBefore.lineKeyOfReversal(r) === lineKey);
+        // SA-839 F1 (MUST): a reversal that a counter-entry undid (a cancelled return, a voided
+        // credit note) nets to zero with it: restating its box axis would put the cancelled units back.
+        const undone = new Set(
+          candidateReversals.filter(isCounterEntry).map((r: any) => r.correctsEntryId),
+        );
         for (const r of candidateReversals) {
           if (r.correctsEntryId != null) continue;
+          if (undone.has(r.id)) continue;
           const rQty = Number(r.qty);
           const rUnitBasis = Number(r.unitBasisQty);
           if (rQty === 0) continue;
@@ -2016,10 +2347,17 @@ export class RegulatedLedgerService {
     await db.regulatedSalesLedger.createMany({ data: rows });
   }
 
-  /** Undo a credit note's REVERSAL rows when the credit note is VOIDED (symmetric
-   *  to the returns cancel-undo). Delete keeps the `creditNoteId` idempotency clean. */
-  async unreverseCreditNoteEntries(params: { creditNoteId: string; db: any }): Promise<void> {
+  /**
+   * Undo a credit note's REVERSAL rows when the credit note is VOIDED (symmetric to the returns
+   * cancel-undo). SA-839 F1: counter-entries, never a delete (#2541's hard-delete item). Private:
+   * `settleRegulatedLedger({ kind: "ADJUSTMENT_UNDONE", creditNoteId })`. A voided note is never
+   * reversed again (`reverseCreditNoteEntries` is idempotent per note; a reissue mints a new id).
+   */
+  private async unreverseCreditNoteEntries(params: {
+    creditNoteId: string;
+    db: any;
+  }): Promise<{ written: number; invoiceIds: string[]; amendedPeriod: FiledPeriod | null }> {
     const { creditNoteId, db } = params;
-    await db.regulatedSalesLedger.deleteMany({ where: { creditNoteId, entryType: "REVERSAL" } });
+    return this.counterDocumentRows(db, { creditNoteId });
   }
 }

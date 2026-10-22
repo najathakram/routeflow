@@ -89,6 +89,7 @@ import {
 } from "./refund-tender";
 import { selectEditRevertedInvoices } from "../invoices/order-edit-revert-set";
 import { uniqueViolationOn } from "../common/prisma-unique";
+import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledger-locks";
 
 /** design.md §8 — the ONE gate every money-writing method here re-checks itself,
  * regardless of the registry's rollout state (the `AddonGuard` on the controller courtesy-
@@ -1788,8 +1789,18 @@ export class InlineReturnsService {
       }
 
       // m-5 order: the carrying order is locked before any credit pull-back below touches
-      // its invoices.
-      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${fresh.orderId} FOR UPDATE`;
+      // its invoices. SA-839 F3: with every SOURCE order this return's ledger rows sit on (PR-1a
+      // multi-order) and the credit note's, in one id-sorted set, then their invoices (Return ->
+      // Order -> Invoice), so a concurrent void of a source invoice serialises with this undo.
+      const ret = await ledgerDocumentTargets(tx, { returnId: id });
+      const note =
+        fresh.status === "REFUNDED" && fresh.creditNoteId
+          ? await ledgerDocumentTargets(tx, { creditNoteId: fresh.creditNoteId })
+          : { orderIds: [], invoiceIds: [] };
+      await lockLedgerDocumentRows(tx, tenantId, {
+        orderIds: [fresh.orderId, ...ret.orderIds, ...note.orderIds],
+        invoiceIds: [...ret.invoiceIds, ...note.invoiceIds],
+      });
 
       // HIGH-4: "applied" (restocked + regulated-ledger reversed) is no longer just
       // `status IN (RECEIVED, REFUNDED)` — a RECEIVED row still carrying `DRIVER_CAP` in
@@ -1829,7 +1840,12 @@ export class InlineReturnsService {
             },
           });
         }
-        await this.ledger.unreverseReturnEntries({ returnId: fresh.id, db: tx });
+        // SA-839 (B705): counter-entries for this return's rows (claimed CANCELLED above); a VOID or
+        // deleted source invoice is netted to 0 again.
+        await this.ledger.settleRegulatedLedger(tx, {
+          kind: "ADJUSTMENT_UNDONE",
+          returnId: fresh.id,
+        });
       }
 
       if (fresh.status === "REFUNDED" && fresh.creditNoteId) {

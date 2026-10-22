@@ -45,6 +45,7 @@ import {
   CREDIT_SETTLE_EXCLUDED,
   CREDIT_SOURCE_EXCLUDED,
 } from "../invoices/invoice-status-sets";
+import { bumpInvoiceRowVersions, ledgerDocumentTargets } from "../regulated/ledger-locks";
 
 @Injectable()
 export class CreditNotesService {
@@ -1114,7 +1115,8 @@ export class CreditNotesService {
       data: { status: "VOID" },
     });
     if (flipped.count > 0) {
-      await this.ledger.unreverseCreditNoteEntries({ creditNoteId, db: tx });
+      // SA-839: counter-entries for this note's rows (the caller holds their Orders and Invoices).
+      await this.ledger.settleRegulatedLedger(tx, { kind: "ADJUSTMENT_UNDONE", creditNoteId });
     }
     return { restored };
   }
@@ -1266,15 +1268,22 @@ export class CreditNotesService {
         where: { creditNoteId: id },
         select: { orderId: true },
       })) ?? [];
+    // SA-839 F3: and the Orders / Invoices the note's own ledger rows sit on (the void counters them).
+    const ledgerRows = await ledgerDocumentTargets(tx, { creditNoteId: id });
     const orderIds = [
       ...new Set([
         ...(seen.map((p) => p.invoice?.orderId).filter(Boolean) as string[]),
         ...intentOrders.map((r) => r.orderId),
         ...(extra?.orderIds ?? []),
+        ...ledgerRows.orderIds,
       ]),
     ].sort();
     const invoiceIds = [
-      ...new Set([...seen.map((p) => p.invoiceId as string), ...(extra?.invoiceIds ?? [])]),
+      ...new Set([
+        ...seen.map((p) => p.invoiceId as string),
+        ...(extra?.invoiceIds ?? []),
+        ...ledgerRows.invoiceIds,
+      ]),
     ].sort();
     // B1052: every lock is tenant-scoped (credit-note-locks.ts): a foreign id can't lock another tenant's rows.
     const lockTenantId = this.prisma.getTenantId();
@@ -1284,6 +1293,8 @@ export class CreditNotesService {
     for (const invoiceId of invoiceIds) {
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} AND (${lockTenantId}::text IS NULL OR "tenantId" = ${lockTenantId}) FOR UPDATE`;
     }
+    // SA-839: a concurrent Serializable void of those invoices must re-read after this undo (ledger-locks.ts).
+    await bumpInvoiceRowVersions(tx, lockTenantId, ledgerRows.invoiceIds);
     await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE id = ${id} AND (${lockTenantId}::text IS NULL OR "tenantId" = ${lockTenantId}) FOR NO KEY UPDATE`;
 
     const cn = await tx.creditNote.findFirst({
@@ -1330,7 +1341,8 @@ export class CreditNotesService {
         "This credit note changed while it was being voided. Nothing was changed; try again.",
       );
     }
-    await this.ledger.unreverseCreditNoteEntries({ creditNoteId: id, db: tx });
+    // SA-839 (B705 twin): counter-entries for the note's rows; a VOID or deleted invoice is re-zeroed.
+    await this.ledger.settleRegulatedLedger(tx, { kind: "ADJUSTMENT_UNDONE", creditNoteId: id });
     await tx.auditLog.create({
       data: {
         tenantId: this.prisma.getTenantId(),

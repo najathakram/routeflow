@@ -300,7 +300,7 @@ describe("RegulatedLedgerService: rotated invoice item (SA-789 F1)", () => {
       prisma.regulatedSalesLedger.createMany.mockClear();
       prisma.regulatedSalesLedger.findMany.mockReset();
       prisma.regulatedSalesLedger.findMany.mockResolvedValue([staleSale(), credit]);
-      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      await service["reverseInvoiceEntries"]({ invoiceId: "inv-1", db: prisma });
       const voided = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
       const net = voided.reduce((n: number, r: any) => n + Number(r.netSales), 0);
       expect(net).toBeCloseTo(-75.83, 2);

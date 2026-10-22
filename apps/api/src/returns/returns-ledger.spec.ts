@@ -17,11 +17,19 @@ import { createMockPrisma } from "../testing/prisma-mock";
 describe("ReturnsService → regulated ledger (W5c)", () => {
   let service: ReturnsService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let ledger: { reverseReturnEntries: jest.Mock; unreverseReturnEntries: jest.Mock };
+  let ledger: {
+    reverseReturnEntries: jest.Mock;
+    unreverseReturnEntries: jest.Mock;
+    settleRegulatedLedger: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    ledger = { reverseReturnEntries: jest.fn(), unreverseReturnEntries: jest.fn() };
+    ledger = {
+      reverseReturnEntries: jest.fn(),
+      unreverseReturnEntries: jest.fn(),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+    };
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
         ReturnsService,
@@ -74,9 +82,11 @@ describe("ReturnsService → regulated ledger (W5c)", () => {
 
     await service.cancel("ret-1", { sub: "u1", role: "OPERATOR" } as any);
 
-    expect(ledger.unreverseReturnEntries).toHaveBeenCalledWith(
-      expect.objectContaining({ returnId: "ret-1" }),
-    );
+    // SA-839: the undo is ADJUSTMENT_UNDONE through the one ledger helper (counter-entries).
+    expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(expect.anything(), {
+      kind: "ADJUSTMENT_UNDONE",
+      returnId: "ret-1",
+    });
   });
 
   it("cancel() of a not-yet-received return does NOT touch the ledger", async () => {
@@ -90,7 +100,7 @@ describe("ReturnsService → regulated ledger (W5c)", () => {
 
     await service.cancel("ret-1", { sub: "u1", role: "OPERATOR" } as any);
 
-    expect(ledger.unreverseReturnEntries).not.toHaveBeenCalled();
+    expect(ledger.settleRegulatedLedger).not.toHaveBeenCalled();
   });
 
   it("F2 (independent review, PR-2): cancel() of a PROCESSED return DOES un-reverse the ledger — legacy rows still need their effects undone", async () => {
@@ -108,9 +118,11 @@ describe("ReturnsService → regulated ledger (W5c)", () => {
 
     await service.cancel("ret-1", { sub: "u1", role: "OPERATOR" } as any);
 
-    expect(ledger.unreverseReturnEntries).toHaveBeenCalledWith(
-      expect.objectContaining({ returnId: "ret-1" }),
-    );
+    // SA-839: the undo is ADJUSTMENT_UNDONE through the one ledger helper (counter-entries).
+    expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(expect.anything(), {
+      kind: "ADJUSTMENT_UNDONE",
+      returnId: "ret-1",
+    });
   });
 
   it("receive() aborts without reversing when the IN_TRANSIT claim loses the race", async () => {

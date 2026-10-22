@@ -90,6 +90,7 @@ import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes"
 import { assertProductIdNotFamily } from "../products/sellable-lines";
 import { AuditService } from "../audit/audit.service";
 import { recordCreditLimitChange, type CreditLimitActor } from "./credit-limit-audit";
+import { lockInvoiceRowsInOrder } from "../regulated/ledger-locks";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -2218,8 +2219,11 @@ export class CustomersService {
           // carry ledger rows — createSplitInvoices writes them at creation,
           // before the DRAFT is ever sent — so filtering by status here would
           // reintroduce the leak.
+          // SA-839 F3: the Invoice rows (id order) before their ledger settles, so a concurrent
+          // return cancel / credit-note void of one of them serialises with this purge.
+          await lockInvoiceRowsInOrder(tx, this.prisma.getTenantId(), invoiceIds);
           for (const invoiceId of invoiceIds) {
-            await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
+            await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId });
           }
           await deleteMoneyRecordCas(tx.invoicePayment, { invoiceId: { in: invoiceIds } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
@@ -2415,8 +2419,11 @@ export class CustomersService {
           // carry ledger rows — createSplitInvoices writes them at creation,
           // before the DRAFT is ever sent — so filtering by status here would
           // reintroduce the leak.
+          // SA-839 F3: the Invoice rows (id order) before their ledger settles, so a concurrent
+          // return cancel / credit-note void of one of them serialises with this purge.
+          await lockInvoiceRowsInOrder(tx, this.prisma.getTenantId(), invoiceIds);
           for (const invoiceId of invoiceIds) {
-            await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
+            await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId });
           }
           await deleteMoneyRecordCas(tx.invoicePayment, { invoiceId: { in: invoiceIds } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
