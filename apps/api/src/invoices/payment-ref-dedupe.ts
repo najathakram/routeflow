@@ -1,4 +1,5 @@
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
+import { PaymentStatus } from "@prisma/client";
 import { roundMoney, toCents } from "@routeflow/pricing";
 import type { DuplicatePaymentRefBody } from "@routeflow/types";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
@@ -206,12 +207,11 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
       }
       const target = toCents(roundMoney(p.amount));
       const groupId = p.opts?.paymentGroupId;
-      // A DRAFT / PENDING payment is a recorded payment too; only a VOID one (reversed or bounced) is not "existing".
-      // scan-ok: draft-payment-not-void — DRAFT/PENDING count as existing for a duplicate check; only VOID is excluded
       const rows: any[] = await tx.invoicePayment.findMany({
         where: {
           method: p.method,
-          status: { not: "VOID" },
+          // every non-void payment with this ref is a duplicate, in-flight DRAFT/PENDING included
+          status: { in: [PaymentStatus.PAID, PaymentStatus.PENDING, PaymentStatus.DRAFT] },
           reference: { not: null },
           invoice: { customerId },
           // M4: a duplicate is the same amount (one row) or a member of a payment group (summed below); never every
