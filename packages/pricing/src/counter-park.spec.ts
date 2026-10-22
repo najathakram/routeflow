@@ -206,6 +206,29 @@ describe("sanitizeParkedPayload", () => {
     }
   });
 
+  it("keeps the tenant's walk-in customer record marked isWalkIn (only when true), so a resumed cart is still a Walk-in (#3610 review)", () => {
+    expect(
+      ok(cart({ customer: { id: "w1", businessName: "Walk-in customer", isWalkIn: true } }))
+        .customer,
+    ).toEqual({
+      id: "w1",
+      businessName: "Walk-in customer",
+      isWalkIn: true,
+    });
+    expect(
+      ok(cart({ customer: { id: "c1", businessName: "Acme", isWalkIn: false } })).customer,
+    ).toEqual({
+      id: "c1",
+      businessName: "Acme",
+    });
+    expect(
+      ok(cart({ customer: { id: "c1", businessName: "Acme", isWalkIn: "yes" } })).customer,
+    ).toEqual({
+      id: "c1",
+      businessName: "Acme",
+    });
+  });
+
   it("keeps a customer of null or absent as null", () => {
     expect(ok(cart({ customer: null })).customer).toBeNull();
     const { customer: _c, ...noCustomer } = cart();

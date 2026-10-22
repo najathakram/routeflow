@@ -109,7 +109,7 @@ export interface ParkedCartLine {
   override?: { mode: ParkedPriceEditMode; value: number; reason?: string };
 }
 
-/** The customer is kept to these five fields; an email is NEVER stored. */
+/** The customer is kept to these six fields; an email is NEVER stored. */
 export interface ParkedCartCustomer {
   id: string;
   businessName: string;
@@ -117,6 +117,8 @@ export interface ParkedCartCustomer {
   fulfillPath?: string;
   /** Tax-exempt customers owe no tax or levy: a resumed cart's estimate must still say so (CQ-02). */
   isTaxExempt?: boolean;
+  /** S5: the tenant's walk-in customer RECORD (a pick of it is a Walk-in, not a named buyer). Only ever `true`. */
+  isWalkIn?: true;
 }
 
 export interface ParkedCartPayload {
@@ -241,6 +243,7 @@ function rebuildCustomer(raw: unknown): ParkedCartCustomer | null | undefined {
   const fulfillPath = str(raw.fulfillPath, 20);
   if (fulfillPath !== undefined) c.fulfillPath = fulfillPath;
   if (typeof raw.isTaxExempt === "boolean") c.isTaxExempt = raw.isTaxExempt;
+  if (raw.isWalkIn === true) c.isWalkIn = true;
   return c;
 }
 

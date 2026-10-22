@@ -1,3 +1,4 @@
+import { sanitizeParkedPayload } from "@routeflow/pricing";
 import { act, renderHook } from "@testing-library/react";
 import { kindOfPick, restoredBuyerKind } from "./counter-buyer-choice";
 import { useCounterBuyerChoice } from "./useCounterBuyerChoice";
@@ -41,5 +42,23 @@ describe("useCounterBuyerChoice", () => {
     expect(result.current.kind).toBe("customer");
     act(() => result.current.restore(null, false));
     expect(result.current.kind).toBeNull();
+  });
+
+  it("a cart parked on the walk-in customer RECORD resumes as Walk-in through the shared sanitizer (#3610 review)", () => {
+    const res = sanitizeParkedPayload(
+      {
+        lines: [{ tempId: "t", productId: "p1", name: "Cola", unitPrice: 10, qty: 1 }],
+        customer: { id: "w1", businessName: "Walk-in customer", isWalkIn: true },
+        method: "CASH",
+        tendered: "",
+        reference: "",
+      },
+      ["CASH"],
+    );
+    expect(res.ok).toBe(true);
+    const value = (
+      res as { ok: true; value: { customer: { isWalkIn?: boolean } | null; walkIn?: true } }
+    ).value;
+    expect(restoredBuyerKind(value.customer, value.walkIn === true)).toBe("walk-in");
   });
 });

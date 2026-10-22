@@ -28,11 +28,15 @@ export function writeLiveCart(
     // Only what the till re-renders: never the customer's email, phone, address or any other field.
     const c = snap.customer as Record<string, unknown> | null | undefined;
     const customer = c
-      ? Object.fromEntries(
-          (["id", "businessName", "pricingTier", "fulfillPath", "isTaxExempt"] as const)
-            .filter((k) => c[k] !== undefined)
-            .map((k) => [k, c[k]]),
-        )
+      ? {
+          ...Object.fromEntries(
+            (["id", "businessName", "pricingTier", "fulfillPath", "isTaxExempt"] as const)
+              .filter((k) => c[k] !== undefined)
+              .map((k) => [k, c[k]]),
+          ),
+          // S5 (#3610 review): the tenant's walk-in customer RECORD stays a Walk-in after a refresh. Only ever true.
+          ...(c.isWalkIn === true ? { isWalkIn: true } : {}),
+        }
       : null;
     window.localStorage.setItem(
       storeKey,
