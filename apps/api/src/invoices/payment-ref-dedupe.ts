@@ -206,8 +206,8 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
       }
       const target = toCents(roundMoney(p.amount));
       const groupId = p.opts?.paymentGroupId;
-      // scan-ok: draft-payment-not-void — a DRAFT / PENDING payment is a recorded payment too; only a VOID one
-      // (a reversed or bounced payment) is not "existing".
+      // A DRAFT / PENDING payment is a recorded payment too; only a VOID one (reversed or bounced) is not "existing".
+      // scan-ok: draft-payment-not-void — DRAFT/PENDING count as existing for a duplicate check; only VOID is excluded
       const rows: any[] = await tx.invoicePayment.findMany({
         where: {
           method: p.method,
