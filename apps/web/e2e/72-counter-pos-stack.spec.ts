@@ -470,3 +470,56 @@ test.describe("R7b till: toasts clear the sticky bar", () => {
     expect(toastBox!.y + toastBox!.height).toBeLessThanOrEqual(barBox!.y);
   });
 });
+
+/**
+ * Interim till guard (owner P0): a check dated after the tenant's today cannot be tendered. NOT RUN in the authoring session
+ * (needs `npm run local:sa` and the screen wiring of CounterCheckDetails). The date is two days ahead so it is in the future
+ * in every tenant zone, whatever the browser's clock says. Nothing is rung: Complete is refused before any POST.
+ */
+const POSTDATED_SENTENCE =
+  "Post-dated check: put this sale on account and record the check when it clears.";
+function daysAheadIso(days: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+test.describe("R7b till: a post-dated check is not tendered", () => {
+  for (const vp of VIEWPORTS) {
+    test(`a check dated in the future shows the message and refuses Complete @ ${vp.name}`, async ({
+      page,
+      context,
+    }) => {
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      await setTenantCookie(context, BASE);
+      const { products } = await discover(page);
+      await page.goto("/orders/counter-sale");
+      const scanField = page.getByLabel("Scan or search items");
+      await expect(scanField).toBeVisible({ timeout: 15_000 });
+      await scanField.fill(String(products[0].sku));
+      await scanField.press("Enter");
+      await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
+        timeout: 15_000,
+      });
+      await page.getByRole("radio", { name: "Check" }).click();
+      await page.getByLabel("Check number").fill("1042");
+      await expect(page.getByLabel("Check date")).toBeVisible();
+      await expect(page.getByText(POSTDATED_SENTENCE)).toBeHidden(); // defaults to the tenant's today
+      await page.getByLabel("Check date").fill(daysAheadIso(2));
+      await expect(page.getByText(POSTDATED_SENTENCE)).toBeVisible();
+      // a walk-in (the default customer-less sale) cannot go on account: the one button is there but disabled
+      const putOnAccount = page.getByRole("button", { name: "Put this sale on account" });
+      await expect(putOnAccount).toBeVisible();
+      await expect(putOnAccount).toBeDisabled();
+      // Complete is refused with the same sentence, and no sale was rung (the Check radio is still the chosen method)
+      await page
+        .getByRole("button", { name: /^Complete/ })
+        .first()
+        .click();
+      await expect(
+        page.getByRole("alert").filter({ hasText: POSTDATED_SENTENCE }).first(),
+      ).toBeVisible();
+      await expect(page.getByRole("radio", { name: "Check" })).toBeChecked();
+      await expect(page.getByTestId("counter-last-sale")).toHaveCount(0);
+    });
+  }
+});

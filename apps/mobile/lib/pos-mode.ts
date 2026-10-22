@@ -334,6 +334,8 @@ const PICKUP_COPY = {
   walkInOnAccount:
     "A walk-in customer can't be charged on account. Pick a customer or another payment method.",
   checkNumber: "Enter the check number.",
+  /** Mirrors web COUNTER_CHECK_POSTDATED_COPY. No mobile path sends a checkDate yet (the hand-over does not judge one); mapped so the day one does, the refusal reads right. */
+  checkPostdated: "Post-dated check: put this sale on account and record the check when it clears.",
 } as const;
 
 export function posErrorCode(err: unknown): string | undefined {
@@ -362,6 +364,8 @@ export function pickupCompleteErrorCopy(err: unknown): string {
       return PICKUP_COPY.walkInOnAccount;
     case API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED:
       return PICKUP_COPY.checkNumber;
+    case API_ERROR_CODES.COUNTER_CHECK_POSTDATED:
+      return PICKUP_COPY.checkPostdated;
     default:
       return PICKUP_COPY.generic;
   }
