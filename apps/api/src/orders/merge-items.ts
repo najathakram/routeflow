@@ -3,6 +3,9 @@ import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { foldTarget, type FoldTrio } from "./fold-target";
 import { mergeIntoStoredLine, type StoredLineShape } from "./stored-line-merge";
+// Import cycle (merge-items -> merge-pack-resolve -> merge-items' deriveUnitsPerBox) is safe: both modules only declare
+// functions at load time, and each calls the other at run time.
+import { resolveLinePack } from "./merge-pack-resolve";
 
 export interface MergeLineSnapshot {
   // SA-124f: the row's own id — carried through to the fold's output as `sourceLineId`, so a
@@ -574,7 +577,17 @@ export function normalizeBoxUnawareSnapshots(
 ): MergeLineSnapshot[] {
   return lines.map((li) => {
     if (!li.productId || li.boxes != null || li.pieces != null) return li;
-    const upb = Math.trunc(Number(liveUnitsPerBoxByProductId.get(li.productId) ?? 0));
+    // #3594: only products the caller put in the map are normalized (the buyer passes just those with a BOX-AWARE
+    // incoming item). Any other box-unaware line is left exactly as stored: "stored box-UNAWARE + incoming BARE ->
+    // leave both alone"; restamping it here would let updateOrderItems re-split it at the live pack (a double bill).
+    if (!liveUnitsPerBoxByProductId.has(li.productId)) return li;
+    // Row 727 (D-2026-10-22-row727-own-pack): the line's OWN unitsPerBox snapshot wins when > 1, else the live pack
+    // (resolveLinePack's precedence): a line sold as a 12-pack is never restamped at a product's later 6-pack.
+    const live = Math.trunc(Number(liveUnitsPerBoxByProductId.get(li.productId) ?? 0));
+    const upb = resolveLinePack(
+      { qty: li.qty, boxes: null, pieces: null, unitsPerBox: li.unitsPerBox ?? null },
+      live,
+    ).pack;
     if (upb <= 1) return li;
     const sellingUnits = Number(li.qty ?? 0);
     if (!(sellingUnits > 0)) return li;
