@@ -633,6 +633,14 @@ export const API_ERROR_CODES = {
    */
   PAYMENT_MISMATCH: "PAYMENT_MISMATCH",
   /**
+   * 409 from every InvoicePayment writer that carries a typed reference (row 498, SA-837): a non-VOID payment of the
+   * same customer, method, NORMALISED reference (trim, uppercase, no spaces or dashes) and amount already exists, with
+   * no time window. The body names it (`existingPayment`: date, amount, invoice number). A staff caller may resend with
+   * `recordAnyway: true` (one audit row). Never raised for the shared walk-in customer or between the payments of one
+   * attempt. Nothing was written.
+   */
+  DUPLICATE_PAYMENT_REF: "DUPLICATE_PAYMENT_REF",
+  /**
    * 409 from GET /orders/counter-sale/by-key/:key: the sale's PENDING or DELIVERED order exists but has NO invoice
    * rows at all (a half-written sale: the first attempt stopped before the invoice step). Re-POST with the same
    * Idempotency-Key to finish it. A voided or cancelled sale is COUNTER_SALE_VOIDED, never this.

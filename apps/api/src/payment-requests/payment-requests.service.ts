@@ -6,6 +6,13 @@ import { CONFIRMED_PAYMENT, sumConfirmed } from "../invoices/payment-predicates"
 import { StripeConnectService } from "../stripe-connect/stripe-connect.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { ConnectChargeReviewService } from "./connect-charge-review.service";
+import {
+  isPaymentAlreadyRecorded,
+  type DuplicateSuspect,
+  type ExternalCapture,
+  type RefDedupeOpts,
+} from "../invoices/payment-ref-dedupe";
 import { roundMoney } from "@routeflow/pricing";
 import {
   PAYMENT_PROVIDER,
@@ -90,6 +97,7 @@ export class PaymentRequestsService {
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
     private readonly tenantContext: TenantContextService,
     private readonly gateway: RouteFlowGateway,
+    private readonly chargeReview: ConnectChargeReviewService,
   ) {}
 
   // ─── Allocation ─────────────────────────────────────────────────────────────
@@ -539,7 +547,12 @@ export class PaymentRequestsService {
    * reopen-on-throw (a failure after the money committed reopened a paid request, so a second Approve
    * credited twice).
    */
-  async approve(requestId: string, decidedBy: { id: string; username: string }) {
+  async approve(
+    requestId: string,
+    decidedBy: { id: string; username: string },
+    /** SA-837b item 2: the APPROVING staff member (actor, role) and their `recordAnyway` choice for a duplicate reference. */
+    refDedupe?: RefDedupeOpts,
+  ) {
     const tenantId = this.tenantContext.get();
     const request = await this.prisma.buyerPaymentRequest.findFirst({
       where: { id: requestId, tenantId },
@@ -569,6 +582,7 @@ export class PaymentRequestsService {
         } as any,
         {
           assertAllocationsWithinBalance: true,
+          refDedupe,
           inTx: async (tx, paid) => {
             // Every key defined: Prisma drops an undefined where key and would widen the write.
             if (!requestId || !tenantId || !paid.paymentGroupId) {
@@ -869,21 +883,55 @@ export class PaymentRequestsService {
       ? `Card payment via Stripe (amount discrepancy: requested $${requestAmount.toFixed(2)}, charged $${providerAmount.toFixed(2)} — recorded the charged amount)`
       : "Card payment via Stripe";
 
-    const result = await this.invoices.recordStandalonePayment(
-      {
-        customerId: request.customerId,
-        totalAmount: amountToRecord,
-        method,
-        reference: evt.paymentIntentId,
-        notes,
-        settledAt,
-        allocations,
-        // Stale-preview guard (carried from the #397 hardening): on conflict the
-        // tx rolls back, the row STAYS SETTLING (never reopened), and Stripe's
-        // redelivery recomputes a fresh allocation — converges without overpay.
-      } as any,
-      { assertAllocationsWithinBalance: true },
-    );
+    // SA-837b: the money already moved at Stripe, so it is NEVER refused as a duplicate reference: a repeat is recorded
+    // and flagged (the payment's audit row, plus the breadcrumb + operator alert below). The marker is structural (this
+    // code, holding the processor's event); the same charge already on the ledger settles idempotently.
+    const capture: ExternalCapture = {
+      source: "STRIPE",
+      sourceRef: evt.paymentIntentId,
+      suspects: [] as DuplicateSuspect[],
+    };
+    let result: { paymentGroupId: string };
+    try {
+      result = await this.invoices.recordStandalonePayment(
+        {
+          customerId: request.customerId,
+          totalAmount: amountToRecord,
+          method,
+          reference: evt.paymentIntentId,
+          notes,
+          settledAt,
+          allocations,
+          // Stale-preview guard (carried from the #397 hardening): on conflict the
+          // tx rolls back, the row STAYS SETTLING (never reopened), and Stripe's
+          // redelivery recomputes a fresh allocation — converges without overpay.
+        } as any,
+        { assertAllocationsWithinBalance: true, capturedExternally: capture },
+      );
+    } catch (err) {
+      if (!isPaymentAlreadyRecorded(err)) throw err;
+      // A crash between the record and the SETTLED flip: the charge is on the ledger. Finish the flip, answer success.
+      await this.completeAlreadyRecorded(request.id, fromStatus, evt.paymentIntentId, {
+        paymentGroupId: err.paymentGroupId,
+      });
+      return;
+    }
+    for (const suspect of capture.suspects ?? []) {
+      // Best-effort: the audit row written inside the payment transaction is the durable record.
+      await this.chargeReview
+        .flagDuplicateSuspect({
+          tenantId: this.tenantContext.get(),
+          paymentIntentId: evt.paymentIntentId,
+          invoiceId: suspect.invoiceId,
+          duplicateOfPaymentId: suspect.duplicateOfPaymentId,
+          duplicateOfInvoiceNumber: suspect.duplicateOfInvoiceNumber,
+        })
+        .catch((e: Error) =>
+          this.logger.error(
+            `duplicate-suspect alert for ${evt.paymentIntentId} failed: ${e?.message}`,
+          ),
+        );
+    }
 
     await this.prisma.forTenant().buyerPaymentRequest.updateMany({
       where: { id: request.id, status: fromStatus },

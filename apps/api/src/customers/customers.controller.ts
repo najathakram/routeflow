@@ -25,6 +25,7 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { refDedupeFromRequest } from "../invoices/payment-ref-dedupe";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
@@ -224,13 +225,17 @@ export class CustomersController {
   createAdvancePayment(
     @Param("id") id: string,
     @Body() dto: CreateAdvancePaymentDto,
+    @CurrentUser() user: JwtPayload,
     // SA-824: optional (an old client is unchanged); a retry with the same key records once.
     @Headers("idempotency-key") rawIdempotencyKey?: string,
   ) {
     const idempotencyKey = optionalIdempotencyKey(rawIdempotencyKey);
-    return idempotencyKey
-      ? this.customersService.createAdvancePayment(id, dto, { idempotencyKey })
-      : this.customersService.createAdvancePayment(id, dto);
+    // Row 498 / SA-837b item 2: staff may resend a flagged duplicate with `recordAnyway`.
+    const refDedupe = refDedupeFromRequest(user, dto);
+    return this.customersService.createAdvancePayment(id, dto, {
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      refDedupe,
+    });
   }
 
   @Get(":id/advance-payments")

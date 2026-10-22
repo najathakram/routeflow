@@ -32,6 +32,7 @@ import {
   BulkCreateExpenseDto,
 } from "./dto/create-expense.dto";
 import { BulkMarkPaidDto } from "../vendor-bills/dto/bulk-mark-paid.dto";
+import { refDedupeFromRequest } from "../invoices/payment-ref-dedupe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
@@ -72,8 +73,15 @@ export class BookkeepingController {
 
   @Post("transactions/:id/payments")
   @HttpCode(HttpStatus.OK)
-  recordPayment(@Param("id") id: string, @Body() dto: RecordPaymentDto) {
-    return this.bookkeepingService.recordPayment(id, dto);
+  recordPayment(
+    @Param("id") id: string,
+    @Body() dto: RecordPaymentDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    // Row 498: the staff "record anyway" flag rides with the actor and role (the service ignores it for non-staff).
+    return this.bookkeepingService.recordPayment(id, dto, {
+      refDedupe: refDedupeFromRequest(user, dto),
+    });
   }
 
   @Get("transactions/:id/pdf")

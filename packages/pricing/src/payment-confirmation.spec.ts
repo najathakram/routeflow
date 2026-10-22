@@ -9,6 +9,7 @@ import {
   splitConfirmed,
   sumConfirmed,
   HELD_STATUSES,
+  DEDUPE_STATUSES,
   HELD_PAYMENT,
   isHeldPayment,
   sumHeld,
@@ -160,6 +161,14 @@ describe("CONFIRMED_STATUS / CONFIRMED_PAYMENT (unchanged by B421)", () => {
 });
 
 // ─── Post-dated check payments PR-1 (additive-only) — HELD money vs. capacity ──────────────────
+
+describe("DEDUPE_STATUSES", () => {
+  it("is a superset of HELD_STATUSES, contains DRAFT, and never VOID", () => {
+    for (const s of HELD_STATUSES) expect(DEDUPE_STATUSES).toContain(s);
+    expect(DEDUPE_STATUSES).toContain("DRAFT");
+    expect(DEDUPE_STATUSES).not.toContain("VOID");
+  });
+});
 
 describe("HELD_STATUSES / HELD_PAYMENT / isHeldPayment", () => {
   it("HELD_STATUSES is exactly PAID and PENDING", () => {
