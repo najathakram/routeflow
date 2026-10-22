@@ -642,8 +642,9 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
       await send();
       expect(prisma.return.findMany).not.toHaveBeenCalled();
       expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
+      // #3576 Opus MUST: master's LITERAL line, labels only
       expect(textOf(email)).toContain(
-        "Payment method: Cash $5.00 + Store credit $2.50\nPaid: $7.50\nBalance due: $5.00",
+        "Payment method: Cash + Store credit\nPaid: $7.50\nBalance due: $5.00",
       );
       expect(textOf(email)).not.toContain("Returned");
     });

@@ -137,6 +137,25 @@ export { formatReceiptMoney };
 const clean = (s: string | null | undefined): string => (s ?? "").trim();
 const num = (v: unknown): number => (v == null ? 0 : Number(v));
 
+/**
+ * A non-counter (delivery) order's Payment method line, exactly as master printed it: labels only, in master's order,
+ * an advance application read as Store credit (#3576 Opus MUST: R7b is counter-only, so delivery emails never change).
+ */
+const DELIVERY_METHOD_ORDER = ["CASH", "CARD", "CHECK", "OTHER", "STORE_CREDIT"] as const;
+const DELIVERY_METHOD_LABEL: Record<(typeof DELIVERY_METHOD_ORDER)[number], string> = {
+  CASH: "Cash",
+  CARD: "Card",
+  CHECK: "Check",
+  OTHER: "Other",
+  STORE_CREDIT: "Store credit",
+};
+function deliveryMethodLine(tenders: ReadonlyArray<{ method: string }>): string {
+  const used = new Set(tenders.map((t) => (t.method === "ADVANCE" ? "STORE_CREDIT" : t.method)));
+  return DELIVERY_METHOD_ORDER.filter((m) => used.has(m))
+    .map((m) => DELIVERY_METHOD_LABEL[m])
+    .join(" + ");
+}
+
 /** "Oct 7, 2026, 11:15 AM" in the given zone; a zone Intl does not know falls back to UTC (never a RangeError). */
 export function formatSaleTime(at: Date, timeZone?: string | null): string {
   const format = (zone: string | undefined) =>
@@ -322,8 +341,12 @@ export function buildReceiptModel(
     paymentNotRecorded: false,
     showPaid: hasTender,
     showBalance: onAccount || balanceDue > 0,
-    // the reprint prints this very line (pricing's counterMethodLine), amounts and all
-    methodLabel: hasTender ? counterMethodLine(tenders) : null,
+    // a counter sale: the reprint's very line (pricing's counterMethodLine), amounts and all; any other order: master's
+    methodLabel: !hasTender
+      ? null
+      : split
+        ? counterMethodLine(tenders)
+        : deliveryMethodLine(tenders),
     tendered,
     tenderedAsEntered: false,
     change: servedChange(order.counterCashTendered, livePayments, balanceDue),

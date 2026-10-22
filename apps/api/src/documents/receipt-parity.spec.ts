@@ -905,12 +905,35 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
       for (const key of ["returned", "refunded", "creditKept", "creditUsed", "returnPending"]) {
         expect(withReads.rendered.model).not.toHaveProperty(key);
       }
-      // the store-credit application stays a tender and part of Paid on a non-counter order
+      // the store-credit application stays a tender and part of Paid on a non-counter order. #3576 Opus MUST: master's
+      // LITERAL line (labels only, no amounts), not this renderer compared against itself.
       expect(textLines(withReads.rendered)).toEqual([
-        "Payment method Cash $5.00 + Store credit $2.50",
+        "Payment method Cash + Store credit",
         "Paid $7.50",
         "Balance due $5.00",
       ]);
+    });
+
+    it.each([
+      // master folded an advance application into Store credit and printed labels only
+      [[{ method: "ADVANCE", amount: "12.50" }], "Store credit"],
+      [
+        [
+          { method: "CASH", amount: "7.50" },
+          { method: "ADVANCE", amount: "5.00" },
+        ],
+        "Cash + Store credit",
+      ],
+      [
+        [
+          { method: "ADVANCE", amount: "5.00" },
+          { method: "CREDIT_NOTE", amount: "2.50" },
+        ],
+        "Store credit",
+      ],
+    ])("a DELIVERY order paid %j reads master's %s", (payments, label) => {
+      const { emailModel } = build({ total: "12.50", tax: "0.00", counterSale: false, payments });
+      expect(emailModel.methodLabel).toBe(label);
     });
   });
 });
