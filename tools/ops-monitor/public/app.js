@@ -525,7 +525,8 @@
           ? pill("private", "ok")
           : pill("visibility ?", "warn"),
     );
-    if (snap.machine) meta.append(el("span", { class: "muted", text: `on ${snap.machine}` }));
+    if (snap.machine)
+      meta.append(el("span", { class: "muted hdr-machine", text: `on ${snap.machine}` }));
 
     const chips = clear(document.getElementById("chips"));
     for (const name of Object.keys(snap.sources ?? {})) {

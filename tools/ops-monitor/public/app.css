@@ -1946,6 +1946,12 @@ details.answered {
   .top-row {
     gap: 4px 12px;
   }
+  /* Keep the sticky header under 200 px: the title shares a row with live + Theme (the source chips and the
+     live dot still show freshness), and the meta row stays one line. */
+  #updated,
+  .hdr-machine {
+    display: none;
+  }
   .nav {
     flex-wrap: wrap;
     overflow: visible;
