@@ -103,6 +103,16 @@ export class PaymentKeyTaken extends Error {
   }
 }
 
+/** Thrown by `settle` when the COMPLETED update did not change exactly the one row the claim inserted. */
+export class PaymentKeySettleMismatch extends Error {
+  constructor(readonly rowsUpdated: number) {
+    super(
+      `Payment key settle updated ${rowsUpdated} rows, expected exactly 1; the payment is rolled back`,
+    );
+    this.name = "PaymentKeySettleMismatch";
+  }
+}
+
 export interface PaymentKeyDeps {
   getTenantId(): string | null;
   forTenant(): any;
@@ -213,7 +223,7 @@ async function replay(
   if (!row || row.scope !== scope || row.requestHash !== requestHash) {
     throw new ConflictException({
       code: IDEMPOTENCY_KEY_CONFLICT,
-      reason: "PAYMENT_MISMATCH",
+      reason: API_ERROR_CODES.PAYMENT_MISMATCH,
       message:
         "Idempotency-Key was already used for a different payment request. That payment may already be recorded; this request wrote nothing.",
     });
@@ -260,13 +270,16 @@ export async function withPaymentKey<T>(
       },
       settle: async (tx, result, writerRefs) => {
         const refs = keyRefs(scope, result, writerRefs);
-        await tx.$executeRaw`
+        const updated = await tx.$executeRaw`
           UPDATE "PaymentIdempotencyKey"
           SET "state" = 'COMPLETED'::"PaymentIdempotencyState",
               "result" = ${JSON.stringify(result)}::jsonb,
               "paymentGroupId" = ${refs.paymentGroupId},
               "advancePaymentId" = ${refs.advancePaymentId}
           WHERE "id" = ${id} AND "tenantId" = ${tenantId}`;
+        // The claim in this same transaction inserted exactly this row: anything else means the key row is not
+        // the one this write claimed. Throw so the money rolls back with it (committed money <=> a COMPLETED key).
+        if (updated !== 1) throw new PaymentKeySettleMismatch(updated);
       },
     });
   } catch (err) {

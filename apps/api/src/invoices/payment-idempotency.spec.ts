@@ -1,11 +1,14 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
+import { isPaymentKeyConflict } from "@routeflow/types/payment-submit-key";
 import { optionalIdempotencyKey } from "../orders/counter-sale/required-idempotency-key";
 import {
   advancePaymentKey,
   invoicePaymentKey,
+  PaymentKeySettleMismatch,
   paymentRequestHash,
   standalonePaymentKey,
   withKeyHooks,
+  withPaymentKey,
   type KeyedWriterOpts,
 } from "./payment-idempotency";
 
@@ -103,6 +106,59 @@ describe("SA-824 payment Idempotency-Key helpers", () => {
       await opts!.claim!({});
       await opts!.inTx!({}, { ok: true }, { advancePaymentId: "adv-1" });
       expect(order).toEqual(["claim", "caller", "settle:adv-1"]);
+    });
+  });
+  describe("withPaymentKey", () => {
+    const req = { invoiceId: "i1", amount: 10, method: "CASH" };
+    const depsWith = (row: unknown, executeRaw: jest.Mock = jest.fn()) => ({
+      getTenantId: () => "t1",
+      forTenant: () => ({ paymentIdempotencyKey: { findFirst: jest.fn().mockResolvedValue(row) } }),
+      executeRaw,
+    });
+
+    it("the 409 a different-body reuse throws is EXACTLY what the clients' isPaymentKeyConflict matches (one PAYMENT_MISMATCH constant)", async () => {
+      const stored = {
+        state: "COMPLETED",
+        scope: "INVOICE_PAYMENT",
+        requestHash: "another-hash",
+        result: {},
+      };
+      const thrown = await withPaymentKey(
+        depsWith(stored),
+        "key-1",
+        "INVOICE_PAYMENT",
+        req,
+        jest.fn(),
+      ).catch((e: unknown) => e);
+      expect(thrown).toBeInstanceOf(ConflictException);
+      const body = (thrown as ConflictException).getResponse() as Record<string, unknown>;
+      expect(body).toMatchObject({ code: "IDEMPOTENCY_KEY_CONFLICT", reason: "PAYMENT_MISMATCH" });
+      // the client reads the server's real body, not a hand-copied literal
+      expect(
+        isPaymentKeyConflict({
+          response: { status: (thrown as ConflictException).getStatus(), data: body },
+        }),
+      ).toBe(true);
+      expect(
+        isPaymentKeyConflict({ response: { status: 409, data: { ...body, reason: "OTHER" } } }),
+      ).toBe(false);
+    });
+
+    it("settle: the COMPLETED update must change exactly 1 row; 0 or 2 throw so the money rolls back", async () => {
+      const run = async (rows: number) => {
+        const tx = {
+          $queryRaw: jest.fn().mockResolvedValue([{ id: "claimed" }]),
+          $executeRaw: jest.fn().mockResolvedValue(rows),
+        };
+        return withPaymentKey(depsWith(null), "key-2", "INVOICE_PAYMENT", req, async (hooks) => {
+          await hooks!.claim(tx);
+          await hooks!.settle(tx, { paymentGroupId: "g1" });
+          return { ok: true };
+        });
+      };
+      await expect(run(1)).resolves.toEqual({ ok: true });
+      await expect(run(0)).rejects.toBeInstanceOf(PaymentKeySettleMismatch);
+      await expect(run(2)).rejects.toThrow(/expected exactly 1/);
     });
   });
 });

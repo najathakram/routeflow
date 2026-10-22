@@ -388,6 +388,12 @@ export const API_ERROR_CODES = {
    */
   PAYMENT_KEY_IN_FLIGHT: "PAYMENT_KEY_IN_FLIGHT",
   /**
+   * The `reason` of the 409 IDEMPOTENCY_KEY_CONFLICT the customer money-in writers send when an Idempotency-Key
+   * already recorded a DIFFERENT payment request (SA-824). It proves a payment may already exist under the key.
+   * Thrown by the server and matched by the clients (`isPaymentKeyConflict`) through this ONE constant.
+   */
+  PAYMENT_MISMATCH: "PAYMENT_MISMATCH",
+  /**
    * 409 from GET /orders/counter-sale/by-key/:key: the sale's PENDING or DELIVERED order exists but has NO invoice
    * rows at all (a half-written sale: the first attempt stopped before the invoice step). Re-POST with the same
    * Idempotency-Key to finish it. A voided or cancelled sale is COUNTER_SALE_VOIDED, never this.

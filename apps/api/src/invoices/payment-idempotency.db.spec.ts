@@ -15,6 +15,12 @@
  *    records exactly once.
  *  - T3 (MUST g): the same key in two tenants records two independent payments.
  *
+ *  - T4: the PER-INVOICE writer (POST /invoices/:id/payments = `recordPayment`: `withAfterCommit`, the till
+ *        lock and the Invoice row lock run AFTER the claim) is race-safe the same way: two connections, one key,
+ *        exactly one InvoicePayment, the loser replays; a throw after the claim leaves no key and no payment.
+ *  - T5: the ADVANCE writer (POST /customers/:id/advance-payments = `createAdvancePayment`) likewise: one
+ *        AdvancePayment for two concurrent same-key submits; the loser waits and replays.
+ *
  * SA-824 race ruling 6 (POST /invoices/payments/by-key/:key/resolve, `PaymentKeyStatusService.resolve` on
  * connection B while connection A holds an UNCOMMITTED claim of the same key):
  *  - R1: B's resolve WAITS; A commits -> "found" with A's payment group; exactly one payment set.
@@ -52,6 +58,7 @@ import { createHash, randomUUID } from "crypto";
 import { PaymentKeyStatusService } from "./payment-key-status.service";
 import { AuditService } from "../audit/audit.service";
 import { InvoicesService } from "./invoices.service";
+import { CustomersService } from "../customers/customers.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -229,7 +236,7 @@ describeDb(
         payments: await prismaA.invoicePayment.findMany({ where: { invoiceId: invoice.id } }),
         keys: await prismaA.paymentIdempotencyKey.findMany({ where: { tenantId: tenant.id } }),
       });
-      return { tenant, dto, asTenant, state };
+      return { tenant, customer, invoice, dto, asTenant, state };
     }
 
     it("T1 (b) two connections, same key, concurrent: exactly one payment set; the loser waits for the winner's commit and replays its result", async () => {
@@ -325,6 +332,122 @@ describeDb(
       expect((await one.state()).payments).toHaveLength(1);
       expect((await two.state()).payments).toHaveLength(1);
     }, 60_000);
+
+    it("T4 the per-invoice writer: two connections, one key -> exactly one InvoicePayment; the loser waits and replays; a throw after the claim leaves nothing", async () => {
+      const { invoice, asTenant, state } = await seed("t4");
+      const key = `inv-race-${randomUUID()}`;
+      const body = { amount: 120, method: "CASH", reference: "receipt 9" } as any;
+      let winnerInTx!: () => void;
+      const winnerHoldsKey = new Promise<void>((r) => (winnerInTx = r));
+      let releasedAt = 0;
+
+      const winner = asTenant(() =>
+        invoicesA.recordPayment(invoice.id, body, {
+          idempotencyKey: key,
+          inTx: async () => {
+            winnerInTx();
+            await new Promise((r) => setTimeout(r, 800));
+            releasedAt = Date.now();
+          },
+        } as any),
+      );
+      await winnerHoldsKey; // A holds the claim, the till lock and the Invoice row lock, uncommitted
+      let loserDoneAt = 0;
+      const loser = asTenant(() =>
+        invoicesB.recordPayment(invoice.id, body, { idempotencyKey: key } as any).then((r) => {
+          loserDoneAt = Date.now();
+          return r;
+        }),
+      );
+      const [w, l]: any[] = await Promise.all([winner, loser]);
+
+      expect(w.replayed).toBeUndefined();
+      expect(l.replayed).toBe(true);
+      expect(l.createdPaymentId).toBe(w.createdPaymentId);
+      expect(loserDoneAt).toBeGreaterThanOrEqual(releasedAt);
+      const after = await state();
+      expect(after.payments).toHaveLength(1);
+      expect(after.keys).toHaveLength(1);
+      expect(after.keys[0]).toMatchObject({ scope: "INVOICE_PAYMENT", state: "COMPLETED" });
+
+      // A throw after the claim (inside withAfterCommit's transaction) rolls the key and the payment back.
+      const failKey = `inv-fail-${randomUUID()}`;
+      await expect(
+        asTenant(() =>
+          invoicesA.recordPayment(invoice.id, body, {
+            idempotencyKey: failKey,
+            inTx: async () => {
+              throw new Error("injected failure after the claim");
+            },
+          } as any),
+        ),
+      ).rejects.toThrow("injected failure after the claim");
+      const afterFailure = await state();
+      expect(afterFailure.payments).toHaveLength(1); // still only the first
+      expect(afterFailure.keys.map((k: any) => k.key)).not.toContain(failKey);
+    }, 60_000);
+
+    it("T5 the advance writer: two connections, one key -> exactly one AdvancePayment; the loser waits and replays", async () => {
+      const { tenant, customer, asTenant } = await seed("t5");
+      // createAdvancePayment reads only PrismaService; every other collaborator is unused on this path.
+      const unused = {} as never;
+      const mk = (prisma: PrismaService) =>
+        new CustomersService(
+          prisma,
+          unused,
+          unused,
+          unused,
+          unused,
+          unused,
+          unused,
+          unused,
+          unused,
+        );
+      const customersA = mk(prismaA);
+      const customersB = mk(prismaB);
+      const key = `adv-race-${randomUUID()}`;
+      const body = { amount: 75, method: "CASH", reference: "adv 1" };
+      let winnerInTx!: () => void;
+      const winnerHoldsKey = new Promise<void>((r) => (winnerInTx = r));
+      let releasedAt = 0;
+
+      const winner = asTenant(() =>
+        customersA.createAdvancePayment(customer.id, body, {
+          idempotencyKey: key,
+          inTx: async () => {
+            winnerInTx();
+            await new Promise((r) => setTimeout(r, 800));
+            releasedAt = Date.now();
+          },
+        } as any),
+      );
+      await winnerHoldsKey;
+      let loserDoneAt = 0;
+      const loser = asTenant(() =>
+        customersB
+          .createAdvancePayment(customer.id, body, { idempotencyKey: key } as any)
+          .then((r) => {
+            loserDoneAt = Date.now();
+            return r;
+          }),
+      );
+      const [w, l]: any[] = await Promise.all([winner, loser]);
+
+      expect(w.replayed).toBeUndefined();
+      expect(l.replayed).toBe(true);
+      expect(l.id).toBe(w.id);
+      expect(loserDoneAt).toBeGreaterThanOrEqual(releasedAt);
+      const advances = await prismaA.advancePayment.findMany({ where: { tenantId: tenant.id } });
+      expect(advances).toHaveLength(1);
+      const keys = await prismaA.paymentIdempotencyKey.findMany({ where: { tenantId: tenant.id } });
+      expect(keys).toHaveLength(1);
+      expect(keys[0]).toMatchObject({
+        scope: "ADVANCE_PAYMENT",
+        state: "COMPLETED",
+        advancePaymentId: w.id,
+      });
+    }, 60_000);
+
     const actor = { sub: null, impersonatedBy: null };
     const keyHash = (k: string) => createHash("sha256").update(k).digest("hex");
     const codeOf = (e: unknown) => (e as ConflictException).getResponse?.() as { code?: string };
