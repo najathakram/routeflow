@@ -10,6 +10,10 @@ description: >
 
 # The bug registry
 
+> **Which bug next (2026-10-22):** when 3 or more LOW rows are queued, batch them through `/bug-swarm`. HIGH rows
+> and single bugs go through `bug-pipeline`. Every swarm run appends a ledger row (`--profile bug-swarm`), so the
+> two paths can be compared on cost, speed and quality.
+
 Three stores, each owning exactly one thing. They are not redundant, and nothing should be copied
 between them by hand — everything downstream of the record is derived.
 
