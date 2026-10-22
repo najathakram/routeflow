@@ -80,14 +80,14 @@ describe("closed handler list (pinned against the controller sources)", () => {
     expect(new Set(handlers.map((x) => `${x.httpMethod} ${x.route}`)).size).toBe(handlers.length);
   });
 
-  it("pins the verified count: 52 handlers + the non-self user update", () => {
+  it("pins the verified count: 53 handlers + the non-self user update", () => {
     const withoutUpdate = handlers.filter((x) => x.id !== "users.update");
-    expect(withoutUpdate).toHaveLength(52);
-    expect(handlers).toHaveLength(53);
-    // Mutations leave an AuditLog row; the 11 GETs cannot be counted.
+    expect(withoutUpdate).toHaveLength(53);
+    expect(handlers).toHaveLength(54);
+    // Mutations leave an AuditLog row; the 12 GETs cannot be counted.
     expect(handlers.filter((x) => x.audited)).toHaveLength(42);
     expect(handlers.filter((x) => !x.audited).map((x) => x.httpMethod)).toEqual(
-      Array(11).fill("GET"),
+      Array(12).fill("GET"),
     );
   });
 
@@ -113,7 +113,7 @@ describe("closed handler list (pinned against the controller sources)", () => {
   );
 
   it.each([
-    ["import/import.controller.ts", 13],
+    ["import/import.controller.ts", 14],
     ["import/migration.controller.ts", 6],
     ["import/numbering.controller.ts", 3],
   ])("%s: every handler in the controller is on the list (%i)", (file, count) => {
