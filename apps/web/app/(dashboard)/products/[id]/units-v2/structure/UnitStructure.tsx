@@ -37,7 +37,7 @@ const PRICE_NOT_KEPT = "Unit added. Type its price in the grid.";
  * alone. `UnitStructure.k11-19.test.tsx` compiles this very file.
  */
 const OPENER_ROW =
-  "mt-3 flex flex-wrap items-start gap-2 " +
+  "mt-3 max-sm:group-data-[panel=closed]:mt-0 flex flex-wrap items-start gap-2 " +
   "[&>*:has([data-testid=units-v2-add-panel])]:order-last " +
   "[&>*:has([data-testid=units-v2-add-panel])]:basis-full " +
   "[&>*:has([data-testid=units-v2-add-panel])]:w-full " +
@@ -133,7 +133,7 @@ export function UnitStructureControls({ productId }: { productId: string }) {
   const reset = resetPreview(served);
 
   return (
-    <div data-testid="units-v2-structure" className="mb-3">
+    <div data-testid="units-v2-structure" className="mb-3 max-sm:mb-2">
       <div
         data-testid="units-v2-structure-row"
         data-last-opened={lastOpened ?? undefined}

@@ -39,6 +39,7 @@ import { effectiveCostingMethod } from "./costing-method-policy";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { recordSaleMovement, resolveSaleCost } from "./sale-movement";
 import { poReversalNote, poReversalOf } from "./bill-revert";
+import { poGoodsUsedConflict, productsUsedSinceReceipt } from "./po-use-since-receipt";
 import { documentStockDate, type DocumentStockDate } from "./stock-write-date";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
@@ -1872,14 +1873,10 @@ export class InventoryService {
     });
     const consumedLots = lots.filter((l) => new Prisma.Decimal(l.remainingQty).lt(l.qty));
     if (consumedLots.length > 0) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.PO_LOT_PARTIALLY_CONSUMED,
-        message:
-          `Part of what was received on ${po.poNumber} has already been used (a lot is partially ` +
-          "consumed), so its inventory can't be re-applied — that would invent stock. " +
-          "Save the edit as document-only (keep stock as is), or record a return.",
-        lotIds: consumedLots.map((l) => l.id),
-      });
+      throw poGoodsUsedConflict(
+        po.poNumber,
+        consumedLots.map((l) => l.id),
+      );
     }
 
     const movements = await tx.stockMovement.findMany({
@@ -1909,6 +1906,10 @@ export class InventoryService {
         poReversalOf(m) == null &&
         !reversedIds.has(m.id),
     );
+
+    // Row 645: the lot figure above no longer moves on a sale (#3487) — the ledger does.
+    const usedProducts = await productsUsedSinceReceipt(tx, live);
+    if (usedProducts.length > 0) throw poGoodsUsedConflict(po.poNumber, [], usedProducts);
 
     const posted = new Map<string, Prisma.Decimal>();
     for (const m of live) {

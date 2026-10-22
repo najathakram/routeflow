@@ -222,6 +222,9 @@ describe("units v2 edit grid (S12a)", () => {
     const select = screen.getByTestId(T.orderUnit) as HTMLSelectElement;
     expect(select.getAttribute("aria-disabled")).toBe("true");
     expect(select.title).toBe("Available after units settings update");
+    // K12: it is the pricing anchor, so it must never read like the live "Default order unit" select.
+    expect(screen.getByLabelText("Pricing unit")).toBe(select);
+    expect(screen.queryByLabelText("Order unit")).toBeNull();
     expect(screen.getByTestId(T.orderUnitReason).textContent).toBe(
       "Available after units settings update",
     );
@@ -294,6 +297,8 @@ describe("units v2 edit grid (S12a)", () => {
     expect(screen.queryByTestId(PLAN_TESTIDS.cellPlan)).toBeNull();
     await type(user, 2, "14.5");
     expect(screen.getByTestId(PLAN_TESTIDS.cellPlan)).toBeTruthy();
+    // R3 review: the slot holds its 8rem only while that plan exists
+    expect(screen.getByTestId("also-update-slot").className).toMatch(/\bmin-h-\[8rem\]/);
   });
 
   it("K5 seam: onSaved/onEdit fire, and loadUndoPreview refetches and returns display strings", async () => {
@@ -373,7 +378,7 @@ describe("units v2 edit grid (S12a)", () => {
       within(screen.getByTestId(T.row("box")))
         .getByTestId(T.input("box", 1))
         .getAttribute("placeholder"),
-    ).toBe("$30.00");
+    ).toBe("30.00");
   });
 
   it("the grid without an edit api is today's read-only grid", () => {

@@ -1816,3 +1816,49 @@ details.answered {
   outline: 2px solid var(--accent, currentColor);
   outline-offset: 2px;
 }
+
+/* Under the big-picture band: quiet folds (tasks of yours, latent risks, mitigated incidents). */
+#summary .tech.todos,
+#summary .tech.latent,
+#summary .tech.incidents {
+  margin-top: 10px;
+  padding-top: 6px;
+}
+
+/* Username field kept for password managers: present in the DOM, invisible to people. */
+.login-username {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Phone: 44px tap targets for nav chips, buttons and fold summaries. */
+@media (max-width: 640px), (pointer: coarse) {
+  .navlink,
+  .btn,
+  .tech > summary,
+  .alarm .drill > summary,
+  details > summary.row {
+    min-height: 44px;
+  }
+  .navlink,
+  .btn {
+    display: inline-flex;
+    align-items: center;
+  }
+  .tech > summary {
+    display: flex;
+    align-items: center;
+  }
+}
+
+@media (max-width: 640px) {
+  .pill,
+  .lname,
+  .cnt,
+  .sub {
+    font-size: 12px;
+  }
+}

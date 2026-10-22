@@ -287,9 +287,9 @@ function ProductCard({
               e.stopPropagation();
               onAddVariant(product.id);
             }}
-            className="relative z-10 mt-1 flex items-center gap-1 text-[10px] text-navy/70 hover:text-brand-500 transition-colors"
+            className="relative z-10 -mx-3 -mb-3 mt-1 flex min-h-[44px] items-center gap-1.5 px-3 text-xs text-navy/70 transition-colors hover:text-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
           >
-            <Plus className="h-2.5 w-2.5" />
+            <Plus className="h-3.5 w-3.5" />
             Add variant
           </button>
         )}
@@ -1304,7 +1304,14 @@ export default function ProductsPage() {
             setShowCreate(false);
             setNewVariantParentId(undefined);
           }}
-          onCreated={(created) => router.push(`/products/${created.id}`)}
+          onCreated={(created) =>
+            // K13 F18: a variant opens its FAMILY with the new row in view; a standalone product opens itself.
+            router.push(
+              created.parentProductId
+                ? `/products/${created.parentProductId}?variant=${created.id}`
+                : `/products/${created.id}`,
+            )
+          }
           units={existingUnits}
           defaultParentId={newVariantParentId}
         />

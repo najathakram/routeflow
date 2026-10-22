@@ -130,7 +130,12 @@ import {
   decideResumeHydrationStart,
 } from "../lib/order-draft-logic";
 import { hydrateParkedLine } from "../lib/resume-draft-hydration";
-import { getOrderSubmitKey, resetOrderSubmitKey } from "../lib/order-submit-key";
+import {
+  getOrderSubmitKey,
+  resetOrderSubmitKey,
+  seedOrderSubmitKeyFromDraft,
+} from "../lib/order-submit-key";
+import { withDraftSubmitKey } from "@routeflow/types/draft-submit-key";
 // Parked drafts (PR-3): NewOrderScreen resolves ?resumeDraft= and hydrates
 // only the customer; ProductPickView (it owns all other parkable state) binds
 // the autosave hook and drives create/update/delete of the SAME draft.
@@ -1465,9 +1470,18 @@ function ProductPickView({
       fulfillPath,
     ],
   );
+  // SA-817 A4: ONE submit key per draft, persisted in the draft itself. The slot is settled BEFORE the first read below: a
+  // resumed draft re-seeds it from its payload (so a resubmit after an app kill replays the first attempt's key); a genuinely
+  // new cart starts clean (R5: a resume must NOT rotate it - that would re-open the duplicate window for a timed-out submit).
+  const keySlotSettledRef = useRef(false);
+  if (!keySlotSettledRef.current) {
+    keySlotSettledRef.current = true;
+    if (initialDraft) seedOrderSubmitKeyFromDraft(customerId, initialDraft.payload);
+    else resetOrderSubmitKey(customerId);
+  }
   const draftPayload = useMemo<OrderDraftPayload>(
-    () => toOrderDraftPayload(draftBuilderState),
-    [draftBuilderState],
+    () => withDraftSubmitKey(toOrderDraftPayload(draftBuilderState), getOrderSubmitKey(customerId)),
+    [draftBuilderState, customerId],
   );
 
   const createDraftMutation = useCreateDraft();
@@ -1493,7 +1507,9 @@ function ProductPickView({
   // rejection in a literal empty catch. A 5xx, a 403 addon gate, a 404 on a
   // draft deleted from web — nothing on screen, nothing in the console, and no
   // retry unless a later edit happens to fire one. (A genuine loss of network
-  // is different: api-client queues that write and replays it.)
+  // is different: draft writes are ONLINE-ONLY, so api-client refuses them with
+  // `isOnlineRequired` instead of queueing; the builder state stays the source
+  // of truth and the next save sends the latest payload, B923 ruling 3.)
   const [draftSaveFailed, setDraftSaveFailed] = useState(false);
   // Stable: the autosave engine reads this ONCE, at mount.
   const noteDraftSaveError = useCallback((err: unknown) => {
@@ -1660,21 +1676,10 @@ function ProductPickView({
   const posMode = pos.posMode;
   const { data: activeOrder } = useActiveOrderForCustomer(customerId, pos.activePath);
 
-  // A screen instance IS a cart session: mint a fresh Idempotency-Key for it
-  // (F30/R8). The key then survives every FAILED attempt on this cart — a
-  // timeout, an offline queue replay — so the server collapses the retry onto
-  // the original order instead of creating a sibling; it is only reset once a
-  // submit actually succeeds (below), because the next submit is deliberately
-  // a new order.
-  useEffect(() => {
-    // R5 (close-out): a parked-draft RESUME re-mounts this screen for the SAME
-    // cart — rotating the key there re-opens the duplicate window for a
-    // timed-out-but-committed submit made before the park. Rotate only for a
-    // genuinely new cart session.
-    // B215/R3: scoped to THIS customer's slot — no other customer's live cart is disturbed.
-    if (!initialDraft) resetOrderSubmitKey(customerId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot mount decision on the resume seed
-  }, []);
+  // The Idempotency-Key for this cart is settled once, in the render above (SA-817 A4): fresh for a new cart, the draft's own
+  // for a resume. It survives every FAILED attempt on this cart (a timeout, a 5xx): the server collapses the retry onto the
+  // original order. It is reset only once a submit actually succeeds (below), because the next submit is deliberately a new
+  // order. The map is process memory; the durable copy is the draft's `payload._submitKey`.
 
   // Re-entrancy latch. `createOrder.isPending` alone leaves two windows open
   // where the button still reads "Confirm": the pre-submit draft flush (a
@@ -1708,7 +1713,7 @@ function ProductPickView({
     setSubmitting(true);
     // Flush BEFORE mutate so a failed create still leaves an up-to-date
     // parked draft behind (nothing about this order is lost) — but NEVER let
-    // it gate the order: a rejected draft write (offline queue, 404 on a draft
+    // it gate the order: a rejected draft write (offline refusal, 404 on a draft
     // discarded from web) would otherwise abort submitOrder before `mutate`,
     // leaving Confirm a dead button with no error shown.
     await flushDraftQuietly();

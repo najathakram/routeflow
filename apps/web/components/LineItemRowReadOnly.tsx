@@ -12,6 +12,7 @@ import {
   normalizeBoxesPieces,
 } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
+import { unitPriceNote } from "@/lib/line-unit-price-note";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { splitProductName } from "@/lib/product-display";
 import { linePriceTag } from "./line-price-tag";
@@ -215,6 +216,17 @@ export function LineItemRowReadOnly({
         <p className="mt-1 text-xs text-navy/70" title={hasSplit ? `${qty} pcs total` : undefined}>
           {qtyPriceLine}
         </p>
+        {(() => {
+          // B1261: a boxed line sold in pieces also says the price each, from the same note the order table uses
+          const note = boxed
+            ? unitPriceNote({ unitPrice, unitsPerBox, unitLabel: boxLabel, pieces })
+            : null;
+          return note?.each ? (
+            <p className="mt-0.5 text-xs text-navy/60" data-testid="line-unit-price-unit">
+              {note.text}
+            </p>
+          ) : null;
+        })()}
         {priceTag && (
           <p
             className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs"

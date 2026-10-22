@@ -345,3 +345,79 @@ test("runBackfill dry run uses injected readers and appenders", async () => {
   assert.equal(rec.counts.events, 16);
   assert.equal(rec.at, new Date(NOW).toISOString());
 });
+
+// =====================================================================================
+// Accuracy round 2 (X1): an unknown status word never becomes "planned" silently.
+// =====================================================================================
+const REG2_HEAD =
+  "| ID | Title | Type | Priority | Status | Lane | Train | Gate | ETA | Links | Updated |\n" +
+  "|---|---|---|---|---|---|---|---|---|---|---|\n";
+const reg2Row = (id, status) =>
+  `| ${id} | Acme row ${id} | ops | P1 | ${status} | Lead | - | - | - | - | 2026-10-15 |`;
+const draftOf = (status) => parseRegister(`${REG2_HEAD}${reg2Row(530, status)}\n`, config)[0];
+
+test("X1 register status words: done-like words become verified, shipped words live, wip building", () => {
+  const cases = {
+    done: "verified",
+    Closed: "verified",
+    fixed: "verified",
+    complete: "verified",
+    completed: "verified",
+    resolved: "verified",
+    shipped: "live",
+    deployed: "live",
+    "in-progress": "building",
+    wip: "building",
+    "done (census 10-19)": "verified",
+    review: "review", // a known word is untouched
+  };
+  for (const [word, want] of Object.entries(cases)) {
+    const d = draftOf(word);
+    assert.equal(d.fields.status, want, `status word "${word}"`);
+    assert.equal(d.fields.statusText, undefined, `no statusText for "${word}"`);
+  }
+});
+
+test("X1 register status words: an unknown word is planned + statusText (the raw word), never silent", () => {
+  const d = draftOf("Triaged (needs info)");
+  assert.equal(d.fields.status, "planned");
+  assert.equal(d.fields.statusText, "Triaged (needs info)");
+  assert.deepEqual(validateEvent({ ...EV_BASE, data: d.fields }), { ok: true, errors: [] });
+  // an empty status cell is just planned: nothing to report
+  const empty = draftOf("-");
+  assert.equal(empty.fields.status, "planned");
+  assert.equal(empty.fields.statusText, undefined);
+});
+
+test("X1 register status words: blocked keeps the previous status (no status field) and flags the draft", () => {
+  const d = draftOf("blocked (waiting on acme)");
+  assert.equal(d.fields.status, undefined);
+  assert.equal(d.fields.statusText, undefined);
+  assert.equal(d.blocked, "blocked (waiting on acme)");
+  assert.equal(draftOf("building").blocked, undefined);
+});
+
+const EV_BASE = {
+  v: 1,
+  id: "pc-1760000000000-ab12",
+  ts: "2026-10-19T04:00:00.000Z",
+  machine: "pc",
+  actor: "backfill",
+  lane: null,
+  kind: "item.new",
+  item: "530",
+};
+
+test("parseStatusCell: the raw status text is masked before its 80-character cut", async () => {
+  const { parseStatusCell } = await import("../lib/backfill.mjs");
+  const name = "acme-foods-distribution";
+  const mask = (t) => t.replace(new RegExp(name, "gi"), "a live business");
+  const cell = `${"w".repeat(70)} ${name} pending`;
+  const r = parseStatusCell(cell, mask);
+  assert.equal(r.status, "planned");
+  assert.doesNotMatch(r.statusText, /acme/i);
+  assert.ok(r.statusText.length <= 80);
+  assert.match(r.statusText, /a live/);
+  // unmasked (no mask given) the cut would have left "acme-foods-" in the text
+  assert.match(parseStatusCell(cell).statusText, /acme/);
+});

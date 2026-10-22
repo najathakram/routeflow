@@ -33,7 +33,13 @@ export interface SaleDraft {
 
 export type SaveDraftInput = Partial<
   Pick<SaleDraft, "kind" | "customerId" | "customerName" | "title" | "payload" | "device">
->;
+> & {
+  /**
+   * PATCH only (SA-817 A): the `updatedAt` this client last saw for the draft. A different current value is a 409
+   * `DRAFT_CHANGED` (another device wrote since). Omitted = last write wins, as before (older clients).
+   */
+  expectedUpdatedAt?: string;
+};
 
 /**
  * ⚠️ Drift fixed here (Wave E / imp-10b, L-072, sibling-sweep find): both apps

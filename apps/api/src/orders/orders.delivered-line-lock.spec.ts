@@ -38,6 +38,8 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { UserRole } from "@prisma/client";
+import { BadRequestException } from "@nestjs/common";
+import { lockRowsNoWait } from "../common/db-locks";
 
 const LOCKED = { response: { code: "LINE_ALREADY_DELIVERED" }, status: 409 };
 
@@ -466,6 +468,110 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
         ),
       ).rejects.toMatchObject(LOCKED);
       nothingWritten();
+    });
+  });
+
+  describe("(5b) row 586: a refused edit never commits the SENT -> DRAFT revert", () => {
+    /**
+     * `revertLinkedInvoicesForOrderEdit` called WITHOUT a transaction and without `preflightOnly` writes on its own
+     * connection: it commits at once and nothing the edit throws afterwards can undo it. Called with the edit's
+     * `tx` it rolls back with the refusal.
+     */
+    const ownConnectionWrites = () =>
+      invoices.revertLinkedInvoicesForOrderEdit.mock.calls.filter(
+        ([, tx, opts]: any[]) => !tx && !opts?.preflightOnly,
+      );
+
+    it("the order flipped to PARTIALLY_DELIVERED between the pre-tx read and the lock: the binding 409 leaves the SENT invoice SENT", async () => {
+      const a = line({ id: "li-a", position: 0, qty: 5 });
+      seed("CONFIRMED", [a, OPEN_LINE], [{ ...a, deliveredQty: 3 }, OPEN_LINE]);
+      prisma.order.findUnique
+        .mockResolvedValueOnce(orderWith("CONFIRMED", [a, OPEN_LINE]))
+        .mockResolvedValue({
+          ...orderWith("PARTIALLY_DELIVERED", [{ ...a, deliveredQty: 3 }, OPEN_LINE]),
+        });
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ id: "li-a", action: "UPDATE", qty: 2 }] } as any,
+          operator,
+        ),
+      ).rejects.toMatchObject(LOCKED);
+      expect(ownConnectionWrites()).toHaveLength(0); // master: 1 (the pre-tx revert, committed)
+      // SA-833: refuse first, write after - the in-tx revert never ran either
+      expect(
+        invoices.revertLinkedInvoicesForOrderEdit.mock.calls.filter(([, tx]: any[]) => !!tx),
+      ).toHaveLength(0);
+      nothingWritten();
+    });
+
+    it("SA-833: a contended invoice row (NOWAIT) is a retryable 409 CONCURRENT_UPDATE / INVOICE_BUSY and nothing is written", async () => {
+      const a = line({ id: "li-a", position: 0, qty: 5 });
+      seed("CONFIRMED", [a, OPEN_LINE]);
+      // The REAL NOWAIT lock (common/db-locks.ts) over a client whose statement hits SQLSTATE 55P03.
+      const contended = {
+        $executeRaw: async () => {
+          throw Object.assign(new Error("could not obtain lock on row"), {
+            meta: { code: "55P03" },
+          });
+        },
+      };
+      invoices.revertLinkedInvoicesForOrderEdit.mockImplementation(
+        async (_id: string, tx?: unknown) => {
+          if (tx) await lockRowsNoWait(contended, "Invoice", ["inv-1"], "INVOICE_BUSY");
+          return [];
+        },
+      );
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ id: "li-a", action: "UPDATE", qty: 4 }] } as any,
+          operator,
+        ),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: "CONCURRENT_UPDATE", reason: "INVOICE_BUSY", retryable: true },
+      });
+      nothingWritten();
+    });
+
+    it("SA-833: a mirror paid between the advisory preflight and the lock is refused under the lock, nothing written", async () => {
+      const a = line({ id: "li-a", position: 0, qty: 5 });
+      seed("CONFIRMED", [a, OPEN_LINE]);
+      // the preflight (no tx) saw an unpaid mirror; the count under the row lock finds the payment
+      invoices.revertLinkedInvoicesForOrderEdit.mockImplementation(
+        async (_id: string, tx?: unknown) => {
+          if (tx)
+            throw new BadRequestException(
+              "This order can't be edited while invoice INV-1 has payments",
+            );
+          return [];
+        },
+      );
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ id: "li-a", action: "UPDATE", qty: 4 }] } as any,
+          operator,
+        ),
+      ).rejects.toMatchObject({ status: 400 });
+      nothingWritten();
+    });
+
+    it("control: an allowed edit of an undelivered order reverts the SENT mirror inside the edit transaction, holding the invoice rows", async () => {
+      const a = line({ id: "li-a", position: 0, qty: 5 });
+      seed("CONFIRMED", [a, OPEN_LINE]);
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-a", action: "UPDATE", qty: 4 }] } as any,
+        operator,
+      );
+      expect(ownConnectionWrites()).toHaveLength(0);
+      const inTx = invoices.revertLinkedInvoicesForOrderEdit.mock.calls.filter(
+        ([, tx]: any[]) => !!tx,
+      );
+      expect(inTx).toHaveLength(1);
+      expect(inTx[0][2]).toEqual({ lockRows: true });
     });
   });
 

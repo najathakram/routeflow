@@ -9,6 +9,7 @@ import {
 } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
+import { configuredTaxRateFraction } from "../common/tax-rate";
 import { isNsfLine } from "./nsf-line";
 
 /**
@@ -148,6 +149,18 @@ export interface TaxStateArgs {
   orderSiblingCount?: number | null;
   discount?: number;
   shipping?: number;
+  /** The tenant's configured rate (a fraction): it wins the inference when it reproduces the stored tax. */
+  preferredRate?: number | null;
+}
+
+/**
+ * The tenant's configured rate as the inference's `preferredRate` (null when none / unreadable). One read, made by the
+ * callers that can re-stamp (the items edit, the price adjustment); defensive about a client without `systemConfig`.
+ */
+export async function tenantPreferredRate(db: any): Promise<number | null> {
+  if (!db?.systemConfig?.findFirst) return null;
+  const fraction = await configuredTaxRateFraction({ forTenant: () => db });
+  return fraction > 0 ? fraction : null;
 }
 
 /** The verdict, without throwing: callers that must weigh the user's own rate change use this. */
@@ -161,6 +174,7 @@ export function taxStateOf(args: TaxStateArgs): TaxStateVerdict {
     orderSiblingCount,
     discount,
     shipping,
+    preferredRate,
   } = args;
   const opts: SumInvoiceTotalsOptions = { discount, shipping, isTaxExempt };
   const totals = sumInvoiceTotalsStrict(storedLines, opts);
@@ -172,12 +186,25 @@ export function taxStateOf(args: TaxStateArgs): TaxStateVerdict {
     orderSiblingCount == null ? 0 : orderAllocationToleranceCents(orderSiblingCount);
   const stale = exemptWithLevy || differsBeyond(totals.tax, invoice.taxAmount, toleranceCents);
   if (!stale || !canRestamp || isTaxExempt) return { totals, stale, restampRate: null };
-  const inferred = inferredGoodsFlatRate({
-    subtotal: invoice.subtotal,
-    taxAmount: invoice.taxAmount,
-    lines: storedLines,
-  }); // #2656: goods only
+  const inferred = inferredGoodsFlatRate(
+    { subtotal: invoice.subtotal, taxAmount: invoice.taxAmount, lines: storedLines },
+    { preferredRate },
+  ); // #2656: goods only
   return { totals, stale, restampRate: inferred?.verified ? inferred.rate : null };
+}
+
+/**
+ * The duplicate's inference (`retakeDuplicateTaxRates`): the ONE other API door to `inferredGoodsFlatRate`, kept in this
+ * guard's file so SA-816 (d)2 still holds - a stored non-finite levy on the source lines is refused (400
+ * MONEY_INVARIANT) by `sumInvoiceTotalsStrict` BEFORE any rate is inferred from them.
+ */
+export function inferredGoodsRateForCopy(
+  invoice: { subtotal: unknown; taxAmount: unknown; lines: ReadonlyArray<any> },
+  opts?: { preferredRate?: number | null },
+) {
+  sumInvoiceTotalsStrict(invoice.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? 0 })));
+
+  return inferredGoodsFlatRate(invoice, opts);
 }
 
 /**
@@ -213,6 +240,8 @@ export function guardItemsEditTaxState(args: {
     storedRows: any[];
     isTaxExempt: boolean;
     orderInvoiceCount?: number | null;
+    /** The tenant's configured rate (`tenantPreferredRate`): wins the inference when it reproduces the stored tax. */
+    preferredRate?: number | null;
   };
   items: ReadonlyArray<{ taxRate?: number | null }>;
   matches: ReadonlyArray<{ row: Record<string, any> | null }>;
@@ -231,6 +260,7 @@ export function guardItemsEditTaxState(args: {
       orderId: locked.invoice?.orderId,
       orderInvoiceCount: locked.orderInvoiceCount,
     }),
+    preferredRate: locked.preferredRate,
   });
   if (!verdict.stale) return;
   if (!matches.some((m) => m.row)) return; // every stored line is gone: nothing is being re-taxed

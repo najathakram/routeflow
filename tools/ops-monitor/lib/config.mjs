@@ -80,9 +80,6 @@ export const DEFAULT_CONFIG = {
     "ops-monitor": "ops-monitor",
   },
   thresholds: { laneSilentMin: 30, sourceStaleFactor: 3 },
-  // Words / phrases (a live client's slug or business name) the brief masks as "a live business".
-  // Lives in the private specs ops/config.json, never in this repo. Empty = no masking.
-  clientNames: [],
 };
 
 /** Loads <specs>/ops/config.json merged over DEFAULT_CONFIG (missing/bad file → defaults). */
@@ -90,7 +87,8 @@ export function loadConfig(dir = specsDir()) {
   const p = join(dir, "ops", "config.json");
   if (!existsSync(p)) return structuredClone(DEFAULT_CONFIG);
   try {
-    const raw = JSON.parse(readFileSync(p, "utf8"));
+    // Live-client names never live in the specs repo (lead ruling 10-19): see lib/mask.mjs.
+    const { clientNames: _dropped, ...raw } = JSON.parse(readFileSync(p, "utf8"));
     return {
       ...structuredClone(DEFAULT_CONFIG),
       ...raw,

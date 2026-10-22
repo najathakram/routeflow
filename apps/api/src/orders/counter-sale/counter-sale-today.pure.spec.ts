@@ -50,6 +50,88 @@ const ret = (over: Partial<Ret> = {}): Ret => ({
   ...over,
 });
 
+describe("toTodaysSaleRow: item names (R7b 2.1)", () => {
+  const withItems = (
+    items: Array<{
+      description: string | null;
+      qty: unknown;
+      boxes?: number | null;
+      pieces?: number | null;
+      unitLabel?: string | null;
+    }>,
+  ) =>
+    order({
+      payments: [pay("CASH", "24.50")],
+      invoices: [
+        {
+          id: "i-1",
+          invoiceNumber: "INV-1",
+          status: "PAID",
+          payments: [pay("CASH", "24.50")],
+          items: items.map((i) => ({ taxRate: 0, ...i })),
+        },
+      ],
+    });
+
+  it("a row carries its first item names and the item count", () => {
+    const row = toTodaysSaleRow(
+      withItems([
+        { description: "Cola 12oz Can", qty: "2.000" },
+        { description: "Ice Bag 10lb", qty: 1 },
+        { description: "Chips", qty: 3 },
+        { description: "Gum", qty: 1 },
+      ]),
+    );
+    expect(row.items).toEqual([
+      { name: "Cola 12oz Can", qty: 2 },
+      { name: "Ice Bag 10lb", qty: 1 },
+      { name: "Chips", qty: 3 },
+    ]);
+    expect(row.itemCount).toBe(4);
+  });
+
+  it("a boxed line sold as 2 cases carries the receipt's quantity text (N4)", () => {
+    const row = toTodaysSaleRow(
+      withItems([
+        {
+          description: "Cola 12oz Can",
+          qty: 24,
+          boxes: 2,
+          pieces: 0,
+          unitLabel: "Case",
+        },
+      ]),
+    );
+    expect(row.items).toEqual([{ name: "Cola 12oz Can", qty: 24, qtyText: "2 Cases" }]);
+  });
+
+  it("a voided row (no live invoice) still carries its item names", () => {
+    const row = toTodaysSaleRow(
+      order({
+        invStatus: "VOID",
+        invoices: [
+          {
+            id: "i-1",
+            invoiceNumber: "INV-1",
+            status: "VOID",
+            payments: [],
+            items: [{ taxRate: 0, description: "Cola 12oz Can", qty: 2 }],
+          },
+        ],
+      }),
+    );
+    expect(row.voided).toBe(true);
+    expect(row.items).toEqual([{ name: "Cola 12oz Can", qty: 2 }]);
+    expect(row.itemCount).toBe(1);
+  });
+
+  it("a record with no item lines carries no names", () => {
+    const row = toTodaysSaleRow(order({ payments: [pay("CASH", "24.50")] }));
+    expect(row.items).toBeUndefined();
+    expect(row.itemCount).toBeUndefined();
+  });
+});
+
 describe("toTodaysSaleRow: payments and state (test 8)", () => {
   it("cash paid in full: one CASH method, PAID, the receipt number and invoice", () => {
     const row = toTodaysSaleRow(order({ payments: [pay("CASH", "24.50")], customer: walkIn }));

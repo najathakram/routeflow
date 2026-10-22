@@ -250,6 +250,8 @@ describe.each(WRITERS)("$name tx retry (SA-767 L-2)", (writer) => {
       expect(committed()).toEqual({ movement: 0, lot: 0, product: 0 });
       expect(alerts).not.toHaveBeenCalled();
     },
+    // Row 668: the retry backoff runs for real; under a loaded pre-push verify the default 30 s was too tight.
+    90_000,
   );
 
   it("a non-conflict error propagates after ONE attempt and fires no alerts", async () => {

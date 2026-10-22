@@ -1,11 +1,8 @@
-# Railway config for the ops monitor service (its own Railway project). Railway reads one config
-# file per service (path set in the service settings: tools/ops-monitor/railway.toml), so this
-# file never affects the api/web services.
+# Railway config for the ops monitor service. Deploy: `railway up tools/ops-monitor --path-as-root`
+# (the build context root is this directory).
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "tools/ops-monitor/Dockerfile"
-# Railway builds from the repo root: the Dockerfile COPY context is "."
-watchPatterns = ["tools/ops-monitor/**"]
+dockerfilePath = "Dockerfile"
 
 [deploy]
 healthcheckPath = "/api/health"

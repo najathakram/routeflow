@@ -66,3 +66,52 @@ describe("UnitCombobox fast typing (V01)", () => {
     expect(document.querySelectorAll("input[type=text]")).toHaveLength(2); // the unit field and the probe
   });
 });
+
+/** K13 F07 / K12 F06: the list closes on every way of finishing, and "Case" + "case" is one suggestion. */
+describe("UnitCombobox closing and de-duplication (K13 F07)", () => {
+  function Controlled({ extra }: { extra?: string[] }) {
+    const [value, setValue] = React.useState("");
+    return (
+      <div>
+        <UnitCombobox id="u" value={value} onChange={setValue} extraUnits={extra} />
+        <input type="text" aria-label="other" defaultValue="" />
+      </div>
+    );
+  }
+
+  it("closes the list after a click pick", async () => {
+    render(<Controlled />);
+    const unit = document.getElementById("u") as HTMLInputElement;
+    await userEvent.click(unit);
+    await userEvent.click(screen.getByRole("button", { name: "case" }));
+    expect(unit.value).toBe("case");
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("closes the list when focus moves on with Tab", async () => {
+    render(<Controlled />);
+    const unit = document.getElementById("u") as HTMLInputElement;
+    await userEvent.type(unit, "case");
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    await userEvent.tab();
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("closes on Escape and on Enter", async () => {
+    render(<Controlled />);
+    const unit = document.getElementById("u") as HTMLInputElement;
+    await userEvent.type(unit, "ca");
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    await userEvent.type(unit, "se{Enter}");
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("shows one suggestion for Case and case, keeping the tenant's own spelling", async () => {
+    render(<Controlled extra={["Case", "Firkin"]} />);
+    await userEvent.click(document.getElementById("u") as HTMLInputElement);
+    expect(screen.getByRole("button", { name: "Case" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "case" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Firkin" })).toBeInTheDocument();
+  });
+});

@@ -62,12 +62,13 @@ const row = (over: Partial<TodaysSaleRow> = {}): TodaysSaleRow => ({
 });
 const SUMMARY: TodaysSalesSummary = {
   sales: { count: 1, total: 22.5 },
-  moneyIn: { cash: 22.5, card: 0, check: 0, other: 0, total: 22.5 },
-  handOvers: { count: 0, total: 0 },
-  storeCreditUsed: 0,
-  onAccount: 0,
-  refunds: { count: 0, cash: 0, card: 0, check: 0, other: 0, total: 0, tenderKnown: true },
-  storeCreditIssued: { count: 0, amount: 0 },
+  // every figure non-zero: a $0 extra row is not rendered (R7b 2.4), and this test proves each figure still is
+  moneyIn: { cash: 22.5, card: 1, check: 1, other: 1, total: 25.5 },
+  handOvers: { count: 1, total: 3 },
+  storeCreditUsed: 1,
+  onAccount: 1,
+  refunds: { count: 1, cash: 1, card: 1, check: 1, other: 1, total: 4, tenderKnown: true },
+  storeCreditIssued: { count: 1, amount: 1 },
   cashExpectedInDrawer: 22.5,
   netCollected: 22.5,
 };
@@ -118,6 +119,7 @@ it("every control of the Today's sales sheet that existed before day close is st
   expect(within(dialog).getByRole("button", { name: "Close" })).toBeInTheDocument();
   // the summary and every figure on it
   const summary = await within(dialog).findByTestId("today-summary");
+  // every figure here is non-zero, so every figure shows by default (no disclosure)
   for (const id of [
     "today-in-cash",
     "today-in-card",

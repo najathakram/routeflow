@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   type BuyerUser,
   type BuyerSeller,
@@ -41,6 +42,7 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = React.useState(true);
   const [activeSeller, setActiveSellerState] = React.useState<BuyerSeller | null>(null);
   const [sellers, setSellers] = React.useState<BuyerSeller[]>([]);
+  const queryClient = useQueryClient();
 
   // Reconcile a restored activeSeller against the sellers list the server just
   // returned. B141: a seller that removed this buyer's customer record drops out
@@ -48,13 +50,18 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
   // with nothing in the UI to explain it. Clearing it (state + the stored copy)
   // lets the portal pages' `!activeSeller` redirect send the buyer back to
   // /buyer/portal. A failed fetch never gets here, so it never clears anything.
-  const applySellers = React.useCallback((list: BuyerSeller[], restored: BuyerSeller | null) => {
-    setSellers(list);
-    if (restored && !list.some((seller) => seller.linkId === restored.linkId)) {
-      clearActiveSeller();
-      setActiveSellerState(null);
-    }
-  }, []);
+  const applySellers = React.useCallback(
+    (list: BuyerSeller[], restored: BuyerSeller | null) => {
+      setSellers(list);
+      if (restored && !list.some((seller) => seller.linkId === restored.linkId)) {
+        clearActiveSeller();
+        setActiveSellerState(null);
+        // Cached buyer data belongs to the seller that was active: drop it with the seller.
+        queryClient.removeQueries({ queryKey: ["buyer"] });
+      }
+    },
+    [queryClient],
+  );
 
   // Mirror of `activeSeller` for the callbacks that reconcile a *later* fetch
   // (refreshSellers / login), so they can read the current one without taking a
@@ -136,10 +143,17 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
     if (typeof window !== "undefined") window.location.href = "/buyer/login";
   }, []);
 
-  const setActiveSeller = React.useCallback((seller: BuyerSeller) => {
-    storeActiveSeller(seller);
-    setActiveSellerState(seller);
-  }, []);
+  const setActiveSeller = React.useCallback(
+    (seller: BuyerSeller) => {
+      // Cached buyer data is per seller: clear it on a switch so seller A's data never shows under B.
+      if (activeSellerRef.current?.linkId !== seller.linkId) {
+        queryClient.removeQueries({ queryKey: ["buyer"] });
+      }
+      storeActiveSeller(seller);
+      setActiveSellerState(seller);
+    },
+    [queryClient],
+  );
 
   const refreshSellers = React.useCallback(async () => {
     const token = getBuyerAccessToken();

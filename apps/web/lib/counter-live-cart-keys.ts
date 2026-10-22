@@ -3,6 +3,8 @@
  * tab does not lose it. Per signed-in tenant + user. This file holds only the key and the wipe, so the auth layer can import
  * it on logout without pulling the counter code in.
  */
+import { clearAllDayCloseDrafts } from "./counter-day-close-draft";
+
 export const LIVE_CART_KEY = "rf.counterSale.liveCart";
 
 /** The storage key for one signed-in tenant + user, or null when either is unknown (then nothing is stored or restored). */
@@ -10,8 +12,12 @@ export function liveCartKey(tenant?: string | null, userId?: string | null): str
   return tenant && userId ? `${LIVE_CART_KEY}:${tenant}:${userId}` : null;
 }
 
-/** Logout: drop every stored live cart on this browser, whoever it belonged to. */
+/**
+ * Logout: drop every stored live cart on this browser, whoever it belonged to. Also drops the Close-day count drafts
+ * (R7b 2.3): every logout path already calls this, so an unsent drawer count never outlives its session either.
+ */
 export function clearAllLiveCarts(): void {
+  clearAllDayCloseDrafts();
   try {
     const doomed: string[] = [];
     for (let i = 0; i < window.localStorage.length; i += 1) {

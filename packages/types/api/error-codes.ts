@@ -821,6 +821,12 @@ export const API_ERROR_CODES = {
    */
   CUSTOMER_PRICES_UNAVAILABLE: "CUSTOMER_PRICES_UNAVAILABLE",
   /**
+   * 409 from PATCH /drafts/:id (SA-817 A): the request's `expectedUpdatedAt` is not the draft's current `updatedAt`, so another device
+   * changed it after this client's last sync. Nothing was written. The body carries `current` (the server's version); the client keeps
+   * BOTH ("Keep this one or open the other?"), never overwrites.
+   */
+  DRAFT_CHANGED: "DRAFT_CHANGED",
+  /**
    * 409 from void / revert-to-draft / delete (and a per-bill `skipped` entry of the bulk delete) of a vendor bill that still carries CASH
    * payments (B288, SA-814 R5-3). Body carries `amount` (the rounded cash total). Nothing was written; move the payments to a supplier
    * credit first (POST /vendor-bills/:id/payments/:paymentId/move-to-credit).

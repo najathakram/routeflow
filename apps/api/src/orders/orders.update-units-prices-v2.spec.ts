@@ -432,7 +432,11 @@ describe("OrdersService.updateOrderItems — billing reads typed customer unit p
     flagV2(true);
     typed(["pack", 8]);
     await addPack();
-    expect(invoicesService.revertLinkedInvoicesForOrderEdit).toHaveBeenCalledWith("ord-1");
+    expect(invoicesService.revertLinkedInvoicesForOrderEdit).toHaveBeenCalledWith(
+      "ord-1",
+      undefined,
+      { preflightOnly: true },
+    );
   });
 
   it("A-7: an old client's derived Piece on a staff edit bills as the pack's pieces at the LAYER pack price", async () => {

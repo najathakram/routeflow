@@ -5,10 +5,16 @@ import { carrierInTransitCount } from "../orders/carrier-in-transit-guard";
 import { featureDefByKey } from "./feature-registry";
 import { planRank } from "./plan-catalog.constants";
 import {
+  overrideRestoreVerdict,
+  type AddonRowForVerdict,
+  type RestorePlanAllows,
+} from "./override-restore-verdict";
+import {
   FULFILMENT_MODEL_KEY,
   buildSnapshotPayload,
   fleetHeldAfterRestore,
   holdConfigEntry,
+  holdOverrideEntry,
   parseSnapshotPayload,
   planRestore,
   summarizeRestore,
@@ -118,6 +124,8 @@ export interface SnapshotPreview {
   beyondAutoRestoreHorizon: boolean;
   /** What a restore WOULD do right now; null when the payload is unreadable. Never written. */
   plan: RestorePlan | null;
+  /** Rows a restore would HOLD right now - the list apply returns for the same fixture. */
+  held: HeldEntry[];
 }
 
 /**
@@ -179,7 +187,7 @@ export class TenantConfigSnapshotService {
     tenantId: string,
     newPlanKey: string,
     now: Date = new Date(),
-    planAllows?: (featureKey: string) => boolean,
+    planAllows?: RestorePlanAllows,
     budget: RestoreBudget = {
       maxRows: AUTO_RESTORE_MAX_ROWS,
       timeBudgetMs: AUTO_RESTORE_TIME_BUDGET_MS,
@@ -259,7 +267,7 @@ export class TenantConfigSnapshotService {
     tenantId: string,
     snapshotId: string,
     now: Date = new Date(),
-    planAllows?: (featureKey: string) => boolean,
+    planAllows?: RestorePlanAllows,
   ): Promise<SnapshotPreview | null> {
     const snapshot = await tx.tenantFeatureConfigSnapshot.findFirst({
       where: { id: snapshotId, tenantId },
@@ -271,19 +279,18 @@ export class TenantConfigSnapshotService {
       tx.tenantFeatureOverride.findMany({ where: { tenantId } }),
     ]);
     // The SAME guarded plan `applySnapshot` builds (one helper), so the dialog equals the apply.
-    const plan = payload
-      ? (
-          await this.planGuarded(
-            tx,
-            tenantId,
-            payload,
-            { configs, overrides },
-            snapshot.takenAt,
-            now,
-            planAllows,
-          )
-        ).plan
+    const guarded = payload
+      ? await this.planGuarded(
+          tx,
+          tenantId,
+          payload,
+          { configs, overrides },
+          snapshot.takenAt,
+          now,
+          planAllows,
+        )
       : null;
+    const plan = guarded?.plan ?? null;
     return {
       snapshotId: snapshot.id,
       takenAt: snapshot.takenAt,
@@ -292,6 +299,7 @@ export class TenantConfigSnapshotService {
       ageDays: snapshotAgeDays(snapshot.takenAt, now),
       beyondAutoRestoreHorizon: beyondAutoRestoreHorizon(snapshot.takenAt, now),
       plan,
+      held: guarded?.held ?? [],
     };
   }
 
@@ -313,30 +321,68 @@ export class TenantConfigSnapshotService {
     current: { configs: readonly ConfigRow[]; overrides: readonly OverrideRow[] },
     takenAt: Date,
     now: Date,
-    planAllows?: (featureKey: string) => boolean,
+    planAllows?: RestorePlanAllows,
     pendingAddonKeys: readonly string[] = [],
   ): Promise<{ plan: RestorePlan; held: HeldEntry[] }> {
     let plan = planRestore(payload, current, takenAt, now, planAllows);
+
+    // Row 640: judge every GRANT this restore would re-create, through the ONE verdict. Iterates so a
+    // held grant stops satisfying another grant's `requires` (bounded: each pass holds at least one).
+    let addonRows: Promise<readonly AddonRowForVerdict[]> | null = null;
+    const loadAddonRows = () =>
+      (addonRows ??= tx.tenantAddon.findMany({
+        where: { tenantId, active: true },
+        select: { addonKey: true, sku: true, active: true, isComp: true, priceSnapshot: true },
+      }));
+    const overrideHeld: HeldEntry[] = [];
+    for (let again = true; again;) {
+      again = false;
+      const effects = [
+        ...current.overrides
+          .filter((o) => o.revokedAt === null && (o.expiresAt === null || o.expiresAt > now))
+          .map((o): [string, "GRANT" | "DENY"] => [o.featureKey, o.effect]),
+        ...plan.overrides.create.map((e): [string, "GRANT" | "DENY"] => [e.featureKey, e.effect]),
+      ];
+      for (const entry of plan.overrides.create) {
+        const reason = await overrideRestoreVerdict(tx, tenantId, entry, {
+          planAllows,
+          pendingAddonKeys,
+          effects,
+          loadAddonRows,
+        });
+        if (!reason) continue;
+        plan = holdOverrideEntry(plan, entry.featureKey, reason);
+        overrideHeld.push({
+          kind: "override",
+          featureKey: entry.featureKey,
+          overrideKind: entry.kind,
+          reason,
+        });
+        again = true;
+        break;
+      }
+    }
+
     const create = plan.configs.create.find((e) => e.featureKey === FULFILMENT_MODEL_KEY);
     const update = plan.configs.update.find((u) => u.entry.featureKey === FULFILMENT_MODEL_KEY);
     const entry = create ?? update?.entry;
-    if (!entry) return { plan, held: [] };
+    if (!entry) return { plan, held: overrideHeld };
 
     const stored = update ? current.configs.find((c) => c.id === update.id)?.mode : undefined;
     const from = stored ?? featureDefByKey(FULFILMENT_MODEL_KEY)?.config?.fallbackMode ?? "unset";
     const to = entry.mode;
-    const base = { featureKey: FULFILMENT_MODEL_KEY, from, to };
+    const base = { kind: "fulfilment" as const, featureKey: FULFILMENT_MODEL_KEY, from, to };
 
     const inTransit = await carrierInTransitCount(tx, tenantId, from, to);
     if (inTransit > 0) {
       plan = holdConfigEntry(plan, FULFILMENT_MODEL_KEY, "CARRIER_IN_TRANSIT");
-      return { plan, held: [{ ...base, reason: "CARRIER_IN_TRANSIT", count: inTransit }] };
+      return {
+        plan,
+        held: [...overrideHeld, { ...base, reason: "CARRIER_IN_TRANSIT", count: inTransit }],
+      };
     }
     if (to === "delivery" || to === "both") {
-      const addons = await tx.tenantAddon.findMany({
-        where: { tenantId, active: true },
-        select: { addonKey: true },
-      });
+      const addons = await loadAddonRows();
       const fleet = fleetHeldAfterRestore(
         plan,
         {
@@ -354,11 +400,11 @@ export class TenantConfigSnapshotService {
         );
         return {
           plan,
-          held: [{ ...base, reason: API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET }],
+          held: [...overrideHeld, { ...base, reason: API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET }],
         };
       }
     }
-    return { plan, held: [] };
+    return { plan, held: overrideHeld };
   }
 
   /**
@@ -374,7 +420,7 @@ export class TenantConfigSnapshotService {
     snapshotId: string,
     currentPlanKey: string,
     now: Date = new Date(),
-    planAllows?: (featureKey: string) => boolean,
+    planAllows?: RestorePlanAllows,
   ): Promise<RestoreResult | null> {
     const snapshot = await tx.tenantFeatureConfigSnapshot.findFirst({
       where: { id: snapshotId, tenantId, restoredAt: null },
@@ -390,7 +436,7 @@ export class TenantConfigSnapshotService {
     snapshot: { id: string; planKey: string; takenAt: Date; payload: Prisma.JsonValue },
     stampPlanKey: string,
     now: Date,
-    planAllows?: (featureKey: string) => boolean,
+    planAllows?: RestorePlanAllows,
     /** Present only for the automatic restore; absent = unbounded (the admin path). */
     bounds?: { maxRows: number; withinBudget: () => void },
     pendingAddonKeys: readonly string[] = [],

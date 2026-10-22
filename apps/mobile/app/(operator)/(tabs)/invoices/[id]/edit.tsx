@@ -126,7 +126,7 @@ export default function EditInvoiceScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: invoice, isLoading } = useAdminInvoice(id ?? "");
-  const { data: settings } = useBusinessSettings();
+  const { data: settings, isLoading: settingsLoading } = useBusinessSettings();
   const { data: customer } = useAdminCustomer(invoice?.customer?.id ?? "");
   const updateMut = useUpdateInvoice();
   const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
@@ -157,11 +157,18 @@ export default function EditInvoiceScreen() {
   // effect below has run once for this invoice.
   const originalRef = useRef<InvoiceEditSnapshot | null>(null);
   useEffect(() => {
-    if (!invoice || invoice.status !== "DRAFT" || hydratedFor.current === invoice.id) return;
+    // Hydrate once the tenant settings have resolved: the tenant rate is the inference's preferred rate (review SHOULD).
+    if (
+      !invoice ||
+      invoice.status !== "DRAFT" ||
+      hydratedFor.current === invoice.id ||
+      settingsLoading
+    )
+      return;
     hydratedFor.current = invoice.id;
     openedUpdatedAt.current = invoice.updatedAt;
     // B294 (SA-141): a legacy invoice's 0-rate lines load at its verified inferred rate.
-    const lineTax = hydratedLineTax(invoice);
+    const lineTax = hydratedLineTax(invoice, tenantTaxRate); // the tenant rate wins when it reproduces the tax
     const hydratedLines = (invoice.items ?? []).map((it, i) => ({
       key: newKey(),
       id: it.id,
@@ -230,7 +237,7 @@ export default function EditInvoiceScreen() {
       notes: hydratedNotes,
       terms: hydratedTerms,
     };
-  }, [invoice]);
+  }, [invoice, settingsLoading]);
 
   const patch = (key: string, up: Partial<EditLine>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...up } : l)));

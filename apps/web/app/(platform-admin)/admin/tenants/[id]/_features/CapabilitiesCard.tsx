@@ -288,11 +288,9 @@ export function CapabilitiesCard({
     el?.focus();
   }, [focusToken]);
 
-  // The stale-plan notice only lives until the fresh preview is on screen.
-  const freshResult = result && result.gen === gen && "response" in result ? result : null;
-  React.useEffect(() => {
-    if (freshResult) setNotice(null);
-  }, [freshResult]);
+  // The stale-plan notice only lives until the fresh preview is on screen. Derived in the same render (row 705): an
+  // effect cleared it one commit late, so "Fresh plan" and the stale notice briefly showed together.
+  const shownNotice = fresh ? null : notice;
 
   function onApplyClick() {
     if (!canApply) return;
@@ -359,9 +357,9 @@ export function CapabilitiesCard({
                 <p aria-live="polite" className="text-sm font-medium text-slate-200">
                   {summaryLine}
                 </p>
-                {notice && (
+                {shownNotice && (
                   <p role="status" className="text-sm text-slate-300">
-                    {notice}
+                    {shownNotice}
                   </p>
                 )}
                 {failedPreview ? (

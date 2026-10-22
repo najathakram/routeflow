@@ -2869,7 +2869,11 @@ export class OrdersService implements OnApplicationBootstrap {
     const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrier); // B215 + D2
     await inlineReturn.preflightInlineReturn(inlineRet, order, user, !postDeliveryEdit); // #2178
     if (!postDeliveryEdit && !carrier.billsShip) {
-      await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId); // ship-billing: under the lock (S2)
+      // Row 586: read-only here (a paid mirror still refuses cleanly before any mutation); the revert itself runs in the
+      // edit tx under the Order lock (carrierRevertUnderLock), so a binding 409 rolls it back instead of stranding DRAFT.
+      await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId, undefined, {
+        preflightOnly: true,
+      });
     }
 
     // W6: license guard on edits. A regulated line added on edit (or via a buyer
@@ -2963,14 +2967,6 @@ export class OrdersService implements OnApplicationBootstrap {
         await assertRevisionCurrent(tx, orderId, dto.expectedRevisionNumber); // row 372: stale -> 409, nothing written
         let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
         let markerCarry: Map<string, number> | undefined; // SA-716 M2: the create-merge fold only
-        const carrierLocked = await carrierGuard.carrierRevertUnderLock(
-          tx,
-          orderId,
-          carrier,
-          postDeliveryEdit,
-          () =>
-            this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId, tx, { lockRows: true }),
-        );
         const heldItems = await tx.orderItem.findMany(heldLinesOf(orderId)); // B709: the LOCKED lines
         const authorOf = authorship.editedLineAuthors(heldItems, dto.items ?? [], user); // SA ruling #3418
         restrictionPlan?.assertHeld(heldItems);
@@ -3020,6 +3016,19 @@ export class OrdersService implements OnApplicationBootstrap {
             );
           unitEdit.assertNoPackRedenomination(li, item, unitRows.get(item)); // SA-474
         }
+
+        // Row 586 (SA-833): the invoice revert runs only AFTER every binding refusal above (stale revision, held lines,
+        // delivered-line lock, unit checks): refuse first, write after. Lock order Order -> Invoice, NOWAIT on the
+        // invoice rows (409 INVOICE_BUSY, retryable); the paid-mirror refusal is re-counted under that lock, because
+        // the pre-tx preflight is advisory. Any later refusal in this tx rolls the revert back with the edit.
+        const carrierLocked = await carrierGuard.carrierRevertUnderLock(
+          tx,
+          orderId,
+          carrier,
+          postDeliveryEdit,
+          () =>
+            this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId, tx, { lockRows: true }),
+        );
 
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff payload skips this branch
         // entirely (merges below, prices stripped). Only the DRIVER half recreates unlisted rows' ids.

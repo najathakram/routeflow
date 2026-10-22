@@ -207,6 +207,65 @@ describe("RegulatedReportService", () => {
       expect(prisma.customer.findMany).toHaveBeenCalled();
     });
 
+    it("SA-789 F1: a ledger row whose invoice line was re-created still prints its product detail (resolved via the order line)", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue([
+        {
+          invoiceId: "inv-1",
+          invoiceItemId: "line-gone", // the old invoice item id: no such InvoiceItem any more
+          orderItemId: "oi-1",
+          unitBasisQty: 75,
+          netSales: 87.5,
+        },
+      ]);
+      prisma.invoiceItem.findMany.mockResolvedValue([]);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "oi-1", productId: "prod-1", qty: 75, boxes: null, pieces: null, unitsPerBox: 10 },
+      ]);
+
+      const report = await service.buildReport({
+        category: "cat-tx",
+        from: "2026-07-01",
+        to: "2026-07-31",
+      });
+
+      expect(report.rows).toHaveLength(1);
+      expect(report.rows[0][9]).toBe("CP"); // unit of measure comes from the product
+      expect(report.warnings.map((w) => w.code)).not.toContain("UNMATCHED_LEDGER_LINE");
+    });
+
+    it("shows how many reversals could not be booked in the period, counted from the notices", async () => {
+      prisma.auditLog.findMany.mockResolvedValue([
+        { meta: { returnId: "r1", saleEntryId: "s1" } },
+        { meta: { returnId: "r1", saleEntryId: "s2" } }, // same return, a second notice row: one reversal
+      ]);
+      const report = await service.buildReport({
+        category: "cat-tx",
+        from: "2026-07-01",
+        to: "2026-07-31",
+      });
+      expect(report.unbookedReversals).toBe(1);
+      expect(report.warnings[0]).toEqual({
+        code: "UNBOOKED_REVERSALS",
+        message: "1 reversals could not be booked; contact support.",
+      });
+      const where = prisma.auditLog.findMany.mock.calls[0][0].where;
+      expect(where.tenantId).toBe("test-tenant");
+      expect(where.action).toBe("REGULATED_REVERSAL_UNBOOKED");
+      expect(where.createdAt.gte).toEqual(new Date("2026-07-01T00:00:00.000Z"));
+      expect(where.createdAt.lt).toEqual(new Date("2026-08-01T00:00:00.000Z"));
+    });
+
+    it("a period with no unbooked notices carries no such warning or field", async () => {
+      prisma.auditLog.findMany.mockResolvedValue([]);
+      const report = await service.buildReport({
+        category: "cat-tx",
+        from: "2026-07-01",
+        to: "2026-07-31",
+      });
+      expect(report.unbookedReversals).toBeUndefined();
+      expect(report.warnings.map((w) => w.code)).not.toContain("UNBOOKED_REVERSALS");
+    });
+
     it("resolves the customer's address via pickReportAddress precedence (default+BILLING over other rows)", async () => {
       prisma.customer.findMany.mockResolvedValue([
         customer({

@@ -5,7 +5,14 @@ import { fold } from "./fold.mjs";
 import { parseEta } from "./ids.mjs";
 import { pickNext, laneNow } from "./next.mjs";
 import { areaDomain, buildAreaTree, fileToArea, guessDomainFromText } from "./areas.mjs";
-import { fixLinksFor, landedAt, linkItemFor, reconcile } from "./reconcile.mjs";
+import {
+  fixLinksFor,
+  incidentBucket,
+  incidentChangedMs,
+  landedAt,
+  linkItemFor,
+  reconcile,
+} from "./reconcile.mjs";
 import { summarizeChecks } from "./collector.mjs";
 
 export { linkItemFor };
@@ -42,6 +49,41 @@ export function statusLabelFor(item, { booked = false, answered = false } = {}) 
   }
   return STATUS_WORDS[item.status] ?? item.status;
 }
+
+// Live-harm rule (accuracy round 2): a DONE census/audit/ops item that says nothing reached a
+// customer marks the open bugs it covers as latent risks, not "hurting now".
+const CENSUS_TYPES = new Set(["audit", "ops"]);
+const LATENT_RE = /\blatent\b|\b0 lines\b|\$0\.00|no (?:live )?customer/i;
+const ROWS_IN_TEXT_RE = /\brows?\s+#?(\d{1,5}(?:\s*(?:,|\/|&|\band\b)\s*#?\d{1,5})*)/gi;
+/** Masked first, then cut: a client name must never survive as a fragment of a clipped excerpt. */
+const evidenceClip = (s, mask = (t) => t) => {
+  const t = mask(s);
+  return t.length > 160 ? t.slice(0, 160).trimEnd() : t;
+};
+const NEGATION_RE = /^(?:not|no|never|but|however|except|although|though|nor|yet)$|n't$/i;
+/**
+ * Finds the census verdict phrase in `text`: { negated } where negated = any occurrence has a
+ * negation word within the 3 words before it ("not latent", "but 2 billed"). null = no phrase.
+ */
+function latentVerdict(text) {
+  const re = new RegExp(LATENT_RE.source, "gi");
+  let found = null;
+  for (const m of text.matchAll(re)) {
+    const before = text
+      .slice(0, m.index)
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(-3)
+      .map((w) => w.replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, ""));
+    found = { negated: Boolean(found?.negated) || before.some((w) => NEGATION_RE.test(w)) };
+  }
+  return found;
+}
+const INCIDENT_LABELS = {
+  hurting: "Open",
+  mitigated: "Mitigated",
+  unverified: "Unverified",
+};
 
 const iso = (ms) =>
   typeof ms === "number" && Number.isFinite(ms) ? new Date(ms).toISOString() : null;
@@ -150,6 +192,8 @@ function derivedItem(base) {
     links: { prs: [], branches: [], urls: [] },
     refPrs: [],
     registerFields: {},
+    harm: null,
+    statusText: null,
     problem: null,
     impact: null,
     solution: null,
@@ -182,7 +226,14 @@ function queueRowDate(row, now) {
   return ms;
 }
 
-export function buildSnapshot({ sources = {}, config, now, machine = null, authEnabled }) {
+export function buildSnapshot({
+  sources = {},
+  config,
+  now,
+  machine = null,
+  authEnabled,
+  mask: maskFn = (t) => t,
+}) {
   const specsData = sources.specs?.data ?? null;
   const cfg = config ?? specsData?.config;
   const events = specsData?.events ?? [];
@@ -432,11 +483,56 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
     .sort((a, b) => (b.pr ?? -1) - (a.pr ?? -1) || compareIds(a.id, b.id))
     .slice(0, 50);
 
+  // ---- harm: explicit `harm` wins, else the latent rule from done census items ----
+  // A census marks a bug latent only when it (a) names the bug (row N / its B-id) in its title or
+  // gate, or (b) shares a PR with it that no other open bug cites and that is not a release/train PR.
+  const prsOf = (it) => [...(it.links?.prs ?? []), ...(it.refPrs ?? [])].map(String);
+  const trainPrs = new Set();
+  for (const r of releases) for (const n of prsOf(r)) trainPrs.add(n);
+  for (const p of [...openRaw, ...mergedRaw])
+    if (/^train\//.test(p.branch ?? "")) trainPrs.add(String(p.number));
+  const openBugs = stateItems.filter((x) => x.type === "bug" && !isDone(x));
+  const derivedHarm = new Map(); // bug item id -> evidence
+  for (const c of stateItems) {
+    if (c.overlay || !CENSUS_TYPES.has(c.type) || !["live", "verified"].includes(c.status))
+      continue;
+    const gate = String(c.gate ?? "");
+    const title = String(c.title ?? "");
+    // Any negation in front of a verdict phrase ("not latent", "but 2 billed") voids the census.
+    const verdicts = [latentVerdict(gate), latentVerdict(title)].filter(Boolean);
+    if (verdicts.length === 0 || verdicts.some((v) => v.negated)) continue;
+    const matched = LATENT_RE.test(gate) ? gate : title;
+    const text = `${title} ${gate}`;
+    const prs = new Set(prsOf(c));
+    for (const m of text.matchAll(/#(\d{3,5})\b/g)) prs.add(m[1]);
+    const rows = new Set();
+    for (const m of text.matchAll(ROWS_IN_TEXT_RE))
+      for (const n of m[1].match(/\d+/g) ?? []) rows.add(n);
+    for (const b of openBugs) {
+      if (b.id === c.id || derivedHarm.has(b.id)) continue;
+      const named =
+        rows.has(b.id) ||
+        (BUG_ID_RE.test(b.id) && new RegExp(`(?<![A-Za-z0-9])${b.id}(?![A-Za-z0-9])`).test(text));
+      const shared =
+        !named &&
+        prsOf(b).some(
+          (n) =>
+            prs.has(n) &&
+            !trainPrs.has(n) &&
+            !openBugs.some((o) => o.id !== b.id && prsOf(o).includes(n)),
+        );
+      if (named || shared) derivedHarm.set(b.id, `${c.id}: ${evidenceClip(matched, maskFn)}`);
+    }
+  }
+  const harmOf = (it) => it.harm ?? (derivedHarm.has(it.id) ? "latent" : null);
+
   // ---- items ----
   const items = stateItems.map((it) => {
     const { history: _history, ...rest } = it;
     return {
       ...rest,
+      harm: harmOf(it),
+      harmEvidence: it.harm ? null : (derivedHarm.get(it.id) ?? null),
       domain: itemDomain(it, bugById),
       claimedBy: it.claimedBy,
       blocked: it.blocked
@@ -502,7 +598,8 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
       (it) =>
         !isDone(it) &&
         !boardTagged(it) &&
-        (it.lane === "owner" || (it.type === "decision" && /owner/i.test(it.gate ?? ""))) &&
+        it.type === "decision" &&
+        (it.lane === "owner" || /owner/i.test(it.gate ?? "")) &&
         !answerInfo.get(it.id)?.answered,
     )
     .sort(byPriorityThenId)
@@ -514,6 +611,21 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
       etaAt: iso(parseEta(it.eta, now)),
       status: it.status,
       state: answerInfo.get(it.id)?.booked ? "booked" : "open",
+    }));
+  // Owner-lane items that are not decisions (tasks like "Run the EAS build").
+  const ownerTodos = stateItems
+    .filter(
+      (it) => !isDone(it) && !boardTagged(it) && it.type !== "decision" && it.lane === "owner",
+    )
+    .sort(byPriorityThenId)
+    .map((it) => ({
+      id: it.id,
+      title: it.title,
+      gate: it.gate,
+      eta: it.eta,
+      etaAt: iso(parseEta(it.eta, now)),
+      status: it.status,
+      priority: it.priority,
     }));
   const answeredRecently = stateItems
     .filter((it) => answerInfo.get(it.id)?.answered)
@@ -532,9 +644,25 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
     .map((d) => ({ ...d, ts: iso(d.ts) }));
 
   // ---- derived items: incidents (incidents/*.md) and B-ids that releases/items reference ----
-  const incidents = (specsData?.incidents ?? []).filter(
-    (i) => i.status === "open" || i.status === "mitigated",
-  );
+  // Incident files are snapshots: the status word + the file's last change decide where one belongs.
+  const incidentFiles = specsData?.incidents ?? [];
+  const incidents = incidentFiles
+    .map((i) => ({ i, bucket: incidentBucket(i, now) }))
+    .filter(({ bucket }) => bucket !== "hidden")
+    .map(({ i, bucket }) => {
+      const at = incidentChangedMs(i);
+      return {
+        id: i.id,
+        title: i.title,
+        file: i.file ?? null,
+        status: i.status,
+        statusLabel: INCIDENT_LABELS[bucket] ?? (i.status === "open" ? "Open" : "No status"),
+        bucket,
+        date: i.date ?? null,
+        changedAt: iso(at),
+        ageDays: at === null ? null : Math.max(0, Math.floor((now - at) / 86400_000)),
+      };
+    });
   const incidentItems = incidents.map((i) =>
     derivedItem({
       id: i.id,
@@ -542,12 +670,15 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
       type: "incident",
       priority: i.status === "open" ? "P0" : "P1",
       status: "planned",
-      statusLabel: i.status === "open" ? "Open" : "Mitigated",
+      statusLabel: i.statusLabel,
       source: "incident",
       domain: guessDomainFromText(i.title) ?? "other",
       createdAt: i.date ? `${i.date}T00:00:00.000Z` : null,
-      updatedAt: i.date ? `${i.date}T00:00:00.000Z` : null,
+      updatedAt: i.changedAt ?? (i.date ? `${i.date}T00:00:00.000Z` : null),
     }),
+  );
+  const hurtingIncidentIds = new Set(
+    incidents.filter((i) => i.bucket === "hurting").map((i) => i.id),
   );
   const wantedBugIds = new Set();
   for (const it of stateItems)
@@ -573,19 +704,31 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
   // The page reads times as ISO strings.
   for (const d of [...incidentItems, ...bugItems]) items.push(d);
 
-  // ---- problems: open P0/P1 bugs and incidents + open/mitigated incident files (never features, ops or the board) ----
+  // ---- problems ("Hurting now"): open P0/P1 bugs and incidents whose harm is not latent / none,
+  // plus incident files that are open AND recently changed (never features, ops, the board or
+  // latent bugs) ----
   const problems = [
     ...stateItems.filter(
       (it) =>
         !isDone(it) &&
         !boardTagged(it) &&
         (it.type === "bug" || it.type === "incident") &&
-        (it.priority === "P0" || it.priority === "P1"),
+        (it.priority === "P0" || it.priority === "P1") &&
+        harmOf(it) !== "latent" &&
+        harmOf(it) !== "none",
     ),
-    ...incidentItems,
+    ...incidentItems.filter((it) => hurtingIncidentIds.has(it.id)),
   ]
     .sort(byPriorityThenId)
     .map((it) => it.id);
+  const latentRisks = stateItems
+    .filter((it) => !isDone(it) && !boardTagged(it) && it.type === "bug" && harmOf(it) === "latent")
+    .sort(byPriorityThenId)
+    .map((it) => ({
+      id: it.id,
+      title: it.title,
+      evidence: it.harm ? "set by the team (harm: latent)" : (derivedHarm.get(it.id) ?? ""),
+    }));
 
   // ---- lanes ----
   const handoffs = specsData?.laneHandoffs ?? [];
@@ -727,6 +870,7 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
       duplicateIds: specsData?.registerDuplicateIds ?? [],
       rowIds: specsData?.registerRowIds ?? null,
     },
+    incidents: incidentFiles,
   });
 
   return {
@@ -740,9 +884,12 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
     trains,
     lanes,
     ownerQueue,
+    ownerTodos,
     answeredRecently,
     decisions,
     problems,
+    latentRisks,
+    incidents,
     prs: { open: openPrs, merged: mergedPrs },
     branches,
     ci,

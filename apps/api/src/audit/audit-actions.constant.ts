@@ -33,6 +33,8 @@ export const AUDIT_ACTIONS = {
    * `ruleId:STATE` keys). A carried stamp writes none.
    */
   SELLING_RESTRICTION_OVERRIDDEN: "selling_restriction.overridden",
+  /** Row 587 (SA-833): PARTIALLY_DELIVERED -> DELIVERED completed an office-evidenced line; meta {orderId, lineId, from, to, summary}. */
+  ORDER_LINE_OFFICE_COMPLETED: "order.line-office-completed",
 } as const;
 
 export type AuditActionName = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

@@ -286,6 +286,27 @@ describe("TenantConfigSnapshotAdminService (A2 step c)", () => {
     });
   });
 
+  it("row 640: the allow-list is built on the SUBSCRIPTION pin when it has one, else the tenant pin", async () => {
+    const pinned = build({
+      tenant: {
+        plan: "STARTER",
+        planVersionId: "v-tenant",
+        subscription: { planKey: HIGH, planVersionId: "v-sub" },
+      },
+    });
+    await pinned.svc.preview("t1", "s1");
+    expect(pinned.transitions.planAllowsFor).toHaveBeenCalledWith(HIGH, "v-sub");
+    const unpinned = build({
+      tenant: {
+        plan: "STARTER",
+        planVersionId: "v-tenant",
+        subscription: { planKey: HIGH, planVersionId: null },
+      },
+    });
+    await unpinned.svc.preview("t1", "s1");
+    expect(unpinned.transitions.planAllowsFor).toHaveBeenCalledWith(HIGH, "v-tenant");
+  });
+
   it("a tenant with no subscription planKey is judged on its legacy Tenant.plan", async () => {
     const { svc, transitions } = build({
       tenant: { plan: "STARTER", planVersionId: null, subscription: null },
@@ -574,7 +595,14 @@ describe("TenantConfigSnapshotAdminService — a held delivery method (BO-13)", 
     const res = await svc.restoreNow("t1", "s1", "admin-1", NOW);
 
     expect(res.held).toEqual([
-      { featureKey: FM, from: "delivery", to: "ship", reason: "CARRIER_IN_TRANSIT", count: 2 },
+      {
+        kind: "fulfilment",
+        featureKey: FM,
+        from: "delivery",
+        to: "ship",
+        reason: "CARRIER_IN_TRANSIT",
+        count: 2,
+      },
     ]);
     expect(state.configs.find((c) => c.id === "c-fm")!.mode).toBe("delivery");
     expect(state.configs.find((c) => c.id === "c-other")!.mode).not.toBe("stale");
@@ -582,7 +610,10 @@ describe("TenantConfigSnapshotAdminService — a held delivery method (BO-13)", 
     expect(state.audits).toHaveLength(1);
     expect(state.audits[0]).toMatchObject({
       action: "CONFIG_SNAPSHOT_RESTORE_HELD",
-      meta: { report: { skipped: 1 }, held: [{ featureKey: FM, reason: "CARRIER_IN_TRANSIT" }] },
+      meta: {
+        report: { skipped: 1 },
+        held: [{ kind: "fulfilment", featureKey: FM, reason: "CARRIER_IN_TRANSIT" }],
+      },
     });
   });
 

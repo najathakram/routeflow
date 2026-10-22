@@ -68,6 +68,8 @@ export const DAY_REOPEN_FAILED_COPY = "Could not reopen the day. Try again.";
 export const Z_REPORT_RESEND_FAILED_COPY = "Could not send the report. Try again.";
 /** The line after an email / re-send of the stored Z report succeeded (owner ruling 10-12 wording). */
 export const Z_REPORT_EMAILED_COPY = "Z report emailed to admins";
+/** R7b 2.3: said in the form, before Close day, so the email is no surprise afterwards. */
+export const Z_REPORT_WILL_EMAIL_COPY = "Closing emails the Z report to admins.";
 
 type ApiErrorShape = { response?: { status?: number; data?: { code?: unknown } } };
 const responseOf = (err: unknown) => (err as ApiErrorShape | null | undefined)?.response;

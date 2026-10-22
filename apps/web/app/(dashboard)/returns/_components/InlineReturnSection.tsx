@@ -16,6 +16,8 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { useScanCodeHandler } from "../../orders/_components/scan/useScanCodeHandler";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { useOrder } from "@/lib/api/orders";
+import { returnReasonOptions } from "@/lib/reason-copy";
+import { LINE_UNDO_MS } from "@/app/(dashboard)/orders/_components/useCounterLineUndo";
 import { useProducts } from "@/lib/api/products";
 import { useInlineReturnQuote } from "@/lib/api/inline-returns";
 import { useOptionalAuth } from "@/lib/auth-context";
@@ -59,14 +61,6 @@ const UW = unitWords();
 // synthetic row identity (never sent on the wire) so two rows of the same product — a Case
 // line and a pack line from a source order, say — can be edited/removed independently.
 type SectionLine = InlineReturnLineDraft & { lineKey: string };
-
-const REASON_OPTIONS: { value: ReturnReason; label: string }[] = [
-  { value: "DAMAGED", label: "Damaged" },
-  { value: "WRONG_ITEM", label: "Wrong Item" },
-  { value: "CUSTOMER_REFUSED", label: "Customer Refused" },
-  { value: "QUALITY_ISSUE", label: "Quality Issue" },
-  { value: "EXCESS_ORDER", label: "Excess / Overdelivery" },
-];
 
 function money(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -121,6 +115,8 @@ export interface InlineReturnSectionProps {
    *  draft the operator already typed/fetched, and so its own same-named actions (e.g. "Back")
    *  never collide with this section's DOM while it is hidden. */
   hidden?: boolean;
+  /** Id of the host's "Choose a reason to continue" hint: the quote step's Reason select points at it while no reason is chosen. */
+  reasonHintId?: string;
 }
 
 export function InlineReturnSection({
@@ -139,8 +135,14 @@ export function InlineReturnSection({
   quoteNote,
   onQuoteRefused,
   hidden = false,
+  reasonHintId,
 }: InlineReturnSectionProps) {
   const { data: entryOrder } = useOrder(entryOrderId ?? "");
+  // R7b 3.1: a counter sale's reasons read in register words (same enum values)
+  const REASON_OPTIONS = React.useMemo(
+    () => returnReasonOptions(entryOrder?.counterSale ? "counter" : "delivery"),
+    [entryOrder?.counterSale],
+  );
 
   const [step, setStep] = React.useState<InlineReturnSectionStep>("lines");
   const [lines, setLines] = React.useState<SectionLine[]>([]);
@@ -202,8 +204,44 @@ export function InlineReturnSection({
     setLines((prev) => prev.map((l) => (l.lineKey === lineKey ? { ...l, ...patch } : l)));
   }
 
+  // R7b 3.1: Remove keeps the line for LINE_UNDO_MS in ONE slot (a newer removal makes the older one final), shown in
+  // the line's own place as "Removed {name} · Undo"
+  const [removed, setRemoved] = React.useState<{ line: SectionLine; index: number } | null>(null);
+  const removedTimer = React.useRef<number | null>(null);
+  const clearRemoved = React.useCallback(() => {
+    if (removedTimer.current !== null) window.clearTimeout(removedTimer.current);
+    removedTimer.current = null;
+    setRemoved(null);
+  }, []);
+  React.useEffect(
+    () => () => {
+      if (removedTimer.current !== null) window.clearTimeout(removedTimer.current);
+    },
+    [],
+  );
+  // a fresh attempt (reset or another order) never offers to undo into the old one
+  React.useEffect(() => {
+    clearRemoved();
+  }, [resetToken, entryOrderId, entryOrder?.id, clearRemoved]);
+
   function removeLine(lineKey: string) {
+    const index = lines.findIndex((l) => l.lineKey === lineKey);
+    if (index < 0) return;
+    const line = lines[index];
     setLines((prev) => prev.filter((l) => l.lineKey !== lineKey));
+    if (removedTimer.current !== null) window.clearTimeout(removedTimer.current);
+    setRemoved({ line, index });
+    removedTimer.current = window.setTimeout(clearRemoved, LINE_UNDO_MS);
+  }
+
+  function undoRemove() {
+    if (!removed) return;
+    const { line, index } = removed;
+    setLines((prev) => {
+      const at = Math.min(index, prev.length);
+      return [...prev.slice(0, at), line, ...prev.slice(at)];
+    });
+    clearRemoved();
   }
 
   function addProduct(product: {
@@ -213,6 +251,8 @@ export function InlineReturnSection({
     unitsPerBox?: number | null;
   }) {
     if (lines.some((l) => l.productId === product.id)) return;
+    // the product sits in the Undo slot: adding it again replaces that, so it is never in the list twice
+    if (removed?.line.productId === product.id) clearRemoved();
     setLines((prev) => [
       ...prev,
       {
@@ -329,6 +369,23 @@ export function InlineReturnSection({
 
   if (hidden) return null;
 
+  const undoRow = removed ? (
+    <div
+      role="status"
+      className="flex items-center justify-between gap-2 rounded-lg border border-dashed border-surface-border bg-navy/5 p-3 text-sm text-navy"
+      data-testid="return-line-undo"
+    >
+      <span className="min-w-0 break-words">Removed {removed.line.productName}</span>
+      <button
+        type="button"
+        className="min-h-11 shrink-0 px-2 text-sm font-medium text-brand-600 hover:underline"
+        onClick={undoRemove}
+      >
+        Undo
+      </button>
+    </div>
+  ) : null;
+
   return (
     <div className="space-y-4">
       {step === "lines" && (
@@ -339,41 +396,53 @@ export function InlineReturnSection({
               {lines.length === 0 && (
                 <p className="text-sm text-navy/70">No products yet — search below to add one.</p>
               )}
-              {lines.map((line) => {
+              {lines.map((line, lineIndex) => {
                 const boxed = isBoxedProduct(line);
                 return (
-                  <div key={line.lineKey} className="rounded-lg border border-surface-border p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-medium text-navy">{line.productName}</p>
-                        {typeof line.qtySold === "number" && (
-                          <p className="text-xs text-navy/70">
-                            Sold {line.qtySold} {line.unit ?? "unit"}
-                            {line.qtyAlreadyReturned
-                              ? ` · Returned ${line.qtyAlreadyReturned}`
-                              : ""}
-                          </p>
-                        )}
+                  <React.Fragment key={line.lineKey}>
+                    {removed && removed.index === lineIndex ? undoRow : null}
+                    <div className="rounded-lg border border-surface-border p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-medium text-navy">{line.productName}</p>
+                          {typeof line.qtySold === "number" && (
+                            <p className="text-xs text-navy/70">
+                              Sold {line.qtySold} {line.unit ?? "unit"}
+                              {line.qtyAlreadyReturned
+                                ? ` · Returned ${line.qtyAlreadyReturned}`
+                                : ""}
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="text-xs text-navy/50 hover:text-danger"
+                          onClick={() => removeLine(line.lineKey)}
+                        >
+                          Remove
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        className="text-xs text-navy/50 hover:text-danger"
-                        onClick={() => removeLine(line.lineKey)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      {boxed ? (
-                        <>
-                          <Input
-                            label={UW.pack.other}
-                            type="number"
-                            min={0}
-                            inputMode="numeric"
-                            value={line.boxes}
-                            onChange={(e) => updateLine(line.lineKey, { boxes: e.target.value })}
-                          />
+                      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        {boxed ? (
+                          <>
+                            <Input
+                              label={UW.pack.other}
+                              type="number"
+                              min={0}
+                              inputMode="numeric"
+                              value={line.boxes}
+                              onChange={(e) => updateLine(line.lineKey, { boxes: e.target.value })}
+                            />
+                            <Input
+                              label={UW.base.other}
+                              type="number"
+                              min={0}
+                              inputMode="numeric"
+                              value={line.pieces}
+                              onChange={(e) => updateLine(line.lineKey, { pieces: e.target.value })}
+                            />
+                          </>
+                        ) : (
                           <Input
                             label={UW.base.other}
                             type="number"
@@ -382,62 +451,54 @@ export function InlineReturnSection({
                             value={line.pieces}
                             onChange={(e) => updateLine(line.lineKey, { pieces: e.target.value })}
                           />
-                        </>
-                      ) : (
-                        <Input
-                          label={UW.base.other}
-                          type="number"
-                          min={0}
-                          inputMode="numeric"
-                          value={line.pieces}
-                          onChange={(e) => updateLine(line.lineKey, { pieces: e.target.value })}
-                        />
-                      )}
-                      <Select
-                        label="Reason (optional)"
-                        value={line.reason}
-                        onChange={(e) =>
-                          updateLine(line.lineKey, {
-                            reason: e.target.value as ReturnReason | "",
-                          })
-                        }
-                        options={[{ value: "", label: "Use default" }, ...REASON_OPTIONS]}
-                      />
-                      <Input
-                        label="Note (optional)"
-                        value={line.note}
-                        onChange={(e) => updateLine(line.lineKey, { note: e.target.value })}
-                      />
-                    </div>
-                    {canOverrideCredit && (
-                      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
-                        <Input
-                          label={
-                            boxed
-                              ? `Credit price per ${UW.pack.lower} (optional)`
-                              : "Credit price (optional)"
-                          }
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="Quoted price"
-                          value={line.creditUnitPrice ?? ""}
+                        )}
+                        <Select
+                          label="Reason (optional)"
+                          value={line.reason}
                           onChange={(e) =>
-                            updateLine(line.lineKey, { creditUnitPrice: e.target.value })
+                            updateLine(line.lineKey, {
+                              reason: e.target.value as ReturnReason | "",
+                            })
                           }
+                          options={[{ value: "", label: "Use default" }, ...REASON_OPTIONS]}
                         />
                         <Input
-                          label="Why the lower price"
-                          maxLength={CREDIT_OVERRIDE_REASON_MAX}
-                          value={line.overrideReason ?? ""}
-                          onChange={(e) =>
-                            updateLine(line.lineKey, { overrideReason: e.target.value })
-                          }
+                          label="Note (optional)"
+                          value={line.note}
+                          onChange={(e) => updateLine(line.lineKey, { note: e.target.value })}
                         />
                       </div>
-                    )}
-                  </div>
+                      {canOverrideCredit && (
+                        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
+                          <Input
+                            label={
+                              boxed
+                                ? `Credit price per ${UW.pack.lower} (optional)`
+                                : "Credit price (optional)"
+                            }
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="Quoted price"
+                            value={line.creditUnitPrice ?? ""}
+                            onChange={(e) =>
+                              updateLine(line.lineKey, { creditUnitPrice: e.target.value })
+                            }
+                          />
+                          <Input
+                            label="Why the lower price"
+                            maxLength={CREDIT_OVERRIDE_REASON_MAX}
+                            value={line.overrideReason ?? ""}
+                            onChange={(e) =>
+                              updateLine(line.lineKey, { overrideReason: e.target.value })
+                            }
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </React.Fragment>
                 );
               })}
+              {removed && removed.index >= lines.length ? undoRow : null}
             </div>
           </div>
 
@@ -683,6 +744,7 @@ export function InlineReturnSection({
             value={captureReason}
             onChange={(e) => setCaptureReason(e.target.value as ReturnReason | "")}
             options={[{ value: "", label: "Select a reason…" }, ...REASON_OPTIONS]}
+            aria-describedby={!captureReason && reasonHintId ? reasonHintId : undefined}
           />
 
           {renderQuoteFooter?.(quote)}

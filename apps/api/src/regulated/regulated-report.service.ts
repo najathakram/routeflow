@@ -18,6 +18,8 @@ import { projectReportColumns } from "./report-projection";
 import { RegulatedReport } from "./report-types";
 import { listParkedReversals, parkedRestockNote, withParkedFirst } from "./parked-reversals";
 import { periodBucketOf } from "./period";
+import { resolveSaleLines } from "./sale-line-resolver";
+import { countUnbookedReversals, unbookedReversalsWarning } from "./unbooked-reversals";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { uncategorisedLineWarnings } from "./uncategorised-lines";
 
@@ -209,6 +211,17 @@ export class RegulatedReportService {
         ...(await uncategorisedLineWarnings(db, policy, { from: fromDate, toExclusive }, tz)),
       );
     }
+    // SA-835: a reversal the ledger could not book is counted from its notices, so the period never looks clean.
+    const unbooked = await countUnbookedReversals(
+      db,
+      { from: fromDate, toExclusive },
+      category.tenantId ?? this.prisma.getTenantId(),
+    );
+    const unbookedWarning = unbookedReversalsWarning(unbooked);
+    if (unbookedWarning) {
+      report.warnings.unshift(unbookedWarning);
+      report.unbookedReversals = unbooked;
+    }
     return withParkedFirst(report, parked, restockNote);
   }
 
@@ -231,6 +244,7 @@ export class RegulatedReportService {
       select: {
         invoiceId: true,
         invoiceItemId: true,
+        orderItemId: true,
         qty: true,
         unitBasisQty: true,
         netSales: true,
@@ -244,38 +258,39 @@ export class RegulatedReportService {
       netSales: Number(r.netSales),
     }));
 
-    const itemIds = [
-      ...new Set(txLedgerRows.map((r) => r.invoiceItemId).filter((id): id is string => !!id)),
-    ];
-    const lines = itemIds.length
-      ? await this.prisma.forTenant().invoiceItem.findMany({
-          where: { id: { in: itemIds } },
-          select: {
-            id: true,
-            productId: true,
-            qty: true,
-            boxes: true,
-            pieces: true,
-            unitsPerBox: true,
-          },
-        })
-      : [];
-    const linesById = new Map<string, TxLineInfo>(
-      lines.map((l: any) => [
-        l.id,
-        {
-          id: l.id,
-          productId: l.productId,
-          qty: Number(l.qty),
-          boxes: l.boxes,
-          pieces: l.pieces,
-          unitsPerBox: l.unitsPerBox,
-        },
-      ]),
+    // SA-789 F1: a row whose invoice item was re-created since the sale resolves through its order
+    // line (`resolveSaleLines`), so the report keeps its product, unit and item type. The row's own
+    // (possibly stale) invoiceItemId stays the lookup key `buildTxReport` reads.
+    const resolved = await resolveSaleLines(
+      this.prisma.forTenant(),
+      ledgerRows.map((r, i) => ({
+        id: String(i),
+        invoiceItemId: r.invoiceItemId,
+        orderItemId: r.orderItemId,
+      })),
     );
+    // Limitation (SA-835): for a row resolved through its order line the case/unit split uses the ORDER
+    // line's qty / boxes / pieces, not the re-created invoice line's. Product, unit of measure and item
+    // type (what the row was missing) are exact; a split line whose invoiced qty differs from its ordered
+    // qty can split cases/units proportionally off the ordered figures.
+    const linesById = new Map<string, TxLineInfo>();
+    ledgerRows.forEach((r, i) => {
+      const hit = resolved.get(String(i));
+      if (!r.invoiceItemId || !hit?.line) return;
+      linesById.set(r.invoiceItemId, {
+        id: hit.liveInvoiceItemId ?? r.invoiceItemId,
+        productId: hit.productId,
+        qty: hit.qty ?? 0,
+        boxes: hit.line.boxes as number | null,
+        pieces: hit.line.pieces as number | null,
+        unitsPerBox: hit.line.unitsPerBox as number | null,
+      });
+    });
 
     const productIds = [
-      ...new Set(lines.map((l: any) => l.productId).filter((id: any): id is string => !!id)),
+      ...new Set(
+        [...linesById.values()].map((l) => l.productId).filter((id): id is string => !!id),
+      ),
     ];
     const products = productIds.length
       ? await this.prisma.forTenant().product.findMany({

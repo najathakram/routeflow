@@ -34,7 +34,8 @@ export class CreateInvoiceItemDto {
   @IsNumber() @Min(0.001) qty: number;
   @IsNumber() @Min(0) unitPrice: number;
   @IsOptionalNotNull() @IsNumber() @Min(0) discount?: number;
-  @IsOptionalNotNull() @IsNumber() @Min(0) taxRate?: number;
+  /** A FRACTION (0.08875 = 8.875%). @Max(1): a percent sent by mistake is a 400, never 887.5% (R5-1, B296). */
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1) taxRate?: number;
   /**
    * units_v1: sell this line by a unit of the product's ladder (Case, Pallet, Piece …); `qty` then
    * counts the unit (a whole number) and boxes/pieces/promoFreeUnits must be omitted. Behind

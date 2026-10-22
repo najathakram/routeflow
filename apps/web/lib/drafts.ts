@@ -33,6 +33,11 @@ export interface DraftLineItem {
   /** UI-only: the pack fields a unit switch overwrote. Web only. */
   packBase?: PackBase;
   /**
+   * SA-817 A5: the price this line carried when the order was parked, set when a resume found today's price different
+   * ("Price changed since you started"). Display only: the server prices at submit.
+   */
+  priceChangedFrom?: number;
+  /**
    * Per-line note. Round-tripped only by mobile's parked drafts
    * (`apps/mobile/lib/drafts-payload.ts`); web keeps the field so the shapes stay
    * identical, but never reads or writes it.
@@ -72,6 +77,11 @@ export interface OrderDraftPayload {
    * shapes stay identical, but never reads or writes it.
    */
   selectedCreditIds?: string[];
+  /**
+   * SA-817 A6: the order's one Idempotency-Key, persisted with the draft (local copy and server `SaleDraft`) so a reload or app
+   * kill followed by a resubmit replays the same key. Kept verbatim by the drafts service; see `@routeflow/types/draft-submit-key`.
+   */
+  _submitKey?: string;
 }
 
 /** A short, human label for the device a draft was last touched on. */
