@@ -13,6 +13,7 @@ export function redactKeyPath(url: string): string {
 
 type RedactableEvent = {
   transaction?: string;
+  tags?: Record<string, unknown>;
   request?: {
     url?: string;
     query_string?: unknown;
@@ -21,7 +22,7 @@ type RedactableEvent = {
 };
 
 /**
- * `beforeSend` / `beforeSendTransaction` hook: redacts the key from `request.url` and `transaction`, drops
+ * `beforeSend` / `beforeSendTransaction` hook: redacts the key from `request.url`, `transaction` and the `path` tag, drops
  * `request.query_string` on by-key paths, and blanks any `Idempotency-Key` request header. Mutates and returns
  * the event; events that touch no by-key route and carry no such header are returned unchanged.
  */
@@ -37,7 +38,11 @@ export function redactSentryEvent<T extends RedactableEvent>(event: T): T {
     }
     if (typeof event.transaction === "string") event.transaction = redactKeyPath(event.transaction);
   }
-  if (req?.headers) {
+  // lock-conflict.filter falls back to the raw originalUrl for its `path` tag when req.route is missing.
+  const pathTag = event.tags?.path;
+  if (typeof pathTag === "string" && HAS_BY_KEY.test(pathTag))
+    event.tags!.path = redactKeyPath(pathTag);
+  if (req?.headers && typeof req.headers === "object") {
     for (const name of Object.keys(req.headers)) {
       if (name.toLowerCase() === "idempotency-key") req.headers[name] = "[Filtered]";
     }

@@ -52,6 +52,20 @@ describe("redactSentryEvent (beforeSend / beforeSendTransaction)", () => {
     expect(redactSentryEvent({})).toEqual({});
   });
 
+  it("redacts a raw by-key `path` tag (the lock-conflict filter's originalUrl fallback)", () => {
+    const e = redactSentryEvent({
+      tags: { path: "/api/v1/invoices/payments/by-key/RAW-KEY-7/resolve?x=1", area: "invoices" },
+    });
+    expect(e.tags?.path).toBe("/api/v1/invoices/payments/by-key/:key/resolve");
+    expect(e.tags?.area).toBe("invoices");
+  });
+
+  it("ignores headers that are not an object", () => {
+    const e = { request: { headers: "nope" as unknown as Record<string, string> } };
+    expect(() => redactSentryEvent(e)).not.toThrow();
+    expect(e.request.headers).toBe("nope");
+  });
+
   it("redactKeyPath is case-insensitive", () => {
     expect(redactKeyPath("/api/v1/invoices/payments/BY-KEY/K9/resolve")).toBe(
       "/api/v1/invoices/payments/BY-KEY/:key/resolve",
