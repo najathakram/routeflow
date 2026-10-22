@@ -116,6 +116,7 @@ import {
   toSaleItem,
 } from "./counter-sale-line-edit";
 import { useCounterSaleScan } from "./useCounterSaleScan";
+import { CounterScanFeedback } from "./CounterScanFeedback";
 import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
@@ -1230,6 +1231,7 @@ export function CounterSaleScreen() {
               onChange={(e) => {
                 if (lineLocked || saleInFlight()) return;
                 lastScanActivityRef.current = performance.now();
+                scan.dismissMessage(); // F05: a miss message goes at the next keystroke
                 setScanText(e.target.value);
               }}
               onKeyDown={(e) => {
@@ -1268,16 +1270,7 @@ export function CounterSaleScreen() {
           <p id="counter-scan-hint" className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
             Type a quantity first to multiply.
           </p>
-          {scanCue ? (
-            <p
-              role="status"
-              className="rounded bg-navy/5 px-2 py-1 text-sm font-medium"
-              data-testid="counter-scan-cue"
-            >
-              {scanCue}
-            </p>
-          ) : null}
-          {scan.message ? <p className="text-sm text-red-700">{scan.message}</p> : null}
+          <CounterScanFeedback miss={scan.message} cue={scanCue} added={scan.added} />
           {scan.failed ? (
             <div
               role="alert"

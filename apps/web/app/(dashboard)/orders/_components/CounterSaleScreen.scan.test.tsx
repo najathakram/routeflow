@@ -200,10 +200,10 @@ describe("B1207: the exact product, a picker on ambiguity, an error that is not 
     expect(screen.queryByTestId("counter-scan-error")).toBeNull();
   });
 
-  it("a genuine miss still reads 'No product found for that code.'", async () => {
+  it("a genuine miss names the rejected text", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("999999999999");
-    expect(await screen.findByText("No product found for that code.")).toBeInTheDocument();
+    expect(await screen.findByText("No product for '999999999999'")).toBeInTheDocument();
   });
 });
 
