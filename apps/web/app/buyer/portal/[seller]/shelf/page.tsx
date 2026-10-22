@@ -22,7 +22,6 @@ import {
   useBuyerShelf,
   useSnoozeReplenishment,
   useUnsnoozeReplenishment,
-  useAddAllLow,
   type ShelfEstimate,
 } from "@/lib/api/buyer";
 import { objectPositionForUrl } from "@/lib/image-focal";
@@ -197,7 +196,6 @@ export default function BuyerShelfPage() {
 
   const { data: shelf, isLoading, isError } = useBuyerShelf();
   const cart = useBuyerCart(buyer?.id, sellerSlug);
-  const addAllLow = useAddAllLow();
   const snooze = useSnoozeReplenishment();
   const unsnooze = useUnsnoozeReplenishment();
 
@@ -214,6 +212,8 @@ export default function BuyerShelfPage() {
   const rest = estimates.filter((e) => e.state === "ok" && !e.snoozed);
 
   const inCartIds = new Set(cart.items.map((i) => i.productId));
+  // Row 702: what "Add all low" adds: the running-low items not already in the cart.
+  const lowToAdd = running.filter((e) => !inCartIds.has(e.productId));
 
   // Row 696: Add puts the item in the buyer's cart (the same line the shop's running-low strip
   // writes), where the cart's Place order owns merge-or-new, fulfilment and the idempotency
@@ -299,17 +299,14 @@ export default function BuyerShelfPage() {
               <ArrowRight className="h-4 w-4 text-buyer-500" />
             </Link>
           )}
+          {/* Row 702: the same cart path as each row's Add (row 696), never a server order. */}
           <Button
-            onClick={() => addAllLow.mutate()}
-            disabled={addAllLow.isPending || running.length === 0}
+            onClick={() => lowToAdd.forEach(handleAdd)}
+            disabled={lowToAdd.length === 0}
             className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
           >
-            {addAllLow.isPending ? (
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-            ) : (
-              <ShoppingCart className="mr-1.5 h-4 w-4" />
-            )}
-            Add all low to cart{running.length > 0 ? ` (${running.length})` : ""}
+            <ShoppingCart className="mr-1.5 h-4 w-4" />
+            Add all low to cart{lowToAdd.length > 0 ? ` (${lowToAdd.length})` : ""}
           </Button>
         </div>
       </div>
