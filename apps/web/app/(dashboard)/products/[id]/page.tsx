@@ -106,10 +106,7 @@ import { ProductPricingV2 } from "./ProductPricingV2";
 import { PriceWindowHost, ProductPricingRegion } from "./PriceWindowHost";
 import { ProductLowerColumns } from "./ProductLowerColumns";
 import { DetailsMore } from "./DetailsMore";
-import {
-  unitStructureGoverned,
-  useUnitStructureAllowed,
-} from "./units-v2/structure/unit-structure";
+import { unitStructureGoverned } from "./units-v2/structure/unit-structure";
 import { ProductJumpLinks } from "./units-v2/nav/ProductJumpLinks";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
@@ -410,10 +407,6 @@ export default function ProductDetailPage() {
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
   const v2 = usePricesV2Enabled({ enabled: isStaff }) && isStaff;
   const v2Pending = usePricesV2Pending({ enabled: isStaff });
-  // The grid shell mounts the default order unit, Name / Contains, Add and Remove only where this is true; only there does
-  // the Units & prices card stop editing (read-only), so no role or product is left without a control.
-  const unitStructure = useUnitStructureAllowed(product ?? {});
-  const cardRo = v2 && unitStructure;
 
   // ── Lightbox state ────────────────────────────────────────────────────────
   const [lightboxOpen, setLightboxOpen] = React.useState(false);
@@ -2383,8 +2376,11 @@ export default function ProductDetailPage() {
             }
             bottom={
               <>
-                {!cardRo && !(v2 && isFamily) && (
-                  <ProductUnitsCard product={product} hideAddForm={v2} />
+                {/* Row 742 (owner 2026-10-22): with the prices grid on it is the one place for units and prices; the old
+                card stays only on a variant or recipe, for unit STRUCTURE (its prices follow the family / recipe).
+                It goes away entirely when row 659 (family ladder with variant inherit / override) ships. */}
+                {(!v2 || (!isFamily && unitStructureGoverned(product))) && (
+                  <ProductUnitsCard product={product} hideAddForm={v2} structureOnly={v2} />
                 )}
 
                 {/* Sales demand — real data from invoiced sales. In its own file (unlike

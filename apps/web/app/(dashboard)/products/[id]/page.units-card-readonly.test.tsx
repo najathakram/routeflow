@@ -191,24 +191,42 @@ describe("page wiring: the Units & prices card reads only where the grid owns th
     expect(cardProps).not.toHaveBeenCalled();
   });
 
-  it("v2 on but the units plan is off: the card keeps its controls", async () => {
+  it("row 742: v2 on but the units plan is off, on a plain product: no card (it would render nothing anyway)", async () => {
     unitsOn = false;
-    await renderPage();
-    expect(lastProps().readOnly).toBeFalsy();
+    renderWithProviders(<ProductDetailPage />);
+    await screen.findByTestId("product-details-card");
+    expect(screen.queryByTestId("units-card")).toBeNull();
+    expect(cardProps).not.toHaveBeenCalled();
   });
 
-  it("v2 on but the product is a variant (governed by its family): the card keeps its controls", async () => {
+  it("row 742: v2 on and a variant (priced by its family): the card stays for unit structure only", async () => {
     getProduct.mockImplementation(() =>
       Promise.resolve({ data: { ...PRODUCT, parentProductId: "fam-1" } }),
     );
     await renderPage();
+    expect(lastProps()).toMatchObject({ structureOnly: true, hideAddForm: true });
     expect(lastProps().readOnly).toBeFalsy();
   });
 
-  it("v2 off: the card is the old editable one", async () => {
+  it("row 742: v2 on and a recipe (priced by its recipe): the card stays for unit structure only", async () => {
+    kind = "RECIPE";
+    await renderPage();
+    expect(lastProps()).toMatchObject({ structureOnly: true, hideAddForm: true });
+  });
+
+  it("v2 off: the card is the old editable one, prices included", async () => {
     flagOn = false;
     await renderPage();
-    expect(lastProps()).toMatchObject({ hideAddForm: false });
+    expect(lastProps()).toMatchObject({ hideAddForm: false, structureOnly: false });
     expect(lastProps().readOnly).toBeFalsy();
+  });
+
+  it("v2 off: a variant keeps its prices on the old card (non-v2 tenants have no other price editor)", async () => {
+    flagOn = false;
+    getProduct.mockImplementation(() =>
+      Promise.resolve({ data: { ...PRODUCT, parentProductId: "fam-1" } }),
+    );
+    await renderPage();
+    expect(lastProps()).toMatchObject({ structureOnly: false });
   });
 });
