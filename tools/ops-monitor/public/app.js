@@ -2329,7 +2329,19 @@
 
   // ---------- render all ----------
   let controlsKey = "";
+  // A banner when the work items lag the register (alarm items-stale): the board would otherwise
+  // look current while it shows old rows.
+  function renderStaleBanner() {
+    const banner = document.getElementById("stale-banner");
+    if (!banner) return;
+    const a = (snap.alarms ?? []).find((x) => x.kind === "items-stale");
+    banner.hidden = !a;
+    banner.className = `stale-banner ${a?.severity === "error" ? "err" : "warn"}`;
+    banner.textContent = a ? a.message : "";
+  }
+
   function renderAll() {
+    renderStaleBanner();
     renderHeader();
     renderSummary();
     renderAlarms();

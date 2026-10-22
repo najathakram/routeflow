@@ -885,6 +885,8 @@ export function buildSnapshot({
     register: {
       duplicateIds: specsData?.registerDuplicateIds ?? [],
       rowIds: specsData?.registerRowIds ?? null,
+      changedAt: specsData?.registerChangedAt ?? null,
+      pending: specsData?.registerPending ?? null,
     },
     incidents: incidentFiles,
   });
