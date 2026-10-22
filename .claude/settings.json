@@ -34,6 +34,9 @@
       },
       {
         "hooks": [{ "type": "command", "command": "node .claude/hooks/ops-brief.mjs" }]
+      },
+      {
+        "hooks": [{ "type": "command", "command": "node .claude/hooks/ops-status.mjs" }]
       }
     ],
     "UserPromptSubmit": [
@@ -61,6 +64,9 @@
       },
       {
         "hooks": [{ "type": "command", "command": "node .claude/hooks/ops-stop.mjs" }]
+      },
+      {
+        "hooks": [{ "type": "command", "command": "node .claude/hooks/ops-status.mjs" }]
       }
     ]
   }

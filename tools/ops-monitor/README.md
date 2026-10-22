@@ -124,3 +124,11 @@ good load keeps the last good list. Names are masked from the collector inputs _
 snapshot is built (and again after), and each text is masked before it is cut or clipped, so a
 name is never left as a fragment; incident ids are date + index only (`INC-1015a`), never a file
 slug.
+
+- `.claude/hooks/ops-status.mjs` (Stop + SessionStart): writes `<opsHome>/status/<session>.json`
+  (lane/title, worktree, branch, head, open PR, last assistant message first 300 chars, masked;
+  atomic, fail open, 2 s budget). On SessionStart it also prints the lane brief and one line per
+  status file on the machine. `rf status-sync` (also run by `rf brief --refresh` and, every 2 min,
+  by the `--views` writer) turns changed files (< 24 h old, ignoring < 2 min `lastActiveAt` jitter)
+  into `heartbeat` events: they feed lane activity (so `lane-silent` sees them), never touch items,
+  and the snapshot's `machines` list (3 days) drives the "Machines and lanes" panel.
