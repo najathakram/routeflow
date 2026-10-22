@@ -348,7 +348,8 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     // the counter payments (classified in code, row 374 a) and the hand-over candidates: two reads, never a groupBy
     expect(prisma.invoicePayment.groupBy).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.aggregate).toHaveBeenCalledTimes(1);
-    expect(prisma.return.findMany).toHaveBeenCalledTimes(1);
+    // the summary's read + the ONE batched read of the returns carried on other orders (a row never makes its own)
+    expect(prisma.return.findMany).toHaveBeenCalledTimes(2);
     expect(prisma.creditNote.findMany).toHaveBeenCalledTimes(1);
     // nothing else is read: no per-row call on any other model
     expect(prisma.invoice.findMany).not.toHaveBeenCalled();
@@ -388,11 +389,12 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     expect(
       (prisma.creditNote.findMany.mock.calls as any[]).filter((c) => c[0]?.select?.invoicePayments),
     ).toHaveLength(1);
-    const batched = (prisma.return.findMany.mock.calls as any[]).filter(
-      (c) => c[0]?.where?.creditNoteId,
-    );
+    const batched = (prisma.return.findMany.mock.calls as any[]).filter((c) => c[0]?.select?.items);
     expect(batched).toHaveLength(1);
-    expect(batched[0][0].where).toEqual({ tenantId: T, creditNoteId: { in: ["cn-1"] } });
+    // one where for both surfaces: behind the page's notes, OR with an item sold on a page order
+    expect(batched[0][0].where.tenantId).toBe(T);
+    expect(batched[0][0].where.OR[0]).toEqual({ creditNoteId: { in: ["cn-1"] } });
+    expect(batched[0][0].where.OR[1].items.some.sourceOrderId.in).toHaveLength(1);
   });
 
   it("page 2 runs NO summary query", async () => {
@@ -402,6 +404,7 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     expect(prisma.invoicePayment.groupBy).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.findMany).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.aggregate).not.toHaveBeenCalled();
+    // this page 2 is empty: no summary and no batched carried read
     expect(prisma.return.findMany).not.toHaveBeenCalled();
     expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
     expect(prisma.order.findMany).toHaveBeenCalledTimes(1);

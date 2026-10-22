@@ -9,6 +9,7 @@ import {
   type ReceiptInvoiceInput,
   type ReceiptOrderInput,
   type ReceiptPaymentInput,
+  type ReceiptReturnData,
 } from "./receipt-model";
 
 /**
@@ -30,18 +31,30 @@ const CELL = "padding:6px 0;font-family:Arial,Helvetica,sans-serif;font-size:14p
 const SUB = "font-size:12px;color:#536579;";
 const RIGHT = "text-align:right;white-space:nowrap;padding-left:12px;";
 
-/** One label/value row of the totals block. */
-function totalRow(label: string, value: string, strong = false): string {
+/**
+ * One label/value row of the totals block. A `null` value is an info row (Refunded / Credit kept / Credit used / Return in
+ * progress): the label alone across the table, as the print view's info lines.
+ */
+function totalRow(label: string, value: string | null, strong = false): string {
   const weight = strong ? "font-weight:700;font-size:16px;" : "";
+  if (value === null) {
+    return `<tr>
+    <td colspan="2" style="${CELL}${SUB}">${escapeHtml(label)}</td>
+  </tr>`;
+  }
   return `<tr>
     <td style="${CELL}${weight}">${escapeHtml(label)}</td>
     <td style="${CELL}${weight}${RIGHT}">${escapeHtml(value)}</td>
   </tr>`;
 }
 
-/** The totals, as (label, value, strong) triples: the ONE list both the html and the text print, in the print view's order. */
-function totalsOf(m: ReceiptModel): Array<[string, string, boolean]> {
-  const rows: Array<[string, string, boolean]> = [["Subtotal", money(m.subtotal), false]];
+/**
+ * The totals, as (label, value, strong) triples: the ONE list both the html and the text print, in the print view's order.
+ * SA-838a: after Paid come the return lines the print view prints (`CounterReceiptView`), from the same model fields: Returned
+ * −$x (the only one Balance due subtracts), then the info lines (a null value: label only), and Return in progress after Balance due.
+ */
+function totalsOf(m: ReceiptModel): Array<[string, string | null, boolean]> {
+  const rows: Array<[string, string | null, boolean]> = [["Subtotal", money(m.subtotal), false]];
   if (m.discounts > 0) rows.push(["Discount", `−${money(m.discounts)}`, false]);
   if (m.tax !== 0) rows.push([taxRowLabel(m.taxRatePercent), money(m.tax), false]);
   for (const c of m.charges) rows.push([c.label, money(c.amount), false]);
@@ -49,7 +62,12 @@ function totalsOf(m: ReceiptModel): Array<[string, string, boolean]> {
   rows.push(["Total", money(m.total), true]);
   if (m.methodLabel) rows.push(["Payment method", m.methodLabel, false]);
   if (m.showPaid) rows.push(["Paid", money(m.paid), false]);
+  if (m.returned) rows.push(["Returned", `−${money(m.returned)}`, false]);
+  if (m.refunded) rows.push([`Refunded ${money(m.refunded)} (returned items)`, null, false]);
+  if (m.creditKept) rows.push([`Credit kept ${money(m.creditKept)} (returned items)`, null, false]);
+  if (m.creditUsed) rows.push([`Credit used ${money(m.creditUsed)} (returned items)`, null, false]);
   if (m.showBalance) rows.push(["Balance due", money(m.balanceDue), false]);
+  if (m.returnPending) rows.push(["Return in progress", null, false]);
   if (m.tendered != null) rows.push(["Tendered", money(m.tendered), false]);
   if (m.change != null) rows.push(["Change", money(m.change), true]);
   return rows;
@@ -131,7 +149,7 @@ function bodyTextOf(m: ReceiptModel): string[] {
       })
       .join("\n"),
     totalsOf(m)
-      .map(([label, value]) => `${label}: ${value}`)
+      .map(([label, value]) => (value === null ? label : `${label}: ${value}`))
       .join("\n"),
   ];
   if (m.onAccount) parts.push(`On account: ${money(m.balanceDue)} balance due on account`);
@@ -148,8 +166,9 @@ export function renderOrderReceipt(
   payments: readonly ReceiptPaymentInput[],
   tenantBranding: ReceiptBranding,
   zone: string | null,
+  returnData?: ReceiptReturnData,
 ): RenderedReceipt {
-  const model = buildReceiptModel(order, invoices, payments, tenantBranding, zone);
+  const model = buildReceiptModel(order, invoices, payments, tenantBranding, zone, returnData);
   const name = oneLine(model.header.name ?? "");
   const subject = name
     ? `Your receipt from ${name} for order ${model.orderNumber}`

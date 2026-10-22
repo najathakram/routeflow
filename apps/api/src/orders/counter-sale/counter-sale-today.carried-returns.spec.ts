@@ -75,20 +75,20 @@ function setup(pageRows: unknown[], carried: unknown[] = [], notes: unknown[] = 
 }
 
 describe("CounterSaleTodayService: the batched read of carried returns (SA-838 e)", () => {
-  it("no credit-note payment on the page: NO return query at all", async () => {
-    const { prisma, call, carriedCalls } = setup([saleA([payment(null, "CASH")])]);
-    await call();
-    expect(carriedCalls()).toHaveLength(0);
-    expect(prisma.return.findMany).not.toHaveBeenCalled(); // page 2 has no summary either
-  });
-
   it("an empty page: no return query", async () => {
     const { prisma, call } = setup([]);
     await call();
     expect(prisma.return.findMany).not.toHaveBeenCalled();
   });
 
-  it("credit-note payments: exactly ONE findMany, tenant-scoped, one id once, with the select the row needs", async () => {
+  it("no credit-note payment on the page: ONE read, by the page's order ids only (an own INLINE return is found by its items)", async () => {
+    const { call, carriedCalls } = setup([saleA([payment(null, "CASH")])]);
+    await call();
+    expect(carriedCalls()).toHaveLength(1);
+    expect(carriedCalls()[0][0].where).toEqual(carriedReturnWhere(T, [], ["o-a"]));
+  });
+
+  it("credit-note payments: exactly ONE findMany, tenant-scoped, one id once, the page's order ids once, with the select the row needs", async () => {
     const { call, carriedCalls } = setup([
       saleA([payment("cn-1"), payment("cn-1"), payment("cn-2"), payment(null, "CASH")]),
       { ...saleA([payment("cn-1")]), id: "o-x" },
@@ -97,8 +97,11 @@ describe("CounterSaleTodayService: the batched read of carried returns (SA-838 e
     expect(carriedCalls()).toHaveLength(1);
     const args = carriedCalls()[0][0];
     expect(args.where.tenantId).toBe(T);
-    expect(args.where.creditNoteId).toEqual({ in: ["cn-1", "cn-2"] });
-    expect(args.where).toEqual(carriedReturnWhere(T, ["cn-1", "cn-2"]));
+    expect(args.where.OR[0]).toEqual({ creditNoteId: { in: ["cn-1", "cn-2"] } });
+    expect(args.where.OR[1]).toEqual({
+      items: { some: { sourceOrderId: { in: ["o-a", "o-x"] } } },
+    });
+    expect(args.where).toEqual(carriedReturnWhere(T, ["cn-1", "cn-2"], ["o-a", "o-x"]));
     expect(args.select).toBe(carriedReturnSelect);
     expect(args.select.items.select).toEqual({
       sourceOrderId: true,
@@ -106,6 +109,14 @@ describe("CounterSaleTodayService: the batched read of carried returns (SA-838 e
       taxAmount: true,
       categoryTax: true,
     });
+  });
+
+  it("the where is tenant-scoped and refuses two empty lists (an undefined `in` would widen it)", () => {
+    expect(() => carriedReturnWhere(T, [], [])).toThrow();
+    expect(carriedReturnWhere(T, [], ["o-a"]).OR).toEqual([
+      { creditNoteId: { in: [] } },
+      { items: { some: { sourceOrderId: { in: ["o-a"] } } } },
+    ]);
   });
 
   it("the INLINE return carried on B, sold on A, makes A's credit its own return credit and A's returnLines.applied", async () => {
@@ -138,6 +149,35 @@ describe("CounterSaleTodayService: the batched read of carried returns (SA-838 e
       used: 0,
       pending: false,
     });
+  });
+
+  it("A's own INLINE return filed on C, its credit spent on B (not on this page): A reads Credit used $5.50, found by its items", async () => {
+    const a = saleA([{ ...payment(null, "CASH"), amount: "12.50" }]);
+    const { call } = setup(
+      [a],
+      [
+        {
+          id: "r-inline",
+          creditNoteId: "cn-1",
+          orderId: "o-c",
+          kind: "INLINE",
+          status: "REFUNDED",
+          refundMethod: "CREDIT_NOTE",
+          refundedAt: null,
+          items: [{ sourceOrderId: "o-a", subtotal: "5.00", taxAmount: "0.50", categoryTax: null }],
+        },
+      ],
+      [note("cn-1", "APPLIED", [[5.5, "i-b"]])],
+    );
+    const row = (await call()).data[0]!;
+    expect(row.returnLines).toEqual({
+      applied: 0,
+      refunded: 0,
+      kept: 0,
+      used: 5.5,
+      pending: false,
+    });
+    expect(row.balanceDue).toBe(0);
   });
 
   it("without the batched read's answer, the same credit stays a tender (never hidden)", async () => {

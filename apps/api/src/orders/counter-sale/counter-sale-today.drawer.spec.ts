@@ -91,7 +91,7 @@ function m(rec: any, where: any): boolean {
           (v.not === undefined || val !== v.not) &&
           (v.notIn === undefined || !v.notIn.includes(val)) &&
           (v.in === undefined || v.in.includes(val)) &&
-          (v.some === undefined || (val as any[]).some((r) => m(r, v.some)))
+          (v.some === undefined || ((val as any[] | undefined) ?? []).some((r) => m(r, v.some)))
         );
       }
       return m(val, v);
