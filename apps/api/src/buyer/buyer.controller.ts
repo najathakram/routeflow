@@ -713,14 +713,18 @@ export class BuyerController {
             const foldResult = foldMergeItems(
               normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
               normalizedIncoming,
-              // SA-124e(3): the price basis follows the RESOLVED pack, not the live one —
-              // already built above for the denomination normalizers.
-              upbByProduct,
-              // B297 row 343 (foldTarget): the rate trio a NEW sale of each incoming product takes today —
-              // an existing line sold at a different trio does not absorb the added quantity.
-              await this.ordersService.liveTrioByProduct(
-                incomingItems.map((i) => i.productId).filter(Boolean) as string[],
-              ),
+              {
+                // SA-124e(3) + SA-841: the live pack map (already built above for the denomination normalizers),
+                // read by the stored-line merge only for a line with no pack of its own.
+                liveUnitsPerBoxByProductId: upbByProduct,
+                // a buyer's bare qty is selling units
+                bare: "sellingUnits",
+                // B297 row 343 (foldTarget): the rate trio a NEW sale of each incoming product takes today —
+                // an existing line sold at a different trio does not absorb the added quantity.
+                liveTrioByProductId: await this.ordersService.liveTrioByProduct(
+                  incomingItems.map((i) => i.productId).filter(Boolean) as string[],
+                ),
+              },
             );
             if (foldResult.livePackFallbackProductIds.length > 0) {
               this.logger.warn(

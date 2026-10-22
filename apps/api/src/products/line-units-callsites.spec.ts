@@ -154,6 +154,9 @@ const NON_WRITERS = new Set([
   // payload names, ONLY to compare it with that payload's qty and split (a coded 400 on a disagreement). It
   // derives no line factor, quantity or price, writes nothing and returns no pack size.
   "buyer/buyer-qty-split.ts",
+  // SA-841 (B207): a read-only live-pack MAP for foldMergeItems; it writes no line, and the stored-line merge reads it
+  // only for a line with no pack of its own (SA-104a(4)). Kept out of orders.service.ts so that file's count stays 15.
+  "orders/live-pack-map.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

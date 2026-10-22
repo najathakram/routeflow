@@ -441,7 +441,10 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
     // (as the original draft did) exercises a different contract: replaceAll's OWN "the payload
     // IS the full desired line set" semantics, where a one-item payload correctly discards the
     // second line. That is not a bug; it is the wrong layer for what this case means to pin.
-    const foldResult = foldMergeItems(await itemsOf(order.id), [{ productId, qty: 4 }]);
+    const foldResult = foldMergeItems(await itemsOf(order.id), [{ productId, qty: 4 }], {
+      liveUnitsPerBoxByProductId: new Map(),
+      bare: "pieces",
+    });
 
     await tenantCtx.run(tenantId, () =>
       svc.updateOrderItems(
@@ -516,9 +519,11 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
     // echoes both lines' prices verbatim (foldMergeItems never produces that shape: a
     // derived/STANDARD line's price never survives the fold, REG-B465-MERGE-2). The scan
     // matches the order's own 12-pack, so it folds into the FIRST bucket (the STANDARD line).
-    const foldResult = foldMergeItems(await itemsOf(order.id), [
-      { productId, qty: 12, boxes: 1, pieces: 0 },
-    ]);
+    const foldResult = foldMergeItems(
+      await itemsOf(order.id),
+      [{ productId, qty: 12, boxes: 1, pieces: 0 }],
+      { liveUnitsPerBoxByProductId: new Map(), bare: "pieces" },
+    );
 
     await tenantCtx.run(tenantId, () =>
       svc.updateOrderItems(
@@ -556,9 +561,11 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
       { productId, qty: 36, boxes: 3, pieces: 0, unitsPerBox: 12, unitPrice: 36 },
     ]);
 
-    const foldResult = foldMergeItems(await itemsOf(order.id), [
-      { productId, qty: 12, boxes: 1, pieces: 0 },
-    ]);
+    const foldResult = foldMergeItems(
+      await itemsOf(order.id),
+      [{ productId, qty: 12, boxes: 1, pieces: 0 }],
+      { liveUnitsPerBoxByProductId: new Map(), bare: "pieces" },
+    );
 
     await tenantCtx.run(tenantId, () =>
       svc.updateOrderItems(
@@ -604,7 +611,10 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
 
     // A staff create-merge: fold a bare 3-piece scan (no box data of its own — the incoming
     // side never claims a pack; only the EXISTING line's stale snapshot does).
-    const foldResult = foldMergeItems(await itemsOf(order.id), [{ productId, qty: 3 }]);
+    const foldResult = foldMergeItems(await itemsOf(order.id), [{ productId, qty: 3 }], {
+      liveUnitsPerBoxByProductId: new Map(),
+      bare: "pieces",
+    });
 
     const err = await tenantCtx
       .run(tenantId, () =>

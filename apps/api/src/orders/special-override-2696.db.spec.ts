@@ -342,6 +342,7 @@ describeDb("#2696(c) staff price override — real Postgres", () => {
       const fold = foldMergeItems(
         pending.lineItems as never,
         [{ productId: product.id, qty: 2, ...item }] as never,
+        { liveUnitsPerBoxByProductId: new Map(), bare: "pieces" },
       );
       await tenantCtx.run(tenantId, () =>
         svc.updateOrderItems(

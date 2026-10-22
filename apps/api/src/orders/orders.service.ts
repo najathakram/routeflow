@@ -70,6 +70,7 @@ import { sourceLineFor } from "./source-line";
 import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-create-options";
 import { checkQtySplitConsistency, warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
 import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
+import { loadLiveUnitsPerBoxByProduct } from "./live-pack-map";
 import {
   oldestFirst,
   resolveSaleDelivery,
@@ -369,6 +370,11 @@ export class OrdersService implements OnApplicationBootstrap {
   /** B297 row 340: the trio a new sale of each product takes today (a fold's `foldTarget` input). */
   liveTrioByProduct(productIds: string[]) {
     return loadLiveTrioByProduct(this.prisma.forTenant() as any, productIds);
+  }
+
+  /** SA-841 (B207): each product's live pack, one tenant-scoped read (live-pack-map.ts, a read-only lookup). */
+  liveUnitsPerBoxByProduct(productIds: string[]): Promise<Map<string, number>> {
+    return loadLiveUnitsPerBoxByProduct(this.prisma.forTenant() as any, productIds);
   }
 
   /**
@@ -4914,9 +4920,12 @@ export class OrdersService implements OnApplicationBootstrap {
             if (!merged.ok) {
               throw new ConflictException({
                 code: API_ERROR_CODES.MERGE_PACK_MISMATCH,
-                message: `This add can't be merged into the ${merged.linePack}-pack line on this order${
-                  merged.addPack ? ` (it is sold as a ${merged.addPack}-pack now)` : ""
-                }: decline it, or approve it for the next delivery.`,
+                message:
+                  merged.reason === "EMPTY_ADD"
+                    ? "This add has no quantity this line can take: decline it, or approve it for the next delivery."
+                    : `This add can't be merged into the ${merged.linePack}-pack line on this order${
+                        merged.addPack ? ` (it is sold as a ${merged.addPack}-pack now)` : ""
+                      }: decline it, or approve it for the next delivery.`,
                 productId: product.id,
                 existingPacks: [merged.linePack],
                 incomingPack: merged.addPack,
