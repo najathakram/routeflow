@@ -58,6 +58,7 @@ jest.mock("../common/db-locks", () => ({
 }));
 
 import { PLAN_CHANGE_ADDONS_CHANGED } from "./plan-change-stripe";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   BadRequestException,
   ConflictException,
@@ -579,7 +580,9 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       },
     );
 
-    it.each([["subscription_cancelled"], [null], ["something_else"]])(
+    // SA-832 / 453: a READ_ONLY with no / an unknown reason is refused before it gets here (paymentReinstatable); the
+    // billing-caused reasons that are NOT a lapsed trial still drop an omitted add-on.
+    it.each([["subscription_cancelled"], ["payment_overdue"]])(
       "READ_ONLY with reason %p is NOT a lapsed trial: an omitted add-on is still dropped",
       async (readOnlyReason) => {
         const { svc, tx, events } = make({
@@ -962,6 +965,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
   it("reactivation from READ_ONLY (stale planKey retained) emits a full +base delta, not 0", async () => {
     const { svc, events } = make({
       tenantStatus: "READ_ONLY",
+      readOnlyReason: "subscription_cancelled",
       sub: { planKey: "BUSINESS" }, // planKey survives the cancellation → READ_ONLY
     });
     await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
@@ -973,6 +977,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
   it("RO-1 subscribe() clears a stale readOnlyReason when the tenant becomes ACTIVE", async () => {
     const { svc, tx } = make({
       tenantStatus: "READ_ONLY",
+      readOnlyReason: "trial_expired",
       sub: { planKey: "BUSINESS" },
     });
     await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
@@ -986,6 +991,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
   it("reactivation re-adds add-ons (churn deactivated them) so the ledger nets symmetrically", async () => {
     const { svc, events } = make({
       tenantStatus: "READ_ONLY",
+      readOnlyReason: "subscription_cancelled",
       sub: { planKey: "BUSINESS" },
       priorAddons: [], // churn (applyScheduledCancellations) deactivated the rows
     });
@@ -1216,6 +1222,7 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
   it("subscribe() re-subscribe of an override row ENTERING the paying set books the fee", async () => {
     const { svc, tx, events } = make({
       tenantStatus: "READ_ONLY",
+      readOnlyReason: "subscription_cancelled",
       sub: { planKey: "BUSINESS", priceOverrideMonthly: 80, basePriceSnapshot: 80 },
     });
     tx.tenantSubscription.findUnique.mockResolvedValue({
@@ -2118,6 +2125,75 @@ describe("SubscriptionMutationService.subscribe ACTIVE plan-change guard (REG-B5
     await expect(attempt).rejects.toBeInstanceOf(ConflictException);
     expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
     expect(mrrEmits(events)).toHaveLength(0);
+  });
+});
+
+// SA-832 row 453: subscribe() is the THIRD writer that flipped an admin lock to ACTIVE (transitionToActiveTx has no
+// status filter). It now asks the shared predicate, twice: pre-tx (before the Stripe add-on removal, which is a side
+// effect) and again on the row re-read under the tenant lock. Refused with a coded 409, nothing written.
+describe("SubscriptionMutationService.subscribe - SA-832 / 453 admin locks are refused", () => {
+  it.each([
+    ["READ_ONLY(admin_set)", "READ_ONLY", "admin_set"],
+    ["READ_ONLY(no reason: a legacy admin write)", "READ_ONLY", null],
+    ["SUSPENDED(admin_set)", "SUSPENDED", "admin_set"],
+    ["CANCELLED", "CANCELLED", null],
+  ])(
+    "%s: 409 TENANT_ADMIN_LOCKED, nothing written, no Stripe item touched",
+    async (_n, status, reason) => {
+      const { svc, tx, events, stripe, prisma } = make({
+        tenantStatus: status,
+        readOnlyReason: reason,
+        priorAddons: [
+          {
+            id: "a1",
+            addonKey: "FORECASTING",
+            sku: "FORECASTING",
+            quantity: 1,
+            active: true,
+            priceSnapshot: 20,
+            stripeItemId: "si_x",
+          },
+        ],
+      });
+      const err: any = await svc
+        .subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin")
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.TENANT_ADMIN_LOCKED });
+      expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(emitted(events)).toEqual([]);
+    },
+  );
+
+  it("a lock set AFTER the pre-tx read (an admin acting between it and the tenant lock) is refused under the lock", async () => {
+    const { svc, tx, events } = make({ tenantStatus: "TRIAL" });
+    tx.tenant.findUnique.mockResolvedValue({
+      status: "READ_ONLY",
+      plan: null,
+      class: "PRODUCTION",
+      deletedAt: null,
+      readOnlyReason: "admin_set",
+    });
+    const err: any = await svc
+      .subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin")
+      .catch((e) => e);
+    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.TENANT_ADMIN_LOCKED });
+    expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(emitted(events)).toEqual([]);
+  });
+
+  it.each([
+    ["TRIAL", "TRIAL", null],
+    ["READ_ONLY(trial_expired)", "READ_ONLY", "trial_expired"],
+    ["SUSPENDED by billing", "SUSPENDED", null],
+  ])("control: %s still subscribes", async (_n, status, reason) => {
+    const { svc, tx } = make({ tenantStatus: status, readOnlyReason: reason });
+    await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+    expect(tx.tenant.updateMany.mock.calls[0][0].data).toMatchObject({ status: "ACTIVE" });
   });
 });
 

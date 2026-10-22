@@ -2,6 +2,7 @@
  * SA-733r7 PR-B3: the named constants of the dunning clock and the one reader of `BILLING_PAUSE_MODE`.
  * Every threshold the sweep uses is here, so a future per-tenant grace length replaces one constant.
  */
+import type { Prisma } from "@prisma/client";
 
 /** Hours from the first failure (`pastDueSince`) until the tenant may be paused: day 7. */
 export const DUNNING_PAUSE_HOURS = 168;
@@ -39,6 +40,72 @@ export const PAYMENT_OVERDUE_REASON = "payment_overdue";
 export const ADMIN_SET_REASON = "admin_set";
 /** The `readOnlyReason` a cancel (self-serve, or Stripe's own) leaves a paused tenant on. */
 export const SUBSCRIPTION_CANCELLED_REASON = "subscription_cancelled";
+/** A lapsed / cancelled trial's READ_ONLY reasons all start with this (`trial_expired`, `trial_cancelled`). */
+export const TRIAL_REASON_PREFIX = "trial_";
+const TRIAL_STATUS = "TRIAL" as const;
+
+/**
+ * SA-832 row 453: THE ONE predicate for "may a payment lift this tenant's lock?" Only a BILLING-caused lock lifts;
+ * a lock an administrator set is a decision a payment must never undo. Every writer that can take a tenant to
+ * ACTIVE because money arrived asks THIS function (or its CAS twin {@link paymentReinstatableWhere}):
+ *   - `invoice.payment_succeeded` (BillingService.onPaymentSucceeded);
+ *   - the checkout completion (BillingService.onCheckoutCompleted);
+ *   - `subscribe()` (SubscriptionMutationService), and checkout CREATION - refused up front so the platform never
+ *     takes money it will not honour.
+ *
+ * Lifts: ACTIVE (nothing to lift: an ordinary renewal), TRIAL, READ_ONLY with a `trial_*`, `payment_overdue` or
+ * `subscription_cancelled` reason, and SUSPENDED unless an admin stamped it {@link ADMIN_SET_REASON} (the billing
+ * suspensions - Stripe cancelled / overdue - carry no reason).
+ * Never lifts: READ_ONLY(admin_set), READ_ONLY with no / an unknown reason (a legacy admin write), SUSPENDED(admin_set),
+ * CANCELLED, and any unknown or missing status.
+ */
+export function paymentReinstatable(
+  status: string | null | undefined,
+  readOnlyReason: string | null | undefined,
+): boolean {
+  const reason = readOnlyReason ?? null;
+  switch (status) {
+    case "ACTIVE":
+    case TRIAL_STATUS:
+      return true;
+    case READ_ONLY_STATUS:
+      return (
+        reason !== null &&
+        (reason.startsWith(TRIAL_REASON_PREFIX) ||
+          reason === PAYMENT_OVERDUE_REASON ||
+          reason === SUBSCRIPTION_CANCELLED_REASON)
+      );
+    case "SUSPENDED":
+      return reason !== ADMIN_SET_REASON;
+    default:
+      return false;
+  }
+}
+
+/**
+ * The same predicate as a Prisma filter for a compare-and-swap, so the lock check and the status write are ONE
+ * statement (an admin who locks the tenant between a read and the write can never be overwritten). Combine with the
+ * caller's own `status: { not: "ACTIVE" }`; a database spec pins that this selects exactly the rows
+ * {@link paymentReinstatable} allows. (SQL: `readOnlyReason <> 'admin_set'` is never true for NULL, hence the OR.)
+ */
+export function paymentReinstatableWhere(): Prisma.TenantWhereInput {
+  return {
+    OR: [
+      { status: TRIAL_STATUS },
+      {
+        status: READ_ONLY_STATUS,
+        OR: [
+          { readOnlyReason: { startsWith: TRIAL_REASON_PREFIX } },
+          { readOnlyReason: { in: [PAYMENT_OVERDUE_REASON, SUBSCRIPTION_CANCELLED_REASON] } },
+        ],
+      },
+      {
+        status: "SUSPENDED",
+        OR: [{ readOnlyReason: null }, { readOnlyReason: { not: ADMIN_SET_REASON } }],
+      },
+    ],
+  };
+}
 
 /**
  * `off`      nothing is stamped, mailed or paused (exits that heal an existing state still run);

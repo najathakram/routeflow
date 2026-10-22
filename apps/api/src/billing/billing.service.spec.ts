@@ -22,6 +22,7 @@ import { toCents } from "@routeflow/pricing";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
 import { BillingService } from "./billing.service";
+import { paymentReinstatableWhere } from "./dunning-config";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { PrismaService } from "../prisma/prisma.service";
 import { StripeService } from "./stripe.service";
@@ -558,6 +559,8 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
           "READ_ONLY(no reason: a legacy admin write)",
           { status: "READ_ONLY", readOnlyReason: null },
         ],
+        // SA-832 / 453: the admin SUSPENDED writer now stamps admin_set, so a payment cannot lift it
+        ["SUSPENDED(admin_set)", { status: "SUSPENDED", readOnlyReason: "admin_set" }],
         ["CANCELLED", { status: "CANCELLED", readOnlyReason: null }],
       ])(
         "%s + a renewal on its own subscription: stays put, warned and audited",
@@ -595,6 +598,16 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         await (svc as any).onPaymentSucceeded(sub("sub_1"));
         expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
         expect(blockedAudit(prisma)).toBeUndefined();
+      });
+
+      it("SA-832 / 453: the reinstating CAS carries the shared predicate, so a lock set after the read cannot be lifted", async () => {
+        const { svc, tx } = make({ transitionCount: 1, sub: row({}) });
+        await (svc as any).onPaymentSucceeded(sub("sub_1"));
+        expect(tx.tenant.updateMany.mock.calls[0][0].where).toEqual({
+          id: "t1",
+          status: { not: "ACTIVE" },
+          ...paymentReinstatableWhere(),
+        });
       });
 
       it("an ACTIVE tenant's ordinary renewal is untouched (no warn, no audit)", async () => {
@@ -813,6 +826,110 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         payment_status: "paid", // P0 hotfix: only a settled session activates
       });
       expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    });
+
+    // SA-832 row 453: the completion is the SECOND writer that flipped READ_ONLY(admin_set) / CANCELLED to ACTIVE
+    // (a session opened before an admin lock still completes). ONE predicate (paymentReinstatable, dunning-config)
+    // gates its CAS; a completion that lands on an admin lock stays locked, writes PAID_WHILE_ADMIN_LOCKED (the
+    // platform-admin feed row that is also the ops alert) and never books a +MRR resume. Refunding is the owner's call.
+    describe("SA-832 / 453: a completion never lifts an admin's lock", () => {
+      const paidSession = {
+        id: "cs_locked",
+        metadata: { tenantId: "t1" },
+        subscription: "sub_1",
+        customer: "cus_1",
+        payment_status: "paid",
+        amount_total: 34_900,
+      };
+      const lockedTenant = (status: string, readOnlyReason: string | null) => ({
+        id: "t1",
+        class: "PRODUCTION",
+        status,
+        readOnlyReason,
+        plan: "STARTER",
+        planVersionId: "v1",
+      });
+      const alertOf = (prisma: any) =>
+        prisma.auditLog.create.mock.calls.find(
+          (c: any[]) => c[0].data.action === "PAID_WHILE_ADMIN_LOCKED",
+        )?.[0].data;
+
+      it("the CAS carries the shared predicate (an admin lock can never match it)", async () => {
+        const { svc, tx } = make({ transitionCount: 1 });
+        await (svc as any).onCheckoutCompleted(paidSession);
+        const cas = tx.tenant.updateMany.mock.calls.find(
+          (c: any[]) => c[0].data.status === "ACTIVE",
+        )?.[0];
+        expect(cas.where).toEqual({
+          id: "t1",
+          status: { not: "ACTIVE" },
+          ...paymentReinstatableWhere(),
+        });
+      });
+
+      it.each([
+        ["READ_ONLY(admin_set)", "READ_ONLY", "admin_set"],
+        ["READ_ONLY(no reason: a legacy admin write)", "READ_ONLY", null],
+        ["SUSPENDED(admin_set)", "SUSPENDED", "admin_set"],
+        ["CANCELLED", "CANCELLED", null],
+      ])(
+        "%s: the lock holds (the CAS misses), no resume is booked, and ONE alert row is written",
+        async (_n, status, reason) => {
+          const { svc, prisma, events } = make({ transitionCount: 0 });
+          prisma.tenant.findUnique.mockResolvedValue(lockedTenant(status, reason));
+          const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+          await (svc as any).onCheckoutCompleted(paidSession);
+          warn.mockRestore();
+          expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+          const alert = alertOf(prisma);
+          expect(alert).toMatchObject({
+            tenantId: "t1",
+            entityType: "tenant",
+            meta: {
+              platformAdmin: true,
+              status,
+              readOnlyReason: reason,
+              checkoutSessionId: "cs_locked",
+            },
+          });
+          expect(alert.meta.message).toMatch(/cs_locked/);
+          expect(
+            prisma.auditLog.create.mock.calls.filter(
+              (c: any[]) => c[0].data.action === "PAID_WHILE_ADMIN_LOCKED",
+            ),
+          ).toHaveLength(1);
+        },
+      );
+
+      it("a lost CAS on a tenant that is simply ACTIVE (a racing delivery won) writes no alert", async () => {
+        const { svc, prisma } = make({ transitionCount: 0 });
+        prisma.tenant.findUnique.mockResolvedValue(lockedTenant("ACTIVE", null));
+        await (svc as any).onCheckoutCompleted(paidSession);
+        expect(alertOf(prisma)).toBeUndefined();
+      });
+
+      it("a lost CAS on a tenant whose lock IS billing-caused (it moved on) writes no alert either", async () => {
+        const { svc, prisma } = make({ transitionCount: 0 });
+        prisma.tenant.findUnique.mockResolvedValue(lockedTenant("READ_ONLY", "trial_expired"));
+        await (svc as any).onCheckoutCompleted(paidSession);
+        expect(alertOf(prisma)).toBeUndefined();
+      });
+
+      it("an alert that cannot be written is logged and never fails the webhook (the money is applied)", async () => {
+        const { svc, prisma } = make({ transitionCount: 0 });
+        prisma.tenant.findUnique.mockResolvedValue(lockedTenant("READ_ONLY", "admin_set"));
+        // only THIS alert fails (the price push has its own, deliberately throwing, notice)
+        prisma.auditLog.create.mockImplementation(async ({ data }: any) => {
+          if (data.action === "PAID_WHILE_ADMIN_LOCKED") throw new Error("db down");
+          return {};
+        });
+        const err = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+        const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        await expect((svc as any).onCheckoutCompleted(paidSession)).resolves.toBeUndefined();
+        expect(err).toHaveBeenCalled();
+        err.mockRestore();
+        warn.mockRestore();
+      });
     });
 
     // P0 HOTFIX (live money): an ACH / bank-debit checkout completes UNPAID; activating then flips the tenant ACTIVE

@@ -24,7 +24,10 @@ import {
   PAYMENT_FAILED_EMAIL_DEDUPE_DAYS,
   billingPauseMode,
   dunningEmailsFor,
+  paymentReinstatable,
+  paymentReinstatableWhere,
 } from "./dunning-config";
+import { adminLockedRefusal } from "./admin-lock-refusal";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { fromCents, roundMoney } from "@routeflow/pricing";
 import {
@@ -533,9 +536,18 @@ export class BillingService {
 
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true, slug: true },
+      select: { id: true, slug: true, status: true, readOnlyReason: true },
     });
     if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
+    // SA-832 row 453: never take money we will not honour. A tenant a payment may not reinstate (a lock an admin set, or
+    // CANCELLED) gets a coded 409 HERE, before any Stripe call: the completion would leave it locked. The completion
+    // re-judges (a session can outlive the lock's change), this is the up-front refusal.
+    if (!paymentReinstatable(tenant.status, tenant.readOnlyReason)) {
+      this.logger.warn(
+        `createCheckoutSession refused tenant=${tenantId}: status ${tenant.status}${tenant.readOnlyReason ? ` (${tenant.readOnlyReason})` : ""} is not payment-reinstatable`,
+      );
+      throw adminLockedRefusal();
+    }
 
     if (!this.stripe.isConfigured) {
       throw new BadRequestException(
@@ -2397,15 +2409,19 @@ export class BillingService {
     // SUSPENDED) re-adds its run-rate exactly once — idempotent against the paired
     // invoice.payment_succeeded webhook. NO-OP for a fresh Stripe checkout (planKey is null —
     // legacy Stripe doesn't set it, so emitPayingDelta short-circuits).
+    // SA-832 row 453: ONLY a billing-caused lock lifts (paymentReinstatableWhere is the CAS form of the one predicate), so
+    // a session an admin's lock outlived (opened before an admin cancel / read-only / suspend) can never reinstate the
+    // tenant: the CAS misses and the payment is alerted below instead.
     const reinstated = await this.transitionAndEmit(
       tenantId,
-      { status: { not: "ACTIVE" } },
+      { status: { not: "ACTIVE" }, ...paymentReinstatableWhere() },
       "ACTIVE",
       1,
       BILLING_EVENTS.SUBSCRIPTION_RESUMED,
       { source: "stripe", reason: "checkout_completed", ...scheduleLeftArmed(upserted) },
     );
     this.tenantStatusGuard.invalidate(tenantId);
+    if (!reinstated) await this.alertCheckoutPaidOnLockedTenant(tenantId, session, subscriptionId);
 
     // B216: this reinstatement does NOT touch the tenant's scheduled downgrade — see
     // scheduleLeftArmed(). The ledger event above carries it, but emitPayingDelta short-circuits
@@ -2434,6 +2450,75 @@ export class BillingService {
     await this.resyncPriceAfterCheckout(tenantId, session, subscriptionId);
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
+  }
+
+  /**
+   * SA-832 row 453: money was taken for a tenant a payment may not reinstate. ONE row in the platform-admin feed
+   * (platformAdmin: true) is both the audit trail and the ops alert - someone must decide on a refund or a deliberate
+   * reinstatement. A failed write is logged and never fails the webhook (the payment is applied; Stripe's redelivery
+   * would take the applied-marker early return and never reach this again).
+   */
+  private async writePaidWhileLockedNotice(
+    tenantId: string,
+    message: string,
+    meta: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await writeAdminNotice(this.prisma, {
+        tenantId,
+        action: AdminAuditAction.PAID_WHILE_ADMIN_LOCKED,
+        message,
+        meta,
+      });
+    } catch (e) {
+      this.logger.error(
+        `tenant ${tenantId}: the paid-while-locked notice could not be written`,
+        e as Error,
+      );
+    }
+  }
+
+  /**
+   * SA-832 row 453: the completion's reinstating CAS found nothing to flip. That is the normal outcome for a tenant that
+   * is already ACTIVE (or whose billing lock moved on); it is an ALERT only when the tenant is still on a lock a payment
+   * may not lift (READ_ONLY admin_set / legacy, SUSPENDED admin_set, CANCELLED): it stays locked, and we say so.
+   */
+  private async alertCheckoutPaidOnLockedTenant(
+    tenantId: string,
+    session: any,
+    subscriptionId: string,
+  ): Promise<void> {
+    let now: { status: string; readOnlyReason: string | null } | null;
+    try {
+      now = await this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { status: true, readOnlyReason: true },
+      });
+    } catch (e) {
+      this.logger.error(
+        `checkout ${session?.id ?? "?"} for tenant ${tenantId}: the post-activation status read failed`,
+        e as Error,
+      );
+      return;
+    }
+    if (!now || paymentReinstatable(now.status, now.readOnlyReason)) return;
+    const reason = now.readOnlyReason ?? null;
+    const amount = typeof session?.amount_total === "number" ? session.amount_total : null;
+    this.logger.warn(
+      `checkout ${session?.id ?? "?"} for tenant ${tenantId}: status ${now.status}${reason ? ` (${reason})` : ""} is not a payment-reinstatable state - not reinstating`,
+    );
+    await this.writePaidWhileLockedNotice(
+      tenantId,
+      `Checkout ${session?.id ?? "(unknown)"} (${amount ?? "?"} cents) completed while the tenant is ${now.status}${reason ? ` (${reason})` : ""}. ` +
+        `The status was NOT changed; decide on a refund or reinstate it deliberately.`,
+      {
+        status: now.status,
+        readOnlyReason: reason,
+        stripeSubId: subscriptionId,
+        checkoutSessionId: session?.id ?? null,
+        amountTotal: amount,
+      },
+    );
   }
 
   /** SA-787 C3: stop billing the add-ons a checkout's plan newly includes (no-op without a plan move). */
@@ -2718,17 +2803,12 @@ export class BillingService {
       return;
     }
 
-    // F4: a payment reinstates ONLY from TRIAL, READ_ONLY with a trial_* reason, and SUSPENDED (ACTIVE is an
-    // ordinary renewal: the CAS below finds nothing to flip). A READ_ONLY an admin set, or a CANCELLED tenant,
-    // is a decision a payment on the still-live subscription must not undo: no change, a warn and an audit row.
+    // F4 + SA-832 row 453: a payment reinstates ONLY a billing-caused lock - the ONE shared predicate (ACTIVE is an
+    // ordinary renewal: the CAS below finds nothing to flip). A READ_ONLY / SUSPENDED an admin set, or a CANCELLED
+    // tenant, is a decision a payment on the still-live subscription must not undo: no change, a warn and an audit row.
     const paidStatus = sub.tenant?.status;
     const paidReason = sub.tenant?.readOnlyReason ?? null;
-    if (
-      paidStatus !== "ACTIVE" &&
-      paidStatus !== "TRIAL" &&
-      paidStatus !== "SUSPENDED" &&
-      !(paidStatus === "READ_ONLY" && paidReason?.startsWith("trial_"))
-    ) {
+    if (!paymentReinstatable(paidStatus, paidReason)) {
       this.logger.warn(
         `payment_succeeded for tenant ${sub.tenantId}: status ${paidStatus ?? "unknown"}` +
           `${paidReason ? ` (${paidReason})` : ""} is not a payment-reinstatable state - not reinstating`,
@@ -2740,25 +2820,13 @@ export class BillingService {
         `Invoice ${invoice?.id ?? "(unknown)"} (${amountPaid ?? "?"} cents) was paid while the tenant is ` +
         `${paidStatus ?? "unknown"}${paidReason ? ` (${paidReason})` : ""}. The status was NOT changed; ` +
         `decide on a refund or reinstate it deliberately.`;
-      try {
-        await writeAdminNotice(this.prisma, {
-          tenantId: sub.tenantId,
-          action: AdminAuditAction.PAID_WHILE_ADMIN_LOCKED,
-          message,
-          meta: {
-            status: paidStatus ?? null,
-            readOnlyReason: paidReason,
-            stripeSubId: sub.stripeSubId,
-            invoiceId: invoice?.id ?? null,
-            amountPaid,
-          },
-        });
-      } catch (e) {
-        this.logger.error(
-          `payment_succeeded for tenant ${sub.tenantId}: the paid-while-locked notice could not be written`,
-          e as Error,
-        );
-      }
+      await this.writePaidWhileLockedNotice(sub.tenantId, message, {
+        status: paidStatus ?? null,
+        readOnlyReason: paidReason,
+        stripeSubId: sub.stripeSubId,
+        invoiceId: invoice?.id ?? null,
+        amountPaid,
+      });
       return;
     }
 
@@ -2766,9 +2834,11 @@ export class BillingService {
     // once. The conditional flip is the idempotency key — the paired checkout.session.completed
     // webhook races here and only the winner emits — and it is a NO-OP on ordinary renewals
     // (already ACTIVE → count 0 → no ledger delta).
+    // SA-832 row 453: the CAS carries the same predicate (paymentReinstatableWhere), so a lock an admin set AFTER the read
+    // above cannot be lifted either.
     const reinstated = await this.transitionAndEmit(
       sub.tenantId,
-      { status: { not: "ACTIVE" } },
+      { status: { not: "ACTIVE" }, ...paymentReinstatableWhere() },
       "ACTIVE",
       1,
       BILLING_EVENTS.SUBSCRIPTION_RESUMED,

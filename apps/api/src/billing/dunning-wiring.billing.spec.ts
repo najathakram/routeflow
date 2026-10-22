@@ -381,7 +381,12 @@ describe("BillingService x dunning wiring (SA-733r7 PR-B3)", () => {
     it("409 PAYMENT_OVERDUE with hosted_invoice_url; no Stripe checkout session is created", async () => {
       process.env.BILLING_PAUSE_MODE = "enforced";
       const { svc, prisma, stripe } = make();
-      prisma.tenant.findUnique.mockResolvedValue({ id: "t1", slug: "acme", status: "READ_ONLY" });
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: "t1",
+        slug: "acme",
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue", // SA-832 / 453: a pause is a billing lock (an admin lock is refused first)
+      });
       prisma.tenantSubscription.findUnique.mockResolvedValue({
         stripeSubId: null,
         externalPayment: false,
