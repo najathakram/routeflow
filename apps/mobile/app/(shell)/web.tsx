@@ -51,7 +51,9 @@ export default function WebShellScreen() {
   const staffUser = useAuthStore((s) => s.user);
   const staffLogout = useAuthStore((s) => s.logout);
   const buyerSignOut = useBuyerSessionStore((s) => s.signOut);
-  const webRef = React.useRef<WebView>(null);
+  // react-native-webview 13.17 types default WebView's prop generic to `undefined`, which makes its
+  // props `never`; pin it to no extra props.
+  const webRef = React.useRef<WebView<object>>(null);
   const [canGoBack, setCanGoBack] = React.useState(false);
   const [offline, setOffline] = React.useState(false);
   const [loadError, setLoadError] = React.useState(false);
@@ -157,7 +159,7 @@ export default function WebShellScreen() {
           </Pressable>
         </View>
       ) : null}
-      <WebView
+      <WebView<object>
         ref={webRef}
         source={{ uri: entry }}
         applicationNameForUserAgent={SHELL_UA}
