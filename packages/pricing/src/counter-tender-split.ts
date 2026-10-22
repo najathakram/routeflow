@@ -4,17 +4,6 @@ import { formatReceiptMoney } from "./receipt-line-detail";
 import { roundMoney } from "./pricing";
 
 /**
- * B1262 / SA-838: the ONE split of a counter sale's payments into what the customer TENDERED and the credit the sale's
- * OWN return made. A return on a sale mints a credit note and applies it back to that sale's invoice (an `InvoicePayment`
- * with `creditNoteId` set): that is the return settling the invoice, not new money, so it is neither a tender on the paper
- * nor part of "Paid". Every other payment (cash, card, check, an advance, store credit from ANOTHER order's return) is a
- * tender. The API calls this once per row; the web never re-derives it.
- *
- * Which credit notes are the sale's own is the CALLER's provenance read (`ownReturnCreditNoteIds`): a payment counts as
- * return credit only when its `creditNoteId` is in that set, so anything the caller could not prove stays a tender and
- * no money is ever hidden. Only PAID rows count (the `sumConfirmed` rule); every figure goes through `roundMoney`.
- */
-/**
  * The ONE copy of what the till calls each display method (a receipt's Payment method row, the hand-over rows, the emailed
  * receipt). `Record<TodaysSaleMethod, string>` makes a new method a compile error here, in the one place (L-072).
  */
@@ -67,6 +56,17 @@ export interface CounterTenderSplit<M extends string = string> {
   methods: Array<{ method: M; amount: number }>;
 }
 
+/**
+ * B1262 / SA-838: the ONE split of a counter sale's payments into what the customer TENDERED and the credit the sale's
+ * OWN return made. A return on a sale mints a credit note and applies it back to that sale's invoice (an `InvoicePayment`
+ * with `creditNoteId` set): that is the return settling the invoice, not new money, so it is neither a tender on the paper
+ * nor part of "Paid". Every other payment (cash, card, check, an advance, store credit from ANOTHER order's return) is a
+ * tender. The API calls this once per row; the web never re-derives it.
+ *
+ * Which credit notes are the sale's own is the CALLER's provenance read (`ownReturnCreditNoteIds`): a payment counts as
+ * return credit only when its `creditNoteId` is in that set, so anything the caller could not prove stays a tender and
+ * no money is ever hidden. Only PAID rows count (the `sumConfirmed` rule); every figure goes through `roundMoney`.
+ */
 export function counterTenderSplit<M extends string>(
   payments: ReadonlyArray<CounterTenderPayment<M>>,
   ownReturnCreditNoteIds: ReadonlyArray<string> | ReadonlySet<string>,
