@@ -206,7 +206,7 @@ describe("mergeIntoStoredLine (SA-841)", () => {
       run({ line: split(24, 2, 0, 12), add: { qty: 5, boxes: 0, pieces: 0 }, livePack: 0 }),
     ).toEqual({
       ok: false,
-      reason: "PACK_MISMATCH",
+      reason: "EMPTY_ADD",
       linePack: 12,
       addPack: null,
     });
@@ -215,7 +215,12 @@ describe("mergeIntoStoredLine (SA-841)", () => {
       run({ line: boxUnaware(2), add: { qty: 5, boxes: 0, pieces: 0 }, livePack: 12 }),
     ).toMatchObject({
       ok: false,
-      reason: "PACK_MISMATCH",
+      reason: "EMPTY_ADD",
+    });
+    // a plain zero add is EMPTY_ADD too, never a pack mismatch
+    expect(run({ line: boxUnaware(10), add: { qty: 0 }, livePack: 0 })).toMatchObject({
+      ok: false,
+      reason: "EMPTY_ADD",
     });
   });
 
@@ -234,13 +239,15 @@ describe("mergeIntoStoredLine (SA-841)", () => {
       { qty: 12, boxes: 1, pieces: 0 },
       { qty: 5, boxes: 0, pieces: 5 },
     ];
+    let okCount = 0;
     for (const line of lines)
       for (const add of adds)
         for (const livePack of [0, 1, 6, 12])
           for (const bare of ["sellingUnits", "pieces"] as const)
             for (const output of ["keep", "split"] as const) {
               const r = mergeIntoStoredLine({ line, add, livePack, bare, output });
-              if (r.ok)
+              if (r.ok) {
+                okCount++;
                 expect({
                   line,
                   add,
@@ -249,6 +256,9 @@ describe("mergeIntoStoredLine (SA-841)", () => {
                   output,
                   added: r.addInLineUnit > 0,
                 }).toMatchObject({ added: true });
+              }
             }
+    // never vacuous: the grid must contain real merges, not only refusals
+    expect(okCount).toBeGreaterThan(0);
   });
 });
