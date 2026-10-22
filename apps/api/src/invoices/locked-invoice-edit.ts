@@ -135,10 +135,50 @@ export function assertInvoiceCurrent(
 
 /** H4: its own channel, so the count of token-less invoice saves is one grep before the token is required. */
 const staleTokenLogger = new Logger("InvoiceStaleToken");
-export const noTokenWarner = (id: string) => () =>
-  staleTokenLogger.warn(
-    `PATCH /invoices/${id} without expectedUpdatedAt (H4: last-writer save accepted)`,
-  );
+
+export type InvoiceEditClient = "web" | "mobile" | "unknown";
+
+/**
+ * SA-837 row 500: who sent a token-less edit. No client sends an identity header today, so the
+ * User-Agent decides (an RN/Expo build is okhttp on Android, CFNetwork/Darwin on iOS; the web app is a
+ * browser) and the app version is the `x-app-version` header when one exists, else "unknown".
+ */
+export function classifyInvoiceEditClient(
+  userAgent: string | undefined | null,
+  appVersion: string | undefined | null,
+): { client: InvoiceEditClient; appVersion: string } {
+  const ua = userAgent ?? "";
+  const client: InvoiceEditClient = /okhttp|CFNetwork|Darwin|Expo|ReactNative/i.test(ua)
+    ? "mobile"
+    : /Mozilla|Chrome|Safari|Firefox|Edg\//i.test(ua)
+      ? "web"
+      : "unknown";
+  return { client, appVersion: appVersion?.trim().slice(0, 32) || "unknown" };
+}
+
+export interface NoTokenWarnContext {
+  route: string;
+  tenantId: string | null;
+  client: InvoiceEditClient;
+  appVersion: string;
+}
+
+/** Step 1 (dark): ONE structured warn per request, no PII, the edit proceeds exactly as before. */
+export const noTokenWarner = (id: string, ctx?: NoTokenWarnContext) => {
+  let warned = false;
+  return () => {
+    if (warned) return;
+    warned = true;
+    staleTokenLogger.warn({
+      event: "INVOICE_EDIT_TOKEN_MISSING",
+      route: ctx?.route ?? "PATCH /invoices/:id",
+      invoiceId: id,
+      tenantId: ctx?.tenantId ?? null,
+      client: ctx?.client ?? "unknown",
+      appVersion: ctx?.appVersion ?? "unknown",
+    });
+  };
+};
 
 /**
  * H4: the header-only save that touches no totals. Without a token it stays one unlocked update (legacy);

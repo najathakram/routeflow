@@ -22,6 +22,9 @@ describe("InvoicesController — the acting user reaches create/update (H3b)", (
   it("update passes the id, the body and user.sub", async () => {
     const dto = { items: [] } as never;
     await controller.update("inv-1", dto, user);
-    expect(service.update).toHaveBeenCalledWith("inv-1", dto, "user-1");
+    expect(service.update).toHaveBeenCalledWith("inv-1", dto, "user-1", {
+      userAgent: undefined,
+      appVersion: undefined,
+    });
   });
 });
