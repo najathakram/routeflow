@@ -111,7 +111,12 @@ describe("row 498: the InvoicePayment writer census", () => {
       "bookkeeping/bookkeeping.service.ts",
       "invoices/payment-idempotency.ts",
     ]);
-    for (const f of [...takers, ...callers]) {
+    // M2: the files whose inTx / claim hooks run UNDER the lock are scanned too (they must never take the merge lock).
+    const hookFiles = [
+      "invoices/invoices.service.ts",
+      "payment-requests/payment-requests.service.ts",
+    ].map((rel) => path.join(SRC, rel));
+    for (const f of [...takers, ...callers, ...hookFiles]) {
       const text = fs.readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
       expect({ file: path.relative(SRC, f), takesMergeLock: /"order-merge"/.test(text) }).toEqual({
         file: path.relative(SRC, f),

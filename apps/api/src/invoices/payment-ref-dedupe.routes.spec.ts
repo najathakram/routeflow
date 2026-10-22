@@ -3,11 +3,15 @@ jest.mock("@anthropic-ai/sdk", () => ({ __esModule: true, default: jest.fn() }))
 jest.mock("./invoice-pdf.service", () => ({ InvoicePdfService: jest.fn() }));
 jest.mock("../bookkeeping/invoice.service", () => ({ InvoiceService: jest.fn() }));
 jest.mock("../vendor-bills/vendor-bills.service", () => ({ VendorBillsService: jest.fn() }));
+jest.mock("../payment-requests/payment-requests.service", () => ({
+  PaymentRequestsService: jest.fn(),
+}));
 jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
 
 import { Reflector } from "@nestjs/core";
 import { InvoicesController } from "./invoices.controller";
 import { BookkeepingController } from "../bookkeeping/bookkeeping.controller";
+import { PaymentRequestsController } from "../payment-requests/payment-requests.controller";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { refDedupeFromRequest } from "./payment-ref-dedupe";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -63,6 +67,17 @@ describe("the staff payment routes pass the staff flag to the service", () => {
     });
   });
 
+  it("POST /payment-requests/:id/approve: the approving STAFF member's actor, role and flag (SA-837b item 2)", async () => {
+    const service = { approve: jest.fn() };
+    const c = new PaymentRequestsController(service as never);
+    await (c as any).approve("req-1", user, { recordAnyway: true });
+    expect(service.approve).toHaveBeenCalledWith(
+      "req-1",
+      { id: "user-1", username: undefined },
+      { actor: "user-1", role: "OPERATOR", recordAnyway: true },
+    );
+  });
+
   it("POST /bookkeeping/transactions/:id/payments", async () => {
     const service = { recordPayment: jest.fn() };
     const c = new BookkeepingController(service as never);
@@ -90,6 +105,7 @@ describe("the three routes are staff-only (a non-staff role is 403 before record
       BookkeepingController as never,
       "recordPayment",
     ],
+    ["POST /payment-requests/:id/approve", PaymentRequestsController as never, "approve"],
   ];
   it.each(routes)("%s", (_name, Cls, handler) => {
     for (const role of ["OPERATOR", "TENANT_ADMIN", "SUPER_ADMIN"])

@@ -37,7 +37,7 @@ jest.mock("../../common/db-locks", () => ({
   },
 }));
 
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { LockTimeoutError, LockUnavailableError } from "../../common/db-locks";
 import { PickupCompleteService } from "./pickup-complete.service";
@@ -927,6 +927,39 @@ describe("PickupCompleteService.complete", () => {
     it("a failed stamp never fails the hand-over", async () => {
       prisma.order.updateMany.mockRejectedValue(new Error("db down"));
       await expect(run()).resolves.toMatchObject({ orderId: "ord-1" });
+    });
+  });
+
+  describe("SA-837b: DUPLICATE_PAYMENT_REF reaches the hand-over dialog; Record anyway resends through the generic flag", () => {
+    const existingPayment = {
+      id: "pay-old",
+      paymentNumber: "PAY-A-0001",
+      paidAt: "2026-10-01T12:00:00.000Z",
+      amount: 37.25,
+      invoiceId: "inv-9",
+      invoiceNumber: "INV-0009",
+    };
+    it("a refused duplicate: the hand-over stands, unrecorded, with the cause and the existing payment", async () => {
+      recordPayment.mockRejectedValueOnce(
+        new ConflictException({ code: "DUPLICATE_PAYMENT_REF", message: "dup", existingPayment }),
+      );
+      const res = await run({ payment: { method: "CARD", amount: 37.25, reference: "4242" } });
+      expect(res).toMatchObject({
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+        paymentCauseCode: "DUPLICATE_PAYMENT_REF",
+        existingPayment,
+      });
+    });
+    it("payment.recordAnyway reaches recordPayment as the generic refDedupe flag, with the signed-in user", async () => {
+      await run({
+        payment: { method: "CARD", amount: 37.25, reference: "4242", recordAnyway: true },
+      });
+      expect(recordPayment.mock.calls[0][2].refDedupe).toEqual({
+        actor: "op-1",
+        role: "OPERATOR",
+        recordAnyway: true,
+      });
     });
   });
 });

@@ -1625,4 +1625,69 @@ describe("CounterSaleService.ring", () => {
       }
     });
   });
+
+  // ── SA-837b: the till's escape from a duplicate payment reference ─────────────────────────────
+  describe("SA-837b: DUPLICATE_PAYMENT_REF reaches the till, and Record anyway resends through the generic flag", () => {
+    const existingPayment = {
+      id: "pay-old",
+      paymentNumber: "PAY-A-0001",
+      paidAt: "2026-10-01T12:00:00.000Z",
+      amount: 37.25,
+      invoiceId: "inv-9",
+      invoiceNumber: "INV-0009",
+    };
+    const dupConflict = () =>
+      new ConflictException({
+        code: "DUPLICATE_PAYMENT_REF",
+        message: "dup",
+        existingPayment,
+      });
+
+    it("a refused duplicate keeps the sale unpaid and carries the cause + the existing payment through the response", async () => {
+      recordPayment.mockRejectedValueOnce(dupConflict());
+      const r = await service.ring(
+        named({ method: "CARD", reference: "4242" }) as never,
+        staff,
+        "k",
+      );
+      expect(r).toMatchObject({
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+        paymentCauseCode: "DUPLICATE_PAYMENT_REF",
+        existingPayment,
+      });
+    });
+
+    it("any other tender failure carries no duplicate cause", async () => {
+      recordPayment.mockRejectedValueOnce(new BadRequestException("nope"));
+      const r: any = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(r.paymentRecorded).toBe(false);
+      expect(r.paymentCauseCode).toBeUndefined();
+      expect(r.existingPayment).toBeUndefined();
+    });
+
+    it("the staff cashier's payment.recordAnyway is the generic refDedupe flag on every recordPayment (actor + role from the signed-in user)", async () => {
+      await service.ring(
+        named({ method: "CARD", reference: "4242", recordAnyway: true }) as never,
+        staff,
+        "k",
+      );
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        expect.any(Object),
+        expect.objectContaining({
+          refDedupe: { actor: "op-1", role: "OPERATOR", recordAnyway: true },
+        }),
+      );
+    });
+
+    it("without the flag the call still names the user, so the writer can judge the role", async () => {
+      await service.ring(named({ method: "CARD", reference: "4242" }) as never, staff, "k");
+      expect(recordPayment.mock.calls[0][2].refDedupe).toEqual({
+        actor: "op-1",
+        role: "OPERATOR",
+        recordAnyway: false,
+      });
+    });
+  });
 });

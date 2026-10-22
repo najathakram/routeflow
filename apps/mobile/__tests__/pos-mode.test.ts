@@ -7,6 +7,7 @@ import {
   POS_MODE_PREF_KEY,
   pickupCompleteErrorCopy,
   decidePickupResponse,
+  withPickupRecordAnyway,
   pendingRefusalIsDone,
   planPosTender,
   posConfirmStepsAfterPending,
@@ -290,6 +291,44 @@ describe("pickup-complete 200 response decision (money)", () => {
     expect((d as { message: string }).message).toBe(
       "A walk-in customer must pay the full balance.",
     );
+  });
+  describe("SA-837b: a duplicate payment reference on the hand-over", () => {
+    const dup = {
+      paymentRecorded: false,
+      paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      paymentCauseCode: "DUPLICATE_PAYMENT_REF",
+      existingPayment: {
+        id: "pay-1",
+        paymentNumber: "PAY-A-0001",
+        paidAt: "2026-10-01T12:00:00.000Z",
+        amount: 40,
+        invoiceId: "inv-9",
+        invoiceNumber: "INV-0042",
+      },
+    };
+    const SENTENCE =
+      "A payment with this reference was already recorded on Oct 1, 2026 for $40.00 (INV-0042).";
+    it("returns to the tender step with the SAME key, the shared sentence, and Record anyway for staff", () => {
+      expect(decidePickupResponse(res(dup), "OPERATOR")).toMatchObject({
+        kind: "duplicate-ref",
+        releaseKey: false,
+        owed: 40,
+        message: SENTENCE,
+        recordAnywayLabel: "Record anyway",
+      });
+    });
+    it("a role that may not use the flag gets the sentence and no action", () => {
+      expect(decidePickupResponse(res(dup), "DRIVER")).toMatchObject({
+        kind: "duplicate-ref",
+        message: SENTENCE,
+        recordAnywayLabel: null,
+      });
+    });
+    it("the resend body is the same hand-over with payment.recordAnyway", () => {
+      expect(
+        withPickupRecordAnyway({ payment: { method: "CARD", amount: 40, reference: "4242" } }),
+      ).toEqual({ payment: { method: "CARD", amount: 40, reference: "4242", recordAnyway: true } });
+    });
   });
   it("any other unrecorded payment is done (hand-over committed) but says so, and releases the key", () => {
     const d = decidePickupResponse(res({ paymentRecorded: false, paymentErrorCode: "SOMETHING" }));

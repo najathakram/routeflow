@@ -13,11 +13,18 @@ jest.mock("../storage/compress.util", () => ({
 // payment-ref lock is held (the pinned lock order: merge BEFORE payment-ref).
 const mockEvents: string[] = [];
 const mockHeld: string[] = [];
+/** SA-837b item 4: how many of the next lock attempts abort with a Postgres deadlock (40P01). */
+let mockLockFailures = 0;
 jest.mock("../common/db-locks", () => ({
   ...jest.requireActual("../common/db-locks"),
   withAdvisoryLock: jest.fn(async (opts: { family: string; key: string }, fn: () => unknown) => {
     if (opts.family === "order-merge" && mockHeld.includes("payment-ref"))
       throw new Error("LOCK ORDER INVERTED: order-merge taken inside payment-ref");
+    if (mockLockFailures > 0) {
+      mockLockFailures -= 1;
+      mockEvents.push("lock:fail");
+      throw Object.assign(new Error("deadlock detected"), { code: "40P01" });
+    }
     mockEvents.push(`lock:${opts.family}:${opts.key}`);
     mockHeld.push(opts.family);
     try {
@@ -111,6 +118,7 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
     rawLog = mockEvents;
     rawLog.length = 0;
     mockHeld.length = 0;
+    mockLockFailures = 0;
     invoiceDir = {
       "inv-1": { customerId: "cust-1", invoiceNumber: "INV-0001" },
       "inv-2": { customerId: "cust-1", invoiceNumber: "INV-0002" },
@@ -181,7 +189,15 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
             invoiceDir[p.invoiceId]?.customerId === cust &&
             p.method === a.where.method &&
             p.status !== "VOID" &&
-            p.reference != null,
+            p.reference != null &&
+            // M4: the cheap DB prefilter: the same amount, or a member of a payment group
+            (a.where.OR
+              ? a.where.OR.some(
+                  (c: any) =>
+                    (c.amount !== undefined && Number(p.amount) === Number(c.amount)) ||
+                    (c.paymentGroupId !== undefined && p.paymentGroupId != null),
+                )
+              : true),
         )
         .map((p) => ({ ...p, invoice: { invoiceNumber: invoiceDir[p.invoiceId].invoiceNumber } }));
     });
@@ -506,6 +522,121 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
       const err = await dupOf(
         record("inv-2", { method: "CARD", reference: "4242" }, { tillLockHeld: true }),
       );
+      expect(err?.getResponse?.()).toMatchObject({ code: DUP });
+    });
+  });
+
+  describe("SA-837b item 4: every payment-ref lock path runs inside the transaction-retry wrapper", () => {
+    it("(R1) a Postgres deadlock abort (40P01) of the first try is retried: recorded once", async () => {
+      mockLockFailures = 1;
+      await record("inv-1");
+      expect(committed().pays).toHaveLength(1);
+      expect(rawLog.filter((s) => s === "lock:fail")).toHaveLength(1);
+      expect(rawLog.filter((s) => s.startsWith("lock:payment-ref"))).toHaveLength(1);
+    });
+
+    it("(R2) retries exhausted: a retryable 503 LOCK_UNAVAILABLE and nothing recorded", async () => {
+      mockLockFailures = 9;
+      const err = await dupOf(record("inv-1"));
+      expect(err?.getStatus?.()).toBe(503);
+      expect(err.getResponse()).toMatchObject({ code: "LOCK_UNAVAILABLE" });
+      expect(committed().pays).toHaveLength(0);
+    });
+
+    it("(R3) the standalone writer's lock path retries too", async () => {
+      mockLockFailures = 1;
+      await invoices.recordStandalonePayment(
+        {
+          customerId: "cust-1",
+          totalAmount: 100,
+          method: "CHECK",
+          reference: "CHK-7788",
+          paidAt: "2026-10-01",
+          allocations: [{ invoiceId: "inv-1", amount: 100 }],
+        } as any,
+        {} as any,
+      );
+      expect(committed().pays).toHaveLength(1);
+    });
+  });
+
+  describe("M4: the candidate read is prefiltered in the database", () => {
+    it("asks for the same amount, or a member of a payment group, never every referenced payment of the customer", async () => {
+      await record("inv-1", { amount: 100 });
+      prisma.invoicePayment.findMany.mockClear();
+      await record("inv-2", { amount: 55.5, reference: "OTHER-1" });
+      const call = prisma.invoicePayment.findMany.mock.calls.find((c) => c[0]?.where?.invoice);
+      expect(call![0].where.OR).toEqual([{ amount: 55.5 }, { paymentGroupId: { not: null } }]);
+    });
+  });
+
+  describe("SA-837b item 1: Stripe-captured money is recorded and flagged, never refused", () => {
+    const capture = (sourceRef: string) => ({
+      capturedExternally: { source: "STRIPE", sourceRef, suspects: [] as any[] },
+    });
+    const card = (over: Record<string, unknown> = {}) =>
+      ({
+        customerId: "cust-1",
+        totalAmount: 100,
+        method: "CREDIT_CARD",
+        reference: " PI_3ABC ",
+        paidAt: "2026-10-01",
+        allocations: [{ invoiceId: "inv-1", amount: 100 }],
+        ...over,
+      }) as any;
+    const suspectAudits = () =>
+      committed().audits.filter((a) => String(a.action) === "payment.ref-duplicate-suspect");
+
+    it("(E1) a capture that repeats an existing payment's normalised reference + amount is RECORDED, flagged by one audit row and a suspect, never 409", async () => {
+      await invoices.recordStandalonePayment(card(), {} as any); // a manual repeat-able payment
+      const opts = capture("pi_3Abc"); // the exact-equal check below is by RAW text; this differs in case/spaces
+      const res: any = await invoices.recordStandalonePayment(
+        card({ reference: "pi_3Abc" }),
+        opts as any,
+      );
+      expect(res.paymentGroupId).toBeTruthy();
+      expect(committed().pays).toHaveLength(2);
+      expect(suspectAudits()).toHaveLength(1);
+      expect(suspectAudits()[0].meta).toMatchObject({
+        source: "STRIPE",
+        paymentIntentId: "pi_3Abc",
+        duplicateOfPaymentId: "pay-1",
+        normalisedRef: "PI_3ABC",
+      });
+      expect(opts.capturedExternally.suspects).toEqual([
+        expect.objectContaining({
+          duplicateOfPaymentId: "pay-1",
+          invoiceId: "inv-1",
+          paymentIds: ["pay-2"],
+        }),
+      ]);
+    });
+
+    it("(E2) the SAME payment intent already recorded: a PaymentAlreadyRecordedError naming its group, nothing written", async () => {
+      const first: any = await invoices.recordStandalonePayment(
+        card({ reference: "pi_3Abc" }),
+        capture("pi_3Abc") as any,
+      );
+      const err: any = await invoices
+        .recordStandalonePayment(card({ reference: "pi_3Abc" }), capture("pi_3Abc") as any)
+        .catch((e) => e);
+      expect(err?.name).toBe("PaymentAlreadyRecordedError");
+      expect(err.paymentGroupId).toBe(first.paymentGroupId);
+      expect(committed().pays).toHaveLength(1);
+      expect(suspectAudits()).toHaveLength(0);
+    });
+
+    it("(E3) a capture with nothing to repeat records quietly: no audit row, no suspect", async () => {
+      const opts = capture("pi_new");
+      await invoices.recordStandalonePayment(card({ reference: "pi_new" }), opts as any);
+      expect(committed().pays).toHaveLength(1);
+      expect(suspectAudits()).toHaveLength(0);
+      expect(opts.capturedExternally.suspects).toHaveLength(0);
+    });
+
+    it("(E4) the exemption is structural: the same repeat from a manual caller (recordAnyway or not) is still 409 without it", async () => {
+      await invoices.recordStandalonePayment(card(), {} as any);
+      const err: any = await invoices.recordStandalonePayment(card(), {} as any).catch((e) => e);
       expect(err?.getResponse?.()).toMatchObject({ code: DUP });
     });
   });

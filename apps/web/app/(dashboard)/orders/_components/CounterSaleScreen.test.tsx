@@ -17,7 +17,11 @@ import {
  * unavailable), FIXED error copy, the capability-driven "Ship this order instead", and an always-focused scan field.
  */
 
-let authUser: { id: string; tenantSlug: string | null } | null = { id: "u-a", tenantSlug: "acme" };
+let authUser: { id: string; tenantSlug: string | null; role?: string } | null = {
+  id: "u-a",
+  tenantSlug: "acme",
+  role: "OPERATOR",
+};
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useOptionalAuth: () => ({ user: authUser }),
@@ -70,7 +74,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   window.localStorage.clear();
   window.sessionStorage.clear();
-  authUser = { id: "u-a", tenantSlug: "acme" };
+  authUser = { id: "u-a", tenantSlug: "acme", role: "OPERATOR" };
   window.print = printSpy;
   customersFor = [];
   productFor = { "012345678905": COLA, WATER: WATER_CASE, ONE: ONE_PACK };
@@ -2591,5 +2595,86 @@ describe("digital receipt on the live receipt (SA-751r)", () => {
     expect(screen.getByRole("button", { name: "Email receipt" }).className).not.toBe(
       screen.getByRole("button", { name: "Print" }).className,
     );
+  });
+});
+
+describe("CounterSaleScreen: SA-837b the till's Record anyway on a duplicate payment reference", () => {
+  const SENTENCE =
+    "A payment with this reference was already recorded on Oct 1, 2026 for $2.50 (INV-0042).";
+  const unrecordedDup = {
+    orderId: "o1",
+    orderNumber: "ORD-1",
+    invoiceId: "i1",
+    invoiceNumber: "INV-1",
+    total: 2.5,
+    paid: 0,
+    balanceDue: 2.5,
+    method: "CARD",
+    paymentRecorded: false,
+    paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+    paymentCauseCode: "DUPLICATE_PAYMENT_REF",
+    existingPayment: {
+      id: "pay-1",
+      paymentNumber: "PAY-A-0001",
+      paidAt: "2026-10-01T12:00:00.000Z",
+      amount: 2.5,
+      invoiceId: "inv-9",
+      invoiceNumber: "INV-0042",
+    },
+  };
+  const ringCard = async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    fireEvent.change(screen.getByLabelText("Reference"), { target: { value: "4242" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+  };
+
+  it("shows the shared duplicate sentence on the not-recorded state, and Record anyway re-sends the SAME key with payment.recordAnyway", async () => {
+    mutateAsync.mockResolvedValueOnce(unrecordedDup);
+    mutateAsync.mockResolvedValueOnce({
+      ...unrecordedDup,
+      paid: 2.5,
+      balanceDue: 0,
+      paymentRecorded: true,
+      paymentErrorCode: undefined,
+      paymentCauseCode: undefined,
+      existingPayment: undefined,
+      replayed: true,
+    });
+    await ringCard();
+    const panel = await screen.findByTestId("counter-payment-not-recorded");
+    expect(within(panel).getByText(SENTENCE)).toBeInTheDocument();
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Record anyway" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+    const [first, second] = mutateAsync.mock.calls.map((c) => c[0]);
+    expect(second.idempotencyKey).toBe(first.idempotencyKey); // the same sale, never a new one
+    expect(first.dto.payment).not.toHaveProperty("recordAnyway");
+    expect(second.dto.payment).toEqual({ ...first.dto.payment, recordAnyway: true });
+    expect(second.dto.items).toEqual(first.dto.items);
+    await waitFor(() => expect(screen.queryByTestId("counter-payment-not-recorded")).toBeNull());
+  });
+
+  it("a role that may not use the flag sees the sentence and no Record anyway", async () => {
+    authUser = { id: "u-a", tenantSlug: "acme", role: "DRIVER" };
+    mutateAsync.mockResolvedValueOnce(unrecordedDup);
+    await ringCard();
+    const panel = await screen.findByTestId("counter-payment-not-recorded");
+    expect(within(panel).getByText(SENTENCE)).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Record anyway" })).toBeNull();
+  });
+
+  it("any other not-recorded state keeps the plain panel (no sentence, no Record anyway)", async () => {
+    mutateAsync.mockResolvedValueOnce({
+      ...unrecordedDup,
+      paymentCauseCode: undefined,
+      existingPayment: undefined,
+    });
+    await ringCard();
+    const panel = await screen.findByTestId("counter-payment-not-recorded");
+    expect(within(panel).queryByRole("button", { name: "Record anyway" })).toBeNull();
+    expect(within(panel).queryByText(SENTENCE)).toBeNull();
   });
 });
