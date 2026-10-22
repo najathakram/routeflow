@@ -13,6 +13,8 @@ export const WITH_CARRIER_COPY =
  * "Cancel Order". When the server says the parcel is with the carrier (`cancelBlockedReason`), there is
  * no button, only the explanation: cancelling would put its stock back while the parcel is still out.
  * The reason is the server's one answer (B1083); the web never derives it from the status.
+ * Destructive, so an outline with red text (as the buyer's order detail has it): the filled button
+ * beside it is the one primary action (apple-ux r3 Q15).
  */
 export function CancelOrderButton({
   blockedReason,
@@ -29,7 +31,12 @@ export function CancelOrderButton({
     );
   }
   return (
-    <Button size="sm" variant="danger" leftIcon={<XCircle className="h-4 w-4" />} onClick={onClick}>
+    <Button
+      size="sm"
+      variant="danger-outline"
+      leftIcon={<XCircle className="h-4 w-4" />}
+      onClick={onClick}
+    >
       Cancel Order
     </Button>
   );

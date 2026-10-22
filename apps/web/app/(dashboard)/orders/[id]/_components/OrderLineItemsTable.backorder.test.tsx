@@ -62,22 +62,68 @@ describe("Backorder tag, card renderer", () => {
 });
 
 describe("F02 / F30: the reason is visible text, not hover-only", () => {
-  it("table renderer: 'Backorder · 3 pcs past stock'", () => {
+  it("table renderer: 'Backorder · 3 pcs'", () => {
     table(line({ backorderedPieces: "3" }));
-    expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent(
-      "Backorder · 3 pcs past stock",
-    );
+    expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent("Backorder · 3 pcs");
   });
   it("card renderer says the same", () => {
     render(<LineItemRowReadOnly {...lineRowProps(line({ backorderedPieces: "3" }), "PENDING")} />);
-    expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent(
-      "Backorder · 3 pcs past stock",
-    );
+    expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent("Backorder · 3 pcs");
   });
   it("one piece reads singular", () => {
     table(line({ backorderedPieces: "1" }));
-    expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent(
-      "Backorder · 1 pc past stock",
+    expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent("Backorder · 1 pc");
+  });
+});
+
+/** R3 Q17 / F14 (L-332): the pill reads in the unit the line was sold in, on its own no-wrap line. */
+describe("R3: backorder pill in the line's own unit, on its own line", () => {
+  const caseLine = (over: Record<string, unknown> = {}) =>
+    line({
+      boxes: 2,
+      pieces: 0,
+      qty: 24,
+      unitsPerBox: 12,
+      unitLabel: "Case",
+      backorderedPieces: "24",
+      ...over,
+    });
+
+  it("a case line says cases, not the pieces behind them (table)", () => {
+    table(caseLine());
+    expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent(/^Backorder · 2 cases$/);
+  });
+  it("a case line says cases (card renderer)", () => {
+    render(<LineItemRowReadOnly {...lineRowProps(caseLine(), "PENDING")} />);
+    expect(screen.getByTestId("line-backorder-tag")).toHaveTextContent(/^Backorder · 2 cases$/);
+  });
+  it("the meaning is visible text beside the pill, not only a hover title (table)", () => {
+    table(caseLine());
+    expect(screen.getByText("Ships when stock arrives")).toBeVisible();
+  });
+  it("the meaning is visible text beside the pill (card renderer)", () => {
+    render(<LineItemRowReadOnly {...lineRowProps(caseLine(), "PENDING")} />);
+    expect(screen.getByText("Ships when stock arrives")).toBeVisible();
+  });
+  it("the hover title also reads in cases", () => {
+    table(caseLine());
+    expect(screen.getByTestId("line-backorder-tag")).toHaveAttribute(
+      "title",
+      "2 cases sold past stock",
     );
+  });
+  it("the pill never wraps and sits on its own line under the name, not inside it", () => {
+    table(caseLine());
+    const pill = screen.getByTestId("line-backorder-tag");
+    expect(pill).toHaveClass("whitespace-nowrap");
+    const name = screen.getByText("Sample Cola 12oz");
+    expect(name.contains(pill)).toBe(false);
+    expect(pill.parentElement).not.toBe(name.parentElement);
+    expect(pill.parentElement).toHaveClass("flex");
+    expect(name.compareDocumentPosition(pill) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+  it("no pill, no hint, when nothing is backordered", () => {
+    table(caseLine({ backorderedPieces: "0" }));
+    expect(screen.queryByText("Ships when stock arrives")).toBeNull();
   });
 });
