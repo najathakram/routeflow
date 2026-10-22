@@ -273,6 +273,14 @@ function isSameAttemptRefusal(err: any): boolean {
   return (parseRegulatedAuthError(err)?.length ?? 0) > 0;
 }
 
+/**
+ * N05: how long after the "Open order exists" prompt mounts that Enter/Space will not activate its buttons.
+ * The pre-check opens the prompt synchronously inside the Create Order click, so an Enter/Space pressed "at
+ * once" lands after the mount as a FRESH keydown that the held-key lineage cannot tell from a deliberate one.
+ * No operator reads and answers a dialog in 300 ms; a deliberate press after the window works as before.
+ */
+export const MERGE_PROMPT_KEY_GUARD_MS = 300;
+
 export function CreateOrderModal({
   isOpen,
   onClose,
@@ -441,10 +449,12 @@ export function CreateOrderModal({
   // are physically held at the moment of opening ("stale") and swallow only those: until the key's
   // keyup, or until a fresh non-repeat keydown starts a new press. Native capture listeners, so
   // they run before React's and before the browser's default action (Enter clicks at keydown/
-  // keypress, Space at keyup). A deliberate press, a pointer click and Tab/Escape are untouched.
+  // keypress, Space at keyup). Second layer: for MERGE_PROMPT_KEY_GUARD_MS after the mount no Enter/Space activates
+  // the buttons at all (the pre-check path, where the key is a fresh keydown). A pointer click and Tab/Escape are untouched.
   const promptFooterRef = React.useRef<HTMLDivElement>(null);
   const heldKeysRef = React.useRef<Set<string>>(new Set());
   const staleKeysRef = React.useRef<Set<string>>(new Set());
+  const promptOpenedAtRef = React.useRef(Number.NEGATIVE_INFINITY); // performance.now() when the prompt mounted
   const mergePromptOpen = mergePrompt !== null;
   React.useEffect(() => {
     if (!isOpen) return;
@@ -452,19 +462,28 @@ export function CreateOrderModal({
     const stale = staleKeysRef.current;
     const inPrompt = (t: EventTarget | null) =>
       t instanceof Node && !!promptFooterRef.current?.contains(t);
+    const isActivationKey = (k: string) => k === "Enter" || k === " ";
+    // Post-mount guard: the pre-check mounts the prompt inside the click, so an Enter/Space pressed "at once" is a
+    // FRESH keydown after the mount that the lineage cannot tell from a deliberate one. A timestamp, not a timer.
+    const inGuardWindow = () =>
+      performance.now() - promptOpenedAtRef.current < MERGE_PROMPT_KEY_GUARD_MS;
     const onKeyDown = (e: KeyboardEvent) => {
       held.add(e.key);
-      if (!e.repeat)
-        stale.delete(e.key); // a new press started after the open: it is deliberate
-      else if (stale.has(e.key) && inPrompt(e.target)) e.preventDefault();
+      if (!e.repeat) stale.delete(e.key); // a new press started after the open: deliberate once the window is over
+      if (!isActivationKey(e.key) || !inPrompt(e.target)) return;
+      if (inGuardWindow()) stale.add(e.key); // a press that began inside the window stays swallowed until its keyup
+      if (stale.has(e.key)) e.preventDefault();
     };
     const onKeyUp = (e: KeyboardEvent) => {
-      if (stale.has(e.key) && inPrompt(e.target)) e.preventDefault(); // Space clicks on keyup
+      // Space clicks on keyup: cancel it for a stale press and for any key activation inside the window.
+      if (isActivationKey(e.key) && inPrompt(e.target) && (stale.has(e.key) || inGuardWindow()))
+        e.preventDefault();
       held.delete(e.key);
       stale.delete(e.key);
     };
     const onClick = (e: MouseEvent) => {
-      // detail 0 = keyboard-made (a pointer click has detail >= 1); only while a stale key is down.
+      // detail 0 = keyboard-made (a pointer click has detail >= 1); only while a stale/swallowed key is down
+      // (a programmatic or assistive click with no key involved is left alone).
       if (e.detail === 0 && stale.size > 0 && inPrompt(e.target)) {
         e.preventDefault();
         e.stopPropagation();
@@ -491,6 +510,7 @@ export function CreateOrderModal({
   React.useLayoutEffect(() => {
     const stale = staleKeysRef.current;
     stale.clear();
+    promptOpenedAtRef.current = mergePromptOpen ? performance.now() : Number.NEGATIVE_INFINITY;
     if (mergePromptOpen) {
       for (const k of heldKeysRef.current) if (k === "Enter" || k === " ") stale.add(k);
     }

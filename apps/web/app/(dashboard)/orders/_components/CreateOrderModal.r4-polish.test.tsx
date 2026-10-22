@@ -1,7 +1,7 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
-import { CreateOrderModal } from "./CreateOrderModal";
+import { CreateOrderModal, MERGE_PROMPT_KEY_GUARD_MS } from "./CreateOrderModal";
 
 /**
  * Orders apple-ux r4 gap-closer (PR-F), Create Order dialog:
@@ -112,6 +112,21 @@ async function scanLine(code: string, name: string) {
   await screen.findByText(name);
 }
 
+// N05: the merge prompt ignores Enter/Space for MERGE_PROMPT_KEY_GUARD_MS after it mounts (a mount timestamp from
+// performance.now, no timers). A deliberate key press in a test must come AFTER that window, so the clock is
+// controllable: pastKeyGuard() jumps it forward instead of really waiting.
+let clockSkew = 0;
+const realNow = performance.now.bind(performance);
+let nowSpy: jest.SpyInstance;
+const pastKeyGuard = () => {
+  clockSkew += MERGE_PROMPT_KEY_GUARD_MS + 50;
+};
+beforeEach(() => {
+  clockSkew = 0;
+  nowSpy = jest.spyOn(performance, "now").mockImplementation(() => realNow() + clockSkew);
+});
+afterEach(() => nowSpy.mockRestore());
+
 beforeEach(() => {
   jest.clearAllMocks();
   activeOrder = undefined;
@@ -205,6 +220,7 @@ describe("N02: the Open order exists prompt is keyboard-first", () => {
     const prompt = await openPrompt();
     const merge = within(prompt).getByRole("button", { name: /merge into ORD-1/i });
     await waitFor(() => expect(merge).toHaveFocus());
+    pastKeyGuard();
     await user.keyboard("{Enter}");
     expect(createOrderMutate).toHaveBeenCalledTimes(1);
     expect(createOrderMutate.mock.calls[0][0]).toMatchObject({ mergeChoice: "merge" });
@@ -217,6 +233,7 @@ describe("N02: the Open order exists prompt is keyboard-first", () => {
     await waitFor(() => expect(merge).toHaveFocus());
     await user.tab();
     expect(within(prompt).getByRole("button", { name: /create as separate/i })).toHaveFocus();
+    pastKeyGuard();
     await user.keyboard("{Enter}");
     expect(createOrderMutate).toHaveBeenCalledTimes(1);
     expect(createOrderMutate.mock.calls[0][0]).toMatchObject({ mergeChoice: "separate" });
@@ -308,6 +325,7 @@ describe("N05: the Open order exists prompt does not take the key press that ope
     fireEvent.keyDown(create, { key: "Enter", code: "Enter" });
     const { merge } = await showPrompt();
     fireEvent.keyUp(merge, { key: "Enter", code: "Enter" }); // the stale press is over
+    pastKeyGuard();
     await user.keyboard("{Enter}");
     expect(createOrderMutate).toHaveBeenCalledTimes(2);
     expect(createOrderMutate.mock.calls[1][0]).toMatchObject({ mergeChoice: "merge" });
@@ -317,6 +335,7 @@ describe("N05: the Open order exists prompt does not take the key press that ope
     const user = userEvent.setup();
     await openVia409();
     await showPrompt();
+    pastKeyGuard();
     await user.keyboard("{Enter}"); // keydown + keypress/click + keyup, all after the open
     expect(createOrderMutate).toHaveBeenCalledTimes(2);
     expect(createOrderMutate.mock.calls[1][0]).toMatchObject({ mergeChoice: "merge" });
@@ -348,9 +367,96 @@ describe("N05: the Open order exists prompt does not take the key press that ope
     const { prompt } = await showPrompt();
     await user.tab();
     expect(within(prompt).getByRole("button", { name: /create as separate/i })).toHaveFocus();
+    pastKeyGuard();
     await user.keyboard("{Enter}");
     expect(createOrderMutate).toHaveBeenCalledTimes(2);
     expect(createOrderMutate.mock.calls[1][0]).toMatchObject({ mergeChoice: "separate" });
+  });
+});
+
+describe("N05: the pre-check opens the prompt inside the click; an Enter/Space right after must not take it", () => {
+  /**
+   * The real-browser repro (Playwright: click Create Order, then press Enter/Space at once). The client already
+   * knows the open order (`activeOrder`), so there is NO 409: the prompt mounts synchronously in the click and the
+   * key arrives afterwards as a fresh, non-repeat keydown, which the held-key lineage rightly treats as new. jsdom has
+   * no default actions, so each step honours preventDefault: Enter's click is made at keydown, Space's at keyup.
+   */
+  const openViaPreCheck = async () => {
+    activeOrder = { id: "o1", orderNumber: "ORD-1", status: "PENDING", itemCount: 1, total: 40 };
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    await scanLine("111", "Widget");
+    const create = screen.getByRole("button", { name: "Create Order" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create); // the prompt mounts right here, no request
+    const prompt = await screen.findByRole("dialog", { name: "Open order exists" });
+    const merge = within(prompt).getByRole("button", { name: /merge into ORD-1/i });
+    await waitFor(() => expect(merge).toHaveFocus());
+    expect(createOrderMutate).not.toHaveBeenCalled();
+    return { prompt, merge };
+  };
+  const stillOpenAndUnmerged = () => {
+    expect(createOrderMutate).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Open order exists" })).toBeInTheDocument();
+  };
+
+  it("Enter keydown, keyboard click and keyup inside the window do not merge", async () => {
+    const { merge } = await openViaPreCheck();
+    const down = fireEvent.keyDown(merge, { key: "Enter", code: "Enter" });
+    if (down) fireEvent.click(merge, { detail: 0 }); // the browser clicks on Enter's keydown unless cancelled
+    fireEvent.click(merge, { detail: 0 }); // ...and even if it clicked anyway, it is swallowed
+    fireEvent.keyUp(merge, { key: "Enter", code: "Enter" });
+    stillOpenAndUnmerged();
+    expect(down).toBe(false);
+  });
+
+  it("Space (activates on keyup) inside the window does not merge", async () => {
+    const { merge } = await openViaPreCheck();
+    fireEvent.keyDown(merge, { key: " ", code: "Space" });
+    const up = fireEvent.keyUp(merge, { key: " ", code: "Space" });
+    if (up) fireEvent.click(merge, { detail: 0 }); // Space clicks on keyup unless cancelled
+    stillOpenAndUnmerged();
+    expect(up).toBe(false);
+  });
+
+  it("a Space pressed inside the window but released after it still does not merge", async () => {
+    const { merge } = await openViaPreCheck();
+    fireEvent.keyDown(merge, { key: " ", code: "Space" });
+    pastKeyGuard();
+    const up = fireEvent.keyUp(merge, { key: " ", code: "Space" });
+    if (up) fireEvent.click(merge, { detail: 0 });
+    stillOpenAndUnmerged();
+  });
+
+  it("a fresh Enter after the window merges (N02 kept)", async () => {
+    const user = userEvent.setup();
+    const { merge } = await openViaPreCheck();
+    fireEvent.keyDown(merge, { key: "Enter", code: "Enter" }); // the impatient one, swallowed
+    fireEvent.keyUp(merge, { key: "Enter", code: "Enter" });
+    pastKeyGuard();
+    await user.keyboard("{Enter}");
+    expect(createOrderMutate).toHaveBeenCalledTimes(1);
+    expect(createOrderMutate.mock.calls[0][0]).toMatchObject({ mergeChoice: "merge" });
+  });
+
+  it("a mouse click on Merge inside the window merges at once", async () => {
+    const user = userEvent.setup();
+    const { merge } = await openViaPreCheck();
+    await user.click(merge);
+    expect(createOrderMutate).toHaveBeenCalledTimes(1);
+    expect(createOrderMutate.mock.calls[0][0]).toMatchObject({ mergeChoice: "merge" });
+  });
+
+  it("Escape inside the window still cancels, and Tab still reaches Separate", async () => {
+    const user = userEvent.setup();
+    const { prompt } = await openViaPreCheck();
+    await user.tab();
+    expect(within(prompt).getByRole("button", { name: /create as separate/i })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Open order exists" })).not.toBeInTheDocument(),
+    );
+    expect(createOrderMutate).not.toHaveBeenCalled();
   });
 });
 
