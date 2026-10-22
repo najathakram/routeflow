@@ -236,7 +236,7 @@ describe("CustomerRecordPaymentModal: Check payment status (SA-824)", () => {
     // The lock lands between render and click (no re-render yet): the button is still enabled.
     const holder = acquirePaymentKeyHolder("standalone:cust-1");
     holder.keyFor({ amount: 50, method: "CASH" });
-    holder.settle({ ok: false, error: httpErr(503) });
+    holder.settle(holder.peek()!, { ok: false, error: httpErr(503) });
     expect(screen.getByRole("button", { name: "Save as Paid" })).not.toBeDisabled();
     save();
     await Promise.resolve();

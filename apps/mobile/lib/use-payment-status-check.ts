@@ -1,9 +1,23 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { paymentStatusCopy, type PaymentStatusOutcome } from "@routeflow/types/payment-submit-key";
 import { resolvePaymentByKey } from "./api/payment-by-key";
 import { checkPaymentStatus } from "./payment-status-check";
 import type { PaymentKeyHolder } from "./payment-submit-key";
+
+/**
+ * Whether the screen treats the outcome as unknown: the key is locked, or a request is still in flight that this
+ * screen did NOT send itself (it opened while the holder already had one out: back + reopen). Its own pending
+ * Save is not shown as "we couldn't confirm". Re-renders on every holder change, so a late settle of the first
+ * request reaches a reopened screen.
+ */
+export function useHolderUnknown(holder: PaymentKeyHolder): boolean {
+  const [, bump] = useReducer((n: number) => n + 1, 0);
+  const inherited = useRef<boolean | null>(null);
+  if (inherited.current === null) inherited.current = holder.hasUnknown();
+  useEffect(() => holder.subscribe(bump), [holder]);
+  return holder.isLocked() || (holder.inFlight() && inherited.current);
+}
 
 /**
  * SA-824: the mobile side of "Check payment status". While `unknown` the screen keeps Save off and shows
@@ -40,7 +54,7 @@ export function usePaymentStatusCheck(
       setChecking(false);
     }
   }, [holder, scope, upload, qc, onRecorded]);
-  const unknown = holder.hasUnknown();
+  const unknown = useHolderUnknown(holder);
   // The last answer's fixed line; while unknown only a no-answer line shows (error, in flight), so a newer
   // unknown outcome hides a stale "cancelled" or "recorded".
   const message =

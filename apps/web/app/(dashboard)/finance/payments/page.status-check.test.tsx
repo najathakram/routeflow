@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { act, fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import {
   acquirePaymentKeyHolder,
   clearPaymentKeyRegistry,
@@ -215,11 +215,38 @@ describe("finance/payments Record Payment: Check payment status (SA-824)", () =>
     await waitFor(() => expect(mockResolve).toHaveBeenCalledWith(resolveUrl(sent)));
   });
 
+  it("MUST-1: Save -> Cancel -> reopen while the request is out -> K1 times out: Save off, the check offered, the SAME key", async () => {
+    let timeOut!: (e: unknown) => void;
+    mockPost.mockImplementationOnce(() => new Promise((_, rej) => (timeOut = rej)));
+    await openModal();
+    save();
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    const k1 = keyOf(mockPost.mock.calls[0]);
+    // Cancel is enabled while the save is pending; the modal unmounts and is reopened
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("heading", { name: "Record Payment" })).toBeNull();
+    fireEvent.click(screen.getAllByRole("button", { name: /Record Payment/ })[0]);
+    // the reopened dialog sees the request still out: unknown, so Save is off and the check is offered
+    expect(checkBtn()).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    // the first request now times out (no response)
+    await act(async () => {
+      timeOut(Object.assign(new Error("timeout of 15000ms exceeded"), { code: "ECONNABORTED" }));
+    });
+    await waitFor(() => expect(mockToast).toHaveBeenCalled());
+    expect(checkBtn()).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(acquirePaymentKeyHolder("standalone:payments-page").peek()).toBe(k1);
+    fireEvent.click(checkBtn());
+    await waitFor(() => expect(mockResolve).toHaveBeenCalledWith(resolveUrl(k1)));
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
   it("the submit handler re-checks the unknown lock (not only the disabled prop)", async () => {
     await openModal();
     const holder = acquirePaymentKeyHolder("standalone:payments-page");
     holder.keyFor({ amount: 50, method: "CASH" });
-    holder.settle({ ok: false, error: httpErr(503) });
+    holder.settle(holder.peek()!, { ok: false, error: httpErr(503) });
     expect(screen.getByRole("button", { name: "Save as Paid" })).not.toBeDisabled();
     save();
     await Promise.resolve();

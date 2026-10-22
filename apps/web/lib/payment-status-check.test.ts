@@ -27,7 +27,7 @@ const conflict = () => err(409, { code: "IDEMPOTENCY_KEY_CONFLICT", reason: "PAY
 const unknownHolder = () => {
   const h = createPaymentKeyHolder(mintSeq());
   h.keyFor(pay);
-  h.settle({ ok: false, error: err(503) });
+  h.settle(h.peek()!, { ok: false, error: err(503) });
   return h;
 };
 
@@ -36,26 +36,26 @@ describe("SA-824 payment status check (shared holder, resolve)", () => {
     const h = createPaymentKeyHolder(mintSeq());
     expect(h.hasUnknown()).toBe(false);
     h.keyFor(pay);
-    h.settle({ ok: false, error: err() });
+    h.settle(h.peek()!, { ok: false, error: err() });
     expect(h.hasUnknown()).toBe(true);
     h.reset(); // a reopen must not drop the unknown outcome
     expect(h.hasUnknown()).toBe(true);
     h.keyFor(pay);
-    h.settle({ ok: true });
+    h.settle(h.peek()!, { ok: true });
     expect(h.hasUnknown()).toBe(false);
   });
 
   it("a definitive 4xx on a FIRST attempt is not unknown and takes a fresh key (condition c)", () => {
     const h = createPaymentKeyHolder(mintSeq());
     h.keyFor(pay);
-    h.settle({ ok: false, error: err(400) });
+    h.settle(h.peek()!, { ok: false, error: err(400) });
     expect(h.hasUnknown()).toBe(false);
     expect(h.keyFor(pay)).toBe("key-2");
   });
 
   it("a 4xx on a retry after an unknown outcome keeps the key and stays unknown (condition a)", () => {
     const h = unknownHolder();
-    h.settle({ ok: false, error: err(422) });
+    h.settle(h.peek()!, { ok: false, error: err(422) });
     expect(h.hasUnknown()).toBe(true);
     expect(h.keyFor({ ...pay, amount: 5 })).toBe("key-1"); // pinned: an edit never mints
   });
@@ -84,7 +84,7 @@ describe("SA-824 payment status check (shared holder, resolve)", () => {
     for (const answer of [{ state: "tombstoned" }, { state: "found", id: "inv-1" }]) {
       const h = createPaymentKeyHolder(mintSeq());
       h.keyFor(pay);
-      h.settle({ ok: false, error: conflict() });
+      h.settle(h.peek()!, { ok: false, error: conflict() });
       expect(h.mayBeRecorded()).toBe(true);
       await h.checkStatus(() => Promise.resolve(answer));
       expect(h.mayBeRecorded()).toBe(false);
@@ -152,7 +152,7 @@ describe("SA-824 payment status check (shared holder, resolve)", () => {
   describe("Save outcomes the resolve introduces", () => {
     it("409 PAYMENT_KEY_RESOLVED on Save RELEASES the key (nothing was written under it), even while locked", () => {
       const h = unknownHolder();
-      h.settle({ ok: false, error: resolvedOnSave() });
+      h.settle(h.peek()!, { ok: false, error: resolvedOnSave() });
       expect(h.hasUnknown()).toBe(false);
       expect(h.mayBeRecorded()).toBe(false);
       expect(h.keyFor(pay)).toBe("key-2");
@@ -161,7 +161,7 @@ describe("SA-824 payment status check (shared holder, resolve)", () => {
     it("409 PAYMENT_KEY_IN_FLIGHT on Save keeps the key locked (unknown), never a fresh key", () => {
       const h = createPaymentKeyHolder(mintSeq());
       h.keyFor(pay);
-      h.settle({ ok: false, error: inFlight() });
+      h.settle(h.peek()!, { ok: false, error: inFlight() });
       expect(h.hasUnknown()).toBe(true);
       expect(h.keyFor({ ...pay, amount: 1 })).toBe("key-1");
     });
@@ -170,7 +170,7 @@ describe("SA-824 payment status check (shared holder, resolve)", () => {
       for (const code of ["COUNTER_SALE_DAY_CLOSED", "DAY_CLOSED_FOR_PAYMENT_DATE"]) {
         const h = createPaymentKeyHolder(mintSeq());
         h.keyFor(pay);
-        h.settle({ ok: false, error: err(409, { code }) });
+        h.settle(h.peek()!, { ok: false, error: err(409, { code }) });
         expect({ code, unknown: h.hasUnknown() }).toEqual({ code, unknown: false });
         expect(h.keyFor(pay)).toBe("key-2");
       }
@@ -178,7 +178,7 @@ describe("SA-824 payment status check (shared holder, resolve)", () => {
 
     it("a day-closed refusal on a RETRY after an unknown outcome keeps the key (the first attempt may have recorded)", () => {
       const h = unknownHolder();
-      h.settle({ ok: false, error: err(409, { code: "COUNTER_SALE_DAY_CLOSED" }) });
+      h.settle(h.peek()!, { ok: false, error: err(409, { code: "COUNTER_SALE_DAY_CLOSED" }) });
       expect(h.hasUnknown()).toBe(true);
       expect(h.keyFor(pay)).toBe("key-1");
     });
@@ -186,7 +186,7 @@ describe("SA-824 payment status check (shared holder, resolve)", () => {
     it("a day-closed body that names a committed order or invoice is still unknown", () => {
       const h = createPaymentKeyHolder(mintSeq());
       h.keyFor(pay);
-      h.settle({
+      h.settle(h.peek()!, {
         ok: false,
         error: err(409, { code: "COUNTER_SALE_DAY_CLOSED", invoiceId: "inv-1" }),
       });

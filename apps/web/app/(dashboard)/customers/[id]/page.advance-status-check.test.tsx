@@ -205,7 +205,7 @@ describe("customers/[id] Record Advance Payment: Check payment status (SA-824)",
     fireEvent.change(amount(), { target: { value: "25" } });
     const holder = acquirePaymentKeyHolder("advance:c1");
     holder.keyFor({ amount: 25, method: "ACH" });
-    holder.settle({ ok: false, error: httpErr(503) });
+    holder.settle(holder.peek()!, { ok: false, error: httpErr(503) });
     expect(record()).not.toBeDisabled();
     fireEvent.click(record());
     await Promise.resolve();

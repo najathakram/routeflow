@@ -29,7 +29,7 @@ const SCOPE = "standalone:c1";
 const unknownScreen = () => {
   const m = mountPaymentKeyHolder(SCOPE);
   m.holder.keyFor(pay);
-  m.holder.settle({ ok: false, error: err(503) });
+  m.holder.settle(m.holder.peek()!, { ok: false, error: err(503) });
   return m;
 };
 const noUpload = jest.fn().mockResolvedValue(undefined);
@@ -105,7 +105,7 @@ describe("SA-824 payment status check (mobile)", () => {
     const { holder } = unknownScreen();
     const first = holder.peek();
     const refused = err(409, { code: "PAYMENT_KEY_RESOLVED" });
-    holder.settle({ ok: false, error: refused });
+    holder.settle(holder.peek()!, { ok: false, error: refused });
     expect(holder.hasUnknown()).toBe(false);
     expect(holder.keyFor(pay)).not.toBe(first);
     expect(paymentKeyRefusalCopy(refused)).toBe(RESOLVED_COPY);
@@ -115,7 +115,10 @@ describe("SA-824 payment status check (mobile)", () => {
   it("a coded day-closed refusal on a first attempt is settled: not unknown, a fresh key next", () => {
     const m = mountPaymentKeyHolder(SCOPE);
     const first = m.holder.keyFor(pay);
-    m.holder.settle({ ok: false, error: err(409, { code: "COUNTER_SALE_DAY_CLOSED" }) });
+    m.holder.settle(m.holder.peek()!, {
+      ok: false,
+      error: err(409, { code: "COUNTER_SALE_DAY_CLOSED" }),
+    });
     expect(m.holder.hasUnknown()).toBe(false);
     expect(m.holder.keyFor(pay)).not.toBe(first);
   });

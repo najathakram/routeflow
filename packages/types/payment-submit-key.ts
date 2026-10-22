@@ -20,8 +20,8 @@ import {
  *  - One key per dialog open: create the holder when the dialog opens (or call `reset()` on open).
  *  - Kept across retries: an unknown outcome (no response, a timeout, a 5xx) keeps the key, even if
  *    the form is then edited, so the server's replay or its 409 answers.
- *  - Re-minted on a known outcome (a 2xx, or a 4xx that wrote nothing) or a changed amount, method or
- *    allocation with nothing unknown pending.
+ *  - Re-minted on a known outcome (a 2xx, or a 4xx that wrote nothing). A request still in flight counts as
+ *    unknown: the key is kept (and a reopened dialog offers the status check) until its outcome lands.
  * Payments stay online-only: the mobile offline queue never replays them (unchanged).
  */
 export interface PaymentSubmitShape {
@@ -57,7 +57,8 @@ export function paymentSubmitFingerprint(p: PaymentSubmitShape): string {
 
 /**
  * The 409 the payment writers send when this Idempotency-Key already recorded a DIFFERENT request
- * (`IDEMPOTENCY_KEY_CONFLICT`, reason `PAYMENT_MISMATCH`). It proves a payment already exists under the
+ * (`IDEMPOTENCY_KEY_CONFLICT`, reason `API_ERROR_CODES.PAYMENT_MISMATCH`, the ONE constant the server
+ * throws it with). It proves a payment already exists under the
  * key (an earlier attempt whose response was lost), so it is never a "nothing was recorded" refusal.
  */
 export function isPaymentKeyConflict(err: unknown): boolean {
@@ -67,7 +68,7 @@ export function isPaymentKeyConflict(err: unknown): boolean {
   return (
     res?.status === 409 &&
     res.data?.code === "IDEMPOTENCY_KEY_CONFLICT" &&
-    res.data?.reason === "PAYMENT_MISMATCH"
+    res.data?.reason === API_ERROR_CODES.PAYMENT_MISMATCH
   );
 }
 
@@ -179,8 +180,17 @@ function resolvedOutcome<T>(body: T): PaymentStatusOutcome<T> {
 }
 
 /**
- * The holder a record-payment dialog keeps for one open: the sale-attempt rule (`saleAttemptKey`,
- * `isDefinitiveSaleRefusal`, widened by `isDefinitivePaymentRefusal`) plus the payment rules.
+ * The holder a record-payment dialog keeps for one open: the sale-attempt rule (`isDefinitiveSaleRefusal`,
+ * widened by `isDefinitivePaymentRefusal`) plus the payment rules.
+ *
+ * State machine (one line): idle (held null) --keyFor--> inFlight (held K, pending > 0) --settle(K, ok | RESOLVED)--> idle;
+ * --settle(K, definitive 4xx)--> idle; --settle(K, timeout | 5xx | conflict)--> locked (held K kept);
+ * locked --checkStatus found | tombstoned--> idle. `held !== null` <=> inFlight or locked.
+ *  - A request in flight is UNKNOWN too: `hasUnknown()` = locked || inFlight, `reset()` is a no-op while a key is
+ *    held, and `keyFor` keeps the held key (a reopened dialog whose request is still out must not mint a second
+ *    key, or a late timeout of the first would be forgotten and the retry would double-charge).
+ *  - `settle(key, outcome)` is tied to the key the request was SENT with: a late result for a key that is no
+ *    longer held (released, or replaced by a newer attempt) is ignored, so it never locks or releases the newer key.
  *  - A payment key conflict (`isPaymentKeyConflict`) proves a payment may already exist under the key:
  *    the key is KEPT and locked (never re-minted), and `mayBeRecorded()` turns true for the dialog copy.
  *  - A 4xx on a RETRY after an unknown outcome proves only that the retry wrote nothing: the key is kept
@@ -190,60 +200,97 @@ function resolvedOutcome<T>(body: T): PaymentStatusOutcome<T> {
  */
 export function createPaymentKeyHolder(mint: () => string = mintSaleKey) {
   let held: HeldSaleKey | null = null;
+  /** Requests sent under `held` with no outcome yet (more than one only for a double submit). */
+  let pending = 0;
   let locked = false;
   let mayBeRecorded = false;
+  const listeners = new Set<() => void>();
+  const notify = () => {
+    for (const listener of [...listeners]) listener();
+  };
   const release = () => {
     held = null;
+    pending = 0;
     locked = false;
     mayBeRecorded = false;
+    notify();
   };
   // Race ruling 5: ONLY a found payment or a tombstone releases; in flight, an error or a 404 never does.
-  const resolveStatus = <T>(outcome: PaymentStatusOutcome<T>): PaymentStatusOutcome<T> => {
-    if (outcome.kind === "found" || outcome.kind === "tombstoned") release();
+  // `key` is the key the status was asked for: an answer for a key no longer held changes nothing.
+  const applyStatus = <T>(
+    key: string,
+    outcome: PaymentStatusOutcome<T>,
+  ): PaymentStatusOutcome<T> => {
+    if ((outcome.kind === "found" || outcome.kind === "tombstoned") && held?.key === key) release();
     return outcome;
   };
   return {
-    /** The key to send for this submit: the held one while the attempt is the same, or locked. */
+    /**
+     * The key to send for this submit, and the start of an attempt: the held key while one is held (in flight
+     * or locked, whatever the form now says), else a fresh one. Every `keyFor` is paired with ONE `settle`.
+     */
     keyFor(p: PaymentSubmitShape): string {
-      const fingerprint = paymentSubmitFingerprint(p);
-      held = locked && held ? held : saleAttemptKey(held, fingerprint, mint);
+      if (!held) held = saleAttemptKey(null, paymentSubmitFingerprint(p), mint);
+      pending += 1;
+      notify();
       return held.key;
     },
-    /** Apply the outcome (see above). */
-    settle(outcome: { ok: true } | { ok: false; error: unknown }): void {
-      if (!held) return;
+    /** Apply the outcome of the request sent with `key` (see above); a key that is no longer held is ignored. */
+    settle(key: string, outcome: { ok: true } | { ok: false; error: unknown }): void {
+      if (!held || held.key !== key) return;
+      if (pending > 0) pending -= 1;
       if (outcome.ok || isPaymentKeyResolved(outcome.error)) {
         release();
-      } else if (isPaymentKeyConflict(outcome.error)) {
+        return;
+      }
+      if (isPaymentKeyConflict(outcome.error)) {
         locked = true;
         mayBeRecorded = true;
       } else if (isDefinitivePaymentRefusal(outcome.error)) {
-        if (!locked) held = null;
+        // wrote nothing: drop the key, unless it is locked or a twin request under it is still out
+        if (!locked && pending === 0) held = null;
       } else {
         locked = true;
       }
+      notify();
     },
-    /** True while an outcome is unknown: the key is kept and locked, and the dialog offers the status check. */
+    /**
+     * True while an outcome is unknown: the key is kept and locked, OR a request under it is still in flight.
+     * The dialog keeps Save off and offers the status check.
+     */
     hasUnknown(): boolean {
+      return locked || pending > 0;
+    },
+    /** True while a request is out under the held key (no outcome yet). */
+    inFlight(): boolean {
+      return pending > 0;
+    },
+    /** True once an outcome was unknown (timeout, 5xx, key conflict) and the key is kept. */
+    isLocked(): boolean {
       return locked;
     },
     /**
      * Apply a status answer (race ruling 5): found settles as a success and a tombstone releases the key;
      * in flight or an error changes nothing (still unknown and locked).
      */
-    resolveFromStatus: resolveStatus,
+    resolveFromStatus<T>(outcome: PaymentStatusOutcome<T>): PaymentStatusOutcome<T> {
+      return held ? applyStatus(held.key, outcome) : outcome;
+    },
     /**
      * "Check payment status": RESOLVE the HELD key (`resolve` is POST /invoices/payments/by-key/:key/resolve,
      * rejecting with the HTTP error) and apply the answer: { state: "found" } or { state: "tombstoned" }
      * releases; 409 PAYMENT_KEY_IN_FLIGHT is "inFlight"; anything else (a 404 included) is "error". Both keep
-     * the key locked. Nothing held = nothing unknown: "idle", no call.
+     * the key held. Works while a request is still in flight (the resolve waits behind it). Nothing held =
+     * nothing unknown: "idle", no call.
      */
     async checkStatus<T>(resolve: (key: string) => Promise<T>): Promise<PaymentStatusOutcome<T>> {
-      if (!held || !locked) return { kind: "idle" };
+      if (!held) return { kind: "idle" };
+      const key = held.key;
       try {
-        return resolveStatus(resolvedOutcome(await resolve(held.key)));
+        return applyStatus(key, resolvedOutcome(await resolve(key)));
       } catch (error) {
-        return resolveStatus<T>(
+        return applyStatus<T>(
+          key,
           isPaymentKeyInFlight(error) ? { kind: "inFlight" } : { kind: "error" },
         );
       }
@@ -257,13 +304,20 @@ export function createPaymentKeyHolder(mint: () => string = mintSaleKey) {
       return held ? held.key : null;
     },
     /**
-     * A fresh dialog open: forget a SETTLED key. NEVER while an outcome is unknown (condition b): a
-     * Cancel -> reopen must not drop the key the status check and the server's replay depend on.
+     * A fresh dialog open: a no-op while a key is held. A held key is in flight or locked, and a
+     * Cancel -> reopen must never drop it: the late result of the first request, the status check and
+     * the server's replay all depend on it.
      */
     reset(): void {
-      if (locked) return;
-      held = null;
+      if (held !== null) return;
       mayBeRecorded = false;
+    },
+    /** Call `listener` after every state change (a late settle must re-render a remounted dialog). */
+    subscribe(listener: () => void): () => void {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
   };
 }
@@ -275,8 +329,8 @@ export type PaymentKeyConfig = [] | [{ headers: Record<string, string> }];
 
 /**
  * Send one keyed payment request (web and mobile): the header carries the holder's key for `shape`,
- * and the outcome settles the holder (a success or a definitive refusal re-mints; anything unknown
- * keeps the key for the retry). No holder = no header and no extra argument, exactly as before.
+ * and the outcome settles the holder FOR THAT KEY (a success or a definitive refusal re-mints; anything
+ * unknown keeps the key for the retry; a result for a key no longer held is ignored). No holder = no header and no extra argument, exactly as before.
  */
 export async function sendWithPaymentKey<T>(
   holder: PaymentKeyHolder | undefined,
@@ -287,10 +341,10 @@ export async function sendWithPaymentKey<T>(
   const key = holder.keyFor(shape);
   try {
     const out = await send([{ headers: { "Idempotency-Key": key } }]);
-    holder.settle({ ok: true });
+    holder.settle(key, { ok: true });
     return out;
   } catch (error) {
-    holder.settle({ ok: false, error });
+    holder.settle(key, { ok: false, error });
     throw error;
   }
 }
@@ -299,7 +353,8 @@ export async function sendWithPaymentKey<T>(
  * One holder per payment TARGET (scope + customer / invoice id), kept at module level so it outlives the
  * dialog: a Cancel -> reopen, or an unmount -> remount, of a dialog whose outcome is unknown gets the SAME
  * holder back (same key, still locked, "Check payment status" still offered). The entry is dropped only
- * once the key is released (nothing unknown, nothing in flight): `releasePaymentKeyHolder`.
+ * once the key is released (nothing unknown, nothing in flight): `releasePaymentKeyHolder` never drops a
+ * holder with a request in flight.
  */
 const holders = new Map<string, PaymentKeyHolder>();
 
@@ -326,6 +381,7 @@ export function adoptPaymentKeyHolder(scope: string, holder: PaymentKeyHolder): 
  */
 export function releasePaymentKeyHolder(scope: string): void {
   const holder = holders.get(scope);
+  // hasUnknown() covers locked AND in flight; a held key is always one of the two.
   if (!holder || holder.hasUnknown() || holder.peek() !== null) return;
   holders.delete(scope);
   proofs.delete(scope);

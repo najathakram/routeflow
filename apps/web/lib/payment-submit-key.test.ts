@@ -1,4 +1,4 @@
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import {
   acquirePaymentKeyHolder,
   clearPaymentKeyRegistry,
@@ -15,6 +15,7 @@ import {
 } from "@routeflow/types/payment-submit-key";
 import { sendWithPaymentKey, usePaymentSubmitKey } from "./payment-submit-key";
 import { genericToastCopy } from "./generic-toast-copy";
+import { useHolderUnknown } from "./use-payment-status-check";
 
 /**
  * SA-824: the record-payment dialogs' Idempotency-Key rule (the shared
@@ -33,27 +34,32 @@ describe("SA-824 payment submit key (web)", () => {
   it("a retry after an unknown outcome (network / 5xx) sends the SAME key, even after an edit", () => {
     const h = createPaymentKeyHolder(mintSeq());
     expect(h.keyFor(pay)).toBe("key-1");
-    h.settle({ ok: false, error: err() }); // no response at all
+    h.settle(h.peek()!, { ok: false, error: err() }); // no response at all
     expect(h.keyFor(pay)).toBe("key-1");
-    h.settle({ ok: false, error: err(503) });
+    h.settle(h.peek()!, { ok: false, error: err(503) });
     expect(h.keyFor({ ...pay, amount: 90 })).toBe("key-1");
   });
 
   it("a success, or a definitive 4xx that wrote nothing, re-mints", () => {
     const h = createPaymentKeyHolder(mintSeq());
     h.keyFor(pay);
-    h.settle({ ok: true });
+    h.settle(h.peek()!, { ok: true });
     expect(h.keyFor(pay)).toBe("key-2");
-    h.settle({ ok: false, error: err(400) });
+    h.settle(h.peek()!, { ok: false, error: err(400) });
     expect(h.keyFor(pay)).toBe("key-3");
   });
 
-  it("a changed amount, method or allocation with nothing pending re-mints; the same form keeps the key", () => {
+  it("a changed amount, method or allocation after a refused attempt re-mints; while the request is out any form keeps the key", () => {
     const h = createPaymentKeyHolder(mintSeq());
     expect(h.keyFor(pay)).toBe("key-1");
     expect(h.keyFor({ ...pay })).toBe("key-1");
+    expect(h.keyFor({ ...pay, amount: 99 })).toBe("key-1"); // still out: an edit never mints
+    for (let i = 0; i < 3; i += 1) h.settle("key-1", { ok: false, error: err(400) }); // all three refused
+    expect(h.peek()).toBeNull();
     expect(h.keyFor({ ...pay, amount: 99 })).toBe("key-2");
+    h.settle("key-2", { ok: false, error: err(400) });
     expect(h.keyFor({ ...pay, amount: 99, method: "CHECK" })).toBe("key-3");
+    h.settle("key-3", { ok: false, error: err(400) });
     expect(
       h.keyFor({
         ...pay,
@@ -64,17 +70,29 @@ describe("SA-824 payment submit key (web)", () => {
     ).toBe("key-4");
   });
 
-  it("a changed DRAFT/PAID status with nothing pending re-mints", () => {
+  it("a changed DRAFT/PAID status after a refused attempt re-mints", () => {
     const h = createPaymentKeyHolder(mintSeq());
     expect(h.keyFor({ ...pay, status: "DRAFT" })).toBe("key-1");
+    h.settle("key-1", { ok: false, error: err(400) });
     expect(h.keyFor({ ...pay, status: "PAID" })).toBe("key-2");
+  });
+
+  it("a double submit under one key: the first refusal does not drop the key the second request is still using", () => {
+    const h = createPaymentKeyHolder(mintSeq());
+    const k = h.keyFor(pay);
+    expect(h.keyFor(pay)).toBe(k);
+    h.settle(k, { ok: false, error: err(400) }); // the first is refused
+    expect(h.peek()).toBe(k); // the twin is still out
+    h.settle(k, { ok: false, error: err() }); // the twin times out
+    expect(h.hasUnknown()).toBe(true);
+    expect(h.peek()).toBe(k);
   });
 
   it("a 409 payment key conflict KEEPS the key (a payment may already exist under it), even after an edit", () => {
     const h = createPaymentKeyHolder(mintSeq());
     h.keyFor(pay);
     const conflict = err(409, { code: "IDEMPOTENCY_KEY_CONFLICT", reason: "PAYMENT_MISMATCH" });
-    h.settle({ ok: false, error: conflict });
+    h.settle(h.peek()!, { ok: false, error: conflict });
     expect(h.peek()).toBe("key-1");
     expect(h.keyFor({ ...pay, amount: 90 })).toBe("key-1");
     expect(paymentMayBeRecordedCopy(conflict)).toBe(PAYMENT_MAY_BE_RECORDED_COPY);
@@ -91,14 +109,14 @@ describe("SA-824 payment submit key (web)", () => {
   it("reset() (a fresh open) forgets a settled key but NEVER an unknown outcome", () => {
     const h = createPaymentKeyHolder(mintSeq());
     h.keyFor(pay);
-    h.settle({ ok: false, error: err(502) });
+    h.settle(h.peek()!, { ok: false, error: err(502) });
     h.reset(); // unknown: the key and the lock survive
     expect(h.hasUnknown()).toBe(true);
     expect(h.peek()).toBe("key-1");
     expect(h.keyFor({ ...pay, amount: 1 })).toBe("key-1");
     h.resolveFromStatus({ kind: "tombstoned" }); // released
     h.keyFor(pay);
-    h.settle({ ok: true });
+    h.settle(h.peek()!, { ok: true });
     h.reset();
     expect(h.keyFor(pay)).toBe("key-3");
   });
@@ -106,7 +124,7 @@ describe("SA-824 payment submit key (web)", () => {
   it("a payment key conflict also survives reset() (it is unknown too)", () => {
     const h = createPaymentKeyHolder(mintSeq());
     h.keyFor(pay);
-    h.settle({
+    h.settle(h.peek()!, {
       ok: false,
       error: err(409, { code: "IDEMPOTENCY_KEY_CONFLICT", reason: "PAYMENT_MISMATCH" }),
     });
@@ -150,7 +168,7 @@ describe("SA-824 payment submit key (web)", () => {
       initialProps: { open: true },
     });
     const first = result.current.keyFor(pay);
-    result.current.settle({ ok: true });
+    result.current.settle(result.current.peek()!, { ok: true });
     rerender({ open: false });
     rerender({ open: true });
     expect(result.current.keyFor(pay)).not.toBe(first);
@@ -162,7 +180,7 @@ describe("SA-824 payment submit key (web)", () => {
       initialProps: { open: true },
     });
     const first = a.result.current.keyFor(pay);
-    a.result.current.settle({ ok: false, error: err(503) });
+    a.result.current.settle(a.result.current.peek()!, { ok: false, error: err(503) });
     a.rerender({ open: false });
     a.rerender({ open: true });
     expect(a.result.current.hasUnknown()).toBe(true);
@@ -191,7 +209,7 @@ describe("SA-824 holder registry, recorded payment id and the found-path photo",
     expect(acquirePaymentKeyHolder("x:1")).toBe(h);
     expect(acquirePaymentKeyHolder("x:2")).not.toBe(h);
     h.keyFor(pay);
-    h.settle({ ok: false, error: err(500) });
+    h.settle(h.peek()!, { ok: false, error: err(500) });
     releasePaymentKeyHolder("x:1");
     expect(acquirePaymentKeyHolder("x:1")).toBe(h);
     h.resolveFromStatus({ kind: "found", payment: {} });
@@ -260,5 +278,65 @@ describe("SA-824 holder registry, recorded payment id and the found-path photo",
     expect(
       await finishFoundPayment("p:2", { paymentGroupId: "g", payments: [{ id: "p" }] }, jest.fn()),
     ).toBe("none");
+  });
+});
+
+describe("SA-824 MUST-1: a request in flight is an unknown outcome (holder)", () => {
+  beforeEach(() => clearPaymentKeyRegistry());
+
+  it("reset during flight, then a timeout -> locked, SAME key, status check offered", () => {
+    const h = createPaymentKeyHolder(mintSeq());
+    const k1 = h.keyFor(pay);
+    expect(h.hasUnknown()).toBe(true); // the request is out: no outcome yet
+    h.reset(); // a dialog reopened while the request is still out
+    expect(h.peek()).toBe(k1);
+    h.settle(h.peek()!, { ok: false, error: err() }); // the 15 s timeout: no response at all
+    expect(h.hasUnknown()).toBe(true); // Save stays off, "Check payment status" is offered
+    expect(h.peek()).toBe(k1);
+    expect(h.keyFor(pay)).toBe(k1); // the next submit would reuse K1, never mint K2
+  });
+
+  it("a late K1 timeout does not lock K2", () => {
+    const h = createPaymentKeyHolder(mintSeq());
+    const k1 = h.keyFor(pay);
+    h.resolveFromStatus({ kind: "tombstoned" }); // the status check closed K1 while its request was out
+    const k2 = h.keyFor(pay);
+    expect(k2).not.toBe(k1);
+    h.settle(k1, { ok: false, error: err() }); // K1's late timeout: not K2's outcome, ignored
+    expect(h.peek()).toBe(k2);
+    h.settle(k2, { ok: false, error: err(400) }); // K2's own definitive refusal
+    expect(h.peek()).toBeNull(); // K2 was never locked: it is released
+  });
+
+  it("a late K1 success does not release K2", () => {
+    const h = createPaymentKeyHolder(mintSeq());
+    const k1 = h.keyFor(pay);
+    h.resolveFromStatus({ kind: "tombstoned" });
+    const k2 = h.keyFor(pay);
+    h.settle(k1, { ok: true }); // K1's late success: ignored, K2 is still out
+    expect(h.peek()).toBe(k2);
+    expect(h.hasUnknown()).toBe(true);
+    h.settle(k2, { ok: false, error: err() }); // K2 times out
+    expect(h.peek()).toBe(k2);
+    expect(h.hasUnknown()).toBe(true);
+    expect(k1).not.toBe(k2);
+  });
+
+  it("useHolderUnknown: the sender is not 'unknown' while its own Save is pending, a remount is; a late settle re-renders both", () => {
+    const h = createPaymentKeyHolder(mintSeq());
+    const sender = renderHook(() => useHolderUnknown(h));
+    let k1 = "";
+    act(() => {
+      k1 = h.keyFor(pay);
+    });
+    const remount = renderHook(() => useHolderUnknown(h)); // Cancel -> reopen mid-flight
+    expect(sender.result.current).toBe(false); // its own button already reads Saving...
+    expect(remount.result.current).toBe(true); // Save off, "Check payment status" offered
+    act(() => h.settle(k1, { ok: false, error: err() })); // the timeout lands
+    expect(sender.result.current).toBe(true);
+    expect(remount.result.current).toBe(true);
+    act(() => void h.resolveFromStatus({ kind: "found", payment: {} })); // released
+    expect(sender.result.current).toBe(false);
+    expect(remount.result.current).toBe(false); // no stale lock on the reopened dialog
   });
 });

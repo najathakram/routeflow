@@ -278,7 +278,7 @@ describe("invoices/[id] Record Payment: Check payment status (SA-824)", () => {
     openDialog();
     const holder = acquirePaymentKeyHolder("invoice:inv-1");
     holder.keyFor({ amount: 100, method: "ACH" });
-    holder.settle({ ok: false, error: httpErr(503) });
+    holder.settle(holder.peek()!, { ok: false, error: httpErr(503) });
     expect(record()).not.toBeDisabled();
     fireEvent.click(record());
     await Promise.resolve();
