@@ -26,6 +26,8 @@ export const AUDIT_ACTIONS = {
   PRODUCT_PRICES_SAVED: "product.prices-saved",
   /** Units v2 (SA-799 b): the Undo of a PRODUCT_PRICES_SAVED row; meta {undoes, revisionBefore, revisionAfter, actor}. */
   PRODUCT_PRICES_UNDONE: "product.prices-undone",
+  /** SA-824 race ruling 4: one POST /invoices/payments/by-key/:key/resolve; meta {keyHash (sha256, never the raw key), outcome found|tombstoned, scope, invoiceId, customerId, paymentGroupId, advancePaymentId}. */
+  PAYMENT_KEY_RESOLVE: "payment-key.resolve",
   /** Row 587 (SA-833): PARTIALLY_DELIVERED -> DELIVERED completed an office-evidenced line; meta {orderId, lineId, from, to, summary}. */
   ORDER_LINE_OFFICE_COMPLETED: "order.line-office-completed",
 } as const;

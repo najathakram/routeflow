@@ -3,6 +3,7 @@ import { apiClient } from "../api-client";
 import type { PaymentMethod } from "./invoices"; // reuse the existing 8-value union
 import type { SelectablePaymentMethod } from "../payment-methods";
 import type { ImageUploadFile } from "../product-image";
+import { sendWithPaymentKey, type PaymentKeyHolder } from "../payment-submit-key";
 import type {
   PaymentListParams,
   PaymentListResponse,
@@ -224,9 +225,22 @@ export function useRecordPaymentStandalone() {
     // X1: bind TMethod to mobile's enterable subset at the use site (not via
     // a local re-declaration — see the comment above `StandalonePaymentDto`'s
     // re-export).
-    StandalonePaymentDto<EditablePaymentMethod>
+    // SA-824: + the screen's Idempotency-Key holder (never sent in the body).
+    StandalonePaymentDto<EditablePaymentMethod> & { submitKey?: PaymentKeyHolder }
   >({
-    mutationFn: (dto) => apiClient.post("/invoices/payments/record", dto).then((r) => r.data),
+    mutationFn: ({ submitKey, ...dto }) =>
+      sendWithPaymentKey(
+        submitKey,
+        {
+          amount: dto.totalAmount,
+          method: dto.method,
+          allocations: dto.allocations,
+          status: dto.status,
+          bankCharges: dto.bankCharges,
+          settledAt: dto.settledAt,
+        },
+        (config) => apiClient.post("/invoices/payments/record", dto, ...config).then((r) => r.data),
+      ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["admin", "invoices"] });

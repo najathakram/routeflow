@@ -1079,6 +1079,44 @@ model AdvancePayment {
   @@index([sourcePaymentId])
 }
 
+// SA-824 (row 661 step 1): the replay store of the customer money-in writers. One row per
+// Idempotency-Key per tenant, claimed by the FIRST statement of the writer's transaction
+// (INSERT ... ON CONFLICT DO NOTHING) and completed with `result` in that same transaction, so a
+// committed key always means committed money. `requestHash` is the normalized body; a same-key
+// retry replays only when it (and `scope`) match, else 409 IDEMPOTENCY_KEY_CONFLICT. No TTL (as
+// OrderIdempotencyKey). The scope enum is the seam the AP writers reuse later.
+// SA-824 race ruling 1: `state` is a DISTINCT state, never a sentinel hash. CLAIMED (the writer's
+// in-tx claim), COMPLETED (committed money + `result`), TOMBSTONED (closed by POST
+// /invoices/payments/by-key/:key/resolve: nothing was committed; a late POST is 409
+// PAYMENT_KEY_RESOLVED). A tombstone has no scope and no requestHash; a CHECK in the migration keeps
+// every other row carrying both.
+enum PaymentIdempotencyScope {
+  STANDALONE_PAYMENT
+  INVOICE_PAYMENT
+  ADVANCE_PAYMENT
+}
+
+enum PaymentIdempotencyState {
+  CLAIMED
+  COMPLETED
+  TOMBSTONED
+}
+
+model PaymentIdempotencyKey {
+  id               String                   @id @default(uuid())
+  tenantId         String
+  key              String
+  scope            PaymentIdempotencyScope?
+  requestHash      String?
+  state            PaymentIdempotencyState
+  result           Json
+  paymentGroupId   String?
+  advancePaymentId String?
+  createdAt        DateTime                 @default(now())
+
+  @@unique([tenantId, key])
+}
+
 // ─── Supplier Credits ─────────────────────────────────────────────────────────
 
 /// On-account credit held for a supplier — the AP mirror of AdvancePayment.

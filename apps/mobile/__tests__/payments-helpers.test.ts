@@ -5,6 +5,7 @@
  */
 import {
   allocationTotals,
+  changeCustomerGate,
   checkNextStates,
   editPaymentMaxAmount,
   oldestInvoicesFirst,
@@ -193,5 +194,18 @@ describe("editPaymentMaxAmount", () => {
 
   it("returns the full total with no siblings", () => {
     expect(editPaymentMaxAmount(250, [])).toBe(250);
+  });
+});
+
+describe("changeCustomerGate (SA-824)", () => {
+  const LOCK = "Check this payment's status before changing the customer.";
+
+  it("an unknown or in-flight attempt blocks Change customer with the fixed reason", () => {
+    // in flight is an unknown outcome too, so both reach the gate as hasUnknown() === true
+    expect(changeCustomerGate(true)).toEqual({ blocked: true, reason: LOCK });
+  });
+
+  it("a released attempt allows Change customer again", () => {
+    expect(changeCustomerGate(false)).toEqual({ blocked: false, reason: null });
   });
 });

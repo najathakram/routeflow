@@ -39,6 +39,13 @@ import { roundMoney } from "@routeflow/pricing";
 import { tierLabel } from "../../../lib/tier-label";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import {
+  paymentKeyRefusalCopy,
+  paymentKeyScope,
+  usePaymentSubmitKey,
+} from "../../../lib/payment-submit-key";
+import { usePaymentStatusCheck } from "../../../lib/use-payment-status-check";
+import { PaymentStatusNotice } from "../../../components/PaymentStatusNotice";
 import { useRecordReturn } from "../../../hooks/useRecordReturn";
 
 function fmt(n: number | string | null | undefined): string {
@@ -490,6 +497,9 @@ export default function CustomerDetailScreen() {
   );
 }
 
+/** An advance carries no receipt photo: there is nothing to attach on a found status check. */
+const noAdvancePhoto = async () => undefined;
+
 /**
  * Take a deposit into the customer's advance wallet (Wave 3). The server has
  * NO validation on this route beyond amount > 0 — everything else is enforced
@@ -506,12 +516,21 @@ function RecordAdvanceModal({
   onClose: () => void;
 }) {
   const mut = useCreateAdvancePayment();
+  // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
+  const keyScope = paymentKeyScope.advance(customerId);
+  const paymentKey = usePaymentSubmitKey(keyScope);
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
+  const statusCheck = usePaymentStatusCheck(paymentKey, keyScope, noAdvancePhoto, (message) => {
+    showToast(message);
+    onClose();
+  });
   const [method, setMethod] = useState<SelectablePaymentMethod>("CASH");
   const [amount, setAmount] = useState<number | null>(null);
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
 
   const submit = () => {
+    if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
     const amt = amount != null ? roundMoney(amount) : 0;
     if (amt <= 0) {
       showToast("Enter a positive amount.");
@@ -524,13 +543,17 @@ function RecordAdvanceModal({
         method,
         ...(reference.trim() ? { reference: reference.trim() } : {}),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
+        submitKey: paymentKey,
       },
       {
         onSuccess: () => {
           showToast("Advance recorded");
           onClose();
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) =>
+          showToast(
+            paymentKeyRefusalCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+          ),
       },
     );
   };
@@ -543,6 +566,7 @@ function RecordAdvanceModal({
           <Text style={styles.advBody}>
             A pre-payment from {customerName} that can be applied to future invoices.
           </Text>
+          <PaymentStatusNotice status={statusCheck} />
           <View style={styles.advChips}>
             {SELECTABLE_METHOD_OPTIONS.map((m) => (
               <Pressable
@@ -590,8 +614,11 @@ function RecordAdvanceModal({
               <Text style={styles.advBtnGhostText}>Cancel</Text>
             </Pressable>
             <Pressable
-              style={[styles.advBtnFill, mut.isPending && { opacity: 0.6 }]}
-              disabled={mut.isPending}
+              style={[
+                styles.advBtnFill,
+                (mut.isPending || statusCheck.unknown) && { opacity: 0.6 },
+              ]}
+              disabled={mut.isPending || statusCheck.unknown}
               onPress={submit}
             >
               <Text style={styles.advBtnFillText}>{mut.isPending ? "Saving…" : "Record"}</Text>

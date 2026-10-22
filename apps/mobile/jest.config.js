@@ -66,6 +66,8 @@ module.exports = {
     "^@routeflow/types/estimate-tax-basis$": "<rootDir>/../../packages/types/estimate-tax-basis.ts",
     // Row 485: the pure sale-retry rule (definitive refusal, per-attempt key), same subpath trick.
     "^@routeflow/types/sale-attempt$": "<rootDir>/../../packages/types/sale-attempt.ts",
+    // SA-824: the shared payment submit-key rule (builds on sale-attempt), same subpath trick.
+    "^@routeflow/types/payment-submit-key$": "<rootDir>/../../packages/types/payment-submit-key.ts",
     // M8: the shared shipment save rule + not-shipped line (pure, no imports), same subpath trick.
     "^@routeflow/types/shipment-save$": "<rootDir>/../../packages/types/shipment-save.ts",
     // SA-817 A: the one persisted-submit-key rule for a draft (pure, no imports), same subpath trick.

@@ -7,6 +7,12 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /**
+ * SA-824 race ruling 4: the resolve route (POST /invoices/payments/by-key/:key/resolve) writes ONE audit row
+ * of its own with the key's sha256. The generic row would be a second one AND carry the RAW key in `action`.
+ */
+const SELF_AUDITED_PATH = /\/invoices\/payments\/by-key\/[^/]+\/resolve\/?$/i;
+
+/**
  * Global interceptor that logs every mutation request (POST/PUT/PATCH/DELETE)
  * to the AuditLog table. Logging is fire-and-forget — it never blocks or
  * fails the main request. No rxjs imports needed (avoids monorepo dual-version
@@ -19,7 +25,8 @@ export class AuditInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler) {
     const req = context.switchToHttp().getRequest<Request>();
 
-    if (MUTATION_METHODS.has(req.method)) {
+    const rawUrl = (req.url ?? req.path ?? "").split("?")[0];
+    if (MUTATION_METHODS.has(req.method) && !SELF_AUDITED_PATH.test(rawUrl)) {
       const user = (req as any).user as JwtPayload | undefined;
       // F9-006: use Express's trust-proxy-aware req.ip (trust proxy = 2 is set in
       // main.ts) — NOT the raw LEFTMOST X-Forwarded-For entry, which a client can
