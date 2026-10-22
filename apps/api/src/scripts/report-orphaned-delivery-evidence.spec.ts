@@ -34,6 +34,8 @@ describe("SA-842 §5 report — source is read-only", () => {
   it.each(FILES)("%s has no write verb, storage write call or raw execute", (file) => {
     const src = fs.readFileSync(file, "utf8");
     expect(src).not.toMatch(/Delete|Put|Copy|executeRaw|UPDATE|INSERT|DELETE/);
+    // no client write call (Prisma-style .update/.create/.upsert/.delete*) and no raw $execute*
+    expect(src).not.toMatch(/\.(update|create|upsert|delete)\w*\(|\$execute/i);
   });
 
   it("every SQL statement is a SELECT, SHOW, SET, BEGIN READ ONLY or ROLLBACK", () => {
@@ -96,9 +98,11 @@ describe("buildCounts with a mocked client", () => {
     const client = mockClient(new Map([[lib.TENANT_IDS, [{ tenantId: "t1" }]]]));
     await lib.buildCounts(client);
     const sqls = client.seen.map((s) => s.sql);
-    expect(sqls.slice(0, 3)).toEqual(lib.READ_ONLY_SESSION);
-    expect(sqls[3]).toBe("BEGIN TRANSACTION READ ONLY");
-    expect(sqls[4]).toBe("SHOW transaction_read_only");
+    const n = lib.READ_ONLY_SESSION.length;
+    expect(sqls.slice(0, n)).toEqual(lib.READ_ONLY_SESSION);
+    expect(lib.READ_ONLY_SESSION).toContain("SET idle_in_transaction_session_timeout = '300s'");
+    expect(sqls[n]).toBe("BEGIN TRANSACTION READ ONLY");
+    expect(sqls[n + 1]).toBe("SHOW transaction_read_only");
     for (const c of lib.COUNT_QUERIES) expect(sqls).toContain(c.sql);
     expect(sqls.at(-1)).toBe("ROLLBACK");
   });
@@ -208,6 +212,27 @@ describe("count 6: storage stop dirs with no RouteRunStop row", () => {
     expect(client.query).toHaveBeenCalledTimes(3);
     expect(client.query.mock.calls.every(([sql]) => sql === lib.EXISTING_STOPS)).toBe(true);
     expect([...found].sort()).toEqual(["s1", "s2400"]);
+  });
+});
+
+describe("R2 unset: the report says the POD files are NOT listed (never a silent zero)", () => {
+  it("names local-disk mode plainly, and the entry script returns it when the R2 variables are unset", () => {
+    expect(lib.STORAGE_NOT_LISTED).toBe(
+      "R2 not configured: POD files are on the API volume and are NOT listed by this report",
+    );
+    const src = fs.readFileSync(FILES[0], "utf8");
+    expect(src).toMatch(
+      /if \(!R2_ACCOUNT_ID \|\| !R2_ACCESS_KEY_ID \|\| !R2_SECRET_ACCESS_KEY\) \{\s*return `\$\{lib\.STORAGE_NOT_LISTED\}/,
+    );
+    const text = lib.formatReport({
+      tenants: new Map(),
+      target: { host: "h", database: "d" },
+      storageNote: lib.STORAGE_NOT_LISTED,
+      generatedAt: "x",
+    });
+    expect(text).toContain(
+      "storage: R2 not configured: POD files are on the API volume and are NOT listed by this report",
+    );
   });
 });
 

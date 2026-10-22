@@ -12,12 +12,18 @@ const READ_ONLY_SESSION = [
   "SET default_transaction_read_only = on",
   "SET statement_timeout = '120s'",
   "SET lock_timeout = '5s'",
+  // a slow storage listing must never hold the READ ONLY snapshot open indefinitely
+  "SET idle_in_transaction_session_timeout = '300s'",
 ];
 const BEGIN_READ_ONLY = "BEGIN TRANSACTION READ ONLY";
 const SHOW_READ_ONLY = "SHOW transaction_read_only";
 const END_TX = "ROLLBACK";
 
 const BAND_DAYS = 30;
+
+/** Printed (header + output) when R2 is unset: prod may store POD files on the API volume (UPLOAD_DIR). */
+const STORAGE_NOT_LISTED =
+  "R2 not configured: POD files are on the API volume and are NOT listed by this report";
 
 /**
  * One entry per count in SA-842 §5. Each query returns rows of
@@ -282,6 +288,7 @@ module.exports = {
   TENANT_IDS,
   EXISTING_STOPS,
   BAND_DAYS,
+  STORAGE_NOT_LISTED,
   checkArgs,
   targetOf,
   buildCounts,

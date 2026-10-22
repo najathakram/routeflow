@@ -7,8 +7,10 @@
  *   4 DeliveryBatch with no stop and a driver                    (strong)
  *   5 DELIVERED / PARTIALLY_DELIVERED orders with no run/stop pin that own a count-3 row
  *   6 object storage: tenants/{tenantId}/pod/{stopId}/ dirs whose stopId has no RouteRunStop row
- *     (stop dirs, objects, bytes, oldest/newest, banded the same way). ListObjectsV2 only; skipped with a
- *     note when the R2 variables are unset (or with --skip-r2).
+ *     (stop dirs, objects, bytes, oldest/newest, banded the same way). ListObjectsV2 only.
+ *     When the R2 variables are unset, storage may be in local-disk mode (files on the API service's volume
+ *     at UPLOAD_DIR): the report then says "R2 not configured: POD files are on the API volume and are NOT listed by this report",
+ *     so a missing count 6 is never read as zero. --skip-r2 skips it on purpose.
  *
  * Owner-run against production (warn-then-approve per call):
  *   railway run --service postgres node apps/api/scripts/report-orphaned-delivery-evidence.mjs \
@@ -93,7 +95,7 @@ async function selfTest() {
 async function storagePass(client, result) {
   const { R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY } = process.env;
   if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
-    return "skipped (R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY not set); count 6 not run";
+    return `${lib.STORAGE_NOT_LISTED} (R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY not set); count 6 not run`;
   }
   const { S3Client, ListObjectsV2Command } = require("@aws-sdk/client-s3");
   const s3 = new S3Client({
