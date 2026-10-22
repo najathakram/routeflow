@@ -418,7 +418,7 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
     asStoreOnly();
     await openWithLine();
     await screen.findByRole("button", { name: "Confirm and invoice" });
-    const names = ["Minimize", "Close", "Save as draft", "Confirm only", "Confirm and invoice"];
+    const names = ["Save as draft", "Confirm only", "Confirm and invoice"]; // Minimize + Close are header icons (Q08)
     for (const name of names) {
       const btn = screen.getByText(name, { selector: "button" });
       expect(btn.className).toMatch(/max-sm:h-11/);
@@ -443,5 +443,41 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
       "placeholder",
       "Special instructions, delivery notes…",
     );
+  });
+});
+
+describe("CreateOrderModal: the View Order action stays long enough to use (F17)", () => {
+  const HOUR = 60 * 60 * 1000;
+
+  it("POS: the toast that carries View Order stays at least an hour (not the 4 s default)", async () => {
+    mockPrefs = { "orders.posMode": "true" };
+    post.mockImplementation((url: string) =>
+      url === "/orders"
+        ? Promise.resolve({ data: { id: "o1", orderNumber: "SO-1" } })
+        : Promise.reject(new Error("nope")),
+    );
+    const { onViewOrder } = await openWithLine();
+    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
+    await waitFor(() => expect(mockToast).toHaveBeenCalled());
+    const withAction = mockToast.mock.calls.map((c) => c[0]).filter((t) => t.action);
+    expect(withAction.length).toBeGreaterThan(0);
+    for (const t of withAction) {
+      expect(t.action.label).toBe("View Order");
+      expect(t.duration).toBeGreaterThanOrEqual(HOUR);
+    }
+    expect(onViewOrder).toHaveBeenCalledWith("o1");
+  });
+
+  it("the plain Create Order toast carries View Order for at least an hour", async () => {
+    const { onViewOrder } = await openWithLine();
+    fireEvent.click(screen.getByRole("button", { name: /^create order$/i }));
+    await waitFor(() => expect(mockToast).toHaveBeenCalled());
+    const t = mockToast.mock.calls[0][0];
+    expect(t.title).toBe("Order created");
+    expect(t.action.label).toBe("View Order");
+    expect(t.duration).toBeGreaterThanOrEqual(HOUR);
+    t.action.onClick();
+    expect(onViewOrder).toHaveBeenCalledWith("o1");
   });
 });

@@ -101,9 +101,9 @@ export function FamilyVariantsGrid({
   const tableRef = React.useRef<HTMLTableSectionElement>(null);
   React.useEffect(() => {
     if (!focusId) return;
-    const row = Array.from(tableRef.current?.querySelectorAll<HTMLElement>("[data-variant-id]") ?? []).find(
-      (el) => el.dataset.variantId === focusId,
-    );
+    const row = Array.from(
+      tableRef.current?.querySelectorAll<HTMLElement>("[data-variant-id]") ?? [],
+    ).find((el) => el.dataset.variantId === focusId);
     if (!row) return;
     setMarked(focusId);
     row.scrollIntoView?.({ block: "center" });

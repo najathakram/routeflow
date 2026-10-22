@@ -1655,7 +1655,14 @@ describeDb(
         const s = await seed("h4d");
         const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
         await run(s, s.payload());
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining("expectedUpdatedAt"));
+        // a78f3dc0d: the warn is a structured event object, logged once per call.
+        const missing = warn.mock.calls.filter(
+          ([m]) => (m as { event?: string } | null)?.event === "INVOICE_EDIT_TOKEN_MISSING",
+        );
+        expect(missing).toHaveLength(1);
+        expect(missing[0][0]).toEqual(
+          expect.objectContaining({ event: "INVOICE_EDIT_TOKEN_MISSING", invoiceId: s.inv.id }),
+        );
         warn.mockRestore();
         expect((await rows(s)).map((r) => r.id).sort()).toEqual([s.l1.id, s.l2.id].sort());
       });

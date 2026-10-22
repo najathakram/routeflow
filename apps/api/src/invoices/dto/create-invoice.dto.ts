@@ -18,6 +18,7 @@ import {
 } from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { CheckStatus, PaymentMethod } from "@prisma/client";
+import type { KeyedWriterOpts, PaymentKeyRefs } from "../payment-idempotency";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { Trim } from "../../common/transforms/trim.transform";
 import { SafeTextCell } from "../../common/transforms/safe-text-cell.transform";
@@ -111,10 +112,35 @@ export class CreateInvoiceDto {
   @IsOptional() @IsDateString() depositDueDate?: string;
 }
 
-/** Internal options of `recordPayment` (never part of a request body). */
-export interface RecordPaymentOpts {
+/** Internal options of `recordPayment` (never part of a request body). SA-824: + the key's hooks. */
+export interface RecordPaymentOpts extends KeyedWriterOpts<any> {
   /** The split counter tender's leg group (uuidv5 of orderId:legIndex), written IN the payment's create. */
   paymentGroupId?: string;
+}
+
+/** What `recordStandalonePayment` returns, and hands its `opts.inTx` hook (SA-818). */
+export type StandalonePaymentResult = { payments: any[]; paymentGroupId: string; excess: number };
+
+/** Internal options of `recordStandalonePayment` (never part of a request body). SA-824: + the key's hooks. */
+export interface StandalonePaymentOpts extends KeyedWriterOpts<StandalonePaymentResult> {
+  /**
+   * Reject any allocation exceeding the invoice's live balance, computed
+   * inside the transaction. Buyer-initiated payments compute their
+   * oldest-first allocation BEFORE this call, outside the row locks, so a
+   * concurrent operator payment can stale the preview — without this check
+   * the stale allocation would overpay an invoice. Operator flows keep the
+   * historical behavior (deliberate overpayment is allowed there).
+   */
+  assertAllocationsWithinBalance?: boolean;
+  /** The operator's user id, for the deliberate-overpayment audit row. */
+  actor?: string | null;
+  /**
+   * SA-818 (row 615): runs INSIDE this payment transaction, after the payment rows (and any
+   * excess AdvancePayment) are written and before commit. A caller that must decide something
+   * atomically with the money (the cash approval's PENDING -> APPROVED claim + link) does it
+   * here: a throw rolls the money back with it. Absent -> behaviour is unchanged.
+   */
+  inTx?: (tx: any, result: StandalonePaymentResult, refs?: PaymentKeyRefs) => Promise<void>;
 }
 
 export class RecordInvoicePaymentDto {

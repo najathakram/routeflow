@@ -665,7 +665,7 @@ export default function BuyerDashboardPage() {
       {/* Quick action */}
       <div className="flex items-center justify-center gap-4">
         <Button variant="secondary" onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}>
-          <Store className="mr-1.5 h-4 w-4" /> Browse Products
+          <Store className="mr-1.5 h-4 w-4" /> Browse products
         </Button>
         {cart.itemCount > 0 && (
           <Button

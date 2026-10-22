@@ -10,6 +10,7 @@ import {
   COUNTER_SALE_DAY_CLOSED_COPY,
   DAY_CLOSED_FOR_PAYMENT_DATE_COPY,
 } from "@/lib/day-closed-copy";
+import { clearPaymentKeyRegistry } from "@routeflow/types/payment-submit-key";
 import FinancePaymentsPage from "./page";
 
 /**
@@ -118,7 +119,10 @@ const openVoidConfirm = async () => {
 };
 
 describe("finance/payments: a closed-day refusal raises exactly one toast (row 348)", () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    clearPaymentKeyRegistry(); // SA-824: a refused attempt's key outlives the dialog; each test starts clean
+  });
 
   it.each(CLOSED_DAY)(
     "Record Payment, %s: the page's one toast, the global one quiet",

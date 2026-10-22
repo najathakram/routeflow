@@ -79,7 +79,7 @@ beforeEach(() => {
 describe("Removing a line offers Undo (F22)", () => {
   it("the line goes, a 'Removed' toast carries Undo, and Undo puts the line back unchanged", async () => {
     await openEdit();
-    fireEvent.click(screen.getByTitle("Delete item"));
+    fireEvent.click(screen.getByTitle(/^Remove /));
     expect(screen.queryByRole("spinbutton", { name: /qty/i })).toBeNull();
     const removed = mockToast.mock.calls.map((c) => c[0]).find((t) => /removed/i.test(t.title));
     expect(removed?.action?.label).toBe("Undo");
@@ -88,7 +88,7 @@ describe("Removing a line offers Undo (F22)", () => {
   });
   it("the Removed toast is dismissed when its edit session ends (row 604 nit)", async () => {
     await openEdit();
-    fireEvent.click(screen.getByTitle("Delete item"));
+    fireEvent.click(screen.getByTitle(/^Remove /));
     expect(mockDismiss).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
     await waitFor(() => expect(mockDismiss).toHaveBeenCalledWith("toast-1"));
@@ -128,7 +128,7 @@ describe("Removing a line offers Undo (F22)", () => {
     );
     fireEvent.click(await screen.findByRole("button", { name: /edit items/i }));
     await screen.findByRole("button", { name: /^save changes$/i });
-    fireEvent.click(screen.getAllByTitle("Delete item")[0]);
+    fireEvent.click(screen.getAllByTitle(/^Remove /)[0]);
     const removed = mockToast.mock.calls.map((c) => c[0]).find((t) => /removed/i.test(t.title));
     fireEvent.click(screen.getByRole("button", { name: /^save changes$/i }));
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));

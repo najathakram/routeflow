@@ -238,8 +238,7 @@ describe("FamilyVariantsGrid read-only reads like a product list (K11-24)", () =
 });
 
 describe("FamilyVariantsGrid focusId (K13 F18)", () => {
-  const saved = (): GridRow[] =>
-    rows(3).map((r, i) => ({ ...r, id: `v${i + 1}` }) as GridRow);
+  const saved = (): GridRow[] => rows(3).map((r, i) => ({ ...r, id: `v${i + 1}` }) as GridRow);
 
   it("scrolls the target variant row into view, focuses its link and marks it for a moment", () => {
     const scroll = jest.fn();
