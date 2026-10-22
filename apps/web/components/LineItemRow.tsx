@@ -213,6 +213,7 @@ export function LineItemRow({
   const qtyLocked = !!pendingUnit;
   // F08: set when a typed quantity below 1 was raised to 1, so the row says so (cleared by the next valid quantity).
   const [qtyBelowMin, setQtyBelowMin] = React.useState(false);
+  const showQtyNote = qtyBelowMin && !li.unitsPerBox; // only the plain (unit-sold) stepper can type a 0
   const qtyNoteId = React.useId();
   const w = unitWords({ packLabel: li.packLabel, baseUnitLabel: li.baseLabel });
   // F15/Q12: a pack line's price is per PACK, so its suffix is the same pack word as the toggle and the qty
@@ -242,6 +243,8 @@ export function LineItemRow({
         // up it is the original single flex row — the grid-placement classes on the
         // children are inert inside a flex container.
         "grid grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-2 px-3 py-2.5 sm:flex sm:items-start sm:gap-3",
+        // Row 731: from `sm` the row is a flex line; while the qty-0 note shows it wraps so the note takes a line of its own.
+        showQtyNote ? "sm:flex-wrap" : "",
         category ? "border-l-2 border-l-amber-300 bg-amber-50/30" : "",
         highlighted ? "ring-2 ring-brand-500" : "",
       )}
@@ -589,15 +592,6 @@ export function LineItemRow({
           >
             +
           </button>
-          {qtyBelowMin && (
-            <p
-              id={qtyNoteId}
-              role="status"
-              className="basis-full text-[11px] leading-snug text-amber-700"
-            >
-              Quantity must be at least 1. Remove the line to drop it.
-            </p>
-          )}
         </fieldset>
       )}
       {/* Line total */}
@@ -638,6 +632,18 @@ export function LineItemRow({
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
+      {/* Row 731 (F08): the qty-0 note is a full-row sibling of the qty controls, NOT inside the qty fieldset: its
+          max-content width inside that flex-wrap box widened the qty column and collapsed the name/price column. Last in
+          the DOM so it takes its own line (grid: row 3 across both columns; flex from sm: a full-basis wrapped line). */}
+      {showQtyNote && (
+        <p
+          id={qtyNoteId}
+          role="status"
+          className="col-span-full row-start-3 text-[11px] leading-snug text-amber-700 sm:basis-full"
+        >
+          Quantity must be at least 1. Remove the line to drop it.
+        </p>
+      )}
     </li>
   );
 }

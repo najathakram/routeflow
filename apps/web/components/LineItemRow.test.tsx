@@ -363,6 +363,26 @@ describe("F08: a typed 0 says why it became 1", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
+  it("row 731: the note is a full-row sibling of the qty fieldset, not inside it (it widened the qty column and collapsed the name)", () => {
+    // jsdom has no layout, so pin the structure that fixes it: a max-content note INSIDE the
+    // flex-wrap fieldset sets the qty column's width; as a direct child of the row spanning every
+    // column (grid under sm, a full-basis flex line from sm) it cannot.
+    renderRow({ ...makeProps(plainItem), onSetQty: jest.fn() });
+    const input = screen.getByLabelText("Quantity");
+    const li = screen.getByRole("listitem");
+    expect(li).not.toHaveClass("sm:flex-wrap"); // nothing changes while there is no note
+    fireEvent.change(input, { target: { value: "0" } });
+    const note = screen.getByRole("status");
+    expect(note).toHaveTextContent("Quantity must be at least 1. Remove the line to drop it.");
+    expect(note.closest("fieldset")).toBeNull();
+    expect(note.parentElement).toBe(li);
+    expect(note).toHaveClass("col-span-full", "sm:basis-full");
+    expect(li).toHaveClass("sm:flex-wrap");
+    expect(input.closest("fieldset")).toHaveAttribute("aria-label", "Line quantity controls");
+    expect(input).toHaveAttribute("aria-describedby", note.id);
+    expect(note.id).not.toBe("");
+  });
+
   it("an emptied field (mid-edit) is not the same as a 0 and shows no message", () => {
     renderRow({ ...makeProps(plainItem), onSetQty: jest.fn() });
     fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "" } });

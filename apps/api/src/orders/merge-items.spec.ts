@@ -275,6 +275,62 @@ describe("merge-items — box-unaware snapshot normalization (T-B47 / REG-B47)",
   });
 });
 
+describe("merge-items — row 727: a box-unaware line keeps its OWN pack when normalized", () => {
+  it("a box-unaware 2-box line sold as a 12-pack (own snapshot 12), product now a 6-pack, normalizes at 12: 24 pieces, never 12 at 6", () => {
+    const lines: MergeLineSnapshot[] = [
+      { productId: "prod-1", qty: 2, boxes: null, pieces: null, unitsPerBox: 12, unitPrice: 36 },
+    ];
+    const [line] = normalizeBoxUnawareSnapshots(lines, new Map([["prod-1", 6]]));
+    // the line's own snapshot is its pack (resolveLinePack / SA-104a(4)); the live pack is only for a line with none
+    expect(line).toMatchObject({ qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 });
+  });
+
+  it("a box-unaware line with NO own pack still takes the live one (unchanged)", () => {
+    const lines: MergeLineSnapshot[] = [
+      { productId: "prod-1", qty: 2, boxes: null, pieces: null, unitsPerBox: null, unitPrice: 36 },
+    ];
+    const [line] = normalizeBoxUnawareSnapshots(lines, new Map([["prod-1", 6]]));
+    expect(line).toMatchObject({ qty: 12, boxes: 2, pieces: 0, unitsPerBox: 6 });
+  });
+
+  it("#3594 MUST: a product NOT in the map (no box-aware incoming for it) is left untouched, even with its own 12", () => {
+    const own12 = {
+      productId: "prod-1",
+      qty: 2,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: 12,
+      unitPrice: 36,
+    };
+    const [line] = normalizeBoxUnawareSnapshots([own12], new Map());
+    // "stored box-UNAWARE + incoming BARE -> leave both alone": never restamped, so never re-split downstream
+    expect(line).toBe(own12);
+  });
+
+  it("#3594 MUST: the buyer passes only products with a BOX-AWARE incoming item; a bare-incoming product's own-12 line stays as stored", () => {
+    const own12 = {
+      productId: "prod-1",
+      qty: 2,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: 12,
+      unitPrice: 36,
+    };
+    const other = {
+      productId: "prod-2",
+      qty: 1,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      unitPrice: 10,
+    };
+    // the map holds prod-2 only (its incoming was box-aware); prod-1's incoming was bare
+    const [a, b] = normalizeBoxUnawareSnapshots([own12, other], new Map([["prod-2", 6]]));
+    expect(a).toBe(own12);
+    expect(b).toMatchObject({ qty: 6, boxes: 1, pieces: 0, unitsPerBox: 6 });
+  });
+});
+
 /**
  * The INCOMING half of the same reconciliation. A buyer's bare `{productId, qty}`
  * counts SELLING UNITS while the fold adds it to the accumulator's PIECES — which
