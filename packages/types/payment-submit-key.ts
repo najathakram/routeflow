@@ -1,4 +1,5 @@
 import { API_ERROR_CODES } from "./api/error-codes";
+import { PAYMENT_KEY_ANSWER_STATE } from "./api/payment-key";
 import {
   isDefinitiveSaleRefusal,
   mintSaleKey,
@@ -172,8 +173,8 @@ function isDefinitivePaymentRefusal(err: unknown): boolean {
 /** The answer of POST /invoices/payments/by-key/:key/resolve, read strictly: anything else is no answer. */
 function resolvedOutcome<T>(body: T): PaymentStatusOutcome<T> {
   const state = (body as { state?: unknown } | null)?.state;
-  if (state === "found") return { kind: "found", payment: body };
-  if (state === "tombstoned") return { kind: "tombstoned" };
+  if (state === PAYMENT_KEY_ANSWER_STATE.FOUND) return { kind: "found", payment: body };
+  if (state === PAYMENT_KEY_ANSWER_STATE.TOMBSTONED) return { kind: "tombstoned" };
   return { kind: "error" };
 }
 

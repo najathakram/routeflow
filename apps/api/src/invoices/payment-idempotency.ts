@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "crypto";
 import { toCents } from "@routeflow/pricing";
 import { IDEMPOTENCY_KEY_CONFLICT } from "../orders/merge-idempotency";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import type { PaymentKeyScope } from "@routeflow/types";
 
 /**
  * SA-824 (row 661 step 1): the ONE claim-in-transaction helper of the customer money-in writers
@@ -54,7 +55,7 @@ export function paymentKeyInFlightConflict(): ConflictException {
       "A payment under this key is still being recorded. Check its status again in a moment.",
   });
 }
-export type PaymentKeyScope = "STANDALONE_PAYMENT" | "INVOICE_PAYMENT" | "ADVANCE_PAYMENT";
+export type { PaymentKeyScope };
 
 /** What the request hash covers: the normalized body (ruling 3). */
 export interface PaymentKeyRequest {

@@ -5,11 +5,8 @@ import { AuditService } from "../audit/audit.service";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isLockTimeout } from "../units/tenant-units-lock";
-import {
-  paymentKeyInFlightConflict,
-  withCurrentState,
-  type PaymentKeyScope,
-} from "./payment-idempotency";
+import type { PaymentKeyAnswer, PaymentKeyScope } from "@routeflow/types";
+import { paymentKeyInFlightConflict, withCurrentState } from "./payment-idempotency";
 
 /** The bound on the resolve's wait behind an uncommitted claim (SA-824 race ruling 3). */
 const RESOLVE_LOCK_TIMEOUT = "5s";
@@ -30,10 +27,6 @@ interface KeyRow {
   paymentGroupId?: string | null;
   advancePaymentId?: string | null;
 }
-
-export type PaymentKeyAnswer =
-  | ({ state: "found"; scope: PaymentKeyScope; replayed: true } & Record<string, unknown>)
-  | { state: "tombstoned" };
 
 const keyHash = (key: string) => createHash("sha256").update(key).digest("hex");
 
@@ -94,7 +87,8 @@ export class PaymentKeyStatusService {
     if (row.state !== "COMPLETED" || !row.scope) throw paymentKeyInFlightConflict(); // CLAIMED
     const scope = row.scope as PaymentKeyScope;
     const stored = await withCurrentState(this.prisma, scope, row.result);
-    return { state: "found", ...stored, scope, replayed: true as const };
+    // state LAST: a stored result can never override the answer's state.
+    return { ...stored, state: "found" as const, scope, replayed: true as const };
   }
 
   async byKey(key: string): Promise<PaymentKeyAnswer> {
@@ -109,12 +103,30 @@ export class PaymentKeyStatusService {
     return this.answer(row);
   }
 
-  async resolve(key: string, actor?: PaymentKeyActor | null): Promise<PaymentKeyAnswer> {
+  async resolve(
+    key: string,
+    actor?: PaymentKeyActor | null,
+    ip?: string | null,
+  ): Promise<PaymentKeyAnswer> {
     const tenantId = this.requireTenant();
+    // A conflict whose row is not readable (it vanished between the insert and the read) proves NOTHING:
+    // retry the insert once, and if it conflicts again with still no row, fail closed (never a false tombstone).
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const inserted = await this.tryTombstone(tenantId, key);
+      // Not inserted: the conflicting row is COMMITTED (Postgres waited for it), so this read sees it.
+      const row = inserted ? null : await this.readRow(key);
+      if (!inserted && !row) continue;
+      const out: PaymentKeyAnswer = row ? await this.answer(row) : { state: "tombstoned" };
+      await this.auditResolve(tenantId, key, out, row, actor, ip);
+      return out;
+    }
+    throw paymentKeyInFlightConflict();
+  }
+
+  private async tryTombstone(tenantId: string, key: string): Promise<boolean> {
     const id = randomUUID();
-    let inserted: boolean;
     try {
-      inserted = await this.prisma.tenantTransaction(async (tx: any) => {
+      return await this.prisma.tenantTransaction(async (tx: any) => {
         await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${RESOLVE_LOCK_TIMEOUT}'`);
         const rows: unknown[] = await tx.$queryRaw`
           INSERT INTO "PaymentIdempotencyKey" ("id", "tenantId", "key", "state", "result")
@@ -127,12 +139,6 @@ export class PaymentKeyStatusService {
       if (inFlight(e)) throw paymentKeyInFlightConflict();
       throw e;
     }
-
-    // Not inserted: the conflicting row is COMMITTED (Postgres waited for it), so this read sees it.
-    const row = inserted ? null : await this.readRow(key);
-    const out: PaymentKeyAnswer = row ? await this.answer(row) : { state: "tombstoned" };
-    await this.auditResolve(tenantId, key, out, row, actor);
-    return out;
   }
 
   private async auditResolve(
@@ -141,6 +147,7 @@ export class PaymentKeyStatusService {
     out: PaymentKeyAnswer,
     row: KeyRow | null,
     actor?: PaymentKeyActor | null,
+    ip?: string | null,
   ): Promise<void> {
     const hash = keyHash(key);
     const found = out.state === "found" ? out : null;
@@ -152,6 +159,7 @@ export class PaymentKeyStatusService {
       action: AUDIT_ACTIONS.PAYMENT_KEY_RESOLVE,
       entityType: "payment-key",
       entityId: hash,
+      ip: ip ?? null,
       meta: {
         keyHash: hash,
         outcome: out.state,

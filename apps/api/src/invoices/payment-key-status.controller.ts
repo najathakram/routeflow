@@ -1,4 +1,5 @@
-import { Controller, Get, HttpCode, Param, Post, UseGuards } from "@nestjs/common";
+import { Controller, Get, HttpCode, Param, Post, Req, UseGuards } from "@nestjs/common";
+import type { Request } from "express";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -28,7 +29,13 @@ export class PaymentKeyStatusController {
   /** SA-824 race ruling 3: { state: "found", ... } | { state: "tombstoned" }; 409 PAYMENT_KEY_IN_FLIGHT. */
   @Post("payments/by-key/:key/resolve")
   @HttpCode(200)
-  async resolve(@Param("key") rawKey: string, @CurrentUser() user: JwtPayload) {
-    return this.status.resolve(requireIdempotencyKey(rawKey, "check a payment"), user);
+  async resolve(
+    @Param("key") rawKey: string,
+    @CurrentUser() user: JwtPayload,
+    @Req() req?: Pick<Request, "ip" | "socket">,
+  ) {
+    // The generic audit row carries the trust-proxy-aware req.ip; this self-audited route keeps it too.
+    const ip = req?.ip ?? req?.socket?.remoteAddress ?? null;
+    return this.status.resolve(requireIdempotencyKey(rawKey, "check a payment"), user, ip);
   }
 }

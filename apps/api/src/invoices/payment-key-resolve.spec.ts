@@ -40,6 +40,9 @@ function build(tenant: string | null, seed: Row[] = []) {
   /** A claim of another connection, uncommitted while the resolve's insert waits on it. */
   let pending: { row: Row; outcome: "commit" | "rollback" } | null = null;
   let insertError: unknown = null;
+  /** Inserts that report a conflict although no row is readable (the conflicting row vanished: review finding 1). */
+  let ghostConflicts = 0;
+  let inserts = 0;
   const sql: string[] = [];
   const txOpts: unknown[] = [];
   const audit = { log: jest.fn(async (_dto: Record<string, unknown>) => undefined) };
@@ -58,6 +61,11 @@ function build(tenant: string | null, seed: Row[] = []) {
       sql.push(q);
       if (!q.includes('INSERT INTO "PaymentIdempotencyKey"')) return [];
       if (insertError) throw insertError;
+      inserts += 1;
+      if (ghostConflicts > 0) {
+        ghostConflicts -= 1;
+        return [];
+      }
       // The wait: the other transaction ends now, then the insert sees its outcome.
       if (pending) {
         if (pending.outcome === "commit") rows.push({ ...pending.row, state: "COMPLETED" });
@@ -114,6 +122,10 @@ function build(tenant: string | null, seed: Row[] = []) {
     get: (key: string) => controller.byKey(key),
     holdClaim: (row: Row, outcome: "commit" | "rollback") => (pending = { row, outcome }),
     failInsert: (e: unknown) => (insertError = e),
+    ghostConflict: (n: number) => (ghostConflicts = n),
+    insertCount: () => inserts,
+    resolveFrom: (key: string, ip: string) =>
+      (controller as any).resolve(key, actor, { ip, socket: {} }),
   };
 }
 
@@ -171,6 +183,38 @@ describe("SA-824 POST /invoices/payments/by-key/:key/resolve", () => {
     t.holdClaim(completed({ state: "CLAIMED" }), "rollback");
     expect(await t.resolve("k-1")).toEqual({ state: "tombstoned" });
     expect(t.rows.map((r) => r.state)).toEqual(["TOMBSTONED"]);
+  });
+
+  it("a conflict whose row is NOT readable (it vanished): retries the insert once, then the tombstone lands", async () => {
+    const t = build("tA");
+    t.ghostConflict(1);
+    expect(await t.resolve("k-g")).toEqual({ state: "tombstoned" });
+    expect(t.insertCount()).toBe(2);
+    expect(t.rows.map((r) => r.state)).toEqual(["TOMBSTONED"]);
+  });
+
+  it("a conflict with no readable row TWICE fails closed: 409 PAYMENT_KEY_IN_FLIGHT, no tombstone claimed, no audit row", async () => {
+    const t = build("tA");
+    t.ghostConflict(5);
+    const err: any = await t.resolve("k-g").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse().code).toBe(IN_FLIGHT);
+    expect(t.insertCount()).toBe(2);
+    expect(t.rows).toHaveLength(0);
+    expect(t.audit.log).not.toHaveBeenCalled();
+  });
+
+  it("the resolve self-audit row carries the caller's ip (like the generic mutation row)", async () => {
+    const t = build("tA");
+    await t.resolveFrom("k-ip", "203.0.113.7");
+    expect(t.audit.log.mock.calls[0][0]).toMatchObject({ ip: "203.0.113.7" });
+  });
+
+  it("a stored result carrying its own `state` can never override the answer's state", async () => {
+    const t = build("tA", [completed({ result: { ...completed().result, state: "tombstoned" } })]);
+    const out: any = await t.resolve("k-1");
+    expect(out.state).toBe("found");
+    expect(((await t.get("k-1")) as any).state).toBe("found");
   });
 
   it("resolve twice: idempotent { state: 'tombstoned' }, one row", async () => {
