@@ -1022,7 +1022,7 @@ export default function EditInvoicePage() {
                             qty={item.qty}
                             unitsPerBox={Number(item.unitsPerBox)}
                             onQtyChange={(qty) => updateItem(item.key, { qty })}
-                            inputClassName="h-9 w-14 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            inputClassName="h-11 w-full min-w-[44px] rounded border border-surface-border bg-white px-1.5 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                           />
                         ) : (
                           <DecimalInput

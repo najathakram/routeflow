@@ -6,9 +6,10 @@ import EditInvoicePage from "./page";
 /**
  * Row 688 (SA-827 §1/§4/P7): the edit form edits the STORED line in its sold unit. A boxed line used to
  * open as one "Qty" field holding total pieces (48.000) beside the per-BOX unit price ($21.60): two units
- * side by side. It now opens as boxes + loose pieces at the line's own stored pack, and saves exactly the
- * stored-unit fields (qty in pieces, boxes, pieces, the box price, the stored pack), whether or not the
- * line has a productId.
+ * side by side. It now opens as boxes + loose pieces at the line's own stored pack (never the live product's),
+ * and saves the stored-unit fields (qty in pieces, boxes, pieces, the box price), whether or not the line has
+ * a productId. The stored pack itself is NOT posted: only an operator-attested pack ever is (SA-189); the
+ * server keeps the row's own snapshot.
  */
 
 let mockInvoice: Record<string, unknown> | undefined;
@@ -28,7 +29,8 @@ jest.mock("@/lib/api/customers", () => ({
   useCustomer: () => ({ data: undefined, isLoading: false }),
   useCustomerPrices: () => ({ data: undefined, isLoading: false }),
 }));
-jest.mock("@/lib/api/products", () => ({ useProducts: () => ({ data: undefined }) }));
+let mockProducts: unknown;
+jest.mock("@/lib/api/products", () => ({ useProducts: () => ({ data: mockProducts }) }));
 jest.mock("@/lib/api-client", () => ({ apiClient: { get: jest.fn(), post: jest.fn() } }));
 jest.mock("@/components/InlineCreateProductModal", () => ({
   InlineCreateProductModal: () => null,
@@ -111,18 +113,65 @@ describe("row 688: invoice edit form edits a boxed line in its sold unit", () =>
     expect(line).toMatchObject({ qty: 72, boxes: 3, pieces: 0, unitPrice: 21.6 });
   });
 
-  it("50 loose pieces normalise to 2 boxes + 2 pieces, prorated", async () => {
+  it("2 boxes + 2 loose pieces saves qty 50, prorated", async () => {
     mockInvoice = draft([boxedLine()]);
     renderWithProviders(<EditInvoicePage />);
-    const boxes = screen.getByLabelText("Boxes");
     const pieces = screen.getByLabelText("Pieces");
-    await userEvent.clear(boxes);
-    await userEvent.type(boxes, "0");
     await userEvent.clear(pieces);
-    await userEvent.type(pieces, "50");
+    await userEvent.type(pieces, "2");
     // 21.60 x (2 + 2/24) = 45.00
     expect(subtotal()).toHaveTextContent("$45.00");
     const line = await save();
     expect(line).toMatchObject({ qty: 50, boxes: 2, pieces: 2, unitPrice: 21.6 });
+  });
+
+  it("row 708: loose pieces cap at pack - 1, never rolling into a box mid-typing", async () => {
+    mockInvoice = draft([boxedLine()]);
+    renderWithProviders(<EditInvoicePage />);
+    const pieces = screen.getByLabelText("Pieces");
+    await userEvent.clear(pieces);
+    await userEvent.type(pieces, "30");
+    // The boxes never roll over while typing; the capped count shows once the field is left.
+    expect(screen.getByLabelText("Boxes")).toHaveValue("2");
+    expect(subtotal()).toHaveTextContent("$63.90"); // 21.60 x (2 + 23/24)
+    await userEvent.tab();
+    expect(pieces).toHaveValue("23");
+    const line = await save();
+    expect(line).toMatchObject({ qty: 71, boxes: 2, pieces: 23, unitPrice: 21.6 });
+  });
+});
+
+describe("row 708: hydration reads the stored line, never the live product", () => {
+  afterEach(() => {
+    mockProducts = undefined;
+  });
+
+  it("2 boxes + 2 pieces opens as 2 box + 2 pcs and totals $45.00", () => {
+    mockInvoice = draft([boxedLine({ qty: 50, boxes: 2, pieces: 2 })]);
+    renderWithProviders(<EditInvoicePage />);
+    expect(screen.getByLabelText("Boxes")).toHaveValue("2");
+    expect(screen.getByLabelText("Pieces")).toHaveValue("2");
+    expect(subtotal()).toHaveTextContent("$45.00");
+  });
+
+  it("a legacy line with no stored pack recovers it from its own split", () => {
+    mockInvoice = draft([boxedLine({ qty: 50, boxes: 2, pieces: 2, unitsPerBox: null })]);
+    renderWithProviders(<EditInvoicePage />);
+    expect(screen.getByLabelText("Boxes")).toHaveValue("2");
+    expect(screen.getByLabelText("Pieces")).toHaveValue("2");
+    expect(subtotal()).toHaveTextContent("$45.00");
+  });
+
+  it("a product repacked since the sale (now 12) keeps the line's stored pack of 24", async () => {
+    mockProducts = {
+      data: [{ id: "p-oj", name: "Orange juice 12oz", unitsPerBox: 12, isActive: true }],
+    };
+    mockInvoice = draft([boxedLine()]);
+    renderWithProviders(<EditInvoicePage />);
+    expect(screen.getByLabelText("Boxes")).toHaveValue("2");
+    expect(screen.getByLabelText("Pieces")).toHaveValue("0");
+    expect(subtotal()).toHaveTextContent("$43.20");
+    const line = await save();
+    expect(line).toMatchObject({ qty: 48, boxes: 2, pieces: 0, unitPrice: 21.6 });
   });
 });
