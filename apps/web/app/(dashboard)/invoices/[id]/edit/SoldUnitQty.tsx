@@ -38,6 +38,8 @@ export function SoldUnitQty({
         aria-label="Pieces"
         decimals={0}
         min={0}
+        // Row 708: loose pieces cap at pack - 1 (mobile's stepper max), so typing never rolls them into a box.
+        max={unitsPerBox - 1}
         value={pieces}
         onChange={(v) => onQtyChange(boxes * unitsPerBox + Math.trunc(v ?? 0))}
         className={inputClassName}
