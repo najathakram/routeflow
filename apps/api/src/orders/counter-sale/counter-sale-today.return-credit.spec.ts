@@ -640,6 +640,18 @@ describe("toTodaysSaleRow: the receipt invariant over every fixture (SA-838a, in
       notes({ "cn-1": ["APPLIED", 5.5] }),
       [inline],
     ],
+    [
+      "inline, note invoiceId null (the real mint, SA-838b)",
+      order([pay("CASH", 7), creditPay(5.5, "cn-1", null)], []),
+      notes({ "cn-1": ["APPLIED", 5.5] }),
+      [inline],
+    ],
+    [
+      "inline mixed-source, note invoiceId null (stays a tender)",
+      order([pay("CASH", 7), creditPay(5.5, "cn-1", null)], []),
+      notes({ "cn-1": ["APPLIED", 5.5] }),
+      [{ ...inline, items: [...(inline.items ?? []), { sourceOrderId: "o-9", subtotal: "1.00" }] }],
+    ],
   ];
 
   it.each(fixtures)("%s: Balance due = Total - Paid - Returned", (_n, rec, seen, carriedRets) => {
