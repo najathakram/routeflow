@@ -106,6 +106,7 @@ import {
   CreditNoteStatus,
   InvoiceStatus,
   NotificationEvent,
+  OrderStatus,
   Prisma,
   UserRole,
 } from "@prisma/client";
@@ -142,7 +143,10 @@ import { InvoicePdfService } from "./invoice-pdf.service";
 import { invoiceItemQtyFields } from "./invoice-pdf-item";
 import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-attachment";
 import { SystemConfigService } from "../system-config/system-config.service";
-import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import {
+  RegulatedLedgerService,
+  type RegulatedSettleResult,
+} from "../regulated/regulated-ledger.service";
 import {
   applyBulkPriceAdjustment,
   assertAdjustedTotalsSane,
@@ -206,7 +210,7 @@ import { lockRowsNoWait } from "../common/db-locks";
 import { counterPay, type CounterPayOpts } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { planInvoicedQtyAdjustment } from "./unvoid-billing-claim";
-import { UNVOID_REFUSAL_COPY } from "./unvoid-billing-refusal";
+import { UNVOID_REFUSAL_COPY, assertUnvoidOrderNotCancelled } from "./unvoid-billing-refusal";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import * as iGate from "./invoice-restriction-gate";
@@ -1935,34 +1939,32 @@ export class InvoicesService {
    * full-order qty createSplitInvoices first wrote. A no-op for a non-regulated invoice
    * (the ledger service early-returns when there are no SALE rows / no regulated lines).
    *
-   * Called ONLY from rebuildSiblingDrafts (the sibling-aware clean-partition paths), where
-   * each draft owns a disjoint set of lines — never from the group-unaware legacy rebuild,
-   * which would double-count a folded regulated line against its live sibling SALE.
+   * Callers (each under its own locks, pinned by regulated/sa839-ledger-pins.spec.ts):
+   * rebuildSiblingDrafts (never the group-unaware legacy rebuild, which would double-count a
+   * folded regulated line against its live sibling SALE), the DRAFT update, the price re-sync
+   * and unvoidInvoice (SA-839 / B706, `restoresVoid`).
    *
-   * Uses `reverseInvoiceEntries({preserveReturns: true})` — it cancels only the
-   * sale-record and LEAVES any prior RETURN / credit-note reversal standing, so a
-   * re-reconcile after a received return nets to (delivered − returned), not delivered.
+   * SA-839 INVOICE_BILLED: it cancels only the sale-record and LEAVES every LIVE return /
+   * credit-note reversal standing (a dead one's rows are countered by the settle's sweep first),
+   * so a re-reconcile after a received return nets to (delivered − returned), not delivered.
    * Idempotent across repeat re-syncs (a prior re-sync reversal has no returnId, so it's
-   * counted; the old line finds 0 remaining and is skipped). The delivered-payment path
-   * runs at delivery before any return exists, so it's unaffected either way.
+   * counted; the old line finds 0 remaining and is skipped).
    */
   private async resyncInvoiceLedger(
     invoiceId: string,
     orderId: string | null,
     items: any[],
     db: any,
-  ): Promise<void> {
-    // preserveReturns: cancel only the sale-record, leave any return/credit-note reversal
-    // standing, so a re-reconcile after a return nets to (delivered − returned).
-    await this.ledger.reverseInvoiceEntries({ invoiceId, db, preserveReturns: true });
+    opts: { restoresVoid?: boolean } = {},
+  ): Promise<RegulatedSettleResult> {
     const packMap = await packAtSaleByProduct(db, items ?? []);
-    await this.ledger.writeSaleEntries({
-      tenantId: this.prisma.getTenantId(),
-      orderId,
+    return this.ledger.settleRegulatedLedger(db, {
+      kind: "INVOICE_BILLED",
       invoiceId,
-      soldAt: new Date(),
+      orderId,
+      tenantId: this.prisma.getTenantId(),
       lines: toSaleLedgerLines(items ?? [], packMap),
-      db,
+      restoresVoid: opts.restoresVoid,
     });
   }
 
@@ -3922,7 +3924,6 @@ export class InvoicesService {
       throw new ConflictException("Invoice was already voided.");
     }
     await this.adjustInvoicedQtyForInvoice(tx, id, orderId, -1);
-    await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
     // Sales agents & commissions: a voided invoice targets zero — this
     // emits the compensating CLAWBACK adjustment when commission was claimed.
     await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
@@ -3951,6 +3952,10 @@ export class InvoicesService {
               { amount: roundMoney(used), status: CreditNoteStatus.APPLIED },
       });
     }
+    // SA-839 F2 (MUST): the regulated ledger settles AFTER every document flip above. An unused
+    // note is VOID by now, so the settle's sweep counters its reversal before the line is netted to
+    // 0 (settling first left its -2 standing on the VOID invoice, and an unvoid then booked 3 of 5).
+    await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId: id });
     // Status already flipped to VOID by the claim above; return the fresh record.
     return tx.invoice.findUnique({ where: { id } });
   }
@@ -4160,8 +4165,7 @@ export class InvoicesService {
     }
     // Voiding RELEASED this invoice's invoicedQty back to the order; bringing it
     // back to DRAFT re-claims that qty so a later invoice can't double-bill the
-    // same lines. Atomic with the status flip. (Ledger reversal is not un-done here
-    // — regulated-ledger un-reversal on unvoid is a separate follow-up.)
+    // same lines, and re-books the regulated ledger (SA-839 / B706). Atomic with the status flip.
     return this.prisma.tenantTransaction(async (tx) => {
       // SA-760 R-1: Order -> Invoice before the invoicedQty write; the VOID check is re-read under them.
       const locked = await lockInvoiceRow(tx, id, inv.orderId);
@@ -4170,13 +4174,21 @@ export class InvoicesService {
           code: API_ERROR_CODES.ORDER_BILLING_CHANGED,
           message: "The invoice changed while it was being restored. Refresh and try again.",
         });
+      await assertUnvoidOrderNotCancelled(tx, inv.orderId); // B693: 409 before any write
       // B299 / SA-814 R4-5: the re-claim runs FIRST and is not clamped - if another invoice now bills these
       // goods (or the line is CANCELLED) it throws 409 ORDER_BILLING_CHANGED before the status flip writes.
       await this.adjustInvoicedQtyForInvoice(tx, id, inv.orderId, 1);
-      return tx.invoice.update({
+      const restored = await tx.invoice.update({
         where: { id },
         data: { status: InvoiceStatus.DRAFT },
       });
+      // SA-839 F2 (B706): re-book from the items read in this tx, in the UNVOID's period (§3); the void's
+      // rows stay. `amendedPeriod` (never a refusal): the void sat in a FILED month (SA-182 shape).
+      const items = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
+      const { amendedPeriod } = await this.resyncInvoiceLedger(id, inv.orderId, items, tx, {
+        restoresVoid: true,
+      });
+      return { ...restored, amendedPeriod };
     });
   }
 
@@ -5108,7 +5120,7 @@ export class InvoicesService {
 
       // W5: reverse this invoice's regulated ledger rows before the invoice + its
       // items are deleted (the ledger keeps its own snapshot; append-only, no FK).
-      await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
+      await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId: id });
 
       // Unlink the remaining (closed) credit notes this invoice sourced, marking each (#2848).
       await unlinkSourcedCredits(
@@ -5625,7 +5637,9 @@ export class InvoicesService {
           isTaxExempt,
           recomputeStatus: (p, t, d, st) => statusFromPayments(p, t, d, st, tz, "NOT_PAID"),
           ledger: this.ledger,
-          resync: (...a) => this.resyncInvoiceLedger(...a),
+          resync: async (...a) => {
+            await this.resyncInvoiceLedger(...a);
+          },
         });
       });
       onCommitted?.();

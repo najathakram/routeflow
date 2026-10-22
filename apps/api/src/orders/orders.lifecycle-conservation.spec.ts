@@ -142,7 +142,7 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
     settleOrderCreditsInTx: jest.Mock;
   };
   let commissionEngineService: { removeInvoiceCommission: jest.Mock };
-  let ledgerService: { reverseInvoiceEntries: jest.Mock };
+  let ledgerService: { reverseInvoiceEntries: jest.Mock; settleRegulatedLedger: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -262,7 +262,10 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
         // red signal; the fix wires `private readonly ledger: RegulatedLedgerService`.
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
       ],
     }).compile();
@@ -486,9 +489,13 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
       creditNotesService.previewOrderCreditRelease.mockResolvedValue([]);
 
       const calls: string[] = [];
-      ledgerService.reverseInvoiceEntries.mockImplementation(async ({ invoiceId }: any) => {
-        calls.push(`ledger:${invoiceId}`);
-      });
+      // SA-839: each invoice is zeroed through the one ledger helper (INVOICE_ZEROED).
+      ledgerService.settleRegulatedLedger.mockImplementation(
+        async (_tx: unknown, { invoiceId }: any) => {
+          calls.push(`ledger:${invoiceId}`);
+          return { written: 0, amendedPeriod: null };
+        },
+      );
       prisma.invoice.delete.mockImplementation(async ({ where }: any) => {
         calls.push(`delete:${where.id}`);
         return { id: where.id };
@@ -497,13 +504,15 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
       await service.deleteOrder("ord-1");
 
       // Called once per invoice — not zero, not once for the whole order.
-      expect(ledgerService.reverseInvoiceEntries).toHaveBeenCalledTimes(2);
-      expect(ledgerService.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "inv-1" }),
-      );
-      expect(ledgerService.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "inv-2" }),
-      );
+      expect(ledgerService.settleRegulatedLedger).toHaveBeenCalledTimes(2);
+      expect(ledgerService.settleRegulatedLedger).toHaveBeenCalledWith(expect.anything(), {
+        kind: "INVOICE_ZEROED",
+        invoiceId: "inv-1",
+      });
+      expect(ledgerService.settleRegulatedLedger).toHaveBeenCalledWith(expect.anything(), {
+        kind: "INVOICE_ZEROED",
+        invoiceId: "inv-2",
+      });
       // Each invoice's reversal precedes ITS OWN delete — never merely
       // "somewhere before the last delete".
       expect(calls.indexOf("ledger:inv-1")).toBeGreaterThanOrEqual(0);

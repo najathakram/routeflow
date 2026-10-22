@@ -55,6 +55,8 @@ export interface ModalProps {
   scroll?: boolean;
   /** Extra classes for the header X (e.g. a 44 px tap target on a touch screen). */
   closeClassName?: string;
+  /** Extra controls rendered in the header just before the X (e.g. a Minimize icon). Omit for the plain X. */
+  headerActions?: React.ReactNode;
   /**
    * Where the dialog rests. "center" (default) centres it vertically and enters with a zoom + slide.
    * "top" pins its top edge 4vh from the viewport top and enters with a fade only: a long form whose
@@ -79,10 +81,23 @@ export const Modal = ({
   onCloseAutoFocus,
   scroll = false,
   closeClassName,
+  headerActions,
   anchor = "center",
 }: ModalProps) => {
   const contentRef = React.useRef<HTMLDivElement>(null);
   const notice = React.useContext(ModalNoticeContext);
+  // No onClick: Dialog.Close triggers onOpenChange which calls onClose via Root.
+  const closeButton = (
+    <Dialog.Close
+      className={cn(
+        "ml-auto flex-shrink-0 rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500",
+        closeClassName,
+      )}
+      aria-label="Close"
+    >
+      <X className="h-4 w-4" />
+    </Dialog.Close>
+  );
   return (
     <Dialog.Root open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <Dialog.Portal>
@@ -148,16 +163,14 @@ export const Modal = ({
                 <Dialog.Description className="sr-only">Modal dialog</Dialog.Description>
               )}
             </div>
-            {/* No onClick — Dialog.Close triggers onOpenChange which calls onClose via Root */}
-            <Dialog.Close
-              className={cn(
-                "ml-auto flex-shrink-0 rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500",
-                closeClassName,
-              )}
-              aria-label="Close"
-            >
-              <X className="h-4 w-4" />
-            </Dialog.Close>
+            {headerActions ? (
+              <div className="ml-auto flex flex-shrink-0 items-center gap-1">
+                {headerActions}
+                {closeButton}
+              </div>
+            ) : (
+              closeButton
+            )}
           </div>
 
           {notice ? <div className={cn("mb-3", scroll && "shrink-0")}>{notice}</div> : null}

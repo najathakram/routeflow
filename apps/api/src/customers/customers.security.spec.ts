@@ -44,7 +44,10 @@ describe("CustomersService — F4-002 sort-field allowlist", () => {
         // invoice's regulated-ledger entries, so the collaborator must be provided.
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         {
           provide: EmailService,

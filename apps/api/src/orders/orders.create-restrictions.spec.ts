@@ -193,7 +193,10 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
         // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
       ],
     }).compile();

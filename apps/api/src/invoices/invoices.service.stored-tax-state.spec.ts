@@ -65,7 +65,11 @@ describe("SA-814 R5-2 — one recompute guard for stored tax state", () => {
         { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         {
           provide: AuthorizationGuardService,

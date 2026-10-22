@@ -44,7 +44,7 @@ import { ResumeUnsentOrderDialog } from "./ResumeUnsentOrderDialog";
 import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
 import { todayLocalIso } from "@/lib/formatting";
-import { ACTION_TOAST_MS, showOrderCreatedToast } from "./order-created-toast";
+import { ACTION_TOAST_MS, addedLineQty, showOrderCreatedToast } from "./order-created-toast";
 import {
   mergePieceIntoLine,
   mergeQtyIntoLine,
@@ -260,6 +260,9 @@ export interface CreateOrderModalProps {
   onViewOrder?: (orderId: string) => void;
 }
 
+/** F13 (row 718): the local copy for a requested delivery day before the browser's today. */
+const DELIVERY_DATE_PAST_COPY = "That day has passed. Pick today or a later date.";
+
 type SubmitOptions = { mergeChoice?: "merge" | "separate"; asDraft?: boolean };
 
 /** A 4xx the modal resolves with the operator and re-submits itself (merge prompt, license capture): the SAME attempt. */
@@ -275,6 +278,14 @@ function isSameAttemptRefusal(err: any): boolean {
   // Row 510: a RESTRICTION_WARNING wrote nothing; the dialog resubmits this SAME attempt (same key) with the ack.
   return parseRestrictionWarning(err) !== null || (parseRegulatedAuthError(err)?.length ?? 0) > 0;
 }
+
+/**
+ * N05: how long after the "Open order exists" prompt mounts that Enter/Space will not activate its buttons.
+ * The pre-check opens the prompt synchronously inside the Create Order click, so an Enter/Space pressed "at
+ * once" lands after the mount as a FRESH keydown that the held-key lineage cannot tell from a deliberate one.
+ * No operator reads and answers a dialog in 300 ms; a deliberate press after the window works as before.
+ */
+export const MERGE_PROMPT_KEY_GUARD_MS = 300;
 
 export function CreateOrderModal({
   isOpen,
@@ -394,8 +405,12 @@ export function CreateOrderModal({
   // Scroll the just-scanned line into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLLIElement>>(new Map());
   const [scrollToId, setScrollToId] = React.useState<string | null>(null);
+  // Q09: the line you last touched (or just added). Only it shows the "Tap to change" hint; before any touch the newest
+  // line is the active one (computed at render, not mirrored into state: L-333).
+  const [touchedLineId, setTouchedLineId] = React.useState<string | null>(null);
   React.useEffect(() => {
     if (!scrollToId) return;
+    setTouchedLineId(scrollToId);
     rowRefs.current.get(scrollToId)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     setScrollToId(null);
   }, [scrollToId, lineItems]);
@@ -432,6 +447,81 @@ export function CreateOrderModal({
   // Merge-vs-separate prompt state. Set when the operator submits and the API
   // (or our pre-check) reports an existing active order for the same customer.
   const [mergePrompt, setMergePrompt] = React.useState<ActiveOrderSummary | null>(null);
+  const mergeChoiceRef = React.useRef<HTMLButtonElement>(null);
+  const separateChoiceRef = React.useRef<HTMLButtonElement>(null);
+  // N05: the prompt must not act on a key press that began before it opened. The 409 (or the
+  // pre-check) opens it while the operator's Enter/Space from the Create Order click is still
+  // down, N02 then focuses Merge, and that same press (auto-repeat keydown, keypress, the click the
+  // browser makes from it, or Space's keyup click) would land on it. We note which activation keys
+  // are physically held at the moment of opening ("stale") and swallow only those: until the key's
+  // keyup, or until a fresh non-repeat keydown starts a new press. Native capture listeners, so
+  // they run before React's and before the browser's default action (Enter clicks at keydown/
+  // keypress, Space at keyup). Second layer: for MERGE_PROMPT_KEY_GUARD_MS after the mount no Enter/Space activates
+  // the buttons at all (the pre-check path, where the key is a fresh keydown). A pointer click and Tab/Escape are untouched.
+  const promptFooterRef = React.useRef<HTMLDivElement>(null);
+  const heldKeysRef = React.useRef<Set<string>>(new Set());
+  const staleKeysRef = React.useRef<Set<string>>(new Set());
+  const promptOpenedAtRef = React.useRef(Number.NEGATIVE_INFINITY); // performance.now() when the prompt mounted
+  const mergePromptOpen = mergePrompt !== null;
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const held = heldKeysRef.current;
+    const stale = staleKeysRef.current;
+    const inPrompt = (t: EventTarget | null) =>
+      t instanceof Node && !!promptFooterRef.current?.contains(t);
+    const isActivationKey = (k: string) => k === "Enter" || k === " ";
+    // Post-mount guard: the pre-check mounts the prompt inside the click, so an Enter/Space pressed "at once" is a
+    // FRESH keydown after the mount that the lineage cannot tell from a deliberate one. A timestamp, not a timer.
+    const inGuardWindow = () =>
+      performance.now() - promptOpenedAtRef.current < MERGE_PROMPT_KEY_GUARD_MS;
+    const onKeyDown = (e: KeyboardEvent) => {
+      held.add(e.key);
+      if (!e.repeat) stale.delete(e.key); // a new press started after the open: deliberate once the window is over
+      if (!isActivationKey(e.key) || !inPrompt(e.target)) return;
+      if (inGuardWindow()) stale.add(e.key); // a press that began inside the window stays swallowed until its keyup
+      if (stale.has(e.key)) e.preventDefault();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      // Space clicks on keyup: cancel it for a stale press and for any key activation inside the window.
+      if (isActivationKey(e.key) && inPrompt(e.target) && (stale.has(e.key) || inGuardWindow()))
+        e.preventDefault();
+      held.delete(e.key);
+      stale.delete(e.key);
+    };
+    const onClick = (e: MouseEvent) => {
+      // detail 0 = keyboard-made (a pointer click has detail >= 1); only while a stale/swallowed key is down
+      // (a programmatic or assistive click with no key involved is left alone).
+      if (e.detail === 0 && stale.size > 0 && inPrompt(e.target)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    const onBlur = () => {
+      held.clear();
+      stale.clear();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keyup", onKeyUp, true);
+    document.addEventListener("click", onClick, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("keyup", onKeyUp, true);
+      document.removeEventListener("click", onClick, true);
+      window.removeEventListener("blur", onBlur);
+      held.clear();
+      stale.clear();
+    };
+  }, [isOpen]);
+  // Layout effect: snapshot the held keys before any follow-on event of the press can be dispatched.
+  React.useLayoutEffect(() => {
+    const stale = staleKeysRef.current;
+    stale.clear();
+    promptOpenedAtRef.current = mergePromptOpen ? performance.now() : Number.NEGATIVE_INFINITY;
+    if (mergePromptOpen) {
+      for (const k of heldKeysRef.current) if (k === "Enter" || k === " ") stale.add(k);
+    }
+  }, [mergePromptOpen]);
   // The license guard (W6b): categories blocked by a 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   // Selling restrictions: lines the API refused for this customer (shown instead of a raw toast).
@@ -1816,6 +1906,10 @@ export function CreateOrderModal({
             ...note,
           };
     });
+    // The lines the request carries, for the merged toast (same filter as the payload's items).
+    const itemsForToast = asDraft
+      ? lines.filter((li) => (li.isUnlisted ? li.productName.trim() : li.productId) && li.qty > 0)
+      : lines;
     const payload = {
       customerId: selectedCustomer!.id,
       items: itemsForSubmit,
@@ -1865,7 +1959,20 @@ export function CreateOrderModal({
                 mergeChoice === "merge" ? { fromStatus: mergePrompt?.status } : undefined,
               );
             } else {
-              showOrderCreatedToast(toastApi, { mergeChoice, asDraft, created, onViewOrder });
+              showOrderCreatedToast(toastApi, {
+                mergeChoice,
+                asDraft,
+                created,
+                onViewOrder,
+                // N01: what the merge added, in the lines' own words (the total comes from the response).
+                addedLines:
+                  mergeChoice === "merge"
+                    ? itemsForToast.map((li) => ({
+                        name: li.productName,
+                        qty: addedLineQty(li),
+                      }))
+                    : undefined,
+              });
             }
             // The parked draft has become a real order — clear it from the dock.
             // SA-817: the order exists - stop autosave, drop the local copy, delete the bound server draft (once a create in flight lands).
@@ -1934,6 +2041,16 @@ export function CreateOrderModal({
               })
             )
               return; // row 510
+            // Row 718: the tenant's day called the date past. The refusal is on the date field (above); a merge-or-separate
+            // prompt that led here must not stay over it, so close it (as its onClose does) and put focus on the field.
+            if (body?.code === API_ERROR_CODES.DELIVERY_DATE_IN_PAST) {
+              setMergePrompt(null);
+              pendingFormValuesRef.current = null;
+              pendingAsDraftRef.current = false;
+              // After the prompt's dialog has unmounted: it traps focus while open and restores it to its opener on close.
+              window.setTimeout(() => deliveryDateRef.current?.focus(), 50);
+              return;
+            }
             const restricted = parseSellingRestricted(err);
             if (restricted) {
               setRestrictedBlock(restricted);
@@ -2022,6 +2139,20 @@ export function CreateOrderModal({
     submitOrder(data);
   };
 
+  // Row 718: the server measures the day on the TENANT's calendar, so a browser on another day can pass the local check
+  // and still get 400 DELIVERY_DATE_IN_PAST. The refusal goes next to the date field, worded from the code and the
+  // tenant's `today` it carries (never the raw server message, B986); editing the date clears it.
+  const deliveryDateRefusal: string | null = (() => {
+    const body = (
+      createOrder.error as { response?: { data?: { code?: unknown; today?: unknown } } } | null
+    )?.response?.data;
+    if (body?.code !== API_ERROR_CODES.DELIVERY_DATE_IN_PAST) return null;
+    return typeof body.today === "string" && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(body.today)
+      ? `That day has passed (today is ${body.today} for this business). Pick today or a later date.`
+      : DELIVERY_DATE_PAST_COPY;
+  })();
+  const deliveryDateError = deliveryDatePast ? DELIVERY_DATE_PAST_COPY : deliveryDateRefusal;
+
   // Extract the API's error message from Axios error structure
   const apiError: string | null = (() => {
     const err = createOrder.error as {
@@ -2032,6 +2163,8 @@ export function CreateOrderModal({
     // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
     // admin-written reason) and outlive the dialog's OK.
     if (parseSellingRestricted(err) || parseRestrictionWarning(err)) return null;
+    // Row 718: the server's past-delivery-day refusal sits on the date field, not in this banner.
+    if (deliveryDateRefusal) return null;
     // B986-7 (Opus): a RECOGNISED refusal (a coded one, a stock shortfall, a credit limit...) is fixed copy; an UNCODED one keeps
     // today's server sentence, which says what to fix (B991 / B987-E mint the codes + fields, then this read goes).
     return (
@@ -2071,6 +2204,13 @@ export function CreateOrderModal({
       }
       highlighted={ctx?.highlighted}
       onTapPrice={ctx?.onTapPrice}
+      active={
+        li.tempId ===
+        (lineItems.some((l) => l.tempId === touchedLineId)
+          ? touchedLineId
+          : lineItems[lineItems.length - 1]?.tempId)
+      }
+      onActivate={() => setTouchedLineId(li.tempId)}
       rowRef={(el) => {
         if (el) rowRefs.current.set(li.tempId, el);
         else rowRefs.current.delete(li.tempId);
@@ -2198,34 +2338,48 @@ export function CreateOrderModal({
         storeOnlyPos ? POS_COPY.builderSubtitle : "Create a new order on behalf of a customer."
       }
       className="max-w-2xl"
+      // Q08: the X is the one Close (the footer used to repeat it); Minimize sits beside it. Both are 44 px targets below lg.
+      closeClassName="max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
+      headerActions={
+        <Button
+          variant="ghost"
+          type="button"
+          size="sm"
+          aria-label="Minimize"
+          title="Minimize to drafts"
+          className="w-7 px-0 max-lg:h-11 max-lg:w-11"
+          onClick={handleMinimize}
+          disabled={!canMinimize || savingDraft}
+          loading={savingDraft}
+        >
+          {savingDraft ? null : <Minus className="h-4 w-4" />}
+        </Button>
+      }
       footer={
-        // B564: the Modal footer is a `justify-end` flex row, so four buttons wider than a
-        // 390px sheet overflowed off the LEFT edge and clipped Minimize. Under `sm` the save
-        // actions get their own row and Minimize sits below them, full-width; from `sm` up
-        // this is the original single row with Minimize pinned left. Every footer button is a 44px touch
-        // target under `sm` (max-sm:h-11); from `sm` up the Button's own height is untouched.
-        <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
-          {/* Minimize parks the whole builder into the bottom-left draft dock
-              (pos-cost-roles-spec §2). Left-aligned, away from the save actions. */}
-          <Button
-            variant="ghost"
-            type="button"
-            className="w-full max-sm:h-11 sm:mr-auto sm:w-auto"
-            onClick={handleMinimize}
-            disabled={!canMinimize || savingDraft}
-            loading={savingDraft}
-            leftIcon={<Minus className="h-4 w-4" />}
-          >
-            Minimize
-          </Button>
-          {/* Three-tier hierarchy: ghost (dismiss) < secondary (alt save) <
+        // Q08: ONE compact row at every width. Minimize moved into the header beside the X and the footer
+        // Close (a repeat of the X, same handleDismiss) is gone, so only the total and the save actions are left; the row
+        // wraps instead of overflowing a 390px sheet (B564). Every footer button is a 44px touch target under `sm`.
+        <div
+          data-testid="create-order-footer"
+          className="flex w-full flex-wrap items-center justify-end gap-x-3 gap-y-2"
+        >
+          {/* O3 (P01/P02): the total is pinned HERE (it used to sit at the foot of the scrolling body, hidden behind
+              this sticky footer at the moment of "Create Order"). First in the row, left-aligned (mr-auto); min-w-0 +
+              tabular-nums, no fixed width: a five-figure total wraps instead of clipping. */}
+          {lineItems.length > 0 && (
+            <div
+              data-testid="create-order-footer-total"
+              className="mr-auto flex min-w-0 items-baseline gap-2 tabular-nums text-navy"
+            >
+              <span className="text-sm text-navy/70">Total</span>
+              <span className="min-w-0 break-all text-base font-semibold">${total.toFixed(2)}</span>
+            </div>
+          )}
+          {/* Two-tier hierarchy: secondary (alt save) <
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
-          <div className="flex flex-wrap items-center justify-end gap-2 sm:order-2 sm:gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
             {/* Row 344: the footer actions are 44 px tap targets below sm (they were 34 px at 390). */}
-            <Button variant="ghost" type="button" className="max-sm:h-11" onClick={handleDismiss}>
-              Close
-            </Button>
             <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
             {priceLayer.enabled && priceLayer.failed ? (
               <p
@@ -2297,20 +2451,6 @@ export function CreateOrderModal({
               {posMode ? POS_COPY.confirmAndInvoice : "Create Order"}
             </WriteButton>
           </div>
-          {/* O3 (P01/P02): the total used to sit at the foot of the scrolling body, hidden behind
-              this sticky footer at the moment of "Create Order". It is now pinned HERE. DOM-last so
-              the col-reverse stack puts it on top of the buttons under `sm`; `sm:order-1` seats it
-              between Minimize and the actions on the single row. min-w-0 + tabular-nums, no fixed
-              width: a five-figure total wraps instead of clipping. */}
-          {lineItems.length > 0 && (
-            <div
-              data-testid="create-order-footer-total"
-              className="flex min-w-0 items-baseline justify-between gap-2 tabular-nums text-navy sm:order-1 sm:justify-end"
-            >
-              <span className="text-sm text-navy/70">Total</span>
-              <span className="min-w-0 break-all text-base font-semibold">${total.toFixed(2)}</span>
-            </div>
-          )}
         </div>
       }
     >
@@ -2476,19 +2616,26 @@ export function CreateOrderModal({
                   type="date"
                   min={deliveryDateMin}
                   value={requestedDeliveryDate}
-                  onChange={(e) => setRequestedDeliveryDate(e.target.value)}
-                  aria-invalid={deliveryDatePast || undefined}
-                  aria-describedby={deliveryDatePast ? "delivery-date-error" : undefined}
+                  onChange={(e) => {
+                    setRequestedDeliveryDate(e.target.value);
+                    if (deliveryDateRefusal) createOrder.reset();
+                  }}
+                  aria-invalid={deliveryDateError ? true : undefined}
+                  aria-describedby={deliveryDateError ? "delivery-date-error" : undefined}
                   className={cn(
                     "h-10 w-full rounded border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2",
-                    deliveryDatePast
-                      ? "border-amber-500 focus:ring-amber-500"
+                    deliveryDateError
+                      ? "border-danger focus:ring-danger"
                       : "border-surface-border focus:ring-brand-500",
                   )}
                 />
-                {deliveryDatePast && (
-                  <p id="delivery-date-error" className="text-xs font-medium text-amber-700">
-                    That day has passed. Pick today or a later date.
+                {deliveryDateError && (
+                  <p
+                    id="delivery-date-error"
+                    role="alert"
+                    className="text-xs font-medium text-danger"
+                  >
+                    {deliveryDateError}
                   </p>
                 )}
               </div>
@@ -3073,6 +3220,14 @@ export function CreateOrderModal({
           pendingFormValuesRef.current = null;
           pendingAsDraftRef.current = false;
         }}
+        // N02: open on the primary action so Enter takes it (Tab reaches the other, Escape cancels). Radix would
+        // otherwise focus the header X, where Enter would just close the prompt.
+        onOpenAutoFocus={(event) => {
+          const primary = orderDate ? separateChoiceRef.current : mergeChoiceRef.current;
+          if (!primary || primary.disabled) return; // a disabled primary: leave Radix's default
+          event.preventDefault();
+          primary.focus();
+        }}
         title={posMode ? POS_COPY.mergeTitle : "Open order exists"}
         description={
           mergePrompt
@@ -3088,7 +3243,7 @@ export function CreateOrderModal({
         className="max-w-md"
         footer={
           mergePrompt ? (
-            <div className="flex w-full flex-col gap-2">
+            <div ref={promptFooterRef} className="flex w-full flex-col gap-2">
               {priceLayerUnconfirmed ? (
                 <p
                   role="status"
@@ -3110,6 +3265,7 @@ export function CreateOrderModal({
               {/* Merging routes through the existing order, which keeps its own
                   orderDate — the backdate would be dropped, so it is not offered. */}
               <Button
+                ref={mergeChoiceRef}
                 type="button"
                 variant={orderDate ? "secondary" : "primary"}
                 disabled={!!orderDate || priceLayerUnconfirmed}
@@ -3127,6 +3283,7 @@ export function CreateOrderModal({
                   : `Merge into ${mergePrompt.orderNumber ?? "existing order"}`}
               </Button>
               <Button
+                ref={separateChoiceRef}
                 type="button"
                 variant={orderDate ? "primary" : "secondary"}
                 disabled={priceLayerUnconfirmed}

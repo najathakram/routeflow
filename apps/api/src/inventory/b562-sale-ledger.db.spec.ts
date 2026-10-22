@@ -365,7 +365,10 @@ describeDb("B562 PR-2 sale ledger — real Postgres", () => {
     const returns = Object.create(ReturnsService.prototype) as ReturnsService;
     Object.assign(returns, {
       prisma,
-      ledger: { unreverseReturnEntries: jest.fn().mockResolvedValue(undefined) },
+      ledger: {
+        unreverseReturnEntries: jest.fn().mockResolvedValue(undefined),
+        settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+      },
       logger: new Logger("b562-returns"),
     });
     await tenantCtx.run(w.tenantId, () => returns.cancel(ret.id, operator(w)));

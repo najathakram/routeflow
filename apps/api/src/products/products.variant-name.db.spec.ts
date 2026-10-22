@@ -116,7 +116,11 @@ describeDb("B1 variant name is stored bare: real Postgres", () => {
     );
   const patch = (tenantId: string, id: string, dto: Record<string, unknown>) =>
     inTenant(tenantId, () =>
-      service.update(id, dto as never, { packPrecondition: "internal", actorId: null }),
+      service.update(id, dto as never, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+        actorId: null,
+      }),
     );
   const fresh = (id: string) => prisma.product.findUniqueOrThrow({ where: { id } });
 

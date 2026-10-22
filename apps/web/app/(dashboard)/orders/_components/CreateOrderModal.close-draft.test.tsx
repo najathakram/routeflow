@@ -4,7 +4,7 @@ import { CreateOrderModal } from "./CreateOrderModal";
 import { createMemoryDraftStorage, setDraftMirrorStorage } from "@/lib/order-draft/storage";
 import { readDraftSubmitKey } from "@routeflow/types/draft-submit-key";
 
-// Row 604 F15 / row 699b: the footer's dismiss says Close (it parks the order as a draft), the toast says
+// Row 604 F15 / row 699b: the dismiss (the header X, named Close) parks (it parks the order as a draft), the toast says
 // "Draft saved" and offers Discard. Harness: CreateOrderModal.draft-resume.test.tsx.
 
 window.HTMLElement.prototype.scrollIntoView = jest.fn();
@@ -174,9 +174,9 @@ beforeEach(() => {
 afterEach(() => setDraftMirrorStorage(null));
 
 describe("CreateOrderModal - Close parks a draft and offers Discard (F15 / row 699b)", () => {
-  it("the dismiss button says Close, not Cancel", () => {
+  it("the one dismiss is the header X named Close (the footer repeat is gone), not Cancel", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    expect(screen.getByText("Close", { selector: "button" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);
     expect(screen.queryByText("Cancel", { selector: "button" })).toBeNull();
   });
 
@@ -186,7 +186,7 @@ describe("CreateOrderModal - Close parks a draft and offers Discard (F15 / row 6
     renderWithProviders(<CreateOrderModal isOpen onClose={onClose} />);
     await pickCustomerAndScan();
     await waitFor(() => expect(mockCreateDraft).toHaveBeenCalledTimes(1), { timeout: 4000 });
-    fireEvent.click(screen.getByText("Close", { selector: "button" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     const saved = mockToast.mock.calls.map((c) => c[0]).find((t) => /draft saved/i.test(t.title));
     expect(saved).toBeDefined();
@@ -205,7 +205,7 @@ describe("CreateOrderModal - Close parks a draft and offers Discard (F15 / row 6
     await pickCustomerAndScan();
     // No wait for autosave: the draft row does not exist until Close flushes it.
     expect(mockCreateDraft).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByText("Close", { selector: "button" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     const saved = mockToast.mock.calls.map((c) => c[0]).find((t) => /draft saved/i.test(t.title));
     expect(saved.action?.label).toBe("Discard");
@@ -214,7 +214,7 @@ describe("CreateOrderModal - Close parks a draft and offers Discard (F15 / row 6
   it("Close on an empty order closes at once with no toast", async () => {
     const onClose = jest.fn();
     renderWithProviders(<CreateOrderModal isOpen onClose={onClose} />);
-    fireEvent.click(screen.getByText("Close", { selector: "button" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(mockToast).not.toHaveBeenCalled();
   });

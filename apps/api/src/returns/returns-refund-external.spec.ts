@@ -62,7 +62,11 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
         { provide: RouteFlowGateway, useValue: { emitReturnCreated: jest.fn() } },
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseReturnEntries: jest.fn(), unreverseReturnEntries: jest.fn() },
+          useValue: {
+            reverseReturnEntries: jest.fn(),
+            unreverseReturnEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         { provide: CreditNotesService, useValue: { create: creditNotesCreate } },
         { provide: NumberingService, useValue: { reserveNext: jest.fn() } },

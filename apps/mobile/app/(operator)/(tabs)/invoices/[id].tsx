@@ -64,6 +64,7 @@ import {
 import { invoiceTaxLines } from "../../../../lib/invoice-tax-lines";
 import { invoiceLineQtyText } from "@routeflow/pricing";
 import { shipmentSaveDecision } from "@routeflow/types/shipment-save";
+import { unvoidAmendedPeriodNote } from "@routeflow/types/unvoid-amended-period";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
 import { printPdf } from "../../../../lib/print-pdf";
@@ -610,7 +611,13 @@ export default function InvoiceDetailScreen() {
       `${invoice.invoiceNumber} returns to Draft and re-claims its billed quantities on the source order.`,
       () =>
         unvoidMut.mutate(id, {
-          onSuccess: () => showToast("Invoice unvoided — now in Draft"),
+          onSuccess: (res: any) => {
+            // SA-839 §3: one more line when the void sat in an already-filed month.
+            const note = unvoidAmendedPeriodNote(res?.amendedPeriod);
+            showToast(
+              note ? `Invoice unvoided — now in Draft. ${note}` : "Invoice unvoided — now in Draft",
+            );
+          },
           onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
         }),
       { confirmText: "Unvoid" },

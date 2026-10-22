@@ -9,11 +9,14 @@ export interface OrdersMoreMenuItem {
   label: string;
   onSelect: () => void;
   disabled?: boolean;
+  /** A destructive entry (Cancel, Delete): red text, still behind its own confirm. */
+  danger?: boolean;
 }
 
 /**
  * The "⋯ More" menu of the Orders header below `sm` (UX G7, store-only tenants): Export and Select step out of the
- * header row so Counter sale and Invoice a customer share one line. Every target is 44 px tall.
+ * header row so Counter sale and Invoice a customer share one line. Every target is 44 px tall. The order
+ * detail's phone action bar (apple-ux r4 Q19) reuses it for Record return, Cancel and Delete.
  */
 export function OrdersMoreMenu({
   items,
@@ -47,7 +50,10 @@ export function OrdersMoreMenu({
               key={item.label}
               disabled={item.disabled}
               onSelect={item.onSelect}
-              className="flex min-h-11 cursor-pointer items-center rounded-md px-3 text-sm text-navy outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-surface-raised"
+              className={cn(
+                "flex min-h-11 cursor-pointer items-center rounded-md px-3 text-sm text-navy outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-surface-raised",
+                item.danger && "text-danger",
+              )}
             >
               {item.label}
             </DropdownMenu.Item>

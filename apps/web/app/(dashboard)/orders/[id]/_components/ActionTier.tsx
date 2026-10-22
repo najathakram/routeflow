@@ -3,6 +3,7 @@
 import * as React from "react";
 import { cn } from "@routeflow/ui/web";
 import { useOrderUiV2 } from "@/lib/api/addons";
+import { usePhoneWidth } from "./use-phone-width";
 
 export type ActionTierName = "primary" | "secondary" | "danger";
 
@@ -35,6 +36,19 @@ const TIER_CLASSES: Record<ActionTierName, string> = {
     "order-3 mt-1 flex w-full flex-wrap items-center gap-2 border-t border-surface-border pt-3 empty:hidden",
 };
 
+/**
+ * Phone width (apple-ux r4 Q19), with the flag on OR off: the bar is ONE row. The primary fills what
+ * the row leaves (44px tall), a secondary keeps its size, and the danger group is only whatever is
+ * left of Cancel / Delete after they step into the "More actions" menu: a Delete confirm or the
+ * with-the-carrier note, each on its own full-width line under the row, hidden when empty.
+ */
+const PHONE_TIER_CLASSES: Record<ActionTierName, string> = {
+  primary:
+    "order-1 flex min-w-[9rem] flex-1 items-center [&>*]:flex-1 [&_button]:w-full [&_button]:min-h-11",
+  secondary: "order-2 flex shrink-0 items-center gap-2 [&_button]:min-h-11",
+  danger: "order-4 flex basis-full flex-wrap items-center gap-2 empty:hidden",
+};
+
 export function ActionTier({
   tier,
   children,
@@ -43,6 +57,14 @@ export function ActionTier({
   children: React.ReactNode;
 }) {
   const { enabled } = useOrderUiV2();
+  const phone = usePhoneWidth();
+  if (phone) {
+    return (
+      <div data-tier={tier} className={PHONE_TIER_CLASSES[tier]}>
+        {children}
+      </div>
+    );
+  }
   if (!enabled) return <>{children}</>;
 
   return (

@@ -22,6 +22,9 @@
 //                    is not the invoice's current updatedAt (another save landed; nothing written; reload).
 //   ORDER_INVOICE_SETTLE_FAILED — `body.code` of the 409 raised AFTER a ship/deliver status committed when its
 //                    invoice could not be created, updated or checked (the status stays; open the order).
+//   DELIVERY_DATE_IN_PAST — `body.code` of the 400 when a create / buyer-cart merge carries a
+//                    requestedDeliveryDate before the TENANT's today (its own time zone; row 718). Today is
+//                    allowed; `body.today` is the tenant's day (clients word the date-field error from it) and `body.requestedDeliveryDate` the refused day.
 //   ORDER_INVOICES_NEED_REVIEW — `body.code` of the 409 when more would be billed on an order whose
 //                    invoices no longer match its lines (orphaned invoice line / counter out of step,
 //                    SA-687); nothing billed, NOT retriable until the invoices are reviewed.
@@ -245,6 +248,7 @@ export const API_ERROR_CODES = {
   INVOICE_STALE: "INVOICE_STALE",
   ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   ORDER_INVOICE_SETTLE_FAILED: "ORDER_INVOICE_SETTLE_FAILED",
+  DELIVERY_DATE_IN_PAST: "DELIVERY_DATE_IN_PAST",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
   CODE_TAKEN: "CODE_TAKEN",
@@ -361,6 +365,8 @@ export const API_ERROR_CODES = {
   /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
   ORDER_DELIVERY_QUANTITIES_MISSING: "ORDER_DELIVERY_QUANTITIES_MISSING",
   ORDER_BILLING_CHANGED: "ORDER_BILLING_CHANGED",
+  /** B693 (SA-839): unvoid refused because the invoice's order is CANCELLED; nothing is written. 409. */
+  UNVOID_ORDER_CANCELLED: "UNVOID_ORDER_CANCELLED",
   ORDER_EDIT_WOULD_OVERPAY: "ORDER_EDIT_WOULD_OVERPAY",
   FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",

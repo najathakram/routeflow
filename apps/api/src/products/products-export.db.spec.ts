@@ -161,7 +161,7 @@ describeDb("products export.csv — real Postgres", () => {
     expect(rows).toHaveLength(1 + 3);
     expect(out).not.toContain("Other Tenant Item");
     const cola = rows.find((r) => r.startsWith("Cola,"))!;
-    expect(cola.endsWith(",3,30,2026-09-12")).toBe(true);
+    expect(cola.endsWith(`,3,30,2026-09-12,${pa.id}`)).toBe(true);
 
     const audits = await prisma.auditLog.findMany({
       where: { tenantId: a.tenantId, action: "PRODUCTS_EXPORT_CSV" },

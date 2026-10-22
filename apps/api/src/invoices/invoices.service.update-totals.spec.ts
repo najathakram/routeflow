@@ -66,7 +66,11 @@ describe("InvoicesService.update() — B1030 the invoice discount cannot exceed 
         { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         {
           provide: AuthorizationGuardService,
