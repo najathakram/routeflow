@@ -112,4 +112,26 @@ describe("CounterLineRow per-unit price", () => {
     );
     expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$12.00 / box");
   });
+
+  it("a scanned case reads 'case of 24' with the price per case and each", () => {
+    // the tenant's pack word (unitWords) is "box" until a pack label rides on the line; the shape is what is pinned
+    renderRow(
+      line({ unitPrice: 18, listPrice: 18, unitsPerBox: 24, boxes: 1, pieces: 0, qty: 24 }),
+    );
+    expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$18.00 / box · $0.75 each");
+    expect(screen.getByRole("listitem")).toHaveTextContent("1 box of 24");
+  });
+
+  it("loose pieces of a case read in pcs, still naming the pack", () => {
+    renderRow(line({ unitPrice: 18, listPrice: 18, unitsPerBox: 24, boxes: 0, pieces: 3, qty: 3 }));
+    expect(screen.getByRole("listitem")).toHaveTextContent("0 boxes + 3 pcs · box of 24");
+    expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$18.00 / box · $0.75 each");
+  });
+
+  it("B1230: unit 'each' never reads '/ piece'", () => {
+    renderRow(line({ unit: "each" }));
+    expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$2.50 / each");
+    expect(screen.getByTestId("line-unit-price")).not.toHaveTextContent("piece");
+    expect(screen.getByTestId("line-unit-price")).not.toHaveTextContent("each each");
+  });
 });

@@ -346,8 +346,9 @@ for (const v of VIEWS) {
       const scan = page.getByLabel("Scan or search items");
       await expect(scan).toHaveAttribute("placeholder", "Scan or type an item");
       await expect(page.getByTestId("scan-hint")).toBeVisible();
-      // kept: the screen's total is an estimate (the server's figure can differ), so the label stays honest
-      await expect(page.getByTestId("running-total")).toContainText("Estimated total");
+      // R7b: while the cash tender is untouched "Amount due" IS the total, so the "Estimated total" row hides until they differ
+      await expect(page.getByTestId("change-due")).toContainText("Amount due");
+      await expect(page.getByText("Estimated total")).toHaveCount(0);
       await noOverflow(page);
       await page.screenshot({ path: path.join(SHOTS, `counter-screen-${v.name}.png`) });
     });

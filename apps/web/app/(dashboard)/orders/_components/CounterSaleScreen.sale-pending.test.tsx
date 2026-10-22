@@ -138,6 +138,25 @@ describe("counter sale: nothing changes while the sale request is in flight", ()
     expect(push).not.toHaveBeenCalled();
   });
 
+  it("Ship instead is disabled while a sale is completing (B1228), 'next sale' with a customer too", async () => {
+    const post = deferred<typeof SALE>();
+    sendSale.mockReturnValue(post.promise);
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA", "Cola");
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
+    fireEvent.click(btn("Exact"));
+    fireEvent.click(btn("Complete & next sale"));
+    await waitFor(() => expect(sendSale).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(btn("Ship this order instead")).toBeDisabled());
+    fireEvent.click(btn("Ship this order instead"));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(createDraft).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+    post.resolve(SALE);
+    await waitFor(() => expect(btn("Ship this order instead")).toBeEnabled());
+  });
+
   it("every cart control is disabled, and a scan / customer pick / note / quantity does not land", async () => {
     const post = await startPendingSale();
     await waitFor(() => expect(btn("Remove Cola")).toBeDisabled());
@@ -161,7 +180,7 @@ describe("counter sale: nothing changes while the sale request is in flight", ()
     expect(itemCount()).toBe(1);
     expect(screen.getByText(/Cola · × 1/)).toBeInTheDocument();
     expect(screen.queryByText("Acme Co")).toBeNull(); // still the walk-in
-    expect(screen.queryByRole("button", { name: "Acme Co" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Acme Co" })).toBeNull();
 
     post.resolve(SALE);
     await screen.findByTestId("counter-sale-receipt");
