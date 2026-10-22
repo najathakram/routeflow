@@ -7,6 +7,7 @@ import { API_ERROR_CODES, PREF, staffMay } from "@routeflow/types";
 import type { PickupCompleteRequest, PickupCompleteResponse } from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
 import { fmtCurrency } from "../utils/format";
+import { duplicateRefPrompt } from "./duplicate-payment-ref";
 
 import { isPosOrder } from "./order-status-flow";
 
@@ -514,6 +515,15 @@ export function posConfirmLabel(posMode: boolean, saving: boolean): string {
 
 export type PickupDecision =
   | { kind: "retry-tender"; releaseKey: false; owed: number | null; message: string }
+  /** SA-837b item 3: the payment was refused as a duplicate reference; same key, the shared sentence, staff may record anyway. */
+  | {
+      kind: "duplicate-ref";
+      releaseKey: false;
+      owed: number | null;
+      title: string;
+      message: string;
+      recordAnywayLabel: string | null;
+    }
   | { kind: "done"; releaseKey: true; message: string };
 
 /**
@@ -522,8 +532,32 @@ export type PickupDecision =
  * SAME Idempotency-Key (so the retry adds the payment to this hand-over) owing `balanceDue`. The key is
  * released only when the payment was recorded (or none was requested). Mirrors web's PickupCompleteDialog.
  */
-export function decidePickupResponse(res: PickupCompleteResponse): PickupDecision {
+export function decidePickupResponse(
+  res: PickupCompleteResponse,
+  role?: string | null,
+): PickupDecision {
   const code = res.paymentRecorded ? undefined : res.paymentErrorCode;
+  if (!res.paymentRecorded && res.paymentCauseCode === API_ERROR_CODES.DUPLICATE_PAYMENT_REF) {
+    const prompt = duplicateRefPrompt(
+      {
+        response: {
+          status: 409,
+          data: { code: res.paymentCauseCode, existingPayment: res.existingPayment },
+        },
+      },
+      role,
+    );
+    if (prompt) {
+      return {
+        kind: "duplicate-ref",
+        releaseKey: false,
+        owed: res.balanceDue > 0 ? res.balanceDue : null,
+        title: prompt.title,
+        message: prompt.message,
+        recordAnywayLabel: prompt.recordAnywayLabel,
+      };
+    }
+  }
   if (
     code === API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED ||
     code === API_ERROR_CODES.COUNTER_TENDER_SHORT
@@ -544,4 +578,9 @@ export function decidePickupResponse(res: PickupCompleteResponse): PickupDecisio
         : "Handed over"
       : "Handed over, but the payment wasn't recorded. Record it on the invoice.",
   };
+}
+
+/** The staff "Record anyway" resend of a hand-over: the same body with `payment.recordAnyway: true` (same Idempotency-Key). */
+export function withPickupRecordAnyway(body: PickupCompleteRequest): PickupCompleteRequest {
+  return body.payment ? { ...body, payment: { ...body.payment, recordAnyway: true } } : body;
 }
