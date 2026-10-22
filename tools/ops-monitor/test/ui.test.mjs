@@ -153,6 +153,18 @@ test("groupAlarms: commands collected once per group, missing suggest skipped, o
   assert.equal(g[0].alarms.length, 4);
 });
 
+test("groupAlarms: a repeated command is listed once, in first-seen order (review MUST)", () => {
+  const g = UI.groupAlarms([
+    al("bug-unowned", "warn", "rf claim <B-id>"),
+    al("bug-unowned", "warn", "rf claim <B-id>"),
+    al("bug-unowned", "warn", "rf event link 742 --pr N"),
+    al("bug-unowned", "warn", "  rf claim <B-id>  "),
+    al("bug-unowned", "warn", "rf event link 742 --pr N"),
+  ]);
+  assert.deepEqual(g[0].commands, ["rf claim <B-id>", "rf event link 742 --pr N"]);
+  assert.equal(g[0].alarms.length, 5);
+});
+
 test("groupAlarms: plain labels for known kinds, dash-to-space fallback", () => {
   const known = [
     "status-behind-merge",

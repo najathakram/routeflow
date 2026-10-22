@@ -1917,6 +1917,16 @@ details.answered {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.agroup .gcmds {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.agroup .gcmds code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .agroup .gcopy {
   margin: 2px 0 4px;
 }

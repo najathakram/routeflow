@@ -109,7 +109,9 @@
       }
       if (sevRank(a?.severity) < sevRank(g.severity)) g.severity = a.severity;
       g.alarms.push(a);
-      if (typeof a?.suggest === "string" && a.suggest.trim()) g.commands.push(a.suggest);
+      // One line per distinct command: a constant suggestion (e.g. a claim) is listed once, not per alarm.
+      const cmd = typeof a?.suggest === "string" ? a.suggest.trim() : "";
+      if (cmd && !g.commands.includes(cmd)) g.commands.push(cmd);
     }
     return [...byKind.values()].sort(
       (x, y) =>
@@ -814,6 +816,8 @@
         {
           class: `healthline ${errs ? "err" : warns || behind ? "warn" : "ok"}`,
           href: "#p-alarms",
+          // Same-hash clicks fire no hashchange: open a re-folded Drift panel here, then let the link scroll.
+          onclick: () => setPanelOpen("alarms", true, true),
         },
         el("i", { class: "dot" }),
         parts.join(" \u00B7 "),
@@ -935,6 +939,8 @@
           el(
             "div",
             { class: "gcopy" },
+            // Visible, so a command with a placeholder (<id>, <loser>) is read and edited, never pasted blind.
+            el("div", { class: "gcmds" }, ...g.commands.map((c) => el("code", { text: c }))),
             copyButton(
               g.commands.join("\n"),
               `Copy ${plural(g.commands.length, "command")}`,
@@ -1128,14 +1134,14 @@
     for (const d of snap.map?.domains ?? []) {
       const tile = el("div", { class: "tile" });
       const totals = d.areas.reduce((n, a) => n + a.items + a.prs + a.branches, 0);
+      tile.append(el("h3", { text: d.label }));
       tile.append(
-        el("h3", {
-          title: `${plural(d.items, "item")} attached to this domain without a specific area`,
-          text: `${d.label} \u00B7 ${d.items}`,
+        el("div", {
+          class: "muted",
+          text:
+            `${plural(d.areas.length, "area")}, ${totals} active` +
+            (d.items ? ` \u00B7 ${plural(d.items, "item")} not in an area` : ""),
         }),
-      );
-      tile.append(
-        el("div", { class: "muted", text: `${plural(d.areas.length, "area")}, ${totals} active` }),
       );
       for (const [layer, label] of LAYERS) {
         const areas = d.areas.filter((a) => a.layer === layer);
@@ -2561,6 +2567,7 @@
   const live = document.getElementById("live");
   let lastDigest = null;
   let lastAnnounceAt = null;
+  let announceTimer = null;
   function maybeAnnounce() {
     if (!snap || !live) return;
     const alarms = snap.alarms ?? [];
@@ -2574,7 +2581,20 @@
       return;
     }
     const text = announceText(lastDigest, digest);
-    if (!text || !announceDue(lastAnnounceAt, Date.now())) return;
+    if (!text) return;
+    if (!announceDue(lastAnnounceAt, Date.now())) {
+      // Throttled: re-check once when the gap ends, so a quiet stream still announces the change.
+      if (!announceTimer) {
+        announceTimer = setTimeout(
+          () => {
+            announceTimer = null;
+            maybeAnnounce();
+          },
+          Math.max(0, lastAnnounceAt + ANNOUNCE_GAP_MS - Date.now()),
+        );
+      }
+      return;
+    }
     live.textContent = text;
     lastAnnounceAt = Date.now();
     lastDigest = digest;
