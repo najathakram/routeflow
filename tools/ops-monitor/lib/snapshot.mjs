@@ -50,6 +50,10 @@ export function statusLabelFor(item, { booked = false, answered = false } = {}) 
   return STATUS_WORDS[item.status] ?? item.status;
 }
 
+/** Display label for an item whose linked PR merged to master but whose status has not caught up. */
+export const AWAITING_DEPLOY_LABEL = "Merged, awaiting deploy";
+const NOT_AWAITING = new Set(["live", "verified", "dropped", "parked"]);
+
 // Live-harm rule (accuracy round 2): a DONE census/audit/ops item that says nothing reached a
 // customer marks the open bugs it covers as latent risks, not "hurting now".
 const CENSUS_TYPES = new Set(["audit", "ops"]);
@@ -234,6 +238,7 @@ export function buildSnapshot({
   machine = null,
   authEnabled,
   mask: maskFn = (t) => t,
+  maskStatus = null,
 }) {
   const specsData = sources.specs?.data ?? null;
   const cfg = config ?? specsData?.config;
@@ -587,12 +592,48 @@ export function buildSnapshot({
       answer: ev?.answer ?? [row?.statusWord, row?.decisionFile].filter(Boolean).join(" → "),
     });
   }
+  // D3: a linked PR already merged to master but the item still reads in-flight -> display
+  // "Merged, awaiting deploy" (itemStatus/itemStatusLabel keep the recorded status; no events).
+  const landedByItem = new Map(); // item id -> { number, at } newest landed merged PR
+  const openByItem = new Set(openPrs.map((p) => p.item).filter(Boolean));
+  const noteLanded = (id, p) => {
+    if (!id || !state.items.has(id)) return;
+    const l = landedAt(p, mergedRaw);
+    if (l.at === null) return;
+    const had = landedByItem.get(id);
+    if (!had || l.at > had.at) landedByItem.set(id, { number: p.number, at: l.at });
+  };
+  for (const p of mergedRaw) {
+    noteLanded(
+      // A bare "row N" mention in a merged PR's body is background, not proof the item shipped.
+      linkItemFor({ number: p.number, branch: p.branch, title: p.title, body: p.body }, state, {
+        bodyMentions: false,
+      }),
+      p,
+    );
+  }
+  for (const it of stateItems) {
+    const linked = new Set((it.links?.prs ?? []).map(String));
+    for (const p of mergedRaw) if (linked.has(String(p.number))) noteLanded(it.id, p);
+  }
   for (const out of items) {
     const info = answerInfo.get(out.id);
     out.statusLabel = statusLabelFor(out, {
       answered: Boolean(info?.answered),
       booked: Boolean(info?.booked),
     });
+    const landed = landedByItem.get(out.id);
+    if (
+      landed &&
+      out.type !== "decision" &&
+      !NOT_AWAITING.has(out.status) &&
+      !openByItem.has(out.id)
+    ) {
+      out.itemStatus = out.status;
+      out.itemStatusLabel = out.statusLabel;
+      out.statusLabel = AWAITING_DEPLOY_LABEL;
+      out.awaitingDeploy = { pr: landed.number, mergedAt: iso(landed.at) };
+    }
     if (info?.answered && out.answeredAt === null) out.answeredAt = iso(info.at);
   }
   const ownerQueue = stateItems
@@ -988,11 +1029,26 @@ export function buildSnapshot({
     },
     incidents: incidentFiles,
   });
+  if (maskStatus && maskStatus.ok === false) {
+    alarms.unshift({
+      id: "mask-list-missing:mask",
+      kind: "mask-list-missing",
+      severity: "error",
+      message: "client-name mask list missing — tenant names hidden by fallback",
+      suggest: `fix client-names.json in the ops home (${maskStatus.reason})`,
+      item: null,
+      lane: null,
+      pr: null,
+      branch: null,
+      source: "mask",
+    });
+  }
 
   return {
     generatedAt: iso(now),
     machine,
     ...(typeof authEnabled === "boolean" ? { authEnabled } : {}),
+    ...(maskStatus ? { maskStatus } : {}),
     sources: outSources,
     items,
     bugs,

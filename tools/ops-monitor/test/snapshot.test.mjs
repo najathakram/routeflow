@@ -1488,3 +1488,88 @@ test("latent evidence is masked before it is cut at 160 characters", async () =>
   assert.match(ev750, /a live/);
   assert.ok(ev750.length <= 5 + 160);
 });
+
+// ---- D3 merged-awaiting-deploy label + D7 maskStatus ----
+test("D3 item with a merged linked PR and in-flight status reads 'Merged, awaiting deploy'", () => {
+  const evs = [
+    lrItem("810", {
+      type: "feature",
+      title: "Picker rework",
+      status: "building",
+      links: { prs: [4101] },
+    }),
+    lrItem("811", { type: "feature", title: "Done thing", status: "live", links: { prs: [4101] } }),
+    lrItem("812", {
+      type: "feature",
+      title: "Parked thing",
+      status: "parked",
+      links: { prs: [4101] },
+    }),
+    lrItem("813", { type: "feature", title: "Other", status: "building", links: { prs: [4102] } }),
+    lrItem("814", { type: "feature", title: "Via title", status: "review" }),
+    lrItem("815", { type: "feature", title: "Only mentioned", status: "building" }),
+    lrItem("816", { type: "feature", title: "Via trailer", status: "building" }),
+  ];
+  const merged = [
+    { number: 4101, title: "t", branch: "feat/x", mergedAt: ago(30), base: "master" },
+    { number: 4103, title: "ship (Row 814)", branch: "feat/y", mergedAt: ago(30), base: "master" },
+    // a background "row 815" mention in the body never marks 815 merged; a trailer does
+    {
+      number: 4104,
+      title: "chore: tidy",
+      branch: "chore/tidy",
+      body: "Context: see row 815 for the follow-up.",
+      mergedAt: ago(30),
+      base: "master",
+    },
+    {
+      number: 4105,
+      title: "chore: other",
+      branch: "chore/other",
+      body: "Done.\n\nRow: 816",
+      mergedAt: ago(30),
+      base: "master",
+    },
+  ];
+  const s = lr(evs, { merged });
+  const by = (id) => s.items.find((i) => i.id === id);
+  assert.equal(by("810").statusLabel, "Merged, awaiting deploy");
+  assert.equal(by("810").status, "building");
+  assert.equal(by("810").itemStatus, "building");
+  assert.equal(by("810").itemStatusLabel, "Being built");
+  assert.equal(by("810").awaitingDeploy.pr, 4101);
+  assert.equal(by("811").statusLabel, "Fixed");
+  assert.equal(by("812").statusLabel, "Parked");
+  assert.equal(by("813").statusLabel, "Being built");
+  assert.equal(by("814").statusLabel, "Merged, awaiting deploy");
+  assert.equal(by("814").itemStatusLabel, "In review");
+  assert.equal(by("815").statusLabel, "Being built");
+  assert.equal(by("816").statusLabel, "Merged, awaiting deploy");
+});
+
+test("D4 merged PR with no item raises untracked-merged-pr through the snapshot", () => {
+  const merged = [
+    { number: 4200, title: "chore: x", branch: "chore/x", mergedAt: ago(60), base: "master" },
+  ];
+  const s = lr([lrItem("820", { type: "feature", title: "Thing", status: "building" })], {
+    merged,
+  });
+  const a = s.alarms.find((x) => x.id === "untracked-merged-pr:4200");
+  assert.equal(a.severity, "warn");
+});
+
+test("D7 maskStatus rides the snapshot; ok:false raises an error alarm", () => {
+  const ok = lr([], { extra: { maskStatus: { ok: true, reason: null } } });
+  assert.deepEqual(ok.maskStatus, { ok: true, reason: null });
+  assert.equal(
+    ok.alarms.find((a) => a.kind === "mask-list-missing"),
+    undefined,
+  );
+  const bad = lr([], {
+    extra: { maskStatus: { ok: false, reason: "client-names.json does not parse" } },
+  });
+  assert.equal(bad.maskStatus.ok, false);
+  const a = bad.alarms.find((x) => x.kind === "mask-list-missing");
+  assert.equal(a.severity, "error");
+  assert.equal(a.message, "client-name mask list missing — tenant names hidden by fallback");
+});
