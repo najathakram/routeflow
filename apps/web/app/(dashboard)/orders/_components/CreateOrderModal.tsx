@@ -1944,6 +1944,16 @@ export function CreateOrderModal({
               setMergePrompt(body.activeOrder as ActiveOrderSummary);
               return;
             }
+            // Row 718: the tenant's day called the date past. The refusal is on the date field (above); a merge-or-separate
+            // prompt that led here must not stay over it, so close it (as its onClose does) and put focus on the field.
+            if (body?.code === API_ERROR_CODES.DELIVERY_DATE_IN_PAST) {
+              setMergePrompt(null);
+              pendingFormValuesRef.current = null;
+              pendingAsDraftRef.current = false;
+              // After the prompt's dialog has unmounted: it traps focus while open and restores it to its opener on close.
+              window.setTimeout(() => deliveryDateRef.current?.focus(), 50);
+              return;
+            }
             const restricted = parseSellingRestricted(err);
             if (restricted) {
               setRestrictedBlock(restricted);

@@ -105,6 +105,7 @@ async function openWithCustomerAndLine() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockCreateMutate.mockReset();
   mockProducts = [PLAIN];
   mockCreateError = null;
 });
@@ -252,5 +253,54 @@ describe("The server's DELIVERY_DATE_IN_PAST refusal lands on the date field (ro
     fireEvent.change(dateField(), { target: { value: localDay(1) } });
     expect(dateField()).not.toHaveAttribute("aria-invalid", "true");
     expect(dateField()).toHaveAccessibleDescription("");
+  });
+});
+
+// Row 718 (UI proof): the server answers MERGE_CHOICE_REQUIRED first and the merge prompt opens; choosing "separate" then
+// meets 400 DELIVERY_DATE_IN_PAST. The prompt must not stay over the real problem: it closes, and the date field takes focus.
+describe("A delivery-date refusal after the merge prompt (row 718)", () => {
+  const ACTIVE = {
+    id: "o-open",
+    orderNumber: "ORD-7",
+    status: "PENDING",
+    itemCount: 2,
+    total: 12.5,
+  };
+  const mergeRequired = {
+    response: {
+      status: 409,
+      data: { code: "MERGE_CHOICE_REQUIRED", message: "choose", activeOrder: ACTIVE },
+    },
+    message: "Request failed with status code 409",
+  };
+  const pastDay = {
+    response: {
+      status: 400,
+      data: { code: "DELIVERY_DATE_IN_PAST", message: "raw", today: "2026-10-22" },
+    },
+    message: "Request failed with status code 400",
+  };
+
+  it("closes the merge prompt, shows the field refusal, and focuses the date input", async () => {
+    mockCreateMutate.mockImplementation(
+      (_payload: unknown, opts: { onError?: (e: unknown) => void }) => {
+        if (mockCreateMutate.mock.calls.length === 1) {
+          opts.onError?.(mergeRequired);
+        } else {
+          mockCreateError = pastDay;
+          opts.onError?.(pastDay);
+        }
+      },
+    );
+    const user = await openWithCustomerAndLine();
+    fireEvent.change(dateField(), { target: { value: localDay(0) } });
+    await user.click(createButton());
+    await user.click(await screen.findByRole("button", { name: /create as separate order/i }));
+
+    await waitFor(() => expect(mockCreateMutate).toHaveBeenCalledTimes(2));
+    expect(mockCreateMutate.mock.calls[1][0].mergeChoice).toBe("separate");
+    await waitFor(() => expect(screen.queryByText("Open order exists")).toBeNull());
+    expect(screen.getByRole("alert")).toHaveTextContent(/today is 2026-10-22/);
+    await waitFor(() => expect(document.activeElement).toBe(dateField()));
   });
 });
