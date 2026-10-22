@@ -791,9 +791,10 @@ async function cmdBrief(flags, env) {
     } catch (e) {
       if (!flags.quiet) process.stderr.write(`warning: refresh failed: ${e?.message ?? e}\n`);
     }
-    // Lane status files -> heartbeat events (no extra pull: the clone was just refreshed).
+    // Lane status files -> this machine's heartbeat events, committed locally and NOT pushed
+    // (the monitor timer / `rf status-sync` push; a brief must stay read-mostly and fast).
     try {
-      await runStatusSync({ dir: ctx.dir, home: ctx.home, env, pull: false });
+      await runStatusSync({ dir: ctx.dir, home: ctx.home, env, push: false });
     } catch {
       // best effort
     }
@@ -986,11 +987,15 @@ export async function main(argv, env = process.env) {
         code = await cmdSync(flags, env);
         break;
       case "status-sync": {
-        const r = await runStatusSync({ env, push: !flags["no-push"] });
+        const r = await runStatusSync({ env, push: !flags["no-push"], lockWaitMs: 5000 });
         print(
           flags,
           r,
-          r.ran ? `status-sync: appended ${r.appended} heartbeat(s)` : "status-sync skipped (busy)",
+          !r.ran
+            ? "status-sync skipped (busy)"
+            : r.pullError
+              ? `status-sync skipped: pull failed (${String(r.pullError).slice(0, 120)})`
+              : `status-sync: appended ${r.appended} heartbeat(s)${r.capped ? `, ${r.capped} left (capped)` : ""}`,
         );
         code = 0;
         break;

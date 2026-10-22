@@ -5,8 +5,8 @@
  * last assistant message first 300 chars, masked). `rf status-sync` (run by `rf brief --refresh`
  * and the views writer) turns changed files into `heartbeat` events.
  *
- * SessionStart also prints a short orientation: the lane brief (if the lane is known) and one
- * line per status file on this machine, so a new session or account switch resumes where the
+ * SessionStart also prints a short orientation: the lane brief (only when RF_STATUS_BRIEF=1) and
+ * one line per status file on this machine, so a new session or account switch resumes where the
  * old one stopped.
  *
  * FAIL OPEN and FAST: any error -> exit 0, nothing on stdout for Stop, hard 2 s budget.
@@ -14,7 +14,8 @@
  */
 import { execFileSync } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readFileSync, readSync, readdirSync } from "node:fs";
-import { renameSync, statSync, writeFileSync } from "node:fs";
+import { renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -24,6 +25,7 @@ const PR_CACHE_MS = 60_000;
 const LAST_MAX = 300;
 const TAIL_BYTES = 262_144;
 const ORIENT_MAX_AGE_MS = 3 * 86_400_000;
+const PRUNE_AGE_MS = 7 * 86_400_000;
 
 const lib = (name) => pathToFileURL(join(ROOT, "tools", "ops-monitor", "lib", name)).href;
 
@@ -31,6 +33,40 @@ export const safeSessionId = (id) =>
   String(id ?? "")
     .replace(/[^A-Za-z0-9_-]/g, "_")
     .slice(0, 80);
+
+const SECRET_PATTERNS = [
+  /gh[pousr]_[A-Za-z0-9]{20,}/g,
+  /github_pat_[A-Za-z0-9_]{20,}/g,
+  /sk_(?:live|test)_[A-Za-z0-9]{8,}/g,
+  /\bsk-[A-Za-z0-9_-]{16,}/g,
+  /whsec_[A-Za-z0-9]{8,}/g,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi,
+  /\beyJ[\w-]{5,}\.[\w-]{5,}\.[\w-]{5,}/g, // JWT (always starts eyJ)
+  /\b[0-9a-fA-F]{32,}\b/g,
+];
+const HOME_RE = /(?:[A-Za-z]:)?[\\/](?:Users|home)[\\/][^\\/\s"'`]+/gi;
+const ENV_PAIR_RE = /\b([A-Z][A-Z0-9_]{2,})=(\S+)/g;
+const B64_RE = /[A-Za-z0-9+/_=-]{40,}/g;
+
+/**
+ * Pure: strips what must not leave the machine from free text: the home dir ("~"), token/key-like
+ * strings and env-pair values ("[redacted]"). Long base64 runs are redacted only when mixed-case
+ * with a digit, so lowercase paths and branch names survive.
+ */
+export function scrubText(text, home = homedir()) {
+  if (typeof text !== "string") return text;
+  let t = text;
+  if (home && home.length > 1) {
+    const esc = home.replace(/[\\/]/g, "[\\\\/]").replace(/[.*+?^${}()|[\]]/g, "\\$&");
+    t = t.replace(new RegExp(esc, "gi"), "~");
+  }
+  t = t.replace(HOME_RE, "~");
+  for (const re of SECRET_PATTERNS) t = t.replace(re, "[redacted]");
+  t = t.replace(B64_RE, (m) =>
+    /\d/.test(m) && /[a-z]/.test(m) && /[A-Z]/.test(m) ? "[redacted]" : m,
+  );
+  return t.replace(ENV_PAIR_RE, "$1=[redacted]");
+}
 
 /** Text of the last assistant message in a JSONL transcript tail; malformed lines are ignored. */
 export function lastAssistantText(jsonl) {
@@ -102,7 +138,17 @@ export function cachedPr(cache, branch, now) {
  * facts = { worktree, branch, head: {sha, at}|null, pr: number|null, lastText: string|null }
  * mask = (text) => text, or null when the client-name list is unreadable (lastMessage -> null).
  */
-export function buildStatusRecord({ payload, env, now, machine, facts, mask, normalizeLane }) {
+export function buildStatusRecord({
+  payload,
+  env,
+  now,
+  machine,
+  facts,
+  mask,
+  normalizeLane,
+  home,
+}) {
+  const sc = (t) => (t == null ? t : scrubText(t, home));
   const title = env.CLAUDE_SESSION_TITLE?.trim() || null;
   const lane =
     env.RF_LANE?.trim() || (title && normalizeLane ? normalizeLane(title) : null) || null;
@@ -111,17 +157,17 @@ export function buildStatusRecord({ payload, env, now, machine, facts, mask, nor
     v: 1,
     sessionId: safeSessionId(payload.session_id),
     machine,
-    title: title && mask ? m(title) : null,
+    title: title && mask ? m(sc(title)) : null,
     lane,
-    cwd: payload.cwd ?? null,
-    worktree: facts.worktree ?? null,
-    branch: facts.branch ?? null,
+    cwd: sc(payload.cwd ?? null),
+    worktree: sc(facts.worktree ?? null),
+    branch: facts.branch ? m(sc(facts.branch)) : null,
     head: facts.head ?? null,
     pr: Number.isInteger(facts.pr) ? facts.pr : null,
     lastActiveAt: new Date(now).toISOString(),
     event: payload.hook_event_name === "SessionStart" ? "SessionStart" : "Stop",
     lastMessage:
-      mask && facts.lastText ? m(facts.lastText).replace(/\s+/g, " ").slice(0, LAST_MAX) : null,
+      mask && facts.lastText ? m(sc(facts.lastText)).replace(/\s+/g, " ").slice(0, LAST_MAX) : null,
   };
 }
 
@@ -138,7 +184,9 @@ export function orientationLines(records, now, max = 8) {
     });
 }
 
+let T0 = Date.now();
 function git(args, cwd, timeout) {
+  if (Date.now() - T0 > 1300) return ""; // sync spawns block the event loop: keep inside the budget
   try {
     return execFileSync("git", args, {
       cwd,
@@ -209,7 +257,28 @@ function readStatusFiles(dir) {
   return out;
 }
 
+/** Drops status files and .pr-cache.json entries older than 7 days. Never throws. */
+export function prune(dir, now) {
+  try {
+    for (const f of readdirSync(dir)) {
+      if (f.startsWith(".") || !f.endsWith(".json")) continue;
+      const file = join(dir, f);
+      if (now - statSync(file).mtimeMs > PRUNE_AGE_MS) unlinkSync(file);
+    }
+    const cacheFile = join(dir, ".pr-cache.json");
+    const cache = readJson(cacheFile);
+    if (cache && typeof cache === "object") {
+      const keep = Object.entries(cache).filter(([, e]) => now - (e?.at ?? 0) <= PRUNE_AGE_MS);
+      if (keep.length !== Object.keys(cache).length)
+        writeAtomic(cacheFile, Object.fromEntries(keep));
+    }
+  } catch {
+    // best effort
+  }
+}
+
 async function main(t0) {
+  T0 = t0;
   if (process.env.RF_OPS_GATE === "off" || process.env.CI) return;
   let payload;
   try {
@@ -242,10 +311,11 @@ async function main(t0) {
   });
   if (!rec.sessionId) return;
   writeAtomic(join(statusDir, `${rec.sessionId}.json`), rec);
+  prune(statusDir, now);
 
   if (rec.event !== "SessionStart") return;
   const parts = [];
-  if (rec.lane && env.RF_STATUS_BRIEF !== "0" && Date.now() - t0 < 1000) {
+  if (rec.lane && env.RF_STATUS_BRIEF === "1" && Date.now() - t0 < 1000) {
     try {
       const brief = execFileSync(
         process.execPath,

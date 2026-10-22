@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,10 +12,12 @@ import {
   formatAge,
   lastAssistantText,
   orientationLines,
+  scrubText,
 } from "../../../.claude/hooks/ops-status.mjs";
 import { fold } from "../lib/fold.mjs";
 import { validateEvent } from "../lib/schema.mjs";
-import { planStatusSync } from "../lib/status-sync.mjs";
+import { planStatusSync, runStatusSync } from "../lib/status-sync.mjs";
+import { readAllEvents, withSpecsLock } from "../lib/store.mjs";
 import { buildSnapshot } from "../lib/snapshot.mjs";
 import { DEFAULT_CONFIG, normalizeLane } from "../lib/config.mjs";
 import { maskText } from "../lib/mask.mjs";
@@ -199,12 +202,17 @@ test("status-sync: change detection, jitter, 24 h cutoff", () => {
     lastMessage: "m",
   };
   const plan = (records, events = []) =>
-    planStatusSync({ records, state: fold(events), machine: "mbp", now: NOW });
+    planStatusSync({ records, state: fold(events), machine: "mbp", now: NOW }).events;
   const first = plan([rec]);
   assert.equal(first.length, 1);
   assert.deepEqual(validateEvent(first[0]).errors, []);
   assert.equal(plan([rec], first).length, 0, "same file twice -> one event");
-  assert.equal(plan([{ ...rec, lastActiveAt: iso(NOW - 10_000) }], first).length, 0, "jitter");
+  assert.equal(plan([{ ...rec, lastActiveAt: iso(NOW - 10_000) }], first).length, 0, "no change");
+  assert.equal(
+    plan([{ ...rec, last: undefined, lastMessage: "other" }], first).length,
+    0,
+    "last only",
+  );
   assert.equal(plan([{ ...rec, branch: "feat/b" }], first).length, 1, "branch change");
   assert.equal(plan([{ ...rec, lastActiveAt: iso(NOW - 25 * 3600_000) }]).length, 0, "stale file");
 });
@@ -226,4 +234,204 @@ test("snapshot: machines list newest first, hides > 3 days", () => {
   );
   assert.equal(snap.machines[0].pr, 9);
   assert.equal(snap.machines[1].lane, "macbook");
+});
+
+// ---- writer model, volume, scrub, watchdog ----
+const rec0 = (id, over = {}) => ({
+  sessionId: id,
+  machine: "mbp",
+  lane: "macbook",
+  branch: "feat/a",
+  pr: null,
+  head: { sha: "abc1234" },
+  lastActiveAt: iso(NOW - 60_000),
+  lastMessage: "m",
+  ...over,
+});
+const planWith = (records, events = [], extra = {}) =>
+  planStatusSync({ records, state: fold(events), machine: "mbp", now: NOW, ...extra });
+
+test("plan: only this machine's sessions; keep-alive after 10 min; cap 20 oldest first", () => {
+  assert.equal(planWith([rec0("s1", { machine: "pc" })]).events.length, 0, "other machine");
+  const prev = (agoMs) => [
+    hb("s1", { branch: "feat/a", head: "abc1234", last: "m" }, { ts: NOW - agoMs }),
+  ];
+  const quiet = rec0("s1", { lastActiveAt: iso(NOW - 30_000), lastMessage: "new text" });
+  assert.equal(planWith([quiet], prev(5 * 60_000)).events.length, 0, "last-only < 10 min");
+  assert.equal(planWith([quiet], prev(11 * 60_000)).events.length, 1, "keep-alive >= 10 min");
+  const same = rec0("s1", { lastActiveAt: iso(NOW - 11 * 60_000) });
+  assert.equal(planWith([same], prev(11 * 60_000)).events.length, 0, "idle session: nothing");
+  assert.equal(
+    planWith([rec0("s1", { branch: "feat/b" })], prev(60_000)).events.length,
+    1,
+    "real change",
+  );
+  assert.equal(
+    planWith([rec0("s1", { title: "t" })], prev(60_000)).events.length,
+    1,
+    "title change",
+  );
+  const many = Array.from({ length: 25 }, (_, i) =>
+    rec0(`s${i}`, { lastActiveAt: iso(NOW - (100 - i) * 1000) }),
+  );
+  const r = planWith(many);
+  assert.equal(r.events.length, 20);
+  assert.equal(r.capped, 5);
+  assert.equal(r.events[0].data.session, "s0", "oldest first");
+});
+
+const git = (cwd, ...a) =>
+  execFileSync("git", a, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+function mkRepo() {
+  const tmp = mkdtempSync(join(tmpdir(), "rfops-st-"));
+  const rem = join(tmp, "remote.git");
+  git(tmp, "init", "--bare", "--quiet", "--initial-branch=main", rem);
+  const seed = join(tmp, "seed");
+  git(tmp, "clone", "--quiet", rem, seed);
+  git(seed, "config", "user.name", "Seed");
+  git(seed, "config", "user.email", "seed@example.com");
+  mkdirSync(join(seed, "register"));
+  writeFileSync(join(seed, "register", "WORK-REGISTER.md"), "# Work register\n");
+  git(seed, "add", "-A");
+  git(seed, "commit", "--quiet", "-m", "init");
+  git(seed, "push", "--quiet", "-u", "origin", "main");
+  const dir = join(tmp, "clone");
+  git(tmp, "clone", "--quiet", rem, dir);
+  git(dir, "config", "user.name", "T");
+  git(dir, "config", "user.email", "t@example.com");
+  const home = join(tmp, "home");
+  mkdirSync(join(home, "status"), { recursive: true });
+  return { tmp, rem, dir, home };
+}
+const putStatus = (home, r) =>
+  writeFileSync(join(home, "status", `${r.sessionId}.json`), JSON.stringify(r));
+
+test(
+  "runStatusSync: pull+append+push, own machine only, busy skip, pull failure, no-push",
+  { timeout: 120000 },
+  async () => {
+    const r = mkRepo();
+    try {
+      const base = { dir: r.dir, home: r.home, machine: "mbp", env: {}, now: NOW };
+      putStatus(r.home, rec0("s1"));
+      putStatus(r.home, rec0("s2", { machine: "pc" }));
+      const first = await runStatusSync(base);
+      assert.equal(first.appended, 1);
+      assert.equal(first.pushed, true);
+      assert.equal(git(r.dir, "rev-list", "--count", "@{u}..HEAD").trim(), "0");
+      const evs = readAllEvents(r.dir).filter((e) => e.kind === "heartbeat");
+      assert.deepEqual(
+        evs.map((e) => e.data.session),
+        ["s1"],
+      );
+      assert.ok(existsSync(join(r.dir, "events", "mbp")), "own machine events dir");
+      assert.equal((await runStatusSync(base)).appended, 0, "second run: nothing");
+
+      putStatus(r.home, rec0("s1", { branch: "feat/z" }));
+      const local = await runStatusSync({ ...base, now: NOW + 1000, push: false });
+      assert.equal(local.appended, 1);
+      assert.equal(local.pushed, false);
+      assert.equal(
+        git(r.dir, "rev-list", "--count", "@{u}..HEAD").trim(),
+        "1",
+        "committed, not pushed",
+      );
+
+      putStatus(r.home, rec0("s1", { branch: "feat/y" }));
+      await withSpecsLock(
+        async () => {
+          const busy = await runStatusSync({ ...base, now: NOW + 2000 });
+          assert.deepEqual(busy, { ran: false, reason: "busy", appended: 0 });
+        },
+        { home: r.home, heartbeatMs: 3600000 },
+      );
+
+      git(r.dir, "remote", "set-url", "origin", join(r.tmp, "missing.git"));
+      const before = readAllEvents(r.dir).length;
+      const failed = await runStatusSync({ ...base, now: NOW + 3000 });
+      assert.equal(failed.appended, 0);
+      assert.ok(failed.pullError, "pull error returned");
+      assert.equal(readAllEvents(r.dir).length, before, "nothing appended on pull failure");
+    } finally {
+      rmSync(r.tmp, { recursive: true, force: true });
+    }
+  },
+);
+
+test("scrubText: home dirs, tokens, env pairs; paths and branches survive", () => {
+  const h = "/Users/zed";
+  const t = (x) => scrubText(x, h);
+  assert.equal(t("in /Users/zed/code/x"), "in ~/code/x");
+  assert.equal(
+    t("also /home/amy/a and C:\\Users\\Bob\\a and c:/users/Eve/b"),
+    "also ~/a and ~\\a and ~/b",
+  );
+  for (const secret of [
+    "ghp_" + "a1".repeat(15),
+    "github_pat_" + "A1b2".repeat(8),
+    "sk_live_" + "x9".repeat(8),
+    "sk-" + "q7".repeat(12),
+    "whsec_" + "k3".repeat(8),
+    "Bearer abc.def-123_456",
+    "eyJhbGciOiJI.eyJzdWIiOiIx.SflKxwRJSMeKKF2",
+    "d".repeat(16) + "0".repeat(16),
+    "Zk9" + "aB1".repeat(15),
+  ])
+    assert.equal(t(`x ${secret} y`), "x [redacted] y", secret);
+  assert.equal(t("run STRIPE_KEY=abc123 now"), "run STRIPE_KEY=[redacted] now");
+  assert.equal(
+    t("~/code/rf-wt-opsls/tools/ops-monitor/lib/status feat/ops-lane-status"),
+    "~/code/rf-wt-opsls/tools/ops-monitor/lib/status feat/ops-lane-status",
+  );
+  const rec = build({
+    payload: { session_id: "s", cwd: "/Users/zed/w", hook_event_name: "Stop" },
+    env: { CLAUDE_SESSION_TITLE: "t ghp_" + "a1".repeat(15) },
+    facts: {
+      ...facts,
+      worktree: "/Users/zed/w",
+      branch: "feat/acme-x",
+      lastText: "see /Users/zed/q",
+    },
+    mask: (x) => maskText(x, ["acme"]),
+    home: h,
+  });
+  assert.equal(rec.cwd, "~/w");
+  assert.equal(rec.worktree, "~/w");
+  assert.equal(rec.lastMessage, "see ~/q");
+  assert.ok(!rec.title.includes("ghp_"));
+  assert.ok(!rec.branch.includes("acme"), "branch masked");
+});
+
+test("hook watchdog: slow git and gh stubs, exits 0 within the budget", { timeout: 20000 }, () => {
+  const tmp = mkdtempSync(join(tmpdir(), "opsls-wd-"));
+  try {
+    const bin = join(tmp, "bin");
+    mkdirSync(bin);
+    for (const n of ["git", "gh"]) {
+      writeFileSync(join(bin, n), "#!/bin/sh\nsleep 5\n");
+      chmodSync(join(bin, n), 0o755);
+    }
+    const cwd = join(tmp, "cwd");
+    mkdirSync(cwd);
+    const env = {
+      ...process.env,
+      PATH: `${bin}:/usr/bin:/bin`,
+      RF_OPS_HOME: join(tmp, "home"),
+      CI: "",
+      RF_OPS_GATE: "",
+    };
+    const input = JSON.stringify({ session_id: "wd", cwd, hook_event_name: "SessionStart" });
+    const t0 = Date.now();
+    const r = spawnSync(process.execPath, [HOOK], {
+      input,
+      env,
+      cwd,
+      encoding: "utf8",
+      timeout: 10000,
+    });
+    assert.equal(r.status, 0);
+    assert.ok(Date.now() - t0 < 2500, `took ${Date.now() - t0} ms`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });
