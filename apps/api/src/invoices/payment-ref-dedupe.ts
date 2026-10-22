@@ -180,6 +180,8 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
     async check(tx) {
       anyway = null; // a retried transaction starts clean
       suspect = null;
+      // m1: a rolled-back attempt's suspects never survive into the retry (the caller alerts only on what committed).
+      if (captured?.suspects) captured.suspects.length = 0;
       if (!norm) return;
       const customerId =
         p.customerId ??
@@ -192,6 +194,16 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
             )?.customerId
           : null);
       if (!customerId) return;
+      if (captured) {
+        // m2: an all-excess charge books ONLY an AdvancePayment (no InvoicePayment row to dedupe against). Under the
+        // payment-ref lock, an advance already carrying this exact source reference IS this charge: a second concurrent
+        // delivery must not book a second advance.
+        const advance = await tx.advancePayment.findFirst({
+          where: { customerId, reference: captured.sourceRef },
+          select: { id: true },
+        });
+        if (advance) throw new PaymentAlreadyRecordedError(null, advance.id);
+      }
       const target = toCents(roundMoney(p.amount));
       const groupId = p.opts?.paymentGroupId;
       // scan-ok: draft-payment-not-void — a DRAFT / PENDING payment is a recorded payment too; only a VOID one
@@ -204,7 +216,12 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
           invoice: { customerId },
           // M4: a duplicate is the same amount (one row) or a member of a payment group (summed below); never every
           // referenced payment of the customer. The reference itself is judged by the one JS normaliser.
-          OR: [{ amount: roundMoney(p.amount) }, { paymentGroupId: { not: null } }],
+          OR: [
+            { amount: roundMoney(p.amount) },
+            { paymentGroupId: { not: null } },
+            // m3: the same charge is recognised by its exact reference whatever its amount was
+            ...(captured ? [{ reference: captured.sourceRef }] : []),
+          ],
         },
         select: {
           id: true,
@@ -224,6 +241,12 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
           normalizePaymentRef(r.reference) === norm,
       );
       if (others.length === 0) return;
+      if (captured) {
+        // m3: the SAME charge is already on the ledger when ANY candidate carries its exact reference, whatever amount
+        // or event the hit below picks; the caller then settles idempotently instead of recording it twice.
+        const same = others.find((r) => r.reference === captured.sourceRef);
+        if (same) throw new PaymentAlreadyRecordedError(same.paymentGroupId ?? null, same.id);
+      }
       // One logical payment = one group (or one row): its amount is the sum of its rows.
       const events = new Map<string, { rows: any[]; cents: number; grouped: boolean }>();
       for (const r of others) {
@@ -274,11 +297,8 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
         paymentGroupId: first.paymentGroupId ?? null,
       };
       if (captured) {
-        // SA-837b: money already captured is never refused. The same charge again is idempotent; anything else is
+        // SA-837b: money already captured is never refused: a repeat that is not the same charge (m3, above) is
         // recorded and flagged.
-        if (hit.rows.some((r) => r.reference === captured.sourceRef)) {
-          throw new PaymentAlreadyRecordedError(existing.paymentGroupId, existing.id);
-        }
         suspect = existing;
         return;
       }

@@ -175,8 +175,9 @@ export class ConnectChargeReviewService {
     if (!inv || inv.internalNotes?.includes(paymentIntentId)) return;
     const line =
       `[REVIEW] The card payment ${paymentIntentId} repeats an earlier payment's reference and amount` +
-      `${duplicateOfInvoiceNumber ? ` (${duplicateOfInvoiceNumber})` : ""}. It is recorded because the money moved; ` +
-      `check Stripe and refund the duplicate if the customer was charged twice.`;
+      `${duplicateOfInvoiceNumber ? ` (${duplicateOfInvoiceNumber})` : ""}. It is recorded because the money moved. ` +
+      `First look for a manual entry of the same charge and void that entry; only if the customer was really ` +
+      `charged twice, refund the duplicate in Stripe.`;
     const { count } = await this.prisma.forTenant().invoice.updateMany({
       where: { id: inv.id, internalNotes: inv.internalNotes },
       data: { internalNotes: inv.internalNotes ? `${inv.internalNotes}\n${line}` : line },
@@ -185,7 +186,8 @@ export class ConnectChargeReviewService {
     const title = "Possible duplicate card payment";
     const body =
       `A card payment on invoice ${inv.invoiceNumber} repeats an earlier payment's reference and amount. ` +
-      `It was recorded because the money moved. Review it in Stripe and refund the duplicate if needed.`;
+      `It was recorded because the money moved. First look for a manual entry of the same charge and void it; ` +
+      `refund in Stripe only if the customer was really charged twice.`;
     try {
       const operators = await this.prisma.user.findMany({
         where: { tenantId, role: { in: ["OPERATOR", "TENANT_ADMIN"] }, status: "ACTIVE" },
