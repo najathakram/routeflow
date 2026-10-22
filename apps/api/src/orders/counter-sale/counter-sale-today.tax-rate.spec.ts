@@ -112,6 +112,11 @@ describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
     // CQ-03: the rate AND the billed levy with its category name (the receipt names it as its own charge)
     expect(q.select.invoices.select.items).toEqual({
       select: {
+        description: true, // R7b 2.1: the row's item names
+        qty: true,
+        boxes: true, // N4: the receipt's own quantity text
+        pieces: true,
+        unitLabel: true,
         taxRate: true,
         categoryTaxAmount: true,
         trackedCategoryId: true,

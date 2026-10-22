@@ -132,6 +132,7 @@ afterEach(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  window.localStorage.removeItem("rf:counter:summary:showAll"); // the remembered disclosure must not leak across tests
   addon = true;
   role = "OPERATOR";
   serve({ 1: page1() });
@@ -189,20 +190,154 @@ describe("CounterTodaysSales", () => {
     expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
   });
 
-  it("renders the summary: sales, money in by method, cash expected", async () => {
+  it("the summary shows every non-zero figure by default; Show all figures reveals only $0.00 rows", async () => {
     await open();
     const s = await screen.findByTestId("today-summary");
     expect(within(s).getByText("2 sales")).toBeInTheDocument();
     expect(within(s).getByText("$45.00")).toBeInTheDocument();
-    expect(within(s).getByTestId("today-in-cash")).toHaveTextContent("$30.00");
-    expect(within(s).getByTestId("today-in-card")).toHaveTextContent("$15.00");
+    for (const [id, text] of [
+      ["in-cash", "$30.00"],
+      ["in-card", "$15.00"],
+      ["in-other", "$1.00"],
+      ["in-total", "$46.00"],
+      ["store-credit-used", "$4.00"],
+      ["on-account", "$7.00"],
+      ["refunds", "$5.00"],
+      ["store-credit-issued", "$2.00"],
+      ["net-collected", "$41.00"],
+      ["cash-expected", "$25.00"],
+    ]) {
+      expect(within(s).getByTestId(`today-${id}`)).toHaveTextContent(text!);
+    }
+    // the $0.00 rows (Check in, Pickup hand-overs) wait behind the disclosure
+    expect(within(s).queryByTestId("today-in-check")).toBeNull();
+    expect(within(s).queryByTestId("today-hand-overs")).toBeNull();
+    fireEvent.click(within(s).getByRole("button", { name: "Show all figures" }));
     expect(within(s).getByTestId("today-in-check")).toHaveTextContent("$0.00");
-    expect(within(s).getByTestId("today-in-other")).toHaveTextContent("$1.00");
-    expect(within(s).getByTestId("today-in-total")).toHaveTextContent("$46.00");
-    expect(within(s).getByTestId("today-store-credit-used")).toHaveTextContent("$4.00");
-    expect(within(s).getByTestId("today-on-account")).toHaveTextContent("$7.00");
-    expect(within(s).getByTestId("today-store-credit-issued")).toHaveTextContent("$2.00");
-    expect(within(s).getByTestId("today-net-collected")).toHaveTextContent("$41.00");
+    expect(within(s).getByTestId("today-hand-overs")).toHaveTextContent("0 · $0.00");
+    expect(within(s).getByRole("button", { name: "Show fewer figures" })).toBeInTheDocument();
+  });
+
+  it("a $12.50 refund shows the Refunds row by default", async () => {
+    serve({
+      1: page1([row()], {
+        summary: {
+          ...SUMMARY,
+          refunds: {
+            count: 1,
+            cash: 12.5,
+            card: 0,
+            check: 0,
+            other: 0,
+            total: 12.5,
+            tenderKnown: true,
+          },
+        },
+      }),
+    });
+    await open();
+    const s = await screen.findByTestId("today-summary");
+    expect(within(s).getByTestId("today-refunds")).toHaveTextContent("$12.50");
+    expect(within(s).getByTestId("today-refunds-cash")).toHaveTextContent("$12.50");
+  });
+
+  it("a day with a refund and card takings shows both rows, and the visible figures reconcile", async () => {
+    serve({
+      1: page1([row()], {
+        summary: {
+          ...SUMMARY,
+          moneyIn: { cash: 30, card: 20, check: 0, other: 0, total: 50 },
+          storeCreditUsed: 0,
+          onAccount: 0,
+          storeCreditIssued: { count: 0, amount: 0 },
+          refunds: {
+            count: 1,
+            cash: 12.5,
+            card: 0,
+            check: 0,
+            other: 0,
+            total: 12.5,
+            tenderKnown: true,
+          },
+          netCollected: 37.5,
+          cashExpectedInDrawer: 17.5,
+        },
+      }),
+    });
+    await open();
+    const s = await screen.findByTestId("today-summary");
+    const figure = (id: string) =>
+      Number((within(s).getByTestId(id).textContent ?? "").match(/\$([0-9.]+)/)![1]);
+    expect(within(s).getByTestId("today-in-card")).toHaveTextContent("$20.00");
+    expect(within(s).getByTestId("today-refunds")).toHaveTextContent("$12.50");
+    // Money in - Refunds = Net collected, from the server's own figures on screen
+    expect(figure("today-in-total") - figure("today-refunds")).toBe(figure("today-net-collected"));
+  });
+
+  it("a $0 summary row is not shown by default; Show all figures reveals it", async () => {
+    await open();
+    const s = await screen.findByTestId("today-summary");
+    expect(within(s).queryByTestId("today-in-check")).toBeNull();
+    fireEvent.click(within(s).getByRole("button", { name: "Show all figures" }));
+    expect(within(s).getByTestId("today-in-check")).toBeInTheDocument();
+  });
+
+  it("the three anchor rows show at $0.00 (never a dash) on an empty day; the rest wait behind the disclosure", async () => {
+    serve({
+      1: page1([row()], {
+        summary: {
+          ...SUMMARY,
+          sales: { count: 0, total: 0 },
+          moneyIn: { cash: 0, card: 0, check: 0, other: 0, total: 0 },
+          storeCreditUsed: 0,
+          onAccount: 0,
+          refunds: { count: 0, cash: 0, card: 0, check: 0, other: 0, total: 0, tenderKnown: true },
+          storeCreditIssued: { count: 0, amount: 0 },
+          cashExpectedInDrawer: 0,
+          netCollected: 0,
+        },
+      }),
+    });
+    await open();
+    const s = await screen.findByTestId("today-summary");
+    expect(within(s).getByTestId("today-in-total")).toHaveTextContent("$0.00");
+    expect(within(s).getByTestId("today-on-account")).toHaveTextContent("$0.00");
+    expect(within(s).getByTestId("today-cash-expected")).toHaveTextContent("$0.00");
+    expect(within(s).queryByTestId("today-refunds")).toBeNull();
+    fireEvent.click(within(s).getByRole("button", { name: "Show all figures" }));
+    expect(within(s).getByTestId("today-refunds")).toHaveTextContent("$0.00");
+  });
+
+  it("no disclosure is offered when no row is $0.00", async () => {
+    serve({
+      1: page1([row()], {
+        summary: {
+          ...SUMMARY,
+          moneyIn: { cash: 30, card: 15, check: 2, other: 1, total: 48 },
+          handOvers: { count: 1, total: 3 },
+          refunds: { count: 1, cash: 1, card: 1, check: 1, other: 1, total: 4, tenderKnown: true },
+        },
+      }),
+    });
+    await open();
+    const s = await screen.findByTestId("today-summary");
+    expect(within(s).queryByRole("button", { name: /figures/ })).toBeNull();
+    expect(within(s).getByTestId("today-in-check")).toBeInTheDocument();
+  });
+
+  it("the Show all figures choice is remembered on this device", async () => {
+    window.localStorage.removeItem("rf:counter:summary:showAll");
+    const first = await open();
+    fireEvent.click(
+      within(await screen.findByTestId("today-summary")).getByRole("button", {
+        name: "Show all figures",
+      }),
+    );
+    expect(window.localStorage.getItem("rf:counter:summary:showAll")).toBe("1");
+    first.unmount();
+    await open();
+    expect(await screen.findByTestId("today-in-check")).toBeInTheDocument();
+    window.localStorage.removeItem("rf:counter:summary:showAll");
   });
 
   it("refunds are ONE total with no per-method split while the tender is unknown", async () => {
@@ -386,6 +521,31 @@ describe("CounterTodaysSales", () => {
     await screen.findByTestId("today-row-o1");
     expect(document.body.classList.contains("counter-reprint-open")).toBe(false);
     expect(screen.getByRole("dialog").className).not.toContain("print:[&>div:first-child]:hidden");
+  });
+
+  it("a row names its items; an old server's row shows none", async () => {
+    serve({
+      1: page1([
+        row({
+          orderId: "o1",
+          items: [
+            { name: "Cola 12oz Can", qty: 2 },
+            { name: "Ice Bag 10lb", qty: 1 },
+            { name: "Chips", qty: 1 },
+          ],
+          itemCount: 3,
+        }),
+        row({ orderId: "o2", orderNumber: "ORD-2" }),
+      ]),
+    });
+    await open();
+    const r1 = await screen.findByTestId("today-row-o1");
+    expect(within(r1).getByTestId("today-row-items")).toHaveTextContent(
+      "Cola 12oz Can ×2, Ice Bag 10lb +1 more",
+    );
+    expect(
+      within(await screen.findByTestId("today-row-o2")).queryByTestId("today-row-items"),
+    ).toBeNull();
   });
 
   it("row 317: a row names its cashier; an old row (no stored cashier) names none", async () => {

@@ -8,8 +8,10 @@ import {
 } from "@prisma/client";
 import {
   COUNTER_DEFAULT_REGISTER,
+  ROW_ITEM_NAMES_MAX,
   billedChargeLines,
   cashierNameOf,
+  foldItemNames,
   roundMoney,
   storedTaxRatePercent,
   sumConfirmed,
@@ -365,7 +367,7 @@ export function windowReturnsWhere(
 
 /**
  * The page query, ONE definition: the service sends it and the EXPLAIN spec captures the SQL of exactly it.
- * `select`, never `include`: no line items, no cost or margin field.
+ * `select`, never `include`: only each line's description and qty (the row's item names), no cost or margin field.
  */
 export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: number) {
   return {
@@ -396,8 +398,15 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           },
           // the stored line rates the sale's tax rate is read from (pricing's storedTaxRatePercent), and the
           // levy each line billed with its category (CQ-03: named charges on the reprint)
+          // R7b 2.1: description + qty name the sale on its row (the snapshot taken at sale time); the fold keeps the first few.
+          // No `take` here: the same items feed the tax-rate and levy reads above, which need every line.
           items: {
             select: {
+              description: true,
+              qty: true,
+              boxes: true,
+              pieces: true,
+              unitLabel: true,
               taxRate: true,
               categoryTaxAmount: true,
               trackedCategoryId: true,
@@ -429,7 +438,7 @@ const num = (v: unknown): number => (v == null ? 0 : Number(v));
 
 // ─── Row ──────────────────────────────────────────────────────────────────────────────────────
 
-/** The page query's row, read with `select` (no line items, no cost / margin fields). */
+/** The page query's row, read with `select` (line descriptions and qty only; no cost / margin fields). */
 export interface TodayOrderRecord {
   id: string;
   orderNumber: string | null;
@@ -449,6 +458,13 @@ export interface TodayOrderRecord {
     payments: Array<{ method: string; amount: unknown; status: string }>;
     /** SA-764: each line's stored tax rate (a fraction, 0.0825); CQ-03: its billed levy and category */
     items?: Array<{
+      /** R7b 2.1: the line's snapshotted description and qty (the row's item names) */
+      description?: string | null;
+      qty?: unknown;
+      /** N4: the line's own boxed split and selling unit, so the row reads "2 Cases" like the receipt */
+      boxes?: number | null;
+      pieces?: number | null;
+      unitLabel?: string | null;
       taxRate: unknown;
       categoryTaxAmount?: unknown;
       trackedCategoryId?: string | null;
@@ -558,6 +574,8 @@ export function toTodaysSaleRow(
   else returnState = total > 0 && returnedAmount >= total ? "FULL" : "PARTLY";
 
   const shown = live[0] ?? o.invoices[0];
+  // a voided sale has no live invoice: its names still come from the invoices it had (tax and levy reads stay on live)
+  const names = itemNamesOf((live.length > 0 ? live : o.invoices).flatMap((i) => i.items ?? []));
   return {
     orderId: o.id,
     orderNumber: o.orderNumber ?? "",
@@ -585,7 +603,24 @@ export function toTodaysSaleRow(
     charges: billedChargeLines(live.flatMap((i) => i.items ?? [])),
     returned: { amount: returnedAmount, state: returnState, returns },
     voided,
+    ...names,
   };
+}
+
+/** The first few line names + qty and the line count (one shared fold with the parked list); `{}` when no lines are named. */
+function itemNamesOf(
+  lines: ReadonlyArray<{
+    description?: string | null;
+    qty?: unknown;
+    boxes?: unknown;
+    pieces?: unknown;
+    unitLabel?: string | null;
+  }>,
+) {
+  return foldItemNames(
+    lines.map((l) => ({ ...l, name: l.description })),
+    ROW_ITEM_NAMES_MAX,
+  );
 }
 
 // ─── Summary ──────────────────────────────────────────────────────────────────────────────────
