@@ -101,13 +101,15 @@ describe("row 498: the InvoicePayment writer census", () => {
       /family:\s*"payment-ref"/.test(fs.readFileSync(f, "utf8")),
     );
     expect(takers.map((f) => path.relative(SRC, f))).toEqual(["invoices/payment-ref-dedupe.ts"]);
-    const callers = walk(SRC).filter((f) =>
-      /withPaymentRefLock\(/.test(fs.readFileSync(f, "utf8")),
+    // the definition itself is not a call site
+    const callers = walk(SRC).filter(
+      (f) =>
+        !f.endsWith("invoices/payment-ref-dedupe.ts") &&
+        /withPaymentRefLock\(/.test(fs.readFileSync(f, "utf8")),
     );
     expect(callers.map((f) => path.relative(SRC, f)).sort()).toEqual([
       "bookkeeping/bookkeeping.service.ts",
       "invoices/payment-idempotency.ts",
-      "invoices/payment-ref-dedupe.ts",
     ]);
     for (const f of [...takers, ...callers]) {
       const text = fs.readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");

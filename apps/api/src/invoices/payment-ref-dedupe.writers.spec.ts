@@ -488,9 +488,10 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
       await record("inv-1", {}, { paymentGroupId: "grp-1" });
       await record("inv-2", {}, { paymentGroupId: "grp-1" });
       expect(committed().pays).toHaveLength(2);
-      expect((await dupOf(record("inv-1", {}, { paymentGroupId: "grp-2" })))?.getStatus?.()).toBe(
-        409,
-      );
+      // the two rows are ONE payment of 200: another group's 200 with the same reference is a duplicate of it
+      expect(
+        (await dupOf(record("inv-1", { amount: 200 }, { paymentGroupId: "grp-2" })))?.getStatus?.(),
+      ).toBe(409);
     });
 
     it("(W1) the shared walk-in identity is never deduped: two walk-in sales, same method, reference and amount, both record", async () => {

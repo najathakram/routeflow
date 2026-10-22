@@ -388,6 +388,13 @@ export class CounterSaleService {
       // A tender that could not be stored takes NO money: the payment loop is skipped entirely.
       if (!planError) {
         try {
+          // Row 498: this sale's payments are ONE attempt for the reference dedupe (its sibling invoices, and a resumed
+          // call's earlier stored tender rows), so they never collide with each other; any OTHER sale's payment does.
+          const paymentAttempt = {
+            ids: new Set(
+              invoices.flatMap((i) => (i.payments ?? []).filter(isTender).map((p) => p.id)),
+            ),
+          };
           for (const { invoiceId, due } of writes) {
             // SA-750r3: the shared close lock is already held on the pinned connection (tillLockHeld)
             await this.invoices.recordPayment(
@@ -398,7 +405,7 @@ export class CounterSaleService {
                 reference: dto.payment.reference,
                 ...(paidAt ? { paidAt } : {}),
               } as never,
-              { tillLockHeld: TILL_LOCK_HELD },
+              { tillLockHeld: TILL_LOCK_HELD, paymentAttempt },
             );
           }
         } catch (e) {

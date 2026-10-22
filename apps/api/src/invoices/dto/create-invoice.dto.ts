@@ -153,6 +153,8 @@ export class RecordInvoicePaymentDto {
   @IsOptional() @IsDateString() settledAt?: string | null;
   @IsOptionalNotNull() @IsNumber() @Min(0) bankCharges?: number;
   @IsOptional() @IsEnum(["DRAFT", "PAID"]) status?: string;
+  /** Row 498: a STAFF resend of a payment refused 409 DUPLICATE_PAYMENT_REF; recorded with one audit row. Ignored for any other role. */
+  @IsOptional() @IsBoolean() recordAnyway?: boolean;
 }
 
 export class UpdatePaymentDto {
@@ -183,6 +185,8 @@ export class StandalonePaymentDto {
   @IsOptional() @IsString() reference?: string;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsEnum(["DRAFT", "PAID"]) status?: string;
+  /** Row 498: a STAFF resend of a payment refused 409 DUPLICATE_PAYMENT_REF; recorded with one audit row. Ignored for any other role. */
+  @IsOptional() @IsBoolean() recordAnyway?: boolean;
   @IsArray()
   // Post-dated check payments PR-1 (additive-only, no behavior change for any real request —
   // every existing caller allocates to a handful of invoices): caps a standalone payment's

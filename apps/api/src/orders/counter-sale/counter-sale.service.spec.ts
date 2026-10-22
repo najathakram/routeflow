@@ -513,7 +513,7 @@ describe("CounterSaleService.ring", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 37.25 }),
-        { tillLockHeld: true },
+        { tillLockHeld: true, paymentAttempt: expect.anything() },
       );
       expect(r).toMatchObject({
         invoiceId: "inv-1",
@@ -543,7 +543,7 @@ describe("CounterSaleService.ring", () => {
           reference: undefined,
           paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
-        { tillLockHeld: true },
+        { tillLockHeld: true, paymentAttempt: expect.anything() },
       );
       expect(r).toEqual({
         orderId: "ord-1",
@@ -572,7 +572,7 @@ describe("CounterSaleService.ring", () => {
           reference: "auth-77",
           paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
-        { tillLockHeld: true },
+        { tillLockHeld: true, paymentAttempt: expect.anything() },
       );
       expect(r.change).toBeUndefined();
       expect(r.balanceDue).toBe(0);
@@ -595,7 +595,7 @@ describe("CounterSaleService.ring", () => {
           reference: undefined,
           paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
-        { tillLockHeld: true },
+        { tillLockHeld: true, paymentAttempt: expect.anything() },
       );
       expect(r).toMatchObject({
         paid: 20,
@@ -634,6 +634,7 @@ describe("CounterSaleService.ring", () => {
       const r = await service.ring(named({ method: "CASH", amount: 30 }) as never, staff);
       expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 30 }), {
         tillLockHeld: true,
+        paymentAttempt: expect.anything(),
       });
       expect(r).toMatchObject({ total: 40, paid: 40, balanceDue: 0, paymentRecorded: true });
       // a 30 cash tender on the 30 left after the credit: nothing handed back
@@ -834,6 +835,7 @@ describe("CounterSaleService.ring", () => {
       expect(recordPayment).toHaveBeenCalledTimes(1);
       expect(recordPayment).toHaveBeenCalledWith("inv-2", expect.objectContaining({ amount: 20 }), {
         tillLockHeld: true,
+        paymentAttempt: expect.anything(),
       });
       expect(second).toMatchObject({
         total: 50,
@@ -843,6 +845,19 @@ describe("CounterSaleService.ring", () => {
         replayed: true,
       });
       expect(invoices[0].payments).toHaveLength(1); // sibling 1 is never charged twice
+      // Row 498: the resumed call's attempt is seeded with the sale's stored tender rows, so the shortfall payment
+      // never collides with sibling 1's payment under the same reference.
+      expect([...recordPayment.mock.calls[0][2].paymentAttempt.ids]).toContain("pay-inv-1");
+    });
+
+    it("row 498: the sibling payments of one sale share ONE payment attempt (they never collide on the reference)", async () => {
+      invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 30, [], 2)];
+      recordPayment.mockImplementation(async (invoiceId: string) => ({ id: invoiceId }));
+      await service.ring(named({ method: "CASH", amount: 60 }) as never, staff, "k");
+      expect(recordPayment).toHaveBeenCalledTimes(2);
+      const [a, b] = recordPayment.mock.calls.map((c) => c[2].paymentAttempt);
+      expect(a).toBeDefined();
+      expect(a).toBe(b);
     });
 
     it("a replay whose planned allocation is already fully stored records nothing", async () => {

@@ -45,6 +45,11 @@ import {
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { lockInvoicesForPayment } from "../invoices/invoice-send-guard";
 import { counterPay } from "../invoices/counter-payment-guard";
+import {
+  createPaymentRefGuard,
+  withPaymentRefLock,
+  type PaymentRefOpts,
+} from "../invoices/payment-ref-dedupe";
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
 import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
 
@@ -197,11 +202,21 @@ export class BookkeepingService implements OnModuleInit {
     };
   }
 
-  async recordPayment(id: string, dto: RecordPaymentDto) {
+  /**
+   * Row 498: the same reference predicate and `payment-ref` lock as the invoice writers (payment-ref-dedupe.ts); this
+   * ledger writer has no SA-824 key, so its single payment row is its own attempt.
+   */
+  recordPayment(id: string, dto: RecordPaymentDto, opts?: PaymentRefOpts) {
+    return withPaymentRefLock(this.prisma, dto, () => this.writeLedgerPayment(id, dto, opts));
+  }
+
+  private async writeLedgerPayment(id: string, dto: RecordPaymentDto, opts?: PaymentRefOpts) {
     // G4: the same end-of-day-close door the office recordPayment uses. The counter scope is read BEFORE the transaction so the
     // shared close lock is its FIRST statement; a non-counter invoice gets null here and every counterPay helper is a no-op.
     const till = await counterPay.scope(this.prisma, id);
+    const refGuard = createPaymentRefGuard({ ...dto, invoiceId: id, opts });
     return this.prisma.tenantTransaction(async (tx) => {
+      await refGuard.check(tx); // before any lock or money row: a duplicate reference is a 409, nothing written
       await counterPay.lock(tx, till);
       // SA-404f F1: FIRST lock (Order →) Invoice, so the status read below sees a committed VOID
       // and refuses, instead of writing PAID/PARTIAL back over it.
@@ -253,7 +268,7 @@ export class BookkeepingService implements OnModuleInit {
         { method: dto.method },
         PaymentStatus.PAID,
       );
-      await tx.invoicePayment.create({
+      const recorded = await tx.invoicePayment.create({
         data: {
           invoiceId: id,
           amount: paymentAmount,
@@ -265,6 +280,7 @@ export class BookkeepingService implements OnModuleInit {
           checkStatus: dto.method === "CHECK" ? CheckStatus.RECORDED : null,
         },
       });
+      await refGuard.recorded(tx, [recorded?.id], id);
 
       const totalPaid = roundMoney(alreadyPaid + paymentAmount);
       const newInvStatus =

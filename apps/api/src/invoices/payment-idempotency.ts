@@ -4,6 +4,12 @@ import { toCents } from "@routeflow/pricing";
 import { IDEMPOTENCY_KEY_CONFLICT } from "../orders/merge-idempotency";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { PaymentKeyScope } from "@routeflow/types";
+import {
+  createPaymentRefGuard,
+  withPaymentRefLock,
+  type PaymentAttempt,
+  type RefDedupeOpts,
+} from "./payment-ref-dedupe";
 
 /**
  * SA-824 (row 661 step 1): the ONE claim-in-transaction helper of the customer money-in writers
@@ -92,6 +98,12 @@ export interface KeyedWriterOpts<T> {
   idempotencyKey?: string;
   /** SA-824: run as the FIRST statement of the writer's transaction (set by `withKeyHooks`). */
   claim?: (tx: any) => Promise<void>;
+  /** Row 498: who is recording and whether staff asked to record a repeat anyway (the staff controllers set it). */
+  refDedupe?: RefDedupeOpts;
+  /** Row 498: the payments of ONE logical attempt (a counter tender over sibling invoices); never deduped against each other. */
+  paymentAttempt?: PaymentAttempt;
+  /** The payment group the call writes into (pickup-complete's tender group): its rows are one attempt. */
+  paymentGroupId?: string;
   /** Runs inside the writer's transaction after the money is written, before commit. */
   inTx?: (tx: any, result: T, refs?: PaymentKeyRefs) => Promise<void>;
 }
@@ -296,7 +308,14 @@ export interface KeyedPayment {
 
 /**
  * The service entry point: `withPaymentKey` with the hooks threaded into the writer's opts
- * (`withKeyHooks`). No `opts.idempotencyKey` = `write(opts)` exactly as today.
+ * (`withKeyHooks`). No `opts.idempotencyKey` = no key claim, exactly as today.
+ *
+ * Row 498 (SA-837): this is also the ONE place the payment-reference dedupe joins SA-824's path, for the two
+ * invoice-payment scopes. The key check runs FIRST (a held key replays before anything else, so a replay never
+ * meets the dedupe); a new attempt then takes the `payment-ref` lock, opens the writer's transaction, claims its
+ * key (the first statement) and runs the reference check (the claim hook, before any money row); a hit rolls the
+ * claim back with it, so the key is free for the staff "record anyway" resend. The attempt marks and the
+ * recorded-anyway audit row are written by the settle hook, in the same transaction.
  */
 export function keyedPayment<T, O extends KeyedWriterOpts<T>>(
   deps: PaymentKeyDeps,
@@ -304,9 +323,36 @@ export function keyedPayment<T, O extends KeyedWriterOpts<T>>(
   opts: O | undefined,
   write: (opts: O | undefined) => Promise<T>,
 ): Promise<T> {
-  return withPaymentKey<T>(deps, opts?.idempotencyKey, keyed.scope, keyed.req, (hooks) =>
-    write(withKeyHooks<T, O>(opts, hooks)),
-  );
+  return withPaymentKey<T>(deps, opts?.idempotencyKey, keyed.scope, keyed.req, (hooks) => {
+    if (keyed.scope === "ADVANCE_PAYMENT") return write(withKeyHooks<T, O>(opts, hooks)); // not an invoice payment
+    const guard = createPaymentRefGuard({
+      method: keyed.req.method,
+      reference: keyed.req.reference,
+      amount: keyed.req.amount,
+      customerId: keyed.req.customerId,
+      invoiceId: keyed.req.invoiceId,
+      opts,
+    });
+    const first = keyed.req.invoiceId ?? keyed.req.allocations?.[0]?.invoiceId ?? null;
+    const withGuard: PaymentKeyHooks<T> = {
+      claim: async (tx) => {
+        await hooks?.claim(tx);
+        await guard.check(tx);
+      },
+      settle: async (tx, result, refs) => {
+        // standalone: the group's rows; per-invoice: the one created row (its result also carries the invoice's
+        // `payments`, which are NOT all this attempt's).
+        const r: any = result;
+        const ids: string[] =
+          keyed.scope === "STANDALONE_PAYMENT"
+            ? (r?.payments ?? []).map((p: any) => p?.id)
+            : [r?.createdPaymentId];
+        await guard.recorded(tx, ids, first);
+        await hooks?.settle(tx, result, refs);
+      },
+    };
+    return withPaymentRefLock(deps, keyed.req, () => write(withKeyHooks<T, O>(opts, withGuard)));
+  });
 }
 
 /** The keyed request of each writer (the hash input), so the services stay one line per call. */
