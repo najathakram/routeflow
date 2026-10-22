@@ -40,7 +40,7 @@ export function backorderQtyText(pieces: number, unit?: BackorderUnit | null): s
 
 /**
  * `soldPieces` (the line's stored base-piece qty) lets the tag say WHY: what was in stock when the line was sold
- * is the sold quantity minus the part sold past stock, in the line's own unit ("(0 in stock)", "(1 case in stock)").
+ * is the sold quantity minus the part sold past stock, in the line's own unit ("(0 in stock when ordered)"; it is stock at the time of the order, not live stock).
  * Omitted or not a number, the tag is just the shortfall.
  */
 export function backorderTagText(
@@ -52,6 +52,6 @@ export function backorderTagText(
   if (soldPieces == null || !Number.isFinite(soldPieces)) return base;
   const inStock = Math.max(0, soldPieces - pieces);
   return inStock > 0
-    ? `${base} (${backorderQtyText(inStock, unit)} in stock)`
-    : `${base} (0 in stock)`;
+    ? `${base} (${backorderQtyText(inStock, unit)} in stock when ordered)`
+    : `${base} (0 in stock when ordered)`;
 }
