@@ -532,19 +532,23 @@ export function reconcile({
     });
   }
 
-  // items-stale: the register changed but no event has landed for ITEMS_STALE_MS since, so the
-  // work items on the board lag the register (the PC register sync has stalled).
+  // items-stale: a dry register sync would still append events (rows or edits the board lacks) and
+  // the register's last commit is older than ITEMS_STALE_MS, so the PC register sync has stalled.
+  // A register commit that syncs to nothing never fires it; other lanes' events never hide it.
   const regAt = register?.changedAt;
-  if (Number.isFinite(regAt) && state.eventCount > 0) {
-    const lastAt = state.lastEventAt;
-    if (Number.isFinite(lastAt) && regAt - lastAt > ITEMS_STALE_MS) {
-      add({
-        kind: "items-stale",
-        severity: now - lastAt >= 24 * HOUR ? "error" : "warn",
-        message: `Work items last updated ${agoWords(now - lastAt)} ago; the register changed ${agoWords(now - regAt)} ago and its rows have not reached the board (the register sync on the PC monitor is behind)`,
-        source: "register",
-      });
-    }
+  const pending = register?.pending;
+  if (
+    Number.isFinite(regAt) &&
+    Number.isFinite(pending) &&
+    pending >= 1 &&
+    now - regAt > ITEMS_STALE_MS
+  ) {
+    add({
+      kind: "items-stale",
+      severity: now - regAt >= 24 * HOUR ? "error" : "warn",
+      message: `Work items are behind the register: ${pending} change${pending === 1 ? "" : "s"} from ${agoWords(now - regAt)} ago ${pending === 1 ? "has" : "have"} not reached the board (the register sync on the PC monitor is behind)`,
+      source: "register",
+    });
   }
 
   // register-id-collision: a register row shares its number with an item sync will not move (not

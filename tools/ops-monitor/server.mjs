@@ -26,6 +26,7 @@ import {
   verifySession,
 } from "./lib/auth.mjs";
 import { renderIcon } from "./lib/icon.mjs";
+import { describeSyncOutcome } from "./lib/sync.mjs";
 import { createNameLoader, maskDeep, maskText } from "./lib/mask.mjs";
 import { verifyGithubSignature } from "./lib/webhooks.mjs";
 
@@ -477,6 +478,28 @@ export function startRegisterSync({
   };
 }
 
+/**
+ * The register-sync log line for one pass. Every pass that appends nothing says why (busy lock,
+ * pull error, generated mode, no changes), plus a refused register or refused rows, logged once per
+ * change of that text so a stalled sync is never silent and a steady state never spams. A busy
+ * streak logs at its first pass and then every BUSY_LOG_EVERY-th. Returns `{ note, log }`: `note`
+ * is the new last-logged text, `log` the line to print or null.
+ */
+export const BUSY_LOG_EVERY = 6;
+export function registerSyncLog(lastNote, res, { busyRuns = 0, mask = (t) => t } = {}) {
+  if (busyRuns > 1 && busyRuns % BUSY_LOG_EVERY !== 0) return { note: lastNote, log: null };
+  const note = [
+    describeSyncOutcome(res, { busyRuns, mask }),
+    res?.refused ? `register refused: ${res.refused}` : null,
+    res?.collisions?.length
+      ? `register rows refused (id shared with a monitor item): ${res.collisions.join(", ")}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("; ");
+  return note === lastNote ? { note, log: null } : { note, log: note || null };
+}
+
 /** Writes the last snapshot atomically (`rf audit` reads it). Never throws. */
 export function writeLastSnapshot(home, snap) {
   try {
@@ -697,7 +720,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     }
     collector.start();
     if (shouldRunRegisterSync(opts)) {
-      const { describeSyncOutcome, runSync } = await import("./lib/sync.mjs");
+      const { runSync } = await import("./lib/sync.mjs");
       const { loadBugIds } = await import("./lib/store.mjs");
       let lastRegisterNote = "";
       let busyRuns = 0;
@@ -715,22 +738,12 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
             lockWaitMs: REGISTER_SYNC_LOCK_WAIT_MS,
           });
           busyRuns = res?.ran === false && res.reason === "busy" ? busyRuns + 1 : 0;
-          // Every pass that appends nothing says why (busy lock, pull error, generated mode, no
-          // changes), plus a refused register or refused rows: logged once per change, so a stalled
-          // sync can never be silent again.
-          const note = [
-            describeSyncOutcome(res, { busyRuns }),
-            res?.refused ? `register refused: ${res.refused}` : null,
-            res?.collisions?.length
-              ? `register rows refused (id shared with a monitor item): ${res.collisions.join(", ")}`
-              : null,
-          ]
-            .filter(Boolean)
-            .join("; ");
-          if (note !== lastRegisterNote) {
-            lastRegisterNote = note;
-            if (note) console.error(`[ops-monitor] ${note}`);
-          }
+          const step = registerSyncLog(lastRegisterNote, res, {
+            busyRuns,
+            mask: (t) => maskText(t, nameLoader.get()),
+          });
+          lastRegisterNote = step.note;
+          if (step.log) console.error(`[ops-monitor] ${step.log}`);
           return res;
         },
         onDone: (res) => {

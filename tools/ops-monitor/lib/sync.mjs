@@ -431,7 +431,7 @@ export async function runSync({
  * One line for a runSync result that appended nothing (the timer logs it once per change), or null
  * when the pass appended events (the caller logs those). `busyRuns` counts consecutive busy skips.
  */
-export function describeSyncOutcome(res, { busyRuns = 0 } = {}) {
+export function describeSyncOutcome(res, { busyRuns = 0, mask = (t) => t } = {}) {
   if (!res) return "register sync: no result";
   if (res.ran === false) {
     if (res.reason === "busy")
@@ -441,12 +441,40 @@ export function describeSyncOutcome(res, { busyRuns = 0 } = {}) {
   }
   if (res.appended > 0) return null;
   const parts = [];
-  if (res.pullError) parts.push(`pull failed: ${redact(res.pullError).slice(0, 200)}`);
+  if (res.pullError) parts.push(`pull failed: ${mask(redact(res.pullError)).slice(0, 200)}`);
   if (res.warnings?.length)
-    parts.push(`warnings: ${redact(res.warnings.join("; ")).slice(0, 200)}`);
+    parts.push(`warnings: ${mask(redact(res.warnings.join("; "))).slice(0, 200)}`);
   if (res.events?.length && !res.appended)
     parts.push(`${res.events.length} event(s) planned, none appended`);
   return parts.length
     ? `register sync: ${parts.join("; ")}`
     : "register sync: register and events agree (0 changes)";
+}
+
+/**
+ * How many events a sync would append right now: a DRY planSync over the given events and the
+ * hand-kept files (pure, read-only, so the cloud can run it on its clone). null in generated mode.
+ * The items-stale alarm fires only when this is >= 1, so a register commit that syncs to nothing
+ * (notes, formatting) never raises it, and an unrelated lane event never hides a stalled sync.
+ */
+export function pendingRegisterChanges({
+  events,
+  registerMd = "",
+  ownerQueueMd = "",
+  config,
+  now = Date.now(),
+  mask = (t) => t,
+}) {
+  if (registerModeOf(config) === "generated") return null;
+  const out = planSync({
+    state: fold(events ?? []),
+    registerMd,
+    ownerQueueMd,
+    config,
+    machine: "dry-run",
+    now,
+    rand: () => 0.5,
+    mask,
+  });
+  return out.events.length;
 }

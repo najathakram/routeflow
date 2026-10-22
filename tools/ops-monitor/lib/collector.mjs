@@ -875,6 +875,27 @@ export function createCollector({
       } catch (e) {
         extras = { errors: [`extras: ${String(e?.message ?? e).slice(0, 160)}`] };
       }
+      // What a register sync would still append (dry, read-only): the items-stale alarm needs it.
+      let registerPending = null;
+      try {
+        const read = (rel) => {
+          try {
+            return (deps.readFile ?? readFileSync)(join(specsDir, ...rel), "utf8");
+          } catch {
+            return "";
+          }
+        };
+        const { pendingRegisterChanges } = await import("./sync.mjs");
+        registerPending = pendingRegisterChanges({
+          events,
+          registerMd: read(["register", "WORK-REGISTER.md"]),
+          ownerQueueMd: read(["priorities", "OWNER-QUEUE.md"]),
+          config,
+          mask,
+        });
+      } catch (e) {
+        (extras.errors ??= []).push(`register pending: ${String(e?.message ?? e).slice(0, 120)}`);
+      }
       return {
         events,
         config,
@@ -884,6 +905,7 @@ export function createCollector({
         registerRowIds: extras.registerRowIds ?? null,
         registerDuplicateIds: extras.registerDuplicateIds ?? [],
         registerChangedAt: extras.registerChangedAt ?? null,
+        registerPending,
         extrasErrors: extras.errors ?? [],
       };
     },

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import {
   describeSyncOutcome,
   parseOwnerQueueRows,
+  pendingRegisterChanges,
   planSync,
   runSync,
   syncEvents,
@@ -555,6 +556,43 @@ test("describeSyncOutcome: every pass that appends nothing says why; an appendin
   );
 });
 
+test("describeSyncOutcome masks client names in a pull error and in warnings", () => {
+  const mask = (t) => t.replace(/Acme Foods/g, "[client]");
+  const line = describeSyncOutcome(
+    {
+      ran: true,
+      appended: 0,
+      events: [],
+      pullError: "Acme Foods denied",
+      warnings: ["Acme Foods"],
+    },
+    { mask },
+  );
+  assert.doesNotMatch(line, /Acme Foods/);
+  assert.match(line, /\[client\]/);
+});
+
+test("pendingRegisterChanges: a dry count of what a sync would append; null in generated mode", () => {
+  const reg = (rows) =>
+    [
+      "| ID | Title | Type | Priority | Status | Lane | Train | Gate | ETA | Links | Updated |",
+      "|---|---|---|---|---|---|---|---|---|---|---|",
+      ...rows,
+    ].join("\n");
+  const row = "| 900 | Pending row | feature | P2 | planned | - | - | - | - | - | 2026-10-22 |";
+  const n = pendingRegisterChanges({ events: [], registerMd: reg([row]), config: DEFAULT_CONFIG });
+  assert.ok(n >= 1, "a register row the events lack is pending");
+  assert.equal(pendingRegisterChanges({ events: [], registerMd: "", config: DEFAULT_CONFIG }), 0);
+  assert.equal(
+    pendingRegisterChanges({
+      events: [],
+      registerMd: reg([row]),
+      config: { ...DEFAULT_CONFIG, registerMode: "generated" },
+    }),
+    null,
+  );
+});
+
 test("runSync does nothing in generated register mode", { timeout: 600000 }, async () => {
   const r = mkRepo("gen");
   try {
@@ -570,7 +608,13 @@ test("runSync does nothing in generated register mode", { timeout: 600000 }, asy
 // ---------------------------------------------------------------------------------------------
 // The monitor's 5-minute sync (server.mjs): only on the --views writer, never in cloud
 
-import { resolveListenOptions, shouldRunRegisterSync, startRegisterSync } from "../server.mjs";
+import {
+  BUSY_LOG_EVERY,
+  registerSyncLog,
+  resolveListenOptions,
+  shouldRunRegisterSync,
+  startRegisterSync,
+} from "../server.mjs";
 
 test("shouldRunRegisterSync: only the local --views writer; never cloud, once or fixture", () => {
   const o = (argv, env = {}) => resolveListenOptions(argv, env);
@@ -833,4 +877,27 @@ test("X1 sync: a blocked row keeps the item's status and raises a blocked event,
   // a block a lane raised itself is never lifted by the register
   const laneBlocked = [...ev0, mk("blocked", "532", { by: "lane says wait" })];
   assert.deepEqual(run(laneBlocked, register(row(532, { status: "building" }))).events, []);
+});
+
+test("registerSyncLog: once per change; a busy streak logs at pass 1 and every 6th; appends log nothing", () => {
+  const busy = { ran: false, reason: "busy" };
+  let note = "";
+  const lines = [];
+  for (let n = 1; n <= 13; n++) {
+    const step = registerSyncLog(note, busy, { busyRuns: n });
+    note = step.note;
+    if (step.log) lines.push(n);
+  }
+  assert.deepEqual(lines, [1, BUSY_LOG_EVERY, 2 * BUSY_LOG_EVERY]);
+  // the same outcome twice: logged once
+  const zero = { ran: true, appended: 0, events: [], warnings: [] };
+  const a = registerSyncLog("", zero);
+  assert.equal(a.log, "register sync: register and events agree (0 changes)");
+  assert.equal(registerSyncLog(a.note, zero).log, null);
+  // a pass that appended: no outcome line (the onDone line covers it), and the note resets
+  const done = registerSyncLog(a.note, { ran: true, appended: 2, events: [{}, {}] });
+  assert.equal(done.log, null);
+  assert.equal(done.note, "");
+  // after the reset the same zero outcome logs again
+  assert.ok(registerSyncLog(done.note, zero).log);
 });

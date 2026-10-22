@@ -765,34 +765,30 @@ test("X1 unknown-status: no alarm once the item has moved past planned or is don
 });
 
 // ---- items-stale ----
-test("items-stale: events older than the register's last commit by > 15 min raise a plain-words banner alarm", () => {
-  const ev = (ts) => ({
-    v: 1,
-    id: "pc-1790000000000-bbbb",
-    ts: new Date(ts).toISOString(),
-    machine: "pc",
-    actor: "register-sync",
-    lane: null,
-    kind: "item.new",
-    item: "680",
-    data: { title: "Last synced row", type: "feature", status: "planned", source: "register" },
-  });
-  const stale = (lastEventAt, changedAt) =>
-    find(run({ state: fold([ev(lastEventAt)]), register: { changedAt } }), "items-stale:register");
-  // two days behind: an error naming both ages in words
-  const a = stale(NOW - 48 * HOUR, NOW - 10 * 60_000);
-  assert.equal(a.severity, "error");
+test("items-stale: only pending register changes older than 15 min raise it; other events never hide it", () => {
+  const stale = (over) =>
+    find(
+      run({ register: { changedAt: NOW - 16 * 60_000, pending: 1, ...over } }),
+      "items-stale:register",
+    );
+  // 1 pending change + 16 min: a warning naming the count and the age in words
+  const a = stale({});
+  assert.equal(a.severity, "warn");
   assert.match(
     a.message,
-    /^Work items last updated 2 days ago; the register changed 10 minutes ago/,
+    /^Work items are behind the register: 1 change from 16 minutes ago has not reached the board/,
   );
-  // within the 15-minute grace: nothing
-  assert.equal(stale(NOW - 20 * 60_000, NOW - 6 * 60_000), undefined);
-  // 30 minutes behind, under a day: a warning
-  assert.equal(stale(NOW - 40 * 60_000, NOW - 10 * 60_000).severity, "warn");
-  // events newer than the register, or no register time: nothing
-  assert.equal(stale(NOW - 5 * 60_000, NOW - 60 * 60_000), undefined);
-  assert.equal(stale(NOW - 48 * HOUR, null), undefined);
+  // register changed, 0 pending changes (notes, formatting): no alarm, however old
+  assert.equal(stale({ pending: 0, changedAt: NOW - 72 * HOUR }), undefined);
+  // pending but within the 15-minute grace: nothing yet
+  assert.equal(stale({ changedAt: NOW - 14 * 60_000 }), undefined);
+  // a day behind: an error, plural wording
+  const b = stale({ pending: 3, changedAt: NOW - 48 * HOUR });
+  assert.equal(b.severity, "error");
+  assert.match(b.message, /3 changes from 2 days ago have not reached the board/);
+  // no register time or no dry-run count (generated mode, a read failure): nothing
+  assert.equal(stale({ changedAt: null }), undefined);
+  assert.equal(stale({ pending: null }), undefined);
 });
 
 test("agoWords: minutes, hours and days in words", () => {
