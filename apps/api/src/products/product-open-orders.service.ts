@@ -1,0 +1,103 @@
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { normalizeBoxesPieces } from "@routeflow/pricing";
+import type {
+  OpenOrderStatusValue,
+  ProductOpenOrderLine,
+  ProductOpenOrders,
+} from "@routeflow/types";
+import { roundQty } from "../common/invoiced-sales";
+import { OPEN_ORDER_STATUSES } from "../invoices/credit-exposure";
+import { openOrderLinesWithOrderCount } from "../orders/open-order-lines";
+import { OrderStatus } from "@prisma/client";
+import { PrismaService } from "../prisma/prisma.service";
+
+/**
+ * The card's statuses: the shared OPEN_ORDER_STATUSES (credit exposure uses it, so it stays untouched)
+ * plus PARTIALLY_DELIVERED, whose undelivered qty is still owed to the customer (owner 2026-10-19).
+ */
+export const CARD_OPEN_STATUSES: OrderStatus[] = [
+  ...OPEN_ORDER_STATUSES,
+  OrderStatus.PARTIALLY_DELIVERED,
+];
+
+export const OPEN_ORDERS_DEFAULT_LIMIT = 200;
+export const OPEN_ORDERS_MAX_LIMIT = 500;
+
+/** `?limit=` for the open-orders card: clamped 1-500, default 200 (same rule as product-sales). */
+export function clampOpenOrdersLimit(raw: unknown): number {
+  const text = typeof raw === "string" ? raw.trim() : typeof raw === "number" ? String(raw) : "";
+  const parsed = text !== "" ? Number(text) : NaN;
+  return Number.isFinite(parsed)
+    ? Math.min(OPEN_ORDERS_MAX_LIMIT, Math.max(1, Math.trunc(parsed)))
+    : OPEN_ORDERS_DEFAULT_LIMIT;
+}
+
+/**
+ * Orders that still have a product to be billed (the product page's "Open orders" card). Operational,
+ * not analytics. The read itself is `openOrderLinesForProduct`, shared with the customer price history.
+ */
+@Injectable()
+export class ProductOpenOrdersService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async getOpenOrders(productId: string, limit: number): Promise<ProductOpenOrders> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("A tenant context is required.");
+    const db = this.prisma.forTenant();
+    const product = await db.product.findFirst({
+      where: { id: productId, tenantId },
+      select: { id: true },
+    });
+    if (!product) throw new NotFoundException("Product not found");
+
+    // Over-read orders (billed-out lines drop); the cut to `limit` lines is made below.
+    const take = limit * 2;
+    const { lines: found, ordersRead } = await openOrderLinesWithOrderCount(db as never, {
+      tenantId,
+      productId,
+      statuses: CARD_OPEN_STATUSES,
+      take,
+      excludeCounterSales: true,
+    });
+    // A part-delivered order owes what is still to DELIVER; every other status owes what is still to bill.
+    const remainingOf = (l: (typeof found)[number]) =>
+      l.status === OrderStatus.PARTIALLY_DELIVERED
+        ? roundQty(l.qty - l.deliveredQty)
+        : l.remainingQty;
+    const open = found
+      .map((l) => ({ ...l, remainingQty: remainingOf(l) }))
+      .filter((l) => l.remainingQty > 0);
+    const kept = open.slice(0, limit);
+
+    const lines: ProductOpenOrderLine[] = kept.map((l) => {
+      // The remainder is split by the line's OWN pack snapshot, never the live product's.
+      const split = normalizeBoxesPieces({ qty: l.remainingQty, unitsPerBox: l.unitsPerBox });
+      return {
+        orderId: l.orderId,
+        orderNumber: l.orderNumber,
+        status: l.status as OpenOrderStatusValue,
+        orderDate: l.orderDate.toISOString(),
+        customerId: l.customerId,
+        customerName: l.customerName,
+        qty: l.qty,
+        remainingQty: l.remainingQty,
+        boxes: split.boxes,
+        pieces: split.pieces,
+        unitsPerBox: l.unitsPerBox == null ? null : Number(l.unitsPerBox),
+        unitLabel: l.unitLabel,
+      };
+    });
+
+    return {
+      productId,
+      lines,
+      summary: {
+        orders: new Set(lines.map((l) => l.orderId)).size,
+        customers: new Set(lines.map((l) => l.customerId)).size,
+        totalQty: roundQty(lines.reduce((sum, l) => sum + l.remainingQty, 0)),
+      },
+      // A full order window may hide older open orders even when most lines billed out.
+      truncated: open.length > limit || ordersRead === take,
+    };
+  }
+}
