@@ -78,17 +78,15 @@ export function OrderLineItemsTable({
             </th>
           </tr>
         </thead>
-        <tbody
-          role="rowgroup"
-          className="divide-y divide-surface-border max-md:block max-md:divide-y-0 max-md:space-y-3 max-md:px-3 max-md:py-3"
-        >
+        <tbody role="rowgroup" className="divide-y divide-surface-border max-md:block max-md:px-6">
           {lineItems.map((li) => (
             <tr
               role="row"
               key={li.id}
               className={cn(
                 "hover:bg-surface-raised",
-                "max-md:grid max-md:grid-cols-2 max-md:gap-x-3 max-md:gap-y-3 max-md:rounded-lg max-md:bg-white max-md:p-3 max-md:ring-1 max-md:ring-surface-border",
+                // r4 Q21: below md a line is a divided row in the one Line Items card, not a bordered card nested in it.
+                "max-md:grid max-md:grid-cols-2 max-md:gap-x-3 max-md:gap-y-3 max-md:py-4",
                 li.status === "CANCELLED" && "opacity-50",
               )}
             >

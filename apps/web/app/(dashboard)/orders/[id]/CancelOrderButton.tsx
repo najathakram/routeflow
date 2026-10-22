@@ -19,9 +19,12 @@ export const WITH_CARRIER_COPY =
 export function CancelOrderButton({
   blockedReason,
   onClick,
+  inMenu = false,
 }: {
   blockedReason?: OrderCancelBlockedReason | null;
   onClick: () => void;
+  /** Phone width: Cancel Order is an entry of the "More actions" menu (apple-ux r4 Q19), so no button here. */
+  inMenu?: boolean;
 }) {
   if (blockedReason === "WITH_CARRIER") {
     return (
@@ -30,6 +33,7 @@ export function CancelOrderButton({
       </p>
     );
   }
+  if (inMenu) return null;
   return (
     <Button
       size="sm"
