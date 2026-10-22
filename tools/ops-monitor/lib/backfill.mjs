@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 
 import { ITEM_ID_RE, STATUSES, TYPES } from "./schema.mjs";
 import { DEFAULT_CONFIG, loadConfig, machineId, normalizeLane } from "./config.mjs";
-import { newEventId, nextItemId } from "./ids.mjs";
+import { newEventId, nextItemId, tagRank } from "./ids.mjs";
 import { guessDomainFromText } from "./areas.mjs";
 
 // ---------------------------------------------------------------------------------------------
@@ -144,8 +144,8 @@ export function parseRegisterReport(md, config = DEFAULT_CONFIG, mask = (t) => t
       const trainText = plain(cell("train"));
       if (!isEmptyCell(trainText)) {
         fields.trainLabel = clip(trainText, 120);
-        const tm = /\bR(\d{1,2})\b/.exec(trainText);
-        if (tm) fields.train = `R${tm[1]}`;
+        const tm = /\b([RT]\d{1,2}[a-z]?)\b/.exec(trainText);
+        if (tm) fields.train = tm[1];
       }
       const gate = plain(cell("gate"));
       if (!isEmptyCell(gate)) fields.gate = clip(gate, 400);
@@ -172,29 +172,128 @@ export function parseRegister(md, config = DEFAULT_CONFIG) {
 // ---------------------------------------------------------------------------------------------
 // Release plan, owner queue, board
 
-/** "## Trains" table -> [{ id, title, membersText, lanes, gates, eta }]. */
+/**
+ * Plan train tables -> [{ id, title, membersText, lanes, gates, eta, lane, tier, depends, budget,
+ * tag }]. Two shapes: the old `Train | Members | Lanes | Gates | ETA` table (id leads the train
+ * cell) and the 10-23 shape `# | Train and goal | Items | Lane | Tier | Depends | Budget | Tag`
+ * (id in `#`, or in the train cell when there is no `#`). Other tables (budget summaries) are
+ * ignored: they need an id column AND an items/members column.
+ */
 export function parsePlanTrains(md) {
   const out = [];
   for (const t of tables(md)) {
     const cols = colIndex(t.header);
-    if (!cols.has("train") || !cols.has("members")) continue;
+    const key = (pred) => [...cols.keys()].find(pred);
+    const trainKey = key((k) => k === "train" || k.startsWith("train "));
+    const itemsKey = key((k) => k === "members" || k.startsWith("items"));
+    if (trainKey === undefined || itemsKey === undefined) continue;
+    const hasHash = cols.has("#");
+    const at = (row, name) => plain(row.cells[cols.get(name)] ?? "");
+    const opt = (row, k) => (k === undefined ? "" : at(row, k));
+    const etaKey = key((k) => k.startsWith("eta"));
+    const laneKey = key((k) => k === "lane" || k === "lanes");
     for (const row of t.rows) {
-      const first = plain(row.cells[cols.get("train")] ?? "");
-      const m = /^(R\d{1,2})\b[\s:.-]*(.*)$/.exec(first);
-      if (!m) continue;
-      const at = (name) => plain(row.cells[cols.get(name)] ?? "");
-      const etaKey = [...cols.keys()].find((k) => k.startsWith("eta"));
+      const first = at(row, hasHash ? "#" : trainKey);
+      let id;
+      let title;
+      if (hasHash) {
+        if (!/^[RT]\d{1,2}[a-z]?$/.test(first)) continue;
+        id = first;
+        title = at(row, trainKey) || id;
+      } else {
+        const m = /^([RT]\d{1,2}[a-z]?)\b[\s:.-]*(.*)$/.exec(first);
+        if (!m) continue;
+        id = m[1];
+        title = m[2] || id;
+      }
       out.push({
-        id: m[1],
-        title: m[2] || m[1],
-        membersText: plain(row.cells[cols.get("members")] ?? ""),
-        lanes: at("lanes"),
-        gates: at("gates"),
-        eta: etaKey ? plain(row.cells[cols.get(etaKey)] ?? "") : "",
+        id,
+        title,
+        membersText: at(row, itemsKey),
+        lanes: opt(row, laneKey),
+        gates: opt(
+          row,
+          key((k) => k === "gates"),
+        ),
+        eta: opt(row, etaKey),
+        lane: opt(row, laneKey),
+        tier: opt(
+          row,
+          key((k) => k === "tier"),
+        ),
+        depends: opt(
+          row,
+          key((k) => k === "depends"),
+        ),
+        budget: opt(
+          row,
+          key((k) => k === "budget"),
+        ),
+        tag: opt(
+          row,
+          key((k) => k === "tag"),
+        ),
       });
     }
   }
   return out;
+}
+
+/**
+ * Plan rows -> one entry per train FAMILY (id without its trailing letter: T5a + T5b -> T5):
+ * [{ id, title, members, parts }]. `parts` keeps each row (id, goal, lane, tier, budget, tag,
+ * depends, members) so "what lands when" survives the grouping; they are ordered earliest tag
+ * first. Numeric members are kept only when in `known`; `extraMembers(familyId)` adds more.
+ */
+export function planFamilies(rows, { known = null, extraMembers = () => [] } = {}) {
+  const fams = new Map();
+  for (const r of rows) {
+    const id = r.id.replace(/[a-z]$/, "");
+    if (!fams.has(id)) fams.set(id, []);
+    fams.get(id).push(r);
+  }
+  const put = (o, k, v, n) => {
+    if (v) o[k] = clip(v, n);
+  };
+  return [...fams].map(([id, list]) => {
+    const parts = list.map((r) => {
+      const p = { id: r.id, goal: clip(r.title, 200), members: trainMembers(r.membersText, known) };
+      put(p, "tag", /^(?:U|A\d)(?:-A\d)?/i.exec(r.tag)?.[0] ?? r.tag, 20);
+      put(p, "lane", r.lane, 60);
+      put(p, "budget", r.budget, 40);
+      put(p, "tier", r.tier, 40);
+      put(p, "depends", r.depends, 120);
+      return p;
+    });
+    parts.sort((a, b) => tagRank(a.tag) - tagRank(b.tag));
+    const goals = [...new Set(parts.map((p) => p.goal))];
+    const members = [];
+    for (const m of [...parts.flatMap((p) => p.members), ...extraMembers(id)])
+      if (!members.includes(m)) members.push(m);
+    return { id, title: clip(goals.join(" · "), 300), members: members.slice(0, 200), parts };
+  });
+}
+
+const PLAN_FILE_RE = /^PLAN-(\d{4}-\d{2}-\d{2})(?:-v(\d+))?\.md$/;
+
+/**
+ * The plan file to read: the newest PLAN-YYYY-MM-DD(-vN).md (highest -vN on a date, none = v1),
+ * skipping any whose first lines say "superseded". `readHead(name)` returns the file's start.
+ */
+export function pickLatestPlan(fileNames, readHead = () => "") {
+  const ranked = [];
+  for (const name of fileNames ?? []) {
+    const m = PLAN_FILE_RE.exec(name);
+    if (!m) continue;
+    const head = String(readHead(name) ?? "")
+      .split(/\r?\n/)
+      .slice(0, 10)
+      .join("\n");
+    if (/superseded/i.test(head)) continue;
+    ranked.push({ name, key: `${m[1]}-${String(m[2] ?? 1).padStart(4, "0")}` });
+  }
+  ranked.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return ranked.length ? ranked[ranked.length - 1].name : null;
 }
 
 /**
@@ -337,7 +436,7 @@ export function buildBackfillEvents(
   };
 
   // Trains
-  const planBy = new Map(plan.map((t) => [t.id, t]));
+  const planBy = new Map(plan.filter((t) => /^R\d{1,2}$/.test(t.id)).map((t) => [t.id, t]));
   const boardBy = new Map();
   for (const t of board.trains) {
     const id = s(t?.train).trim();
@@ -465,11 +564,10 @@ export async function runBackfill({ specsDir, boardDir, dry = false, deps = {} }
     "register/WORK-REGISTER.md",
     read(specsDir, "register", "WORK-REGISTER.md"),
   );
-  const planFile = d
-    .listDir(join(specsDir, "releases"))
-    .filter((f) => /^PLAN-.*\.md$/.test(f))
-    .sort()
-    .pop();
+  const planDir = join(specsDir, "releases");
+  const planFile = pickLatestPlan(d.listDir(planDir), (f) =>
+    (read(planDir, f) ?? "").slice(0, 2000),
+  );
   const planText = planFile
     ? need(`releases/${planFile}`, read(specsDir, "releases", planFile))
     : (missing.push("releases/PLAN-*.md"), "");

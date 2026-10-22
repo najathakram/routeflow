@@ -625,7 +625,8 @@ async function cmdSync(flags, env) {
   const s = res.summary;
   const text =
     `sync${flags.dry ? " (dry)" : ""}: ${res.events.length} event(s): ${s.registerNew} new row(s), ` +
-    `${s.registerEdits} edited, ${s.answered} answered, ${s.dropped} board item(s) dropped` +
+    `${s.registerEdits} edited, ${s.answered} answered, ${s.dropped} board item(s) dropped, ` +
+    `${s.planNew} plan train(s) new, ${s.planEdits} edited, ${s.planDropped} dropped` +
     (flags.dry
       ? "\n" + res.events.map((e) => `  ${e.kind} ${e.item ?? "-"}`).join("\n")
       : `; appended ${res.appended}${res.pushed ? " and pushed" : ""}`) +

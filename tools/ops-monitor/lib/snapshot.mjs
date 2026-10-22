@@ -2,7 +2,7 @@
 // JSON document the UI and generated views consume. Pure given its inputs.
 import { BUG_ID_RE, DONE_STATUSES } from "./schema.mjs";
 import { fold } from "./fold.mjs";
-import { parseEta } from "./ids.mjs";
+import { parseEta, tagDue, tagRank, tagWords } from "./ids.mjs";
 import { pickNext, laneNow } from "./next.mjs";
 import { areaDomain, buildAreaTree, fileToArea, guessDomainFromText } from "./areas.mjs";
 import {
@@ -151,7 +151,8 @@ function trainIdsOf(item, aliases) {
   const out = new Set();
   for (const text of [item.train, item.trainLabel]) {
     if (typeof text !== "string" || !text) continue;
-    for (const m of text.matchAll(/\bR(\d+)\b/g)) out.add(`R${m[1]}`);
+    // "T5 (was: R6 set)": the "was" part is history, never a second train.
+    for (const m of text.replace(/\(was:[^)]*\)/gi, "").matchAll(/\b([RT]\d+)\b/g)) out.add(m[1]);
     for (const [phrase, id] of Object.entries(aliases)) {
       const p = String(phrase)
         .toLowerCase()
@@ -349,6 +350,7 @@ export function buildSnapshot({
       status: it.status,
       eta: it.eta,
       etaAt: iso(parseEta(it.eta, now)),
+      ...(it.parts?.length ? { parts: it.parts } : {}),
       members: uniq([
         ...it.members,
         ...stateItems
@@ -704,6 +706,108 @@ export function buildSnapshot({
   // The page reads times as ISO strings.
   for (const d of [...incidentItems, ...bugItems]) items.push(d);
 
+  // ---- release state, DERIVED from its parts (display only, never written as events) ----
+  // A part is done when all its counting members (not dropped / parked) are live or verified; a
+  // part with no members at all is done. A release is Shipped only when EVERY part is done.
+  const statusOf = new Map(items.map((x) => [x.id, x.status]));
+  const countOf = (ids) => {
+    const counting = ids.filter((m) => !["dropped", "parked"].includes(statusOf.get(m)));
+    const done = counting.filter((m) => ["live", "verified"].includes(statusOf.get(m)));
+    return {
+      total: counting.length,
+      done: done.length,
+      isDone: ids.length === 0 || (counting.length > 0 && done.length === counting.length),
+    };
+  };
+  for (const t of trains) {
+    const parts = (t.parts ?? []).map((p) => {
+      const c = countOf(p.members);
+      const late = !c.isDone && tagDue(p.tag) !== null && now > tagDue(p.tag);
+      return {
+        ...p,
+        tagWords: tagWords(p.tag),
+        memberCount: p.members.length,
+        done: c.isDone,
+        itemsDone: c.done,
+        itemsTotal: c.total,
+        state: c.isDone ? "done" : late ? "late" : "progress",
+        stateText: c.isDone ? "Done" : late ? "Late" : `${c.done} of ${c.total} items`,
+        status: c.isDone ? "live" : "building",
+      };
+    });
+    if (!parts.length) {
+      // An old release without parts only loses a "done" status its members do not back up.
+      const c = countOf(t.members);
+      if (
+        t.members.length &&
+        DONE_STATUSES.includes(t.status) &&
+        t.status !== "dropped" &&
+        !c.isDone
+      ) {
+        t.itemStatus = t.status;
+        t.status = "building";
+        t.state = "progress";
+        t.stateText = `In progress ${c.done} of ${c.total} items`;
+      }
+      continue;
+    }
+    if (t.status === "dropped") {
+      t.parts = parts;
+      continue;
+    }
+    const doneUnits = parts.filter((p) => p.done).length;
+    const unfinished = parts.filter((p) => !p.done).sort((a, b) => tagRank(a.tag) - tagRank(b.tag));
+    const due = unfinished.length ? tagDue(unfinished[0].tag) : null;
+    t.itemStatus = t.status;
+    {
+      t.parts = parts;
+      t.partsDone = doneUnits;
+      t.partsTotal = parts.length;
+      const first = parts.reduce((a, p) => (tagRank(p.tag) < tagRank(a.tag) ? p : a));
+      t.tag = first.tag ?? "";
+      t.tagWords = first.tagWords;
+    }
+    if (doneUnits === parts.length) {
+      t.state = "shipped";
+      t.stateText = "Shipped";
+      t.status = "live";
+    } else {
+      const late = due !== null && now > due;
+      t.state = late ? "late" : "progress";
+      t.stateText = late ? "Late" : `In progress ${doneUnits} of ${parts.length} parts`;
+      if (DONE_STATUSES.includes(t.status)) t.status = "building"; // never "Fixed" with work left
+    }
+  }
+  for (const t of trains)
+    if (t.status === "dropped") ((t.state = "dropped"), (t.stateText = "Dropped"));
+
+  // ---- Shipping next: unfinished releases by earliest unfinished part tag, each with its open
+  // PRs that are not draft and whose checks are green (the snapshot has no review state), oldest
+  // update first. At most 5 releases, 3 PRs each. ----
+  const rankOf = (t) =>
+    Math.min(...(t.parts ?? []).filter((p) => !p.done).map((p) => tagRank(p.tag)), 9);
+  const shippingNext = trains
+    .filter((t) => (t.state === "progress" || t.state === "late") && t.parts?.length)
+    .sort((a, b) => rankOf(a) - rankOf(b) || compareIds(a.id, b.id))
+    .slice(0, 5)
+    .map((t) => {
+      const mem = new Set(t.members);
+      const prs = openPrs
+        .filter((p) => !p.draft && p.gate === "success" && p.item && mem.has(p.item))
+        .sort((a, b) => (Date.parse(a.updatedAt) || 0) - (Date.parse(b.updatedAt) || 0))
+        .slice(0, 3)
+        .map((p) => ({ number: p.number, title: p.title, url: p.url, item: p.item }));
+      return { id: t.id, title: t.title, stateText: t.stateText, tagWords: t.tagWords, prs };
+    });
+  // Earliest tag first, then id; releases without parts (old trains) keep their numeric order.
+  const earliest = (t) => (t.parts ? Math.min(...t.parts.map((p) => tagRank(p.tag))) : 10);
+  trains.sort(
+    (a, b) =>
+      earliest(a) - earliest(b) ||
+      (Number(/\d+/.exec(a.id)?.[0]) || 99) - (Number(/\d+/.exec(b.id)?.[0]) || 99) ||
+      compareIds(a.id, b.id),
+  );
+
   // ---- problems ("Hurting now"): open P0/P1 bugs and incidents whose harm is not latent / none,
   // plus incident files that are open AND recently changed (never features, ops, the board or
   // latent bugs) ----
@@ -884,6 +988,7 @@ export function buildSnapshot({
     bugs,
     bugsFixedByNote,
     trains,
+    shippingNext,
     lanes,
     ownerQueue,
     ownerTodos,
