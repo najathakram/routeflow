@@ -36,6 +36,8 @@ jest.mock("@/lib/api/products", () => ({
   useCreateProduct: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
 }));
 const mockCreateMutate = jest.fn();
+const mockCreateReset = jest.fn();
+let mockCreateError: unknown = null;
 jest.mock("@/lib/api/credit-notes", () => ({
   ...jest.requireActual("@/lib/api/credit-notes"),
   useCreditNotes: () => ({ data: { data: [] } }),
@@ -44,8 +46,8 @@ jest.mock("@/lib/api/orders", () => ({
   useCreateOrder: () => ({
     mutate: mockCreateMutate,
     isPending: false,
-    error: null,
-    reset: jest.fn(),
+    error: mockCreateError,
+    reset: mockCreateReset,
   }),
   useActiveOrderForCustomer: () => ({ data: undefined }),
   useCustomerPriceHistory: () => ({ data: undefined }),
@@ -103,7 +105,9 @@ async function openWithCustomerAndLine() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockCreateMutate.mockReset();
   mockProducts = [PLAIN];
+  mockCreateError = null;
 });
 
 describe("Requested Delivery Date placement (F09 + F12)", () => {
@@ -150,6 +154,25 @@ describe("A delivery date in the past is refused (F13)", () => {
     expect(dateField()).toHaveValue("2025-10-26");
   });
 
+  // Row 718: a blocking error is announced when it appears, and is red (the danger token), never amber.
+  it("the message is a live region (role=alert) and the field and message are red, not amber", async () => {
+    await openWithCustomerAndLine();
+    fireEvent.change(dateField(), { target: { value: "2025-10-26" } });
+    const alert = screen.getByRole("alert", { name: "" });
+    expect(alert).toHaveTextContent(PAST_MESSAGE);
+    expect(alert).toHaveClass("text-danger");
+    expect(alert.className).not.toMatch(/amber/);
+    expect(dateField()).toHaveClass("border-danger");
+    expect(dateField().className).not.toMatch(/amber/);
+  });
+
+  it("no message and no alert while the date is fine", async () => {
+    await openWithCustomerAndLine();
+    fireEvent.change(dateField(), { target: { value: localDay(2) } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(dateField()).toHaveClass("border-surface-border");
+  });
+
   it("yesterday is refused; today and a later date are accepted", async () => {
     const user = await openWithCustomerAndLine();
     fireEvent.change(dateField(), { target: { value: localDay(-1) } });
@@ -179,5 +202,105 @@ describe("A delivery date in the past is refused (F13)", () => {
     fireEvent.change(dateField(), { target: { value: "2025-10-26" } });
     await user.click(screen.getByRole("button", { name: "Save as draft" }));
     expect(mockCreateMutate).not.toHaveBeenCalled();
+  });
+});
+
+// Row 718: the server measures the day on the TENANT's calendar, so a browser on a different day than the tenant can
+// pass the local check and still be refused (400 DELIVERY_DATE_IN_PAST). That sentence belongs on the date field.
+describe("The server's DELIVERY_DATE_IN_PAST refusal lands on the date field (row 718)", () => {
+  const SERVER_MESSAGE =
+    "That day has passed (today is 2026-10-22 for this business). Pick today or a later date.";
+  const refusal = {
+    response: {
+      status: 400,
+      data: { code: "DELIVERY_DATE_IN_PAST", message: "raw server sentence", today: "2026-10-22" },
+    },
+    message: "Request failed with status code 400",
+  };
+
+  it("shows the refusal, with the tenant's day, next to the field as a red live region, with no second banner", async () => {
+    mockCreateError = refusal;
+    await openWithCustomerAndLine();
+    fireEvent.change(dateField(), { target: { value: localDay(0) } });
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent(SERVER_MESSAGE);
+    expect(screen.queryByText(/raw server sentence/)).toBeNull(); // worded from the code + the tenant's today (B986)
+    expect(alerts[0]).toHaveClass("text-danger");
+    expect(screen.getAllByText(SERVER_MESSAGE)).toHaveLength(1);
+    expect(dateField()).toHaveAttribute("aria-invalid", "true");
+    expect(dateField()).toHaveAccessibleDescription(SERVER_MESSAGE);
+    expect(dateField()).toHaveClass("border-danger");
+  });
+
+  it("editing the date clears the refusal", async () => {
+    mockCreateError = refusal;
+    await openWithCustomerAndLine();
+    mockCreateReset.mockClear();
+    fireEvent.change(dateField(), { target: { value: localDay(1) } });
+    expect(mockCreateReset).toHaveBeenCalled();
+  });
+
+  it("any other API error is not put on the date field", async () => {
+    mockCreateError = {
+      response: {
+        status: 400,
+        data: { code: "SOMETHING_ELSE", message: "Nope, different problem" },
+      },
+      message: "x",
+    };
+    await openWithCustomerAndLine();
+    fireEvent.change(dateField(), { target: { value: localDay(1) } });
+    expect(dateField()).not.toHaveAttribute("aria-invalid", "true");
+    expect(dateField()).toHaveAccessibleDescription("");
+  });
+});
+
+// Row 718 (UI proof): the server answers MERGE_CHOICE_REQUIRED first and the merge prompt opens; choosing "separate" then
+// meets 400 DELIVERY_DATE_IN_PAST. The prompt must not stay over the real problem: it closes, and the date field takes focus.
+describe("A delivery-date refusal after the merge prompt (row 718)", () => {
+  const ACTIVE = {
+    id: "o-open",
+    orderNumber: "ORD-7",
+    status: "PENDING",
+    itemCount: 2,
+    total: 12.5,
+  };
+  const mergeRequired = {
+    response: {
+      status: 409,
+      data: { code: "MERGE_CHOICE_REQUIRED", message: "choose", activeOrder: ACTIVE },
+    },
+    message: "Request failed with status code 409",
+  };
+  const pastDay = {
+    response: {
+      status: 400,
+      data: { code: "DELIVERY_DATE_IN_PAST", message: "raw", today: "2026-10-22" },
+    },
+    message: "Request failed with status code 400",
+  };
+
+  it("closes the merge prompt, shows the field refusal, and focuses the date input", async () => {
+    mockCreateMutate.mockImplementation(
+      (_payload: unknown, opts: { onError?: (e: unknown) => void }) => {
+        if (mockCreateMutate.mock.calls.length === 1) {
+          opts.onError?.(mergeRequired);
+        } else {
+          mockCreateError = pastDay;
+          opts.onError?.(pastDay);
+        }
+      },
+    );
+    const user = await openWithCustomerAndLine();
+    fireEvent.change(dateField(), { target: { value: localDay(0) } });
+    await user.click(createButton());
+    await user.click(await screen.findByRole("button", { name: /create as separate order/i }));
+
+    await waitFor(() => expect(mockCreateMutate).toHaveBeenCalledTimes(2));
+    expect(mockCreateMutate.mock.calls[1][0].mergeChoice).toBe("separate");
+    await waitFor(() => expect(screen.queryByText("Open order exists")).toBeNull());
+    expect(screen.getByRole("alert")).toHaveTextContent(/today is 2026-10-22/);
+    await waitFor(() => expect(document.activeElement).toBe(dateField()));
   });
 });

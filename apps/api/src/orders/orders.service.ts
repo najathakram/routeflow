@@ -161,6 +161,7 @@ import {
 } from "./order-edit-restrictions";
 import { planChangeRequestRestrictions } from "./change-request-restrictions";
 import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
+import { assertDeliveryDateNotPast } from "./delivery-date-guard";
 import { getOrderTracking } from "./order-tracking";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
@@ -1460,6 +1461,11 @@ export class OrdersService implements OnApplicationBootstrap {
         return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
       }
     }
+
+    // Row 718: a day before the TENANT's today is refused (400 DELIVERY_DATE_IN_PAST) - after the replay branch above, so a retry of an order that already landed still replays.
+    await assertDeliveryDateNotPast(this.prisma, dto.requestedDeliveryDate, {
+      tenantId: user.tenantId,
+    });
 
     // An auto-merge folds these items into an EXISTING order whose own business
     // date stays authoritative, so a supplied orderDate would be silently dropped.
