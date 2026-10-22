@@ -56,8 +56,12 @@ jest.mock("@/lib/barcode-resolve", () => ({ resolveProductByCode: jest.fn() }));
 describe("CreateOrderModal footer layout (B564)", () => {
   it("renders all four footer actions", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    for (const name of [/minimize/i, /^cancel$/i, /save as draft/i, /^create order$/i]) {
-      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    for (const name of [/minimize/i, "Close", /save as draft/i, /^create order$/i]) {
+      expect(
+        typeof name === "string"
+          ? screen.getByText(name, { selector: "button" })
+          : screen.getByRole("button", { name }),
+      ).toBeInTheDocument();
     }
   });
 
@@ -72,7 +76,7 @@ describe("CreateOrderModal footer layout (B564)", () => {
 
   it("keeps Cancel / Save as Draft / Create Order together in their own row", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    const actions = screen.getByRole("button", { name: /^cancel$/i }).parentElement!;
+    const actions = screen.getByText("Close", { selector: "button" }).parentElement!;
     expect(actions).toContainElement(screen.getByRole("button", { name: /save as draft/i }));
     expect(actions).toContainElement(screen.getByRole("button", { name: /^create order$/i }));
     expect(actions).not.toContainElement(screen.getByRole("button", { name: /minimize/i }));
@@ -81,8 +85,11 @@ describe("CreateOrderModal footer layout (B564)", () => {
   });
   it("every footer action is a 44 px touch target under sm and keeps its own height from sm up (row 344b)", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    for (const name of [/minimize/i, /^cancel$/i, /save as draft/i, /^create order$/i]) {
-      const button = screen.getByRole("button", { name });
+    for (const name of [/minimize/i, "Close", /save as draft/i, /^create order$/i]) {
+      const button =
+        typeof name === "string"
+          ? screen.getByText(name, { selector: "button" })
+          : screen.getByRole("button", { name });
       // max-sm:h-11 = 2.75rem = 44 px below the sm breakpoint only; no unprefixed height override.
       expect(button).toHaveClass("max-sm:h-11");
       expect(button.className).not.toMatch(/(^|\s)h-11(\s|$)/);

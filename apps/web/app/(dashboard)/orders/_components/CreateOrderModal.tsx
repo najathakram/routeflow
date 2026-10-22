@@ -43,7 +43,7 @@ import { useUnsentOrderResume } from "./use-unsent-order-resume";
 import { ResumeUnsentOrderDialog } from "./ResumeUnsentOrderDialog";
 import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
-import { orderCreatedToast } from "./order-created-toast";
+import { showOrderCreatedToast } from "./order-created-toast";
 import {
   mergePieceIntoLine,
   mergeQtyIntoLine,
@@ -65,6 +65,7 @@ import {
 } from "@/lib/staff-price-override";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -282,7 +283,8 @@ export function CreateOrderModal({
   initialFulfillPath,
   onViewOrder,
 }: CreateOrderModalProps) {
-  const { toast } = useToast();
+  const { toast, dismiss: dismissToast } = useToast();
+  const toastApi = { toast, dismiss: dismissToast };
   const createOrder = useCreateOrder({ localErrorToast: true });
   const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const pos = usePosMode(); // SA-763r P-2: server-backed preference, never localStorage
@@ -1392,6 +1394,8 @@ export function CreateOrderModal({
   });
   // Only an EXPLICIT park (Minimize / dismiss) disables the buttons; a background autosave never does.
   const [savingDraft, setSavingDraft] = React.useState(false);
+  // Row 604 S5: the toast's Discard asks first (same wording as the drafts dock).
+  const [discardDraftId, setDiscardDraftId] = React.useState<string | null>(null);
 
   // Park the current builder state into the draft (the dock): save it now, creating the row if autosave has not yet.
   // Returns whether the save succeeded.
@@ -1473,7 +1477,21 @@ export function CreateOrderModal({
     }
     const ok = await parkDraft();
     if (ok) {
-      toast({ title: "Order saved as draft", variant: "success" });
+      // Row 604 S5: read the engine's id NOW - when Close itself created the draft, the render-time id is still null.
+      const parkedId = autosave.getDraftId();
+      toast({
+        title: "Draft saved",
+        description: "Find it in the drafts dock to resume.",
+        variant: "success",
+        ...(parkedId
+          ? {
+              action: {
+                label: "Discard",
+                onClick: () => setDiscardDraftId(parkedId),
+              },
+            }
+          : {}),
+      });
       onClose();
     } else {
       toast({
@@ -1833,7 +1851,7 @@ export function CreateOrderModal({
                 mergeChoice === "merge" ? { fromStatus: mergePrompt?.status } : undefined,
               );
             } else {
-              toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
+              showOrderCreatedToast(toastApi, { mergeChoice, asDraft, created, onViewOrder });
             }
             // The parked draft has become a real order — clear it from the dock.
             // SA-817: the order exists - stop autosave, drop the local copy, delete the bound server draft (once a create in flight lands).
@@ -2178,7 +2196,7 @@ export function CreateOrderModal({
           <div className="flex flex-wrap items-center justify-end gap-2 sm:order-2 sm:gap-3">
             {/* Row 344: the footer actions are 44 px tap targets below sm (they were 34 px at 390). */}
             <Button variant="ghost" type="button" className="max-sm:h-11" onClick={handleDismiss}>
-              Cancel
+              Close
             </Button>
             <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
             {priceLayer.enabled && priceLayer.failed ? (
@@ -3142,6 +3160,21 @@ export function CreateOrderModal({
   return (
     <>
       {dialog}
+      <ConfirmDialog
+        open={discardDraftId !== null}
+        onClose={() => setDiscardDraftId(null)}
+        onConfirm={() => {
+          const id = discardDraftId;
+          setDiscardDraftId(null);
+          if (!id) return;
+          deleteDraft.mutate(id, {
+            onSuccess: () => toast({ title: "Draft discarded", variant: "success" }),
+          });
+        }}
+        title="Discard this draft?"
+        description="The parked order and everything in it will be removed. This cannot be undone."
+        confirmLabel="Discard"
+      />
       {scanV2 && (
         <ScanOrderScreen
           open={isOpen && scanScreenOpen}

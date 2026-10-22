@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -175,8 +176,12 @@ export class InvoicesController {
     @Param("id") id: string,
     @Body() dto: UpdateInvoiceDto,
     @CurrentUser() user: JwtPayload,
+    @Headers("user-agent") userAgent?: string,
+    @Headers("x-app-version") appVersion?: string,
+    @Headers("x-client") xClient?: string,
   ) {
-    return this.invoicesService.update(id, dto, user);
+    // SA-837 row 500 step 1: the client identity only feeds the missing-token warn log.
+    return this.invoicesService.update(id, dto, user, { userAgent, appVersion, xClient });
   }
 
   /**

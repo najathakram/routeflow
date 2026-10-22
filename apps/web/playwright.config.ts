@@ -572,6 +572,14 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── Row 711: a boxed invoice line's Boxes / Pieces / Unit Price each hit-test to themselves (spec 78).
+    {
+      name: "invoice-edit-boxed-qty-hit",
+      testMatch: /78-invoice-edit-boxed-qty-hit\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── B1188: Settings invoice-numbering card, preview + confirm copy (spec 67). READ-ONLY:
     // never clicks Confirm; asserts no write request leaves the page.
     {
@@ -1003,6 +1011,18 @@ export default defineConfig({
     {
       name: "date-input-grid-overflow",
       testMatch: /57-date-input-grid-overflow\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // Row 492: the invoice form's bottom action bar wraps at 1440/768/390 and never clips Save and Send.
+    // Read-only (nothing is saved or sent). WITHOUT THIS ENTRY THE SPEC NEVER RUNS.
+    {
+      name: "invoice-action-bar",
+      testMatch: /77-invoice-action-bar\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],

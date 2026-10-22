@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useBarHeight } from "./use-bar-height";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -817,6 +818,7 @@ function LevelCount({
 
 export default function NewInvoicePage() {
   const w = unitWords();
+  const [actionBarH, actionBarRef] = useBarHeight();
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
@@ -2073,7 +2075,12 @@ export default function NewInvoicePage() {
   const isSale = basis === "newSale";
 
   return (
-    <div className="pb-24">
+    <div
+      className="pb-24 max-md:pb-[calc(var(--invoice-bar-h,11rem)+1rem)]"
+      style={
+        { "--invoice-bar-h": actionBarH ? `${actionBarH}px` : undefined } as React.CSSProperties
+      }
+    >
       {saleUnknown ? (
         <SaleUnknownPanel
           unknown={saleUnknown}
@@ -3065,12 +3072,17 @@ export default function NewInvoicePage() {
       />
 
       {/* Sticky bottom bar (Zoho-style) */}
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-surface-border bg-white px-6 py-3 shadow-[0_-2px_8px_0_rgb(0,0,0,0.06)]">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
+      <div
+        data-testid="invoice-action-bar"
+        ref={actionBarRef}
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-surface-border bg-white px-4 py-3 shadow-[0_-2px_8px_0_rgb(0,0,0,0.06)] md:px-6"
+      >
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             {isSale ? (
               deliveredNow ? (
                 <WriteButton
+                  className="min-h-11"
                   onClick={() => withResolvedItems((l) => handleSubmitSale(true, l))}
                   loading={createSale.isPending}
                   disabled={createSale.isPending || saleLocked || priceBlocked}
@@ -3081,6 +3093,7 @@ export default function NewInvoicePage() {
                 // Deliver later → only create the draft. It mirrors the order and
                 // becomes sendable after the order is delivered (never sent here).
                 <WriteButton
+                  className="min-h-11"
                   onClick={() => withResolvedItems((l) => handleSubmitSale(false, l))}
                   loading={createSale.isPending}
                   disabled={createSale.isPending || saleLocked || priceBlocked}
@@ -3092,6 +3105,7 @@ export default function NewInvoicePage() {
               <>
                 <Button
                   variant="secondary"
+                  className="min-h-11"
                   leftIcon={<Eye className="h-4 w-4" />}
                   onClick={() => withResolvedItems((l) => handlePreview(l))}
                   loading={previewLoading}
@@ -3101,6 +3115,7 @@ export default function NewInvoicePage() {
                 </Button>
                 <WriteButton
                   variant="secondary"
+                  className="min-h-11"
                   leftIcon={<Download className="h-4 w-4" />}
                   onClick={() => withResolvedItems((l) => handleDownload(l))}
                   loading={downloadLoading}
@@ -3116,6 +3131,7 @@ export default function NewInvoicePage() {
                 </WriteButton>
                 <WriteButton
                   variant="secondary"
+                  className="min-h-11"
                   onClick={() => withResolvedItems((l) => handleSubmit(false, l))}
                   loading={createInvoice.isPending || updateInvoice.isPending}
                   disabled={createInvoice.isPending || updateInvoice.isPending || priceBlocked}
@@ -3123,6 +3139,7 @@ export default function NewInvoicePage() {
                   Save as draft
                 </WriteButton>
                 <WriteButton
+                  className="min-h-11"
                   onClick={() => withResolvedItems((l) => handleSubmit(true, l))}
                   loading={createInvoice.isPending || updateInvoice.isPending}
                   disabled={createInvoice.isPending || updateInvoice.isPending || priceBlocked}
@@ -3139,7 +3156,7 @@ export default function NewInvoicePage() {
             <ReadOnlyHint className="ml-2 text-xs text-slate-600" />
             <button
               onClick={() => router.push("/invoices")}
-              className="px-3 py-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
+              className="min-h-11 px-3 py-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
             >
               Cancel
             </button>

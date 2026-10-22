@@ -380,6 +380,23 @@ export function CounterSaleScreen() {
       main.style.removeProperty("scroll-padding-bottom");
     };
   }, [barHeight]);
+  // B1182: below md a toast would land on the floating bar. While the register is mounted the page publishes the bar's height
+  // + 12px as --toast-bottom-inset (the toast viewport's own bottom offset reads it); md+ and unmount leave none.
+  React.useEffect(() => {
+    const root = document.documentElement;
+    const mq = window.matchMedia?.("(min-width: 768px)");
+    const apply = () => {
+      if (barHeight > 0 && !mq?.matches)
+        root.style.setProperty("--toast-bottom-inset", `${barHeight + 12}px`);
+      else root.style.removeProperty("--toast-bottom-inset");
+    };
+    apply();
+    mq?.addEventListener?.("change", apply);
+    return () => {
+      mq?.removeEventListener?.("change", apply);
+      root.style.removeProperty("--toast-bottom-inset");
+    };
+  }, [barHeight]);
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
   };
@@ -859,6 +876,13 @@ export function CounterSaleScreen() {
       isWalkIn,
     });
     if (problem) {
+      // B1181: On account is refused for a walk-in, so it can no longer be the checked tender (its radio is disabled): fall
+      // back to Cash with a clean amount and reference. The cart and the refusal copy stay.
+      if (problem === "WALK_IN_ON_ACCOUNT") {
+        setMethod("CASH");
+        setTendered("");
+        setReference("");
+      }
       setError(paymentProblemCopy(problem, totals.total));
       return null;
     }

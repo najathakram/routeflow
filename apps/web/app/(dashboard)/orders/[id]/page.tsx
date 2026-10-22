@@ -75,7 +75,7 @@ import { useOrderStaleRevision } from "./_components/OrderStaleNotice";
 import { rebaseOnReload } from "./_components/order-edit-rebase";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
-import { formatMoney, formatQty } from "@/lib/format";
+import { formatMoney } from "@/lib/format";
 import { OrderRevisionLog } from "./_components/OrderRevisionLog";
 import { SendInvoiceModal, type InvoiceModalData } from "./_components/SendInvoiceModal";
 import {
@@ -148,6 +148,8 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { PriceEditRow } from "./price-edit-row";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { summarizeQtyByUnit } from "@/lib/order-qty-summary";
+import { isEditDirty, useEditLeaveGuard } from "./edit-leave-guard";
 import { AppliedCreditsPanel, appliedOnOrderRows } from "./AppliedCreditsPanel";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
@@ -786,7 +788,10 @@ export function EditableLineItems({
   customer,
   orderId,
   lockedLineIds,
+  focusFirstQty = false,
 }: {
+  /** F08: edit opened from the keyboard - focus the first quantity instead of the scan bar. */
+  focusFirstQty?: boolean;
   items: EditItemState[];
   onChange: (items: EditItemState[]) => void;
   onAdd: (item: EditItemState) => void;
@@ -845,6 +850,7 @@ export function EditableLineItems({
   const [customError, setCustomError] = React.useState("");
   const addRef = React.useRef<HTMLDivElement>(null);
   const addInputRef = React.useRef<HTMLInputElement>(null);
+  const linesRef = React.useRef<HTMLDivElement>(null);
   // Digit runs that look like a scanned code query the candidate-aware
   // `scanCode` search — a suffix-less wedge scan lands here via the dropdown,
   // and the raw decode contains-misses when the camera's digit count differs
@@ -872,9 +878,15 @@ export function EditableLineItems({
       if (!el || el.disabled) return;
       const active = document.activeElement;
       if (active && active !== document.body && active !== el) return;
-      el.focus();
+      // F08: a keyboard open lands on the first quantity (a person who types straight away); mouse, touch and
+      // scanners keep the scan bar (B62). preventScroll either way (F26: the page used to jump to the bottom).
+      const firstQty = focusFirstQty
+        ? linesRef.current?.querySelector<HTMLInputElement>("input[type=number]:not(:disabled)")
+        : null;
+      (firstQty ?? el).focus({ preventScroll: true });
     }, 100);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pricingReady]);
 
   React.useEffect(() => {
@@ -1071,7 +1083,7 @@ export function EditableLineItems({
   }
 
   return (
-    <div className="space-y-2">
+    <div ref={linesRef} className="space-y-2">
       {items.map((item) => (
         <div
           key={item.id}
@@ -1757,6 +1769,8 @@ export default function OrderDetailPage() {
     localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
   });
   const savingItems = updateItems.isPending;
+  const saveLatchRef = React.useRef(false);
+  const [focusFirstQty, setFocusFirstQty] = React.useState(false);
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
   // S19b M3: while this customer's prices are unconfirmed (layer pending / failed / this product missing from an incomplete
   // layer) the edit cannot be saved or published; flag off nothing is read, so this is false.
@@ -1765,6 +1779,11 @@ export default function OrderDetailPage() {
     editItems.map((it) => it.productId),
   );
   const [pendingDeletes, setPendingDeletes] = React.useState<string[]>([]);
+  // Row 604 S4: bumped each time edit mode opens or closes (save, publish, cancel, discard).
+  const editSessionRef = React.useRef(0);
+  React.useEffect(() => {
+    editSessionRef.current += 1;
+  }, [isEditing]);
   const [draftAutoEntered, setDraftAutoEntered] = React.useState(false);
   // Staff-editable shipping fee (operator/tenant-admin only page). Initialized from
   // the stored order fee whenever edit mode opens; never taxed.
@@ -1774,6 +1793,18 @@ export default function OrderDetailPage() {
   // (undefined on the wire = leave the server's stored intents untouched).
   const [editCredits, setEditCredits] = React.useState<CreditSelection[]>([]);
   const [creditsTouched, setCreditsTouched] = React.useState(false);
+  // Row 604 F24: Back / tab close / the Orders link ask before unsaved edits are dropped.
+  const editDirty =
+    isEditing &&
+    !!order &&
+    isEditDirty(
+      {
+        items: order.lineItems.filter((li) => li.status !== "CANCELLED").map(buildEditItemFromLine),
+        shippingFee: Number(order.shippingFee ?? 0),
+      },
+      { items: editItems, pendingDeletes, shippingFee: editShippingFee, creditsTouched },
+    );
+  const leaveGuard = useEditLeaveGuard(editDirty, cancelEditMode, () => router.push("/orders"));
   // #2406: an inline return started in edit mode, folded into the SAME updateOrderItems write.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
   const returnSave = useOrderInlineReturnSave(returnsRef, (why) =>
@@ -1801,7 +1832,15 @@ export default function OrderDetailPage() {
   // Floating invoice-preview popup (from the Invoices card).
   const [previewInvoiceId, setPreviewInvoiceId] = React.useState<string | null>(null);
 
-  const { toast } = useToast();
+  const { toast, dismiss } = useToast();
+  // Row 604 nit: Undo toasts of the current edit session; dismissed when it ends (an Undo would be a no-op).
+  const undoToastIds = React.useRef<string[]>([]);
+  React.useEffect(() => {
+    const ids = undoToastIds.current;
+    return () => {
+      for (const id of ids.splice(0)) dismiss(id);
+    };
+  }, [isEditing, dismiss]);
 
   React.useEffect(() => {
     if (order) {
@@ -1963,13 +2002,35 @@ export default function OrderDetailPage() {
   }
 
   function handleDeleteItem(id: string) {
-    const item = editItems.find((it) => it.id === id);
+    // Row 604 S4: an Undo belongs to the edit session that removed the line; once that session saves or ends it is dropped.
+    const sessionAtRemove = editSessionRef.current;
+    const index = editItems.findIndex((it) => it.id === id);
+    const item = editItems[index];
     if (!item) return;
     setEditItems((prev) => prev.filter((it) => it.id !== id));
     if (!item.isNew) {
       // Existing saved line — queue a DELETE action on save (falls back to CANCEL if invoiced).
       setPendingDeletes((prev) => [...prev, id]);
     }
+    // F22: the DELETE is deferred to Save, so Undo is a display change: put the line back where it was.
+    const toastId = toast({
+      title: `Removed ${item.productName || "item"}`,
+      variant: "info",
+      duration: 8000,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          if (editSessionRef.current !== sessionAtRemove) return;
+          setPendingDeletes((prev) => prev.filter((x) => x !== id));
+          setEditItems((prev) => {
+            if (prev.some((it) => it.id === id)) return prev;
+            const at = Math.min(index, prev.length);
+            return [...prev.slice(0, at), item, ...prev.slice(at)];
+          });
+        },
+      },
+    });
+    undoToastIds.current.push(toastId);
   }
 
   /** SA-388: refuse visibly, sending nothing, a save editing a LOCKED line (both save paths). */
@@ -1984,6 +2045,9 @@ export default function OrderDetailPage() {
   }
 
   function handleSaveItems() {
+    // Row 698 (F23): ONE write per Save. `isPending` is stale for the second tap of a double tap, so a synchronous latch
+    // holds until the write settles; a replayed second write would be judged against the revision the first just moved.
+    if (saveLatchRef.current) return;
     if (refuseLockedUnitLineEdit()) return;
     // B465: refuse client-side before the server has to — a SPECIAL-tier line
     // whose price was overridden with no reason would otherwise round-trip a
@@ -2026,6 +2090,7 @@ export default function OrderDetailPage() {
     // id). F30/R10 (B198) made the flag explicit-only, so omitting it would merge
     // too; sending false states the intent at the call site rather than relying on
     // the server default.
+    saveLatchRef.current = true;
     updateItems.mutate(
       rw.attach({
         id: order!.id,
@@ -2040,6 +2105,9 @@ export default function OrderDetailPage() {
         ...(inlineReturn ? { inlineReturn } : {}),
       }),
       {
+        onSettled: () => {
+          saveLatchRef.current = false;
+        },
         onSuccess: () => {
           setIsEditing(false);
           setEditItems([]);
@@ -2314,6 +2382,9 @@ export default function OrderDetailPage() {
       {/* Back */}
       <Link
         href="/orders"
+        onClick={(e) => {
+          if (leaveGuard.requestLeave(() => router.push("/orders"))) e.preventDefault();
+        }}
         className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -2377,7 +2448,10 @@ export default function OrderDetailPage() {
                 size="sm"
                 variant="secondary"
                 leftIcon={<Pencil className="h-4 w-4" />}
-                onClick={enterEditMode}
+                onClick={(e) => {
+                  setFocusFirstQty(e.detail === 0);
+                  enterEditMode();
+                }}
               >
                 {isPos ? "Edit order" : "Edit Items"}
               </WriteButton>
@@ -2723,6 +2797,7 @@ export default function OrderDetailPage() {
                 {stale.node}
                 <InvoicedEditNotice invoices={order.invoices} />
                 <EditableLineItems
+                  focusFirstQty={focusFirstQty}
                   items={editItems}
                   onChange={setEditItems}
                   onAdd={(item) => setEditItems((prev) => [...prev, item])}
@@ -2832,6 +2907,11 @@ export default function OrderDetailPage() {
                               updateStatus.mutate(
                                 rw.attach({ id: order!.id, status: "PENDING" as any }),
                                 {
+                                  // Row 604 M1: the publish latch is held from the first tap
+                                  // until the status write settles (save-then-publish included).
+                                  onSettled: () => {
+                                    saveLatchRef.current = false;
+                                  },
                                   onSuccess: () => {
                                     setLocalStatus("PENDING");
                                     setIsEditing(false);
@@ -2853,6 +2933,9 @@ export default function OrderDetailPage() {
                             const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
                             if (inlineReturn === null) return;
                             const saveThenPublish = () => {
+                              // Row 698: same one-write latch as handleSaveItems.
+                              if (saveLatchRef.current) return;
+                              saveLatchRef.current = true;
                               if (
                                 updates.length > 0 ||
                                 feeChanged ||
@@ -2881,10 +2964,13 @@ export default function OrderDetailPage() {
                                   }),
                                   {
                                     onSuccess: () => (returnSave.onSuccess(), doPublish()),
-                                    onError: returnSave.chainError(
-                                      inlineReturn,
-                                      guardError(() => saveThenPublish()),
-                                    ),
+                                    onError: (err: unknown) => {
+                                      saveLatchRef.current = false;
+                                      returnSave.chainError(
+                                        inlineReturn,
+                                        guardError(() => saveThenPublish()),
+                                      )(err);
+                                    },
                                   },
                                 );
                               } else {
@@ -3166,7 +3252,7 @@ export default function OrderDetailPage() {
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Total quantity</dt>
                 <dd className="mono font-medium text-navy">
-                  {formatQty(summaryLineItems.reduce((s, li) => s + Number(li.qty), 0))}
+                  {summarizeQtyByUnit(summaryLineItems)}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3">
@@ -3345,6 +3431,8 @@ export default function OrderDetailPage() {
         invoiceId={previewInvoiceId ?? ""}
         orderTotal={Number(order.total)}
       />
+
+      {leaveGuard.dialog}
 
       {/* Cancel confirmation */}
       <ConfirmDialog

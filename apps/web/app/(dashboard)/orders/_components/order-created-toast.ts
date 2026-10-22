@@ -1,4 +1,5 @@
 import type { ToastData } from "@routeflow/ui/web";
+import { markOrderCreatedHere } from "@/lib/order-created-echo";
 
 export interface OrderCreatedToastInput {
   /** The operator's answer to the merge prompt ("merge" folds the lines into an open order). */
@@ -17,8 +18,8 @@ export interface OrderCreatedToastInput {
  * redirect would fight rapid multi-order entry, so this offers a one-click "View Order" action
  * on the toast instead of navigating on its own.
  */
-/** Long enough to reach for the action (the provider default is 4s). */
-const ACTION_TOAST_MS = 8000;
+/** F28: with an action the toast stays until dismissed (the X), so a glance away never loses "View Order". */
+const ACTION_TOAST_MS = 24 * 60 * 60 * 1000;
 
 export function orderCreatedToast({
   mergeChoice,
@@ -26,6 +27,8 @@ export function orderCreatedToast({
   created,
   onViewOrder,
 }: OrderCreatedToastInput): Omit<ToastData, "id"> {
+  // F17: record this tab's own order so the realtime echo does not toast it a second time.
+  markOrderCreatedHere(created?.orderNumber);
   const merged = mergeChoice === "merge";
   const orderId = created?.id ?? null;
   const action =
@@ -50,4 +53,21 @@ export function orderCreatedToast({
     action,
     ...(action ? { duration: ACTION_TOAST_MS } : {}),
   };
+}
+
+/** The id of the order-created toast still on screen, so the next one can replace it (row 604 S6). */
+let lastOrderCreatedToastId: string | null = null;
+
+/**
+ * Shows the order-created toast, replacing the previous one rather than stacking a 24 h toast per order.
+ * The echo dedupe (`markOrderCreatedHere`) still runs for every order, inside `orderCreatedToast`.
+ */
+export function showOrderCreatedToast(
+  api: { toast: (data: Omit<ToastData, "id">) => string; dismiss: (id: string) => void },
+  input: OrderCreatedToastInput,
+): string {
+  const data = orderCreatedToast(input);
+  if (lastOrderCreatedToastId) api.dismiss(lastOrderCreatedToastId);
+  lastOrderCreatedToastId = api.toast(data);
+  return lastOrderCreatedToastId;
 }

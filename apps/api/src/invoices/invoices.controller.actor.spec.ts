@@ -19,9 +19,13 @@ describe("InvoicesController — the acting user reaches create/update (H3b)", (
     expect(service.create).toHaveBeenCalledWith(dto, "user-1");
   });
 
-  it("update passes the id, the body and user.sub", async () => {
+  it("update passes the id, the body and the whole actor (row 510 override needs the role)", async () => {
     const dto = { items: [] } as never;
     await controller.update("inv-1", dto, user);
-    expect(service.update).toHaveBeenCalledWith("inv-1", dto, "user-1");
+    expect(service.update).toHaveBeenCalledWith("inv-1", dto, user, {
+      userAgent: undefined,
+      appVersion: undefined,
+      xClient: undefined,
+    });
   });
 });

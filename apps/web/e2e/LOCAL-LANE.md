@@ -254,3 +254,11 @@ the local super admin (`npm run local:sa`), reads the three platform app links, 
 `PUT /platform-admin/app-links`, and puts the previous values back in `afterAll`. As the operator it opens the page from the avatar
 menu, checks three buttons, then two (iPhone link cleared), then the empty copy and no menu item (all cleared); at 390 / 768 / 1280 it
 checks no horizontal overflow and saves a screenshot under `test-results/`. No button is clicked and nothing is installed.
+
+## Spec 78 (`invoice-edit-boxed-qty-hit`): invoice edit, a boxed line's inputs are reachable
+
+`78-invoice-edit-boxed-qty-hit.spec.ts` (row 711) is on the `local:e2e` allow-list. It creates a throwaway boxed product
+(pack 24), customer and DRAFT invoice on the e2e-routeflow seed, opens `/invoices/<id>/edit` at 1440 / 768 / 390, and
+asserts that the centre of Boxes, Pieces and Unit Price each hit-tests (`elementFromPoint`) to that input, that Boxes and
+Pieces are at least 44 px, and that the "box" / "pcs" labels are visible. It never saves the form and deletes what it
+created in a `finally`. jsdom cannot see an overlap, so this is the guard for the edit grid's layout.
