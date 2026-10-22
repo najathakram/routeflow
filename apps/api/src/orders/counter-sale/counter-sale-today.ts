@@ -459,16 +459,29 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
 }
 
 /**
- * B1262 / SA-838 (e): the returns behind the page's credit-note payments, ONE batched read after the page query. Neither
- * `Return.creditNoteId` nor `ReturnItem.sourceOrderId` has a Prisma relation, so an INLINE return carried on ANOTHER order and
- * sold on a page sale is only reachable by the credit note it made. The ids list must be a real, non-empty array: an
- * undefined `in` would be dropped by Prisma and widen this to every return of the tenant.
+ * B1262 / SA-838 (e) + SA-838a: the returns that belong to a counter sale but are filed elsewhere, ONE batched read. Neither
+ * `Return.creditNoteId` nor `ReturnItem.sourceOrderId` has a Prisma relation, so an INLINE return carried on ANOTHER order is
+ * reachable two ways: by the credit note a sale's payment applied (its own credit, or a store-credit tender it must not claim),
+ * or by an item sold on the sale (`sourceOrderId`): the second finds a return whose credit was never applied here (kept, or
+ * spent on a third order). The Today's-sales page and the emailed receipt build this ONE where, so both surfaces find the same
+ * returns. Both lists must be real arrays and at least one non-empty: an undefined `in` would be dropped by Prisma and widen
+ * this to every return of the tenant.
  */
-export function carriedReturnWhere(tenantId: string, creditNoteIds: readonly string[]) {
-  if (!creditNoteIds || creditNoteIds.length === 0) {
-    throw new Error("carriedReturnWhere needs at least one credit note id");
+export function carriedReturnWhere(
+  tenantId: string,
+  creditNoteIds: readonly string[],
+  orderIds: readonly string[],
+) {
+  if (!creditNoteIds || !orderIds || (creditNoteIds.length === 0 && orderIds.length === 0)) {
+    throw new Error("carriedReturnWhere needs at least one credit note id or order id");
   }
-  return { tenantId, creditNoteId: { in: [...creditNoteIds] } };
+  return {
+    tenantId,
+    OR: [
+      { creditNoteId: { in: [...creditNoteIds] } },
+      { items: { some: { sourceOrderId: { in: [...orderIds] } } } },
+    ],
+  };
 }
 
 export const carriedReturnSelect = {

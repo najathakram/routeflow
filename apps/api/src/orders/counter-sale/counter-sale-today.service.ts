@@ -64,8 +64,9 @@ const badDay = (message: string) =>
  * `invoicePayment.aggregate` (paid on the day's own sales), `creditNote.findMany` (ids created in the window),
  * `invoicePayment.findMany` (the day's POS-mode hand-over candidates, v5-filtered in code; the same rows feed
  * the summary's hand-over line and `handOverRows`, so the rows add no query) and `return.findMany` (a day's few
- * returns). No per-row call. Plus ONE more read, after the page, only when a page payment applied a credit note: the returns
- * behind those notes (`carriedReturnWhere`), so an INLINE return carried on another order is found (SA-838 e). And ONE more,
+ * returns). No per-row call. Plus ONE more read, after the page, when the page is not empty: the returns carried
+ * on other orders (`carriedReturnWhere`: behind a page payment's credit note, or with an item sold on a page order), so an
+ * INLINE return filed on another order is found (SA-838 e). And ONE more,
  * when the page or its returns name any credit note: the notes themselves with the PAID amount applied anywhere (SA-838a).
  * Rows and summary are two reads, not one transaction: a sale rung between them can show in one and not the other
  * until the next refetch (accepted; the web refetches both together).
@@ -102,14 +103,17 @@ export class CounterSaleTodayService {
       configuredTaxRatePercent(this.prisma),
     ]);
 
-    // B1262 / SA-838 (e): ONE batched read of the returns behind the page's credit-note payments (an INLINE return carried
-    // on another order is reachable only by its credit note); skipped when no payment applied a credit note
+    // B1262 / SA-838 (e) + SA-838a: ONE batched read of the returns filed elsewhere that belong to the page: those behind the
+    // page's credit-note payments (an INLINE return carried on another order), and those with an item sold on a page order (its
+    // own credit never applied here: kept, or spent on a third order). The emailed receipt builds the same where, so a row and its
+    // emailed receipt find the same returns. Skipped on an empty page.
     const creditNoteIds = pageCreditNoteIds(rows);
+    const orderIds = rows.map((r) => r.id);
     const carriedReturns: ReturnProvenance[] =
-      creditNoteIds.length === 0
+      creditNoteIds.length === 0 && orderIds.length === 0
         ? []
         : await db.return.findMany({
-            where: carriedReturnWhere(tenantId, creditNoteIds),
+            where: carriedReturnWhere(tenantId, creditNoteIds, orderIds),
             select: carriedReturnSelect,
           });
 
