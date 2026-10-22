@@ -89,16 +89,27 @@ export default function BuyerCartPage() {
 
   // Read the active order for the CHOSEN path (the server's merge search is path-scoped), so the
   // banner can only name an order this cart would really fold into.
-  const { data: activeOrder } = useBuyerActiveOrder(fulfillPath ?? undefined);
+  const activeQuery = useBuyerActiveOrder(fulfillPath ?? undefined);
+  const activeOrder = activeQuery.data;
+  // The cart only knows whether an open order exists once this read has SUCCEEDED. Until then (or if it
+  // failed) the server would still fold the cart into an open order, so the button must not offer to
+  // place one: it is disabled while the read is pending and never submits after an error.
+  const activeReady = activeQuery.isSuccess;
+  const activeFailed = activeQuery.isError;
 
   // Whether we'll merge into the existing order
   // The server folds a buyer cart only into an order on the SAME fulfil path, so with a path being
   // sent a differing active order is not a merge target. No path sent => today's rule.
   const pathMatches = !fulfillPath || activeOrder?.fulfillPath === fulfillPath;
-  // "No open order" arrives as an empty body (read client-side as ""), not null, so test truthiness:
-  // this ONE value drives the banner, the submit path and the button label, so they cannot disagree.
-  const mergeable = Boolean(activeOrder) && pathMatches;
+  // "No open order" arrives as an empty body (read client-side as ""), not null, so test truthiness.
+  // `mergeTarget` is the ONE derived value for the banner, the button label and the post-submit
+  // destination ("added to ORD-x" vs "order placed"), so they cannot disagree. The REQUEST sends
+  // `forceNew` only for the buyer's explicit "Create new order instead": the server folds into the
+  // open order whenever `forceNew` is absent, and `forceNew` also pins the new order out of every
+  // later merge, so it is never sent for a buyer who simply has no open order.
+  const mergeable = activeReady && Boolean(activeOrder) && pathMatches;
   const willMerge = !forceNew && mergeable;
+  const mergeTarget = willMerge ? activeOrder : null;
 
   // Resolve prices for exactly the cart's products. This MUST be an id filter:
   // a plain page of the catalog silently omits any product outside it, and the
@@ -244,6 +255,8 @@ export default function BuyerCartPage() {
   }, [authLoading, activeSeller, router]);
 
   const handlePlaceOrder = async () => {
+    // Never submit before the open-order read has succeeded: the label would be a guess.
+    if (!activeReady) return;
     setOrderError(null);
     setConflict(null);
     try {
@@ -261,8 +274,8 @@ export default function BuyerCartPage() {
       cart.clearCart();
       setForceNew(false);
 
-      if (willMerge && activeOrder) {
-        router.push(`/buyer/portal/${sellerSlug}/orders/${activeOrder.id}`);
+      if (mergeTarget) {
+        router.push(`/buyer/portal/${sellerSlug}/orders/${mergeTarget.id}`);
       } else {
         setOrderPlaced(result);
       }
@@ -440,18 +453,18 @@ export default function BuyerCartPage() {
       {correctedNotice}
 
       {/* Active order merge banner */}
-      {willMerge && activeOrder && (
-        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-buyer-200 bg-buyer-50 px-4 py-3">
+      {mergeTarget && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-buyer-200 bg-buyer-50 px-4 py-1">
           <div className="flex items-center gap-2 text-sm text-buyer-700">
             <ShoppingCart className="h-4 w-4 flex-shrink-0" />
             <span>
               Items will be added to your existing order{" "}
-              <strong>#{(activeOrder as any).orderNumber ?? activeOrder.id.slice(0, 8)}</strong>
+              <strong>#{(mergeTarget as any).orderNumber ?? mergeTarget.id.slice(0, 8)}</strong>
             </span>
           </div>
           <button
             onClick={() => setForceNew(true)}
-            className="text-xs font-medium text-buyer-500 hover:text-buyer-700 underline whitespace-nowrap"
+            className="inline-flex min-h-[44px] items-center text-xs font-medium text-buyer-500 hover:text-buyer-700 underline whitespace-nowrap"
           >
             Create new order instead
           </button>
@@ -459,11 +472,11 @@ export default function BuyerCartPage() {
       )}
 
       {forceNew && mergeable && (
-        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-raised px-4 py-3">
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-raised px-4 py-1">
           <p className="text-sm text-navy/70">A new order will be created.</p>
           <button
             onClick={() => setForceNew(false)}
-            className="text-xs font-medium text-buyer-500 hover:text-buyer-700 underline whitespace-nowrap"
+            className="inline-flex min-h-[44px] items-center text-xs font-medium text-buyer-500 hover:text-buyer-700 underline whitespace-nowrap"
           >
             Add to existing order instead
           </button>
@@ -704,14 +717,33 @@ export default function BuyerCartPage() {
           {/* Actions */}
           <div className="space-y-2">
             <SellerUnavailableLine className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/80" />
+            {activeFailed && (
+              <div
+                role="alert"
+                className="flex items-center justify-between gap-3 rounded-lg bg-danger-bg px-3 py-1 text-xs text-danger"
+              >
+                <span>Couldn&apos;t check for an open order.</span>
+                <button
+                  type="button"
+                  onClick={() => activeQuery.refetch()}
+                  className="inline-flex min-h-[44px] items-center font-medium underline"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
             <Button
               className="min-h-[44px] w-full bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
               onClick={handlePlaceOrder}
-              loading={createOrder.isPending}
-              disabled={createOrder.isPending || !sellerAccepting}
+              loading={createOrder.isPending || (!activeReady && !activeFailed)}
+              disabled={createOrder.isPending || !activeReady || !sellerAccepting}
               aria-describedby={sellerAccepting ? undefined : "seller-unavailable-line"}
             >
-              {willMerge ? "Add to existing order" : "Place order"}
+              {!activeReady && !activeFailed
+                ? "Checking your orders"
+                : willMerge
+                  ? "Add to existing order"
+                  : "Place order"}
             </Button>
           </div>
 

@@ -86,7 +86,7 @@ jest.mock("@/lib/api/buyer", () => {
     useUnsubscribeStockAlert: () => mutation,
     useBuyerShelf: () => none,
     useBuyerCreateOrder: () => ({ mutateAsync, isPending: false }),
-    useBuyerActiveOrder: () => none,
+    useBuyerActiveOrder: () => ({ ...none, isSuccess: true, isError: false, refetch: jest.fn() }),
     toPromotionRules: () => [],
   };
 });

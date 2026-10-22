@@ -35,7 +35,12 @@ jest.mock("@/lib/api/buyer-capabilities", () => ({
 jest.mock("@/lib/api/buyer", () => ({
   useBuyerProducts: () => productsState,
   useBuyerCreateOrder: () => ({ mutateAsync: jest.fn(), isPending: false }),
-  useBuyerActiveOrder: () => ({ data: undefined }),
+  useBuyerActiveOrder: () => ({
+    data: undefined,
+    isSuccess: true,
+    isError: false,
+    refetch: jest.fn(),
+  }),
   useBuyerPromotions: () => ({ data: [] }),
   toPromotionRules: () => [],
 }));

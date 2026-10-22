@@ -48,7 +48,7 @@ jest.mock("@/lib/api/buyer", () => ({
   useBuyerCreateOrder: () => ({ mutateAsync, isPending: false }),
   useBuyerActiveOrder: (path?: string) => {
     activeOrderArgs.push(path);
-    return { data: active };
+    return { data: active, isSuccess: true, isError: false, refetch: jest.fn() };
   },
   useBuyerPromotions: () => ({ data: [] }),
   toPromotionRules: () => [],
