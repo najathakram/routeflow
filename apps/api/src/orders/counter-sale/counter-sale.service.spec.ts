@@ -647,7 +647,7 @@ describe("CounterSaleService.ring", () => {
         expect(recordPayment).toHaveBeenCalledWith(
           "inv-1",
           expect.objectContaining({ method: "CHECK", reference: "1042", amount: 37.25 }),
-          { tillLockHeld: true },
+          { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
         );
         expect(r.paymentRecorded).toBe(true);
       });

@@ -2632,7 +2632,11 @@ describe("CounterSaleScreen: SA-837b the not-recorded state names a duplicate pa
     },
   };
   const ringCheck = async () => {
+    // A walk-in is never deduped, so the buyer is a NAMED account customer, chosen explicitly (not renderTill's Walk-in tap).
+    customersFor = [{ id: "c1", businessName: "Acme Co", fulfillPath: "ROUTE" }];
     renderWithProviders(<CounterSaleScreen />);
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
     await scan("012345678905");
     await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
     fireEvent.click(screen.getByRole("radio", { name: "Check" }));
