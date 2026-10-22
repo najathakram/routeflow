@@ -254,7 +254,7 @@ test("R7b 3.3 (B1262): a reprint of a sale with a return says Returned at 390", 
   await expect(page.getByTestId("receipt-returned")).toContainText("Returned");
   await expect(page.getByTestId("receipt-returned")).toContainText("6.25");
   await expect(page.getByTestId("counter-on-account")).toContainText("On account");
-  await expect(page.getByTestId("receipt-reprint")).not.toContainText("Store credit");
+  await expect(page.getByTestId("receipt-print-root")).not.toContainText("Store credit");
 });
 
 test("SA-838a: a reprint with a pending, a refunded and a kept return prints the pinned lines at 390", async ({
@@ -264,11 +264,11 @@ test("SA-838a: a reprint with a pending, a refunded and a kept return prints the
 }) => {
   await setTenantCookie(context, baseURL ?? "");
   await page.setViewportSize({ width: 390, height: 844 });
-  // Total $12.50, Cash $5.00: balance 7.50 and nothing subtracted for a refunded, kept or pending return
+  // the shared ORDER totals $22.50; Cash $5.00 leaves 17.50, and nothing is subtracted for a refunded, kept or pending return
   const row = (lines: { refunded: number; kept: number; used?: number; pending: boolean }) => ({
     ...ROW,
     paid: 5,
-    balanceDue: 7.5,
+    balanceDue: 17.5,
     methods: [{ method: "CASH", amount: 5 }],
     tenderPaid: 5,
     returnCredit: 0,
@@ -288,11 +288,13 @@ test("SA-838a: a reprint with a pending, a refunded and a kept return prints the
     await page.goto("/orders/counter-sale");
     await page.getByRole("button", { name: "Today's sales" }).click();
     await page.getByTestId("today-row-e2e-o1").getByRole("button", { name: "Reprint" }).click();
-    const paper = page.getByTestId("receipt-reprint");
+    await expect(page.getByTestId("receipt-reprint")).toBeVisible();
+    // the paper itself: receipt-reprint is only the "Reprint · Sold" heading
+    const paper = page.getByTestId("receipt-print-root");
     await expect(paper).toContainText("Cash $5.00");
     await expect(paper).toContainText(expected);
     await expect(paper).toContainText("Balance due");
-    await expect(paper).toContainText("7.50");
+    await expect(paper).toContainText("17.50");
     await expect(paper.getByTestId("receipt-returned")).toHaveCount(0);
     await page.unroute(/\/api\/v1\/orders\/counter-sale\/today/);
     await page.unroute(/\/api\/v1\/orders\/e2e-o1$/);
