@@ -100,6 +100,10 @@ async function openSheet(page: Page) {
   await page.goto("/orders/counter-sale");
   await page.getByRole("button", { name: "Today's sales" }).click();
   await expect(page.getByTestId("today-summary")).toBeVisible();
+  // measure after the sheet's open animation settles (a mid-scale box reads < 44 px)
+  await page.waitForFunction(() =>
+    document.getAnimations().every((a) => a.playState !== "running"),
+  );
 }
 
 for (const [name, width, height] of [
