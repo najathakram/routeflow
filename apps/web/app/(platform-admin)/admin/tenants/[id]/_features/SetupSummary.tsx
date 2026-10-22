@@ -21,7 +21,7 @@ const DELIVERY_MODES: readonly FulfilmentMode[] = ["delivery", "both"];
 
 function counterSalesText(setup: Setup): string {
   if ((IN_STORE_MODES as readonly string[]).includes(setup.fulfilmentValue)) {
-    return "Always on: in-store setups have the counter";
+    return "Always on: this setup includes the counter";
   }
   return setup.counterValue === COUNTER_ON
     ? "On: this business can also sell over the counter"
@@ -34,7 +34,7 @@ function fleetWarning(setup: Setup): string | null {
   if (!wantsDelivery || !setup.fleet) return null;
   if (FLEET_ENABLERS.some((k) => setup.fleet?.[k])) return null;
   const names = FLEET_ENABLERS.map(keyLabel).join(" or ");
-  return `Orders are set to use delivery, but no fleet feature is on. Turn on ${names}, or change the fulfilment model.`;
+  return `Orders are set to use delivery, but no fleet feature is on. Turn on ${names}, or change where orders go.`;
 }
 
 /**
@@ -103,7 +103,7 @@ function SetupBody({ setup }: { setup: Setup }) {
       <dl className="flex flex-col gap-3 text-sm">
         <div className="flex flex-col gap-0.5">
           <dt className="text-xs font-medium uppercase tracking-wider text-slate-400">
-            Fulfilment model
+            Where orders go
           </dt>
           <dd className="text-slate-200">{fulfilmentModeLabel(setup.fulfilmentValue)}</dd>
         </div>

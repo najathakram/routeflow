@@ -31,6 +31,7 @@
  */
 
 import { BadRequestException } from "@nestjs/common";
+import { finiteStoredLevy, finiteStoredMoney } from "../common/money-invariants.util";
 import { assertSellableLines } from "../products/sellable-lines";
 import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware, prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
@@ -302,12 +303,15 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         untouched: true,
         data: {
           ...row,
-          qty: Number(row.qty),
-          unitPrice: Number(row.unitPrice),
-          discount: Number(row.discount ?? 0),
+          // SA-816: qty and subtotal survive an untouched row and are summed by the order back-sync.
+          qty: finiteStoredMoney(row.qty, `Invoice line ${row.id} qty`),
+          // SA-816c: the stored price and line discount are refused when non-finite, like the levy below.
+          unitPrice: finiteStoredMoney(row.unitPrice, `Invoice line ${row.id} unit price`),
+          discount: finiteStoredMoney(row.discount, `Invoice line ${row.id} discount`),
           taxRate: Number(row.taxRate ?? 0),
-          subtotal: Number(row.subtotal),
-          categoryTaxAmount: Number(row.categoryTaxAmount ?? 0),
+          subtotal: finiteStoredMoney(row.subtotal, `Invoice line ${row.id} subtotal`),
+          // SA-816: a stored non-finite levy is refused (400), never carried into the rewrite verbatim.
+          categoryTaxAmount: finiteStoredLevy(row, `Invoice line ${row.id} category tax`),
           description: sentItem.description ?? row.description,
           notes: sentItem.notes ?? null,
           orderItemId: sentItem.orderItemId ?? row.orderItemId ?? null,
@@ -552,6 +556,8 @@ export function inPlacePatch(line: EditedLine, row: StoredEditRow): Record<strin
   }
   if (!same(data.categoryTaxAmount ?? 0, row.categoryTaxAmount ?? 0))
     patch.categoryTaxAmount = data.categoryTaxAmount;
+  // SA-814 R5-2: a verified B294 rate stamped on a kept legacy rate-0 line (stored-tax-state.ts) is the one rate write.
+  if (!same(data.taxRate ?? 0, row.taxRate ?? 0)) patch.taxRate = data.taxRate;
   return Object.keys(patch).length > 0 ? patch : null;
 }
 

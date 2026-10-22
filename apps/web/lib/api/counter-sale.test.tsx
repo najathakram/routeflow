@@ -1,5 +1,5 @@
 import * as React from "react";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useCounterSaleByKey, useCounterSaleGate, useCreateCounterSale } from "./counter-sale";
 
@@ -15,6 +15,12 @@ jest.mock("../tenant-features", () => ({
     featureOpts.push(o);
     return features;
   },
+}));
+
+let authUser: { role: string } | null = null;
+jest.mock("../auth-context", () => ({
+  useOptionalAuth: () => (authUser ? { user: authUser } : null),
+  useAuth: () => ({ user: authUser }),
 }));
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -48,7 +54,7 @@ describe("useCounterSaleGate: a missing capability is DARK (entry points and scr
   const NONE = { showButton: false, opensAsCounter: false, offerShipInstead: false };
   const gateFor = (f: typeof features) => {
     features = f;
-    return renderHook(() => useCounterSaleGate()).result.current;
+    return renderHook(() => useCounterSaleGate(), { wrapper }).result.current;
   };
   afterEach(() => {
     features = { data: undefined };
@@ -132,23 +138,114 @@ describe("useCounterSaleGate: a disabled gate stays dark even with cached add-on
   });
   it.each(["optional", "always"])("enabled:false with cached %s: showButton false", (counter) => {
     features = cached(counter);
-    const r = renderHook(() => useCounterSaleGate({ enabled: false })).result.current;
+    const r = renderHook(() => useCounterSaleGate({ enabled: false }), { wrapper }).result.current;
     expect(r.showButton).toBe(false);
   });
   it.each(["optional", "always"])("enabled:false with cached %s: capability is null", (counter) => {
     features = cached(counter);
-    const r = renderHook(() => useCounterSaleGate({ enabled: false })).result.current;
+    const r = renderHook(() => useCounterSaleGate({ enabled: false }), { wrapper }).result.current;
     expect(r.capability).toBeNull();
   });
   it("enabled:true with cached always: capability is passed through", () => {
     features = cached("always");
-    const r = renderHook(() => useCounterSaleGate({ enabled: true })).result.current;
+    const r = renderHook(() => useCounterSaleGate({ enabled: true }), { wrapper }).result.current;
     expect(r.capability).toEqual({ counter: "always" });
   });
   it("enabled:true with cached optional: unchanged", () => {
     features = cached("optional");
-    expect(renderHook(() => useCounterSaleGate({ enabled: true })).result.current.showButton).toBe(
-      true,
+    expect(
+      renderHook(() => useCounterSaleGate({ enabled: true }), { wrapper }).result.current
+        .showButton,
+    ).toBe(true);
+  });
+});
+
+describe("useCounterSaleGate: BO-07 till permission (an operator whose admin turned off ORDERS)", () => {
+  const ALWAYS = { data: { capabilities: { fulfilment: { counter: "always" } } } };
+  const ALL = ["PRICING", "ORDERS", "FINANCE"];
+  const perms = (groups: string[]) => ({
+    data: { role: "OPERATOR", isAccountAdmin: false, groups, version: 1, mode: "shadow" },
+  });
+  /** One QueryClient for the whole render (the shared `wrapper` builds a new one per render). */
+  const render = () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const w = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
     );
+    return renderHook(() => useCounterSaleGate(), { wrapper: w });
+  };
+  const permissionCalls = () =>
+    get.mock.calls.filter((c) => c[0] === "/users/me/permissions").length;
+  beforeEach(() => {
+    get.mockReset();
+    features = ALWAYS;
+  });
+  afterEach(() => {
+    features = { data: undefined };
+    authUser = null;
+  });
+
+  it("OPERATOR without ORDERS: no button, no open-as-counter, mayUseTill false, the capability and old keys intact", async () => {
+    authUser = { role: "OPERATOR" };
+    get.mockResolvedValue(perms(["PRICING", "FINANCE"]));
+    const { result } = render();
+    await waitFor(() => expect(result.current.mayUseTill).toBe(false));
+    expect(result.current).toMatchObject({
+      showButton: false,
+      opensAsCounter: false,
+      mayUseTill: false,
+      loading: false,
+      capability: { counter: "always" },
+    });
+    expect(result.current).toHaveProperty("offerShipInstead");
+    expect(result.current).toHaveProperty("offerInvoiceOrder");
+    expect(result.current).toHaveProperty("failed");
+    expect(result.current).toHaveProperty("retry");
+  });
+
+  it("OPERATOR with ORDERS held: unchanged, mayUseTill true", async () => {
+    authUser = { role: "OPERATOR" };
+    get.mockResolvedValue(perms(ALL));
+    const { result } = render();
+    await waitFor(() => expect(permissionCalls()).toBe(1));
+    await waitFor(() => expect(result.current.showButton).toBe(true));
+    expect(result.current).toMatchObject({ opensAsCounter: true, mayUseTill: true });
+  });
+
+  it.each(["TENANT_ADMIN", "SUPER_ADMIN"])("%s: no permissions fetch at all", async (role) => {
+    authUser = { role };
+    const { result } = render();
+    expect(result.current).toMatchObject({ showButton: true, mayUseTill: true });
+    expect(permissionCalls()).toBe(0);
+  });
+
+  it("while the operator's permissions load: loading is true and nothing is offered", () => {
+    authUser = { role: "OPERATOR" };
+    get.mockReturnValue(new Promise(() => {}));
+    const { result } = render();
+    expect(result.current).toMatchObject({
+      loading: true,
+      showButton: false,
+      opensAsCounter: false,
+    });
+  });
+
+  it("the permissions request failed: the server stays the authority (mayUseTill true, entry offered)", async () => {
+    authUser = { role: "OPERATOR" };
+    get.mockRejectedValue(new Error("network"));
+    const { result } = render();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current).toMatchObject({ mayUseTill: true, showButton: true });
+  });
+
+  it("a gate that is disabled never fetches permissions", () => {
+    authUser = { role: "OPERATOR" };
+    const client = new QueryClient();
+    const w = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useCounterSaleGate({ enabled: false }), { wrapper: w });
+    expect(permissionCalls()).toBe(0);
+    expect(result.current.showButton).toBe(false);
   });
 });

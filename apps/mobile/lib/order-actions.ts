@@ -99,12 +99,9 @@ function routeStatusActions(current: OrderStatus): StatusAction[] {
           style: "primary",
           icon: "checkmark-done-circle-outline",
         },
-        {
-          label: "Partial delivery",
-          toStatus: "PARTIALLY_DELIVERED",
-          style: "secondary",
-          icon: "git-branch-outline",
-        },
+        // B692 (SA-814 R4-3): no manual "Partial delivery" here. The server refuses a PARTIALLY_DELIVERED without
+        // per-line quantities (409 ORDER_PD_NEEDS_QUANTITIES) and this screen has no quantity dialog yet; a route
+        // stop's completion records partials. Do not re-add until that dialog exists.
         {
           label: "Back to confirmed",
           toStatus: "CONFIRMED",

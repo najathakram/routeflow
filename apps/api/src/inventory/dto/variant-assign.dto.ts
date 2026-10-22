@@ -13,6 +13,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /**
  * PR-D: move stock atomically from a generic parent product to its variants.
@@ -54,7 +55,7 @@ export class VariantAssignmentDto {
   @IsOptional() @IsInt() @Min(0) @Max(100_000) @Type(() => Number) pieces?: number;
 
   /** Rare: this variant cost more/less than the generic. 4dp. */
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsNumber()
   @Type(() => Number)
   @Min(0)

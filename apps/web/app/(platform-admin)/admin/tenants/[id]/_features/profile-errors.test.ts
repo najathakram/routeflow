@@ -24,7 +24,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
         apiError(400, { code: API_ERROR_CODES.BUSINESS_PROFILE_UNKNOWN, message: "x is not one" }),
         FALLBACK,
       ),
-    ).toBe("That business profile does not exist.");
+    ).toBe("That setup option does not exist.");
   });
 
   it("BUSINESS_PROFILE_UNAVAILABLE → says in-store profiles open with counter sales", () => {
@@ -38,7 +38,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
         }),
         FALLBACK,
       ),
-    ).toBe("This business profile isn't available for this tenant.");
+    ).toBe("This isn't available for this business.");
   });
 
   it("FULFILMENT_CARRIER_IN_TRANSIT → the blocker in fixed copy, with the count, never the server text", () => {
@@ -51,7 +51,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
       FALLBACK,
     );
     expect(copy).toBe(
-      "3 orders are with the carrier right now. Apply this profile once they are delivered: changing how orders ship now would bill them twice or not at all.",
+      "3 orders are with the carrier right now. Change this once they are delivered: changing how orders ship now would bill them twice or not at all.",
     );
     expect(
       profileErrorCopy(
@@ -97,7 +97,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
       "That tenant was not found.",
     );
     expect(profileErrorCopy(apiError(403, { message: "Forbidden" }), FALLBACK)).toBe(
-      "Only platform admins can change a business profile.",
+      "Only platform admins can change what a business does.",
     );
   });
 
@@ -122,7 +122,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
           FALLBACK,
         ),
       ).toBe(
-        "The business profile was not applied: billing for At-door payment collection could not be stopped. Nothing was changed. Try again.",
+        "This change was not applied: billing for At-door payment collection could not be stopped. Nothing was changed. Try again.",
       );
     });
 
@@ -137,7 +137,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
         FALLBACK,
       );
       expect(copy).toBe(
-        "The business profile was only partly applied. Billing was already stopped for At-door payment collection and Ad hoc order delivery, but not for Recurring routes. Try again to finish.",
+        "This change was only partly applied. Billing was already stopped for At-door payment collection and Ad hoc order delivery, but not for Recurring routes. Try again to finish.",
       );
     });
 
@@ -153,7 +153,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
           FALLBACK,
         ),
       ).toBe(
-        "The business profile was only partly applied. Billing was already stopped for At-door payment collection, then saving the fulfilment model failed. Try again to finish.",
+        "This change was only partly applied. Billing was already stopped for At-door payment collection, then saving the fulfilment model failed. Try again to finish.",
       );
       expect(
         profileErrorCopy(
@@ -165,7 +165,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
           FALLBACK,
         ),
       ).toBe(
-        "The business profile was only partly applied. Billing was already stopped for Ad hoc order delivery, then recording the change failed. Try again to finish.",
+        "This change was only partly applied. Billing was already stopped for Ad hoc order delivery, then recording the change failed. Try again to finish.",
       );
     });
 
@@ -183,7 +183,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
       expect(copy).toContain("Try again to finish.");
       // No usable body at all → still the coded line, never the fallback that hides a partial apply.
       expect(profileErrorCopy(apiError(503, { code }), FALLBACK)).toBe(
-        "The business profile could not be applied because billing could not be stopped. Check the tenant's setup, then try again.",
+        "This change could not be applied because billing could not be stopped. Check the tenant's setup, then try again.",
       );
     });
   });
@@ -249,7 +249,7 @@ describe("BUSINESS_PROFILE_BILLING_FAILED with the per-add-on list (ROW c)", () 
       { alreadyDisabled: ["driver_payments", "order_delivery"] },
     );
     expect(copy).toBe(
-      "The business profile was only partly applied. " +
+      "This change was only partly applied. " +
         "Recurring routes could not be switched off; it's still on. " +
         "Billing stopped for At-door payment collection. " +
         "Ad hoc order delivery switched off. " +
@@ -260,7 +260,7 @@ describe("BUSINESS_PROFILE_BILLING_FAILED with the per-add-on list (ROW c)", () 
   it("nothing switched off yet: 'not applied' and no 'partly'", () => {
     const copy = copyFor([item("recurring_routes", false, false, false)]);
     expect(copy).toBe(
-      "The business profile was not applied. Billing for Recurring routes could not be stopped; it's still on. Nothing was changed. Try again.",
+      "This change was not applied. Billing for Recurring routes could not be stopped; it's still on. Nothing was changed. Try again.",
     );
   });
 
@@ -270,7 +270,7 @@ describe("BUSINESS_PROFILE_BILLING_FAILED with the per-add-on list (ROW c)", () 
       failedStep: { step: "mode", key: "fulfilment_model" },
     });
     expect(copy).toBe(
-      "The business profile was only partly applied. Billing stopped for At-door payment collection. Then saving the fulfilment model failed. Try again to finish.",
+      "This change was only partly applied. Billing stopped for At-door payment collection. Then saving the fulfilment model failed. Try again to finish.",
     );
   });
 

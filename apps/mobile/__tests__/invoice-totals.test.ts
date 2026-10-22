@@ -141,15 +141,16 @@ describe("invoiceLineDto", () => {
     ).toMatchObject({ taxRate: 0 });
   });
 
-  it("never leaks unitsPerBox/taxable, and drops the split for a productless line", () => {
+  it("never leaks unitsPerBox/taxable; a productless boxed line keeps its split (row 708)", () => {
+    // The edit screen's stored box line with no product: 2 boxes of 24 = 48 pieces at the box price.
     const dto = invoiceLineDto(
       {
-        description: "Ad-hoc",
-        qty: 6,
-        unitPrice: 2,
-        boxes: 1,
+        description: "OJ 12oz",
+        qty: 48,
+        unitPrice: 21.6,
+        boxes: 2,
         pieces: 0,
-        unitsPerBox: 6,
+        unitsPerBox: 24,
         taxable: true,
       },
       TAX,
@@ -157,9 +158,10 @@ describe("invoiceLineDto", () => {
     // forbidNonWhitelisted: these keys would 400 the whole request.
     expect(dto).not.toHaveProperty("unitsPerBox");
     expect(dto).not.toHaveProperty("taxable");
-    // Server only honours boxes/pieces with a productId — don't send them.
-    expect(dto).not.toHaveProperty("boxes");
-    expect(dto).not.toHaveProperty("pieces");
+    expect(dto).not.toHaveProperty("productId");
+    // Row 708: the split travels with or without a product. On edit the server re-splits a stored row from it;
+    // a bare qty 48 would rewrite the line. Create ignores a productless split (manual-invoice-lines.ts).
+    expect(dto).toMatchObject({ qty: 48, boxes: 2, pieces: 0, unitPrice: 21.6 });
   });
 
   it("omits zero discount, keeps a real one; trims + omits empty notes", () => {

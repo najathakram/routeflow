@@ -29,6 +29,8 @@ jest.mock("@/lib/tenant-features", () => ({
   }),
 }));
 jest.mock("@/lib/auth-context", () => ({
+  // BO-07: the gate reads the role from the optional context to decide whether to ask for permissions; none here.
+  useOptionalAuth: () => null,
   useAuth: () => ({
     isAuthenticated: true,
     isLoading: false,

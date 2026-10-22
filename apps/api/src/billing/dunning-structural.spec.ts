@@ -241,7 +241,8 @@ describe("SA-733r7 PR-B3 structural pins", () => {
       expect(billing.slice(i, i + 4500)).toMatch(/await assertTenantNotPaymentOverdue\(/);
       const admin = code(read(path.join(SRC, "platform-admin", "platform-admin.service.ts")));
       const j = admin.indexOf("private async updatePlanLocked(");
-      expect(admin.slice(j, j + 1200)).toMatch(
+      // 1400: the tenant select grew by the `planVersionId` line (SA-815a); the guard is still its first call
+      expect(admin.slice(j, j + 1400)).toMatch(
         /await assertTenantNotPaymentOverdue\([\s\S]*"admin_plan_change"/,
       );
     });

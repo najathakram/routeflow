@@ -179,7 +179,7 @@ describe("QuickKeysGrid: a tap is the scan add path", () => {
   it("prices at the picked customer's tier", async () => {
     renderWithProviders(<CounterSaleScreen />);
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-    fireEvent.click(screen.getByRole("button", { name: "Acme Cafe" }));
+    fireEvent.click(screen.getByRole("option", { name: "Acme Cafe" }));
     fireEvent.click(await colaKey());
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(total()).toHaveTextContent("$2.00"); // tier 2, not the 2.50 walk-in price

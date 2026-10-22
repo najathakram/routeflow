@@ -14,6 +14,13 @@ describe("CancelOrderButton (B1083)", () => {
     expect(screen.getAllByRole("button", { name: /cancel order/i })).toHaveLength(2);
   });
 
+  it("is an outline with red text, never a filled red button (apple-ux r3 Q15)", () => {
+    render(<CancelOrderButton onClick={jest.fn()} />);
+    const btn = screen.getByRole("button", { name: /cancel order/i });
+    expect(btn).toHaveClass("text-danger", "border-danger/40");
+    expect(btn).not.toHaveClass("bg-danger");
+  });
+
   it("WITH_CARRIER: no button at all, only the fixed explanation", () => {
     const onClick = jest.fn();
     render(<CancelOrderButton blockedReason="WITH_CARRIER" onClick={onClick} />);

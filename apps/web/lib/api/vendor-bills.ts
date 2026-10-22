@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-methods";
 import { API_ERROR_CODES } from "@routeflow/types";
+import { codedToastCopy } from "../generic-toast-copy";
 import type {
   CheckVendorBillDuplicateDto,
   DuplicateVendorBillError,
@@ -52,7 +53,16 @@ export interface VendorBillPayment {
   method: AnyPaymentMethod;
   reference?: string;
   notes?: string;
+  /** Set only on a draw of on-account supplier credit (a CREDIT_NOTE row); cash payments leave it null. */
+  supplierCreditId?: string | null;
+  /** The date the money went out (the credit created by "Move to supplier credit" carries it). */
+  paidAt?: string;
   createdAt: string;
+}
+
+/** B288: a payment the bill page offers "Move to supplier credit" for — cash, not a credit draw. */
+export function isMovableBillPayment(p: Pick<VendorBillPayment, "method" | "supplierCreditId">) {
+  return p.method !== "CREDIT_NOTE" && !p.supplierCreditId;
 }
 
 export interface VendorBill {
@@ -290,6 +300,97 @@ export interface VendorBillReceiveGap {
   productId: string;
   name: string;
   stockDrift: number;
+  /** SA-808b (void only): pieces adjusted today because the bill had no receipt record for them. */
+  noReceiptQty?: number;
+  /** SA-808b (void only): pieces on bill lots the void could not identify and left standing. */
+  lotsLeft?: number;
+}
+
+/** The warning toast for a stock write whose product cost history could not be recomputed. */
+export function costHistoryGapToast(
+  gaps: VendorBillReceiveGap[] | undefined,
+  action: "received" | "voided",
+): { title: string; description: string; variant: "warning" } | null {
+  // A shortfall or a lot left standing is reported by voidSuccessToast; this one is the replay's.
+  const costGaps = (gaps ?? []).filter(
+    (g) => !(g.noReceiptQty && g.noReceiptQty > 0) && !(g.lotsLeft && g.lotsLeft > 0),
+  );
+  if (costGaps.length === 0) return null;
+  const names = [...new Set(costGaps.map((g) => g.name))];
+  const isPlural = names.length > 1;
+  const its = isPlural ? "their" : "its";
+  return {
+    title: `${action === "received" ? "Received" : "Voided"} — cost history not recomputed`,
+    description: `${names.join(", ")} — ${
+      action === "received" ? "received and costed normally" : "voided and reversed normally"
+    }, but ${its} stock records don't fully explain the quantity on hand (this usually happens after past sales), so ${its} historical cost snapshots weren't recalculated. Ask an admin to look into ${
+      isPlural ? "these products" : "this product"
+    }.`,
+    variant: "warning",
+  };
+}
+
+const andList = (parts: string[]) =>
+  parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
+
+/**
+ * SA-808b: the success toast for a void. When some stock had no receipt record the void adjusted it
+ * today, and says so: "Voided. 3 Widget had no receipt record and were adjusted today." Bill lots
+ * the void could not identify were left standing; the description says so.
+ */
+export function voidSuccessToast(
+  billNumber: string,
+  gaps: VendorBillReceiveGap[] | undefined,
+): { title: string; description?: string; variant: "info" } {
+  const missing = (gaps ?? []).filter((g) => g.noReceiptQty && g.noReceiptQty > 0);
+  const lotNote = (gaps ?? []).some((g) => g.lotsLeft && g.lotsLeft > 0)
+    ? "Some stock batches for this bill were left unchanged and are listed in the activity log."
+    : undefined;
+  if (missing.length === 0) {
+    return {
+      title: "Bill voided",
+      description: lotNote ?? `Bill ${billNumber} has been voided.`,
+      variant: "info",
+    };
+  }
+  const list = andList(missing.map((g) => `${g.noReceiptQty} ${g.name}`));
+  return {
+    title: `Voided. ${list} had no receipt record and were adjusted today.`,
+    ...(lotNote ? { description: lotNote } : {}),
+    variant: "info",
+  };
+}
+
+/**
+ * The error toast for a refused void. FIXED copy chosen by the server's `code` (B986: the UI never renders
+ * `response.data.message`). Two refusals are known: the excess INVENTORY_LEDGER_GAP (SA-808c: the stock records
+ * show more received than the bill; flagged for a repair; keyed on the structured `ledgerExcess` field, since a
+ * revert's shortfall gap shares the code and tells the user to void) and STOCK_DATE_IN_FILED_PERIOD (the void
+ * dates its reversal through documentStockDate; today is in a filed period). Names come from structured fields.
+ */
+export function voidFailureToast(err: unknown): {
+  title: string;
+  description: string;
+  variant: "error";
+} {
+  const data = (
+    err as {
+      response?: {
+        data?: { code?: unknown; name?: unknown; period?: unknown; ledgerExcess?: unknown };
+      };
+    } | null
+  )?.response?.data;
+  let description: string;
+  if (data?.code === API_ERROR_CODES.INVENTORY_LEDGER_GAP && data.ledgerExcess) {
+    const who = typeof data.name === "string" && data.name ? data.name : "This product";
+    description = `${who}'s stock records show more received than this bill, so it can't be voided here. We've flagged it for a repair.`;
+  } else if (data?.code === API_ERROR_CODES.STOCK_DATE_IN_FILED_PERIOD) {
+    const period = typeof data.period === "string" && data.period ? data.period : "This period";
+    description = `${period} is already filed for a product on this bill, so it can't be voided today. Ask an admin before voiding it.`;
+  } else {
+    description = codedToastCopy(err) ?? "Please try again.";
+  }
+  return { title: "Failed to void bill", description, variant: "error" };
 }
 
 export function useReceiveVendorBill() {
@@ -338,8 +439,11 @@ export function useRevertVendorBillToDraft() {
 
 export function useVoidVendorBill() {
   const qc = useQueryClient();
-  return useMutation<VendorBill, Error, string>({
+  // gapsDetected is additive (B846 sibling): products whose cost history the void could not replay.
+  return useMutation<VendorBill & { gapsDetected?: VendorBillReceiveGap[] }, Error, string>({
     mutationFn: (id) => apiClient.post(`/vendor-bills/${id}/void`).then((r) => r.data),
+    // The bill page toasts a refused void itself (voidFailureToast): one toast, not that plus the app-wide one.
+    meta: { localErrorToast: true },
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
@@ -370,6 +474,28 @@ export function useRecordVendorBillPayment() {
   });
 }
 
+/**
+ * B288 (SA-814 R5-3): the exit for a refused void / revert / delete (409 BILL_HAS_PAYMENTS) — holds one cash payment
+ * as a supplier credit dated at the payment. The bill page toasts a refusal itself (`codedToastCopy`).
+ */
+export function useMoveVendorBillPaymentToCredit() {
+  const qc = useQueryClient();
+  return useMutation<{ bill: VendorBill }, Error, { billId: string; paymentId: string }>({
+    mutationFn: ({ billId, paymentId }) =>
+      apiClient
+        .post(`/vendor-bills/${billId}/payments/${paymentId}/move-to-credit`)
+        .then((r) => r.data),
+    meta: { localErrorToast: true },
+    onSuccess: (_, { billId }) => {
+      qc.invalidateQueries({ queryKey: ["vendor-bills"] });
+      qc.invalidateQueries({ queryKey: ["vendor-bills", billId] });
+      // The statement lives at ["suppliers", supplierId, "statement"] and the supplier's credit balance
+      // under the same prefix; the mutation does not know the supplierId, so invalidate the prefix.
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
+    },
+  });
+}
+
 export function useDeleteVendorBill() {
   const qc = useQueryClient();
   return useMutation<{ success: boolean }, Error, string>({
@@ -380,7 +506,11 @@ export function useDeleteVendorBill() {
 
 export function useBulkDeleteVendorBills() {
   const qc = useQueryClient();
-  return useMutation<{ deleted: number; skipped: any[] }, Error, string[]>({
+  return useMutation<
+    { deleted: number; skipped: Array<{ id: string; billNumber: string; code?: string }> },
+    Error,
+    string[]
+  >({
     mutationFn: (ids) => apiClient.delete("/vendor-bills", { data: { ids } }).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["vendor-bills"] }),
   });

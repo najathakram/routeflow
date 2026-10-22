@@ -7,10 +7,14 @@ import { FEATURE_REGISTRY } from "./feature-registry";
 import {
   CONFIG_SNAPSHOT_RESTORED_ACTION,
   CONFIG_SNAPSHOT_RESTORE_FAILED_ACTION,
+  CONFIG_SNAPSHOT_RESTORE_HELD_ACTION,
+  heldAuditMeta,
 } from "./config-snapshot-audit.constants";
 import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { findPlanDefinition, planRank } from "./plan-catalog.constants";
+import { coverageOf, type RestorePlanAllows } from "./override-restore-verdict";
+import { pricedAddonSku } from "./plan-version-pin";
 import {
   RestoreBudgetExceededError,
   TenantConfigSnapshotService,
@@ -30,6 +34,15 @@ export interface PlanTransition {
    */
   toPlanVersionId: string | null;
   actor?: SnapshotActor;
+  /**
+   * BO-13: add-on keys the caller's transaction activates AFTER `onPlanChange` (a checkout's purchased
+   * add-ons), so the restore's fleet check judges the transaction's END state. No self-service SKU is a
+   * fleet module today (Routes and Order delivery are not sold through checkout), so this cannot change a
+   * fleet answer yet: it keeps the check correct if one ever is. They are SKU codes compared with add-on
+   * keys; a bridged pair (a SKU code that differs from its add-on key) would need mapping first. Only
+   * `restoreLatest` reads them.
+   */
+  pendingAddonKeys?: readonly string[];
 }
 
 /**
@@ -42,7 +55,7 @@ export interface PreparedPlanTransition {
    *  consistent answer for the whole plan change). */
   enabled: boolean;
   /** null = restore is skipped for this change (flag off, not an upgrade, or the catalog read failed). */
-  planAllows: ((featureKey: string) => boolean) | null;
+  planAllows: RestorePlanAllows | null;
 }
 
 /**
@@ -186,7 +199,7 @@ export class PlanTransitionConfigService implements OnModuleInit {
   private async restoreWithoutBlocking(
     tx: Prisma.TransactionClient,
     t: PlanTransition,
-    planAllows: (featureKey: string) => boolean,
+    planAllows: RestorePlanAllows,
     now: Date,
   ): Promise<PlanTransitionOutcome> {
     try {
@@ -210,7 +223,13 @@ export class PlanTransitionConfigService implements OnModuleInit {
         t.toPlanKey,
         now,
         planAllows,
+        undefined,
+        t.pendingAddonKeys,
       );
+      // BO-13: a HELD row (a delivery-method change under a shipment, or own delivery with no fleet) makes
+      // the restore partial. The upgrade still proceeds; the snapshot stays claimable (not stamped), and
+      // the partial run is its own audit action so the list keeps one RESTORED row per restored snapshot.
+      const held = restore?.held ?? [];
       if (restore) {
         // The report goes into the existing audit trail (no migration), in the SAME savepoint as
         // the restore. The admin list reads the counts from here.
@@ -218,7 +237,9 @@ export class PlanTransitionConfigService implements OnModuleInit {
           data: {
             tenantId: t.tenantId,
             userId: t.actor?.id ?? null,
-            action: CONFIG_SNAPSHOT_RESTORED_ACTION,
+            action: held.length
+              ? CONFIG_SNAPSHOT_RESTORE_HELD_ACTION
+              : CONFIG_SNAPSHOT_RESTORED_ACTION,
             entityType: "tenant",
             entityId: t.tenantId,
             meta: {
@@ -230,15 +251,28 @@ export class PlanTransitionConfigService implements OnModuleInit {
               restoredToPlanKey: t.toPlanKey,
               report: { ...restore.report },
               supersededSnapshots: restore.supersededSnapshots,
+              ...heldAuditMeta(held),
             },
           },
         });
       }
       await tx.$executeRaw`RELEASE SAVEPOINT config_snapshot_restore`;
-      if (restore) {
+      if (restore && held.length === 0) {
         this.logger.log(
           `Restored tenant ${t.tenantId} feature config from snapshot ${restore.snapshotId} on ` +
             `${t.fromPlanKey} -> ${t.toPlanKey}: ${JSON.stringify(restore.report)}`,
+        );
+      } else if (restore) {
+        this.logger.warn(
+          `Config restore for tenant ${t.tenantId} (${t.fromPlanKey} -> ${t.toPlanKey}) HELD ` +
+            `${held
+              .map((h) =>
+                h.kind === "override"
+                  ? `${h.featureKey} GRANT/${h.overrideKind} (${h.reason})`
+                  : `${h.featureKey} ${h.from}->${h.to} (${h.reason})`,
+              )
+              .join(", ")}; ` +
+            `snapshot ${restore.snapshotId} stays restorable — "Restore now" once cleared`,
         );
       }
       return { action: "restore", restore };
@@ -358,12 +392,10 @@ export class PlanTransitionConfigService implements OnModuleInit {
    * bridge ∪ default-granted ∪ addon-keyed gates. A plan-bundled flag the new plan lacks and no SKU
    * grants is skipped and reported by `planRestore`.
    */
-  async planAllowsFor(
-    planKey: string,
-    planVersionId: string | null,
-  ): Promise<(featureKey: string) => boolean> {
+  async planAllowsFor(planKey: string, planVersionId: string | null): Promise<RestorePlanAllows> {
     const version = await this.catalog.getVersionForTenant(planVersionId);
-    const flags = new Set(findPlanDefinition(version.definitions, planKey)?.featureFlags ?? []);
+    const planFlags = [...(findPlanDefinition(version.definitions, planKey)?.featureFlags ?? [])];
+    const flags = new Set(planFlags);
     for (const sku of version.addonSkus) for (const g of sku.grantsFlags ?? []) flags.add(g);
     const allowed = new Set<string>();
     for (const f of FEATURE_REGISTRY) {
@@ -377,6 +409,21 @@ export class PlanTransitionConfigService implements OnModuleInit {
         allowed.add(f.key);
       }
     }
-    return (featureKey) => allowed.has(featureKey);
+    // Row 640: the same version's SKU prices and inclusion, for the restored-GRANT verdict (NOT part of
+    // `allowed`: planAllows treats every add-on-keyed key as allowed, which is the bug the verdict avoids).
+    // Prices: the ONE rule (`pricedAddonSku`) - this version's own SKU price, else the published one - for
+    // every SKU a registry key can name plus every SKU this version lists.
+    const priceBySku = new Map<string, number>();
+    const skuCodes = new Set([
+      ...version.addonSkus.map((s) => s.sku),
+      ...FEATURE_REGISTRY.flatMap((f) => f.billing.skus),
+    ]);
+    for (const sku of skuCodes) {
+      const def = await pricedAddonSku(this.catalog, version, sku);
+      if (def) priceBySku.set(sku, Number(def.monthlyPrice));
+    }
+    return Object.assign((featureKey: string) => allowed.has(featureKey), {
+      coverage: coverageOf({ addonSkus: version.addonSkus, planFlags, priceBySku }, planKey),
+    });
   }
 }

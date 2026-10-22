@@ -280,6 +280,9 @@ export function parseScanField(
 
 export const COUNTER_SALES_DISABLED_COPY = "Counter sales are not turned on for this business.";
 
+/** BO-07: an operator whose admin has not turned selling on for their account (the Counter reached by a link or a stale tab). */
+export const COUNTER_NO_ACCESS_COPY = "Your admin hasn't turned on selling for your account.";
+
 /** CQ-30: shown after a Retry that got no answer either (still offline); the lookup resumes by itself when the network is back. */
 export const COUNTER_GATE_STILL_OFFLINE_COPY =
   "Still no answer. It will open by itself when you are back online.";

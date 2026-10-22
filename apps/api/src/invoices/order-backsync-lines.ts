@@ -1,4 +1,5 @@
 import { normalizeBoxesPieces, roundMoney, splitMatchesQty } from "@routeflow/pricing";
+import { finiteStoredMoney } from "../common/money-invariants.util";
 import { assertUnitLineSplit } from "../orders/unit-line-split";
 
 /**
@@ -122,9 +123,13 @@ export function orderLineUnchanged(
     ["boxes", shape.boxes],
     ["pieces", shape.pieces],
     ["unitsPerBox", shape.unitsPerBox],
-    ["unitPrice", agg.unitPrice],
-    ["subtotal", roundMoney(agg.subtotal)],
-    ["categoryTaxAmount", roundMoney(agg.categoryTax)],
+    // SA-816b: a non-finite aggregate must not read as 0 (equal to a stored 0, so the line looked unchanged).
+    ["unitPrice", finiteStoredMoney(agg.unitPrice, "The order line unit price")],
+    ["subtotal", roundMoney(finiteStoredMoney(agg.subtotal, "The order line subtotal"))],
+    [
+      "categoryTaxAmount",
+      roundMoney(finiteStoredMoney(agg.categoryTax, "The order line category tax")),
+    ],
     ["promoFreeUnits", freeUnits > 0 ? freeUnits : null],
     ["invoicedQty", shape.qty],
     ["status", "PENDING"],

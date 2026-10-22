@@ -11,7 +11,6 @@
   "src/credit-notes/credit-notes.service.spec.ts": 2,
   "src/crm/crm.controller.spec.ts": 3,
   "src/customers/customers.service.spec.ts": 30,
-  "src/drafts/drafts.service.spec.ts": 7,
   "src/drivers/drivers.service.spec.ts": 4,
   "src/email/mailbox/mailbox-connection.microsoft.spec.ts": 2,
   "src/email/mailbox/mailbox-connection.service.spec.ts": 2,

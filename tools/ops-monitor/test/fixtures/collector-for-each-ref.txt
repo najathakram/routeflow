@@ -1,0 +1,8 @@
+origin	1111111111111111111111111111111111111111	2026-10-19T11:30:00+00:00
+origin/HEAD	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	2026-10-19T09:00:05+00:00
+origin/master	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	2026-10-19T09:00:05+00:00
+origin/feat/k11-20-floating-editor	1111111111111111111111111111111111111111	2026-10-19T11:30:00+00:00
+origin/fix/b231-boxed-rounding	2222222222222222222222222222222222222222	2026-10-19T10:00:00+00:00
+origin/fix/b233-counter-promo	cccccccccccccccccccccccccccccccccccccccc	2026-10-18T20:00:00+00:00
+origin/feat/loose-experiment	dddddddddddddddddddddddddddddddddddddddd	2026-10-17T12:00:00+00:00
+origin/old/ancient	eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee	2026-09-01T12:00:00+00:00

@@ -45,7 +45,7 @@ describe("B744 — order-edit scanner re-arm wiring (REG-B744)", () => {
 
   it("pin: B62's one-time mount autofocus keeps its own stricter guard, unchanged", () => {
     expect(src).toMatch(
-      /if \(active && active !== document\.body && active !== el\) return;\s*\n\s*el\.focus\(\);/,
+      /if \(active && active !== document\.body && active !== el\) return;[\s\S]{0,700}\(firstQty \?\? el\)\.focus\(\{ preventScroll: true \}\);/,
     );
   });
 });

@@ -22,6 +22,9 @@
 //                    is not the invoice's current updatedAt (another save landed; nothing written; reload).
 //   ORDER_INVOICE_SETTLE_FAILED — `body.code` of the 409 raised AFTER a ship/deliver status committed when its
 //                    invoice could not be created, updated or checked (the status stays; open the order).
+//   DELIVERY_DATE_IN_PAST — `body.code` of the 400 when a create / buyer-cart merge carries a
+//                    requestedDeliveryDate before the TENANT's today (its own time zone; row 718). Today is
+//                    allowed; `body.today` is the tenant's day (clients word the date-field error from it) and `body.requestedDeliveryDate` the refused day.
 //   ORDER_INVOICES_NEED_REVIEW — `body.code` of the 409 when more would be billed on an order whose
 //                    invoices no longer match its lines (orphaned invoice line / counter out of step,
 //                    SA-687); nothing billed, NOT retriable until the invoices are reviewed.
@@ -168,6 +171,8 @@
 //                    add-on the tenant's plan already bundles, `includedAtPlan`). Both are `body.code` of the refusal and also `refusal.code`
 //                    of GET /billing/proration-preview (billing "REFUSED"), so the confirm sheet and the enable call agree. Clients show
 //                    the body's fixed copy or their own, never a Stripe message.
+//   B808 — ADVANCE_CUSTOMER_MISMATCH (customers): the 400 of an advance-payment apply whose invoice belongs to a different
+//                    customer than the advance (value == key); nothing is written.
 //   M11 (stackable add-on quantity) — the enable body's `quantity` is the TARGET total, so a stale page could cut a pack.
 //                    ADDON_QUANTITY_CHANGED (409: `expectedQuantity` no longer matches the stored quantity; nothing was changed, refetch),
 //                    ADDON_QUANTITY_NOT_INCREASED (409: a call carrying `expectedQuantity` is a buy-more and its target is not above it),
@@ -226,8 +231,8 @@
 //                    committed but whose payment did not. An order create / buyer submit asking for a fulfilment method the business does
 //                    not offer is 400 FULFIL_METHOD_NOT_OFFERED.
 //   B1043 (invoice header-only PATCH, discount or shippingFee without items) — 409 INVOICE_TAX_STATE_STALE: the invoice's stored subtotal or
-//                    tax does not match its lines, so the discount/shipping change cannot be priced safely; nothing is written; re-save the
-//                    invoice lines. 409 INVOICE_TOTAL_BELOW_PAID (B1046): the edit would take a DRAFT's total below the amount already paid
+//                    tax does not match its lines, so the discount/shipping change cannot be priced safely; nothing is written. SA-814e: body
+//                    {code, message, path} where path is DRAFT_EDIT or PRICE_ADJUSTMENT (INVOICE_TAX_STATE_STALE_COPY). 409 INVOICE_TOTAL_BELOW_PAID (B1046): the edit would take a DRAFT's total below the amount already paid
 //                    or credited against it. Body {code, message}.
 
 export const API_ERROR_CODES = {
@@ -243,6 +248,7 @@ export const API_ERROR_CODES = {
   INVOICE_STALE: "INVOICE_STALE",
   ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   ORDER_INVOICE_SETTLE_FAILED: "ORDER_INVOICE_SETTLE_FAILED",
+  DELIVERY_DATE_IN_PAST: "DELIVERY_DATE_IN_PAST",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
   CODE_TAKEN: "CODE_TAKEN",
@@ -263,6 +269,12 @@ export const API_ERROR_CODES = {
   /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */
   FAMILY_NOT_PRICEABLE: "FAMILY_NOT_PRICEABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",
+  /** 409 from POST /import/products when the file has a Family column and family pricing (mixed_packs) is on: grouping would re-price the products, so the whole file is refused and nothing is written. */
+  IMPORT_FAMILY_PRICING_ON: "IMPORT_FAMILY_PRICING_ON",
+  /** 400 from POST /import/products when a file with a Family column has more rows than IMPORT_FAMILY_MAX_ROWS (2500); `max` and `rows` are in the body. Split the file. */
+  IMPORT_FAMILY_TOO_MANY_ROWS: "IMPORT_FAMILY_TOO_MANY_ROWS",
+  /** `errorCode` of a failed background product import whose reason is not one the page names. */
+  IMPORT_JOB_FAILED: "IMPORT_JOB_FAILED",
   FAMILY_NOT_FOUND: "FAMILY_NOT_FOUND",
   /** 409 from DELETE /products/bulk and /products/clear-all: a unique violation while deleting; nothing was deleted, reload and retry. */
   PRODUCT_DELETE_CONFLICT: "PRODUCT_DELETE_CONFLICT",
@@ -348,7 +360,13 @@ export const API_ERROR_CODES = {
   MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
   ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
   ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
+  /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
+  ORDER_PD_NEEDS_QUANTITIES: "ORDER_PD_NEEDS_QUANTITIES",
+  /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
+  ORDER_DELIVERY_QUANTITIES_MISSING: "ORDER_DELIVERY_QUANTITIES_MISSING",
   ORDER_BILLING_CHANGED: "ORDER_BILLING_CHANGED",
+  /** B693 (SA-839): unvoid refused because the invoice's order is CANCELLED; nothing is written. 409. */
+  UNVOID_ORDER_CANCELLED: "UNVOID_ORDER_CANCELLED",
   ORDER_EDIT_WOULD_OVERPAY: "ORDER_EDIT_WOULD_OVERPAY",
   FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
@@ -405,6 +423,12 @@ export const API_ERROR_CODES = {
   PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
   SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
   PO_LINK_BROKEN: "PO_LINK_BROKEN",
+  BILL_NEEDS_A_LINE: "BILL_NEEDS_A_LINE",
+  BILL_NOT_EDITABLE: "BILL_NOT_EDITABLE",
+  BILL_PO_SUPPLIER_LOCKED: "BILL_PO_SUPPLIER_LOCKED",
+  BILL_NEVER_RECEIVED: "BILL_NEVER_RECEIVED",
+  BILL_TAX_UNKNOWN: "BILL_TAX_UNKNOWN",
+  RECEIVE_EXCEEDS_OUTSTANDING: "RECEIVE_EXCEEDS_OUTSTANDING",
   AI_KEY_INVALID: "AI_KEY_INVALID",
   AI_SCAN_REJECTED: "AI_SCAN_REJECTED",
   AI_UNAVAILABLE: "AI_UNAVAILABLE",
@@ -482,6 +506,8 @@ export const API_ERROR_CODES = {
   HANDOFF_ROLE_NOT_ALLOWED: "HANDOFF_ROLE_NOT_ALLOWED",
   REGULATED_AUTH_REQUIRED: "REGULATED_AUTH_REQUIRED",
   WALLET_LOCK_BUSY: "WALLET_LOCK_BUSY",
+  /** An advance payment can only be applied to an invoice of its own customer (customers). 400. */
+  ADVANCE_CUSTOMER_MISMATCH: "ADVANCE_CUSTOMER_MISMATCH",
   PROMOTION_ZERO_PRICE: "PROMOTION_ZERO_PRICE",
   UNEXPLAINED_DIFFS: "UNEXPLAINED_DIFFS",
   INTAKE_ANSWERS_INVALID: "INTAKE_ANSWERS_INVALID",
@@ -579,6 +605,31 @@ export const API_ERROR_CODES = {
    * A definitive answer (unlike a timeout): the clerk may ring the sale again with a new key.
    */
   COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
+  /**
+   * 404 from GET /invoices/payments/by-key/:key (SA-824): NO payment, advance or invoice payment is recorded
+   * under this Idempotency-Key in this tenant YET. NOT definitive: a payment may still be in flight, so the
+   * dialog never releases on it (SA-824 race ruling 5); only POST …/resolve (found | tombstoned) releases.
+   */
+  PAYMENT_KEY_NOT_FOUND: "PAYMENT_KEY_NOT_FOUND",
+  /**
+   * 409 from the customer money-in writers (POST /invoices/payments/record, POST /invoices/:id/payments,
+   * POST /customers/:id/advance-payments) on an Idempotency-Key that "Check payment status" already resolved
+   * to a TOMBSTONE (SA-824 race ruling 2): nothing was recorded under the key and NOTHING was written by this
+   * request. Definitive: the dialog releases the key and starts a new payment.
+   */
+  PAYMENT_KEY_RESOLVED: "PAYMENT_KEY_RESOLVED",
+  /**
+   * 409 from POST /invoices/payments/by-key/:key/resolve (SA-824 race ruling 3) when the resolve waited the
+   * full lock timeout behind an UNCOMMITTED payment under the same key (or meets a key that is claimed and not
+   * yet completed). NOT an answer: the payment may still commit. Retryable; the dialog keeps the key locked.
+   */
+  PAYMENT_KEY_IN_FLIGHT: "PAYMENT_KEY_IN_FLIGHT",
+  /**
+   * The `reason` of the 409 IDEMPOTENCY_KEY_CONFLICT the customer money-in writers send when an Idempotency-Key
+   * already recorded a DIFFERENT payment request (SA-824). It proves a payment may already exist under the key.
+   * Thrown by the server and matched by the clients (`isPaymentKeyConflict`) through this ONE constant.
+   */
+  PAYMENT_MISMATCH: "PAYMENT_MISMATCH",
   /**
    * 409 from GET /orders/counter-sale/by-key/:key: the sale's PENDING or DELIVERED order exists but has NO invoice
    * rows at all (a half-written sale: the first attempt stopped before the invoice step). Re-POST with the same
@@ -794,11 +845,37 @@ export const API_ERROR_CODES = {
   /** 409 from POST /products/:productId/prices/undo: that audit row is not a price save of this product, or it was already undone. */
   PRICE_UNDO_UNAVAILABLE: "PRICE_UNDO_UNAVAILABLE",
   /**
+   * 400 from POST /platform-admin/tenants/:id/business-capabilities (and its /preview) when no capability is ticked
+   * (BO-04): at least one of Delivery, Shipping or Counter is needed. Fixed body; nothing was written.
+   */
+  BUSINESS_CAPABILITIES_EMPTY: "BUSINESS_CAPABILITIES_EMPTY",
+  /**
    * 503 from every server-priced order path (buyer checkout, standing orders, returns, order edits) when the customer has
    * typed unit prices but the units_prices_v2 flag could not be read (the override or plan lookup failed). Retryable: nothing
    * was written, so the caller never gets the tier price instead of the customer's typed price.
    */
   CUSTOMER_PRICES_UNAVAILABLE: "CUSTOMER_PRICES_UNAVAILABLE",
+  /**
+   * 409 from PATCH /drafts/:id (SA-817 A): the request's `expectedUpdatedAt` is not the draft's current `updatedAt`, so another device
+   * changed it after this client's last sync. Nothing was written. The body carries `current` (the server's version); the client keeps
+   * BOTH ("Keep this one or open the other?"), never overwrites.
+   */
+  DRAFT_CHANGED: "DRAFT_CHANGED",
+  /**
+   * 409 from void / revert-to-draft / delete (and a per-bill `skipped` entry of the bulk delete) of a vendor bill that still carries CASH
+   * payments (B288, SA-814 R5-3). Body carries `amount` (the rounded cash total). Nothing was written; move the payments to a supplier
+   * credit first (POST /vendor-bills/:id/payments/:paymentId/move-to-credit).
+   */
+  BILL_HAS_PAYMENTS: "BILL_HAS_PAYMENTS",
+  /** 409 from move-to-credit: the payment is a draw of supplier credit (void or delete hands it back), not cash. */
+  BILL_PAYMENT_NOT_CASH: "BILL_PAYMENT_NOT_CASH",
+  /** 409 from move-to-credit: the bill has no supplier, so there is no account to hold the credit. */
+  BILL_PAYMENT_NO_SUPPLIER: "BILL_PAYMENT_NO_SUPPLIER",
+  /**
+   * 400 from PUT /platform-admin/app-links: a link is not an https URL with a host (or is over 2048 characters);
+   * body carries `field` (the link's name). Nothing was written.
+   */
+  APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
@@ -838,3 +915,47 @@ export type CreditNoteErrorCode = (typeof CREDIT_NOTE_ERROR_CODES)[number];
  */
 export const SHIPPED_ORDER_MESSAGE =
   "This order has already shipped. Contact the seller for changes.";
+
+/**
+ * SA-814g: the 409 INVOICE_TAX_STATE_STALE body carries `path`, the kind of invoice that refused: an
+ * order-linked DRAFT, a manual DRAFT, or an ISSUED invoice (whichever recompute asked: lines save, discount /
+ * shipping, price adjustment). Web and mobile pick their copy from it; the API keeps a literal copy
+ * (`TAX_STATE_STALE_COPY`, apps/api/src/invoices/stored-tax-state.ts) pinned byte-equal by
+ * apps/api/src/common/invoice-tax-state-copy-parity.spec.ts.
+ */
+export const INVOICE_TAX_STATE_STALE_PATH_VALUES = [
+  "DRAFT_ORDER",
+  "DRAFT_MANUAL",
+  "ISSUED",
+] as const;
+export type InvoiceTaxStateStalePath = (typeof INVOICE_TAX_STATE_STALE_PATH_VALUES)[number];
+
+export const INVOICE_TAX_STATE_STALE_COPY: Record<InvoiceTaxStateStalePath, string> = {
+  DRAFT_ORDER:
+    "This draft's tax was saved by an older version and can't be recalculated safely. Create it again from the order, or contact support.",
+  DRAFT_MANUAL:
+    "This draft's tax was saved by an older version and can't be recalculated safely. Create the draft again, or contact support.",
+  ISSUED:
+    "This invoice's stored tax can't be recalculated safely. Issue a credit note or contact support.",
+};
+
+/**
+ * SA-814d: why an unvoid is refused with 409 `ORDER_BILLING_CHANGED`. The body carries `reason` (a flat field, like
+ * `CONCURRENT_UPDATE`'s) and clients pick the copy from it, never by matching the message. `OTHER_INVOICE`: another
+ * live invoice bills part of the line (it wins when both apply). `LINE_REDUCED`: nothing else bills it, but the order
+ * line now holds less than this invoice bills (or is cancelled, or is gone). The API keeps literal copies
+ * (`apps/api/src/invoices/unvoid-billing-refusal.ts`), pinned equal by `unvoid-billing-refusal-parity.spec.ts`.
+ */
+export const ORDER_BILLING_CHANGED_REASONS = {
+  OTHER_INVOICE: "OTHER_INVOICE",
+  LINE_REDUCED: "LINE_REDUCED",
+} as const;
+
+export type OrderBillingChangedReason =
+  (typeof ORDER_BILLING_CHANGED_REASONS)[keyof typeof ORDER_BILLING_CHANGED_REASONS];
+
+export const UNVOID_BILLING_COPY: Record<OrderBillingChangedReason, string> = {
+  OTHER_INVOICE: "Another invoice now bills these items. Void it first.",
+  LINE_REDUCED:
+    "The order line now holds less than this invoice bills. Raise the order line, or create a new invoice from the order.",
+};

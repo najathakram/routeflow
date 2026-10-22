@@ -214,6 +214,9 @@ const POOL_MAX: Record<string, number | undefined> = {
   // a convenience: admin / cron writers wait up to 20 s, but the tenant-facing upgrade waits only ~2.5 s
   // (`billing/price-lock.ts`) so a double-click burst or a slow Stripe cannot hold all 4 slots for the
   // long wait; a caller that cannot get a slot surfaces as a retryable 409 / 503, never a hang.
+  // LOCK ORDER (G1a): `tenant-price` is taken BEFORE `billing` `addon:<tenant>:<sku>`, never the reverse - the
+  // scheduled-downgrade sweep and the admin plan edit hold the price lock while they bill leaving add-ons under the
+  // add-on lock. No code path may take an add-on lock and then wait for the tenant-price lock.
   "tenant-price": 4,
   // `counter-park` (SA-748): the parked-cart cap in `CounterParkService#park`, keyed on the tenant id. That
   // lock is a transaction-scoped `pg_advisory_xact_lock` taken on the park transaction's own Prisma connection

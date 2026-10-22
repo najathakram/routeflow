@@ -31,6 +31,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { storedInvoiceHeader } from "../testing/stored-invoice-header";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -169,6 +170,7 @@ describe("InvoicesService", () => {
           useValue: {
             writeSaleEntries: jest.fn(),
             reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
             correctSaleForPriceChange: jest.fn(),
           },
         },
@@ -978,12 +980,12 @@ describe("InvoicesService", () => {
         items: [{ productId: "prod-tob", description: "Cigs", qty: 5, unitPrice: 10 }],
       });
 
-      // Prior SALE reversed (preserveReturns), then a fresh SALE written from new items.
-      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "inv-e", preserveReturns: true }),
-      );
-      expect(ledger.writeSaleEntries).toHaveBeenCalledWith(
+      // SA-839 INVOICE_BILLED: the prior sale-record reversed (live returns kept), then a fresh SALE
+      // written from the new items, in one settle.
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
         expect.objectContaining({
+          kind: "INVOICE_BILLED",
           invoiceId: "inv-e",
           lines: [
             expect.objectContaining({
@@ -3134,7 +3136,7 @@ describe("InvoicesService", () => {
   });
 
   describe("unvoidInvoice restores invoicedQty", () => {
-    it("re-claims each line's invoicedQty (capped at line qty) when unvoiding", async () => {
+    it("re-claims each line's invoicedQty when its quantity is still free (uncapped: B299 refuses instead)", async () => {
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-1",
         status: "VOID",
@@ -4751,17 +4753,19 @@ describe("InvoicesService", () => {
       await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
 
       // Prior SALE rows reversed for BOTH drafts (nets the full-qty entries to 0).
-      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "d-base" }),
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "INVOICE_BILLED", invoiceId: "d-base" }),
       );
-      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "d-r1" }),
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "INVOICE_BILLED", invoiceId: "d-r1" }),
       );
       // Fresh SALE rows written; the regulated line (R1) now reports the DELIVERED qty (4)
       // and its prorated netSales (20 = 4/10 of 50), not the full 10 / 50.
-      const r1Write = ledger.writeSaleEntries.mock.calls.find(
-        (c: any) => c[0].invoiceId === "d-r1",
-      )?.[0];
+      const r1Write = ledger.settleRegulatedLedger.mock.calls.find(
+        (c: any) => c[1].invoiceId === "d-r1",
+      )?.[1];
       expect(r1Write).toBeDefined();
       const regLedgerLine = r1Write.lines.find((l: any) => l.trackedCategoryId === "cat-reg");
       expect(regLedgerLine.qty).toBe(4);
@@ -5100,11 +5104,9 @@ describe("InvoicesService", () => {
 
       await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
 
-      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "inv-1", preserveReturns: true }),
-      );
-      expect(ledger.writeSaleEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "inv-1" }),
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "INVOICE_BILLED", invoiceId: "inv-1" }),
       );
     });
 
@@ -5338,8 +5340,10 @@ describe("InvoicesService", () => {
       expect(oiUpdOf("oi-std").data.invoicedQty).toBe(10);
       expect(oiUpdOf("oi-reg").data.invoicedQty).toBe(4);
       // The regulated-sales ledger is re-synced on the order basis too.
-      expect((service as any).ledger.reverseInvoiceEntries).toHaveBeenCalled();
-      expect((service as any).ledger.writeSaleEntries).toHaveBeenCalled();
+      expect((service as any).ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "INVOICE_BILLED" }),
+      );
     });
 
     it("an edit that ADDED a standard line bills it on the base (grouping, not provenance)", async () => {
@@ -6647,8 +6651,7 @@ describe("InvoicesService", () => {
         customerId: "cust-1",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         items: [invoiceItem],
       };
@@ -6784,8 +6787,7 @@ describe("InvoicesService", () => {
         customerId: "c-294b",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         items: [invoiceItem],
       };
@@ -6909,8 +6911,7 @@ describe("InvoicesService", () => {
         customerId: "c-294e",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         items: [invoiceItem],
       };
@@ -6961,8 +6962,7 @@ describe("InvoicesService", () => {
         customerId: "cust-1",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         items: [invoiceItem],
       };
@@ -7044,15 +7044,14 @@ describe("InvoicesService", () => {
         unitsPerBox: null,
         taxRate: 0,
         // 0.50 x (10 x 20 pieces) — what creation billed off the PRODUCT's box size.
-        categoryTaxAmount: 100,
+        categoryTaxAmount: opts.isTaxExempt ? 0 : 100, // foldCategoryTax zeroed an exempt line at creation
       };
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-b57e",
         customerId: "cust-2",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         dueDate: null,
         items: [invoiceItem],
@@ -7124,8 +7123,7 @@ describe("InvoicesService", () => {
         customerId: "cust-2",
         orderId: null,
         status: InvoiceStatus.SENT,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([pieceItem]),
         internalNotes: null,
         dueDate: null,
         items: [pieceItem],
@@ -7214,8 +7212,7 @@ describe("InvoicesService", () => {
         customerId: "cust-1",
         orderId: null,
         status,
-        discount: 0,
-        shippingFee: 0,
+        ...storedInvoiceHeader([invoiceItem]),
         internalNotes: null,
         dueDate: null,
         items: [invoiceItem],

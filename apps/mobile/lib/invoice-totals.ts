@@ -145,10 +145,10 @@ export function invoiceLineDto(
     ...(line.productId ? { productId: line.productId } : {}),
     qty: line.qty,
     unitPrice: line.unitPrice,
-    // Split only travels for a boxed catalog line — the server only honours
-    // boxes/pieces when productId is set AND the product has unitsPerBox.
-    ...(line.productId && upb > 1 && line.boxes != null ? { boxes: line.boxes } : {}),
-    ...(line.productId && upb > 1 && line.pieces != null ? { pieces: line.pieces } : {}),
+    // Row 708: the split travels for every boxed line, product or not (web #3564). An edit re-splits a stored
+    // row from it, so a bare qty would rewrite the line; create ignores a productless split.
+    ...(upb > 1 && line.boxes != null ? { boxes: line.boxes } : {}),
+    ...(upb > 1 && line.pieces != null ? { pieces: line.pieces } : {}),
     ...(line.discount && line.discount > 0 ? { discount: line.discount } : {}),
     // MONEY: the PATCH path replaces every line, so the BOGO snapshot must travel
     // or an agreed 12-boxes-2-free line re-prices from $350 to $420 on save.

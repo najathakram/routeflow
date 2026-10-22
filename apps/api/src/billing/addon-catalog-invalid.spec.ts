@@ -20,7 +20,7 @@ import { ConflictException, Logger } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { addonCatalogInvalid } from "./addon-catalog-invalid";
-import { addonsIncludedAtPlan } from "./addon-retirement";
+import { addonsEnteringInclusion } from "./addon-inclusion";
 import { priceUnbilledAddonsOnActivation } from "./manual-activation-addons";
 import { beginStripeFirstPlanChange } from "./plan-change-flow";
 import { resolveIncludedAtPlan } from "./plan-catalog.constants";
@@ -44,7 +44,12 @@ const rejection = (p: Promise<unknown>): Promise<any> =>
     (e) => e,
   );
 
-function makeSvc(includedAtPlan: string | null, planKey = "GROWTH") {
+function makeSvc(
+  includedAtPlan: string | null,
+  planKey = "GROWTH",
+  /** SA-815a: the version the subscription is pinned to, and what THAT catalog says about FORECASTING. */
+  pinned?: { id: string; includedAtPlan: string | null },
+) {
   const stripeClient = {
     products: { create: jest.fn().mockResolvedValue({ id: "prod_1" }) },
     subscriptionItems: {
@@ -93,11 +98,19 @@ function makeSvc(includedAtPlan: string | null, planKey = "GROWTH") {
         stripeCustomerId: "cus_t1",
         billingInterval: "month",
         cycle: "MONTHLY",
+        planVersionId: pinned?.id ?? null,
       }),
     },
     $transaction: jest.fn(async (fn: any) => fn(auditTx)),
   } as any;
-  const cat = { getPublishedCatalog: jest.fn().mockResolvedValue(catalogWith(includedAtPlan)) };
+  const cat = {
+    getPublishedCatalog: jest.fn().mockResolvedValue(catalogWith(includedAtPlan)),
+    getVersionForTenant: jest.fn(async (id: string | null) =>
+      pinned && id === pinned.id
+        ? { id, ...catalogWith(pinned.includedAtPlan) }
+        : catalogWith(includedAtPlan),
+    ),
+  };
   const svc = new SubscriptionMutationService(
     prisma,
     cat as any,
@@ -120,6 +133,13 @@ describe("B1102 one parser: resolveIncludedAtPlan", () => {
     expect(resolveIncludedAtPlan("SCALE")).toEqual({ ok: true, plan: "SCALE" });
     expect(resolveIncludedAtPlan("BUSINESS")).toEqual({ ok: true, plan: "SCALE" });
     expect(resolveIncludedAtPlan(TYPO)).toEqual({ ok: false });
+  });
+
+  it("SA-786 S10 (row 474): a whitespace-only value is the legacy 'never bundled', like the empty string (not a typo)", () => {
+    expect(resolveIncludedAtPlan("")).toEqual({ ok: true, plan: null });
+    expect(resolveIncludedAtPlan("   ")).toEqual({ ok: true, plan: null });
+    expect(resolveIncludedAtPlan(" \t ")).toEqual({ ok: true, plan: null });
+    expect(resolveIncludedAtPlan(" SCALE ")).toEqual({ ok: true, plan: "SCALE" });
   });
 });
 
@@ -164,18 +184,18 @@ describe("B1102 user-initiated readers answer 409 ADDON_CATALOG_INVALID", () => 
     expect(err.getResponse()).toEqual(BAD);
   });
 
-  it("plan-change retirement throws it for an add-on the tenant holds, not for one it does not", () => {
+  it("plan-change inclusion throws it for an add-on the tenant holds, not for one it does not", () => {
     const skus = [{ sku: "FORECASTING", name: "Forecasting", includedAtPlan: TYPO }];
     const held = { id: "a1", addonKey: "FORECASTING", sku: "FORECASTING", quantity: 1 };
     let err: any;
     try {
-      addonsIncludedAtPlan([held], skus, "SCALE");
+      addonsEnteringInclusion([held], skus, "GROWTH", skus, "SCALE");
     } catch (e) {
       err = e;
     }
     expect(err).toBeInstanceOf(ConflictException);
     expect(err.getResponse()).toEqual(BAD);
-    expect(addonsIncludedAtPlan([], skus, "SCALE")).toEqual([]);
+    expect(addonsEnteringInclusion([], skus, "GROWTH", skus, "SCALE")).toEqual([]);
   });
 });
 
@@ -289,11 +309,13 @@ describe("B1102 a valid key is unchanged", () => {
     });
   });
 
-  it("retirement: a held add-on bundled at the new plan is retired", () => {
+  it("inclusion: a held add-on bundled at the new plan is picked up (and one already included at the old plan is not)", () => {
     const skus = [{ sku: "FORECASTING", name: "Forecasting", includedAtPlan: "SCALE" }];
     const held = { id: "a1", addonKey: "FORECASTING", sku: "FORECASTING", quantity: 1 };
-    expect(addonsIncludedAtPlan([held], skus, "SCALE").map((r) => r.code)).toEqual(["FORECASTING"]);
-    expect(addonsIncludedAtPlan([held], skus, "GROWTH")).toEqual([]);
+    expect(
+      addonsEnteringInclusion([held], skus, "GROWTH", skus, "SCALE").map((r) => r.code),
+    ).toEqual(["FORECASTING"]);
+    expect(addonsEnteringInclusion([held], skus, "GROWTH", skus, "GROWTH")).toEqual([]);
   });
 
   it("adoption: bundled at the plan -> skipped as before, and NO catalog-invalid audit", async () => {
@@ -355,7 +377,7 @@ describe("B1102 a Stripe-first plan change refuses a held invalid add-on before 
           stripeSubId: "sub_1",
           targetPlanKey: "SCALE",
           targetPlanName: "Scale",
-          retireAddons: true,
+          stopBillingAddons: true,
           addonSkus: [{ sku: "FORECASTING", name: "Forecasting", includedAtPlan: TYPO }],
         } as any,
       ),
@@ -365,5 +387,31 @@ describe("B1102 a Stripe-first plan change refuses a held invalid add-on before 
     for (const group of Object.values(stripe)) {
       for (const fn of Object.values(group)) expect(fn).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe("SA-815a: the self-serve 'already in your plan' refusal is judged by the tenant's PINNED catalog", () => {
+  it("pinned version INCLUDES the SKU at SCALE (published no longer does): the preview and the enable both refuse", async () => {
+    const { svc, stripeClient } = makeSvc(null, "SCALE", { id: "v_old", includedAtPlan: "SCALE" });
+
+    const refusal = await svc.addonEnableRefusal("t1", "FORECASTING");
+    expect(refusal).toMatchObject({ code: API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN });
+
+    const err = await rejection(svc.enableAddon("t1", "FORECASTING", 1, "u1"));
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN });
+    expect(stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+  });
+
+  it("control: pinned version does NOT include it (published does): no refusal, the SKU bills as it did on that version", async () => {
+    const { svc } = makeSvc("SCALE", "SCALE", { id: "v_old", includedAtPlan: null });
+    expect(await svc.addonEnableRefusal("t1", "FORECASTING")).toBeNull();
+  });
+
+  it("control: an UNPINNED tenant is judged by the published catalog, as before (no extra catalog read)", async () => {
+    const { svc } = makeSvc("SCALE", "SCALE");
+    expect(await svc.addonEnableRefusal("t1", "FORECASTING")).toMatchObject({
+      code: API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN,
+    });
   });
 });

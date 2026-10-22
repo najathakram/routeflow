@@ -3,7 +3,6 @@
 import * as React from "react";
 import type { ProductPriceGridDto, ProductUnitLevel } from "@routeflow/types";
 import { resolveUnitPrice, unitWords, type LadderProduct } from "@routeflow/pricing";
-import { useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, Skeleton, useToast } from "@routeflow/ui/web";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DecimalInput } from "@/components/MoneyInput";
@@ -21,9 +20,11 @@ import {
 import { cascadePatch, proposeCascade, type CascadeProposal } from "@/lib/unit-cascade";
 import { unitNotListedNotice } from "@/lib/api/tenant-units";
 import { usePriceGrid } from "@/lib/api/usePriceGrid";
+import { MoneyFigure } from "./MoneyFigure";
 import { PriceFigure, TIERS, packRowOf, rowForUnit } from "./PriceFigures";
 import { usePriceWindowOpener } from "./PriceWindowHost";
 import { PriceSaveStatus } from "./ProductPricingV2";
+import { useDefaultOrderUnit } from "./units-v2/structure/useDefaultOrderUnit";
 import { BTN } from "./units-v2/edit/PriceEditBar";
 import { usePriceDraftOptional } from "./units-v2/edit/PriceDraftProvider";
 import {
@@ -58,18 +59,6 @@ const priceOrNull = (v: number | null): number | null => (v != null && v > 0 ? v
 const FIELD =
   "h-10 w-full rounded-md border border-surface-border bg-white px-2.5 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20";
 const LABEL = "mb-1 block text-[11px] font-medium uppercase tracking-wide text-navy/60";
-
-/** F18: the last default change's message, and the single write that undoes it (null once it has been undone). */
-type DefaultNote = {
-  text: string;
-  /** The unit that should be the default while this message is true (null: the pack, i.e. none). */
-  expectedDefaultId: string | null;
-  undo: {
-    body: { id: string; isDefaultSelling: boolean };
-    restoredName: string;
-    restoredId: string | null;
-  } | null;
-};
 
 type Draft = {
   label: string;
@@ -323,9 +312,67 @@ function UnitRow({
   );
 }
 
+/** The badge a read-only row (or the pack row) wears instead of the Default order unit radio. */
+const DefaultBadge = () => (
+  <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[11px] font-medium text-navy">
+    Default order unit
+  </span>
+);
+
+/**
+ * Read-only row (the v2 grid owns every control now): name, size and each tier's price as text. Prices come from the
+ * served grid; with no grid row (the query failed) the unit's own stored prices stand in, as the live row does.
+ */
+function UnitRowReadOnly({
+  unit,
+  grid,
+  tierNames,
+}: {
+  unit: ProductUnitLevel;
+  grid: ProductPriceGridDto | undefined;
+  tierNames: Record<string, string> | undefined;
+}) {
+  const w = unitWords();
+  const row = rowForUnit(grid, unit);
+  const stored = draftOf(unit).prices;
+  return (
+    <li className="rounded-lg border border-surface-border bg-white p-3" data-testid="unit-row">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-sm text-navy">
+          <span className="font-medium">{unit.label}</span>{" "}
+          <span className="text-navy/60">
+            · {unit.factorToBase} {w.baseFor(unit.factorToBase)}
+          </span>
+        </span>
+        {unit.isDefaultSelling && <DefaultBadge />}
+      </div>
+      <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-5">
+        {TIERS.map((t) => {
+          const value = row ? row.cells.find((c) => c.tier === t)?.value : stored[t - 1];
+          return (
+            <div key={t}>
+              <dt className="text-[11px] uppercase tracking-wide text-navy/60">
+                {productTierLabel(tierNames, t)}
+              </dt>
+              <dd>
+                {value == null ? (
+                  <span aria-label="not set">—</span>
+                ) : (
+                  <MoneyFigure value={value} className="font-mono font-medium text-navy" />
+                )}
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+    </li>
+  );
+}
+
 export function ProductUnitsCard({
   product,
   hideAddForm = false,
+  readOnly = false,
 }: {
   product: UnitsCardProduct;
   /**
@@ -333,6 +380,12 @@ export function ProductUnitsCard({
    * goes. A product the shell does not mount it on (family, recipe, variant) keeps this form.
    */
   hideAddForm?: boolean;
+  /**
+   * Owner ruling D-2026-10-18: under the v2 grid this card only reads. Every live control (Add, Remove, Name / size, the
+   * default order unit, Edit prices) sits beside the grid. Applies once the grid has mounted those controls, so until
+   * then (or if its query fails) the card keeps its own, and nothing is ever without a control.
+   */
+  readOnly?: boolean;
 }) {
   const { user } = useAuth();
   // GET /billing/subscription is OPERATOR-only — never fire it (and 403) for other roles.
@@ -349,16 +402,11 @@ export function ProductUnitsCard({
   const [price, setPrice] = React.useState<number | null>(null);
   const [proposals, setProposals] = React.useState<CascadeProposal[]>([]);
   const [removing, setRemoving] = React.useState<ProductUnitLevel | null>(null);
-  const queryClient = useQueryClient();
-  // F18: what the last default change said, and the one write that takes it back. No timer: it stays until the next write,
-  // Dismiss, or leaving the page (WCAG 2.2.1), so a keyboard or screen-reader user is never raced.
-  const [defaultNote, setDefaultNote] = React.useState<DefaultNote | null>(null);
   const cardRef = React.useRef<HTMLDivElement>(null);
   const headingRef = React.useRef<HTMLHeadingElement>(null);
   // K11-20c: under the v2 page's price host, prices are figures that open the floating window (the card writes none).
   const opener = usePriceWindowOpener();
   const pageDraft = usePriceDraftOptional();
-  const ownWrite = React.useRef(false);
   // After Dismiss, Undo or a committed change the CHECKED default radio takes focus (never another radio: one Space press
   // on it would flip the default). It is the pack radio when the pack is the default, so that one is never natively
   // disabled. Focus moves only if it is already on the page's body or inside this card, so a late write never steals it
@@ -378,16 +426,6 @@ export function ProductUnitsCard({
     checked.scrollIntoView?.({ block: "nearest" });
   }, [refocus]);
 
-  // The default that changed under us (another tab, a write that is not a mutation here) makes the message untrue: drop it.
-  // Keyed on the default's id alone, so our own write (whose refetch lands on the id the message names) keeps it.
-  const currentDefaultId = (list.data ?? []).find((u) => u.isDefaultSelling)?.id ?? null;
-  const defaultNoteRef = React.useRef(defaultNote);
-  defaultNoteRef.current = defaultNote;
-  React.useEffect(() => {
-    const n = defaultNoteRef.current;
-    if (n && currentDefaultId !== n.expectedDefaultId) setDefaultNote(null);
-  }, [currentDefaultId]);
-
   // K10d: the same grid the v2 shell reads. Until it has rows the shell has no Add / Remove, so the old ones stay.
   const shellOwns = hideAddForm && !unitStructureGoverned(product);
   const gridQuery = usePriceGrid(product.id, enabled && shellOwns);
@@ -402,19 +440,19 @@ export function ProductUnitsCard({
       }
     : undefined;
   const anyEditable = !!grid?.rows?.some((r) => r.editable);
-  // Any write that is not this card's own default change makes the Undo stale: the unit writes below, the v2 shell's Add /
-  // Remove and anything else on the page all pass through the mutation cache, so one listener covers them all.
-  React.useEffect(
-    () =>
-      queryClient.getMutationCache().subscribe((event) => {
-        if (event.type === "added" && !ownWrite.current) setDefaultNote(null);
-      }),
-    [queryClient],
-  );
+  const units = list.data ?? [];
+  const otherBusy = create.isPending || update.isPending || remove.isPending;
+  // F18: the default order unit's write logic is shared with the v2 shell's units beside the grid.
+  const packName = product.unit || unitWords().pack.one;
+  const dflt = useDefaultOrderUnit(product.id, units, packName, {
+    busy: otherBusy,
+    onSettled: (needInside) => setRefocus((r) => ({ n: r.n + 1, needInside })),
+  });
+  const defaultNote = dflt.note;
+  const busy = otherBusy || dflt.pending;
   if (!enabled) return null;
   const addInShell = shellOwns && shellHasUnitControls(grid);
-  const units = list.data ?? [];
-  const busy = create.isPending || update.isPending || remove.isPending;
+  const ro = readOnly && addInShell;
   const tierNames = tiers;
   // B594: no component-level error toasts — app/providers.tsx's global MutationCache handler
   // already toasts the server's message for every failed mutation, so a second one here doubled it.
@@ -425,59 +463,8 @@ export function ProductUnitsCard({
     if (notice) toast({ title: notice, variant: "info" });
   };
 
-  const packName = product.unit || unitWords().pack.one;
-  /** Run one of the card's default writes without it counting as "another write". */
-  const writeDefault = (body: { id: string; isDefaultSelling: boolean }, onSuccess: () => void) => {
-    ownWrite.current = true;
-    try {
-      update.mutate(body, { onSuccess });
-    } finally {
-      ownWrite.current = false;
-    }
-  };
-
-  /** F18: make `target` the default order unit (null = the pack row), and say so with an inline Undo. */
-  const changeDefault = (target: ProductUnitLevel | null) => {
-    if (busy) return;
-    const prev = units.find((u) => u.isDefaultSelling) ?? null;
-    if (target ? target.isDefaultSelling : prev == null) return;
-    const body = target
-      ? { id: target.id, isDefaultSelling: true }
-      : { id: (prev as ProductUnitLevel).id, isDefaultSelling: false };
-    const undo = prev
-      ? { id: prev.id, isDefaultSelling: true }
-      : { id: (target as ProductUnitLevel).id, isDefaultSelling: false };
-    const restoredName = prev ? prev.label : packName;
-    writeDefault(body, () => {
-      setDefaultNote({
-        text: `${target ? target.label : packName} is now the default order unit.`,
-        expectedDefaultId: target ? target.id : null,
-        undo: { body: undo, restoredName, restoredId: prev ? prev.id : null },
-      });
-      setRefocus((r) => ({ n: r.n + 1, needInside: true }));
-    });
-  };
-
-  const undoDefault = () => {
-    const undo = defaultNote?.undo;
-    if (!undo) return;
-    writeDefault(undo.body, () => {
-      setDefaultNote({
-        text: `${undo.restoredName} is the default order unit again.`,
-        expectedDefaultId: undo.restoredId,
-        undo: null,
-      });
-      setRefocus((r) => ({ n: r.n + 1, needInside: false }));
-    });
-  };
-
-  const dismissDefaultNote = () => {
-    setDefaultNote(null);
-    setRefocus((r) => ({ n: r.n + 1, needInside: false }));
-  };
-
   const save = (unit: ProductUnitLevel, d: Draft) => {
-    setDefaultNote(null);
+    dflt.clearNote();
     const oldPrices = draftOf(unit).prices;
     const newPrices = d.prices.map(priceOrNull);
     // Only a price the operator changed is sent (a draft price that still equals the value the row was seeded with is
@@ -504,7 +491,7 @@ export function ProductUnitsCard({
   };
 
   const applyCascade = async () => {
-    setDefaultNote(null);
+    dflt.clearNote();
     const todo = proposals;
     setProposals([]);
     const results = await Promise.allSettled(
@@ -524,7 +511,7 @@ export function ProductUnitsCard({
 
   const add = () => {
     if (!name.trim() || !factor) return;
-    setDefaultNote(null);
+    dflt.clearNote();
     create.mutate(
       {
         label: name.trim(),
@@ -562,7 +549,7 @@ export function ProductUnitsCard({
           >
             Units &amp; prices
           </h3>
-          {figures && opener && anyEditable && (
+          {figures && opener && anyEditable && !ro && (
             <button
               type="button"
               className={BTN}
@@ -586,11 +573,22 @@ export function ProductUnitsCard({
             <span className="font-medium">{product.unit || w.pack.one}</span>{" "}
             <span className="text-navy/60">
               · {packPieces} {w.baseFor(packPieces)} ·{" "}
-              {figures ? <>the {w.pack.lower}</> : <>the {w.pack.lower} (edit its price above)</>}
+              {figures || ro ? (
+                <>the {w.pack.lower}</>
+              ) : (
+                <>the {w.pack.lower} (edit its price above)</>
+              )}
             </span>
           </span>
           <span className="flex items-center gap-4">
-            {figures ? (
+            {ro ? (
+              <MoneyFigure
+                value={
+                  packRowOf(grid)?.cells.find((c) => c.tier === 1)?.value ?? product.pricePerUnit
+                }
+                className="font-mono font-medium text-navy"
+              />
+            ) : figures ? (
               <PriceFigure
                 row={packRowOf(grid)}
                 tier={1}
@@ -603,32 +601,39 @@ export function ProductUnitsCard({
                 {fmt(Number(product.pricePerUnit) || 0)}
               </span>
             )}
-            <label className="flex items-center gap-2 text-navy">
-              <input
-                type="radio"
-                name={DEFAULT_RADIO}
-                aria-describedby={DEFAULT_HINT_ID}
-                checked={noneDefault}
-                // Never natively disabled: a disabled radio drops focus the moment it becomes the checked default, so a
-                // screen-reader user would hear nothing. aria-disabled keeps it focusable; activating it does nothing.
-                aria-disabled={busy || noneDefault || undefined}
-                onChange={() => {
-                  if (!busy && !noneDefault) changeDefault(null);
-                }}
-                onKeyDown={radioKeys(() => {
-                  if (!busy && !noneDefault) changeDefault(null);
-                })}
-              />
-              Default order unit
-            </label>
+            {ro ? (
+              noneDefault && <DefaultBadge />
+            ) : (
+              <label className="flex items-center gap-2 text-navy">
+                <input
+                  type="radio"
+                  name={DEFAULT_RADIO}
+                  aria-describedby={DEFAULT_HINT_ID}
+                  checked={noneDefault}
+                  // Never natively disabled: a disabled radio drops focus the moment it becomes the checked default, so a
+                  // screen-reader user would hear nothing. aria-disabled keeps it focusable; activating it does nothing.
+                  aria-disabled={busy || noneDefault || undefined}
+                  onChange={() => {
+                    if (!busy && !noneDefault) dflt.change(null);
+                  }}
+                  onKeyDown={radioKeys(() => {
+                    if (!busy && !noneDefault) dflt.change(null);
+                  })}
+                />
+                Default order unit
+              </label>
+            )}
           </span>
         </div>
 
         {/* F18: always mounted, so the text it receives is announced. Undo and Dismiss sit beside it, not inside it. */}
-        <p id={DEFAULT_HINT_ID} className="sr-only">
-          {DEFAULT_HINT}
-        </p>
+        {!ro && (
+          <p id={DEFAULT_HINT_ID} className="sr-only">
+            {DEFAULT_HINT}
+          </p>
+        )}
         <div
+          hidden={ro}
           className={
             defaultNote
               ? "flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-surface-raised px-3 py-2 text-sm text-navy"
@@ -639,7 +644,7 @@ export function ProductUnitsCard({
             {defaultNote?.text ?? ""}
           </p>
           {defaultNote?.undo && (
-            <Button size="sm" variant="secondary" onClick={undoDefault} disabled={busy}>
+            <Button size="sm" variant="secondary" onClick={dflt.undo} disabled={busy}>
               Undo
             </Button>
           )}
@@ -648,7 +653,7 @@ export function ProductUnitsCard({
               type="button"
               className="inline-flex min-h-11 items-center px-1 text-xs font-medium text-brand-600 underline"
               aria-label="Dismiss the default order unit message"
-              onClick={dismissDefaultNote}
+              onClick={dflt.dismiss}
             >
               Dismiss
             </button>
@@ -677,25 +682,29 @@ export function ProductUnitsCard({
           </p>
         ) : (
           <ul className="space-y-3">
-            {units.map((u) => (
-              <UnitRow
-                key={u.id}
-                unit={u}
-                product={product}
-                units={units}
-                tierNames={tierNames}
-                busy={busy}
-                onSave={save}
-                onDelete={setRemoving}
-                hideRemove={shellOwns && !gridQuery.isError && shellRemovesUnit(grid, u.id)}
-                figures={figureCtx}
-                onMakeDefault={changeDefault}
-              />
-            ))}
+            {units.map((u) =>
+              ro ? (
+                <UnitRowReadOnly key={u.id} unit={u} grid={grid} tierNames={tierNames} />
+              ) : (
+                <UnitRow
+                  key={u.id}
+                  unit={u}
+                  product={product}
+                  units={units}
+                  tierNames={tierNames}
+                  busy={busy}
+                  onSave={save}
+                  onDelete={setRemoving}
+                  hideRemove={shellOwns && !gridQuery.isError && shellRemovesUnit(grid, u.id)}
+                  figures={figureCtx}
+                  onMakeDefault={dflt.change}
+                />
+              ),
+            )}
           </ul>
         )}
 
-        {!addInShell && (
+        {!addInShell && !ro && (
           <form
             className="grid grid-cols-2 items-end gap-3 border-t border-surface-border pt-3 sm:grid-cols-4"
             onSubmit={(e) => {
@@ -758,7 +767,7 @@ export function ProductUnitsCard({
         loading={remove.isPending}
         onConfirm={() => {
           if (!removing) return;
-          setDefaultNote(null);
+          dflt.clearNote();
           remove.mutate(removing.id, {
             onSuccess: () => setRemoving(null),
             onError: () => setRemoving(null),

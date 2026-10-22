@@ -15,6 +15,7 @@ import {
   ValidationPipe,
 } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
+import { taxPercentPrecisionError } from "@routeflow/pricing";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -160,6 +161,13 @@ export class SettingsController {
       if (!Number.isFinite(n) || n < 0 || n > 100) {
         throw new BadRequestException("Tax rate must be between 0 and 100 (percent)");
       }
+      // R5-1 (SA-814 §3): a percent carries at most 4 decimals (the 6-dp line fraction), 400 beyond that.
+      // Review Q5: a rate equal to the tenant's stored one passes whatever its decimals; only a CHANGED rate is capped.
+      const precision =
+        taxPercentPrecisionError(dto.taxRate) === null
+          ? null
+          : taxPercentPrecisionError(dto.taxRate, await this.svc.get("settings.taxRate"));
+      if (precision) throw new BadRequestException(precision);
     }
 
     // SA-738 R16-4: `timezone` is TENANT_ADMIN only (403) and must be an IANA zone (400), checked

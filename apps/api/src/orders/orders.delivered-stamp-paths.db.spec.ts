@@ -312,6 +312,9 @@ describeDb("SA-763r — the delivered stamp through the real writers, real Postg
             user: operator(),
             notes: "CANCEL",
             bookedFloor,
+            // As counter-sale-void.service.ts passes it (SA-814h): the void step above already undid the
+            // hand-over, so the B692 under-lock delivery-state refusal does not apply to a counter void.
+            skipDeliveryStateCheck: true,
           },
         );
       }),

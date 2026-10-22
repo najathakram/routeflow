@@ -158,6 +158,7 @@ describe("billing export projection (B1187)", () => {
       "reconciliation.snapshot_backfilled",
       "coupon.unbilled",
       "coupon.billed",
+      "addon.state_changed",
     ]);
   });
 

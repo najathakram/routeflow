@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -9,10 +10,25 @@ import {
   useVendorBill,
   useReceiveVendorBill,
   useVoidVendorBill,
+  useMoveVendorBillPaymentToCredit,
   getUnlinkedItemsError,
   billNeedsMapping,
 } from "../../../lib/api/vendor-bills";
 import { vendorBillPillFor as billPill } from "../../../lib/vendor-bill-logic";
+import {
+  billHasPaymentsRefusal,
+  canOfferMoveAll,
+  usd,
+  isMovableBillPayment,
+  movablePayments,
+  moveToCreditFailureCopy,
+  movePaymentConfirmCopy,
+  movePaymentsConfirmCopy,
+  movedToCreditCopy,
+  voidRefusalCopy,
+} from "../../../lib/vendor-bill-payments-logic";
+import { paymentMethodLabel } from "../../../lib/payment-methods";
+import type { VendorBillPayment } from "../../../lib/api/vendor-bills";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 import { getPackSizeUnknownError, packSizeUnknownPrompt } from "../../../lib/pack-size-unknown";
@@ -23,12 +39,23 @@ function formatCurrency(n: number | string | undefined): string {
   return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
 }
 
+/** Payment dates are real timestamps (not calendar dates): render in the viewer's local time. */
+function fmtPaymentDate(pmt: VendorBillPayment): string {
+  return new Date(pmt.paidAt ?? pmt.createdAt).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 export default function VendorBillDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data: bill, isLoading } = useVendorBill(id);
+  const { data: bill, isLoading, refetch } = useVendorBill(id);
+  const [moving, setMoving] = useState(false);
   const receiveMut = useReceiveVendorBill();
   const voidMut = useVoidVendorBill();
+  const moveMut = useMoveVendorBillPaymentToCredit();
 
   if (isLoading || !bill) {
     return (
@@ -87,6 +114,37 @@ export default function VendorBillDetailScreen() {
       },
     );
 
+  /** Move the given cash payments to supplier credit one at a time (the endpoint is per payment). */
+  const movePayments = async (payments: VendorBillPayment[]) => {
+    setMoving(true);
+    let moved = 0;
+    let total = 0;
+    try {
+      for (const pmt of payments) {
+        await moveMut.mutateAsync({ billId: bill.id, paymentId: pmt.id });
+        moved += 1;
+        total += Number(pmt.amount);
+      }
+      showToast(movedToCreditCopy(moved, total));
+    } catch (e) {
+      // Earlier payments in this run did move; the refresh in onSettled shows what is left.
+      showToast(
+        moved > 0
+          ? `${movedToCreditCopy(moved, total)}. ${moveToCreditFailureCopy(e)}`
+          : moveToCreditFailureCopy(e),
+      );
+    } finally {
+      setMoving(false);
+    }
+  };
+
+  const onMovePayment = (pmt: VendorBillPayment) => {
+    const copy = movePaymentConfirmCopy(pmt, bill.status, fmtPaymentDate(pmt));
+    confirm(copy.title, copy.message, () => void movePayments([pmt]), {
+      confirmText: copy.confirmText,
+    });
+  };
+
   const onVoid = () =>
     confirm(
       "Void bill?",
@@ -94,7 +152,31 @@ export default function VendorBillDetailScreen() {
       () =>
         voidMut.mutate(bill.id, {
           onSuccess: () => showToast("Bill voided"),
-          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+          onError: (e: any) => {
+            // B288: cash payments sit on the bill. Refetch first so the prompt is built from the
+            // server's current payments, and offer move-all only if it matches the refusal amount.
+            const refusal = billHasPaymentsRefusal(e);
+            if (refusal.kind !== "has-payments") {
+              showToast(voidRefusalCopy(e));
+              return;
+            }
+            void refetch().then((r) => {
+              const cash = movablePayments(r.data?.payments);
+              if (canOfferMoveAll(cash, refusal.amount)) {
+                const copy = movePaymentsConfirmCopy(cash);
+                confirm(
+                  "Bill has payments",
+                  `${voidRefusalCopy(e)}
+
+${copy.message}`,
+                  () => void movePayments(cash),
+                  { confirmText: copy.confirmText },
+                );
+              } else {
+                showToast(voidRefusalCopy(e));
+              }
+            });
+          },
         }),
       { confirmText: "Void", destructive: true },
     );
@@ -174,6 +256,47 @@ export default function VendorBillDetailScreen() {
           </>
         ) : null}
 
+        {/* Payments (B288: cash can be moved to a supplier credit) */}
+        {(bill.payments?.length ?? 0) > 0 ? (
+          <>
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>Payments</Text>
+            </View>
+            <View style={styles.itemsList}>
+              {bill.payments!.map((pmt, i) => (
+                <View
+                  key={pmt.id}
+                  style={[
+                    styles.itemRow,
+                    i > 0 && {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: ios.separator,
+                    },
+                  ]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.itemName}>{usd(Number(pmt.amount))}</Text>
+                    <Text style={styles.itemMeta}>
+                      {paymentMethodLabel(pmt.method)} · {fmtPaymentDate(pmt)}
+                      {pmt.reference ? ` · ${pmt.reference}` : ""}
+                    </Text>
+                    {isMovableBillPayment(pmt) ? (
+                      <Pressable
+                        onPress={() => onMovePayment(pmt)}
+                        disabled={moveMut.isPending || moving}
+                        accessibilityRole="button"
+                        hitSlop={8}
+                      >
+                        <Text style={styles.linkText}>Move to supplier credit</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                </View>
+              ))}
+            </View>
+          </>
+        ) : null}
+
         {/* Actions */}
         {bill.status === "DRAFT" || bill.status === "RECEIVED" || bill.status === "PARTIAL" ? (
           <View style={styles.actionsRow}>
@@ -187,7 +310,11 @@ export default function VendorBillDetailScreen() {
                 <Text style={styles.primaryBtnText}>Mark received</Text>
               </Pressable>
             ) : null}
-            <Pressable style={styles.ghostBtn} onPress={onVoid} disabled={voidMut.isPending}>
+            <Pressable
+              style={styles.ghostBtn}
+              onPress={onVoid}
+              disabled={voidMut.isPending || moveMut.isPending || moving}
+            >
               <Text style={styles.ghostBtnText}>Void</Text>
             </Pressable>
           </View>
@@ -266,6 +393,7 @@ const styles = StyleSheet.create({
     color: ios.label,
     fontVariant: ["tabular-nums"],
   },
+  linkText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand, marginTop: 6 },
   actionsRow: { flexDirection: "row", gap: 10, paddingHorizontal: 16, marginTop: 24 },
   primaryBtn: {
     flex: 1,

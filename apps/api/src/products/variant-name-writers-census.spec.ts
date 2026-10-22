@@ -42,7 +42,7 @@ function walk(dir: string, out: string[] = []): string[] {
 const GUARDED: Record<string, { calls: number; why: string }> = {
   "products/products.service.ts": {
     calls: 2,
-    why: "create() and update() strip dto.name / dto.variantName before the name guard and the uniqueness check; bulkAssignParent, make-variant, link-existing, the web save, the mobile edit and the import create/update all reach one of the two",
+    why: "create() and update() strip dto.name / dto.variantName before the name guard and the uniqueness check; bulkAssignParent (via assignToParent), make-variant, link-existing, the web save, the mobile edit and the import create/update all reach one of the two",
   },
   "products/product-families.service.ts": {
     calls: 3,
@@ -62,6 +62,8 @@ const ROUTED: Record<string, string> = {
 
 /** Files that match the scan but never write a variant label, each with the reason. */
 const ALLOWED: Record<string, string> = {
+  "import/import.service.ts":
+    "SA-823 PR-2: a Family row's new variant is built as a create() dto (name = variantName = the bare label from the planner) and handed to ProductsService.create; it writes no Product row itself",
   "buyer/buyer-catalog-where.ts": "a search filter on variantName (read)",
   "common/safe-text-cell.ts": "the field-label map for the formula-lead refusal copy",
   "common/text-cell-guards.ts": "the formula-lead guard: reads the candidate name, writes nothing",
@@ -72,6 +74,10 @@ const ALLOWED: Record<string, string> = {
   "orders/orders.service.ts": "a select of variantName (read)",
   "product-labels/product-labels.service.ts": "a select of variantName (read)",
   "products/dto/bulk-assign-parent.dto.ts": "the request DTO (validated, then handed to update())",
+  "products/product-parent.ts":
+    "writeFamilyAssigned: variantName is AUDIT META on product.family_assigned (SA-823b); writes no product row",
+  "import/product-family-import.service.ts":
+    "SA-823 PR-2: plans the import's Family rows read-only; the label comes from bareVariantLabel (the one normaliser) and is handed to assignToParent / create, so it writes no product row of its own",
   "products/family-price.ts":
     "propagates PRICE columns to a family's variants (where: parentProductId); writes no name",
 };
@@ -159,15 +165,16 @@ type BlockPin = {
 const BLOCKS: Record<string, BlockPin> = {
   "src/products/products.service.ts": {
     blocks: { "create:create+": 1, "update:update+": 1, "importFromZoho:create": 1 },
-    why: "create() and update() call bareVariantNames first (the web save, mobile edit, make-variant, link-existing, bulkAssignParent and every importer reach them); importFromZoho creates a standalone product (no parentProductId, no variantName)",
+    why: "create() and update() call bareVariantNames first (the web save, mobile edit, make-variant, link-existing, assignToParent (bulkAssignParent) and every importer reach them); importFromZoho creates a standalone product (no parentProductId, no variantName)",
   },
   "src/products/product-families.service.ts": {
     blocks: {
-      "createFamily:create+": 2,
+      "createFamily:create+": 1,
+      "createFamilyContainer:create": 1,
       "updateVariants:create+": 1,
       "updateVariants:update+": 1,
     },
-    why: "the family row and its variants (createFamily), added and renamed rows (updateVariants): bareRowNames runs before each function builds its rows",
+    why: "the grid's variants (createFamily) and added and renamed rows (updateVariants); the variants this editor creates, in createFamily and as updateVariants' added rows, each write a product.family_assigned row (via family_editor, SA-823b) through writeFamilyAssigned: bareRowNames runs before each function builds its rows. createFamilyContainer is the ONE FAMILY writer: a bare container name, parentProductId null, never a variant label; its callers ran assertSafeProductNames and reserveFamilyName",
   },
   "src/inventory/inventory.service.ts": {
     blocks: {
@@ -208,8 +215,8 @@ const BLOCKS: Record<string, BlockPin> = {
     why: "completes an import-created product's price / unit / unitsPerBox / category with conditional spreads (`...(dto.x !== undefined && { x })`, surfaced by the parenthesised-spread rule); the dto has no name field and the row's label is never touched",
   },
   "src/vendor-bills/vendor-bills.service.ts": {
-    blocks: { "receive:update": 1, "revertToDraft:update": 1, "voidBill:update": 1 },
-    why: "bill receive / revert / void move currentStock and averageCost (`...(updatesAverage ? { averageCost } : {})`, surfaced by the parenthesised-spread rule); they write no name",
+    blocks: { "receive:update": 1, "appendBillReversals:update": 1 },
+    why: "bill receive, and the one shared reversal revert and void both go through (SA-808), move currentStock and averageCost (`...(updatesAverage ? { averageCost } : {})`, surfaced by the parenthesised-spread rule); they write no name",
   },
   "prisma/seed.ts": {
     blocks: { "main:upsert": 1 },

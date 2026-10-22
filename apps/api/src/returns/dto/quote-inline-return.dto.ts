@@ -12,6 +12,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { RequireBoxesOrPiecesPositive } from "./require-boxes-or-pieces.validator";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 export class QuoteInlineReturnItemDto {
   @IsString()
@@ -50,7 +51,7 @@ export class QuoteInlineReturnItemDto {
    * chunk (`applyCreditOverride`). Requires `overrideReason`, on the quote AND the capture, so both
    * price the same chunks; a DRIVER/CUSTOMER request carrying either field is a 400.
    */
-  @IsOptional()
+  @IsOptionalNotNull()
   @IsNumber({ maxDecimalPlaces: 2, allowNaN: false, allowInfinity: false })
   @Min(0)
   creditUnitPrice?: number;

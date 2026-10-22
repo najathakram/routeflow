@@ -6,17 +6,12 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn } from "@routeflow/ui/web";
-import type { TodaysHandOverRow, TodaysSaleMethod } from "@routeflow/types";
+import { COUNTER_METHOD_LABEL } from "@routeflow/pricing";
+import type { TodaysHandOverRow } from "@routeflow/types";
 import { formatReceiptMoney as money } from "@/lib/counter-receipt";
 import { guardCounterLeave } from "@/lib/counter-cart-signal";
 
-export const METHOD_LABEL: Record<TodaysSaleMethod, string> = {
-  CASH: "Cash",
-  CARD: "Card",
-  CHECK: "Check",
-  OTHER: "Other",
-  STORE_CREDIT: "Store credit",
-};
+export const METHOD_LABEL = COUNTER_METHOD_LABEL;
 
 /** `Pickup hand-overs · N · $X`: N and $X are the server's `summary.handOvers`, so a day with none still reads $0.00. */
 export const handOverHeading = (h: { count: number; total: number }) =>

@@ -7,6 +7,7 @@ import {
   buildUnitOptions,
   defaultUnitValue,
   withLayerPrices,
+  type OwnPackBasis,
   type UnitOption,
 } from "@/lib/unit-options";
 import { isShapedLine } from "@/lib/default-unit-line";
@@ -38,6 +39,11 @@ export interface OrderLineUnitPickerLine extends DerivedBaseMarker {
    * system price. Absent or false = master: every MANUAL line is the operator's and the picker never re-prices it.
    */
   layerManual?: boolean;
+  /**
+   * Row 630: an EXISTING line's own pack price and size as stored (the order edit's loaded pack lines). Its derived Piece is
+   * that price over that size, never the customer's live layer price over the product's current pack size. Absent = a fresh line.
+   */
+  ownPack?: OwnPackBasis | null;
 }
 
 /**
@@ -83,6 +89,12 @@ function OrderLineUnitPickerInner({
     [line.unit, line.unitsPerBox, line.listPrice, line.packBase, line.tierPrices],
   );
   const packPrice = line.packBase?.unitPrice ?? line.unitPrice;
+  // a stable reference (the caller builds the object each render): the options below must not re-derive on every render
+  const ownPack = React.useMemo(
+    () => line.ownPack ?? null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [line.ownPack?.unitPrice, line.ownPack?.unitsPerBox],
+  );
   const options = React.useMemo<UnitOption[]>(() => {
     if (!enabled || !units.data || units.data.length === 0) return [];
     try {
@@ -91,11 +103,12 @@ function OrderLineUnitPickerInner({
         product,
         tier,
         layer,
+        ownPack,
       );
     } catch {
       return []; // display-only: a bad tier never unmounts the order form (the server 400s on save)
     }
-  }, [enabled, units.data, product, tier, packPrice, layer]);
+  }, [enabled, units.data, product, tier, packPrice, layer, ownPack]);
 
   const startedRef = React.useRef(false);
   React.useEffect(() => {
@@ -168,6 +181,7 @@ function OrderLineUnitPickerInner({
       tier={tier}
       packPrice={packPrice}
       layer={layer}
+      ownPack={ownPack}
       ariaLabel={`Sell ${line.productName} by`}
       value={unitPickerValueOf(line)}
       onChange={(label) => {

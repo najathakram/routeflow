@@ -302,6 +302,7 @@ describeDb("#2476 webhook ledger exclusive claim on redelivery (real Postgres, S
         prisma as any,
         { log: async () => undefined } as any,
         { server: { to: () => ({ emit: () => undefined }) } } as any,
+        { flagForReview: async () => "no_matching_payment" } as any,
       );
       return { ctl, calls };
     }

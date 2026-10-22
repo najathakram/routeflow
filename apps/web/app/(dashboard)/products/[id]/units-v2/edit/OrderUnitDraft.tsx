@@ -9,7 +9,7 @@ import { usePriceDraft } from "./usePriceDraft";
 export const ORDER_UNIT_SWITCH_OFF = "Available after units settings update";
 
 /**
- * V06: the order unit control. Switching it waits for U-1, so in edit mode it stays visible but disabled
+ * V06: the pricing unit control (the U-1 anchor; K12: labelled "Pricing unit" so it never reads like the "Default order unit" select). Switching it waits for U-1, so in edit mode it stays visible but disabled
  * (aria-disabled, never silently gone) with the reason beside it. It shows the current order unit, read-only.
  */
 export function OrderUnitDraft() {
@@ -17,10 +17,10 @@ export function OrderUnitDraft() {
   const reasonId = React.useId();
   if (!grid) return null;
   return (
-    <div className="mt-3 text-sm text-navy">
-      <label className="flex items-center gap-2">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-navy/60">
-          Order unit
+    <div data-testid="order-unit-footer" data-wide-inset="" className="mb-4 mt-3 text-sm text-navy">
+      <label className="block min-w-[12rem]">
+        <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-navy/60">
+          Pricing unit
         </span>
         <select
           data-testid={T.orderUnit}
@@ -33,7 +33,7 @@ export function OrderUnitDraft() {
           onKeyDown={(e) => {
             if (e.key !== "Tab") e.preventDefault();
           }}
-          className={`h-9 cursor-not-allowed rounded-md border bg-white px-2.5 text-sm text-navy opacity-60 ${FIELD_BORDER}`}
+          className={`h-9 w-full cursor-not-allowed rounded-md border bg-white px-2.5 text-sm text-navy opacity-60 ${FIELD_BORDER}`}
         >
           {[...grid.rows]
             .sort((a, b) => b.factor - a.factor)

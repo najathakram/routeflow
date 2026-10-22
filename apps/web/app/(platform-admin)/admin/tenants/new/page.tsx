@@ -2,27 +2,31 @@
 
 import * as React from "react";
 import Link from "next/link";
-import {
-  API_ERROR_CODES,
-  PLAN_KEYS,
-  type BusinessProfileKey,
-  type BusinessProfilePreviewResponse,
-  type BusinessProfileSummary,
-} from "@routeflow/types";
+import { API_ERROR_CODES, PLAN_KEYS, type ManualActivationAddons } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pricing";
 import {
-  applyBusinessProfile,
-  previewBusinessProfile,
-  fetchBusinessProfiles,
-} from "@/lib/platform-admin/business-profiles";
+  applyBusinessCapabilities,
+  fetchCapabilityCatalog,
+  previewBusinessCapabilities,
+  type BusinessCapabilitiesPreviewResponse,
+  type CapabilityAvailability,
+  type CapabilityPresetSummary,
+} from "@/lib/platform-admin/capabilities-contract";
 import { activateSubscription } from "@/lib/platform-admin/activate-subscription";
 import { enableTenantAddon, fetchFeatureRegistry } from "@/lib/platform-admin/features";
-import { BusinessProfileChoices } from "../[id]/_features/BusinessProfileChoices";
+import { CapabilityChoices } from "../[id]/_features/CapabilityChoices";
+import { CapabilityReviewModal } from "../[id]/_features/CapabilityReviewModal";
+import {
+  NO_TICKS,
+  nothingTicked,
+  tickedNames,
+  ticksToRequest,
+  type CapabilityTicks,
+} from "../[id]/_features/capability-ticks";
 import { profileErrorCopy } from "../[id]/_features/profile-errors";
-import { profilePlainCopy } from "../[id]/_features/profile-plain-copy";
-import { BusinessProfilePreviewModal } from "../[id]/_features/BusinessProfilePreviewModal";
 import { planLabel } from "../../../_components/AdminBadge";
+import { ActivationAddonChecklist } from "../../../_components/ActivationAddonChecklist";
 import { selectablePlanKeys } from "../../../_components/usePlanOptions";
 import { TimeZoneInput } from "@/components/TimeZoneInput";
 import {
@@ -48,7 +52,6 @@ import {
   type FreeAddon,
 } from "./_components/FreeAddonsSection";
 import { ReviewCreateSheet } from "./_components/ReviewCreateSheet";
-import { setupLines } from "./_components/setup-lines";
 
 interface CreatedTenant {
   slug: string;
@@ -198,28 +201,33 @@ export default function AdminCreateTenantPage() {
   const [plans, setPlans] = React.useState<PlanCatalogEntry[]>([]);
   const [plansLoading, setPlansLoading] = React.useState(true);
   const [plansUnavailable, setPlansUnavailable] = React.useState(false);
-  // Business profile: "" = Custom (the account starts exactly as before). The create API takes no profile, so a
-  // chosen one is applied to the new tenant right after the create succeeds.
-  const [profiles, setProfiles] = React.useState<BusinessProfileSummary[] | null>(null);
-  const [profilesFailed, setProfilesFailed] = React.useState(false);
-  const [profile, setProfile] = React.useState<BusinessProfileKey | "">("");
+  // What this business does (BO-05): nothing ticked = the account starts exactly as before (the plan's defaults).
+  // The create API takes no capabilities, so ticks are applied to the new tenant right after the create succeeds.
+  const [presets, setPresets] = React.useState<CapabilityPresetSummary[]>([]);
+  const [availability, setAvailability] = React.useState<CapabilityAvailability>({});
+  const [presetsFailed, setPresetsFailed] = React.useState(false);
+  const [ticks, setTicks] = React.useState<CapabilityTicks>(NO_TICKS);
   const [profileResult, setProfileResult] = React.useState<
     | { status: "applied"; label: string; summary?: string[] }
     | { status: "failed"; reason: string }
     | null
   >(null);
-  /** A profile that would stop billing is never auto-applied: the admin reviews it here first. */
+  /** A plan that would stop billing is never auto-applied: the admin reviews it here first. */
   const [profileReview, setProfileReview] = React.useState<{
     tenantId: string;
-    key: BusinessProfileKey;
+    ticks: CapabilityTicks;
     label: string;
-    response: BusinessProfilePreviewResponse;
+    response: BusinessCapabilitiesPreviewResponse;
   } | null>(null);
   const [reviewApplying, setReviewApplying] = React.useState(false);
   const [reviewError, setReviewError] = React.useState<string | null>(null);
   // Plan and start (SA-2)
   const [startAs, setStartAs] = React.useState<StartAs>(START_AS_DEFAULT);
   const [startedLine, setStartedLine] = React.useState<string | null>(null);
+  // SA-788 (c): the new tenant's add-ons as the activation left them (shown under the start line).
+  const [activationAddons, setActivationAddons] = React.useState<ManualActivationAddons | null>(
+    null,
+  );
   const [activationFailed, setActivationFailed] = React.useState(false);
   // Free add-ons (SA-2): comped after the account exists, never billed.
   const [addonList, setAddonList] = React.useState<FreeAddon[] | null>(null);
@@ -276,12 +284,14 @@ export default function AdminCreateTenantPage() {
 
   React.useEffect(() => {
     let cancelled = false;
-    fetchBusinessProfiles()
-      .then((list) => {
-        if (!cancelled) setProfiles(list);
+    fetchCapabilityCatalog()
+      .then((catalog) => {
+        if (cancelled) return;
+        setPresets(catalog.presets);
+        setAvailability(catalog.availability);
       })
       .catch(() => {
-        if (!cancelled) setProfilesFailed(true);
+        if (!cancelled) setPresetsFailed(true);
       });
     return () => {
       cancelled = true;
@@ -330,7 +340,7 @@ export default function AdminCreateTenantPage() {
     };
 
   const mode = effectiveMode(form.plan, startAs.mode);
-  const chosenProfile = profiles?.find((p) => p.key === profile);
+  const hasTicks = !nothingTicked(ticks);
   const planEntry = plans.find((p) => p.planKey === form.plan);
 
   /** The add-ons the admin ticked, in the list's order. */
@@ -346,9 +356,8 @@ export default function AdminCreateTenantPage() {
     }`,
     billingLine: billingLine(mode, startAs),
     setupTitle: "Setup",
-    setupLines: chosenProfile
-      ? setupLines(chosenProfile)
-      : ["Plan defaults only. Nothing else is turned on."],
+    // Only the ticked names: the sheet derives no mode (the preview after the create says what they mean).
+    setupLines: hasTicks ? tickedNames(ticks) : ["Plan defaults only. Nothing else is turned on."],
     addonLabels: chosenAddons.map((a) => a.label),
   };
 
@@ -369,31 +378,26 @@ export default function AdminCreateTenantPage() {
     setAddonFailures(failed);
   }
 
-  /** The profile step: preview the new tenant, then confirm that plan. Returns true when a billing-stop review opened. */
+  /** The capabilities step: preview the new tenant, then confirm that plan. Returns true when a billing-stop review opened. */
   async function runProfile(tenantId: string): Promise<boolean> {
-    // Its own try/catch: once the account exists, a failed profile must not read as "Failed to create tenant".
+    // Its own try/catch: once the account exists, a failed apply must not read as "Failed to create tenant".
     try {
       // confirm needs the plan it applies (#3199): preview the new tenant, confirm that plan
-      const label = chosenProfile
-        ? profilePlainCopy(chosenProfile.key, chosenProfile.label, chosenProfile.description).name
-        : "";
-      const preview = await previewBusinessProfile(tenantId, profile as BusinessProfileKey);
+      const label = tickedNames(ticks).join(", ");
+      const body = ticksToRequest(ticks);
+      const preview = await previewBusinessCapabilities(tenantId, body);
+      if (preview.blocked) {
+        // nothing is applied; the banner sends the admin to Setup, where the same preview says why
+        setProfileResult({ status: "failed", reason: "" });
+        return false;
+      }
       if ((preview.plan?.billing?.length ?? 0) > 0) {
         // stopping billing is never silent: show the preview and let the admin confirm (#3220)
         afterReview.current = { tenantId };
-        setProfileReview({
-          tenantId,
-          key: profile as BusinessProfileKey,
-          label,
-          response: preview,
-        });
+        setProfileReview({ tenantId, ticks, label, response: preview });
         return true;
       }
-      const applied = await applyBusinessProfile(
-        tenantId,
-        profile as BusinessProfileKey,
-        preview.planFingerprint,
-      );
+      const applied = await applyBusinessCapabilities(tenantId, body, preview.planFingerprint);
       profileComped.current = compedKeys(applied);
       setProfileResult({ status: "applied", label, summary: appliedSummary(applied) });
     } catch (applyErr: unknown) {
@@ -402,7 +406,7 @@ export default function AdminCreateTenantPage() {
     return false;
   }
 
-  /** The chain: create → activate (if Start active) → profile → free add-ons. Not atomic: each step reports itself. */
+  /** The chain: create → activate (if Start active) → capabilities → free add-ons. Not atomic: each step reports itself. */
   async function runCreate() {
     setSheetOpen(false);
     setIsLoading(true);
@@ -411,6 +415,7 @@ export default function AdminCreateTenantPage() {
     setSuccess(null);
     setProfileResult(null);
     setStartedLine(null);
+    setActivationAddons(null);
     setActivationFailed(false);
     setAddonFailures([]);
     profileComped.current = new Set();
@@ -459,13 +464,14 @@ export default function AdminCreateTenantPage() {
       if (!created.id) return;
       if (mode === "active") {
         try {
-          await activateSubscription(created.id, {
+          const activated = await activateSubscription(created.id, {
             plan: form.plan,
             paymentMethod: startAs.paymentMethod,
             billingPeriodDays: startAs.billingPeriodDays,
             ...(startAs.paymentRef.trim() ? { paymentRef: startAs.paymentRef.trim() } : {}),
           });
           setStartedLine(billingLine("active", startAs));
+          setActivationAddons(activated.addons ?? null);
         } catch {
           // Nothing after a failed activation runs: the banner names the step and links the tenant's Billing tab.
           setActivationFailed(true);
@@ -474,7 +480,7 @@ export default function AdminCreateTenantPage() {
       } else {
         setStartedLine(billingLine("trial", startAs));
       }
-      if (profile) {
+      if (hasTicks) {
         reviewOpened = await runProfile(created.id);
         if (reviewOpened) return;
       }
@@ -498,9 +504,9 @@ export default function AdminCreateTenantPage() {
     setReviewError(null);
     let applied = false;
     try {
-      const response = await applyBusinessProfile(
+      const response = await applyBusinessCapabilities(
         profileReview.tenantId,
-        profileReview.key,
+        ticksToRequest(profileReview.ticks),
         profileReview.response.planFingerprint,
       );
       profileComped.current = compedKeys(response);
@@ -512,7 +518,7 @@ export default function AdminCreateTenantPage() {
       setProfileReview(null);
       applied = true;
     } catch (err: unknown) {
-      setReviewError(profileErrorCopy(err, "Could not apply that business profile. Try again."));
+      setReviewError(profileErrorCopy(err, "Could not apply this change. Try again."));
     } finally {
       setReviewApplying(false);
     }
@@ -589,14 +595,14 @@ export default function AdminCreateTenantPage() {
                   <p className="text-sm font-semibold text-amber-300">
                     Created {nameForBanner}, but activation didn&apos;t finish. Open Billing to
                     finish it.
-                    {(profile || chosenAddons.length > 0) && (
+                    {(hasTicks || chosenAddons.length > 0) && (
                       <span className="font-normal">
                         {" "}
                         The{" "}
-                        {[profile ? "profile" : "", chosenAddons.length ? "free add-ons" : ""]
+                        {[hasTicks ? "setup" : "", chosenAddons.length ? "free add-ons" : ""]
                           .filter(Boolean)
                           .join(" and ")}{" "}
-                        {profile && chosenAddons.length ? "were" : "was"} not applied.
+                        {hasTicks && chosenAddons.length ? "were" : "was"} not applied.
                       </span>
                     )}
                   </p>
@@ -606,8 +612,8 @@ export default function AdminCreateTenantPage() {
                     className="text-sm font-semibold text-amber-300"
                     data-testid="profile-apply-failed"
                   >
-                    Created {nameForBanner}, but the profile didn&apos;t apply. Open Setup to finish
-                    it.
+                    Created {nameForBanner}, but what this business does didn&apos;t save. Open
+                    Setup to finish it.
                     {profileResult.reason && (
                       <span className="font-normal"> {profileResult.reason}</span>
                     )}
@@ -634,6 +640,7 @@ export default function AdminCreateTenantPage() {
                     {startedLine}
                   </p>
                 )}
+                {startedLine && <ActivationAddonChecklist addons={activationAddons} />}
               </>
             )}
             {success.welcomeEmail &&
@@ -685,7 +692,8 @@ export default function AdminCreateTenantPage() {
             {profileResult?.status === "applied" && (
               <div className="mt-3 text-sm text-green-300">
                 <p data-testid="profile-applied">
-                  Business profile applied{profileResult.label ? `: ${profileResult.label}` : ""}.
+                  Saved what this business does
+                  {profileResult.label ? `: ${profileResult.label}` : ""}.
                 </p>
                 {/* Interim result line (SA-1): what the apply actually set, straight from its response. */}
                 {profileResult.summary && profileResult.summary.length > 0 && (
@@ -740,9 +748,9 @@ export default function AdminCreateTenantPage() {
           </div>
         )}
 
-        <BusinessProfilePreviewModal
+        <CapabilityReviewModal
           open={profileReview !== null}
-          profileLabel={profileReview?.label ?? ""}
+          label={profileReview?.label ?? ""}
           response={profileReview?.response ?? null}
           confirming={reviewApplying}
           error={reviewError}
@@ -989,34 +997,27 @@ export default function AdminCreateTenantPage() {
             trialError={trialError}
           />
 
-          {/* Business profile (optional) */}
-          {profilesFailed ? (
-            <p className="text-xs text-amber-400">
-              Business profiles could not be loaded. You can set one later from the tenant&apos;s
-              Setup tab.
+          {/* What this business does (optional): nothing ticked = the plan's defaults */}
+          <div className="flex flex-col gap-1.5">
+            <CapabilityChoices
+              idPrefix="create-tenant-capabilities"
+              ticks={ticks}
+              onChange={setTicks}
+              presets={presets}
+              unavailable={availability}
+              disabled={isLoading}
+            />
+            {presetsFailed && (
+              <p className="text-xs text-amber-400">
+                The presets could not be loaded. You can still tick what the business does, or set
+                it later in Setup.
+              </p>
+            )}
+            <p className="text-xs text-slate-400">
+              Nothing ticked: the account starts with the plan&apos;s defaults. You can set this
+              later in Setup.
             </p>
-          ) : (
-            profiles && (
-              <div className="flex flex-col gap-1.5">
-                <BusinessProfileChoices
-                  profiles={profiles}
-                  value={profile}
-                  onChange={setProfile}
-                  name="create-tenant-profile"
-                  legend="What does this business do?"
-                  disabled={isLoading}
-                  expandSelected
-                  noneOption={{
-                    label: "Custom: I'll choose the features myself",
-                    description: "Starts with the plan's defaults. Nothing else is turned on.",
-                  }}
-                />
-                <p className="text-xs text-slate-400">
-                  Pick the closest match. You can change it later in Setup.
-                </p>
-              </div>
-            )
-          )}
+          </div>
 
           <FreeAddonsSection
             addons={addonList}

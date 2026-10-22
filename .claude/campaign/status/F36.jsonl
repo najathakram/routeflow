@@ -1,7 +1,7 @@
-{"id":"B293","batch":"F36","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B293","batch":"F36","tier":"T1","state":"already-fixed","pr":3392,"proof":null,"evidence":"SA-814: fixed by commit 42891a58e (landed via train PR #3392)"}
 {"id":"B294","batch":"F36","tier":"T1","state":"proven","pr":725,"proof":"REG-B294 order-derived and estimate-converted invoice lines store the effective regular tax rate so applyPriceAdjustment keeps the tax (invoices.service.spec.ts, estimates.service.spec.ts)","evidence":null,"buildPlan":null}
 {"id":"B295","batch":"F36","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B296","batch":"F36","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B297","batch":"F36","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B298","batch":"F36","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B298","batch":"F36","tier":"T1","state":"already-fixed","pr":2612,"proof":null,"evidence":"SA-814: fixed by #2612 (cited by the owner; resolves as a closed issue, not a PR)"}
 {"id":"B299","batch":"F36","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}

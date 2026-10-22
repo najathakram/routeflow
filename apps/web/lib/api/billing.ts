@@ -92,6 +92,10 @@ export interface PlanChange {
    *  mark the plan they are on without re-deriving it from a stored (possibly aliased)
    *  key. Absent when the caller carries no tenant context. */
   fromPlanKey?: string | null;
+  /** UPGRADE only (SA-786): the add-ons the new plan newly includes - free from commit, still on. */
+  includedAddons?: { sku: string; name: string }[];
+  /** DOWNGRADE only (SA-786): the add-ons the new plan stops including - billed at the catalog price. */
+  repricedAddons?: { sku: string; name: string; monthlyPrice: number }[];
 }
 
 export interface QuoteResult {

@@ -38,9 +38,9 @@ describe("products/[id]/page.tsx — batch A1 wiring", () => {
     expect(src).toMatch(/<ProductMerchandising/);
   });
 
-  it("J3 reverted: the Move left / Move right reorder controls stay (the only reorder path); on-image arrows stay", () => {
-    expect(src).toContain('title="Move left"');
-    expect(src).toContain('title="Move right"');
+  it("J3 reverted: the Move earlier / Move later reorder controls stay (the only reorder path); on-image arrows stay", () => {
+    expect(src).toContain('title="Move earlier"');
+    expect(src).toContain('title="Move later"');
     expect(src).toContain("Prev / next arrows");
   });
 

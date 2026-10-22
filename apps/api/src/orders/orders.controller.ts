@@ -260,16 +260,25 @@ export class OrdersController {
                   // operator to edit yet. The actual remedy is to not merge at all.
                   'Choose "Create as a separate order" instead.',
                 );
-                const foldResult = foldMergeItems(
-                  current.lineItems ?? [],
-                  dto.items ?? [],
-                  undefined,
+                const incomingIds = (dto.items ?? [])
+                  .map((i) => i.productId)
+                  .filter(Boolean) as string[];
+                const foldResult = foldMergeItems(current.lineItems ?? [], dto.items ?? [], {
                   // B297 row 340 (foldTarget): the rate trio a NEW sale of each incoming product takes today —
                   // an existing line sold at a different trio does not absorb the added quantity.
-                  await this.ordersService.liveTrioByProduct(
-                    (dto.items ?? []).map((i) => i.productId).filter(Boolean) as string[],
-                  ),
-                );
+                  liveTrioByProductId: await this.ordersService.liveTrioByProduct(incomingIds),
+                  // SA-841 (B207): the live pack map, read HERE inside the advisory lock after the in-lock
+                  // re-read (no second lock), over the stored ∪ incoming products; used only for a line with
+                  // no pack of its own, and as the SA-124e(3) price basis.
+                  liveUnitsPerBoxByProductId: await this.ordersService.liveUnitsPerBoxByProduct([
+                    ...((current.lineItems ?? [])
+                      .map((li) => li.productId)
+                      .filter(Boolean) as string[]),
+                    ...incomingIds,
+                  ]),
+                  // REG-B199: a bare staff scan qty is loose pieces
+                  bare: "pieces",
+                });
                 if (foldResult.livePackFallbackProductIds.length > 0) {
                   this.logger.warn(
                     `foldMergeItems: order ${current.id} product(s) [${foldResult.livePackFallbackProductIds.join(", ")}] had box data but no resolvable pack of their own — deferred to the live product pack in updateOrderItems (B776/SA-124)`,

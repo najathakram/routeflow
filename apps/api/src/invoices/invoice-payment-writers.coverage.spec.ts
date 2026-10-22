@@ -30,8 +30,9 @@ const TABLE: Record<string, Row> = {
   "credit-notes/credit-notes.service.ts::CreditNotesService.applyCreditInTx": T,
   "customers/customers.service.ts::CustomersService.applyAdvancePaymentToInvoiceLocked": T,
   "invoices/invoices.service.ts::InvoicesService.recordDeliveryPaymentInTx": T,
-  "invoices/invoices.service.ts::InvoicesService.recordPayment": T,
-  "invoices/invoices.service.ts::InvoicesService.recordStandalonePayment": T,
+  // SA-824: recordPayment / recordStandalonePayment are the Idempotency-Key entry points; the bodies are these.
+  "invoices/invoices.service.ts::InvoicesService.writeInvoicePayment": T,
+  "invoices/invoices.service.ts::InvoicesService.writeStandalonePayment": T,
   // #2262 / SA-424: the bulk import now writes payments and the Invoice row in one tx.
   "import/import.service.ts::ImportService.importInvoices": T,
   "import/import.service.ts::ImportService.importPayments": T,

@@ -68,7 +68,9 @@ import {
 } from "./at-stop-conflicts";
 import { sourceLineFor } from "./source-line";
 import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-create-options";
-import { warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
+import { checkQtySplitConsistency, warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
+import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
+import { loadLiveUnitsPerBoxByProduct } from "./live-pack-map";
 import {
   oldestFirst,
   resolveSaleDelivery,
@@ -101,6 +103,7 @@ import { ListOrdersDto } from "./dto/list-orders.dto";
 import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import { fulfilCaller, resolveFulfilPath } from "./fulfil-path-resolver";
+import { assertMayUseTill } from "./counter-sale/till-permission.guard";
 import {
   assertNoBackdatedMerge,
   findActiveOrderImpl,
@@ -111,6 +114,7 @@ import {
 import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
+import { assertDeliveredLinesUntouched, reduceDeliveredLineEntries } from "./delivered-line-lock";
 import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
@@ -128,7 +132,12 @@ import {
   type IdempotencyLookupDeps,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
-import { cancelBlockedMessage, cancelImpact } from "./order-cancel-impact";
+import {
+  assertQuantitiesKnown,
+  cancelBlockedMessage,
+  cancelImpact,
+  deliveredUnitsBlockedMessage,
+} from "./order-cancel-impact";
 import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
 import { claimReopenInTx } from "./order-reopen-claim";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
@@ -152,6 +161,7 @@ import {
 } from "./order-edit-restrictions";
 import { planChangeRequestRestrictions } from "./change-request-restrictions";
 import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
+import { assertDeliveryDateNotPast } from "./delivery-date-guard";
 import { getOrderTracking } from "./order-tracking";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
@@ -162,7 +172,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { openTenantGroups } from "./sweep-tenant-gate";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
-import { orderFor, ordersFor } from "../common/staff-only-fields";
+import { orderFor } from "../common/staff-only-fields";
 import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -185,7 +195,7 @@ import { guardBuyerEditLineIds, pairEditLines, piecesDenominated } from "./buyer
 import * as keep from "./buyer-replace-keep"; // row 497 / 496
 import type { SplitPromoGroup } from "./split-promo-group";
 import { settleSplitFreeUnits } from "./settle-split-free-units";
-import { dateAndShipmentFilters } from "./list-filters";
+import { findAllOrdersImpl } from "./order-list";
 import { resolveOversellAllowed } from "./oversell-policy";
 import { PolicyOversellReader } from "./policy-oversell-reader";
 import {
@@ -198,6 +208,7 @@ import { captureMarkerCarry } from "./backorder-marker-writes";
 import { buildMergeLineWrites, type MergeLine, type MergeWarning } from "./merge-line-writes";
 import { assertReplaceAllPackMatchesLive } from "./replace-all-pack-resolution";
 import { decideAddedLinePrice, decideEditedLinePrice, isOverride } from "./staff-line-price";
+import { linesPriceAtCustomerTier, typedLinePrice } from "./driver-line-price";
 import {
   buildExistingLineMaps,
   buildReplaceAllLineData,
@@ -362,6 +373,11 @@ export class OrdersService implements OnApplicationBootstrap {
     return loadLiveTrioByProduct(this.prisma.forTenant() as any, productIds);
   }
 
+  /** SA-841 (B207): each product's live pack, one tenant-scoped read (live-pack-map.ts, a read-only lookup). */
+  liveUnitsPerBoxByProduct(productIds: string[]): Promise<Map<string, number>> {
+    return loadLiveUnitsPerBoxByProduct(this.prisma.forTenant() as any, productIds);
+  }
+
   /**
    * RF-4 / B297 PR3: recompute + persist each regulated line's `categoryTaxAmount` at the line's OWN rate
    * snapshot (never the live category) and return the order-level Σ. The rule, the NULL-trio stamp and
@@ -373,82 +389,7 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {
-    const {
-      customerId,
-      productId,
-      search,
-      status,
-      urgent,
-      page = 1,
-      limit = 20,
-      fulfillPath,
-    } = query;
-    const skip = (page - 1) * limit;
-    const where: any = {};
-
-    if (user.role === UserRole.CUSTOMER) {
-      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
-      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
-      // in-flight session must fall into the existing refusal below.
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer)
-        throw new ForbiddenException({
-          code: API_ERROR_CODES.CUSTOMER_NOT_LINKED,
-          message: "Customer record not found",
-        });
-      where.customerId = customer.id;
-    } else if (customerId) {
-      where.customerId = customerId;
-    }
-
-    // B144: `search` composes with the role/customerId scope above instead of
-    // being swallowed by an `else if` — matches order NUMBER as well as the
-    // customer's businessName.
-    if (search) {
-      where.OR = [
-        { orderNumber: { contains: search, mode: "insensitive" } },
-        { customer: { businessName: { contains: search, mode: "insensitive" } } },
-      ];
-    }
-
-    // PR-B: "which orders had this item?" — an AND-ed relation filter, so it
-    // narrows whatever customer/status/date filters are already set instead of
-    // replacing them. Equality can never match NULL, so ad-hoc unlisted lines
-    // (productId = null) are excluded for free.
-    if (productId) where.lineItems = { some: { productId } };
-
-    if (status) where.status = status;
-    if (urgent !== undefined) where.urgent = urgent;
-    // Ad-hoc trips + fulfillment mode: filter by ROUTE/SHIP. Omitted ⇒ no where
-    // key at all (every existing order stays visible either way).
-    if (fulfillPath) where.fulfillPath = fulfillPath;
-    Object.assign(where, dateAndShipmentFilters(query));
-
-    const [data, total] = await Promise.all([
-      this.prisma.forTenant().order.findMany({
-        where,
-        include: {
-          customer: { select: { id: true, businessName: true } },
-          lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
-          // P5-11: pending change-request count for the orders-list badge. Filtered relation count
-          // — additive; clients that don't know `_count` ignore it.
-          _count: {
-            select: {
-              changeRequests: { where: { status: ChangeRequestStatus.PENDING } },
-            },
-          },
-        },
-        skip,
-        take: limit,
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      }),
-      this.prisma.forTenant().order.count({ where }),
-    ]);
-
-    const rows = ordersFor(user, data); // customer-facing fields only for the customer
-    return { data: rows, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    return findAllOrdersImpl(this.prisma, query, user);
   }
 
   async findOne(id: string, user: JwtPayload) {
@@ -1521,6 +1462,11 @@ export class OrdersService implements OnApplicationBootstrap {
       }
     }
 
+    // Row 718: a day before the TENANT's today is refused (400 DELIVERY_DATE_IN_PAST) - after the replay branch above, so a retry of an order that already landed still replays.
+    await assertDeliveryDateNotPast(this.prisma, dto.requestedDeliveryDate, {
+      tenantId: user.tenantId,
+    });
+
     // An auto-merge folds these items into an EXISTING order whose own business
     // date stays authoritative, so a supplied orderDate would be silently dropped.
     // Refuse instead — the operator can re-submit as a separate order.
@@ -1560,6 +1506,12 @@ export class OrdersService implements OnApplicationBootstrap {
     // today for every existing order/customer, which default to ROUTE too).
     // Counter sale (#3211): an INTERNAL `options.fulfillPath` (PICKUP) wins; every other caller goes
     // through the ONE resolver (#3210).
+    // BO-07: an explicit PICKUP is the till (POS mode), so an operator denied it is refused with the
+    // till guard's own 403 before the resolver can map the request to PICKUP. (A counter sale arrives
+    // through `options.fulfillPath`, behind TillPermissionGuard.)
+    if (!options.fulfillPath && isStaffRole && dto.fulfillPath === FulfillPath.PICKUP) {
+      await assertMayUseTill(this.prisma, user);
+    }
     const fulfillPath =
       options.fulfillPath ??
       (await resolveFulfilPath(this.fulfilDeps(), {
@@ -2703,14 +2655,11 @@ export class OrdersService implements OnApplicationBootstrap {
     if (impact.canCancel) return;
     if (impact.blockingPayments.length > 0)
       throw new BadRequestException(cancelBlockedMessage(impact.blockingPayments));
+    assertQuantitiesKnown(impact); // B692: legacy delivered row, no quantity recorded
     // B56 (REG-B56): delivered goods can't be un-delivered by cancelling the
     // order out from under them — that would erase the revenue for goods the
     // customer already has. Record a return, or edit the order down instead.
-    throw new BadRequestException(
-      `This order has delivered items (${impact.deliveredUnits} unit(s) already delivered). ` +
-        `Cancelling would erase revenue for goods the customer already has. Record a return for ` +
-        `the delivered goods, or edit the order down to the undelivered items instead.`,
-    );
+    throw new BadRequestException(deliveredUnitsBlockedMessage(impact.deliveredUnits));
   }
 
   async reopenOrder(id: string) {
@@ -2892,6 +2841,7 @@ export class OrdersService implements OnApplicationBootstrap {
       throw new ForbiddenException(await carrierGuard.buyerEditClosedMessage(this, order)); // B1135
     }
 
+    assertDeliveredLinesUntouched(order, order.lineItems ?? [], dto, user, isDiffPayload); // B1234: before any side effect
     // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice revert and any
     // write; a draft is judged at its promotion UNLESS it has a live (non-VOID) linked invoice: the reconcile after this
     // edit copies the order's lines onto that sent mirror. Re-checked under the row lock (order-edit-restrictions.ts).
@@ -2939,7 +2889,11 @@ export class OrdersService implements OnApplicationBootstrap {
     const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrier); // B215 + D2
     await inlineReturn.preflightInlineReturn(inlineRet, order, user, !postDeliveryEdit); // #2178
     if (!postDeliveryEdit && !carrier.billsShip) {
-      await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId); // ship-billing: under the lock (S2)
+      // Row 586: read-only here (a paid mirror still refuses cleanly before any mutation); the revert itself runs in the
+      // edit tx under the Order lock (carrierRevertUnderLock), so a binding 409 rolls it back instead of stranding DRAFT.
+      await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId, undefined, {
+        preflightOnly: true,
+      });
     }
 
     // W6: license guard on edits. A regulated line added on edit (or via a buyer
@@ -3033,20 +2987,34 @@ export class OrdersService implements OnApplicationBootstrap {
         await assertRevisionCurrent(tx, orderId, dto.expectedRevisionNumber); // row 372: stale -> 409, nothing written
         let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
         let markerCarry: Map<string, number> | undefined; // SA-716 M2: the create-merge fold only
-        const carrierLocked = await carrierGuard.carrierRevertUnderLock(
-          tx,
-          orderId,
-          carrier,
-          postDeliveryEdit,
-          () =>
-            this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId, tx, { lockRows: true }),
-        );
         const heldItems = await tx.orderItem.findMany(heldLinesOf(orderId)); // B709: the LOCKED lines
         const authorOf = authorship.editedLineAuthors(heldItems, dto.items ?? [], user); // SA ruling #3418
         restrictionPlan?.assertHeld(heldItems);
         await assertNoMirrorAppearedUnderLock(tx, orderId, judgeEdit, order.status); // DRAFT edit vs a concurrent bill
         await driverAccess.assertDriverMayEditOrder(tx, orderId, user); // SA-429: re-derived under the Order lock
         cancelledLines.assertHeldCancelledLines(heldItems, dto.items, user, isDiffPayload); // SA-422
+        // B1234 / SA-814: the binding check. Applicability comes from the status read UNDER the Order lock (a delivery
+        // can flip the order to PARTIALLY_DELIVERED after the pre-tx read), never from `order.status`.
+        const lockedStatus = await tx.order.findUnique({
+          where: { id: orderId },
+          select: { status: true },
+        });
+        assertDeliveredLinesUntouched(
+          { status: lockedStatus?.status ?? order.status },
+          heldItems,
+          dto,
+          user,
+          isDiffPayload,
+        ); // B1234: the locked lines
+        // B1234: a delivered line's entry that the guard let through (it restated qty / price / split / unit)
+        // is cut to its note / reason / rename NOW, so the write loop below never reprices a delivered line
+        // from live promotions, the live product or the live ladder. Replaces the items in place: every later
+        // read of `dto.items` (the unit resolution below included) sees the reduced entries.
+        dto.items = reduceDeliveredLineEntries(
+          { status: lockedStatus?.status ?? order.status },
+          heldItems,
+          dto.items,
+        ) as typeof dto.items;
 
         // units_v1 (A1, #1102 precedent): the pre-lock resolution above can go stale under a
         // concurrent edit of the SAME line — re-run it against the just-locked, authoritative
@@ -3068,6 +3036,19 @@ export class OrdersService implements OnApplicationBootstrap {
             );
           unitEdit.assertNoPackRedenomination(li, item, unitRows.get(item)); // SA-474
         }
+
+        // Row 586 (SA-833): the invoice revert runs only AFTER every binding refusal above (stale revision, held lines,
+        // delivered-line lock, unit checks): refuse first, write after. Lock order Order -> Invoice, NOWAIT on the
+        // invoice rows (409 INVOICE_BUSY, retryable); the paid-mirror refusal is re-counted under that lock, because
+        // the pre-tx preflight is advisory. Any later refusal in this tx rolls the revert back with the edit.
+        const carrierLocked = await carrierGuard.carrierRevertUnderLock(
+          tx,
+          orderId,
+          carrier,
+          postDeliveryEdit,
+          () =>
+            this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId, tx, { lockRows: true }),
+        );
 
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff payload skips this branch
         // entirely (merges below, prices stripped). Only the DRIVER half recreates unlisted rows' ids.
@@ -3097,26 +3078,22 @@ export class OrdersService implements OnApplicationBootstrap {
           // (which only covers unit-aware `unitCtx.products`) — its own scoped load.
           const buyerCategoryMap = await loadCategoryMapForProducts(tx, productMap);
 
-          // P5-04: buyer pricing context (tier + per-product override + active promos).
-          // Loaded only for the buyer (CUSTOMER) merge path; DRIVER edits keep the
-          // legacy list pricing unchanged. This also corrects a pre-existing bug where
-          // the buyer merge billed LIST price, ignoring the customer's tier.
+          // P5-04: pricing context (tier + per-product override + active promos). A DRIVER's full list
+          // resolves the customer's tier like a buyer's (B1036, ruling 2026-10-03); its promos are [] by role.
           const isBuyerEdit = user.role === UserRole.CUSTOMER;
-          const buyerTierCtx = isBuyerEdit
-            ? await tx.customer.findFirst({
-                where: { id: order.customerId },
-                select: { pricingTier: true },
-              })
-            : null;
+          const buyerTierCtx = await tx.customer.findFirst({
+            where: { id: order.customerId },
+            select: { pricingTier: true },
+          });
           const buyerCustomerPrices =
-            isBuyerEdit && productIds.length > 0
+            productIds.length > 0
               ? await tx.customerPrice.findMany({
                   where: { customerId: order.customerId, productId: { in: productIds } },
                 })
               : [];
           const buyerPc = await customerPricing(
             this,
-            isBuyerEdit ? order.customerId : null,
+            order.customerId,
             productIds,
             buyerTierCtx,
             buyerCustomerPrices,
@@ -3213,7 +3190,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // P5-04: buyers get their tier price + best active promotion. The
             // QTY_BREAK threshold is measured in PIECES: split.qty when re-split, else
             // box-count × unitsPerBox for boxed selling-unit lines, else the piece qty.
-            // DRIVER edits keep the legacy list price (unchanged).
+            // A DRIVER's list too (B1036), but a re-listed line keeps its stored price (priceReplacedLine).
             // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
             const qtyPieces = split ? split.qty : upb > 1 ? item.qty * upb : item.qty;
             // BUY_N_GET_M threshold: whole SELLING units (boxes for a boxed line,
@@ -3224,6 +3201,8 @@ export class OrdersService implements OnApplicationBootstrap {
               item: item as typeof item & { productId: string },
               held: heldById,
               isBuyerEdit,
+              user, // B1036: a DRIVER's list too: tier price, but a re-listed line keeps its stored one
+              bogoPromos,
               group: splitPromos.get(item.productId),
               tier: buyerCpMap.get(item.productId) ?? buyerDefaultTier,
               layer: buyerPc.layer(product),
@@ -3318,13 +3297,12 @@ export class OrdersService implements OnApplicationBootstrap {
           // flat catalog price (mirrors create() + the isBuyerEdit branch above).
           // Post-MSRP hazard: CustomerPrice.pricingTier is nullable (an MSRP-only
           // row) — every lookup falls back to the customer's default tier below.
-          // STAFF ONLY, same posture as the substitute branch's isStaffCaller: a
-          // DRIVER also lands in this branch (A4 routes its diff payload here, with
-          // prices stripped) and driver edits keep the legacy list pricing — so no
-          // tier is resolved and no extra query is issued for them.
+          // Staff AND a DRIVER (A4 routes its diff payload here, prices stripped) resolve the customer's tier for a
+          // NEW / SUBSTITUTED line (B1036, ruling 2026-10-03); only staff may TYPE a price.
           const isStaffEdit =
             user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN;
-          const atCustomerTier = isStaffEdit || user?.role === UserRole.CUSTOMER; // SA-407: unit counts
+          const tierCaller = linesPriceAtCustomerTier(user);
+          const atCustomerTier = tierCaller || user?.role === UserRole.CUSTOMER; // SA-407: unit counts
           // B465 fix round (Opus BLOCK): an id-only UPDATE entry (web/mobile send
           // {id, action, qty, unitPrice} with no productId of their own) must resolve
           // tier pricing for the EXISTING line's product too — not just products
@@ -3405,10 +3383,10 @@ export class OrdersService implements OnApplicationBootstrap {
               bogoPromos,
               existingLineByProduct,
               existingLineById,
-              isStaffEdit,
+              atCustomerTier: tierCaller,
               operatorCpMap,
               operatorDefaultTier,
-              layerOf: isStaffEdit ? operatorPc.layer : undefined,
+              layerOf: tierCaller ? operatorPc.layer : undefined,
               isCreateMerge: opts?.isCreateMerge,
               buyerPromos,
               userId: user?.sub ?? null,
@@ -3587,21 +3565,20 @@ export class OrdersService implements OnApplicationBootstrap {
                 const boxesForLine = hasBoxSplit ? (item.boxes ?? null) : null;
                 const piecesForLine = hasBoxSplit ? (item.pieces ?? null) : null;
                 const catalogPrice = Number(product.pricePerUnit);
-                const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+                const overridePrice = typedLinePrice(user, item.unitPrice); // a driver's is dropped
                 const unitsPerBoxNum = Number(product.unitsPerBox ?? 0);
                 const qtyPieces =
                   boxesForLine != null ? qty : unitsPerBoxNum > 1 ? qty * unitsPerBoxNum : qty;
                 const qtyUnits = boxesForLine != null ? boxesForLine : qty;
-                const tierForProduct = isStaffEdit
+                const tierForProduct = tierCaller
                   ? (operatorCpMap.get(item.productId) ?? operatorDefaultTier)
                   : 1;
-                const layer = isStaffEdit ? operatorPc.layer(product) : null;
+                const layer = tierCaller ? operatorPc.layer(product) : null;
                 // #2716c: ONE rule (staff-line-price.ts -> decideStaffOverride). A special-tier
                 // line (B465) refuses a changed price with no reason; a price within half a cent
                 // of the customer's tier price is no override; otherwise below list is DISCOUNTED,
                 // at/above list MANUAL, originalPrice = list. WP1: ONLY a line with no price at
-                // all falls through to the tier ladder, and only for staff — a DRIVER diff add
-                // (prices stripped by B13) keeps list pricing.
+                // all falls through to the tier ladder (staff and DRIVER; a driver's price is dropped).
                 const addDecision =
                   overridePrice !== null
                     ? decideAddedLinePrice({
@@ -3621,7 +3598,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 const isManualOverride = !!addDecision && isOverride(addDecision);
                 const priced = addDecision
                   ? { ...addDecision, freeUnits: 0 }
-                  : isStaffEdit
+                  : tierCaller
                     ? this.resolveBuyerLinePrice(
                         product,
                         tierForProduct,
@@ -3638,7 +3615,7 @@ export class OrdersService implements OnApplicationBootstrap {
                         layer,
                       )
                     : {
-                        // Non-staff caller (driver diff add): legacy list pricing.
+                        // No principal (an internal call): list pricing.
                         unitPrice: catalogPrice,
                         originalPrice: null as number | null,
                         priceType: PriceType.STANDARD,
@@ -3745,14 +3722,13 @@ export class OrdersService implements OnApplicationBootstrap {
                 // same house override convention as create()'s operator-override ladder
                 // and the operator update branches above: net unitPrice, DISCOUNTED
                 // below the substitute's list price, MANUAL above it, originalPrice =
-                // the displaced list price. This branch is only reachable via the
-                // operator/admin path (drivers/customers replace-all above and never
-                // carry substituteProductId), but the role check stays explicit so a
+                // the displaced list price. This branch is reached by staff and by a
+                // driver diff (A4: substituteProductId makes it a diff; buyers never
+                // get here), but the role check stays explicit so a
                 // driver/customer DTO can never buy price control here — B13, non-staff
                 // never set prices. No override (or one equal to the substitute's own
-                // tier price) keeps today's SPECIAL/STANDARD tier-priced behavior.
-                const isStaffCaller =
-                  user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN;
+                // tier price) keeps today's SPECIAL/STANDARD tier-priced behavior. B1036: a DRIVER substitute
+                // resolves the same tier (ruling 2026-10-03); only staff's typed price counts.
                 // B466: this branch never checked tier at all — a bare unitPrice on a
                 // substitute to a SPECIAL-tier product was compared only against LIST
                 // price, so a correctly-priced substitute (typed at this customer's real
@@ -3760,7 +3736,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // tier resolution as the ADD/UPDATE branches above (reuse isSpecialTier(),
                 // operatorCpMap/operatorDefaultTier — operatorProductIds now also collects
                 // substituteProductId so the per-product CustomerPrice row is fetched).
-                const tierForProduct = isStaffCaller
+                const tierForProduct = tierCaller
                   ? (operatorCpMap.get(item.substituteProductId) ?? operatorDefaultTier)
                   : 1;
                 // The baseline is the SUBSTITUTE's own tier price (list at tier 1, so non-special
@@ -3768,8 +3744,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 // #2696(c): the ONE rule A, shared with create (decideTierOverride → pricing's
                 // decideStaffOverride, rounded) — pinned byte-identical to this branch's B466 shape.
                 const overridePrice =
-                  isStaffCaller && item.unitPrice != null ? Number(item.unitPrice) : null;
-                const layerSub = isStaffCaller ? operatorPc.layer(product) : null;
+                  isStaffEdit && item.unitPrice != null ? Number(item.unitPrice) : null;
+                const layerSub = tierCaller ? operatorPc.layer(product) : null;
                 const decided = decideTierOverride(
                   product,
                   tierForProduct,
@@ -3836,7 +3812,10 @@ export class OrdersService implements OnApplicationBootstrap {
                 // reason-only and notes-only writes below were unreachable dead code
                 // for exactly the payload shape that needs them.
                 item.overrideReason !== undefined ||
-                item.notes !== undefined
+                item.notes !== undefined ||
+                // B1234: a delivered unlisted line's entry is reduced to {id, action, name}; a rename alone must
+                // still reach the fast path below (a name on a LISTED line is filtered out there, never written).
+                item.name !== undefined
               ) {
                 const li = item.id ? heldById.get(item.id) : undefined;
                 if (!li) continue;
@@ -3854,26 +3833,29 @@ export class OrdersService implements OnApplicationBootstrap {
                   item.qty === undefined &&
                   item.boxes == null &&
                   item.pieces == null &&
-                  item.unitPrice === undefined &&
-                  (item.overrideReason !== undefined || item.notes !== undefined);
+                  item.unitPrice == null &&
+                  (item.overrideReason !== undefined ||
+                    item.notes !== undefined ||
+                    item.name !== undefined);
                 if (isReasonOrNotesOnly) {
-                  await tx.orderItem.update({
-                    where: { id: item.id },
-                    data: {
-                      // Round 3 finding 1 (independent review, PR-2): `name` is not a pricing
-                      // field — an unlisted line's rename must survive this fast path exactly
-                      // like the full path below allows it, or a payload combining a rename
-                      // with a reason/notes edit silently drops the rename.
-                      ...(isUnlisted && item.name !== undefined ? { name: item.name } : {}),
-                      ...(item.notes !== undefined ? { notes: item.notes } : {}),
-                      ...(item.overrideReason !== undefined
-                        ? {
-                            overrideReason: item.overrideReason ?? null,
-                            overriddenBy: user?.sub ?? null,
-                          }
-                        : {}),
-                    },
-                  });
+                  const fastData = {
+                    // Round 3 finding 1 (independent review, PR-2): `name` is not a pricing
+                    // field — an unlisted line's rename must survive this fast path exactly
+                    // like the full path below allows it, or a payload combining a rename
+                    // with a reason/notes edit silently drops the rename.
+                    ...(isUnlisted && item.name !== undefined ? { name: item.name } : {}),
+                    ...(item.notes !== undefined ? { notes: item.notes } : {}),
+                    ...(item.overrideReason !== undefined
+                      ? {
+                          overrideReason: item.overrideReason ?? null,
+                          overriddenBy: user?.sub ?? null,
+                        }
+                      : {}),
+                  };
+                  // A name-only entry on a listed line carries nothing to write.
+                  if (Object.keys(fastData).length > 0) {
+                    await tx.orderItem.update({ where: { id: item.id }, data: fastData });
+                  }
                   continue;
                 }
                 const unitRow = unitRows.get(item);
@@ -3939,9 +3921,9 @@ export class OrdersService implements OnApplicationBootstrap {
                 if (qty <= 0) continue;
 
                 const existingUnitPrice = Number(li.unitPrice);
-                const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+                const overridePrice = typedLinePrice(user, item.unitPrice); // a driver's is dropped
                 const tierForProduct =
-                  isStaffEdit && li.productId
+                  tierCaller && li.productId
                     ? (operatorCpMap.get(li.productId) ?? operatorDefaultTier)
                     : 1;
                 const storedOverrideReason = (li as any).overrideReason ?? null;
@@ -3959,7 +3941,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     where: { id: li.productId },
                   });
                 }
-                const layerEdit = editProduct && isStaffEdit ? operatorPc.layer(editProduct) : null;
+                const layerEdit = editProduct && tierCaller ? operatorPc.layer(editProduct) : null;
                 const repriced = decideEditedLinePrice({
                   overridePrice,
                   storedPrice: existingUnitPrice,
@@ -4105,7 +4087,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // silently zeroing shipping (the fee-wipe regression).
         const isStaffFeeEdit =
           (user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN) &&
-          dto.shippingFee !== undefined;
+          dto.shippingFee != null;
         const shippingFee = isStaffFeeEdit
           ? roundMoney(Math.max(0, dto.shippingFee!))
           : roundMoney(Number((order as any).shippingFee ?? 0));
@@ -4904,25 +4886,63 @@ export class OrdersService implements OnApplicationBootstrap {
           // B135 (REG-B135): pick the merge target from the row held under the Order FOR UPDATE
           // lock, then read its authoritative qty/price through the tx — the pre-tx snapshot can
           // name a line a concurrent edit has since cancelled, delivered or re-quantified.
-          const heldMatch = heldItems.find(
-            (h: any) =>
-              h.productId === product.id &&
-              h.status !== "CANCELLED" &&
-              Number(h.deliveredQty) === 0,
+          // SA-841 / SA-124b: by product, then unit, then the resolved pack the add was filed at
+          const heldMatch = pickHeldMergeTarget(
+            heldItems as any[],
+            product.id,
+            payload as any,
+            upb,
           );
           const existing = heldMatch
             ? await tx.orderItem.findUnique({ where: { id: heldMatch.id } })
             : null;
           if (existing) {
-            // Same product already on the order → increase THAT line at its
-            // stored (agreed) unitPrice; the agreed price always wins.
-            const lineUpb = Number((existing as any).unitsPerBox ?? upb);
-            const wasBoxSplit = existing.boxes != null;
-            const newQty = Number(existing.qty) + addQty;
-            const split =
-              wasBoxSplit && lineUpb > 1
-                ? normalizeBoxesPieces({ qty: newQty, unitsPerBox: lineUpb })
-                : { qty: newQty, boxes: null as number | null, pieces: null as number | null };
+            // Same product already on the order → increase THAT line at its stored (agreed) unitPrice.
+            // SA-841 (B753): both sides in pieces at the line's OWN pack through the one helper; a box-unaware
+            // line stays box-unaware (`keep`); a pack the door cannot reconcile is refused, nothing written.
+            const lineShape = {
+              qty: Number(existing.qty),
+              boxes: existing.boxes,
+              pieces: existing.pieces,
+              unitsPerBox: (existing as any).unitsPerBox ?? null,
+            };
+            // row 531: the add's own qty-vs-split check first (a buyer's is refused, staff/driver warn)
+            checkQtySplitConsistency({
+              mode: cr.requestedByRole === UserRole.CUSTOMER ? "enforce" : "warn",
+              path: "orders.cr.add.merge",
+              items: [{ ...payload, productId: product.id, qty: addQty } as QtySplitLine],
+              // the add was filed at the LIVE pack; a repacked line is the helper's 409, never a split 400
+              upbFor: () => upb,
+              tenantId: this.prisma?.getTenantId?.(),
+              logger: this.logger,
+            });
+            const merged = mergeIntoStoredLine({
+              line: lineShape,
+              add: { qty: addQty, boxes: payload.boxes ?? null, pieces: payload.pieces ?? null },
+              bare: "sellingUnits",
+              output: "keep",
+              livePack: upb,
+            });
+            if (!merged.ok) {
+              throw new ConflictException({
+                code: API_ERROR_CODES.MERGE_PACK_MISMATCH,
+                message:
+                  merged.reason === "EMPTY_ADD"
+                    ? "This add has no quantity this line can take: decline it, or approve it for the next delivery."
+                    : `This add can't be merged into the ${merged.linePack}-pack line on this order${
+                        merged.addPack ? ` (it is sold as a ${merged.addPack}-pack now)` : ""
+                      }: decline it, or approve it for the next delivery.`,
+                productId: product.id,
+                existingPacks: [merged.linePack],
+                incomingPack: merged.addPack,
+              });
+            }
+            if (merged.usedLivePack)
+              this.logger.warn(
+                `orders.cr.add.merge used the live pack ${upb} for line ${existing.id}`,
+              );
+            const lineUpb = merged.pack;
+            const split = { qty: merged.qty, boxes: merged.boxes, pieces: merged.pieces };
             const unitPrice = Number(existing.unitPrice);
             // Agreed price wins (never re-runs applyBestPromotion for the unit
             // price) — but the bigger quantity earns its OWN free units, so they
@@ -4944,7 +4964,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 ...authorship.raisedBy(crAuthor, existing.qty, split.qty), // SA ruling #3418: a buyer's raise is BUYER
                 boxes: split.boxes,
                 pieces: split.pieces,
-                unitsPerBox: split.boxes != null && lineUpb > 1 ? lineUpb : null,
+                unitsPerBox: merged.unitsPerBox,
                 subtotal: computeLineSubtotal({
                   unitPrice,
                   qty: split.qty,
@@ -4963,8 +4983,8 @@ export class OrdersService implements OnApplicationBootstrap {
             mutationRow = {
               orderItemId: existing.id,
               productId: product.id,
-              qty: addQty,
-              note: `Added ${addQty} at the door via approved change request ${cr.id}`,
+              qty: merged.addInLineUnit, // SA-104a(6): in the line's own unit
+              note: `Added ${merged.addInLineUnit} at the door via approved change request ${cr.id}`,
             };
           } else {
             // New line → the CUSTOMER's effective price (tier → sticky upsell →
@@ -5277,9 +5297,8 @@ export class OrdersService implements OnApplicationBootstrap {
         // before deleting it — the two sibling teardown paths
         // (InvoicesService.voidInvoiceInTx, InvoicesService.deleteInvoice)
         // already do this; this loop hard-deletes invoices directly and was
-        // the one path that skipped it. No preserveReturns (mirrors
-        // deleteInvoice, not the partial-void path).
-        await this.ledger.reverseInvoiceEntries({ invoiceId: inv.id, db: tx });
+        // the one path that skipped it. Zeroed in full (mirrors deleteInvoice, SA-839 INVOICE_ZEROED).
+        await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId: inv.id });
         await tx.invoicePayment.deleteMany({ where: { invoiceId: inv.id } });
         await tx.invoiceItem.deleteMany({ where: { invoiceId: inv.id } });
         // Sales agents & commissions: this loop hard-deletes invoices WITHOUT

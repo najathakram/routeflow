@@ -386,7 +386,9 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
 
       // (c) text changes away from the label: the membership stays.
       await inA(() =>
-        products.update(p.id, { category: "Gadgets" } as any, { packPrecondition: "internal" }),
+        products.update(p.id, { category: "Gadgets" } as any, {
+          packPrecondition: "internal",
+        }),
       );
       expect((await membershipsOf(p.id)).map((r) => r.categoryId)).toEqual([A.snacks]);
 

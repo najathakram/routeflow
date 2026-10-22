@@ -1,4 +1,8 @@
-import { CONFIG_SNAPSHOT_RESTORED_ACTION } from "./config-snapshot-audit.constants";
+import {
+  CONFIG_SNAPSHOT_RESTORED_ACTION,
+  CONFIG_SNAPSHOT_RESTORE_HELD_ACTION,
+  heldAuditMeta,
+} from "./config-snapshot-audit.constants";
 import {
   ConflictException,
   Injectable,
@@ -11,6 +15,7 @@ import { FeatureConfigStore } from "./feature-config.store";
 import { FeatureOverrideService } from "./feature-override.service";
 import { normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import { resolvePlanVersionId } from "./plan-version-pin";
 import type { RestorePlan, SkippedEntry } from "./tenant-config-snapshot";
 import {
   TenantConfigSnapshotService,
@@ -51,7 +56,8 @@ export interface SnapshotPreviewView {
   willRestore: { kind: "config" | "override"; featureKey: string }[];
   /** Kept as-is: the tenant/an admin changed it after the snapshot (newer wins). */
   keptNewer: string[];
-  /** Skipped with a reason (unknown feature, mode no longer offered, expired, plan not allowed). */
+  /** Skipped with a reason (unknown feature, mode no longer offered, expired, plan not allowed — and,
+   *  for the delivery method, CARRIER_IN_TRANSIT / FULFILMENT_MODE_NEEDS_FLEET: held, the snapshot stays restorable). */
   skipped: (SkippedEntry & { kind: "config" | "override" })[];
   unchangedCount: number;
 }
@@ -206,7 +212,11 @@ export class TenantConfigSnapshotAdminService {
         data: {
           tenantId,
           userId: actorId,
-          action: CONFIG_SNAPSHOT_RESTORED_ACTION,
+          // BO-13: a held row = a partial restore (the snapshot stays claimable) -> its own action, so the
+          // list keeps exactly one RESTORED row per restored snapshot (#2226).
+          action: res.held.length
+            ? CONFIG_SNAPSHOT_RESTORE_HELD_ACTION
+            : CONFIG_SNAPSHOT_RESTORED_ACTION,
           entityType: "tenant",
           entityId: tenantId,
           meta: {
@@ -218,6 +228,7 @@ export class TenantConfigSnapshotAdminService {
             restoredToPlanKey: planKey,
             report: { ...res.report },
             supersededSnapshots: res.supersededSnapshots,
+            ...heldAuditMeta(res.held),
           },
         },
       });
@@ -238,12 +249,16 @@ export class TenantConfigSnapshotAdminService {
       select: {
         plan: true,
         planVersionId: true,
-        subscription: { select: { planKey: true } },
+        subscription: { select: { planKey: true, planVersionId: true } },
       },
     });
     if (!tenant) throw new NotFoundException("Tenant not found");
     const planKey = normalizePlanKey(tenant.subscription?.planKey) ?? planKeyFromEnum(tenant.plan);
-    const planAllows = await this.transitions.planAllowsFor(planKey, tenant.planVersionId ?? null);
+    // The ONE pin rule: the subscription's pin, else the tenant's, else null (= the published version).
+    const planAllows = await this.transitions.planAllowsFor(
+      planKey,
+      resolvePlanVersionId(tenant.subscription, tenant),
+    );
     return { planKey, planAllows };
   }
 }

@@ -37,7 +37,7 @@ const expectDark = () => {
   expect(screen.getByTestId("counter-sale-off").textContent).toBe(DISABLED_COPY);
   expect(screen.queryByLabelText("Scan or search items")).toBeNull();
   expect(screen.queryByRole("button", { name: "Complete & show receipt" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Cash" })).toBeNull();
+  expect(screen.queryByRole("radio", { name: "Cash" })).toBeNull();
   expect(screen.queryByTestId("counter-sale-screen")).toBeNull();
   expect(screen.queryByTestId("counter-sale-loading")).toBeNull();
 };

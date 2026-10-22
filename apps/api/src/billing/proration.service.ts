@@ -12,17 +12,8 @@ import {
   Cycle,
 } from "./billing-math";
 import { addonCatalogInvalidException } from "./addon-catalog-invalid";
-import { planRank, resolveIncludedAtPlan } from "./plan-catalog.constants";
-
-/**
- * Plan ordering for "included at plan and above" checks. Goes through `planRank`
- * so historical keys stored on superseded catalog versions (TEAM/BUSINESS) rank
- * alongside their current equivalents instead of falling off the ladder.
- */
-function rankOrDefault(planKey: string, fallback: number): number {
-  const rank = planRank(planKey);
-  return rank < 0 ? fallback : rank;
-}
+import { isAddonIncludedAtPlan, resolveIncludedAtPlan } from "./plan-catalog.constants";
+import { addonSkuFor } from "./plan-version-pin";
 
 export interface QuoteRequest {
   planKey: string;
@@ -109,8 +100,9 @@ export class ProrationService {
       // B1102: one parser; a key no plan answers to fails closed (409) instead of billing the add-on everywhere.
       const included = resolveIncludedAtPlan(sku.includedAtPlan);
       if (!included.ok) throw addonCatalogInvalidException(sku.sku, sku.includedAtPlan);
-      const includedFree =
-        included.plan !== null && rankOrDefault(req.planKey, 0) >= planRank(included.plan);
+      // SA-786 S10: the SAME rule as every plan move (`isAddonIncludedAtPlan`), never a second rank read with a
+      // fallback: a plan key the ladder does not know is bundled nowhere.
+      const includedFree = isAddonIncludedAtPlan(included.plan, req.planKey);
       const unitMonthly = Number(sku.monthlyPrice);
       const lineMonthly = unitMonthly * qty;
       lines.push({
@@ -157,8 +149,17 @@ export class ProrationService {
 
     const sub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
-      select: { cycle: true, periodStart: true, periodEnd: true },
+      select: {
+        cycle: true,
+        periodStart: true,
+        periodEnd: true,
+        planVersionId: true,
+        tenant: { select: { planVersionId: true } },
+      },
     });
+    // SA-815e: quoted at the SKU of the tenant's own pinned version - the version the enable writes the row at
+    // and the checkout bills it at (the published one when that version lacks the SKU).
+    const priced = (await addonSkuFor(this.catalog, skuCode, sub, sub?.tenant, version)) ?? sku;
     const now = new Date();
 
     // Add-ons are MONTHLY-priced, so the proration window is always ~one month:
@@ -186,13 +187,13 @@ export class ProrationService {
     const MS_PER_DAY = 24 * 60 * 60 * 1000;
     const msInWindow = windowEnd.getTime() - windowStart.getTime();
     const msRemaining = Math.max(0, Math.min(msInWindow, windowEnd.getTime() - now.getTime()));
-    const monthly = Number(sku.monthlyPrice);
+    const monthly = Number(priced.monthlyPrice);
     // A 90/180-day manual row (cycle MONTHLY since B863) covers 3/6 monthly charges (SA-383).
     const windowCharge = monthly * periodMonths(windowStart, windowEnd);
 
     return {
-      sku: sku.sku,
-      name: sku.name,
+      sku: priced.sku,
+      name: priced.name,
       monthly: roundMoney(monthly),
       proratedToday: prorateDaily(windowCharge, msRemaining / MS_PER_DAY, msInWindow / MS_PER_DAY),
       daysRemaining: Math.round(msRemaining / MS_PER_DAY),

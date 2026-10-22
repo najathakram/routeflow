@@ -1334,7 +1334,10 @@ describe("PlatformAdminService — audit provenance", () => {
       tenant("STARTER");
       (prisma as any).tenantSubscription.findUnique.mockResolvedValue(null);
       await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
-      expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
+      // no guarded compare-and-set of nothing: the only updateMany is the pin writer's (SA-815a), after the create
+      expect((prisma as any).tenantSubscription.updateMany.mock.calls).toEqual([
+        [{ where: { tenantId: TENANT_ID }, data: { planVersionId: "v-9" } }],
+      ]);
       expect((prisma as any).tenantSubscription.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ tenantId: TENANT_ID, planKey: "SCALE" }),
       });
@@ -1416,14 +1419,22 @@ describe("PlatformAdminService — audit provenance", () => {
     // stale/absent one would report SCALE tenants at the old plan's price (or $0).
     expect(prisma.tenant.update).toHaveBeenCalledWith({
       where: expect.objectContaining({ id: TENANT_ID }), // SA-485b: + the status as read
-      data: { plan: "PROFESSIONAL", planVersionId: "v-9" },
+      data: { plan: "PROFESSIONAL" },
+    });
+    // SA-815a: BOTH pins are written by the one pin writer, after the subscription write
+    expect(prisma.tenant.updateMany).toHaveBeenCalledWith({
+      where: { id: TENANT_ID },
+      data: { planVersionId: "v-9" },
+    });
+    expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith({
+      where: { tenantId: TENANT_ID },
+      data: { planVersionId: "v-9" },
     });
     expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith({
       where: expect.objectContaining({ tenantId: TENANT_ID }), // SA-485b: a compare-and-set
       data: {
         currentPlan: "PROFESSIONAL",
         planKey: "SCALE",
-        planVersionId: "v-9",
         basePriceSnapshot: 499,
         // A committing plan write disarms any scheduled downgrade (round 3, findings 2/9):
         // the 02:00 sweep filters on downgradeEffectiveAt alone, so one left armed would undo
@@ -1669,7 +1680,11 @@ describe("PlatformAdminService — audit provenance", () => {
       // An upgrade still applies instantly — unchanged from today.
       expect(prisma.tenant.update).toHaveBeenCalledWith({
         where: expect.objectContaining({ id: TENANT_ID }), // SA-485b: + the status as read
-        data: { plan: "PROFESSIONAL", planVersionId: "v-9" },
+        data: { plan: "PROFESSIONAL" },
+      });
+      expect(prisma.tenant.updateMany).toHaveBeenCalledWith({
+        where: { id: TENANT_ID },
+        data: { planVersionId: "v-9" }, // SA-815a: the one pin writer
       });
     });
 
@@ -1962,10 +1977,16 @@ describe("PlatformAdminService — audit provenance", () => {
         expect((prisma as any).tenantSubscription.update).not.toHaveBeenCalled();
         expect(prisma.tenant.update).toHaveBeenCalledWith({
           where: expect.objectContaining({ id: TENANT_ID }), // SA-485b: + the status as read
-          data: { plan: "STARTER", planVersionId: "v-9" },
+          data: { plan: "STARTER" },
+        });
+        expect(prisma.tenant.updateMany).toHaveBeenCalledWith({
+          where: { id: TENANT_ID },
+          data: { planVersionId: "v-9" }, // SA-815a: the one pin writer
         });
         // SA-485b: the instant write is the compare-and-set updateMany (still disarms a downgrade).
-        const written = (prisma as any).tenantSubscription.updateMany.mock.calls.at(-1)[0];
+        const written = (prisma as any).tenantSubscription.updateMany.mock.calls.find(
+          (c: any[]) => "downgradeToPlanKey" in c[0].data,
+        )[0];
         expect(written.data.downgradeToPlanKey).toBeNull();
         expect(result.downgradeToPlanKey).toBeUndefined();
       },
@@ -1973,7 +1994,7 @@ describe("PlatformAdminService — audit provenance", () => {
   });
 
   // SA-733 D8 / SA-733r [M7] (B1104 + B1103): the admin plan edit reaches Stripe like the tenant upgrade does —
-  // Stripe-first, one update, the override beating the plan price, the included add-ons retired.
+  // Stripe-first, one update, the override beating the plan price, the included add-ons stop billing and stay on (SA-786).
   describe("updatePlan — Stripe-first plan change (SA-733 D8)", () => {
     const periodStart = new Date("2026-09-01T00:00:00Z");
     const periodEnd = new Date("2026-10-01T00:00:00Z");
@@ -2089,7 +2110,7 @@ describe("PlatformAdminService — audit provenance", () => {
       );
     });
 
-    it("the included add-on's Stripe item is deleted in the same update; the row retires and its MRR books -price once", async () => {
+    it("the included add-on's Stripe item is deleted in the same update; the row stays ACTIVE at $0 and its MRR books -price once (R3)", async () => {
       arrange({ from: "GROWTH", fromKey: "GROWTH", addons: [forecasting] });
       await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
 
@@ -2100,7 +2121,7 @@ describe("PlatformAdminService — audit provenance", () => {
       });
       expect((prisma as any).tenantAddon.update).toHaveBeenCalledWith({
         where: { id: "ta_fc" },
-        data: { active: false, stripeItemId: null },
+        data: { priceSnapshot: 0, stripeItemId: null },
       });
       const addonDeltas = billingEventService.emit.mock.calls.filter(
         (c: any[]) => c[1] === "addon.disabled",
@@ -2123,7 +2144,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(revert.items[0]).toMatchObject({ id: "si_base", price_data: { unit_amount: 24900 } });
     });
 
-    it("review M2: GROWTH -> ENTERPRISE (a custom plan) still retires the add-on the higher plan includes", async () => {
+    it("review M2: GROWTH -> ENTERPRISE (a custom plan) still stops billing the add-on the higher plan includes (R3)", async () => {
       arrange({
         from: "GROWTH",
         fromKey: "GROWTH",
@@ -2138,7 +2159,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(params.proration_behavior).toBe("none"); // a custom plan is not a ranked-and-priced upgrade
       expect((prisma as any).tenantAddon.update).toHaveBeenCalledWith({
         where: { id: "ta_fc" },
-        data: { active: false, stripeItemId: null },
+        data: { priceSnapshot: 0, stripeItemId: null },
       });
     });
 
@@ -2275,7 +2296,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(stripe.getSubscription).not.toHaveBeenCalled();
     });
 
-    it("a tenant without a Stripe subscription pushes nothing and still retires the included add-on", async () => {
+    it("a tenant without a Stripe subscription pushes nothing and still stops billing the included add-on, which stays ACTIVE at $0 (R3)", async () => {
       arrange({
         from: "GROWTH",
         fromKey: "GROWTH",
@@ -2284,7 +2305,70 @@ describe("PlatformAdminService — audit provenance", () => {
       });
       await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
       expect(stripe.updateSubscription).not.toHaveBeenCalled();
-      expect((prisma as any).tenantAddon.update).toHaveBeenCalled();
+      expect((prisma as any).tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "ta_fc" },
+        data: { priceSnapshot: 0, stripeItemId: null },
+      });
+    });
+
+    // SA-786 S2 / R10: the instant DOWN arm (a non-ACTIVE tenant, or a custom plan moving to a ranked one).
+    // A $0 add-on the old plan included starts to bill at the target version's catalog price, per billing mode.
+    describe("instant down-move re-prices an add-on the old plan included (R10)", () => {
+      const included = {
+        ...forecasting,
+        priceSnapshot: 0,
+        stripeItemId: null,
+      };
+      const customToStarter = (sub: Record<string, unknown>, addons: any[] = [included]) =>
+        arrange({ from: "ENTERPRISE", fromKey: "ENTERPRISE", status: "ACTIVE", sub, addons });
+
+      it("MANUAL tenant: priced at the catalog price in the plan-write transaction, +25 booked once, a DUE notice", async () => {
+        customToStarter({ stripeSubId: null, externalPayment: true });
+        (prisma as any).tenantAddon.updateMany.mockResolvedValue({ count: 1 });
+        await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+
+        expect((prisma as any).tenantAddon.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            // limited to the locked rows by the writer: AND: [guard, { id: { in } }]
+            where: {
+              AND: expect.arrayContaining([
+                expect.objectContaining({ id: "ta_fc", stripeItemId: null, isComp: false }),
+              ]),
+            },
+            data: { priceSnapshot: 25 },
+          }),
+        );
+        const enabled = billingEventService.emit.mock.calls.filter(
+          (c: any[]) => c[1] === "addon.enabled",
+        );
+        expect(enabled.map((c: any[]) => c[3].amountDelta)).toEqual([25]);
+        const notices = (prisma as any).auditLog.create.mock.calls.map((c: any[]) => c[0].data);
+        expect(notices.filter((n: any) => n.action === "ADDON_MANUAL_INVOICE_DUE")).toHaveLength(1);
+      });
+
+      it("STRIPE tenant: the row is billed AFTER the plan write through the mutation service (plan_change, always_invoice)", async () => {
+        customToStarter({ stripeSubId: "sub_1" });
+        const billAddonsLeavingInclusion = jest.fn().mockResolvedValue({});
+        (service as any).mutations = { billAddonsLeavingInclusion };
+        await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+
+        expect(billAddonsLeavingInclusion).toHaveBeenCalledTimes(1);
+        const [tenantId, rows, , source, opts] = billAddonsLeavingInclusion.mock.calls[0];
+        expect(tenantId).toBe(TENANT_ID);
+        expect(rows.map((r: any) => r.id)).toEqual(["ta_fc"]);
+        expect(source).toBe("plan_change");
+        expect(opts).toEqual({ prorationBehavior: "always_invoice" });
+        expect((prisma as any).tenantAddon.updateMany).not.toHaveBeenCalled(); // no local re-price for Stripe
+      });
+
+      it("UNBILLED tenant: nothing is written (the row stays at $0 and books nothing)", async () => {
+        customToStarter({ stripeSubId: null, externalPayment: false });
+        await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+        expect((prisma as any).tenantAddon.updateMany).not.toHaveBeenCalled();
+        expect(
+          billingEventService.emit.mock.calls.filter((c: any[]) => c[1] === "addon.enabled"),
+        ).toHaveLength(0);
+      });
     });
   });
 
@@ -2317,6 +2401,67 @@ describe("PlatformAdminService — audit provenance", () => {
       downgradeToPlanKey: null,
       downgradeEffectiveAt: null,
       retainedUserIds: [],
+    });
+  });
+
+  // SA-788 (c) C-R1: the activation result lists the tenant's add-ons before and after (read under the tenant lock at
+  // the start of the transaction and again just before commit), and what changed - including a row this activation
+  // priced. On master the result has no `addons` at all.
+  it("C-R1: activateManualSubscription returns addons { before, after, changed } with the row it priced", async () => {
+    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.update.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      status: "ACTIVE",
+      plan: "PROFESSIONAL",
+    } as any);
+    planCatalogService.getPublishedVersion.mockResolvedValue({
+      id: "v-1",
+      definitions: [{ planKey: "SCALE", monthlyPrice: 349, isCustom: false }],
+      addonSkus: [{ sku: "FORECASTING", name: "Forecasting", monthlyPrice: 25 }],
+    } as any);
+    const row = (priceSnapshot: number) => ({
+      addonKey: "FORECASTING",
+      sku: "FORECASTING",
+      active: true,
+      priceSnapshot,
+      isComp: false,
+    });
+    let reads = 0;
+    (prisma as any).tenantAddon.findMany.mockImplementation(async (a: any) =>
+      a?.orderBy && a?.where && Object.keys(a.where).length === 1
+        ? [row(++reads === 1 ? 0 : 25)]
+        : [],
+    );
+
+    const res: any = await service.activateManualSubscription(
+      TENANT_ID,
+      { plan: "PROFESSIONAL", billingPeriodDays: 30, paymentMethod: "BANK_TRANSFER" } as any,
+      ADMIN_ID,
+    );
+
+    expect(res.addons).toEqual({
+      before: [
+        {
+          addonKey: "FORECASTING",
+          sku: "FORECASTING",
+          name: "Forecasting",
+          active: true,
+          priceSnapshot: 0,
+          isComp: false,
+        },
+      ],
+      after: [
+        {
+          addonKey: "FORECASTING",
+          sku: "FORECASTING",
+          name: "Forecasting",
+          active: true,
+          priceSnapshot: 25,
+          isComp: false,
+        },
+      ],
+      changed: [{ addonKey: "FORECASTING", field: "priceSnapshot", before: 0, after: 25 }],
     });
   });
 
@@ -4309,7 +4454,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
     });
 
-    it("REG-2 activating LITE on a catalog that has it writes planKey + planVersionId into the upsert", async () => {
+    it("REG-2 activating LITE on a catalog that has it writes planKey into the upsert and the version through the pin writer", async () => {
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
@@ -4325,8 +4470,18 @@ describe("PlatformAdminService — audit provenance", () => {
       await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
 
       const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
-      expect(upsertArg.create).toMatchObject({ planKey: "LITE", planVersionId: "v-12" });
-      expect(upsertArg.update).toMatchObject({ planKey: "LITE", planVersionId: "v-12" });
+      expect(upsertArg.create).toMatchObject({ planKey: "LITE" });
+      expect(upsertArg.update).toMatchObject({ planKey: "LITE" });
+      // SA-815a: the version rides in the one pin writer (both pins), not in the upsert
+      expect(upsertArg.create).not.toHaveProperty("planVersionId");
+      expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: TENANT_ID },
+        data: { planVersionId: "v-12" },
+      });
+      expect(prisma.tenant.updateMany).toHaveBeenCalledWith({
+        where: { id: TENANT_ID },
+        data: { planVersionId: "v-12" },
+      });
     });
   });
 

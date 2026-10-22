@@ -2,6 +2,11 @@
 // like ./features.ts. The contract is packages/types/api/profiles.ts; nothing here redeclares a shape from it.
 import { superAdminClient } from "@/lib/admin-api";
 import type {
+  BusinessCapabilities,
+  BusinessCapabilitiesApplyResponse,
+  BusinessCapabilitiesPreviewResponse,
+  BusinessCapabilitiesRequest,
+  ConfirmBusinessCapabilitiesRequest,
   ConfirmBusinessProfileRequest,
   BusinessProfileApplyResponse,
   BusinessProfileKey,
@@ -17,6 +22,14 @@ export async function fetchBusinessProfiles(): Promise<BusinessProfileSummary[]>
     "/platform-admin/business-profiles",
   );
   return Array.isArray(res.data?.profiles) ? res.data.profiles : [];
+}
+
+/** `GET /platform-admin/tenants/:id/business-capabilities` — the ticks, read back from the server (BO-03). */
+export async function fetchBusinessCapabilities(tenantId: string): Promise<BusinessCapabilities> {
+  const res = await superAdminClient.get<BusinessCapabilities>(
+    `/platform-admin/tenants/${tenantId}/business-capabilities`,
+  );
+  return res.data;
 }
 
 /** `POST /platform-admin/tenants/:id/business-profile/preview` — a dry run: writes nothing. */
@@ -44,6 +57,43 @@ export async function applyBusinessProfile(
   const body: ConfirmBusinessProfileRequest = { profile, planFingerprint };
   const res = await superAdminClient.post<BusinessProfileApplyResponse>(
     `/platform-admin/tenants/${tenantId}/business-profile`,
+    body,
+  );
+  return res.data;
+}
+
+/**
+ * `POST /platform-admin/tenants/:id/business-capabilities/preview` (BO-04) — a dry run for the ticks: writes
+ * nothing. A blocked plan is still a 200; its `blocked` field says why Confirm must stay disabled.
+ */
+export async function previewBusinessCapabilities(
+  tenantId: string,
+  ticks: BusinessCapabilitiesRequest,
+): Promise<BusinessCapabilitiesPreviewResponse> {
+  const res = await superAdminClient.post<BusinessCapabilitiesPreviewResponse>(
+    `/platform-admin/tenants/${tenantId}/business-capabilities/preview`,
+    ticks,
+  );
+  return res.data;
+}
+
+/**
+ * `POST /platform-admin/tenants/:id/business-capabilities` (BO-04) — one audited action; re-applying is
+ * idempotent. Sends the preview's `planFingerprint` (else a 409 PROFILE_PLAN_CHANGED: re-preview).
+ */
+export async function applyBusinessCapabilities(
+  tenantId: string,
+  ticks: BusinessCapabilitiesRequest,
+  planFingerprint: string,
+  reason?: string,
+): Promise<BusinessCapabilitiesApplyResponse> {
+  const body: ConfirmBusinessCapabilitiesRequest = {
+    ...ticks,
+    planFingerprint,
+    ...(reason ? { reason } : {}),
+  };
+  const res = await superAdminClient.post<BusinessCapabilitiesApplyResponse>(
+    `/platform-admin/tenants/${tenantId}/business-capabilities`,
     body,
   );
   return res.data;

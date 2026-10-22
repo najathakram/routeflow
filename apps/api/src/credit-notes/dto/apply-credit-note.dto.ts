@@ -1,4 +1,5 @@
-import { IsNotEmpty, IsNumber, IsOptional, IsString, Min } from "class-validator";
+import { IsNotEmpty, IsNumber, IsString, Min } from "class-validator";
+import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 /**
  * #2416: POST /credit-notes/:id/apply. Without a class, the global ValidationPipe had no metadata
@@ -6,7 +7,7 @@ import { IsNotEmpty, IsNumber, IsOptional, IsString, Min } from "class-validator
  */
 export class ApplyCreditNoteDto {
   @IsString() @IsNotEmpty() invoiceId!: string;
-  @IsOptional() @IsNumber() @Min(0.01) amount?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0.01) amount?: number;
 }
 
 /** #2416: POST /credit-notes/:id/unapply, the same invoiceId guard. */

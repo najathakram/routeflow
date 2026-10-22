@@ -30,6 +30,7 @@ import {
   Handshake,
   BadgePercent,
   Store,
+  Smartphone,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
@@ -44,6 +45,8 @@ import { BillingShellBanner, BillingStripReserve } from "@/components/BillingShe
 import { DriverReadOnlyBanner } from "@/components/DriverReadOnlyBanner";
 import { subscriptionPollInterval } from "@/lib/subscription-banner-state";
 import { useSubscription } from "@/lib/api/billing";
+import { hasAnyAppLink, useAppLinks } from "@/lib/api/app-links";
+import { isInShell } from "@/lib/in-shell";
 import { useAuth } from "@/lib/auth-context";
 import {
   getImpersonation,
@@ -58,11 +61,13 @@ import { useExpiringAuthorizations, type ExpiringAuthorization } from "@/lib/api
 import { usePendingPortalApprovals } from "@/lib/api/portal-approvals";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
+import { useGuardedSignOut } from "@/components/SignOutUnsentGuard";
 import { useHasAddon, useTenantAddons } from "@/lib/api/tobacco";
 import { useRoutesAccess, useDeliveryAccess, SALES_AGENTS_ADDON } from "@/lib/api/addons";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { RegisterHeader } from "@/components/RegisterHeader";
 import { guardCounterLeave } from "@/lib/counter-cart-signal";
+import { NumberWheelGuard } from "@/components/NumberWheelGuard";
 import { useGuardedRouter } from "@/lib/use-guarded-router";
 import { isRegisterPath, recordPreviousPath } from "@/lib/register-mode";
 import { useCounterLanding, useOpenCounterPref } from "@/lib/use-counter-device-pref";
@@ -531,6 +536,8 @@ function HeaderTools({
   clerkTestId?: string;
 }) {
   const { user, logout } = useAuth();
+  // SA-817 A8: an explicit sign-out with unsent orders on this device asks first; a session expiry never comes through here.
+  const { requestSignOut, dialog: signOutDialog } = useGuardedSignOut(() => void logout(), user);
   const { locale, setLocale, t } = useI18n();
   const pathname = usePathname();
   const router = useGuardedRouter();
@@ -550,6 +557,10 @@ function HeaderTools({
   const bellCount = unreadCount + expiring.length + pendingApprovals.length;
   const { driveMode, setDriveMode } = useDriveMode();
   const counterPref = useOpenCounterPref();
+  // Row 559: "Get the app" shows only when an install link is ready (fails closed while loading or on an
+  // older api) and never inside the app shell itself.
+  const { data: appLinks } = useAppLinks();
+  const showGetTheApp = hasAnyAppLink(appLinks) && !isInShell();
   // Drive mode is a recurring-routes affordance ("My Routes"), so it's gated
   // on routesAccess (not delivery access).
   const { enabled: routesAccess } = useRoutesAccess();
@@ -788,6 +799,15 @@ function HeaderTools({
               <UserIcon className="h-4 w-4 text-navy/70" />
               {t("menu.profile")}
             </DropdownMenu.Item>
+            {showGetTheApp && (
+              <DropdownMenu.Item
+                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+                onSelect={() => router.push("/get-the-app")}
+              >
+                <Smartphone className="h-4 w-4 text-navy/70" />
+                {t("menu.getTheApp")}
+              </DropdownMenu.Item>
+            )}
             {/* POS-7: per-device preference; hidden when storage is blocked (the toggle could not persist). */}
             {showCounterPref && counterPref.available && (
               <DropdownMenu.CheckboxItem
@@ -871,8 +891,8 @@ function HeaderTools({
               <DropdownMenu.Item
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
                 onSelect={() => {
-                  if (guardCounterLeave(() => void logout())) return;
-                  void logout();
+                  if (guardCounterLeave(requestSignOut)) return;
+                  requestSignOut();
                 }}
               >
                 <LogOut className="h-4 w-4" />
@@ -882,6 +902,7 @@ function HeaderTools({
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
+      {signOutDialog}
     </div>
   );
 }
@@ -1476,6 +1497,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <ToastProvider>
+      <NumberWheelGuard />
       <PageTitleProvider>
         <AuthGuard>{children}</AuthGuard>
       </PageTitleProvider>

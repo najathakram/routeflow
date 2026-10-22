@@ -69,9 +69,11 @@ function AddUnitForm({
   const shownName = isPiece ? baseLabel : name;
   const canSubmit = shownName.trim() !== "" && countOk && !create.isPending;
 
+  // Row 614: set before the request, so a second click in the same tick creates nothing.
+  const inFlight = React.useRef(false);
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit || inFlight.current) return;
     setErr("");
     setPriceRefused(false);
     // A typed price is checked here, with the grid cell's own rule, so a bad one never creates a unit.
@@ -83,12 +85,16 @@ function AddUnitForm({
       return;
     }
     const label = shownName.trim();
+    inFlight.current = true;
     create.mutate(
       { label, factorToBase: count * options[ofIdx].factorToBase },
       {
         onSuccess: (created: { id?: string } | undefined) =>
           onDone({ id: created?.id ?? "", label, price: priceText }),
         onError: (error) => setErr(orderErrorText(error)),
+        onSettled: () => {
+          inFlight.current = false;
+        },
       },
     );
   };

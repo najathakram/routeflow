@@ -55,7 +55,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 describe("SA-078(b) — reconcile rebuild carries the PRIOR InvoiceItem's unitsPerBox forward, never the live product", () => {
   let service: InvoicesService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let writeSaleEntries: jest.Mock;
+  let settleRegulatedLedger: jest.Mock;
 
   const mockNumbering = {
     reserveNext: jest.fn().mockResolvedValue("INV-2026-0001"),
@@ -64,7 +64,7 @@ describe("SA-078(b) — reconcile rebuild carries the PRIOR InvoiceItem's unitsP
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    writeSaleEntries = jest.fn().mockResolvedValue(undefined);
+    settleRegulatedLedger = jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -84,8 +84,9 @@ describe("SA-078(b) — reconcile rebuild carries the PRIOR InvoiceItem's unitsP
         {
           provide: RegulatedLedgerService,
           useValue: {
-            writeSaleEntries,
+            writeSaleEntries: jest.fn().mockResolvedValue(undefined),
             reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger,
           },
         },
         {
@@ -190,7 +191,7 @@ describe("SA-078(b) — reconcile rebuild carries the PRIOR InvoiceItem's unitsP
     await service.reconcileOrderDeliveredInvoices("o1");
 
     const createdItem = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
-    const ledgerLine = writeSaleEntries.mock.calls[0][0].lines[0];
+    const ledgerLine = settleRegulatedLedger.mock.calls[0][1].lines[0];
     // No expect() here on purpose -- this case exists to print what the CURRENT code
     // actually does, per SA-078(b)'s "observe, do not predict." See the PR body for the
     // captured numbers from this run.
@@ -214,7 +215,7 @@ describe("SA-078(b) — reconcile rebuild carries the PRIOR InvoiceItem's unitsP
     armDeliveredReconcile();
     await service.reconcileOrderDeliveredInvoices("o1");
 
-    const ledgerLine = writeSaleEntries.mock.calls[0][0].lines[0];
+    const ledgerLine = settleRegulatedLedger.mock.calls[0][1].lines[0];
     expect(ledgerLine.packAtSale).toBe(12);
     // regulatedUnitBasis's box-unaware branch: qty * packAtSale.
     expect(ledgerLine.qty * (ledgerLine.packAtSale as number)).toBe(60);

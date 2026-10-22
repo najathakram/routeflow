@@ -1,6 +1,6 @@
 /**
  * Units v2 (units-v2-grid): the product page's unit ladder grid.
- *   open a product with a boxed unit ladder -> the grid shows -> the code column is headed "Barcode" (never "SKU")
+ *   open a product with a boxed unit ladder -> the grid shows -> no "SKU" column, and each unit cell's second line carries its barcode (or "No barcode")
  *   -> every price cell reads "Auto" or "Set" -> at 390 the ladder is cards, at 768 / 1440 it is the table.
  *
  * LOCAL LANE ONLY (project `units-v2`, registered by playwright.config.ts only for a local base URL outside GitHub Actions).
@@ -19,7 +19,7 @@ for (const vp of VIEWPORTS) {
   test.describe(`Units v2 grid @ ${vp.name}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
 
-    test("boxed ladder: Barcode header, Auto/Set cells, cards on phone, table otherwise", async ({
+    test("boxed ladder: barcode on the unit cell, no SKU, Auto/Set cells, cards on phone, table otherwise", async ({
       page,
       context,
     }, info) => {
@@ -31,12 +31,11 @@ for (const vp of VIEWPORTS) {
       const grid = page.getByTestId(UNITS_V2_IDS.grid);
       await expect(grid).toBeVisible({ timeout: 20_000 });
 
-      await expect(
-        grid
-          .getByText(/^Barcode\b/)
-          .filter({ visible: true })
-          .first(),
-      ).toBeVisible();
+      // K11-10: the barcode left its own column; it is the unit cell's second line (or "No barcode").
+      const codes = grid.locator(`[data-testid^="${UNITS_V2_PREFIX.code}"]:visible`);
+      expect(await codes.count(), "every unit shows a barcode line").toBeGreaterThan(0);
+      await expect(codes.first()).toHaveText(/\S/);
+      await expect(grid.getByRole("columnheader", { name: /^Barcode\b/ })).toHaveCount(0);
       await expect(grid.getByText("SKU", { exact: true })).toHaveCount(0);
 
       const cells = grid.locator(`[data-testid^="${UNITS_V2_PREFIX.cell}"]:visible`);

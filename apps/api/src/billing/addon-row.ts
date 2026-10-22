@@ -1,5 +1,6 @@
 import { TenantStatus } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
+import { toCents } from "@routeflow/pricing";
 import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
 
 /**
@@ -64,6 +65,45 @@ export function billableAddonWhere(
   where: Prisma.TenantAddonWhereInput = {},
 ): Prisma.TenantAddonWhereInput {
   return { ...where, isComp: false };
+}
+
+type BillableRowLike = {
+  addonKey: string;
+  sku?: string | null;
+  active?: boolean | null;
+  isComp?: boolean | null;
+  priceSnapshot?: unknown;
+};
+
+/**
+ * SA-815c / SA-815d: an active, non-comp row an admin PRICED above zero, that is not seat plumbing - the rows whose
+ * stored price the card checkout has to match to a catalog item before it bills them.
+ *
+ * SEAT_EXTRA is excluded HERE and nowhere else: seats bill through the plan quantity, never through an add-on item.
+ */
+export function isPricedBillableCandidate(row: BillableRowLike): boolean {
+  if (!row.active || row.isComp) return false;
+  if ((row.sku ?? addonCodeOf(row.addonKey)) === "SEAT_EXTRA") return false;
+  return Number(row.priceSnapshot ?? 0) > 0;
+}
+
+/**
+ * SA-815c / SA-815d: the ONE predicate for "the card checkout bills this ADMIN-ONLY row through a Stripe item" -
+ * it decides BILLING only (the ledger's booking at the reactivation crossing is unchanged, so live and ledger MRR
+ * keep agreeing). A candidate ({@link isPricedBillableCandidate}) whose stored price EQUALS the billing catalog
+ * price of its SKU (cents) and that price is above zero: the item is created at exactly what the row says.
+ * Anything else (a SKU the catalog prices at $0 or does not list, or a custom price above or below the catalog)
+ * is never billed here: billing it at the catalog price would silently change what was agreed, and the caller
+ * raises a platform notice instead. Self-serve rows keep their own rule (billed at the catalog price) and do not
+ * go through this.
+ */
+export function isStripeBillableAddonRow(
+  row: BillableRowLike,
+  catalogMonthlyPrice: unknown,
+): boolean {
+  if (!isPricedBillableCandidate(row)) return false;
+  const catalog = toCents(Number(catalogMonthlyPrice ?? 0));
+  return catalog > 0 && catalog === toCents(Number(row.priceSnapshot));
 }
 
 /**

@@ -452,3 +452,92 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
     });
   });
 });
+
+describe("InlineReturnSection — Remove offers Undo, counter reason labels (R7b 3.1)", () => {
+  const COUNTER_ORDER = {
+    id: "order-c",
+    orderNumber: "ORD-1",
+    customerId: "cust-1",
+    counterSale: true,
+    lineItems: [
+      {
+        id: "li-1",
+        productId: "prod-1",
+        product: { id: "prod-1", name: "Cola 12oz Can", unit: "each", unitsPerBox: null },
+        qty: 4,
+        unitPrice: 2,
+        status: "CONFIRMED",
+      },
+      {
+        id: "li-2",
+        productId: "prod-2",
+        product: { id: "prod-2", name: "Ice Bag 10lb", unit: "each", unitsPerBox: null },
+        qty: 2,
+        unitPrice: 3,
+        status: "CONFIRMED",
+      },
+    ],
+  };
+
+  it("Remove offers Undo that restores the line with its quantity", async () => {
+    mockEntryOrder = COUNTER_ORDER;
+    renderSection({ entryOrderId: "order-c" });
+    await screen.findByText("Cola 12oz Can");
+    const qty = screen.getAllByLabelText(/^pieces$/i)[0] as HTMLInputElement;
+    fireEvent.change(qty, { target: { value: "1" } });
+    fireEvent.click(screen.getAllByRole("button", { name: /^remove$/i })[0]);
+    expect(screen.queryByLabelText(/^pieces$/i, { selector: "[value='1']" })).toBeNull();
+    expect(screen.getByText(/removed cola 12oz can/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^undo$/i }));
+    expect(screen.queryByText(/removed cola 12oz can/i)).toBeNull();
+    const back = screen.getAllByLabelText(/^pieces$/i) as HTMLInputElement[];
+    expect(back).toHaveLength(2);
+    expect(back[0].value).toBe("1"); // back in its place, with the quantity typed
+    expect(screen.getAllByText(/cola 12oz can|ice bag 10lb/i)[0]).toHaveTextContent(
+      "Cola 12oz Can",
+    );
+  });
+
+  it("adding a product that sits in the Undo slot discards the slot and adds it once", async () => {
+    mockEntryOrder = COUNTER_ORDER;
+    productResults = [{ id: "prod-1", name: "Cola 12oz Can", unit: "each", unitsPerBox: null }];
+    renderSection({ entryOrderId: "order-c" });
+    await screen.findByText("Cola 12oz Can");
+    fireEvent.click(screen.getAllByRole("button", { name: /^remove$/i })[0]);
+    expect(screen.getByRole("button", { name: /^undo$/i })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "col" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Cola 12oz Can" }));
+    expect(screen.queryByRole("button", { name: /^undo$/i })).toBeNull();
+    expect(screen.getAllByText("Cola 12oz Can")).toHaveLength(1);
+  });
+
+  it("a counter-sale return shows counter reason labels", async () => {
+    mockEntryOrder = COUNTER_ORDER;
+    renderSection({ entryOrderId: "order-c" });
+    await screen.findByText("Cola 12oz Can");
+    const reason = screen.getByLabelText(/^reason$/i) as HTMLSelectElement;
+    const labels = Array.from(reason.options).map((o) => o.text);
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        "Damaged",
+        "Wrong item",
+        "Changed their mind",
+        "Faulty",
+        "Bought too many",
+      ]),
+    );
+    expect(labels).not.toContain("Customer Refused");
+    // the value sent is still the enum value
+    expect(Array.from(reason.options).find((o) => o.text === "Changed their mind")?.value).toBe(
+      "CUSTOMER_REFUSED",
+    );
+  });
+
+  it("a delivery return keeps the delivery labels", async () => {
+    mockEntryOrder = { ...COUNTER_ORDER, counterSale: false };
+    renderSection({ entryOrderId: "order-c" });
+    await screen.findByText("Cola 12oz Can");
+    const reason = screen.getByLabelText(/^reason$/i) as HTMLSelectElement;
+    expect(Array.from(reason.options).map((o) => o.text)).toContain("Customer Refused");
+  });
+});

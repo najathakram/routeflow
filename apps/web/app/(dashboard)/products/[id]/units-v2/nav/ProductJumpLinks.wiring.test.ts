@@ -15,7 +15,9 @@ describe("products/[id]/page.tsx jump-links mount", () => {
   });
 
   it("mounts it only behind the v2 condition, never for a family", () => {
-    expect(src).toMatch(/\{v2 && product\.kind !== "FAMILY" \? <ProductJumpLinks \/> : null\}/);
+    expect(src).toMatch(
+      /\{v2 && product\.kind !== "FAMILY" \? <ProductJumpLinks reserveSpace \/> : null\}/,
+    );
   });
 
   it("gives the PAGE h1 (the product name) the h-product id the Product link targets", () => {

@@ -8,8 +8,15 @@ import {
 } from "@prisma/client";
 import {
   COUNTER_DEFAULT_REGISTER,
+  ROW_ITEM_NAMES_MAX,
   billedChargeLines,
   cashierNameOf,
+  counterTenderSplit,
+  isOwnReturn,
+  returnSettlement,
+  settlementTotals,
+  type SettlementCreditNote,
+  foldItemNames,
   roundMoney,
   storedTaxRatePercent,
   sumConfirmed,
@@ -364,8 +371,32 @@ export function windowReturnsWhere(
 }
 
 /**
+ * The order's returns as every counter-receipt reader selects them (the Today's-sales page and the emailed receipt read the
+ * same columns, so `toTodaysSaleRow` and the receipt model get the same record). One home: a column added for a settlement
+ * figure is added once.
+ */
+export const orderReturnSelect = {
+  id: true,
+  returnNumber: true,
+  status: true,
+  refundMethod: true,
+  refundedAt: true,
+  creditNoteId: true,
+  refundAmount: true,
+  creditSubtotal: true,
+  creditTax: true,
+  creditCategoryTax: true,
+  // B1262 / SA-838: the second link. An INLINE return counts as this order's only through an item sold on it.
+  kind: true,
+  // plus each item's priced amount: an INLINE return is worth its items (returnSettlement), never a proration
+  items: {
+    select: { sourceOrderId: true, subtotal: true, taxAmount: true, categoryTax: true },
+  },
+} satisfies Prisma.ReturnSelect;
+
+/**
  * The page query, ONE definition: the service sends it and the EXPLAIN spec captures the SQL of exactly it.
- * `select`, never `include`: no line items, no cost or margin field.
+ * `select`, never `include`: only each line's description and qty (the row's item names), no cost or margin field.
  */
 export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: number) {
   return {
@@ -392,12 +423,27 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           status: true,
           payments: {
             orderBy: { createdAt: "asc" },
-            select: { method: true, amount: true, status: true },
+            // B1262 / SA-838: the credit note each payment applied and the invoice that NOTE was issued against: the
+            // first link of "this payment is the sale's own return credit" (same query: no extra read).
+            select: {
+              method: true,
+              amount: true,
+              status: true,
+              creditNoteId: true,
+              creditNote: { select: { invoiceId: true } },
+            },
           },
           // the stored line rates the sale's tax rate is read from (pricing's storedTaxRatePercent), and the
           // levy each line billed with its category (CQ-03: named charges on the reprint)
+          // R7b 2.1: description + qty name the sale on its row (the snapshot taken at sale time); the fold keeps the first few.
+          // No `take` here: the same items feed the tax-rate and levy reads above, which need every line.
           items: {
             select: {
+              description: true,
+              qty: true,
+              boxes: true,
+              pieces: true,
+              unitLabel: true,
               taxRate: true,
               categoryTaxAmount: true,
               trackedCategoryId: true,
@@ -407,29 +453,155 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           },
         },
       },
-      returns: {
-        select: {
-          id: true,
-          returnNumber: true,
-          status: true,
-          refundMethod: true,
-          refundedAt: true,
-          creditNoteId: true,
-          refundAmount: true,
-          creditSubtotal: true,
-          creditTax: true,
-          creditCategoryTax: true,
-        },
-      },
+      returns: { select: orderReturnSelect },
     },
   } satisfies Prisma.OrderFindManyArgs;
+}
+
+/**
+ * B1262 / SA-838 (e) + SA-838a: the returns that belong to a counter sale but are filed elsewhere, ONE batched read. Neither
+ * `Return.creditNoteId` nor `ReturnItem.sourceOrderId` has a Prisma relation, so an INLINE return carried on ANOTHER order is
+ * reachable two ways: by the credit note a sale's payment applied (its own credit, or a store-credit tender it must not claim),
+ * or by an item sold on the sale (`sourceOrderId`): the second finds a return whose credit was never applied here (kept, or
+ * spent on a third order). The Today's-sales page and the emailed receipt build this ONE where, so both surfaces find the same
+ * returns. Both lists must be real arrays and at least one non-empty: an undefined `in` would be dropped by Prisma and widen
+ * this to every return of the tenant.
+ */
+export function carriedReturnWhere(
+  tenantId: string,
+  creditNoteIds: readonly string[],
+  orderIds: readonly string[],
+) {
+  if (!creditNoteIds || !orderIds || (creditNoteIds.length === 0 && orderIds.length === 0)) {
+    throw new Error("carriedReturnWhere needs at least one credit note id or order id");
+  }
+  return {
+    tenantId,
+    OR: [
+      { creditNoteId: { in: [...creditNoteIds] } },
+      { items: { some: { sourceOrderId: { in: [...orderIds] } } } },
+    ],
+  };
+}
+
+export const carriedReturnSelect = {
+  id: true,
+  creditNoteId: true,
+  orderId: true,
+  kind: true,
+  status: true,
+  refundMethod: true,
+  refundedAt: true,
+  items: {
+    select: { sourceOrderId: true, subtotal: true, taxAmount: true, categoryTax: true },
+  },
+} satisfies Prisma.ReturnSelect;
+
+/** The distinct credit note ids the page's PAID-or-not payments applied (dead invoices included: provenance decides). */
+export function pageCreditNoteIds(
+  rows: ReadonlyArray<{
+    invoices: ReadonlyArray<{ payments: ReadonlyArray<{ creditNoteId?: string | null }> }>;
+  }>,
+): string[] {
+  const ids = new Set<string>();
+  for (const o of rows) {
+    for (const i of o.invoices) {
+      for (const p of i.payments) if (p.creditNoteId) ids.add(p.creditNoteId);
+    }
+  }
+  return [...ids];
+}
+
+/**
+ * SA-838a I2: every credit note id the page's returns and payments refer to, for the ONE batched read of the notes: the
+ * page payments' notes, each page return's own note and each carried return's note. A kept credit is reachable only through
+ * its return's `creditNoteId`, a spent one through the note's payments.
+ */
+export function creditNoteIdsToRead(
+  rows: ReadonlyArray<{
+    invoices: ReadonlyArray<{ payments: ReadonlyArray<{ creditNoteId?: string | null }> }>;
+    returns: ReadonlyArray<{ creditNoteId: string | null }>;
+  }>,
+  carried: readonly ReturnProvenance[],
+): string[] {
+  const ids = new Set(pageCreditNoteIds(rows));
+  for (const o of rows) for (const r of o.returns) if (r.creditNoteId) ids.add(r.creditNoteId);
+  for (const r of carried) if (r.creditNoteId) ids.add(r.creditNoteId);
+  return [...ids];
+}
+
+/** The note read: tenant-scoped, one id list. An undefined `in` would be dropped by Prisma and widen it to every note. */
+export function creditNoteReadWhere(tenantId: string, ids: readonly string[]) {
+  if (!ids || ids.length === 0) throw new Error("creditNoteReadWhere needs at least one id");
+  return { tenantId, id: { in: [...ids] } };
+}
+
+/** status + amount + the invoice, and the PAID payments applied to the note on ANY sale (same select: no second query). */
+export const creditNoteReadSelect = {
+  id: true,
+  status: true,
+  amount: true,
+  invoiceId: true,
+  invoicePayments: { where: { status: "PAID" }, select: { amount: true, invoiceId: true } },
+} satisfies Prisma.CreditNoteSelect;
+
+/** A credit note as the read saw it, with where each PAID application sits (the row decides which are on its own invoices). */
+export interface CreditNoteFact extends SettlementCreditNote {
+  applications?: ReadonlyArray<{ amount: unknown; invoiceId: string | null }>;
+}
+
+/** The fact as `returnSettlement` takes it: how much of the note's application sits on this order's own invoices. */
+function settlementNote(
+  fact: CreditNoteFact | undefined,
+  orderInvoiceIds: ReadonlySet<string>,
+): SettlementCreditNote | null {
+  if (!fact) return null;
+  const { status, appliedAnywhere, applications } = fact;
+  return {
+    status,
+    appliedAnywhere,
+    ...(applications
+      ? {
+          appliedOnThisOrder: roundMoney(
+            applications
+              .filter((a) => !!a.invoiceId && orderInvoiceIds.has(a.invoiceId))
+              .reduce((s, a) => s + num(a.amount), 0),
+          ),
+        }
+      : {}),
+  };
+}
+
+/** The read's rows as facts: status, the PAID amount applied anywhere in cents, and each application's invoice. */
+export function creditNoteFacts(
+  rows: ReadonlyArray<{
+    id: string;
+    status: string;
+    invoicePayments?: ReadonlyArray<{ amount: unknown; invoiceId?: string | null }>;
+  }>,
+): Map<string, CreditNoteFact> {
+  return new Map(
+    rows.map((n) => [
+      n.id,
+      {
+        status: n.status,
+        appliedAnywhere: roundMoney(
+          (n.invoicePayments ?? []).reduce((s, p) => s + num(p.amount), 0),
+        ),
+        applications: (n.invoicePayments ?? []).map((p) => ({
+          amount: p.amount,
+          invoiceId: p.invoiceId ?? null,
+        })),
+      },
+    ]),
+  );
 }
 
 const num = (v: unknown): number => (v == null ? 0 : Number(v));
 
 // ─── Row ──────────────────────────────────────────────────────────────────────────────────────
 
-/** The page query's row, read with `select` (no line items, no cost / margin fields). */
+/** The page query's row, read with `select` (line descriptions and qty only; no cost / margin fields). */
 export interface TodayOrderRecord {
   id: string;
   orderNumber: string | null;
@@ -446,9 +618,23 @@ export interface TodayOrderRecord {
     id: string;
     invoiceNumber: string | null;
     status: string;
-    payments: Array<{ method: string; amount: unknown; status: string }>;
+    payments: Array<{
+      method: string;
+      amount: unknown;
+      status: string;
+      /** B1262 / SA-838: the credit note this payment applied, and the invoice that note was issued against */
+      creditNoteId?: string | null;
+      creditNote?: { invoiceId: string | null } | null;
+    }>;
     /** SA-764: each line's stored tax rate (a fraction, 0.0825); CQ-03: its billed levy and category */
     items?: Array<{
+      /** R7b 2.1: the line's snapshotted description and qty (the row's item names) */
+      description?: string | null;
+      qty?: unknown;
+      /** N4: the line's own boxed split and selling unit, so the row reads "2 Cases" like the receipt */
+      boxes?: number | null;
+      pieces?: number | null;
+      unitLabel?: string | null;
       taxRate: unknown;
       categoryTaxAmount?: unknown;
       trackedCategoryId?: string | null;
@@ -472,21 +658,49 @@ export interface TodayOrderRecord {
     creditSubtotal: unknown;
     creditTax: unknown;
     creditCategoryTax: unknown;
+    /** B1262 / SA-838: STANDARD (absent reads STANDARD) or INLINE, and its items' source orders */
+    kind?: string;
+    items?: ReadonlyArray<{
+      sourceOrderId?: string | null;
+      subtotal?: unknown;
+      taxAmount?: unknown;
+      categoryTax?: unknown;
+    }>;
   }>;
 }
 
-/** The sale's money labels, in the order a receipt lists them. */
-const METHOD_ORDER: TodaysSaleMethod[] = ["CASH", "CARD", "CHECK", "OTHER", "STORE_CREDIT"];
+/**
+ * The sale's money labels, in the order a receipt lists them (prepaid advance first). The shared list in
+ * @routeflow/types (`TODAYS_SALE_METHOD_VALUES`) is the twin the API never value-imports (L-261); a parity spec pins the two equal.
+ */
+export const TODAYS_SALE_METHOD_ORDER: readonly TodaysSaleMethod[] = [
+  "ADVANCE",
+  "CASH",
+  "CARD",
+  "CHECK",
+  "OTHER",
+  "STORE_CREDIT",
+];
+const METHOD_ORDER = TODAYS_SALE_METHOD_ORDER;
 
-/** A stored payment method as the till names it: CASH / CARD / CHECK, a credit application, anything else. */
+/**
+ * A stored payment method as the till names it: CASH / CARD / CHECK, a credit-note application (STORE_CREDIT), an advance
+ * application (ADVANCE: the customer's prepaid money, its own label since SA-838), anything else.
+ */
 export function todaysMethodOf(prismaMethod: string): TodaysSaleMethod {
-  if (prismaMethod === "CREDIT_NOTE" || prismaMethod === "ADVANCE") return "STORE_CREDIT";
+  if (prismaMethod === "ADVANCE") return "ADVANCE";
+  if (prismaMethod === "CREDIT_NOTE") return "STORE_CREDIT";
   const method = counterMethodOf(prismaMethod);
   // ON_ACCOUNT is not money taken at the till; anything the till does not name is OTHER.
   return method && method !== "ON_ACCOUNT" ? method : "OTHER";
 }
 
-function resolutionOf(r: TodayOrderRecord["returns"][number]): TodaysSaleReturnResolution {
+function resolutionOf(r: {
+  status: string;
+  refundMethod?: string | null;
+  refundedAt?: Date | null;
+  creditNoteId?: string | null;
+}): TodaysSaleReturnResolution {
   // A refund chosen at capture but not recorded yet (`refundedAt` null): the clerk still has to hand the money back.
   if (r.refundMethod === REFUND_METHOD_EXTERNAL && r.refundedAt === null) return "PENDING";
   if (r.refundMethod === REFUND_METHOD_EXTERNAL) return "REFUND";
@@ -514,10 +728,163 @@ export function returnAmount(r: ReturnMoney): number {
   return credit > 0 ? credit : roundMoney(num(r.refundAmount));
 }
 
+/** One return, as far as "whose return is this, and what is it worth" needs it. */
+export interface ReturnProvenance {
+  /** absent on a hand-built record; when set, a return seen twice (the page's own and the batched read) counts once */
+  id?: string;
+  creditNoteId: string | null;
+  /** SA-838a: that note as the batched read saw it (absent = not seen = not settled; VOID = dead) */
+  creditNote?: SettlementCreditNote | null;
+  /** the order the return is filed on (for an INLINE return, the CARRYING order) */
+  orderId: string;
+  /** STANDARD (absent reads STANDARD) or INLINE */
+  kind?: string;
+  status: string;
+  /** how it was settled, for the "Refunded" label (`resolutionOf`) */
+  refundMethod?: string | null;
+  refundedAt?: Date | null;
+  /** a STANDARD return's worth (`returnAmount`); an INLINE return is worth its items' amounts instead */
+  amount?: unknown;
+  /** the return's items; an INLINE one is sold per line through `sourceOrderId` and priced per item */
+  items?: ReadonlyArray<{
+    sourceOrderId?: string | null;
+    subtotal?: unknown;
+    taxAmount?: unknown;
+    categoryTax?: unknown;
+  }>;
+}
+
+/**
+ * B1262 / SA-838: which credit notes applied to this sale are its OWN return credit (the return settling the invoice).
+ * BOTH links must agree or the payment stays a tender (never hide money):
+ *   1. the payment's credit note was made by a live return of THIS order (`isOwnReturn` in pricing, the ONE predicate: a
+ *      STANDARD return filed on it, or an INLINE return, filed on any order, with an item sold on it); and
+ *   2. that credit note was issued against one of this order's invoices (`CreditNote.invoiceId`).
+ * A rejected or cancelled return proves nothing. `Return.creditNoteId` has no Prisma relation, so the caller supplies the
+ * returns (this order's own, plus the INLINE ones the batched read finds).
+ */
+export function ownReturnCreditNoteIds(input: {
+  orderId: string;
+  invoiceIds: readonly string[];
+  payments: ReadonlyArray<{
+    creditNoteId?: string | null;
+    creditNote?: { invoiceId: string | null } | null;
+  }>;
+  returns: readonly ReturnProvenance[];
+}): Set<string> {
+  const madeByThisOrder = new Set(
+    input.returns
+      .filter((r) => r.creditNoteId && !isDeadReturn(r.status) && isOwnReturn(input.orderId, r))
+      .map((r) => r.creditNoteId as string),
+  );
+  const own = new Set<string>();
+  for (const p of input.payments) {
+    const invoiceId = p.creditNote?.invoiceId;
+    if (
+      p.creditNoteId &&
+      madeByThisOrder.has(p.creditNoteId) &&
+      invoiceId &&
+      input.invoiceIds.includes(invoiceId)
+    ) {
+      own.add(p.creditNoteId);
+    }
+  }
+  return own;
+}
+
+/** The inputs of one counter sale's return split: the order, its LIVE-invoice payments, and the reads that settle its returns. */
+export interface CounterReturnSplitInput {
+  orderId: string;
+  /** EVERY invoice of the order, live or dead: an application on any of them is never "elsewhere" */
+  invoiceIds: readonly string[];
+  /** the payments on the order's LIVE invoices, with the credit note each applied and the invoice that note was issued against */
+  payments: ReadonlyArray<{
+    method: string;
+    amount: unknown;
+    status: string;
+    creditNoteId?: string | null;
+    creditNote?: { invoiceId: string | null } | null;
+  }>;
+  /** the order's own returns (`orderReturnSelect`) */
+  returns: TodayOrderRecord["returns"];
+  /** INLINE returns filed on OTHER orders that may have been sold on this one (`carriedReturnSelect`) */
+  carriedReturns?: readonly ReturnProvenance[];
+  /** the ONE batched credit-note read, by note id (`creditNoteFacts`) */
+  creditNotes?: ReadonlyMap<string, CreditNoteFact>;
+}
+
+export interface CounterReturnSplit {
+  /** what the customer TENDERED: Paid on a counter receipt (the sale's own return credit is not in it) */
+  tenderPaid: number;
+  /** the own return credit applied to the invoices (pricing's `counterTenderSplit`) */
+  returnCredit: number;
+  /** the tenders by method, in the till's order, own return credit excluded */
+  tenderMethods: Array<{ method: TodaysSaleMethod; amount: number }>;
+  /** pricing's `settlementTotals` of the order's own returns: the Returned / Refunded / Credit kept / Credit used / pending lines */
+  returnLines: { applied: number; refunded: number; kept: number; used: number; pending: boolean };
+}
+
+/**
+ * B1262 / SA-838 + SA-838a: the ONE derivation of a counter sale's tender split and return lines. The Today's-sales row (and so
+ * the reprint) and the emailed receipt both call it, so a figure is never on one receipt and not the other (SA-751r). One
+ * provenance read -> ONE settlement per own return (pricing's `returnSettlement`) -> the pricing `counterTenderSplit` and
+ * `settlementTotals` over those settlements. Nothing else derives these figures; the money math itself lives in
+ * `@routeflow/pricing`.
+ */
+export function counterReturnSplit(input: CounterReturnSplitInput): CounterReturnSplit {
+  const { orderId, payments } = input;
+  const thisOrderInvoiceIds = new Set(input.invoiceIds);
+  const provenance = dedupeById<ReturnProvenance>([
+    ...input.returns.map((r) => ({ ...r, orderId, amount: returnAmount(r) })),
+    ...(input.carriedReturns ?? []),
+  ]).map((r) => ({
+    ...r,
+    // the batched read's answer; a note it did not return stays absent (returnSettlement: not settled, never kept)
+    creditNote: r.creditNoteId
+      ? settlementNote(input.creditNotes?.get(r.creditNoteId), thisOrderInvoiceIds)
+      : null,
+  }));
+  const ownCreditNoteIds = ownReturnCreditNoteIds({
+    orderId,
+    invoiceIds: input.invoiceIds,
+    payments,
+    returns: provenance,
+  });
+  // the payments PROVEN to be this order's own return credit (both links agree); every other payment is a tender
+  const ownCreditPayments = payments.filter(
+    (p) => !!p.creditNoteId && ownCreditNoteIds.has(p.creditNoteId),
+  );
+  const settlements = provenance
+    .filter((r) => isOwnReturn(orderId, r))
+    .map((r) => returnSettlement(r, ownCreditPayments, orderId));
+  const split = counterTenderSplit(
+    payments.map((p) => ({ ...p, method: todaysMethodOf(p.method) })),
+    settlements,
+    METHOD_ORDER,
+  );
+  const totals = settlementTotals(settlements);
+  return {
+    tenderPaid: split.tenderPaid,
+    returnCredit: split.returnCredit,
+    tenderMethods: split.methods,
+    returnLines: {
+      applied: totals.applied,
+      refunded: totals.refunded,
+      kept: totals.kept,
+      used: totals.used,
+      pending: totals.pending,
+    },
+  };
+}
+
 export function toTodaysSaleRow(
   o: TodayOrderRecord,
   /** the tenant's configured rate in percent (`settings.taxRate`): a stored line rate is named only when it equals this */
   configuredTaxPercent: number | null = null,
+  /** INLINE returns filed on OTHER orders that may have been sold on this one (see `ownReturnCreditNoteIds`) */
+  carriedReturns: readonly ReturnProvenance[] = [],
+  /** SA-838a: the ONE batched credit-note read, by note id (see `creditNoteFacts`) */
+  creditNotes: ReadonlyMap<string, CreditNoteFact> = new Map(),
 ): TodaysSaleRow {
   const live = o.invoices.filter((i) => !isDeadInvoice(i.status));
   const voided = o.status === OrderStatus.CANCELLED || (o.invoices.length > 0 && live.length === 0);
@@ -534,6 +901,17 @@ export function toTodaysSaleRow(
       sumConfirmed(payments.filter((p) => todaysMethodOf(p.method) === method)),
     );
     return amount > 0 ? [{ method, amount }] : [];
+  });
+
+  // B1262 / SA-838 + SA-838a: the sale's own return credit is not a tender (counterReturnSplit: the ONE derivation, which the
+  // emailed receipt calls too)
+  const { tenderPaid, returnCredit, tenderMethods, returnLines } = counterReturnSplit({
+    orderId: o.id,
+    invoiceIds: o.invoices.map((i) => i.id),
+    payments,
+    returns: o.returns,
+    carriedReturns,
+    creditNotes,
   });
 
   // Nothing paid: a named customer left it on account by choice; a walk-in must pay, so no tender is the
@@ -558,6 +936,8 @@ export function toTodaysSaleRow(
   else returnState = total > 0 && returnedAmount >= total ? "FULL" : "PARTLY";
 
   const shown = live[0] ?? o.invoices[0];
+  // a voided sale has no live invoice: its names still come from the invoices it had (tax and levy reads stay on live)
+  const names = itemNamesOf((live.length > 0 ? live : o.invoices).flatMap((i) => i.items ?? []));
   return {
     orderId: o.id,
     orderNumber: o.orderNumber ?? "",
@@ -573,6 +953,10 @@ export function toTodaysSaleRow(
     paid,
     balanceDue,
     methods,
+    tenderPaid,
+    returnCredit,
+    tenderMethods,
+    returnLines,
     paymentState,
     cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
     change: servedChange(o.counterCashTendered, payments, balanceDue),
@@ -585,7 +969,35 @@ export function toTodaysSaleRow(
     charges: billedChargeLines(live.flatMap((i) => i.items ?? [])),
     returned: { amount: returnedAmount, state: returnState, returns },
     voided,
+    ...names,
   };
+}
+
+/** A return the page and the batched read both carry counts once (by id); a record with no id is kept as is. */
+function dedupeById<T extends { id?: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    if (!r.id) return true;
+    if (seen.has(r.id)) return false;
+    seen.add(r.id);
+    return true;
+  });
+}
+
+/** The first few line names + qty and the line count (one shared fold with the parked list); `{}` when no lines are named. */
+function itemNamesOf(
+  lines: ReadonlyArray<{
+    description?: string | null;
+    qty?: unknown;
+    boxes?: unknown;
+    pieces?: unknown;
+    unitLabel?: string | null;
+  }>,
+) {
+  return foldItemNames(
+    lines.map((l) => ({ ...l, name: l.description })),
+    ROW_ITEM_NAMES_MAX,
+  );
 }
 
 // ─── Summary ──────────────────────────────────────────────────────────────────────────────────
@@ -629,6 +1041,7 @@ export function foldSummary(input: {
   handOvers?: readonly HandOverPayment[];
 }): TodaysSalesSummary {
   const by: Record<TodaysSaleMethod, number> = {
+    ADVANCE: 0,
     CASH: 0,
     CARD: 0,
     CHECK: 0,
@@ -683,7 +1096,8 @@ export function foldSummary(input: {
     sales: { count: countOf(input.sales._count), total: salesTotal },
     moneyIn,
     handOvers: { count: new Set(handOvers.map((h) => h.orderId)).size, total: handOverTotal },
-    storeCreditUsed: by.STORE_CREDIT,
+    // credit-note and advance applications together, as before ADVANCE became its own display method (SA-838)
+    storeCreditUsed: roundMoney(by.STORE_CREDIT + by.ADVANCE),
     onAccount: Math.max(
       0,
       roundMoney(salesTotal - roundMoney(num(input.paidOnSales._sum?.amount))),

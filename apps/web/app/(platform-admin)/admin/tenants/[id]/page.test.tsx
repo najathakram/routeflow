@@ -8,9 +8,11 @@ import { EFFECTIVE_FIXTURE } from "./_features/__fixtures__/effective.fixtures";
 import { diffsFixture } from "./_features/__fixtures__/diffs.fixtures";
 import { previewFixture } from "./_features/__fixtures__/preview.fixtures";
 import {
-  PROFILES_FIXTURE,
-  shippingPreviewWithBilling,
-} from "./_features/__fixtures__/profiles.fixtures";
+  CAPABILITY_PRESETS_FIXTURE,
+  capabilitiesFixture,
+  capabilitiesPreviewWithBilling,
+} from "./_features/__fixtures__/capabilities.fixtures";
+import type { BusinessCapabilities } from "@/lib/platform-admin/capabilities-contract";
 
 const TENANT_ID = "tenant-1";
 
@@ -50,6 +52,7 @@ jest.mock("@/lib/platform-admin/features", () => ({
 let tenantOverrides: Record<string, unknown> = {};
 // The tenant's admin account card (GET .../admin); null = no admin yet.
 let mockAdmin: unknown = null;
+let mockAuditLogs: unknown[] = [];
 
 function tenantFixture() {
   return {
@@ -94,19 +97,22 @@ const mockSetImpersonation = jest.fn();
 const mockProfilePreview = jest.fn();
 const mockProfileApply = jest.fn();
 let fulfilmentModeValue = "delivery";
+/** What `GET .../business-capabilities` answers (BO-05). */
+let capabilitiesValue: BusinessCapabilities = capabilitiesFixture();
 
 jest.mock("@/lib/admin-api", () => ({
   superAdminClient: {
     get: jest.fn((url: string) => {
       if (/\/admin$/.test(url)) return Promise.resolve({ data: { admin: mockAdmin } });
       if (/\/audit-logs/.test(url))
-        return Promise.resolve({ data: { data: [], meta: { total: 0, pages: 1 } } });
+        return Promise.resolve({ data: { data: mockAuditLogs, meta: { total: 0, pages: 1 } } });
       if (/\/addons$/.test(url)) return Promise.resolve({ data: [] });
       if (/\/feature-overrides$/.test(url)) return Promise.resolve({ data: [] });
       if (/\/features\/registry$/.test(url))
         return Promise.resolve({ data: OVERRIDES_REGISTRY_OPTION_FIXTURE });
       if (/\/platform-admin\/business-profiles$/.test(url))
-        return Promise.resolve({ data: { profiles: PROFILES_FIXTURE } });
+        return Promise.resolve({ data: { profiles: CAPABILITY_PRESETS_FIXTURE } });
+      if (/\/business-capabilities$/.test(url)) return Promise.resolve({ data: capabilitiesValue });
       if (/\/feature-config\/fulfilment_model$/.test(url))
         return Promise.resolve({ data: { value: fulfilmentModeValue } });
       if (/\/feature-config\/counter_sales$/.test(url))
@@ -120,8 +126,8 @@ jest.mock("@/lib/admin-api", () => ({
         callOrder.push("create");
         return mockPost(url, body);
       }
-      if (/\/business-profile\/preview$/.test(url)) return mockProfilePreview(url, body);
-      if (/\/business-profile$/.test(url)) return mockProfileApply(url, body);
+      if (/\/business-capabilities\/preview$/.test(url)) return mockProfilePreview(url, body);
+      if (/\/business-capabilities$/.test(url)) return mockProfileApply(url, body);
       return Promise.resolve({ data: {} });
     }),
     patch: jest.fn().mockResolvedValue({ data: {} }),
@@ -165,12 +171,18 @@ beforeEach(() => {
   mockFetchDiffs.mockResolvedValue(diffsFixture(TENANT_ID));
   mockFetchMode.mockResolvedValue({ mode: "shadow" });
   mockPost.mockResolvedValue({ data: {} });
-  mockProfilePreview.mockResolvedValue({ data: shippingPreviewWithBilling() });
+  mockProfilePreview.mockResolvedValue({ data: capabilitiesPreviewWithBilling() });
   mockProfileApply.mockResolvedValue({ data: {} });
   fulfilmentModeValue = "delivery";
+  capabilitiesValue = capabilitiesFixture({
+    delivery: true,
+    doorPayments: true,
+    matchedPreset: "delivery_distributor",
+  });
   mockSearch = "";
   tenantOverrides = {};
   mockAdmin = null;
+  mockAuditLogs = [];
   mockFetchPlanCatalog.mockResolvedValue(v11Catalog());
 });
 
@@ -389,46 +401,52 @@ describe("Tenant detail page — the Setup tab (business profiles)", () => {
     expect(screen.queryByRole("button", { name: "Addons & Features" })).not.toBeInTheDocument();
   });
 
-  it("opens with the plain-English current setup, then the profile picker, then the feature console", async () => {
+  it("opens with the plain-English current setup, then What this business does, then the feature console", async () => {
     await gotoSetupTab();
     expect(await screen.findByText("Current setup")).toBeInTheDocument();
     expect(
       await screen.findByText("Own delivery: orders go out on the business's own trucks"),
     ).toBeInTheDocument();
     expect(screen.getByText("Counter sales")).toBeInTheDocument();
-    expect(await screen.findByRole("radio", { name: /Delivery distributor/ })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: /In-store retailer/ })).toBeDisabled();
-    expect(screen.queryByText("Available when counter sales launch")).toBeNull();
+    expect(
+      await screen.findByRole("heading", { name: "What this business does" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole("checkbox", { name: "Delivers on own trucks" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sells at the counter" })).not.toBeChecked();
+    expect(screen.queryByRole("radio", { name: /Delivery distributor/ })).toBeNull();
     // The existing feature console is still there, below.
     expect(screen.getByText("compliance")).toBeInTheDocument();
   });
 
-  it("previews with the API's change list, then Confirm applies once and the setup reloads", async () => {
+  it("previews the ticks live, then Apply (after the billing dialog) writes once and the setup reloads", async () => {
     await gotoSetupTab();
-    fireEvent.click(await screen.findByRole("radio", { name: /Shipping wholesaler/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Delivers on own trucks" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Ships by carrier" }));
 
-    const dialog = await screen.findByRole("dialog");
-    expect(mockProfilePreview).toHaveBeenCalledWith(
-      `/platform-admin/tenants/${TENANT_ID}/business-profile/preview`,
-      { profile: "shipping_wholesaler" },
+    await waitFor(() => expect(mockProfilePreview).toHaveBeenCalled());
+    expect(mockProfilePreview).toHaveBeenLastCalledWith(
+      `/platform-admin/tenants/${TENANT_ID}/business-capabilities/preview`,
+      { delivery: false, shipping: true, counter: false },
     );
     expect(mockProfileApply).not.toHaveBeenCalled();
     expect(
-      within(dialog).getByText(
-        "At-door payment collection will be switched off and its billing stopped",
-      ),
+      await screen.findByText("Turn off At-door payment collection. Billing stops."),
     ).toBeInTheDocument();
+
+    const stop = await screen.findByRole("button", { name: "Stop billing and apply" });
+    await waitFor(() => expect(stop).toBeEnabled());
+    fireEvent.click(stop);
+    const dialog = await screen.findByRole("alertdialog", { name: "Stop billing for 2 add-ons?" });
 
     const registryCalls = mockFetchRegistry.mock.calls.length;
     fulfilmentModeValue = "ship";
-    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop billing and apply" }));
 
     await waitFor(() => expect(mockProfileApply).toHaveBeenCalledTimes(1));
     expect(mockProfileApply).toHaveBeenCalledWith(
-      `/platform-admin/tenants/${TENANT_ID}/business-profile`,
+      `/platform-admin/tenants/${TENANT_ID}/business-capabilities`,
       // the confirm sends back the previewed plan's fingerprint (#3199)
-      { profile: "shipping_wholesaler", planFingerprint: "a".repeat(64) },
+      { delivery: false, shipping: true, counter: false, planFingerprint: "a".repeat(64) },
     );
     expect(
       await screen.findByText("Ship by carrier: orders are shipped, not delivered"),
@@ -804,47 +822,41 @@ describe("SA-1: the tab lives in the URL (?tab=)", () => {
   });
 });
 
-describe("SA-1: the applied business profile is marked 'Current'", () => {
-  it("marks the profile the tenant's stored setup matches, and no other row", async () => {
-    fulfilmentModeValue = "delivery";
+describe("SA-1: only the server's matched preset is marked 'Current'", () => {
+  const openMenu = async () => {
     await gotoSetupTab();
-    const current = await screen.findByTestId("profile-current");
-    expect(current).toHaveTextContent("Current");
-    expect(screen.getAllByTestId("profile-current")).toHaveLength(1);
+    fireEvent.click(await screen.findByRole("button", { name: "Start from…" }));
+  };
+
+  it("marks the preset the server matched, and no other row", async () => {
+    await openMenu();
     expect(
-      within(
-        screen.getByRole("radio", { name: /Delivery distributor/ }).closest("label")!,
-      ).getByTestId("profile-current"),
+      await screen.findByRole("menuitem", { name: "Delivery, current setup" }),
     ).toBeInTheDocument();
-    // Still selectable.
-    expect(screen.getByRole("radio", { name: /Delivery distributor/ })).toBeEnabled();
+    expect(screen.getAllByText("Current")).toHaveLength(1);
   });
 
-  it("no profile applied (mode unset) shows no marker", async () => {
+  it("a tenant nobody set up shows no marker and nothing ticked", async () => {
+    capabilitiesValue = capabilitiesFixture({ configured: false });
     fulfilmentModeValue = "unset";
-    await gotoSetupTab();
-    await screen.findByRole("radio", { name: /Delivery distributor/ });
-    await screen.findByText(/Not set/);
-    expect(screen.queryByTestId("profile-current")).toBeNull();
+    await openMenu();
+    expect(screen.queryByText("Current")).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "Delivers on own trucks" })).not.toBeChecked();
   });
 
-  it("a mode no profile sets ('both') shows no marker", async () => {
-    fulfilmentModeValue = "both";
-    await gotoSetupTab();
-    await screen.findByRole("radio", { name: /Delivery distributor/ });
-    expect(screen.queryByTestId("profile-current")).toBeNull();
+  it("a setup no preset equals shows no marker", async () => {
+    capabilitiesValue = capabilitiesFixture({ shipping: true, counter: true, matchedPreset: null });
+    await openMenu();
+    expect(screen.queryByText("Current")).toBeNull();
   });
 });
 
 describe("SA-3: the Readiness card on Overview", () => {
+  beforeEach(() => {
+    capabilitiesValue = capabilitiesFixture({ counter: true, counterCapability: "always" });
+  });
+
   it("is the first card, above Tenant Info, and the fix anchors exist", async () => {
-    mockFetchEffective.mockResolvedValue([
-      {
-        ...EFFECTIVE_FIXTURE[0],
-        key: "fulfilment_model",
-        mode: { value: "pickup", effective: "pickup", source: "TENANT", allowed: [], blocked: [] },
-      },
-    ]);
     const { container } = render(<TenantDetailPage />);
     const heading = await screen.findByRole("heading", { name: "Ready to take a sale?" });
     const info = await screen.findByRole("heading", { name: "Tenant Info" });
@@ -852,15 +864,24 @@ describe("SA-3: the Readiness card on Overview", () => {
     expect(container.querySelector("#admin-account")).not.toBeNull();
   });
 
+  it("?focus=admin-account focuses the Admin Account card and the Create admin link points at it", async () => {
+    mockSearch = "focus=admin-account";
+    render(<TenantDetailPage />);
+    const card = await waitFor(() => {
+      const el = document.getElementById("admin-account");
+      expect(el).not.toBeNull();
+      expect(el).toHaveFocus();
+      return el as HTMLElement;
+    });
+    expect(card).toHaveAttribute("tabindex", "-1");
+    expect(await screen.findByRole("link", { name: /^Create admin for/ })).toHaveAttribute(
+      "href",
+      `/admin/tenants/${TENANT_ID}?focus=admin-account`,
+    );
+  });
+
   it("fetches the admin once, and Create admin flips the Has an admin row without a refetch", async () => {
     mockAdmin = null;
-    mockFetchEffective.mockResolvedValue([
-      {
-        ...EFFECTIVE_FIXTURE[0],
-        key: "fulfilment_model",
-        mode: { value: "pickup", effective: "pickup", source: "TENANT", allowed: [], blocked: [] },
-      },
-    ]);
     (superAdminClient.post as unknown as jest.Mock).mockImplementationOnce(() =>
       Promise.resolve({
         data: { id: "u-9", username: "new_admin", email: "a@b.co", status: "ACTIVE" },
@@ -884,5 +905,78 @@ describe("SA-3: the Readiness card on Overview", () => {
     await waitFor(async () => expect(within(await rowOf()).queryByText(/Not ready/)).toBeNull());
     expect(within(await rowOf()).getByText(/Ready/)).toBeInTheDocument();
     expect(adminGets()).toHaveLength(1);
+  });
+});
+
+// BO-08: the Overview and Billing grids must be able to shrink to a 390px viewport. jsdom cannot
+// measure layout, so these pin the structure that makes it true: a one-column base track
+// (`grid-cols-1` is minmax(0,1fr); an implicit column is auto and grows to the audit table's
+// min-content, which made main.scrollWidth 559 at 390), two columns from lg, shrinkable items, and
+// the audit table scrolling inside its own box. Playwright: e2e/bo-web-overview-fit.spec.ts.
+describe("BO-08: the Overview and Billing grids fit a narrow screen", () => {
+  const cardOf = (title: string) =>
+    screen.getByRole("heading", { name: title }).closest("div.rounded-xl") as HTMLElement;
+
+  it("Overview: one column by default, two from lg, items can shrink", async () => {
+    mockAuditLogs = [
+      {
+        id: "log-1",
+        action: "BUSINESS_PROFILE_APPLIED",
+        actionLabel: "Business profile applied",
+        entityType: "Tenant",
+        entityId: TENANT_ID,
+        userId: "u-1",
+        ip: null,
+        createdAt: "2026-10-17T10:00:00.000Z",
+        actor: { email: "a-very-long-address-for-a-platform-admin@example.com", isPlatform: true },
+      },
+    ];
+    render(<TenantDetailPage />);
+    const grid = (await screen.findByRole("heading", { name: "Tenant Info" })).closest(
+      "div.grid",
+    ) as HTMLElement;
+    expect(grid).toHaveClass("grid-cols-1", "lg:grid-cols-2");
+    for (const title of ["Tenant Info", "Quick Actions", "Recent Audit Logs"]) {
+      const card = cardOf(title);
+      expect(card.parentElement).toBe(grid);
+      expect(card).toHaveClass("min-w-0");
+    }
+    expect(document.getElementById("admin-account")).toHaveClass("min-w-0");
+    expect(document.getElementById("admin-account")!.parentElement).toBe(grid);
+  });
+
+  it("Overview: the audit table scrolls inside its own box", async () => {
+    mockAuditLogs = [
+      {
+        id: "log-1",
+        action: "BUSINESS_PROFILE_APPLIED",
+        actionLabel: "Business profile applied",
+        entityType: "Tenant",
+        entityId: TENANT_ID,
+        userId: "u-1",
+        ip: null,
+        createdAt: "2026-10-17T10:00:00.000Z",
+        actor: null,
+      },
+    ];
+    render(<TenantDetailPage />);
+    const region = await screen.findByRole("region", { name: "Recent audit log entries" });
+    expect(region).toHaveClass("overflow-x-auto");
+    expect(within(region).getByRole("table")).toBeInTheDocument();
+    expect(cardOf("Recent Audit Logs")).toContainElement(region);
+  });
+
+  it("Billing: one column by default, two from lg, items can shrink", async () => {
+    render(<TenantDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Billing & Subscription" }));
+    const grid = (await screen.findByRole("heading", { name: "Current Plan" })).closest(
+      "div.grid",
+    ) as HTMLElement;
+    expect(grid).toHaveClass("grid-cols-1", "lg:grid-cols-2");
+    for (const title of ["Current Plan", "Subscription", "Manual Activation", "Stripe Actions"]) {
+      const card = cardOf(title);
+      expect(card.parentElement).toBe(grid);
+      expect(card).toHaveClass("min-w-0");
+    }
   });
 });

@@ -71,6 +71,8 @@ describe("TRIAL / tenant-status write sites (back-office P2)", () => {
       "billing/billing.service.ts",
       // dunning: only moves readOnlyReason on an already READ_ONLY row (payment_overdue -> subscription_cancelled); never a TRIAL write
       "billing/dunning.service.ts",
+      // SA-815a: the one plan-version pin writer sets Tenant.planVersionId only (no status)
+      "billing/plan-version-pin.ts",
       "billing/subscription-mutation.service.ts",
       // the one transition-to-ACTIVE helper (clears readOnlyReason, closes the dunning clock); writes ACTIVE, never TRIAL
       "billing/transition-to-active.ts",

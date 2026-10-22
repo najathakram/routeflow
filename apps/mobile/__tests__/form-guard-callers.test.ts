@@ -106,14 +106,14 @@ describe("invoices/[id]/edit.tsx discard guard (REG-FG-02)", () => {
     // seeds `lines`/header state, not derived on every render — otherwise
     // "dirty" would always compare the live form against itself.
     const hydrationEffect = (invoiceEditSrc.match(
-      /useEffect\(\(\) => \{\s*if \(!invoice[\s\S]*?\n {2}\}, \[invoice\]\);/,
+      /useEffect\(\(\) => \{[\s\S]{0,200}?if \(\s*!invoice[\s\S]*?\n {2}\}, \[invoice, settingsLoading\]\);/,
     ) ?? [""])[0];
     expect(hydrationEffect).toMatch(/originalRef\.current = \{/);
   });
 
   it("REG-FG-02: the hydration snapshot strips key/unitsPerBox/taxRate/promoFreeUnits/promoBaseUnits per line", () => {
     const hydrationEffect = (invoiceEditSrc.match(
-      /useEffect\(\(\) => \{\s*if \(!invoice[\s\S]*?\n {2}\}, \[invoice\]\);/,
+      /useEffect\(\(\) => \{[\s\S]{0,200}?if \(\s*!invoice[\s\S]*?\n {2}\}, \[invoice, settingsLoading\]\);/,
     ) ?? [""])[0];
     expect(hydrationEffect).toMatch(
       /hydratedLines\.map\(\s*\(\{\s*key,\s*unitsPerBox,\s*taxRate,\s*promoFreeUnits,\s*promoBaseUnits,\s*\.\.\.rest\s*\}\)\s*=>\s*rest,?\s*\)/,

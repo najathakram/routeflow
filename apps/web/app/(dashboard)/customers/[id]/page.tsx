@@ -63,6 +63,7 @@ import {
 import { usePageTitle } from "@/lib/page-title-context";
 import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
 import { PriceLayerNotice } from "@/components/PriceLayerNotice";
+import { ReviewFlagNotice } from "@/components/ReviewFlagNotice";
 import { useAuth } from "@/lib/auth-context";
 import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/portal-approvals";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
@@ -168,6 +169,10 @@ import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { focusRefusedContactField } from "@/lib/refused-text-field";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, WriteLink } from "@/lib/read-only-gate";
+import { paymentKeyScope, usePaymentSubmitKey } from "@/lib/payment-submit-key";
+import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
+import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
+import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -2157,6 +2162,17 @@ function CustomerDetailPageInner({ id }: { id: string }) {
 
   // Advance payment
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
+  // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
+  const advanceKey = usePaymentSubmitKey(isAdvanceOpen, paymentKeyScope.advance(id));
+  // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
+  const advanceStatus = usePaymentStatusCheck(
+    advanceKey,
+    () => {
+      setIsAdvanceOpen(false);
+      toast({ title: PAYMENT_STATUS_COPY.recorded, variant: "success" });
+    },
+    isAdvanceOpen,
+  );
   const [advanceForm, setAdvanceForm] = React.useState<{
     method: SelectablePaymentMethod;
     amount: string;
@@ -3814,6 +3830,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                           {ap.reference ? ` \u00b7 ${ap.reference}` : ""} \u00b7{" "}
                           {new Date(ap.createdAt).toLocaleDateString()}
                         </p>
+                        <ReviewFlagNotice notes={ap.notes} role={user?.role} compact />
                       </li>
                     ))}
                   </ul>
@@ -3858,7 +3875,9 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 </Button>
                 <Button
                   loading={createAdvance.isPending}
+                  disabled={advanceStatus.unknown}
                   onClick={() => {
+                    if (advanceKey.hasUnknown()) return; // SA-824: the status check comes first
                     const amt = parseFloat(advanceForm.amount);
                     if (!amt || amt <= 0) return;
                     createAdvance.mutate(
@@ -3868,6 +3887,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         amount: amt,
                         reference: advanceForm.reference || undefined,
                         notes: advanceForm.notes || undefined,
+                        submitKey: advanceKey,
                       },
                       { onSuccess: () => setIsAdvanceOpen(false) },
                     );
@@ -3879,6 +3899,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             }
           >
             <div className="space-y-4">
+              <PaymentStatusCheck status={advanceStatus} />
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">
                   Payment Method

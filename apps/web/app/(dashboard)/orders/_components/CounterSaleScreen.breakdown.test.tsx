@@ -74,6 +74,7 @@ const CATEGORIES = [
     taxType: "EXCISE_PER_UNIT",
     rate: "0.5000",
     priceIncludesTax: false,
+    requiresLicense: true,
     active: true,
   },
 ];
@@ -98,9 +99,13 @@ const scan = async (text: string) => {
 };
 const pick = (name: string) => {
   fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "cafe" } });
-  fireEvent.click(screen.getByRole("button", { name }));
+  fireEvent.click(screen.getByRole("option", { name }));
 };
 const text = (id: string) => screen.getByTestId(id).textContent ?? "";
+/** The total a SIGHTED user reads: the visible Estimated-total row when it shows, else the Amount due status. */
+const visibleTotal = () =>
+  (screen.queryByTestId("estimated-total-row") ?? screen.getByTestId("change-due")).textContent ??
+  "";
 
 describe("counter checkout panel: the number explains itself (CQ-08) and matches the receipt (CQ-01)", () => {
   it("a taxed cart with a deposit and an excise item: Subtotal, Tax, one named charge each, Estimated total", async () => {
@@ -115,7 +120,8 @@ describe("counter checkout panel: the number explains itself (CQ-08) and matches
     expect(text("running-charge-cat-tob")).toContain("$0.50");
     expect(text("running-charge-cat-tob")).toContain("Tobacco excise");
     // 30.00 + 2.48 + 0.10 + 0.50
-    expect(text("running-total")).toContain("$33.08");
+    expect(visibleTotal()).toContain("$33.08");
+    expect(text("running-total")).toContain("$33.08"); // and the accessible (visually hidden) total agrees
   });
 
   it("an exempt customer's panel carries no tax row and no charge: total = subtotal", async () => {
@@ -123,7 +129,7 @@ describe("counter checkout panel: the number explains itself (CQ-08) and matches
     await scan("SODA");
     await scan("CIGAR");
     pick("Exempt Cafe");
-    await waitFor(() => expect(text("running-total")).toContain("$20.00"));
+    await waitFor(() => expect(visibleTotal()).toContain("$20.00"));
     expect(screen.queryByTestId("running-tax")).toBeNull();
     expect(screen.queryByTestId("running-charge-cat-crv")).toBeNull();
     expect(text("running-subtotal")).toContain("$20.00");
@@ -135,7 +141,7 @@ describe("counter checkout panel: the number explains itself (CQ-08) and matches
     );
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
-    await waitFor(() => expect(text("running-total")).toContain("$10.00"));
+    await waitFor(() => expect(visibleTotal()).toContain("$10.00"));
     expect(text("running-subtotal")).toContain("$10.00");
     expect(screen.queryByTestId("running-tax")).toBeNull();
   });
@@ -159,5 +165,63 @@ describe("a regulated line waits for the categories before it can be paid (fail-
         "Still loading the regulated charges. Try again in a moment.",
       ),
     );
+  });
+});
+
+describe("R7b 1.4: a licence-needing line says so at add, for a walk-in", () => {
+  const NOTE = "Needs a licensed customer: choose one before paying";
+
+  it("a walk-in line in a licence category says it needs a licensed customer at add", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
+    expect(screen.queryByTestId("line-license-note")).toBeNull();
+    await scan("CIGAR");
+    await waitFor(() => expect(screen.getAllByTestId("line-license-note")).toHaveLength(1));
+    expect(screen.getByTestId("line-license-note")).toHaveTextContent(NOTE);
+    // the Payment area says it once, not per line
+    await scan("CIGAR");
+    await waitFor(() => expect(screen.getByTestId("counter-license-note")).toHaveTextContent(NOTE));
+    expect(screen.getAllByTestId("counter-license-note")).toHaveLength(1);
+  });
+
+  it("an account customer sees no add-time note", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("CIGAR");
+    await waitFor(() => expect(screen.getByTestId("line-license-note")).toBeInTheDocument());
+    pick("Taxed Cafe");
+    await waitFor(() => expect(screen.queryByTestId("line-license-note")).toBeNull());
+    expect(screen.queryByTestId("counter-license-note")).toBeNull();
+  });
+
+  it("a walk-in line in a category that needs no licence has no note", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("SODA");
+    await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
+    expect(screen.queryByTestId("line-license-note")).toBeNull();
+  });
+});
+
+describe("R7b ruling: the Estimated total row hides when it equals Amount due", () => {
+  it("hides Estimated total when it equals Amount due", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
+    // cash, nothing tendered yet: Amount due is the total, to the cent
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $10.");
+    expect(screen.queryByText("Estimated total")).toBeNull();
+  });
+
+  it("shows Estimated total when it differs from Amount due", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "4" } });
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $6.");
+    expect(screen.getByText("Estimated total")).toBeInTheDocument();
+    expect(text("running-total")).toContain("$10.");
+    // a card sale has no Amount due line, so the total keeps its row
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    expect(screen.getByText("Estimated total")).toBeInTheDocument();
   });
 });

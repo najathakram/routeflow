@@ -1,7 +1,9 @@
 import {
   applyCellPatches,
+  ladderPrice,
   planCellEdit,
   priceGrid,
+  roundMoney,
   type CellChange,
   type CellPatch,
   type CustomerPricingWithId,
@@ -209,6 +211,27 @@ export function foldDraft(
     conflicts: [...conflicts],
     bakedTitles,
   };
+}
+
+/**
+ * Row 622: the server checks every Keep against the SAVED ladder ("that price is not what it shows now"), but a Keep
+ * chosen after an earlier edit pins the price the DRAFT shows. A pin the saved ladder still shows goes as a Keep; any
+ * other goes as the patch it amounts to (the cell set at that price), which the server plans like any typed price.
+ * A Keep pins the cell as Set at its current value on both sides (specs PLAN.md P7; packages/pricing/src/price-change.ts
+ * FollowerRow.keep), so sending it as a patch does not change the cell's source. Proof: product-price-write.service.spec.ts
+ * "row 622".
+ */
+export function splitKeeps(
+  served: LadderView,
+  rules: TierRules,
+  keeps: readonly Pin[],
+): { keeps: Pin[]; asPatches: CellPatch[] } {
+  const out: { keeps: Pin[]; asPatches: CellPatch[] } = { keeps: [], asPatches: [] };
+  for (const k of keeps) {
+    if (ladderPrice(served, k.ref, k.tier, rules) === roundMoney(k.value)) out.keeps.push(k);
+    else out.asPatches.push({ ref: k.ref, tier: k.tier, to: roundMoney(k.value) });
+  }
+  return out;
 }
 
 /** Every price that differs once `patches` are applied to `view`: what an undo would change. */

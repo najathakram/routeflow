@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { Eye } from "lucide-react";
 import { Badge } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { isStaffRole } from "@/lib/default-unit-line";
@@ -51,8 +50,8 @@ export function ProductPortalVisibilityCard({
       className="rounded-xl border border-surface-border bg-white p-4"
       data-testid="portal-visibility-card"
     >
-      <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-navy">
-        <Eye className="h-4 w-4 text-brand-600" aria-hidden /> Buyer portal
+      <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+        Buyer portal
       </h3>
       {showsSwitch && (
         <label className="flex items-center gap-2 text-sm font-medium text-navy">

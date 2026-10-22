@@ -194,9 +194,10 @@ describe("products export.csv", () => {
         "Units sold",
         "Net sales",
         "Last sold date",
+        "Product ID",
       ].join(","),
     );
-    expect(PRODUCTS_EXPORT_HEADER).toHaveLength(16);
+    expect(PRODUCTS_EXPORT_HEADER).toHaveLength(17);
   });
 
   it("an empty result is header-only (no truncation or failure row)", async () => {
@@ -249,8 +250,8 @@ describe("products export.csv", () => {
     });
     const { out } = await run(svc, WINDOW);
     const [, r1, r2] = rows(out);
-    expect(r1).toBe("Cola 12pk,C-1,,,Drinks,each,24.5,10.1235,,7,Yes,Yes,,8,80,2026-09-20");
-    expect(r2).toBe("Cola Diet,,,,,each,1,,,0,No,No,Cola 12pk,0,0,");
+    expect(r1).toBe("Cola 12pk,C-1,,,Drinks,each,24.5,10.1235,,7,Yes,Yes,,8,80,2026-09-20,p1");
+    expect(r2).toBe("Cola Diet,,,,,each,1,,,0,No,No,Cola 12pk,0,0,,p2");
   });
 
   it("leaves the parent column empty for a parent that belongs to another tenant (B1211)", async () => {
@@ -375,7 +376,7 @@ describe("products export.csv", () => {
       ],
     });
     const { out } = await run(svc, WINDOW);
-    expect(rows(out)[1]).toBe("Cola,,,,,each,1,,,0,Yes,No,,4,35.01,2026-09-12");
+    expect(rows(out)[1]).toBe("Cola,,,,,each,1,,,0,Yes,No,,4,35.01,2026-09-12,p1");
     expect(itemCalls).toHaveLength(1); // one grouped read per batch
     const where = itemCalls[0].where;
     expect(where.invoice.tenantId).toBe(TENANT_A);

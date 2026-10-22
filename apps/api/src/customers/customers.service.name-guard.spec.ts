@@ -51,7 +51,10 @@ describe("CustomersService name guard (B956)", () => {
         entitlementAuthorityFromEntitlements, // #2241
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         { provide: EmailService, useValue: { send: jest.fn() } },
       ],

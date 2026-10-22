@@ -23,7 +23,7 @@ const STEPS: Array<[string, string]> = [
   ],
   [
     "Pricing",
-    "The order prices itself against that customer's tier and any per-product overrides you've set — the same pricing engine whether the order was typed by hand or generated from a standing order.",
+    "The order prices itself against that customer's tier and any per-product overrides you've set. It's the same pricing engine whether the order was typed by hand or generated from a standing order.",
   ],
   [
     "Route",

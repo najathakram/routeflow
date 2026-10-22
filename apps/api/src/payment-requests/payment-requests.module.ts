@@ -2,6 +2,8 @@ import { Module } from "@nestjs/common";
 import { InvoicesModule } from "../invoices/invoices.module";
 import { GatewaysModule } from "../gateways/gateways.module";
 import { StripeConnectModule } from "../stripe-connect/stripe-connect.module";
+import { NotificationsModule } from "../notifications/notifications.module";
+import { ConnectChargeReviewService } from "./connect-charge-review.service";
 import { PaymentRequestsService } from "./payment-requests.service";
 import { PaymentRequestsController } from "./payment-requests.controller";
 import { ConnectWebhookController } from "./connect-webhook.controller";
@@ -23,10 +25,11 @@ import { StripePaymentProvider } from "./provider/stripe-payment-provider";
  * with different webhook secrets and must stay decoupled failure domains.
  */
 @Module({
-  imports: [InvoicesModule, GatewaysModule, StripeConnectModule],
+  imports: [InvoicesModule, GatewaysModule, StripeConnectModule, NotificationsModule],
   controllers: [PaymentRequestsController, ConnectWebhookController],
   providers: [
     PaymentRequestsService,
+    ConnectChargeReviewService,
     { provide: PAYMENT_PROVIDER, useClass: StripePaymentProvider },
   ],
   exports: [PaymentRequestsService],

@@ -39,6 +39,11 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
 import {
+  advancePaymentKey,
+  keyedPayment,
+  type KeyedWriterOpts,
+} from "../invoices/payment-idempotency";
+import {
   collectedDateOf,
   CONFIRMED_PAYMENT,
   RECEIVED_METHOD_FILTER,
@@ -90,6 +95,7 @@ import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes"
 import { assertProductIdNotFamily } from "../products/sellable-lines";
 import { AuditService } from "../audit/audit.service";
 import { recordCreditLimitChange, type CreditLimitActor } from "./credit-limit-audit";
+import { lockInvoiceRowsInOrder } from "../regulated/ledger-locks";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -930,20 +936,30 @@ export class CustomersService {
       notes?: string;
       receivedAt?: string;
     },
+    opts?: KeyedWriterOpts<any>,
   ) {
     await this.findCustomerOrThrow(customerId);
     if (roundMoney(dto.amount) <= 0) throw new BadRequestException("Amount must be greater than 0");
-    return this.prisma.forTenant().advancePayment.create({
-      data: {
-        customerId,
-        amount: roundMoney(dto.amount),
-        balance: roundMoney(dto.amount), // initial balance equals amount
-        method: dto.method as any,
-        reference: dto.reference,
-        notes: dto.notes,
-        receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
-      },
-    });
+    const data = {
+      customerId,
+      amount: roundMoney(dto.amount),
+      balance: roundMoney(dto.amount), // initial balance equals amount
+      method: dto.method as any,
+      reference: dto.reference,
+      notes: dto.notes,
+      receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
+    };
+    // SA-824: no Idempotency-Key = the single create of today; a key claims as the FIRST statement of
+    // one transaction with the create and its settle, or replays the stored advance.
+    if (!opts?.idempotencyKey) return this.prisma.forTenant().advancePayment.create({ data });
+    return keyedPayment(this.prisma, advancePaymentKey(customerId, dto), opts, (o) =>
+      this.prisma.tenantTransaction(async (tx) => {
+        await o?.claim?.(tx);
+        const created = await tx.advancePayment.create({ data });
+        await o?.inTx?.(tx, created);
+        return created;
+      }),
+    );
   }
 
   async getAdvancePayments(customerId: string) {
@@ -1086,12 +1102,17 @@ export class CustomersService {
   async applyAdvancePaymentToInvoice(
     advancePaymentId: string,
     dto: { invoiceId: string; amount?: number },
+    /** The route's customer id (`:id`): the advance must belong to this customer (B808). */
+    routeCustomerId: string,
   ) {
     const apStub = await this.prisma.forTenant().advancePayment.findUnique({
       where: { id: advancePaymentId },
       select: { customerId: true },
     });
-    if (!apStub) throw new NotFoundException("Advance payment not found");
+    // B808: an advance under another customer is the same 404 as a missing advance.
+    if (!apStub || apStub.customerId !== routeCustomerId) {
+      throw new NotFoundException("Advance payment not found");
+    }
 
     try {
       const lock = await withAdvisoryLock(
@@ -1153,6 +1174,13 @@ export class CustomersService {
         include: { payments: true },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
+      // B808: the invoice must belong to the advance's own customer (checked before any write).
+      if (inv.customerId !== ap.customerId) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.ADVANCE_CUSTOMER_MISMATCH,
+          message: "An advance payment can only be applied to an invoice of the same customer.",
+        });
+      }
       if (inv.status === "DRAFT" || CREDIT_NOT_APPLICABLE.includes(inv.status)) {
         throw new BadRequestException(
           `Cannot apply advance payment to invoice with status ${inv.status}`,
@@ -2206,8 +2234,11 @@ export class CustomersService {
           // carry ledger rows — createSplitInvoices writes them at creation,
           // before the DRAFT is ever sent — so filtering by status here would
           // reintroduce the leak.
+          // SA-839 F3: the Invoice rows (id order) before their ledger settles, so a concurrent
+          // return cancel / credit-note void of one of them serialises with this purge.
+          await lockInvoiceRowsInOrder(tx, this.prisma.getTenantId(), invoiceIds);
           for (const invoiceId of invoiceIds) {
-            await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
+            await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId });
           }
           await deleteMoneyRecordCas(tx.invoicePayment, { invoiceId: { in: invoiceIds } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
@@ -2403,8 +2434,11 @@ export class CustomersService {
           // carry ledger rows — createSplitInvoices writes them at creation,
           // before the DRAFT is ever sent — so filtering by status here would
           // reintroduce the leak.
+          // SA-839 F3: the Invoice rows (id order) before their ledger settles, so a concurrent
+          // return cancel / credit-note void of one of them serialises with this purge.
+          await lockInvoiceRowsInOrder(tx, this.prisma.getTenantId(), invoiceIds);
           for (const invoiceId of invoiceIds) {
-            await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
+            await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId });
           }
           await deleteMoneyRecordCas(tx.invoicePayment, { invoiceId: { in: invoiceIds } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });

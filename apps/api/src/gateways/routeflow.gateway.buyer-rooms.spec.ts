@@ -1128,7 +1128,10 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
         none, // email
         none, // pdf
         none, // system config
-        { reverseInvoiceEntries: jest.fn(async () => undefined) } as never,
+        {
+          reverseInvoiceEntries: jest.fn(async () => undefined),
+          settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+        } as never,
         none, // authorization guard
         none, // credit notes
         none, // messaging

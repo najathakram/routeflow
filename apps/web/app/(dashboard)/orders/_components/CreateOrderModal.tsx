@@ -27,9 +27,24 @@ import {
 } from "@/lib/api/orders";
 import { usePriceSummary } from "@/lib/api/price-history";
 import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/api/drafts";
-import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
+import type { OrderDraftPayload } from "@/lib/drafts";
+import { readDraftSubmitKey } from "@routeflow/types/draft-submit-key";
+import { priceChangedCopy, repriceResumedLines } from "@/lib/order-draft/resume";
+import {
+  fetchCurrentTierPrices,
+  PRICES_NOT_REFRESHED_COPY,
+  productsToRefresh,
+  withFreshTierPrices,
+} from "@/lib/order-draft/fresh-prices";
+import type { DraftPayload } from "@/lib/order-draft/engine";
+import type { LocalDraftRecord } from "@/lib/order-draft/storage";
+import { draftMetaOf, useOrderDraftAutosave } from "./use-order-draft-autosave";
+import { useUnsentOrderResume } from "./use-unsent-order-resume";
+import { ResumeUnsentOrderDialog } from "./ResumeUnsentOrderDialog";
+import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
-import { orderCreatedToast } from "./order-created-toast";
+import { todayLocalIso } from "@/lib/formatting";
+import { ACTION_TOAST_MS, addedLineQty, showOrderCreatedToast } from "./order-created-toast";
 import {
   mergePieceIntoLine,
   mergeQtyIntoLine,
@@ -51,6 +66,7 @@ import {
 } from "@/lib/staff-price-override";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -109,6 +125,7 @@ import { STALE_CREDIT_COPY, isStaleCreditRefusal } from "./stale-credit-refusal"
 import { useCustomerChangeUndo } from "./use-customer-change-undo";
 import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useAuth } from "@/lib/auth-context";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
 import { useFulfilmentCaps, useStaffFulfilment } from "@/lib/fulfilment-caps";
@@ -202,6 +219,8 @@ interface LineItem extends DerivedBaseMarker {
   unitLabel?: string;
   /** S19b: a price the SYSTEM pre-filled from last-given history; the customer layer replaces it once ready. */
   systemPrefill?: boolean;
+  /** SA-817 A5: the price this line carried when the order was parked, set when a resume found today's price different. */
+  priceChangedFrom?: number;
   /** S19b: set while the customer layer prices this line; the pre-layer values to restore if its row goes away. */
   layerFrom?: LayerFrom;
   /** #2784 UI-only: a NEW line from the picker tap / a shared-code scan starts on the default selling unit. */
@@ -239,6 +258,9 @@ export interface CreateOrderModalProps {
   onViewOrder?: (orderId: string) => void;
 }
 
+/** F13 (row 718): the local copy for a requested delivery day before the browser's today. */
+const DELIVERY_DATE_PAST_COPY = "That day has passed. Pick today or a later date.";
+
 type SubmitOptions = { mergeChoice?: "merge" | "separate"; asDraft?: boolean };
 
 /** A 4xx the modal resolves with the operator and re-submits itself (merge prompt, license capture): the SAME attempt. */
@@ -262,12 +284,15 @@ export function CreateOrderModal({
   initialFulfillPath,
   onViewOrder,
 }: CreateOrderModalProps) {
-  const { toast } = useToast();
+  const { toast, dismiss: dismissToast } = useToast();
+  const toastApi = { toast, dismiss: dismissToast };
   const createOrder = useCreateOrder({ localErrorToast: true });
   const pos = usePosMode(); // SA-763r P-2: server-backed preference, never localStorage
   const { user: posUser } = useAuth();
   // The switch and PICKUP are for roles with USE_POS_MODE only: a stored preference never applies without it.
-  const posAllowed = staffMay(posUser?.role, "USE_POS_MODE");
+  // BO-07: and not for an operator whose admin switched ORDERS off (the same deny list the till reads).
+  const { deniedGroups: posDenied, permsKnown } = useCounterSaleGate();
+  const posAllowed = permsKnown && staffMay(posUser?.role, "USE_POS_MODE", posDenied);
   // A store-only business (capabilities.fulfilment: PICKUP is its only method) has no delivery to switch back to:
   // the builder is simply POS mode, with no switch and no preference involved (row 331).
   const storeOnly = isStoreOnly(useFulfilmentCaps());
@@ -277,7 +302,9 @@ export function CreateOrderModal({
   const posFinish = usePosFinish();
   // Which POS finishing action the operator pressed ("Confirm and invoice" vs "Confirm only"); survives the merge prompt.
   const posFinishRef = React.useRef<"invoice" | "confirm">("invoice");
-  const submitKey = useCreateOrderSubmitKey(isOpen); // BUG-A: latch + Idempotency-Key per attempt
+  // SA-817 A: the key rides with the draft (payload._submitKey); a re-mint bumps `keyTick` so the draft carries the new one.
+  const [keyTick, setKeyTick] = React.useState(0);
+  const submitKey = useCreateOrderSubmitKey(isOpen, () => setKeyTick((t) => t + 1)); // BUG-A: latch + Idempotency-Key per attempt
   // An unknown outcome (timeout / 5xx) may still have written the order. Closing mints a fresh key on
   // reopen (accepted residual risk), so tell the operator to check before re-entering it.
   React.useEffect(() => {
@@ -303,7 +330,9 @@ export function CreateOrderModal({
   const [activeDraftId, setActiveDraftId] = React.useState<string | null>(null);
   const hydratedRef = React.useRef<string | null>(null);
   const scanConsumedRef = React.useRef(false);
-  const lastSavedRef = React.useRef<string>("");
+  // SA-817 A5: a resume re-prices once the customer's prices have been read (display only; the server prices at submit).
+  const repriceAfterResumeRef = React.useRef(false);
+  const [repriceTick, setRepriceTick] = React.useState(0);
 
   // Fetch default tax rate from settings
   const { data: settings } = useQuery<{ taxRate?: number }>({
@@ -364,8 +393,12 @@ export function CreateOrderModal({
   // Scroll the just-scanned line into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLLIElement>>(new Map());
   const [scrollToId, setScrollToId] = React.useState<string | null>(null);
+  // Q09: the line you last touched (or just added). Only it shows the "Tap to change" hint; before any touch the newest
+  // line is the active one (computed at render, not mirrored into state: L-333).
+  const [touchedLineId, setTouchedLineId] = React.useState<string | null>(null);
   React.useEffect(() => {
     if (!scrollToId) return;
+    setTouchedLineId(scrollToId);
     rowRefs.current.get(scrollToId)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     setScrollToId(null);
   }, [scrollToId, lineItems]);
@@ -402,6 +435,8 @@ export function CreateOrderModal({
   // Merge-vs-separate prompt state. Set when the operator submits and the API
   // (or our pre-check) reports an existing active order for the same customer.
   const [mergePrompt, setMergePrompt] = React.useState<ActiveOrderSummary | null>(null);
+  const mergeChoiceRef = React.useRef<HTMLButtonElement>(null);
+  const separateChoiceRef = React.useRef<HTMLButtonElement>(null);
   // The license guard (W6b): categories blocked by a 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   // Selling restrictions: lines the API refused for this customer (shown instead of a raw toast).
@@ -610,7 +645,8 @@ export function CreateOrderModal({
     setActiveDraftId(null);
     hydratedRef.current = null;
     scanConsumedRef.current = false;
-    lastSavedRef.current = "";
+    repriceAfterResumeRef.current = false;
+    setPricesNotRefreshed(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, resumeDraftId]);
 
@@ -1300,6 +1336,12 @@ export function CreateOrderModal({
   }, [backdateOpen]);
   // The server's upper bound is the end of the current UTC day (parseOrderDate).
   const maxOrderDate = new Date().toISOString().slice(0, 10);
+  // F13: a requested delivery day before today (the browser's local day) is refused next to the field. Derived in the render,
+  // never mirrored into state (L-333). POS mode steps the field aside and sends no delivery date, so it never blocks there.
+  const deliveryDateMin = todayLocalIso();
+  const deliveryDatePast =
+    !posMode && requestedDeliveryDate !== "" && requestedDeliveryDate < deliveryDateMin;
+  const deliveryDateRef = React.useRef<HTMLInputElement>(null);
 
   // Staff-only per-order commission override (0 = exempt; null = agent/customer
   // default). Gated on role + the sales_agents addon — server re-checks both.
@@ -1342,36 +1384,39 @@ export function CreateOrderModal({
   );
   const draftPayloadJson = JSON.stringify(draftPayload);
 
-  const buildDraftDto = React.useCallback(
-    (payload: OrderDraftPayload) => ({
-      kind: "ORDER" as const,
-      customerId: payload.customer?.id ?? null,
-      customerName: payload.customer?.businessName ?? null,
-      title: payload.customer ? `Order, ${payload.customer.businessName}` : "Order draft",
-      payload: payload as unknown as Record<string, unknown>,
-      device: draftDeviceLabel(),
-    }),
-    [],
-  );
-
   // Nothing worth parking until a customer is picked or a line is added.
   const canMinimize = !!selectedCustomer || lineItems.length > 0;
-  const savingDraft = createDraft.isPending || updateDraft.isPending;
+  // SA-817 A2: a server draft (and the local mirror) from the FIRST parkable change (customer + at least one line), not only on
+  // Minimize. The submit key rides in the payload; the engine mirrors mobile's autosave rules (900 ms, single-flight create).
+  const draftParkable = !!selectedCustomer && lineItems.length > 0;
+  const draftMeta = React.useMemo(() => draftMetaOf(draftPayload), [draftPayload]);
+  const autosave = useOrderDraftAutosave({
+    isOpen,
+    resumeDraftId,
+    enabled: isOpen && (!resumeDraftId || activeDraftId === resumeDraftId),
+    parkable: draftParkable,
+    payload: draftPayload as unknown as Record<string, unknown>,
+    payloadJson: draftPayloadJson,
+    meta: draftMeta,
+    user,
+    submitKey,
+    keyTick,
+    createDraft: (dto) => createDraft.mutateAsync(dto as never),
+    updateDraft: (dto) => updateDraft.mutateAsync(dto as never),
+  });
+  // Only an EXPLICIT park (Minimize / dismiss) disables the buttons; a background autosave never does.
+  const [savingDraft, setSavingDraft] = React.useState(false);
+  // Row 604 S5: the toast's Discard asks first (same wording as the drafts dock).
+  const [discardDraftId, setDiscardDraftId] = React.useState<string | null>(null);
 
-  // Park the current builder state into the local Draft (the dock). Returns whether
-  // the save succeeded. Reuses the bound draft when resuming, else creates a new one.
+  // Park the current builder state into the draft (the dock): save it now, creating the row if autosave has not yet.
+  // Returns whether the save succeeded.
   const parkDraft = async (): Promise<boolean> => {
-    const dto = buildDraftDto(draftPayload);
+    setSavingDraft(true);
     try {
-      if (activeDraftId) {
-        await updateDraft.mutateAsync({ id: activeDraftId, ...dto });
-      } else {
-        await createDraft.mutateAsync(dto);
-      }
-      lastSavedRef.current = draftPayloadJson;
-      return true;
-    } catch {
-      return false;
+      return await autosave.flush({ force: true });
+    } finally {
+      setSavingDraft(false);
     }
   };
 
@@ -1444,7 +1489,21 @@ export function CreateOrderModal({
     }
     const ok = await parkDraft();
     if (ok) {
-      toast({ title: "Order saved as draft", variant: "success" });
+      // Row 604 S5: read the engine's id NOW - when Close itself created the draft, the render-time id is still null.
+      const parkedId = autosave.getDraftId();
+      toast({
+        title: "Draft saved",
+        description: "Find it in the drafts dock to resume.",
+        variant: "success",
+        ...(parkedId
+          ? {
+              action: {
+                label: "Discard",
+                onClick: () => setDiscardDraftId(parkedId),
+              },
+            }
+          : {}),
+      });
       onClose();
     } else {
       toast({
@@ -1454,12 +1513,10 @@ export function CreateOrderModal({
     }
   };
 
-  // Hydrate the builder from a resumed draft (once per open).
-  React.useEffect(() => {
-    if (!isOpen || !resumeDraftId || !loadedDraft) return;
-    if (hydratedRef.current === loadedDraft.id) return;
-    hydratedRef.current = loadedDraft.id;
-    const p = (loadedDraft.payload ?? {}) as unknown as DraftPayloadWithFulfillPath;
+  // Fill the builder from a draft payload (a docked server draft, a local copy, or the other device's version after a conflict).
+  // Returns the payload exactly as the builder will re-serialize it, so the engine's baseline matches and hydrating itself writes nothing.
+  const hydrateFromPayload = (p: DraftPayloadWithFulfillPath): DraftPayload => {
+    const pick = staffFulfilment.pickForm(p.fulfillPath);
     setSelectedCustomer(p.customer ?? null);
     setLineItems(Array.isArray(p.lineItems) ? p.lineItems : []);
     setOrderDiscount(p.orderDiscount ?? "");
@@ -1473,15 +1530,15 @@ export function CreateOrderModal({
     // the customer's own default (that only seeds a FRESH selection; see the
     // picker's onClick). Order matters: this reset() must run after
     // setSelectedCustomer above so a resumed SHIP order stays SHIP.
-    reset({
-      notes: p.notes ?? "",
-      urgent: !!p.urgent,
-      fulfillPath: staffFulfilment.pickForm(p.fulfillPath),
-    });
-    setActiveDraftId(loadedDraft.id);
-    // Seed the autosave baseline so hydration itself never triggers a write. Key
-    // order must match `draftPayload` — the comparison is on the JSON string.
-    lastSavedRef.current = JSON.stringify({
+    reset({ notes: p.notes ?? "", urgent: !!p.urgent, fulfillPath: pick });
+    // SA-817 A6: the draft's own submit key is the order's key (a resubmit after a reload replays it). A draft without one keeps
+    // the key this session minted, and the next autosave writes it into the draft.
+    const savedKey = readDraftSubmitKey(p);
+    if (savedKey) submitKey.adopt(savedKey);
+    // SA-817 A5: today's prices are read once the customer's price read lands (see the effect below).
+    repriceAfterResumeRef.current = true;
+    setRepriceTick((t) => t + 1);
+    return {
       customer: p.customer ?? null,
       lineItems: Array.isArray(p.lineItems) ? p.lineItems : [],
       orderDiscount: p.orderDiscount ?? "",
@@ -1492,29 +1549,131 @@ export function CreateOrderModal({
       urgent: !!p.urgent,
       floorAcked: p.floorAcked ?? [],
       commissionRatePct: p.commissionRatePct ?? null,
-      fulfillPath: staffFulfilment.pickForm(p.fulfillPath),
-    });
+      fulfillPath: pick,
+      _submitKey: savedKey ?? submitKey.peek(),
+    } as unknown as DraftPayload;
+  };
+
+  // Hydrate the builder from a resumed draft (once per open).
+  React.useEffect(() => {
+    if (!isOpen || !resumeDraftId || !loadedDraft) return;
+    if (hydratedRef.current === loadedDraft.id) return;
+    hydratedRef.current = loadedDraft.id;
+    const normalized = hydrateFromPayload(
+      (loadedDraft.payload ?? {}) as unknown as DraftPayloadWithFulfillPath,
+    );
+    setActiveDraftId(loadedDraft.id);
+    autosave.hydrateFromServer(loadedDraft, normalized);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, resumeDraftId, loadedDraft]);
 
-  // Autosave per change while bound to a draft (debounced so keystrokes stay cheap
-  // and survive navigation / device loss). Skips when nothing changed.
+  // The bound server draft (created by autosave on the first parkable change) is the modal's active draft.
   React.useEffect(() => {
-    if (!isOpen || !activeDraftId) return;
-    if (draftPayloadJson === lastSavedRef.current) return;
-    const t = setTimeout(() => {
-      updateDraft.mutate(
-        { id: activeDraftId, ...buildDraftDto(draftPayload) },
-        {
-          onSuccess: () => {
-            lastSavedRef.current = draftPayloadJson;
-          },
-        },
+    if (autosave.draftId) setActiveDraftId(autosave.draftId);
+  }, [autosave.draftId]);
+
+  // SA-817 A3: "Resume your unsent order?" - a local copy the server lacks (or is behind on) is offered on a FRESH open.
+  // A docked draft (resumeDraftId) is also checked: a local copy bound to THAT draft that is newer than the server's is offered, so
+  // opening the draft from the dock never orphans work that only reached this device.
+  const unsent = useUnsentOrderResume({
+    active: isOpen,
+    mirror: autosave.mirror,
+    onlyFor: resumeDraftId ?? null,
+  });
+  const resumeLocalCopy = (record: LocalDraftRecord) => {
+    const normalized = hydrateFromPayload(record.payload as unknown as DraftPayloadWithFulfillPath);
+    autosave.hydrateFromLocal(record, normalized);
+    if (record.serverDraftId) setActiveDraftId(record.serverDraftId);
+    unsent.dismiss();
+  };
+
+  // SA-817 A5 / SA-817a: re-price a resumed order for display from TODAY's prices: each product's current tier columns
+  // (the existing GET /products/:id, parallel, capped at 8) plus the customer's price layer / tier rows the modal already
+  // reads. Overrides survive as typed; a failed read never blocks the resume (the lines keep what they had and a notice says so);
+  // the server prices again at submit, so what is shown is what is billed.
+  const [conflictBusy, setConflictBusy] = React.useState(false);
+  // SA-817a: when the draft conflicts and this session has a submit whose outcome is unknown, that submit is replayed FIRST with
+  // its original key (the order may already exist); only then is the user asked which version to keep.
+  const [replay, setReplay] = React.useState<"idle" | "running" | "done">("idle");
+  const lastSubmitRef = React.useRef<{
+    data: FormValues;
+    options: SubmitOptions;
+    /** The builder state the attempt was sent with: the replay may only resend THAT cart. */
+    cartJson: string;
+  } | null>(null);
+  const [pricesNotRefreshed, setPricesNotRefreshed] = React.useState(false);
+  const resumePricesReady = priceLayer.ready && customerPricesData !== undefined;
+  React.useEffect(() => {
+    if (!repriceAfterResumeRef.current || !selectedCustomer || lineItems.length === 0) return;
+    if (!resumePricesReady) return;
+    repriceAfterResumeRef.current = false;
+    const tierFor = tierForProduct; // the one tier chain this modal prices with
+    const layerOf = priceLayer.enabled
+      ? (productId: string) => priceLayer.layerOf(productId)
+      : undefined;
+    void fetchCurrentTierPrices(productsToRefresh(lineItems), (id) =>
+      apiClient.get(`/products/${id}`).then((r) => r.data),
+    ).then((fresh) => {
+      setPricesNotRefreshed(fresh.failed);
+      if (fresh.byProduct.size === 0) return;
+      setLineItems(
+        (prev) =>
+          repriceResumedLines(withFreshTierPrices(prev, fresh.byProduct), tierFor, layerOf).lines,
       );
-    }, 900);
-    return () => clearTimeout(t);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, activeDraftId, draftPayloadJson]);
+  }, [resumePricesReady, selectedCustomer?.id, lineItems.length, repriceTick]);
+
+  React.useEffect(() => {
+    if (!autosave.conflict) {
+      if (replay !== "idle") setReplay("idle");
+      return;
+    }
+    if (replay !== "idle") return;
+    const last = lastSubmitRef.current;
+    // Replay only the cart that was actually sent: if the cart changed since, K1 may never have reached the server and a replay
+    // would create an order for edits nobody confirmed. Then the dialog opens at once and Keep this one still keeps K1.
+    if (submitKey.hasUnknown() && last && last.cartJson === draftPayloadJson) {
+      setReplay("running");
+      if (submitOrder(last.data, last.options) !== true) setReplay("done");
+    } else {
+      setReplay("done");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autosave.conflict, replay]);
+
+  // SA-817 A4: another device changed the draft after our last sync. Keep BOTH; the choice only picks which one is shown.
+  const settleConflict = async (choice: "keep-mine" | "open-other") => {
+    setConflictBusy(true);
+    try {
+      // A key that may already own an order (a submit was sent with it, or it came from a resumed draft) is never moved to a
+      // copy: Keep this one then keeps this version on the same draft and parks the other device's version instead.
+      const res = await autosave.resolveConflict(choice, { keepKey: submitKey.maybeUsed() });
+      if (res.choice === "keep-mine") {
+        const key = readDraftSubmitKey(res.payload);
+        if (key && !res.parkedDraftId) submitKey.adopt(key, { fresh: true });
+        setActiveDraftId(res.draftId);
+        toast({
+          title: "Kept your version. The other one is still in your drafts.",
+          variant: "success",
+        });
+      } else {
+        const normalized = hydrateFromPayload(
+          res.current.payload as unknown as DraftPayloadWithFulfillPath,
+        );
+        setActiveDraftId(res.current.id);
+        autosave.hydrateFromServer(res.current, normalized);
+        toast({
+          title: "Opened the other version. Yours is saved in your drafts.",
+          variant: "success",
+        });
+      }
+    } catch {
+      toast({ title: "Couldn't settle the two versions. Try again.", variant: "error" });
+    } finally {
+      setConflictBusy(false);
+    }
+  };
 
   // Scan-to-draft / scan-to-new: add the incoming barcode once the builder is
   // ready — a fresh open adds immediately; a resumed draft waits until it has
@@ -1589,6 +1748,8 @@ export function CreateOrderModal({
           title: finish === "invoice" ? POS_COPY.confirmedInvoiced : POS_COPY.confirmedOnly,
           variant: "success",
           action,
+          // F17: a toast that carries View Order stays until used (the 4 s default is gone before a click lands).
+          ...(action ? { duration: ACTION_TOAST_MS } : {}),
         });
       })
       .catch((err: unknown) => {
@@ -1602,6 +1763,7 @@ export function CreateOrderModal({
                 : POS_COPY.confirmMissing,
           variant: "warning",
           action,
+          ...(action ? { duration: ACTION_TOAST_MS } : {}),
         });
       })
       // POS mode lands on the new order's page (Hand over / Print live there), never back on the list.
@@ -1657,6 +1819,10 @@ export function CreateOrderModal({
             ...note,
           };
     });
+    // The lines the request carries, for the merged toast (same filter as the payload's items).
+    const itemsForToast = asDraft
+      ? lines.filter((li) => (li.isUnlisted ? li.productName.trim() : li.productId) && li.qty > 0)
+      : lines;
     const payload = {
       customerId: selectedCustomer!.id,
       items: itemsForSubmit,
@@ -1684,96 +1850,137 @@ export function CreateOrderModal({
     // of the cart fingerprint: the merge-prompt round trip re-submits the SAME attempt.
     const { mergeChoice: _mc, idempotencyKey: _ik, ...cartForKey } = payload;
     const attemptKey = submitKey.begin(JSON.stringify(cartForKey));
-    if (attemptKey === null) return;
-    createOrder.mutate(
-      { ...payload, idempotencyKey: attemptKey },
-      {
-        onSuccess: (created: any) => {
-          submitKey.settle("success");
-          if (posMode && !asDraft && created?.id) {
-            // A merge returns the target order; its status (else the prompt's) says if it is still a DRAFT.
-            finishPosOrder(
-              created,
-              posFinishRef.current,
-              onViewOrder,
-              mergeChoice === "merge" ? { fromStatus: mergePrompt?.status } : undefined,
-            );
-          } else {
-            toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
-          }
-          // The parked draft has become a real order — clear it from the dock.
-          if (activeDraftId) deleteDraft.mutate(activeDraftId);
-          setMergePrompt(null);
-          pendingFormValuesRef.current = null;
-          pendingAsDraftRef.current = false;
-          returnSave.onSuccess();
-          onClose();
-          // B1201: a lost-response replay of a create whose credits were never applied (read-only hint).
-          if (created?.creditsPending && created?.id) {
-            toast({ title: CREDITS_PENDING_COPY, variant: "warning" });
-            onViewOrder?.(created.id);
-          }
-        },
-        onError: (err: any) => {
-          // SA-715: the key already made an order: open it, never resubmit. Checked FIRST so no
-          // key-conflict code can fall through to the refused / re-mint branch.
-          const pendingOrderId = creditsPendingOrderId(err); // B1201: saved, credits not applied
-          const heldOrderId = idempotencyConflictOrderId(err) ?? pendingOrderId;
-          submitKey.settle(
-            heldOrderId
-              ? "conflict"
-              : isUnknownOutcome(err)
-                ? "unknown"
-                : isSameAttemptRefusal(err)
-                  ? "same-attempt"
-                  : "refused",
-          );
-          if (heldOrderId) {
-            toast(
-              pendingOrderId
-                ? { title: CREDITS_PENDING_COPY, variant: "warning" }
-                : {
-                    title: "Your earlier submit went through. Opening that order.",
-                    variant: "success",
-                  },
-            );
+    if (attemptKey === null) return false;
+    lastSubmitRef.current = { data, options, cartJson: draftPayloadJson };
+    // SA-817 A6: the key is DURABLE before it is sent - the local copy (with `_submitKey`) is written and the server copy saved
+    // (short budget, never gating the order) before the POST, so a lost response followed by a reload can replay the same key.
+    const send = () =>
+      createOrder.mutate(
+        { ...payload, idempotencyKey: attemptKey },
+        {
+          onSuccess: (created: any) => {
+            submitKey.settle("success");
+            if (posMode && !asDraft && created?.id) {
+              // A merge returns the target order; its status (else the prompt's) says if it is still a DRAFT.
+              finishPosOrder(
+                created,
+                posFinishRef.current,
+                onViewOrder,
+                mergeChoice === "merge" ? { fromStatus: mergePrompt?.status } : undefined,
+              );
+            } else {
+              showOrderCreatedToast(toastApi, {
+                mergeChoice,
+                asDraft,
+                created,
+                onViewOrder,
+                // N01: what the merge added, in the lines' own words (the total comes from the response).
+                addedLines:
+                  mergeChoice === "merge"
+                    ? itemsForToast.map((li) => ({
+                        name: li.productName,
+                        qty: addedLineQty(li),
+                      }))
+                    : undefined,
+              });
+            }
+            // The parked draft has become a real order — clear it from the dock.
+            // SA-817: the order exists - stop autosave, drop the local copy, delete the bound server draft (once a create in flight lands).
+            void autosave.finish().then((boundId) => {
+              if (boundId) deleteDraft.mutate(boundId);
+            });
+            setMergePrompt(null);
+            pendingFormValuesRef.current = null;
+            pendingAsDraftRef.current = false;
+            returnSave.onSuccess();
             onClose();
-            onViewOrder?.(heldOrderId);
-            return;
-          }
-          // Belt-and-braces: if our pre-check missed an active order (race) the API
-          // returns 409 with code MERGE_CHOICE_REQUIRED. Surface the modal from that.
-          const body = err?.response?.data;
-          if (
-            err?.response?.status === 409 &&
-            body?.code === API_ERROR_CODES.MERGE_CHOICE_REQUIRED &&
-            body?.activeOrder
-          ) {
-            pendingFormValuesRef.current = data;
-            pendingAsDraftRef.current = !!asDraft;
-            setMergePrompt(body.activeOrder as ActiveOrderSummary);
-            return;
-          }
-          const restricted = parseSellingRestricted(err);
-          if (restricted) {
-            setRestrictedBlock(restricted);
-            return;
-          }
-          // A regulated line needs a verified license (or a §8 override / removal).
-          const blocked = parseRegulatedAuthError(err);
-          if (blocked && blocked.length > 0) {
-            licenseRetryRef.current = { data, options };
-            setLicenseBlock(blocked);
-            return;
-          }
-          // #2406: none of the precondition flows above matched (each re-submits the SAME
-          // attempt and must keep the returnKey) — an inline-return-carrying save refused
-          // for any other 4xx reason mints a fresh one and surfaces the message near the
-          // Returns section. The modal itself stays open (no onClose() on this path already).
-          if (inlineReturn) returnSave.onError(err, false);
+            // B1201: a lost-response replay of a create whose credits were never applied (read-only hint).
+            if (created?.creditsPending && created?.id) {
+              toast({ title: CREDITS_PENDING_COPY, variant: "warning" });
+              onViewOrder?.(created.id);
+            }
+          },
+          onError: (err: any) => {
+            // SA-715: the key already made an order: open it, never resubmit. Checked FIRST so no
+            // key-conflict code can fall through to the refused / re-mint branch.
+            const pendingOrderId = creditsPendingOrderId(err); // B1201: saved, credits not applied
+            const heldOrderId = idempotencyConflictOrderId(err) ?? pendingOrderId;
+            submitKey.settle(
+              heldOrderId
+                ? "conflict"
+                : isUnknownOutcome(err)
+                  ? "unknown"
+                  : isSameAttemptRefusal(err)
+                    ? "same-attempt"
+                    : "refused",
+            );
+            if (heldOrderId) {
+              toast(
+                pendingOrderId
+                  ? { title: CREDITS_PENDING_COPY, variant: "warning" }
+                  : {
+                      title: "Your earlier submit went through. Opening that order.",
+                      variant: "success",
+                    },
+              );
+              // The order EXISTS: the bound draft is finished with (no zombie draft left to resubmit).
+              void autosave.finish().then((boundId) => {
+                if (boundId) deleteDraft.mutate(boundId);
+              });
+              onClose();
+              onViewOrder?.(heldOrderId);
+              return;
+            }
+            // Belt-and-braces: if our pre-check missed an active order (race) the API
+            // returns 409 with code MERGE_CHOICE_REQUIRED. Surface the modal from that.
+            const body = err?.response?.data;
+            if (
+              err?.response?.status === 409 &&
+              body?.code === API_ERROR_CODES.MERGE_CHOICE_REQUIRED &&
+              body?.activeOrder
+            ) {
+              pendingFormValuesRef.current = data;
+              pendingAsDraftRef.current = !!asDraft;
+              setMergePrompt(body.activeOrder as ActiveOrderSummary);
+              return;
+            }
+            // Row 718: the tenant's day called the date past. The refusal is on the date field (above); a merge-or-separate
+            // prompt that led here must not stay over it, so close it (as its onClose does) and put focus on the field.
+            if (body?.code === API_ERROR_CODES.DELIVERY_DATE_IN_PAST) {
+              setMergePrompt(null);
+              pendingFormValuesRef.current = null;
+              pendingAsDraftRef.current = false;
+              // After the prompt's dialog has unmounted: it traps focus while open and restores it to its opener on close.
+              window.setTimeout(() => deliveryDateRef.current?.focus(), 50);
+              return;
+            }
+            const restricted = parseSellingRestricted(err);
+            if (restricted) {
+              setRestrictedBlock(restricted);
+              return;
+            }
+            // A regulated line needs a verified license (or a §8 override / removal).
+            const blocked = parseRegulatedAuthError(err);
+            if (blocked && blocked.length > 0) {
+              licenseRetryRef.current = { data, options };
+              setLicenseBlock(blocked);
+              return;
+            }
+            // #2406: none of the precondition flows above matched (each re-submits the SAME
+            // attempt and must keep the returnKey) — an inline-return-carrying save refused
+            // for any other 4xx reason mints a fresh one and surfaces the message near the
+            // Returns section. The modal itself stays open (no onClose() on this path already).
+            if (inlineReturn) returnSave.onError(err, false);
+          },
+          // SA-817a: a replay triggered by a draft conflict is over, whatever its outcome.
+          onSettled: () => setReplay((r) => (r === "running" ? "done" : r)),
         },
-      },
-    );
+      );
+    // With no local copy to make durable (no signed-in identity) the POST goes at once.
+    const durable = autosave.durableBeforeSubmit();
+    if (durable) void durable.then(send);
+    else send();
+    return true;
   };
 
   /**
@@ -1783,6 +1990,10 @@ export function CreateOrderModal({
   const onSaveDraft = () => {
     if (!selectedCustomer) {
       setCustomerError("Select a customer");
+      return;
+    }
+    if (deliveryDatePast) {
+      deliveryDateRef.current?.focus();
       return;
     }
     // Read Notes from react-hook-form (the <Textarea> renders id="notes", so the
@@ -1814,6 +2025,10 @@ export function CreateOrderModal({
       setLineItemsError("All items must have a quantity greater than zero");
       hasErrors = true;
     }
+    if (deliveryDatePast) {
+      deliveryDateRef.current?.focus();
+      hasErrors = true;
+    }
     if (hasErrors) return;
 
     // If the customer already has an active draft/pending order, ask the operator
@@ -1827,6 +2042,20 @@ export function CreateOrderModal({
     submitOrder(data);
   };
 
+  // Row 718: the server measures the day on the TENANT's calendar, so a browser on another day can pass the local check
+  // and still get 400 DELIVERY_DATE_IN_PAST. The refusal goes next to the date field, worded from the code and the
+  // tenant's `today` it carries (never the raw server message, B986); editing the date clears it.
+  const deliveryDateRefusal: string | null = (() => {
+    const body = (
+      createOrder.error as { response?: { data?: { code?: unknown; today?: unknown } } } | null
+    )?.response?.data;
+    if (body?.code !== API_ERROR_CODES.DELIVERY_DATE_IN_PAST) return null;
+    return typeof body.today === "string" && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(body.today)
+      ? `That day has passed (today is ${body.today} for this business). Pick today or a later date.`
+      : DELIVERY_DATE_PAST_COPY;
+  })();
+  const deliveryDateError = deliveryDatePast ? DELIVERY_DATE_PAST_COPY : deliveryDateRefusal;
+
   // Extract the API's error message from Axios error structure
   const apiError: string | null = (() => {
     const err = createOrder.error as {
@@ -1837,6 +2066,8 @@ export function CreateOrderModal({
     // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
     // admin-written reason) and outlive the dialog's OK.
     if (parseSellingRestricted(err)) return null;
+    // Row 718: the server's past-delivery-day refusal sits on the date field, not in this banner.
+    if (deliveryDateRefusal) return null;
     // B986-7 (Opus): a RECOGNISED refusal (a coded one, a stock shortfall, a credit limit...) is fixed copy; an UNCODED one keeps
     // today's server sentence, which says what to fix (B991 / B987-E mint the codes + fields, then this read goes).
     return (
@@ -1876,6 +2107,13 @@ export function CreateOrderModal({
       }
       highlighted={ctx?.highlighted}
       onTapPrice={ctx?.onTapPrice}
+      active={
+        li.tempId ===
+        (lineItems.some((l) => l.tempId === touchedLineId)
+          ? touchedLineId
+          : lineItems[lineItems.length - 1]?.tempId)
+      }
+      onActivate={() => setTouchedLineId(li.tempId)}
       rowRef={(el) => {
         if (el) rowRefs.current.set(li.tempId, el);
         else rowRefs.current.delete(li.tempId);
@@ -1897,13 +2135,20 @@ export function CreateOrderModal({
       onRemove={() => removeLineItem(li.tempId)}
       pendingUnit={pendingUnitOf(li)}
       unitSlot={
-        <OrderLineUnitPicker
-          line={{ ...li, layerManual: isLayerManualLine(li, priceLayer.layerOf(li.productId)) }}
-          tier={tierForProduct(li.productId)}
-          layer={priceLayer.layerOf(li.productId)}
-          startOnDefaultUnit={li.startOnDefaultUnit}
-          onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
-        />
+        <>
+          <OrderLineUnitPicker
+            line={{ ...li, layerManual: isLayerManualLine(li, priceLayer.layerOf(li.productId)) }}
+            tier={tierForProduct(li.productId)}
+            layer={priceLayer.layerOf(li.productId)}
+            startOnDefaultUnit={li.startOnDefaultUnit}
+            onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
+          />
+          {li.priceChangedFrom != null && li.priceChangedFrom !== li.unitPrice && (
+            <p data-testid="price-changed-note" className="mt-1 text-xs font-medium text-amber-700">
+              {priceChangedCopy(li.priceChangedFrom, li.unitPrice)}
+            </p>
+          )}
+        </>
       }
     />
   );
@@ -1996,34 +2241,48 @@ export function CreateOrderModal({
         storeOnlyPos ? POS_COPY.builderSubtitle : "Create a new order on behalf of a customer."
       }
       className="max-w-2xl"
+      // Q08: the X is the one Close (the footer used to repeat it); Minimize sits beside it. Both are 44 px targets below lg.
+      closeClassName="max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
+      headerActions={
+        <Button
+          variant="ghost"
+          type="button"
+          size="sm"
+          aria-label="Minimize"
+          title="Minimize to drafts"
+          className="w-7 px-0 max-lg:h-11 max-lg:w-11"
+          onClick={handleMinimize}
+          disabled={!canMinimize || savingDraft}
+          loading={savingDraft}
+        >
+          {savingDraft ? null : <Minus className="h-4 w-4" />}
+        </Button>
+      }
       footer={
-        // B564: the Modal footer is a `justify-end` flex row, so four buttons wider than a
-        // 390px sheet overflowed off the LEFT edge and clipped Minimize. Under `sm` the save
-        // actions get their own row and Minimize sits below them, full-width; from `sm` up
-        // this is the original single row with Minimize pinned left. Every footer button is a 44px touch
-        // target under `sm` (max-sm:h-11); from `sm` up the Button's own height is untouched.
-        <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
-          {/* Minimize parks the whole builder into the bottom-left draft dock
-              (pos-cost-roles-spec §2). Left-aligned, away from the save actions. */}
-          <Button
-            variant="ghost"
-            type="button"
-            className="w-full max-sm:h-11 sm:mr-auto sm:w-auto"
-            onClick={handleMinimize}
-            disabled={!canMinimize || savingDraft}
-            loading={savingDraft}
-            leftIcon={<Minus className="h-4 w-4" />}
-          >
-            Minimize
-          </Button>
-          {/* Three-tier hierarchy: ghost (dismiss) < secondary (alt save) <
+        // Q08: ONE compact row at every width. Minimize moved into the header beside the X and the footer
+        // Close (a repeat of the X, same handleDismiss) is gone, so only the total and the save actions are left; the row
+        // wraps instead of overflowing a 390px sheet (B564). Every footer button is a 44px touch target under `sm`.
+        <div
+          data-testid="create-order-footer"
+          className="flex w-full flex-wrap items-center justify-end gap-x-3 gap-y-2"
+        >
+          {/* O3 (P01/P02): the total is pinned HERE (it used to sit at the foot of the scrolling body, hidden behind
+              this sticky footer at the moment of "Create Order"). First in the row, left-aligned (mr-auto); min-w-0 +
+              tabular-nums, no fixed width: a five-figure total wraps instead of clipping. */}
+          {lineItems.length > 0 && (
+            <div
+              data-testid="create-order-footer-total"
+              className="mr-auto flex min-w-0 items-baseline gap-2 tabular-nums text-navy"
+            >
+              <span className="text-sm text-navy/70">Total</span>
+              <span className="min-w-0 break-all text-base font-semibold">${total.toFixed(2)}</span>
+            </div>
+          )}
+          {/* Two-tier hierarchy: secondary (alt save) <
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
-          <div className="flex flex-wrap items-center justify-end gap-2 sm:order-2 sm:gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
             {/* Row 344: the footer actions are 44 px tap targets below sm (they were 34 px at 390). */}
-            <Button variant="ghost" type="button" className="max-sm:h-11" onClick={handleDismiss}>
-              Cancel
-            </Button>
             <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
             {priceLayer.enabled && priceLayer.failed ? (
               <p
@@ -2095,20 +2354,6 @@ export function CreateOrderModal({
               {posMode ? POS_COPY.confirmAndInvoice : "Create Order"}
             </WriteButton>
           </div>
-          {/* O3 (P01/P02): the total used to sit at the foot of the scrolling body, hidden behind
-              this sticky footer at the moment of "Create Order". It is now pinned HERE. DOM-last so
-              the col-reverse stack puts it on top of the buttons under `sm`; `sm:order-1` seats it
-              between Minimize and the actions on the single row. min-w-0 + tabular-nums, no fixed
-              width: a five-figure total wraps instead of clipping. */}
-          {lineItems.length > 0 && (
-            <div
-              data-testid="create-order-footer-total"
-              className="flex min-w-0 items-baseline justify-between gap-2 tabular-nums text-navy sm:order-1 sm:justify-end"
-            >
-              <span className="text-sm text-navy/70">Total</span>
-              <span className="min-w-0 break-all text-base font-semibold">${total.toFixed(2)}</span>
-            </div>
-          )}
         </div>
       }
     >
@@ -2138,6 +2383,16 @@ export function CreateOrderModal({
           {resumeDraftId && draftLoading && !activeDraftId && (
             <div className="rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-700 ring-1 ring-brand-200">
               Loading your parked draft…
+            </div>
+          )}
+
+          {pricesNotRefreshed && (
+            <div
+              role="status"
+              data-testid="prices-not-refreshed"
+              className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700 ring-1 ring-amber-200"
+            >
+              {PRICES_NOT_REFRESHED_COPY}
             </div>
           )}
 
@@ -2249,6 +2504,44 @@ export function CreateOrderModal({
                   </p>
                 )}
               </>
+            )}
+
+            {/* F09/F12: the delivery day is set right after the customer, so it is on screen once lines are added. */}
+            {!posMode && (
+              <div className="space-y-1 sm:max-w-[16rem]">
+                <label className="block text-xs font-medium text-navy/70" htmlFor="delivery-date">
+                  Requested Delivery Date{" "}
+                  <span className="font-normal text-navy/70">(optional)</span>
+                </label>
+                <input
+                  id="delivery-date"
+                  ref={deliveryDateRef}
+                  type="date"
+                  min={deliveryDateMin}
+                  value={requestedDeliveryDate}
+                  onChange={(e) => {
+                    setRequestedDeliveryDate(e.target.value);
+                    if (deliveryDateRefusal) createOrder.reset();
+                  }}
+                  aria-invalid={deliveryDateError ? true : undefined}
+                  aria-describedby={deliveryDateError ? "delivery-date-error" : undefined}
+                  className={cn(
+                    "h-10 w-full rounded border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2",
+                    deliveryDateError
+                      ? "border-danger focus:ring-danger"
+                      : "border-surface-border focus:ring-brand-500",
+                  )}
+                />
+                {deliveryDateError && (
+                  <p
+                    id="delivery-date-error"
+                    role="alert"
+                    className="text-xs font-medium text-danger"
+                  >
+                    {deliveryDateError}
+                  </p>
+                )}
+              </div>
             )}
 
             {selectedCustomer && (
@@ -2690,21 +2983,6 @@ export function CreateOrderModal({
 
             {/* Dates */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {!posMode && (
-                <div className="space-y-1">
-                  <label className="block text-xs font-medium text-navy/70" htmlFor="delivery-date">
-                    Requested Delivery Date{" "}
-                    <span className="font-normal text-navy/70">(optional)</span>
-                  </label>
-                  <input
-                    id="delivery-date"
-                    type="date"
-                    value={requestedDeliveryDate}
-                    onChange={(e) => setRequestedDeliveryDate(e.target.value)}
-                    className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-              )}
               {showOrderDate ? (
                 <div className="space-y-1">
                   <label className="block text-xs font-medium text-navy/70" htmlFor="order-date">
@@ -2845,6 +3123,14 @@ export function CreateOrderModal({
           pendingFormValuesRef.current = null;
           pendingAsDraftRef.current = false;
         }}
+        // N02: open on the primary action so Enter takes it (Tab reaches the other, Escape cancels). Radix would
+        // otherwise focus the header X, where Enter would just close the prompt.
+        onOpenAutoFocus={(event) => {
+          const primary = orderDate ? separateChoiceRef.current : mergeChoiceRef.current;
+          if (!primary || primary.disabled) return; // a disabled primary: leave Radix's default
+          event.preventDefault();
+          primary.focus();
+        }}
         title={posMode ? POS_COPY.mergeTitle : "Open order exists"}
         description={
           mergePrompt
@@ -2882,6 +3168,7 @@ export function CreateOrderModal({
               {/* Merging routes through the existing order, which keeps its own
                   orderDate — the backdate would be dropped, so it is not offered. */}
               <Button
+                ref={mergeChoiceRef}
                 type="button"
                 variant={orderDate ? "secondary" : "primary"}
                 disabled={!!orderDate || priceLayerUnconfirmed}
@@ -2899,6 +3186,7 @@ export function CreateOrderModal({
                   : `Merge into ${mergePrompt.orderNumber ?? "existing order"}`}
               </Button>
               <Button
+                ref={separateChoiceRef}
                 type="button"
                 variant={orderDate ? "primary" : "secondary"}
                 disabled={priceLayerUnconfirmed}
@@ -2956,12 +3244,40 @@ export function CreateOrderModal({
         />
       )}
       {editingLine && renderPriceEditor(editingLine, () => setEditingLineId(null))}
+      {/* SA-817 A3: a local copy the server lacks is offered on a fresh open. */}
+      <ResumeUnsentOrderDialog
+        candidates={unsent.candidates}
+        onResume={resumeLocalCopy}
+        onDismiss={unsent.dismiss}
+        onDiscard={unsent.discard}
+      />
+      {/* SA-817 A4: the draft changed on another device after our last sync. */}
+      <DraftConflictDialog
+        open={!!autosave.conflict && replay === "done"}
+        busy={conflictBusy}
+        onChoose={(choice) => void settleConflict(choice)}
+      />
     </Modal>
   );
 
   return (
     <>
       {dialog}
+      <ConfirmDialog
+        open={discardDraftId !== null}
+        onClose={() => setDiscardDraftId(null)}
+        onConfirm={() => {
+          const id = discardDraftId;
+          setDiscardDraftId(null);
+          if (!id) return;
+          deleteDraft.mutate(id, {
+            onSuccess: () => toast({ title: "Draft discarded", variant: "success" }),
+          });
+        }}
+        title="Discard this draft?"
+        description="The parked order and everything in it will be removed. This cannot be undone."
+        confirmLabel="Discard"
+      />
       {scanV2 && (
         <ScanOrderScreen
           open={isOpen && scanScreenOpen}

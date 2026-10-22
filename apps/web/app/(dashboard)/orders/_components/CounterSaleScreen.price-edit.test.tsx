@@ -128,7 +128,7 @@ const scan = async (text: string) => {
 const total = () => screen.getByTestId("running-total");
 const pickAcme = async () => {
   fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-  fireEvent.click(screen.getByRole("button", { name: "Acme Cafe" }));
+  fireEvent.click(screen.getByRole("option", { name: "Acme Cafe" }));
   await waitFor(() => expect(screen.queryByTestId("counter-reprice-busy")).toBeNull());
 };
 const completeBtn = () => screen.getByRole("button", { name: "Complete & show receipt" });
@@ -199,7 +199,7 @@ describe("POS-5 price edit: hidden without the grant (the ONE gate)", () => {
     mockUser = { ...ADMIN, role: "DRIVER" };
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(completeBtn());
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     expect(Object.keys(sentItems()[0]).sort()).toEqual(["productId", "qty"]);
@@ -345,7 +345,7 @@ describe("POS-5 price edit: the dialog on the screen", () => {
     await scan("COLA");
     await tenPercentOffCola();
     mutateAsync.mockRejectedValueOnce(new Error("network"));
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(completeBtn());
     await screen.findByTestId("counter-outcome-unknown");
     expect(editBtn("Cola")).toBeDisabled();
@@ -360,7 +360,7 @@ describe("POS-5 price edit: the request", () => {
     await scan("JUICE");
     await tenPercentOffCola("Damaged box");
     await waitFor(() => expect(total()).toHaveTextContent("$14.00"));
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(completeBtn());
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(sentItems()).toEqual([
@@ -374,7 +374,7 @@ describe("POS-5 price edit: the request", () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     await tenPercentOffCola("   ");
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(completeBtn());
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(sentItems()[0]).toEqual({ productId: "p-cola", qty: 1, unitPrice: 9 });
@@ -385,7 +385,7 @@ describe("POS-5 price edit: the request", () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("WATER");
     await editPrice("Water", { mode: "Percent off", label: "Percent off", value: "10" });
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(completeBtn());
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(sentItems()[0]).toMatchObject({
@@ -402,7 +402,7 @@ describe("POS-5 price edit: the request", () => {
     await scan("COLA");
     await tenPercentOffCola("Damaged box");
     mutateAsync.mockRejectedValueOnce(new Error("network"));
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(completeBtn());
     await screen.findByTestId("counter-outcome-unknown");
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -418,7 +418,7 @@ describe("POS-5 price edit: the request", () => {
     mutateAsync.mockRejectedValueOnce({
       response: { status: 403, data: { code: "PRICE_EDIT_NOT_PERMITTED" } },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(completeBtn());
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(
@@ -466,7 +466,7 @@ describe("POS-5 price edit: a special-price customer needs a reason", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(total()).toHaveTextContent("$6.00");
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(completeBtn());
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(sentItems()[0]).toMatchObject({ unitPrice: 6, priceReason: "Damaged box" });
@@ -489,7 +489,7 @@ describe("POS-5 price edit: the estimate matches the server, so 'next sale' rese
     await editPrice("Water", { mode: "Percent off", label: "Percent off", value: "10" });
     await waitFor(() => expect(total()).toHaveTextContent(`$${serverTotal.toFixed(2)}`));
     expect(serverTotal).toBe(29.23); // 27.00 + 2.23 tax
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(nextBtn());
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByText("No items yet.")).toBeInTheDocument());
@@ -511,7 +511,7 @@ describe("POS-5 price edit: the receipt", () => {
     await scan("COLA");
     await scan("JUICE");
     await tenPercentOffCola();
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(completeBtn());
     const cola = await screen.findByTestId("receipt-line-p-cola-0");
     expect(within(cola).getByTestId("receipt-line-original")).toHaveTextContent("$10.00");
@@ -528,7 +528,7 @@ describe("POS-5 price edit: the receipt", () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     await scan("JUICE");
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(completeBtn());
     await screen.findByTestId("counter-sale-receipt");
     const receipt = screen.getByTestId("counter-sale-receipt");
@@ -605,7 +605,7 @@ describe("POS-5 price edit: a customer pick keeps the edited price (POS-2 surviv
     await tenPercentOffCola(); // tier 1, no reason: fine
     await pickAcme();
     await waitFor(() => expect(screen.getByTestId("counter-reprice-note")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(completeBtn());
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Add a reason for Cola. Acme Cafe has a special price on it.",

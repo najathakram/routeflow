@@ -59,6 +59,7 @@ export const REGULATED_REPORT_WARNING_CODES = [
   "UNLISTED_PRODUCT_LINE",
   "UNCATEGORISED_LINE_IN_RULE_STATE",
   "PARKED_REVERSALS",
+  "UNBOOKED_REVERSALS",
 ] as const;
 
 export type RegulatedReportWarningCode = (typeof REGULATED_REPORT_WARNING_CODES)[number];
@@ -96,6 +97,8 @@ export interface RegulatedReportPreview {
   /** Headline figures for the preview UI (not necessarily in the CSV). */
   displayTotals: { label: string; value: string }[];
   warnings: RegulatedReportWarning[];
+  /** Reversals of the range the ledger could not book; a filing is not clean while this is above 0. */
+  unbookedReversals?: number;
   /** True when the column layout deviates from the template's official default. */
   custom?: boolean;
 }

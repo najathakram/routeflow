@@ -102,7 +102,7 @@ const lines = () =>
     .filter((li) => li.textContent !== "No items yet.");
 const pickAcme = () => {
   fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
-  fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+  fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
 };
 const shipBtn = () => screen.getByRole("button", { name: "Ship this order instead" });
 
@@ -322,7 +322,7 @@ describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     fireEvent.click(shipBtn());
     // the customer pick that would let an armed hand-off run is itself frozen while the sale posts
-    expect(screen.queryByRole("button", { name: "Acme Co" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Acme Co" })).toBeNull();
     await new Promise((r) => setTimeout(r, 30));
     expect(createDraft).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
@@ -347,7 +347,7 @@ describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(createDraft).not.toHaveBeenCalled(); // never both rung up AND parked
     salePending = false; // the POST failed cleanly (4xx): nothing was written
-    fireEvent.click(screen.getByRole("button", { name: "Card" })); // any re-render reads the flag
+    fireEvent.click(screen.getByRole("radio", { name: "Card" })); // any re-render reads the flag
     await waitFor(() => expect(createDraft).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/orders?resumeDraft=d-1"));
   });
@@ -356,7 +356,7 @@ describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     salePending = true;
-    fireEvent.click(screen.getByRole("button", { name: "Card" })); // any state change re-reads the flag
+    fireEvent.click(screen.getByRole("radio", { name: "Card" })); // any state change re-reads the flag
     expect(shipBtn()).toBeDisabled();
   });
 
@@ -384,7 +384,7 @@ describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     draftPending = true;
-    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     expect(screen.getByRole("button", { name: "Complete & show receipt" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Complete & next sale" })).toBeDisabled();
   });

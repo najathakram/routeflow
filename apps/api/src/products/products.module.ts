@@ -51,6 +51,6 @@ import { GatewaysModule } from "../gateways/gateways.module";
     ProductsExportService,
     ProductOpenOrdersService,
   ],
-  exports: [ProductsService],
+  exports: [ProductsService, ProductFamiliesService],
 })
 export class ProductsModule {}

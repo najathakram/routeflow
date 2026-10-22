@@ -18,12 +18,6 @@ import {
   RotateCcw,
   Trash2,
   Calendar,
-  Download,
-  Printer,
-  Mail,
-  MessageCircle,
-  Phone,
-  Send,
   X,
 } from "lucide-react";
 import {
@@ -59,7 +53,7 @@ import {
 } from "@/lib/api/orders";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
+import { ORDERS_INLINE_RETURNS_ADDON, SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
@@ -67,6 +61,7 @@ import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { useStaffFulfilment } from "@/lib/fulfilment-caps";
 import { OrderFulfilmentRow, fulfillPathErrorCopy } from "../_components/OrderFulfilmentRow";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
+import { OrdersMoreMenu } from "../_components/OrdersMoreMenu";
 import {
   OrderInlineReturnsSection,
   type OrderInlineReturnsSectionHandle,
@@ -81,15 +76,16 @@ import { useOrderStaleRevision } from "./_components/OrderStaleNotice";
 import { rebaseOnReload } from "./_components/order-edit-rebase";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
-import { formatMoney, formatQty } from "@/lib/format";
+import { formatMoney } from "@/lib/format";
 import { OrderRevisionLog } from "./_components/OrderRevisionLog";
+import { SendInvoiceModal, type InvoiceModalData } from "./_components/SendInvoiceModal";
 import {
   describeChangeRequest,
   describeResolution,
   type ChangeRequest,
   type ChangeRequestResolveAction,
 } from "@/lib/change-requests";
-import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
+import { useCreateInvoiceFromOrder } from "@/lib/api/invoices";
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { CancelOrderButton } from "./CancelOrderButton";
 import { OrderShipmentSection } from "./_components/OrderShipmentSection";
@@ -100,6 +96,10 @@ import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
+import { usePhoneWidth } from "./_components/use-phone-width";
+import { phoneActionItems } from "./_components/phone-action-items";
+import { useInvoiceDraftNotice } from "./_components/use-invoice-draft-notice";
+import { SAVE_CHORD_KEYS, saveChordHandler } from "./_components/use-save-chord";
 import { PickupHandOverButton, PickupHandOverDialog } from "./_components/PickupHandOver";
 import {
   ConfirmedPrimaryAction,
@@ -117,9 +117,12 @@ import { InvoicedEditNotice } from "./_components/InvoicedEditNotice";
 import { StickyEditBar } from "./_components/StickyEditBar";
 import { EditCasesPieces } from "./_components/EditCasesPieces";
 import { isCasesPiecesLine } from "./edit-cases-pieces";
+import { EDIT_QTY_INPUT } from "./edit-line-controls";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditTaxLabel } from "./_components/EditTaxLabel";
 import { EditScanBar } from "./_components/EditScanBar";
+import { DeliveredLockedHint, DeliveredLockedQty } from "./_components/DeliveredLineLock";
+import { deliveredLockedLineIds } from "@/lib/order-line-lock";
 import {
   findLockedUnitLineEdit,
   LockedUnitLineBadge,
@@ -150,311 +153,23 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { PriceEditRow } from "./price-edit-row";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { summarizeQtyByUnit } from "@/lib/order-qty-summary";
+import { isEditDirty, useEditLeaveGuard } from "./edit-leave-guard";
 import { AppliedCreditsPanel, appliedOnOrderRows } from "./AppliedCreditsPanel";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
 import * as scan from "./scan-level-line";
+import { storedPackBasis } from "./stored-pack-basis";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { toSplitInvoiceLine } from "@/lib/split-invoice-line";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
-import { apiClient } from "@/lib/api-client";
-import { printPdfBlob } from "@/lib/print-pdf-blob";
-import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import { derivedUnitPatch } from "@/lib/edit-line-derived-unit";
 import type { UnitOption } from "@/lib/unit-options";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
-import { markSentErrorText, orderErrorText, sendEmailErrorText } from "@/lib/order-error-text";
-import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
-
-// ─── Send Invoice Modal ────────────────────────────────────────────────────────
-
-interface InvoiceModalData {
-  invoiceId: string;
-  invoiceNumber: string;
-  total: number;
-  customerName: string;
-  customerPhone?: string | null;
-  customerMobile?: string | null;
-  customerEmail?: string | null;
-  /**
-   * #2089: true when `postDeliveryInvoicePrompt` returned "issue-and-send" — this
-   * is still a DRAFT, and `useSendInvoice`/`useSendInvoiceEmail` issue it
-   * (DRAFT → SENT) in the same call. The modal says so instead of "Mark as Sent",
-   * which would misleadingly imply it was already issued.
-   */
-  issuePrompt?: boolean;
-}
-
-function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: () => void }) {
-  const { toast } = useToast();
-  const sendInvoice = useSendInvoice({ localErrorToast: true });
-  const sendInvoiceEmail = useSendInvoiceEmail({ localErrorToast: true });
-  const [pdfLoading, setPdfLoading] = React.useState(false);
-  const [printLoading, setPrintLoading] = React.useState(false);
-  const [sent, setSent] = React.useState(false);
-  const [emailSent, setEmailSent] = React.useState(false);
-
-  const phone = data.customerMobile || data.customerPhone;
-  const totalFmt = formatMoney(data.total);
-  const invoiceMsg = encodeURIComponent(
-    `Hi ${data.customerName}, your invoice ${data.invoiceNumber} for ${totalFmt} is ready. Please let us know if you have any questions.`,
-  );
-
-  async function handleSend() {
-    sendInvoice.mutate(data.invoiceId, {
-      onSuccess: () => {
-        setSent(true);
-        toast({ title: "Invoice marked as sent", variant: "success" });
-      },
-      onError: (e) =>
-        toast({
-          title: "Couldn't mark the invoice as sent",
-          description: markSentErrorText(e),
-          variant: "error",
-        }),
-    });
-  }
-
-  function handleSendEmail() {
-    sendInvoiceEmail.mutate(
-      { id: data.invoiceId, email: data.customerEmail! },
-      {
-        onSuccess: (res) => {
-          setEmailSent(true);
-          setSent(true);
-          toast({
-            title: "Invoice emailed",
-            description: `Sent to ${res.sentTo}`,
-            variant: "success",
-          });
-        },
-        onError: (e: any) =>
-          toast({
-            title: "Failed to send email",
-            description: sendEmailErrorText(e),
-            variant: "error",
-          }),
-      },
-    );
-  }
-
-  async function handleDownload() {
-    setPdfLoading(true);
-    try {
-      // Two-step: ask the API to render the PDF, then fetch the bytes.
-      // Cannot `window.open(url)` directly — the storage endpoint requires a
-      // JWT (RF-075) and a top-level new-tab navigation has no token in
-      // localStorage scope, so it returns 401. `fetchPdfBlob` (not bare
-      // apiClient — review finding F3) picks the right transport: same-origin
-      // → auth'd apiClient; external presigned URL → bare axios, so the JWT
-      // is never sent to a third-party host.
-      const meta = await apiClient.get<{ url: string }>(`/invoices/${data.invoiceId}/pdf`);
-      if (!meta.data?.url) throw new Error("No PDF URL returned");
-      const blob = await fetchPdfBlob(meta.data.url, apiClient);
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `invoice-${data.invoiceId}.pdf`;
-      a.rel = "noopener noreferrer";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
-    } catch {
-      toast({ title: "Could not generate PDF", variant: "error" });
-    } finally {
-      setPdfLoading(false);
-    }
-  }
-
-  async function handlePrint() {
-    setPrintLoading(true);
-    try {
-      // Mirrors handleDownload's two-step fetch (RF-075 — the storage URL
-      // still requires a JWT; fetchPdfBlob, not bare apiClient — review
-      // finding F3), then hands the bytes to the shared print helper
-      // instead of triggering a download.
-      const meta = await apiClient.get<{ url: string }>(`/invoices/${data.invoiceId}/pdf`);
-      if (!meta.data?.url) throw new Error("No PDF URL returned");
-      const blob = await fetchPdfBlob(meta.data.url, apiClient);
-      printPdfBlob(blob);
-    } catch {
-      toast({ title: "Could not generate PDF", variant: "error" });
-    } finally {
-      setPrintLoading(false);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center">
-      <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl">
-        {/* Header */}
-        <div className="flex items-start justify-between border-b border-surface-border px-5 py-4">
-          <div>
-            <h2 className="text-base font-semibold text-navy">
-              {data.issuePrompt ? "Issue & Send Invoice" : "Invoice Ready"}
-            </h2>
-            <p className="mt-0.5 text-sm text-navy/70">
-              {data.invoiceNumber} · {totalFmt} · {data.customerName}
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            title="Close"
-            className={cn(TAP_TARGET, "rounded text-navy/70 hover:text-navy transition-colors")}
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Options */}
-        <div className="px-5 py-4 space-y-2">
-          {sent ? (
-            <div className="flex items-center gap-2 rounded-lg bg-success-bg px-4 py-3 text-sm font-medium text-success">
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
-              Invoice marked as sent
-            </div>
-          ) : (
-            <button
-              onClick={handleSend}
-              disabled={sendInvoice.isPending}
-              className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-brand-50 hover:border-brand-300 disabled:opacity-50"
-            >
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-100">
-                {sendInvoice.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
-                ) : (
-                  <Send className="h-4 w-4 text-brand-600" />
-                )}
-              </div>
-              <div>
-                <p className="text-sm font-medium text-navy">
-                  {data.issuePrompt ? "Issue & Mark as Sent" : "Mark as Sent"}
-                </p>
-                <p className="text-xs text-navy/70">
-                  {data.issuePrompt
-                    ? "Issues the draft invoice and records it sent to customer"
-                    : "Record invoice as sent to customer"}
-                </p>
-              </div>
-            </button>
-          )}
-
-          {/* WhatsApp */}
-          {phone && (
-            <a
-              href={`https://wa.me/${phone.replace(/\D/g, "")}?text=${invoiceMsg}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-[#e7f9e7] hover:border-[#25D366]/40"
-            >
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#e7f9e7]">
-                <MessageCircle className="h-4 w-4 text-[#25D366]" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-navy">Send via WhatsApp</p>
-                <p className="text-xs text-navy/70">{phone}</p>
-              </div>
-            </a>
-          )}
-
-          {/* Email */}
-          {data.customerEmail &&
-            (emailSent ? (
-              <div className="flex items-center gap-2 rounded-lg bg-success-bg px-4 py-3 text-sm font-medium text-success">
-                <CheckCircle2 className="h-4 w-4 shrink-0" />
-                Email sent to {data.customerEmail}
-              </div>
-            ) : (
-              <button
-                onClick={handleSendEmail}
-                disabled={sendInvoiceEmail.isPending}
-                className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised disabled:opacity-50"
-              >
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
-                  {sendInvoiceEmail.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-navy/70" />
-                  ) : (
-                    <Mail className="h-4 w-4 text-navy/70" />
-                  )}
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-navy">Send via Email</p>
-                  <p className="text-xs text-navy/70">{data.customerEmail}</p>
-                </div>
-              </button>
-            ))}
-
-          {/* SMS */}
-          {phone && (
-            <a
-              href={`sms:${phone}?body=${invoiceMsg}`}
-              className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised"
-            >
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
-                <Phone className="h-4 w-4 text-navy/70" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-navy">Send via Text</p>
-                <p className="text-xs text-navy/70">{phone}</p>
-              </div>
-            </a>
-          )}
-
-          {/* Download PDF */}
-          <button
-            onClick={handleDownload}
-            disabled={pdfLoading}
-            className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised disabled:opacity-50"
-          >
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
-              {pdfLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin text-navy/70" />
-              ) : (
-                <Download className="h-4 w-4 text-navy/70" />
-              )}
-            </div>
-            <div>
-              <p className="text-sm font-medium text-navy">Download PDF</p>
-              <p className="text-xs text-navy/70">Save a copy to your device</p>
-            </div>
-          </button>
-
-          {/* Print PDF */}
-          <button
-            onClick={handlePrint}
-            disabled={printLoading}
-            className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised disabled:opacity-50"
-          >
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
-              {printLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin text-navy/70" />
-              ) : (
-                <Printer className="h-4 w-4 text-navy/70" />
-              )}
-            </div>
-            <div>
-              <p className="text-sm font-medium text-navy">Print</p>
-              <p className="text-xs text-navy/70">Open the print dialog</p>
-            </div>
-          </button>
-        </div>
-
-        {/* Footer */}
-        <div className="border-t border-surface-border px-5 py-3">
-          <button
-            onClick={onClose}
-            className="w-full rounded-lg px-4 py-2 text-sm text-navy/70 hover:text-navy hover:bg-surface-raised transition-colors"
-          >
-            Skip — I&apos;ll send it later
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+import { orderErrorText } from "@/lib/order-error-text";
+import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -490,6 +205,8 @@ export interface EditItemState {
    *  substitute re-denominates the line against ITS case size). */
   originalUnitsPerBox?: number | null;
   originalBoxSplit?: boolean;
+  /** Row 630: the named unit the line was STORED on (a unit line); absent = a stored pack line, whose own price and size price its derived Piece. */
+  originalUnitLabel?: string;
   /** The line's own price, restored alongside the denomination when a
    *  substitution is undone — otherwise the original product would save at the
    *  SUBSTITUTE's price (the UPDATE branch sees `priceChanged` and sends it). */
@@ -726,6 +443,7 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     category: li.product?.category ?? null,
     boxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
     originalBoxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
+    originalUnitLabel: li.unitLabel ?? undefined,
     // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
     promoFreeUnits: li.promoFreeUnits ?? null,
     // SA-378/388: unit line = unitLineCount (0 if LOCKED); PACK keeps boxes (boxes:0+pieces ⇒ 0).
@@ -734,8 +452,11 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
       : null,
     unit: li.product?.unit ?? "",
     packUnit: li.product?.unit ?? undefined,
-    packUnitsPerBox:
-      li.product?.unitsPerBox ?? (isUnitLine ? undefined : (li.unitsPerBox ?? undefined)),
+    // Row 620: a legacy boxed line's own sale-time size wins over the live product (a repack after the sale must not
+    // re-denominate a Piece pick). A unit line's snapshot is the picked unit's factor, so it keeps the live pack.
+    packUnitsPerBox: isUnitLine
+      ? (li.product?.unitsPerBox ?? undefined)
+      : (li.unitsPerBox ?? li.product?.unitsPerBox ?? undefined),
     unitLabel: li.unitLabel ?? undefined,
     priceType: li.priceType,
   };
@@ -1071,7 +792,11 @@ export function EditableLineItems({
   pricingReady,
   customer,
   orderId,
+  lockedLineIds,
+  focusFirstQty = false,
 }: {
+  /** F08: edit opened from the keyboard - focus the first quantity instead of the scan bar. */
+  focusFirstQty?: boolean;
   items: EditItemState[];
   onChange: (items: EditItemState[]) => void;
   onAdd: (item: EditItemState) => void;
@@ -1101,7 +826,10 @@ export function EditableLineItems({
   customer?: { id: string; name?: string | null };
   /** The order being edited: its own lines are left out of that history (hunt2 F6). */
   orderId?: string;
+  /** B1234: delivered lines of a PARTIALLY_DELIVERED order; no editing control is rendered for them. */
+  lockedLineIds?: ReadonlySet<string>;
 }) {
+  const isLocked = (id: string) => lockedLineIds?.has(id) === true;
   const { toast } = useToast();
   // Scroll the just-scanned/added row into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
@@ -1127,6 +855,7 @@ export function EditableLineItems({
   const [customError, setCustomError] = React.useState("");
   const addRef = React.useRef<HTMLDivElement>(null);
   const addInputRef = React.useRef<HTMLInputElement>(null);
+  const linesRef = React.useRef<HTMLDivElement>(null);
   // Digit runs that look like a scanned code query the candidate-aware
   // `scanCode` search — a suffix-less wedge scan lands here via the dropdown,
   // and the raw decode contains-misses when the camera's digit count differs
@@ -1154,9 +883,15 @@ export function EditableLineItems({
       if (!el || el.disabled) return;
       const active = document.activeElement;
       if (active && active !== document.body && active !== el) return;
-      el.focus();
+      // F08: a keyboard open lands on the first quantity (a person who types straight away); mouse, touch and
+      // scanners keep the scan bar (B62). preventScroll either way (F26: the page used to jump to the bottom).
+      const firstQty = focusFirstQty
+        ? linesRef.current?.querySelector<HTMLInputElement>("input[type=number]:not(:disabled)")
+        : null;
+      (firstQty ?? el).focus({ preventScroll: true });
     }, 100);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pricingReady]);
 
   React.useEffect(() => {
@@ -1353,7 +1088,7 @@ export function EditableLineItems({
   }
 
   return (
-    <div className="space-y-2">
+    <div ref={linesRef} className="space-y-2">
       {items.map((item) => (
         <div
           key={item.id}
@@ -1425,29 +1160,40 @@ export function EditableLineItems({
               <LockedUnitLineBadge display={item.lockedDisplay} />
             )}
 
+            {/* B1234: a delivered line shows its quantity as text, no input */}
+            {!item.cancelled && isLocked(item.id) && <DeliveredLockedQty qty={item.qty} />}
+
             {/* O1 (F06): a classic boxed line gets the SAME cases + loose-pieces control as Create. */}
-            {isCasesPiecesLine(item) && (
+            {!isLocked(item.id) && isCasesPiecesLine(item) && (
               <EditCasesPieces item={item} onChange={(patch) => update(item.id, patch)} />
             )}
 
             {/* Qty input */}
-            {!item.cancelled && !item.countLocked && !isCasesPiecesLine(item) && (
-              <label className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-navy/40">
-                Qty
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  className="mono w-16 rounded border border-surface-border bg-surface-raised px-2 py-1 text-right text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  value={item.qty}
-                  onChange={(e) => {
-                    const v = parseInt(e.target.value, 10);
-                    if (!isNaN(v) && v > 0) update(item.id, { qty: v, startOnDefaultUnit: false });
-                  }}
-                />
-                <scan.SplitLineHint item={item} />
-              </label>
-            )}
+            {!item.cancelled &&
+              !item.countLocked &&
+              !isCasesPiecesLine(item) &&
+              !isLocked(item.id) && (
+                // r4 Q28: the same field and the same word-after-the-number as a boxed line ("[2] boxes", "[3] each").
+                <label className="flex items-center gap-1.5 text-xs text-navy/70">
+                  <span className="sr-only">Qty</span>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    className={EDIT_QTY_INPUT}
+                    value={item.qty}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      if (!isNaN(v) && v > 0)
+                        update(item.id, { qty: v, startOnDefaultUnit: false });
+                    }}
+                  />
+                  <span aria-hidden className="min-w-0 max-w-[6rem] truncate">
+                    {item.unit?.trim() || "qty"}
+                  </span>
+                  <scan.SplitLineHint item={item} />
+                </label>
+              )}
 
             {/* units_v1 (A3-2): renders nothing unless flag.units_v1 is on AND this product has
                 levels (OrderLineUnitPicker/UnitPicker self-gate) — every other tenant/product sees
@@ -1456,7 +1202,8 @@ export function EditableLineItems({
             {!item.cancelled &&
               !item.isUnlisted &&
               !item.substituteProductId &&
-              !item.countLocked && (
+              !item.countLocked &&
+              !isLocked(item.id) && (
                 <OrderLineUnitPicker
                   line={{
                     productId: item.productId,
@@ -1477,6 +1224,7 @@ export function EditableLineItems({
                     unitLabel: item.unitLabel,
                     derivedBase: item.derivedBase,
                     priceEdited: item.priceEdited,
+                    ownPack: storedPackBasis(item),
                   }}
                   tier={tierForProductId(item.productId)}
                   layer={layerOf?.(item.productId)}
@@ -1499,8 +1247,8 @@ export function EditableLineItems({
               </span>
             )}
 
-            {/* Action buttons */}
-            <div className="flex items-center gap-1.5">
+            {/* Action buttons (phone: the first label lines up with the card edge, not 8px in) */}
+            <div className="flex items-center gap-1.5 max-sm:-ml-2">
               {item.cancelled ? (
                 <button
                   className="flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50"
@@ -1528,7 +1276,7 @@ export function EditableLineItems({
                   <RotateCcw className="h-3 w-3" />
                   Undo
                 </button>
-              ) : (
+              ) : isLocked(item.id) ? null : (
                 <>
                   {!item.substituteProductId && !item.isUnlisted && !item.countLocked && (
                     <button
@@ -1562,7 +1310,7 @@ export function EditableLineItems({
                     </button>
                   )}
                   <button
-                    className="rounded px-2 py-1 text-xs text-danger hover:bg-danger-bg"
+                    className="rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy"
                     onClick={() => update(item.id, { cancelled: true })}
                   >
                     Not available
@@ -1572,7 +1320,8 @@ export function EditableLineItems({
                       TAP_TARGET,
                       "rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors",
                     )}
-                    title="Delete item"
+                    title={`Remove ${item.productName?.trim() || "item"}`}
+                    aria-label={`Remove ${item.productName?.trim() || "item"}`}
                     onClick={() => onDelete(item.id)}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -1584,7 +1333,7 @@ export function EditableLineItems({
 
           {/* Per-line price + discount editor — DRAFT catalog lines, or any unlisted
               line (its price is intrinsic, so always editable in edit mode). */}
-          {(canEditPrice || item.isUnlisted) && !item.cancelled && (
+          {(canEditPrice || item.isUnlisted) && !item.cancelled && !isLocked(item.id) && (
             <PriceEditRow
               basePrice={item.basePrice}
               unitPrice={item.unitPrice}
@@ -1622,9 +1371,11 @@ export function EditableLineItems({
             />
           )}
 
+          {isLocked(item.id) && !item.cancelled && <DeliveredLockedHint />}
+
           {/* Per-line note — carried onto the invoice line (buyer-visible). */}
           {!item.cancelled && (
-            <div className="ml-11 mt-1">
+            <div className="mt-1 sm:ml-11">
               <textarea
                 rows={2}
                 maxLength={2000}
@@ -1967,6 +1718,13 @@ export default function OrderDetailPage() {
   const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const [commissionEditOpen, setCommissionEditOpen] = React.useState(false);
+  // apple-ux r4: phone width folds the action bar into one row + a More menu; Record return then opens from that menu.
+  const phone = usePhoneWidth();
+  const returnAvailable = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
+  const [returnOpen, setReturnOpen] = React.useState(false);
+  const readOnlyGate = useReadOnlyGate();
+  // F07: the draft invoice just made says it was not sent, and takes focus.
+  const invoiceNotice = useInvoiceDraftNotice(order?.invoices);
 
   // P5-11: change-request resolution (office side; driver-at-stop is P10 mobile).
   const resolveCr = useResolveChangeRequest();
@@ -2029,6 +1787,8 @@ export default function OrderDetailPage() {
     localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
   });
   const savingItems = updateItems.isPending;
+  const saveLatchRef = React.useRef(false);
+  const [focusFirstQty, setFocusFirstQty] = React.useState(false);
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
   // S19b M3: while this customer's prices are unconfirmed (layer pending / failed / this product missing from an incomplete
   // layer) the edit cannot be saved or published; flag off nothing is read, so this is false.
@@ -2037,6 +1797,11 @@ export default function OrderDetailPage() {
     editItems.map((it) => it.productId),
   );
   const [pendingDeletes, setPendingDeletes] = React.useState<string[]>([]);
+  // Row 604 S4: bumped each time edit mode opens or closes (save, publish, cancel, discard).
+  const editSessionRef = React.useRef(0);
+  React.useEffect(() => {
+    editSessionRef.current += 1;
+  }, [isEditing]);
   const [draftAutoEntered, setDraftAutoEntered] = React.useState(false);
   // Staff-editable shipping fee (operator/tenant-admin only page). Initialized from
   // the stored order fee whenever edit mode opens; never taxed.
@@ -2046,6 +1811,18 @@ export default function OrderDetailPage() {
   // (undefined on the wire = leave the server's stored intents untouched).
   const [editCredits, setEditCredits] = React.useState<CreditSelection[]>([]);
   const [creditsTouched, setCreditsTouched] = React.useState(false);
+  // Row 604 F24: Back / tab close / the Orders link ask before unsaved edits are dropped.
+  const editDirty =
+    isEditing &&
+    !!order &&
+    isEditDirty(
+      {
+        items: order.lineItems.filter((li) => li.status !== "CANCELLED").map(buildEditItemFromLine),
+        shippingFee: Number(order.shippingFee ?? 0),
+      },
+      { items: editItems, pendingDeletes, shippingFee: editShippingFee, creditsTouched },
+    );
+  const leaveGuard = useEditLeaveGuard(editDirty, cancelEditMode, () => router.push("/orders"));
   // #2406: an inline return started in edit mode, folded into the SAME updateOrderItems write.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
   const returnSave = useOrderInlineReturnSave(returnsRef, (why) =>
@@ -2073,7 +1850,15 @@ export default function OrderDetailPage() {
   // Floating invoice-preview popup (from the Invoices card).
   const [previewInvoiceId, setPreviewInvoiceId] = React.useState<string | null>(null);
 
-  const { toast } = useToast();
+  const { toast, dismiss } = useToast();
+  // Row 604 nit: Undo toasts of the current edit session; dismissed when it ends (an Undo would be a no-op).
+  const undoToastIds = React.useRef<string[]>([]);
+  React.useEffect(() => {
+    const ids = undoToastIds.current;
+    return () => {
+      for (const id of ids.splice(0)) dismiss(id);
+    };
+  }, [isEditing, dismiss]);
 
   React.useEffect(() => {
     if (order) {
@@ -2233,13 +2018,35 @@ export default function OrderDetailPage() {
   }
 
   function handleDeleteItem(id: string) {
-    const item = editItems.find((it) => it.id === id);
+    // Row 604 S4: an Undo belongs to the edit session that removed the line; once that session saves or ends it is dropped.
+    const sessionAtRemove = editSessionRef.current;
+    const index = editItems.findIndex((it) => it.id === id);
+    const item = editItems[index];
     if (!item) return;
     setEditItems((prev) => prev.filter((it) => it.id !== id));
     if (!item.isNew) {
       // Existing saved line — queue a DELETE action on save (falls back to CANCEL if invoiced).
       setPendingDeletes((prev) => [...prev, id]);
     }
+    // F22: the DELETE is deferred to Save, so Undo is a display change: put the line back where it was.
+    const toastId = toast({
+      title: `Removed ${item.productName || "item"}`,
+      variant: "info",
+      duration: 8000,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          if (editSessionRef.current !== sessionAtRemove) return;
+          setPendingDeletes((prev) => prev.filter((x) => x !== id));
+          setEditItems((prev) => {
+            if (prev.some((it) => it.id === id)) return prev;
+            const at = Math.min(index, prev.length);
+            return [...prev.slice(0, at), item, ...prev.slice(at)];
+          });
+        },
+      },
+    });
+    undoToastIds.current.push(toastId);
   }
 
   /** SA-388: refuse visibly, sending nothing, a save editing a LOCKED line (both save paths). */
@@ -2254,6 +2061,9 @@ export default function OrderDetailPage() {
   }
 
   function handleSaveItems() {
+    // Row 698 (F23): ONE write per Save. `isPending` is stale for the second tap of a double tap, so a synchronous latch
+    // holds until the write settles; a replayed second write would be judged against the revision the first just moved.
+    if (saveLatchRef.current) return;
     if (refuseLockedUnitLineEdit()) return;
     // B465: refuse client-side before the server has to — a SPECIAL-tier line
     // whose price was overridden with no reason would otherwise round-trip a
@@ -2296,6 +2106,7 @@ export default function OrderDetailPage() {
     // id). F30/R10 (B198) made the flag explicit-only, so omitting it would merge
     // too; sending false states the intent at the call site rather than relying on
     // the server default.
+    saveLatchRef.current = true;
     updateItems.mutate(
       {
         id: order!.id,
@@ -2310,12 +2121,17 @@ export default function OrderDetailPage() {
         ...(inlineReturn ? { inlineReturn } : {}),
       },
       {
+        onSettled: () => {
+          saveLatchRef.current = false;
+        },
         onSuccess: () => {
           setIsEditing(false);
           setEditItems([]);
           setEditCredits([]);
           setCreditsTouched(false);
           returnSave.onSuccess();
+          // r4 F16: the page used to return to the detail with only a small "Edited 1×" chip.
+          toast({ title: "Order updated", variant: "success" });
         },
         onError: returnSave.chainError(
           inlineReturn,
@@ -2522,7 +2338,7 @@ export default function OrderDetailPage() {
           No
         </button>
       </div>
-    ) : (
+    ) : phone ? null : (
       <Button
         size="sm"
         variant="ghost"
@@ -2532,6 +2348,28 @@ export default function OrderDetailPage() {
         Delete order
       </Button>
     );
+
+  // Phone width: what steps out of the bar into "More actions" (apple-ux r4 Q19). Same gates, same handlers.
+  const phoneItems = phone
+    ? phoneActionItems({
+        status: localStatus,
+        isEditing,
+        staff: access.staff,
+        canCancel: access.cancel,
+        cancelBlocked: !!order.cancelBlockedReason,
+        canDeleteOpen: orderOperationallyOpen && !hasPostedInvoice,
+        isShip: order.fulfillPath === "SHIP",
+        returnAvailable,
+        onRecordReturn: () => setReturnOpen(true),
+        onCancel: handleCancel,
+        onDelete: () => setShowDeleteConfirm(true),
+        onUnconfirm: () => setDemoteTarget("PENDING"),
+        onReturnToConfirmed: () =>
+          order.fulfillPath === "SHIP" && orderHasFinalInvoice(order)
+            ? setShowUnmarkConfirm(true)
+            : setDemoteTarget("CONFIRMED"),
+      })
+    : [];
 
   // ── Estimated totals in edit mode ──────────────────────────────────────────
 
@@ -2584,6 +2422,9 @@ export default function OrderDetailPage() {
       {/* Back */}
       <Link
         href="/orders"
+        onClick={(e) => {
+          if (leaveGuard.requestLeave(() => router.push("/orders"))) e.preventDefault();
+        }}
         className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -2639,7 +2480,11 @@ export default function OrderDetailPage() {
 
         {/* Action bar */}
         <ReadOnlyHint className="text-xs text-slate-600" />
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Phone width: ONE row (Edit, primary full width, More), chips and notes after it (r4 Q19). */}
+        <div
+          data-testid="order-actions"
+          className="flex flex-wrap items-center gap-2 max-sm:w-full max-sm:[&>:not([data-tier])]:order-5"
+        >
           {/* Edit Items button */}
           {canEdit && access.editItems && !isEditing && (
             <ActionTier tier="secondary">
@@ -2647,7 +2492,10 @@ export default function OrderDetailPage() {
                 size="sm"
                 variant="secondary"
                 leftIcon={<Pencil className="h-4 w-4" />}
-                onClick={enterEditMode}
+                onClick={(e) => {
+                  setFocusFirstQty(e.detail === 0);
+                  enterEditMode();
+                }}
               >
                 {isPos ? "Edit order" : "Edit Items"}
               </WriteButton>
@@ -2656,16 +2504,28 @@ export default function OrderDetailPage() {
 
           {/* Record return (Returns Inside Order Creation, PR 1 — office web capture).
               Any order, no cap — never gated on order status, unlike the buttons below. */}
-          {!isEditing && access.staff && (
-            <ActionTier tier="secondary">
+          {!isEditing &&
+            access.staff &&
+            (phone ? (
+              // Phone: the action is a "More actions" entry; this only hosts its dialog.
               <RecordReturnAction
                 customerId={order.customerId}
                 customerName={order.customer?.businessName}
                 orderId={order.id}
                 allowRefund
+                open={returnOpen}
+                onOpenChange={setReturnOpen}
               />
-            </ActionTier>
-          )}
+            ) : (
+              <ActionTier tier="secondary">
+                <RecordReturnAction
+                  customerId={order.customerId}
+                  customerName={order.customer?.businessName}
+                  orderId={order.id}
+                  allowRefund
+                />
+              </ActionTier>
+            ))}
 
           {/* P5-08 / R1: staff editing closes only once the order is CANCELLED
               ("STATUS"); the buyer-facing window instead closes once dispatched
@@ -2692,7 +2552,11 @@ export default function OrderDetailPage() {
           {/* DRAFT actions */}
           {localStatus === "DRAFT" && !isEditing && !access.staff && access.cancel && (
             <ActionTier tier="danger">
-              <CancelOrderButton blockedReason={order.cancelBlockedReason} onClick={handleCancel} />
+              <CancelOrderButton
+                blockedReason={order.cancelBlockedReason}
+                onClick={handleCancel}
+                inMenu={phone}
+              />
             </ActionTier>
           )}
           {localStatus === "DRAFT" && !isEditing && access.staff && (
@@ -2719,6 +2583,7 @@ export default function OrderDetailPage() {
               </ActionTier>
               <DeleteOrderTier
                 orderId={order.id}
+                inMenu={phone}
                 deleteOrder={deleteOrder}
                 open={showDeleteConfirm}
                 setOpen={setShowDeleteConfirm}
@@ -2769,6 +2634,7 @@ export default function OrderDetailPage() {
                   <CancelOrderButton
                     blockedReason={order.cancelBlockedReason}
                     onClick={handleCancel}
+                    inMenu={phone}
                   />
                 )}
                 {/* #3219 S3: an order with the carrier is not deleted either (the server 409s) */}
@@ -2803,7 +2669,7 @@ export default function OrderDetailPage() {
                         No
                       </button>
                     </div>
-                  ) : (
+                  ) : phone ? null : (
                     <Button
                       size="sm"
                       variant="ghost"
@@ -2837,21 +2703,24 @@ export default function OrderDetailPage() {
                   reason, so the ONLY path is the DemoteReasonModal. A second
                   "Unconfirm" button used to submit directly (predating the
                   reason rule) and guaranteed a 400 with nowhere to type one. */}
-              <ActionTier tier="secondary">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  leftIcon={<RotateCcw className="h-4 w-4" />}
-                  onClick={() => setDemoteTarget("PENDING")}
-                  loading={updateStatus.isPending}
-                >
-                  Unconfirm
-                </Button>
-              </ActionTier>
+              {!phone && (
+                <ActionTier tier="secondary">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    leftIcon={<RotateCcw className="h-4 w-4" />}
+                    onClick={() => setDemoteTarget("PENDING")}
+                    loading={updateStatus.isPending}
+                  >
+                    Unconfirm
+                  </Button>
+                </ActionTier>
+              )}
               <ActionTier tier="danger">
                 <CancelOrderButton
                   blockedReason={order.cancelBlockedReason}
                   onClick={handleCancel}
+                  inMenu={phone}
                 />
                 {!order.cancelBlockedReason &&
                   renderDeleteOrderAction("Delete this order? This can't be undone.")}
@@ -2869,24 +2738,27 @@ export default function OrderDetailPage() {
                 onDeliver={handleDeliver}
                 pending={updateStatus.isPending}
               />
-              <ActionTier tier="secondary">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  leftIcon={<RefreshCcw className="h-4 w-4" />}
-                  onClick={() =>
-                    order.fulfillPath === "SHIP" && orderHasFinalInvoice(order)
-                      ? setShowUnmarkConfirm(true)
-                      : setDemoteTarget("CONFIRMED")
-                  }
-                >
-                  {order.fulfillPath === "SHIP" ? "Unmark shipped" : "Return to Confirmed"}
-                </Button>
-              </ActionTier>
+              {!phone && (
+                <ActionTier tier="secondary">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    leftIcon={<RefreshCcw className="h-4 w-4" />}
+                    onClick={() =>
+                      order.fulfillPath === "SHIP" && orderHasFinalInvoice(order)
+                        ? setShowUnmarkConfirm(true)
+                        : setDemoteTarget("CONFIRMED")
+                    }
+                  >
+                    {order.fulfillPath === "SHIP" ? "Unmark shipped" : "Return to Confirmed"}
+                  </Button>
+                </ActionTier>
+              )}
               <ActionTier tier="danger">
                 <CancelOrderButton
                   blockedReason={order.cancelBlockedReason}
                   onClick={handleCancel}
+                  inMenu={phone}
                 />
                 {!order.cancelBlockedReason &&
                   renderDeleteOrderAction(
@@ -2951,6 +2823,7 @@ export default function OrderDetailPage() {
               </ActionTier>
               <DeleteOrderTier
                 orderId={order.id}
+                inMenu={phone}
                 deleteOrder={deleteOrder}
                 open={showDeleteConfirm}
                 setOpen={setShowDeleteConfirm}
@@ -2959,6 +2832,12 @@ export default function OrderDetailPage() {
                 errorText={orderErrorText}
               />
             </>
+          )}
+
+          {phoneItems.length > 0 && (
+            <div data-tier="overflow" className="order-3 shrink-0">
+              <OrdersMoreMenu items={phoneItems} />
+            </div>
           )}
         </div>
       </div>
@@ -2982,7 +2861,11 @@ export default function OrderDetailPage() {
               </h3>
             </div>
             {isEditing ? (
-              <div className="space-y-4">
+              // r4 F05: Ctrl/Cmd+Enter saves from any field in here (a chord, never a bare key).
+              <div
+                className="space-y-4"
+                onKeyDown={saveChordHandler(handleSaveItems, layerBlocked || readOnlyGate.readOnly)}
+              >
                 {isPos && localStatus === "DELIVERED" && <PosCutAfterHandOverNote />}
                 <p className="text-sm text-navy/70">
                   Add new items, adjust quantities, substitute or mark as unavailable.
@@ -2993,6 +2876,7 @@ export default function OrderDetailPage() {
                 {stale.node}
                 <InvoicedEditNotice invoices={order.invoices} />
                 <EditableLineItems
+                  focusFirstQty={focusFirstQty}
                   items={editItems}
                   onChange={setEditItems}
                   onAdd={(item) => setEditItems((prev) => [...prev, item])}
@@ -3006,6 +2890,7 @@ export default function OrderDetailPage() {
                   pricingReady={pricingReady}
                   customer={{ id: order.customerId, name: order.customer?.businessName }}
                   orderId={order.id}
+                  lockedLineIds={deliveredLockedLineIds(order.status, order.lineItems)}
                 />
 
                 {/* Live total preview */}
@@ -3067,7 +2952,7 @@ export default function OrderDetailPage() {
                   refusalReturn={returnSave.refusalReturn}
                 />
 
-                <StickyEditBar>
+                <StickyEditBar total={formatMoney(editTotal)}>
                   <PriceLayerNotice
                     layer={priceLayer}
                     unconfirmed={layerBlocked}
@@ -3079,6 +2964,7 @@ export default function OrderDetailPage() {
                         size="sm"
                         className="bg-amber-500 text-white hover:bg-amber-600"
                         onClick={handleSaveItems}
+                        aria-keyshortcuts={SAVE_CHORD_KEYS}
                         disabled={layerBlocked}
                         loading={updateItems.isPending}
                       >
@@ -3101,6 +2987,11 @@ export default function OrderDetailPage() {
                               updateStatus.mutate(
                                 { id: order!.id, status: "PENDING" as any },
                                 {
+                                  // Row 604 M1: the publish latch is held from the first tap
+                                  // until the status write settles (save-then-publish included).
+                                  onSettled: () => {
+                                    saveLatchRef.current = false;
+                                  },
                                   onSuccess: () => {
                                     setLocalStatus("PENDING");
                                     setIsEditing(false);
@@ -3122,6 +3013,9 @@ export default function OrderDetailPage() {
                             const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
                             if (inlineReturn === null) return;
                             const saveThenPublish = () => {
+                              // Row 698: same one-write latch as handleSaveItems.
+                              if (saveLatchRef.current) return;
+                              saveLatchRef.current = true;
                               if (
                                 updates.length > 0 ||
                                 feeChanged ||
@@ -3150,10 +3044,13 @@ export default function OrderDetailPage() {
                                   },
                                   {
                                     onSuccess: () => (returnSave.onSuccess(), doPublish()),
-                                    onError: returnSave.chainError(
-                                      inlineReturn,
-                                      guardError(() => saveThenPublish()),
-                                    ),
+                                    onError: (err: unknown) => {
+                                      saveLatchRef.current = false;
+                                      returnSave.chainError(
+                                        inlineReturn,
+                                        guardError(() => saveThenPublish()),
+                                      )(err);
+                                    },
                                   },
                                 );
                               } else {
@@ -3182,6 +3079,7 @@ export default function OrderDetailPage() {
                       <WriteButton
                         size="sm"
                         onClick={handleSaveItems}
+                        aria-keyshortcuts={SAVE_CHORD_KEYS}
                         disabled={layerBlocked}
                         loading={savingItems}
                       >
@@ -3435,7 +3333,7 @@ export default function OrderDetailPage() {
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Total quantity</dt>
                 <dd className="mono font-medium text-navy">
-                  {formatQty(summaryLineItems.reduce((s, li) => s + Number(li.qty), 0))}
+                  {summarizeQtyByUnit(summaryLineItems)}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3">
@@ -3459,7 +3357,9 @@ export default function OrderDetailPage() {
                 </div>
               )}
               <div className="flex items-center justify-between gap-3 border-t border-surface-border pt-2.5">
-                <dt className="font-semibold text-navy">Order total</dt>
+                <dt className="font-semibold text-navy">
+                  {isEditing ? "Saved total" : "Order total"}
+                </dt>
                 <dd className="money text-[15px] font-semibold text-navy">{formatMoney(total)}</dd>
               </div>
             </dl>
@@ -3476,6 +3376,17 @@ export default function OrderDetailPage() {
               can split into multiple invoices any time after the order is confirmed. */}
           {localStatus !== "DRAFT" && localStatus !== "CANCELLED" && (
             <Card title={`Invoice${((order as any).invoices?.length ?? 0) > 1 ? "s" : ""}`}>
+              {/* r4 F07: always mounted (empty), so the sentence is read out when it appears. */}
+              <p
+                role="status"
+                className={
+                  invoiceNotice.message
+                    ? "mb-3 rounded-md bg-surface-raised px-3 py-2 text-xs text-navy"
+                    : undefined
+                }
+              >
+                {invoiceNotice.message}
+              </p>
               {(order as any).invoices?.length > 0 && (
                 <div className="space-y-3">
                   {(() => {
@@ -3504,7 +3415,11 @@ export default function OrderDetailPage() {
                     <div key={inv.id} className="space-y-1">
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4 text-brand-500" />
-                        <span className="mono text-sm font-medium text-navy">
+                        <span
+                          ref={invoiceNotice.focusRef(inv.invoiceNumber)}
+                          tabIndex={-1}
+                          className="mono rounded text-sm font-medium text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                        >
                           {inv.invoiceNumber}
                         </span>
                       </div>
@@ -3551,8 +3466,18 @@ export default function OrderDetailPage() {
                     </p>
                   ) : null;
                 }
+                // apple-ux r3 Q27: an invoice made now bills the SAVED lines, not the edit in front of the
+                // person. The two actions are held (disabled, with the reason as text they point at)
+                // until the edit is saved or cancelled; a hidden or merely quiet button would still
+                // invite the click, and an invoice cannot be taken back with Undo.
+                const invoiceHold = isEditing ? "invoice-edit-hold" : undefined;
                 return (
                   <div className="mt-3 space-y-2 border-t border-surface-border pt-3">
+                    {isEditing && (
+                      <p id="invoice-edit-hold" className="text-xs text-navy/70">
+                        Save your changes first, then invoice this order.
+                      </p>
+                    )}
                     {hasNoInvoiceYet && (
                       <>
                         <p className="text-xs text-navy/70">
@@ -3560,14 +3485,20 @@ export default function OrderDetailPage() {
                         </p>
                         <Button
                           size="sm"
+                          // One filled primary leads the page: while PENDING that is Confirm Order
+                          // (apple-ux r3 Q16), so invoicing is secondary until the order is confirmed.
+                          variant={localStatus === "PENDING" || isEditing ? "secondary" : "primary"}
                           className="w-full justify-center"
                           leftIcon={<FileText className="h-4 w-4" />}
+                          disabled={isEditing}
+                          aria-describedby={invoiceHold}
                           loading={createInvoiceFromOrder.isPending}
                           onClick={() => {
                             // The invoice-time backstop can 409 on an expired/newly-added
                             // regulated line — route it into the license guard + retry.
                             const invoiceNow = () =>
                               createInvoiceFromOrder.mutate(order.id, {
+                                onSuccess: (made) => invoiceNotice.announce(made),
                                 onError: guardError(() => invoiceNow()),
                               });
                             invoiceNow();
@@ -3581,6 +3512,8 @@ export default function OrderDetailPage() {
                       <Button
                         size="sm"
                         variant="secondary"
+                        disabled={isEditing}
+                        aria-describedby={invoiceHold}
                         onClick={() => setSplitInvoiceOpen(true)}
                       >
                         Split into invoice…
@@ -3614,6 +3547,8 @@ export default function OrderDetailPage() {
         invoiceId={previewInvoiceId ?? ""}
         orderTotal={Number(order.total)}
       />
+
+      {leaveGuard.dialog}
 
       {/* Cancel confirmation */}
       <ConfirmDialog

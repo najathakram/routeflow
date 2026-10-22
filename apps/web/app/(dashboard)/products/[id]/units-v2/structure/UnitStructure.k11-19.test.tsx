@@ -232,7 +232,9 @@ describe("K11-19: the row's variants compile to the selectors the layout needs",
     expect(css).toMatch(
       /\[data-last-opened="?reset"?]>\*:has\(\[data-testid=units-v2-reset-panel\]\)\s*\{\s*order: 10000/,
     );
-  });
+    // Row 666: an in-process postcss + tailwind build. Fast alone, but it passed jest's 30 s default under
+    // pre-push load (a 105-minute push lost to it), so this one case gets a generous timeout.
+  }, 180_000);
 });
 
 describe("K11-19: one unsaved hint for the opener row", () => {

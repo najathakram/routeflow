@@ -31,6 +31,14 @@
           { "type": "command", "command": "node scripts/campaign/plane-triage.mjs --brief" },
           { "type": "command", "command": "node scripts/check-git-hooks.mjs --warn" }
         ]
+      },
+      {
+        "hooks": [{ "type": "command", "command": "node .claude/hooks/ops-brief.mjs" }]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [{ "type": "command", "command": "node .claude/hooks/ops-brief.mjs" }]
       }
     ],
     "PostToolUse": [
@@ -40,12 +48,19 @@
       },
       {
         "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": "node scripts/work/claude-hook.mjs" }]
+        "hooks": [{ "type": "command", "command": "node .claude/hooks/ops-post-push.mjs" }]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|SendMessage",
+        "hooks": [{ "type": "command", "command": "node .claude/hooks/ops-post-plan.mjs" }]
       }
     ],
     "Stop": [
       {
         "hooks": [{ "type": "command", "command": "node .claude/hooks/stop.mjs" }]
+      },
+      {
+        "hooks": [{ "type": "command", "command": "node .claude/hooks/ops-stop.mjs" }]
       }
     ]
   }

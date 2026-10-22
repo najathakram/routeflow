@@ -17,6 +17,7 @@ import {
   type PriceDraftHooks,
 } from "./units-v2/edit/usePriceDraft";
 import { UnitRowRemove, UnitStructureControls } from "./units-v2/structure/UnitStructure";
+import { UnitDetailsEditor, UnitsBesideGrid } from "./units-v2/structure/UnitsBesideGrid";
 import { useUnitStructureAllowed } from "./units-v2/structure/unit-structure";
 
 /**
@@ -59,28 +60,56 @@ function PricingSection({
   };
 }) {
   const cp = useChangePrices();
-  // K10d: Add a unit / Remove / Reset to Auto, only where the unit ladder can be edited.
+  // K10d: Add a unit / Remove / Reset to Auto (+ the default order unit and Name / Contains beside the grid), only where the unit ladder can be edited.
   const structure = useUnitStructureAllowed(product);
   return (
     <>
-      <EditablePricesGrid
-        product={product}
-        onOpenChangePrices={cp.enabled ? cp.toggle : undefined}
-        changePricesOpen={cp.open}
-        changePricesRef={cp.opener}
-        panel={<ChangePrices open={cp.open} onClose={cp.close} openerRef={cp.opener} />}
-        unitControls={structure ? <UnitStructureControls productId={product.id} /> : undefined}
-        rowAction={
-          structure
-            ? (row, layout) => <UnitRowRemove productId={product.id} row={row} layout={layout} />
-            : undefined
-        }
-      />
-      <PriceSaveStatus productId={product.id} surface="inline" />
-      <CustomerPriceView productId={product.id} />
+      {/* K12 F02: the "Units and prices" jump lands here, on the row that starts with Change prices / Edit,
+          not on the grid title below it. */}
+      {/* The jump focuses this row's wrapper: name it by the grid title so focus is announced. */}
+      <div data-units-jump-anchor="" role="group" aria-labelledby="units-v2-grid-title">
+        <EditablePricesGrid
+          product={product}
+          onOpenChangePrices={cp.enabled ? cp.toggle : undefined}
+          changePricesOpen={cp.open}
+          changePricesRef={cp.opener}
+          panel={<ChangePrices open={cp.open} onClose={cp.close} openerRef={cp.opener} />}
+          unitControls={structure ? <UnitStructureControls productId={product.id} /> : undefined}
+          afterGrid={
+            structure ? (
+              <>
+                <UnitDetailsEditor product={product} />
+                {/* R3 review: the default order unit is an ordering setting, not a price, so it sits under the grid card
+                    (before the order-unit footer) and the first price row climbs on a phone. */}
+                <UnitsBesideGrid product={product} />
+              </>
+            ) : undefined
+          }
+          rowAction={
+            structure
+              ? (row, layout) => <UnitRowRemove productId={product.id} row={row} layout={layout} />
+              : undefined
+          }
+        />
+      </div>
+      {/* K13: per-unit Name / Contains (edit mode) render in the grid's afterGrid slot, right under the card, so entering
+          edit never moves its rows and Name / Contains read straight under the units they name. */}
+      {/* K13 P09: the Save bar rests directly under the grid it saves, not below the Customer view block. */}
       <PriceEditBar changePricesOpen={cp.open} />
+      <PriceSaveStatus productId={product.id} surface="inline" />
+      <CustomerViewSlot productId={product.id} />
     </>
   );
+}
+
+/**
+ * K13: the Customer view steps aside while prices are edited inline and returns on Save or Cancel. The jump strip is
+ * built from the DOM, so its "Customer view" entry disappears with the section and comes back with it.
+ */
+export function CustomerViewSlot({ productId }: { productId: string }) {
+  const draft = usePriceDraft();
+  if (draft.editingIn === "inline") return null;
+  return <CustomerPriceView productId={productId} />;
 }
 
 /**

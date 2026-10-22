@@ -108,7 +108,11 @@ export function handleMutationError(
   // `localErrorToast` is `true` (the mutation owns every error) or a predicate (it owns only the errors it matches).
   const local = mutation?.meta?.localErrorToast;
   if (typeof local === "function" ? local(error) : local) return;
-  if (data?.code && HANDLED_CODES.includes(data.code)) return;
+  // B1234: the staff item save has no screen of its own for LINE_ALREADY_DELIVERED (a delivered line of a partly
+  // delivered order), so it opts in to the generic fixed-copy toast instead of the change-request screen's.
+  const ownsLineDeliveredToast =
+    data?.code === API_ERROR_CODES.LINE_ALREADY_DELIVERED && mutation?.meta?.lineDeliveredToast;
+  if (data?.code && HANDLED_CODES.includes(data.code) && !ownsLineDeliveredToast) return;
   // B956: a refused formula-led name is fixed copy with a human field label, never the raw message.
   const refusedName = safeTextBodyCopy(data);
   if (refusedName) {

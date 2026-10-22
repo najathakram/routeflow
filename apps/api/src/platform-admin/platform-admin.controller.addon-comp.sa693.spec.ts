@@ -61,7 +61,7 @@ describe("SA-693 PlatformAdminController#enableAddon", () => {
       "tobacco_dealer",
       undefined,
       undefined,
-      { comp: true },
+      { comp: true, actorId: "admin-1" },
     );
     expect(svc.recordAdminAction).toHaveBeenCalledWith(
       "t1",
@@ -85,7 +85,7 @@ describe("SA-693 PlatformAdminController#enableAddon", () => {
       "tobacco_dealer",
       "price_1",
       undefined,
-      { comp: false },
+      { comp: false, actorId: "admin-1" },
     );
     const actions = svc.recordAdminAction.mock.calls.map((c: any[]) => c[2]);
     expect(actions).toEqual([AdminAuditAction.ADDON_ENABLED]);
@@ -102,7 +102,12 @@ describe("SA-693 PlatformAdminController#uncompAddon", () => {
       admin,
     );
 
-    expect(addonService.uncompAddon).toHaveBeenCalledWith("t1", "tobacco_dealer", "price_1");
+    expect(addonService.uncompAddon).toHaveBeenCalledWith(
+      "t1",
+      "tobacco_dealer",
+      "price_1",
+      "admin-1",
+    );
     expect(svc.recordAdminAction).toHaveBeenCalledWith(
       "t1",
       "admin-1",

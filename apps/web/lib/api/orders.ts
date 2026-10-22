@@ -555,7 +555,11 @@ export function useUpdateOrderItems(options?: LocalErrorToastOption) {
       expectedRevisionNumber?: number;
     }
   >({
-    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
+    meta: {
+      // B1234: a delivered line's 409 LINE_ALREADY_DELIVERED is toasted here (mutation-error-toast).
+      lineDeliveredToast: true,
+      ...(options?.localErrorToast ? { localErrorToast: options.localErrorToast } : {}),
+    },
     mutationFn: ({
       id,
       items,

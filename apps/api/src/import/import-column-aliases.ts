@@ -60,6 +60,19 @@ export const PRODUCT_IMPORT_COLUMNS: ImportColumnAlias[] = [
     aliases: ["Reorder Point", "Reorder Level"],
   },
   { field: "reorderQty", canonical: "Reorder Qty", aliases: ["Reorder Qty"] },
+  // SA-823 (row 655): the optional family columns. `id` is the product id from the products export (the stable key
+  // a Family cell needs); `family` names the family to group the row under; `variantName` is the label it carries.
+  { field: "id", canonical: "Product ID", aliases: ["Product ID", "RouteFlow ID"] },
+  {
+    field: "family",
+    canonical: "Family",
+    aliases: ["Family", "Family Name", "Family / Variant of (parent product name)"],
+  },
+  {
+    field: "variantName",
+    canonical: "Variant Name",
+    aliases: ["Variant Name", "Variant", "Variant Label"],
+  },
 ];
 
 export const CUSTOMER_IMPORT_COLUMNS: ImportColumnAlias[] = [

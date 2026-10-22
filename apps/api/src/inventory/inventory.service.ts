@@ -39,6 +39,7 @@ import { effectiveCostingMethod } from "./costing-method-policy";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { recordSaleMovement, resolveSaleCost } from "./sale-movement";
 import { poReversalNote, poReversalOf } from "./bill-revert";
+import { poGoodsUsedConflict, productsUsedSinceReceipt } from "./po-use-since-receipt";
 import { documentStockDate, type DocumentStockDate } from "./stock-write-date";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
@@ -89,6 +90,7 @@ import {
 } from "./stock-count-commit";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
+import { writeFamilyAssigned } from "../products/product-parent";
 
 /**
  * Interactive-tx options of a count add / amend (SA-767 r-note 5 SA-3). The product-lock helper bounds its
@@ -554,6 +556,7 @@ export class InventoryService {
     },
     variantName: string,
     familyMode: "on" | "off" = "off",
+    actorId: string | null = null,
   ) {
     // #2717 M2: mode on -> the family's five columns, re-read under its row lock (the `parent` this
     // tx read earlier may predate a family edit); off -> the parent row exactly as before.
@@ -593,6 +596,16 @@ export class InventoryService {
     });
     // The variant copied its parent's category text: add-only label sync, same tx.
     await syncCategoryLabel(tx, { tenantId, productId: created.id, text: created.category });
+    // SA-823 R11: a variant born under the parent is an assignment (fromParentId null), written in this same tx.
+    await writeFamilyAssigned(tx, {
+      tenantId,
+      actorId,
+      productId: created.id,
+      fromParentId: null,
+      toParentId: parent.id,
+      variantName: created.variantName ?? null,
+      via: "inventory",
+    });
     return created;
   }
 
@@ -885,7 +898,13 @@ export class InventoryService {
             const qtyDecimal = new Prisma.Decimal(target.qty);
             const variant = target.existing
               ? target.existing
-              : await this.createVariantRowInTx(tx, parent, target.newVariantName!, familyMode);
+              : await this.createVariantRowInTx(
+                  tx,
+                  parent,
+                  target.newVariantName!,
+                  familyMode,
+                  performedById,
+                );
 
             // Cost: unitCostOverride ?? the parent's EFFECTIVE cost. STANDARD-
             // costed variants are valued from their own operator-set cost, so a
@@ -1872,14 +1891,10 @@ export class InventoryService {
     });
     const consumedLots = lots.filter((l) => new Prisma.Decimal(l.remainingQty).lt(l.qty));
     if (consumedLots.length > 0) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.PO_LOT_PARTIALLY_CONSUMED,
-        message:
-          `Part of what was received on ${po.poNumber} has already been used (a lot is partially ` +
-          "consumed), so its inventory can't be re-applied — that would invent stock. " +
-          "Save the edit as document-only (keep stock as is), or record a return.",
-        lotIds: consumedLots.map((l) => l.id),
-      });
+      throw poGoodsUsedConflict(
+        po.poNumber,
+        consumedLots.map((l) => l.id),
+      );
     }
 
     const movements = await tx.stockMovement.findMany({
@@ -1909,6 +1924,10 @@ export class InventoryService {
         poReversalOf(m) == null &&
         !reversedIds.has(m.id),
     );
+
+    // Row 645: the lot figure above no longer moves on a sale (#3487) — the ledger does.
+    const usedProducts = await productsUsedSinceReceipt(tx, live);
+    if (usedProducts.length > 0) throw poGoodsUsedConflict(po.poNumber, [], usedProducts);
 
     const posted = new Map<string, Prisma.Decimal>();
     for (const m of live) {

@@ -42,6 +42,9 @@ export const billReversalTargetId = (notes: string | null | undefined): string |
  */
 export const PO_REVERSAL_NOTE = "PO edit reversal — reverses ";
 
+/** Note prefix on the ADJUSTMENT a bill VOID writes for stock that had no receipt record (SA-808b). */
+export const BILL_VOID_SHORTFALL_NOTE = "Void of vendor bill ";
+
 /** The note on a PO re-apply's reversing row; names the filing when the row moved forward to now. */
 export const poReversalNote = (originalId: string, filedThroughLabel?: string | null): string =>
   `${PO_REVERSAL_NOTE}${originalId}${filedThroughLabel ? ` (filed through ${filedThroughLabel})` : ""}`;

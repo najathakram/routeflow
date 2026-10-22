@@ -154,7 +154,7 @@ export function PlanView({
       data-testid={T.cellPlan}
       role="region"
       aria-labelledby={headingId}
-      className="rounded-lg border border-l-4 border-surface-border border-l-accent bg-white p-3"
+      className="rounded-lg bg-surface-raised p-3"
     >
       <h4 id={headingId} className={heading ? "text-sm font-semibold text-navy" : "sr-only"}>
         {heading ?? "What else changes"}
@@ -187,7 +187,8 @@ export function PlanView({
       )}
       {hasAlso && (
         <div data-testid={T.alsoUpdate} className="mt-3">
-          <p className={SECTION_LABEL}>Also update:</p>
+          {/* K12 P16: not drawn over an "Also ..." offer; still the group's name for a screen reader. */}
+          <p className="sr-only">Also update:</p>
           {customersTruncated && (
             <p data-testid={T.customersTruncated} className="mt-1 text-xs text-ink-500">
               {TRUNCATED_NOTE}

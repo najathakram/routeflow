@@ -19,6 +19,7 @@ import { Button, Input, Modal, TAP_TARGET, Textarea, cn } from "@routeflow/ui/we
 import {
   Z_REPORT_EMAILED_COPY,
   Z_REPORT_RESEND_FAILED_COPY,
+  Z_REPORT_WILL_EMAIL_COPY,
   DAY_OFFLINE_COPY,
   DAY_REOPEN_FAILED_COPY,
   DAY_REOPENED_CLOSE_AGAIN_COPY,
@@ -30,6 +31,14 @@ import {
   useResendZReport,
 } from "@/lib/api/counter-day-close";
 import { useOptionalAuth } from "@/lib/auth-context";
+import { useTenant } from "@/components/tenant-provider";
+import {
+  clampDayCloseCount,
+  clearDayCloseDraft,
+  dayCloseDraftKey,
+  readDayCloseDraft,
+  writeDayCloseDraft,
+} from "@/lib/counter-day-close-draft";
 import { formatReceiptMoney as money } from "@/lib/counter-receipt";
 import { ZReportView, verdictText, zHeadlineText, zTime } from "./ZReportView";
 
@@ -42,6 +51,13 @@ const REOPEN_ROLES: ReadonlySet<string> = new Set(["OPERATOR", "TENANT_ADMIN"]);
 /** "$20 bill" and "$1.00 coin": the $1 bill and the $1 coin are different rows. */
 function denominationLabel(d: { kind: "bill" | "coin"; value: number }): string {
   return d.kind === "bill" ? `$${d.value} bill` : `$${d.value.toFixed(2)} coin`;
+}
+
+/** Two float texts are the same amount when they agree to the cent ("100" and "100.00"); an unparseable one is never the same. */
+function sameFloat(a: string, b: string): boolean {
+  const x = parseFloatInput(a);
+  const y = parseFloatInput(b);
+  return x !== null && y !== null && roundMoney(x) === roundMoney(y);
 }
 
 /** The opening float as typed: whole cents, or null while it is empty / not a valid amount. */
@@ -120,27 +136,88 @@ function DayCloseForm({
   onClose: () => void;
   onViewZ: () => Promise<void>;
 }) {
+  // R7b 2.3: the typed count is a form draft (sessionStorage), keyed tenant + register + tenant day
+  const tenant = useTenant().slug;
+  // keyed on the tenant day of the window being closed (the preview's windowStart), never on the clock: a count typed
+  // before midnight must still be found after it. No preview yet = no key = no draft read or written.
+  const windowStart = state.preview?.windowStart;
+  const draftKey = windowStart
+    ? dayCloseDraftKey(tenant, state.registerKey, dayIn(new Date(windowStart), state.zone))
+    : null;
+  // the body reports whether it holds a typed count; a dirty dismissal asks Keep or Discard first
+  const dirtyRef = React.useRef(false);
+  const [confirming, setConfirming] = React.useState(false);
+  const requestClose = () => {
+    if (dirtyRef.current) setConfirming(true);
+    else onClose();
+  };
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={editing ? "Edit count" : "Close day"}
-      description={
-        editing
-          ? "Sales times stay the same. A corrected Z report is emailed."
-          : "Count the drawer. The totals are checked again when you close."
-      }
-      scroll
-      closeClassName={TAP_TARGET}
-      className={cn(
-        "left-0 top-0 h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 rounded-none p-4",
-        "sm:left-1/2 sm:top-1/2 sm:h-auto sm:max-h-[92vh] sm:w-full sm:max-w-lg sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:p-6",
-      )}
-    >
-      {open ? (
-        <DayCloseFormBody state={state} editing={editing} onClose={onClose} onViewZ={onViewZ} />
-      ) : null}
-    </Modal>
+    <>
+      <Modal
+        open={open}
+        onClose={requestClose}
+        title={editing ? "Edit count" : "Close day"}
+        description={
+          editing
+            ? "Sales times stay the same. A corrected Z report is emailed."
+            : "Count the drawer. The totals are checked again when you close."
+        }
+        scroll
+        closeClassName={TAP_TARGET}
+        className={cn(
+          "left-0 top-0 h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 rounded-none p-4",
+          "sm:left-1/2 sm:top-1/2 sm:h-auto sm:max-h-[92vh] sm:w-full sm:max-w-lg sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:p-6",
+        )}
+      >
+        {open ? (
+          <DayCloseFormBody
+            state={state}
+            editing={editing}
+            draftKey={draftKey}
+            dirtyRef={dirtyRef}
+            onClose={onClose}
+            onRequestClose={requestClose}
+            onViewZ={onViewZ}
+          />
+        ) : null}
+      </Modal>
+      <Modal
+        open={open && confirming}
+        onClose={() => setConfirming(false)}
+        title="Keep your count for later?"
+        description="Your typed count stays on this device until you close the day."
+        footer={
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className="min-h-[44px]"
+              onClick={() => {
+                if (draftKey) clearDayCloseDraft(draftKey);
+                dirtyRef.current = false;
+                setConfirming(false);
+                onClose();
+              }}
+            >
+              Discard
+            </Button>
+            <Button
+              type="button"
+              autoFocus
+              className="min-h-[44px]"
+              onClick={() => {
+                setConfirming(false);
+                onClose();
+              }}
+            >
+              Keep
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm">Keep opens it again where you left off. Discard clears it.</p>
+      </Modal>
+    </>
   );
 }
 
@@ -148,12 +225,21 @@ function DayCloseForm({
 function DayCloseFormBody({
   state,
   editing,
+  draftKey,
+  dirtyRef,
   onClose,
+  onRequestClose,
   onViewZ,
 }: {
   state: DayCloseState;
   editing: DayCloseSnapshot | null;
+  draftKey: string | null;
+  /** set here each render: true while a typed count would be lost by closing */
+  dirtyRef: React.MutableRefObject<boolean>;
+  /** leaves the form now (a successful close) */
   onClose: () => void;
+  /** a dismissal (Cancel): the parent asks Keep or Discard first when the form is dirty */
+  onRequestClose: () => void;
   onViewZ: () => Promise<void>;
 }) {
   const { preview, lastClose } = state;
@@ -162,15 +248,18 @@ function DayCloseFormBody({
   const [seed] = React.useState<DayCloseSnapshot | null>(
     () => editing ?? (lastClose?.reopenedAt ? lastClose : null),
   );
+  // R7b 2.3: a kept draft of this tenant + register + day is the starting state when there is no stored close to continue
+  const [draft] = React.useState(() => (seed || !draftKey ? null : readDayCloseDraft(draftKey)));
+  const suggestedFloat = preview.suggestedOpeningFloat.toFixed(2);
   const [floatText, setFloatText] = React.useState(() =>
-    (seed ? seed.openingFloat : preview.suggestedOpeningFloat).toFixed(2),
+    seed ? seed.openingFloat.toFixed(2) : (draft?.floatText ?? suggestedFloat),
   );
   const [counts, setCounts] = React.useState<Record<string, number>>(() => {
-    const init: Record<string, number> = {};
+    const init: Record<string, number> = { ...(draft?.counts ?? {}) };
     for (const d of seed?.denominations ?? []) init[ROW_KEY(d)] = d.count;
     return init;
   });
-  const [notes, setNotes] = React.useState(seed?.notes ?? "");
+  const [notes, setNotes] = React.useState(seed?.notes ?? draft?.notes ?? "");
   const closeMutation = useCloseCounterDay();
   const reopenMutation = useReopenCounterDay();
   const [pending, setPending] = React.useState(false);
@@ -195,8 +284,35 @@ function DayCloseFormBody({
   const shownTotals = editing ? editing.totals : preview.totals;
   const refunds = shownTotals.refunds;
   const setCount = (key: string, n: number) =>
-    setCounts((c) => ({ ...c, [key]: Math.min(DAY_CLOSE_MAX_COUNT, Math.max(0, n)) }));
+    setCounts((c) => ({ ...c, [key]: clampDayCloseCount(n) }));
   const canSubmit = openingFloat !== null && !pending && online;
+
+  // R7b 2.3: the draft follows the typed state (debounced 300 ms) and is flushed when the form unmounts (Today's sales
+  // closing included). A seeded form (a reopened or edited close) keeps no draft.
+  const dirty =
+    !seed &&
+    (!sameFloat(floatText, suggestedFloat) ||
+      Object.values(counts).some((n) => n > 0) ||
+      notes.trim() !== "");
+  dirtyRef.current = dirty;
+  const latest = React.useRef({ floatText, counts, notes });
+  latest.current = { floatText, counts, notes };
+  const persist = React.useCallback(() => {
+    if (!draftKey || seed) return; // a seeded form (Edit count / reopened) never touches the draft
+    if (dirtyRef.current) writeDayCloseDraft(draftKey, latest.current);
+    else clearDayCloseDraft(draftKey);
+  }, [dirtyRef, draftKey, seed]);
+  React.useEffect(() => {
+    const t = window.setTimeout(persist, 300);
+    return () => window.clearTimeout(t);
+  }, [floatText, counts, notes, persist]);
+  // unmount: keep what is typed (Discard and a successful close set dirtyRef false first, so they write nothing)
+  React.useEffect(
+    () => () => {
+      if (draftKey && !seed && dirtyRef.current) writeDayCloseDraft(draftKey, latest.current);
+    },
+    [dirtyRef, draftKey, seed],
+  );
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -228,6 +344,9 @@ function DayCloseFormBody({
       });
       inFlight.current = false;
       setPending(false);
+      // the server has the count now: the draft is spent
+      if (draftKey && !seed) clearDayCloseDraft(draftKey);
+      dirtyRef.current = false;
       onClose();
     } catch (err) {
       inFlight.current = false;
@@ -390,8 +509,18 @@ function DayCloseFormBody({
             {DAY_OFFLINE_COPY}
           </p>
         )}
+        {editing ? null : (
+          <p className="text-xs text-navy/70" data-testid="day-close-email-note">
+            {Z_REPORT_WILL_EMAIL_COPY}
+          </p>
+        )}
         <div className="flex flex-wrap justify-end gap-2">
-          <Button type="button" variant="secondary" className="min-h-[44px]" onClick={onClose}>
+          <Button
+            type="button"
+            variant="secondary"
+            className="min-h-[44px]"
+            onClick={onRequestClose}
+          >
             Cancel
           </Button>
           <Button type="submit" className="min-h-[44px]" disabled={!canSubmit} loading={pending}>
@@ -557,7 +686,12 @@ export function CounterDayClose() {
         </p>
       ) : null}
       {offerClose ? (
-        <Button ref={openerRef} className="min-h-[44px] w-full sm:w-auto" onClick={openForm}>
+        <Button
+          ref={openerRef}
+          variant="secondary"
+          className="min-h-[44px] w-full sm:w-auto"
+          onClick={openForm}
+        >
           {closed ? "Close again" : "Close day"}
         </Button>
       ) : null}

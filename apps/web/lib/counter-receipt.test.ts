@@ -4,7 +4,9 @@ import {
   formatReceiptMoney,
   formatSaleDayTime,
   formatSaleTime,
+  receiptModelFromOrder,
   type ReceiptLineInput,
+  type ReprintSaleFacts,
 } from "./counter-receipt";
 
 const NOW = new Date("2026-10-07T15:30:00Z");
@@ -234,5 +236,256 @@ describe("row 298: the receipt line names the product's unit", () => {
     expect(detailOf({ unit: "each", unitsPerBox: 12, boxes: 1, pieces: 0, qty: 12 })).toBe(
       "1 box × $2.50 per box",
     );
+  });
+});
+
+describe("reprint after a return (SA-838a): the server's tender split and return lines, used as given", () => {
+  const reprint = (over: Partial<ReprintSaleFacts> = {}) =>
+    receiptModelFromOrder({
+      order: {
+        orderNumber: "ORD-1",
+        total: 12.5,
+        tax: 0,
+        lineItems: [{ id: "l1", name: "Cola", qty: 5, unitPrice: 2.5 }],
+      },
+      sale: {
+        invoiceId: "i1",
+        invoiceNumber: "INV-1",
+        paid: 12.5,
+        balanceDue: 0,
+        methods: [],
+        createdAt: "2026-10-07T15:15:00.000Z",
+        ...over,
+      },
+      profile: null,
+    });
+  const none = { applied: 0, refunded: 0, kept: 0, used: 0, pending: false };
+
+  it("(1a) Total 12.50, Cash 5.00, own return 2.50 refunded outside: Refunded, nothing subtracted", () => {
+    const m = reprint({
+      paid: 5,
+      balanceDue: 7.5,
+      methods: [{ method: "CASH", amount: 5 }],
+      tenderPaid: 5,
+      tenderMethods: [{ method: "CASH", amount: 5 }],
+      returnLines: { ...none, refunded: 2.5 },
+    });
+    expect(m.methodLabel).toBe("Cash $5.00");
+    expect(m.paid).toBe(5);
+    expect(m.returned).toBeNull();
+    expect(m.refunded).toBe(2.5);
+    expect(m.creditKept).toBeNull();
+    expect(m.returnPending).toBe(false);
+    expect(m.balanceDue).toBe(7.5);
+  });
+
+  it("(1b) the credit is kept: Credit kept, nothing subtracted", () => {
+    const m = reprint({
+      paid: 5,
+      balanceDue: 7.5,
+      methods: [{ method: "CASH", amount: 5 }],
+      tenderPaid: 5,
+      tenderMethods: [{ method: "CASH", amount: 5 }],
+      returnLines: { ...none, kept: 2.5 },
+    });
+    expect([m.returned, m.refunded, m.creditKept]).toEqual([null, null, 2.5]);
+    expect(m.balanceDue).toBe(7.5);
+  });
+
+  it("(1c) the credit is applied: Returned, and the balance is the server's", () => {
+    const m = reprint({
+      paid: 7.5,
+      balanceDue: 5,
+      methods: [
+        { method: "CASH", amount: 5 },
+        { method: "STORE_CREDIT", amount: 2.5 },
+      ],
+      tenderPaid: 5,
+      tenderMethods: [{ method: "CASH", amount: 5 }],
+      returnLines: { ...none, applied: 2.5 },
+    });
+    expect([m.returned, m.refunded, m.creditKept]).toEqual([2.5, null, null]);
+    expect(m.paid).toBe(5);
+    expect(m.balanceDue).toBe(5);
+  });
+
+  it("(3) own credit spent on another order: Credit used, nothing subtracted, no Balance due", () => {
+    const m = reprint({
+      paid: 12.5,
+      balanceDue: 0,
+      methods: [{ method: "CASH", amount: 12.5 }],
+      tenderPaid: 12.5,
+      tenderMethods: [{ method: "CASH", amount: 12.5 }],
+      returnLines: { ...none, used: 5.5 },
+    });
+    expect(m.methodLabel).toBe("Cash $12.50");
+    expect([m.returned, m.refunded, m.creditKept, m.creditUsed]).toEqual([null, null, null, 5.5]);
+    expect(m.showBalance).toBe(false);
+    expect(m.paid).toBe(12.5);
+  });
+
+  it("(2) pending: no amount anywhere, only the note", () => {
+    const m = reprint({
+      paid: 5,
+      balanceDue: 7.5,
+      methods: [{ method: "CASH", amount: 5 }],
+      tenderPaid: 5,
+      tenderMethods: [{ method: "CASH", amount: 5 }],
+      returnLines: { ...none, pending: true },
+    });
+    expect([m.returned, m.refunded, m.creditKept]).toEqual([null, null, null]);
+    expect(m.returnPending).toBe(true);
+  });
+
+  it("(a) on account $12.50, $6.25 returned and applied, $6.25 cash: Cash $6.25, Paid $6.25, Returned", () => {
+    const m = reprint({
+      methods: [
+        { method: "CASH", amount: 6.25 },
+        { method: "STORE_CREDIT", amount: 6.25 },
+      ],
+      tenderPaid: 6.25,
+      tenderMethods: [{ method: "CASH", amount: 6.25 }],
+      returnLines: { ...none, applied: 6.25 },
+    });
+    expect(m.methodLabel).toBe("Cash $6.25");
+    expect(m.showPaid).toBe(true);
+    expect(m.paid).toBe(6.25);
+    expect(m.showBalance).toBe(false);
+    expect(m.returned).toBe(6.25);
+  });
+
+  it("(b) $5 advance + $7.50 cash, $2.50 refunded outside: each tender with its amount, Paid $12.50, Refunded", () => {
+    const m = reprint({
+      methods: [
+        { method: "ADVANCE", amount: 5 },
+        { method: "CASH", amount: 7.5 },
+      ],
+      tenderPaid: 12.5,
+      tenderMethods: [
+        { method: "ADVANCE", amount: 5 },
+        { method: "CASH", amount: 7.5 },
+      ],
+      returnLines: { ...none, refunded: 2.5 },
+    });
+    expect(m.methodLabel).toBe("Advance $5.00 + Cash $7.50");
+    expect(m.paid).toBe(12.5);
+    expect(m.returned).toBeNull();
+    expect(m.refunded).toBe(2.5);
+  });
+
+  it("(c) paid fully from an advance, $3.00 returned and kept: Advance $12.50, Paid, Credit kept", () => {
+    const m = reprint({
+      methods: [{ method: "ADVANCE", amount: 12.5 }],
+      tenderPaid: 12.5,
+      tenderMethods: [{ method: "ADVANCE", amount: 12.5 }],
+      returnLines: { ...none, kept: 3 },
+    });
+    expect(m.methodLabel).toBe("Advance $12.50");
+    expect(m.paid).toBe(12.5);
+    expect(m.creditKept).toBe(3);
+    expect(m.returned).toBeNull();
+  });
+
+  it("every method carries its amount, a single tender that is the whole sale included", () => {
+    expect(
+      reprint({
+        methods: [{ method: "CARD", amount: 12.5 }],
+        tenderPaid: 12.5,
+        tenderMethods: [{ method: "CARD", amount: 12.5 }],
+        returnLines: none,
+      }).methodLabel,
+    ).toBe("Card $12.50");
+    expect(
+      reprint({
+        methods: [],
+        tenderPaid: 12.5,
+        tenderMethods: [
+          { method: "CASH", amount: 10 },
+          { method: "CARD", amount: 2.5 },
+        ],
+        returnLines: none,
+      }).methodLabel,
+    ).toBe("Cash $10.00 + Card $2.50");
+  });
+
+  it("the carrier order of another sale's INLINE return: no return line, and Paid adds up to the tenders", () => {
+    const m = reprint({
+      methods: [
+        { method: "CASH", amount: 7 },
+        { method: "STORE_CREDIT", amount: 5.5 },
+      ],
+      tenderPaid: 12.5,
+      tenderMethods: [
+        { method: "CASH", amount: 7 },
+        { method: "STORE_CREDIT", amount: 5.5 },
+      ],
+      returnLines: none,
+    });
+    expect([m.returned, m.refunded, m.creditKept]).toEqual([null, null, null]);
+    expect(m.returnPending).toBe(false);
+    expect(m.methodLabel).toBe("Cash $7.00 + Store credit $5.50");
+    expect(m.paid).toBe(12.5);
+    expect(m.balanceDue).toBe(0);
+  });
+
+  it("(d)(e)(f) a store-credit tender the server did not prove is the sale's own return stays Store credit", () => {
+    const m = reprint({
+      methods: [{ method: "STORE_CREDIT", amount: 12.5 }],
+      tenderPaid: 12.5,
+      tenderMethods: [{ method: "STORE_CREDIT", amount: 12.5 }],
+      returnLines: none,
+    });
+    expect(m.methodLabel).toBe("Store credit $12.50");
+    expect(m.paid).toBe(12.5);
+    expect(m.returned).toBeNull();
+  });
+
+  it("an on-account sale whose only credit is its own return stays On account with a Balance due", () => {
+    const m = reprint({
+      paid: 6.25,
+      balanceDue: 6.25,
+      methods: [{ method: "STORE_CREDIT", amount: 6.25 }],
+      tenderPaid: 0,
+      tenderMethods: [],
+      returnLines: { ...none, applied: 6.25 },
+    });
+    expect(m.onAccount).toBe(true);
+    expect(m.methodLabel).toBeNull();
+    expect(m.showPaid).toBe(false);
+    expect(m.showBalance).toBe(true);
+    expect(m.balanceDue).toBe(6.25);
+    expect(m.returned).toBe(6.25);
+  });
+
+  it("(g) an old server (none of the new fields): master's reading, byte for byte, with nothing new on the model", () => {
+    const m = reprint({
+      paid: 6.25,
+      balanceDue: 6.25,
+      methods: [{ method: "STORE_CREDIT", amount: 6.25 }],
+    });
+    expect(m.methodLabel).toBe("Store credit");
+    expect(m.paid).toBe(6.25);
+    expect(m.showPaid).toBe(true);
+    expect(m.onAccount).toBe(false);
+    expect(m.showBalance).toBe(true);
+    expect(m.balanceDue).toBe(6.25);
+    for (const key of ["returned", "refunded", "creditKept", "creditUsed", "returnPending"]) {
+      expect(key in m).toBe(false);
+    }
+    // a multi-tender old row keeps master's label-only join
+    expect(
+      reprint({
+        methods: [
+          { method: "CASH", amount: 5 },
+          { method: "CARD", amount: 7.5 },
+        ],
+      }).methodLabel,
+    ).toBe("Cash + Card");
+  });
+
+  it("a split present without tenderMethods reads the row's methods (never throws)", () => {
+    const m = reprint({ methods: [{ method: "CASH", amount: 12.5 }], tenderPaid: 12.5 });
+    expect(m.methodLabel).toBe("Cash $12.50");
+    expect(m.paid).toBe(12.5);
   });
 });

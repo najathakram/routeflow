@@ -25,6 +25,7 @@ export const API_ERROR_CODES = {
   INVOICE_STALE: "INVOICE_STALE",
   ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   ORDER_INVOICE_SETTLE_FAILED: "ORDER_INVOICE_SETTLE_FAILED",
+  DELIVERY_DATE_IN_PAST: "DELIVERY_DATE_IN_PAST",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
   CODE_TAKEN: "CODE_TAKEN",
@@ -46,6 +47,9 @@ export const API_ERROR_CODES = {
   FAMILY_NOT_PRICEABLE: "FAMILY_NOT_PRICEABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",
   FAMILY_NOT_FOUND: "FAMILY_NOT_FOUND",
+  IMPORT_FAMILY_PRICING_ON: "IMPORT_FAMILY_PRICING_ON",
+  IMPORT_FAMILY_TOO_MANY_ROWS: "IMPORT_FAMILY_TOO_MANY_ROWS",
+  IMPORT_JOB_FAILED: "IMPORT_JOB_FAILED",
   /** 409 from DELETE /products/bulk and /products/clear-all: a unique violation while deleting; nothing was deleted, reload and retry. */
   PRODUCT_DELETE_CONFLICT: "PRODUCT_DELETE_CONFLICT",
   /** 409 from PATCH/DELETE /products/:id: a family still has ACTIVE variants; body carries `variantCount`. Resend with `confirmCascade: true` to deactivate them with it. */
@@ -130,7 +134,12 @@ export const API_ERROR_CODES = {
   MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
   ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
   ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
+  /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
+  ORDER_PD_NEEDS_QUANTITIES: "ORDER_PD_NEEDS_QUANTITIES",
+  /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
+  ORDER_DELIVERY_QUANTITIES_MISSING: "ORDER_DELIVERY_QUANTITIES_MISSING",
   ORDER_BILLING_CHANGED: "ORDER_BILLING_CHANGED",
+  UNVOID_ORDER_CANCELLED: "UNVOID_ORDER_CANCELLED",
   ORDER_EDIT_WOULD_OVERPAY: "ORDER_EDIT_WOULD_OVERPAY",
   FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
@@ -187,6 +196,12 @@ export const API_ERROR_CODES = {
   PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
   SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
   PO_LINK_BROKEN: "PO_LINK_BROKEN",
+  BILL_NEEDS_A_LINE: "BILL_NEEDS_A_LINE",
+  BILL_NOT_EDITABLE: "BILL_NOT_EDITABLE",
+  BILL_PO_SUPPLIER_LOCKED: "BILL_PO_SUPPLIER_LOCKED",
+  BILL_NEVER_RECEIVED: "BILL_NEVER_RECEIVED",
+  BILL_TAX_UNKNOWN: "BILL_TAX_UNKNOWN",
+  RECEIVE_EXCEEDS_OUTSTANDING: "RECEIVE_EXCEEDS_OUTSTANDING",
   AI_KEY_INVALID: "AI_KEY_INVALID",
   AI_SCAN_REJECTED: "AI_SCAN_REJECTED",
   AI_UNAVAILABLE: "AI_UNAVAILABLE",
@@ -262,6 +277,8 @@ export const API_ERROR_CODES = {
   HANDOFF_ROLE_NOT_ALLOWED: "HANDOFF_ROLE_NOT_ALLOWED",
   REGULATED_AUTH_REQUIRED: "REGULATED_AUTH_REQUIRED",
   WALLET_LOCK_BUSY: "WALLET_LOCK_BUSY",
+  /** An advance payment can only be applied to an invoice of its own customer (customers). 400. */
+  ADVANCE_CUSTOMER_MISMATCH: "ADVANCE_CUSTOMER_MISMATCH",
   PROMOTION_ZERO_PRICE: "PROMOTION_ZERO_PRICE",
   UNEXPLAINED_DIFFS: "UNEXPLAINED_DIFFS",
   INTAKE_ANSWERS_INVALID: "INTAKE_ANSWERS_INVALID",
@@ -356,6 +373,31 @@ export const API_ERROR_CODES = {
    * A definitive answer (unlike a timeout): the clerk may ring the sale again with a new key.
    */
   COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
+  /**
+   * 404 from GET /invoices/payments/by-key/:key (SA-824): NO payment, advance or invoice payment is recorded
+   * under this Idempotency-Key in this tenant YET. NOT definitive: a payment may still be in flight, so the
+   * dialog never releases on it (SA-824 race ruling 5); only POST …/resolve (found | tombstoned) releases.
+   */
+  PAYMENT_KEY_NOT_FOUND: "PAYMENT_KEY_NOT_FOUND",
+  /**
+   * 409 from the customer money-in writers (POST /invoices/payments/record, POST /invoices/:id/payments,
+   * POST /customers/:id/advance-payments) on an Idempotency-Key that "Check payment status" already resolved
+   * to a TOMBSTONE (SA-824 race ruling 2): nothing was recorded under the key and NOTHING was written by this
+   * request. Definitive: the dialog releases the key and starts a new payment.
+   */
+  PAYMENT_KEY_RESOLVED: "PAYMENT_KEY_RESOLVED",
+  /**
+   * 409 from POST /invoices/payments/by-key/:key/resolve (SA-824 race ruling 3) when the resolve waited the
+   * full lock timeout behind an UNCOMMITTED payment under the same key (or meets a key that is claimed and not
+   * yet completed). NOT an answer: the payment may still commit. Retryable; the dialog keeps the key locked.
+   */
+  PAYMENT_KEY_IN_FLIGHT: "PAYMENT_KEY_IN_FLIGHT",
+  /**
+   * The `reason` of the 409 IDEMPOTENCY_KEY_CONFLICT the customer money-in writers send when an Idempotency-Key
+   * already recorded a DIFFERENT payment request (SA-824). It proves a payment may already exist under the key.
+   * Thrown by the server and matched by the clients (`isPaymentKeyConflict`) through this ONE constant.
+   */
+  PAYMENT_MISMATCH: "PAYMENT_MISMATCH",
   /**
    * 409 from GET /orders/counter-sale/by-key/:key: the sale's PENDING or DELIVERED order exists but has NO invoice
    * rows at all (a half-written sale: the first attempt stopped before the invoice step). Re-POST with the same
@@ -585,11 +627,34 @@ export const API_ERROR_CODES = {
   /** 409 from POST /products/:productId/prices/undo: that audit row is not a price save of this product, or it was already undone. */
   PRICE_UNDO_UNAVAILABLE: "PRICE_UNDO_UNAVAILABLE",
   /**
+   * 400 from POST /platform-admin/tenants/:id/business-capabilities (and its /preview) when no capability is ticked
+   * (BO-04): at least one of Delivery, Shipping or Counter is needed. Fixed body; nothing was written.
+   */
+  BUSINESS_CAPABILITIES_EMPTY: "BUSINESS_CAPABILITIES_EMPTY",
+  /**
    * 503 from every server-priced order path (buyer checkout, standing orders, returns, order edits) when the customer has
    * typed unit prices but the units_prices_v2 flag could not be read (the override or plan lookup failed). Retryable: nothing
    * was written, so the caller never gets the tier price instead of the customer's typed price.
    */
   CUSTOMER_PRICES_UNAVAILABLE: "CUSTOMER_PRICES_UNAVAILABLE",
+  /**
+   * 409 from PATCH /drafts/:id (SA-817 A): the request's `expectedUpdatedAt` is not the draft's current `updatedAt`, so another device
+   * changed it after this client's last sync. Nothing was written. The body carries `current` (the server's version); the client keeps
+   * BOTH ("Keep this one or open the other?"), never overwrites.
+   */
+  DRAFT_CHANGED: "DRAFT_CHANGED",
+  /**
+   * 409 from void / revert-to-draft / delete (and a per-bill `skipped` entry of the bulk delete) of a vendor bill that still carries CASH
+   * payments (B288, SA-814 R5-3). Body carries `amount` (the rounded cash total). Nothing was written; move the payments to a supplier
+   * credit first (POST /vendor-bills/:id/payments/:paymentId/move-to-credit).
+   */
+  BILL_HAS_PAYMENTS: "BILL_HAS_PAYMENTS",
+  /** 409 from move-to-credit: the payment is a draw of supplier credit (void or delete hands it back), not cash. */
+  BILL_PAYMENT_NOT_CASH: "BILL_PAYMENT_NOT_CASH",
+  /** 409 from move-to-credit: the bill has no supplier, so there is no account to hold the credit. */
+  BILL_PAYMENT_NO_SUPPLIER: "BILL_PAYMENT_NO_SUPPLIER",
+  /** 400 from PUT /platform-admin/app-links: a link is not an https URL with a host; body carries `field`. */
+  APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

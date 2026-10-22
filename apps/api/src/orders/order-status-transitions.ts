@@ -12,6 +12,13 @@ import type { OrderStatus } from "@prisma/client";
  * already make them staff-only — CUSTOMER may only cancel, DRIVER may only
  * confirm. Mirrored EXACTLY by `apps/mobile/lib/order-status-flow.ts`.
  */
+/**
+ * SA-814h (B692): DELIVERED -> CONFIRMED stays legal. Its required reason (see `assertOrderStatusTransition`) is
+ * appended to the order's notes (the status history) by `buildStatusUpdateData`, and the reopened order is not
+ * cancelled blind: the cancel's delivery-state guard reads the lines under the lock. PARTIALLY_DELIVERED ->
+ * OUT_FOR_DELIVERY is the one step back that IS guarded (a legacy row with no quantities cannot leave PD,
+ * `leavePartialDeliveryInTx`).
+ */
 export const ORDER_STATUS_TRANSITIONS: Record<string, string[]> = {
   DRAFT: ["PENDING", "CANCELLED"],
   PENDING: ["CONFIRMED", "CANCELLED", "DRAFT"],
