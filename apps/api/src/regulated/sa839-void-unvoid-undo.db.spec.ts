@@ -407,6 +407,24 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
     expect(await lineSum(s.itemId, { returnId: r1 })).toEqual(ZERO);
   });
 
+  it("R12 (B693): unvoid when the owning order is CANCELLED is a 409 and writes no row", async () => {
+    const s = await seedSale();
+    await as(() => invoices.voidInvoice(s.invoiceId));
+    await prisma.order.update({ where: { id: s.orderId }, data: { status: "CANCELLED" } });
+    const before = await prisma.regulatedSalesLedger.count({ where: { invoiceId: s.invoiceId } });
+
+    await expect(as(() => invoices.unvoidInvoice(s.invoiceId))).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "UNVOID_ORDER_CANCELLED" }),
+    });
+    expect(await invoiceStatus(s.invoiceId)).toBe("VOID");
+    expect(await prisma.regulatedSalesLedger.count({ where: { invoiceId: s.invoiceId } })).toBe(
+      before,
+    );
+    const line = await prisma.orderItem.findUnique({ where: { id: s.orderItemId } });
+    expect(Number(line!.invoicedQty)).toBe(0);
+  });
+
   it("R14: a credit-note void AFTER the invoice void (the note capped APPLIED by the void) leaves the line at 0", async () => {
     const s = await seedSale();
     seq += 1;

@@ -209,7 +209,7 @@ import { lockRowsNoWait } from "../common/db-locks";
 import { counterPay, type CounterPayOpts } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { planInvoicedQtyAdjustment } from "./unvoid-billing-claim";
-import { UNVOID_REFUSAL_COPY } from "./unvoid-billing-refusal";
+import { UNVOID_REFUSAL_COPY, assertUnvoidOrderNotCancelled } from "./unvoid-billing-refusal";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
@@ -4159,6 +4159,7 @@ export class InvoicesService {
           code: API_ERROR_CODES.ORDER_BILLING_CHANGED,
           message: "The invoice changed while it was being restored. Refresh and try again.",
         });
+      await assertUnvoidOrderNotCancelled(tx, inv.orderId); // B693: 409 before any write
       // B299 / SA-814 R4-5: the re-claim runs FIRST and is not clamped - if another invoice now bills these
       // goods (or the line is CANCELLED) it throws 409 ORDER_BILLING_CHANGED before the status flip writes.
       await this.adjustInvoicedQtyForInvoice(tx, id, inv.orderId, 1);

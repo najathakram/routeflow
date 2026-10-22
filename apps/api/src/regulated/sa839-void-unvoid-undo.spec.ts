@@ -314,6 +314,20 @@ describe("SA-839: regulated ledger void / unvoid / undo (unit lane, real ledger)
     expect(w.ledger).toEqual(before);
   });
 
+  it("R12 (B693): unvoid when the owning order is CANCELLED is a 409 and writes no row", async () => {
+    w.seedSale({ orderStatus: "CANCELLED" });
+    await voidInv();
+    const before = w.ledger.length;
+
+    await expect(unvoid()).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "UNVOID_ORDER_CANCELLED" }),
+    });
+    expect(w.invoiceStatus()).toBe("VOID");
+    expect(w.ledger).toHaveLength(before);
+    expect(w.db.line("oi-1").invoicedQty).toBe(0);
+  });
+
   it("R13: SALE 2026-09, void 2026-10 (GENERATED filing), unvoid 2026-11: rows only in 2026-11, amendedPeriod 2026-10", async () => {
     w.seedSale();
     w.addFiling("2026-10", "GENERATED");
