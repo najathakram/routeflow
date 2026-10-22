@@ -8,6 +8,16 @@ jest.mock("../storage/compress.util", () => ({
   compressDocument: jest.fn(),
 }));
 
+// Row 498: a payment with a reference runs under the `payment-ref` advisory lock (a real pooled connection); this
+// unit spec has no database, so the lock is a pass-through here (its behaviour is payment-ref-dedupe.writers.spec.ts).
+jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
+  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => unknown) => ({
+    acquired: true,
+    value: await fn(),
+  })),
+}));
+
 import { Test, TestingModule } from "@nestjs/testing";
 import { InvoicesService } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";

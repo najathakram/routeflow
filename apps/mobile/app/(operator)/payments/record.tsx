@@ -27,7 +27,10 @@ import {
 } from "../../../lib/payment-methods";
 import { roundMoney } from "@routeflow/pricing";
 import { productImageFile } from "../../../lib/product-image";
+import { chooseAction } from "../../../lib/confirm";
 import { showToast } from "../../../lib/toast";
+import { useAuthStore } from "../../../lib/auth-store";
+import { duplicateRefChoice, duplicateRefPrompt } from "../../../lib/duplicate-payment-ref";
 import { fmtCalendarDate } from "../../../lib/format-date";
 import { hasUnsavedPayment } from "../../../lib/discard-guard";
 import { isOpenInvoiceStatus } from "../../../lib/invoices-logic";
@@ -201,6 +204,7 @@ function PaymentForm({
   const [paidAt, setPaidAt] = useState("");
   const [settledAt, setSettledAt] = useState("");
   const [asDraft, setAsDraft] = useState(false);
+  const role = useAuthStore((s) => s.user?.role);
   const [photos, setPhotos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [allocs, setAllocs] = useState<Record<string, number | null>>({});
@@ -243,7 +247,7 @@ function PaymentForm({
     }
   };
 
-  const submit = () => {
+  const submit = (recordAnyway = false) => {
     if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
     if (amountNum <= 0) {
       setError("Enter a positive amount received.");
@@ -284,6 +288,7 @@ function PaymentForm({
         ...(notes.trim() ? { notes: notes.trim() } : {}),
         status: asDraft ? "DRAFT" : "PAID",
         submitKey: paymentKey,
+        ...(recordAnyway ? { recordAnyway: true } : {}),
       },
       {
         onSuccess: (res) => {
@@ -298,10 +303,19 @@ function PaymentForm({
           }
           onDone();
         },
-        onError: (e: any) =>
+        onError: (e: any) => {
+          // Row 498: a duplicate reference names the existing payment; staff may "Record anyway".
+          const dup = duplicateRefPrompt(e, role);
+          if (dup) {
+            const c = duplicateRefChoice(dup, () => submit(true));
+            chooseAction(c.title, c.message, c.actions);
+            setError(dup.message); // review I1: also inline, so the sentence is never only in a dialog
+            return;
+          }
           showToast(
             paymentKeyRefusalCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
-          ),
+          );
+        },
       },
     );
   };
@@ -323,7 +337,7 @@ function PaymentForm({
         asDraft,
       })}
       submitDisabled={statusCheck.unknown}
-      onSubmit={submit}
+      onSubmit={() => submit()}
     >
       <PaymentStatusNotice status={statusCheck} />
       <Pressable

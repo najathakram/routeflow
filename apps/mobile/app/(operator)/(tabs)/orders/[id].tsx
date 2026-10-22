@@ -53,7 +53,7 @@ import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
 import { shipmentSaveDecision } from "@routeflow/types/shipment-save";
 import { lineBackorderPieces } from "@routeflow/types/order-line-backorder";
 import { useOfflineQueue } from "../../../../store/offlineQueue";
-import { alertInfo, confirm } from "../../../../lib/confirm";
+import { alertInfo, chooseAction, confirm } from "../../../../lib/confirm";
 import { invoiceLineQtyText } from "@routeflow/pricing";
 import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../../lib/invoice-line-display";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
@@ -85,6 +85,7 @@ import {
   POS_READY_FAILED,
   pickupCompleteErrorCopy,
   decidePickupResponse,
+  withPickupRecordAnyway,
   posHandOverBalance,
   posLiveInvoices,
   posMoveConfirm,
@@ -98,6 +99,8 @@ import {
   type PosAction,
 } from "../../../../lib/pos-mode";
 import { PosHandOverSheet } from "../../../../components/PosHandOverSheet";
+import { useAuthStore } from "../../../../lib/auth-store";
+import type { PickupCompleteRequest } from "@routeflow/types";
 import { useCustomer } from "../../../../lib/api/customers";
 import {
   releasePickupKey,
@@ -141,6 +144,7 @@ function statusPill(status: string): {
 export default function OrderDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const staffRole = useAuthStore((s) => s.user?.role); // SA-837b: who may "Record anyway"
   const { data: order, isLoading, isError, refetch } = useAdminOrder(id ?? "");
   // #2420: before any early return (rules of hooks) — null until the add-on resolves allowed.
   const recordReturn = useRecordReturn({
@@ -1298,15 +1302,35 @@ export default function OrderDetailScreen() {
         submitting={pickupMut.isPending}
         error={handOverError}
         onCancel={() => setHandOverOpen(false)}
-        onSubmit={(body) =>
+        onSubmit={function submitHandOver(body: PickupCompleteRequest) {
           pickupMut.mutate(body, {
             onSuccess: (res) => {
-              const d = decidePickupResponse(res);
+              const d = decidePickupResponse(res, staffRole);
               if (d.kind === "retry-tender") {
                 // Committed but unpaid: back to the tender step, same Idempotency-Key.
                 setHandOverOwed(d.owed);
                 setHandOverError(d.message);
                 refetch();
+                return;
+              }
+              if (d.kind === "duplicate-ref") {
+                // SA-837b item 3: the payment repeats an earlier one's reference. Same key; staff may record it anyway.
+                setHandOverOwed(d.owed);
+                setHandOverError(d.message);
+                refetch();
+                chooseAction(
+                  d.title,
+                  d.message,
+                  d.recordAnywayLabel
+                    ? [
+                        { label: "Cancel", style: "cancel" },
+                        {
+                          label: d.recordAnywayLabel,
+                          onPress: () => submitHandOver(withPickupRecordAnyway(body)),
+                        },
+                      ]
+                    : [{ label: "Cancel", style: "cancel" }],
+                );
                 return;
               }
               releasePickupKey(order.id);
@@ -1316,8 +1340,8 @@ export default function OrderDetailScreen() {
               refetch();
             },
             onError: (e) => setHandOverError(pickupCompleteErrorCopy(e)),
-          })
-        }
+          });
+        }}
       />
       <ReasonSheet
         visible={reasonFor !== null}

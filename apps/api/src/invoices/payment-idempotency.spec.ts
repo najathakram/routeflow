@@ -1,3 +1,4 @@
+import type { PaymentMethod } from "@prisma/client";
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { isPaymentKeyConflict } from "@routeflow/types/payment-submit-key";
 import { optionalIdempotencyKey } from "../orders/counter-sale/required-idempotency-key";
@@ -36,7 +37,7 @@ describe("SA-824 payment Idempotency-Key helpers", () => {
     const base: {
       customerId: string;
       totalAmount: number;
-      method: string;
+      method: PaymentMethod;
       paidAt: string;
       reference: string;
       allocations: Array<{ invoiceId: string; amount: number }>;
@@ -46,7 +47,7 @@ describe("SA-824 payment Idempotency-Key helpers", () => {
     } = {
       customerId: "c1",
       totalAmount: 100,
-      method: "CASH",
+      method: "CASH" as PaymentMethod,
       paidAt: "2026-10-20T15:00:00.000Z",
       reference: "r1",
       allocations: [
@@ -81,7 +82,7 @@ describe("SA-824 payment Idempotency-Key helpers", () => {
     });
 
     it("each writer names its own scope", () => {
-      const dto = { amount: 10, method: "CASH" };
+      const dto = { amount: 10, method: "CASH" as PaymentMethod };
       expect(standalonePaymentKey(base).scope).toBe("STANDALONE_PAYMENT");
       expect(invoicePaymentKey("i1", dto).scope).toBe("INVOICE_PAYMENT");
       expect(advancePaymentKey("c1", dto).scope).toBe("ADVANCE_PAYMENT");
@@ -109,7 +110,7 @@ describe("SA-824 payment Idempotency-Key helpers", () => {
     });
   });
   describe("withPaymentKey", () => {
-    const req = { invoiceId: "i1", amount: 10, method: "CASH" };
+    const req = { invoiceId: "i1", amount: 10, method: "CASH" as PaymentMethod };
     const depsWith = (row: unknown, executeRaw: jest.Mock = jest.fn()) => ({
       getTenantId: () => "t1",
       forTenant: () => ({ paymentIdempotencyKey: { findFirst: jest.fn().mockResolvedValue(row) } }),

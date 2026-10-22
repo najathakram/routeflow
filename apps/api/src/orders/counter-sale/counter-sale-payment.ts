@@ -18,6 +18,7 @@ export interface CounterPaymentInput {
   method: CounterPaymentMethod;
   amount?: number;
   reference?: string;
+  recordAnyway?: boolean;
   /** CHECK only: the date written on the check, YYYY-MM-DD (the DTO pins the shape). */
   checkDate?: string;
 }

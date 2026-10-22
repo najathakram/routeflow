@@ -9,6 +9,8 @@ import { z } from "zod";
 import { ArrowLeft, Download, Plus, CheckCircle2, CreditCard, Loader2 } from "lucide-react";
 import { Badge, Button, Card, Modal, Input, Select, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useAuth } from "@/lib/auth-context";
+import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import {
   useTransaction,
   useRecordPayment,
@@ -135,6 +137,7 @@ export default function TransactionDetailPage() {
   const transactionId = params.transactionId as string;
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
+  const { user } = useAuth();
   const { data: txn, isLoading, isError } = useTransaction(transactionId);
   const recordPayment = useRecordPayment();
   const downloadInvoice = useDownloadInvoice();
@@ -215,10 +218,22 @@ export default function TransactionDetailPage() {
 
   const localStatus: PaymentStatus = bal <= 0 ? "PAID" : paid > 0 ? "PARTIAL" : "UNPAID";
 
-  const handleRecord = (data: PaymentFormValues) => {
+  const handleRecord = (data: PaymentFormValues, recordAnyway = false) => {
     recordPayment.mutate(
-      { id: txn.id, amount: data.amount, method: data.method, reference: data.reference },
-      { onSuccess: () => setIsPaymentOpen(false) },
+      {
+        id: txn.id,
+        amount: data.amount,
+        method: data.method,
+        reference: data.reference,
+        ...(recordAnyway ? { recordAnyway: true } : {}),
+      },
+      {
+        onSuccess: () => setIsPaymentOpen(false),
+        // Row 498: a duplicate reference names the existing payment; staff may "Record anyway".
+        onError: (err) => {
+          toastDuplicatePaymentRef(err, toast, user?.role, () => handleRecord(data, true));
+        },
+      },
     );
   };
 
