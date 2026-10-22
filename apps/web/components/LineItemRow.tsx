@@ -91,6 +91,14 @@ export interface LineItemRowProps {
   /** Last-scanned highlight ring (scanner-redesign-spec.md §4.1/§5.1) — unused by
    *  `CreateOrderModal`, which never passes it; reserved for the scan screen. */
   highlighted?: boolean;
+  /**
+   * Q09: whether this is the line the operator is working on. Only the active line shows the "Tap to change" hint (the
+   * pencil already says "editable" on every line). Omitted = always active, so a caller with no notion of an
+   * active line (the scan screen, other pages) keeps the hint it always had.
+   */
+  active?: boolean;
+  /** Q09: the operator focused or tapped this line - the caller makes it the active one. */
+  onActivate?: () => void;
 
   onQtyDelta: (delta: number) => void;
   onSetBoxes: (value: number) => void;
@@ -180,6 +188,8 @@ export function LineItemRow({
   priceHistoryEntry,
   customerPriceHistory,
   highlighted,
+  active = true,
+  onActivate,
   onQtyDelta,
   onSetBoxes,
   onSetPieces,
@@ -201,7 +211,13 @@ export function LineItemRow({
   rowRef,
 }: LineItemRowProps) {
   const qtyLocked = !!pendingUnit;
+  // F08: set when a typed quantity below 1 was raised to 1, so the row says so (cleared by the next valid quantity).
+  const [qtyBelowMin, setQtyBelowMin] = React.useState(false);
+  const qtyNoteId = React.useId();
   const w = unitWords({ packLabel: li.packLabel, baseUnitLabel: li.baseLabel });
+  // F15/Q12: a pack line's price is per PACK, so its suffix is the same pack word as the toggle and the qty
+  // (not the product's stored unit, e.g. "case" beside a "Box" toggle). A named-unit or single-unit line keeps its own unit.
+  const priceUnit = li.unitsPerBox && li.unitsPerBox > 1 && !li.unitLabel ? w.pack.lower : li.unit;
   const historyButton = customerPriceHistory && !li.isUnlisted && (
     <PriceHistoryButton
       customerId={customerPriceHistory.customerId}
@@ -218,6 +234,8 @@ export function LineItemRow({
   return (
     <li
       ref={rowRef}
+      onFocusCapture={onActivate}
+      onPointerDownCapture={onActivate}
       className={cn(
         // B565: under `sm` the row is a 2-column grid (info | actions, then qty | total) so
         // the boxed controls no longer squeeze the info column to ~40px at 390px. From `sm`
@@ -270,77 +288,90 @@ export function LineItemRow({
         <div className="col-start-1 row-start-1 min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-navy">{li.productName}</p>
           {/* Price display with special/discount indicators */}
+          {/* Q09: the price, its pencil and the history icon share ONE row (history used to sit alone on the next row). The
+              tap-to-edit target is only the price + pencil, so the history button (a sibling) never opens the editor. */}
           <div
-            className={cn(
-              "mt-0.5 flex flex-wrap items-center gap-1.5",
-              onTapPrice ? "cursor-pointer" : "",
-            )}
-            onClick={qtyLocked ? undefined : onTapPrice}
-            aria-disabled={onTapPrice && qtyLocked ? true : undefined}
-            role={onTapPrice ? "button" : undefined}
-            tabIndex={onTapPrice ? 0 : undefined}
+            data-testid="line-price-row"
+            className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5"
           >
-            {li.priceType === "SPECIAL" ? (
-              <>
-                <span className="text-xs text-navy/70 line-through">
-                  ${li.listPrice.toFixed(2)}
-                </span>
-                <span className="text-xs font-medium text-emerald-600">
-                  ${li.unitPrice.toFixed(2)} / {li.unit}
-                </span>
-                <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                  Special price
-                </span>
-              </>
-            ) : li.priceType === "DISCOUNTED" ? (
-              <>
-                <span className="text-xs text-navy/70 line-through">
-                  ${li.listPrice.toFixed(2)}
-                </span>
-                <span className="text-xs font-medium text-amber-600">
-                  ${li.unitPrice.toFixed(2)} / {li.unit}
-                </span>
-                <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
-                  Discounted
-                </span>
-              </>
-            ) : li.priceType === "MANUAL" ? (
-              <>
-                {/* Upsell (sold above list). Operator-only green badge;
+            <div
+              className={cn(
+                "flex flex-wrap items-center gap-1.5",
+                onTapPrice ? "cursor-pointer" : "",
+              )}
+              onClick={qtyLocked ? undefined : onTapPrice}
+              aria-disabled={onTapPrice && qtyLocked ? true : undefined}
+              role={onTapPrice ? "button" : undefined}
+              tabIndex={onTapPrice ? 0 : undefined}
+            >
+              {li.priceType === "SPECIAL" ? (
+                <>
+                  <span className="text-xs text-navy/70 line-through">
+                    ${li.listPrice.toFixed(2)}
+                  </span>
+                  <span className="text-xs font-medium text-emerald-600">
+                    ${li.unitPrice.toFixed(2)} / {priceUnit}
+                  </span>
+                  <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                    Special price
+                  </span>
+                </>
+              ) : li.priceType === "DISCOUNTED" ? (
+                <>
+                  <span className="text-xs text-navy/70 line-through">
+                    ${li.listPrice.toFixed(2)}
+                  </span>
+                  <span className="text-xs font-medium text-amber-600">
+                    ${li.unitPrice.toFixed(2)} / {priceUnit}
+                  </span>
+                  <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
+                    Discounted
+                  </span>
+                </>
+              ) : li.priceType === "MANUAL" ? (
+                <>
+                  {/* Upsell (sold above list). Operator-only green badge;
                     no strikethrough — the base is never shown to the buyer. */}
-                <span className="text-xs font-medium text-emerald-600">
-                  ${li.unitPrice.toFixed(2)} / {li.unit}
+                  <span className="text-xs font-medium text-emerald-600">
+                    ${li.unitPrice.toFixed(2)} / {priceUnit}
+                  </span>
+                  <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                    Upsell
+                  </span>
+                </>
+              ) : (
+                <span className="text-xs text-navy/70">
+                  ${li.unitPrice.toFixed(2)} / {priceUnit}
                 </span>
-                <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                  Upsell
-                </span>
-              </>
-            ) : (
-              <span className="text-xs text-navy/70">
-                ${li.unitPrice.toFixed(2)} / {li.unit}
-              </span>
-            )}
-            {onTapPrice && (
+              )}
+              {onTapPrice && (
+                <>
+                  <Pencil aria-label="Change price" className="h-3 w-3 text-navy/50" />
+                  {active && (
+                    <span className="text-[10px] text-navy/50 underline sm:hidden">
+                      Tap to change
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+            {historyButton && (
               <>
-                <Pencil aria-label="Change price" className="h-3 w-3 text-navy/50" />
-                <span className="text-[10px] text-navy/50 underline sm:hidden">Tap to change</span>
+                {historyButton}
+                <span className="hidden whitespace-nowrap text-[10px] text-navy/60 sm:inline">
+                  Price history
+                </span>
+                <PriceChips
+                  entry={customerPriceHistory?.summary?.[li.productId]}
+                  unitHint={
+                    li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)
+                  }
+                  packHint={li.unitsPerBox ?? null}
+                  onUsePrice={customerPriceHistory!.onUsePrice}
+                />
               </>
             )}
           </div>
-          {/* Price history: its own row so it shows in EVERY configuration — the price input only
-              renders without `onTapPrice`, and both real callers pass it (tap-to-edit price). */}
-          {historyButton && (
-            <div className="mt-0.5 flex items-center gap-1 text-[10px] text-navy/60">
-              {historyButton}
-              <span className="hidden whitespace-nowrap sm:inline">Price history</span>
-              <PriceChips
-                entry={customerPriceHistory?.summary?.[li.productId]}
-                unitHint={li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)}
-                packHint={li.unitsPerBox ?? null}
-                onUsePrice={customerPriceHistory!.onUsePrice}
-              />
-            </div>
-          )}
           {/* Price per piece (when product has box packaging) */}
           {li.unitsPerBox && li.unitsPerBox > 1 && (
             <div className="mt-0.5 text-[10px] text-navy/70">
@@ -512,13 +543,17 @@ export function LineItemRow({
               ? "Line quantity controls, locked while the selling unit loads"
               : "Line quantity controls"
           }
-          className="col-start-1 row-start-2 m-0 flex min-w-0 items-center gap-1 border-0 p-0"
+          className="col-start-1 row-start-2 m-0 flex min-w-0 flex-wrap items-center gap-1 border-0 p-0"
         >
+          {/* Q13: 24 px at lg+ (a pointer), 44 px below lg (390 phone and 768 tablet are touch). */}
           <button
             type="button"
-            onClick={() => onQtyDelta(-1)}
+            onClick={() => {
+              setQtyBelowMin(false);
+              onQtyDelta(-1);
+            }}
             disabled={li.qty <= 1}
-            className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+            className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors max-lg:h-11 max-lg:w-11 max-lg:text-lg"
           >
             −
           </button>
@@ -529,10 +564,16 @@ export function LineItemRow({
               inputMode="numeric"
               min={1}
               value={li.qty}
-              onChange={(e) => onSetQty(parseInt(e.target.value, 10))}
+              onChange={(e) => {
+                const typed = parseInt(e.target.value, 10);
+                // F08: a typed 0 (or less) is raised to 1 by the order; say so. An emptied field (NaN) is mid-edit.
+                setQtyBelowMin(Number.isFinite(typed) && typed < 1);
+                onSetQty(typed);
+              }}
               onFocus={(e) => e.target.select()}
               aria-label="Quantity"
-              className="h-6 w-10 rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              aria-describedby={qtyBelowMin ? qtyNoteId : undefined}
+              className="h-6 w-10 max-lg:h-11 max-lg:w-14 max-lg:text-base rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             />
           ) : (
             <span className="w-8 text-center text-sm font-semibold text-navy">{li.qty}</span>
@@ -540,11 +581,23 @@ export function LineItemRow({
           <button
             type="button"
             disabled={qtyLocked}
-            onClick={() => onQtyDelta(1)}
-            className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised transition-colors"
+            onClick={() => {
+              setQtyBelowMin(false);
+              onQtyDelta(1);
+            }}
+            className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised transition-colors max-lg:h-11 max-lg:w-11 max-lg:text-lg"
           >
             +
           </button>
+          {qtyBelowMin && (
+            <p
+              id={qtyNoteId}
+              role="status"
+              className="basis-full text-[11px] leading-snug text-amber-700"
+            >
+              Quantity must be at least 1. Remove the line to drop it.
+            </p>
+          )}
         </fieldset>
       )}
       {/* Line total */}

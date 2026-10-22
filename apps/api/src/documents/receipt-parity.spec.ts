@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { join } from "path";
-import { roundMoney } from "@routeflow/pricing";
+import { formatReceiptMoney, roundMoney } from "@routeflow/pricing";
 import type { ReceiptModel } from "@routeflow/types";
 import {
   adjustmentLabel,
@@ -8,9 +8,14 @@ import {
   receiptModelFromOrder,
 } from "../../../web/lib/counter-receipt";
 import { buildCounterSaleResponse } from "../orders/counter-sale/counter-sale-readback";
-import { toTodaysSaleRow, type TodayOrderRecord } from "../orders/counter-sale/counter-sale-today";
-import { buildReceiptModel, type ReceiptOrderInput } from "./receipt-model";
+import {
+  toTodaysSaleRow,
+  type ReturnProvenance,
+  type TodayOrderRecord,
+} from "../orders/counter-sale/counter-sale-today";
+import { type ReceiptOrderInput, type ReceiptReturnData } from "./receipt-model";
 import { BRANDING, orderFixture } from "./receipt.fixtures";
+import { renderOrderReceipt } from "./render-order-receipt";
 
 /**
  * SA-762r / SA-751r (G1, G4): ONE receipt money model, ONE home for each figure. The same stored sale is read three ways, each
@@ -42,6 +47,8 @@ interface Pay {
   amount: string;
   /** a credit-note application: the note it applied (issued against this sale's invoice) */
   creditNoteId?: string;
+  /** the invoice that note was issued against; default this sale's own (`inv-1`) */
+  noteInvoice?: string;
 }
 interface Scenario {
   total: string;
@@ -57,7 +64,20 @@ interface Scenario {
   /** the sale's own returns, as the Today's-sales page query reads them (SA-838a) */
   returns?: TodayOrderRecord["returns"];
   /** the batched credit-note read's answer: note id -> status and PAID amount applied on any sale */
-  notes?: Record<string, { status: string; appliedAnywhere: number }>;
+  notes?: Record<
+    string,
+    {
+      status: string;
+      appliedAnywhere: number;
+      applications?: ReadonlyArray<{ amount: unknown; invoiceId: string | null }>;
+    }
+  >;
+  /** INLINE returns filed on OTHER orders, found by the batched read behind the payments' credit notes (SA-838 e) */
+  carried?: ReturnProvenance[];
+  /** false = a delivery order (default: a counter sale) */
+  counterSale?: boolean;
+  /** true = the reprint of an OLDER server: the row's tender split and return lines are not served (SA-838 g) */
+  oldServer?: boolean;
   tendered?: string | null;
   /** the stored cashier (`Order.soldBy.username`); omitted = a sale rung before soldById was stamped */
   cashier?: string;
@@ -84,6 +104,7 @@ function build(s: Scenario) {
     total: s.total,
     tax: s.tax,
     counterCashTendered: s.tendered ?? null,
+    counterSale: s.counterSale ?? true,
   });
   const order = {
     ...(s.lines ? { ...base, lineItems: s.lines } : base),
@@ -96,7 +117,9 @@ function build(s: Scenario) {
     method: p.method,
     amount: p.amount,
     status: "PAID",
-    ...(p.creditNoteId ? { creditNoteId: p.creditNoteId, creditNote: { invoiceId: "inv-1" } } : {}),
+    ...(p.creditNoteId
+      ? { creditNoteId: p.creditNoteId, creditNote: { invoiceId: p.noteInvoice ?? "inv-1" } }
+      : {}),
   }));
   const invoice = {
     id: "inv-1",
@@ -116,14 +139,29 @@ function build(s: Scenario) {
     payments,
   };
 
-  // the emailed receipt
-  const emailModel = buildReceiptModel(
+  // the emailed receipt: rendered end to end (the model AND the text/html the customer reads), from the SAME stored rows and the
+  // SAME batched reads the Today's-sales row gets (the receipt service reads them once)
+  const creditNotes = new Map(Object.entries(s.notes ?? {}));
+  const returnData: ReceiptReturnData = {
+    returns: s.returns ?? [],
+    carriedReturns: s.carried ?? [],
+    creditNotes,
+  };
+  const emailArgs = {
     order,
-    [invoice],
-    payments.map((p) => ({ ...p, invoiceId: "inv-1" })),
-    { ...BRANDING, configuredTaxPercent: configured, hideOriginalPrice: !!s.hide },
+    invoices: [invoice],
+    payments: payments.map((p) => ({ ...p, invoiceId: "inv-1" })),
+    branding: { ...BRANDING, configuredTaxPercent: configured, hideOriginalPrice: !!s.hide },
+  };
+  const rendered = renderOrderReceipt(
+    emailArgs.order,
+    emailArgs.invoices,
+    emailArgs.payments,
+    emailArgs.branding,
     ZONE,
+    returnData,
   );
+  const emailModel = rendered.model;
 
   // the Today's-sales row, then the reprint built from the row exactly as CounterTodaysSales hands it over
   const record = {
@@ -139,7 +177,7 @@ function build(s: Scenario) {
     invoices: [invoice],
     returns: s.returns ?? [],
   } as unknown as TodayOrderRecord;
-  const row = toTodaysSaleRow(record, configured, [], new Map(Object.entries(s.notes ?? {})));
+  const row = toTodaysSaleRow(record, configured, s.carried ?? [], creditNotes);
   const reprint = receiptModelFromOrder({
     cashier: row.cashierName,
     order: {
@@ -167,9 +205,13 @@ function build(s: Scenario) {
       balanceDue: row.balanceDue,
       methods: row.methods,
       // as CounterTodaysSales hands the row over: the server's tender split and return lines (SA-838a)
-      tenderPaid: row.tenderPaid,
-      tenderMethods: row.tenderMethods,
-      returnLines: row.returnLines,
+      ...(s.oldServer
+        ? {}
+        : {
+            tenderPaid: row.tenderPaid,
+            tenderMethods: row.tenderMethods,
+            returnLines: row.returnLines,
+          }),
       createdAt: row.createdAt,
       cashTendered: row.cashTendered,
       change: row.change,
@@ -200,7 +242,7 @@ function build(s: Scenario) {
     profile: { businessName: BRANDING.businessName, timezone: ZONE, hideOriginalPrice: !!s.hide },
     now: order.createdAt,
   });
-  return { emailModel, reprint, live, row, response };
+  return { emailModel, reprint, live, row, response, rendered, emailArgs };
 }
 
 describe("print / reprint / email carry one money model (SA-762r)", () => {
@@ -529,6 +571,370 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
         cents(reprint.total) - cents(reprint.paid) - cents(reprint.returned ?? 0),
       );
     }
+  });
+
+  describe("N1 (SA-838 + SA-838a): the emailed receipt prints exactly the reprint's lines", () => {
+    const money = formatReceiptMoney;
+    /** the rows below Total of the REPRINT, top to bottom, as CounterReceiptView prints them ("Label value"; info lines are label only) */
+    const reprintLines = (m: ReceiptModel): string[] => [
+      ...(m.methodLabel ? [`Payment method ${m.methodLabel}`] : []),
+      ...(m.showPaid ? [`Paid ${money(m.paid)}`] : []),
+      ...(m.returned ? [`Returned −${money(m.returned)}`] : []),
+      ...(m.refunded ? [`Refunded ${money(m.refunded)} (returned items)`] : []),
+      ...(m.creditKept ? [`Credit kept ${money(m.creditKept)} (returned items)`] : []),
+      ...(m.creditUsed ? [`Credit used ${money(m.creditUsed)} (returned items)`] : []),
+      ...(m.showBalance ? [`Balance due ${money(m.balanceDue)}`] : []),
+      ...(m.returnPending ? ["Return in progress"] : []),
+      ...(m.tendered != null ? [`Tendered ${money(m.tendered)}`] : []),
+      ...(m.change != null ? [`Change ${money(m.change)}`] : []),
+    ];
+    /** the rows below Total of the EMAIL's plain text ("Label: value" read as "Label value"; an info line has no value) */
+    const textLines = (r: { text: string }): string[] => {
+      const part = r.text
+        .split("\n\n")
+        .find((p) => p.split("\n").some((l) => l.startsWith("Total: ")));
+      const rows = (part ?? "").split("\n");
+      return rows
+        .slice(rows.findIndex((l) => l.startsWith("Total: ")) + 1)
+        .map((l) => l.replace(": ", " "));
+    };
+    /** the same rows read out of the email's HTML table (a label cell, then an optional value cell) */
+    const htmlLines = (r: { html: string }): string[] => {
+      const rows = [
+        ...r.html.matchAll(/<tr>\s*<td[^>]*>([^<]*)<\/td>\s*(?:<td[^>]*>([^<]*)<\/td>)?\s*<\/tr>/g),
+      ].map((m) => (m[2] === undefined ? m[1]! : `${m[1]} ${m[2]}`));
+      return rows.slice(rows.findIndex((l) => l.startsWith("Total ")) + 1);
+    };
+    /** the case: both surfaces print the pinned strings, and the email's html and text agree with its model */
+    const same = (b: ReturnType<typeof build>, pinned: string[]) => {
+      expect(reprintLines(b.reprint)).toEqual(pinned);
+      expect(textLines(b.rendered)).toEqual(pinned);
+      expect(htmlLines(b.rendered)).toEqual(pinned);
+      expect(reprintLines(b.emailModel)).toEqual(pinned);
+      expect(b.emailModel.onAccount).toBe(b.reprint.onAccount);
+    };
+    const refunded2 = ret({
+      status: "REFUNDED",
+      refundMethod: "EXTERNAL_REFUND",
+      refundedAt: new Date("2026-10-22T10:00:00Z"),
+      creditNoteId: null,
+    });
+    const cash = (amount: string): Pay => ({ method: "CASH", amount });
+    const note = (amount: string, over: Partial<Pay> = {}): Pay => ({
+      method: "CREDIT_NOTE",
+      amount,
+      creditNoteId: "cn-1",
+      ...over,
+    });
+    const inline = (over: Partial<ReturnProvenance> = {}): ReturnProvenance => ({
+      id: "r-inline",
+      creditNoteId: "cn-1",
+      orderId: "ord-b",
+      kind: "INLINE",
+      status: "REFUNDED",
+      refundMethod: "CREDIT_NOTE",
+      refundedAt: null,
+      items: [{ sourceOrderId: "ord-1", subtotal: "5.00", taxAmount: "0.50", categoryTax: null }],
+      ...over,
+    });
+
+    it("(1a) refunded: Cash $5.00 / Paid $5.00 / Refunded $2.50 (returned items) / Balance due $7.50", () => {
+      same(sale([cash("5.00")], [refunded2]), [
+        "Payment method Cash $5.00",
+        "Paid $5.00",
+        "Refunded $2.50 (returned items)",
+        "Balance due $7.50",
+      ]);
+    });
+
+    it("(1b) kept: Cash $5.00 / Paid $5.00 / Credit kept $2.50 (returned items) / Balance due $7.50", () => {
+      same(sale([cash("5.00")], [ret()], issued), [
+        "Payment method Cash $5.00",
+        "Paid $5.00",
+        "Credit kept $2.50 (returned items)",
+        "Balance due $7.50",
+      ]);
+    });
+
+    it("(1c) applied: Cash $5.00 / Paid $5.00 / Returned −$2.50 / Balance due $5.00 (the credit is no tender)", () => {
+      same(sale([cash("5.00"), note("2.50")], [ret()], appliedTo(2.5)), [
+        "Payment method Cash $5.00",
+        "Paid $5.00",
+        "Returned −$2.50",
+        "Balance due $5.00",
+      ]);
+    });
+
+    it("(2) pending: Cash $5.00 / Paid $5.00 / Balance due $7.50 / Return in progress (no Returned amount)", () => {
+      same(sale([cash("5.00")], [pending]), [
+        "Payment method Cash $5.00",
+        "Paid $5.00",
+        "Balance due $7.50",
+        "Return in progress",
+      ]);
+    });
+
+    it("SA-838 (a) on-account $12.50, $6.25 returned, $6.25 cash: Cash $6.25 / Paid $6.25 / Returned −$6.25", () => {
+      same(sale([cash("6.25"), note("6.25")], [ret({ creditSubtotal: "6.25" })], appliedTo(6.25)), [
+        "Payment method Cash $6.25",
+        "Paid $6.25",
+        "Returned −$6.25",
+      ]);
+    });
+
+    it("SA-838 (b) $5 advance + $7.50 cash, $2.50 refunded: Advance $5.00 + Cash $7.50 / Paid $12.50 / Refunded", () => {
+      same(
+        sale(
+          [
+            { method: "ADVANCE", amount: "5.00" },
+            { method: "CASH", amount: "7.50" },
+          ],
+          [refunded2],
+        ),
+        [
+          "Payment method Advance $5.00 + Cash $7.50",
+          "Paid $12.50",
+          "Refunded $2.50 (returned items)",
+        ],
+      );
+    });
+
+    it("SA-838 (c) paid fully from an advance, $3 kept: Advance $12.50 / Paid $12.50 / Credit kept $3.00", () => {
+      same(
+        sale([{ method: "ADVANCE", amount: "12.50" }], [ret({ creditSubtotal: "3.00" })], issued),
+        ["Payment method Advance $12.50", "Paid $12.50", "Credit kept $3.00 (returned items)"],
+      );
+    });
+
+    it("(3) the own credit ($5.50) was spent on another order: Cash $12.50 / Paid $12.50 / Credit used $5.50, no Balance due", () => {
+      same(sale([cash("12.50")], [ret({ creditSubtotal: "5.50" })], appliedTo(5.5)), [
+        "Payment method Cash $12.50",
+        "Paid $12.50",
+        "Credit used $5.50 (returned items)",
+      ]);
+    });
+
+    it("(d) store credit from ANOTHER order's return stays the tender Store credit", () => {
+      same(sale([note("12.50", { creditNoteId: "cn-9" })], []), [
+        "Payment method Store credit $12.50",
+        "Paid $12.50",
+      ]);
+    });
+
+    it("(e) sale A, whose own INLINE return was carried on order B and applied: Returned −$5.50", () => {
+      const b = build({
+        total: "12.50",
+        tax: "0.00",
+        payments: [cash("7.00"), note("5.50")],
+        carried: [inline()],
+        notes: appliedTo(5.5),
+      });
+      same(b, ["Payment method Cash $7.00", "Paid $7.00", "Returned −$5.50"]);
+    });
+
+    it("(f) the payment's credit note was issued against ANOTHER invoice: it stays a tender, nothing is hidden", () => {
+      const b = build({
+        total: "12.50",
+        tax: "0.00",
+        payments: [cash("7.50"), note("5.00", { noteInvoice: "inv-other" })],
+        returns: [ret({ creditSubtotal: "5.00" })],
+        notes: {
+          "cn-1": {
+            status: "APPLIED",
+            appliedAnywhere: 5,
+            applications: [{ amount: "5.00", invoiceId: "inv-1" }],
+          },
+        },
+      });
+      same(b, ["Payment method Cash $7.50 + Store credit $5.00", "Paid $12.50"]);
+    });
+
+    it("the double-claim fixture: a store-credit tender whose note another order's return made prints once, no Credit used", () => {
+      const b = build({
+        total: "12.50",
+        tax: "0.00",
+        payments: [cash("7.50"), note("5.00")],
+        carried: [
+          {
+            id: "r-other",
+            creditNoteId: "cn-1",
+            orderId: "ord-9",
+            kind: "STANDARD",
+            status: "REFUNDED",
+            refundMethod: "CREDIT_NOTE",
+            refundedAt: null,
+            amount: "5.00",
+            items: [],
+          },
+        ],
+        notes: {
+          "cn-1": {
+            status: "APPLIED",
+            appliedAnywhere: 5,
+            applications: [{ amount: "5.00", invoiceId: "inv-1" }],
+          },
+        },
+      });
+      same(b, ["Payment method Cash $7.50 + Store credit $5.00", "Paid $12.50"]);
+    });
+
+    it("the carrier order B of A's INLINE return prints NO return line, and its store credit is a tender", () => {
+      const b = build({
+        total: "12.50",
+        tax: "0.00",
+        payments: [cash("7.00"), note("5.50")],
+        returns: [
+          ret({
+            kind: "INLINE",
+            items: [
+              { sourceOrderId: "ord-a", subtotal: "5.00", taxAmount: "0.50", categoryTax: null },
+            ],
+          }),
+        ],
+        notes: {
+          "cn-1": {
+            status: "APPLIED",
+            appliedAnywhere: 5.5,
+            applications: [{ amount: "5.50", invoiceId: "inv-1" }],
+          },
+        },
+      });
+      same(b, ["Payment method Cash $7.00 + Store credit $5.50", "Paid $12.50"]);
+    });
+
+    it("an on-account sale with only its own return credit: Returned −$6.25 / Balance due $6.25, and the On account block", () => {
+      const b = build({
+        total: "12.50",
+        tax: "0.00",
+        payments: [note("6.25")],
+        returns: [ret({ creditSubtotal: "6.25" })],
+        notes: appliedTo(6.25),
+      });
+      same(b, ["Returned −$6.25", "Balance due $6.25"]);
+      expect(b.emailModel.onAccount).toBe(true);
+      expect(b.rendered.text).toContain("On account: $6.25 balance due on account");
+    });
+
+    it("I2: a note the read did not return prints Return in progress; a VOID note prints no return line", () => {
+      same(sale([cash("5.00")], [ret()], {}), [
+        "Payment method Cash $5.00",
+        "Paid $5.00",
+        "Balance due $7.50",
+        "Return in progress",
+      ]);
+      same(sale([cash("5.00")], [ret()], { "cn-1": { status: "VOID", appliedAnywhere: 0 } }), [
+        "Payment method Cash $5.00",
+        "Paid $5.00",
+        "Balance due $7.50",
+      ]);
+    });
+
+    it("a sale with no return at all prints the same rows on both, including Tendered and Change", () => {
+      same(build({ total: "28.62", tax: "2.12", tendered: "30.00", payments: [cash("28.62")] }), [
+        "Payment method Cash $28.62",
+        "Paid $28.62",
+        "Tendered $30.00",
+        "Change $1.38",
+      ]);
+    });
+
+    it("old-server (g): the reprint of an older server keeps master's wording; the email still prints the figures it prints", () => {
+      const b = build({ total: "12.50", tax: "0.00", payments: [cash("5.00")], oldServer: true });
+      expect(reprintLines(b.reprint)).toEqual([
+        "Payment method Cash",
+        "Paid $5.00",
+        "Balance due $7.50",
+      ]);
+      // the email is rendered by THIS server from the row it just read: it has no old-wording mode, it prints amounts
+      expect(textLines(b.rendered)).toEqual([
+        "Payment method Cash $5.00",
+        "Paid $5.00",
+        "Balance due $7.50",
+      ]);
+      expect(b.emailModel.paid).toBe(b.reprint.paid);
+      expect(b.emailModel.balanceDue).toBe(b.reprint.balanceDue);
+    });
+
+    it("the rendered email text: (a) prints Returned −$6.25 and no Store credit tender; (3) prints Credit used and no Balance due", () => {
+      const a = sale(
+        [cash("6.25"), note("6.25")],
+        [ret({ creditSubtotal: "6.25" })],
+        appliedTo(6.25),
+      );
+      expect(a.rendered.text).toContain(
+        "Payment method: Cash $6.25\nPaid: $6.25\nReturned: −$6.25",
+      );
+      expect(a.rendered.text).not.toContain("Store credit");
+      expect(a.rendered.html).not.toContain("Store credit");
+      expect(a.rendered.html).toContain("Returned");
+      const c = sale([cash("12.50")], [ret({ creditSubtotal: "5.50" })], appliedTo(5.5));
+      expect(c.rendered.text).toContain("Credit used $5.50 (returned items)");
+      expect(c.rendered.html).toContain("Credit used $5.50 (returned items)");
+      expect(c.rendered.text).not.toContain("Balance due");
+    });
+
+    it("the invariant on the email, in cents: Balance due = Total - Paid - Returned for every pinned case", () => {
+      const cents = (n: number) => Math.round(n * 100);
+      const cases = [
+        sale([cash("5.00")], [refunded2]),
+        sale([cash("5.00")], [ret()], issued),
+        sale([cash("5.00"), note("2.50")], [ret()], appliedTo(2.5)),
+        sale([cash("12.50")], [ret({ creditSubtotal: "5.50" })], appliedTo(5.5)),
+        sale([cash("5.00")], [pending]),
+      ];
+      for (const { emailModel: m } of cases) {
+        expect(cents(m.balanceDue)).toBe(cents(m.total) - cents(m.paid) - cents(m.returned ?? 0));
+      }
+    });
+
+    it("a DELIVERY order with its own return and an applied note prints exactly master's receipt: no split, no return lines", () => {
+      const withReads = build({
+        total: "12.50",
+        tax: "0.00",
+        counterSale: false,
+        payments: [cash("5.00"), note("2.50")],
+        returns: [ret()],
+        notes: appliedTo(2.5),
+      });
+      const { order, invoices, payments, branding } = withReads.emailArgs;
+      // master: the same stored rows and NO return reads at all
+      const master = renderOrderReceipt(order, invoices, payments, branding, ZONE);
+      expect(withReads.rendered.model).toEqual(master.model);
+      expect(withReads.rendered.text).toBe(master.text);
+      expect(withReads.rendered.html).toBe(master.html);
+      for (const key of ["returned", "refunded", "creditKept", "creditUsed", "returnPending"]) {
+        expect(withReads.rendered.model).not.toHaveProperty(key);
+      }
+      // the store-credit application stays a tender and part of Paid on a non-counter order. #3576 Opus MUST: master's
+      // LITERAL line (labels only, no amounts), not this renderer compared against itself.
+      expect(textLines(withReads.rendered)).toEqual([
+        "Payment method Cash + Store credit",
+        "Paid $7.50",
+        "Balance due $5.00",
+      ]);
+    });
+
+    it.each([
+      // master folded an advance application into Store credit and printed labels only
+      [[{ method: "ADVANCE", amount: "12.50" }], "Store credit"],
+      [
+        [
+          { method: "CASH", amount: "7.50" },
+          { method: "ADVANCE", amount: "5.00" },
+        ],
+        "Cash + Store credit",
+      ],
+      [
+        [
+          { method: "ADVANCE", amount: "5.00" },
+          { method: "CREDIT_NOTE", amount: "2.50" },
+        ],
+        "Store credit",
+      ],
+    ])("a DELIVERY order paid %j reads master's %s", (payments, label) => {
+      const { emailModel } = build({ total: "12.50", tax: "0.00", counterSale: false, payments });
+      expect(emailModel.methodLabel).toBe(label);
+    });
   });
 });
 

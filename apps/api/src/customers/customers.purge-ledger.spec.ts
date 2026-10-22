@@ -47,7 +47,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 describe("CustomersService — purge paths reverse the regulated ledger", () => {
   let service: CustomersService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let ledger: { reverseInvoiceEntries: jest.Mock };
+  let ledger: { settleRegulatedLedger: jest.Mock };
   /** Shared call log — the ORDER of reversal vs deletion is the whole point. */
   let calls: string[];
 
@@ -55,9 +55,10 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
     prisma = createMockPrisma();
     calls = [];
     ledger = {
-      reverseInvoiceEntries: jest.fn().mockImplementation(({ invoiceId }: any) => {
+      // SA-839: the purge zeroes each invoice through the one ledger helper (INVOICE_ZEROED).
+      settleRegulatedLedger: jest.fn().mockImplementation((_tx: unknown, { invoiceId }: any) => {
         calls.push(`reverse:${invoiceId}`);
-        return Promise.resolve(undefined);
+        return Promise.resolve({ written: 0, amendedPeriod: null });
       }),
     };
 
@@ -132,11 +133,12 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
 
     await service.deleteAllCustomers();
 
-    expect(ledger.reverseInvoiceEntries).toHaveBeenCalledTimes(2);
+    expect(ledger.settleRegulatedLedger).toHaveBeenCalledTimes(2);
     for (const id of ["inv-1", "inv-2"]) {
-      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: id }),
-      );
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(expect.anything(), {
+        kind: "INVOICE_ZEROED",
+        invoiceId: id,
+      });
     }
     // Both entries must EXIST before their order means anything — indexOf
     // returns -1 for an absent call, so a bare `<` would also pass on a tree
@@ -155,7 +157,7 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
 
     await service.runImportedCustomersCleanup();
 
-    expect(ledger.reverseInvoiceEntries).toHaveBeenCalledTimes(2);
+    expect(ledger.settleRegulatedLedger).toHaveBeenCalledTimes(2);
     expect(calls.indexOf("reverse:inv-1")).toBeLessThan(calls.indexOf("deleteItems"));
     expect(calls.indexOf("reverse:inv-2")).toBeLessThan(calls.indexOf("deleteInvoices"));
   });
@@ -169,13 +171,13 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
     const result = await service.runImportedCustomersCleanup();
 
     expect(result).toEqual({ deleted: 0, preserved: 1 });
-    expect(ledger.reverseInvoiceEntries).not.toHaveBeenCalled();
+    expect(ledger.settleRegulatedLedger).not.toHaveBeenCalled();
   });
 
   it("REG-LEDGER-PURGE: deleteAllCustomers still refuses a null tenant before touching the ledger", async () => {
     prisma.getTenantId.mockReturnValue(null);
 
     await expect(service.deleteAllCustomers()).rejects.toThrow(/tenant context/i);
-    expect(ledger.reverseInvoiceEntries).not.toHaveBeenCalled();
+    expect(ledger.settleRegulatedLedger).not.toHaveBeenCalled();
   });
 });

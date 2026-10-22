@@ -20,6 +20,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { UserRole } from "@prisma/client";
 import { ImportService } from "./import.service";
+import { ProductImportJobService } from "./product-import-job.service";
 import { MB, uploadLimits } from "../common/upload-limits";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
@@ -27,7 +28,10 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.TENANT_ADMIN)
 export class ImportController {
-  constructor(private readonly importService: ImportService) {}
+  constructor(
+    private readonly importService: ImportService,
+    private readonly jobs: ProductImportJobService,
+  ) {}
 
   @Post("contacts")
   @HttpCode(HttpStatus.OK)
@@ -106,7 +110,15 @@ export class ImportController {
     return this.importService.importProducts(file.buffer, user.sub, {
       dryRun: dryRun === "true",
       fileName: file.originalname,
+      // a large regrouping apply is queued (SA-823 section 5); the preview is always synchronous
+      allowBackground: true,
     });
+  }
+
+  /** SA-823 section 5: progress and result of a queued product-import apply (tenant-scoped). */
+  @Get("products/jobs/:id")
+  productImportJob(@Param("id") id: string) {
+    return this.jobs.status(id);
   }
 
   @Post("inventory")

@@ -135,7 +135,7 @@ describe("regulated ledger: resync, return, credit, void on one order line (SA-8
     expect(lineTotals().qty).toBe(55);
     expect(lineTotals().net).toBeGreaterThanOrEqual(0);
 
-    await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+    await service["reverseInvoiceEntries"]({ invoiceId: "inv-1", db: prisma });
     expect(lineTotals()).toEqual({ qty: 0, net: 0 });
   });
 });

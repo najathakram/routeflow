@@ -265,6 +265,12 @@ export const API_ERROR_CODES = {
   /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */
   FAMILY_NOT_PRICEABLE: "FAMILY_NOT_PRICEABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",
+  /** 409 from POST /import/products when the file has a Family column and family pricing (mixed_packs) is on: grouping would re-price the products, so the whole file is refused and nothing is written. */
+  IMPORT_FAMILY_PRICING_ON: "IMPORT_FAMILY_PRICING_ON",
+  /** 400 from POST /import/products when a file with a Family column has more rows than IMPORT_FAMILY_MAX_ROWS (2500); `max` and `rows` are in the body. Split the file. */
+  IMPORT_FAMILY_TOO_MANY_ROWS: "IMPORT_FAMILY_TOO_MANY_ROWS",
+  /** `errorCode` of a failed background product import whose reason is not one the page names. */
+  IMPORT_JOB_FAILED: "IMPORT_JOB_FAILED",
   FAMILY_NOT_FOUND: "FAMILY_NOT_FOUND",
   /** 409 from DELETE /products/bulk and /products/clear-all: a unique violation while deleting; nothing was deleted, reload and retry. */
   PRODUCT_DELETE_CONFLICT: "PRODUCT_DELETE_CONFLICT",
@@ -355,6 +361,8 @@ export const API_ERROR_CODES = {
   /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
   ORDER_DELIVERY_QUANTITIES_MISSING: "ORDER_DELIVERY_QUANTITIES_MISSING",
   ORDER_BILLING_CHANGED: "ORDER_BILLING_CHANGED",
+  /** B693 (SA-839): unvoid refused because the invoice's order is CANCELLED; nothing is written. 409. */
+  UNVOID_ORDER_CANCELLED: "UNVOID_ORDER_CANCELLED",
   ORDER_EDIT_WOULD_OVERPAY: "ORDER_EDIT_WOULD_OVERPAY",
   FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",

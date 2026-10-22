@@ -64,6 +64,7 @@ import { BookkeepingController } from "../bookkeeping/bookkeeping.controller";
 import { BookkeepingService } from "../bookkeeping/bookkeeping.service";
 import { ImportController } from "../import/import.controller";
 import { ImportService } from "../import/import.service";
+import { ProductImportJobService } from "../import/product-import-job.service";
 import { listenOnLoopback } from "../common/testing/listen-loopback";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -549,7 +550,10 @@ describe("POST /import/* (7 spreadsheet routes)", () => {
         return Promise.resolve({ ok: true });
       };
     }
-    app = await bootstrap(ImportController, [{ provide: ImportService, useValue }]);
+    app = await bootstrap(ImportController, [
+      { provide: ImportService, useValue },
+      { provide: ProductImportJobService, useValue: { status: jest.fn() } },
+    ]);
   });
 
   afterAll(async () => await app.close());

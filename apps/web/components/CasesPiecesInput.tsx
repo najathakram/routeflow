@@ -37,6 +37,9 @@ function useTypedNumber(value: number | null | undefined, commit: (n: number) =>
   };
 }
 
+const DEFAULT_INPUT =
+  "w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500";
+
 export interface CasesPiecesInputProps {
   /** Whole cases; null/undefined reads as 0. */
   boxes: number | null | undefined;
@@ -49,6 +52,8 @@ export interface CasesPiecesInputProps {
   /** Raw parseInt of the typed value: may be NaN; the caller normalises (normalizeBoxesPieces). */
   onSetBoxes: (n: number) => void;
   onSetPieces: (n: number) => void;
+  /** Replaces the default field style (Edit Items gives its cases and plain quantity fields one look). */
+  inputClassName?: string;
 }
 
 /**
@@ -70,6 +75,7 @@ export function CasesPiecesInput({
   disabled = false,
   onSetBoxes,
   onSetPieces,
+  inputClassName = DEFAULT_INPUT,
 }: CasesPiecesInputProps) {
   const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(pieces);
   const boxesField = useTypedNumber(boxes, onSetBoxes);
@@ -94,7 +100,7 @@ export function CasesPiecesInput({
           onChange={boxesField.onChange}
           onBlur={boxesField.onBlur}
           onFocus={(e) => e.target.select()}
-          className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+          className={inputClassName}
           title={`Number of whole ${w.pack.lowerOther}`}
         />
         <span
@@ -117,7 +123,7 @@ export function CasesPiecesInput({
             onChange={piecesField.onChange}
             onBlur={piecesField.onBlur}
             onFocus={(e) => e.target.select()}
-            className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className={inputClassName}
             title={`Extra ${w.base.lowerOther} (less than a full ${w.pack.lower})`}
             aria-label={`Extra ${w.base.lowerOther}`}
           />

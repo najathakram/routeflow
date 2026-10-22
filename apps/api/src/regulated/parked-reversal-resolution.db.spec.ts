@@ -990,7 +990,7 @@ describeDb(
       }
     }, 30_000);
 
-    it("cancel-after-resolve: the booked REVERSAL is gone, the parked row stays resolved (resolvedEntryId dangles), the corrections survive", async () => {
+    it("cancel-after-resolve (SA-839): the booked REVERSAL is KEPT and countered (Σ return = 0), the parked row stays resolved and its resolvedEntryId still resolves, the corrections survive", async () => {
       const f = await seedLegacyLine("cancel-after", {
         qty: 5,
         netSales: 50,
@@ -1005,22 +1005,33 @@ describeDb(
       const resolvedEntryId = result.resolvedEntryId!;
 
       await tenantCtx.run(tenantId, () =>
-        ledger.unreverseReturnEntries({ returnId: f.returnId, db: prisma.forTenant() }),
+        ledger.settleRegulatedLedger(prisma.forTenant(), {
+          kind: "ADJUSTMENT_UNDONE",
+          returnId: f.returnId,
+        }),
       );
 
       const bookedReversal = await raw.regulatedSalesLedger.findFirst({
         where: { id: resolvedEntryId },
       });
-      expect(bookedReversal).toBeNull(); // gone
+      expect(bookedReversal).not.toBeNull(); // kept: append-only
+      const counter = await raw.regulatedSalesLedger.findMany({
+        where: { correctsEntryId: resolvedEntryId, returnId: f.returnId },
+      });
+      expect(counter).toHaveLength(1);
+      expect(Number(counter[0].unitBasisQty)).toBe(-Number(bookedReversal!.unitBasisQty));
+      expect(Number(counter[0].netSales)).toBe(-Number(bookedReversal!.netSales));
+      const ofReturn = await raw.regulatedSalesLedger.findMany({ where: { returnId: f.returnId } });
+      expect(ofReturn.reduce((n, r) => n + Number(r.unitBasisQty), 0)).toBeCloseTo(0, 6);
 
       const parkedRow = await raw.regulatedLedgerParkedReversal.findFirst({
         where: { id: f.parkedRowId },
       });
       expect(parkedRow!.resolvedAt).not.toBeNull(); // still resolved
-      expect(parkedRow!.resolvedEntryId).toBe(resolvedEntryId); // dangles — points at the row just deleted
+      expect(parkedRow!.resolvedEntryId).toBe(resolvedEntryId); // and the row it names still exists
 
       const corrections = await raw.regulatedSalesLedger.findMany({
-        where: { orderItemId: f.orderItemId, correctsEntryId: { not: null } },
+        where: { orderItemId: f.orderItemId, correctsEntryId: { not: null }, returnId: null },
       });
       expect(corrections).toHaveLength(2); // both restatements survive — neither carries a returnId
     }, 30_000);

@@ -289,6 +289,7 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       const body = await refusal(
         service.update("prod-1", { parentProductId: "other-tenant-product" } as never, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         }),
       );
       expect(body).toMatchObject({
@@ -303,6 +304,7 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       const body = await refusal(
         service.update("prod-1", { parentProductId: "prod-1" } as never, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         }),
       );
       expect(body.reason).toBe(PRODUCT_PARENT_REASONS.SELF);
@@ -314,6 +316,7 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       const body = await refusal(
         service.update("prod-1", { parentProductId: "child" } as never, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         }),
       );
       expect(body.reason).toBe(PRODUCT_PARENT_REASONS.VARIANT_PARENT);
@@ -325,6 +328,7 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       const body = await refusal(
         service.update("prod-1", { parentProductId: "fam" } as never, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         }),
       );
       expect(body.reason).toBe(PRODUCT_PARENT_REASONS.INACTIVE);
@@ -336,6 +340,7 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       const body = await refusal(
         service.update("prod-1", { parentProductId: "fam" } as never, {
           packPrecondition: "internal",
+          reparentVia: "editor",
         }),
       );
       expect(body.reason).toBe(PRODUCT_PARENT_REASONS.HAS_VARIANTS);
@@ -346,6 +351,7 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       seed({ fam: FAMILY });
       await service.update("prod-1", { parentProductId: "fam" } as never, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
       expect(prisma.product.update.mock.calls[0][0].data).toMatchObject({
         parentProductId: "fam",
@@ -356,6 +362,7 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       seed({ std: { ...FAMILY, id: "std", kind: "STANDARD" } });
       await service.update("prod-1", { parentProductId: "std" } as never, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
       const data = prisma.product.update.mock.calls[0][0].data as Record<string, unknown>;
       expect(data.parentProductId).toBe("std");
@@ -374,6 +381,7 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       prisma.product.update.mockResolvedValue({ ...PRODUCT });
       await service.update("prod-1", { parentProductId: null } as never, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
       expect(prisma.product.update.mock.calls[0][0].data).toMatchObject({
         parentProductId: null,
@@ -401,6 +409,7 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       );
       await service.update("prod-1", { parentProductId: "std" } as never, {
         packPrecondition: "internal",
+        reparentVia: "editor",
       });
       expect(prisma.product.update.mock.calls[0][0].data).toMatchObject({
         parentProductId: "std",
@@ -414,8 +423,13 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
         parentProductId: "fam",
         kind: "VARIANT",
       });
+      // The locked in-tx re-read sees the SAME parent (a true echo), as Postgres would.
       prisma.product.findFirst.mockImplementation(async (args: { where?: { id?: string } }) =>
-        args?.where?.id === "fam" ? { ...FAMILY, isActive: false } : null,
+        args?.where?.id === "fam"
+          ? { ...FAMILY, isActive: false }
+          : args?.where?.id === "prod-1"
+            ? { parentProductId: "fam", category: null, unitsPerBox: null }
+            : null,
       );
       prisma.product.update.mockResolvedValue({ ...PRODUCT });
       await service.update("prod-1", { parentProductId: "fam", description: "x" } as never, {
@@ -438,6 +452,7 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
         const body = await refusal(
           service.update("prod-1", { parentProductId: "fam", name } as never, {
             packPrecondition: "internal",
+            reparentVia: "editor",
           }),
         );
         expect(body.code).toBe(API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY);
@@ -462,12 +477,15 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       async (name) => {
         seed({ fam: NAMED_FAMILY });
         const body = await refusal(
-          service.create({
-            name,
-            parentProductId: "fam",
-            unit: "each",
-            pricePerUnit: "1.00",
-          } as never),
+          service.create(
+            {
+              name,
+              parentProductId: "fam",
+              unit: "each",
+              pricePerUnit: "1.00",
+            } as never,
+            { reparentVia: "editor" },
+          ),
         );
         expect(body.code).toBe(API_ERROR_CODES.VARIANT_NAME_PREFIX_ONLY);
         expect(prisma.product.create).not.toHaveBeenCalled();

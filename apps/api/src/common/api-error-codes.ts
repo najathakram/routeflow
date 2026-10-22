@@ -46,6 +46,9 @@ export const API_ERROR_CODES = {
   FAMILY_NOT_PRICEABLE: "FAMILY_NOT_PRICEABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",
   FAMILY_NOT_FOUND: "FAMILY_NOT_FOUND",
+  IMPORT_FAMILY_PRICING_ON: "IMPORT_FAMILY_PRICING_ON",
+  IMPORT_FAMILY_TOO_MANY_ROWS: "IMPORT_FAMILY_TOO_MANY_ROWS",
+  IMPORT_JOB_FAILED: "IMPORT_JOB_FAILED",
   /** 409 from DELETE /products/bulk and /products/clear-all: a unique violation while deleting; nothing was deleted, reload and retry. */
   PRODUCT_DELETE_CONFLICT: "PRODUCT_DELETE_CONFLICT",
   /** 409 from PATCH/DELETE /products/:id: a family still has ACTIVE variants; body carries `variantCount`. Resend with `confirmCascade: true` to deactivate them with it. */
@@ -135,6 +138,7 @@ export const API_ERROR_CODES = {
   /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
   ORDER_DELIVERY_QUANTITIES_MISSING: "ORDER_DELIVERY_QUANTITIES_MISSING",
   ORDER_BILLING_CHANGED: "ORDER_BILLING_CHANGED",
+  UNVOID_ORDER_CANCELLED: "UNVOID_ORDER_CANCELLED",
   ORDER_EDIT_WOULD_OVERPAY: "ORDER_EDIT_WOULD_OVERPAY",
   FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",

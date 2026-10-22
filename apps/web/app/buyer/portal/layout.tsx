@@ -536,7 +536,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
 
       {/* Mobile nav drawer — off-canvas sidebar below the lg breakpoint */}
       <MobileSidebarDrawer open={sidebar.mobileNavOpen} onClose={sidebar.closeMobileNav}>
-        <aside className="absolute inset-y-0 left-0 flex w-64 max-w-[82%] flex-col bg-gradient-to-b from-buyer-900 to-buyer-800 shadow-modal animate-in slide-in-from-left duration-200">
+        <aside className="absolute inset-y-0 left-0 flex w-64 max-w-[82%] flex-col bg-gradient-to-b from-buyer-900 to-buyer-800 shadow-modal animate-in slide-in-from-left duration-300 [animation-timing-function:cubic-bezier(0.32,0.72,0,1)] motion-reduce:animate-none">
           <div className="flex shrink-0 items-center justify-end px-2 pt-2">
             <MobileDrawerCloseButton
               onClose={sidebar.closeMobileNav}

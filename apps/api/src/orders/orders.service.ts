@@ -5291,9 +5291,8 @@ export class OrdersService implements OnApplicationBootstrap {
         // before deleting it — the two sibling teardown paths
         // (InvoicesService.voidInvoiceInTx, InvoicesService.deleteInvoice)
         // already do this; this loop hard-deletes invoices directly and was
-        // the one path that skipped it. No preserveReturns (mirrors
-        // deleteInvoice, not the partial-void path).
-        await this.ledger.reverseInvoiceEntries({ invoiceId: inv.id, db: tx });
+        // the one path that skipped it. Zeroed in full (mirrors deleteInvoice, SA-839 INVOICE_ZEROED).
+        await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId: inv.id });
         await tx.invoicePayment.deleteMany({ where: { invoiceId: inv.id } });
         await tx.invoiceItem.deleteMany({ where: { invoiceId: inv.id } });
         // Sales agents & commissions: this loop hard-deletes invoices WITHOUT

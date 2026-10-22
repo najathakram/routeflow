@@ -70,20 +70,12 @@ export interface ReceiptBusinessProfile {
  */
 export type CounterReceiptLine = ReceiptLine;
 /**
- * SA-838a: the reprint of a sale that had a return carries the server's `returnLines`, each used as given (the web derives none):
- * `returned` = credit APPLIED to this sale (the "Returned −$x" line, the only figure the balance subtracts); `refunded` = money
- * handed back outside RouteFlow, `creditKept` = credit left on the customer's account and `creditUsed` = credit spent on OTHER
- * orders (info lines, never subtracted);
- * `returnPending` = a return is not settled yet ("Return in progress", no amount). null = no line. Only a server that sends
- * `returnLines` sets any of them; an older one reprints exactly as before (none of the keys exist on the model).
+ * SA-838a: the reprint of a sale that had a return carries the server's `returnLines`, each used as given (the web derives none),
+ * on the SHARED `ReceiptModel` (`returned` / `refunded` / `creditKept` / `creditUsed` / `returnPending`, documented there): the
+ * emailed receipt prints the same fields from the same pricing helpers. Only a server that sends `returnLines` sets any of
+ * them; an older one reprints exactly as before (none of the keys exist on the model).
  */
-export type CounterReceiptModel = ReceiptModel & {
-  returned?: number | null;
-  refunded?: number | null;
-  creditKept?: number | null;
-  creditUsed?: number | null;
-  returnPending?: boolean;
-};
+export type CounterReceiptModel = ReceiptModel;
 
 /**
  * The ONE formatter of the Tax row's label, live and reprint alike: "Tax (8.25%)" when one rate explains the tax, else

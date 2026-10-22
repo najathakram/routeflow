@@ -115,6 +115,7 @@ describe("CreditNotesService — wallet-exclusion on the credit apply paths (F09
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {
@@ -302,6 +303,7 @@ describe("CreditNotesService — create() refuses VOID/WRITTEN_OFF source invoic
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {
@@ -406,12 +408,15 @@ describe("CreditNotesService — create() refuses VOID/WRITTEN_OFF source invoic
 describe("InvoicesService — voidInvoiceInTx caps/voids credit notes it sourced (F09 gate)", () => {
   let service: InvoicesService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let ledger: { reverseInvoiceEntries: jest.Mock };
+  let ledger: { reverseInvoiceEntries: jest.Mock; settleRegulatedLedger: jest.Mock };
   let commissionEngine: { syncInvoiceCommissionSafe: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    ledger = { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) };
+    ledger = {
+      reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+    };
     commissionEngine = { syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -589,6 +594,7 @@ describe("CreditNotesService — findAll invoice-number include (F09, R9)", () =
           useValue: {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
           },
         },
         {
