@@ -487,8 +487,8 @@
     handoff: "handoff note",
     "handoff note": "handoff note",
   };
+  const trainNum = (id) => Number((/^[RT](\d+)/.exec(id) ?? [])[1] ?? 99);
   const trainEta = (t) => etaWords(t.eta, t.etaAt ?? byId().get(t.id)?.etaAt);
-  const trainNum = (id) => Number((/^R(\d+)/.exec(id) ?? [])[1] ?? 99);
 
   function sourceState(name) {
     const s = snap.sources?.[name];
@@ -584,10 +584,7 @@
     const own = ri?.solution ?? ri?.problem;
     return own ? firstSentence(own) : null;
   }
-  const openReleases = () =>
-    (snap.trains ?? [])
-      .filter((t) => !DONE.has(t.status))
-      .sort((a, b) => trainNum(a.id) - trainNum(b.id));
+  const openReleases = () => (snap.trains ?? []).filter((t) => !DONE.has(t.status));
 
   function bandEntry(id, main, sub, note) {
     return el(
@@ -1195,15 +1192,35 @@
   function renderReleases() {
     const body = clear(panels.releases.body);
     const items = byId();
-    const trains = [...(snap.trains ?? [])].sort((a, b) => trainNum(a.id) - trainNum(b.id));
+    const trains = snap.trains ?? []; // the snapshot orders them: earliest tag, then id
     if (!trains.length) body.append(el("div", { class: "empty", text: "No releases defined." }));
+    // Shipping next: ready PRs (not draft, checks green; review state is not in the snapshot).
+    if ((snap.shippingNext ?? []).length) {
+      const next = el(
+        "div",
+        { class: "tinfo" },
+        el("p", { class: "delivers-h", text: "Shipping next" }),
+      );
+      for (const r of snap.shippingNext)
+        next.append(
+          el(
+            "div",
+            { class: "tpart" },
+            el("span", { class: "id", text: r.id }),
+            el("span", { class: "ptitle", text: r.title }),
+            pill(r.tagWords || "no tag"),
+            ...r.prs.map((p) => el("span", { class: "muted", text: `#${p.number} ${p.title}` })),
+          ),
+        );
+      body.append(next);
+    }
     for (const t of trains) {
       const members = t.members.map(
         (id) =>
           items.get(id) ?? { id, title: "(not in item list)", status: "planned", missing: true },
       );
       const done = members.filter((m) => m.status === "live" || m.status === "verified").length;
-      const when = trainEta(t);
+      const when = t.tagWords || trainEta(t);
       const box = el("div", { class: "train" });
       box.append(
         el(
@@ -1212,7 +1229,13 @@
           items.get(t.id)
             ? openerBtn(t.id, t.title, "title")
             : el("span", { class: "title", text: t.title }),
-          pill(statusWord(t.status), DONE.has(t.status) ? "ok" : ""),
+          pill(
+            t.stateText ?? statusWord(t.status),
+            t.state === "late" ? "warn" : DONE.has(t.status) ? "ok" : "",
+          ),
+          t.partsTotal
+            ? el("span", { class: "muted", text: `${t.partsDone} of ${t.partsTotal} parts done` })
+            : null,
           el("span", { class: "muted", text: when ?? "no date yet" }),
         ),
       );
@@ -1250,6 +1273,29 @@
           }),
         ),
       );
+      // Plan families: each part on its own row, so what lands when is never hidden in a family.
+      for (const p of t.parts ?? []) {
+        info.append(
+          el(
+            "div",
+            { class: "tpart" },
+            el("span", { class: "id", text: p.id }),
+            el("span", { class: "ptitle", text: p.goal }),
+            pill(p.tagWords || "no tag"),
+            pill(p.stateText, p.state === "late" ? "warn" : p.done ? "ok" : ""),
+            el("span", {
+              class: "muted",
+              text: [
+                p.lane,
+                p.budget ? `budget ${p.budget}` : null,
+                `${p.itemsDone} of ${p.itemsTotal} items done`,
+              ]
+                .filter(Boolean)
+                .join(" · "),
+            }),
+          ),
+        );
+      }
       box.append(info);
       const cols = el("div", { class: "cols" });
       for (const [label, statuses] of STATUS_BUCKETS) {

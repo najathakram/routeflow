@@ -8,6 +8,7 @@ import { CreateOrderModal } from "./CreateOrderModal";
  * Orders r3 F09 + F12 + F13: the Requested Delivery Date sits directly under the Customer picker (visible
  * without scrolling once lines are added), stays optional, and a date before today is refused next to the
  * field - the value is kept, the message says what to do, and Create Order does not send it.
+ * Row 735a: "before today" is the BUSINESS's day (its zone from GET /settings), not the browser's.
  */
 
 window.HTMLElement.prototype.scrollIntoView = jest.fn();
@@ -21,6 +22,8 @@ const PLAIN = {
   isActive: true,
 };
 let mockProducts: unknown[] = [PLAIN];
+/** The business's zone as GET /settings reports it (undefined = the settings read carries none). */
+let mockZone: string | undefined;
 
 const CUSTOMERS = [
   { id: "c1", businessName: "Acme Deli", contactName: "Bo", pricingTier: 1, fulfillPath: "ROUTE" },
@@ -71,7 +74,8 @@ jest.mock("@/lib/api/addons", () => ({
 }));
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
-    get: jest.fn().mockResolvedValue({ data: { taxRate: 0 } }),
+    // GET /settings carries the business's zone (row 735a); every other read gets the tax shape it always did
+    get: jest.fn().mockImplementation(async () => ({ data: { taxRate: 0, timezone: mockZone } })),
     post: jest.fn(),
     patch: jest.fn(),
     delete: jest.fn(),
@@ -85,13 +89,39 @@ jest.mock("@/lib/barcode-resolve", () => ({ resolveProductByCode: jest.fn() }));
 const dateField = () => screen.getByLabelText(/requested delivery date/i) as HTMLInputElement;
 const createButton = () => screen.getByRole("button", { name: "Create Order" });
 const PAST_MESSAGE = /pick today or a later date/i;
+/** Fake only `Date`: React, userEvent and the query client keep their real timers. */
+const ONLY_DATE = [
+  "hrtime",
+  "nextTick",
+  "performance",
+  "queueMicrotask",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
+  "requestIdleCallback",
+  "cancelIdleCallback",
+  "setImmediate",
+  "clearImmediate",
+  "setInterval",
+  "clearInterval",
+  "setTimeout",
+  "clearTimeout",
+] as const;
 
-/** The browser's local calendar day, as the date input writes it (YYYY-MM-DD). */
-const localDay = (offsetDays = 0) => {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
+// Two zones 25 hours apart (UTC+14, UTC-11) are on different calendar days at EVERY instant, so whatever day the
+// browser (or this machine) is on, at least one of them is on another day than the browser: the old browser-day check
+// could not pass for both. The default tenant is the eastern one.
+const EAST = "Pacific/Kiritimati";
+const WEST = "Pacific/Pago_Pago";
+
+/** The business's calendar day (YYYY-MM-DD) in `zone` at `now`, shifted by whole days. */
+const tenantDay = (offsetDays = 0, zone: string = mockZone ?? EAST, now: Date = new Date()) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(now.getTime() + offsetDays * 86_400_000)); // en-CA formats as YYYY-MM-DD
+const localDay = (offsetDays = 0) => tenantDay(offsetDays); // the tests below speak of the tenant's day
 
 async function openWithCustomerAndLine() {
   const user = userEvent.setup({ delay: null });
@@ -100,6 +130,8 @@ async function openWithCustomerAndLine() {
   await user.click((await screen.findByText(/Acme Deli/)).closest("button") as HTMLElement);
   await user.type(screen.getByPlaceholderText(/search by name, sku or scan barcode/i), "cola");
   await user.click((await screen.findByText(/Sample Cola/)).closest("button") as HTMLElement);
+  // the business's zone arrives with GET /settings; until then the field has no `min` and nothing is blocked locally
+  if (mockZone) await waitFor(() => expect(dateField()).toHaveAttribute("min", tenantDay()));
   return user;
 }
 
@@ -108,7 +140,9 @@ beforeEach(() => {
   mockCreateMutate.mockReset();
   mockProducts = [PLAIN];
   mockCreateError = null;
+  mockZone = EAST;
 });
+afterEach(() => jest.useRealTimers());
 
 describe("Requested Delivery Date placement (F09 + F12)", () => {
   it("renders right after the customer and before the products, with a line added", async () => {
@@ -302,5 +336,78 @@ describe("A delivery-date refusal after the merge prompt (row 718)", () => {
     await waitFor(() => expect(screen.queryByText("Open order exists")).toBeNull());
     expect(screen.getByRole("alert")).toHaveTextContent(/today is 2026-10-22/);
     await waitFor(() => expect(document.activeElement).toBe(dateField()));
+  });
+});
+
+// Row 735a: the local past-date check reads the BUSINESS's calendar day (GET /settings timezone), never the browser's.
+describe("The past-date check uses the tenant's day, not the browser's (row 735a)", () => {
+  it.each([
+    ["UTC+14", EAST],
+    ["UTC-11", WEST],
+  ])(
+    "a %s business: its yesterday is refused, its today and tomorrow go out; `min` is its today",
+    async (_label, zone) => {
+      mockZone = zone;
+      const user = await openWithCustomerAndLine();
+      expect(dateField()).toHaveAttribute("min", tenantDay(0, zone));
+      fireEvent.change(dateField(), { target: { value: tenantDay(-1, zone) } });
+      expect(screen.getByText(PAST_MESSAGE)).toBeInTheDocument();
+      await user.click(createButton());
+      expect(mockCreateMutate).not.toHaveBeenCalled();
+      for (const offset of [0, 1]) {
+        fireEvent.change(dateField(), { target: { value: tenantDay(offset, zone) } });
+        expect(screen.queryByText(PAST_MESSAGE)).toBeNull();
+      }
+      fireEvent.change(dateField(), { target: { value: tenantDay(0, zone) } });
+      await user.click(createButton());
+      await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
+      expect(mockCreateMutate.mock.calls[0][0].requestedDeliveryDate).toBe(tenantDay(0, zone));
+    },
+  );
+
+  it("the two businesses really are on different days now (so the two cases above cannot both be the browser's day)", () => {
+    expect(tenantDay(0, EAST) > tenantDay(0, WEST)).toBe(true);
+  });
+
+  it("a Honolulu business (UTC-10) at 05:00Z on the 22nd is on the 21st: the 21st is allowed, the 20th refused", async () => {
+    mockZone = "Pacific/Honolulu";
+    jest.useFakeTimers({ now: new Date("2026-10-22T05:00:00Z"), doNotFake: [...ONLY_DATE] });
+    const user = await openWithCustomerAndLine();
+    expect(dateField()).toHaveAttribute("min", "2026-10-21");
+    fireEvent.change(dateField(), { target: { value: "2026-10-20" } });
+    expect(screen.getByText(PAST_MESSAGE)).toBeInTheDocument();
+    fireEvent.change(dateField(), { target: { value: "2026-10-21" } });
+    expect(screen.queryByText(PAST_MESSAGE)).toBeNull();
+    await user.click(createButton());
+    await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
+    expect(mockCreateMutate.mock.calls[0][0].requestedDeliveryDate).toBe("2026-10-21");
+  });
+
+  it("across the Chicago fall-back (2026-11-01 is 25 hours long): 23:30 CST on the 1st still allows the 1st", async () => {
+    mockZone = "America/Chicago";
+    jest.useFakeTimers({ now: new Date("2026-11-02T05:30:00Z"), doNotFake: [...ONLY_DATE] }); // 00:30 on the 2nd if the CDT offset were kept
+    await openWithCustomerAndLine();
+    expect(dateField()).toHaveAttribute("min", "2026-11-01");
+    fireEvent.change(dateField(), { target: { value: "2026-11-01" } });
+    expect(screen.queryByText(PAST_MESSAGE)).toBeNull();
+  });
+
+  it("...and 00:30 CST on the 2nd refuses the 1st", async () => {
+    mockZone = "America/Chicago";
+    jest.useFakeTimers({ now: new Date("2026-11-02T06:30:00Z"), doNotFake: [...ONLY_DATE] });
+    await openWithCustomerAndLine();
+    expect(dateField()).toHaveAttribute("min", "2026-11-02");
+    fireEvent.change(dateField(), { target: { value: "2026-11-01" } });
+    expect(screen.getByText(PAST_MESSAGE)).toBeInTheDocument();
+  });
+
+  it("until the business's zone is known nothing is blocked here and the field has no min: the server decides", async () => {
+    mockZone = undefined;
+    const user = await openWithCustomerAndLine();
+    fireEvent.change(dateField(), { target: { value: "2025-10-26" } });
+    expect(dateField()).not.toHaveAttribute("min");
+    expect(screen.queryByText(PAST_MESSAGE)).toBeNull();
+    await user.click(createButton());
+    await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled()); // its 400 lands on the field (row 718, below)
   });
 });

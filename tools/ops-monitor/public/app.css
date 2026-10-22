@@ -1882,6 +1882,17 @@ details.answered {
   }
 }
 
+.tpart {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.tpart .ptitle {
+  flex: 1 1 12rem;
+}
+
 /* ---------- owner-first bands, folded panels, grouped alarms (UI fixes) ---------- */
 .bmore {
   margin-top: 8px;

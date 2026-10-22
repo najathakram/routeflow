@@ -171,6 +171,7 @@ test("top-level contract keys and stats", () => {
       "ownerTodos",
       "prs",
       "problems",
+      "shippingNext",
       "sources",
       "stats",
       "trains",

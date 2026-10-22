@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "./api-client";
+import { calendarDayInZone } from "./calendar-date";
 import { startOfTenantWeek } from "./tenant-week";
 
 /**
@@ -23,6 +24,17 @@ export function useTenantTimeZoneQuery(enabled = true) {
 
 export function useTenantTimeZone(enabled = true): string | undefined {
   return useTenantTimeZoneQuery(enabled).zone;
+}
+
+/**
+ * The business's own "today" (YYYY-MM-DD) in its zone, for a check that must agree with the API's tenant day (row 735:
+ * the Create Order past-date check). `undefined` until the zone is known: the caller must not fall back to the BROWSER's
+ * day (it can be a different day than the business's) - the server stays the authority until the zone arrives.
+ * Derived at every render from the clock, so the day rolls over without a refetch.
+ */
+export function useTenantToday(enabled = true): string | undefined {
+  const zone = useTenantTimeZone(enabled);
+  return zone ? calendarDayInZone(zone) : undefined;
 }
 
 /** `shippedFrom` for the "Shipped this week" card and the orders week view: Sunday 00:00 in the

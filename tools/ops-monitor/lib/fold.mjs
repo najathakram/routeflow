@@ -67,6 +67,7 @@ function newItem(id, fields, ts) {
     source: fields.source ?? null,
     tags: [...(fields.tags ?? [])],
     members: [...(fields.members ?? [])],
+    parts: structuredClone(fields.parts ?? []),
     related: [...(fields.related ?? [])],
     links,
     refPrs: uniq([...split.refPrs, ...(fields.refPrs ?? [])]),
