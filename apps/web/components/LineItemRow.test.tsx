@@ -271,3 +271,101 @@ it("the '+ pieces' and remove-units controls carry an 8px hit-area extension", (
   fireEvent.click(screen.getByRole("button", { name: ADD_EXTRA }));
   expect(screen.getByLabelText(REMOVE_EXTRA)).toHaveClass("relative", "before:-inset-2");
 });
+
+// ── r4 gap-closer (PR-F): Q09 / Q13 / F08 ────────────────────────────────────
+// The history control is mocked to a bare labelled button: this block pins WHERE the row puts it, not what it opens.
+jest.mock("@/components/PriceHistory", () => ({
+  PriceHistoryButton: () => <button type="button" aria-label="Price history" />,
+  PriceChips: () => null,
+}));
+
+describe("Q09: 'Tap to change' shows on the active line only; the history icon sits inline after the pencil", () => {
+  it("shows the hint while the line is active and hides it when another line is", () => {
+    const { rerender } = renderRow({
+      ...makeProps(plainItem),
+      onTapPrice: jest.fn(),
+      active: true,
+    });
+    expect(screen.getByText("Tap to change")).toBeInTheDocument();
+    rerender(
+      <ul>
+        <LineItemRow {...makeProps(plainItem)} onTapPrice={jest.fn()} active={false} />
+      </ul>,
+    );
+    expect(screen.queryByText("Tap to change")).not.toBeInTheDocument();
+    // the pencil itself stays: it is the always-on affordance
+    expect(screen.getByLabelText("Change price")).toBeInTheDocument();
+  });
+
+  it("an active-less caller (scan screen, other pages) keeps the hint it always had", () => {
+    renderRow({ ...makeProps(plainItem), onTapPrice: jest.fn() });
+    expect(screen.getByText("Tap to change")).toBeInTheDocument();
+  });
+
+  it("puts the price-history button in the SAME row as the price and pencil, not in a row of its own", () => {
+    renderRow({
+      ...makeProps(plainItem),
+      onTapPrice: jest.fn(),
+      active: false,
+      customerPriceHistory: { customerId: "c1", customerName: "Acme", onUsePrice: jest.fn() },
+    });
+    const priceRow = screen.getByTestId("line-price-row");
+    expect(priceRow).toContainElement(screen.getByLabelText("Change price"));
+    expect(priceRow).toContainElement(screen.getByRole("button", { name: "Price history" }));
+  });
+
+  it("tapping the history button does not open the price editor (it is not inside the tap-price target)", async () => {
+    const user = userEvent.setup();
+    const onTapPrice = jest.fn();
+    renderRow({
+      ...makeProps(plainItem),
+      onTapPrice,
+      customerPriceHistory: { customerId: "c1", customerName: "Acme", onUsePrice: jest.fn() },
+    });
+    await user.click(screen.getByRole("button", { name: "Price history" }));
+    expect(onTapPrice).not.toHaveBeenCalled();
+  });
+
+  it("marks the line active on focus so the modal can move the hint", async () => {
+    const user = userEvent.setup();
+    const onActivate = jest.fn();
+    renderRow({ ...makeProps(plainItem), onActivate, onSetQty: jest.fn() });
+    await user.click(screen.getByLabelText("Quantity"));
+    expect(onActivate).toHaveBeenCalled();
+  });
+});
+
+describe("Q13: the plain-line stepper is a 44 px touch target below lg, input height matching", () => {
+  it("the minus, plus and typed-quantity controls carry the 44 px sizing below lg", () => {
+    renderRow({ ...makeProps(plainItem), onSetQty: jest.fn() });
+    for (const el of [
+      screen.getByRole("button", { name: "+" }),
+      screen.getByRole("button", { name: "−" }),
+    ]) {
+      expect(el).toHaveClass("max-lg:h-11", "max-lg:w-11");
+    }
+    expect(screen.getByLabelText("Quantity")).toHaveClass("max-lg:h-11");
+  });
+});
+
+describe("F08: a typed 0 says why it became 1", () => {
+  it("shows a short status next to the field, tied to the input, and clears it on the next valid quantity", () => {
+    const props = { ...makeProps(plainItem), onSetQty: jest.fn() };
+    renderRow(props);
+    const input = screen.getByLabelText("Quantity");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "0" } });
+    expect(props.onSetQty).toHaveBeenCalledWith(0);
+    expect(screen.getByRole("status")).toHaveTextContent(/at least 1/i);
+    expect(screen.getByRole("status")).toHaveTextContent(/remove the line/i);
+    expect(input).toHaveAccessibleDescription(/at least 1/i);
+    fireEvent.change(input, { target: { value: "5" } });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("an emptied field (mid-edit) is not the same as a 0 and shows no message", () => {
+    renderRow({ ...makeProps(plainItem), onSetQty: jest.fn() });
+    fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "" } });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+});

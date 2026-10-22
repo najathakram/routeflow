@@ -44,7 +44,7 @@ import { ResumeUnsentOrderDialog } from "./ResumeUnsentOrderDialog";
 import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
 import { todayLocalIso } from "@/lib/formatting";
-import { ACTION_TOAST_MS, showOrderCreatedToast } from "./order-created-toast";
+import { ACTION_TOAST_MS, addedLineQty, showOrderCreatedToast } from "./order-created-toast";
 import {
   mergePieceIntoLine,
   mergeQtyIntoLine,
@@ -390,8 +390,12 @@ export function CreateOrderModal({
   // Scroll the just-scanned line into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLLIElement>>(new Map());
   const [scrollToId, setScrollToId] = React.useState<string | null>(null);
+  // Q09: the line you last touched (or just added). Only it shows the "Tap to change" hint; before any touch the newest
+  // line is the active one (computed at render, not mirrored into state: L-333).
+  const [touchedLineId, setTouchedLineId] = React.useState<string | null>(null);
   React.useEffect(() => {
     if (!scrollToId) return;
+    setTouchedLineId(scrollToId);
     rowRefs.current.get(scrollToId)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     setScrollToId(null);
   }, [scrollToId, lineItems]);
@@ -428,6 +432,8 @@ export function CreateOrderModal({
   // Merge-vs-separate prompt state. Set when the operator submits and the API
   // (or our pre-check) reports an existing active order for the same customer.
   const [mergePrompt, setMergePrompt] = React.useState<ActiveOrderSummary | null>(null);
+  const mergeChoiceRef = React.useRef<HTMLButtonElement>(null);
+  const separateChoiceRef = React.useRef<HTMLButtonElement>(null);
   // The license guard (W6b): categories blocked by a 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   // Selling restrictions: lines the API refused for this customer (shown instead of a raw toast).
@@ -1810,6 +1816,10 @@ export function CreateOrderModal({
             ...note,
           };
     });
+    // The lines the request carries, for the merged toast (same filter as the payload's items).
+    const itemsForToast = asDraft
+      ? lines.filter((li) => (li.isUnlisted ? li.productName.trim() : li.productId) && li.qty > 0)
+      : lines;
     const payload = {
       customerId: selectedCustomer!.id,
       items: itemsForSubmit,
@@ -1856,7 +1866,20 @@ export function CreateOrderModal({
                 mergeChoice === "merge" ? { fromStatus: mergePrompt?.status } : undefined,
               );
             } else {
-              showOrderCreatedToast(toastApi, { mergeChoice, asDraft, created, onViewOrder });
+              showOrderCreatedToast(toastApi, {
+                mergeChoice,
+                asDraft,
+                created,
+                onViewOrder,
+                // N01: what the merge added, in the lines' own words (the total comes from the response).
+                addedLines:
+                  mergeChoice === "merge"
+                    ? itemsForToast.map((li) => ({
+                        name: li.productName,
+                        qty: addedLineQty(li),
+                      }))
+                    : undefined,
+              });
             }
             // The parked draft has become a real order — clear it from the dock.
             // SA-817: the order exists - stop autosave, drop the local copy, delete the bound server draft (once a create in flight lands).
@@ -2055,6 +2078,13 @@ export function CreateOrderModal({
       }
       highlighted={ctx?.highlighted}
       onTapPrice={ctx?.onTapPrice}
+      active={
+        li.tempId ===
+        (lineItems.some((l) => l.tempId === touchedLineId)
+          ? touchedLineId
+          : lineItems[lineItems.length - 1]?.tempId)
+      }
+      onActivate={() => setTouchedLineId(li.tempId)}
       rowRef={(el) => {
         if (el) rowRefs.current.set(li.tempId, el);
         else rowRefs.current.delete(li.tempId);
@@ -2182,34 +2212,48 @@ export function CreateOrderModal({
         storeOnlyPos ? POS_COPY.builderSubtitle : "Create a new order on behalf of a customer."
       }
       className="max-w-2xl"
+      // Q08: the X is the one Close (the footer used to repeat it); Minimize sits beside it. Both are 44 px targets below lg.
+      closeClassName="max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
+      headerActions={
+        <Button
+          variant="ghost"
+          type="button"
+          size="sm"
+          aria-label="Minimize"
+          title="Minimize to drafts"
+          className="w-7 px-0 max-lg:h-11 max-lg:w-11"
+          onClick={handleMinimize}
+          disabled={!canMinimize || savingDraft}
+          loading={savingDraft}
+        >
+          {savingDraft ? null : <Minus className="h-4 w-4" />}
+        </Button>
+      }
       footer={
-        // B564: the Modal footer is a `justify-end` flex row, so four buttons wider than a
-        // 390px sheet overflowed off the LEFT edge and clipped Minimize. Under `sm` the save
-        // actions get their own row and Minimize sits below them, full-width; from `sm` up
-        // this is the original single row with Minimize pinned left. Every footer button is a 44px touch
-        // target under `sm` (max-sm:h-11); from `sm` up the Button's own height is untouched.
-        <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
-          {/* Minimize parks the whole builder into the bottom-left draft dock
-              (pos-cost-roles-spec §2). Left-aligned, away from the save actions. */}
-          <Button
-            variant="ghost"
-            type="button"
-            className="w-full max-sm:h-11 sm:mr-auto sm:w-auto"
-            onClick={handleMinimize}
-            disabled={!canMinimize || savingDraft}
-            loading={savingDraft}
-            leftIcon={<Minus className="h-4 w-4" />}
-          >
-            Minimize
-          </Button>
-          {/* Three-tier hierarchy: ghost (dismiss) < secondary (alt save) <
+        // Q08: ONE compact row at every width. Minimize moved into the header beside the X and the footer
+        // Close (a repeat of the X, same handleDismiss) is gone, so only the total and the save actions are left; the row
+        // wraps instead of overflowing a 390px sheet (B564). Every footer button is a 44px touch target under `sm`.
+        <div
+          data-testid="create-order-footer"
+          className="flex w-full flex-wrap items-center justify-end gap-x-3 gap-y-2"
+        >
+          {/* O3 (P01/P02): the total is pinned HERE (it used to sit at the foot of the scrolling body, hidden behind
+              this sticky footer at the moment of "Create Order"). First in the row, left-aligned (mr-auto); min-w-0 +
+              tabular-nums, no fixed width: a five-figure total wraps instead of clipping. */}
+          {lineItems.length > 0 && (
+            <div
+              data-testid="create-order-footer-total"
+              className="mr-auto flex min-w-0 items-baseline gap-2 tabular-nums text-navy"
+            >
+              <span className="text-sm text-navy/70">Total</span>
+              <span className="min-w-0 break-all text-base font-semibold">${total.toFixed(2)}</span>
+            </div>
+          )}
+          {/* Two-tier hierarchy: secondary (alt save) <
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
-          <div className="flex flex-wrap items-center justify-end gap-2 sm:order-2 sm:gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
             {/* Row 344: the footer actions are 44 px tap targets below sm (they were 34 px at 390). */}
-            <Button variant="ghost" type="button" className="max-sm:h-11" onClick={handleDismiss}>
-              Close
-            </Button>
             <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
             {priceLayer.enabled && priceLayer.failed ? (
               <p
@@ -2281,20 +2325,6 @@ export function CreateOrderModal({
               {posMode ? POS_COPY.confirmAndInvoice : "Create Order"}
             </WriteButton>
           </div>
-          {/* O3 (P01/P02): the total used to sit at the foot of the scrolling body, hidden behind
-              this sticky footer at the moment of "Create Order". It is now pinned HERE. DOM-last so
-              the col-reverse stack puts it on top of the buttons under `sm`; `sm:order-1` seats it
-              between Minimize and the actions on the single row. min-w-0 + tabular-nums, no fixed
-              width: a five-figure total wraps instead of clipping. */}
-          {lineItems.length > 0 && (
-            <div
-              data-testid="create-order-footer-total"
-              className="flex min-w-0 items-baseline justify-between gap-2 tabular-nums text-navy sm:order-1 sm:justify-end"
-            >
-              <span className="text-sm text-navy/70">Total</span>
-              <span className="min-w-0 break-all text-base font-semibold">${total.toFixed(2)}</span>
-            </div>
-          )}
         </div>
       }
     >
@@ -3057,6 +3087,14 @@ export function CreateOrderModal({
           pendingFormValuesRef.current = null;
           pendingAsDraftRef.current = false;
         }}
+        // N02: open on the primary action so Enter takes it (Tab reaches the other, Escape cancels). Radix would
+        // otherwise focus the header X, where Enter would just close the prompt.
+        onOpenAutoFocus={(event) => {
+          const primary = orderDate ? separateChoiceRef.current : mergeChoiceRef.current;
+          if (!primary || primary.disabled) return; // a disabled primary: leave Radix's default
+          event.preventDefault();
+          primary.focus();
+        }}
         title={posMode ? POS_COPY.mergeTitle : "Open order exists"}
         description={
           mergePrompt
@@ -3094,6 +3132,7 @@ export function CreateOrderModal({
               {/* Merging routes through the existing order, which keeps its own
                   orderDate — the backdate would be dropped, so it is not offered. */}
               <Button
+                ref={mergeChoiceRef}
                 type="button"
                 variant={orderDate ? "secondary" : "primary"}
                 disabled={!!orderDate || priceLayerUnconfirmed}
@@ -3111,6 +3150,7 @@ export function CreateOrderModal({
                   : `Merge into ${mergePrompt.orderNumber ?? "existing order"}`}
               </Button>
               <Button
+                ref={separateChoiceRef}
                 type="button"
                 variant={orderDate ? "primary" : "secondary"}
                 disabled={priceLayerUnconfirmed}
