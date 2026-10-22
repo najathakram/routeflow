@@ -107,15 +107,9 @@ describe("row 500 step 1 - missing expectedUpdatedAt is reported, never refused"
     const service = { update: jest.fn() };
     const controller = new InvoicesController(service as never, {} as never);
     const dto = { items: [] } as never;
-    await controller.update(
-      "inv-1",
-      dto,
-      { sub: "user-1" } as never,
-      "okhttp/4.12.0",
-      "2.4.1",
-      "mobile",
-    );
-    expect(service.update).toHaveBeenCalledWith("inv-1", dto, "user-1", {
+    const user = { sub: "user-1" };
+    await controller.update("inv-1", dto, user as never, "okhttp/4.12.0", "2.4.1", "mobile");
+    expect(service.update).toHaveBeenCalledWith("inv-1", dto, user, {
       userAgent: "okhttp/4.12.0",
       appVersion: "2.4.1",
       xClient: "mobile",

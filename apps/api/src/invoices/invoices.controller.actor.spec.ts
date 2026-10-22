@@ -13,10 +13,10 @@ describe("InvoicesController — the acting user reaches create/update (H3b)", (
 
   beforeEach(() => jest.clearAllMocks());
 
-  it("create passes the body and user.sub", async () => {
+  it("create passes the body and the whole actor (row 510 override needs the role)", async () => {
     const dto = { customerId: "c1", items: [] } as never;
     await controller.create(dto, user);
-    expect(service.create).toHaveBeenCalledWith(dto, "user-1");
+    expect(service.create).toHaveBeenCalledWith(dto, user);
   });
 
   it("update passes the id, the body and the whole actor (row 510 override needs the role)", async () => {

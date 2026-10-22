@@ -24,6 +24,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 const autoMock = () =>
   new Proxy({} as Record<string | symbol, jest.Mock>, {
@@ -77,7 +78,8 @@ describe("InvoicesService — a typed price is judged against the customer's tie
   });
   const caseLine = (over: Record<string, unknown> = {}) =>
     line({ productId: "p1", unitLabel: "Case", ...over });
-  const create = (items: unknown[], actor: string | undefined = "user-1") =>
+  const USER = { sub: "user-1" } as JwtPayload;
+  const create = (items: unknown[], actor: JwtPayload | undefined = USER) =>
     service.create({ customerId: "cust-1", items } as never, actor);
   const createdRow = () => prisma.invoice.create.mock.calls[0][0].data.items.create[0];
 
@@ -125,7 +127,7 @@ describe("InvoicesService — a typed price is judged against the customer's tie
     overriddenBy: "user-0",
     ...over,
   });
-  const update = (items: unknown[], actor: string | undefined = "user-1") =>
+  const update = (items: unknown[], actor: JwtPayload | undefined = USER) =>
     service.update("inv-1", { items } as never, actor);
 
   beforeEach(async () => {
