@@ -269,6 +269,47 @@ export function paymentProblemCopy(problem: PaymentProblem, total: number): stri
   return problem === "TENDER_SHORT" ? tenderShortCopy(total) : PAYMENT_PROBLEM_COPY[problem];
 }
 
+/**
+ * Interim till guard (owner P0): the one sentence for a check dated after the business's today. It is the inline message on
+ * the Check fields AND the refusal copy for the server's 400 COUNTER_CHECK_POSTDATED (a post-dated check is not money yet).
+ */
+export const COUNTER_CHECK_POSTDATED_COPY =
+  "Post-dated check: put this sale on account and record the check when it clears.";
+
+/** True when `checkDate` names a real YYYY-MM-DD day strictly after `today` (the business's day). Anything else is not post-dated. */
+export function isPostdatedCheck(checkDate: string, today: string): boolean {
+  const real = (v: string) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    if (!m) return false;
+    const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+    return (
+      d.getUTCFullYear() === Number(m[1]) &&
+      d.getUTCMonth() === Number(m[2]) - 1 &&
+      d.getUTCDate() === Number(m[3])
+    );
+  };
+  return real(checkDate) && real(today) && checkDate > today;
+}
+
+/**
+ * The business's own calendar day (YYYY-MM-DD) at `now` in its IANA `zone`; UTC while the zone is unknown or invalid.
+ * Never the browser's day: a till in one zone for a business in another must agree with the server's day.
+ */
+export function tenantDayIn(zone: string | undefined, now: Date = new Date()): string {
+  const fmt = (timeZone: string) =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+  try {
+    return fmt(zone || "UTC");
+  } catch {
+    return fmt("UTC");
+  }
+}
+
 /** The scan field: 1-3 digits are a QUANTITY to multiply the next scan by; anything else is a code. */
 export function parseScanField(
   raw: string,
@@ -426,6 +467,9 @@ export function counterSaleErrorCopy(err: unknown, opts: { walkIn?: boolean } = 
   // B1209: a walk-in's cash below the server's total was refused (400, as pickup-complete) BEFORE anything was written.
   if (status === 400 && res?.data?.code === API_ERROR_CODES.COUNTER_TENDER_SHORT)
     return PICKUP_TENDER_SHORT_COPY;
+  // Interim till guard: a check dated after the business's today was refused (400) BEFORE anything was written.
+  if (status === 400 && res?.data?.code === API_ERROR_CODES.COUNTER_CHECK_POSTDATED)
+    return COUNTER_CHECK_POSTDATED_COPY;
   if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_KEY_CONFLICT)
     return "That sale reference was already used. Ring the sale again.";
   // CQ-06: a license refusal (create()'s regulated guard, before anything is written) says what to fix, not "Something changed".
@@ -531,6 +575,8 @@ export function pickupCompleteErrorCopy(err: unknown, balanceDue?: number): stri
     return PAYMENT_PROBLEM_COPY.WALK_IN_ON_ACCOUNT;
   if (res?.data?.code === API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED)
     return PAYMENT_PROBLEM_COPY.CHECK_NUMBER_REQUIRED;
+  if (res?.data?.code === API_ERROR_CODES.COUNTER_CHECK_POSTDATED)
+    return COUNTER_CHECK_POSTDATED_COPY;
   return PICKUP_GENERIC_COPY;
 }
 

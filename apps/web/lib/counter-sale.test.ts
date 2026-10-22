@@ -8,6 +8,9 @@ import {
   changeDue,
   COUNTER_OUTCOME_UNKNOWN_COPY,
   counterSaleErrorCopy,
+  COUNTER_CHECK_POSTDATED_COPY,
+  isPostdatedCheck,
+  tenantDayIn,
   COUNTER_SALE_CHANGED_COPY,
   COUNTER_SALE_VOIDED_COPY,
   finalCounterSaleCopy,
@@ -821,5 +824,35 @@ describe("isNotSentOffline (CQ-29)", () => {
     expect(isNotSentOffline(new Error("Network Error"), false)).toBe(false);
     expect(isNotSentOffline({ response: { status: 503 } }, true)).toBe(false);
     expect(isNotSentOffline(null, true)).toBe(false);
+  });
+});
+
+describe("post-dated check (interim till guard)", () => {
+  it("one sentence, shared by the inline message and the refusal", () => {
+    expect(COUNTER_CHECK_POSTDATED_COPY).toBe(
+      "Post-dated check: put this sale on account and record the check when it clears.",
+    );
+    const refusal = {
+      response: { status: 400, data: { code: "COUNTER_CHECK_POSTDATED", message: "raw" } },
+    };
+    expect(counterSaleErrorCopy(refusal)).toBe(COUNTER_CHECK_POSTDATED_COPY);
+    expect(counterSaleErrorCopy(refusal, { walkIn: true })).toBe(COUNTER_CHECK_POSTDATED_COPY);
+    expect(pickupCompleteErrorCopy(refusal)).toBe(COUNTER_CHECK_POSTDATED_COPY);
+  });
+  it("isPostdatedCheck: only a real day strictly after the tenant's today", () => {
+    expect(isPostdatedCheck("2026-10-23", "2026-10-22")).toBe(true);
+    expect(isPostdatedCheck("2026-10-22", "2026-10-22")).toBe(false);
+    expect(isPostdatedCheck("2026-10-21", "2026-10-22")).toBe(false);
+    expect(isPostdatedCheck("", "2026-10-22")).toBe(false);
+    expect(isPostdatedCheck("2026-02-30", "2026-10-22")).toBe(false);
+    expect(isPostdatedCheck("2026-10-23", "")).toBe(false);
+  });
+  it("tenantDayIn: the business's own calendar day, not the browser's or UTC's", () => {
+    const now = new Date("2026-10-22T03:00:00Z");
+    expect(tenantDayIn("America/Los_Angeles", now)).toBe("2026-10-21");
+    expect(tenantDayIn("Pacific/Auckland", new Date("2026-10-22T20:00:00Z"))).toBe("2026-10-23");
+    expect(tenantDayIn("UTC", now)).toBe("2026-10-22");
+    expect(tenantDayIn(undefined, now)).toBe("2026-10-22");
+    expect(tenantDayIn("Not/AZone", now)).toBe("2026-10-22");
   });
 });
