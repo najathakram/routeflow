@@ -199,4 +199,56 @@ describe("mergeIntoStoredLine (SA-841)", () => {
       usedLivePack: false,
     });
   });
+
+  it("MUST-1b: at pack > 1 an all-zero split ({5, 0, 0}) is ambiguous and refused, never an ok with nothing added", () => {
+    // (1) a 12-pack line after the product went unboxed (live 0)
+    expect(
+      run({ line: split(24, 2, 0, 12), add: { qty: 5, boxes: 0, pieces: 0 }, livePack: 0 }),
+    ).toEqual({
+      ok: false,
+      reason: "PACK_MISMATCH",
+      linePack: 12,
+      addPack: null,
+    });
+    // (2) a box-unaware line while the product is boxed live, from a stale client
+    expect(
+      run({ line: boxUnaware(2), add: { qty: 5, boxes: 0, pieces: 0 }, livePack: 12 }),
+    ).toMatchObject({
+      ok: false,
+      reason: "PACK_MISMATCH",
+    });
+  });
+
+  it("invariant: a merge never returns ok with a zero add (every line shape x add shape x pack)", () => {
+    const lines = [
+      boxUnaware(2),
+      split(24, 2, 0, 12),
+      split(24, 2, 0, null),
+      { qty: 2, boxes: null, pieces: null, unitsPerBox: 12 },
+    ];
+    const adds = [
+      { qty: 5, boxes: 0, pieces: 0 },
+      { qty: 0, boxes: 0, pieces: 0 },
+      { qty: 0 },
+      { qty: 5 },
+      { qty: 12, boxes: 1, pieces: 0 },
+      { qty: 5, boxes: 0, pieces: 5 },
+    ];
+    for (const line of lines)
+      for (const add of adds)
+        for (const livePack of [0, 1, 6, 12])
+          for (const bare of ["sellingUnits", "pieces"] as const)
+            for (const output of ["keep", "split"] as const) {
+              const r = mergeIntoStoredLine({ line, add, livePack, bare, output });
+              if (r.ok)
+                expect({
+                  line,
+                  add,
+                  livePack,
+                  bare,
+                  output,
+                  added: r.addInLineUnit > 0,
+                }).toMatchObject({ added: true });
+            }
+  });
 });

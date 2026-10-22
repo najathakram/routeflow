@@ -367,4 +367,30 @@ describe("OrdersService.approveChangeRequestAtStop — a door add's box split (B
       }),
     });
   });
+
+  it("SA-841 MUST-1b: an all-zero split {5, 0, 0} into a 12-pack line of a product now UNBOXED is refused 409, nothing written (never 'Added 0')", async () => {
+    const unboxed = { ...PRODUCT, unitsPerBox: null };
+    h.prisma.product.findUnique.mockResolvedValue(unboxed);
+    h.prisma.product.findFirst.mockResolvedValue(unboxed);
+    h.prisma.changeRequest.findUnique.mockResolvedValue(addItem({ qty: 5, boxes: 0, pieces: 0 }));
+    mergeInto({
+      id: "li-1",
+      orderId: "ord-1",
+      productId: "prod-1",
+      qty: 24,
+      boxes: 2,
+      pieces: 0,
+      unitsPerBox: 12,
+      unitPrice: 40,
+      subtotal: 80,
+      status: "PENDING",
+      deliveredQty: 0,
+    });
+
+    const body = await conflictCode(h.service.approveChangeRequestAtStop("cr-1", driver, null));
+
+    expect(body.code).toBe("MERGE_PACK_MISMATCH");
+    expect(h.prisma.orderItem.update).not.toHaveBeenCalled();
+    expect(h.prisma.deliveryMutation.create).not.toHaveBeenCalled();
+  });
 });

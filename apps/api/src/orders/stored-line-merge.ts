@@ -98,6 +98,12 @@ export function mergeIntoStoredLine(args: MergeIntoStoredLineArgs): MergeIntoSto
     addPieces = Number(add.qty);
   }
 
+  // MUST-1b: an add that resolves to no pieces is ambiguous (e.g. {qty N, boxes 0, pieces 0} at a pack > 1, from a
+  // stale client or a product unboxed since the line was sold). Fail closed: never an ok with nothing added, which
+  // would approve the change, record "Added 0" and bill nothing for the goods handed over.
+  if (!(addPieces > 0))
+    return { ok: false, reason: "PACK_MISMATCH", linePack: pack, addPack: null };
+
   // 3. no pack: a plain sum
   if (!(pack > 1)) {
     return {
@@ -147,6 +153,9 @@ export function mergeIntoStoredLine(args: MergeIntoStoredLineArgs): MergeIntoSto
  * lines; the target is picked by unit (a plain add prefers a line with no unit label), then by resolved pack (the line
  * whose own pack equals the pack the add was filed at), then the first candidate (the helper still refuses a pack it
  * cannot reconcile, so the fallback fails closed).
+ *
+ * The unit is only a PREFERENCE here, never a hard key: a door add carries no unit label, and unit-aware (Case) adds
+ * at the door are deferred (B649); `assertChangeTargetAllowed` refuses a unit-aware target before this runs.
  */
 export function pickHeldMergeTarget<
   H extends StoredLineShape & {
