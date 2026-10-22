@@ -23,6 +23,10 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../../common/testing/db-spec";
 import {
+  carriedReturnSelect,
+  carriedReturnWhere,
+  creditNoteReadSelect,
+  creditNoteReadWhere,
   counterSalesWhere,
   liveCounterSalesWhere,
   pageQuery,
@@ -157,6 +161,40 @@ describeDb(`POS-7b-1 — today's sales query plans (${N} orders)`, () => {
       rows = (await raw.order.findMany(pageQuery(tenantId, WINDOW, 1, limit))).length;
     });
     expect(rows).toBe(Math.min(limit, N));
+    expect(plans.length).toBeGreaterThan(0);
+  });
+
+  it("carried returns (B1262 / SA-838 e): the batched read by the page's credit note ids, plan printed", async () => {
+    // Return.creditNoteId has no index of its own (no schema change in SA-838): the plan reads tenantId's index and filters
+    // the note ids. Evidence for a human, like the rest: the lane prints it.
+    const noteIds = Array.from({ length: 50 }, () => randomUUID());
+    let rows = -1;
+    const plans = await explain("carried returns", async () => {
+      rows = (
+        await raw.return.findMany({
+          where: carriedReturnWhere(tenantId, noteIds),
+          select: carriedReturnSelect,
+        })
+      ).length;
+    });
+    expect(rows).toBe(0);
+    expect(plans.length).toBeGreaterThan(0);
+  });
+
+  it("credit notes (SA-838a I2): the ONE batched read by note id, with the PAID payments applied anywhere, plan printed", async () => {
+    // CreditNote.id is the primary key and InvoicePayment.creditNoteId is the relation's join column: the plan is evidence
+    // for a human, like the rest. The lane prints it.
+    const noteIds = Array.from({ length: 50 }, () => randomUUID());
+    let rows = -1;
+    const plans = await explain("credit notes", async () => {
+      rows = (
+        await raw.creditNote.findMany({
+          where: creditNoteReadWhere(tenantId, noteIds),
+          select: creditNoteReadSelect,
+        })
+      ).length;
+    });
+    expect(rows).toBe(0);
     expect(plans.length).toBeGreaterThan(0);
   });
 

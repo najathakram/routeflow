@@ -2,6 +2,7 @@ import { InvoiceStatus } from "@prisma/client";
 import {
   cashierNameOf,
   billedChargeLines,
+  counterMethodLine,
   explainedTaxRatePercent,
   formatReceiptMoney,
   receiptFigures,
@@ -11,10 +12,13 @@ import {
   storedTaxRatePercent,
   sumConfirmed,
 } from "@routeflow/pricing";
-import type { ReceiptLine, ReceiptModel } from "@routeflow/types";
+import type { ReceiptLine, ReceiptModel, TodaysSaleMethod } from "@routeflow/types";
 import { servedChange } from "../orders/counter-sale/counter-sale-readback";
 import { RECEIPT_FOOTER_MAX_CHARS } from "../system-config/receipt-footer";
-import { todaysMethodOf } from "../orders/counter-sale/counter-sale-today";
+import {
+  TODAYS_SALE_METHOD_ORDER,
+  todaysMethodOf,
+} from "../orders/counter-sale/counter-sale-today";
 
 /**
  * The pure half of the order receipt (SA-751r): stored rows in, the shared `ReceiptModel` out. It mirrors the web's
@@ -112,15 +116,6 @@ const DEAD_INVOICE_STATUSES: readonly string[] = [InvoiceStatus.VOID, InvoiceSta
 /** A live invoice: not VOID and not written off (the same rule Today's sales uses for "voided"). */
 export const isLiveInvoice = (i: Pick<ReceiptInvoiceInput, "status">): boolean =>
   !DEAD_INVOICE_STATUSES.includes(i.status);
-
-const METHOD_ORDER = ["CASH", "CARD", "CHECK", "OTHER", "STORE_CREDIT"] as const;
-const METHOD_LABEL: Record<(typeof METHOD_ORDER)[number], string> = {
-  CASH: "Cash",
-  CARD: "Card",
-  CHECK: "Check",
-  OTHER: "Other",
-  STORE_CREDIT: "Store credit",
-};
 
 /** Sign first: a downward reprice reads "-$1.00", never "$-1.00". The ONE formatter (pricing), shared with the web. */
 export { formatReceiptMoney };
@@ -229,7 +224,7 @@ export function buildReceiptModel(
   );
   const balanceDue = Math.max(0, roundMoney(total - paid));
 
-  const appliedBy = (method: (typeof METHOD_ORDER)[number]) =>
+  const appliedBy = (method: TodaysSaleMethod) =>
     roundMoney(
       sumConfirmed(
         livePayments
@@ -237,8 +232,12 @@ export function buildReceiptModel(
           .map((p) => ({ amount: p.amount, status: p.status })),
       ),
     );
-  const methods = METHOD_ORDER.filter((method) => appliedBy(method) > 0);
-  const hasTender = methods.length > 0;
+  // the till's ONE method order and labels (an ADVANCE application is a tender here exactly as on the print: SA-838)
+  const tenders = TODAYS_SALE_METHOD_ORDER.map((method) => ({
+    method,
+    amount: appliedBy(method),
+  })).filter((t) => t.amount > 0);
+  const hasTender = tenders.length > 0;
   const onAccount = !hasTender && balanceDue > 0;
   // CQ-03: the levy the live invoices billed is its own named charge; Tax is the regular tax only; Adjustments the rest
   const { tax, charges, adjustments } = receiptFigures({
@@ -291,7 +290,8 @@ export function buildReceiptModel(
     paymentNotRecorded: false,
     showPaid: hasTender,
     showBalance: onAccount || balanceDue > 0,
-    methodLabel: hasTender ? methods.map((m) => METHOD_LABEL[m]).join(" + ") : null,
+    // the reprint prints this very line (pricing's counterMethodLine), amounts and all
+    methodLabel: hasTender ? counterMethodLine(tenders) : null,
     tendered,
     tenderedAsEntered: false,
     change: servedChange(order.counterCashTendered, livePayments, balanceDue),

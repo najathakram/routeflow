@@ -163,3 +163,291 @@ describe("counter receipt files never inject markup (SA-762r F6)", () => {
     expect(src).not.toMatch(/dangerouslySetInnerHTML|innerHTML/);
   });
 });
+
+describe("reprint after a return (SA-838a): the paper", () => {
+  type Sale = Parameters<typeof receiptModelFromOrder>[0]["sale"];
+  /** the money rows below Total, as the paper reads them, top to bottom: "Label value" per line */
+  const paper = (over: Partial<Sale>) => {
+    const model = receiptModelFromOrder({
+      order: {
+        orderNumber: "ORD-1",
+        total: 12.5,
+        tax: 0,
+        lineItems: [{ id: "l1", name: "Cola", qty: 5, unitPrice: 2.5 }],
+      },
+      sale: {
+        invoiceId: "i1",
+        invoiceNumber: "INV-1",
+        paid: 12.5,
+        balanceDue: 0,
+        methods: [],
+        createdAt: "2026-10-07T15:15:00.000Z",
+        ...over,
+      },
+      profile: null,
+    });
+    const { container } = render(<CounterReceiptView model={model} />);
+    const rows = Array.from(container.querySelectorAll("dl > div")).map((r) =>
+      Array.from(r.children)
+        .map((c) => c.textContent)
+        .join(" "),
+    );
+    return rows.slice(rows.findIndex((r) => r.startsWith("Total")) + 1);
+  };
+  const none = { applied: 0, refunded: 0, kept: 0, used: 0, pending: false };
+  /** Total $12.50, Cash $5.00 */
+  const cash5 = {
+    paid: 5,
+    balanceDue: 7.5,
+    methods: [{ method: "CASH" as const, amount: 5 }],
+    tenderPaid: 5,
+    tenderMethods: [{ method: "CASH" as const, amount: 5 }],
+  };
+
+  it("(1a) refund done: Payment method Cash $5.00, Paid $5.00, Refunded $2.50 (returned items), Balance due $7.50", () => {
+    expect(paper({ ...cash5, returnLines: { ...none, refunded: 2.5 } })).toEqual([
+      "Payment method Cash $5.00",
+      "Paid $5.00",
+      "Refunded $2.50 (returned items)",
+      "Balance due $7.50",
+    ]);
+  });
+
+  it("(1b) credit kept: Payment method Cash $5.00, Paid $5.00, Credit kept $2.50 (returned items), Balance due $7.50", () => {
+    expect(paper({ ...cash5, returnLines: { ...none, kept: 2.5 } })).toEqual([
+      "Payment method Cash $5.00",
+      "Paid $5.00",
+      "Credit kept $2.50 (returned items)",
+      "Balance due $7.50",
+    ]);
+  });
+
+  it("(1c) credit applied: Payment method Cash $5.00, Paid $5.00, Returned −$2.50, Balance due $5.00", () => {
+    expect(
+      paper({
+        ...cash5,
+        paid: 7.5,
+        balanceDue: 5,
+        methods: [
+          { method: "CASH", amount: 5 },
+          { method: "STORE_CREDIT", amount: 2.5 },
+        ],
+        returnLines: { ...none, applied: 2.5 },
+      }),
+    ).toEqual(["Payment method Cash $5.00", "Paid $5.00", "Returned −$2.50", "Balance due $5.00"]);
+  });
+
+  it("(2) pending: Payment method Cash $5.00, Paid $5.00, Balance due $7.50, Return in progress", () => {
+    expect(paper({ ...cash5, returnLines: { ...none, pending: true } })).toEqual([
+      "Payment method Cash $5.00",
+      "Paid $5.00",
+      "Balance due $7.50",
+      "Return in progress",
+    ]);
+  });
+
+  it("(a) prints Payment method Cash $6.25, Paid $6.25, Returned −$6.25 (no Store credit, no Balance due)", () => {
+    expect(
+      paper({
+        methods: [
+          { method: "CASH", amount: 6.25 },
+          { method: "STORE_CREDIT", amount: 6.25 },
+        ],
+        tenderPaid: 6.25,
+        tenderMethods: [{ method: "CASH", amount: 6.25 }],
+        returnLines: { ...none, applied: 6.25 },
+      }),
+    ).toEqual(["Payment method Cash $6.25", "Paid $6.25", "Returned −$6.25"]);
+  });
+
+  it("(b) prints Payment method Advance $5.00 + Cash $7.50, Paid $12.50, Refunded $2.50 (returned items)", () => {
+    expect(
+      paper({
+        methods: [
+          { method: "ADVANCE", amount: 5 },
+          { method: "CASH", amount: 7.5 },
+        ],
+        tenderPaid: 12.5,
+        tenderMethods: [
+          { method: "ADVANCE", amount: 5 },
+          { method: "CASH", amount: 7.5 },
+        ],
+        returnLines: { ...none, refunded: 2.5 },
+      }),
+    ).toEqual([
+      "Payment method Advance $5.00 + Cash $7.50",
+      "Paid $12.50",
+      "Refunded $2.50 (returned items)",
+    ]);
+  });
+
+  it("(c) prints Payment method Advance $12.50, Paid $12.50, Credit kept $3.00 (returned items)", () => {
+    expect(
+      paper({
+        methods: [{ method: "ADVANCE", amount: 12.5 }],
+        tenderPaid: 12.5,
+        tenderMethods: [{ method: "ADVANCE", amount: 12.5 }],
+        returnLines: { ...none, kept: 3 },
+      }),
+    ).toEqual([
+      "Payment method Advance $12.50",
+      "Paid $12.50",
+      "Credit kept $3.00 (returned items)",
+    ]);
+  });
+
+  it("(3) the own credit spent on order B: Cash $12.50, Paid $12.50, Credit used $5.50, and no Balance due", () => {
+    expect(
+      paper({
+        methods: [{ method: "CASH", amount: 12.5 }],
+        tenderPaid: 12.5,
+        tenderMethods: [{ method: "CASH", amount: 12.5 }],
+        returnLines: { ...none, used: 5.5 },
+      }),
+    ).toEqual(["Payment method Cash $12.50", "Paid $12.50", "Credit used $5.50 (returned items)"]);
+  });
+
+  it("a return whose credit note was voided, or whose settlement is all zero, prints no return line", () => {
+    expect(
+      paper({
+        methods: [{ method: "CASH", amount: 12.5 }],
+        tenderPaid: 12.5,
+        tenderMethods: [{ method: "CASH", amount: 12.5 }],
+        returnLines: none,
+      }),
+    ).toEqual(["Payment method Cash $12.50", "Paid $12.50"]);
+  });
+
+  it("same-receipt double claim: an unproven store-credit tender prints once, with no Credit used line", () => {
+    expect(
+      paper({
+        methods: [
+          { method: "CASH", amount: 7.5 },
+          { method: "STORE_CREDIT", amount: 5 },
+        ],
+        tenderPaid: 12.5,
+        tenderMethods: [
+          { method: "CASH", amount: 7.5 },
+          { method: "STORE_CREDIT", amount: 5 },
+        ],
+        returnLines: none,
+      }),
+    ).toEqual(["Payment method Cash $7.50 + Store credit $5.00", "Paid $12.50"]);
+  });
+
+  it("(d) another order's store credit prints as the tender Store credit", () => {
+    expect(
+      paper({
+        methods: [{ method: "STORE_CREDIT", amount: 12.5 }],
+        tenderPaid: 12.5,
+        tenderMethods: [{ method: "STORE_CREDIT", amount: 12.5 }],
+        returnLines: none,
+      }),
+    ).toEqual(["Payment method Store credit $12.50", "Paid $12.50"]);
+  });
+
+  it("the carrier order B of sale A's INLINE return prints NO return line, and Paid adds up", () => {
+    expect(
+      paper({
+        methods: [
+          { method: "CASH", amount: 7 },
+          { method: "STORE_CREDIT", amount: 5.5 },
+        ],
+        tenderPaid: 12.5,
+        tenderMethods: [
+          { method: "CASH", amount: 7 },
+          { method: "STORE_CREDIT", amount: 5.5 },
+        ],
+        returnLines: none,
+      }),
+    ).toEqual(["Payment method Cash $7.00 + Store credit $5.50", "Paid $12.50"]);
+  });
+
+  it("sale A, whose own INLINE return was carried on B and applied, prints its own Returned line", () => {
+    expect(
+      paper({
+        methods: [
+          { method: "CASH", amount: 7 },
+          { method: "STORE_CREDIT", amount: 5.5 },
+        ],
+        tenderPaid: 7,
+        tenderMethods: [{ method: "CASH", amount: 7 }],
+        returnLines: { ...none, applied: 5.5 },
+      }),
+    ).toEqual(["Payment method Cash $7.00", "Paid $7.00", "Returned −$5.50"]);
+  });
+
+  it("an on-account sale with only its own return credit prints Returned −$6.25 and Balance due $6.25", () => {
+    expect(
+      paper({
+        paid: 6.25,
+        balanceDue: 6.25,
+        methods: [{ method: "STORE_CREDIT", amount: 6.25 }],
+        tenderPaid: 0,
+        tenderMethods: [],
+        returnLines: { ...none, applied: 6.25 },
+      }),
+    ).toEqual(["Returned −$6.25", "Balance due $6.25"]);
+  });
+
+  it("two own returns: applied and refunded and pending each print once, in the pinned order", () => {
+    expect(
+      paper({
+        ...cash5,
+        paid: 7.5,
+        balanceDue: 5,
+        methods: [
+          { method: "CASH", amount: 5 },
+          { method: "STORE_CREDIT", amount: 2.5 },
+        ],
+        returnLines: { applied: 2.5, refunded: 1, kept: 0.5, used: 0.75, pending: true },
+      }),
+    ).toEqual([
+      "Payment method Cash $5.00",
+      "Paid $5.00",
+      "Returned −$2.50",
+      "Refunded $1.00 (returned items)",
+      "Credit kept $0.50 (returned items)",
+      "Credit used $0.75 (returned items)",
+      "Balance due $5.00",
+      "Return in progress",
+    ]);
+  });
+
+  it("the invariant on the paper: Balance due = Total - Paid - Returned for every applied fixture", () => {
+    const cents = (t: string) => Math.round(Number(t.replace(/[^0-9.]/g, "")) * 100);
+    const rows = paper({
+      ...cash5,
+      paid: 7.5,
+      balanceDue: 5,
+      methods: [
+        { method: "CASH", amount: 5 },
+        { method: "STORE_CREDIT", amount: 2.5 },
+      ],
+      returnLines: { ...none, applied: 2.5 },
+    });
+    const get = (label: string) => cents(rows.find((r) => r.startsWith(label))!);
+    expect(get("Balance due")).toBe(1250 - get("Paid") - get("Returned"));
+  });
+
+  it("(g) an old server prints master's wording, byte for byte (literal text taken from master's behaviour)", () => {
+    expect(
+      paper({
+        paid: 6.25,
+        balanceDue: 6.25,
+        methods: [{ method: "STORE_CREDIT", amount: 6.25 }],
+      }),
+    ).toEqual(["Payment method Store credit", "Paid $6.25", "Balance due $6.25"]);
+    document.body.innerHTML = "";
+    expect(
+      paper({
+        paid: 12.5,
+        balanceDue: 0,
+        methods: [
+          { method: "CASH", amount: 5 },
+          { method: "CARD", amount: 7.5 },
+        ],
+      }),
+    ).toEqual(["Payment method Cash + Card", "Paid $12.50"]);
+  });
+});
