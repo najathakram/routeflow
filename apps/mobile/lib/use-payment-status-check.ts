@@ -8,14 +8,28 @@ import type { PaymentKeyHolder } from "./payment-submit-key";
 /**
  * Whether the screen treats the outcome as unknown: the key is locked, or a request is still in flight that this
  * screen did NOT send itself (it opened while the holder already had one out: back + reopen). Its own pending
- * Save is not shown as "we couldn't confirm". Re-renders on every holder change, so a late settle of the first
- * request reaches a reopened screen.
+ * Save is not shown as "we couldn't confirm".
+ *  - "Inherited" is decided on every OPEN (`isOpen` false -> true) and whenever the holder changes, never once
+ *    per mount, so a screen or sheet that stays mounted offers the check the moment it reopens.
+ *  - It ends with the inherited flight: once nothing is out, a later Save of this screen is its own.
+ * Re-renders on every holder change, so a late settle of the first request reaches a reopened screen.
  */
-export function useHolderUnknown(holder: PaymentKeyHolder): boolean {
+export function useHolderUnknown(holder: PaymentKeyHolder, isOpen = true): boolean {
   const [, bump] = useReducer((n: number) => n + 1, 0);
-  const inherited = useRef<boolean | null>(null);
-  if (inherited.current === null) inherited.current = holder.hasUnknown();
-  useEffect(() => holder.subscribe(bump), [holder]);
+  const inherited = useRef(false);
+  const seen = useRef<{ holder: PaymentKeyHolder; open: boolean } | null>(null);
+  if (!seen.current || seen.current.holder !== holder || (isOpen && !seen.current.open)) {
+    inherited.current = isOpen && holder.inFlight();
+  }
+  seen.current = { holder, open: isOpen };
+  useEffect(() => {
+    // the inherited flight may have ended between render and subscribe
+    if (!holder.inFlight()) inherited.current = false;
+    return holder.subscribe(() => {
+      if (!holder.inFlight()) inherited.current = false;
+      bump();
+    });
+  }, [holder]);
   return holder.isLocked() || (holder.inFlight() && inherited.current);
 }
 
@@ -30,6 +44,8 @@ export function usePaymentStatusCheck(
   scope: string,
   upload: (paymentId: string, photoUri: string) => Promise<unknown>,
   onRecorded?: (message: string) => void,
+  /** A screen or sheet that stays mounted passes its open flag. */
+  isOpen = true,
 ) {
   const qc = useQueryClient();
   const [checking, setChecking] = useState(false);
@@ -54,7 +70,7 @@ export function usePaymentStatusCheck(
       setChecking(false);
     }
   }, [holder, scope, upload, qc, onRecorded]);
-  const unknown = useHolderUnknown(holder);
+  const unknown = useHolderUnknown(holder, isOpen);
   // The last answer's fixed line; while unknown only a no-answer line shows (error, in flight), so a newer
   // unknown outcome hides a stale "cancelled" or "recorded".
   const message =

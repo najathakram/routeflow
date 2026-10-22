@@ -23,6 +23,7 @@ import {
   forgetPaymentProof,
   paymentKeyRefusalCopy,
   rememberPaymentProof,
+  paymentKeyScope,
   usePaymentSubmitKey,
 } from "../../../../../lib/payment-submit-key";
 import { usePaymentStatusCheck } from "../../../../../lib/use-payment-status-check";
@@ -45,7 +46,7 @@ export default function RecordPaymentScreen() {
   const { data: invoice } = useAdminInvoice(id ?? "");
   const mut = useRecordInvoicePayment();
   // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
-  const keyScope = `invoice:${id ?? ""}`;
+  const keyScope = paymentKeyScope.invoice(id ?? "");
   const paymentKey = usePaymentSubmitKey(keyScope);
   const uploadImageMut = useUploadPaymentImage();
   // Re-encode to JPEG first (iOS HEIC picks aren't decodable once uploaded as-is; see

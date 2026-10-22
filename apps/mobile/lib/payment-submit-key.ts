@@ -16,6 +16,7 @@ export {
   PAYMENT_MAY_BE_RECORDED_COPY,
   PAYMENT_PHOTO_LATER_COPY,
   paymentKeyRefusalCopy,
+  paymentKeyScope,
   paymentMayBeRecordedCopy,
   paymentSubmitFingerprint,
   rememberPaymentProof,

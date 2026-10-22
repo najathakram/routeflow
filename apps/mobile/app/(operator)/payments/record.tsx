@@ -34,6 +34,7 @@ import {
   forgetPaymentProof,
   paymentKeyRefusalCopy,
   rememberPaymentProof,
+  paymentKeyScope,
   usePaymentSubmitKey,
 } from "../../../lib/payment-submit-key";
 import { usePaymentStatusCheck } from "../../../lib/use-payment-status-check";
@@ -158,7 +159,7 @@ function PaymentForm({
 }) {
   const mut = useRecordPaymentStandalone();
   // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
-  const keyScope = `standalone:${customerId}`;
+  const keyScope = paymentKeyScope.standalone(customerId);
   const paymentKey = usePaymentSubmitKey(keyScope);
   const uploadImageMut = useUploadPaymentImage();
   // Re-encode to JPEG first (iOS HEIC picks aren't decodable once uploaded as-is). Throws on failure.

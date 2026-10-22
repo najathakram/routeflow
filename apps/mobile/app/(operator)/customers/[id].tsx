@@ -39,7 +39,11 @@ import { roundMoney } from "@routeflow/pricing";
 import { tierLabel } from "../../../lib/tier-label";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
-import { paymentKeyRefusalCopy, usePaymentSubmitKey } from "../../../lib/payment-submit-key";
+import {
+  paymentKeyRefusalCopy,
+  paymentKeyScope,
+  usePaymentSubmitKey,
+} from "../../../lib/payment-submit-key";
 import { usePaymentStatusCheck } from "../../../lib/use-payment-status-check";
 import { PaymentStatusNotice } from "../../../components/PaymentStatusNotice";
 import { useRecordReturn } from "../../../hooks/useRecordReturn";
@@ -513,7 +517,7 @@ function RecordAdvanceModal({
 }) {
   const mut = useCreateAdvancePayment();
   // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
-  const keyScope = `advance:${customerId}`;
+  const keyScope = paymentKeyScope.advance(customerId);
   const paymentKey = usePaymentSubmitKey(keyScope);
   // SA-824: an unknown outcome offers "Check payment status"; found closes like a 2xx.
   const statusCheck = usePaymentStatusCheck(paymentKey, keyScope, noAdvancePhoto, (message) => {

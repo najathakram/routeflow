@@ -6,6 +6,7 @@ import {
   sendWithPaymentKey,
   PAYMENT_MAY_BE_RECORDED_COPY,
   paymentMayBeRecordedCopy,
+  paymentKeyScope,
 } from "../lib/payment-submit-key";
 
 /**
@@ -218,5 +219,13 @@ describe("SA-824 MUST-1: a request in flight is an unknown outcome (mobile)", ()
     h.settle(k4, { ok: false, error: err() }); // K4 times out
     expect(h.peek()).toBe(k4);
     expect(k3).not.toBe(k4);
+  });
+});
+
+describe("SA-824 scope is writer + target (mobile)", () => {
+  it("paymentKeyScope: one scope per writer + target; the three screens use these builders", () => {
+    expect(paymentKeyScope.standalone("c1")).toBe("standalone:c1");
+    expect(paymentKeyScope.invoice("i1")).toBe("invoice:i1");
+    expect(paymentKeyScope.advance("c1")).toBe("advance:c1");
   });
 });
