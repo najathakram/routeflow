@@ -31,6 +31,8 @@ export interface CounterSalePayment {
   amount?: number;
   /** a check number or card reference */
   reference?: string;
+  /** CHECK only: the date written on the check, YYYY-MM-DD. After the tenant's today = 400 COUNTER_CHECK_POSTDATED. Omitted = not checked. */
+  checkDate?: string;
 }
 
 export interface CounterSaleRequest {
