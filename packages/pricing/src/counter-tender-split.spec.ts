@@ -1,4 +1,5 @@
 import { counterMethodLine, counterTenderSplit } from "./counter-tender-split";
+import type { ReturnSettlement } from "./return-settlement";
 
 /**
  * B1262 / SA-838: the ONE split of a counter sale's PAID payments into what the customer TENDERED and the credit the
@@ -13,11 +14,20 @@ const pay = (method: string, amount: unknown, extra: Record<string, unknown> = {
   ...extra,
 });
 
-describe("counterTenderSplit (SA-838)", () => {
+/** a settlement as `returnSettlement` hands it over: the credit note it spoke for and what of it was applied here */
+const settled = (creditNoteId: string, applied: number): ReturnSettlement => ({
+  state: "SETTLED",
+  creditNoteId,
+  applied,
+  refunded: 0,
+  kept: 0,
+});
+
+describe("counterTenderSplit (SA-838, SA-838a)", () => {
   it("(a) on account $12.50, $6.25 returned, $6.25 cash: the own return credit is not a tender", () => {
     const r = counterTenderSplit(
       [pay("CASH", 6.25), pay("STORE_CREDIT", 6.25, { creditNoteId: "cn-1" })],
-      ["cn-1"],
+      [settled("cn-1", 6.25)],
       ORDER,
     );
     expect(r).toEqual({
@@ -48,7 +58,7 @@ describe("counterTenderSplit (SA-838)", () => {
   it("(d) store credit from ANOTHER order's return stays a tender", () => {
     const r = counterTenderSplit(
       [pay("STORE_CREDIT", 4, { creditNoteId: "cn-other" })],
-      ["cn-own"],
+      [settled("cn-own", 0)],
       ORDER,
     );
     expect(r).toEqual({
@@ -59,7 +69,11 @@ describe("counterTenderSplit (SA-838)", () => {
   });
 
   it("a credit note payment with no note id is a tender (never hide money)", () => {
-    const r = counterTenderSplit([pay("STORE_CREDIT", 3, { creditNoteId: null })], ["cn-1"], ORDER);
+    const r = counterTenderSplit(
+      [pay("STORE_CREDIT", 3, { creditNoteId: null })],
+      [settled("cn-1", 0)],
+      ORDER,
+    );
     expect(r.tenderPaid).toBe(3);
     expect(r.returnCredit).toBe(0);
   });
@@ -71,7 +85,7 @@ describe("counterTenderSplit (SA-838)", () => {
         pay("STORE_CREDIT", 2.2, { creditNoteId: "cn-1" }),
         pay("STORE_CREDIT", 0.35, { creditNoteId: "cn-2" }),
       ],
-      new Set(["cn-1", "cn-2"]),
+      [settled("cn-1", 3.3), settled("cn-2", 0.35)],
       ORDER,
     );
     expect(r.returnCredit).toBe(3.65);
@@ -101,7 +115,7 @@ describe("counterTenderSplit (SA-838)", () => {
         { method: "CHECK", amount: 7, status: "PENDING" },
         { method: "STORE_CREDIT", amount: 6, status: "VOID", creditNoteId: "cn-1" },
       ],
-      ["cn-1"],
+      [settled("cn-1", 0)],
       ORDER,
     );
     expect(r).toEqual({ tenderPaid: 5, returnCredit: 0, methods: [{ method: "CASH", amount: 5 }] });
@@ -122,7 +136,7 @@ describe("counterTenderSplit (SA-838)", () => {
       pay("STORE_CREDIT", 6.25, { creditNoteId: "cn-1" }),
       pay("ADVANCE", 1.01),
     ];
-    const r = counterTenderSplit(rows, ["cn-1"], ORDER);
+    const r = counterTenderSplit(rows, [settled("cn-1", 6.25)], ORDER);
     expect(r.tenderPaid + r.returnCredit).toBeCloseTo(13.51, 10);
   });
 
@@ -135,29 +149,23 @@ describe("counterTenderSplit (SA-838)", () => {
   });
 });
 
-describe("counterMethodLine (the ONE Payment method line, email and reprint)", () => {
+describe("counterMethodLine (the ONE Payment method line, email and reprint; SA-838a)", () => {
   it("two or more tenders carry their amounts", () => {
     expect(
-      counterMethodLine(
-        [
-          { method: "ADVANCE", amount: 5 },
-          { method: "CASH", amount: 7.5 },
-        ],
-        12.5,
-      ),
+      counterMethodLine([
+        { method: "ADVANCE", amount: 5 },
+        { method: "CASH", amount: 7.5 },
+      ]),
     ).toBe("Advance $5.00 + Cash $7.50");
   });
 
-  it("a single tender that differs from the sale total carries its amount", () => {
-    expect(counterMethodLine([{ method: "CASH", amount: 6.25 }], 12.5)).toBe("Cash $6.25");
-  });
-
-  it("a single tender equal to the total reads the label only (compared in cents)", () => {
-    expect(counterMethodLine([{ method: "ADVANCE", amount: 12.5 }], 12.5)).toBe("Advance");
-    expect(counterMethodLine([{ method: "CARD", amount: 0.1 + 0.2 }], 0.3)).toBe("Card");
+  it("a single tender carries its amount, whether or not it is the whole sale", () => {
+    expect(counterMethodLine([{ method: "CASH", amount: 6.25 }])).toBe("Cash $6.25");
+    expect(counterMethodLine([{ method: "ADVANCE", amount: 12.5 }])).toBe("Advance $12.50");
+    expect(counterMethodLine([{ method: "CARD", amount: 0.1 + 0.2 }])).toBe("Card $0.30");
   });
 
   it("no tenders is an empty line", () => {
-    expect(counterMethodLine([], 12.5)).toBe("");
+    expect(counterMethodLine([])).toBe("");
   });
 });
