@@ -2401,7 +2401,7 @@ export function CreateOrderModal({
       }
       className="max-w-2xl"
       // Q08: the X is the one Close (the footer used to repeat it); Minimize sits beside it. Both are 44 px targets below lg.
-      closeClassName="max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
+      closeClassName="max-lg:flex max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
       headerActions={
         <Button
           variant="ghost"
@@ -3305,7 +3305,7 @@ export function CreateOrderModal({
       />
 
       {/* Merge-or-separate prompt: shown when the selected customer already has an
-          unconfirmed order. Operator must choose explicitly — no default. */}
+          unconfirmed order. Enter takes the primary action (N02); Escape cancels. */}
       <Modal
         open={!!mergePrompt}
         onClose={() => {

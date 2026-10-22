@@ -66,7 +66,27 @@ function Harness() {
   );
 }
 
-const tokens = (el: Element) => (el.getAttribute("class") ?? "").split(/\s+/).filter(Boolean);
+function PriceHarness({ boxed = false }: { boxed?: boolean }) {
+  const [items, setItems] = React.useState([
+    boxed ? { ...line, qty: 24, unit: "box", unitsPerBox: 12, boxSplit: true } : line,
+  ]);
+  return (
+    <EditableLineItems
+      items={items}
+      onChange={setItems}
+      onAdd={() => {}}
+      onDelete={() => {}}
+      canEditPrice
+      tierPriceFor={() => 6.99}
+      isSpecialTierFor={() => false}
+      tierForProductId={() => 1}
+      pricingReady
+    />
+  );
+}
+
+const tokens = (el: Element | null) =>
+  (el?.getAttribute("class") ?? "").split(/\s+/).filter(Boolean);
 
 describe("Edit Items product search at phone width (N09)", () => {
   it("the results list flips above the field below sm, clear of the pinned Save bar", () => {
@@ -81,6 +101,30 @@ describe("Edit Items product search at phone width (N09)", () => {
     );
     // from sm up it still drops below the field
     expect(t).toContain("top-full");
+  });
+});
+
+// row 730: the qty and price fields of an Edit Items line are 44 px below lg (they were 36 px, h-9, everywhere).
+describe("Edit Items fields are 44 px on touch widths (row 730)", () => {
+  it("the qty field and both price fields step up to h-11 below lg, keeping h-9 from lg", () => {
+    renderWithProviders(<PriceHarness />);
+    const qty = screen.getByRole("spinbutton", { name: /qty/i });
+    expect(tokens(qty)).toEqual(expect.arrayContaining(["h-9", "max-lg:h-11"]));
+    for (const label of [
+      ...screen.getAllByLabelText(/^unit price/i),
+      ...screen.getAllByLabelText(/\$ off/i),
+    ]) {
+      expect(tokens(label.closest("span.rounded") as HTMLElement)).toEqual(
+        expect.arrayContaining(["h-9", "max-lg:h-11"]),
+      );
+    }
+  });
+
+  it("a boxed line's cases and pieces fields use the same 44 px step", () => {
+    renderWithProviders(<PriceHarness boxed />);
+    expect(tokens(screen.getByTitle(/number of whole/i))).toEqual(
+      expect.arrayContaining(["h-9", "max-lg:h-11"]),
+    );
   });
 });
 
