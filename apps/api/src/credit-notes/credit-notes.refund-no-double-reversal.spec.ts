@@ -17,13 +17,18 @@ import { createMockPrisma } from "../testing/prisma-mock";
 describe("a refund credit note books NO second regulated reversal (ledgerReversedByReturn)", () => {
   let service: CreditNotesService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let ledger: { reverseCreditNoteEntries: jest.Mock; unreverseCreditNoteEntries: jest.Mock };
+  let ledger: {
+    reverseCreditNoteEntries: jest.Mock;
+    unreverseCreditNoteEntries: jest.Mock;
+    settleRegulatedLedger: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
     ledger = {
       reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
       unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
     };
     const mod = await Test.createTestingModule({
       providers: [

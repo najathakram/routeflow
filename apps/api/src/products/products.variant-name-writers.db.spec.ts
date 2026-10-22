@@ -135,7 +135,11 @@ describeDb("B1 every variant-name writer stores the bare label: real Postgres", 
     );
   const patch = (tenantId: string, id: string, dto: Record<string, unknown>) =>
     inTenant(tenantId, () =>
-      products.update(id, dto as never, { packPrecondition: "internal", actorId: null }),
+      products.update(id, dto as never, {
+        packPrecondition: "internal",
+        reparentVia: "editor",
+        actorId: null,
+      }),
     );
   const fresh = (id: string) => prisma.product.findUniqueOrThrow({ where: { id } });
   const labels = async (id: string) => {

@@ -228,6 +228,8 @@ test.describe("Orders list — mobile card layout + dock clearance (B823)", () =
       els.map((el) => el.querySelector("span.font-mono.text-xs.font-semibold")?.textContent),
     );
 
+    // r4 Q01: below md the sort control lives in the Filters panel.
+    await page.getByRole("button", { name: /^Filters/ }).click();
     const sortSelect = page.getByRole("combobox", { name: "Sort orders by" });
     await expect(sortSelect).toBeVisible();
     // Default is "Created" desc — switch to "Order #", which starts ascending (the sort

@@ -79,12 +79,20 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
   let service: ReturnsService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let creditNotesCreate: jest.Mock;
-  let ledger: { reverseReturnEntries: jest.Mock; unreverseReturnEntries: jest.Mock };
+  let ledger: {
+    reverseReturnEntries: jest.Mock;
+    unreverseReturnEntries: jest.Mock;
+    settleRegulatedLedger: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
     creditNotesCreate = jest.fn();
-    ledger = { reverseReturnEntries: jest.fn(), unreverseReturnEntries: jest.fn() };
+    ledger = {
+      reverseReturnEntries: jest.fn(),
+      unreverseReturnEntries: jest.fn(),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+    };
 
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
@@ -1249,6 +1257,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
           create: jest.fn().mockResolvedValue({ id: "mv-rev" }),
         },
         returnParkedRestock: { deleteMany: jest.fn() },
+        // SA-839 F3: the cancel reads its ledger rows to lock their Orders / Invoices (none here).
+        regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
       prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
@@ -1281,7 +1291,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
         performedById: "u1",
       });
       expect(rev.quantity.toString()).toBe("-2");
-      expect(ledger.unreverseReturnEntries).toHaveBeenCalledTimes(1);
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
       // The fresh read alone is still a TOCTOU: pin the FOR UPDATE row lock, and pin that
       // it ran BEFORE the fresh read, so deleting it turns this test red.
       expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
@@ -1309,6 +1319,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
           create: jest.fn(),
         },
         returnParkedRestock: { deleteMany: jest.fn() },
+        // SA-839 F3: the cancel reads its ledger rows to lock their Orders / Invoices (none here).
+        regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
       prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
@@ -1326,7 +1338,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
       // B562 PR-2: no movement to undo → nothing appended, and nothing is ever deleted.
       expect(tx.stockMovement.create).not.toHaveBeenCalled();
       expect(tx.stockMovement.deleteMany).not.toHaveBeenCalled();
-      expect(ledger.unreverseReturnEntries).toHaveBeenCalledTimes(1);
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
       expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
       expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
         txReturnFindUnique.mock.invocationCallOrder[0],

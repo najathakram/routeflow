@@ -53,7 +53,7 @@ import {
 } from "@/lib/api/orders";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
+import { ORDERS_INLINE_RETURNS_ADDON, SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
@@ -61,6 +61,7 @@ import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { useStaffFulfilment } from "@/lib/fulfilment-caps";
 import { OrderFulfilmentRow, fulfillPathErrorCopy } from "../_components/OrderFulfilmentRow";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
+import { OrdersMoreMenu } from "../_components/OrdersMoreMenu";
 import {
   OrderInlineReturnsSection,
   type OrderInlineReturnsSectionHandle,
@@ -95,6 +96,10 @@ import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
+import { usePhoneWidth } from "./_components/use-phone-width";
+import { phoneActionItems } from "./_components/phone-action-items";
+import { useInvoiceDraftNotice } from "./_components/use-invoice-draft-notice";
+import { SAVE_CHORD_KEYS, saveChordHandler } from "./_components/use-save-chord";
 import { PickupHandOverButton, PickupHandOverDialog } from "./_components/PickupHandOver";
 import {
   ConfirmedPrimaryAction,
@@ -112,6 +117,7 @@ import { InvoicedEditNotice } from "./_components/InvoicedEditNotice";
 import { StickyEditBar } from "./_components/StickyEditBar";
 import { EditCasesPieces } from "./_components/EditCasesPieces";
 import { isCasesPiecesLine } from "./edit-cases-pieces";
+import { EDIT_QTY_INPUT } from "./edit-line-controls";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditTaxLabel } from "./_components/EditTaxLabel";
 import { EditScanBar } from "./_components/EditScanBar";
@@ -163,7 +169,7 @@ import { derivedUnitPatch } from "@/lib/edit-line-derived-unit";
 import type { UnitOption } from "@/lib/unit-options";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { orderErrorText } from "@/lib/order-error-text";
-import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1167,13 +1173,14 @@ export function EditableLineItems({
               !item.countLocked &&
               !isCasesPiecesLine(item) &&
               !isLocked(item.id) && (
-                <label className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-navy/40">
-                  Qty
+                // r4 Q28: the same field and the same word-after-the-number as a boxed line ("[2] boxes", "[3] each").
+                <label className="flex items-center gap-1.5 text-xs text-navy/70">
+                  <span className="sr-only">Qty</span>
                   <input
                     type="number"
                     min={1}
                     step={1}
-                    className="mono w-16 rounded border border-surface-border bg-surface-raised px-2 py-1 text-right text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    className={EDIT_QTY_INPUT}
                     value={item.qty}
                     onChange={(e) => {
                       const v = parseInt(e.target.value, 10);
@@ -1181,6 +1188,9 @@ export function EditableLineItems({
                         update(item.id, { qty: v, startOnDefaultUnit: false });
                     }}
                   />
+                  <span aria-hidden className="min-w-0 max-w-[6rem] truncate">
+                    {item.unit?.trim() || "qty"}
+                  </span>
                   <scan.SplitLineHint item={item} />
                 </label>
               )}
@@ -1237,8 +1247,8 @@ export function EditableLineItems({
               </span>
             )}
 
-            {/* Action buttons */}
-            <div className="flex items-center gap-1.5">
+            {/* Action buttons (phone: the first label lines up with the card edge, not 8px in) */}
+            <div className="flex items-center gap-1.5 max-sm:-ml-2">
               {item.cancelled ? (
                 <button
                   className="flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50"
@@ -1310,7 +1320,7 @@ export function EditableLineItems({
                       TAP_TARGET,
                       "rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors",
                     )}
-                    title="Delete item"
+                    title={`Remove ${item.productName?.trim() || "item"}`}
                     aria-label={`Remove ${item.productName?.trim() || "item"}`}
                     onClick={() => onDelete(item.id)}
                   >
@@ -1365,7 +1375,7 @@ export function EditableLineItems({
 
           {/* Per-line note — carried onto the invoice line (buyer-visible). */}
           {!item.cancelled && (
-            <div className="ml-11 mt-1">
+            <div className="mt-1 sm:ml-11">
               <textarea
                 rows={2}
                 maxLength={2000}
@@ -1708,6 +1718,13 @@ export default function OrderDetailPage() {
   const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const [commissionEditOpen, setCommissionEditOpen] = React.useState(false);
+  // apple-ux r4: phone width folds the action bar into one row + a More menu; Record return then opens from that menu.
+  const phone = usePhoneWidth();
+  const returnAvailable = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
+  const [returnOpen, setReturnOpen] = React.useState(false);
+  const readOnlyGate = useReadOnlyGate();
+  // F07: the draft invoice just made says it was not sent, and takes focus.
+  const invoiceNotice = useInvoiceDraftNotice(order?.invoices);
 
   // P5-11: change-request resolution (office side; driver-at-stop is P10 mobile).
   const resolveCr = useResolveChangeRequest();
@@ -2113,6 +2130,8 @@ export default function OrderDetailPage() {
           setEditCredits([]);
           setCreditsTouched(false);
           returnSave.onSuccess();
+          // r4 F16: the page used to return to the detail with only a small "Edited 1×" chip.
+          toast({ title: "Order updated", variant: "success" });
         },
         onError: returnSave.chainError(
           inlineReturn,
@@ -2319,7 +2338,7 @@ export default function OrderDetailPage() {
           No
         </button>
       </div>
-    ) : (
+    ) : phone ? null : (
       <Button
         size="sm"
         variant="ghost"
@@ -2329,6 +2348,28 @@ export default function OrderDetailPage() {
         Delete order
       </Button>
     );
+
+  // Phone width: what steps out of the bar into "More actions" (apple-ux r4 Q19). Same gates, same handlers.
+  const phoneItems = phone
+    ? phoneActionItems({
+        status: localStatus,
+        isEditing,
+        staff: access.staff,
+        canCancel: access.cancel,
+        cancelBlocked: !!order.cancelBlockedReason,
+        canDeleteOpen: orderOperationallyOpen && !hasPostedInvoice,
+        isShip: order.fulfillPath === "SHIP",
+        returnAvailable,
+        onRecordReturn: () => setReturnOpen(true),
+        onCancel: handleCancel,
+        onDelete: () => setShowDeleteConfirm(true),
+        onUnconfirm: () => setDemoteTarget("PENDING"),
+        onReturnToConfirmed: () =>
+          order.fulfillPath === "SHIP" && orderHasFinalInvoice(order)
+            ? setShowUnmarkConfirm(true)
+            : setDemoteTarget("CONFIRMED"),
+      })
+    : [];
 
   // ── Estimated totals in edit mode ──────────────────────────────────────────
 
@@ -2439,7 +2480,11 @@ export default function OrderDetailPage() {
 
         {/* Action bar */}
         <ReadOnlyHint className="text-xs text-slate-600" />
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Phone width: ONE row (Edit, primary full width, More), chips and notes after it (r4 Q19). */}
+        <div
+          data-testid="order-actions"
+          className="flex flex-wrap items-center gap-2 max-sm:w-full max-sm:[&>:not([data-tier])]:order-5"
+        >
           {/* Edit Items button */}
           {canEdit && access.editItems && !isEditing && (
             <ActionTier tier="secondary">
@@ -2459,16 +2504,28 @@ export default function OrderDetailPage() {
 
           {/* Record return (Returns Inside Order Creation, PR 1 — office web capture).
               Any order, no cap — never gated on order status, unlike the buttons below. */}
-          {!isEditing && access.staff && (
-            <ActionTier tier="secondary">
+          {!isEditing &&
+            access.staff &&
+            (phone ? (
+              // Phone: the action is a "More actions" entry; this only hosts its dialog.
               <RecordReturnAction
                 customerId={order.customerId}
                 customerName={order.customer?.businessName}
                 orderId={order.id}
                 allowRefund
+                open={returnOpen}
+                onOpenChange={setReturnOpen}
               />
-            </ActionTier>
-          )}
+            ) : (
+              <ActionTier tier="secondary">
+                <RecordReturnAction
+                  customerId={order.customerId}
+                  customerName={order.customer?.businessName}
+                  orderId={order.id}
+                  allowRefund
+                />
+              </ActionTier>
+            ))}
 
           {/* P5-08 / R1: staff editing closes only once the order is CANCELLED
               ("STATUS"); the buyer-facing window instead closes once dispatched
@@ -2495,7 +2552,11 @@ export default function OrderDetailPage() {
           {/* DRAFT actions */}
           {localStatus === "DRAFT" && !isEditing && !access.staff && access.cancel && (
             <ActionTier tier="danger">
-              <CancelOrderButton blockedReason={order.cancelBlockedReason} onClick={handleCancel} />
+              <CancelOrderButton
+                blockedReason={order.cancelBlockedReason}
+                onClick={handleCancel}
+                inMenu={phone}
+              />
             </ActionTier>
           )}
           {localStatus === "DRAFT" && !isEditing && access.staff && (
@@ -2522,6 +2583,7 @@ export default function OrderDetailPage() {
               </ActionTier>
               <DeleteOrderTier
                 orderId={order.id}
+                inMenu={phone}
                 deleteOrder={deleteOrder}
                 open={showDeleteConfirm}
                 setOpen={setShowDeleteConfirm}
@@ -2572,6 +2634,7 @@ export default function OrderDetailPage() {
                   <CancelOrderButton
                     blockedReason={order.cancelBlockedReason}
                     onClick={handleCancel}
+                    inMenu={phone}
                   />
                 )}
                 {/* #3219 S3: an order with the carrier is not deleted either (the server 409s) */}
@@ -2606,7 +2669,7 @@ export default function OrderDetailPage() {
                         No
                       </button>
                     </div>
-                  ) : (
+                  ) : phone ? null : (
                     <Button
                       size="sm"
                       variant="ghost"
@@ -2640,21 +2703,24 @@ export default function OrderDetailPage() {
                   reason, so the ONLY path is the DemoteReasonModal. A second
                   "Unconfirm" button used to submit directly (predating the
                   reason rule) and guaranteed a 400 with nowhere to type one. */}
-              <ActionTier tier="secondary">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  leftIcon={<RotateCcw className="h-4 w-4" />}
-                  onClick={() => setDemoteTarget("PENDING")}
-                  loading={updateStatus.isPending}
-                >
-                  Unconfirm
-                </Button>
-              </ActionTier>
+              {!phone && (
+                <ActionTier tier="secondary">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    leftIcon={<RotateCcw className="h-4 w-4" />}
+                    onClick={() => setDemoteTarget("PENDING")}
+                    loading={updateStatus.isPending}
+                  >
+                    Unconfirm
+                  </Button>
+                </ActionTier>
+              )}
               <ActionTier tier="danger">
                 <CancelOrderButton
                   blockedReason={order.cancelBlockedReason}
                   onClick={handleCancel}
+                  inMenu={phone}
                 />
                 {!order.cancelBlockedReason &&
                   renderDeleteOrderAction("Delete this order? This can't be undone.")}
@@ -2672,24 +2738,27 @@ export default function OrderDetailPage() {
                 onDeliver={handleDeliver}
                 pending={updateStatus.isPending}
               />
-              <ActionTier tier="secondary">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  leftIcon={<RefreshCcw className="h-4 w-4" />}
-                  onClick={() =>
-                    order.fulfillPath === "SHIP" && orderHasFinalInvoice(order)
-                      ? setShowUnmarkConfirm(true)
-                      : setDemoteTarget("CONFIRMED")
-                  }
-                >
-                  {order.fulfillPath === "SHIP" ? "Unmark shipped" : "Return to Confirmed"}
-                </Button>
-              </ActionTier>
+              {!phone && (
+                <ActionTier tier="secondary">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    leftIcon={<RefreshCcw className="h-4 w-4" />}
+                    onClick={() =>
+                      order.fulfillPath === "SHIP" && orderHasFinalInvoice(order)
+                        ? setShowUnmarkConfirm(true)
+                        : setDemoteTarget("CONFIRMED")
+                    }
+                  >
+                    {order.fulfillPath === "SHIP" ? "Unmark shipped" : "Return to Confirmed"}
+                  </Button>
+                </ActionTier>
+              )}
               <ActionTier tier="danger">
                 <CancelOrderButton
                   blockedReason={order.cancelBlockedReason}
                   onClick={handleCancel}
+                  inMenu={phone}
                 />
                 {!order.cancelBlockedReason &&
                   renderDeleteOrderAction(
@@ -2754,6 +2823,7 @@ export default function OrderDetailPage() {
               </ActionTier>
               <DeleteOrderTier
                 orderId={order.id}
+                inMenu={phone}
                 deleteOrder={deleteOrder}
                 open={showDeleteConfirm}
                 setOpen={setShowDeleteConfirm}
@@ -2762,6 +2832,12 @@ export default function OrderDetailPage() {
                 errorText={orderErrorText}
               />
             </>
+          )}
+
+          {phoneItems.length > 0 && (
+            <div data-tier="overflow" className="order-3 shrink-0">
+              <OrdersMoreMenu items={phoneItems} />
+            </div>
           )}
         </div>
       </div>
@@ -2785,7 +2861,11 @@ export default function OrderDetailPage() {
               </h3>
             </div>
             {isEditing ? (
-              <div className="space-y-4">
+              // r4 F05: Ctrl/Cmd+Enter saves from any field in here (a chord, never a bare key).
+              <div
+                className="space-y-4"
+                onKeyDown={saveChordHandler(handleSaveItems, layerBlocked || readOnlyGate.readOnly)}
+              >
                 {isPos && localStatus === "DELIVERED" && <PosCutAfterHandOverNote />}
                 <p className="text-sm text-navy/70">
                   Add new items, adjust quantities, substitute or mark as unavailable.
@@ -2884,6 +2964,7 @@ export default function OrderDetailPage() {
                         size="sm"
                         className="bg-amber-500 text-white hover:bg-amber-600"
                         onClick={handleSaveItems}
+                        aria-keyshortcuts={SAVE_CHORD_KEYS}
                         disabled={layerBlocked}
                         loading={updateItems.isPending}
                       >
@@ -2998,6 +3079,7 @@ export default function OrderDetailPage() {
                       <WriteButton
                         size="sm"
                         onClick={handleSaveItems}
+                        aria-keyshortcuts={SAVE_CHORD_KEYS}
                         disabled={layerBlocked}
                         loading={savingItems}
                       >
@@ -3294,6 +3376,17 @@ export default function OrderDetailPage() {
               can split into multiple invoices any time after the order is confirmed. */}
           {localStatus !== "DRAFT" && localStatus !== "CANCELLED" && (
             <Card title={`Invoice${((order as any).invoices?.length ?? 0) > 1 ? "s" : ""}`}>
+              {/* r4 F07: always mounted (empty), so the sentence is read out when it appears. */}
+              <p
+                role="status"
+                className={
+                  invoiceNotice.message
+                    ? "mb-3 rounded-md bg-surface-raised px-3 py-2 text-xs text-navy"
+                    : undefined
+                }
+              >
+                {invoiceNotice.message}
+              </p>
               {(order as any).invoices?.length > 0 && (
                 <div className="space-y-3">
                   {(() => {
@@ -3322,7 +3415,11 @@ export default function OrderDetailPage() {
                     <div key={inv.id} className="space-y-1">
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4 text-brand-500" />
-                        <span className="mono text-sm font-medium text-navy">
+                        <span
+                          ref={invoiceNotice.focusRef(inv.invoiceNumber)}
+                          tabIndex={-1}
+                          className="mono rounded text-sm font-medium text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                        >
                           {inv.invoiceNumber}
                         </span>
                       </div>
@@ -3401,6 +3498,7 @@ export default function OrderDetailPage() {
                             // regulated line — route it into the license guard + retry.
                             const invoiceNow = () =>
                               createInvoiceFromOrder.mutate(order.id, {
+                                onSuccess: (made) => invoiceNotice.announce(made),
                                 onError: guardError(() => invoiceNow()),
                               });
                             invoiceNow();

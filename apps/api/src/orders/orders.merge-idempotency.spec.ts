@@ -251,7 +251,10 @@ async function buildOrdersService(
       { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
       {
         provide: RegulatedLedgerService,
-        useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+        useValue: {
+          reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+          settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+        },
       },
     ],
   }).compile();
@@ -329,6 +332,7 @@ function statefulOrdersService(opts: { orderKey: string | null; throwAfterFirstF
     replayMergeReconcile: jest.fn().mockResolvedValue(undefined),
     // Fold stand-in; records the key only when the caller hands it in (the fixed controller does).
     liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
+    liveUnitsPerBoxByProduct: jest.fn().mockResolvedValue(new Map()), // SA-841
     updateOrderItems: jest.fn(
       async (
         _id: string,

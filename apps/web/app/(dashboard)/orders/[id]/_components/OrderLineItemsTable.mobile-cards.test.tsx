@@ -67,15 +67,27 @@ describe("OrderLineItemsTable — stacked cards below md (row 508)", () => {
     renderThree();
     expect(screen.getByRole("table")).toHaveClass("max-md:block");
     expect(screen.getAllByRole("columnheader")[0].closest("thead")).toHaveClass("max-md:sr-only");
-    expect(document.querySelector("tbody")).toHaveClass("max-md:block", "max-md:divide-y-0");
+    // r4 Q21: the lines are divided rows inside the one Line Items card, not cards nested in it.
+    const tbody = document.querySelector("tbody") as HTMLElement;
+    expect(tbody).toHaveClass("max-md:block", "divide-y", "max-md:px-6");
+    expect(tbody).not.toHaveClass("max-md:divide-y-0");
+    expect(tbody).not.toHaveClass("max-md:space-y-3");
   });
 
-  it("makes every line a card with a full-width product cell", () => {
+  it("makes every line a divided row (no inner border, ring or fill) with a full-width product cell", () => {
     renderThree();
     const rows = document.querySelectorAll("tbody tr");
     expect(rows).toHaveLength(3);
     rows.forEach((tr) => {
-      expect(tr).toHaveClass("max-md:grid", "max-md:grid-cols-2", "max-md:rounded-lg");
+      expect(tr).toHaveClass("max-md:grid", "max-md:grid-cols-2");
+      for (const nested of [
+        "max-md:rounded-lg",
+        "max-md:ring-1",
+        "max-md:ring-surface-border",
+        "max-md:bg-white",
+      ]) {
+        expect(tr).not.toHaveClass(nested);
+      }
       expect(tr.querySelector("td")).toHaveClass("max-md:col-span-2");
     });
   });

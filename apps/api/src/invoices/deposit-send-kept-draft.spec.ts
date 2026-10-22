@@ -169,6 +169,7 @@ describe("InvoicesService — deposit-at-placement send keeps the invoice (row 4
           useValue: {
             writeSaleEntries: jest.fn(),
             reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
             correctSaleForPriceChange: jest.fn(),
           },
         },

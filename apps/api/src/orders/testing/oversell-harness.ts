@@ -127,7 +127,13 @@ export async function buildOversellOrders(policy: PolicyFor = "off") {
         syncOrderCreditSelections: jest.fn().mockResolvedValue(undefined),
       },
     ],
-    [RegulatedLedgerService, { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) }],
+    [
+      RegulatedLedgerService,
+      {
+        reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+        settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+      },
+    ],
   ]);
   const module = await Test.createTestingModule({ providers: [OrdersService] })
     .useMocker((token) => (explicit.has(token) ? explicit.get(token) : autoMock()))

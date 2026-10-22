@@ -151,7 +151,12 @@ describeDb(
               new CreditNotesService(
                 p,
                 { emitCreditNoteVoided: jest.fn() } as never,
-                { unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined) } as never,
+                {
+                  unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+                  settleRegulatedLedger: jest
+                    .fn()
+                    .mockResolvedValue({ written: 0, amendedPeriod: null }),
+                } as never,
                 {} as never,
                 {} as never,
               ),
@@ -171,7 +176,12 @@ describeDb(
           },
           {
             provide: RegulatedLedgerService,
-            useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+            useValue: {
+              reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+              settleRegulatedLedger: jest
+                .fn()
+                .mockResolvedValue({ written: 0, amendedPeriod: null }),
+            },
           },
         ],
       }).compile();

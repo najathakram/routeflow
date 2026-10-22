@@ -418,7 +418,7 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
     asStoreOnly();
     await openWithLine();
     await screen.findByRole("button", { name: "Confirm and invoice" });
-    const names = ["Minimize", "Close", "Save as draft", "Confirm only", "Confirm and invoice"];
+    const names = ["Save as draft", "Confirm only", "Confirm and invoice"]; // Minimize + Close are header icons (Q08)
     for (const name of names) {
       const btn = screen.getByText(name, { selector: "button" });
       expect(btn.className).toMatch(/max-sm:h-11/);

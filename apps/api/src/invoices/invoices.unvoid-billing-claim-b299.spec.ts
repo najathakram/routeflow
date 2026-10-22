@@ -27,7 +27,11 @@ describe("B299: unvoid re-claims invoicedQty only when the quantity is still fre
   let service: InvoicesService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let db: SplitInvoiceFakeDb;
-  const mockLedger = { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() };
+  const mockLedger = {
+    writeSaleEntries: jest.fn(),
+    reverseInvoiceEntries: jest.fn(),
+    settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+  };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -314,6 +318,7 @@ describe("adjustInvoicedQtyForInvoice void direction (-1) is clamped into [0, li
     service = await buildSplitInvoicesService(InvoicesService, prisma, {
       writeSaleEntries: jest.fn(),
       reverseInvoiceEntries: jest.fn(),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
     });
   });
 

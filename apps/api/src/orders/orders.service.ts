@@ -70,6 +70,7 @@ import { sourceLineFor } from "./source-line";
 import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-create-options";
 import { checkQtySplitConsistency, warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
 import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
+import { loadLiveUnitsPerBoxByProduct } from "./live-pack-map";
 import {
   oldestFirst,
   resolveSaleDelivery,
@@ -160,6 +161,7 @@ import {
 } from "./order-edit-restrictions";
 import { planChangeRequestRestrictions } from "./change-request-restrictions";
 import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
+import { assertDeliveryDateNotPast } from "./delivery-date-guard";
 import { getOrderTracking } from "./order-tracking";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
@@ -369,6 +371,11 @@ export class OrdersService implements OnApplicationBootstrap {
   /** B297 row 340: the trio a new sale of each product takes today (a fold's `foldTarget` input). */
   liveTrioByProduct(productIds: string[]) {
     return loadLiveTrioByProduct(this.prisma.forTenant() as any, productIds);
+  }
+
+  /** SA-841 (B207): each product's live pack, one tenant-scoped read (live-pack-map.ts, a read-only lookup). */
+  liveUnitsPerBoxByProduct(productIds: string[]): Promise<Map<string, number>> {
+    return loadLiveUnitsPerBoxByProduct(this.prisma.forTenant() as any, productIds);
   }
 
   /**
@@ -1454,6 +1461,11 @@ export class OrdersService implements OnApplicationBootstrap {
         return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
       }
     }
+
+    // Row 718: a day before the TENANT's today is refused (400 DELIVERY_DATE_IN_PAST) - after the replay branch above, so a retry of an order that already landed still replays.
+    await assertDeliveryDateNotPast(this.prisma, dto.requestedDeliveryDate, {
+      tenantId: user.tenantId,
+    });
 
     // An auto-merge folds these items into an EXISTING order whose own business
     // date stays authoritative, so a supplied orderDate would be silently dropped.
@@ -4914,9 +4926,12 @@ export class OrdersService implements OnApplicationBootstrap {
             if (!merged.ok) {
               throw new ConflictException({
                 code: API_ERROR_CODES.MERGE_PACK_MISMATCH,
-                message: `This add can't be merged into the ${merged.linePack}-pack line on this order${
-                  merged.addPack ? ` (it is sold as a ${merged.addPack}-pack now)` : ""
-                }: decline it, or approve it for the next delivery.`,
+                message:
+                  merged.reason === "EMPTY_ADD"
+                    ? "This add has no quantity this line can take: decline it, or approve it for the next delivery."
+                    : `This add can't be merged into the ${merged.linePack}-pack line on this order${
+                        merged.addPack ? ` (it is sold as a ${merged.addPack}-pack now)` : ""
+                      }: decline it, or approve it for the next delivery.`,
                 productId: product.id,
                 existingPacks: [merged.linePack],
                 incomingPack: merged.addPack,
@@ -5282,9 +5297,8 @@ export class OrdersService implements OnApplicationBootstrap {
         // before deleting it — the two sibling teardown paths
         // (InvoicesService.voidInvoiceInTx, InvoicesService.deleteInvoice)
         // already do this; this loop hard-deletes invoices directly and was
-        // the one path that skipped it. No preserveReturns (mirrors
-        // deleteInvoice, not the partial-void path).
-        await this.ledger.reverseInvoiceEntries({ invoiceId: inv.id, db: tx });
+        // the one path that skipped it. Zeroed in full (mirrors deleteInvoice, SA-839 INVOICE_ZEROED).
+        await this.ledger.settleRegulatedLedger(tx, { kind: "INVOICE_ZEROED", invoiceId: inv.id });
         await tx.invoicePayment.deleteMany({ where: { invoiceId: inv.id } });
         await tx.invoiceItem.deleteMany({ where: { invoiceId: inv.id } });
         // Sales agents & commissions: this loop hard-deletes invoices WITHOUT

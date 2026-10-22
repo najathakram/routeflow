@@ -63,7 +63,11 @@ describe("InvoicesService.update(): F3 a duplicate line id is refused before any
         { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         {
           provide: AuthorizationGuardService,
