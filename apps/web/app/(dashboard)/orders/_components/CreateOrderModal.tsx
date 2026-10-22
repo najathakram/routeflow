@@ -1913,7 +1913,12 @@ export function CreateOrderModal({
               setMergePrompt(body.activeOrder as ActiveOrderSummary);
               return;
             }
-            if (rw.handle(err, () => submitOrder(data, options))) return; // row 510
+            if (
+              rw.handle(err, () => {
+                submitOrder(data, options); // its boolean result is the submit's, not the retry's
+              })
+            )
+              return; // row 510
             const restricted = parseSellingRestricted(err);
             if (restricted) {
               setRestrictedBlock(restricted);
