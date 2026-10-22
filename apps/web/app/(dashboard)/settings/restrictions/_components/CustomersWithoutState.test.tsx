@@ -463,7 +463,7 @@ describe("CustomersWithoutState: SA rows R2 + undo by action id", () => {
     renderWithProviders(<CustomersWithoutState canFix />);
     expect(
       await screen.findByText(
-        /^Your customer list is too large to check all at once, so some customers may still need a state\. Until it's set/,
+        /^Your customer list is too large to check all at once, so some customers may still need a state\.$/,
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Every customer has a state on file.")).toBeNull();

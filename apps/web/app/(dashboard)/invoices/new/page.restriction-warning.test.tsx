@@ -140,7 +140,13 @@ describe("row 510 - New invoice page", () => {
     act(() => saleMutate.mock.calls[0][1].onError(warning409));
     await sellAnyway(user);
     expect(saleMutate).toHaveBeenCalledTimes(2);
-    expect(saleMutate.mock.calls[1][0]).toEqual({ ...first, ...ack });
+    // The attempt key follows the body (row 485): the ack makes this a different request, so it mints a new key.
+    expect(saleMutate.mock.calls[1][0]).toEqual({
+      ...first,
+      ...ack,
+      idempotencyKey: expect.any(String),
+    });
+    expect(saleMutate.mock.calls[1][0].idempotencyKey).not.toBe(first.idempotencyKey);
     expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ variant: "error" }));
   });
 

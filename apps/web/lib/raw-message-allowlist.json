@@ -411,6 +411,11 @@
     "count": 1,
     "why": "B986-6 invoices: the void-failure sentence (payments to reverse first) moved here from invoices/[id]/page.tsx; pending"
   },
+  "lib/api/restriction-warning.ts": {
+    "count": 1,
+    "permanent": true,
+    "why": "lookup: parseRestrictionHardBlock accepts the 409 only when its message is one of the closed OVERRIDE_BLOCK_MESSAGES sentences (anything else → null), so no free server text is rendered"
+  },
   "lib/password-policy.ts": {
     "count": 1,
     "permanent": true,
