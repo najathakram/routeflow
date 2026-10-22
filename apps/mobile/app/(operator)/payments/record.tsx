@@ -17,6 +17,7 @@ import {
 } from "../../../lib/api/payments";
 import {
   allocationTotals,
+  changeCustomerGate,
   oldestInvoicesFirst,
   waterfallAllocations,
 } from "../../../lib/payments-logic";
@@ -161,6 +162,8 @@ function PaymentForm({
   // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
   const keyScope = paymentKeyScope.standalone(customerId);
   const paymentKey = usePaymentSubmitKey(keyScope);
+  // An unknown or in-flight attempt for this customer is never re-scoped to another one.
+  const customerGate = changeCustomerGate(paymentKey.hasUnknown());
   const uploadImageMut = useUploadPaymentImage();
   // Re-encode to JPEG first (iOS HEIC picks aren't decodable once uploaded as-is). Throws on failure.
   const attachReceiptPhoto = useCallback(
@@ -323,11 +326,22 @@ function PaymentForm({
       onSubmit={submit}
     >
       <PaymentStatusNotice status={statusCheck} />
-      <Pressable style={styles.changeCustomer} onPress={onChangeCustomer} hitSlop={6}>
+      <Pressable
+        style={[styles.changeCustomer, customerGate.blocked && { opacity: 0.5 }]}
+        onPress={() => {
+          if (customerGate.blocked) return;
+          onChangeCustomer();
+        }}
+        disabled={customerGate.blocked}
+        hitSlop={6}
+      >
         <Ionicons name="person-outline" size={14} color={ios.brand} />
         <Text style={styles.changeCustomerText}>{customerName}</Text>
         <Text style={styles.changeCustomerAction}>Change</Text>
       </Pressable>
+      {customerGate.reason ? (
+        <Text style={styles.changeCustomerLocked}>{customerGate.reason}</Text>
+      ) : null}
 
       <FormSection title="Method">
         <View style={styles.chips}>
@@ -524,6 +538,12 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: ios.brand,
     flexShrink: 1,
+  },
+  changeCustomerLocked: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginBottom: 8,
   },
   changeCustomerAction: {
     fontSize: 12,
