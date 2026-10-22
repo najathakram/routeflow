@@ -200,6 +200,19 @@ export default defineConfig({
       },
     },
 
+    // ── Open orders card ────────────────────────────────────────────────────────
+    // "Open orders" on /products/[id], above Sales; every endpoint mocked, writes nothing,
+    // 390/768/1280 overflow + screenshots. Self-skips on web builds that predate the card.
+    {
+      name: "product-open-orders",
+      testMatch: /77-product-open-orders\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // ── Counter "Today's sales" sheet (POS-7b-2) ───────────────────────────────
     // Mocked reads only (POS-7b-1 contract); 1440/768/390 + 80 mm print emulation.
     {

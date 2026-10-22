@@ -114,4 +114,14 @@ export function calendarDayBounds(
   return { start, end };
 }
 
+/**
+ * The calendar day (YYYY-MM-DD) it is at `now` in `timeZone`: the business's own "today", the web twin of the
+ * API's `tenantTodayDay`. DST-safe (Intl reads the zone's day at that instant); an unknown zone reads the UTC day,
+ * never throws.
+ */
+export function calendarDayInZone(timeZone: string, now: Date = new Date()): string {
+  const { year, month, day } = readCalendarParts(now, timeZone);
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 export { fmtCalendarDate, fmtCalendarDateWithWeekday } from "./formatting";

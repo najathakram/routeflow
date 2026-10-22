@@ -43,7 +43,7 @@ import { useUnsentOrderResume } from "./use-unsent-order-resume";
 import { ResumeUnsentOrderDialog } from "./ResumeUnsentOrderDialog";
 import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
-import { todayLocalIso } from "@/lib/formatting";
+import { useTenantToday } from "@/lib/tenant-timezone";
 import { ACTION_TOAST_MS, addedLineQty, showOrderCreatedToast } from "./order-created-toast";
 import {
   mergePieceIntoLine,
@@ -258,6 +258,9 @@ export interface CreateOrderModalProps {
   onViewOrder?: (orderId: string) => void;
 }
 
+/** F13 (row 718): the local copy for a requested delivery day before the browser's today. */
+const DELIVERY_DATE_PAST_COPY = "That day has passed. Pick today or a later date.";
+
 type SubmitOptions = { mergeChoice?: "merge" | "separate"; asDraft?: boolean };
 
 /** A 4xx the modal resolves with the operator and re-submits itself (merge prompt, license capture): the SAME attempt. */
@@ -272,6 +275,14 @@ function isSameAttemptRefusal(err: any): boolean {
   }
   return (parseRegulatedAuthError(err)?.length ?? 0) > 0;
 }
+
+/**
+ * N05: how long after the "Open order exists" prompt mounts that Enter/Space will not activate its buttons.
+ * The pre-check opens the prompt synchronously inside the Create Order click, so an Enter/Space pressed "at
+ * once" lands after the mount as a FRESH keydown that the held-key lineage cannot tell from a deliberate one.
+ * No operator reads and answers a dialog in 300 ms; a deliberate press after the window works as before.
+ */
+export const MERGE_PROMPT_KEY_GUARD_MS = 300;
 
 export function CreateOrderModal({
   isOpen,
@@ -434,6 +445,82 @@ export function CreateOrderModal({
   const [mergePrompt, setMergePrompt] = React.useState<ActiveOrderSummary | null>(null);
   const mergeChoiceRef = React.useRef<HTMLButtonElement>(null);
   const separateChoiceRef = React.useRef<HTMLButtonElement>(null);
+  // N05: the prompt must not act on a key press that began before it opened. The 409 (or the
+  // pre-check) opens it while the operator's Enter/Space from the Create Order click is still
+  // down, N02 then focuses Merge, and that same press (auto-repeat keydown, keypress, the click the
+  // browser makes from it, or Space's keyup click) would land on it. We note which activation keys
+  // are physically held at the moment of opening ("stale") and swallow only those: until the key's
+  // keyup, or until a fresh non-repeat keydown starts a new press. Native capture listeners, so
+  // they run before React's and before the browser's default action (Enter clicks at keydown/
+  // keypress, Space at keyup). Second layer: for MERGE_PROMPT_KEY_GUARD_MS after the mount no Enter/Space activates
+  // the buttons at all (the pre-check path, where the key is a fresh keydown). A pointer click and Tab/Escape are untouched.
+  const promptFooterRef = React.useRef<HTMLDivElement>(null);
+  const heldKeysRef = React.useRef<Set<string>>(new Set());
+  const staleKeysRef = React.useRef<Set<string>>(new Set());
+  const promptOpenedAtRef = React.useRef(Number.NEGATIVE_INFINITY); // performance.now() when the prompt mounted (compared with a key event's own timeStamp)
+  const mergePromptOpen = mergePrompt !== null;
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const held = heldKeysRef.current;
+    const stale = staleKeysRef.current;
+    const inPrompt = (t: EventTarget | null) =>
+      t instanceof Node && !!promptFooterRef.current?.contains(t);
+    const isActivationKey = (k: string) => k === "Enter" || k === " ";
+    // Post-mount guard: the pre-check mounts the prompt inside the click, so an Enter/Space pressed "at once" is a
+    // FRESH keydown after the mount that the lineage cannot tell from a deliberate one. A timestamp, not a timer.
+    // Row 744: judged by the key event's OWN timeStamp (the same clock origin as the mount's performance.now()), never by a
+    // clock read while the handler runs: a press queued before the mount but handled after it (a main-thread stall) is still
+    // "before or within the window" (a negative difference is under the limit).
+    const inGuardWindow = (e: KeyboardEvent) =>
+      e.timeStamp - promptOpenedAtRef.current < MERGE_PROMPT_KEY_GUARD_MS;
+    const onKeyDown = (e: KeyboardEvent) => {
+      held.add(e.key);
+      if (!e.repeat) stale.delete(e.key); // a new press started after the open: deliberate once the window is over
+      if (!isActivationKey(e.key) || !inPrompt(e.target)) return;
+      if (inGuardWindow(e)) stale.add(e.key); // a press that began inside the window stays swallowed until its keyup
+      if (stale.has(e.key)) e.preventDefault();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      // Space clicks on keyup: cancel it for a stale press and for any key activation inside the window.
+      if (isActivationKey(e.key) && inPrompt(e.target) && (stale.has(e.key) || inGuardWindow(e)))
+        e.preventDefault();
+      held.delete(e.key);
+      stale.delete(e.key);
+    };
+    const onClick = (e: MouseEvent) => {
+      // detail 0 = keyboard-made (a pointer click has detail >= 1); only while a stale/swallowed key is down
+      // (a programmatic or assistive click with no key involved is left alone).
+      if (e.detail === 0 && stale.size > 0 && inPrompt(e.target)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    const onBlur = () => {
+      held.clear();
+      stale.clear();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keyup", onKeyUp, true);
+    document.addEventListener("click", onClick, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("keyup", onKeyUp, true);
+      document.removeEventListener("click", onClick, true);
+      window.removeEventListener("blur", onBlur);
+      held.clear();
+      stale.clear();
+    };
+  }, [isOpen]);
+  // Layout effect: snapshot the held keys before any follow-on event of the press can be dispatched.
+  React.useLayoutEffect(() => {
+    const stale = staleKeysRef.current;
+    stale.clear();
+    promptOpenedAtRef.current = mergePromptOpen ? performance.now() : Number.NEGATIVE_INFINITY;
+    if (mergePromptOpen) {
+      for (const k of heldKeysRef.current) if (k === "Enter" || k === " ") stale.add(k);
+    }
+  }, [mergePromptOpen]);
   // The license guard (W6b): categories blocked by a 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   // Selling restrictions: lines the API refused for this customer (shown instead of a raw toast).
@@ -1333,11 +1420,16 @@ export function CreateOrderModal({
   }, [backdateOpen]);
   // The server's upper bound is the end of the current UTC day (parseOrderDate).
   const maxOrderDate = new Date().toISOString().slice(0, 10);
-  // F13: a requested delivery day before today (the browser's local day) is refused next to the field. Derived in the render,
-  // never mirrored into state (L-333). POS mode steps the field aside and sends no delivery date, so it never blocks there.
-  const deliveryDateMin = todayLocalIso();
+  // F13 + row 735a: a requested delivery day before today ON THE BUSINESS'S CALENDAR (the tenant's zone, the day the API judges
+  // it on; never the browser's) is refused next to the field. Until the zone has loaded nothing is blocked locally: the
+  // server refuses a past day with the tenant's today on the field (below). Derived in the render, never mirrored into state (L-333). POS mode steps the field aside and sends no delivery date, so it never blocks there.
+  const tenantToday = useTenantToday(isOpen);
+  const deliveryDateMin = tenantToday; // undefined until the business's zone is known: no `min`, no local block
   const deliveryDatePast =
-    !posMode && requestedDeliveryDate !== "" && requestedDeliveryDate < deliveryDateMin;
+    !posMode &&
+    requestedDeliveryDate !== "" &&
+    tenantToday !== undefined &&
+    requestedDeliveryDate < tenantToday;
   const deliveryDateRef = React.useRef<HTMLInputElement>(null);
 
   // Staff-only per-order commission override (0 = exempt; null = agent/customer
@@ -1941,6 +2033,16 @@ export function CreateOrderModal({
               setMergePrompt(body.activeOrder as ActiveOrderSummary);
               return;
             }
+            // Row 718: the tenant's day called the date past. The refusal is on the date field (above); a merge-or-separate
+            // prompt that led here must not stay over it, so close it (as its onClose does) and put focus on the field.
+            if (body?.code === API_ERROR_CODES.DELIVERY_DATE_IN_PAST) {
+              setMergePrompt(null);
+              pendingFormValuesRef.current = null;
+              pendingAsDraftRef.current = false;
+              // After the prompt's dialog has unmounted: it traps focus while open and restores it to its opener on close.
+              window.setTimeout(() => deliveryDateRef.current?.focus(), 50);
+              return;
+            }
             const restricted = parseSellingRestricted(err);
             if (restricted) {
               setRestrictedBlock(restricted);
@@ -2029,6 +2131,20 @@ export function CreateOrderModal({
     submitOrder(data);
   };
 
+  // Row 718: the server measures the day on the TENANT's calendar, so a browser on another day can pass the local check
+  // and still get 400 DELIVERY_DATE_IN_PAST. The refusal goes next to the date field, worded from the code and the
+  // tenant's `today` it carries (never the raw server message, B986); editing the date clears it.
+  const deliveryDateRefusal: string | null = (() => {
+    const body = (
+      createOrder.error as { response?: { data?: { code?: unknown; today?: unknown } } } | null
+    )?.response?.data;
+    if (body?.code !== API_ERROR_CODES.DELIVERY_DATE_IN_PAST) return null;
+    return typeof body.today === "string" && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(body.today)
+      ? `That day has passed (today is ${body.today} for this business). Pick today or a later date.`
+      : DELIVERY_DATE_PAST_COPY;
+  })();
+  const deliveryDateError = deliveryDatePast ? DELIVERY_DATE_PAST_COPY : deliveryDateRefusal;
+
   // Extract the API's error message from Axios error structure
   const apiError: string | null = (() => {
     const err = createOrder.error as {
@@ -2039,6 +2155,8 @@ export function CreateOrderModal({
     // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
     // admin-written reason) and outlive the dialog's OK.
     if (parseSellingRestricted(err)) return null;
+    // Row 718: the server's past-delivery-day refusal sits on the date field, not in this banner.
+    if (deliveryDateRefusal) return null;
     // B986-7 (Opus): a RECOGNISED refusal (a coded one, a stock shortfall, a credit limit...) is fixed copy; an UNCODED one keeps
     // today's server sentence, which says what to fix (B991 / B987-E mint the codes + fields, then this read goes).
     return (
@@ -2490,19 +2608,26 @@ export function CreateOrderModal({
                   type="date"
                   min={deliveryDateMin}
                   value={requestedDeliveryDate}
-                  onChange={(e) => setRequestedDeliveryDate(e.target.value)}
-                  aria-invalid={deliveryDatePast || undefined}
-                  aria-describedby={deliveryDatePast ? "delivery-date-error" : undefined}
+                  onChange={(e) => {
+                    setRequestedDeliveryDate(e.target.value);
+                    if (deliveryDateRefusal) createOrder.reset();
+                  }}
+                  aria-invalid={deliveryDateError ? true : undefined}
+                  aria-describedby={deliveryDateError ? "delivery-date-error" : undefined}
                   className={cn(
                     "h-10 w-full rounded border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2",
-                    deliveryDatePast
-                      ? "border-amber-500 focus:ring-amber-500"
+                    deliveryDateError
+                      ? "border-danger focus:ring-danger"
                       : "border-surface-border focus:ring-brand-500",
                   )}
                 />
-                {deliveryDatePast && (
-                  <p id="delivery-date-error" className="text-xs font-medium text-amber-700">
-                    That day has passed. Pick today or a later date.
+                {deliveryDateError && (
+                  <p
+                    id="delivery-date-error"
+                    role="alert"
+                    className="text-xs font-medium text-danger"
+                  >
+                    {deliveryDateError}
                   </p>
                 )}
               </div>
@@ -3110,7 +3235,7 @@ export function CreateOrderModal({
         className="max-w-md"
         footer={
           mergePrompt ? (
-            <div className="flex w-full flex-col gap-2">
+            <div ref={promptFooterRef} className="flex w-full flex-col gap-2">
               {priceLayerUnconfirmed ? (
                 <p
                   role="status"

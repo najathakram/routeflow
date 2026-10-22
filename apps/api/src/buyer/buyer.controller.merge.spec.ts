@@ -88,6 +88,10 @@ const MOCK_CTX = {
   customer: { id: "cust-merge-1", businessName: "Merge Test Buyer" },
 };
 
+// Row 718: a merge refuses a requested day before the tenant's today, so the fixture day is two days ahead of
+// the wall clock (the mock tenant has no zone: UTC), never a fixed calendar date that goes stale.
+const DELIVERY_DAY = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+
 describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", () => {
   let controller: BuyerController;
   let ordersService: {
@@ -300,6 +304,35 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     ]);
   });
 
+  it("row 727: a box-unaware line sold as a 12-pack (own snapshot 12), product now a 6-pack, + a 6-pack box is refused 409, never restamped at 6", async () => {
+    const activeOrder = {
+      id: "order-active-repack",
+      customerId: MOCK_CTX.customerId,
+      lineItems: [
+        {
+          id: "li-own-12",
+          productId: "prod-boxed",
+          qty: 2,
+          boxes: null,
+          pieces: null,
+          unitsPerBox: 12,
+          unitPrice: 36.0,
+          name: null,
+        },
+      ],
+    };
+    ordersService.findActiveOrder.mockResolvedValue(activeOrder);
+    prisma.forTenant().product.findMany.mockResolvedValue([{ id: "prod-boxed", unitsPerBox: 6 }]);
+
+    const dto = { items: [{ productId: "prod-boxed", qty: 6, boxes: 1, pieces: 0 }] };
+
+    // the stored line normalizes at its OWN 12 (row 727), so the live-6 box is a pack the merge cannot reconcile
+    await expect(controller.createOrder(dto as any, MOCK_CTX as any)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "MERGE_PACK_MISMATCH" }),
+    });
+    expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
+  });
+
   it("REG-B47 (T14 companion): a BARE-qty incoming add against a box-SPLIT stored line expands to boxes — 2 boxes + 2 = {qty:48, boxes:4}, never {qty:26, boxes:2, pieces:2}", async () => {
     // The other stored shape. A box-split line's fold accumulator is in PIECES, so
     // the bare buyer qty (SELLING UNITS) does NOT agree with it — the incoming side
@@ -371,7 +404,7 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
       items: [{ productId: "prod-plain", qty: 2 }],
       notes: "ring bell",
       urgent: true,
-      requestedDeliveryDate: "2026-09-05",
+      requestedDeliveryDate: DELIVERY_DAY,
     };
 
     await controller.createOrder(dto as any, MOCK_CTX as any);
@@ -381,7 +414,7 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     expect(ordersService.applyBuyerMergeHeader).toHaveBeenCalledTimes(1);
     expect(ordersService.applyBuyerMergeHeader).toHaveBeenCalledWith(
       activeOrder.id,
-      { notes: "ring bell", urgent: true, requestedDeliveryDate: "2026-09-05" },
+      { notes: "ring bell", urgent: true, requestedDeliveryDate: DELIVERY_DAY },
       expect.any(Object),
     );
 

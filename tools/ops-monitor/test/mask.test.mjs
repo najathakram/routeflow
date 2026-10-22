@@ -6,7 +6,15 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createNameLoader, deepMasker, loadClientNames, maskDeep, maskText } from "../lib/mask.mjs";
+import {
+  createNameLoader,
+  deepMasker,
+  fallbackMaskDeep,
+  fallbackMaskText,
+  loadClientNames,
+  maskDeep,
+  maskText,
+} from "../lib/mask.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(HERE, "..", "server.mjs");
@@ -410,5 +418,62 @@ test("non-fixture server: last-snapshot.json, /api/snapshot and SSE carry no cli
     } catch {
       /* a lingering git child on Windows; the temp dir is disposable */
     }
+  }
+});
+
+test("D7 fallbackMaskText: hides tenant-like slugs, tenant subdomains and business e-mails", () => {
+  const f = fallbackMaskText;
+  const L = "a live business";
+  assert.equal(f("tenant acme-foods has 3 orders"), `tenant ${L} has 3 orders`);
+  assert.equal(f("tenant: acme-foods"), `tenant: ${L}`);
+  assert.equal(f("the acme-foods tenant"), `the ${L} tenant`);
+  assert.equal(f("slug=acmefoods"), `slug=${L}`);
+  assert.equal(f("see acme-foods.routeflow.info/login"), `see ${L}/login`);
+  assert.equal(f("owner@acmefoods.com wrote"), `${L} wrote`);
+  // approved test tenants, project hosts and own addresses stay readable
+  assert.equal(f("tenant routeflow-demo"), "tenant routeflow-demo");
+  assert.equal(
+    f("tenant qa-smoke-1 and e2e-routeflow tenant"),
+    "tenant qa-smoke-1 and e2e-routeflow tenant",
+  );
+  assert.equal(
+    f("www.routeflow.info and api.routeflow.info"),
+    "www.routeflow.info and api.routeflow.info",
+  );
+  assert.equal(f("admin@routeflow.info"), "admin@routeflow.info");
+  assert.equal(f(7), 7);
+  assert.deepEqual(fallbackMaskDeep({ a: ["tenant acme-foods", 1], k: "x" }), {
+    a: [`tenant ${L}`, 1],
+    k: "x",
+  });
+});
+
+test("D7 spawned server with NO names list: fallback masks, maskStatus ok:false + error alarm", async () => {
+  const home = tmp();
+  try {
+    const snap = JSON.parse(readFileSync(FIXTURE, "utf8"));
+    snap.items[0].title = "Reprice for tenant acme-foods";
+    writeFileSync(join(home, "fx.json"), JSON.stringify(snap));
+    const { child, port } = await startServer({ RF_OPS_HOME: home });
+    try {
+      const api = JSON.parse(await get(port, "/api/snapshot"));
+      assert.equal(api.maskStatus.ok, false);
+      assert.match(api.maskStatus.reason, /client-names/);
+      assert.equal(api.items[0].title, "Reprice for tenant a live business");
+      const a = api.alarms.find((x) => x.kind === "mask-list-missing");
+      assert.equal(a.severity, "error");
+    } finally {
+      child.kill();
+    }
+    writeFileSync(join(home, "client-names.json"), JSON.stringify(["acme-foods"]));
+    const again = await startServer({ RF_OPS_HOME: home });
+    try {
+      const api = JSON.parse(await get(again.port, "/api/snapshot"));
+      assert.deepEqual(api.maskStatus, { ok: true, reason: null });
+    } finally {
+      again.child.kill();
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });

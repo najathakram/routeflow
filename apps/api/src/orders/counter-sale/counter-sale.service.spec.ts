@@ -585,6 +585,117 @@ describe("CounterSaleService.ring", () => {
       expect(createSale).not.toHaveBeenCalled();
     });
 
+    describe("post-dated check (interim guard: a check dated after the TENANT's today is never tendered)", () => {
+      const FAKE_ALL_BUT_DATE = [
+        "hrtime",
+        "nextTick",
+        "performance",
+        "queueMicrotask",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        "requestIdleCallback",
+        "cancelIdleCallback",
+        "setImmediate",
+        "clearImmediate",
+        "setInterval",
+        "clearInterval",
+        "setTimeout",
+        "clearTimeout",
+      ] as never;
+      const at = (iso: string, timezone: string | null) => {
+        jest.useFakeTimers({ now: new Date(iso), doNotFake: FAKE_ALL_BUT_DATE });
+        prisma.tenantConfig.findUnique.mockResolvedValue({
+          creditAutoApplyOnSend: true,
+          timezone,
+        });
+      };
+      afterEach(() => jest.useRealTimers());
+      const check = (checkDate?: string) =>
+        named({ method: "CHECK", reference: "1042", ...(checkDate ? { checkDate } : {}) });
+
+      it("tenant tomorrow: 400 COUNTER_CHECK_POSTDATED and NOTHING is written", async () => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const e = await errorOf(service.ring(check("2026-10-23") as never, staff));
+        expect(e).toBeInstanceOf(BadRequestException);
+        expect(e.getResponse().code).toBe("COUNTER_CHECK_POSTDATED");
+        expect(createSale).not.toHaveBeenCalled();
+        expect(recordPayment).not.toHaveBeenCalled();
+        expect(walkIn.getOrCreateWalkIn).not.toHaveBeenCalled();
+        expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      });
+
+      it("a walk-in sale with a post-dated check is refused the same way, before the walk-in row exists", async () => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const dto = {
+          walkIn: true,
+          items: [item],
+          payment: { method: "CHECK", reference: "7", checkDate: "2026-12-01" },
+        };
+        expect(await codeOf(service.ring(dto as never, staff))).toBe("COUNTER_CHECK_POSTDATED");
+        expect(walkIn.getOrCreateWalkIn).not.toHaveBeenCalled();
+        expect(createSale).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ["today", "2026-10-22"],
+        ["yesterday", "2026-10-21"],
+        ["a year ago", "2025-10-22"],
+      ])("a check dated %s is tendered as before (201, paid)", async (_n, d) => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const r = await service.ring(check(d) as never, staff);
+        expect(createSale).toHaveBeenCalledTimes(1);
+        expect(recordPayment).toHaveBeenCalledWith(
+          "inv-1",
+          expect.objectContaining({ method: "CHECK", reference: "1042", amount: 37.25 }),
+          { tillLockHeld: true },
+        );
+        expect(r.paymentRecorded).toBe(true);
+      });
+
+      it("no checkDate (older client): unchanged and tendered", async () => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const r = await service.ring(check() as never, staff);
+        expect(r.paymentRecorded).toBe(true);
+      });
+
+      it("a future checkDate on a non-check method is ignored (CASH is not a dated instrument)", async () => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const r = await service.ring(
+          named({ method: "CASH", checkDate: "2026-12-01" }) as never,
+          staff,
+        );
+        expect(r.paymentRecorded).toBe(true);
+      });
+
+      it("west of UTC: it is already the 22nd in UTC but the tenant's day is the 21st, so the 22nd is TOMORROW (refused) and the 21st is today (tendered)", async () => {
+        at("2026-10-22T03:00:00Z", "America/Los_Angeles");
+        expect(await codeOf(service.ring(check("2026-10-22") as never, staff))).toBe(
+          "COUNTER_CHECK_POSTDATED",
+        );
+        expect(createSale).not.toHaveBeenCalled();
+        const r = await service.ring(check("2026-10-21") as never, staff);
+        expect(r.paymentRecorded).toBe(true);
+      });
+
+      it("east of UTC: UTC is still the 22nd but the tenant's day is the 23rd, so the 23rd is today (NO false refusal) and the 24th is refused", async () => {
+        at("2026-10-22T20:00:00Z", "Pacific/Auckland");
+        const r = await service.ring(check("2026-10-23") as never, staff);
+        expect(r.paymentRecorded).toBe(true);
+        createSale.mockClear();
+        expect(await codeOf(service.ring(check("2026-10-24") as never, staff))).toBe(
+          "COUNTER_CHECK_POSTDATED",
+        );
+        expect(createSale).not.toHaveBeenCalled();
+      });
+
+      it("a tenant with no configured zone judges its day in UTC", async () => {
+        at("2026-10-22T23:30:00Z", null);
+        expect(await codeOf(service.ring(check("2026-10-23") as never, staff))).toBe(
+          "COUNTER_CHECK_POSTDATED",
+        );
+      });
+    });
+
     it("CASH 20 on a 37.25 sale: a PARTIAL payment of 20, paid 20, balanceDue read back from storage, no change", async () => {
       const r = await service.ring(named({ method: "CASH", amount: 20 }) as never, staff);
       expect(recordPayment).toHaveBeenCalledWith(

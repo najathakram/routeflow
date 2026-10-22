@@ -451,6 +451,100 @@ describe("PickupCompleteService.complete", () => {
       expect(e.getResponse().code).toBe("COUNTER_CHECK_NUMBER_REQUIRED");
       nothingWritten();
     });
+    describe("post-dated check (interim guard: a check dated after the TENANT's today is never tendered)", () => {
+      const FAKE_ALL_BUT_DATE = [
+        "hrtime",
+        "nextTick",
+        "performance",
+        "queueMicrotask",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        "requestIdleCallback",
+        "cancelIdleCallback",
+        "setImmediate",
+        "clearImmediate",
+        "setInterval",
+        "clearInterval",
+        "setTimeout",
+        "clearTimeout",
+      ] as never;
+      const at = (iso: string, timezone: string | null) => {
+        jest.useFakeTimers({ now: new Date(iso), doNotFake: FAKE_ALL_BUT_DATE });
+        prisma.tenantConfig.findUnique.mockResolvedValue({ timezone });
+      };
+      afterEach(() => jest.useRealTimers());
+      const check = (checkDate?: string) => ({
+        payment: { method: "CHECK", reference: "1042", ...(checkDate ? { checkDate } : {}) },
+      });
+
+      it("tenant tomorrow: 400 COUNTER_CHECK_POSTDATED and NOTHING is written (no claim, no status, no payment)", async () => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const e = await errorOf(run(check("2026-10-23")));
+        expect(e.getStatus()).toBe(400);
+        expect(e.getResponse().code).toBe("COUNTER_CHECK_POSTDATED");
+        nothingWritten();
+        expect(claims).toHaveLength(0);
+      });
+
+      it("a walk-in hand-over with a post-dated check is refused the same way", async () => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        order = orderRow("OUT_FOR_DELIVERY", { customer: { isWalkIn: true } });
+        const e = await errorOf(run(check("2026-12-01")));
+        expect(e.getResponse().code).toBe("COUNTER_CHECK_POSTDATED");
+        nothingWritten();
+      });
+
+      it.each([
+        ["today", "2026-10-22"],
+        ["yesterday", "2026-10-21"],
+        ["a year ago", "2025-10-22"],
+        ["no date", undefined],
+      ])("a check dated %s is tendered as before", async (_n, d) => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const res = await run(check(d));
+        expect(recordPayment).toHaveBeenCalledWith(
+          "inv-1",
+          expect.objectContaining({ method: "CHECK", reference: "1042" }),
+          expect.anything(),
+        );
+        expect(res.paymentRecorded).toBe(true);
+      });
+
+      it("a future checkDate on a non-check method is ignored", async () => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const res = await run({ payment: { method: "CASH", checkDate: "2026-12-01" } });
+        expect(res.paymentRecorded).toBe(true);
+      });
+
+      it("west of UTC: the tenant's day is the 21st, so the 22nd is TOMORROW (refused) and the 21st is today (tendered)", async () => {
+        at("2026-10-22T03:00:00Z", "America/Los_Angeles");
+        expect((await errorOf(run(check("2026-10-22")))).getResponse().code).toBe(
+          "COUNTER_CHECK_POSTDATED",
+        );
+        nothingWritten();
+        expect((await run(check("2026-10-21"))).paymentRecorded).toBe(true);
+      });
+
+      it("east of UTC: the tenant's day is the 23rd, so the 23rd is today (NO false refusal) and the 24th is refused", async () => {
+        at("2026-10-22T20:00:00Z", "Pacific/Auckland");
+        expect((await run(check("2026-10-23"))).paymentRecorded).toBe(true);
+        recordPayment.mockClear();
+        changeStatus.mockClear();
+        order = orderRow("OUT_FOR_DELIVERY");
+        expect((await errorOf(run(check("2026-10-24")))).getResponse().code).toBe(
+          "COUNTER_CHECK_POSTDATED",
+        );
+        expect(recordPayment).not.toHaveBeenCalled();
+        expect(changeStatus).not.toHaveBeenCalled();
+      });
+
+      it("a tenant with no configured zone judges its day in UTC", async () => {
+        at("2026-10-22T23:30:00Z", null);
+        expect((await errorOf(run(check("2026-10-23")))).getResponse().code).toBe(
+          "COUNTER_CHECK_POSTDATED",
+        );
+      });
+    });
     it("a negative amount is 400 before any write", async () => {
       await expect(run(cash(-1))).rejects.toBeInstanceOf(BadRequestException);
       nothingWritten();

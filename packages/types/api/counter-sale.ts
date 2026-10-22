@@ -38,6 +38,8 @@ export interface CounterSalePayment {
    * reference. The server ignores it unless the signed-in user is a staff role.
    */
   recordAnyway?: boolean;
+  /** CHECK only: the date written on the check, YYYY-MM-DD. After the tenant's today = 400 COUNTER_CHECK_POSTDATED. Omitted = not checked. */
+  checkDate?: string;
 }
 
 export interface CounterSaleRequest {

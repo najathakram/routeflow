@@ -38,6 +38,7 @@ import {
 } from "./fulfilment-capability-reader";
 import {
   allocateOldestFirst,
+  assertCheckNotPostdatedForTenant,
   assertPaymentShape,
   assertWalkInTenderCoversTotal,
   type CounterPaymentMethod,
@@ -117,6 +118,8 @@ export class CounterSaleService {
     }
     const walkIn = !!dto.walkIn;
     assertPaymentShape(dto.payment, walkIn);
+    // Interim till guard: judged on the TENANT's day, before any write.
+    await assertCheckNotPostdatedForTenant(this.prisma, dto.payment);
 
     // 3. Tenant-scoped existence checks (another tenant's ids are simply not found).
     const packs = await this.assertProductsExist(dto.items.map((i) => i.productId));

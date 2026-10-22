@@ -924,7 +924,7 @@ const EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
 test("A2 GraphQL: asks for PR bodies and check contexts (CheckRun + StatusContext) for open PRs and master", () => {
   assert.match(COL.GRAPHQL_QUERY, /body/);
   assert.match(COL.GRAPHQL_QUERY, /contexts\(first: 50\)/);
-  assert.match(COL.GRAPHQL_QUERY, /\.\.\. on CheckRun \{ name conclusion status \}/);
+  assert.match(COL.GRAPHQL_QUERY, /\.\.\. on CheckRun \{ name conclusion status startedAt \}/);
   assert.match(COL.GRAPHQL_QUERY, /\.\.\. on StatusContext \{ context state \}/);
   // master and the open PRs both carry contexts
   assert.equal((COL.GRAPHQL_QUERY.match(/contexts\(first: 50\)/g) ?? []).length, 2);
@@ -1370,16 +1370,20 @@ test("A2 readSpecsExtras: reads incidents/ and priorities/OWNER-QUEUE.md, ONE gi
     const calls = [];
     const exec = async (cmd, args, opts) => {
       calls.push({ line: `${cmd} ${args.join(" ")}`, cwd: opts?.cwd });
+      if (args.includes("register/WORK-REGISTER.md"))
+        return { code: 0, stdout: "2026-10-22T10:27:28-05:00\n", stderr: "" };
       return { code: 0, stdout: read("a2-gitlog-handoff.txt"), stderr: "" };
     };
     const x = await COL.readSpecsExtras({ dir, exec });
     assert.equal(x.incidents.length, 5);
     assert.equal(x.ownerQueueRows.length, 11);
     assert.equal(x.laneHandoffs.length, 4);
+    assert.equal(x.registerChangedAt, Date.parse("2026-10-22T15:27:28Z"));
     assert.deepEqual(x.errors, []);
-    // ONE git log for the handoff times and ONE for the incident files' last commit times
-    assert.equal(calls.length, 2);
+    // ONE git log each: the handoff times, the incident files' last commit times, the register's
+    assert.equal(calls.length, 3);
     const lines = calls.map((c) => c.line);
+    assert.ok(lines.includes("git log -1 --format=%cI -- register/WORK-REGISTER.md"));
     assert.ok(
       lines.includes("git log --since=7.days --format=%x00%cI --name-only -- handoff/lanes"),
     );
@@ -1395,6 +1399,7 @@ test("A2 readSpecsExtras: reads incidents/ and priorities/OWNER-QUEUE.md, ONE gi
       assert.deepEqual(y.incidents, []);
       assert.equal(y.ownerQueueRows, null);
       assert.deepEqual(y.laneHandoffs, []);
+      assert.equal(y.registerChangedAt, null);
       assert.ok(y.errors.length >= 2);
     } finally {
       rmSync(empty, { recursive: true, force: true });
@@ -1614,4 +1619,55 @@ test("bugs: a git spawn failure surfaces as such, never as 'registry not found'"
     assert.ok(c.sources.bugs.error.includes(msg), c.sources.bugs.error);
     assert.ok(!/not found/.test(c.sources.bugs.error), c.sources.bugs.error);
   }
+});
+
+test("D6 normalizeContext/summarizeChecks: never-started checks are not-run, never failure", () => {
+  const n = COL.normalizeContext;
+  const cr = (over) => ({ __typename: "CheckRun", name: "verify", startedAt: null, ...over });
+  assert.equal(n(cr({ status: "QUEUED", conclusion: null })).state, "notrun");
+  assert.equal(n(cr({ status: "WAITING", conclusion: null })).state, "notrun");
+  assert.equal(n(cr({ status: "COMPLETED", conclusion: "CANCELLED" })).state, "notrun");
+  assert.equal(n(cr({ status: "COMPLETED", conclusion: "SKIPPED" })).state, "notrun");
+  // a started run keeps its normal reading; a missing startedAt key keeps the old one
+  const t = "2026-10-19T00:00:00Z";
+  assert.equal(
+    n(cr({ status: "COMPLETED", conclusion: "CANCELLED", startedAt: t })).state,
+    "cancelled",
+  );
+  assert.equal(n(cr({ status: "IN_PROGRESS", startedAt: t })).state, "pending");
+  assert.equal(n({ name: "verify", status: "COMPLETED", conclusion: "FAILURE" }).state, "failure");
+  assert.equal(
+    n(cr({ status: "COMPLETED", conclusion: "FAILURE", startedAt: t })).state,
+    "failure",
+  );
+  // a not-run duplicate never hides a real result
+  const runs = COL.collapseRuns([
+    cr({ status: "COMPLETED", conclusion: "CANCELLED" }),
+    cr({ status: "COMPLETED", conclusion: "SUCCESS", startedAt: t }),
+  ]);
+  assert.deepEqual(runs, [{ name: "verify", state: "success" }]);
+  assert.equal(COL.summarizeChecks([{ name: "verify", state: "notrun" }], {}).gate, "not-run");
+  assert.equal(
+    COL.summarizeChecks(
+      [
+        { name: "verify", state: "notrun" },
+        { name: "e2e", state: "success" },
+      ],
+      {},
+    ).gate,
+    "not-run",
+  );
+  assert.equal(
+    COL.summarizeChecks(
+      [
+        { name: "verify", state: "notrun" },
+        { name: "e2e", state: "failure" },
+      ],
+      {},
+    ).gate,
+    "failure",
+  );
+  const probe = COL.summarizeChecks([{ name: "lint", state: "notrun" }], {});
+  assert.equal(probe.gate, "none");
+  assert.deepEqual(probe.probesFailing, []);
 });

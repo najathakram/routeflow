@@ -1,6 +1,8 @@
 import { BadRequestException } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { parseCalendarDay, tenantTodayDay } from "../../common/calendar-date";
+import { resolveZone } from "../../common/tenant-time-zone";
 
 /**
  * Counter sale payment rules. Two stages, because the sale's total is computed by create() (tax,
@@ -17,6 +19,8 @@ export interface CounterPaymentInput {
   amount?: number;
   reference?: string;
   recordAnyway?: boolean;
+  /** CHECK only: the date written on the check, YYYY-MM-DD (the DTO pins the shape). */
+  checkDate?: string;
 }
 
 const refuse = (code: string, message: string) => new BadRequestException({ code, message });
@@ -34,6 +38,39 @@ export function assertPaymentShape(payment: CounterPaymentInput, walkIn: boolean
   if (payment.method === "CHECK" && !payment.reference?.trim()) {
     throw refuse(API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED, "Enter the check number");
   }
+}
+
+/**
+ * Interim till guard (owner P0): a CHECK dated after the TENANT's today is never tendered at the till, because a post-dated
+ * check is not money yet. Refused 400 COUNTER_CHECK_POSTDATED before anything is written. `today` is the tenant's calendar day
+ * ("YYYY-MM-DD", from the tenant's zone, never the server's); YYYY-MM-DD strings order like the days they name. No date, today
+ * or earlier, and every other method pass. A date that names no real day is a plain 400.
+ */
+export function assertCheckNotPostdated(payment: CounterPaymentInput, today: string): void {
+  if (payment.method !== "CHECK" || payment.checkDate == null) return;
+  if (!parseCalendarDay(payment.checkDate)) {
+    throw new BadRequestException("checkDate must be a real calendar day (YYYY-MM-DD)");
+  }
+  if (payment.checkDate > today) {
+    throw refuse(
+      API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
+      "Post-dated check: put this sale on account and record the check when it clears.",
+    );
+  }
+}
+
+/**
+ * The tender paths' one call: resolves the TENANT's zone (one read, and only when a CHECK states a date), takes its calendar
+ * day at `now`, and applies `assertCheckNotPostdated`. The counter sale and the pickup hand-over both run it before any write.
+ */
+export async function assertCheckNotPostdatedForTenant(
+  prisma: Parameters<typeof resolveZone>[0] & { getTenantId(): string | null | undefined },
+  payment: CounterPaymentInput,
+  now: Date = new Date(),
+): Promise<void> {
+  if (payment.method !== "CHECK" || payment.checkDate == null) return;
+  const { zone } = await resolveZone(prisma, { tenantId: prisma.getTenantId() ?? "" });
+  assertCheckNotPostdated(payment, tenantTodayDay(zone, now));
 }
 
 /**

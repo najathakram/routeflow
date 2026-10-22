@@ -10,6 +10,7 @@ import {
   IsString,
   IsUUID,
   Max,
+  Matches,
   MaxLength,
   Min,
   ValidateNested,
@@ -43,6 +44,8 @@ export class CounterSalePaymentDto {
   @IsOptional() @IsString() @MaxLength(100) reference?: string;
   /** Row 498 (SA-837b): the staff cashier's resend of a payment refused as a duplicate reference; staff roles only. */
   @IsOptional() @IsBoolean() recordAnyway?: boolean;
+  /** CHECK only: the date written on the check, a strict YYYY-MM-DD. After the tenant's today = 400 COUNTER_CHECK_POSTDATED. */
+  @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/) checkDate?: string;
 }
 
 /** `CounterSaleRequest` of the shared contract (packages/types/api/counter-sale.ts). */

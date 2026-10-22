@@ -208,6 +208,9 @@ describe("hand-over tender and fixed error copy", () => {
     expect(pickupCompleteErrorCopy(e("COUNTER_TENDER_SHORT"))).toBe(
       "A walk-in customer must pay the full balance.",
     );
+    expect(pickupCompleteErrorCopy(e("COUNTER_CHECK_POSTDATED"))).toBe(
+      "Post-dated check: put this sale on account and record the check when it clears.",
+    );
     const generic = pickupCompleteErrorCopy(e("SOMETHING_ELSE"));
     expect(generic).toMatch(/Couldn't complete the pickup/);
     expect(generic).not.toMatch(/SERVER TEXT/);

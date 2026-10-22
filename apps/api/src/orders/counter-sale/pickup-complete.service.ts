@@ -24,6 +24,7 @@ import {
 } from "../../credit-notes/auto-apply-candidates";
 import {
   allocateOldestFirst,
+  assertCheckNotPostdatedForTenant,
   assertPaymentShape,
   planCounterPayment,
   toPrismaMethod,
@@ -118,8 +119,11 @@ export class PickupCompleteService {
       alreadyPickedUp ? isHandOverTender(order.deliveredAt) : undefined,
     );
     const excused = !sent && preRows.length > 0 && preOwed <= 0;
-    if (sent) assertPaymentShape(sent, walkIn);
-    else if (!excused) assertPaymentShape({ method: "ON_ACCOUNT" }, walkIn);
+    if (sent) {
+      assertPaymentShape(sent, walkIn);
+      // Interim till guard: a check dated after the TENANT's day is never tendered, before any write (as the counter sale).
+      await assertCheckNotPostdatedForTenant(this.prisma, sent);
+    } else if (!excused) assertPaymentShape({ method: "ON_ACCOUNT" }, walkIn);
     if (walkIn) {
       // A walk-in leaves no partial on account and takes no credit: the counter sale's two guards.
       if (

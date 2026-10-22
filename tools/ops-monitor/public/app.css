@@ -1415,6 +1415,25 @@ th {
   background: var(--err);
 }
 
+.stale-banner {
+  margin: 12px 16px 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+}
+.stale-banner.err {
+  color: var(--err);
+  background: var(--err-soft);
+  border-color: var(--err);
+}
+.stale-banner[hidden] {
+  display: none;
+}
+
 /* ---- releases in words ---- */
 .train > .thead {
   align-items: center;
@@ -1860,5 +1879,118 @@ details.answered {
   .cnt,
   .sub {
     font-size: 12px;
+  }
+}
+
+.tpart {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.tpart .ptitle {
+  flex: 1 1 12rem;
+}
+
+/* ---------- owner-first bands, folded panels, grouped alarms (UI fixes) ---------- */
+.bmore {
+  margin-top: 8px;
+  width: 100%;
+}
+.pbody[hidden] {
+  display: none;
+}
+.pcount {
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ptoggle {
+  margin-left: 8px;
+}
+.agroup {
+  border-top: 1px solid var(--line);
+  padding: 4px 0;
+}
+.agroup:first-of-type {
+  border-top: 0;
+}
+.agroup > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 6px 0;
+  font-weight: 600;
+}
+.agroup .gname {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.agroup .gcmds {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.agroup .gcmds code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.agroup .gcopy {
+  margin: 2px 0 4px;
+}
+.agroup .alarm {
+  display: block;
+}
+.lane-recent {
+  font-size: 12px;
+  margin-top: 4px;
+}
+/* Every clickable area chip is at least 24 x 24 px. */
+.achip {
+  min-width: 24px;
+  min-height: 28px;
+  padding: 3px 8px;
+  justify-content: center;
+}
+
+/* Phone: all nine section tabs wrap into view (no sideways scrolling); chips keep one row. */
+@media (max-width: 600px) {
+  :root {
+    --head-h: 196px;
+  }
+  .top {
+    padding-top: 8px;
+  }
+  .top-row {
+    gap: 4px 12px;
+  }
+  /* Keep the sticky header under 200 px: the title shares a row with live + Theme (the source chips and the
+     live dot still show freshness), and the meta row stays one line. */
+  #updated,
+  .hdr-machine {
+    display: none;
+  }
+  .nav {
+    flex-wrap: wrap;
+    overflow: visible;
+    margin: 4px 0 0;
+    padding: 0;
+    gap: 0;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .navlink {
+    min-height: 34px;
+    padding: 5px 9px;
+  }
+  .chips {
+    margin-top: 6px;
+  }
+  .chips.more {
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent 100%);
+    mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent 100%);
   }
 }

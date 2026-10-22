@@ -2,7 +2,7 @@
 // JSON document the UI and generated views consume. Pure given its inputs.
 import { BUG_ID_RE, DONE_STATUSES } from "./schema.mjs";
 import { fold } from "./fold.mjs";
-import { parseEta } from "./ids.mjs";
+import { parseEta, tagDue, tagRank, tagWords } from "./ids.mjs";
 import { pickNext, laneNow } from "./next.mjs";
 import { areaDomain, buildAreaTree, fileToArea, guessDomainFromText } from "./areas.mjs";
 import {
@@ -49,6 +49,10 @@ export function statusLabelFor(item, { booked = false, answered = false } = {}) 
   }
   return STATUS_WORDS[item.status] ?? item.status;
 }
+
+/** Display label for an item whose linked PR merged to master but whose status has not caught up. */
+export const AWAITING_DEPLOY_LABEL = "Merged, awaiting deploy";
+const NOT_AWAITING = new Set(["live", "verified", "dropped", "parked"]);
 
 // Live-harm rule (accuracy round 2): a DONE census/audit/ops item that says nothing reached a
 // customer marks the open bugs it covers as latent risks, not "hurting now".
@@ -151,7 +155,8 @@ function trainIdsOf(item, aliases) {
   const out = new Set();
   for (const text of [item.train, item.trainLabel]) {
     if (typeof text !== "string" || !text) continue;
-    for (const m of text.matchAll(/\bR(\d+)\b/g)) out.add(`R${m[1]}`);
+    // "T5 (was: R6 set)": the "was" part is history, never a second train.
+    for (const m of text.replace(/\(was:[^)]*\)/gi, "").matchAll(/\b([RT]\d+)\b/g)) out.add(m[1]);
     for (const [phrase, id] of Object.entries(aliases)) {
       const p = String(phrase)
         .toLowerCase()
@@ -233,6 +238,7 @@ export function buildSnapshot({
   machine = null,
   authEnabled,
   mask: maskFn = (t) => t,
+  maskStatus = null,
 }) {
   const specsData = sources.specs?.data ?? null;
   const cfg = config ?? specsData?.config;
@@ -349,6 +355,7 @@ export function buildSnapshot({
       status: it.status,
       eta: it.eta,
       etaAt: iso(parseEta(it.eta, now)),
+      ...(it.parts?.length ? { parts: it.parts } : {}),
       members: uniq([
         ...it.members,
         ...stateItems
@@ -585,12 +592,48 @@ export function buildSnapshot({
       answer: ev?.answer ?? [row?.statusWord, row?.decisionFile].filter(Boolean).join(" → "),
     });
   }
+  // D3: a linked PR already merged to master but the item still reads in-flight -> display
+  // "Merged, awaiting deploy" (itemStatus/itemStatusLabel keep the recorded status; no events).
+  const landedByItem = new Map(); // item id -> { number, at } newest landed merged PR
+  const openByItem = new Set(openPrs.map((p) => p.item).filter(Boolean));
+  const noteLanded = (id, p) => {
+    if (!id || !state.items.has(id)) return;
+    const l = landedAt(p, mergedRaw);
+    if (l.at === null) return;
+    const had = landedByItem.get(id);
+    if (!had || l.at > had.at) landedByItem.set(id, { number: p.number, at: l.at });
+  };
+  for (const p of mergedRaw) {
+    noteLanded(
+      // A bare "row N" mention in a merged PR's body is background, not proof the item shipped.
+      linkItemFor({ number: p.number, branch: p.branch, title: p.title, body: p.body }, state, {
+        bodyMentions: false,
+      }),
+      p,
+    );
+  }
+  for (const it of stateItems) {
+    const linked = new Set((it.links?.prs ?? []).map(String));
+    for (const p of mergedRaw) if (linked.has(String(p.number))) noteLanded(it.id, p);
+  }
   for (const out of items) {
     const info = answerInfo.get(out.id);
     out.statusLabel = statusLabelFor(out, {
       answered: Boolean(info?.answered),
       booked: Boolean(info?.booked),
     });
+    const landed = landedByItem.get(out.id);
+    if (
+      landed &&
+      out.type !== "decision" &&
+      !NOT_AWAITING.has(out.status) &&
+      !openByItem.has(out.id)
+    ) {
+      out.itemStatus = out.status;
+      out.itemStatusLabel = out.statusLabel;
+      out.statusLabel = AWAITING_DEPLOY_LABEL;
+      out.awaitingDeploy = { pr: landed.number, mergedAt: iso(landed.at) };
+    }
     if (info?.answered && out.answeredAt === null) out.answeredAt = iso(info.at);
   }
   const ownerQueue = stateItems
@@ -704,6 +747,102 @@ export function buildSnapshot({
   // The page reads times as ISO strings.
   for (const d of [...incidentItems, ...bugItems]) items.push(d);
 
+  // ---- release state, DERIVED from its parts (display only, never written as events) ----
+  // Only releases of the CURRENT plan (the ones carrying parts) are derived. A release that is not
+  // in the current plan keeps its last explicit status (live / verified / dropped) as history.
+  // A part is done when all its counting members (not dropped / parked) are live or verified; a
+  // part with no linked items is NOT done ("no items linked") and blocks Shipped.
+  const statusOf = new Map(items.map((x) => [x.id, x.status]));
+  const countOf = (ids) => {
+    const counting = ids.filter((m) => !["dropped", "parked"].includes(statusOf.get(m)));
+    const done = counting.filter((m) => ["live", "verified"].includes(statusOf.get(m)));
+    return {
+      total: counting.length,
+      done: done.length,
+      empty: ids.length === 0,
+      isDone: counting.length > 0 && done.length === counting.length,
+    };
+  };
+  for (const t of trains) {
+    const parts = (t.parts ?? []).map((p) => {
+      const c = countOf(p.members);
+      const late = !c.isDone && tagDue(p.tag) !== null && now > tagDue(p.tag);
+      return {
+        ...p,
+        tagWords: tagWords(p.tag),
+        memberCount: p.members.length,
+        done: c.isDone,
+        itemsDone: c.done,
+        itemsTotal: c.total,
+        state: c.isDone ? "done" : late ? "late" : "progress",
+        stateText: c.isDone
+          ? "Done"
+          : late
+            ? "Late"
+            : c.empty
+              ? "no items linked"
+              : `${c.done} of ${c.total} items`,
+        status: c.isDone ? "live" : "building",
+      };
+    });
+    if (!parts.length) continue; // not in the current plan: its explicit status stands
+    if (t.status === "dropped") {
+      t.parts = parts;
+      continue;
+    }
+    const doneUnits = parts.filter((p) => p.done).length;
+    const unfinished = parts.filter((p) => !p.done).sort((a, b) => tagRank(a.tag) - tagRank(b.tag));
+    const due = unfinished.length ? tagDue(unfinished[0].tag) : null;
+    t.itemStatus = t.status;
+    {
+      t.parts = parts;
+      t.partsDone = doneUnits;
+      t.partsTotal = parts.length;
+      const first = parts.reduce((a, p) => (tagRank(p.tag) < tagRank(a.tag) ? p : a));
+      t.tag = first.tag ?? "";
+      t.tagWords = first.tagWords;
+    }
+    if (doneUnits === parts.length) {
+      t.state = "shipped";
+      t.stateText = "Shipped";
+      t.status = "live";
+    } else {
+      const late = due !== null && now > due;
+      t.state = late ? "late" : "progress";
+      t.stateText = late ? "Late" : `In progress ${doneUnits} of ${parts.length} parts`;
+      if (DONE_STATUSES.includes(t.status)) t.status = "building"; // never "Fixed" with work left
+    }
+  }
+  for (const t of trains)
+    if (t.status === "dropped") ((t.state = "dropped"), (t.stateText = "Dropped"));
+
+  // ---- Shipping next: unfinished releases by earliest unfinished part tag, each with its open
+  // PRs that are not draft and whose checks are green (the snapshot has no review state), oldest
+  // update first. At most 5 releases, 3 PRs each. ----
+  const rankOf = (t) =>
+    Math.min(...(t.parts ?? []).filter((p) => !p.done).map((p) => tagRank(p.tag)), 9);
+  const shippingNext = trains
+    .filter((t) => (t.state === "progress" || t.state === "late") && t.parts?.length)
+    .sort((a, b) => rankOf(a) - rankOf(b) || compareIds(a.id, b.id))
+    .slice(0, 5)
+    .map((t) => {
+      const mem = new Set(t.members);
+      const prs = openPrs
+        .filter((p) => !p.draft && p.gate === "success" && p.item && mem.has(p.item))
+        .sort((a, b) => (Date.parse(a.updatedAt) || 0) - (Date.parse(b.updatedAt) || 0))
+        .slice(0, 3)
+        .map((p) => ({ number: p.number, title: p.title, url: p.url, item: p.item }));
+      return { id: t.id, title: t.title, stateText: t.stateText, tagWords: t.tagWords, prs };
+    });
+  // Earliest tag first, then id; releases without parts (old trains) keep their numeric order.
+  const earliest = (t) => (t.parts ? Math.min(...t.parts.map((p) => tagRank(p.tag))) : 10);
+  trains.sort(
+    (a, b) =>
+      earliest(a) - earliest(b) ||
+      (Number(/\d+/.exec(a.id)?.[0]) || 99) - (Number(/\d+/.exec(b.id)?.[0]) || 99) ||
+      compareIds(a.id, b.id),
+  );
+
   // ---- problems ("Hurting now"): open P0/P1 bugs and incidents whose harm is not latent / none,
   // plus incident files that are open AND recently changed (never features, ops, the board or
   // latent bugs) ----
@@ -728,6 +867,22 @@ export function buildSnapshot({
       id: it.id,
       title: it.title,
       evidence: it.harm ? "set by the team (harm: latent)" : (derivedHarm.get(it.id) ?? ""),
+    }));
+
+  // ---- machines and lanes: latest heartbeat per session, newest first, <= 3 days old ----
+  const machines = [...state.sessions.values()]
+    .filter((s) => now - Date.parse(s.lastActiveAt) <= 3 * 86400000)
+    .sort((a, b) => Date.parse(b.lastActiveAt) - Date.parse(a.lastActiveAt))
+    .map((s) => ({
+      session: s.session,
+      machine: s.machine ?? null,
+      lane: s.lane ?? null,
+      title: s.title ?? null,
+      branch: s.branch ?? null,
+      pr: s.pr ?? null,
+      head: s.head ?? null,
+      lastActiveAt: s.lastActiveAt,
+      last: s.last ?? null,
     }));
 
   // ---- lanes ----
@@ -869,20 +1024,39 @@ export function buildSnapshot({
     register: {
       duplicateIds: specsData?.registerDuplicateIds ?? [],
       rowIds: specsData?.registerRowIds ?? null,
+      changedAt: specsData?.registerChangedAt ?? null,
+      pending: specsData?.registerPending ?? null,
     },
     incidents: incidentFiles,
   });
+  if (maskStatus && maskStatus.ok === false) {
+    alarms.unshift({
+      id: "mask-list-missing:mask",
+      kind: "mask-list-missing",
+      severity: "error",
+      message: "client-name mask list missing — tenant names hidden by fallback",
+      suggest: `fix client-names.json in the ops home (${maskStatus.reason})`,
+      item: null,
+      lane: null,
+      pr: null,
+      branch: null,
+      source: "mask",
+    });
+  }
 
   return {
     generatedAt: iso(now),
     machine,
     ...(typeof authEnabled === "boolean" ? { authEnabled } : {}),
+    ...(maskStatus ? { maskStatus } : {}),
     sources: outSources,
     items,
     bugs,
     bugsFixedByNote,
     trains,
+    shippingNext,
     lanes,
+    machines,
     ownerQueue,
     ownerTodos,
     answeredRecently,
