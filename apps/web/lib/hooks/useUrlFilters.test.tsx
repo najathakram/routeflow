@@ -80,6 +80,59 @@ describe("useUrlFilters: quick successive writes (row 729)", () => {
     expect(q.get("urgent")).toBeNull();
   });
 
+  // The lead's ruling on row 729: a browser Back inside the pending window must not be overwritten by the write in flight.
+  it("Back, then a write inside the window, builds on the post-Back URL (popstate clears the pending write)", () => {
+    currentQuery = "status=PENDING";
+    const { result, rerender } = renderHook(() => useUrlFilters(DEFAULTS));
+    act(() => result.current[1]("urgent", true)); // in flight: status=PENDING&urgent=1
+    act(() => {
+      jest.advanceTimersByTime(300);
+    });
+    // the person presses Back: the browser fires popstate, then Next hands us the previous URL
+    act(() => {
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    currentQuery = "";
+    rerender();
+    act(() => {
+      jest.advanceTimersByTime(100);
+    });
+    act(() => result.current[1]("fulfillPath", "SHIP"));
+    const q = lastQuery();
+    expect(q.get("fulfillPath")).toBe("SHIP");
+    expect(q.get("urgent")).toBeNull(); // the pre-Back write is not resurrected
+    expect(q.get("status")).toBeNull();
+  });
+
+  it("after Back, quick writes still compose with each other", () => {
+    const { result, rerender } = renderHook(() => useUrlFilters(DEFAULTS));
+    act(() => result.current[1]("urgent", true));
+    act(() => {
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    currentQuery = "";
+    rerender();
+    act(() => result.current[1]("fulfillPath", "SHIP"));
+    act(() => {
+      jest.advanceTimersByTime(100);
+    });
+    act(() => result.current[1]("status", "DRAFT"));
+    const q = lastQuery();
+    expect([q.get("fulfillPath"), q.get("status"), q.get("urgent")]).toEqual([
+      "SHIP",
+      "DRAFT",
+      null,
+    ]);
+  });
+
+  it("stops listening for Back on unmount", () => {
+    const spy = jest.spyOn(window, "removeEventListener");
+    const { unmount } = renderHook(() => useUrlFilters(DEFAULTS));
+    unmount();
+    expect(spy).toHaveBeenCalledWith("popstate", expect.any(Function));
+    spy.mockRestore();
+  });
+
   it("an unrelated param already in the URL is kept, and page resets", () => {
     currentQuery = "action=new&page=3";
     const { result } = renderHook(() => useUrlFilters(DEFAULTS));

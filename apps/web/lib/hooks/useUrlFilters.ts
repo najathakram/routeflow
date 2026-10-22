@@ -38,6 +38,15 @@ export function useUrlFilters<T extends FilterState>(
   const latestParams = React.useRef(searchParams);
   latestParams.current = searchParams;
   const pendingWrite = React.useRef<{ query: string; at: number } | null>(null);
+  // A browser Back/Forward moves the URL out from under any write still on its way: drop it, so the next write builds on
+  // the URL the person went back to (Next hands us that as searchParams), not on the write they just left.
+  React.useEffect(() => {
+    const onPop = () => {
+      pendingWrite.current = null;
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
   const baseParams = React.useCallback(() => {
     const current = latestParams.current.toString();
     const pending = pendingWrite.current;
