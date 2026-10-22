@@ -12,7 +12,7 @@
  *   staff reads     an OPERATOR reading the invoice sees the overriding user's real name; a deleted user reads null;
  *                   a buyer's read never carries it.
  *
- * No `selling_restrictions.enabled` row exists for the tenant: the switch is gone. Collected only by
+ * The fixture turns the owner-only `selling_restrictions.enabled` switch ON for the tenant. Collected only by
  * jest.db.config.js. One throwaway `qa-r510-<run>` tenant (assertTestTenant), purged in afterAll.
  */
 jest.mock("./invoice-pdf.service", () => ({
@@ -231,8 +231,12 @@ describeDb(
       await pool?.end();
     }, 120_000);
 
-    it("setup: the tenant has no selling_restrictions.enabled row and is judged all the same", async () => {
-      expect(await raw.systemConfig.count({ where: { tenantId: w.tenantId } })).toBe(0);
+    it("setup: the owner-only switch is ON for the tenant, so it is judged", async () => {
+      expect(
+        await raw.systemConfig.count({
+          where: { tenantId: w.tenantId, key: "selling_restrictions.enabled", value: "true" },
+        }),
+      ).toBe(1);
     });
 
     describe("manual create", () => {

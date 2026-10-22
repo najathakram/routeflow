@@ -1,6 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { PrismaService } from "../prisma/prisma.service";
+import * as rGate from "../orders/order-restriction-gate";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import {
@@ -15,7 +16,8 @@ import {
 /**
  * Row 510 through the real service over a mocked prisma: what a STAFF write of a restricted product gets back from
  * `assertLinesSellable` (warning / hard block / decision), the buyer channel unchanged, the jurisdiction (store vs
- * customer) and the switch that no longer exists. The DB-backed proofs (locks, stamps, audit rows) are in the
+ * customer) and the owner-only tenant switch (`selling_restrictions.enabled`, D-2026-09-25-banned-items-rules): ON keeps the
+ * row-510 protocol, OFF means no warning or block on ANY staff path. The DB-backed proofs (locks, stamps, audit rows) are in the
  * `restriction-override*.db.spec.ts` files.
  */
 const T = "tenant-1";
@@ -62,6 +64,10 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
     fulfilmentKind: "DELIVERY",
     ...over,
   });
+  const switchRow = (value: string | null) =>
+    prisma.systemConfig.findMany.mockResolvedValue(
+      value === null ? [] : [{ key: "selling_restrictions.enabled", value }],
+    );
   const reject = async (p: SellableLinesParams) => {
     try {
       await service.assertLinesSellable(p);
@@ -79,7 +85,7 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
     prisma.productCategory = {
       findMany: jest.fn().mockResolvedValue([{ id: "cat-thc", name: "THC" }]),
     };
-    prisma.systemConfig.findMany.mockResolvedValue([]); // NO switch row: the switch is gone
+    switchRow("true"); // the owner turned the tenant switch ON: the row-510 protocol applies
     prisma.product.findMany.mockResolvedValue([
       {
         id: "p1",
@@ -206,13 +212,116 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
     expect(decision.active).toBe(false);
   });
 
-  it("the tenant switch is gone: no selling_restrictions.enabled row still means the rule applies", async () => {
-    prisma.systemConfig.findMany.mockResolvedValue([]);
+  it("switch ON keeps the row-510 warning", async () => {
+    switchRow("true");
     expect((await reject(args())).getResponse()).toMatchObject({ code: "RESTRICTION_WARNING" });
-    prisma.systemConfig.findMany.mockResolvedValue([
-      { key: "selling_restrictions.enabled", value: "false" },
-    ]);
-    expect((await reject(args())).getResponse()).toMatchObject({ code: "RESTRICTION_WARNING" });
+  });
+
+  describe("switch OFF (a `false` row, or no row at all): staff are never warned or blocked", () => {
+    it.each([
+      ["a false row", "false"],
+      ["no row", null],
+    ])(
+      "%s: assertLinesSellable resolves to an inert decision and reads no rule",
+      async (_n, value) => {
+        switchRow(value);
+        const decision = await service.assertLinesSellable(args());
+        expect(decision.stamps).toEqual([]);
+        expect(decision.off).toBe(true);
+        expect(prisma.sellingRestriction.findMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it("a DRIVER and a support session, whom the protocol hard-blocks, are not blocked either", async () => {
+      switchRow("false");
+      for (const principal of [
+        { role: "DRIVER", sub: "u-d" },
+        { role: "TENANT_ADMIN", sub: "u-a", impersonatedBy: "sa-1" },
+        undefined,
+      ]) {
+        await expect(service.assertLinesSellable(args({ principal }))).resolves.toBeDefined();
+      }
+    });
+
+    it("judgeStaffWrite reports nothing breached", async () => {
+      switchRow("false");
+      expect(await service.judgeStaffWrite(args())).toMatchObject({
+        outcome: "OFF",
+        breaches: [],
+      });
+    });
+
+    it("the BUYER channel is unchanged by the switch: the portal still refuses", async () => {
+      switchRow("false");
+      await expect(
+        service.assertLinesSellable(args({ channel: "BUYER_PORTAL" })),
+      ).rejects.toMatchObject({ response: { code: "SELLING_RESTRICTED" } });
+    });
+  });
+
+  describe("every staff write path, through its real gate builder, follows the switch", () => {
+    const user = { role: "OPERATOR", sub: "u-op" } as never;
+    const create = (counterSale: boolean) =>
+      rGate.create({
+        tenant: T,
+        customerId: "c1",
+        user,
+        lineItemsData: [{ productId: "p1" }],
+        fulfillPath: counterSale ? "PICKUP" : "ROUTE",
+        options: { counterSale },
+        dto: undefined,
+      });
+    const order = {
+      customerId: "c1",
+      lineItems: [] as never[],
+      fulfillPath: "ROUTE",
+      counterSale: false,
+    };
+
+    it.each([
+      ["order create", false],
+      ["counter sale", true],
+    ])("%s: switch OFF is never warned; switch ON is", async (_n, counter) => {
+      switchRow("false");
+      await expect(
+        service.assertLinesSellable({ ...create(counter), channel: "STAFF" }),
+      ).resolves.toMatchObject({ off: true });
+      switchRow("true");
+      expect((await reject({ ...create(counter), channel: "STAFF" })).getResponse()).toMatchObject({
+        code: "RESTRICTION_WARNING",
+      });
+    });
+
+    it("order edit: switch OFF plans nothing for staff (null), switch ON plans and judges", async () => {
+      const plan = () =>
+        rGate.editPlan(
+          { restrictions: service, prisma: mock },
+          {
+            tenant: T,
+            order,
+            user,
+            dto: { items: [{ productId: "p1", qty: 1 }] },
+            isDiffPayload: false,
+          },
+        );
+      switchRow("false");
+      expect(await plan()).toBeNull();
+      switchRow("true");
+      const on = await plan();
+      expect(on).not.toBeNull();
+      await expect(
+        service.assertLinesSellable({ ...on!.params, channel: "STAFF" }),
+      ).rejects.toMatchObject({ response: { code: "RESTRICTION_WARNING" } });
+    });
+
+    it("change request: switch OFF plans nothing for staff (null), switch ON plans and judges", async () => {
+      const cr = { id: "cr-1", type: "ADD_ITEM", productId: "p1" } as never;
+      const plan = () => rGate.crPlan({ restrictions: service }, { tenant: T, order, cr, user });
+      switchRow("false");
+      expect(await plan()).toBeNull();
+      switchRow("true");
+      expect(await plan()).not.toBeNull();
+    });
   });
 
   describe("jurisdiction: the store for a till / pickup sale, the customer's address for a delivery", () => {

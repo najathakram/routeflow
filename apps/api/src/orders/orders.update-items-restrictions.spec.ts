@@ -61,7 +61,7 @@ describe("OrdersService.updateOrderItems — selling restrictions (lane R 2a-7)"
     h.prisma.order.findUnique.mockResolvedValue({ ...order });
     return h.service.updateOrderItems("ord-1", dto as never, user);
   };
-  const on = () => undefined; // row 510: nothing to switch on
+  const on = () => h.restrictions.getPolicy.mockResolvedValue({ enabled: true });
   const firstCall = (m: jest.Mock) => m.mock.invocationCallOrder[0];
 
   beforeEach(async () => {
@@ -75,19 +75,37 @@ describe("OrdersService.updateOrderItems — selling restrictions (lane R 2a-7)"
     h.prisma.orderItem.findMany.mockResolvedValue(EXISTING);
   });
 
-  describe("row 510: the tenant switch is gone, so a staff edit is always judged", () => {
-    it("never reads the tenant policy itself (the engine reads what it needs); the plan query and the choke point run with NO switch on", async () => {
+  describe("OFF (the default): inert", () => {
+    it("ONE policy read for the row's tenant before the transaction, and nothing else — no plan query, no choke point, nothing inside the tx", async () => {
+      let readsAtTxStart = -1;
+      let readsAtTxEnd = -1;
+      const runTx = h.prisma.tenantTransaction.getMockImplementation() as (
+        fn: (tx: unknown) => Promise<unknown>,
+      ) => Promise<unknown>;
+      h.prisma.tenantTransaction.mockImplementation(
+        async (fn: (tx: unknown) => Promise<unknown>) => {
+          readsAtTxStart = h.restrictions.getPolicy.mock.calls.length;
+          const result = await runTx(fn);
+          readsAtTxEnd = h.restrictions.getPolicy.mock.calls.length;
+          return result;
+        },
+      );
+
       await edit(ADD_X);
 
-      expect(h.restrictions.getPolicy).not.toHaveBeenCalled();
-      expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
+      expect(h.restrictions.getPolicy).toHaveBeenCalledTimes(1);
+      expect(h.restrictions.getPolicy).toHaveBeenCalledWith("t-row");
+      expect([readsAtTxStart, readsAtTxEnd]).toEqual([1, 1]);
+      expect(h.restrictions.assertLinesSellable).not.toHaveBeenCalled();
+      expect(h.restrictions.checkLinesSellable).not.toHaveBeenCalled();
       const planReads = h.prisma.product.findMany.mock.calls.filter(
         ([a]) => JSON.stringify(a.select) === JSON.stringify({ id: true, unitsPerBox: true }),
       );
-      expect(planReads).toHaveLength(1);
+      expect(planReads).toHaveLength(0);
     });
 
     it("a DRAFT edit reads nothing at all: a draft is judged at its promotion", async () => {
+      on();
       await edit(ADD_X, operator, { ...ORDER, status: "DRAFT" });
       expect(h.restrictions.getPolicy).not.toHaveBeenCalled();
       expect(h.restrictions.assertLinesSellable).not.toHaveBeenCalled();

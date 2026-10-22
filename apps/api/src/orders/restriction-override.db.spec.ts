@@ -15,7 +15,7 @@
  *   merge         a fold carries the loser's stamp onto the winner's line.
  *   staff reads   an OPERATOR sees the overriding user's real name; a deleted user reads null; a buyer never gets it.
  *
- * The tenant has NO `selling_restrictions.enabled` row: the switch is gone, so it is judged all the same.
+ * The fixture turns the owner-only `selling_restrictions.enabled` switch ON for the tenant, so it is judged.
  * Collected only by jest.db.config.js (`RUN_DB_SPECS=local npx jest -c jest.db.config.js --runInBand <this file>`).
  * One throwaway `qa-r510-<run>` tenant approved by `assertTestTenant`, deleted in afterAll.
  */
@@ -282,8 +282,12 @@ describeDb(
 
     afterEach(() => jest.restoreAllMocks());
 
-    it("setup: the tenant has no selling_restrictions.enabled row, and is judged all the same", async () => {
-      expect(await raw.systemConfig.count({ where: { tenantId: w.tenantId } })).toBe(0);
+    it("setup: the owner-only switch is ON for the tenant, so it is judged", async () => {
+      expect(
+        await raw.systemConfig.count({
+          where: { tenantId: w.tenantId, key: "selling_restrictions.enabled", value: "true" },
+        }),
+      ).toBe(1);
       const e = await errOf(
         as(() =>
           svc.create(

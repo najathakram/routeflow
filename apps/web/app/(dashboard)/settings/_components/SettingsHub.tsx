@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { ChevronRight, UserCircle } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
+import { ReadinessBanner } from "./ReadinessBanner";
 import { RouteDefaultsCard } from "./RouteDefaultsCard";
 import { BuyerOversellCard } from "./BuyerOversellCard";
 import { BusinessCard } from "./BusinessCard";
@@ -69,6 +70,8 @@ export function SettingsHub({
       <p className="text-sm text-[var(--ink-500)]">
         Manage your business, selling rules, orders, notifications and integrations.
       </p>
+
+      <ReadinessBanner isAdmin={isAdmin} />
 
       {desktop ? (
         <>

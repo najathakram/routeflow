@@ -197,11 +197,8 @@ describe("LimitInPortalDialog (C a-d)", () => {
     open();
     await pickTexas(user);
     await user.click(screen.getByRole("checkbox", { name: /legal ban/i }));
-    // row 510: there is no enforcement switch to turn on any more; staff are always warned
-    expect(screen.getAllByText(/staff are warned and must give a reason/i).length).toBeGreaterThan(
-      0,
-    );
-    expect(screen.queryByText(/once enforcement is on/i)).toBeNull();
+    // the owner-only switch is off in this fixture: the legal-ban note points at turning enforcement on
+    expect(screen.getByText("Staff are warned once enforcement is on.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Hide from Texas" }));
     await waitFor(() => expect(mockPost).toHaveBeenCalled());
     expect(mockPost.mock.calls[0][1]).toEqual(expect.objectContaining({ surface: "ALL" }));

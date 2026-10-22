@@ -2840,17 +2840,16 @@ export class OrdersService implements OnApplicationBootstrap {
         .invoice.findFirst({ where: { orderId, status: { not: "VOID" } }, select: { id: true } }));
     if (judgeEdit) {
       const tenant = rGate.tenantId(this.prisma, user, order.tenantId);
-      restrictionPlan = await rGate.editPlan(this.prisma, {
-        tenant,
-        order,
-        user,
-        dto,
-        isDiffPayload,
-      });
-      restrictionPlan.decision = await this.sellingRestrictions.assertLinesSellable({
-        ...restrictionPlan.params,
-        channel: restrictionChannelForPrincipal(user),
-      });
+      restrictionPlan = await rGate.editPlan(
+        { restrictions: this.sellingRestrictions, prisma: this.prisma },
+        { tenant, order, user, dto, isDiffPayload },
+      );
+      // null = the tenant's owner-only switch is off for this staff edit: no judgement, no call
+      if (restrictionPlan)
+        restrictionPlan.decision = await this.sellingRestrictions.assertLinesSellable({
+          ...restrictionPlan.params,
+          channel: restrictionChannelForPrincipal(user),
+        });
     }
 
     // SA-812a G-1: a failed customer-prices read (503) must surface BEFORE the un-tx'd invoice revert below commits.
@@ -4597,11 +4596,16 @@ export class OrdersService implements OnApplicationBootstrap {
     // approved by a driver is still a buyer's add); an unknown requester is the buyer.
     const judgedAs = authorship.leastPrivilegedPrincipal(resolver, cr.requestedByRole);
     const crAuthor = authorship.lineAuthorFor(judgedAs); // SA ruling #3418: requester's (stricter)
-    const restrictionPlan = rGate.crPlan({ tenant, order, cr, user: judgedAs, ack });
-    restrictionPlan.decision = await this.sellingRestrictions.assertLinesSellable({
-      ...restrictionPlan.params,
-      channel: restrictionChannelForPrincipal(judgedAs),
-    });
+    const restrictionPlan = await rGate.crPlan(
+      { restrictions: this.sellingRestrictions },
+      { tenant, order, cr, user: judgedAs, ack },
+    );
+    // null = the tenant's owner-only switch is off for this staff resolver: no judgement, no call
+    if (restrictionPlan)
+      restrictionPlan.decision = await this.sellingRestrictions.assertLinesSellable({
+        ...restrictionPlan.params,
+        channel: restrictionChannelForPrincipal(judgedAs),
+      });
 
     // P5-08b posture: reference reads on separate pooled connections are
     // hoisted BEFORE the interactive tx (pool-starvation guard, :1660-1672).
@@ -5018,7 +5022,7 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         }
 
-        await restrictionPlan.stamp(tx, order.id); // row 510: the acknowledged stamp, with the line
+        await restrictionPlan?.stamp(tx, order.id); // row 510: the acknowledged stamp, with the line
         await settleSplitFreeUnits(tx, order.id, heldItems, buyerPromos);
         await this.syncCompositions(tx, order.id);
         // ── Totals recompute — identical to updateOrderItems :2163-2168 ──────

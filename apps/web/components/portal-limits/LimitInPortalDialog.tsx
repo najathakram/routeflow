@@ -9,6 +9,7 @@ import { StatePicker } from "@/app/(dashboard)/settings/restrictions/rules/_comp
 import { liftBatchRequest, useBulkLimit } from "@/lib/api/portal-limits";
 import { useUnknownStateBuckets } from "@/lib/api/unknown-state";
 import { totalWithoutState } from "@/lib/unknown-state";
+import { useRestrictionsSettings } from "@/lib/api/restrictions-settings";
 import { useProductCategories } from "@/lib/api/product-labels";
 import { WriteButton } from "@/lib/read-only-gate";
 import { useAuth } from "@/lib/auth-context";
@@ -58,6 +59,7 @@ export function LimitInPortalDialog({
   const qc = useQueryClient();
   const bulk = useBulkLimit();
   const unknown = useUnknownStateBuckets(1);
+  const settings = useRestrictionsSettings();
   const [everyone, setEveryone] = React.useState(false);
   const [states, setStates] = React.useState<string[]>([]);
   const [note, setNote] = React.useState("");
@@ -99,6 +101,7 @@ export function LimitInPortalDialog({
   const ready = !tooMany && !needsCategory && !needsAdmin && (everyone || states.length > 0);
   const noState = totalWithoutState(unknown.data);
   const line = liveLine(scope, chosen, legalBan);
+  const enforcementOff = settings.data ? settings.data.enabled === false : false;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -276,6 +279,17 @@ export function LimitInPortalDialog({
             />
             <span>Legal ban — staff are warned and must give a reason</span>
           </label>
+          {legalBan && enforcementOff && (
+            <p className="mt-1 pl-6 text-xs text-navy/70">
+              Staff are warned once enforcement is on.{" "}
+              <NextLink
+                href="/settings/restrictions"
+                className="font-medium text-brand-600 underline"
+              >
+                Turn on
+              </NextLink>
+            </p>
+          )}
         </div>
 
         {failed && (

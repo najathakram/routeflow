@@ -110,6 +110,11 @@ export interface StaffWriteDecision {
    */
   active: boolean;
   /**
+   * The tenant's owner-only switch is off for this staff write (the engine answered OFF): nothing was judged, so a
+   * lock-time re-check has nothing to refuse (a plan skips its "a product now needs a check" refusal).
+   */
+  off: boolean;
+  /**
    * Pure recompute under the write's EXISTING lock: `held` are the document's lines as just read after the lock. A
    * product that is uncovered and whose rows hash differently from the acknowledgement throws 409 RESTRICTION_WARNING
    * (the fresh list), or the hard block for a principal who may not override. `lines` replaces the judged lines when
@@ -373,6 +378,7 @@ function buildDecision(d: DecisionInput): StaffWriteDecision {
     warningHash: d.ackedHash,
     basis: d.judgement.basis,
     active: d.judgement.breaches.length > 0 || heldStamped.size > 0,
+    off: d.judgement.outcome === "OFF",
     recheck(held, lines) {
       const rows = uncoveredRows(d.judgement.breaches, lines ?? d.lines, held);
       if (rows.length > 0) {

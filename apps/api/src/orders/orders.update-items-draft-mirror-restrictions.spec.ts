@@ -113,10 +113,11 @@ describe("updateOrderItems — a DRAFT order with a live linked invoice is judge
     expect(h.prisma.orderItem.create).toHaveBeenCalled();
   });
 
-  it("row 510: no tenant switch - a live mirror at the pre-check still asks the engine, and an ALLOW lets the staff DRAFT edit SUCCEED", async () => {
+  it("switch OFF + a live mirror already present at the pre-check: the staff DRAFT edit SUCCEEDS (no 409)", async () => {
+    h.restrictions.getPolicy.mockResolvedValue({ enabled: false });
     linked("SENT"); // the same mirror answers the pre-check and the in-lock re-read
     await edit();
     expect(h.prisma.orderItem.create).toHaveBeenCalled();
-    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
+    expect(h.restrictions.assertLinesSellable).not.toHaveBeenCalled();
   });
 });

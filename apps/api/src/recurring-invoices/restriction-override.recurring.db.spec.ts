@@ -11,7 +11,7 @@
  *                      stamp anywhere; reactivated and cleaned, the next scheduled run issues a plain invoice, so an
  *                      override is never carried forward.
  *
- * No `selling_restrictions.enabled` row exists. Collected only by jest.db.config.js. One throwaway `qa-r510-<run>` tenant
+ * The fixture turns the owner-only `selling_restrictions.enabled` switch ON. Collected only by jest.db.config.js. One throwaway `qa-r510-<run>` tenant
  * (assertTestTenant), purged in afterAll.
  */
 jest.mock("../invoices/invoice-pdf.service", () => ({

@@ -13,7 +13,7 @@
  *                       with no override.
  *   buyer Reorder       a CUSTOMER keeps the hard BUYER_PORTAL 409; no warning, no ack path.
  *
- * No `selling_restrictions.enabled` row exists. Collected only by jest.db.config.js. One throwaway `qa-r510-<run>` tenant
+ * The fixture turns the owner-only `selling_restrictions.enabled` switch ON. Collected only by jest.db.config.js. One throwaway `qa-r510-<run>` tenant
  * (assertTestTenant), purged in afterAll.
  */
 jest.mock("../invoices/invoices.service", () => ({

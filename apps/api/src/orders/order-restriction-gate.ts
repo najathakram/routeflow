@@ -12,6 +12,7 @@ import type { ChannelPrincipal } from "../selling-restrictions/selling-restricti
 import type {
   SellableLinesArgs,
   SellableLinesParams,
+  SellingRestrictionsService,
 } from "../selling-restrictions/selling-restrictions.service";
 import type { ChangeRequestFacts } from "../selling-restrictions/order-edit-lines";
 import type { PrismaService } from "../prisma/prisma.service";
@@ -128,7 +129,10 @@ export type CrPlan = ChangeRequestRestrictionPlan;
 
 /** `updateOrderItems` (non-draft): the edit's plan, built from the order read before the lock and the payload. */
 export function editPlan(
-  prisma: Pick<PrismaService, "forTenant">,
+  deps: {
+    restrictions: Pick<SellingRestrictionsService, "getPolicy">;
+    prisma: Pick<PrismaService, "forTenant">;
+  },
   a: {
     tenant: string;
     order: {
@@ -141,8 +145,8 @@ export function editPlan(
     dto: { items?: readonly any[]; replaceAll?: boolean } & NonNullable<Ack>;
     isDiffPayload: boolean;
   },
-): Promise<EditPlan> {
-  return planOrderEditRestrictions(prisma, {
+): Promise<EditPlan | null> {
+  return planOrderEditRestrictions(deps, {
     tenantId: a.tenant,
     customerId: a.order.customerId,
     existing: a.order.lineItems ?? [],
@@ -158,20 +162,23 @@ export function editPlan(
 }
 
 /** `approveChangeRequestAtStop`: the at-door approval's plan. */
-export function crPlan(a: {
-  tenant: string;
-  order: {
-    customerId: string;
-    lineItems?: readonly HeldEditLine[];
-    fulfillPath?: string | null;
-    counterSale?: boolean | null;
-  };
-  cr: ChangeRequestFacts & { id: string };
-  /** The resolver, or the BUYER channel when the requester is the stricter side (F1 i: `leastPrivilegedPrincipal`). */
-  user: User | { type: "BUYER" };
-  ack?: Ack;
-}): CrPlan {
-  return planChangeRequestRestrictions({
+export function crPlan(
+  deps: { restrictions: Pick<SellingRestrictionsService, "getPolicy"> },
+  a: {
+    tenant: string;
+    order: {
+      customerId: string;
+      lineItems?: readonly HeldEditLine[];
+      fulfillPath?: string | null;
+      counterSale?: boolean | null;
+    };
+    cr: ChangeRequestFacts & { id: string };
+    /** The resolver, or the BUYER channel when the requester is the stricter side (F1 i: `leastPrivilegedPrincipal`). */
+    user: User | { type: "BUYER" };
+    ack?: Ack;
+  },
+): Promise<CrPlan | null> {
+  return planChangeRequestRestrictions(deps, {
     tenantId: a.tenant,
     customerId: a.order.customerId,
     existing: a.order.lineItems ?? [],

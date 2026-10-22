@@ -6,7 +6,8 @@ import RestrictionsSettingsPage from "./page";
 /**
  * End to end for the toast contract (B594 class): the REAL global MutationCache handler
  * (app/providers.tsx) around the REAL page, only the network mocked. Each failed save must raise
- * exactly ONE toast, the global handler's (row 510 removed the page's own guided toast with the switch).
+ * exactly ONE toast — the page's own for the guided cases (which HANDLED_CODES tells the global
+ * handler to skip), the global handler's for everything else.
  */
 const toast = jest.fn();
 const patch = jest.fn();
@@ -36,7 +37,7 @@ jest.mock("@/lib/api-client", () => ({
               needsReview: { total: 0, rows: [], nextCursor: null },
             },
           }
-        : { data: { governingAddress: "BILLING_FIRST" } },
+        : { data: { enabled: false, governingAddress: "BILLING_FIRST" } },
     ),
     patch: (...a: unknown[]) => patch(...a),
   },
@@ -52,7 +53,7 @@ const flip = async () => {
       <RestrictionsSettingsPage />
     </Providers>,
   );
-  fireEvent.click(await screen.findByLabelText(/shipping address first/i));
+  fireEvent.click(await screen.findByRole("switch"));
 };
 
 beforeEach(() => jest.clearAllMocks());

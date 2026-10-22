@@ -8,11 +8,14 @@ import {
 } from "../selling-restrictions/order-edit-lines";
 import {
   checkableProductIds,
+  restrictionChannelForPrincipal,
+  restrictionsApply,
   type ChannelPrincipal,
 } from "../selling-restrictions/selling-restrictions.core";
 import type {
   SellableLinesArgs,
   SellableLinesParams,
+  SellingRestrictionsService,
 } from "../selling-restrictions/selling-restrictions.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { HeldEditLine } from "./order-edit-restrictions";
@@ -41,16 +44,22 @@ export interface ChangeRequestRestrictionPlan {
   stamp(tx: any, orderId: string): Promise<number>;
 }
 
-export function planChangeRequestRestrictions(p: {
-  tenantId: string;
-  customerId: string;
-  existing: readonly HeldEditLine[];
-  cr: ChangeRequestFacts & { id: string };
-  /** The resolver: the channel and the override right. */
-  principal: ChannelPrincipal | null | undefined;
-  fulfilmentKind: SaleFulfilmentKind;
-  ack?: SellableLinesParams["ack"];
-}): ChangeRequestRestrictionPlan {
+export async function planChangeRequestRestrictions(
+  deps: { restrictions: Pick<SellingRestrictionsService, "getPolicy"> },
+  p: {
+    tenantId: string;
+    customerId: string;
+    existing: readonly HeldEditLine[];
+    cr: ChangeRequestFacts & { id: string };
+    /** The resolver: the channel and the override right. */
+    principal: ChannelPrincipal | null | undefined;
+    fulfilmentKind: SaleFulfilmentKind;
+    ack?: SellableLinesParams["ack"];
+  },
+): Promise<ChangeRequestRestrictionPlan | null> {
+  // OFF (staff channel, the tenant's owner-only switch off): one read, nothing else. The portal channel always applies.
+  const channel = restrictionChannelForPrincipal(p.principal);
+  if (!restrictionsApply(await deps.restrictions.getPolicy(p.tenantId), channel)) return null;
   const lineKey = `cr:${p.cr.id}`;
   const lines: EditLine[] = sellableLinesForChangeRequest(p.cr, p.existing);
   const judged = new Set(checkableProductIds(lines));
@@ -66,6 +75,7 @@ export function planChangeRequestRestrictions(p: {
       document: "ORDER",
     },
     assertHeld(lockTimeRows) {
+      if (plan.decision?.off) return; // the tenant's switch is off: nothing was judged, nothing to refuse
       if (
         checkableProductIds(sellableLinesForChangeRequest(p.cr, lockTimeRows)).some(
           (id) => !judged.has(id),

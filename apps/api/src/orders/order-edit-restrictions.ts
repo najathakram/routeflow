@@ -15,11 +15,14 @@ import {
 } from "../selling-restrictions/order-edit-lines";
 import {
   checkableProductIds,
+  restrictionChannelForPrincipal,
+  restrictionsApply,
   type ChannelPrincipal,
 } from "../selling-restrictions/selling-restrictions.core";
 import type {
   SellableLinesArgs,
   SellableLinesParams,
+  SellingRestrictionsService,
 } from "../selling-restrictions/selling-restrictions.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { STORED_UNIT_LINE_SELECT } from "./unit-line-build";
@@ -35,7 +38,8 @@ import { STORED_UNIT_LINE_SELECT } from "./unit-line-build";
  * the lock-time read the service already makes (`heldItems`): a pure recompute (no query) that refuses
  * with a retryable 409 when a product now needs a check the pre-lock judgment never made.
  *
- * Row 510: every edit is planned (the tenant switch no longer gates the staff channel), and the plan carries the
+ * Row 510: a STAFF edit is planned only when the tenant's owner-only switch is on (off = `null`, ONE policy read, before
+ * the transaction); a buyer's edit is always planned. The plan carries the
  * choke point's whole parameter set (`params`: the lines with their warning keys, the principal, the acknowledgement)
  * and, once the service has called it, the staff-write `decision`. The re-check ALSO re-judges the override under the
  * lock (`decision.recheck(heldItems)`: coverage and the acknowledged hash, a pure recompute), and `stamp` writes the
@@ -110,7 +114,10 @@ export interface OrderEditRestrictionPlan {
 }
 
 export async function planOrderEditRestrictions(
-  prisma: Pick<PrismaService, "forTenant">,
+  deps: {
+    restrictions: Pick<SellingRestrictionsService, "getPolicy">;
+    prisma: Pick<PrismaService, "forTenant">;
+  },
   p: {
     tenantId: string;
     customerId: string;
@@ -122,7 +129,11 @@ export async function planOrderEditRestrictions(
     fulfilmentKind: SaleFulfilmentKind;
     ack?: SellableLinesParams["ack"];
   },
-): Promise<OrderEditRestrictionPlan> {
+): Promise<OrderEditRestrictionPlan | null> {
+  // OFF (staff channel, the tenant's owner-only switch off): one read, nothing else. The portal channel always applies.
+  const channel = restrictionChannelForPrincipal(p.principal);
+  if (!restrictionsApply(await deps.restrictions.getPolicy(p.tenantId), channel)) return null;
+
   const ids = [
     ...new Set(
       [...p.items.map((i) => i.productId), ...p.existing.map((l) => l.productId)].filter(
@@ -131,7 +142,7 @@ export async function planOrderEditRestrictions(
     ),
   ];
   const products: Array<{ id: string; unitsPerBox: number | null }> = ids.length
-    ? await prisma.forTenant().product.findMany({
+    ? await deps.prisma.forTenant().product.findMany({
         where: { tenantId: p.tenantId, id: { in: ids } },
         select: { id: true, unitsPerBox: true },
       })
@@ -162,6 +173,7 @@ export async function planOrderEditRestrictions(
       document: "ORDER",
     },
     assertHeld(lockTimeRows) {
+      if (plan.decision?.off) return; // the tenant's switch is off: nothing was judged, nothing to refuse
       if (checkableProductIds(linesFor(lockTimeRows)).some((id) => !judged.has(id)))
         throw new ConflictException({
           code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,

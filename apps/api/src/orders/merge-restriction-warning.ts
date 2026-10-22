@@ -82,8 +82,8 @@ export async function warnBannedMergedLines(
       customerId: p.customerId,
       lines: productIds.map((productId) => ({ productId })),
       channel,
-      // A warning, never a block: a portal-only limit alone raises no operator alert (a legal ban always does).
-      skipPortalOnlyRules: true,
+      // A warning, never a block: it follows the tenant switch, so a portal limit alone raises no operator alert.
+      switchGated: true,
       fulfilmentKind: saleFulfilmentKind(p.winner), // L8: a pickup winner is judged on the store state
     });
     if (verdict.outcome !== "BLOCK" && verdict.outcome !== "INDETERMINATE") return undefined;

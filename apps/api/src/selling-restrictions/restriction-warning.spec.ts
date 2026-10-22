@@ -747,11 +747,18 @@ describe("pins", () => {
     expect(offenders).toEqual(["selling-restrictions/restriction-warning.ts"]);
   });
 
-  it("the tenant switch gates nothing in the engine: restrictionsApply and switchGated are gone", () => {
-    const offenders = walk(SRC)
+  it("the owner-only tenant switch is read in the engine and the two edit plans only (D-2026-09-25-banned-items-rules)", () => {
+    const readers = walk(SRC)
       .map((f) => ({ rel: path.relative(SRC, f), code: strip(fs.readFileSync(f, "utf8")) }))
       .filter(({ code }) => /\brestrictionsApply\b|\bswitchGated\b/.test(code))
       .map(({ rel }) => rel);
-    expect(offenders).toEqual([]);
+    expect(readers).toEqual([
+      "orders/change-request-restrictions.ts",
+      "orders/merge-restriction-warning.ts",
+      "orders/order-edit-restrictions.ts",
+      "selling-restrictions/selling-restrictions.core.ts",
+      "selling-restrictions/selling-restrictions.service.ts",
+      "selling-restrictions-admin/staff-channel.ts",
+    ]);
   });
 });

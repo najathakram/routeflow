@@ -1,15 +1,27 @@
 import { Module } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { RedisThrottlerStorage } from "../common/redis-throttler.storage";
 import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
 import { RestrictionsSettingsController } from "./restrictions-settings.controller";
-import { RestrictionsSettingsService } from "./restrictions-settings.service";
+import { READINESS_LIMITER, RestrictionsSettingsService } from "./restrictions-settings.service";
 import { UnknownStateBulkService } from "./unknown-state-bulk.service";
 import { UnknownStateCustomersController } from "./unknown-state-customers.controller";
 import { UnknownStateCustomersService } from "./unknown-state-customers.service";
 
-/** Tenant settings for selling restrictions (the governing-address policy and the customers-without-a-state sweep). */
+/** Tenant settings for selling restrictions. Changing them affects nothing until a caller enforces (step 2). */
 @Module({
   imports: [SellingRestrictionsModule],
   controllers: [RestrictionsSettingsController, UnknownStateCustomersController],
-  providers: [RestrictionsSettingsService, UnknownStateCustomersService, UnknownStateBulkService],
+  providers: [
+    RestrictionsSettingsService,
+    UnknownStateCustomersService,
+    UnknownStateBulkService,
+    // The repo's own Redis-backed throttler storage (fixed-window INCR), used per tenant.
+    {
+      provide: READINESS_LIMITER,
+      inject: [ConfigService],
+      useFactory: (c: ConfigService) => new RedisThrottlerStorage(c),
+    },
+  ],
 })
 export class RestrictionsSettingsModule {}

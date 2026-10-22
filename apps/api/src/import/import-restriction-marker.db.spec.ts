@@ -8,7 +8,7 @@
  *   - one `selling_restriction.overridden` audit row per marked line (documentType INVOICE, no warning hash) plus the
  *     run-level `invoice.import.restricted_lines` row; the report lists the line in `restrictedLines`;
  *   - a customer in a state the rule does not name is imported with no mark and no audit row;
- *   - there is no tenant switch: no `selling_restrictions.enabled` row exists.
+ *   - the owner-only tenant switch (`selling_restrictions.enabled`) is ON in the fixture.
  *
  * Collected only by jest.db.config.js. One throwaway `qa-r510-<run>` tenant (assertTestTenant), purged in afterAll.
  */
@@ -117,8 +117,12 @@ describeDb(
       await pool?.end();
     }, 120_000);
 
-    it("setup: the tenant has no selling_restrictions.enabled row and the operator is the importer", async () => {
-      expect(await raw.systemConfig.count({ where: { tenantId: w.tenantId } })).toBe(0);
+    it("setup: the owner-only switch is ON for the tenant and the operator is the importer", async () => {
+      expect(
+        await raw.systemConfig.count({
+          where: { tenantId: w.tenantId, key: "selling_restrictions.enabled", value: "true" },
+        }),
+      ).toBe(1);
       expect(staffPayload(w).sub).toBe(w.operatorId);
     });
 

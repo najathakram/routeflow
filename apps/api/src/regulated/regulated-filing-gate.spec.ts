@@ -97,7 +97,9 @@ describe("filing gate: unresolved parked reversals", () => {
         {
           provide: SellingRestrictionsService,
           useValue: {
-            getPolicy: jest.fn().mockResolvedValue({ addressPrecedence: "BILLING_FIRST" }),
+            getPolicy: jest
+              .fn()
+              .mockResolvedValue({ enabled: false, addressPrecedence: "BILLING_FIRST" }),
           },
         },
         { provide: PrismaService, useValue: prisma },

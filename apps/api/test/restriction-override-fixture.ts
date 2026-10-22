@@ -7,8 +7,8 @@ import { assertSafeTextCell } from "../src/common/safe-text-cell";
  * Row 510 DB-spec fixture (test code only; lives in apps/api/test/, outside src/ and outside the build, because the repo-wide
  * writer scans (stock ledger, address, price, text cell) read every non-spec file under src/): a throwaway `qa-*` tenant with an OPERATOR, a
  * TENANT_ADMIN and a DRIVER, two customers (one in CA, one in TX), a restricted category with a STATE rule banning CA,
- * three products (two carry the restricted label, one is clean) and NO `selling_restrictions.enabled` row (the switch is
- * gone, so a tenant without it must still be judged). The store (`TenantConfig.state`) is set per test.
+ * three products (two carry the restricted label, one is clean) and the owner-only switch ON (`selling_restrictions.enabled`
+ * = "true", D-2026-09-25-banned-items-rules: without it a staff sale is never warned or blocked). The store (`TenantConfig.state`) is set per test.
  */
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
@@ -36,6 +36,9 @@ export async function seedOverrideWorld(
 ): Promise<OverrideWorld> {
   const slug = assertTestTenant(`qa-r510-${run}`, specName);
   const tenantId = (await raw.tenant.create({ data: { slug, name: `R510 ${slug}` } })).id;
+  await raw.systemConfig.create({
+    data: { tenantId, key: "selling_restrictions.enabled", value: "true" },
+  });
   const mkUser = async (key: string, role: "OPERATOR" | "TENANT_ADMIN" | "DRIVER" | "CUSTOMER") =>
     (
       await raw.user.create({
