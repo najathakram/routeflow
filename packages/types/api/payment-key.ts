@@ -3,8 +3,13 @@
  * POST /invoices/payments/by-key/:key/resolve). One declaration for the api, the web and the mobile clients.
  */
 
-/** The three money-in writers that claim a payment key. */
-export type PaymentKeyScope = "STANDALONE_PAYMENT" | "INVOICE_PAYMENT" | "ADVANCE_PAYMENT";
+import type { PaymentIdempotencyScope } from "./enums";
+
+/**
+ * The three money-in writers that claim a payment key. Derived from the parity-pinned
+ * `PAYMENT_IDEMPOTENCY_SCOPE_VALUES` (api/enums.ts), never hand-typed (L-072).
+ */
+export type PaymentKeyScope = PaymentIdempotencyScope;
 
 /** The `state` literals of a definitive answer. */
 export const PAYMENT_KEY_ANSWER_STATE = {

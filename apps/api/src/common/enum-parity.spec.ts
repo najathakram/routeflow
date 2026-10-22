@@ -161,6 +161,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // Sitting 4 (SA-772 folders 1 and 3): two brand-new Prisma enums.
   ["TAX_RATE_SOURCE_VALUES", "TaxRateSource"],
   ["INVOICE_ORDER_BILLING_ROLE_VALUES", "InvoiceOrderBillingRole"],
+  // SA-824: the payment Idempotency-Key scope, mirrored as the one source of `PaymentKeyScope`.
+  ["PAYMENT_IDEMPOTENCY_SCOPE_VALUES", "PaymentIdempotencyScope"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -279,8 +281,9 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // from the merged schema folder (`grep -h "^enum " apps/api/prisma/schema/*.prisma | wc -l`: 114 on master af182eaad,
 // 116 with the bundle), not hand-picked (114 → 116).
 // Triage for PaymentIdempotencyScope (SA-824, migration 20261021090000_payment_idempotency_key): a brand-new
-// Prisma enum, explicitly LEFT UNMIRRORED: server-only (the scope of a PaymentIdempotencyKey row); no web or mobile
-// code reads or sends it, the clients only send the Idempotency-Key header (116 → 117).
+// Prisma enum, MIRRORED as `PAYMENT_IDEMPOTENCY_SCOPE_VALUES` + its `ENUM_TABLE` row above (`PaymentKeyScope` in
+// packages/types/api/payment-key.ts is now derived from it, no hand-typed copy; the by-key answers carry it to the
+// web and mobile clients) (116 → 117).
 // Triage for PaymentIdempotencyState (SA-824 race ruling 1, the same unapplied migration folder): a brand-new Prisma
 // enum, explicitly LEFT UNMIRRORED: server-only (CLAIMED / COMPLETED / TOMBSTONED of a key row); the clients read the
 // resolve / by-key body's lowercase `state` ("found" | "tombstoned"), never this enum (117 → 118).

@@ -606,3 +606,12 @@ export const INVOICE_ORDER_BILLING_ROLE_VALUES = [
   "MANUAL",
 ] as const;
 export type InvoiceOrderBillingRole = (typeof INVOICE_ORDER_BILLING_ROLE_VALUES)[number];
+
+// SA-824: the scope of a payment Idempotency-Key (Prisma `PaymentIdempotencyScope`): the three money-in writers
+// that claim a key. Shared by the api and the key-status answers the web and mobile read (L-072).
+export const PAYMENT_IDEMPOTENCY_SCOPE_VALUES = [
+  "STANDALONE_PAYMENT",
+  "INVOICE_PAYMENT",
+  "ADVANCE_PAYMENT",
+] as const;
+export type PaymentIdempotencyScope = (typeof PAYMENT_IDEMPOTENCY_SCOPE_VALUES)[number];
