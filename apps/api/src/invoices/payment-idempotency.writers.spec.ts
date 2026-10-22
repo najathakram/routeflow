@@ -1,3 +1,4 @@
+import type { PaymentMethod } from "@prisma/client";
 // Prevent Jest from traversing ESM-only dependencies (mirrors invoices.service.spec.ts).
 jest.mock("./invoice-pdf.service", () => ({
   InvoicePdfService: jest.fn().mockImplementation(() => ({
@@ -6,6 +7,16 @@ jest.mock("./invoice-pdf.service", () => ({
 }));
 jest.mock("../storage/compress.util", () => ({
   compressDocument: jest.fn(),
+}));
+
+// Row 498: a payment with a reference runs under the `payment-ref` advisory lock (a real pooled connection); this
+// unit spec has no database, so the lock is a pass-through here (its behaviour is payment-ref-dedupe.writers.spec.ts).
+jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
+  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => unknown) => ({
+    acquired: true,
+    value: await fn(),
+  })),
 }));
 
 import { Test, TestingModule } from "@nestjs/testing";
@@ -477,7 +488,7 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
   });
 
   describe("POST /customers/:id/advance-payments (createAdvancePayment)", () => {
-    const dto = (amount = 75) => ({ amount, method: "CASH", reference: "adv 1" });
+    const dto = (amount = 75) => ({ amount, method: "CASH" as PaymentMethod, reference: "adv 1" });
     const call = (amount: number, key?: string) =>
       key
         ? (customers as any).createAdvancePayment("cust-1", dto(amount), { idempotencyKey: key })

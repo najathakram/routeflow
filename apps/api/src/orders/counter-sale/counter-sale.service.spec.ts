@@ -557,7 +557,7 @@ describe("CounterSaleService.ring", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 37.25 }),
-        { tillLockHeld: true },
+        { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
       );
       expect(r).toMatchObject({
         invoiceId: "inv-1",
@@ -587,7 +587,7 @@ describe("CounterSaleService.ring", () => {
           reference: undefined,
           paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
-        { tillLockHeld: true },
+        { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
       );
       expect(r).toEqual({
         orderId: "ord-1",
@@ -616,7 +616,7 @@ describe("CounterSaleService.ring", () => {
           reference: "auth-77",
           paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
-        { tillLockHeld: true },
+        { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
       );
       expect(r.change).toBeUndefined();
       expect(r.balanceDue).toBe(0);
@@ -691,7 +691,7 @@ describe("CounterSaleService.ring", () => {
         expect(recordPayment).toHaveBeenCalledWith(
           "inv-1",
           expect.objectContaining({ method: "CHECK", reference: "1042", amount: 37.25 }),
-          { tillLockHeld: true },
+          { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
         );
         expect(r.paymentRecorded).toBe(true);
       });
@@ -750,7 +750,7 @@ describe("CounterSaleService.ring", () => {
           reference: undefined,
           paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
-        { tillLockHeld: true },
+        { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
       );
       expect(r).toMatchObject({
         paid: 20,
@@ -789,6 +789,8 @@ describe("CounterSaleService.ring", () => {
       const r = await service.ring(named({ method: "CASH", amount: 30 }) as never, staff);
       expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 30 }), {
         tillLockHeld: true,
+        paymentAttempt: expect.anything(),
+        refDedupe: expect.anything(),
       });
       expect(r).toMatchObject({ total: 40, paid: 40, balanceDue: 0, paymentRecorded: true });
       // a 30 cash tender on the 30 left after the credit: nothing handed back
@@ -989,6 +991,8 @@ describe("CounterSaleService.ring", () => {
       expect(recordPayment).toHaveBeenCalledTimes(1);
       expect(recordPayment).toHaveBeenCalledWith("inv-2", expect.objectContaining({ amount: 20 }), {
         tillLockHeld: true,
+        paymentAttempt: expect.anything(),
+        refDedupe: expect.anything(),
       });
       expect(second).toMatchObject({
         total: 50,
@@ -998,6 +1002,19 @@ describe("CounterSaleService.ring", () => {
         replayed: true,
       });
       expect(invoices[0].payments).toHaveLength(1); // sibling 1 is never charged twice
+      // Row 498: the resumed call's attempt is seeded with the sale's stored tender rows, so the shortfall payment
+      // never collides with sibling 1's payment under the same reference.
+      expect([...recordPayment.mock.calls[0][2].paymentAttempt.ids]).toContain("pay-inv-1");
+    });
+
+    it("row 498: the sibling payments of one sale share ONE payment attempt (they never collide on the reference)", async () => {
+      invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 30, [], 2)];
+      recordPayment.mockImplementation(async (invoiceId: string) => ({ id: invoiceId }));
+      await service.ring(named({ method: "CASH", amount: 60 }) as never, staff, "k");
+      expect(recordPayment).toHaveBeenCalledTimes(2);
+      const [a, b] = recordPayment.mock.calls.map((c) => c[2].paymentAttempt);
+      expect(a).toBeDefined();
+      expect(a).toBe(b);
     });
 
     it("a replay whose planned allocation is already fully stored records nothing", async () => {
@@ -1763,6 +1780,71 @@ describe("CounterSaleService.ring", () => {
         expect(a.include.items.select.createdAt).toBe(true);
         expect(a.include.items.select.id).toBe(true);
       }
+    });
+  });
+
+  // ── SA-837b: the till's escape from a duplicate payment reference ─────────────────────────────
+  describe("SA-837b: DUPLICATE_PAYMENT_REF reaches the till, and Record anyway resends through the generic flag", () => {
+    const existingPayment = {
+      id: "pay-old",
+      paymentNumber: "PAY-A-0001",
+      paidAt: "2026-10-01T12:00:00.000Z",
+      amount: 37.25,
+      invoiceId: "inv-9",
+      invoiceNumber: "INV-0009",
+    };
+    const dupConflict = () =>
+      new ConflictException({
+        code: "DUPLICATE_PAYMENT_REF",
+        message: "dup",
+        existingPayment,
+      });
+
+    it("a refused duplicate keeps the sale unpaid and carries the cause + the existing payment through the response", async () => {
+      recordPayment.mockRejectedValueOnce(dupConflict());
+      const r = await service.ring(
+        named({ method: "CARD", reference: "4242" }) as never,
+        staff,
+        "k",
+      );
+      expect(r).toMatchObject({
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+        paymentCauseCode: "DUPLICATE_PAYMENT_REF",
+        existingPayment,
+      });
+    });
+
+    it("any other tender failure carries no duplicate cause", async () => {
+      recordPayment.mockRejectedValueOnce(new BadRequestException("nope"));
+      const r: any = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(r.paymentRecorded).toBe(false);
+      expect(r.paymentCauseCode).toBeUndefined();
+      expect(r.existingPayment).toBeUndefined();
+    });
+
+    it("the staff cashier's payment.recordAnyway is the generic refDedupe flag on every recordPayment (actor + role from the signed-in user)", async () => {
+      await service.ring(
+        named({ method: "CARD", reference: "4242", recordAnyway: true }) as never,
+        staff,
+        "k",
+      );
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        expect.any(Object),
+        expect.objectContaining({
+          refDedupe: { actor: "op-1", role: "OPERATOR", recordAnyway: true },
+        }),
+      );
+    });
+
+    it("without the flag the call still names the user, so the writer can judge the role", async () => {
+      await service.ring(named({ method: "CARD", reference: "4242" }) as never, staff, "k");
+      expect(recordPayment.mock.calls[0][2].refDedupe).toEqual({
+        actor: "op-1",
+        role: "OPERATOR",
+        recordAnyway: false,
+      });
     });
   });
 });

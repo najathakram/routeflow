@@ -4,9 +4,11 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { roundMoney } from "@routeflow/pricing";
-import { API_ERROR_CODES } from "@routeflow/types";
+import { API_ERROR_CODES, RECORD_ANYWAY_LABEL, canRecordAnyway } from "@routeflow/types";
 import type { CounterSalePaymentMethod, PickupCompleteResponse } from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
+import { useOptionalAuth } from "@/lib/auth-context";
+import { duplicatePaymentRefMessage } from "@/lib/duplicate-payment-ref";
 import {
   paymentProblemCopy,
   PICKUP_DEAD_INVOICE,
@@ -29,7 +31,14 @@ const money = (n: number) =>
 /** The key of an attempt whose outcome is UNKNOWN, held by the parent across close/reopen, per order. */
 export type HeldPickupKey = { orderId: string; key: string } | null;
 
-type Body = { payment?: { method: CounterSalePaymentMethod; amount?: number; reference?: string } };
+type Body = {
+  payment?: {
+    method: CounterSalePaymentMethod;
+    amount?: number;
+    reference?: string;
+    recordAnyway?: boolean;
+  };
+};
 
 /**
  * "Picked up" on a PICKUP order (order ahead): payment is taken AT pickup. Opening the dialog mints ONE
@@ -170,6 +179,26 @@ export function PickupCompleteDialog({
   }
 
   const unrecorded = outcome !== null && !outcome.paymentRecorded;
+  // SA-837b item 3: the payment was refused as a duplicate reference. The shared sentence names the existing payment, and a
+  // staff role may resend THIS hand-over (same key, same body) with the generic `payment.recordAnyway` flag.
+  const role = (useOptionalAuth()?.user as { role?: string } | null | undefined)?.role;
+  const duplicateMessage =
+    unrecorded &&
+    outcome?.paymentCauseCode === API_ERROR_CODES.DUPLICATE_PAYMENT_REF &&
+    outcome.existingPayment
+      ? duplicatePaymentRefMessage({
+          response: {
+            status: 409,
+            data: {
+              code: API_ERROR_CODES.DUPLICATE_PAYMENT_REF,
+              existingPayment: outcome.existingPayment,
+            },
+          },
+        })
+      : null;
+  const sentPayment = lastBody.current?.payment;
+  const recordAnyway = () =>
+    void send({ ...lastBody.current, payment: { ...sentPayment!, recordAnyway: true } });
 
   return (
     <Modal
@@ -188,6 +217,16 @@ export function PickupCompleteDialog({
                 onClick={() => void send(lastBody.current)}
               >
                 Retry
+              </Button>
+            )}
+            {duplicateMessage && sentPayment && canRecordAnyway(role) && (
+              <Button
+                variant="secondary"
+                type="button"
+                loading={complete.isPending}
+                onClick={recordAnyway}
+              >
+                {RECORD_ANYWAY_LABEL}
               </Button>
             )}
             <Button type="button" onClick={onClose}>
@@ -253,6 +292,7 @@ export function PickupCompleteDialog({
                 The order is handed over, but the payment was not saved. Retry to record it.
               </p>
             )}
+            {duplicateMessage && <p className="text-sm text-navy">{duplicateMessage}</p>}
             {(outcome.change ?? 0) > 0 && (
               <p className="text-3xl font-bold" data-testid="pickup-change">
                 Change {money(outcome.change ?? 0)}

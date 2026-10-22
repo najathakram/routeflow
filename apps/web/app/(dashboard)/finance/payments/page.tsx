@@ -20,6 +20,8 @@ import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { clampAllocationInput } from "@/lib/payment-allocation";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { useAuth } from "@/lib/auth-context";
+import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { useCustomers } from "@/lib/api/customers";
 import { useToast, EmptyState, Button, Badge } from "@routeflow/ui/web";
@@ -75,6 +77,7 @@ interface Allocation {
 
 function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const record = useRecordPaymentStandalone();
   const [customerId, setCustomerId] = React.useState("");
   // SA-824: the holder scope is the writer + target (`standalone:<customerId>`), shared with
@@ -182,7 +185,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
 
   const customers = customersData?.data ?? [];
 
-  const handleSave = async (status: "DRAFT" | "PAID") => {
+  const handleSave = async (status: "DRAFT" | "PAID", recordAnyway = false) => {
     if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
     if (!customerId || !keyScope) {
       toast({ title: "Select a customer", variant: "error" });
@@ -211,6 +214,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       reference: reference || undefined,
       notes: notes || undefined,
       status,
+      ...(recordAnyway ? { recordAnyway: true } : {}),
       allocations: validAllocs.map((a) => ({
         invoiceId: a.invoiceId,
         amount: parseFloat(a.amount),
@@ -242,6 +246,9 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       }
       onClose();
     } catch (err: unknown) {
+      // Row 498: a duplicate reference names the existing payment; staff may "Record anyway".
+      if (toastDuplicatePaymentRef(err, toast, user?.role, () => void handleSave(status, true)))
+        return;
       toast({
         title: "Failed to record payment",
         description: genericToastCopy(err),

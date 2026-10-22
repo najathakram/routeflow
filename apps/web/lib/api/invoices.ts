@@ -1,6 +1,7 @@
 import type { InvoiceItemSystemKind, InvoiceStatus } from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { isRecordPaymentLocalRefusal } from "@/lib/duplicate-payment-ref";
 import { isDayClosedRefusal } from "../day-closed-copy";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
 import { priceAdjustmentFailure } from "../price-adjustment-failure";
@@ -651,6 +652,8 @@ export interface RecordInvoicePaymentDto {
   notes?: string;
   /** SA-824: the dialog's Idempotency-Key holder (never sent in the body). */
   submitKey?: PaymentKeyHolder;
+  /** Row 498: the staff "Record anyway" resend of a payment refused 409 DUPLICATE_PAYMENT_REF. */
+  recordAnyway?: boolean;
 }
 
 export function useRecordInvoicePayment() {
@@ -661,7 +664,8 @@ export function useRecordInvoicePayment() {
         apiClient.post(`/invoices/${id}/payments`, data, ...config).then((r) => r.data),
       ),
     // SA-750r3: the invoice page answers a closed-day refusal with its own fixed copy (dayClosedCopy): no second toast.
-    meta: { localErrorToast: isDayClosedRefusal },
+    // Row 498: and a duplicate-reference refusal with its own "Record anyway" toast.
+    meta: { localErrorToast: isRecordPaymentLocalRefusal },
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", id] });
@@ -777,8 +781,8 @@ export function useRecordPaymentStandalone() {
         (config) => apiClient.post("/invoices/payments/record", dto, ...config).then((r) => r.data),
       ),
     // Row 348: every caller (finance Payments, the customer Record Payment modal) answers a closed-day refusal in its
-    // own toast; the global one stays quiet for it so the failure is shown ONCE.
-    meta: { localErrorToast: isDayClosedRefusal },
+    // own toast; the global one stays quiet for it so the failure is shown ONCE. Row 498: and for a duplicate reference.
+    meta: { localErrorToast: isRecordPaymentLocalRefusal },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });

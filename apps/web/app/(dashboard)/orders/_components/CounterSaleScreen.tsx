@@ -77,6 +77,7 @@ import {
 import { keptSaleHref } from "@/lib/kept-draft-invoice";
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
+import { CounterPaymentNotRecorded } from "./CounterPaymentNotRecorded";
 import { CounterReceiptBody } from "./CounterReceiptBody";
 import { CounterCustomerCredit } from "./CounterCustomerCredit";
 import { CounterGateOffline } from "./CounterGateOffline";
@@ -1099,6 +1100,7 @@ export function CounterSaleScreen() {
           customerName={receiptCustomerName(customer)}
           headingRef={receiptHeadingRef}
         />
+        <CounterPaymentNotRecorded receipt={receipt} onReceipt={setReceipt} />
         <CounterReceiptActions
           orderId={receipt.orderId}
           customer={customer}

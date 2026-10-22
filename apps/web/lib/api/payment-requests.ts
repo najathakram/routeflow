@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import { isDayClosedRefusal } from "../day-closed-copy";
+import { isRecordPaymentLocalRefusal } from "@/lib/duplicate-payment-ref";
 
 // ─── Types (mirror apps/api/src/payment-requests return shapes) ─────────────────
 
@@ -76,10 +76,21 @@ function useDecisionMutation<TVars, TResult>(
 }
 
 export function useApprovePaymentRequest() {
-  return useDecisionMutation<string, ApprovePaymentRequestResult>(
-    (id) => apiClient.post(`/payment-requests/${id}/approve`).then((r) => r.data),
+  return useDecisionMutation<
+    string | { id: string; recordAnyway?: boolean },
+    ApprovePaymentRequestResult
+  >(
+    (vars) => {
+      const { id, recordAnyway } =
+        typeof vars === "string" ? { id: vars, recordAnyway: false } : vars;
+      // SA-837b item 2: the approving staff member's "Record anyway" resend of a duplicate payment reference.
+      return apiClient
+        .post(`/payment-requests/${id}/approve`, recordAnyway ? { recordAnyway: true } : undefined)
+        .then((r) => r.data);
+    },
     // Row 348: approving writes a payment, so a closed day can refuse it; the page toasts that itself, once.
-    isDayClosedRefusal,
+    // Row 498: and so can a duplicate payment reference ("Record anyway").
+    isRecordPaymentLocalRefusal,
   );
 }
 

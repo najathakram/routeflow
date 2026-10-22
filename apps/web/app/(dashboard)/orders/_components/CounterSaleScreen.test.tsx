@@ -18,7 +18,11 @@ import {
  * unavailable), FIXED error copy, the capability-driven "Ship this order instead", and an always-focused scan field.
  */
 
-let authUser: { id: string; tenantSlug: string | null } | null = { id: "u-a", tenantSlug: "acme" };
+let authUser: { id: string; tenantSlug: string | null; role?: string } | null = {
+  id: "u-a",
+  tenantSlug: "acme",
+  role: "OPERATOR",
+};
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useOptionalAuth: () => ({ user: authUser }),
@@ -71,7 +75,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   window.localStorage.clear();
   window.sessionStorage.clear();
-  authUser = { id: "u-a", tenantSlug: "acme" };
+  authUser = { id: "u-a", tenantSlug: "acme", role: "OPERATOR" };
   window.print = printSpy;
   customersFor = [];
   productFor = { "012345678905": COLA, WATER: WATER_CASE, ONE: ONE_PACK };
@@ -2599,5 +2603,66 @@ describe("digital receipt on the live receipt (SA-751r)", () => {
     expect(screen.getByRole("button", { name: "Email receipt" }).className).not.toBe(
       screen.getByRole("button", { name: "Print" }).className,
     );
+  });
+});
+
+describe("CounterSaleScreen: SA-837b the not-recorded state names a duplicate payment reference", () => {
+  // The resend ("Record anyway": same key, same cart, payment.recordAnyway) is CounterPaymentNotRecorded's own test.
+  const SENTENCE =
+    "A payment with this reference was already recorded on Oct 1, 2026 for $2.50 (INV-0042).";
+  const unrecordedDup = {
+    orderId: "o1",
+    orderNumber: "ORD-1",
+    invoiceId: "i1",
+    invoiceNumber: "INV-1",
+    total: 2.5,
+    paid: 0,
+    balanceDue: 2.5,
+    method: "CHECK",
+    paymentRecorded: false,
+    paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+    paymentCauseCode: "DUPLICATE_PAYMENT_REF",
+    existingPayment: {
+      id: "pay-1",
+      paymentNumber: "PAY-A-0001",
+      paidAt: "2026-10-01T12:00:00.000Z",
+      amount: 2.5,
+      invoiceId: "inv-9",
+      invoiceNumber: "INV-0042",
+    },
+  };
+  const ringCheck = async () => {
+    // A walk-in is never deduped, so the buyer is a NAMED account customer, chosen explicitly (not renderTill's Walk-in tap).
+    customersFor = [{ id: "c1", businessName: "Acme Co", fulfillPath: "ROUTE" }];
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.click(screen.getByRole("radio", { name: "Check" }));
+    fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+  };
+
+  it("keeps the existing payment-not-recorded panel and adds the shared duplicate sentence beneath it", async () => {
+    mutateAsync.mockResolvedValueOnce(unrecordedDup);
+    await ringCheck();
+    expect(await screen.findByTestId("counter-payment-not-recorded")).toHaveTextContent(
+      "Sale recorded — payment not recorded",
+    );
+    expect(
+      within(await screen.findByTestId("counter-payment-duplicate")).getByText(SENTENCE),
+    ).toBeInTheDocument();
+  });
+
+  it("any other not-recorded cause shows no duplicate panel", async () => {
+    mutateAsync.mockResolvedValueOnce({
+      ...unrecordedDup,
+      paymentCauseCode: undefined,
+      existingPayment: undefined,
+    });
+    await ringCheck();
+    await screen.findByTestId("counter-payment-not-recorded");
+    expect(screen.queryByTestId("counter-payment-duplicate")).toBeNull();
   });
 });
