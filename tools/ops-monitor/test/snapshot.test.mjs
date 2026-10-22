@@ -165,6 +165,7 @@ test("top-level contract keys and stats", () => {
       "lanes",
       "latentRisks",
       "machine",
+      "machines",
       "map",
       "ownerQueue",
       "ownerTodos",
