@@ -517,17 +517,44 @@ export const creditNoteReadSelect = {
   status: true,
   amount: true,
   invoiceId: true,
-  invoicePayments: { where: { status: "PAID" }, select: { amount: true } },
+  invoicePayments: { where: { status: "PAID" }, select: { amount: true, invoiceId: true } },
 } satisfies Prisma.CreditNoteSelect;
 
-/** The read's rows as `returnSettlement` takes them: status and the PAID amount applied anywhere, in cents. */
+/** A credit note as the read saw it, with where each PAID application sits (the row decides which are on its own invoices). */
+export interface CreditNoteFact extends SettlementCreditNote {
+  applications?: ReadonlyArray<{ amount: unknown; invoiceId: string | null }>;
+}
+
+/** The fact as `returnSettlement` takes it: how much of the note's application sits on this order's own invoices. */
+function settlementNote(
+  fact: CreditNoteFact | undefined,
+  orderInvoiceIds: ReadonlySet<string>,
+): SettlementCreditNote | null {
+  if (!fact) return null;
+  const { status, appliedAnywhere, applications } = fact;
+  return {
+    status,
+    appliedAnywhere,
+    ...(applications
+      ? {
+          appliedOnThisOrder: roundMoney(
+            applications
+              .filter((a) => !!a.invoiceId && orderInvoiceIds.has(a.invoiceId))
+              .reduce((s, a) => s + num(a.amount), 0),
+          ),
+        }
+      : {}),
+  };
+}
+
+/** The read's rows as facts: status, the PAID amount applied anywhere in cents, and each application's invoice. */
 export function creditNoteFacts(
   rows: ReadonlyArray<{
     id: string;
     status: string;
-    invoicePayments?: ReadonlyArray<{ amount: unknown }>;
+    invoicePayments?: ReadonlyArray<{ amount: unknown; invoiceId?: string | null }>;
   }>,
-): Map<string, SettlementCreditNote> {
+): Map<string, CreditNoteFact> {
   return new Map(
     rows.map((n) => [
       n.id,
@@ -536,6 +563,10 @@ export function creditNoteFacts(
         appliedAnywhere: roundMoney(
           (n.invoicePayments ?? []).reduce((s, p) => s + num(p.amount), 0),
         ),
+        applications: (n.invoicePayments ?? []).map((p) => ({
+          amount: p.amount,
+          invoiceId: p.invoiceId ?? null,
+        })),
       },
     ]),
   );
@@ -743,7 +774,7 @@ export function toTodaysSaleRow(
   /** INLINE returns filed on OTHER orders that may have been sold on this one (see `ownReturnCreditNoteIds`) */
   carriedReturns: readonly ReturnProvenance[] = [],
   /** SA-838a: the ONE batched credit-note read, by note id (see `creditNoteFacts`) */
-  creditNotes: ReadonlyMap<string, SettlementCreditNote> = new Map(),
+  creditNotes: ReadonlyMap<string, CreditNoteFact> = new Map(),
 ): TodaysSaleRow {
   const live = o.invoices.filter((i) => !isDeadInvoice(i.status));
   const voided = o.status === OrderStatus.CANCELLED || (o.invoices.length > 0 && live.length === 0);
@@ -764,13 +795,17 @@ export function toTodaysSaleRow(
 
   // B1262 / SA-838 + SA-838a: the sale's own return credit is not a tender. One provenance read, ONE settlement per own
   // return (pricing's returnSettlement), then the ONE pricing split over those settlements. Nothing else derives these figures.
+  // EVERY invoice of this order, live or dead: an application on any of them is never "elsewhere"
+  const thisOrderInvoiceIds = new Set(o.invoices.map((i) => i.id));
   const provenance = dedupeById<ReturnProvenance>([
     ...o.returns.map((r) => ({ ...r, orderId: o.id, amount: returnAmount(r) })),
     ...carriedReturns,
   ]).map((r) => ({
     ...r,
     // the batched read's answer; a note it did not return stays absent (returnSettlement: not settled, never kept)
-    creditNote: r.creditNoteId ? (creditNotes.get(r.creditNoteId) ?? null) : null,
+    creditNote: r.creditNoteId
+      ? settlementNote(creditNotes.get(r.creditNoteId), thisOrderInvoiceIds)
+      : null,
   }));
   const ownCreditNoteIds = ownReturnCreditNoteIds({
     orderId: o.id,

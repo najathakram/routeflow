@@ -22,6 +22,12 @@ export interface SettlementCreditNote {
   /** ISSUED / APPLIED / VOID */
   status: string;
   appliedAnywhere: number;
+  /**
+   * The part of `appliedAnywhere` sitting on ANY invoice of the order being read (live or dead, proven or not): it is never
+   * "elsewhere", so an application the provenance could not prove (it stays a tender) is not also counted as Credit used.
+   * Absent: only the proven application is known to be here.
+   */
+  appliedOnThisOrder?: number;
 }
 
 export interface SettlementReturn extends OwnReturnShape {
@@ -62,7 +68,7 @@ export interface ReturnSettlement {
   applied: number;
   /** the completed external refund */
   refunded: number;
-  /** the part of the credit spent on OTHER orders (an info line, never subtracted): applied anywhere - applied here */
+  /** the part of the credit spent on OTHER orders (an info line, never subtracted): applied anywhere - applied on this order */
   appliedElsewhere: number;
   /** what is still the customer's on account: worth - applied ANYWHERE - refunded */
   kept: number;
@@ -110,17 +116,18 @@ export function returnSettlement(
     // not settled (or a note nobody could see): whatever was applied is still money on the invoice, nothing else is shown
     return { state: "PENDING", creditNoteId, applied, refunded: 0, appliedElsewhere: 0, kept: 0 };
   }
-  // the PAID amount applied to the note on ANY sale; never less than what is applied here
+  // the PAID amount applied to the note on ANY sale; never less than what sits on this order (proven or not)
+  const onThisOrder = Math.max(applied, roundMoney(ret.creditNote?.appliedOnThisOrder ?? 0));
   const anywhere = refundDone
     ? 0
-    : Math.max(applied, roundMoney(ret.creditNote?.appliedAnywhere ?? 0));
+    : Math.max(onThisOrder, roundMoney(ret.creditNote?.appliedAnywhere ?? 0));
   const refunded = refundDone ? worth : 0;
   return {
     state: "SETTLED",
     creditNoteId,
     applied,
     refunded,
-    appliedElsewhere: Math.max(0, roundMoney(anywhere - applied)),
+    appliedElsewhere: Math.max(0, roundMoney(anywhere - onThisOrder)),
     kept: Math.max(0, roundMoney(worth - anywhere - refunded)),
   };
 }

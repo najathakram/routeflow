@@ -39,12 +39,16 @@ const saleA = (payments: ReturnType<typeof payment>[]) => ({
 });
 
 /** a credit note as the batched read returns it: status, amount, the invoice, and the PAID payments applied to it anywhere */
-const note = (id: string, status: string, appliedAnywhere: number[] = []) => ({
+const note = (id: string, status: string, applications: Array<number | [number, string]> = []) => ({
   id,
   status,
   amount: "5.50",
   invoiceId: null,
-  invoicePayments: appliedAnywhere.map((amount) => ({ amount: String(amount) })),
+  // a bare number sits on the sale's own invoice (i-a); a pair names the invoice it was applied to
+  invoicePayments: applications.map((a) => {
+    const [amount, invoiceId] = Array.isArray(a) ? a : [a, "i-a"];
+    return { amount: String(amount), invoiceId };
+  }),
 });
 
 function setup(pageRows: unknown[], carried: unknown[] = [], notes: unknown[] = []) {
@@ -195,9 +199,10 @@ describe("ONE batched credit-note read (SA-838a I2)", () => {
     expect([...args.where.id.in].sort()).toEqual(["cn-1", "cn-2", "cn-3"]);
     expect(args.where).toEqual(creditNoteReadWhere(T, ["cn-1", "cn-2", "cn-3"]));
     expect(args.select).toBe(creditNoteReadSelect);
+    // each PAID application with the invoice it sits on: this order's own is never "elsewhere"
     expect(args.select.invoicePayments).toEqual({
       where: { status: "PAID" },
-      select: { amount: true },
+      select: { amount: true, invoiceId: true },
     });
   });
 
@@ -252,7 +257,7 @@ describe("ONE batched credit-note read (SA-838a I2)", () => {
         },
       ],
     };
-    const { call } = setup([a], [], [note("cn-2", "APPLIED", [5.5])]);
+    const { call } = setup([a], [], [note("cn-2", "APPLIED", [[5.5, "i-other"]])]);
     const row = (await call()).data[0]!;
     expect(row.returnLines).toEqual({
       applied: 0,

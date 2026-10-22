@@ -34,12 +34,21 @@ const creditPay = (amount: number, noteId: string, noteInvoiceId: string | null 
   creditNote: { invoiceId: noteInvoiceId },
 });
 
-/** the batched credit-note read's answer: note id -> [status, PAID amount applied on ANY sale] */
-const notes = (entries: Record<string, [string, number]>) =>
+/**
+ * the batched credit-note read's answer: note id -> [status, PAID amount applied on ANY sale, and (optional) where each PAID
+ * application sits as [amount, invoiceId]; left out, nothing is known to sit on this order beyond the proven payments]
+ */
+const notes = (entries: Record<string, [string, number, Array<[number, string | null]>?]>) =>
   new Map(
-    Object.entries(entries).map(([id, [status, appliedAnywhere]]) => [
+    Object.entries(entries).map(([id, [status, appliedAnywhere, apps]]) => [
       id,
-      { status, appliedAnywhere },
+      {
+        status,
+        appliedAnywhere,
+        ...(apps
+          ? { applications: apps.map(([amount, invoiceId]) => ({ amount, invoiceId })) }
+          : {}),
+      },
     ]),
   );
 
@@ -415,10 +424,30 @@ describe("toTodaysSaleRow: returnLines, what THIS order's own return did (SA-838
     expect(row.balanceDue).toBe(6.5);
   });
 
+  it("same-receipt double claim: an unproven application on THIS order stays a tender and is NOT also Credit used", () => {
+    // the note names no invoice (provenance link 2 fails), so its 5.00 application is a tender; it sits on this order's i-1
+    const row = go(
+      order([pay("CASH", 7.5), creditPay(5, "cn-1", null)], [ret({ creditSubtotal: "5.00" })]),
+      notes({ "cn-1": ["APPLIED", 5, [[5, "i-1"]]] }),
+    );
+    expect(row.tenderMethods).toEqual([
+      { method: "CASH", amount: 7.5 },
+      { method: "STORE_CREDIT", amount: 5 },
+    ]);
+    expect(row.tenderPaid).toBe(12.5);
+    expect(lines(row)).toEqual(L(0, 0, 0, 0, false));
+    // and a foreign note id on a dead invoice of this order is still this order's, never "elsewhere"
+    const dead = order([pay("CASH", 12.5)], [ret({ creditSubtotal: "5.00" })]);
+    dead.invoices.push({ id: "i-dead", invoiceNumber: "INV-D", status: "VOID", payments: [] });
+    expect(lines(go(dead, notes({ "cn-1": ["APPLIED", 5, [[5, "i-dead"]]] })))).toEqual(
+      L(0, 0, 0, 0, false),
+    );
+  });
+
   it("(3) I1: sale A 12.50 all cash, its 5.50 credit spent on order B: Credit used 5.50, nothing kept, no balance", () => {
     const row = go(
       order([pay("CASH", 12.5)], [ret({ creditSubtotal: "5.50" })]),
-      notes({ "cn-1": ["APPLIED", 5.5] }),
+      notes({ "cn-1": ["APPLIED", 5.5, [[5.5, "i-b"]]] }),
     );
     expect(lines(row)).toEqual(L(0, 0, 0, 5.5, false));
     expect(row.balanceDue).toBe(0);

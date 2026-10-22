@@ -318,6 +318,23 @@ describe("reprint after a return (SA-838a): the paper", () => {
     ).toEqual(["Payment method Cash $12.50", "Paid $12.50"]);
   });
 
+  it("same-receipt double claim: an unproven store-credit tender prints once, with no Credit used line", () => {
+    expect(
+      paper({
+        methods: [
+          { method: "CASH", amount: 7.5 },
+          { method: "STORE_CREDIT", amount: 5 },
+        ],
+        tenderPaid: 12.5,
+        tenderMethods: [
+          { method: "CASH", amount: 7.5 },
+          { method: "STORE_CREDIT", amount: 5 },
+        ],
+        returnLines: none,
+      }),
+    ).toEqual(["Payment method Cash $7.50 + Store credit $5.00", "Paid $12.50"]);
+  });
+
   it("(d) another order's store credit prints as the tender Store credit", () => {
     expect(
       paper({

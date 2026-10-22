@@ -499,4 +499,32 @@ describe("SA-838a fix round 1", () => {
     );
     expect(s).toMatchObject({ appliedElsewhere: 0, kept: 0, refunded: 2.5 });
   });
+
+  it("same-receipt double claim: an unproven application on THIS order is not Credit used, and not kept", () => {
+    // the note's 5.00 application sits on this order's invoice but its provenance did not prove (payments is empty here):
+    // it stays a tender, so it must not ALSO read as credit spent elsewhere
+    const s = returnSettlement(
+      standard({
+        amount: 5,
+        creditNoteId: "cn-1",
+        creditNote: { status: "APPLIED", appliedAnywhere: 5, appliedOnThisOrder: 5 },
+      }),
+      [],
+      THIS,
+    );
+    expect(s).toMatchObject({ state: "SETTLED", applied: 0, appliedElsewhere: 0, kept: 0 });
+  });
+
+  it("appliedElsewhere is the PAID applications on OTHER orders' invoices only", () => {
+    const s = returnSettlement(
+      standard({
+        amount: 5,
+        creditNoteId: "cn-1",
+        creditNote: { status: "APPLIED", appliedAnywhere: 4, appliedOnThisOrder: 1 },
+      }),
+      [pay("STORE_CREDIT", 1, "cn-1")],
+      THIS,
+    );
+    expect(s).toMatchObject({ applied: 1, appliedElsewhere: 3, kept: 1 });
+  });
 });
