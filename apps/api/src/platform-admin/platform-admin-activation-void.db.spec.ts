@@ -396,6 +396,8 @@ describeDb("manual activation auto-void (DB)", () => {
       const end = next[0].periodEnd!;
       const expected = nextBillingWindow(new Date(P.getTime() + 30 * DAY), "MONTHLY");
       expect(end.toISOString()).toBe(expected.periodEnd.toISOString());
+      // and the independent shape check, so a helper bug cannot make the exact check agree with itself
+      expect([end.getUTCDate(), end.getUTCHours()]).toEqual([1, 12]);
       expect(next[0].status).toBe("OPEN");
     });
 
