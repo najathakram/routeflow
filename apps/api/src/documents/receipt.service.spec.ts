@@ -10,6 +10,13 @@ import {
 } from "./receipt-limits";
 import { INVOICE, orderFixture, paymentsFixture } from "./receipt.fixtures";
 import { createMockPrisma, type MockPrisma } from "../testing/prisma-mock";
+import {
+  carriedReturnSelect,
+  carriedReturnWhere,
+  creditNoteReadSelect,
+  creditNoteReadWhere,
+  orderReturnSelect,
+} from "../orders/counter-sale/counter-sale-today";
 
 const T = "test-tenant";
 const NOW = new Date("2026-10-07T16:00:00.000Z");
@@ -20,6 +27,8 @@ function storedOrder(over: Record<string, unknown> = {}) {
   return {
     ...rest,
     lineItems,
+    // the select's `returns` relation always arrives as an array (none for an order that had no return)
+    returns: [],
     invoices: [
       {
         ...INVOICE,
@@ -456,6 +465,122 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
       await send();
       const select = prisma.order.findFirst.mock.calls[0][0].select;
       expect(select.customer.select).not.toHaveProperty("email");
+    });
+  });
+
+  describe("B1262 N1 (SA-838a): a counter sale's returns are read once, with the Today's-sales read shapes", () => {
+    const ownReturn = {
+      id: "r-1",
+      returnNumber: "RET-1",
+      status: "REFUNDED",
+      refundMethod: "CREDIT_NOTE",
+      refundedAt: null,
+      creditNoteId: "cn-1",
+      refundAmount: null,
+      creditSubtotal: "2.50",
+      creditTax: "0.00",
+      creditCategoryTax: "0.00",
+      kind: "STANDARD",
+      items: [],
+    };
+    /** $12.50 sale: $5.00 cash, plus (optionally) the own return's $2.50 credit note applied to the invoice */
+    const sale = (over: { applied?: boolean; counterSale?: boolean; returns?: unknown[] } = {}) => {
+      const { lineItems, ...rest } = orderFixture({
+        total: "12.50",
+        tax: "0.00",
+        counterSale: over.counterSale ?? true,
+      });
+      const payments: Array<Record<string, unknown>> = [
+        { method: "CASH", amount: "5.00", status: "PAID" },
+      ];
+      if (over.applied) {
+        payments.push({
+          method: "CREDIT_NOTE",
+          amount: "2.50",
+          status: "PAID",
+          creditNoteId: "cn-1",
+          creditNote: { invoiceId: "inv-1" },
+        });
+      }
+      return {
+        ...rest,
+        lineItems,
+        returns: over.returns ?? [ownReturn],
+        invoices: [{ ...INVOICE, payments }],
+      };
+    };
+    const textOf = (email: { send: jest.Mock }) => email.send.mock.calls[0][0].text as string;
+
+    it("selects the order's returns by the shared select and each payment's credit note with its invoice", async () => {
+      const { prisma, send } = setup({ order: sale() });
+      await send();
+      const select = prisma.order.findFirst.mock.calls[0][0].select;
+      expect(select.returns.select).toBe(orderReturnSelect);
+      expect(select.invoices.select.payments.select).toEqual({
+        method: true,
+        amount: true,
+        status: true,
+        creditNoteId: true,
+        creditNote: { select: { invoiceId: true } },
+      });
+    });
+
+    it("a counter sale with an applied note: exactly ONE carried-return read and ONE credit-note read, tenant-scoped", async () => {
+      const { prisma, email, send } = setup({ order: sale({ applied: true }) });
+      prisma.creditNote.findMany.mockResolvedValue([
+        {
+          id: "cn-1",
+          status: "APPLIED",
+          amount: "2.50",
+          invoiceId: "inv-1",
+          invoicePayments: [{ amount: "2.50", invoiceId: "inv-1" }],
+        },
+      ] as never);
+      await send();
+      expect(prisma.return.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.return.findMany).toHaveBeenCalledWith({
+        where: carriedReturnWhere(T, ["cn-1"]),
+        select: carriedReturnSelect,
+      });
+      expect(prisma.creditNote.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.creditNote.findMany).toHaveBeenCalledWith({
+        where: creditNoteReadWhere(T, ["cn-1"]),
+        select: creditNoteReadSelect,
+      });
+      // and the email prints the reprint's lines for it
+      expect(textOf(email)).toContain(
+        "Payment method: Cash $5.00\nPaid: $5.00\nReturned: −$2.50\nBalance due: $5.00",
+      );
+    });
+
+    it("an own return whose credit note was never applied: no carried read, ONE credit-note read, Credit kept prints", async () => {
+      const { prisma, email, send } = setup({ order: sale() });
+      prisma.creditNote.findMany.mockResolvedValue([
+        { id: "cn-1", status: "ISSUED", amount: "2.50", invoiceId: "inv-1", invoicePayments: [] },
+      ] as never);
+      await send();
+      expect(prisma.return.findMany).not.toHaveBeenCalled();
+      expect(prisma.creditNote.findMany).toHaveBeenCalledTimes(1);
+      expect(textOf(email)).toContain("Credit kept $2.50 (returned items)");
+      expect(textOf(email)).toContain("Balance due: $7.50");
+    });
+
+    it("a counter sale with no credit note anywhere: no return read and no credit-note read", async () => {
+      const { prisma, send } = setup({ order: sale({ returns: [] }) });
+      await send();
+      expect(prisma.return.findMany).not.toHaveBeenCalled();
+      expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
+    });
+
+    it("a delivery order with its own return and an applied note: NO return read, NO credit-note read, master's receipt", async () => {
+      const { prisma, email, send } = setup({ order: sale({ applied: true, counterSale: false }) });
+      await send();
+      expect(prisma.return.findMany).not.toHaveBeenCalled();
+      expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
+      expect(textOf(email)).toContain(
+        "Payment method: Cash $5.00 + Store credit $2.50\nPaid: $7.50\nBalance due: $5.00",
+      );
+      expect(textOf(email)).not.toContain("Returned");
     });
   });
 });

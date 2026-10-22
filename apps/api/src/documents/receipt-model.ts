@@ -12,10 +12,14 @@ import {
   storedTaxRatePercent,
   sumConfirmed,
 } from "@routeflow/pricing";
-import type { ReceiptLine, ReceiptModel, TodaysSaleMethod } from "@routeflow/types";
+import type { ReceiptLine, ReceiptModel } from "@routeflow/types";
 import { servedChange } from "../orders/counter-sale/counter-sale-readback";
 import { RECEIPT_FOOTER_MAX_CHARS } from "../system-config/receipt-footer";
 import {
+  counterReturnSplit,
+  type CreditNoteFact,
+  type ReturnProvenance,
+  type TodayOrderRecord,
   TODAYS_SALE_METHOD_ORDER,
   todaysMethodOf,
 } from "../orders/counter-sale/counter-sale-today";
@@ -93,6 +97,16 @@ export interface ReceiptPaymentInput {
   method: string;
   amount: unknown;
   status: string;
+  /** SA-838: the credit note this payment applied, and the invoice that note was issued against (counter sales only) */
+  creditNoteId?: string | null;
+  creditNote?: { invoiceId: string | null } | null;
+}
+
+/** SA-838a: what a COUNTER sale's return split reads (the receipt service's reads; the Today's-sales page reads the same). */
+export interface ReceiptReturnData {
+  returns: TodayOrderRecord["returns"];
+  carriedReturns: readonly ReturnProvenance[];
+  creditNotes: ReadonlyMap<string, CreditNoteFact>;
 }
 
 /** The receipt header and footer: TenantConfig first, the legacy SystemConfig values behind it (as `GET /settings` reads them). */
@@ -185,6 +199,7 @@ export function buildReceiptModel(
   payments: readonly ReceiptPaymentInput[],
   branding: ReceiptBranding,
   zone: string | null,
+  returnData?: ReceiptReturnData,
 ): ReceiptModel {
   const live = invoices.filter(isLiveInvoice);
   const shown = live[0] ?? invoices[0];
@@ -219,24 +234,41 @@ export function buildReceiptModel(
   const netSubtotal = roundMoney(lines.reduce((sum, l) => sum + l.total, 0));
   const discounts = roundMoney(lines.reduce((sum, l) => sum + l.discount, 0));
   const total = roundMoney(num(order.total));
-  const paid = roundMoney(
+  // everything paid on the live invoices, the own return credit included: the balance is what is left of the total after ALL of it
+  const paidInAll = roundMoney(
     sumConfirmed(livePayments.map((p) => ({ amount: p.amount, status: p.status }))),
   );
-  const balanceDue = Math.max(0, roundMoney(total - paid));
+  const balanceDue = Math.max(0, roundMoney(total - paidInAll));
 
-  const appliedBy = (method: TodaysSaleMethod) =>
-    roundMoney(
-      sumConfirmed(
-        livePayments
-          .filter((p) => todaysMethodOf(p.method) === method)
-          .map((p) => ({ amount: p.amount, status: p.status })),
-      ),
-    );
+  // A COUNTER sale prints the reprint's lines (SA-838 + SA-838a): the SAME `counterReturnSplit` the Today's-sales row calls splits
+  // what was TENDERED from the sale's own return credit and settles each own return, so Paid, the Payment method and the
+  // Returned / Refunded / Credit kept / Credit used / Return in progress lines are the reprint's, never a second derivation.
+  // Any other order keeps every payment a tender and prints no return line (R7b is counter-only: no carried or credit-note
+  // reads are made for it either).
+  const split = order.counterSale
+    ? counterReturnSplit({
+        orderId: order.id,
+        invoiceIds: invoices.map((i) => i.id),
+        payments: livePayments,
+        returns: returnData?.returns ?? [],
+        carriedReturns: returnData?.carriedReturns,
+        creditNotes: returnData?.creditNotes,
+      })
+    : null;
   // the till's ONE method order and labels (an ADVANCE application is a tender here exactly as on the print: SA-838)
-  const tenders = TODAYS_SALE_METHOD_ORDER.map((method) => ({
-    method,
-    amount: appliedBy(method),
-  })).filter((t) => t.amount > 0);
+  const tenders = split
+    ? split.tenderMethods
+    : TODAYS_SALE_METHOD_ORDER.map((method) => ({
+        method,
+        amount: roundMoney(
+          sumConfirmed(
+            livePayments
+              .filter((p) => todaysMethodOf(p.method) === method)
+              .map((p) => ({ amount: p.amount, status: p.status })),
+          ),
+        ),
+      })).filter((t) => t.amount > 0);
+  const paid = split ? split.tenderPaid : paidInAll;
   const hasTender = tenders.length > 0;
   const onAccount = !hasTender && balanceDue > 0;
   // CQ-03: the levy the live invoices billed is its own named charge; Tax is the regular tax only; Adjustments the rest
@@ -296,5 +328,14 @@ export function buildReceiptModel(
     tenderedAsEntered: false,
     change: servedChange(order.counterCashTendered, livePayments, balanceDue),
     changeAsEntered: false,
+    ...(split
+      ? {
+          returned: split.returnLines.applied > 0 ? split.returnLines.applied : null,
+          refunded: split.returnLines.refunded > 0 ? split.returnLines.refunded : null,
+          creditKept: split.returnLines.kept > 0 ? split.returnLines.kept : null,
+          creditUsed: split.returnLines.used > 0 ? split.returnLines.used : null,
+          returnPending: split.returnLines.pending,
+        }
+      : {}),
   };
 }

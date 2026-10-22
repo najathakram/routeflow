@@ -14,6 +14,18 @@ import { calendarDayBounds } from "../common/calendar-date";
 import { taxRatePercentFrom } from "../common/tax-rate";
 import { resolveZone } from "../common/tenant-time-zone";
 import { EmailService } from "../email/email.service";
+import {
+  carriedReturnSelect,
+  carriedReturnWhere,
+  creditNoteFacts,
+  creditNoteIdsToRead,
+  creditNoteReadSelect,
+  creditNoteReadWhere,
+  orderReturnSelect,
+  pageCreditNoteIds,
+  type ReturnProvenance,
+  type TodayOrderRecord,
+} from "../orders/counter-sale/counter-sale-today";
 import { PrismaService } from "../prisma/prisma.service";
 import { RECEIPT_CHANNELS } from "./receipt-channels";
 import {
@@ -25,7 +37,12 @@ import {
   RECEIPT_EMAIL_PER_TENANT_PER_DAY_KEY,
   resolveReceiptLimit,
 } from "./receipt-limits";
-import { isLiveInvoice, type ReceiptBranding, type ReceiptPaymentInput } from "./receipt-model";
+import {
+  isLiveInvoice,
+  type ReceiptBranding,
+  type ReceiptPaymentInput,
+  type ReceiptReturnData,
+} from "./receipt-model";
 import { renderOrderReceipt } from "./render-order-receipt";
 import type { SendReceiptDto } from "./send-receipt.dto";
 
@@ -99,6 +116,8 @@ export class ReceiptService {
         customer: { select: { businessName: true, isWalkIn: true } },
         // row 317: the cashier's username only, printed as "Cashier: <name>" (never an email)
         soldBy: { select: { username: true } },
+        // SA-838a: the order's own returns, by the shape the Today's-sales read selects (a counter sale's receipt settles them)
+        returns: { select: orderReturnSelect },
         lineItems: {
           orderBy: { createdAt: "asc" },
           select: {
@@ -145,7 +164,15 @@ export class ReceiptService {
             // in the order they were taken: the first stored tender decides whether change is served
             payments: {
               orderBy: { createdAt: "asc" },
-              select: { method: true, amount: true, status: true },
+              // SA-838: the credit note each payment applied and the invoice that NOTE was issued against: the first
+              // link of "this payment is the sale's own return credit" (same query: no extra read)
+              select: {
+                method: true,
+                amount: true,
+                status: true,
+                creditNoteId: true,
+                creditNote: { select: { invoiceId: true } },
+              },
             },
           },
         },
@@ -253,8 +280,15 @@ export class ReceiptService {
         method: p.method,
         amount: p.amount,
         status: p.status,
+        creditNoteId: p.creditNoteId,
+        creditNote: p.creditNote,
       })),
     );
+    // A COUNTER sale prints the reprint's return lines (SA-838a): the same batched reads the Today's-sales page makes, once, for
+    // this one order. Any other order reads nothing and prints what it always did (R7b is counter-only).
+    const returnData = order.counterSale
+      ? await this.readReturnData(tenantId, db, order)
+      : undefined;
     const branding: ReceiptBranding = {
       businessName: config?.businessName || settings["settings.businessName"],
       street: config?.addressLine1 ?? settings["settings.street"],
@@ -266,7 +300,14 @@ export class ReceiptService {
       configuredTaxPercent: taxRatePercentFrom(settings["settings.taxRate"]),
       hideOriginalPrice: settings["invoice.hideOriginalPrice"] === "true",
     };
-    const { subject, html, text } = renderOrderReceipt(order, invoices, payments, branding, zone);
+    const { subject, html, text } = renderOrderReceipt(
+      order,
+      invoices,
+      payments,
+      branding,
+      zone,
+      returnData,
+    );
 
     try {
       await RECEIPT_CHANNELS[dto.channel](
@@ -290,5 +331,43 @@ export class ReceiptService {
       });
     }
     return { channel: dto.channel, to };
+  }
+
+  /**
+   * SA-838 (e) + SA-838a I2: the reads a counter sale's return split needs, by the Today's-sales read shapes. ONE batched read of
+   * the returns behind the sale's credit-note payments (an INLINE return carried on another order is reachable only by its note),
+   * skipped when no payment applied a note; and ONE read of every credit note the sale's payments and returns name (status, and
+   * the PAID amount applied anywhere), skipped when there are none. Tenant-scoped, one id list each, never per payment.
+   */
+  private async readReturnData(
+    tenantId: string,
+    db: ReturnType<PrismaService["forTenant"]>,
+    order: {
+      id: string;
+      returns: TodayOrderRecord["returns"];
+      invoices: Array<{ payments: Array<{ creditNoteId?: string | null }> }>;
+    },
+  ): Promise<ReceiptReturnData> {
+    // this one order as a page of one: the page's own helpers pick the note ids
+    const page = [order];
+    const paymentNoteIds = pageCreditNoteIds(page);
+    const carriedReturns: ReturnProvenance[] =
+      paymentNoteIds.length === 0
+        ? []
+        : await db.return.findMany({
+            where: carriedReturnWhere(tenantId, paymentNoteIds),
+            select: carriedReturnSelect,
+          });
+    const noteIds = creditNoteIdsToRead(page, carriedReturns);
+    const creditNotes =
+      noteIds.length === 0
+        ? new Map()
+        : creditNoteFacts(
+            await db.creditNote.findMany({
+              where: creditNoteReadWhere(tenantId, noteIds),
+              select: creditNoteReadSelect,
+            }),
+          );
+    return { returns: order.returns, carriedReturns, creditNotes };
   }
 }

@@ -90,4 +90,17 @@ export interface ReceiptModel {
   customerName: string | null;
   /** SA-762r: the business's receipt footer, trimmed, or null. Tenant text: the email template HTML-escapes it, print renders a React text node. */
   footer: string | null;
+  /**
+   * SA-838a: a COUNTER sale that had a return carries these (the reprint and the emailed receipt alike), each from
+   * `@routeflow/pricing`'s `returnSettlement` / `settlementTotals`, used as given and never re-derived. `returned` = the
+   * credit APPLIED to this sale (the "Returned −$x" line, the only figure the balance subtracts); `refunded` = money handed
+   * back outside RouteFlow, `creditKept` = credit left on the customer's account and `creditUsed` = credit spent on OTHER
+   * orders (info lines, never subtracted); `returnPending` = a return is not settled yet ("Return in progress", no amount).
+   * null = no line. Absent on every other receipt (a non-counter order, or a reprint from an older server).
+   */
+  returned?: number | null;
+  refunded?: number | null;
+  creditKept?: number | null;
+  creditUsed?: number | null;
+  returnPending?: boolean;
 }

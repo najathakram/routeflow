@@ -371,6 +371,30 @@ export function windowReturnsWhere(
 }
 
 /**
+ * The order's returns as every counter-receipt reader selects them (the Today's-sales page and the emailed receipt read the
+ * same columns, so `toTodaysSaleRow` and the receipt model get the same record). One home: a column added for a settlement
+ * figure is added once.
+ */
+export const orderReturnSelect = {
+  id: true,
+  returnNumber: true,
+  status: true,
+  refundMethod: true,
+  refundedAt: true,
+  creditNoteId: true,
+  refundAmount: true,
+  creditSubtotal: true,
+  creditTax: true,
+  creditCategoryTax: true,
+  // B1262 / SA-838: the second link. An INLINE return counts as this order's only through an item sold on it.
+  kind: true,
+  // plus each item's priced amount: an INLINE return is worth its items (returnSettlement), never a proration
+  items: {
+    select: { sourceOrderId: true, subtotal: true, taxAmount: true, categoryTax: true },
+  },
+} satisfies Prisma.ReturnSelect;
+
+/**
  * The page query, ONE definition: the service sends it and the EXPLAIN spec captures the SQL of exactly it.
  * `select`, never `include`: only each line's description and qty (the row's item names), no cost or margin field.
  */
@@ -429,26 +453,7 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           },
         },
       },
-      returns: {
-        select: {
-          id: true,
-          returnNumber: true,
-          status: true,
-          refundMethod: true,
-          refundedAt: true,
-          creditNoteId: true,
-          refundAmount: true,
-          creditSubtotal: true,
-          creditTax: true,
-          creditCategoryTax: true,
-          // B1262 / SA-838: the second link. An INLINE return counts as this order's only through an item sold on it.
-          kind: true,
-          // plus each item's priced amount: an INLINE return is worth its items (returnSettlement), never a proration
-          items: {
-            select: { sourceOrderId: true, subtotal: true, taxAmount: true, categoryTax: true },
-          },
-        },
-      },
+      returns: { select: orderReturnSelect },
     },
   } satisfies Prisma.OrderFindManyArgs;
 }
@@ -480,7 +485,11 @@ export const carriedReturnSelect = {
 } satisfies Prisma.ReturnSelect;
 
 /** The distinct credit note ids the page's PAID-or-not payments applied (dead invoices included: provenance decides). */
-export function pageCreditNoteIds(rows: readonly TodayOrderRecord[]): string[] {
+export function pageCreditNoteIds(
+  rows: ReadonlyArray<{
+    invoices: ReadonlyArray<{ payments: ReadonlyArray<{ creditNoteId?: string | null }> }>;
+  }>,
+): string[] {
   const ids = new Set<string>();
   for (const o of rows) {
     for (const i of o.invoices) {
@@ -496,7 +505,10 @@ export function pageCreditNoteIds(rows: readonly TodayOrderRecord[]): string[] {
  * its return's `creditNoteId`, a spent one through the note's payments.
  */
 export function creditNoteIdsToRead(
-  rows: readonly TodayOrderRecord[],
+  rows: ReadonlyArray<{
+    invoices: ReadonlyArray<{ payments: ReadonlyArray<{ creditNoteId?: string | null }> }>;
+    returns: ReadonlyArray<{ creditNoteId: string | null }>;
+  }>,
   carried: readonly ReturnProvenance[],
 ): string[] {
   const ids = new Set(pageCreditNoteIds(rows));
@@ -767,6 +779,91 @@ export function ownReturnCreditNoteIds(input: {
   return own;
 }
 
+/** The inputs of one counter sale's return split: the order, its LIVE-invoice payments, and the reads that settle its returns. */
+export interface CounterReturnSplitInput {
+  orderId: string;
+  /** EVERY invoice of the order, live or dead: an application on any of them is never "elsewhere" */
+  invoiceIds: readonly string[];
+  /** the payments on the order's LIVE invoices, with the credit note each applied and the invoice that note was issued against */
+  payments: ReadonlyArray<{
+    method: string;
+    amount: unknown;
+    status: string;
+    creditNoteId?: string | null;
+    creditNote?: { invoiceId: string | null } | null;
+  }>;
+  /** the order's own returns (`orderReturnSelect`) */
+  returns: TodayOrderRecord["returns"];
+  /** INLINE returns filed on OTHER orders that may have been sold on this one (`carriedReturnSelect`) */
+  carriedReturns?: readonly ReturnProvenance[];
+  /** the ONE batched credit-note read, by note id (`creditNoteFacts`) */
+  creditNotes?: ReadonlyMap<string, CreditNoteFact>;
+}
+
+export interface CounterReturnSplit {
+  /** what the customer TENDERED: Paid on a counter receipt (the sale's own return credit is not in it) */
+  tenderPaid: number;
+  /** the own return credit applied to the invoices (pricing's `counterTenderSplit`) */
+  returnCredit: number;
+  /** the tenders by method, in the till's order, own return credit excluded */
+  tenderMethods: Array<{ method: TodaysSaleMethod; amount: number }>;
+  /** pricing's `settlementTotals` of the order's own returns: the Returned / Refunded / Credit kept / Credit used / pending lines */
+  returnLines: { applied: number; refunded: number; kept: number; used: number; pending: boolean };
+}
+
+/**
+ * B1262 / SA-838 + SA-838a: the ONE derivation of a counter sale's tender split and return lines. The Today's-sales row (and so
+ * the reprint) and the emailed receipt both call it, so a figure is never on one receipt and not the other (SA-751r). One
+ * provenance read -> ONE settlement per own return (pricing's `returnSettlement`) -> the pricing `counterTenderSplit` and
+ * `settlementTotals` over those settlements. Nothing else derives these figures; the money math itself lives in
+ * `@routeflow/pricing`.
+ */
+export function counterReturnSplit(input: CounterReturnSplitInput): CounterReturnSplit {
+  const { orderId, payments } = input;
+  const thisOrderInvoiceIds = new Set(input.invoiceIds);
+  const provenance = dedupeById<ReturnProvenance>([
+    ...input.returns.map((r) => ({ ...r, orderId, amount: returnAmount(r) })),
+    ...(input.carriedReturns ?? []),
+  ]).map((r) => ({
+    ...r,
+    // the batched read's answer; a note it did not return stays absent (returnSettlement: not settled, never kept)
+    creditNote: r.creditNoteId
+      ? settlementNote(input.creditNotes?.get(r.creditNoteId), thisOrderInvoiceIds)
+      : null,
+  }));
+  const ownCreditNoteIds = ownReturnCreditNoteIds({
+    orderId,
+    invoiceIds: input.invoiceIds,
+    payments,
+    returns: provenance,
+  });
+  // the payments PROVEN to be this order's own return credit (both links agree); every other payment is a tender
+  const ownCreditPayments = payments.filter(
+    (p) => !!p.creditNoteId && ownCreditNoteIds.has(p.creditNoteId),
+  );
+  const settlements = provenance
+    .filter((r) => isOwnReturn(orderId, r))
+    .map((r) => returnSettlement(r, ownCreditPayments, orderId));
+  const split = counterTenderSplit(
+    payments.map((p) => ({ ...p, method: todaysMethodOf(p.method) })),
+    settlements,
+    METHOD_ORDER,
+  );
+  const totals = settlementTotals(settlements);
+  return {
+    tenderPaid: split.tenderPaid,
+    returnCredit: split.returnCredit,
+    tenderMethods: split.methods,
+    returnLines: {
+      applied: totals.applied,
+      refunded: totals.refunded,
+      kept: totals.kept,
+      used: totals.used,
+      pending: totals.pending,
+    },
+  };
+}
+
 export function toTodaysSaleRow(
   o: TodayOrderRecord,
   /** the tenant's configured rate in percent (`settings.taxRate`): a stored line rate is named only when it equals this */
@@ -793,39 +890,16 @@ export function toTodaysSaleRow(
     return amount > 0 ? [{ method, amount }] : [];
   });
 
-  // B1262 / SA-838 + SA-838a: the sale's own return credit is not a tender. One provenance read, ONE settlement per own
-  // return (pricing's returnSettlement), then the ONE pricing split over those settlements. Nothing else derives these figures.
-  // EVERY invoice of this order, live or dead: an application on any of them is never "elsewhere"
-  const thisOrderInvoiceIds = new Set(o.invoices.map((i) => i.id));
-  const provenance = dedupeById<ReturnProvenance>([
-    ...o.returns.map((r) => ({ ...r, orderId: o.id, amount: returnAmount(r) })),
-    ...carriedReturns,
-  ]).map((r) => ({
-    ...r,
-    // the batched read's answer; a note it did not return stays absent (returnSettlement: not settled, never kept)
-    creditNote: r.creditNoteId
-      ? settlementNote(creditNotes.get(r.creditNoteId), thisOrderInvoiceIds)
-      : null,
-  }));
-  const ownCreditNoteIds = ownReturnCreditNoteIds({
+  // B1262 / SA-838 + SA-838a: the sale's own return credit is not a tender (counterReturnSplit: the ONE derivation, which the
+  // emailed receipt calls too)
+  const { tenderPaid, returnCredit, tenderMethods, returnLines } = counterReturnSplit({
     orderId: o.id,
     invoiceIds: o.invoices.map((i) => i.id),
     payments,
-    returns: provenance,
+    returns: o.returns,
+    carriedReturns,
+    creditNotes,
   });
-  // the payments PROVEN to be this order's own return credit (both links agree); every other payment is a tender
-  const ownCreditPayments = payments.filter(
-    (p) => !!p.creditNoteId && ownCreditNoteIds.has(p.creditNoteId),
-  );
-  const settlements = provenance
-    .filter((r) => isOwnReturn(o.id, r))
-    .map((r) => returnSettlement(r, ownCreditPayments, o.id));
-  const split = counterTenderSplit(
-    payments.map((p) => ({ ...p, method: todaysMethodOf(p.method) })),
-    settlements,
-    METHOD_ORDER,
-  );
-  const totals = settlementTotals(settlements);
 
   // Nothing paid: a named customer left it on account by choice; a walk-in must pay, so no tender is the
   // "payment not recorded" case. Something paid but short is partly paid (the receipt makes the same split).
@@ -866,16 +940,10 @@ export function toTodaysSaleRow(
     paid,
     balanceDue,
     methods,
-    tenderPaid: split.tenderPaid,
-    returnCredit: split.returnCredit,
-    tenderMethods: split.methods,
-    returnLines: {
-      applied: totals.applied,
-      refunded: totals.refunded,
-      kept: totals.kept,
-      used: totals.used,
-      pending: totals.pending,
-    },
+    tenderPaid,
+    returnCredit,
+    tenderMethods,
+    returnLines,
     paymentState,
     cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
     change: servedChange(o.counterCashTendered, payments, balanceDue),
