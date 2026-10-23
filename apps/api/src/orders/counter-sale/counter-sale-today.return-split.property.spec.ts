@@ -90,25 +90,19 @@ function sample(): CounterReturnSplitInput {
       ],
     } as ReturnProvenance);
   }
-  // a note the batched read did NOT return is absent from the map: the not-returned path (PENDING, nothing kept)
-  const creditNotes = new Map(
-    NOTES.filter(() => next(4) !== 0).map((id) => {
-      const appliedAnywhere = money();
-      return [
-        id,
-        {
-          status: pick(["ISSUED", "APPLIED", "VOID"]),
-          appliedAnywhere,
-          ...(next(2) === 0
-            ? {
-                applications: [
-                  { amount: appliedAnywhere, invoiceId: pick(["i-1", "i-other", null]) },
-                ],
-              }
-            : {}),
-        },
-      ];
-    }),
+  // a note the batched read did NOT return is absent from the map: the not-returned path (PENDING, nothing kept). The draws
+  // are taken here; the AMOUNTS are derived below, once every payment exists (SA-838b: a note's `appliedAnywhere` is the SUM
+  // of its applications, this order's PAID ones included, never drawn on its own).
+  const drawn = new Map(
+    NOTES.filter(() => next(4) !== 0).map((id) => [
+      id,
+      {
+        status: pick(["ISSUED", "APPLIED", "VOID"]),
+        listed: next(2) === 0,
+        elsewhere: next(2) === 0 ? money() : 0,
+        elsewhereOn: pick(["i-other", null]),
+      },
+    ]),
   );
   // A uniform draw almost never lines up a live own return, its live note and a PAID application of that note on this
   // order's invoice, so a third of the sales also carry one COHERENT own-credit settlement (on top of the noise above).
@@ -135,12 +129,26 @@ function sample(): CounterReturnSplitInput {
       creditNoteId: "cn-1",
       creditNote: { invoiceId: "i-1" },
     });
-    creditNotes.set("cn-1", {
-      status: "APPLIED",
-      appliedAnywhere: spent,
-      applications: [{ amount: spent, invoiceId: "i-1" }],
-    });
+    drawn.set("cn-1", { status: "APPLIED", listed: true, elsewhere: 0, elsewhereOn: null });
   }
+  const creditNotes = new Map(
+    [...drawn].map(([id, d]) => {
+      // this order's applications: its PAID payments of the note (payments are those of its own live invoices)
+      const here = payments.filter((p) => p.status === "PAID" && p.creditNoteId === id);
+      const applications = [
+        ...here.map((p) => ({ amount: Number(p.amount), invoiceId: "i-1" as string | null })),
+        ...(d.elsewhere > 0 ? [{ amount: d.elsewhere, invoiceId: d.elsewhereOn }] : []),
+      ];
+      return [
+        id,
+        {
+          status: d.status,
+          appliedAnywhere: roundMoney(applications.reduce((sum, a) => sum + a.amount, 0)),
+          ...(d.listed ? { applications } : {}),
+        },
+      ];
+    }),
+  );
   return { orderId: ORDER, invoiceIds: INVOICES, payments, returns, carriedReturns, creditNotes };
 }
 
@@ -151,6 +159,47 @@ const paidSum = (ps: readonly Pay[]) =>
 const EXTERNAL_REFUND = "EXTERNAL_REFUND";
 const refundDone = (r: { refundMethod?: string | null; refundedAt?: Date | null }) =>
   r.refundMethod === EXTERNAL_REFUND && r.refundedAt != null;
+
+/**
+ * SA-838b: which credit notes are this sale's OWN return credit, written from the INPUT alone (it never calls production's
+ * provenance). A note N on a PAID payment is own iff ALL hold, else its payment is a tender:
+ *   (1) at least one LIVE return (not REJECTED/CANCELLED) names N;
+ *   (2) EVERY such return is this order's own: a STANDARD return of this order, or an INLINE return with an item sold here;
+ *   (3) a STANDARD return: N was issued against one of THIS order's invoices;
+ *   (4) an INLINE return: every item is sold here, and N carries no invoice at all or one of THIS order's invoices (a note
+ *       stamped with ANOTHER order's invoice is never own: fail closed).
+ */
+function ownNoteIds(input: CounterReturnSplitInput): Set<string> {
+  type Naming = { inline: boolean; items: readonly (string | null | undefined)[] };
+  const live = new Map<string, Naming[]>();
+  const add = (noteId: string | null, n: Naming) => {
+    if (noteId) live.set(noteId, [...(live.get(noteId) ?? []), n]);
+  };
+  for (const r of input.returns) {
+    if (r.status === "REJECTED" || r.status === "CANCELLED") continue;
+    add(r.creditNoteId, { inline: false, items: [] });
+  }
+  for (const c of input.carriedReturns ?? []) {
+    if (c.status === "REJECTED" || c.status === "CANCELLED") continue;
+    add(c.creditNoteId, { inline: true, items: (c.items ?? []).map((i) => i.sourceOrderId) });
+  }
+  const own = new Set<string>();
+  for (const p of input.payments) {
+    if (p.status !== "PAID" || !p.creditNoteId) continue;
+    const naming = live.get(p.creditNoteId) ?? [];
+    const issuedOn = p.creditNote?.invoiceId;
+    const onThisOrder = !!issuedOn && input.invoiceIds.includes(issuedOn);
+    const everyOwn = naming.every((n) =>
+      n.inline
+        ? n.items.some((o) => o === ORDER) &&
+          n.items.every((o) => o === ORDER) &&
+          (!issuedOn || onThisOrder)
+        : onThisOrder,
+    );
+    if (naming.length >= 1 && everyOwn) own.add(p.creditNoteId);
+  }
+  return own;
+}
 
 /**
  * The module docs as an oracle, written from the INPUT alone (it never calls pricing's settlement): the sale's LIVE own
@@ -185,6 +234,7 @@ function oracle(input: CounterReturnSplitInput) {
   }
   const onInvoices = (invoiceId: string | null | undefined): boolean =>
     !!invoiceId && input.invoiceIds.includes(invoiceId);
+  const ownNotes = ownNoteIds(input);
   const seen = new Set<string>();
   let kept = 0;
   let pending = false;
@@ -217,7 +267,7 @@ function oracle(input: CounterReturnSplitInput) {
             p.status === "PAID" &&
             !!l.noteId &&
             p.creditNoteId === l.noteId &&
-            onInvoices(p.creditNote?.invoiceId),
+            ownNotes.has(l.noteId),
         )
         .reduce((s, p) => s + Number(p.amount), 0),
     );
@@ -260,15 +310,12 @@ describe("counterReturnSplit: seeded properties (#3576 review nit)", () => {
     }
   });
 
-  it("a PAID payment with no credit note, or whose note was issued against ANOTHER order's invoice, is always a tender", () => {
+  it("a PAID payment whose note the SA-838b oracle does not prove this order's own return credit is always a tender", () => {
     for (const input of cases) {
       const r = counterReturnSplit(input);
+      const own = ownNoteIds(input);
       const alwaysTender = input.payments.filter(
-        (p) =>
-          p.status === "PAID" &&
-          (!p.creditNoteId ||
-            !p.creditNote?.invoiceId ||
-            !input.invoiceIds.includes(p.creditNote.invoiceId)),
+        (p) => p.status === "PAID" && (!p.creditNoteId || !own.has(p.creditNoteId)),
       );
       expect(cents(r.tenderPaid)).toBeGreaterThanOrEqual(cents(paidSum(alwaysTender)));
     }
@@ -281,14 +328,41 @@ describe("counterReturnSplit: seeded properties (#3576 review nit)", () => {
     }
   });
 
-  it("a carried INLINE return with nothing sold on this order never changes anything", () => {
+  it("adding a return that names a note can only move it own -> tender; one naming ANOTHER note or none changes nothing", () => {
+    // a return filed on another order and sold only elsewhere: never this order's own, but it VETOES a note it names
+    const foreign = (creditNoteId: string | null): ReturnProvenance =>
+      ({
+        id: "rc-added",
+        creditNoteId,
+        orderId: "o-b",
+        kind: "INLINE",
+        status: "REFUNDED",
+        refundMethod: "CREDIT_NOTE",
+        refundedAt: null,
+        items: [{ sourceOrderId: "o-z", subtotal: "1.00", taxAmount: "0.00", categoryTax: null }],
+      }) as ReturnProvenance;
+    const withAdded = (input: CounterReturnSplitInput, added: ReturnProvenance) => ({
+      ...input,
+      carriedReturns: [...(input.carriedReturns ?? []), added],
+    });
     for (const input of cases) {
-      const own = (input.carriedReturns ?? []).filter((c) =>
-        (c.items ?? []).some((i) => i.sourceOrderId === ORDER),
-      );
-      expect(counterReturnSplit(input)).toEqual(
-        counterReturnSplit({ ...input, carriedReturns: own }),
-      );
+      const base = counterReturnSplit(input);
+      const own = ownNoteIds(input);
+      for (const noteId of NOTES) {
+        const after = counterReturnSplit(withAdded(input, foreign(noteId)));
+        // monotone: money only moves from the own return credit to the tenders, never the other way
+        expect(cents(after.tenderPaid)).toBeGreaterThanOrEqual(cents(base.tenderPaid));
+        expect(cents(after.returnCredit)).toBeLessThanOrEqual(cents(base.returnCredit));
+        // a note that was already a tender stays one: the added return changes nothing for it
+        if (!own.has(noteId)) {
+          expect(cents(after.tenderPaid)).toBe(cents(base.tenderPaid));
+          expect(cents(after.returnCredit)).toBe(cents(base.returnCredit));
+        }
+      }
+      // a foreign return naming no note, or a note no payment of this order applies, changes nothing at all
+      for (const noteId of [null, "cn-unapplied"]) {
+        expect(counterReturnSplit(withAdded(input, foreign(noteId)))).toEqual(base);
+      }
     }
   });
 
