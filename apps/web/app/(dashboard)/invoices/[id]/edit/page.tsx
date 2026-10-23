@@ -21,7 +21,7 @@ import {
 import { useProducts } from "@/lib/api/products";
 import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
 import { PRICE_LAYER_FAILED_COPY, PriceLayerNotice } from "@/components/PriceLayerNotice";
-import { customerPricingGate } from "@/lib/customer-pricing-gate";
+import { customerPricingGate, gateNoticeLayer } from "@/lib/customer-pricing-gate";
 import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -1247,8 +1247,11 @@ export default function EditInvoicePage() {
                 </div>
               )}
               <PriceLayerNotice
-                layer={priceLayer}
-                unconfirmed={priceBlocked}
+                layer={gateNoticeLayer(pickGate, priceLayer, () => {
+                  void customerQuery.refetch();
+                  void customerPricesQuery.refetch();
+                })}
+                unconfirmed={priceBlocked || pickGate.readFailed}
                 className="block text-xs text-amber-700"
               />
               <Button
