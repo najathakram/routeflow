@@ -9,9 +9,11 @@ import {
   fixLinksFor,
   incidentBucket,
   incidentChangedMs,
+  isRevertPr,
   landedAt,
   linkItemFor,
   reconcile,
+  revertedNumbers,
 } from "./reconcile.mjs";
 import { summarizeChecks } from "./collector.mjs";
 
@@ -596,8 +598,30 @@ export function buildSnapshot({
   // "Merged, awaiting deploy" (itemStatus/itemStatusLabel keep the recorded status; no events).
   const landedByItem = new Map(); // item id -> { number, at } newest landed merged PR
   const openByItem = new Set(openPrs.map((p) => p.item).filter(Boolean));
+  // Reverts never label, and clear the label of the PR they undo when they merged after it.
+  const reverted = new Set();
+  for (const r of mergedRaw.filter(isRevertPr)) {
+    const rAt = landedAt(r, mergedRaw).at;
+    const nums = revertedNumbers(r);
+    const t = /^Revert "(.*)"$/.exec(String(r.title ?? ""))?.[1];
+    for (const o of mergedRaw) {
+      if (o === r || !(nums.has(Number(o.number)) || (t && o.title === t))) continue;
+      const oAt = landedAt(o, mergedRaw).at;
+      if (rAt !== null && oAt !== null && oAt < rAt) reverted.add(o.number);
+    }
+  }
+  // An item moved back into work (status/edit event) after the merge is not "awaiting deploy".
+  const inWork = new Set(["building", "spec", "planned", "ready"]);
+  const workEventAt = (it) =>
+    Math.max(
+      0,
+      ...(it?.history ?? [])
+        .filter((h) => h.kind === "status" || h.kind === "item.edit")
+        .map((h) => toMs(h.ts) ?? 0),
+    );
   const noteLanded = (id, p) => {
     if (!id || !state.items.has(id)) return;
+    if (isRevertPr(p) || reverted.has(p.number)) return;
     const l = landedAt(p, mergedRaw);
     if (l.at === null) return;
     const had = landedByItem.get(id);
@@ -627,7 +651,8 @@ export function buildSnapshot({
       landed &&
       out.type !== "decision" &&
       !NOT_AWAITING.has(out.status) &&
-      !openByItem.has(out.id)
+      !openByItem.has(out.id) &&
+      !(inWork.has(out.status) && workEventAt(state.items.get(out.id)) > landed.at)
     ) {
       out.itemStatus = out.status;
       out.itemStatusLabel = out.statusLabel;

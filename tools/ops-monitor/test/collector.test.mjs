@@ -1621,11 +1621,32 @@ test("bugs: a git spawn failure surfaces as such, never as 'registry not found'"
   }
 });
 
+test("D6 a queued check is pending, never not-run and never success", () => {
+  const n = COL.normalizeContext;
+  const cr = (over) => ({ __typename: "CheckRun", name: "verify", startedAt: null, ...over });
+  for (const status of ["QUEUED", "WAITING", "REQUESTED", "PENDING"])
+    assert.equal(n(cr({ status, conclusion: null })).state, "pending");
+  const g = (runs) => COL.summarizeChecks(runs, {}).gate;
+  assert.equal(g([{ name: "verify", state: "pending" }]), "pending");
+  assert.equal(
+    g([
+      { name: "verify", state: "pending" },
+      { name: "e2e", state: "success" },
+    ]),
+    "pending",
+  );
+  assert.equal(
+    g([
+      { name: "verify", state: "notrun" },
+      { name: "e2e", state: "success" },
+    ]),
+    "not-run",
+  );
+});
+
 test("D6 normalizeContext/summarizeChecks: never-started checks are not-run, never failure", () => {
   const n = COL.normalizeContext;
   const cr = (over) => ({ __typename: "CheckRun", name: "verify", startedAt: null, ...over });
-  assert.equal(n(cr({ status: "QUEUED", conclusion: null })).state, "notrun");
-  assert.equal(n(cr({ status: "WAITING", conclusion: null })).state, "notrun");
   assert.equal(n(cr({ status: "COMPLETED", conclusion: "CANCELLED" })).state, "notrun");
   assert.equal(n(cr({ status: "COMPLETED", conclusion: "SKIPPED" })).state, "notrun");
   // a started run keeps its normal reading; a missing startedAt key keeps the old one
