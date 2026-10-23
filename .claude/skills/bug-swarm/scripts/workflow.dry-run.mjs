@@ -54,31 +54,60 @@ export async function runWorkflow(scenario, args = {}) {
     ui: true,
     extractionFirst: false,
   }));
+  const lastHead = {};
+  const manifestBugs =
+    scenario.manifestBugs ??
+    scenario.clusters.flatMap((c) => c.rows.map((r) => ({ row: r, risk: "LOW", status: "live" })));
   const pick = (v, n) => (typeof v === "function" ? v(n) : v);
   const agent = async (prompt, opts = {}) => {
     calls.push({ prompt, ...opts });
     const [kind, id] = String(opts.label).split(":");
+    if (scenario.throwOn === opts.label) throw new Error("boom");
     switch (kind) {
       case "triage":
-        return { run: args.run, bugs: [] };
+        return scenario.triageNull ? null : { run: args.run, bugs: [] };
       case "cluster":
-        return { clusters, excluded: scenario.excluded ?? [] };
+        return {
+          clusters,
+          excluded: scenario.excluded ?? [],
+          parked: scenario.parked ?? [],
+          unaccounted: scenario.unaccounted ?? [],
+          overCap: !!scenario.overCap,
+          bugs: manifestBugs,
+        };
       case "pack":
-        return "ok";
+        return scenario.packFail
+          ? { ok: false, path: "", bytes: 0 }
+          : { ok: true, path: `/p/${id}.md`, bytes: 100 };
       case "build":
       case "buildfix":
       case "reviewfix":
+        if (scenario.worktreeFailed && kind === "build")
+          return {
+            status: "worktree-failed",
+            message: "dir exists",
+            commits: [],
+            redValues: [],
+            specEdits: [],
+            lesson: "",
+            worktree: "",
+            head: "",
+          };
+        lastHead[id] = `head-${id}-${(lastHead[id + "n"] = (lastHead[id + "n"] ?? 0) + 1)}`;
         return {
+          status: "ok",
           commits: [`sha-${id}`],
           redValues: ["expected 1 got 2"],
           specEdits: [],
           lesson: "none",
           worktree: `/wt/${id}`,
+          head: lastHead[id],
         };
       case "gate": {
         gateN[id] = (gateN[id] ?? 0) + 1;
         const ok = pick(scenario.gateGreen, gateN[id]);
-        return { ok, steps: [{ name: "jest", ok, tail: ok ? "" : "boom" }] };
+        const head = scenario.staleHead ? "old-head" : lastHead[id];
+        return { ok, head, steps: [{ name: "jest", ok, tail: ok ? "" : "boom" }] };
       }
       case "review":
       case "recheck": {
@@ -218,6 +247,110 @@ export async function runAll() {
     { ...ARGS, avoidFiles: ["apps/api/src/orders/orders.service.ts"] },
   );
   assert.ok(avoid.calls.find((c) => c.label === "build:c1").prompt.includes("orders.service.ts"));
+
+  // 8. HIGH / not-live bug in the cluster result never reaches Build.
+  const high = await runWorkflow(
+    {
+      clusters: [
+        { id: "c1", rows: ["1"] },
+        { id: "c2", rows: ["2"] },
+      ],
+      manifestBugs: [
+        { row: "1", risk: "LOW", status: "live" },
+        { row: "2", risk: "HIGH", status: "live" },
+      ],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    ARGS,
+  );
+  assert.equal(count(high.calls, /^build:/), 1);
+  assert.equal(high.calls.find((c) => c.label === "build:c1") !== undefined, true);
+  assert.equal(high.result.clusters.length, 1);
+  assert.ok(high.result.excluded.some((e) => e.row === "2"));
+
+  // 9. Triage dead: every requested row unaccounted, nothing else runs.
+  const dead = await runWorkflow(
+    { clusters: two, triageNull: true, gateGreen: true, verdict: "PASS" },
+    ARGS,
+  );
+  assert.equal(dead.calls.length, 1);
+  assert.deepEqual([...dead.result.unaccounted], ["1", "2"]);
+  assert.match(dead.result.error, /triage/);
+
+  // 10. A stage throw parks the cluster with the stage name.
+  const thrown = await runWorkflow(
+    { clusters: [two[0]], throwOn: "gate:c1", gateGreen: true, verdict: "PASS" },
+    ARGS,
+  );
+  assert.match(thrown.result.clusters[0].parked, /stage Gate threw/);
+  assert.equal(count(thrown.calls, /^review:/), 0);
+  assert.ok(thrown.result.parked.some((p) => /stage Gate/.test(p.reason)));
+
+  // 11. A stale gate head is red: one fix round, then parked.
+  const stale = await runWorkflow(
+    { clusters: [two[0]], staleHead: true, gateGreen: true, verdict: "PASS" },
+    ARGS,
+  );
+  assert.equal(count(stale.calls, /^buildfix:/), 1);
+  assert.equal(count(stale.calls, /^gate:/), 2);
+  assert.equal(count(stale.calls, /^review:/), 0);
+  assert.ok(stale.result.clusters[0].parked);
+  const rounds = stale.calls
+    .filter((c) => /^gate:/.test(c.label))
+    .map((c) => /gate-c1-r(\d)\.json/.exec(c.prompt)[1]);
+  assert.deepEqual(rounds, ["1", "2"]);
+
+  // 12. Over-cap clusters are reported parked, with overCap and unaccounted carried through.
+  const cap = await runWorkflow(
+    {
+      clusters: [two[0]],
+      parked: [{ id: "c9" }],
+      overCap: true,
+      unaccounted: ["7"],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    ARGS,
+  );
+  assert.equal(cap.result.overCap, true);
+  assert.ok(cap.result.parked.some((p) => p.id === "c9"));
+  assert.deepEqual([...cap.result.unaccounted], ["7"]);
+
+  // 13. worktree-failed and pack failure park the cluster; missing rows reports an error.
+  const wtf = await runWorkflow(
+    { clusters: [two[0]], worktreeFailed: true, gateGreen: true, verdict: "PASS" },
+    ARGS,
+  );
+  assert.match(wtf.result.clusters[0].parked, /worktree-failed/);
+  assert.equal(count(wtf.calls, /^gate:/), 0);
+  const pf = await runWorkflow(
+    { clusters: [two[0]], packFail: true, gateGreen: true, verdict: "PASS" },
+    ARGS,
+  );
+  assert.equal(pf.result.clusters[0].parked, "pack failed");
+  assert.equal(count(pf.calls, /^build:/), 0);
+  const norows = await runWorkflow(
+    { clusters: two, gateGreen: true, verdict: "PASS" },
+    { ...ARGS, rows: undefined },
+  );
+  assert.ok(norows.result.error);
+  assert.equal(norows.calls.length, 0);
+
+  // 14. Full-slug names, cluster flags, avoid on gate.
+  const flags = await runWorkflow(
+    { clusters: [two[0]], gateGreen: true, verdict: "PASS" },
+    { ...ARGS, avoidFiles: ["a/b.ts"] },
+  );
+  const cl = flags.calls.find((c) => c.label === "cluster").prompt;
+  assert.ok(
+    cl.includes("--max 4") && cl.includes('--avoid "a/b.ts"') && cl.includes('--rows "1,2"'),
+  );
+  assert.ok(cl.includes("Hard rules"));
+  assert.ok(flags.calls.find((c) => c.label === "gate:c1").prompt.includes('--avoid "a/b.ts"'));
+  const bp = flags.calls.find((c) => c.label === "build:c1").prompt;
+  assert.ok(bp.includes(`--branch "fix/${ARGS.run}-c1"`) && bp.includes(`/repo-wt-${ARGS.run}-c1`));
+  assert.equal(flags.result.clusters[0].branch, `fix/${ARGS.run}-c1`);
 
   return out;
 }
