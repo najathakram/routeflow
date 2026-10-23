@@ -120,14 +120,15 @@ async function main() {
       const since = `now() - interval '${months} months'`;
       ({ rows: zoneRows } = await client.query(`SELECT "tenantId", timezone FROM "TenantConfig"`));
       const q = (sql) => client.query(sql).then((r) => r.rows);
-      const [cn, rf, wo] = await Promise.all([
-        q(`SELECT "tenantId", "createdAt" AS at, amount::float8 AS amount FROM "CreditNote"
-            WHERE status <> 'VOID' AND "createdAt" >= ${since}`),
-        q(`SELECT "tenantId", "refundedAt" AS at, "refundAmount"::float8 AS amount FROM "Return"
-            WHERE "refundMethod" = 'EXTERNAL_REFUND' AND "refundedAt" >= ${since}`),
-        q(`SELECT "tenantId", "writtenOffAt" AS at, total::float8 AS amount FROM "Invoice"
-            WHERE status = 'WRITTEN_OFF' AND "writtenOffAt" >= ${since}`),
-      ]);
+      const cn =
+        await q(`SELECT "tenantId", "createdAt" AS at, amount::float8 AS amount FROM "CreditNote"
+            WHERE status <> 'VOID' AND "createdAt" >= ${since}`);
+      const rf =
+        await q(`SELECT "tenantId", "refundedAt" AS at, "refundAmount"::float8 AS amount FROM "Return"
+            WHERE "refundMethod" = 'EXTERNAL_REFUND' AND "refundedAt" >= ${since}`);
+      const wo =
+        await q(`SELECT "tenantId", "writtenOffAt" AS at, total::float8 AS amount FROM "Invoice"
+            WHERE status = 'WRITTEN_OFF' AND "writtenOffAt" >= ${since}`);
       events = [
         ...cn.map((r) => ({ ...r, kind: "credit" })),
         ...rf.map((r) => ({ ...r, kind: "refund", amount: r.amount ?? 0 })),
