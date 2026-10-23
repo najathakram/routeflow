@@ -91,7 +91,10 @@ jobs:
     name: Replay migrations on a fresh database
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 30, not 15: a schema PR runs the FULL DB-spec step, which alone takes over 13 min. #3626's
+    # replay was cancelled twice at the 15-min mark mid-pass with every spec green so far
+    # (run 39905899177, step 9 "DB-backed specs" 06:10:33-06:23:31).
+    timeout-minutes: 30
 
     services:
       postgres:
