@@ -1,7 +1,25 @@
+import { API_ERROR_CODES } from "@routeflow/types";
 import { pricesUnconfirmed } from "@/components/PriceLayerNotice";
 import type { CustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
+import { parsePlanGate } from "@/lib/plan-gate";
 
-type ReadState = { isPending?: boolean; isLoading?: boolean; isError?: boolean; data?: unknown };
+type ReadState = {
+  isPending?: boolean;
+  isLoading?: boolean;
+  isError?: boolean;
+  data?: unknown;
+  error?: unknown;
+};
+
+/**
+ * SA-884 rule 1: the tenant's PLAN lacks the read's flag: an axios 403 whose body is the PLAN_GATE code. A role 403,
+ * PLAN_GATE_UNAVAILABLE (entitlements unreadable) or any other failure is not a plan answer.
+ */
+function isPlanGate403(error: unknown): boolean {
+  const status = (error as { response?: { status?: unknown } } | null | undefined)?.response
+    ?.status;
+  return status === 403 && parsePlanGate(error)?.code === API_ERROR_CODES.PLAN_GATE;
+}
 
 /**
  * SA-868 (W-693): money fails CLOSED. A staff form that pre-fills a customer's price may suggest one only once the
@@ -33,7 +51,16 @@ export function customerPricingGate(i: {
   // Waiting = no data yet and no error. TanStack v5 `isPending` (a query paused offline is pending but not loading); a
   // caller without it falls back to `isLoading`. Fails closed: a paused read blocks the pick like a loading one.
   const waiting = (q: ReadState) => !q.isError && q.data == null && !!(q.isPending ?? q.isLoading);
-  const readFailed = failedRead(i.customerQuery) || failedRead(i.customerPricesQuery);
+  // SA-883 #3: a plan without flag.pricing_tiers gets 403 (PLAN_GATE) on GET /customers/:id/prices. That tenant has no
+  // customer-product price rows to honour, so the read is SETTLED EMPTY (neither failed nor waiting) and the pick is
+  // priced by the customer's own tier. ONLY this read and ONLY the PLAN_GATE code (SA-884): a role 403, a 5xx, a 404
+  // or a network error still fails closed, and so does any error on the customer read.
+  const pricesPlanGated =
+    !!i.customerPricesQuery.isError &&
+    i.customerPricesQuery.data == null &&
+    isPlanGate403(i.customerPricesQuery.error);
+  const readFailed =
+    failedRead(i.customerQuery) || (failedRead(i.customerPricesQuery) && !pricesPlanGated);
   const pending =
     waiting(i.customerQuery) ||
     waiting(i.customerPricesQuery) ||
