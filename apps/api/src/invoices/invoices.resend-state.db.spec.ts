@@ -212,8 +212,8 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
     expect(await state(id)).toMatchObject({ state: "unchanged", lastSentTo: "ap@resend.test" });
     expect(await emailed(id)).toBe(1);
 
-    // the order is edited after the email: the invoice's customer-visible content changes
-    await prisma.invoice.update({ where: { id }, data: { subject: "Now with a subject" } });
+    // the invoice is edited after the email: a customer-visible field changes (subject is not printed, so it is not one)
+    await prisma.invoice.update({ where: { id }, data: { notes: "Now with a printed note" } });
     expect((await state(id)).state).toBe("changedSinceSent");
 
     await email(id);
@@ -267,7 +267,8 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
     await run(() => invoicesService.revertInvoiceToDraft(id));
     expect((await row(id)).sentAt).toBeNull();
     const s = await state(id);
-    expect(s.state).toBe("unchanged");
+    // the revert puts the plain-send stage back to DRAFT, a different document from the FINAL that was emailed
+    expect(s.state).toBe("changedSinceSent");
     expect(s.lastSentAt).not.toBeNull();
   }, 60_000);
 
