@@ -149,6 +149,7 @@ import {
 } from "../lib/drafts-payload";
 import { useDraftAutosave, type DraftRowMeta } from "../lib/use-draft-autosave";
 import { useStopCartStore } from "../store/stopCartStore";
+import { useDraftLeaveNotice } from "./new-order/use-draft-leave-notice";
 import { CartModal } from "./new-order/CartModal";
 import { CreateCreditNoteSheet } from "./new-order/CreateCreditNoteSheet";
 import { CustomerPickerView } from "./new-order/CustomerPickerView";
@@ -1607,15 +1608,18 @@ function ProductPickView({
   }, [flushDraftQuietly]);
   useEffect(() => () => void flushDraftQuietly(), [flushDraftQuietly]);
   const navigation = useNavigation();
+  // Row 699: a kept draft is no longer silent on leave ("Draft saved. Find it in Orders."); Discard stays in DraftStrip.
+  const draftLeave = useDraftLeaveNotice(getDraftId, stopCartParkable);
   useEffect(() => {
     const nav = navigation as unknown as {
       addListener: (event: "beforeRemove", cb: () => void) => () => void;
     };
     const unsubscribe = nav.addListener("beforeRemove", () => {
       void flushDraftQuietly();
+      draftLeave.announce();
     });
     return unsubscribe;
-  }, [navigation, flushDraftQuietly]);
+  }, [navigation, flushDraftQuietly, draftLeave.announce]);
   useEffect(() => {
     if (Platform.OS !== "web") return;
     if (typeof document === "undefined") return;
@@ -1640,6 +1644,7 @@ function ProductPickView({
     // undeleted — DraftStrip would then offer an already-submitted order.
     const id = getDraftId();
     if (!id) return;
+    draftLeave.markFinalized();
     discardDraft();
     await updateDraftMutation
       .mutateAsync({
