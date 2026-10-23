@@ -93,8 +93,10 @@ const SETTLE_CALLERS: Record<string, string> = {
   "invoices/invoices.service.ts#createSplitInvoices":
     "own tx: lockOrderRow (SA-706); caller's tx: lockStopOrdersAndFit (completeWithPayment, SA-706c)",
   "invoices/invoices.service.ts#createPartialFromOrder": "lockOrderRow, first statement (SA-706)",
-  "invoices/invoices.service.ts#markSent":
-    "lockInvoiceRow (Order then Invoice, SA-404) before lockCreditsForSend",
+  // SA-860: the settle call moved out of markSent into the ONE shared helper. It takes no lock itself: BOTH callers (markSent's
+  // tx and the issuing dry run, readSendSnapshot) take lockInvoiceRow (Order then Invoice, SA-404) and then lockCreditsForSend first.
+  "invoices/invoice-send-snapshot.ts#runSendCredits":
+    "caller holds lockInvoiceRow (Order then Invoice, SA-404) then lockCreditsForSend: markSent and the issuing dry run (SA-860)",
   "orders/orders.service.ts#syncAndSettleOrderCredits":
     "lockOrderRow, first statement (SA-706a); create() and reconcileOrderAfterEdit both go through it",
   "orders/orders.service.ts#changeStatus":
