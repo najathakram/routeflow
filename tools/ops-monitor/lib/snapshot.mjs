@@ -928,7 +928,7 @@ export function buildSnapshot({
     if (stateItems.some((it) => !isDone(it) && (it.claimedBy === id || it.lane === id)))
       return true;
     const seenLane = state.lanes.get(id);
-    const last = seenLane?.lastHeartbeatAt ?? seenLane?.lastEventAt ?? null;
+    const last = seenLane?.lastEventAt ?? null; // heartbeats advance lastEventAt too
     return last !== null && now - last <= UNKNOWN_LANE_RECENT_DAYS * 24 * 3600_000;
   };
   const laneIds = uniq([...configured, ...state.lanes.keys()]).filter(laneShown);

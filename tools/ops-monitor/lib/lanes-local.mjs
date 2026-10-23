@@ -13,7 +13,8 @@ export const lanesFile = (home) => join(home, LANES_FILE);
 /** Path functions of the platform's own flavour, never the host's (a win32 path on a Mac). */
 const pathFor = (platform) => (platform === "win32" ? win32 : posix);
 
-/** Windows and macOS (APFS default) paths are case-insensitive. */
+/** Windows and macOS (APFS default) paths are case-insensitive. A case-sensitive APFS volume would
+ * map two checkouts differing only by case to one lane: rare, accepted. */
 const CASE_INSENSITIVE = new Set(["win32", "darwin"]);
 
 /** Absolute, forward-slash, no trailing slash; lower-cased where paths are case-insensitive. */

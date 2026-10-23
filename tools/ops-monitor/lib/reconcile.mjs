@@ -574,7 +574,7 @@ export function reconcile({
     }
     // Bounded: a retired lane id seen only in old events must not warn forever.
     for (const [id, l] of state.lanes) {
-      const last = l.lastHeartbeatAt ?? l.lastEventAt ?? null;
+      const last = l.lastEventAt ?? null; // heartbeats advance lastEventAt too: the latest of both
       if (last !== null && now - last <= UNKNOWN_LANE_RECENT_DAYS * 24 * HOUR) note(id, null);
     }
     for (const [laneId, ids] of byLane) {
