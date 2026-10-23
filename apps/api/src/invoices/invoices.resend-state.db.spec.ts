@@ -325,8 +325,9 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
     mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
     mockCreditNotes.settleOrderCreditsInTx.mockClear();
     await email(id);
-    expect(sweepCalls()).toBe(1);
-    expect(mockCreditNotes.settleOrderCreditsInTx).toHaveBeenCalledTimes(1);
+    // SA-860: twice, once in the rolled-back dry run that feeds the email snapshot and once in the real markSent commit
+    expect(sweepCalls()).toBe(2);
+    expect(mockCreditNotes.settleOrderCreditsInTx).toHaveBeenCalledTimes(2);
   }, 60_000);
 
   it("GUARD: Mark as Sent of a DRAFT still runs the credit sweep", async () => {

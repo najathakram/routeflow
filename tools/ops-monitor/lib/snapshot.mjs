@@ -612,13 +612,13 @@ export function buildSnapshot({
       if (rAt !== null && oAt !== null && oAt < rAt) reverted.add(o.number);
     }
   }
-  // An item moved back into work (status/edit event) after the merge is not "awaiting deploy".
+  // An item moved back into work (a status event, or an edit that sets the status) after the merge is not "awaiting deploy".
   const inWork = new Set(["building", "spec", "planned", "ready"]);
   const workEventAt = (it) =>
     Math.max(
       0,
       ...(it?.history ?? [])
-        .filter((h) => h.kind === "status" || h.kind === "item.edit")
+        .filter((h) => h.kind === "status" || (h.kind === "item.edit" && h.status !== undefined))
         .map((h) => toMs(h.ts) ?? 0),
     );
   const noteLanded = (id, p) => {
