@@ -1,6 +1,7 @@
 // Drift detection: compares human-typed state (events) with derived facts (PRs, branches,
 // source freshness) and returns alarms. Pure; never writes anywhere.
 import { DONE_STATUSES } from "./schema.mjs";
+import { resolveLaneId } from "./config.mjs";
 import { itemIdsFromBranch, parseEta } from "./ids.mjs";
 import { DOMAINS, areaDomain } from "./areas.mjs";
 import { isLegacyMonitorItem, isRegisterOwned } from "./sync.mjs";
@@ -560,10 +561,9 @@ export function reconcile({
   // unknown-lane: work or events naming a lane that ops/config.json does not list (a retired or
   // misspelt lane id). One alarm per lane id.
   if (Array.isArray(config?.lanes) && config.lanes.length) {
-    const known = new Set(config.lanes.map((l) => l.id));
     const byLane = new Map(); // unknown lane id -> open item ids naming it
     const note = (laneId, itemId) => {
-      if (!laneId || known.has(laneId)) return;
+      if (!laneId || resolveLaneId(laneId, config)) return;
       if (!byLane.has(laneId)) byLane.set(laneId, []);
       if (itemId && !byLane.get(laneId).includes(itemId)) byLane.get(laneId).push(itemId);
     };

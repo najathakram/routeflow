@@ -126,12 +126,18 @@ export function loadConfig(dir = specsDir()) {
   try {
     // Live-client names never live in the specs repo (lead ruling 10-19): see lib/mask.mjs.
     const { clientNames: _dropped, ...raw } = JSON.parse(readFileSync(p, "utf8"));
-    return {
+    const merged = {
       ...structuredClone(DEFAULT_CONFIG),
       ...raw,
       thresholds: { ...DEFAULT_CONFIG.thresholds, ...(raw.thresholds ?? {}) },
       laneAliases: { ...DEFAULT_CONFIG.laneAliases, ...(raw.laneAliases ?? {}) },
     };
+    // The file's lanes replace the defaults, so a merged alias may point at a lane it omits.
+    const ids = new Set((merged.lanes ?? []).map((l) => l.id));
+    merged.laneAliases = Object.fromEntries(
+      Object.entries(merged.laneAliases).filter(([, target]) => ids.has(target)),
+    );
+    return merged;
   } catch {
     return structuredClone(DEFAULT_CONFIG);
   }
@@ -154,6 +160,18 @@ export function machineId(config = DEFAULT_CONFIG, env = process.env, host = hos
   }
   if (config.machines?.[host]) return sanitize(config.machines[host]);
   return sanitize(host);
+}
+
+/**
+ * The configured lane an id stands for: a configured id is itself, else the lane its alias
+ * names when that lane is configured, else null (unknown). One resolver for alarms and snapshot.
+ */
+export function resolveLaneId(id, config = DEFAULT_CONFIG) {
+  if (!id) return null;
+  const lanes = config?.lanes ?? [];
+  if (lanes.some((l) => l.id === id)) return id;
+  const target = config?.laneAliases?.[id] ?? config?.laneAliases?.[String(id).toLowerCase()];
+  return target && lanes.some((l) => l.id === target) ? target : null;
 }
 
 /**

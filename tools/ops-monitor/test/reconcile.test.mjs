@@ -940,3 +940,17 @@ test("unknown-lane: the lanes arm is bounded to 7 days; open items are not", () 
     .sort();
   assert.deepEqual(ids, ["unknown-lane:ancient", "unknown-lane:fresh"]);
 });
+
+test("unknown-lane: aliased lane ids resolve to their target and raise nothing", async () => {
+  const { DEFAULT_CONFIG: LIVE } = await import("../lib/config.mjs");
+  const state = mkState([
+    item("1", { lane: "pc-lane" }),
+    item("2", { claimedBy: "coordinator" }),
+    item("3", { lane: "ops-monitor" }),
+    item("4", { lane: "ghost" }),
+  ]);
+  const ids = run({ state, config: LIVE })
+    .filter((a) => a.kind === "unknown-lane")
+    .map((a) => a.id);
+  assert.deepEqual(ids, ["unknown-lane:ghost"]);
+});

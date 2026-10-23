@@ -1689,3 +1689,36 @@ test("lanes: unconfigured lanes appear only with open work or activity in the la
   assert.ok(!s.alarms.some((a) => a.id === "unknown-lane:retired-lane"));
   assert.ok(s.alarms.some((a) => a.id === "unknown-lane:fresh-lane"));
 });
+
+test("lanes: aliased lane ids fold into their target row, no separate row", async () => {
+  const { loadConfig } = await import("../lib/config.mjs");
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const live = loadConfig(mkdtempSync(join(tmpdir(), "ops-snap-")));
+  const hb = (at, lane, session) => ev(at, "heartbeat", null, lane, { session, lastActiveAt: at });
+  const s = buildSnapshot({
+    config: live,
+    now: NOW,
+    machine: "pc",
+    sources: sources({
+      specs: okSource(30, {
+        events: [
+          hb("2026-10-19T11:50:00Z", "coordinator", "s1"),
+          ev("2026-10-19T11:00:00Z", "item.new", "901", "lead", {
+            title: "Aliased claim",
+            type: "feature",
+            status: "building",
+            lane: "ops-monitor",
+          }),
+          ev("2026-10-19T11:10:00Z", "claim", "901", "ops-monitor", {}),
+        ],
+        config: live,
+      }),
+    }),
+  });
+  const ids = s.lanes.map((l) => l.id);
+  assert.ok(!ids.includes("coordinator") && !ids.includes("ops-monitor"), ids.join());
+  assert.equal(s.lanes.find((l) => l.id === "lead").lastHeartbeatAt, "2026-10-19T11:50:00.000Z");
+  assert.ok(s.lanes.find((l) => l.id === "mm-landing").now.includes("901"));
+  assert.ok(!s.alarms.some((a) => a.kind === "unknown-lane"));
+});
