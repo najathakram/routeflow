@@ -213,9 +213,10 @@ const report = (extra) => {
   return r;
 };
 
-if (!RUN || !R || !RUN_DIR || REQUESTED.length === 0) {
+if (!RUN || !R || !RUN_DIR || !args.fromWorktree || REQUESTED.length === 0) {
   return report({
-    error: "args.run, args.repo, args.runDir and a non-empty args.rows are required",
+    error:
+      "args.run, args.repo, args.runDir, args.fromWorktree and a non-empty args.rows are required",
   });
 }
 
@@ -263,6 +264,39 @@ for (const c of clustered.clusters) {
 }
 log(`clusters: ${clusters.length}, excluded: ${excluded.length}`);
 
+// Every requested row and every manifest bug must sit in a bucket: clusters, excluded, parked, unaccounted.
+const seenKeys = new Set();
+const seenRows = new Set();
+const note = (row, sub) => {
+  if (row === undefined || row === null) return;
+  seenRows.add(String(row));
+  seenKeys.add(`${row}|${sub || "*"}`);
+};
+const noteLabel = (label) => {
+  const m = /^(.*?)([a-z])?$/.exec(String(label));
+  note(m[1], m[2]);
+  seenRows.add(String(label));
+};
+for (const c of clustered.clusters) for (const b of c.bugs) note(b.row, b.sub);
+for (const e of excluded) note(e.row, e.sub);
+for (const p of clustered.parked || []) {
+  for (const b of p.bugs || []) note(b.row, b.sub);
+  for (const l of p.rows || []) noteLabel(l);
+}
+for (const u of clustered.unaccounted || []) noteLabel(u);
+const bucketed = (row, sub) => seenKeys.has(`${row}|${sub || "*"}`) || seenKeys.has(`${row}|*`);
+const unaccounted = [...(clustered.unaccounted || []).map(String)];
+const addMissing = (label) => {
+  if (!unaccounted.includes(label)) {
+    unaccounted.push(label);
+    log(`unaccounted (in no bucket): ${label}`);
+  }
+};
+for (const r of REQUESTED) if (!seenRows.has(r)) addMissing(r);
+for (const b of manifest.bugs) {
+  if (!bucketed(b.row, b.sub)) addMissing(b.sub ? `${b.row}${b.sub}` : String(b.row));
+}
+
 // ---- Per-cluster pipeline: Pack -> Build -> Gate (+fix) -> Review (+fix) ----
 const buildBrief = (
   c,
@@ -275,11 +309,11 @@ ${AVOID_RULE}
 Worktree: ${t.exists ? `already at ${t.dir} (branch ${t.name}); work there, do not recreate it.` : `create it first: cd "${R}" && node "${SCRIPTS}/worktree.mjs" --dir "${t.dir}" --branch "${t.name}" --from "${args.fromWorktree}". If worktree.mjs exits non-zero, STOP and return status "worktree-failed" with its message in "message" (other fields empty); never reuse or delete an existing tree or branch.`}
 For each bug in order: (1) write a test that fails on the bug's own wrong value and run it; record the failing assertion text (the wrong value) in redValues; (2) make the minimal fix; (3) one commit "fix(<area>): <what> (B<id>)". Editing an existing assertion needs a line "SPEC-EDIT: <file:line> <why>" in specEdits. Put trailers on the LAST commit: "Bookkeeping-Follow-Up: pending" and "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>".
 ${RULES}
-Return {status "ok", commits (full shas), redValues, specEdits, lesson (one candidate or "none"), worktree (absolute path), head (git rev-parse HEAD after your last commit)}.`;
+Return {status "ok", commits (full shas of the commits made in THIS round; empty if you changed nothing), redValues, specEdits, lesson (one candidate or "none"), worktree (absolute path), head (git rev-parse HEAD after your last commit)}.`;
 
 const runGate = (c, wt, label, round) =>
   agent(
-    `Start the gate with Bash run_in_background (it queues behind other clusters and can run for a long time): cd "${wt}" && node "${SCRIPTS}/gate.mjs" --json "${RUN_DIR}/gate-${c.id}-r${round}.json"${c.needsDb ? " --needs-db" : ""}${avoidFlags}
+    `First stop any earlier gate of this cluster: if "${RUN_DIR}/gate-${c.id}.pid" exists, run pkill -P "$(cat "${RUN_DIR}/gate-${c.id}.pid")"; kill "$(cat "${RUN_DIR}/gate-${c.id}.pid")"; rm -f "${RUN_DIR}/gate-${c.id}.pid" (ignore errors). Then start the gate with Bash run_in_background (it queues behind other clusters and can run for a long time): cd "${wt}" && echo $$ > "${RUN_DIR}/gate-${c.id}.pid" && exec node "${SCRIPTS}/gate.mjs" --json "${RUN_DIR}/gate-${c.id}-r${round}.json"${c.needsDb ? " --needs-db" : ""}${avoidFlags}
 Then wait for it with: node "${SCRIPTS}/gate.mjs" --wait "${RUN_DIR}/gate-${c.id}-r${round}.json" (Bash timeout 600000). It prints the json and exits 0 when the gate finished, or exits 3 if it is still running: call it again, up to 5 times in total, until it exits 0. Never use sleep (it is blocked). Return {ok, running, head, base, steps:[{name, ok, tail}]} exactly as printed (keep the tail only for failed steps). If it still exits 3 after 5 calls, or the file is missing, return what you have (ok false, running true, head empty) and do not retry. Do not fix anything, do not rerun with other flags. ${RULES}`,
     { label, phase: "Gate", schema: GATE_SCHEMA, model: "haiku", effort: "low" },
   );
@@ -337,7 +371,18 @@ const results = await pipeline(
   // Gate (+ one build fix round)
   guard("Gate", async (st) => {
     phase("Gate");
-    let g = await settleGate(st.c, st.worktree, st.head, 1);
+    // An empty build (no commit) is red without spending a gate run; it consumes the one fix round.
+    const emptyBuild = !st.commits || st.commits.length === 0;
+    let g = emptyBuild
+      ? {
+          state: "red",
+          round: 1,
+          gate: {
+            ok: false,
+            steps: [{ name: "build", ok: false, tail: "the build made no commit" }],
+          },
+        }
+      : await settleGate(st.c, st.worktree, st.head, 1);
     if (g.state === "incomplete") {
       return { ...st, gate: g.gate || { ok: false, steps: [] }, parked: incompleteWhy(g) };
     }
@@ -356,6 +401,7 @@ const results = await pipeline(
     );
     if (!fix) return { ...st, gate, parked: "build fix agent died" };
     const next = { ...st, ...fix, worktree: st.worktree };
+    if (!fix.commits || fix.commits.length === 0) return { ...next, gate, parked: "no change" };
     phase("Gate");
     g = await settleGate(st.c, st.worktree, next.head, g.round);
     if (g.state !== "green") {
@@ -387,6 +433,9 @@ const results = await pipeline(
     if (!fix)
       return { ...st, verdict: "FAIL", musts: first.musts, parked: "review fix agent died" };
     const next = { ...st, ...fix, worktree: st.worktree };
+    if (!fix.commits || fix.commits.length === 0) {
+      return { ...next, verdict: "FAIL", musts: first.musts, parked: "no change" };
+    }
     phase("Gate");
     const g = await settleGate(st.c, st.worktree, next.head, st.round || 3);
     const gate = g.gate;
@@ -451,6 +500,6 @@ return report({
     ...(clustered.parked || []).map((p) => ({ ...p, reason: "over cap" })),
     ...rows.filter((r) => r.parked).map((r) => ({ id: r.id, rows: r.rows, reason: r.parked })),
   ],
-  unaccounted: clustered.unaccounted || [],
+  unaccounted,
   overCap: !!clustered.overCap,
 });

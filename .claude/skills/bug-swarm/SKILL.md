@@ -93,6 +93,7 @@ choreography into one Workflow script. The v0 steps above stay valid as the fall
   `--json`, `--needs-db`). `workflow.dry-run.mjs` proves the workflow against stubbed agents; run it with
   `node --test .claude/skills/bug-swarm/scripts/*.test.mjs` after any edit to `workflow.js`.
 - `gate.mjs` replaces the planned `gate.sh` (lead-accepted): argv arrays, no shell, because shell quoting broke the hand gate twice in runs 1-2.
+- The HIGH guard rests on Triage's risk label: a mislabelled HIGH row can reach Build; Review is the backstop.
 - **Workflow:** Triage (haiku) -> Cluster (haiku) -> per cluster Pack (sonnet) -> Build (sonnet) -> Gate (haiku,
   one build fix round) -> Review (opus, one fix round plus re-check), then a Report. A red cluster is parked.
 - **Stays with the orchestrator:** push, PRs, captures for UI clusters, the public window and landing, the

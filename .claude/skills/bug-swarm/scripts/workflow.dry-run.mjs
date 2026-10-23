@@ -84,6 +84,19 @@ export async function runWorkflow(scenario, args = {}) {
       case "build":
       case "buildfix":
       case "reviewfix":
+        if (
+          scenario.emptyBuild === "always" ||
+          (scenario.emptyBuild === "first" && kind === "build")
+        )
+          return {
+            status: "ok",
+            commits: [],
+            redValues: [],
+            specEdits: [],
+            lesson: "none",
+            worktree: `/wt/${id}`,
+            head: "empty",
+          };
         if (scenario.worktreeFailed && kind === "build")
           return {
             status: "worktree-failed",
@@ -320,7 +333,7 @@ export async function runAll() {
   );
   assert.equal(cap.result.overCap, true);
   assert.ok(cap.result.parked.some((p) => p.id === "c9"));
-  assert.deepEqual([...cap.result.unaccounted], ["7"]);
+  assert.ok(cap.result.unaccounted.includes("7"));
 
   // 13. worktree-failed and pack failure park the cluster; missing rows reports an error.
   const wtf = await runWorkflow(
@@ -406,6 +419,46 @@ export async function runAll() {
   );
   assert.equal(count(relay.calls, /^build:/), 1);
   assert.ok(relay.result.excluded.some((e) => e.row === "2"));
+
+  // 18. Reconciliation: a manifest bug and a requested row that no bucket holds become unaccounted.
+  const recon = await runWorkflow(
+    {
+      clusters: [two[0]],
+      triageBugs: [
+        { row: "1", risk: "LOW", status: "live" },
+        { row: "3", risk: "LOW", status: "live" },
+      ],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    { ...ARGS, rows: ["1", "3", "5"] },
+  );
+  assert.deepEqual([...recon.result.unaccounted].sort(), ["3", "5"]);
+
+  // 19. Empty build is red: the fix round runs once (no gate before it); a second empty parks "no change".
+  const e1 = await runWorkflow(
+    { clusters: [two[0]], emptyBuild: "first", gateGreen: true, verdict: "PASS" },
+    ARGS,
+  );
+  assert.equal(count(e1.calls, /^buildfix:/), 1);
+  assert.equal(count(e1.calls, /^gate:/), 1);
+  assert.ok(!e1.result.clusters[0].parked);
+  const e2 = await runWorkflow(
+    { clusters: [two[0]], emptyBuild: "always", gateGreen: true, verdict: "PASS" },
+    ARGS,
+  );
+  assert.equal(e2.result.clusters[0].parked, "no change");
+  assert.equal(count(e2.calls, /^(gate|review):/), 0);
+  assert.equal(count(e2.calls, /^buildfix:/), 1);
+
+  // 20. fromWorktree is required; the gate prompt stops an earlier gate by pid file.
+  const nofrom = await runWorkflow(
+    { clusters: two, gateGreen: true, verdict: "PASS" },
+    { ...ARGS, fromWorktree: undefined },
+  );
+  assert.ok(nofrom.result.error);
+  assert.equal(nofrom.calls.length, 0);
+  assert.ok(gp.includes("gate-c1.pid") && gp.includes("stop any earlier gate"));
 
   return out;
 }
