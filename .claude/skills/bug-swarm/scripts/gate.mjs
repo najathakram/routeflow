@@ -58,87 +58,11 @@ function lintScriptExists(root, ws) {
 
 // Specs that census files BY NAME across the repo (run 2026-10-23-bug-swarm-4: #3659 went red on one after
 // adding a script). They run when the branch ADDS a file under apps/api/prisma/, apps/api/scripts/ or scripts/.
-// Each spec runs in the lane that actually includes it: apps/api's default jest config EXCLUDES the
-// repo-truth specs (testPathIgnorePatterns), so listing them there silently skips them.
-export const CENSUS_LANES = [
-  {
-    name: "unit",
-    config: null,
-    specs: [
-      "src/common/scripts-live-target-guard.spec.ts",
-      "src/common/fixture-git-env-scrub.spec.ts",
-      "src/common/script-spec-lane.spec.ts",
-      "src/common/scripts-unscoped-delete.spec.ts",
-      "src/common/scripts-product-mirror-tripwire.spec.ts",
-      "src/common/script-money-writers.spec.ts",
-      "src/common/no-runtime-ddl.spec.ts",
-      "src/common/schema-folder.spec.ts",
-      // Scanners of the trigger dirs (prisma/*.ts, prisma/schema, prisma/migrations, scripts).
-      "src/common/tsconfig-prisma-scope.spec.ts",
-      "src/common/tsconfig-spec-prisma-scope.spec.ts",
-      "src/common/numeric-not-nan-check.spec.ts",
-      "src/common/t6-tenantid-guard.spec.ts",
-      "src/common/no-routeflow-ui-import.spec.ts",
-      "src/common/no-ui-package-import.spec.ts",
-      "src/common/units-p0a-schema.spec.ts",
-      "src/common/units-prices-v2-schema.spec.ts",
-      "src/common/wipe-order-fk-pin.spec.ts",
-      "src/common/fulfil-path-pickup-migration-shape.spec.ts",
-      "src/common/order-source-recorded-migration-shape.spec.ts",
-    ],
-  },
-  {
-    name: "repo-truth",
-    config: "jest.repo-truth.config.js",
-    specs: [
-      "src/common/size-ratchet.spec.ts",
-      "src/common/no-single-schema-path.spec.ts",
-      "src/common/owner-report-db-url.spec.ts",
-      "src/common/no-dead-deps.spec.ts",
-    ],
-  },
-];
-export const CENSUS_SPECS = CENSUS_LANES.flatMap((l) => l.specs);
-
-/** Expected specs that a lane's `jest --listTests` did not list (pure; fail-closed input for the census). */
-export function missingSpecs(listedOutput, expected) {
-  const listed = String(listedOutput)
-    .split(/\r?\n/)
-    .map((l) => l.trim().replace(/\\/g, "/"))
-    .filter(Boolean);
-  return expected.filter((spec) => !listed.some((l) => l.endsWith(`/${spec}`) || l === spec));
-}
-
-/**
- * Run one census lane from apps/api: --listTests first, FAIL if any expected spec is not listed (it
- * names it), then run the specs. exec(cmd, args) -> { status, stdout }.
- */
-export function runCensusLane(laneName, { exec } = {}) {
-  const lane = CENSUS_LANES.find((l) => l.name === laneName);
-  if (!lane) {
-    console.error(`census: unknown lane ${laneName}`);
-    return 2;
-  }
-  const run =
-    exec ??
-    ((cmd, args, stdio) =>
-      spawnSync(cmd, args, {
-        encoding: "utf8",
-        stdio: stdio ?? ["ignore", "pipe", "inherit"],
-        shell: process.platform === "win32",
-      }));
-  const cfg = lane.config ? ["-c", lane.config] : [];
-  const listed = run("npx", ["jest", ...cfg, "--listTests", ...lane.specs]);
-  const missing = missingSpecs(listed.stdout ?? "", lane.specs);
-  if (missing.length) {
-    console.error(
-      `census lane ${lane.name}: not listed by jest (would be silently skipped): ${missing.join(", ")}`,
-    );
-    return 1;
-  }
-  return run("npx", ["jest", ...cfg, ...lane.specs], "inherit").status ?? 1;
-}
+// Run 2026-10-23-bug-swarm-4 (#3659) went red on a repo-wide census; a hand-listed subset still missed ~25
+// scanners (v1.2 review of #3674). So when a trigger dir changes, run the FULL api lanes, not a list.
+export const FULL_LANE_TIMEOUT_MS = 30 * 60_000;
 const CENSUS_DIRS = ["apps/api/prisma/", "apps/api/scripts/", "scripts/"];
+const posix = (f) => f.split("\\").join("/");
 
 // Fails when a commit subject carries a (B###) label that is not one of the ids the run was given
 // (run 4 fixed row 668 under the label B668: a row id translated to a bug id).
@@ -150,10 +74,20 @@ const bad=[];
 for(const s of subjects)for(const m of s.matchAll(/\\b(B\\d+)\\b/g))if(!allowed.has(m[1]))bad.push(m[1]+" in: "+s);
 if(bad.length){console.error("commit labels outside the given ids ("+[...allowed].join(", ")+"):\\n"+bad.join("\\n"));process.exit(1);}`;
 
-/** Files ADDED in base..HEAD. */
-export function addedSince(git, base) {
-  const out = git(["diff", "--name-only", "-z", "--diff-filter=ACR", `${base}..HEAD`]);
-  return out.split("\0").filter(Boolean);
+/**
+ * Every path touched in base..HEAD by an add, copy, modify, rename or delete (for a rename or copy BOTH the
+ * old and the new path), so editing, deleting or moving a script also counts.
+ */
+export function touchedSince(git, base) {
+  const out = git(["diff", "--name-status", "-z", "--diff-filter=ACMRD", "-M", `${base}..HEAD`]);
+  const parts = out.split("\0").filter(Boolean);
+  const files = [];
+  for (let i = 0; i < parts.length;) {
+    const status = parts[i++];
+    const n = /^[RC]/.test(status) ? 2 : 1;
+    for (let k = 0; k < n && i < parts.length; k++) files.push(parts[i++]);
+  }
+  return [...new Set(files)];
 }
 
 /** { base, files } for the whole branch: merge-base with origin/master, deleted files dropped. */
@@ -167,7 +101,7 @@ const workspaceOf = (f) => /^(apps|packages)\/[^/]+(?=\/)/.exec(f)?.[0] ?? null;
 
 export function planGate({
   changedFiles,
-  addedFiles = [],
+  touchedFiles = [],
   ids = [],
   idSpace,
   needsDb = false,
@@ -238,15 +172,15 @@ export function planGate({
     if (exists(path.join(root, test))) add(`self-test:scripts/${m[1]}`, root, ["node", test]);
   }
 
-  if (addedFiles.some((f) => CENSUS_DIRS.some((d) => f.startsWith(d)))) {
-    for (const lane of CENSUS_LANES) {
-      add(`census:${lane.name}`, path.join(root, "apps/api"), [
-        "node",
-        fileURLToPath(import.meta.url),
-        "--run-census",
-        lane.name,
-      ]);
-    }
+  if (touchedFiles.some((f) => CENSUS_DIRS.some((d) => posix(f).startsWith(d)))) {
+    const api = path.join(root, "apps/api");
+    add("census:unit", api, ["npx", "jest"], FULL_LANE_TIMEOUT_MS);
+    add(
+      "census:repo-truth",
+      api,
+      ["npx", "jest", "-c", "jest.repo-truth.config.js"],
+      FULL_LANE_TIMEOUT_MS,
+    );
   }
   add("size-ratchet", path.join(root, "apps/api"), [
     "npx",
@@ -484,8 +418,6 @@ export function stopGate(file, { platform = process.platform, exec, killTree } =
 }
 
 export async function main(argv = process.argv.slice(2)) {
-  const ri = argv.indexOf("--run-census");
-  if (ri !== -1) return runCensusLane(argv[ri + 1]);
   const si = argv.indexOf("--stop");
   if (si !== -1) {
     if (!argv[si + 1]) {
@@ -525,7 +457,7 @@ export async function main(argv = process.argv.slice(2)) {
   const head = git(["rev-parse", "HEAD"]).trim();
   if (jsonOut && !dryRun && process.env.RF_HEAVY_SLOT_HELD !== "1") beginJson(jsonOut, head);
   const { base, files } = changedSince(git);
-  const addedFiles = addedSince(git, base);
+  const touchedFiles = touchedSince(git, base);
   const ii = argv.indexOf("--ids");
   const ids =
     ii === -1
@@ -538,7 +470,7 @@ export async function main(argv = process.argv.slice(2)) {
   const idSpace = si2 === -1 ? undefined : argv[si2 + 1];
   const steps = planGate({
     changedFiles: files,
-    addedFiles,
+    touchedFiles,
     ids,
     idSpace,
     needsDb,

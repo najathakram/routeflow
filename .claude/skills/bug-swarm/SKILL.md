@@ -104,9 +104,10 @@ choreography into one Workflow script. The v0 steps above stay valid as the fall
   `W-679`, `B668`); `gate.mjs --ids a,b --id-space row|bug` adds an `id-labels` step that fails on a `(B###)` subject
   outside the given ids; a bare `B123` word counts too, so pass `--ids 599,B123` when a branch legitimately
   names a bug.
-- **Census (run 2026-10-23-bug-swarm-4):** a branch that ADDS a file under `apps/api/prisma/`, `apps/api/scripts/` or
-  `scripts/` (including a file moved or copied in, `--diff-filter=ACR`) also runs the file-census specs, each in its own jest lane (`CENSUS_LANES` in `gate.mjs`; the step lists
-  the specs first and fails if jest would skip one).
+- **Census (run 2026-10-23-bug-swarm-4, #3659; review of #3674):** a branch that touches ANY file under
+  `apps/api/prisma/`, `apps/api/scripts/` or `scripts/` (add, modify, delete, rename or copy; both paths of a move,
+  `--diff-filter=ACMRD`) runs the FULL api lanes in `gate.mjs`: `npx jest` and `npx jest -c jest.repo-truth.config.js`
+  in `apps/api`, 30 minutes each. A hand-listed subset of census specs missed about 25 scanners, so none is kept.
 - **Workflow:** Triage+Pack (sonnet) -> Cluster (haiku) -> per cluster Build (sonnet) -> Gate (haiku,
   one build fix round) -> Review (opus, one fix round plus re-check), then a Report. A red cluster is parked.
 - **Stays with the orchestrator:** push, PRs, captures for UI clusters, the public window and landing, the

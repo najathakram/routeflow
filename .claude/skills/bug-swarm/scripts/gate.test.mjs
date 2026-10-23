@@ -8,11 +8,8 @@ import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync } from 
 import { tmpdir } from "node:os";
 import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
 import {
-  addedSince,
-  CENSUS_LANES,
-  CENSUS_SPECS,
-  missingSpecs,
-  runCensusLane,
+  touchedSince,
+  FULL_LANE_TIMEOUT_MS,
   commandLineOf,
   holdPidFile,
   stopGate,
@@ -488,73 +485,93 @@ test("stopGate kills only a gate.mjs pid, per platform, and removes the file", (
   assert.equal(stopGate(f3, { exec: () => "gate.mjs" }).stopped, false);
 });
 
-test("census steps: an ADDED file under apps/api/prisma, apps/api/scripts or scripts runs both lanes", () => {
+test("census: any change in apps/api/prisma, apps/api/scripts or scripts runs the FULL api lanes", () => {
   for (const f of [
     "apps/api/scripts/new.mjs",
     "apps/api/prisma/seed-x.ts",
     "scripts/lib/new.mjs",
   ]) {
-    const steps = planGate({ changedFiles: [f], addedFiles: [f], ...opts });
-    for (const lane of ["unit", "repo-truth"]) {
-      const s = step(steps, `census:${lane}`);
-      assert.ok(s, `${f} ${lane}`);
-      assert.equal(norm(s.cwd), norm("/r/apps/api"));
-      assert.deepEqual(s.cmd.slice(2), ["--run-census", lane]);
-    }
+    const steps = planGate({ changedFiles: [f], touchedFiles: [f], ...opts });
+    const unit = step(steps, "census:unit");
+    const rt = step(steps, "census:repo-truth");
+    assert.equal(norm(unit.cwd), norm("/r/apps/api"));
+    assert.deepEqual(unit.cmd, ["npx", "jest"]);
+    assert.equal(norm(rt.cwd), norm("/r/apps/api"));
+    assert.deepEqual(rt.cmd, ["npx", "jest", "-c", "jest.repo-truth.config.js"]);
+    assert.equal(unit.timeoutMs, 30 * 60_000);
+    assert.equal(rt.timeoutMs, FULL_LANE_TIMEOUT_MS);
   }
-  const edited = planGate({ changedFiles: ["scripts/x.mjs"], addedFiles: [], ...opts });
-  assert.equal(step(edited, "census:unit"), undefined);
+  // Windows-style separators still match.
+  assert.ok(
+    step(planGate({ changedFiles: [], touchedFiles: ["scripts\\x.mjs"], ...opts }), "census:unit"),
+  );
   const other = planGate({
     changedFiles: ["apps/api/src/a.ts"],
-    addedFiles: ["apps/api/src/a.ts"],
+    touchedFiles: ["apps/api/src/a.ts"],
     ...opts,
   });
-  assert.equal(step(other, "census:repo-truth"), undefined);
-  assert.equal(CENSUS_SPECS.length, 23);
-  const rt = CENSUS_LANES.find((l) => l.name === "repo-truth");
-  assert.equal(rt.config, "jest.repo-truth.config.js");
-  assert.ok(rt.specs.some((s) => s.includes("no-single-schema-path")));
+  assert.equal(step(other, "census:unit"), undefined);
+  assert.equal(step(planGate({ changedFiles: [], ...opts }), "census:repo-truth"), undefined);
+  // No hand-listed spec subset remains.
+  for (const s of planGate({ changedFiles: [], touchedFiles: ["scripts/x.mjs"], ...opts }))
+    assert.ok(!s.cmd.some((a) => /\.spec\.ts$/.test(a)), s.name);
 });
 
-test("missingSpecs flags an expected spec that jest did not list", () => {
-  const exp = ["src/common/a.spec.ts", "src/common/b.spec.ts"];
-  assert.deepEqual(
-    missingSpecs("/x/apps/api/src/common/a.spec.ts\n/x/apps/api/src/common/b.spec.ts\n", exp),
-    [],
-  );
-  assert.deepEqual(missingSpecs("C:\\x\\apps\\api\\src\\common\\a.spec.ts\n", exp), [
-    "src/common/b.spec.ts",
+test("touchedSince parses name-status: add, modify, delete, and BOTH paths of a rename", () => {
+  const git = () => "A\0a.ts\0M\0b.ts\0D\0c.ts\0R100\0old.ts\0new.ts\0C75\0src.ts\0copy.ts\0";
+  assert.deepEqual(touchedSince(git, "abc"), [
+    "a.ts",
+    "b.ts",
+    "c.ts",
+    "old.ts",
+    "new.ts",
+    "src.ts",
+    "copy.ts",
   ]);
-  assert.deepEqual(missingSpecs("", exp), exp);
+  let args;
+  touchedSince((a) => ((args = a), ""), "abc");
+  assert.ok(
+    args.includes("--diff-filter=ACMRD") && args.includes("abc..HEAD") && args.includes("-M"),
+  );
 });
 
-test("runCensusLane fails closed naming the missing spec, and runs jest only when all are listed", () => {
-  const lane = CENSUS_LANES.find((l) => l.name === "repo-truth");
-  const calls = [];
-  const partial = (cmd, args) => (
-    calls.push(args),
-    { status: 0, stdout: `/x/apps/api/${lane.specs[0]}\n` }
-  );
-  assert.equal(runCensusLane("repo-truth", { exec: partial }), 1);
-  assert.equal(calls.length, 1, "no jest run after a short listing");
-  assert.ok(calls[0].includes("--listTests") && calls[0].includes("-c"));
-  const calls2 = [];
-  const full = (cmd, args) => (
-    calls2.push(args),
-    { status: 0, stdout: lane.specs.map((s) => `/x/apps/api/${s}`).join("\n") }
-  );
-  assert.equal(runCensusLane("repo-truth", { exec: full }), 0);
-  assert.equal(calls2.length, 2);
-  assert.ok(!calls2[1].includes("--listTests") && calls2[1].includes("jest.repo-truth.config.js"));
-  assert.equal(runCensusLane("nope"), 2);
-});
-
-test("addedSince lists only added files of the merge-base range", () => {
-  const calls = [];
-  const git = (a) => (calls.push(a), "a.ts\0b.ts\0");
-  assert.deepEqual(addedSince(git, "abc"), ["a.ts", "b.ts"]);
-  assert.deepEqual(calls[0].slice(0, 3), ["diff", "--name-only", "-z"]);
-  assert.ok(calls[0].includes("--diff-filter=ACR") && calls[0].includes("abc..HEAD"));
+test("touchedSince on a real repo: modify, delete and a move out of scripts/ all fire the census", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "gate-touch-"));
+  const env = scrubbedGitEnv();
+  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8", env });
+  const git = (args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", env });
+  sh("init", "-q");
+  sh("config", "user.email", "t@t");
+  sh("config", "user.name", "t");
+  mkdirSync(path.join(dir, "scripts"), { recursive: true });
+  mkdirSync(path.join(dir, "apps", "api", "scripts"), { recursive: true });
+  mkdirSync(path.join(dir, "tmp"), { recursive: true });
+  for (const f of ["scripts/m.mjs", "scripts/d.mjs", "scripts/r.mjs"])
+    writeFileSync(path.join(dir, f), "export const a = 1;\n".repeat(20));
+  sh("add", ".");
+  sh("commit", "-qm", "base");
+  const base = sh("rev-parse", "HEAD").stdout.trim();
+  const fires = (touched) =>
+    !!step(planGate({ changedFiles: [], touchedFiles: touched, ...opts }), "census:unit");
+  writeFileSync(path.join(dir, "scripts/m.mjs"), "export const a = 2;\n");
+  sh("commit", "-qam", "modify");
+  assert.deepEqual(touchedSince(git, base), ["scripts/m.mjs"]);
+  assert.ok(fires(touchedSince(git, base)));
+  const b2 = sh("rev-parse", "HEAD").stdout.trim();
+  sh("rm", "-q", "scripts/d.mjs");
+  sh("commit", "-qm", "delete");
+  assert.deepEqual(touchedSince(git, b2), ["scripts/d.mjs"]);
+  assert.ok(fires(touchedSince(git, b2)));
+  const b3 = sh("rev-parse", "HEAD").stdout.trim();
+  sh("mv", "scripts/r.mjs", "tmp/r.mjs");
+  sh("commit", "-qm", "move out");
+  const moved = touchedSince(git, b3);
+  assert.ok(moved.includes("scripts/r.mjs") && moved.includes("tmp/r.mjs"));
+  assert.ok(fires(moved));
+  const b4 = sh("rev-parse", "HEAD").stdout.trim();
+  sh("mv", "tmp/r.mjs", "apps/api/scripts/r.mjs");
+  sh("commit", "-qm", "move in");
+  assert.ok(fires(touchedSince(git, b4)));
 });
 
 test("id-labels step: a (B###) commit label outside the given ids fails; row labels pass", () => {
@@ -593,47 +610,6 @@ test("id-labels step: a (B###) commit label outside the given ids fails; row lab
   const bad = run();
   assert.equal(bad.status, 1);
   assert.match(bad.stdout + bad.stderr, /B668/);
-});
-
-test("addedSince sees a file renamed INTO apps/api/scripts (R, not A) and census fires", () => {
-  const dir = mkdtempSync(path.join(tmpdir(), "gate-rename-"));
-  const env = scrubbedGitEnv();
-  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8", env });
-  sh("init", "-q");
-  sh("config", "user.email", "t@t");
-  sh("config", "user.name", "t");
-  mkdirSync(path.join(dir, "tmp"), { recursive: true });
-  writeFileSync(path.join(dir, "tmp", "a.mjs"), "export const a = 1;\n".repeat(20));
-  sh("add", ".");
-  sh("commit", "-qm", "base");
-  const base = sh("rev-parse", "HEAD").stdout.trim();
-  mkdirSync(path.join(dir, "apps", "api", "scripts"), { recursive: true });
-  sh("mv", "tmp/a.mjs", "apps/api/scripts/a.mjs");
-  sh("commit", "-qm", "move");
-  const git = (args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", env });
-  const added = addedSince(git, base);
-  assert.deepEqual(
-    added.map((f) => f.split(path.sep).join("/")),
-    ["apps/api/scripts/a.mjs"],
-  );
-  const steps = planGate({ changedFiles: added, addedFiles: added, ...opts });
-  assert.ok(step(steps, "census:unit"));
-});
-
-test("census lists the extra scanners of the trigger dirs, each in the lane jest includes it in", () => {
-  const unit = CENSUS_LANES.find((l) => l.name === "unit").specs.map((s) => path.basename(s));
-  const rt = CENSUS_LANES.find((l) => l.name === "repo-truth").specs.map((s) => path.basename(s));
-  for (const n of [
-    "tsconfig-prisma-scope",
-    "tsconfig-spec-prisma-scope",
-    "numeric-not-nan-check",
-    "t6-tenantid-guard",
-    "no-routeflow-ui-import",
-    "no-ui-package-import",
-  ])
-    assert.ok(unit.includes(`${n}.spec.ts`), n);
-  for (const n of ["owner-report-db-url", "no-dead-deps"])
-    assert.ok(rt.includes(`${n}.spec.ts`), n);
 });
 
 test("id-labels also catches a bare B### word in a subject, and --ids may name a bug", () => {
