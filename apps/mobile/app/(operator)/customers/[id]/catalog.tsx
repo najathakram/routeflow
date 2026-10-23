@@ -23,7 +23,7 @@ import {
 } from "../../../../lib/api/customers";
 import { useAdminProducts, type AdminProduct } from "../../../../lib/api/admin";
 import { useTierLabels } from "../../../../lib/api/tier-labels";
-import { isSpecialTier, getTierPrice } from "@routeflow/pricing";
+import { customerTierFor, isSpecialTier, getTierPrice } from "@routeflow/pricing";
 import { useCustomerPriceLayer } from "../../../../lib/api/price-layer";
 import { packLinePrice } from "../../../../lib/cart-order-total";
 import { confirmedPrice } from "../../../../lib/price-layer-gate";
@@ -255,7 +255,7 @@ export default function CustomerCatalogScreen() {
   // An msrp-only override row (created on web) has pricingTier null — it prices
   // at the customer's default tier, so that tier is needed for the row's price.
   const { data: customerDetail } = useCustomer(customerId);
-  const customerTier = customerDetail?.pricingTier ?? 1;
+  const customerTier = customerTierFor(undefined, customerDetail?.pricingTier);
   // S19b slice D (SA-811a/813): the row's price is billing's own (the customer layer); flag off = no request, master's number.
   const priceLayer = useCustomerPriceLayer(customerId);
   const { data: productsData, isLoading: productsLoading } = useAdminProducts({
@@ -319,7 +319,7 @@ export default function CustomerCatalogScreen() {
           ) : (
             <View style={styles.list}>
               {priceList.map((cp, i) => {
-                const effectiveTier = cp.pricingTier ?? customerTier;
+                const effectiveTier = customerTierFor(cp.pricingTier, customerTier);
                 const clp = cp.product
                   ? packLinePrice(cp.product, effectiveTier, priceLayer.layerOf(cp.productId))
                   : null;

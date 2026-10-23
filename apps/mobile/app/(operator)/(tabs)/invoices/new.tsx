@@ -101,7 +101,12 @@ import { useAuthStore } from "../../../../lib/auth-store";
 import { hasUnsavedInvoiceDraft, shouldConfirmDiscard } from "../../../../lib/discard-guard";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
-import { computeLineSubtotal, effectiveQty, type CustomerLayerUnit } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  customerTierFor,
+  effectiveQty,
+  type CustomerLayerUnit,
+} from "@routeflow/pricing";
 import { useCustomerPriceLayer } from "../../../../lib/api/price-layer";
 import { lineIsSpecial, packLinePrice, withLayerBase } from "../../../../lib/cart-order-total";
 import { guardLayerSave, priceLayerGate } from "../../../../lib/price-layer-gate";
@@ -508,7 +513,7 @@ function InvoiceComposer({
   // overrides first, then the customer's own tier ladder. Without this the
   // invoice builder billed LIST to everyone.
   const { data: customerPrices } = useCustomerPrices(customerId ?? "");
-  const customerTier = Number((pickedCustomer as any)?.pricingTier ?? 1) || 1;
+  const customerTier = customerTierFor(undefined, (pickedCustomer as any)?.pricingTier);
   const cpMap = useMemo(() => {
     const m = new Map<string, number | null>();
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
@@ -517,7 +522,7 @@ function InvoiceComposer({
   // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, every number is master's.
   const priceLayer = useCustomerPriceLayer(customerId);
   const layerOf = priceLayer.layerOf;
-  const effectiveTierFor = (id: string) => cpMap.get(id) ?? customerTier ?? 1;
+  const effectiveTierFor = (id: string) => customerTierFor(cpMap.get(id), customerTier);
   const packPriceFor = (p: Product) => packLinePrice(p, effectiveTierFor(p.id), layerOf(p.id));
   const tierPriceFor = (p: Product) => packPriceFor(p).price;
   /** A unit line whose unit is in the layer carries the layer's price as its base (same line object otherwise). */

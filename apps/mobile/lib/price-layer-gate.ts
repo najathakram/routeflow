@@ -49,14 +49,6 @@ export function guardLayerSave(gate: PriceLayerGate, asDraft: boolean): string |
   return !asDraft && gate.blocked ? gate.message : null;
 }
 
-/** edit-items' `pricingReady` with the layer folded in: the picker, Substitute, scan and price edits wait for it (flag off: the base). */
-export function pricingReadyWithLayer(
-  base: boolean,
-  status: Pick<PriceLayerStatus, "enabled" | "ready">,
-): boolean {
-  return base && (!status.enabled || status.ready);
-}
-
 /** A unit option's price detail, or an ellipsis while the layer is unconfirmed (never a tier price shown as final). */
 export function unitDetailOrUnconfirmed(detail: string, unconfirmed: boolean): string {
   return unconfirmed ? "…" : detail;

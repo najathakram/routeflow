@@ -73,7 +73,7 @@ import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
-import { effectiveQty, isSpecialTier, roundMoney } from "@routeflow/pricing";
+import { customerTierFor, effectiveQty, isSpecialTier, roundMoney } from "@routeflow/pricing";
 import { useCustomerPriceLayer } from "../lib/api/price-layer";
 import { PriceLayerGateNotice } from "./PriceLayerGateNotice";
 import { buildInvoiceSplitPreview } from "../lib/invoice-split-preview";
@@ -486,7 +486,7 @@ function ProductPickView({
       m.set(c.id, { id: c.id, name: c.name, invoiceTreatment: c.invoiceTreatment });
     return m;
   }, [splitTrackedCategories]);
-  const customerTier = customerDetail?.pricingTier ?? 1;
+  const customerTier = customerTierFor(undefined, customerDetail?.pricingTier);
   // Ad-hoc trips (plan §WP11): the customer's default fulfillment mode, which
   // seeds this order's own fulfillPath below (never constrains it).
   const customerFulfillPath = customerDetail?.fulfillPath;
@@ -495,7 +495,7 @@ function ProductPickView({
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
     return m;
   }, [customerPrices]);
-  const effectiveTierFor = (id: string) => cpMap.get(id) ?? customerTier ?? 1;
+  const effectiveTierFor = (id: string) => customerTierFor(cpMap.get(id), customerTier);
   /** The customer's effective per-selling-unit (box) price for a product. */
   // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, `layerOf` is undefined and every
   // price below is master's number.
