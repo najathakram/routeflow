@@ -1,10 +1,19 @@
 // node --test cluster.test.mjs — contract tests for cluster.mjs (runs 2026-10-23-bug-swarm-1/-2).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { clusterBugs, parseCli, ratchetFilesFrom } from "./cluster.mjs";
+import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
+import {
+  clusterBugs,
+  parseCli,
+  ratchetFilesFrom,
+  resolveIdInSpace,
+  titlesMatch,
+} from "./cluster.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = (n) => JSON.parse(readFileSync(path.join(here, "fixtures", n), "utf8"));
@@ -220,4 +229,110 @@ test("triage exclusions are carried into excluded (one per row) and requested ro
   );
   assert.equal(again.excluded.length, 2);
   assert.deepEqual(again.unaccounted, ["9"]);
+});
+
+test("--packs: a bug without pack-<row>.md next to the manifest is excluded as no context pack", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "cl-packs-"));
+  writeFileSync(path.join(dir, "pack-1.md"), "pack");
+  const packExists = (row) => existsSync(path.join(dir, `pack-${row}.md`));
+  const r = clusterBugs({ bugs: [bug("1", ["a.ts"]), bug("2", ["b.ts"])] }, { packExists });
+  assert.equal(r.clusters.length, 1);
+  assert.deepEqual(r.excluded, [{ row: "2", reason: "no context pack" }]);
+  assert.equal(parseCli(["m.json", "--packs"]).packs, true);
+  assert.equal(parseCli(["m.json"]).packs, undefined);
+  // CLI: resolves the pack dir from the manifest's directory.
+  const mf = path.join(dir, "manifest.json");
+  writeFileSync(mf, JSON.stringify({ bugs: [bug("1", ["a.ts"]), bug("2", ["b.ts"])] }));
+  const out = spawnSync(process.execPath, [path.join(here, "cluster.mjs"), mf, "--packs"], {
+    encoding: "utf8",
+    env: scrubbedGitEnv(),
+  });
+  assert.equal(out.status, 0);
+  assert.deepEqual(JSON.parse(out.stdout).excluded, [{ row: "2", reason: "no context pack" }]);
+});
+
+test("titlesMatch: whitespace/case-insensitive, prefix of 40 chars, truncation marks ignored", () => {
+  assert.ok(
+    titlesMatch("Settings  Business NAME never saves", "settings business name never saves"),
+  );
+  const long = "BUG P2: Settings > Business profile > Business Name never saves: toast shows";
+  assert.ok(titlesMatch(long, `${long.slice(0, 50)}...`));
+  assert.ok(!titlesMatch("Parked sales label", "Customer invoice email"));
+  assert.ok(!titlesMatch("", "x"));
+  assert.ok(!titlesMatch("x", ""));
+});
+
+test("resolveId (injected): non-zero, unparsable, empty title and mismatch are unaccounted with a reason", () => {
+  const titles = { 1: "Parked sales label", 2: "Other thing" };
+  const resolveId = (id) => {
+    if (id === "3") return { ok: false, reason: "not found in row: resolver exited non-zero" };
+    if (id === "4") return { ok: false, reason: "not found in row: rf.mjs output unparsable" };
+    return titles[id]
+      ? { ok: true, title: titles[id] }
+      : { ok: false, reason: "not found in row: empty title" };
+  };
+  const mk = (row, title) => ({ ...bug(row, [`f${row}.ts`]), resolvedTitle: title });
+  const r = clusterBugs(
+    {
+      bugs: [
+        mk("1", "parked sales  label"),
+        mk("2", "Wrong title"),
+        mk("3", "x"),
+        mk("4", "x"),
+        mk("5", "x"),
+      ],
+    },
+    { resolveId, requestedRows: ["1", "2", "3", "4", "5"] },
+  );
+  assert.equal(r.clusters.length, 1);
+  assert.deepEqual(r.clusters[0].bugs, [{ row: "1" }]);
+  assert.deepEqual(
+    r.unresolved.map((u) => u.row),
+    ["2", "3", "4", "5"],
+  );
+  assert.match(r.unresolved[0].reason, /title mismatch/);
+  assert.deepEqual([...r.unaccounted].sort(), ["2", "3", "4", "5"]);
+  assert.deepEqual(r.excluded, []);
+});
+
+test("resolveIdInSpace builds the row and bug commands without a shell, with a scrubbed env", () => {
+  const seen = [];
+  const exec = (cmd, args, opts) => {
+    seen.push({ cmd, args, opts });
+    return args.includes("--json")
+      ? JSON.stringify({ title: "T row" })
+      : "---\nid: B302\ntitle: T bug\n---\n";
+  };
+  const row = resolveIdInSpace({ space: "row", id: "W-652", repo: "/r", exec });
+  assert.deepEqual(row, { ok: true, title: "T row" });
+  assert.equal(seen[0].cmd, process.execPath);
+  assert.deepEqual(seen[0].args.slice(1), ["item", "show", "W-652", "--json"]);
+  assert.match(seen[0].args[0].split(path.sep).join("/"), /tools\/ops-monitor\/bin\/rf\.mjs$/);
+  assert.equal(seen[0].opts.env.GIT_DIR, undefined);
+  const bugR = resolveIdInSpace({ space: "bug", id: "B302", repo: "/r", exec });
+  assert.deepEqual(bugR, { ok: true, title: "T bug" });
+  assert.deepEqual(seen[1].args.slice(1), ["show", "B302"]);
+  const bad = resolveIdInSpace({
+    space: "row",
+    id: "9",
+    repo: "/r",
+    exec: () => {
+      throw new Error("exit 1");
+    },
+  });
+  assert.equal(bad.ok, false);
+  assert.match(bad.reason, /not found in row/);
+});
+
+test("resolveIdInSpace against the real rf.mjs: an id that does not exist is unresolved", () => {
+  const repo = path.resolve(here, "../../../..");
+  const r = resolveIdInSpace({ space: "row", id: "999999999", repo });
+  assert.equal(r.ok, false);
+});
+
+test("parseCli reads --id-space and --repo", () => {
+  const o = parseCli(["m.json", "--id-space", "bug", "--repo", "/x"]);
+  assert.equal(o.idSpace, "bug");
+  assert.equal(o.repo, "/x");
+  assert.throws(() => parseCli(["m.json", "--id-space", "other"]));
 });

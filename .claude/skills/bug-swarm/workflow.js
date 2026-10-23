@@ -1,19 +1,16 @@
 export const meta = {
   name: "bug-swarm",
   description:
-    "Fix a batch of LOW RouteFlow bugs: triage, cluster by shared files, then per cluster pack, build test-first in a worktree, gate, and review. Returns the report; the orchestrator pushes and opens PRs.",
+    "Fix a batch of LOW RouteFlow bugs: one Triage+Pack agent, cluster by shared files, then per cluster build test-first in a worktree, gate, and review. Returns the report; the orchestrator pushes and opens PRs.",
   phases: [
     {
-      title: "Triage",
-      detail: "One haiku agent writes manifest.json (risk, files, needsDb, ui, status).",
+      title: "Triage+Pack",
+      detail:
+        "One sonnet agent resolves ids, verifies liveness, writes manifest.json and a pack per bug.",
     },
     {
       title: "Cluster",
       detail: "One haiku agent runs scripts/cluster.mjs --write and returns its JSON.",
-    },
-    {
-      title: "Pack",
-      detail: "Per cluster, sonnet writes a context pack (signatures, radius, lesson ids).",
     },
     {
       title: "Build",
@@ -42,6 +39,9 @@ const REQUESTED = Array.isArray(args.rows) ? args.rows.map(String) : [];
 const SCRIPTS = args.scriptsDir || `${R}/.claude/skills/bug-swarm/scripts`;
 const AVOID = Array.isArray(args.avoidFiles) ? args.avoidFiles : [];
 const MAX = args.maxClusters ?? 4;
+const SPACE = args.idSpace;
+const REGISTER =
+  args.registerPath || "$HOME/.routeflow/ops/routeflow-specs/register/WORK-REGISTER.md";
 const avoidFlags = AVOID.map((f) => ` --avoid "${f}"`).join("");
 
 const RULES = `Hard rules: never push, merge, stash, amend, rebase, flip repo visibility, run railway or touch a live tenant. Use the Edit tool for file edits (never sed -i). Chain shell steps with && and quote every path (paths like (dashboard) break unquoted). Read-only git is fine; all writes stay inside your own worktree. Do not run captures (screenshots); the orchestrator decides those.`;
@@ -54,6 +54,8 @@ const BUG_SCHEMA = {
   properties: {
     row: { type: "string" },
     sub: { type: "string" },
+    resolvedTitle: { type: "string", minLength: 1 },
+    packWritten: { type: "boolean" },
     risk: { type: "string", enum: ["LOW", "HIGH"] },
     riskReason: { type: "string" },
     status: { type: "string", enum: ["live", "fixed-on-master", "unclear"] },
@@ -62,11 +64,15 @@ const BUG_SCHEMA = {
     ui: { type: "boolean" },
     repro: { type: "string" },
   },
-  required: ["row", "risk", "status", "files", "needsDb", "ui"],
+  required: ["row", "resolvedTitle", "packWritten", "risk", "status", "files", "needsDb", "ui"],
 };
 const MANIFEST_SCHEMA = {
   type: "object",
-  properties: { run: { type: "string" }, bugs: { type: "array", items: BUG_SCHEMA } },
+  properties: {
+    run: { type: "string" },
+    bugs: { type: "array", items: BUG_SCHEMA },
+    unresolved: { type: "array", items: { type: "string" } },
+  },
   required: ["run", "bugs"],
 };
 const ROWREF = {
@@ -105,8 +111,35 @@ const CLUSTER_SCHEMA = {
         required: ["row", "reason"],
       },
     },
-    parked: { type: "array", items: { type: "object", properties: { id: { type: "string" } } } },
+    // Canonical parked shape, exactly what cluster.mjs prints: { cluster: { id, bugs, files... }, reason }.
+    parked: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          cluster: {
+            type: "object",
+            properties: { id: { type: "string" }, bugs: { type: "array", items: ROWREF } },
+            required: ["id", "bugs"],
+          },
+          reason: { type: "string" },
+        },
+        required: ["cluster", "reason"],
+      },
+    },
     unaccounted: { type: "array", items: { type: "string" } },
+    unresolved: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          row: { type: "string" },
+          sub: { type: "string" },
+          reason: { type: "string" },
+        },
+        required: ["row", "reason"],
+      },
+    },
     overCap: { type: "boolean" },
     bugs: {
       type: "array",
@@ -123,11 +156,6 @@ const CLUSTER_SCHEMA = {
     },
   },
   required: ["clusters", "excluded"],
-};
-const PACK_SCHEMA = {
-  type: "object",
-  properties: { ok: { type: "boolean" }, path: { type: "string" }, bytes: { type: "number" } },
-  required: ["ok", "path", "bytes"],
 };
 const BUILD_SCHEMA = {
   type: "object",
@@ -195,6 +223,19 @@ const settleGate = async (c, wt, head, round) => {
 // Green only when the gate ran on the commit the builder reported and says it finished ok.
 const gateGreen = (g, head) => !!g && g.ok === true && !g.running && !!head && g.head === head;
 
+// Why unaccounted ids are unaccounted, and the titles the ids resolved to (run 3 fixed the wrong bug
+// because Triage resolved W- ids in the wrong id space).
+const WHY = new Map();
+const TITLES = new Map();
+const idsReport = (unaccounted) =>
+  REQUESTED.map((id) => {
+    const title = TITLES.get(id) || null;
+    if (unaccounted.includes(id)) {
+      return { id, resolvedTitle: title, unaccounted: true, reason: WHY.get(id) || "in no bucket" };
+    }
+    return { id, resolvedTitle: title, unaccounted: false };
+  });
+
 const report = (extra) => {
   phase("Report");
   const r = {
@@ -206,6 +247,14 @@ const report = (extra) => {
     overCap: false,
     ...extra,
   };
+  if (r.error) {
+    // An error means nothing was done: every requested id is unaccounted, with the error as the reason.
+    r.unaccounted = [...new Set([...r.unaccounted.map(String), ...REQUESTED])];
+    for (const id of REQUESTED) if (!WHY.has(id)) WHY.set(id, r.error);
+  }
+  r.ids = idsReport(r.unaccounted);
+  for (const i of r.ids)
+    log(`${i.id}: ${i.unaccounted ? `UNACCOUNTED (${i.reason})` : i.resolvedTitle}`);
   log(`excluded: ${r.excluded.length}`);
   log(`parked: ${r.parked.length}`);
   log(`unaccounted: ${r.unaccounted.length}${r.error ? ` (${r.error})` : ""}`);
@@ -213,6 +262,21 @@ const report = (extra) => {
   return r;
 };
 
+if (SPACE !== "row" && SPACE !== "bug") {
+  return report({ error: 'args.idSpace is required and must be "row" or "bug" (no default)' });
+}
+const SHAPE = SPACE === "row" ? /^(W-\d+|\d+)$/ : /^B\d{1,4}$/;
+const badShapes = REQUESTED.filter((id) => !SHAPE.test(id));
+if (badShapes.length) {
+  return report({
+    error: `id shape does not match idSpace "${SPACE}" (row: W-<n> or <n>; bug: B<n>): ${badShapes.join(", ")}`,
+  });
+}
+if (REQUESTED.length > 10) {
+  return report({
+    error: "at most 10 ids per batch: split the batch (the orchestrator does that)",
+  });
+}
 if (!RUN || !R || !RUN_DIR || !args.fromWorktree || REQUESTED.length === 0) {
   return report({
     error:
@@ -220,41 +284,78 @@ if (!RUN || !R || !RUN_DIR || !args.fromWorktree || REQUESTED.length === 0) {
   });
 }
 
-// ---- Triage ----
-phase("Triage");
+// ---- Triage+Pack (one agent per batch, before clustering) ----
+phase("Triage+Pack");
 const manifest = await agent(
-  `Triage these RouteFlow bug register rows for run ${RUN}: ${REQUESTED.join(", ")}.
-Repo: ${R}. For each row read the register row and its card (node scripts/campaign/bugs.mjs card <id>), then decide:
-risk LOW or HIGH (HIGH = money, ledger, units, locks, tenancy, migrations, billing, auth, or a repro needing a live-tenant reading), the reason, status (live | fixed-on-master | unclear: check the code on origin/master), files (use .claude/code-map/INDEX.md and scripts/graph.mjs radius), needsDb (prisma, a *.db.spec, or a transaction path), ui (yes/no) and a one-line repro. Split a row into sub-bugs (sub: "a", "b") when it holds several defects.
-Write the result as JSON to ${RUN_DIR}/manifest.json (shape {"run": "${RUN}", "bugs": [...]}) and return the same object. Read-only apart from that file. ${RULES}`,
-  { label: "triage", phase: "Triage", schema: MANIFEST_SCHEMA, model: "haiku", effort: "low" },
+  `Triage these ids for run ${RUN}: ${REQUESTED.join(", ")}. The id space is "${SPACE}" and ONLY that space: ${
+    SPACE === "row"
+      ? `an id is a WORK-REGISTER row (including W- ids). Resolve each with: cd "${args.fromWorktree}" && node tools/ops-monitor/bin/rf.mjs item show <id>, and confirm with grep -n '| <id> |' "${REGISTER}". NEVER use bugs.mjs and never read a number as a B### catalogue id.`
+      : `an id is a B### bug catalogue id. Resolve each with: cd "${R}" && node scripts/campaign/bugs.mjs show <id>.`
+  }
+Report the resolved title of every id in resolvedTitle. An id that does not resolve in the "${SPACE}" space goes in the "unresolved" list (not in bugs): it is never HIGH and never built; do not try the other space.
+Repo: ${R}. For each resolved id decide: risk LOW or HIGH (HIGH = money, ledger, units, locks, tenancy, migrations, billing, auth, or a repro needing a live-tenant reading), the reason, status (live | fixed-on-master | unclear: check the code on origin/master), files (use .claude/code-map/INDEX.md and scripts/graph.mjs radius), needsDb (prisma, a *.db.spec, or a transaction path), ui (yes/no) and a one-line repro. Split an id into sub-bugs (sub: "a", "b") when it holds several defects.
+Also write a context pack per resolved row to ${RUN_DIR}/pack-<row>.md (at most 3 KB each; line 1 = the sha of origin/master): the liveness evidence as file:line, exported signatures (not bodies) of the row's files, the graph radius condensed to file names, the relevant lesson ids from .claude/lessons/LESSONS-DIGEST.md with one line each. Set packWritten true on a bug only after checking its pack file exists.
+Write the result as JSON to ${RUN_DIR}/manifest.json (shape {"run": "${RUN}", "bugs": [...], "unresolved": [...]}) and return the same object. Read-only apart from the manifest and the packs. ${RULES}`,
+  {
+    label: "triagepack",
+    phase: "Triage+Pack",
+    schema: MANIFEST_SCHEMA,
+    model: "sonnet",
+    effort: "low",
+  },
 );
 if (!manifest) {
-  return report({ error: "triage agent died", unaccounted: REQUESTED });
+  for (const id of REQUESTED) WHY.set(id, "triage+pack agent died");
+  return report({ error: "triage+pack agent died", unaccounted: REQUESTED });
 }
 
 // ---- Cluster ----
 phase("Cluster");
 const clustered = await agent(
-  `Run exactly: cd "${R}" && node "${SCRIPTS}/cluster.mjs" "${RUN_DIR}/manifest.json" --write --max ${MAX} --rows "${REQUESTED.join(",")}"${avoidFlags}
+  `Run exactly: cd "${R}" && node "${SCRIPTS}/cluster.mjs" "${RUN_DIR}/manifest.json" --write --max ${MAX} --rows "${REQUESTED.join(",")}" --packs --id-space ${SPACE} --repo "${R}"${avoidFlags}
 Return its printed JSON verbatim (clusters, excluded, parked, unaccounted, overCap), and add "bugs": [] (the workflow reads risk and status from Triage, not from you). Do not edit anything else, do not reinterpret. ${RULES}`,
   { label: "cluster", phase: "Cluster", schema: CLUSTER_SCHEMA, model: "haiku", effort: "low" },
 );
 if (!clustered) {
+  for (const id of REQUESTED) WHY.set(id, "cluster agent died");
   return report({ error: "cluster agent died", unaccounted: REQUESTED });
 }
 
 // HIGH or not-live bugs never reach Build, whatever the script returned.
 const key = (b) => `${b.row}|${b.sub || ""}`;
 const meta2 = new Map(manifest.bugs.map((b) => [key(b), b]));
-const excluded = [...clustered.excluded];
+const unresolved = new Set((manifest.unresolved || []).map(String));
+for (const b of manifest.bugs)
+  if (!TITLES.has(String(b.row))) TITLES.set(String(b.row), b.resolvedTitle);
+// Not found in the declared id space: an unresolved id, or a bug whose resolvedTitle is empty. These are
+// unaccounted ("not found in <space>"), never excluded, never built, and never mislabelled by risk/status.
+const notFound = new Set(unresolved);
+// cluster.mjs resolves every id in code (rf.mjs / bugs.mjs); what it rejects is not found either.
+const codeWhy = new Map();
+for (const u of clustered.unresolved || []) {
+  notFound.add(String(u.row));
+  codeWhy.set(String(u.row), u.reason);
+}
+for (const b of manifest.bugs) {
+  if (typeof b.resolvedTitle !== "string" || b.resolvedTitle.trim() === "")
+    notFound.add(String(b.row));
+}
+const excluded = clustered.excluded.filter((e) => !notFound.has(String(e.row)));
 const clusters = [];
 for (const c of clustered.clusters) {
   const keep = c.bugs.filter((b) => {
     const m = meta2.get(key(b));
-    const ok = m && m.risk === "LOW" && m.status === "live";
+    if (notFound.has(String(b.row))) {
+      log(`dropped ${key(b)} from ${c.id}: not found in ${SPACE}`);
+      return false;
+    }
+    const ok = m && m.packWritten === true && m.risk === "LOW" && m.status === "live";
     if (!ok) {
-      const reason = m ? `risk ${m.risk}, status ${m.status}` : "not in manifest";
+      const reason = !m
+        ? "not in manifest"
+        : m.packWritten !== true
+          ? "no context pack"
+          : `risk ${m.risk}, status ${m.status}`;
       excluded.push({ row: b.row, sub: b.sub, reason: `dropped before Build: ${reason}` });
       log(`dropped ${key(b)} from ${c.id}: ${reason}`);
     }
@@ -280,30 +381,35 @@ const noteLabel = (label) => {
 for (const c of clustered.clusters) for (const b of c.bugs) note(b.row, b.sub);
 for (const e of excluded) note(e.row, e.sub);
 for (const p of clustered.parked || []) {
-  for (const b of (p.cluster && p.cluster.bugs) || p.bugs || []) note(b.row, b.sub);
-  for (const l of p.rows || []) noteLabel(l);
+  for (const b of (p.cluster && p.cluster.bugs) || []) note(b.row, b.sub); // canonical shape only
 }
 for (const u of clustered.unaccounted || []) noteLabel(u);
 const bucketed = (row, sub) => seenKeys.has(`${row}|${sub || "*"}`) || seenKeys.has(`${row}|*`);
 const unaccounted = [...(clustered.unaccounted || []).map(String)];
-const addMissing = (label) => {
+const addMissing = (label, why = "in no bucket") => {
+  if (!WHY.has(label)) WHY.set(label, why);
   if (!unaccounted.includes(label)) {
     unaccounted.push(label);
-    log(`unaccounted (in no bucket): ${label}`);
+    log(`unaccounted (${why}): ${label}`);
   }
 };
+for (const u of notFound) {
+  const why = codeWhy.get(u) || `not found in ${SPACE}`;
+  WHY.set(u, why);
+  addMissing(u, why);
+}
 for (const r of REQUESTED) if (!seenRows.has(r)) addMissing(r);
 for (const b of manifest.bugs) {
   if (!bucketed(b.row, b.sub)) addMissing(b.sub ? `${b.row}${b.sub}` : String(b.row));
 }
 
-// ---- Per-cluster pipeline: Pack -> Build -> Gate (+fix) -> Review (+fix) ----
+// ---- Per-cluster pipeline: Build -> Gate (+fix) -> Review (+fix) ----
 const buildBrief = (
   c,
   t,
   pack,
 ) => `You fix LOW-risk bugs ${rowsOf(c).join(", ")} in RouteFlow, test-first. Cluster ${c.id}, run ${RUN}.
-Read the context pack first: ${pack}. Files in scope: ${c.files.join(", ")}.${c.extractionFirst ? " A file here is at its size-ratchet ceiling: extract first (own commit), then fix." : ""}
+Read the context pack(s) first: ${pack}. Files in scope: ${c.files.join(", ")}.${c.extractionFirst ? " A file here is at its size-ratchet ceiling: extract first (own commit), then fix." : ""}
 LOW only: if a fix needs a HIGH path (money, ledger, units, locks, tenancy, migration, billing, auth) stop and report it in the lesson field; do not fix it.
 ${AVOID_RULE}
 Worktree: ${t.exists ? `already at ${t.dir} (branch ${t.name}); work there, do not recreate it.` : `create it first: cd "${R}" && node "${SCRIPTS}/worktree.mjs" --dir "${t.dir}" --branch "${t.name}" --from "${args.fromWorktree}". If worktree.mjs exits non-zero, STOP and return status "worktree-failed" with its message in "message" (other fields empty); never reuse or delete an existing tree or branch.`}
@@ -313,7 +419,7 @@ Return {status "ok", commits (full shas of the commits made in THIS round; empty
 
 const runGate = (c, wt, label, round) =>
   agent(
-    `First stop any earlier gate of this cluster: if "${RUN_DIR}/gate-${c.id}.pid" exists, read its pid P and run ps -p P -o command=; ONLY if that output contains gate.mjs, run pkill -P P; kill P (never kill otherwise: the pid may have been reused by another process). Then rm -f the pid file (ignore errors). Then start the gate with Bash run_in_background (it queues behind other clusters and can run for a long time): cd "${wt}" && node "${SCRIPTS}/gate.mjs" --json "${RUN_DIR}/gate-${c.id}-r${round}.json" --pid-file "${RUN_DIR}/gate-${c.id}.pid"${c.needsDb ? " --needs-db" : ""}${avoidFlags}
+    `First stop any earlier gate of this cluster by running: node "${SCRIPTS}/gate.mjs" --stop "${RUN_DIR}/gate-${c.id}.pid" (it kills the gate's process tree on any platform only if that pid is a gate.mjs process, then removes the pid file; never kill anything by hand). Then start the gate with Bash run_in_background (it queues behind other clusters and can run for a long time): cd "${wt}" && node "${SCRIPTS}/gate.mjs" --json "${RUN_DIR}/gate-${c.id}-r${round}.json" --pid-file "${RUN_DIR}/gate-${c.id}.pid"${c.needsDb ? " --needs-db" : ""}${avoidFlags}
 Then wait for it with: node "${SCRIPTS}/gate.mjs" --wait "${RUN_DIR}/gate-${c.id}-r${round}.json" (Bash timeout 600000). It prints the json and exits 0 when the gate finished, or exits 3 if it is still running: call it again, up to 5 times in total, until it exits 0. Never use sleep (it is blocked). Return {ok, running, head, base, steps:[{name, ok, tail}]} exactly as printed (keep the tail only for failed steps). If it still exits 3 after 5 calls, or the file is missing, return what you have (ok false, running true, head empty) and do not retry. Do not fix anything, do not rerun with other flags. ${RULES}`,
     { label, phase: "Gate", schema: GATE_SCHEMA, model: "haiku", effort: "low" },
   );
@@ -339,23 +445,18 @@ const guard = (name, fn) => async (prev, item) => {
 
 const results = await pipeline(
   clusters,
-  // Pack
-  guard("Pack", async (c) => {
-    phase("Pack");
-    const packPath = `${RUN_DIR}/pack-${c.id}.md`;
-    const branch = `fix/${RUN}-${c.id}`;
-    const p = await agent(
-      `Write a context pack for cluster ${c.id} (bugs ${rowsOf(c).join(", ")}) to ${packPath}, at most 6 KB, pinned to the sha of origin/master (put it on line 1). Contents: exported signatures (not bodies) of ${c.files.join(", ")}; the graph radius (node scripts/graph.mjs radius <file>) condensed to file names; the relevant lesson ids from .claude/lessons/LESSONS-DIGEST.md with one line each; the code-map area file path. Repo: ${R}. Read-only apart from the pack. Return {ok, path, bytes} after checking the file exists. ${RULES}`,
-      { label: `pack:${c.id}`, phase: "Pack", schema: PACK_SCHEMA, model: "sonnet", effort: "low" },
-    );
-    if (!p || !p.ok) return { c, packPath, branch, parked: "pack failed" };
-    return { c, packPath: p.path || packPath, branch };
-  }),
   // Build
-  guard("Build", async (st) => {
+  guard("Build", async (c) => {
     phase("Build");
-    const dir = `${R}-wt-${RUN}-${st.c.id}`;
-    const b = await agent(buildBrief(st.c, { name: st.branch, dir, exists: false }, st.packPath), {
+    const st = {
+      c,
+      branch: `fix/${RUN}-${c.id}`,
+      packs: [...new Set(c.bugs.map((b) => b.row))]
+        .map((r) => `${RUN_DIR}/pack-${r}.md`)
+        .join(", "),
+    };
+    const dir = `${R}-wt-${RUN}-${c.id}`;
+    const b = await agent(buildBrief(st.c, { name: st.branch, dir, exists: false }, st.packs), {
       label: `build:${st.c.id}`,
       phase: "Build",
       schema: BUILD_SCHEMA,
@@ -390,7 +491,7 @@ const results = await pipeline(
     const gate = g.gate;
     phase("Build");
     const fix = await agent(
-      `${buildBrief(st.c, { name: st.branch, dir: st.worktree, exists: true }, st.packPath)}\n\nFIX ROUND (the only one): the gate was red. Fix only these failures with new commit(s), then return the same schema. Failed steps:\n${redTails(gate)}`,
+      `${buildBrief(st.c, { name: st.branch, dir: st.worktree, exists: true }, st.packs)}\n\nFIX ROUND (the only one): the gate was red. Fix only these failures with new commit(s), then return the same schema. Failed steps:\n${redTails(gate)}`,
       {
         label: `buildfix:${st.c.id}`,
         phase: "Build",
@@ -421,7 +522,7 @@ const results = await pipeline(
     if (first.verdict === "PASS") return { ...st, verdict: "PASS", musts: first.musts };
     phase("Build");
     const fix = await agent(
-      `${buildBrief(st.c, { name: st.branch, dir: st.worktree, exists: true }, st.packPath)}\n\nREVIEW FIX ROUND (the only one): an independent reviewer returned FAIL. Resolve exactly these MUSTs with new commit(s) and return the same schema:\n${first.musts.map((m) => `- ${m}`).join("\n")}`,
+      `${buildBrief(st.c, { name: st.branch, dir: st.worktree, exists: true }, st.packs)}\n\nREVIEW FIX ROUND (the only one): an independent reviewer returned FAIL. Resolve exactly these MUSTs with new commit(s) and return the same schema:\n${first.musts.map((m) => `- ${m}`).join("\n")}`,
       {
         label: `reviewfix:${st.c.id}`,
         phase: "Build",
@@ -497,7 +598,10 @@ return report({
   clusters: rows,
   excluded,
   parked: [
-    ...(clustered.parked || []).map((p) => ({ ...p, reason: "over cap" })),
+    ...(clustered.parked || []).map((p) => ({
+      cluster: p.cluster,
+      reason: p.reason || "over cap",
+    })),
     ...rows.filter((r) => r.parked).map((r) => ({ id: r.id, rows: r.rows, reason: r.parked })),
   ],
   unaccounted,

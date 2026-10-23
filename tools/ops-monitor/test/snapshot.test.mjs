@@ -1618,6 +1618,35 @@ test("D3 an item moved back into work after the merge is not relabelled", () => 
   assert.equal(by("841").statusLabel, "Merged, awaiting deploy");
 });
 
+test("D3 a post-merge eta/note edit keeps 'Merged, awaiting deploy'; a post-merge status edit does not", () => {
+  const evs = [
+    lrItem("850", {
+      type: "feature",
+      title: "Eta only",
+      status: "building",
+      links: { prs: [4501] },
+    }),
+    ev(ago(10), "item.edit", "850", "lead", { fields: { eta: "2026-10-30" } }),
+    lrItem("851", {
+      type: "feature",
+      title: "Status edit",
+      status: "building",
+      links: { prs: [4502] },
+    }),
+    ev(ago(10), "item.edit", "851", "lead", { fields: { status: "building" } }),
+  ];
+  const merged = [
+    { number: 4501, title: "t", branch: "feat/p", mergedAt: ago(30), base: "master" },
+    { number: 4502, title: "t", branch: "feat/q", mergedAt: ago(30), base: "master" },
+  ];
+  const s = lr(evs, { merged });
+  const by = (id) => s.items.find((i) => i.id === id);
+  assert.equal(by("850").statusLabel, "Merged, awaiting deploy");
+  assert.equal(by("851").statusLabel, "Being built");
+  // intended: an explicit status write after the merge counts even when it re-writes the same status
+  // (a human signal), so 851 above reads "Being built" although it was already "building".
+});
+
 test("D4 merged PR with no item raises untracked-merged-pr through the snapshot", () => {
   const merged = [
     { number: 4200, title: "chore: x", branch: "chore/x", mergedAt: ago(60), base: "master" },

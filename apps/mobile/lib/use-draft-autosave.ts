@@ -117,6 +117,9 @@ export function createDraftAutosave(
   let timer: ReturnType<typeof setTimeout> | null = null;
   let idListener: ((id: string | null) => void) | null = null;
 
+  // Row 699: the PATCH that claimed `lastSavedSnapshot` and has not settled yet (TanStack PAUSES it offline). A save
+  // that finds its snapshot already claimed waits on it, so flush() never resolves before the write has landed.
+  let inflightUpdate: Promise<unknown> | null = null;
   let latestPayload: unknown = hydrate?.payload ?? null;
   let latestMeta: DraftRowMeta = hydrate?.meta ?? { kind: "ORDER" };
   let latestEnabled = false;
@@ -137,7 +140,10 @@ export function createDraftAutosave(
 
   async function performSave(): Promise<void> {
     if (discarded || !latestEnabled) return;
-    if (snapshot(latestPayload, latestMeta) === lastSavedSnapshot) return; // JSON-unchanged skip
+    if (snapshot(latestPayload, latestMeta) === lastSavedSnapshot) {
+      await inflightUpdate;
+      return;
+    } // JSON-unchanged skip
 
     let id = draftIdRef;
     if (!id) {
@@ -175,7 +181,10 @@ export function createDraftAutosave(
     if (discarded) return;
 
     const finalSnapshot = snapshot(latestPayload, latestMeta);
-    if (finalSnapshot === lastSavedSnapshot) return; // create already covered it
+    if (finalSnapshot === lastSavedSnapshot) {
+      await inflightUpdate;
+      return;
+    } // create already covered it
 
     // Claim the snapshot BEFORE awaiting the PATCH (mirrors the create
     // latch): a concurrent save that resumes while this PATCH is in flight
@@ -183,11 +192,15 @@ export function createDraftAutosave(
     // firing a second identical PATCH.
     const previousSnapshot = lastSavedSnapshot;
     lastSavedSnapshot = finalSnapshot;
+    const write = deps.updateDraft({ id: id as string, payload: latestPayload, ...latestMeta });
+    inflightUpdate = write;
     try {
-      await deps.updateDraft({ id: id as string, payload: latestPayload, ...latestMeta });
+      await write;
     } catch (err) {
       if (lastSavedSnapshot === finalSnapshot) lastSavedSnapshot = previousSnapshot;
       throw err;
+    } finally {
+      if (inflightUpdate === write) inflightUpdate = null;
     }
   }
 

@@ -8,7 +8,9 @@ import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync } from 
 import { tmpdir } from "node:os";
 import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
 import {
+  commandLineOf,
   holdPidFile,
+  stopGate,
   beginJson,
   changedSince,
   execStep,
@@ -321,6 +323,7 @@ test("CLI --dry-run prints the plan and runs nothing", () => {
   const r = spawnSync(process.execPath, [path.join(here, "gate.mjs"), "--dry-run", "--needs-db"], {
     encoding: "utf8",
     cwd: here,
+    env: scrubbedGitEnv(),
   });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /packages-build/);
@@ -419,4 +422,63 @@ test("holdPidFile writes the pid and removes the file on exit and on signals", (
   handlers.SIGTERM();
   assert.equal(existsSync(f), false);
   assert.deepEqual(exits, [143]);
+});
+
+test("holdPidFile cleanup keeps the file when a newer gate overwrote it with its own pid", () => {
+  const f = path.join(mkdtempSync(path.join(tmpdir(), "gate-pid-")), "g.pid");
+  const handlers = {};
+  holdPidFile(f, { pid: 4242, on: (e, fn) => (handlers[e] = fn), exit: () => {} });
+  writeFileSync(f, "9999\n");
+  handlers.exit();
+  assert.equal(readFileSync(f, "utf8").trim(), "9999");
+});
+
+test("commandLineOf: ps on posix, PowerShell CIM on win32", () => {
+  const seen = [];
+  const exec = (cmd, args) => (seen.push([cmd, args]), "node /x/gate.mjs --json a");
+  assert.equal(commandLineOf(7, { platform: "linux", exec }), "node /x/gate.mjs --json a");
+  assert.deepEqual(seen[0], ["ps", ["-p", "7", "-o", "command="]]);
+  commandLineOf(7, { platform: "win32", exec });
+  assert.equal(seen[1][0], "powershell");
+  assert.match(seen[1][1].join(" "), /Win32_Process.*ProcessId=7.*CommandLine/);
+  assert.equal(
+    commandLineOf(7, {
+      exec: () => {
+        throw new Error("gone");
+      },
+    }),
+    "",
+  );
+});
+
+test("stopGate kills only a gate.mjs pid, per platform, and removes the file", () => {
+  const mk = (pid) => {
+    const f = path.join(mkdtempSync(path.join(tmpdir(), "gate-stop-")), "g.pid");
+    writeFileSync(f, `${pid}\n`);
+    return f;
+  };
+  for (const platform of ["linux", "win32"]) {
+    const f = mk(321);
+    const kills = [];
+    const r = stopGate(f, {
+      platform,
+      exec: () => "node C:\\x\\gate.mjs --json a",
+      killTree: (pid, p) => kills.push([pid, p]),
+    });
+    assert.equal(r.stopped, true);
+    assert.deepEqual(kills, [[321, platform]]);
+    assert.equal(existsSync(f), false);
+  }
+  const f2 = mk(654);
+  const kills2 = [];
+  const r2 = stopGate(f2, {
+    exec: () => "/usr/bin/vim notes.txt",
+    killTree: (p) => kills2.push(p),
+  });
+  assert.equal(r2.stopped, false);
+  assert.deepEqual(kills2, []);
+  assert.equal(existsSync(f2), false);
+  assert.equal(stopGate("/no/such/file.pid").stopped, false);
+  const f3 = mk("abc");
+  assert.equal(stopGate(f3, { exec: () => "gate.mjs" }).stopped, false);
 });

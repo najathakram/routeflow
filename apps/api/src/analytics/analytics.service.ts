@@ -1,11 +1,15 @@
-import { Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "@routeflow/pricing";
 import { endOfCalendarDay } from "../common/calendar-date";
-import { resolveZone } from "../common/tenant-time-zone";
+import { resolveZone, tenantTimeZone } from "../common/tenant-time-zone";
 import {
+  ACCRUAL_REVENUE_STATUSES,
   REAL_INVOICE_STATUSES,
   estimateCogs,
+  fetchAccrualNetSalesByCustomerRows,
+  fetchAccrualNetSalesByPeriod,
+  fetchAccrualNetSalesTotal,
   fetchCostIndex,
   fetchInvoicedSaleLines,
   fetchProductCostFacts,
@@ -136,31 +140,32 @@ export class AnalyticsService {
     return { issueDate: { gte: fromDate, lte: toDate } };
   }
 
+  /**
+   * Revenue = accrual NET sales (SA-859, owner ruling D-2026-09-15): non-draft, non-void invoices by issueDate (written-off
+   * ones stay), tax out, minus credit notes (tenant-local day of their createdAt) and external refunds, through the ONE
+   * reader family in common/invoiced-sales.ts, so the dashboard equals Bookkeeping for the same window. `revenue` is the net;
+   * `gross`, `creditNotes` and `externalRefunds` ride along. With the tobacco switch on, tobacco leaves on the pre-tax basis
+   * (a freeform credit with no lines cannot be attributed and stays in the main figure).
+   */
   async getRevenueTrend(from?: string, to?: string, groupBy = "month") {
     const { fromDate, toDate } = this.dateRange(from, to);
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("Tenant context required");
     const excludeTobacco = await this.tobaccoExclusionActive();
-    const invoices = await this.prisma.forTenant().invoice.findMany({
-      where: {
-        issueDate: { gte: fromDate, lte: toDate },
-        status: { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] },
-      },
-      orderBy: { issueDate: "asc" },
-      select: { issueDate: true, total: true, ...(excludeTobacco ? TOBACCO_LINE_SELECT : {}) },
-    });
-    const grouped: Record<string, number> = {};
-    for (const inv of invoices) {
-      const key =
-        groupBy === "month"
-          ? inv.issueDate.toISOString().slice(0, 7)
-          : inv.issueDate.toISOString().split("T")[0];
-      // Invoice-level discount/shippingFee stay attributed to the remainder
-      const total = excludeTobacco
-        ? Number(inv.total) - this.tobaccoPortion((inv as { items?: any[] }).items ?? [])
-        : Number(inv.total);
-      grouped[key] = (grouped[key] ?? 0) + total;
-    }
-    return Object.entries(grouped)
-      .map(([period, revenue]) => ({ period, revenue: roundMoney(revenue) }))
+    const buckets = await fetchAccrualNetSalesByPeriod(
+      this.prisma.forTenant() as any,
+      tenantId,
+      { gte: fromDate, lte: toDate },
+      { groupBy, timeZone: await tenantTimeZone(this.prisma), excludeTobacco },
+    );
+    return [...buckets.entries()]
+      .map(([period, b]) => ({
+        period,
+        revenue: b.net,
+        gross: b.gross,
+        creditNotes: b.creditNotes,
+        externalRefunds: b.externalRefunds,
+      }))
       .sort((a, b) => a.period.localeCompare(b.period));
   }
 
@@ -208,33 +213,42 @@ export class AnalyticsService {
       .slice(0, limit);
   }
 
+  /** Top customers by accrual NET sales (SA-859): the same reader family and window predicate as the revenue trend. */
   async getTopCustomers(metric = "revenue", limit = 10, from?: string, to?: string) {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("Tenant context required");
     const excludeTobacco = await this.tobaccoExclusionActive();
-    const where: any = { status: { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] } };
-    if (from || to) {
-      where.createdAt = {};
-      if (from) where.createdAt.gte = new Date(from);
-      if (to) where.createdAt.lte = new Date(to + "T23:59:59.999Z");
-    }
-    const invoices = await this.prisma.forTenant().invoice.findMany({
-      where,
-      include: {
-        customer: { select: { id: true, businessName: true } },
-        ...(excludeTobacco ? TOBACCO_LINE_SELECT : {}),
-      },
-    });
-    const map: Record<string, { name: string; totalRevenue: number; orderCount: number }> = {};
-    for (const inv of invoices) {
-      const id = inv.customerId;
-      if (!map[id]) map[id] = { name: inv.customer.businessName, totalRevenue: 0, orderCount: 0 };
-      const total = excludeTobacco
-        ? Number(inv.total) - this.tobaccoPortion((inv as { items?: any[] }).items ?? [])
-        : Number(inv.total);
-      map[id].totalRevenue += total;
-      map[id].orderCount += 1;
-    }
-    const arr = Object.entries(map).map(([id, v]) => ({ id, ...v }));
-    return arr
+    // No bounds = all time (the endpoint's historical behaviour for parameterless callers).
+    const window =
+      from || to
+        ? (() => {
+            const { fromDate, toDate } = this.dateRange(from, to);
+            return { gte: fromDate, lte: toDate };
+          })()
+        : { gte: new Date(0), lte: new Date("9999-12-31T23:59:59.999Z") };
+    const buckets = await fetchAccrualNetSalesByCustomerRows(
+      this.prisma.forTenant() as any,
+      tenantId,
+      window,
+      { timeZone: await tenantTimeZone(this.prisma), excludeTobacco },
+    );
+    const ids = [...buckets.keys()];
+    const names = new Map<string, string>(
+      ids.length
+        ? (
+            await this.prisma.forTenant().customer.findMany({
+              where: { id: { in: ids } },
+              select: { id: true, businessName: true },
+            })
+          ).map((c: any) => [c.id, c.businessName] as [string, string])
+        : [],
+    );
+    return ids
+      .map((id) => {
+        const b = buckets.get(id)!;
+        return { id, name: names.get(id) ?? "", totalRevenue: b.net, orderCount: b.orderCount };
+      })
+      .filter((r) => r.orderCount > 0 || r.totalRevenue !== 0)
       .sort((a, b) =>
         metric === "orders" ? b.orderCount - a.orderCount : b.totalRevenue - a.totalRevenue,
       )
@@ -690,7 +704,7 @@ export class AnalyticsService {
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         issueDate: { gte: fromDate, lte: toDate },
-        status: REAL_INVOICE_STATUSES,
+        status: { notIn: [...ACCRUAL_REVENUE_STATUSES.notIn] },
       },
       select: {
         total: true,
@@ -706,16 +720,18 @@ export class AnalyticsService {
         },
       },
     });
-    const revenue = roundMoney(
-      invoices.reduce(
-        (s, inv) =>
-          s +
-          (excludeTobacco
-            ? Number(inv.total) - this.tobaccoPortion(inv.items ?? [])
-            : Number(inv.total)),
-        0,
-      ),
-    );
+    // SA-869: "Revenue" on this card is the SAME accrual net the trend shows (tax out, credit notes and refunds out,
+    // written-off in; the Bookkeeping P&L shape), so one page never shows two different revenues for the same dates.
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("Tenant context required");
+    const revenue = (
+      await fetchAccrualNetSalesTotal(
+        this.prisma.forTenant() as any,
+        tenantId,
+        { gte: fromDate, lte: toDate },
+        { timeZone: await tenantTimeZone(this.prisma), excludeTobacco },
+      )
+    ).net;
     const cogsLines = invoices.flatMap((inv) =>
       (inv.items ?? []).map((item: any) => ({
         productId: (item.productId ?? null) as string | null,

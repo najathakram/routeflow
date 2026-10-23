@@ -555,10 +555,6 @@ test("describeSyncOutcome: every pass that appends nothing says why; an appendin
     describeSyncOutcome({ ran: false, reason: "busy" }),
     "register sync skipped: busy (specs lock held)",
   );
-  assert.equal(
-    describeSyncOutcome({ ran: false, reason: "busy" }, { busyRuns: 3 }),
-    "register sync skipped: busy (specs lock held, 3 in a row)",
-  );
   assert.match(describeSyncOutcome({ ran: false, reason: "generated" }), /generated mode/);
   assert.match(
     describeSyncOutcome({
@@ -643,14 +639,12 @@ test("runSync does nothing in generated register mode", { timeout: 600000 }, asy
 // The monitor's 5-minute sync (server.mjs): only on the --views writer, never in cloud
 
 import {
-  BUSY_LOG_EVERY,
   registerSyncLog,
   resolveListenOptions,
   shouldRunRegisterSync,
   makeSpecsPassStep,
   makeSpecsPassHook,
   SYNC_STARVATION_LOG_MS,
-  startRegisterSync,
 } from "../server.mjs";
 
 test("shouldRunRegisterSync: only the local --views writer; never cloud, once or fixture", () => {
@@ -717,15 +711,15 @@ test("makeSpecsPassHook: runs the steps in order, each only when due; a failed p
   await pass(60);
   assert.deepEqual(order, ["status", "register"]);
   order.length = 0;
-  await pass(150, { pullOk: false, pullError: "network down" }); // both due, pull failed
+  await pass(150, { pullOk: false, pullError: "network down", pullStage: "pull" }); // both due, pull failed
   assert.deepEqual(order, []);
   const failLogs = logs.filter((m) => /pull failed/.test(m));
   assert.equal(failLogs.length, 1);
   assert.match(failLogs[0], /network down/);
   assert.equal(
     logs.filter((m) => m.startsWith("specs pass:")).length,
-    3,
-    "no timing line for the skipped pass",
+    2,
+    "a timing line only for passes where a step ran (30, 60), none for idle or failed passes",
   );
   await pass(180); // pull fine again: status runs, register (due 360) not yet
   assert.deepEqual(order, ["status"]);
@@ -761,7 +755,35 @@ test("makeSpecsPassHook: one timing line per pass that held the lock; steps that
     now: () => t,
   });
   await idle.afterPull({ pullOk: true, pullMs: 40, lockStartedAt: t - 40 });
-  assert.deepEqual(logs, ["specs pass: lock 40 ms (pull 40, register skip, status skip)"]);
+  assert.deepEqual(logs, [], "a pass where no step ran logs no timing line");
+  const half = makeSpecsPassHook({
+    steps: [
+      { name: "status", run: timed(0, false) },
+      { name: "register", run: timed(50, true) },
+    ],
+    log: (m) => logs.push(m),
+    now: () => t,
+  });
+  await half.afterPull({ pullOk: true, pullMs: 40, lockStartedAt: t - 40 });
+  assert.deepEqual(logs, ["specs pass: lock 90 ms (pull 40, register 50, status skip)"]);
+});
+
+test("makeSpecsPassHook: a failed pass with no pullStage given reads as a pull failure", async () => {
+  const logs = [];
+  const hook = makeSpecsPassHook({ steps: [], log: (m) => logs.push(m), now: () => 0 });
+  await hook.afterPull({ pullOk: false, pullError: "boom" });
+  assert.match(logs[0], /^specs pull failed/);
+});
+
+test("makeSpecsPassHook: a push/reconcile failure after a good pull logs a different reason than a pull failure", async () => {
+  const logs = [];
+  const hook = makeSpecsPassHook({ steps: [], log: (m) => logs.push(m), now: () => 0 });
+  await hook.afterPull({ pullOk: false, pullError: "no route", pullStage: "pull" });
+  await hook.afterPull({ pullOk: false, pullError: "rejected", pullStage: "push" });
+  assert.equal(logs.length, 2);
+  assert.match(logs[0], /^specs pull failed/);
+  assert.match(logs[1], /^specs push\/reconcile failed after a good pull/);
+  assert.match(logs[1], /rejected/);
 });
 
 test("makeSpecsPassHook: lock starvation logs at most once per SYNC_STARVATION_LOG_MS, with the time since the last sync", () => {
@@ -816,38 +838,6 @@ test("makeSpecsPassStep: first run after firstMs, then at most once per interval
   await step();
   assert.equal(runs, 3);
   assert.deepEqual(done, [1, 3]);
-});
-
-test("startRegisterSync: first run after the delay, then every interval; errors never stop it", async () => {
-  const t = fakeTimers();
-  const calls = [];
-  const done = [];
-  const logs = [];
-  let n = 0;
-  const stop = startRegisterSync({
-    run: async () => {
-      calls.push(++n);
-      if (n === 2) throw new Error("boom");
-      return { ran: true, appended: n === 1 ? 3 : 0 };
-    },
-    onDone: (r) => done.push(r),
-    log: (m) => logs.push(m),
-    firstDelayMs: 1000,
-    intervalMs: 300000,
-    schedule: t.schedule,
-    cancel: t.cancel,
-  });
-  assert.equal(t.live(), 1);
-  assert.equal(await t.fire(), 1000);
-  assert.deepEqual(calls, [1]);
-  assert.deepEqual(done, [{ ran: true, appended: 3 }]); // only passes that appended notify
-  assert.equal(await t.fire(), 300000);
-  assert.deepEqual(calls, [1, 2]);
-  assert.match(logs.join("\n"), /boom/);
-  assert.equal(await t.fire(), 300000); // still scheduled after the error
-  assert.deepEqual(done.length, 1); // a pass that appended nothing does not notify
-  stop();
-  assert.equal(t.live(), 0);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -1047,16 +1037,11 @@ test("X1 sync: a blocked row keeps the item's status and raises a blocked event,
   assert.deepEqual(run(laneBlocked, register(row(532, { status: "building" }))).events, []);
 });
 
-test("registerSyncLog: once per change; a busy streak logs at pass 1 and every 6th; appends log nothing", () => {
+test("registerSyncLog: once per change; appends log nothing", () => {
   const busy = { ran: false, reason: "busy" };
-  let note = "";
-  const lines = [];
-  for (let n = 1; n <= 13; n++) {
-    const step = registerSyncLog(note, busy, { busyRuns: n });
-    note = step.note;
-    if (step.log) lines.push(n);
-  }
-  assert.deepEqual(lines, [1, BUSY_LOG_EVERY, 2 * BUSY_LOG_EVERY]);
+  const first = registerSyncLog("", busy);
+  assert.ok(first.log);
+  assert.equal(registerSyncLog(first.note, busy).log, null);
   // the same outcome twice: logged once
   const zero = { ran: true, appended: 0, events: [], warnings: [] };
   const a = registerSyncLog("", zero);

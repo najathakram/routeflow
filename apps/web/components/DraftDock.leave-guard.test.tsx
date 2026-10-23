@@ -6,7 +6,10 @@ import { setCounterCartBusy } from "@/lib/counter-cart-signal";
 
 /** POS-7: the dock floats over the counter; Resume and "Start a new order instead" are ways out and obey the leave guard. */
 const mockPush = jest.fn();
-jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush, replace: jest.fn() }) }));
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush, replace: jest.fn() }),
+  usePathname: () => "/orders",
+}));
 jest.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: { role: "OPERATOR" } }) }));
 jest.mock("@/lib/api/drafts", () => ({
   useDrafts: () => ({
