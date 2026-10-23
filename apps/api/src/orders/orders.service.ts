@@ -77,7 +77,7 @@ import {
   saleCreateOptions,
   type SaleOptions,
 } from "./sale-options";
-import { notifyPickupHandover, pickupOutForDeliveryPush } from "./order-pickup-wording";
+import { notifyOrderStatusChange } from "./order-status-notify";
 import { assertPriceEditAllowed, decideTierOverride } from "./staff-override";
 import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
 import {
@@ -93,7 +93,6 @@ import {
   PriceType,
   ChangeRequestStatus,
   ChangeRequestType,
-  NotificationEvent,
   FulfillPath,
   RouteRunStatus,
   RouteRunStopStatus,
@@ -252,8 +251,6 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import type { OrderCancelBlockedField } from "@routeflow/types";
-import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
-import { shippedPushCopy } from "./shipped-push-copy";
 import { attachInvoiceStages } from "./order-invoice-stage";
 import { HANDOVER_SOLD_BY_SELECT, seesHandOverStamp, stampHandedOverBy } from "./handover-stamp";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
@@ -271,8 +268,7 @@ import {
   settleOrderInvoice,
   settledAtShipment,
 } from "./order-status-invoicing";
-import { formatDate, formatMoney } from "../messaging/messaging.helpers";
-import { orderConfirmedVars } from "../messaging/order-confirmed-copy";
+import { formatMoney } from "../messaging/messaging.helpers";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
 import { tenantSafeParentView } from "../products/product-parent";
@@ -2555,91 +2551,18 @@ export class OrdersService implements OnApplicationBootstrap {
     // with the status write, inside the `updated` transaction — nothing left
     // to do for them here.
 
-    // Fire-and-forget push notifications for key status transitions
-    const notifMap: Partial<Record<OrderStatus, { title: string; body: string }>> = {
-      [OrderStatus.CONFIRMED]: {
-        title: "Order Confirmed ✓",
-        body: `Your order #${order.orderNumber} has been confirmed.`,
-      },
-      [OrderStatus.OUT_FOR_DELIVERY]: pickupOutForDeliveryPush(order) ?? {
-        title: "Out for Delivery 🚚",
-        body: `Your order #${order.orderNumber} is on its way!`,
-      },
-      [OrderStatus.PARTIALLY_DELIVERED]: {
-        title: "Partial Delivery 📦",
-        body: `Some items from order #${order.orderNumber} have been delivered.`,
-      },
-      [OrderStatus.DELIVERED]: {
-        title: "Order Delivered ✓",
-        body: `Your order #${order.orderNumber} has been delivered.`,
-      },
-      [OrderStatus.CANCELLED]: {
-        title: "Order Cancelled",
-        body: `Your order #${order.orderNumber} has been cancelled.`,
-      },
+    // The customer notifications (push + messaging event): order-status-notify.ts (SA-861 commit 1, moved verbatim).
+    const notifyDeps = {
+      prisma: this.prisma,
+      notifications: this.notifications,
+      messaging: this.messaging,
     };
-    // SHIP orders say "shipped", not "Out for Delivery" (PICKUP wording: #3211, not touched here).
-    const notif =
-      dto.status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP
-        ? // told once, like the email: an unmark + re-mark keeps shippedAt and sends nothing
-          isFirstShipment(order)
-          ? shippedPushCopy(order)
-          : undefined
-        : notifMap[dto.status];
-    if (notif) {
-      this.notifications
-        .sendToCustomer(order.customerId, notif.title, notif.body, { orderId: id })
-        .catch(() => {});
-    }
-
-    // P6-5: customer notification via the rules matrix (fire-and-forget AFTER
-    // the status write; notify() no-ops on a disabled cell + meters itself).
-    const messagingEventMap: Partial<Record<OrderStatus, NotificationEvent>> = {
-      [OrderStatus.CONFIRMED]: NotificationEvent.ORDER_CONFIRMED,
-      [OrderStatus.OUT_FOR_DELIVERY]: NotificationEvent.OUT_FOR_DELIVERY,
-      [OrderStatus.DELIVERED]: NotificationEvent.DELIVERED,
-      // N1 (2026-09-16): CANCELLED gains a real messaging-engine event — the
-      // older push-notification `notifMap` above already covered it; this adds
-      // the (now real, via EmailChannelProvider) EMAIL/PORTAL/WA/SMS channels.
-      [OrderStatus.CANCELLED]: NotificationEvent.CANCELLED,
-    };
-    // A PICKUP handover fires READY_FOR_PICKUP instead of the driver-named template (order-pickup-wording.ts).
-    const pickupHandled = notifyPickupHandover(this.messaging, order, dto.status, user.sub || null);
-    const messagingEvent = pickupHandled ? undefined : messagingEventMap[dto.status];
-    if (
-      messagingEvent === NotificationEvent.OUT_FOR_DELIVERY &&
-      order.fulfillPath === FulfillPath.SHIP
-    ) {
-      // Carrier-shipped: ORDER_SHIPPED, not "out for delivery today" (customised wording kept per channel).
-      // E-c: an unmark + re-ship keeps shippedAt, so the customer is told once.
-      if (isFirstShipment(order)) void notifyOrderShipped(this, order, user.sub || null);
-    } else if (messagingEvent) {
-      let driverName = "your driver";
-      if (messagingEvent === NotificationEvent.OUT_FOR_DELIVERY && order.routeRunId) {
-        const run = await this.prisma.forTenant().routeRun.findFirst({
-          where: { id: order.routeRunId },
-          select: { driver: { select: { contactName: true } } },
-        });
-        driverName = run?.driver?.contactName ?? "your driver";
-      }
-      const vars: Record<string, string> = {
-        orderNumber: order.orderNumber ?? "",
-        ...(messagingEvent === NotificationEvent.ORDER_CONFIRMED
-          ? orderConfirmedVars(order, updated.total) // B1127: SHIP wording, no dangling date
-          : {}),
-        ...(messagingEvent === NotificationEvent.OUT_FOR_DELIVERY ? { driverName } : {}),
-        ...(messagingEvent === NotificationEvent.DELIVERED
-          ? { orderTotal: formatMoney(updated.total), deliveredAt: formatDate(new Date()) }
-          : {}),
-      };
-      this.messaging
-        .notifyEvent(messagingEvent, {
-          customerId: order.customerId,
-          senderId: user.sub || null,
-          vars,
-        })
-        .catch(() => {});
-    }
+    await notifyOrderStatusChange(notifyDeps, {
+      order,
+      updated,
+      status: dto.status,
+      userSub: user.sub,
+    });
 
     // B105 (REG-B105): the delivery is persisted and everyone has been told;
     // NOW surface the invoicing failure so the operator can retry it instead of
