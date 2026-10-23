@@ -77,11 +77,11 @@ test("lint is npm run lint -w <ws> for every touched workspace with a lint scrip
     "-w",
     "packages/ui",
   ]);
-  assert.equal(step(steps, "lint:apps/api").cwd, "/r");
+  assert.equal(step(steps, "lint:apps/api").cwd, path.join("/r"));
   const none = planGate({ changedFiles: ["packages/nolint/a.ts"], ...opts, hasLint: () => false });
   assert.ok(!names(none).some((n) => n.startsWith("lint:")));
   const jest = step(steps, "jest:apps/api");
-  assert.equal(jest.cwd, "/r/apps/api");
+  assert.equal(jest.cwd, path.join("/r/apps/api"));
   assert.ok(jest.cmd.includes("--findRelatedTests"));
   assert.ok(jest.cmd.includes("src/orders/a.service.ts"));
   assert.deepEqual(step(steps, "tsc:apps/api").cmd, [
@@ -100,7 +100,7 @@ test("packages/types or packages/pricing change adds consumer type checks and en
       assert.deepEqual(step(steps, `tsc:${ws}`).cmd, ["npm", "run", "check-types", "-w", ws]);
     }
     const ep = step(steps, "enum-parity");
-    assert.equal(ep.cwd, "/r/apps/api");
+    assert.equal(ep.cwd, path.join("/r/apps/api"));
     assert.deepEqual(ep.cmd, ["npx", "jest", "src/common/enum-parity.spec.ts"]);
   }
   const plain = planGate({ changedFiles: ["packages/ui/a.tsx"], ...opts });
@@ -234,8 +234,8 @@ test("web and package workspaces use tsc --noEmit in their own directory", () =>
     ...opts,
   });
   assert.deepEqual(step(steps, "tsc:apps/web").cmd, ["npx", "tsc", "--noEmit"]);
-  assert.deepEqual(step(steps, "tsc:apps/web").cwd, "/r/apps/web");
-  assert.equal(step(steps, "tsc:packages/pricing").cwd, "/r/packages/pricing");
+  assert.deepEqual(step(steps, "tsc:apps/web").cwd, path.join("/r/apps/web"));
+  assert.equal(step(steps, "tsc:packages/pricing").cwd, path.join("/r/packages/pricing"));
 });
 
 test("fixed steps: packages-build, signature-scan, commitlint on the merge-base, size-ratchet", () => {
@@ -253,7 +253,7 @@ test("fixed steps: packages-build, signature-scan, commitlint on the merge-base,
   ]);
   assert.deepEqual(step(steps, "commitlint").cmd.slice(-4), ["--from", "abc123", "--to", "HEAD"]);
   const sr = step(steps, "size-ratchet");
-  assert.equal(sr.cwd, "/r/apps/api");
+  assert.equal(sr.cwd, path.join("/r/apps/api"));
   assert.deepEqual(sr.cmd, ["npx", "jest", "-c", "jest.repo-truth.config.js", "size-ratchet"]);
 });
 
@@ -282,9 +282,9 @@ test("tools/ops-monitor change adds its run-all; scripts/<x>.mjs adds its self-t
 
 test("runGate runs every step after a failure and reports ok=false with a 20-line tail", async () => {
   const steps = [
-    { name: "a", cwd: "/r", cmd: ["x"] },
-    { name: "b", cwd: "/r", cmd: ["y"] },
-    { name: "c", cwd: "/r", cmd: ["z"] },
+    { name: "a", cwd: path.join("/r"), cmd: ["x"] },
+    { name: "b", cwd: path.join("/r"), cmd: ["y"] },
+    { name: "c", cwd: path.join("/r"), cmd: ["z"] },
   ];
   const seen = [];
   const exec = async (s) => {
@@ -347,4 +347,30 @@ test("--wait exits 3 and prints the json when the gate never finishes within --m
   const r = await runWait(f, ["--max-ms", "1500"]);
   assert.equal(r.code, 3);
   assert.equal(JSON.parse(r.out).running, true);
+});
+
+test("clean-tree is the first step and fails on a dirty tracked file, passes when clean", () => {
+  const steps = planGate({ changedFiles: ["a.ts"], ...opts });
+  assert.equal(steps[0].name, "clean-tree");
+  const dir = mkdtempSync(path.join(tmpdir(), "gate-clean-"));
+  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8" });
+  sh("init", "-q");
+  sh("config", "user.email", "t@t");
+  sh("config", "user.name", "t");
+  writeFileSync(path.join(dir, "a.txt"), "1");
+  sh("add", ".");
+  sh("commit", "-qm", "base");
+  const run = (ignore = []) => {
+    const st = planGate({ changedFiles: [], ...opts, root: dir, ignore })[0];
+    return spawnSync(st.cmd[0], st.cmd.slice(1), { cwd: st.cwd, encoding: "utf8" });
+  };
+  assert.equal(run().status, 0);
+  writeFileSync(path.join(dir, "a.txt"), "2");
+  const bad = run();
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout + bad.stderr, /a\.txt/);
+  sh("checkout", "a.txt");
+  writeFileSync(path.join(dir, "gate.json"), "{}");
+  assert.equal(run().status, 1);
+  assert.equal(run(["gate.json"]).status, 0);
 });

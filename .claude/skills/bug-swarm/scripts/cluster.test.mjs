@@ -202,3 +202,22 @@ it("x", () => { expect("apps/api/src/other.ts": 1) });
   ]);
   assert.deepEqual(ratchetFilesFrom("nothing here"), []);
 });
+
+test("triage exclusions are carried into excluded (one per row) and requested rows are accounted", () => {
+  const r = clusterBugs(
+    { bugs: [bug("1", ["a.ts"])], excluded: [{ row: "7, 8", why: "x" }] },
+    { requestedRows: ["1", "7", "8"] },
+  );
+  assert.deepEqual(r.excluded, [
+    { row: "7", reason: "x", source: "triage" },
+    { row: "8", reason: "x", source: "triage" },
+  ]);
+  assert.deepEqual(r.unaccounted, []);
+  // a re-run over a --write'n manifest does not duplicate them
+  const again = clusterBugs(
+    { bugs: [bug("1", ["a.ts"])], excluded: r.excluded },
+    { requestedRows: ["1", "7", "8", "9"] },
+  );
+  assert.equal(again.excluded.length, 2);
+  assert.deepEqual(again.unaccounted, ["9"]);
+});

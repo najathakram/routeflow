@@ -39,6 +39,12 @@ const [base,...avoid]=process.argv.slice(1);
 const out=execFileSync("git",["diff","--name-only",base+"..HEAD","--",...avoid],{encoding:"utf8"}).trim();
 if(out){console.error("avoided files touched:\\n"+out);process.exit(1);}`;
 
+// Fails on any uncommitted change (tracked or untracked), except the gate's own output paths.
+const CLEAN_SCRIPT = `const {execFileSync}=require("node:child_process");
+const ignore=process.argv.slice(1).map((p)=>":(exclude)"+p);
+const out=execFileSync("git",["status","--porcelain","--","."].concat(ignore),{encoding:"utf8"}).trim();
+if(out){console.error("working tree is not clean (commit or discard first):\\n"+out);process.exit(1);}`;
+
 function lintScriptExists(root, ws) {
   try {
     return Boolean(
@@ -65,11 +71,13 @@ export function planGate({
   root = process.cwd(),
   exists = existsSync,
   avoid = [],
+  ignore = [],
   hasLint = (ws) => lintScriptExists(root, ws),
 }) {
   const steps = [];
   const add = (name, cwd, cmd, timeoutMs = STEP_TIMEOUT_MS) =>
     steps.push({ name, cwd, cmd, timeoutMs });
+  add("clean-tree", root, ["node", "-e", CLEAN_SCRIPT, ...ignore]);
   add("packages-build", root, ["npx", "turbo", "run", "build", "--filter=./packages/*"]);
   add("signature-scan", root, ["node", ".claude/skills/bug-hunt/scripts/scan-signatures.mjs"]);
   add("commitlint", root, ["npx", "commitlint", "--from", base, "--to", "HEAD"]);
@@ -87,7 +95,7 @@ export function planGate({
     byWs.get(ws).push(f);
   }
   for (const ws of [...byWs.keys()].sort()) {
-    const rel = byWs.get(ws).map((f) => path.relative(ws, f));
+    const rel = byWs.get(ws).map((f) => path.posix.relative(ws, f));
     const cwd = path.join(root, ws);
     if (ws === "apps/api") add(`tsc:${ws}`, root, ["npm", "run", "check-types", "-w", "apps/api"]);
     else add(`tsc:${ws}`, cwd, ["npx", "tsc", "--noEmit"]);
@@ -217,6 +225,13 @@ export function finishJson(file, result, { head, base }) {
   );
 }
 
+// Repo-relative posix path of the gate's own json output when it lives inside the tree.
+function ownOutputs(root, jsonOut) {
+  if (!jsonOut) return [];
+  const rel = path.relative(root, path.resolve(jsonOut));
+  return rel.startsWith("..") || path.isAbsolute(rel) ? [] : [rel.split(path.sep).join("/")];
+}
+
 const git = (args) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 
 /**
@@ -279,7 +294,14 @@ export async function main(argv = process.argv.slice(2)) {
   const head = git(["rev-parse", "HEAD"]).trim();
   if (jsonOut && !dryRun && process.env.RF_HEAVY_SLOT_HELD !== "1") beginJson(jsonOut, head);
   const { base, files } = changedSince(git);
-  const steps = planGate({ changedFiles: files, needsDb, base, root, avoid });
+  const steps = planGate({
+    changedFiles: files,
+    needsDb,
+    base,
+    root,
+    avoid,
+    ignore: ownOutputs(root, jsonOut),
+  });
 
   if (dryRun) {
     console.log(

@@ -158,12 +158,25 @@ export function clusterBugs(
       .slice(maxClusters)
       .map((cluster) => ({ cluster, reason: `over cap ${maxClusters}` }));
   }
+  // Triage's own exclusions (raw `{row, why}` or a previous run's `source: "triage"`) are kept, one
+  // entry per row ("7, 8" splits); entries this script derived itself are regenerated, not copied.
+  const have = new Set(excluded.map((e) => `${e.row}|${e.sub ?? ""}|${e.reason}`));
+  for (const e of manifest.excluded ?? []) {
+    if (e.why === undefined && e.source !== "triage") continue;
+    for (const row of String(e.row)
+      .split(",")
+      .map((r) => r.trim())
+      .filter(Boolean)) {
+      const reason = e.why ?? e.reason;
+      if (have.has(`${row}||${reason}`)) continue;
+      have.add(`${row}||${reason}`);
+      excluded.push({ row, reason, source: "triage" });
+    }
+  }
   if (requestedRows) {
     const seen = new Set((manifest.bugs ?? []).map((b) => String(b.row)));
     for (const e of excluded) seen.add(String(e.row));
-    for (const e of manifest.excluded ?? []) {
-      for (const r of String(e.row).split(",")) seen.add(r.trim());
-    }
+    for (const p of result.parked ?? []) for (const b of p.cluster.bugs) seen.add(String(b.row));
     result.unaccounted = requestedRows.filter((r) => !seen.has(String(r)));
   }
   return result;
@@ -219,9 +232,6 @@ export function main(argv = process.argv.slice(2)) {
   });
   if (cli.write) {
     const next = { ...manifest, ...result };
-    // Triage's own `excluded` notes ({row, why}) are kept under a separate key, not overwritten.
-    if (manifest.excluded?.length && !manifest.triageExcluded)
-      next.triageExcluded = manifest.excluded;
     writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`);
   }
   console.log(JSON.stringify(result, null, 2));

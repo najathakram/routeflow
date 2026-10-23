@@ -1,5 +1,6 @@
 // node --test worktree.test.mjs — contract tests for worktree.mjs (runs 2026-10-23-bug-swarm-1/-2).
 import { test } from "node:test";
+import path from "node:path";
 import assert from "node:assert/strict";
 import { planWorktree, parseArgs, preflight } from "./worktree.mjs";
 
@@ -25,14 +26,19 @@ test("darwin clones node_modules with cp -cR (APFS), after git worktree add", ()
     "/r/wt",
     "origin/master",
   ]);
-  assert.equal(plan[1].cwd, "/r/main");
+  assert.equal(plan[1].cwd, path.join("/r/main"));
   const cps = plan.filter((s) => s.cmd[0] === "cp");
   assert.equal(cps.length, 4);
   for (const s of cps) assert.deepEqual(s.cmd.slice(0, 2), ["cp", "-cR"]);
-  assert.deepEqual(cps[0].cmd, ["cp", "-cR", "/r/src/node_modules", "/r/wt/node_modules"]);
+  assert.deepEqual(cps[0].cmd, [
+    "cp",
+    "-cR",
+    path.join("/r/src/node_modules"),
+    path.join("/r/wt/node_modules"),
+  ]);
   assert.deepEqual(cps[1].cmd.slice(2), [
-    "/r/src/apps/api/node_modules",
-    "/r/wt/apps/api/node_modules",
+    path.join("/r/src/apps/api/node_modules"),
+    path.join("/r/wt/apps/api/node_modules"),
   ]);
 });
 
@@ -51,8 +57,8 @@ test("packages build and prisma generate are always present, last, in order", ()
     ]);
   }
   const plan = planWorktree({ ...base, platform: "darwin" });
-  assert.equal(plan.at(-2).cwd, "/r/wt");
-  assert.equal(plan.at(-1).cwd, "/r/wt/apps/api");
+  assert.equal(plan.at(-2).cwd, path.join("/r/wt"));
+  assert.equal(plan.at(-1).cwd, path.join("/r/wt/apps/api"));
 });
 
 test("never runs npm ci or npm install", () => {
