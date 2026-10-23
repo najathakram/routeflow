@@ -110,6 +110,7 @@ describeDb(
       expect(bodyOf(err)).toMatchObject({
         code: "STOCK_DATE_IN_FILED_PERIOD",
         period: FILED_LABEL,
+        filedFor: "Tobacco", // W-755
       });
       expect(await h.countMovements(w)).toHaveLength(0);
       expect(await h.stockOfId(w.idOf(1))).toBe(100);
@@ -143,6 +144,11 @@ describeDb(
         .commitSession(h.A, w, { effectiveDate: IN_FILED.toISOString() })
         .catch((e) => e);
       expect(statusOf(err)).toBe(409);
+      // W-755: the real product read selects the category name, and the 409 names it.
+      expect(bodyOf(err)).toMatchObject({ filedFor: `Vape ${w.idOf(1)}` });
+      expect(String(bodyOf(err).message)).toContain(
+        `already filed for Vape ${w.idOf(1)} (${FILED_LABEL})`,
+      );
       expect(await h.countMovements(w)).toHaveLength(0);
     }, 60_000);
 

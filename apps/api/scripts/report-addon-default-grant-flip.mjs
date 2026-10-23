@@ -270,7 +270,7 @@ async function main() {
     console.log(
       `\n${result.totals.FLIPS_ON} tenant(s) newly gain "${TARGET_KEY}" with no TenantAddon row once the default grant ships.\n`,
     );
-    // SA-559a: the line the owner posts on #2554 before AND after the v13 publish (a count only).
+    // SA-559a: the line the owner posts on the board (#3686) before AND after the v13 publish (a count only).
     console.log(`${payingOnLiteLine(result)}\n`);
     console.log("=== END — session was read-only; nothing was modified ===\n");
   } finally {

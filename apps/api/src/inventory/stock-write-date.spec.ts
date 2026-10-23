@@ -21,7 +21,12 @@ const SEPT_FILING = {
 };
 
 function db(opts: {
-  products?: Array<{ id: string; isTobacco?: boolean; trackedCategoryId?: string | null }>;
+  products?: Array<{
+    id: string;
+    isTobacco?: boolean;
+    trackedCategoryId?: string | null;
+    categoryName?: string;
+  }>;
   report?: unknown;
   filing?: unknown;
 }) {
@@ -32,6 +37,7 @@ function db(opts: {
           id: p.id,
           isTobacco: !!p.isTobacco,
           trackedCategoryId: p.trackedCategoryId ?? null,
+          trackedCategory: p.trackedCategoryId ? { name: p.categoryName ?? "Vapes" } : null,
         })),
       ),
     },
@@ -125,5 +131,101 @@ describe("stockWriteDate (row 563)", () => {
         now: NOW,
       }),
     ).rejects.toThrow(/tenant/);
+  });
+
+  describe("W-755 (SA-894 LOW-1, SA-802a): the boundary, latest wins, the message names WHAT is filed, one read per key", () => {
+    it("tobacco's INCLUSIVE periodEnd + 1 ms is the close: the next month's first instant is accepted, the last ms refused", async () => {
+      const d = db({ products: [{ id: "p1", isTobacco: true }], report: SEPT });
+      await expect(call(d, "2026-10-01T00:00:00.000Z")).resolves.toEqual(
+        new Date("2026-10-01T00:00:00.000Z"),
+      );
+      await conflict(call(d, "2026-09-30T23:59:59.999Z"));
+    });
+
+    it("tobacco AND a tracked category both filed: the LATER close wins, with its own label and name", async () => {
+      const OCT_FILING = {
+        periodStart: new Date("2026-10-01T00:00:00.000Z"),
+        periodEnd: new Date("2026-11-01T00:00:00.000Z"),
+        periodKey: "2026-10",
+        cadence: "MONTHLY",
+      };
+      const later = db({
+        products: [
+          { id: "p1", isTobacco: true, trackedCategoryId: "cat-1", categoryName: "Vapes" },
+        ],
+        report: SEPT,
+        filing: OCT_FILING,
+      });
+      const body = await conflict(call(later, "2026-10-15T10:00:00.000Z"));
+      expect(body).toMatchObject({ period: "October 2026", filedFor: "Vapes" });
+
+      const earlier = db({
+        products: [
+          { id: "p1", isTobacco: true, trackedCategoryId: "cat-1", categoryName: "Vapes" },
+        ],
+        report: {
+          periodStart: OCT_FILING.periodStart,
+          periodEnd: new Date("2026-10-31T23:59:59.999Z"),
+        },
+        filing: SEPT_FILING,
+      });
+      const body2 = await conflict(call(earlier, "2026-10-15T10:00:00.000Z"));
+      expect(body2).toMatchObject({ period: "October 2026", filedFor: "Tobacco" });
+    });
+
+    it("a TIE keeps tobacco (the common case: tobacco products carry the Tobacco tracked category too)", async () => {
+      // The tobacco report's inclusive end + 1 ms and the September filing's exclusive end are the same instant.
+      const d = db({
+        products: [
+          { id: "p1", isTobacco: true, trackedCategoryId: "cat-1", categoryName: "Vapes" },
+        ],
+        report: SEPT, // periodEnd 2026-09-30T23:59:59.999Z → through 2026-10-01T00:00:00.000Z
+        filing: SEPT_FILING, // periodEnd 2026-10-01T00:00:00.000Z
+      });
+      const body = await conflict(call(d, "2026-09-15T10:00:00.000Z"));
+      expect(body).toMatchObject({ period: "September 2026", filedFor: "Tobacco" });
+    });
+
+    it("the 409 names what is filed: Tobacco", async () => {
+      const d = db({ products: [{ id: "p1", isTobacco: true }], report: SEPT });
+      const body = await conflict(call(d, "2026-09-15T10:00:00.000Z"));
+      expect(body).toMatchObject({ filedFor: "Tobacco" });
+      expect(String(body.message)).toContain("already filed for Tobacco (September 2026)");
+    });
+
+    it("the 409 names what is filed: the tracked category's name", async () => {
+      const d = db({
+        products: [{ id: "p1", trackedCategoryId: "cat-1", categoryName: "Vapes" }],
+        filing: SEPT_FILING,
+      });
+      const body = await conflict(call(d, "2026-09-15T10:00:00.000Z"));
+      expect(body).toMatchObject({ filedFor: "Vapes" });
+      expect(String(body.message)).toContain("already filed for Vapes (September 2026)");
+    });
+
+    it("the product read selects the category name (the message's source)", async () => {
+      const d = db({ products: [{ id: "p1", trackedCategoryId: "cat-1" }] });
+      await call(d, "2026-09-15T10:00:00.000Z");
+      expect(d.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({ trackedCategory: { select: { name: true } } }),
+        }),
+      );
+    });
+
+    it("many products sharing tobacco and one category read each filing ONCE per call", async () => {
+      const d = db({
+        products: [
+          { id: "a", isTobacco: true, trackedCategoryId: "cat-1" },
+          { id: "b", isTobacco: true, trackedCategoryId: "cat-1" },
+          { id: "c", isTobacco: true, trackedCategoryId: "cat-1" },
+          { id: "d", trackedCategoryId: "cat-2" },
+          { id: "e", trackedCategoryId: "cat-2" },
+        ],
+      });
+      await call(d, "2026-09-15T10:00:00.000Z", ["a", "b", "c", "d", "e"]);
+      expect(d.tobaccoReport.findFirst).toHaveBeenCalledTimes(1);
+      expect(d.regulatedFiling.findFirst).toHaveBeenCalledTimes(2);
+    });
   });
 });

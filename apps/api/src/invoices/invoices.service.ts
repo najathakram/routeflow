@@ -79,6 +79,7 @@ import { assertReminderIssued, assertReminderOwes } from "./invoice-balance-sql"
 import { classifyInvoiceBalance, confirmedBalance } from "./invoice-balance-classify";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
+import { regulatedContentChanged } from "./regulated-content-change";
 import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
@@ -1569,7 +1570,17 @@ export class InvoicesService {
     }
     const priorItems = await db.invoiceItem.findMany({
       where: { invoiceId: draft.id },
-      select: { orderItemId: true, unitsPerBox: true, qty: true, subtotal: true },
+      // 683 (SA-789 F2): the regulated content too, compared after the re-create below
+      select: {
+        orderItemId: true,
+        unitsPerBox: true,
+        qty: true,
+        subtotal: true,
+        trackedCategoryId: true,
+        trackedSubcategoryId: true,
+        unitLabel: true,
+        categoryTaxAmount: true,
+      },
     });
     const priorPackByLine = priorUnitsPerBoxMap(priorItems);
     const order = await db.order.findUnique({
@@ -1710,10 +1721,13 @@ export class InvoicesService {
       });
     }
 
-    // NOTE: the ledger is re-synced ONLY on the sibling-aware paths (rebuildSiblingDrafts).
-    // This legacy single-draft rebuild is group-UNAWARE — for a bailed split it folds the
-    // regulated line onto the base while the -R# sibling's SALE row stays live, so writing
-    // a SALE here would double-count. Leave the ledger untouched (pre-existing behavior).
+    // 683 (SA-789 F2, SA-896): this rebuild re-created every item. The draft is the order's SOLE non-void invoice here (the
+    // SA-681 fence above: a split or a sibling never reaches this point), so a resync cannot double-count. Regulated content
+    // unchanged → no ledger write (the rotated ids resolve through the order line, F1). Changed → the same reverse-and-rewrite
+    // the sibling-aware path uses (append-only; B297's period rule).
+    if (regulatedContentChanged(priorItems, updated.items ?? [])) {
+      await this.resyncInvoiceLedger(draft.id, orderId, updated.items ?? [], db);
+    }
 
     // Reset invoicedQty on every order line to exactly what this draft bills.
     const billMap = new Map<string, number>(
@@ -1943,9 +1957,9 @@ export class InvoicesService {
    * (the ledger service early-returns when there are no SALE rows / no regulated lines).
    *
    * Callers (each under its own locks, pinned by regulated/sa839-ledger-pins.spec.ts):
-   * rebuildSiblingDrafts (never the group-unaware legacy rebuild, which would double-count a
-   * folded regulated line against its live sibling SALE), the DRAFT update, the price re-sync
-   * and unvoidInvoice (SA-839 / B706, `restoresVoid`).
+   * rebuildSiblingDrafts, the legacy single-draft rebuild when its regulated content changed (683: it
+   * runs only for the order's SOLE non-void invoice, so no sibling SALE can be double-counted), the
+   * DRAFT update, the price re-sync and unvoidInvoice (SA-839 / B706, `restoresVoid`).
    *
    * SA-839 INVOICE_BILLED: it cancels only the sale-record and LEAVES every LIVE return /
    * credit-note reversal standing (a dead one's rows are countered by the settle's sweep first),
