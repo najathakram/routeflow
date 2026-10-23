@@ -307,6 +307,37 @@ const putStatus = (home, r) =>
   writeFileSync(join(home, "status", `${r.sessionId}.json`), JSON.stringify(r));
 
 test(
+  "runStatusSync lockHeld: takes no lock (a held lock is not a busy skip), skips the pull, still appends",
+  { timeout: 120000 },
+  async () => {
+    const r = mkRepo();
+    try {
+      putStatus(r.home, rec0("s1"));
+      await withSpecsLock(
+        async () => {
+          const res = await runStatusSync({
+            dir: r.dir,
+            home: r.home,
+            machine: "mbp",
+            env: {},
+            now: NOW,
+            push: false,
+            lockHeld: true,
+          });
+          assert.equal(res.ran, true);
+          assert.equal(res.appended, 1);
+          assert.equal(res.pullError, undefined);
+        },
+        { home: r.home, heartbeatMs: 3600000 },
+      );
+      assert.equal(readAllEvents(r.dir).filter((e) => e.kind === "heartbeat").length, 1);
+    } finally {
+      rmSync(r.tmp, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   "runStatusSync: pull+append+push, own machine only, busy skip, pull failure, no-push",
   { timeout: 120000 },
   async () => {
