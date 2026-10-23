@@ -354,7 +354,8 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
     expect((await row(id)).status).toBe("DRAFT");
     mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
     await email(id); // the re-issue
-    expect(sweepCalls()).toBe(1);
+    // SA-860: twice, once in the rolled-back dry run that feeds the email snapshot and once in the markSent commit
+    expect(sweepCalls()).toBe(2);
   }, 60_000);
 
   // GUARD (SA-852 rule 3): green before and after the fold; it pins the stage a revert leaves behind.
