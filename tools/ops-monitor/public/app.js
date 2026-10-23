@@ -1375,7 +1375,13 @@
             },
             `${beat.label} `,
             beat.at
-              ? el("span", { "data-sw": beat.at, text: sinceWords(now() - Date.parse(beat.at)) })
+              ? el("span", {
+                  "data-sw": beat.at,
+                  text:
+                    l.heartbeatAgeMin != null
+                      ? sinceWords(l.heartbeatAgeMin * 60000)
+                      : sinceWords(now() - Date.parse(beat.at)),
+                })
               : null,
           ),
           isSilent ? pill(`SILENT ${silent}m`, "warn", "Holds work but has been quiet") : null,

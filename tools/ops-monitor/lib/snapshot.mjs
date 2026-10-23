@@ -16,6 +16,7 @@ import {
   revertedNumbers,
 } from "./reconcile.mjs";
 import { summarizeChecks } from "./collector.mjs";
+import { UNKNOWN_LANE_RECENT_DAYS } from "./reconcile.mjs";
 
 export { linkItemFor };
 
@@ -920,7 +921,17 @@ export function buildSnapshot({
     for (const b of branches) if (b.item === it.id) set.add(b.branch);
     return set;
   };
-  const laneIds = uniq([...(cfg?.lanes ?? []).map((l) => l.id), ...state.lanes.keys()]);
+  // Configured lanes always show; an unconfigured one only with open work or recent activity.
+  const configured = new Set((cfg?.lanes ?? []).map((l) => l.id));
+  const laneShown = (id) => {
+    if (configured.has(id)) return true;
+    if (stateItems.some((it) => !isDone(it) && (it.claimedBy === id || it.lane === id)))
+      return true;
+    const seenLane = state.lanes.get(id);
+    const last = seenLane?.lastHeartbeatAt ?? seenLane?.lastEventAt ?? null;
+    return last !== null && now - last <= UNKNOWN_LANE_RECENT_DAYS * 24 * 3600_000;
+  };
+  const laneIds = uniq([...configured, ...state.lanes.keys()]).filter(laneShown);
   const lanes = laneIds.map((id) => {
     const cl = cfg?.lanes?.find((l) => l.id === id);
     const seen = state.lanes.get(id);

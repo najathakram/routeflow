@@ -1669,3 +1669,23 @@ test("lanes: lastHeartbeatAt, heartbeatAgeMin and known", () => {
   assert.equal(ghost.heartbeatAgeMin, 20);
   assert.equal(ghost.known, false);
 });
+
+test("lanes: unconfigured lanes appear only with open work or activity in the last 7 days", () => {
+  const hb = (at, lane, session) => ev(at, "heartbeat", null, lane, { session, lastActiveAt: at });
+  const s = build({
+    specs: okSource(30, {
+      events: [
+        ...events(),
+        hb("2026-10-10T00:00:00Z", "retired-lane", "s1"), // 9 days
+        hb("2026-10-18T12:00:00Z", "fresh-lane", "s2"), // 1 day
+      ],
+      config: DEFAULT_CONFIG,
+    }),
+  });
+  const ids = s.lanes.map((l) => l.id);
+  assert.ok(!ids.includes("retired-lane"));
+  assert.equal(s.lanes.find((l) => l.id === "fresh-lane").known, false);
+  assert.ok(ids.includes("owner")); // configured lanes always appear
+  assert.ok(!s.alarms.some((a) => a.id === "unknown-lane:retired-lane"));
+  assert.ok(s.alarms.some((a) => a.id === "unknown-lane:fresh-lane"));
+});

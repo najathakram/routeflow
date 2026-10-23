@@ -920,3 +920,23 @@ test("unknown-lane: items on known lanes and done items raise nothing", () => {
   const alarms = run({ state, config }).filter((a) => a.kind === "unknown-lane");
   assert.deepEqual(alarms, []);
 });
+
+test("unknown-lane: the lanes arm is bounded to 7 days; open items are not", () => {
+  const config = { ...DEFAULT_CONFIG, lanes: [{ id: "lead" }] };
+  const L = (id, at, kind = "note") => [
+    id,
+    { id, lastEventAt: at, lastEventKind: kind, claims: [] },
+  ];
+  const state = mkState([item("5", { claimedBy: "ancient" })], {
+    lanes: new Map([
+      L("old-only", NOW - 8 * 24 * HOUR),
+      L("fresh", NOW - 24 * HOUR, "heartbeat"),
+      L("ancient", NOW - 90 * 24 * HOUR),
+    ]),
+  });
+  const ids = run({ state, config })
+    .filter((a) => a.kind === "unknown-lane")
+    .map((a) => a.id)
+    .sort();
+  assert.deepEqual(ids, ["unknown-lane:ancient", "unknown-lane:fresh"]);
+});

@@ -7,6 +7,8 @@ import { isLegacyMonitorItem, isRegisterOwned } from "./sync.mjs";
 
 const SEV_ORDER = { error: 0, warn: 1, info: 2 };
 const HOUR = 3600_000;
+/** An unconfigured lane with no open work only counts while its activity is this recent. */
+export const UNKNOWN_LANE_RECENT_DAYS = 7;
 // Events older than the register's last change by more than this mean the register sync is behind.
 export const ITEMS_STALE_MS = 15 * 60_000;
 const BEHIND_STATUSES = ["idea", "planned", "spec", "building", "review"];
@@ -570,7 +572,11 @@ export function reconcile({
       note(it.lane, it.id);
       note(it.claimedBy, it.id);
     }
-    for (const id of state.lanes.keys()) note(id, null);
+    // Bounded: a retired lane id seen only in old events must not warn forever.
+    for (const [id, l] of state.lanes) {
+      const last = l.lastHeartbeatAt ?? l.lastEventAt ?? null;
+      if (last !== null && now - last <= UNKNOWN_LANE_RECENT_DAYS * 24 * HOUR) note(id, null);
+    }
     for (const [laneId, ids] of byLane) {
       const named = ids.slice(0, 3).join(", ");
       add({
