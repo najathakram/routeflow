@@ -100,6 +100,8 @@ export interface AppConfig {
     stableUrlWindowSeconds: number;
   };
   throttle: {
+    /** Per-IP ceiling (requests / 60 s) of the global "default" throttler; prod default 100 (B599). */
+    defaultLimit: number;
     /**
      * Per-IP ceiling (requests / 60 s) for GET /uploads/*, which is exempt from the global
      * 100 / 60 s throttle because one catalog page loads more images than that (#2091).
@@ -176,6 +178,7 @@ export const configuration = (): AppConfig => ({
     stableUrlWindowSeconds: positiveIntEnv("STORAGE_URL_STABLE_WINDOW_SECONDS", 43_200),
   },
   throttle: {
+    defaultLimit: positiveIntEnv("DEFAULT_THROTTLE_LIMIT", 100),
     uploadsLimit: positiveIntEnv("UPLOADS_THROTTLE_LIMIT", 1200),
   },
   ors: {
