@@ -267,10 +267,17 @@ export function CounterLinePriceEdit({
           </p>
 
           <div className="flex items-center justify-end gap-3 border-t border-surface-border pt-4">
-            <Button type="button" variant="ghost" onClick={close}>
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-[44px] lg:min-h-0"
+              onClick={close}
+            >
               Cancel
             </Button>
-            <Button type="submit">Apply</Button>
+            <Button type="submit" className="min-h-[44px] lg:min-h-0">
+              Apply
+            </Button>
           </div>
         </form>
       </Modal>

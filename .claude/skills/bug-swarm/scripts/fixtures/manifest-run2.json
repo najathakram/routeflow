@@ -1,0 +1,30 @@
+{
+  "run": "2026-10-23-bug-swarm-2",
+  "bugs": [
+    {
+      "row": "301",
+      "risk": "LOW",
+      "status": "live",
+      "files": ["apps/web/app/(dashboard)/orders/_components/CounterLinePriceEdit.tsx"],
+      "needsDb": false,
+      "ui": true
+    },
+    {
+      "row": "296",
+      "risk": "LOW",
+      "status": "live",
+      "files": ["apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx"],
+      "needsDb": false,
+      "ui": true
+    },
+    {
+      "row": "300",
+      "risk": "LOW",
+      "status": "live",
+      "files": ["apps/web/app/(dashboard)/invoices/new/page.tsx"],
+      "needsDb": false,
+      "ui": true
+    }
+  ],
+  "excluded": []
+}

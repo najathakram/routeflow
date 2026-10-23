@@ -13,9 +13,11 @@ import {
   landedAt,
   linkItemFor,
   reconcile,
+  UNKNOWN_LANE_RECENT_DAYS,
   revertedNumbers,
 } from "./reconcile.mjs";
 import { summarizeChecks } from "./collector.mjs";
+import { resolveLaneId } from "./config.mjs";
 
 export { linkItemFor };
 
@@ -920,14 +922,41 @@ export function buildSnapshot({
     for (const b of branches) if (b.item === it.id) set.add(b.branch);
     return set;
   };
-  const laneIds = uniq([...(cfg?.lanes ?? []).map((l) => l.id), ...state.lanes.keys()]);
+  // Configured lanes always show; an alias folds into its target lane; an unconfigured one only
+  // shows with open work or recent activity.
+  const configured = new Set((cfg?.lanes ?? []).map((l) => l.id));
+  const rowOf = (raw) => resolveLaneId(raw, cfg) ?? raw;
+  const group = new Map(); // row id -> raw lane ids folded into it
+  for (const id of [...configured, ...state.lanes.keys()]) {
+    const row = rowOf(id);
+    if (!group.has(row)) group.set(row, new Set());
+    group.get(row).add(id);
+  }
+  const laneShown = (row) => {
+    if (configured.has(row)) return true;
+    const raws = group.get(row);
+    if (stateItems.some((it) => !isDone(it) && (raws.has(it.claimedBy) || raws.has(it.lane))))
+      return true;
+    const last = Math.max(
+      -Infinity,
+      ...[...raws].map((r) => state.lanes.get(r)?.lastEventAt ?? -Infinity),
+    );
+    return Number.isFinite(last) && now - last <= UNKNOWN_LANE_RECENT_DAYS * 24 * 3600_000;
+  };
+  const laneIds = [...group.keys()].filter(laneShown);
   const lanes = laneIds.map((id) => {
     const cl = cfg?.lanes?.find((l) => l.id === id);
-    const seen = state.lanes.get(id);
-    const lastEvent = seen?.lastEventAt ?? null;
+    const raws = group.get(id);
+    const maxOf = (f) =>
+      [...raws].reduce((m, r) => {
+        const v = f(state.lanes.get(r));
+        return v == null || (m !== null && m >= v) ? m : v;
+      }, null);
+    const lastEvent = maxOf((l) => l?.lastEventAt);
+    const lastBeat = maxOf((l) => l?.lastHeartbeatAt);
     let commit = null;
     for (const it of stateItems) {
-      if (isDone(it) || (it.claimedBy !== id && it.lane !== id)) continue;
+      if (isDone(it) || (!raws.has(it.claimedBy) && !raws.has(it.lane))) continue;
       for (const br of branchesOfItem(it)) {
         const d = branchDate.get(br);
         if (d !== undefined && (commit === null || d > commit)) commit = d;
@@ -958,10 +987,13 @@ export function buildSnapshot({
       title: cl?.title ?? id,
       machine: cl?.machine ?? null,
       lastEventAt: iso(lastEvent),
+      lastHeartbeatAt: iso(lastBeat),
+      heartbeatAgeMin: lastBeat == null ? null : Math.max(0, Math.round((now - lastBeat) / 60000)),
+      known: !!cl,
       lastActivityAt: act ? iso(act[1]) : null,
       lastActivitySource: act ? act[0] : null,
       silentMin: act === null ? null : Math.max(0, Math.round((now - act[1]) / 60000)),
-      now: laneNow(state, id),
+      now: uniq([...raws].flatMap((r) => laneNow(state, r))),
       next: pick ? { id: pick.item.id, title: pick.item.title, reason: pick.reason } : null,
     };
   });

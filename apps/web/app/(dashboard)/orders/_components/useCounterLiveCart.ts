@@ -124,7 +124,7 @@ export function useCounterLiveCart({
   const canRestoreRef = React.useRef(canRestore);
   canRestoreRef.current = canRestore;
 
-  const { lines, customer, method, tendered, reference, walkIn } = snapshot;
+  const { lines, customer, method, tendered, reference, checkDate, walkIn } = snapshot;
   React.useEffect(() => {
     if (!storeKey || !owner) return;
     if (suspended || sending || latest.current.lines.length === 0) {
@@ -136,7 +136,19 @@ export function useCounterLiveCart({
       if (!sendingRef.current) writeLiveCart(storeKey, latest.current, me());
     }, SAVE_DELAY_MS);
     return () => window.clearTimeout(t);
-  }, [storeKey, owner, suspended, sending, lines, customer, method, tendered, reference, walkIn]);
+  }, [
+    storeKey,
+    owner,
+    suspended,
+    sending,
+    lines,
+    customer,
+    method,
+    tendered,
+    reference,
+    checkDate,
+    walkIn,
+  ]);
 
   // A refresh inside the debounce window still keeps the last edit, unless a sale is going out.
   React.useEffect(() => {

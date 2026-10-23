@@ -27,3 +27,5 @@
 ## Retro cadence
 
 Every ten rulings, or at session close: append the row, compare with the previous, then promote/retire per SKILL.md §7.3. Retro 1 done at SA-080 (2026-09-23 ~21:00Z). Retro 3 done at SA-100 (2026-09-23). Retro 4 done at SA-110 (2026-09-23). Retro 5 done at SA-120 (2026-09-23). Retro 6 done at SA-130 (2026-09-23). Retro 7 done at SA-141 (2026-09-24). Retro 8 done at SA-150 (2026-09-24). The next retro is due at SA-160 or session close, whichever is first.
+
+| 2026-10-23 | SA seat (lane sa, Opus) | rulings SA-843..864 (22) + 3 pre-reads | amended after execution/review: SA-836 (premise overtaken), SA-845 §7, SA-846, SA-847, SA-858 ×3, SA-863 | own errors: E12 (A), E13 (B), E14-E16 (B, one shape) | builder/lane catches: 2 (Counter lane: L-O2, REG-B11) | lesson: a money ruling over N writers reads each writer's PINS, not only its guard line → OP-17 / check 12 |
