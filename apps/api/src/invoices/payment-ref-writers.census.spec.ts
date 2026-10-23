@@ -11,6 +11,25 @@ import * as path from "path";
  */
 const SRC = path.resolve(__dirname, "..");
 
+/** A path relative to SRC with "/" separators, so the census keys match on Windows as well as on Linux CI. */
+function toPosixRel(rel: string, sep: string = path.sep): string {
+  return rel.split(sep).join("/");
+}
+const rel = (f: string) => toPosixRel(path.relative(SRC, f));
+
+describe("census paths are separator-neutral", () => {
+  it("a Windows-style relative path reads as the posix key", () => {
+    expect(toPosixRel("bookkeeping\\bookkeeping.service.ts", "\\")).toBe(
+      "bookkeeping/bookkeeping.service.ts",
+    );
+  });
+  it("a posix relative path is unchanged", () => {
+    expect(toPosixRel("invoices/payment-ref-dedupe.ts", "/")).toBe(
+      "invoices/payment-ref-dedupe.ts",
+    );
+  });
+});
+
 type Kind = "GUARDED" | "NO_REFERENCE" | "SYSTEM_METHOD" | "IMPORT";
 const WRITERS: Record<string, { creates: number; kind: Kind; why: string }> = {
   "invoices/invoices.service.ts": {
@@ -57,7 +76,7 @@ describe("row 498: the InvoicePayment writer census", () => {
   const found = new Map<string, number>();
   for (const f of walk(SRC)) {
     const n = (fs.readFileSync(f, "utf8").match(WRITE_RE) ?? []).length;
-    if (n) found.set(path.relative(SRC, f), n);
+    if (n) found.set(rel(f), n);
   }
 
   it("lists every InvoicePayment writer in apps/api/src, with its count (a new writer fails here)", () => {
@@ -92,7 +111,7 @@ describe("row 498: the InvoicePayment writer census", () => {
           fs.readFileSync(f, "utf8"),
         ),
       )
-      .map((f) => path.relative(SRC, f));
+      .map((f) => rel(f));
     expect(definers).toEqual(["invoices/payment-ref-dedupe.ts"]);
   });
 
@@ -100,14 +119,14 @@ describe("row 498: the InvoicePayment writer census", () => {
     const takers = walk(SRC).filter((f) =>
       /family:\s*"payment-ref"/.test(fs.readFileSync(f, "utf8")),
     );
-    expect(takers.map((f) => path.relative(SRC, f))).toEqual(["invoices/payment-ref-dedupe.ts"]);
+    expect(takers.map((f) => rel(f))).toEqual(["invoices/payment-ref-dedupe.ts"]);
     // the definition itself is not a call site
     const callers = walk(SRC).filter(
       (f) =>
-        !f.endsWith("invoices/payment-ref-dedupe.ts") &&
+        rel(f) !== "invoices/payment-ref-dedupe.ts" &&
         /withPaymentRefLock\(/.test(fs.readFileSync(f, "utf8")),
     );
-    expect(callers.map((f) => path.relative(SRC, f)).sort()).toEqual([
+    expect(callers.map((f) => rel(f)).sort()).toEqual([
       "bookkeeping/bookkeeping.service.ts",
       "invoices/payment-idempotency.ts",
     ]);
@@ -118,8 +137,8 @@ describe("row 498: the InvoicePayment writer census", () => {
     ].map((rel) => path.join(SRC, rel));
     for (const f of [...takers, ...callers, ...hookFiles]) {
       const text = fs.readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
-      expect({ file: path.relative(SRC, f), takesMergeLock: /"order-merge"/.test(text) }).toEqual({
-        file: path.relative(SRC, f),
+      expect({ file: rel(f), takesMergeLock: /"order-merge"/.test(text) }).toEqual({
+        file: rel(f),
         takesMergeLock: false,
       });
     }
@@ -147,7 +166,7 @@ describe("SA-837b: the AdvancePayment writer census", () => {
     const actual: Record<string, number> = {};
     for (const f of walk(SRC)) {
       const n = (fs.readFileSync(f, "utf8").match(ADVANCE_RE) ?? []).length;
-      if (n) actual[path.relative(SRC, f)] = n;
+      if (n) actual[rel(f)] = n;
     }
     const expected = Object.fromEntries(
       Object.entries(ADVANCE_WRITERS).map(([k, v]) => [k, v.creates]),
