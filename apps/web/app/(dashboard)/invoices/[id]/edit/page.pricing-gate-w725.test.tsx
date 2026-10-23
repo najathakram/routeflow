@@ -163,19 +163,27 @@ describe("W-725: the invoice edit page's picks fail closed on an unread customer
   });
 });
 
-/** SA-883: GET /customers/:id/prices is plan-gated; a 403 (un-flagged plan, every LITE tenant) is an EMPTY read. */
+/** SA-883/884: GET /customers/:id/prices is plan-gated; its PLAN_GATE 403 (un-flagged plan, every LITE tenant) is an EMPTY read. */
 describe("SA-883: the invoice edit page treats a plan-gated 403 on the customer prices as an empty read", () => {
-  const http = (status: number) => ({
+  const http = (status: number, code?: string) => ({
     data: undefined,
     isError: true,
-    error: { response: { status } },
+    error: { response: { status, data: { code } } },
   });
 
-  it("prices 403: the scanner stays open and a scan prices at the customer's tier ($8)", async () => {
+  it("prices PLAN_GATE 403: the scanner stays open and a scan prices at the customer's tier ($8)", async () => {
     flagOn = false;
-    mockPricesRead = http(403);
+    mockPricesRead = http(403, "PLAN_GATE");
     const line = await scanAndSave();
     expect(line).toMatchObject({ unitPrice: 8 });
+  });
+
+  it("a role 403 on the prices read (no PLAN_GATE code) still closes the scanner", async () => {
+    flagOn = false;
+    mockPricesRead = http(403);
+    renderWithProviders(<EditInvoicePage />);
+    await screen.findByDisplayValue("Old");
+    expect(capturedOnScan).toBeUndefined();
   });
 
   it("prices 500: the scanner stays closed with the failed copy", async () => {
@@ -189,7 +197,7 @@ describe("SA-883: the invoice edit page treats a plan-gated 403 on the customer 
 
   it("a 403 on the CUSTOMER read still closes the scanner", async () => {
     flagOn = false;
-    mockCustomerRead = http(403);
+    mockCustomerRead = http(403, "PLAN_GATE");
     renderWithProviders(<EditInvoicePage />);
     await screen.findByDisplayValue("Old");
     expect(capturedOnScan).toBeUndefined();

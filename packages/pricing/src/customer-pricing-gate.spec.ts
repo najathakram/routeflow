@@ -1,4 +1,4 @@
-import { customerPricingGate, pricesUnconfirmed } from "./customer-pricing-gate";
+import { customerPricingGate, isPlanGateError, pricesUnconfirmed } from "./customer-pricing-gate";
 
 /**
  * W-725 (SA-868 / SA-870 / SA-873): the ONE customer-pricing gate, pure and shared by web and mobile. Money fails CLOSED:
@@ -84,21 +84,22 @@ describe("customerPricingGate (W-725 truth table)", () => {
   });
 });
 
-const http = (status: number) => ({
+const http = (status: number, code?: string) => ({
   isError: true,
   data: undefined,
-  error: { response: { status } },
+  error: { response: { status, data: code ? { code } : {} } },
 });
+const planGate = http(403, "PLAN_GATE");
 
 /**
- * SA-883 (#3658 MUST): GET /customers/:id/prices is @RequirePlanFlag("flag.pricing_tiers"), enforced in prod since 09-17. A
- * tenant whose plan lacks the flag gets 403 there: that is an EMPTY customer-price read (no overrides), not a failure, so the
- * pick prices at the customer's own tier. Only that one read and only 403: the customer read, 5xx, 404 and network errors
- * still fail closed.
+ * SA-883/884 (#3658 MUST): GET /customers/:id/prices is @RequirePlanFlag("flag.pricing_tiers"), enforced in prod since 09-17. A
+ * tenant whose plan lacks the flag (every LITE plan) gets the PLAN_GATE 403 there: an EMPTY customer-price read (no
+ * overrides), not a failure, so the pick prices at the customer's own tier. Only that read and only that code: a role 403,
+ * PLAN_GATE_UNAVAILABLE, 5xx, 404, a network error and any 403 on the customer read still fail closed.
  */
-describe("customerPricingGate: a plan-gated 403 on the customer-price read is an empty read (SA-883)", () => {
-  it("prices 403 with no data: nothing blocks (an un-flagged tenant can pick)", () => {
-    expect(gate({ customerPricesQuery: http(403) })).toEqual({
+describe("customerPricingGate: a PLAN_GATE 403 on the customer-price read is an empty read (SA-883/884)", () => {
+  it("prices PLAN_GATE 403 with no data: nothing blocks (an un-flagged tenant can pick)", () => {
+    expect(gate({ customerPricesQuery: planGate })).toEqual({
       pending: false,
       failed: false,
       readFailed: false,
@@ -107,10 +108,9 @@ describe("customerPricingGate: a plan-gated 403 on the customer-price read is an
     });
   });
 
-  it("a 403 given as a top-level `status` counts the same", () => {
-    expect(gate({ customerPricesQuery: { isError: true, error: { status: 403 } } }).blockPick).toBe(
-      false,
-    );
+  it("a role 403 (no PLAN_GATE code) and PLAN_GATE_UNAVAILABLE still fail closed", () => {
+    for (const q of [http(403), http(403, "FORBIDDEN"), http(403, "PLAN_GATE_UNAVAILABLE")])
+      expect(gate({ customerPricesQuery: q })).toMatchObject({ failed: true, blockPick: true });
   });
 
   it("prices 500, 404 or a network error (no response) still fail closed", () => {
@@ -122,8 +122,18 @@ describe("customerPricingGate: a plan-gated 403 on the customer-price read is an
       });
   });
 
-  it("a 403 on the CUSTOMER read still fails closed", () => {
-    expect(gate({ customerQuery: http(403) })).toMatchObject({ failed: true, blockPick: true });
+  it("a PLAN_GATE 403 on the CUSTOMER read still fails closed", () => {
+    expect(gate({ customerQuery: planGate })).toMatchObject({ failed: true, blockPick: true });
+  });
+});
+
+describe("isPlanGateError", () => {
+  it("is true only for a 403 whose body code is exactly PLAN_GATE", () => {
+    expect(isPlanGateError(planGate.error)).toBe(true);
+    expect(isPlanGateError(http(403, "PLAN_GATE_UNAVAILABLE").error)).toBe(false);
+    expect(isPlanGateError(http(402, "PLAN_GATE").error)).toBe(false);
+    expect(isPlanGateError(undefined)).toBe(false);
+    expect(isPlanGateError(new Error("x"))).toBe(false);
   });
 });
 

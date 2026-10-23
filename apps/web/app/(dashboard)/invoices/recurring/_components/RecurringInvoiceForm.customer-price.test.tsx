@@ -34,6 +34,7 @@ let mockCustomerError = false;
 let mockPricesError = false;
 let mockPricesErrorWithData = false;
 let mockPricesStatus = 500;
+let mockPricesCode: string | undefined;
 let mockCustomerPaused = false;
 const mockRefetchCustomer = jest.fn();
 const mockRefetchPrices = jest.fn();
@@ -71,7 +72,10 @@ jest.mock("@/lib/api/customers", () => ({
     data: id && !mockPricesError ? mockCustomerPrices : undefined,
     isLoading: false,
     isError: !!id && (mockPricesError || mockPricesErrorWithData),
-    error: id && mockPricesError ? { response: { status: mockPricesStatus } } : null,
+    error:
+      id && mockPricesError
+        ? { response: { status: mockPricesStatus, data: { code: mockPricesCode } } }
+        : null,
     refetch: mockRefetchPrices,
   }),
 }));
@@ -86,6 +90,7 @@ beforeEach(() => {
   mockPricesError = false;
   mockPricesErrorWithData = false;
   mockPricesStatus = 500;
+  mockPricesCode = undefined;
   mockCustomerPaused = false;
   mockCustomerPrices = [];
   mockLayer = layerOff();
@@ -235,14 +240,15 @@ describe("SA-868: a failed customer-price read fails CLOSED (never a list-price 
 });
 
 /**
- * SA-883 (#3658 MUST): GET /customers/:id/prices is plan-gated (flag.pricing_tiers). A tenant whose plan lacks the flag (every
- * LITE plan) gets 403 there: an EMPTY read, so the pick prices at the customer's own tier. At 44170adcf (and master since
+ * SA-883/884 (#3658 MUST): GET /customers/:id/prices is plan-gated (flag.pricing_tiers). A tenant whose plan lacks the flag
+ * (every LITE plan) gets the PLAN_GATE 403 there: an EMPTY read, so the pick prices at the customer's own tier. At 44170adcf (and master since
  * #3639) the form treated it as a failed read and refused every pick for those tenants.
  */
 describe("SA-883: a plan-gated 403 on the customer-price read is an empty read", () => {
   it("a tier-3 customer on an un-flagged plan picks at the tier-3 price (8.00)", async () => {
     mockPricesError = true;
     mockPricesStatus = 403;
+    mockPricesCode = "PLAN_GATE";
     renderCreate();
     await chooseCustomer("Tier Three Cafe");
     expect(
@@ -250,6 +256,14 @@ describe("SA-883: a plan-gated 403 on the customer-price read is an empty read",
     ).not.toBeInTheDocument();
     await pickProduct();
     expect(await screen.findByDisplayValue("8.00")).toBeInTheDocument();
+  });
+
+  it("a role 403 (no PLAN_GATE code) on the same read still refuses the pick", async () => {
+    mockPricesError = true;
+    mockPricesStatus = 403;
+    renderCreate();
+    await chooseCustomer("Tier Three Cafe");
+    expect(screen.getByPlaceholderText("Couldn't load this customer's prices.")).toBeDisabled();
   });
 
   it("a 500 on the same read still refuses the pick", async () => {
