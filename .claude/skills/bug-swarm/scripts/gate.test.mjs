@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
 import {
   holdPidFile,
   beginJson,
@@ -191,7 +192,7 @@ test("runGate marks timedOut steps ok=false and continues", async () => {
 
 test("avoid-files step fails when the merge-base diff touches an avoided file", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "gate-avoid-"));
-  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8" });
+  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8", env: scrubbedGitEnv() });
   sh("init", "-q");
   sh("config", "user.email", "t@t");
   sh("config", "user.name", "t");
@@ -207,7 +208,11 @@ test("avoid-files step fails when the merge-base diff touches an avoided file", 
       planGate({ changedFiles: ["b.txt"], ...opts, base, avoid, root: dir }),
       "avoid-files",
     );
-    return spawnSync(st.cmd[0], st.cmd.slice(1), { cwd: st.cwd, encoding: "utf8" });
+    return spawnSync(st.cmd[0], st.cmd.slice(1), {
+      cwd: st.cwd,
+      encoding: "utf8",
+      env: scrubbedGitEnv(),
+    });
   };
   assert.equal(run(["a.txt"]).status, 0);
   const bad = run(["a.txt", "b.txt"]);
@@ -316,6 +321,7 @@ test("CLI --dry-run prints the plan and runs nothing", () => {
   const r = spawnSync(process.execPath, [path.join(here, "gate.mjs"), "--dry-run", "--needs-db"], {
     encoding: "utf8",
     cwd: here,
+    env: scrubbedGitEnv(),
   });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /packages-build/);
@@ -355,7 +361,7 @@ test("clean-tree is the first step and fails on a dirty tracked file, passes whe
   const steps = planGate({ changedFiles: ["a.ts"], ...opts });
   assert.equal(steps[0].name, "clean-tree");
   const dir = mkdtempSync(path.join(tmpdir(), "gate-clean-"));
-  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8" });
+  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8", env: scrubbedGitEnv() });
   sh("init", "-q");
   sh("config", "user.email", "t@t");
   sh("config", "user.name", "t");
@@ -364,7 +370,11 @@ test("clean-tree is the first step and fails on a dirty tracked file, passes whe
   sh("commit", "-qm", "base");
   const run = (ignore = []) => {
     const st = planGate({ changedFiles: [], ...opts, root: dir, ignore })[0];
-    return spawnSync(st.cmd[0], st.cmd.slice(1), { cwd: st.cwd, encoding: "utf8" });
+    return spawnSync(st.cmd[0], st.cmd.slice(1), {
+      cwd: st.cwd,
+      encoding: "utf8",
+      env: scrubbedGitEnv(),
+    });
   };
   assert.equal(run().status, 0);
   writeFileSync(path.join(dir, "a.txt"), "2");
@@ -379,7 +389,7 @@ test("clean-tree is the first step and fails on a dirty tracked file, passes whe
 
 test("clean-tree fails on a new untracked file inside a new directory", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "gate-untracked-"));
-  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8" });
+  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8", env: scrubbedGitEnv() });
   sh("init", "-q");
   sh("config", "user.email", "t@t");
   sh("config", "user.name", "t");
@@ -387,7 +397,8 @@ test("clean-tree fails on a new untracked file inside a new directory", () => {
   sh("add", ".");
   sh("commit", "-qm", "base");
   const st = planGate({ changedFiles: [], ...opts, root: dir })[0];
-  const run = () => spawnSync(st.cmd[0], st.cmd.slice(1), { cwd: st.cwd, encoding: "utf8" });
+  const run = () =>
+    spawnSync(st.cmd[0], st.cmd.slice(1), { cwd: st.cwd, encoding: "utf8", env: scrubbedGitEnv() });
   assert.equal(run().status, 0);
   mkdirSync(path.join(dir, "newdir", "deep"), { recursive: true });
   writeFileSync(path.join(dir, "newdir", "deep", "b.ts"), "x");

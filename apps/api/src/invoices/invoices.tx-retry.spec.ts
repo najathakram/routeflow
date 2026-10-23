@@ -182,6 +182,7 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
 
   it("sendEmail(): VOID committed before the pre-check ⇒ 400, NO email, nothing written", async () => {
     prisma.invoice.findUnique
+      .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // SA-857: fingerprint A (the first read)
       .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // pre-tx read
       .mockResolvedValue(invoice(InvoiceStatus.VOID)); // the pre-check's locked re-read
     await expect(service.sendEmail(INVOICE_ID)).rejects.toThrow("Cannot send a voided invoice");
@@ -191,6 +192,7 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
 
   it("sendEmail(): VOID committed between the pre-check and markSent ⇒ email once, 400 that SAYS so, status unchanged", async () => {
     prisma.invoice.findUnique
+      .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // SA-857: fingerprint A (the first read)
       .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // pre-tx read
       .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // pre-check: still sendable
       .mockResolvedValue(invoice(InvoiceStatus.VOID)); // markSent's locked re-read

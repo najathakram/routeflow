@@ -151,7 +151,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // so a line added or substituted in that window bakes the LIST price (the
   // substitute path even SENDS it). Gate the pricing-dependent controls — the
   // product picker and Substitute — until both settle, mirroring web's order
-  // editor (apps/web/app/(dashboard)/orders/[id]/page.tsx).
+  // editor (apps/web/app/(dashboard)/orders/[id]/_components/order-line-edit.tsx).
   // NOTE: a disabled query stays `isPending` forever, so short-circuit when
   // there is no customer; an errored fetch falls back to the tier-1 degraded
   // mode rather than wedging the editor.
@@ -911,7 +911,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     );
   }
 
-  // Web parity (apps/web/app/(dashboard)/orders/[id]/page.tsx:1765): the
+  // Web parity (apps/web/app/(dashboard)/orders/[id]/_components/order-line-edit.tsx): the
   // server's own edit window decides, with the status list as the fallback —
   // NOT "any status but CANCELLED", which is what mobile used to allow.
   const orderPriceEditable =
@@ -1378,7 +1378,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           </View>
 
           {/* B246: permanent scan affordance on the line list — mirrors web's
-              always-present scan row (orders/[id]/page.tsx). REG-B62: stays
+              always-present scan row (orders/[id]/_components/order-line-edit.tsx). REG-B62: stays
               hidden until pricing is ready, and while the picker or the
               price-edit modal already has the operator's attention, and while
               any other modal (unlisted item, credit note, licence /

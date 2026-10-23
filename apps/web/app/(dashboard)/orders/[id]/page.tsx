@@ -109,7 +109,7 @@ import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-li
 import { roundMoney } from "@routeflow/pricing";
 import { useCustomer, useCustomerPrices } from "@/lib/api/customers";
 import { PriceLayerNotice, pricesUnconfirmed } from "@/components/PriceLayerNotice";
-import { useOrderCustomerPricing } from "./_components/use-order-pricing";
+import { useCustomerLinePricing } from "@/lib/useCustomerLinePricing";
 import { MoneyInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { summarizeQtyByUnit } from "@/lib/order-qty-summary";
@@ -134,6 +134,12 @@ import {
   EditableLineItems,
 } from "./_components/order-line-edit";
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Render a date-only field (stored midnight UTC) as its calendar day. Parsing the
+ * parts by hand avoids the day-behind shift `new Date(iso)` causes west of UTC.
+ */
 function formatDateOnly(iso: string): string {
   const [y, m, d] = iso.split("T")[0].split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString("en-US", {
@@ -210,7 +216,7 @@ export default function OrderDetailPage() {
     [cpMap, customerTier],
   );
   const { priceLayer, tierPriceFor, isSpecialTierFor, isSpecialTierForProductId } =
-    useOrderCustomerPricing(order?.customerId, tierForProductId);
+    useCustomerLinePricing(order?.customerId, tierForProductId);
   // S19b: flag on, the customer's price layer must also have settled (a price is UNCONFIRMED while it reads or failed); flag
   // off it is ready at once, no request.
   const pricingReady =

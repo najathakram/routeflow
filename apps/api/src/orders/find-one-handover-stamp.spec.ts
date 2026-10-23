@@ -144,7 +144,10 @@ function invoicesService() {
       getTenantId: () => null,
       forTenant: () => ({
         invoice: { findUnique },
-        auditLog: { groupBy: jest.fn().mockResolvedValue([]) },
+        auditLog: {
+          groupBy: jest.fn().mockResolvedValue([]),
+          findFirst: jest.fn().mockResolvedValue(null),
+        },
         customer: { findFirst: jest.fn().mockResolvedValue({ id: "c-1" }) },
       }),
     },

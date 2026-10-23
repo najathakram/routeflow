@@ -7,9 +7,67 @@
 //
 // Pure core: clusterBugs(manifest, { ratchetFiles, maxClusters }) -> { clusters, excluded, overCap? }.
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
+
+const norm = (t) =>
+  String(t ?? "")
+    .toLowerCase()
+    .replace(/(\.{3}|\u2026)\s*$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** A resolved title matches the manifest's when the first min(40, shorter) normalized chars agree (rf truncates). */
+export function titlesMatch(manifestTitle, resolvedTitle) {
+  const a = norm(manifestTitle);
+  const b = norm(resolvedTitle);
+  if (!a || !b) return false;
+  const n = Math.min(40, a.length, b.length);
+  return a.slice(0, n) === b.slice(0, n);
+}
+
+/**
+ * Resolve one id in the declared id space by running the real tool (no shell, scrubbed env).
+ * exec(cmd, args, opts) -> stdout string, throws on non-zero. Returns { ok, title } or { ok: false, reason }.
+ */
+export function resolveIdInSpace({ space, id, repo, exec }) {
+  const run =
+    exec ??
+    ((cmd, args, opts) =>
+      execFileSync(cmd, args, { ...opts, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  const opts = { cwd: repo, env: scrubbedGitEnv() };
+  try {
+    if (space === "row") {
+      const out = run(
+        process.execPath,
+        [path.join(repo, "tools/ops-monitor/bin/rf.mjs"), "item", "show", id, "--json"],
+        opts,
+      );
+      let j;
+      try {
+        j = JSON.parse(out);
+      } catch {
+        return { ok: false, reason: "not found in row: rf.mjs output unparsable" };
+      }
+      const title = typeof j.title === "string" ? j.title.trim() : "";
+      if (!title) return { ok: false, reason: "not found in row: empty title" };
+      return { ok: true, title };
+    }
+    const out = run(
+      process.execPath,
+      [path.join(repo, "scripts/campaign/bugs.mjs"), "show", id],
+      opts,
+    );
+    const m = /^title:\s*(.+)$/m.exec(String(out));
+    const title = m ? m[1].trim() : "";
+    if (!title) return { ok: false, reason: "not found in bug: no title" };
+    return { ok: true, title };
+  } catch {
+    return { ok: false, reason: `not found in ${space}: resolver exited non-zero` };
+  }
+}
 
 const RATCHET_SPEC = "apps/api/src/common/size-ratchet.spec.ts";
 
@@ -58,24 +116,47 @@ function affinity(x, y) {
   return best;
 }
 
-function exclusionReason(b, avoid) {
+function exclusionReason(b, avoid, packExists) {
   if (b.risk !== "LOW") return `risk ${b.risk}: HIGH-risk bugs never enter the swarm`;
   if (b.status !== "live") return `status ${b.status}: only live bugs enter`;
   if (!b.files || b.files.length === 0) return "no files: triage found no touched file";
   const hit = b.files.find((f) => avoid.has(f));
   if (hit) return `touches avoided file ${hit}`;
+  if (packExists && !packExists(b.row)) return "no context pack";
   return null;
 }
 
 export function clusterBugs(
   manifest,
-  { ratchetFiles = [], maxClusters = 4, avoidFiles = [], requestedRows } = {},
+  {
+    ratchetFiles = [],
+    maxClusters = 4,
+    avoidFiles = [],
+    requestedRows,
+    packExists,
+    resolveId,
+  } = {},
 ) {
   const avoid = new Set(avoidFiles);
   const excluded = [];
   const bugs = [];
+  const unresolved = [];
+  const cache = new Map();
   for (const b of manifest.bugs ?? []) {
-    const reason = exclusionReason(b, avoid);
+    if (resolveId) {
+      if (!cache.has(b.row)) cache.set(b.row, resolveId(String(b.row)));
+      const res = cache.get(b.row);
+      const why = !res.ok
+        ? res.reason
+        : titlesMatch(b.resolvedTitle, res.title)
+          ? null
+          : `title mismatch: manifest ${JSON.stringify(b.resolvedTitle)} vs resolved ${JSON.stringify(res.title)}`;
+      if (why) {
+        unresolved.push({ row: b.row, ...(b.sub ? { sub: b.sub } : {}), reason: why });
+        continue;
+      }
+    }
+    const reason = exclusionReason(b, avoid, packExists);
     if (reason) excluded.push({ row: b.row, ...(b.sub ? { sub: b.sub } : {}), reason });
     else bugs.push(b);
   }
@@ -173,11 +254,17 @@ export function clusterBugs(
       excluded.push({ row, reason, source: "triage" });
     }
   }
+  if (unresolved.length) result.unresolved = unresolved;
   if (requestedRows) {
     const seen = new Set((manifest.bugs ?? []).map((b) => String(b.row)));
     for (const e of excluded) seen.add(String(e.row));
     for (const p of result.parked ?? []) for (const b of p.cluster.bugs) seen.add(String(b.row));
     result.unaccounted = requestedRows.filter((r) => !seen.has(String(r)));
+  }
+  if (unresolved.length) {
+    const un = new Set(result.unaccounted ?? []);
+    for (const u of unresolved) un.add(String(u.row));
+    result.unaccounted = [...un];
   }
   return result;
 }
@@ -188,6 +275,11 @@ export function parseCli(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--write") o.write = true;
+    else if (a === "--packs") o.packs = true;
+    else if (a === "--id-space" && argv[i + 1]) {
+      o.idSpace = argv[++i];
+      if (o.idSpace !== "row" && o.idSpace !== "bug") throw new Error("--id-space needs row|bug");
+    } else if (a === "--repo" && argv[i + 1]) o.repo = argv[++i];
     else if (a === "--max") {
       const n = Number(argv[++i]);
       if (!Number.isInteger(n) || n < 1) throw new Error("--max needs a positive integer");
@@ -211,7 +303,7 @@ export function main(argv = process.argv.slice(2)) {
     if (!cli.file) throw new Error("manifest path required");
   } catch (e) {
     console.error(
-      `cluster: ${e.message}\nusage: node cluster.mjs <manifest.json> [--write] [--max N] [--avoid <file>]... [--rows a,b,c]`,
+      `cluster: ${e.message}\nusage: node cluster.mjs <manifest.json> [--write] [--max N] [--avoid <file>]... [--rows a,b,c] [--packs] [--id-space row|bug] [--repo <dir>]`,
     );
     return 2;
   }
@@ -228,7 +320,21 @@ export function main(argv = process.argv.slice(2)) {
     ratchetFiles,
     avoidFiles: cli.avoidFiles,
     requestedRows: cli.requestedRows,
+    // --packs: a bug enters a cluster only if pack-<row>.md sits next to the manifest (proof, not the agent's word).
+    ...(cli.packs
+      ? {
+          packExists: (row) =>
+            existsSync(path.join(path.dirname(path.resolve(file)), `pack-${row}.md`)),
+        }
+      : {}),
     ...(cli.maxClusters ? { maxClusters: cli.maxClusters } : {}),
+    // --id-space: the script resolves every id itself (rf.mjs / bugs.mjs), not on the agent's word.
+    ...(cli.idSpace
+      ? {
+          resolveId: (id) =>
+            resolveIdInSpace({ space: cli.idSpace, id, repo: path.resolve(cli.repo ?? root) }),
+        }
+      : {}),
   });
   if (cli.write) {
     const next = { ...manifest, ...result };

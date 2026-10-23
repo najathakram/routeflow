@@ -14,11 +14,11 @@ import {
   type PriceType,
 } from "@/lib/api/orders";
 import { formatMoney } from "@/lib/format";
-import { EditCasesPieces } from "../_components/EditCasesPieces";
+import { EditCasesPieces } from "./EditCasesPieces";
 import { isCasesPiecesLine } from "../edit-cases-pieces";
 import { EDIT_QTY_INPUT } from "../edit-line-controls";
-import { EditScanBar } from "../_components/EditScanBar";
-import { DeliveredLockedHint, DeliveredLockedQty } from "../_components/DeliveredLineLock";
+import { EditScanBar } from "./EditScanBar";
+import { DeliveredLockedHint, DeliveredLockedQty } from "./DeliveredLineLock";
 import {
   findLockedUnitLineEdit,
   LockedUnitLineBadge,
@@ -26,7 +26,7 @@ import {
   type LockedUnitLineDisplay,
   LockedUnitLineError,
   unitLineCount,
-} from "../_components/unit-line-lock";
+} from "./unit-line-lock";
 import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
@@ -34,7 +34,7 @@ import {
   needsOverrideReason,
   normalizeBoxesPieces,
 } from "@routeflow/pricing";
-import { type SpecialLine } from "../_components/use-order-pricing";
+import { type SpecialLine } from "@/lib/useCustomerLinePricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { PriceEditRow } from "../price-edit-row";
 import { DecimalInput } from "@/components/MoneyInput";
@@ -55,7 +55,7 @@ export type ApiOrderStatus =
   | "OUT_FOR_DELIVERY"
   | "DELIVERED"
   // Not (yet) rendered as its own status block below — included so the shared
-  // "Delete order" gate (renderDeleteOrderAction, further down this file) can
+  // "Delete order" gate (renderDeleteOrderAction, further down in page.tsx) can
   // compare against it without a type error; a route can leave an order
   // PARTIALLY_DELIVERED and it must be treated as no-longer-open.
   | "PARTIALLY_DELIVERED"
@@ -1469,10 +1469,3 @@ export function EditableLineItems({
     </div>
   );
 }
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
-/**
- * Render a date-only field (stored midnight UTC) as its calendar day. Parsing the
- * parts by hand avoids the day-behind shift `new Date(iso)` causes west of UTC.
- */
