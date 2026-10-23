@@ -3,7 +3,14 @@ import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { lockBillRows } from "../vendor-bills/bill-locks";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { PrismaService } from "../prisma/prisma.service";
-import { isOverdue, overdueCutoff, startOfCalendarDay } from "../common/calendar-date";
+import {
+  calendarDayRange,
+  isOverdue,
+  overdueCutoff,
+  startOfCalendarDay,
+  tenantPeriod,
+  type TenantPeriod,
+} from "../common/calendar-date";
 import { computeDepositFields } from "../invoices/deposit-fields";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import {
@@ -112,15 +119,7 @@ export class BookkeepingService implements OnModuleInit {
     }
 
     if (customerId) where.customerId = customerId;
-    if (dateFrom || dateTo) {
-      where.issueDate = {};
-      if (dateFrom) where.issueDate.gte = new Date(dateFrom);
-      if (dateTo) {
-        const d = new Date(dateTo);
-        d.setUTCHours(23, 59, 59, 999);
-        where.issueDate.lte = d;
-      }
-    }
+    if (dateFrom || dateTo) where.issueDate = calendarDayRange(dateFrom, dateTo);
 
     const [invoices, total] = await Promise.all([
       this.prisma.forTenant().invoice.findMany({
@@ -482,15 +481,7 @@ export class BookkeepingService implements OnModuleInit {
     if (customerId) where.customerId = customerId;
     if (type === "mileage") where.isMileage = true;
     if (type === "itemized") where.isItemized = true;
-    if (from || to) {
-      where.date = {};
-      if (from) where.date.gte = new Date(from);
-      if (to) {
-        const d = new Date(to);
-        d.setUTCHours(23, 59, 59, 999);
-        where.date.lte = d;
-      }
-    }
+    if (from || to) where.date = calendarDayRange(from, to);
     const [data, total] = await Promise.all([
       this.prisma.forTenant().expense.findMany({
         where,
@@ -1076,19 +1067,12 @@ export class BookkeepingService implements OnModuleInit {
    * instant it's counted.
    */
   async getProfitAndLoss(from?: string, to?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { zone, period, fromDate, toDate } = await this.reportPeriod(from, to);
     const window = { gte: fromDate, lte: toDate };
     const tenantId = this.requireTenantId();
 
     const [netSales, cogsLines, expenses, badDebtExpense] = await Promise.all([
-      fetchAccrualNetSales(this.prisma.forTenant(), tenantId, window),
+      fetchAccrualNetSales(this.prisma.forTenant(), tenantId, window, { timeZone: zone }),
       fetchInvoicedSaleLines(this.prisma.forTenant(), {
         from: fromDate,
         to: toDate,
@@ -1099,13 +1083,18 @@ export class BookkeepingService implements OnModuleInit {
         where: { deletedAt: null, date: { gte: fromDate, lte: toDate } },
         include: { category: true },
       }),
-      fetchBadDebtExpense(this.prisma.forTenant(), tenantId, window),
+      fetchBadDebtExpense(this.prisma.forTenant(), tenantId, window, { timeZone: zone }),
     ]);
 
     const revenue = netSales.net;
     const productIds = soldProductIds(cogsLines);
     const [costIndex, costFacts] = await Promise.all([
-      fetchCostIndex(this.prisma.forTenant(), productIds, toDate),
+      // effectiveAt is a real instant: as of the last moment of the tenant's last day
+      fetchCostIndex(
+        this.prisma.forTenant(),
+        productIds,
+        new Date(period.instants.lt.getTime() - 1),
+      ),
       fetchProductCostFacts(this.prisma.forTenant(), productIds),
     ]);
     const cogs = roundMoney(estimateCogs(cogsLines, costIndex, costFacts));
@@ -1143,14 +1132,7 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Cash Flow ──
   async getCashFlow(from?: string, to?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { fromDate, toDate } = await this.reportPeriod(from, to);
 
     const CfPayStatus = PaymentStatus;
     const [payments, expenses, bills, supplierCredits] = await Promise.all([
@@ -1205,18 +1187,21 @@ export class BookkeepingService implements OnModuleInit {
   async getSummary() {
     const now = new Date();
     const tz = await tenantTimeZone(this.prisma); // SA-488: the tenant's due day
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const sevenDaysAgo = new Date(now);
-    sevenDaysAgo.setDate(now.getDate() - 7);
+    const month = tenantPeriod("month", tz, now); // SA-906: this month to date on the tenant's own calendar
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 86_400_000);
 
     const [netSales, outstandingInvoices, paymentsThisWeekResult, overdueCount] = await Promise.all(
       [
         // B440: totalRevenue is accrual net sales (this month to date), never
         // a cash/paidAt-windowed aggregate.
-        fetchAccrualNetSales(this.prisma.forTenant(), this.requireTenantId(), {
-          gte: startOfMonth,
-          lte: now,
-        }),
+        fetchAccrualNetSales(
+          this.prisma.forTenant(),
+          this.requireTenantId(),
+          this.windowOf(month),
+          {
+            timeZone: tz,
+          },
+        ),
         this.prisma.forTenant().invoice.findMany({
           where: {
             status: {
@@ -1287,9 +1272,10 @@ export class BookkeepingService implements OnModuleInit {
    * Uses current calendar year as the aggregation window.
    */
   async getMobileDashboard() {
-    const now = new Date();
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
-    const window = { gte: startOfYear, lte: now };
+    const tz = await tenantTimeZone(this.prisma); // SA-906: the tenant's own year
+    const year = tenantPeriod("year", tz);
+    const startOfYear = year.days.gte;
+    const window = this.windowOf(year);
     const tenantId = this.requireTenantId();
 
     const [invoiceAgg, paymentAgg, expenseAgg, outstandingInvoices, netSales, badDebtExpense] =
@@ -1343,11 +1329,11 @@ export class BookkeepingService implements OnModuleInit {
           },
         }),
         // B440: revenue = accrual net sales, never totalCollected.
-        fetchAccrualNetSales(this.prisma.forTenant(), tenantId, window),
+        fetchAccrualNetSales(this.prisma.forTenant(), tenantId, window, { timeZone: tz }),
         // B456: an invoice WRITTEN_OFF this year is a P&L expense the instant
         // its total counts as revenue (ACCRUAL_REVENUE_STATUSES includes
         // WRITTEN_OFF).
-        fetchBadDebtExpense(this.prisma.forTenant(), tenantId, window),
+        fetchBadDebtExpense(this.prisma.forTenant(), tenantId, window, { timeZone: tz }),
       ]);
 
     const totalInvoiced = Number(invoiceAgg._sum.total ?? 0);
@@ -1367,16 +1353,43 @@ export class BookkeepingService implements OnModuleInit {
     };
   }
 
+  /** The period as the readers' calendar-day window (`gte` stamp .. last ms of the `to` day). */
+  private windowOf(p: TenantPeriod) {
+    return { gte: p.days.gte, lte: new Date(p.days.lt.getTime() - 1) };
+  }
+
+  /**
+   * SA-906 / W-728: the tenant's own period for a report. The zone is resolved ONCE per report (SA-488); `from`/`to` are
+   * the client's days, defaulting to the tenant's year to date (or all time). `fromDate`/`toDate` are the CALENDAR-DATE column
+   * window (UTC-midnight stamps, no zone shift; `toDate` = the last millisecond of the `to` day); the readers take `zone` and
+   * derive the real-instant window themselves (credits, refunds, write-offs).
+   */
+  private async reportPeriod(from?: string, to?: string, opts?: { allTime?: boolean }) {
+    const zone = await tenantTimeZone(this.prisma);
+    const period = tenantPeriod(
+      { fromDay: opts?.allTime && !from ? "1970-01-01" : from, toDay: to },
+      zone,
+    );
+    return {
+      zone,
+      period,
+      fromDate: period.days.gte,
+      toDate: new Date(period.days.lt.getTime() - 1),
+    };
+  }
+
   // ── Finance Dashboard ──
   async getFinanceDashboard() {
     const now = new Date();
     const tz = await tenantTimeZone(this.prisma); // SA-488: the tenant's due day
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startOfWeek = new Date(startOfToday);
-    startOfWeek.setDate(startOfToday.getDate() - startOfToday.getDay());
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const startOfQuarter = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    // SA-906: today / week / month / quarter / year are the TENANT's own (zone, once per report)
+    const startOfToday = tenantPeriod("today", tz, now).days.gte;
+    const startOfWeek = tenantPeriod("week", tz, now).days.gte;
+    const startOfMonth = tenantPeriod("month", tz, now).days.gte;
+    const startOfQuarter = tenantPeriod("quarter", tz, now).days.gte;
+    const yearPeriod = tenantPeriod("year", tz, now);
+    const startOfYear = yearPeriod.days.gte;
+    const todayEnd = this.windowOf(tenantPeriod("today", tz, now)).lte; // end of the tenant's today
     const tenantId = this.requireTenantId();
 
     const unpaidInvoices = await this.prisma.forTenant().invoice.findMany({
@@ -1432,16 +1445,21 @@ export class BookkeepingService implements OnModuleInit {
       creditNotesYtd = 0,
       externalRefundsYtd = 0;
     for (let m = 0; m < 12; m++) {
-      const mStart = new Date(now.getFullYear(), m, 1);
-      const rawMEnd = new Date(now.getFullYear(), m + 1, 0, 23, 59, 59, 999);
-      // Opus review of check-payments PR-2b: cap the CURRENT (in-progress)
-      // month's bucket at `now`, not the month's last instant — otherwise it
-      // disagrees with getPeriodSummary's "thisMonth" figure below, which
-      // already caps at `now`. A finished month is unaffected (rawMEnd <= now).
-      const mEnd = rawMEnd > now ? now : rawMEnd;
+      // Opus review of check-payments PR-2b: cap the CURRENT (in-progress) month's bucket at the tenant's today, not the
+      // month's last day — otherwise it disagrees with getPeriodSummary's "thisMonth" figure below. A finished month is
+      // unaffected; a month that has not started has an empty bucket.
+      const monthPeriod = tenantPeriod({ month: m }, tz, now);
+      const mStart = monthPeriod.days.gte;
+      const rawMEnd = this.windowOf(monthPeriod).lte;
+      const mEnd = rawMEnd > todayEnd ? todayEnd : rawMEnd;
       const [netSales, receiptsAgg, expensesAgg] = await Promise.all([
         // B440: sales is accrual net sales, not the inline gross aggregate.
-        fetchAccrualNetSales(this.prisma.forTenant(), tenantId, { gte: mStart, lte: mEnd }),
+        fetchAccrualNetSales(
+          this.prisma.forTenant(),
+          tenantId,
+          { gte: mStart, lte: mEnd },
+          { timeZone: tz },
+        ),
         // F03/R1/T-B11s: receipts are CONFIRMED (PAID) money only — matches
         // getCashFlow's basis, not the historical "everything but VOID" one.
         // B421: same RECEIVED_METHOD_FILTER as getCashFlow.totalIn.
@@ -1491,7 +1509,12 @@ export class BookkeepingService implements OnModuleInit {
       const [netSales, r] = await Promise.all([
         // B440: sales is accrual net sales, not the inline gross aggregate —
         // same fix as the monthlySales loop above.
-        fetchAccrualNetSales(this.prisma.forTenant(), tenantId, { gte: from, lte: now }),
+        fetchAccrualNetSales(
+          this.prisma.forTenant(),
+          tenantId,
+          { gte: from, lte: todayEnd },
+          { timeZone: tz },
+        ),
         // F03/R1/T-B11s: same CONFIRMED (PAID) basis as monthlySales.totalReceipts.
         // B421: same RECEIVED_METHOD_FILTER too.
         // check-payments PR-2b (M2): collected basis is settledAt ?? paidAt.
@@ -1499,7 +1522,7 @@ export class BookkeepingService implements OnModuleInit {
           where: {
             ...CONFIRMED_PAYMENT,
             method: RECEIVED_METHOD_FILTER,
-            ...settledDateFilter({ gte: from, lte: now }),
+            ...settledDateFilter({ gte: from, lte: todayEnd }),
           },
           _sum: { amount: true },
         }),
@@ -1644,23 +1667,18 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getSalesByCustomer(from?: string, to?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { zone, fromDate, toDate } = await this.reportPeriod(from, to);
     const tenantId = this.requireTenantId();
     // B440: salesAmount is accrual net (gross - creditNotes - externalRefunds)
     // per customer, never clamped at 0 — a CN-only customer (no invoices of
     // its own) legitimately nets negative.
     const [netByCustomer, invoices, customers] = await Promise.all([
-      fetchAccrualNetSalesByCustomer(this.prisma.forTenant(), tenantId, {
-        gte: fromDate,
-        lte: toDate,
-      }),
+      fetchAccrualNetSalesByCustomer(
+        this.prisma.forTenant(),
+        tenantId,
+        { gte: fromDate, lte: toDate },
+        { timeZone: zone },
+      ),
       // B440 Fable review of #791: invoiceCount uses the SAME predicate as
       // salesAmount (ACCRUAL_REVENUE_STATUSES — WRITTEN_OFF counts, only
       // DRAFT/VOID excluded), not the narrower REAL_INVOICE_STATUSES-style
@@ -1693,14 +1711,7 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getSalesByItem(from?: string, to?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { fromDate, toDate } = await this.reportPeriod(from, to);
     // Query via Invoice (correct tenantId) and include items via relation.
     // Direct invoiceItem.findMany with forTenant() would inject tenantId on InvoiceItem,
     // but older nested-created items (written before nested creates were stamped) may have
@@ -1820,14 +1831,7 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getInvoiceDetailsReport(from?: string, to?: string, status?: string, customerId?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { fromDate, toDate } = await this.reportPeriod(from, to);
     const where: any = { issueDate: { gte: fromDate, lte: toDate } };
     if (status) where.status = status as (typeof InvoiceStatus)[keyof typeof InvoiceStatus];
     if (customerId) where.customerId = customerId;
@@ -1871,14 +1875,7 @@ export class BookkeepingService implements OnModuleInit {
    * up in the human-readable list even though it can't be windowed.
    */
   async getBadDebtsReport(from?: string, to?: string) {
-    const fromDate = from ? new Date(from) : new Date(0);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { zone, fromDate, toDate } = await this.reportPeriod(from, to, { allTime: true });
 
     const [invoices, expense] = await Promise.all([
       this.prisma.forTenant().invoice.findMany({
@@ -1895,10 +1892,12 @@ export class BookkeepingService implements OnModuleInit {
       // B456/Fable review of #791: this is the P&L's pre-tax, windowed
       // expense figure — NOT the same number as `total` below, which is the
       // gross balance the `data` rows sum to (what the web footer displays).
-      fetchBadDebtExpense(this.prisma.forTenant(), this.requireTenantId(), {
-        gte: fromDate,
-        lte: toDate,
-      }),
+      fetchBadDebtExpense(
+        this.prisma.forTenant(),
+        this.requireTenantId(),
+        { gte: fromDate, lte: toDate },
+        { timeZone: zone },
+      ),
     ]);
     const data = invoices.map((inv) => {
       const paid = sumConfirmed(inv.payments);
@@ -1925,14 +1924,7 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getPaymentsReceivedReport(from?: string, to?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { fromDate, toDate } = await this.reportPeriod(from, to);
     // B421: a "Payments Received" report — a CREDIT_NOTE application is not
     // a payment received (it's a credit extended), so it belongs in neither
     // the listed rows nor the total. ADVANCE stays (already-real cash).
@@ -1973,14 +1965,7 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getTimeToGetPaid(from?: string, to?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { fromDate, toDate } = await this.reportPeriod(from, to);
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: { status: InvoiceStatus.PAID, paidAt: { gte: fromDate, lte: toDate } },
       select: {
@@ -2033,14 +2018,7 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getExpenseDetailsReport(from?: string, to?: string, categoryId?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { fromDate, toDate } = await this.reportPeriod(from, to);
     const where: any = { deletedAt: null, date: { gte: fromDate, lte: toDate } };
     if (categoryId) where.categoryId = categoryId;
     const expenses = await this.prisma.forTenant().expense.findMany({
@@ -2065,14 +2043,7 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getExpensesByCategoryReport(from?: string, to?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { fromDate, toDate } = await this.reportPeriod(from, to);
     const expenses = await this.prisma.forTenant().expense.findMany({
       where: { deletedAt: null, date: { gte: fromDate, lte: toDate } },
       include: { category: true },
@@ -2101,14 +2072,7 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getExpensesByCustomerReport(from?: string, to?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { fromDate, toDate } = await this.reportPeriod(from, to);
     const expenses = await this.prisma.forTenant().expense.findMany({
       where: {
         deletedAt: null,
@@ -2141,14 +2105,7 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Sales by Driver Report ──
   async getSalesByDriver(from?: string, to?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { fromDate, toDate } = await this.reportPeriod(from, to);
 
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
@@ -2210,15 +2167,7 @@ export class BookkeepingService implements OnModuleInit {
     const where: any = {
       status: { in: [InvoiceStatus.SENT, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE] },
     };
-    if (from || to) {
-      where.issueDate = {};
-      if (from) where.issueDate.gte = new Date(from);
-      if (to) {
-        const d = new Date(to);
-        d.setUTCHours(23, 59, 59, 999);
-        where.issueDate.lte = d;
-      }
-    }
+    if (from || to) where.issueDate = calendarDayRange(from, to);
     if (customerId) where.customerId = customerId;
 
     const invoices = await this.prisma.forTenant().invoice.findMany({
@@ -2257,14 +2206,7 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Estimate Details Report ──
   async getEstimateDetails(from?: string, to?: string, status?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { fromDate, toDate } = await this.reportPeriod(from, to);
     const where: any = { createdAt: { gte: fromDate, lte: toDate } };
     if (status) where.status = status;
 
@@ -2291,14 +2233,7 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Refund History Report ──
   async getRefundHistory(from?: string, to?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { fromDate, toDate } = await this.reportPeriod(from, to);
 
     const [voidPayments, appliedCreditNotes] = await Promise.all([
       this.prisma.forTenant().invoicePayment.findMany({
@@ -2366,14 +2301,7 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Receivable Summary Report ──
   async getReceivableSummary(from?: string, to?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-    const toDate = to
-      ? (() => {
-          const d = new Date(to);
-          d.setUTCHours(23, 59, 59, 999);
-          return d;
-        })()
-      : new Date();
+    const { fromDate, toDate } = await this.reportPeriod(from, to);
 
     const [invoices, creditNotes, payments] = await Promise.all([
       this.prisma.forTenant().invoice.findMany({

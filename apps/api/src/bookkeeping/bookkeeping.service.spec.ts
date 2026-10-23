@@ -175,10 +175,11 @@ describe("BookkeepingService", () => {
       expect(prisma.invoice.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            issueDate: expect.objectContaining({
-              gte: expect.any(Date),
-              lte: expect.any(Date),
-            }),
+            // SA-906: a calendar column is filtered by day stamps; the whole last day is in (lt = next day's stamp)
+            issueDate: {
+              gte: new Date("2025-01-01T00:00:00.000Z"),
+              lt: new Date("2026-01-01T00:00:00.000Z"),
+            },
           }),
         }),
       );
@@ -1488,24 +1489,24 @@ describe("BookkeepingService", () => {
       await service.getFinanceDashboard();
 
       const nowInTest = new Date();
-      const startOfThisMonth = new Date(nowInTest.getFullYear(), nowInTest.getMonth(), 1);
+      // SA-906: the month starts at the tenant-calendar day stamp (UTC zone in this fixture), not the host clock
+      const startOfThisMonth = new Date(
+        Date.UTC(nowInTest.getUTCFullYear(), nowInTest.getUTCMonth(), 1),
+      );
       const thisMonthCall = calls.find(
         (c) => c.where?.OR?.[0]?.settledAt?.gte?.getTime() === startOfThisMonth.getTime(),
       );
       expect(thisMonthCall).toBeDefined();
       const upperBound: Date = thisMonthCall.where.OR[0].settledAt.lte;
-      expect(upperBound.getTime()).toBeLessThanOrEqual(nowInTest.getTime());
+      const endOfTodayUtc =
+        Date.UTC(nowInTest.getUTCFullYear(), nowInTest.getUTCMonth(), nowInTest.getUTCDate() + 1) -
+        1;
+      expect(upperBound.getTime()).toBeLessThanOrEqual(endOfTodayUtc);
       // The uncapped month-end instant is always later than `now` (unless the
       // test happens to run in the month's final millisecond) — proves the
       // cap actually did something, not just that `lte` exists.
       const rawMonthEnd = new Date(
-        nowInTest.getFullYear(),
-        nowInTest.getMonth() + 1,
-        0,
-        23,
-        59,
-        59,
-        999,
+        Date.UTC(nowInTest.getUTCFullYear(), nowInTest.getUTCMonth() + 1, 1) - 1,
       );
       expect(upperBound.getTime()).not.toBe(rawMonthEnd.getTime());
     });
