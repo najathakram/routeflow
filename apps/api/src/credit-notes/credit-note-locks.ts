@@ -49,9 +49,10 @@ export async function creditPaymentTargets(
   tx: any,
   creditNoteId: string,
 ): Promise<{ orderIds: string[]; invoiceIds: string[] }> {
-  // scan-ok: draft-payment-not-void — a CREDIT_NOTE-method payment is written CONFIRMED by this service (see
-  // cancelStandaloneInTx), so not-VOID is the complete filter.
+  // A CREDIT_NOTE-method payment is written CONFIRMED by this service (see cancelStandaloneInTx), so not-VOID is the
+  // complete filter here, and it matches the payments cancelStandaloneInTx then restores.
   const pays: Array<{ invoiceId: string; invoice: { orderId: string | null } | null }> =
+    // scan-ok: draft-payment-not-void — method-scoped to CREDIT_NOTE, never written as DRAFT.
     (await tx.invoicePayment.findMany({
       where: { creditNoteId, method: "CREDIT_NOTE", status: { not: "VOID" } },
       select: { invoiceId: true, invoice: { select: { orderId: true } } },
