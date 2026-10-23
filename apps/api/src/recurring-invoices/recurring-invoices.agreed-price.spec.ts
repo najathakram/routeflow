@@ -107,7 +107,9 @@ describe("recurring generation bills the template's agreed price verbatim (SA-85
 
   it("the only live product read at generation is the pack (no price columns are selected)", async () => {
     await (service as any).generateInvoiceFromTemplate(template);
-    const reads = prisma.product.findMany.mock.calls.map((c: any[]) => c[0]?.select ?? {});
+    const reads = prisma.product.findMany.mock.calls.map((c: any[]) => c[0]?.select);
+    // A read with no `select` would load every column, prices included: it must name its columns.
+    expect(reads.every((sel: unknown) => sel && typeof sel === "object")).toBe(true);
     for (const select of reads) {
       expect(Object.keys(select).filter((k) => /price|tier/i.test(k))).toEqual([]);
     }

@@ -359,6 +359,9 @@ export function RecurringInvoiceForm({
       customerPricesQuery.isLoading ||
       (priceLayer.enabled && !priceLayer.ready));
   const pricingFailed = priceLayer.enabled && priceLayer.failed;
+  // A failed customer / customer-price read leaves no customer's price to compare with: the marker stays hidden then
+  // (it would name the LIST price as "this customer's price"). Save keeps the invoice form's gate (SA-856 rule 1).
+  const pricingReadFailed = customerQuery.isError || customerPricesQuery.isError;
   const priceBlocked =
     pricingPending ||
     pricesUnconfirmed(
@@ -608,14 +611,17 @@ export function RecurringInvoiceForm({
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
-                {item.productId && !pricingPending && (
-                  <CustomerPriceNow
-                    productId={item.productId}
-                    picked={item.product}
-                    stored={item.unitPrice}
-                    priceFor={suggestedPrice}
-                  />
-                )}
+                {item.productId &&
+                  !pricingPending &&
+                  !pricingReadFailed &&
+                  !pricesUnconfirmed(priceLayer, [item.productId]) && (
+                    <CustomerPriceNow
+                      productId={item.productId}
+                      picked={item.product}
+                      stored={item.unitPrice}
+                      priceFor={suggestedPrice}
+                    />
+                  )}
               </div>
             ))}
             <button
