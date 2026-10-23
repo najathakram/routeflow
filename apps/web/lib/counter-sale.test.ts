@@ -342,6 +342,16 @@ describe("counterSaleErrorCopy: a license refusal (CQ-06) is never the generic '
   });
 });
 
+describe("counterSaleErrorCopy: a walk-in rung on account", () => {
+  it("WALK_IN_NO_ACCOUNT says what to do, not the generic 400 line", () => {
+    expect(
+      counterSaleErrorCopy({
+        response: { status: 400, data: { code: "WALK_IN_NO_ACCOUNT", message: "RAW" } },
+      }),
+    ).toBe("A walk-in has no account. Pick a customer to put this sale on account.");
+  });
+});
+
 describe("counterSaleErrorCopy: a credit-limit or selling-restriction refusal says what to fix (CQ-06 review)", () => {
   const credit = (data: Record<string, unknown> = {}) => ({
     response: {
@@ -362,13 +372,14 @@ describe("counterSaleErrorCopy: a credit-limit or selling-restriction refusal sa
   it("credit limit: the structured numbers, the next step, and that nothing was charged", () => {
     const copy = counterSaleErrorCopy(credit({ limit: 500, exposure: 640.5 }));
     expect(copy).toBe(
-      "This sale would put the customer's balance at $640.50, over their $500.00 credit limit. Collect a payment on their account, or choose another customer, then try again. Nothing was charged.",
+      "Over the credit limit ($640.50 owed after this sale, limit $500.00): take cash or card now or choose another customer. Nothing was charged.",
     );
   });
   it("credit limit without numbers still names the cause and the way out", () => {
     const copy = counterSaleErrorCopy(credit());
-    expect(copy).toContain("exceed the customer's credit limit");
-    expect(copy).toContain("Nothing was charged.");
+    expect(copy).toBe(
+      "Over the credit limit: take cash or card now or choose another customer. Nothing was charged.",
+    );
     expect(copy).not.toMatch(/Something changed|RAW SERVER TEXT/);
   });
   it("selling restricted: names the cause and the next step", () => {
