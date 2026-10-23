@@ -172,6 +172,17 @@ export class PickupCompleteService {
         await this.orders.assertDeliveryCreditGate(at, user, { creditPaidNow });
       }
     }
+    // SA-909 item 1: a tender this call would record is refused for a CLOSED day before the first write (the same
+    // window check the tender runs under its lock, read-only, on the same register and the database clock), so a closed day
+    // leaves the order as it was. The in-lock check stays the authority (the day closing in between: today's 409 after).
+    if (!alreadyPickedUp && sent && sent.method !== "ON_ACCOUNT") {
+      await counterTenderPaidAt(
+        this.prisma,
+        this.prisma.getTenantId(),
+        order,
+        pickupRegisterOf(order, dto.registerKey),
+      );
+    }
     try {
       await this.claimHandOver(id, _idempotencyKey, sent, user);
     } catch (e) {
