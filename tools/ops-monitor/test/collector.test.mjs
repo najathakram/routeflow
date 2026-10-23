@@ -1039,7 +1039,7 @@ test("A2 GraphQL: asks for PR bodies and check contexts (CheckRun + StatusContex
   assert.match(COL.GRAPHQL_QUERY, /contexts\(first: 50\)/);
   assert.match(
     COL.GRAPHQL_QUERY,
-    /\.\.\. on CheckRun \{ name conclusion status startedAt checkSuite \{ createdAt \} \}/,
+    /\.\.\. on CheckRun \{ name conclusion status startedAt checkSuite \{ createdAt updatedAt \} \}/,
   );
   assert.match(COL.GRAPHQL_QUERY, /\.\.\. on StatusContext \{ context state \}/);
   // master and the open PRs both carry contexts
@@ -1783,6 +1783,36 @@ test("D6 a check queued for longer than QUEUED_STALE_MS is not-run (stale), a fr
     n(cr(at(COL.QUEUED_STALE_MS * 2), { status: "IN_PROGRESS", startedAt: at(60_000) }), now).state,
     "pending",
   );
+});
+
+test("D6 stale-queued times from the suite's last update: a re-run reuses an old suite", () => {
+  const n = COL.normalizeContext;
+  const now = Date.parse("2026-10-23T12:00:00Z");
+  const at = (ageMs) => new Date(now - ageMs).toISOString();
+  const H = 3600_000;
+  const q = (suite) => ({
+    __typename: "CheckRun",
+    name: "verify",
+    status: "QUEUED",
+    conclusion: null,
+    startedAt: null,
+    checkSuite: suite,
+  });
+  // (1) created 8 h ago, updated 1 min ago (a re-run): still pending
+  const rerun = q({ createdAt: at(8 * H), updatedAt: at(60_000) });
+  assert.equal(n(rerun, now).state, "pending");
+  // (2) the old success beside that re-run collapses to pending, never success
+  const done = {
+    __typename: "CheckRun",
+    name: "verify",
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+    startedAt: at(8 * H),
+  };
+  assert.deepEqual(COL.collapseRuns([done, rerun], now), [{ name: "verify", state: "pending" }]);
+  // (3) created AND updated both older than the cut-off: not-run
+  assert.equal(n(q({ createdAt: at(9 * H), updatedAt: at(7 * H) }), now).state, "notrun");
+  assert.match(COL.GRAPHQL_QUERY, /checkSuite \{ createdAt updatedAt \}/);
 });
 
 test("collapseRuns: an old success and a newer queued re-run of the same check read pending (pending outranks success)", () => {

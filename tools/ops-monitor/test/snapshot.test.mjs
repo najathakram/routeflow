@@ -1643,6 +1643,8 @@ test("D3 a post-merge eta/note edit keeps 'Merged, awaiting deploy'; a post-merg
   const by = (id) => s.items.find((i) => i.id === id);
   assert.equal(by("850").statusLabel, "Merged, awaiting deploy");
   assert.equal(by("851").statusLabel, "Being built");
+  // intended: an explicit status write after the merge counts even when it re-writes the same status
+  // (a human signal), so 851 above reads "Being built" although it was already "building".
 });
 
 test("D4 merged PR with no item raises untracked-merged-pr through the snapshot", () => {

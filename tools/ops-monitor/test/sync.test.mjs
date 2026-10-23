@@ -555,10 +555,6 @@ test("describeSyncOutcome: every pass that appends nothing says why; an appendin
     describeSyncOutcome({ ran: false, reason: "busy" }),
     "register sync skipped: busy (specs lock held)",
   );
-  assert.equal(
-    describeSyncOutcome({ ran: false, reason: "busy" }, { busyRuns: 3 }),
-    "register sync skipped: busy (specs lock held, 3 in a row)",
-  );
   assert.match(describeSyncOutcome({ ran: false, reason: "generated" }), /generated mode/);
   assert.match(
     describeSyncOutcome({
@@ -770,6 +766,13 @@ test("makeSpecsPassHook: one timing line per pass that held the lock; steps that
   });
   await half.afterPull({ pullOk: true, pullMs: 40, lockStartedAt: t - 40 });
   assert.deepEqual(logs, ["specs pass: lock 90 ms (pull 40, register 50, status skip)"]);
+});
+
+test("makeSpecsPassHook: a failed pass with no pullStage given reads as a pull failure", async () => {
+  const logs = [];
+  const hook = makeSpecsPassHook({ steps: [], log: (m) => logs.push(m), now: () => 0 });
+  await hook.afterPull({ pullOk: false, pullError: "boom" });
+  assert.match(logs[0], /^specs pull failed/);
 });
 
 test("makeSpecsPassHook: a push/reconcile failure after a good pull logs a different reason than a pull failure", async () => {

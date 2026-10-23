@@ -52,7 +52,7 @@ export const BUG_FILE_RE = /^\.claude\/campaign\/bugs\/B\d+[^/]*\.md$/;
 export const DEFAULT_CI_GATES = ["verify", "e2e"];
 
 const [OWNER, REPO] = GITHUB_REPO.split("/");
-const CONTEXTS = `statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name conclusion status startedAt checkSuite { createdAt } } ... on StatusContext { context state } } } }`;
+const CONTEXTS = `statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name conclusion status startedAt checkSuite { createdAt updatedAt } } ... on StatusContext { context state } } } }`;
 export const GRAPHQL_QUERY = `query {
   repository(owner: "${OWNER}", name: "${REPO}") {
     visibility
@@ -87,7 +87,7 @@ export const QUEUED_STALE_MS = 6 * 3600_000;
  * success | failure | pending | skipped | cancelled | notrun. Unknown shapes -> null.
  * notrun = the check ended without ever starting (startedAt null, conclusion cancelled / skipped /
  * startup-failure). It is NOT a failure. A queued/waiting check with startedAt null is pending,
- * until its suite is older than QUEUED_STALE_MS: a check queued that long is not going to run
+ * until its suite (last created or updated) is older than QUEUED_STALE_MS: a check queued that long is not going to run
  * (stuck runner, blocked Actions) and reads notrun, so it cannot hold the gate pending forever.
  */
 export function normalizeContext(n, nowMs = Date.now()) {
@@ -105,8 +105,11 @@ export function normalizeContext(n, nowMs = Date.now()) {
   // startedAt present-and-null = never started. (A fixture without the key keeps the old reading.)
   const neverStarted = n.startedAt === null;
   if (neverStarted && ["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(status)) {
-    const queuedAt = Date.parse(n.checkSuite?.createdAt ?? "");
-    const stale = Number.isFinite(queuedAt) && nowMs - queuedAt > QUEUED_STALE_MS;
+    // A re-run reuses the original suite, so time from the LATER of created/updated.
+    const times = [n.checkSuite?.createdAt, n.checkSuite?.updatedAt]
+      .map((t) => Date.parse(t ?? ""))
+      .filter(Number.isFinite);
+    const stale = times.length > 0 && nowMs - Math.max(...times) > QUEUED_STALE_MS;
     return { name: String(n.name), state: stale ? "notrun" : "pending" };
   }
   if (status && status !== "COMPLETED") return { name: String(n.name), state: "pending" };
