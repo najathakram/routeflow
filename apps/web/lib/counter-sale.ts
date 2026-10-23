@@ -1,4 +1,5 @@
 import {
+  isCalendarDay,
   roundMoney,
   saleTotals,
   type ChargeLine,
@@ -269,6 +270,24 @@ export function paymentProblemCopy(problem: PaymentProblem, total: number): stri
   return problem === "TENDER_SHORT" ? tenderShortCopy(total) : PAYMENT_PROBLEM_COPY[problem];
 }
 
+/**
+ * Interim till guard (owner P0): the one sentence for a check dated after the business's today. It is the inline message on
+ * the Check fields AND the refusal copy for the server's 400 COUNTER_CHECK_POSTDATED (a post-dated check is not money yet).
+ */
+export const COUNTER_CHECK_POSTDATED_COPY =
+  "Post-dated check: put this sale on account and record the check when it clears.";
+
+/** A check can only be dated against the business's day, so until that day is known the till says so and waits. */
+export const COUNTER_CHECK_ZONE_LOADING_COPY =
+  "Still loading the business's day. Try again in a moment.";
+export const COUNTER_CHECK_ZONE_FAILED_COPY =
+  "Couldn't load the business's day, so a check can't be dated yet.";
+
+/** True when `checkDate` names a real YYYY-MM-DD day strictly after `today` (the business's day). Anything else is not post-dated. */
+export function isPostdatedCheck(checkDate: string, today: string): boolean {
+  return isCalendarDay(checkDate) && isCalendarDay(today) && checkDate > today;
+}
+
 /** The scan field: 1-3 digits are a QUANTITY to multiply the next scan by; anything else is a code. */
 export function parseScanField(
   raw: string,
@@ -428,6 +447,9 @@ export function counterSaleErrorCopy(err: unknown, opts: { walkIn?: boolean } = 
   // B1209: a walk-in's cash below the server's total was refused (400, as pickup-complete) BEFORE anything was written.
   if (status === 400 && res?.data?.code === API_ERROR_CODES.COUNTER_TENDER_SHORT)
     return PICKUP_TENDER_SHORT_COPY;
+  // Interim till guard: a check dated after the business's today was refused (400) BEFORE anything was written.
+  if (status === 400 && res?.data?.code === API_ERROR_CODES.COUNTER_CHECK_POSTDATED)
+    return COUNTER_CHECK_POSTDATED_COPY;
   if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_KEY_CONFLICT)
     return "That sale reference was already used. Ring the sale again.";
   // CQ-06: a license refusal (create()'s regulated guard, before anything is written) says what to fix, not "Something changed".
@@ -533,6 +555,8 @@ export function pickupCompleteErrorCopy(err: unknown, balanceDue?: number): stri
     return PAYMENT_PROBLEM_COPY.WALK_IN_ON_ACCOUNT;
   if (res?.data?.code === API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED)
     return PAYMENT_PROBLEM_COPY.CHECK_NUMBER_REQUIRED;
+  if (res?.data?.code === API_ERROR_CODES.COUNTER_CHECK_POSTDATED)
+    return COUNTER_CHECK_POSTDATED_COPY;
   return PICKUP_GENERIC_COPY;
 }
 
@@ -551,6 +575,8 @@ export interface HeldAttemptSnapshot {
   method: string;
   tendered: string;
   reference: string;
+  /** a check's typed date, so a restored held sale shows it (the retry sends the dto's own) */
+  checkDate?: string;
 }
 /** Shown with the Discard button: the unreadable held sale may already have been written. */
 export const COUNTER_DISCARD_COPY =
@@ -639,7 +665,17 @@ const PICKUP_HANDLED_CODES: ReadonlySet<string> = new Set([
   API_ERROR_CODES.PICKUP_NOT_READY,
   API_ERROR_CODES.PICKUP_ONLY,
   API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
+  API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
 ]);
+/** Counter-sale codes the till answers with its own fixed copy (counterSaleErrorCopy): the global error toast stays quiet. */
+const COUNTER_SALE_HANDLED_CODES: ReadonlySet<string> = new Set([
+  API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
+  API_ERROR_CODES.COUNTER_TENDER_SHORT,
+]);
+export function isCounterSaleHandledError(err: unknown): boolean {
+  const code = pickupErrorCode(err);
+  return code !== undefined && COUNTER_SALE_HANDLED_CODES.has(code);
+}
 export function isPickupHandledError(err: unknown): boolean {
   const code = pickupErrorCode(err);
   return code !== undefined && PICKUP_HANDLED_CODES.has(code);

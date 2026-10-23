@@ -1,0 +1,167 @@
+{
+  "v": 1,
+  "sessionId": "87835f0f-d3b7-4fb2-9115-a4562e751a15",
+  "project": "/Users/maznahamanullah/code/routeflow",
+  "pricesAsOf": "2026-06-24",
+  "session": {
+    "byModel": {
+      "claude-opus-5-5": {
+        "input": 234,
+        "cacheWrite5m": 0,
+        "cacheWrite1h": 195874,
+        "cacheRead": 19152510,
+        "output": 48429,
+        "messages": 100,
+        "tokens": 19397047,
+        "costUsd": 12.74689
+      }
+    },
+    "total": {
+      "input": 234,
+      "cacheWrite5m": 0,
+      "cacheWrite1h": 195874,
+      "cacheRead": 19152510,
+      "output": 48429,
+      "messages": 100,
+      "tokens": 19397047,
+      "costUsd": 12.74689
+    },
+    "messages": 100,
+    "firstAt": "2026-10-23T03:33:28.834Z",
+    "lastAt": "2026-10-23T04:46:13.022Z",
+    "activeMs": 2199439,
+    "cacheHitRatio": 0.9898644957484819
+  },
+  "workflows": {},
+  "agents": {
+    "byType": {
+      "general-purpose": {
+        "total": {
+          "input": 304,
+          "cacheWrite5m": 973697,
+          "cacheWrite1h": 0,
+          "cacheRead": 16992554,
+          "output": 84799,
+          "messages": 0,
+          "tokens": 18051354,
+          "costUsd": 7.7485384
+        },
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 234,
+            "cacheWrite5m": 662614,
+            "cacheWrite1h": 0,
+            "cacheRead": 13333847,
+            "output": 58978,
+            "messages": 0,
+            "tokens": 14055673,
+            "costUsd": 4.9135524
+          },
+          "claude-haiku-5-5": {
+            "input": 18,
+            "cacheWrite5m": 130739,
+            "cacheWrite1h": 0,
+            "cacheRead": 934155,
+            "output": 12009,
+            "messages": 0,
+            "tokens": 1076921,
+            "costUsd": null
+          },
+          "claude-opus-5-5": {
+            "input": 52,
+            "cacheWrite5m": 180344,
+            "cacheWrite1h": 0,
+            "cacheRead": 2724552,
+            "output": 13812,
+            "messages": 0,
+            "tokens": 2918760,
+            "costUsd": 2.834986
+          }
+        },
+        "agents": 7,
+        "durationMs": 4797192
+      }
+    },
+    "list": [
+      {
+        "id": "a11e36f76fd93524c",
+        "agentType": "general-purpose",
+        "description": "bug-swarm builder c4 tooling",
+        "tokens": 5229654,
+        "costUsd": 1.7987238,
+        "cacheHitRatio": 0.9531504162763207,
+        "durationMs": 2041794
+      },
+      {
+        "id": "a3dd46f4fc900dd85",
+        "agentType": "general-purpose",
+        "description": "bug-swarm triage (Haiku)",
+        "tokens": 1076921,
+        "costUsd": null,
+        "cacheHitRatio": 0.8772133284252596,
+        "durationMs": 63874
+      },
+      {
+        "id": "a5bb58373f4e52512",
+        "agentType": "general-purpose",
+        "description": "bug-swarm context packs (Sonnet)",
+        "tokens": 3358592,
+        "costUsd": 1.1790368,
+        "cacheHitRatio": 0.9554237962189646,
+        "durationMs": 144694
+      },
+      {
+        "id": "a7d54293083b412ba",
+        "agentType": "general-purpose",
+        "description": "bug-swarm review c3 (Opus)",
+        "tokens": 1009131,
+        "costUsd": 1.100461,
+        "cacheHitRatio": 0.9164991692326377,
+        "durationMs": 36361
+      },
+      {
+        "id": "aa9d7fe1b8a34a19f",
+        "agentType": "general-purpose",
+        "description": "Find fixing shas for close-outs",
+        "tokens": 1340274,
+        "costUsd": 0.5277785,
+        "cacheHitRatio": 0.9369399162808416,
+        "durationMs": 47579
+      },
+      {
+        "id": "ab70c3ca8db2a0fcf",
+        "agentType": "general-purpose",
+        "description": "bug-swarm review c4 (Opus)",
+        "tokens": 1909629,
+        "costUsd": 1.734525,
+        "cacheHitRatio": 0.949212162350595,
+        "durationMs": 332071
+      },
+      {
+        "id": "aebdae72126c2c50b",
+        "agentType": "general-purpose",
+        "description": "bug-swarm builder c3 mobile",
+        "tokens": 4127153,
+        "costUsd": 1.4080133000000001,
+        "cacheHitRatio": 0.9548313969963163,
+        "durationMs": 2130819
+      }
+    ],
+    "total": {
+      "input": 304,
+      "cacheWrite5m": 973697,
+      "cacheWrite1h": 0,
+      "cacheRead": 16992554,
+      "output": 84799,
+      "messages": 148,
+      "tokens": 18051354,
+      "costUsd": 7.7485384
+    },
+    "cacheHitRatio": 0.9457881046199452
+  },
+  "warnings": [
+    "project: resolved via --project -> /Users/maznahamanullah/code/routeflow",
+    "unknown model id 'claude-haiku-5-5' -- cost set to null for its usage",
+    "unknown model id 'claude-haiku-5-5' -- cost set to null for its usage"
+  ]
+}
