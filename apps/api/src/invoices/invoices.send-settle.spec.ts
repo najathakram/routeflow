@@ -79,7 +79,7 @@ function buildInvoiceFixture() {
     orderId: ORDER_ID,
     customerId: CUSTOMER_ID,
     invoiceNumber: "INV-F07-SETTLE-1",
-    status: InvoiceStatus.SENT,
+    status: InvoiceStatus.DRAFT, // SA-857: only the DRAFT -> SENT issue settles and sweeps credits
     deliveryBatchId: null as string | null,
     total: 100,
     issueDate: new Date("2026-09-01T00:00:00.000Z"),
