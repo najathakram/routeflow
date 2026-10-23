@@ -1358,3 +1358,8 @@ Format: `## <date> <anchor>` then `- what:` `- cause:` `- guard:` `- rule:` (opt
 - cause: The lead created an item on merge without first looking up items already linked to the PR
 - guard: Before 'rf item new' for a merged PR, run 'rf ls --json' filtered on links.prs containing the PR number; link and status the existing item if one exists
 
+## 2026-10-23 #2554
+- what: Window-4 visibility watchdog (pid 12356, deadline 06:43:15Z) died before its deadline with no flip logged; the repo stayed PUBLIC until the lead re-armed at 06:44Z
+- cause: The watchdog is started from the Claude session's process tree; the desktop app restart around 06:35Z (which also stopped 4 lane sessions) killed it
+- guard: Start the watchdog outside the session tree (a Windows scheduled task or a fully detached launcher), and after any app restart/resume the lead checks gh visibility + the watchdog pid first; the 30-min check already arms one when PUBLIC with none
+
