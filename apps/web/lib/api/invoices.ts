@@ -689,6 +689,8 @@ export interface UpdateInvoicePaymentDto {
   status?: "DRAFT" | "PAID" | "VOID";
   reference?: string;
   notes?: string;
+  /** W-718: the staff "Record anyway" resend of an edit refused 409 DUPLICATE_PAYMENT_REF. */
+  recordAnyway?: boolean;
 }
 
 export function useUpdateInvoicePayment() {
@@ -696,7 +698,8 @@ export function useUpdateInvoicePayment() {
   return useMutation<Invoice, Error, UpdateInvoicePaymentDto>({
     mutationFn: ({ invoiceId, paymentId, ...data }) =>
       apiClient.patch(`/invoices/${invoiceId}/payments/${paymentId}`, data).then((r) => r.data),
-    meta: { localErrorToast: isDayClosedRefusal },
+    // W-718: the invoice page also answers a duplicate-reference refusal itself ("Record anyway").
+    meta: { localErrorToast: isRecordPaymentLocalRefusal },
     onSuccess: (updated) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
