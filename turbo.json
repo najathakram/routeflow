@@ -169,6 +169,13 @@
       "dependsOn": ["^build", "^check-types"],
       "outputs": []
     },
+    // The api check-types heap override (scripts/lib/check-types-ratchet-core.mjs chooseHeapMb):
+    // strict env mode drops an undeclared variable, so declare it here or it never reaches the task.
+    "@routeflow/api#check-types": {
+      "dependsOn": ["^build", "^check-types"],
+      "env": ["CHECK_TYPES_HEAP_MB"],
+      "outputs": []
+    },
     // apps/web's typecheck walks the apps/mobile files such a spec imports (see the
     // `@routeflow/web#test` note above), so those must be hashed into ITS key too.
     "@routeflow/web#check-types": {
