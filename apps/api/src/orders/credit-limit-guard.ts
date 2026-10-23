@@ -1,3 +1,4 @@
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { ConflictException, Logger } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import type { EntitlementsService } from "../billing/entitlements.service";
@@ -335,5 +336,79 @@ export async function assertCreditAtEnforcementPoint(
       `credit limit would DENY a ${ACTION_LABEL[action]} (dark): tenant=${p.tenantId} ` +
         `customer=${p.customerId} exposure=${exposure} limit=${limit}`,
     );
+  }
+}
+
+/**
+ * SA-849 (S1 S-1): the ONE post-tender credit re-check. The counter sale's gate counted the till's tender (`netted`, the
+ * S1 netting) and let the sale through; the sale is committed before the tender, which can then fail. When it did not fully
+ * record (`planError`), re-run the SAME derivation on live state (it nets what was really paid, so a partly recorded tender
+ * alerts only when the remainder still breaches). Never blocks, never reverses the sale: the remedy is the existing retry /
+ * Record anyway. Reads the SAME switch as the gate (`order`): OFF returns before any other read. DARK: one warn line.
+ * ENFORCED: the warn line, ONE audit row per order (a retried sale that fails again writes no second), and the figures for
+ * the response. Any other error is logged and swallowed (an alert never fails a finished sale).
+ */
+export async function creditAfterTender(
+  deps: CreditEnforcementDeps,
+  p: {
+    tenantId: string | null | undefined;
+    customerId: string | null | undefined;
+    orderId: string;
+    total: number;
+    netted: number;
+    planError: string;
+    actor?: string | null;
+  },
+): Promise<{ limit: number; exposure: number } | null> {
+  if (!(p.netted > 0) || !p.tenantId || !p.customerId) return null;
+  try {
+    const mode = await creditEnforcementMode(deps.prisma, p.tenantId, "order");
+    if (mode === "OFF") return null;
+    const enabled = await isCreditLimitCheckEnabled(deps);
+    const db = deps.prisma.forTenant();
+    try {
+      await assertWithinCreditLimit(db, p.customerId, p.orderId, p.total, enabled, {
+        invoicesSurviveEdit: true,
+        action: "order",
+      });
+      return null;
+    } catch (e) {
+      if (!isCreditLimitExceeded(e)) throw e;
+      const { limit, exposure } = e.getResponse() as { limit: number; exposure: number };
+      deps.logger.warn(
+        `credit limit would DENY an order (after-tender, ${mode === "ENFORCED" ? "enforced" : "dark"}): ` +
+          `tenant=${p.tenantId} customer=${p.customerId} order=${p.orderId} exposure=${exposure} limit=${limit} ` +
+          `netted=${p.netted} planError=${p.planError}`,
+      );
+      if (mode !== "ENFORCED") return null;
+      const where = {
+        tenantId: p.tenantId,
+        entityType: "Order",
+        entityId: p.orderId,
+        action: AUDIT_ACTIONS.CREDIT_LIMIT_OVER_AFTER_TENDER,
+      };
+      if (!(await db.auditLog.findFirst({ where, select: { id: true } }))) {
+        await db.auditLog.create({
+          data: {
+            ...where,
+            userId: p.actor ?? null,
+            meta: {
+              customerId: p.customerId,
+              limit,
+              exposure,
+              netted: p.netted,
+              planError: p.planError,
+            },
+          },
+        });
+      }
+      return { limit, exposure };
+    }
+  } catch (err) {
+    deps.logger.error(
+      `credit re-check after a failed tender unavailable (allowed): tenant=${p.tenantId} order=${p.orderId}`,
+      err,
+    );
+    return null;
   }
 }
