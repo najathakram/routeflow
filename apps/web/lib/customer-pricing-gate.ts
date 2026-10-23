@@ -1,3 +1,4 @@
+import { API_ERROR_CODES } from "@routeflow/types";
 import { pricesUnconfirmed } from "@/components/PriceLayerNotice";
 import type { CustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
 import { parsePlanGate } from "@/lib/plan-gate";
@@ -17,7 +18,7 @@ type ReadState = {
 function isPlanGate403(error: unknown): boolean {
   const status = (error as { response?: { status?: unknown } } | null | undefined)?.response
     ?.status;
-  return status === 403 && parsePlanGate(error)?.code === "PLAN_GATE";
+  return status === 403 && parsePlanGate(error)?.code === API_ERROR_CODES.PLAN_GATE;
 }
 
 /**
