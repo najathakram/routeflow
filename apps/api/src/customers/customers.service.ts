@@ -1595,6 +1595,10 @@ export class CustomersService {
     try {
       return await this.prisma.tenantTransaction(
         async (tx) => {
+          // SA-893 (ROW_LOCK_ORDER, common/db-locks.ts): both customers' Returns are locked FIRST, id-sorted, before the
+          // first Order row lock below. Moving orders and invoices first and the returns last was Order -> Invoice ->
+          // Return, the inverse of every return path (Return -> Order): 40P01 against an inline approve on the same order.
+          await tx.$queryRaw`SELECT id FROM "Return" WHERE "customerId" IN (${primaryId}, ${secondaryId}) ORDER BY id FOR UPDATE`;
           // Move orders FIRST, then invoices (SA-218, house lock order: Order before Invoice).
           // Invoices first was an Invoice → Order edge: 40P01 against any Order → Invoice writer.
           await tx.order.updateMany({
