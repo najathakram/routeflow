@@ -3,7 +3,7 @@ import { headerLine } from "./unknown-state";
 const OFF_TAIL =
   "Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on 'Also block restricted products on staff orders and invoices' to block them).";
 const ON_TAIL =
-  "Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff (except drivers) are warned and can override with a reason.";
+  "Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. On staff orders and invoices, staff are warned and can choose Sell anyway with a reason; drivers can't.";
 
 describe("headerLine (M5)", () => {
   it("switch off: says staff orders are not checked", () => {
