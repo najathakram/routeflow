@@ -10,6 +10,7 @@ import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import {
   fetchAccrualNetSales,
+  fetchAccrualNetSalesByCustomer,
   fetchAccrualNetSalesByCustomerRows,
   fetchAccrualNetSalesByPeriod,
 } from "../common/invoiced-sales";
@@ -28,6 +29,7 @@ describeDb("accrual net-sales row readers, real Postgres (SA-859)", () => {
   let pool: Pool;
   let tenantId = "";
   let customerId = "";
+  const extraTenants: string[] = [];
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
@@ -163,6 +165,13 @@ describeDb("accrual net-sales row readers, real Postgres (SA-859)", () => {
     await prisma.customer.deleteMany({ where: { tenantId } }).catch(swallow);
     await prisma.user.deleteMany({ where: { tenantId } }).catch(swallow);
     await prisma.tenant.delete({ where: { id: tenantId } }).catch(swallow);
+    for (const t of extraTenants) {
+      await prisma.creditNote.deleteMany({ where: { tenantId: t } }).catch(swallow);
+      await prisma.invoice.deleteMany({ where: { tenantId: t } }).catch(swallow);
+      await prisma.customer.deleteMany({ where: { tenantId: t } }).catch(swallow);
+      await prisma.user.deleteMany({ where: { tenantId: t } }).catch(swallow);
+      await prisma.tenant.delete({ where: { id: t } }).catch(swallow);
+    }
     await prisma.$disconnect();
     await pool.end().catch(swallow);
   });
@@ -194,6 +203,61 @@ describeDb("accrual net-sales row readers, real Postgres (SA-859)", () => {
       externalRefunds: 0,
       net: 125,
     });
+  });
+
+  it("SA-869 MUST 2: the by-customer rows equal fetchAccrualNetSalesByCustomer for every customer (switch off, no zone)", async () => {
+    const slug = assertTestTenant(`qa-netrev-b-${RUN}`, "analytics-net-revenue.db.spec.ts");
+    const t = (await prisma.tenant.create({ data: { slug, name: `netrev ${slug}` } })).id;
+    extraTenants.push(t);
+    const mk = async (label: string) => {
+      const u = await prisma.user.create({
+        data: {
+          email: `${label}-${slug}@example.invalid`,
+          username: `${label}-${slug}`,
+          role: "CUSTOMER",
+          tenantId: t,
+        },
+      });
+      return (
+        await prisma.customer.create({
+          data: { userId: u.id, businessName: label, contactName: label, tenantId: t } as any,
+        })
+      ).id;
+    };
+    const c1 = await mk("c1");
+    const c2 = await mk("c2"); // credit-only
+    await prisma.invoice.create({
+      data: {
+        tenantId: t,
+        customerId: c1,
+        invoiceNumber: `INV-NETREV-B-${RUN}`,
+        status: "SENT",
+        issueDate: new Date("2026-10-05T00:00:00.000Z"),
+        subtotal: 100,
+        taxAmount: 10,
+        total: 110,
+      } as any,
+    });
+    for (const [n, customer, amount] of [
+      [1, c1, 20],
+      [2, c2, 30],
+    ] as const) {
+      await prisma.creditNote.create({
+        data: {
+          tenantId: t,
+          customerId: customer,
+          creditNoteNumber: `CN-NETREV-B-${RUN}-${n}`,
+          status: "ISSUED",
+          amount,
+          createdAt: new Date("2026-10-10T15:00:00.000Z"),
+        } as any,
+      });
+    }
+    const rows = await fetchAccrualNetSalesByCustomerRows(prisma as any, t, WINDOW);
+    const reader = await fetchAccrualNetSalesByCustomer(prisma as any, t, WINDOW);
+    expect([...rows.keys()].sort()).toEqual([...reader.keys()].sort());
+    for (const [id, net] of reader) expect(rows.get(id)!.net).toBe(net.net);
+    expect(rows.get(c2)!.net).toBe(-30);
   });
 
   it("per customer rows read the same predicates and count the invoice", async () => {

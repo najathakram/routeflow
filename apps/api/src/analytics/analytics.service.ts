@@ -4,10 +4,12 @@ import { roundMoney } from "@routeflow/pricing";
 import { endOfCalendarDay } from "../common/calendar-date";
 import { resolveZone, tenantTimeZone } from "../common/tenant-time-zone";
 import {
+  ACCRUAL_REVENUE_STATUSES,
   REAL_INVOICE_STATUSES,
   estimateCogs,
   fetchAccrualNetSalesByCustomerRows,
   fetchAccrualNetSalesByPeriod,
+  fetchAccrualNetSalesTotal,
   fetchCostIndex,
   fetchInvoicedSaleLines,
   fetchProductCostFacts,
@@ -167,6 +169,16 @@ export class AnalyticsService {
       .sort((a, b) => a.period.localeCompare(b.period));
   }
 
+  /**
+   * Top products for the analytics page. Source is invoiced sales (see
+   * common/invoiced-sales.ts — the old sources are both dead: SALE stock
+   * movements have no writer, and TransactionItem never had one). Both
+   * metrics are computed in one pass and returned on every row, so the
+   * client's revenue/units toggle only changes the sort; `metric` picks the
+   * sort key. Windowed on Invoice.issueDate via dateRange (defaults
+   * Jan 1 of the current year → now — previously all-time, which only ever
+   * returned an empty list in production anyway).
+   */
   async getTopProducts(metric = "revenue", limit = 10, from?: string, to?: string) {
     const { fromDate, toDate } = this.dateRange(from, to);
     const excludeTobacco = await this.tobaccoExclusionActive();
@@ -692,7 +704,7 @@ export class AnalyticsService {
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         issueDate: { gte: fromDate, lte: toDate },
-        status: REAL_INVOICE_STATUSES,
+        status: { notIn: [...ACCRUAL_REVENUE_STATUSES.notIn] },
       },
       select: {
         total: true,
@@ -708,16 +720,18 @@ export class AnalyticsService {
         },
       },
     });
-    const revenue = roundMoney(
-      invoices.reduce(
-        (s, inv) =>
-          s +
-          (excludeTobacco
-            ? Number(inv.total) - this.tobaccoPortion(inv.items ?? [])
-            : Number(inv.total)),
-        0,
-      ),
-    );
+    // SA-869: "Revenue" on this card is the SAME accrual net the trend shows (tax out, credit notes and refunds out,
+    // written-off in; the Bookkeeping P&L shape), so one page never shows two different revenues for the same dates.
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("Tenant context required");
+    const revenue = (
+      await fetchAccrualNetSalesTotal(
+        this.prisma.forTenant() as any,
+        tenantId,
+        { gte: fromDate, lte: toDate },
+        { timeZone: await tenantTimeZone(this.prisma), excludeTobacco },
+      )
+    ).net;
     const cogsLines = invoices.flatMap((inv) =>
       (inv.items ?? []).map((item: any) => ({
         productId: (item.productId ?? null) as string | null,

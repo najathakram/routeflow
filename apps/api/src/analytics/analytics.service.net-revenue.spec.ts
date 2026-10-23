@@ -13,8 +13,8 @@ import { fetchAccrualNetSales } from "../common/invoiced-sales";
 type Row = Record<string, any>;
 const day = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
-function inWindow(d: Date, w: { gte: Date; lte: Date }) {
-  return d >= w.gte && d <= w.lte;
+function inWindow(d: Date, w: { gte: Date; lte?: Date; lt?: Date }) {
+  return d >= w.gte && (w.lte ? d <= w.lte : d < (w.lt as Date));
 }
 
 function makeDb(fx: { invoices?: Row[]; creditNotes?: Row[]; returns?: Row[]; products?: Row[] }) {
@@ -237,6 +237,139 @@ describe("AnalyticsService revenue = accrual net sales (SA-859)", () => {
       const db = makeDb({ invoices: [tobaccoInvoice], creditNotes: [lineCredit, freeform] });
       const rows = await makeService(db).getRevenueTrend("2026-10-01", "2026-10-31", "month");
       expect(rows[0]).toMatchObject({ gross: 200, creditNotes: 35, revenue: 165 });
+    });
+  });
+
+  describe("SA-869 MUST 1: credits and refunds are WINDOWED on the tenant-local day", () => {
+    const chicago = { zone: "America/Chicago" };
+    const lateOct31 = new Date("2026-11-01T04:30:00Z"); // 23:30 CDT on Oct 31
+    const earlySep30 = new Date("2026-10-01T03:00:00Z"); // 22:00 CDT on Sep 30
+    const cn = (createdAt: Date) => ({ customerId: "c1", amount: 25, createdAt, status: "ISSUED" });
+
+    it("R3a: an October-only window nets a credit made at 23:30 local on Oct 31", async () => {
+      const db = makeDb({
+        invoices: [inv({ issueDate: day("2026-10-02") })],
+        creditNotes: [cn(lateOct31)],
+      });
+      const rows = await makeService(db, chicago).getRevenueTrend(
+        "2026-10-01",
+        "2026-10-31",
+        "month",
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ period: "2026-10", creditNotes: 25, revenue: 75 });
+    });
+
+    it("R3b: a credit made at 22:00 local on Sep 30 is outside an October-only window and makes no September bar", async () => {
+      const db = makeDb({
+        invoices: [inv({ issueDate: day("2026-10-02") })],
+        creditNotes: [cn(earlySep30)],
+      });
+      const rows = await makeService(db, chicago).getRevenueTrend(
+        "2026-10-01",
+        "2026-10-31",
+        "month",
+      );
+      expect(rows.map((r) => r.period)).toEqual(["2026-10"]);
+      expect(rows[0]).toMatchObject({ creditNotes: 0, revenue: 100 });
+    });
+
+    it("R3b (reviewer): a November-only window with the credit at 2026-11-01T04:30Z has no stray October bar", async () => {
+      const db = makeDb({
+        invoices: [inv({ issueDate: day("2026-11-05") })],
+        creditNotes: [cn(lateOct31)],
+      });
+      const rows = await makeService(db, chicago).getRevenueTrend(
+        "2026-11-01",
+        "2026-11-30",
+        "month",
+      );
+      expect(rows.map((r) => r.period)).toEqual(["2026-11"]);
+      expect(rows[0].creditNotes).toBe(0);
+    });
+
+    it("a tenant without a zone keeps the UTC window", async () => {
+      const db = makeDb({
+        invoices: [inv({ issueDate: day("2026-10-02") })],
+        creditNotes: [cn(lateOct31)],
+      });
+      const rows = await makeService(db).getRevenueTrend("2026-10-01", "2026-10-31", "month");
+      expect(rows.map((r) => r.period)).toEqual(["2026-10"]);
+      expect(rows[0].creditNotes).toBe(0); // 2026-11-01T04:30Z is November in UTC
+    });
+  });
+
+  it("MUST 3: the gross-margin card's revenue is the trend's net (110 invoice with 10 tax and a 20 credit = 80)", async () => {
+    const db = makeDb({
+      invoices: [inv({ items: [] })],
+      creditNotes: [
+        {
+          customerId: "c1",
+          amount: 20,
+          createdAt: new Date("2026-10-10T15:00:00Z"),
+          status: "ISSUED",
+        },
+      ],
+    });
+    const svc = makeService(db);
+    const margin = await svc.getGrossMarginTrend("2026-10-01", "2026-10-31");
+    const trend = await svc.getRevenueTrend("2026-10-01", "2026-10-31", "month");
+    expect(margin.revenue).toBe(80);
+    expect(margin.revenue).toBe(trend[0].revenue);
+  });
+
+  describe("SA-869: the zero-row filter on top customers (pinned behaviour)", () => {
+    it("(i) credits equal invoices: the customer stays, at 0.00 with one order", async () => {
+      const db = makeDb({
+        invoices: [inv({ total: 100, taxAmount: 0 })],
+        creditNotes: [
+          {
+            customerId: "c1",
+            amount: 100,
+            createdAt: new Date("2026-10-10T15:00:00Z"),
+            status: "ISSUED",
+          },
+        ],
+      });
+      const top = await makeService(db).getTopCustomers("revenue", 10, "2026-10-01", "2026-10-31");
+      expect(top.map((t) => [t.id, t.totalRevenue, t.orderCount])).toEqual([["c1", 0, 1]]);
+    });
+
+    it("(ii) tobacco switch on: a customer whose only term is a credit on a tobacco line has no row", async () => {
+      const db = makeDb({
+        creditNotes: [
+          {
+            customerId: "c1",
+            amount: 20,
+            createdAt: new Date("2026-10-10T15:00:00Z"),
+            status: "ISSUED",
+            items: [{ invoiceItemId: "li-t", amount: 20 }],
+            invoice: { items: [{ id: "li-t", productId: "p-tob", product: { isTobacco: true } }] },
+          },
+        ],
+      });
+      const top = await makeService(db, { tobacco: true }).getTopCustomers(
+        "revenue",
+        10,
+        "2026-10-01",
+        "2026-10-31",
+      );
+      expect(top).toEqual([]);
+    });
+
+    it("(iii) a credit-only customer shows at the negative net", async () => {
+      const db = makeDb({
+        creditNotes: [
+          {
+            customerId: "c2",
+            amount: 30,
+            createdAt: new Date("2026-10-10T15:00:00Z"),
+            status: "ISSUED",
+          },
+        ],
+      });
+      const top = await makeService(db).getTopCustomers("revenue", 10, "2026-10-01", "2026-10-31");
+      expect(top.map((t) => [t.id, t.totalRevenue, t.orderCount])).toEqual([["c2", -30, 0]]);
     });
   });
 

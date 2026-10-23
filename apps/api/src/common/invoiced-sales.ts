@@ -2,7 +2,7 @@ import { CostingMethod, CreditNoteStatus, InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { attributeCreditNote, attributeExternalRefund } from "../sales-facts/sales-facts.rules";
-import { tenantTodayDay } from "./calendar-date";
+import { localInstantWindow, startOfLocalDay, tenantTodayDay } from "./calendar-date";
 
 /**
  * Invoiced-sales sourcing for the analytics / forecasting / COGS readers.
@@ -383,6 +383,18 @@ async function fetchAccrualNetRows(
   opts: AccrualNetRowsOptions = {},
 ): Promise<Map<string, AccrualNetBucket>> {
   const tobacco = !!opts.excludeTobacco;
+  // SA-869: credits and refunds are instants, so with a zone they are WINDOWED on the tenant-local day (not only bucketed
+  // on it): a credit at 23:30 local on the last day stays in that window, one at 22:00 local the day before the window stays
+  // out. Invoices keep their calendar issueDate window. No zone = the window as given. The all-time sentinel (year 9999) has
+  // no day arithmetic: its instant end is now.
+  const eventWindow: { gte: Date; lte?: Date; lt?: Date } = (() => {
+    if (!opts.timeZone) return window;
+    const fromDay = window.gte.toISOString().slice(0, 10);
+    if (window.lte.getUTCFullYear() >= 9999) {
+      return { gte: startOfLocalDay(fromDay, opts.timeZone), lte: new Date() };
+    }
+    return localInstantWindow(fromDay, window.lte.toISOString().slice(0, 10), opts.timeZone);
+  })();
   const [invoices, creditNotes, returns] = await Promise.all([
     db.invoice.findMany({
       where: { tenantId, status: ACCRUAL_REVENUE_STATUSES, issueDate: window },
@@ -397,7 +409,7 @@ async function fetchAccrualNetRows(
       },
     }),
     db.creditNote.findMany({
-      where: { tenantId, createdAt: window, ...ACCRUAL_CREDIT_NOTE_FILTER },
+      where: { tenantId, createdAt: eventWindow, ...ACCRUAL_CREDIT_NOTE_FILTER },
       select: {
         customerId: true,
         createdAt: true,
@@ -417,7 +429,7 @@ async function fetchAccrualNetRows(
       },
     }),
     db.return.findMany({
-      where: { tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: window },
+      where: { tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: eventWindow },
       select: {
         customerId: true,
         refundedAt: true,
@@ -530,6 +542,19 @@ export async function fetchAccrualNetSalesByPeriod(
 ): Promise<Map<string, AccrualNetBucket>> {
   const width = opts.groupBy === "month" ? 7 : 10;
   return fetchAccrualNetRows(db, tenantId, window, (src) => src.day.slice(0, width), opts);
+}
+
+/** The whole window as ONE bucket (the gross-margin card's revenue; SA-869 MUST 3). */
+export async function fetchAccrualNetSalesTotal(
+  db: AccrualNetRowsDb,
+  tenantId: string,
+  window: AccrualWindow,
+  opts: AccrualNetRowsOptions = {},
+): Promise<AccrualNetBucket> {
+  const all = await fetchAccrualNetRows(db, tenantId, window, () => "all", opts);
+  return (
+    all.get("all") ?? { ...netOf({ gross: 0, creditNotes: 0, externalRefunds: 0 }), orderCount: 0 }
+  );
 }
 
 /** Row-based per-customer accrual net sales with the invoice count (for the dashboard's top customers; SA-859). */

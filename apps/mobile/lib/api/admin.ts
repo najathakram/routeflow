@@ -1,3 +1,4 @@
+import type { RevenuePeriod } from "@routeflow/types";
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -869,14 +870,6 @@ export function useAdminFinanceDashboard() {
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
 
-export interface RevenuePeriod {
-  period: string;
-  /** Accrual NET sales (SA-859): excludes sales tax, net of credit notes and external refunds. */
-  revenue: number;
-  gross?: number;
-  creditNotes?: number;
-  externalRefunds?: number;
-}
 export interface TopProduct {
   id: string;
   name: string;
