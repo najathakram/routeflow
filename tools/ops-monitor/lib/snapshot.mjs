@@ -1092,7 +1092,7 @@ export function buildSnapshot({
       kind: "mask-list-missing",
       severity: "error",
       message: "client-name mask list missing — tenant names hidden by fallback",
-      suggest: `fix client-names.json in the ops home (${maskStatus.reason})`,
+      suggest: `fix the client-name list: client-names.json in the ops home or CLIENT_NAMES_JSON (${maskStatus.reason})`,
       item: null,
       lane: null,
       pr: null,

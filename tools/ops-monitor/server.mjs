@@ -29,6 +29,7 @@ import { renderIcon } from "./lib/icon.mjs";
 import { describeSyncOutcome } from "./lib/sync.mjs";
 import {
   createNameLoader,
+  emptyListReason,
   fallbackMaskDeep,
   fallbackMaskText,
   maskDeep,
@@ -636,7 +637,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     const problem = nameLoader.error();
     if (problem || nameLoader.get().length === 0) {
       console.error(
-        `[ops-monitor] warning: ${problem ?? "no client names"} - the board is not masked; fill client-names.json in the ops home.`,
+        `[ops-monitor] warning: ${problem ?? emptyListReason(env)} - the board is not masked; fill client-names.json in the ops home or set CLIENT_NAMES_JSON.`,
       );
     }
   }
@@ -651,7 +652,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       fallback: !ok,
       status: ok
         ? { ok: true, reason: null }
-        : { ok: false, reason: problem ?? "client-names.json missing or empty" },
+        : { ok: false, reason: problem ?? emptyListReason(env) },
     };
   };
   const maskOne = (t) => {
