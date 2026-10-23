@@ -1,0 +1,123 @@
+{
+  "run": "2026-10-23-bug-swarm-1",
+  "bugs": [
+    {
+      "row": "182",
+      "sub": "a",
+      "risk": "LOW",
+      "status": "unclear",
+      "files": ["apps/web/app/(dashboard)/orders/_components/ParkedSales.tsx"],
+      "needsDb": false,
+      "ui": true
+    },
+    {
+      "row": "182",
+      "sub": "b",
+      "risk": "LOW",
+      "status": "unclear",
+      "files": [],
+      "needsDb": false,
+      "ui": true
+    },
+    {
+      "row": "182",
+      "sub": "c",
+      "risk": "HIGH",
+      "status": "live",
+      "files": [],
+      "needsDb": true,
+      "ui": true
+    },
+    {
+      "row": "182",
+      "sub": "d",
+      "risk": "LOW",
+      "status": "live",
+      "files": ["apps/mobile/app/(operator)/returns/[id].tsx"],
+      "needsDb": false,
+      "ui": true
+    },
+    {
+      "row": "211",
+      "risk": "LOW",
+      "status": "live",
+      "files": ["apps/mobile/app/(customer)/orders/[id].tsx"],
+      "needsDb": false,
+      "ui": true
+    },
+    {
+      "row": "238",
+      "risk": "LOW",
+      "status": "unclear",
+      "files": ["apps/web/app/(dashboard)/orders/_components/CounterSaleScreen.tsx"],
+      "needsDb": false,
+      "ui": true
+    },
+    {
+      "row": "285",
+      "risk": "LOW",
+      "status": "live",
+      "files": ["apps/mobile/components/CustomerForm.tsx"],
+      "needsDb": false,
+      "ui": true
+    },
+    {
+      "row": "296",
+      "risk": "LOW",
+      "status": "live",
+      "files": ["apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx"],
+      "needsDb": false,
+      "ui": true
+    },
+    {
+      "row": "301",
+      "risk": "LOW",
+      "status": "live",
+      "files": ["apps/web/app/(dashboard)/orders/_components/CounterLinePriceEdit.tsx"],
+      "needsDb": false,
+      "ui": true
+    },
+    {
+      "row": "364",
+      "risk": "LOW",
+      "status": "live",
+      "files": ["apps/web/app/(dashboard)/layout.tsx"],
+      "needsDb": false,
+      "ui": true
+    },
+    {
+      "row": "298",
+      "risk": "LOW",
+      "status": "unclear",
+      "files": [],
+      "needsDb": false,
+      "ui": true
+    },
+    {
+      "row": "300",
+      "risk": "LOW",
+      "status": "unclear",
+      "files": [],
+      "needsDb": false,
+      "ui": true
+    },
+    {
+      "row": "440",
+      "risk": "LOW",
+      "status": "unclear",
+      "files": ["apps/mobile/app/(operator)/(tabs)/invoices/[id].tsx"],
+      "needsDb": false,
+      "ui": true
+    },
+    {
+      "row": "533",
+      "sub": "a",
+      "risk": "LOW",
+      "status": "unclear",
+      "files": [],
+      "needsDb": false,
+      "ui": true
+    }
+  ],
+  "excluded": []
+}
