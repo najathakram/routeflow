@@ -168,6 +168,8 @@ export class UpdatePaymentDto {
   @IsOptional() @IsDateString() settledAt?: string | null;
   @IsOptionalNotNull() @IsNumber() @Min(0) bankCharges?: number;
   @IsOptional() @IsEnum(["DRAFT", "PAID", "VOID"]) status?: string;
+  /** Row 752: a STAFF resend of an edit refused 409 DUPLICATE_PAYMENT_REF; saved with one audit row. Ignored for any other role. */
+  @IsOptional() @IsBoolean() recordAnyway?: boolean;
 }
 
 export class AllocationDto {

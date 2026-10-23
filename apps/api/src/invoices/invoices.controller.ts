@@ -314,8 +314,11 @@ export class InvoicesController {
     @Param("id") id: string,
     @Param("paymentId") paymentId: string,
     @Body() dto: UpdatePaymentDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.invoicesService.updatePayment(id, paymentId, dto);
+    return this.invoicesService.updatePayment(id, paymentId, dto, {
+      refDedupe: refDedupeFromRequest(user, dto), // row 752: the staff "record anyway" flag on an edit
+    });
   }
 
   @Post(":id/price-adjustment")

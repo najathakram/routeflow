@@ -78,6 +78,16 @@ describe("the staff payment routes pass the staff flag to the service", () => {
     );
   });
 
+  it("PATCH /invoices/:id/payments/:paymentId (row 752, SA-843 ruling 4)", async () => {
+    const service = { updatePayment: jest.fn() };
+    const c = new InvoicesController(service as never, {} as never);
+    const dto = { amount: 10, method: "CHECK", reference: "R-1", recordAnyway: true } as never;
+    await c.updatePayment("inv-1", "pay-1", dto, user);
+    expect(service.updatePayment).toHaveBeenCalledWith("inv-1", "pay-1", dto, {
+      refDedupe: { actor: "user-1", role: "OPERATOR", recordAnyway: true },
+    });
+  });
+
   it("POST /bookkeeping/transactions/:id/payments", async () => {
     const service = { recordPayment: jest.fn() };
     const c = new BookkeepingController(service as never);
@@ -106,6 +116,8 @@ describe("the three routes are staff-only (a non-staff role is 403 before record
       "recordPayment",
     ],
     ["POST /payment-requests/:id/approve", PaymentRequestsController as never, "approve"],
+    // row 752: the edit route too (R4: a DRIVER token is 403 at the route)
+    ["PATCH /invoices/:id/payments/:paymentId", InvoicesController as never, "updatePayment"],
   ];
   it.each(routes)("%s", (_name, Cls, handler) => {
     for (const role of ["OPERATOR", "TENANT_ADMIN", "SUPER_ADMIN"])

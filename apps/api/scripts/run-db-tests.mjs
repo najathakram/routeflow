@@ -32,8 +32,25 @@ export function serialDbArgs(args) {
   return { kept, dropped };
 }
 
+/**
+ * W-699: the hard ceiling on one DB-lane run. A run that never exits (an open handle after
+ * "Tests:") holds the machine's heavy slot for every other lane, so the runner kills it. 60 min by
+ * default; RF_DB_LANE_TIMEOUT_MIN (a positive integer) overrides it. Anything else throws.
+ */
+export function dbLaneTimeoutMs(env) {
+  const raw = env.RF_DB_LANE_TIMEOUT_MIN;
+  if (raw === undefined || raw === "") return 60 * 60_000;
+  if (!/^[1-9]\d*$/.test(raw)) {
+    throw new Error(
+      `RF_DB_LANE_TIMEOUT_MIN must be a positive whole number of minutes, got "${raw}"`,
+    );
+  }
+  return Number(raw) * 60_000;
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { kept, dropped } = serialDbArgs(process.argv.slice(2));
+  const timeoutMs = dbLaneTimeoutMs(process.env);
   const env = { ...process.env };
   if (dropped.length) {
     console.warn(
@@ -48,8 +65,15 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const res = spawnSync(
     process.execPath,
     [jestBin, "-c", "jest.db.config.js", "--maxWorkers=1", ...kept],
-    { cwd: apiDir, stdio: "inherit", env },
+    { cwd: apiDir, stdio: "inherit", env, timeout: timeoutMs, killSignal: "SIGKILL" },
   );
+  if (res.error?.code === "ETIMEDOUT") {
+    console.error(
+      `run-db-tests: killed jest after ${timeoutMs / 60_000} min (W-699 hard timeout). If "Tests:" ` +
+        `had printed, a spec left an open handle; RF_DB_LANE_TIMEOUT_MIN raises the ceiling.`,
+    );
+    process.exit(124);
+  }
   if (res.error) console.error(`run-db-tests: could not start jest: ${res.error.message}`);
   process.exit(res.status ?? 1);
 }
