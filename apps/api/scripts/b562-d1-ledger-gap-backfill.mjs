@@ -49,11 +49,13 @@ import { isLocalDbTarget } from "./lib/local-db-target.cjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 import { DRIFTED_PRODUCTS_SQL, PRODUCT_LEDGER_SQL } from "./lib/stock-drift-sql.mjs";
 import guard from "./lib/live-target-guard.cjs";
+import finiteMoney from "../../../scripts/lib/assert-finite-money.cjs";
 import protectedSlugsLib from "./lib/protected-slugs.cjs";
 
 const { confirmProtectedOverride, hasBackupAttestation, protectedTenantIds, refuseRetiredFlags } =
   guard;
 const { loadProtectedSlugs } = protectedSlugsLib;
+const { assertFiniteMoney } = finiteMoney;
 
 const TAG = "b562-d1";
 const REFERENCE_PREFIX = "B562:BACKFILL:";
@@ -376,9 +378,11 @@ async function apply() {
           randomUUID(),
           a.productId,
           a.tenantId,
-          a.quantity,
-          locked.averageCost,
-          locked.currentStock,
+          assertFiniteMoney(a.quantity, `product ${a.productId} quantity`),
+          locked.averageCost == null
+            ? null
+            : assertFiniteMoney(locked.averageCost, `product ${a.productId} averageCost`),
+          assertFiniteMoney(locked.currentStock, `product ${a.productId} currentStock`),
           reference,
           NOTES,
           plan.cutover,
