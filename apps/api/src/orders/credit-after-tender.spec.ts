@@ -28,11 +28,50 @@ function deps(mode: Mode, opts: { limit?: number | null; audited?: boolean } = {
       }),
     },
   };
+  // The audit write's transaction: a per-key mutex stands in for pg_advisory_xact_lock (released when the tx ends).
+  // SA-877 leaf: the tx exposes ONLY the lock and the audit table, and records every step it takes.
+  const held = new Map<string, Promise<void>>();
+  const locks: string[] = [];
+  const ops: string[] = [];
+  const lockFail: { err: Error | null } = { err: null };
+  const tenantTransaction = jest.fn(async (fn: (tx: any) => Promise<unknown>) => {
+    let release = () => undefined as void;
+    ops.push("tx");
+    const tx = {
+      auditLog: {
+        findFirst: (...a: any[]) => (ops.push("findFirst"), (db.auditLog.findFirst as any)(...a)),
+        create: (...a: any[]) => (ops.push("create"), (db.auditLog.create as any)(...a)),
+      },
+      $executeRaw: jest.fn(async (strings: TemplateStringsArray, ...vals: unknown[]) => {
+        const sql = strings.join("?");
+        if (!sql.includes("pg_advisory_xact_lock")) {
+          ops.push(sql.includes("lock_timeout") ? "lock_timeout" : `raw:${sql}`);
+          return 0;
+        }
+        ops.push("lock");
+        if (lockFail.err) throw lockFail.err;
+        const key = `${vals[0]}:${vals[1]}`;
+        locks.push(key);
+        while (held.has(key)) await held.get(key);
+        held.set(key, new Promise<void>((r) => (release = () => (held.delete(key), r()))));
+        return 0;
+      }),
+    };
+    try {
+      return await fn(tx);
+    } finally {
+      release();
+    }
+  });
   return {
     db,
     audits,
+    locks,
+    ops,
+    lockFail,
+    tenantTransaction,
     d: {
-      prisma: { getTenantId: () => "t-1", forTenant: () => db } as any,
+      prisma: { getTenantId: () => "t-1", forTenant: () => db, tenantTransaction } as any,
       entitlements: { hasFlag: async () => true } as any,
       logger: { warn: jest.fn(), error: jest.fn() },
     },
@@ -77,12 +116,58 @@ describe("creditAfterTender (SA-849)", () => {
     expect(audits).toHaveLength(1); // the pre-existing row only
   });
 
+  it("the row names an impersonating operator, like every other counter-sale audit row", async () => {
+    const { d, audits } = deps("true");
+    await creditAfterTender(d, sale({ impersonatedBy: "sa-9" }));
+    expect(audits[0]).toMatchObject({ userId: "op-1", impersonatedBy: "sa-9" });
+    const plain = deps("true");
+    await creditAfterTender(plain.d, sale());
+    expect(plain.audits[0].impersonatedBy).toBeNull();
+  });
+
+  it("R7b two concurrent re-checks of one order write ONE row: the check-then-insert runs under the order's xact lock", async () => {
+    const { d, db, audits, locks } = deps("true");
+    // the first check reads "none yet" and yields before inserting: without the lock the second would too
+    db.auditLog.findFirst.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 5));
+      return audits[0] ?? null;
+    });
+    const out = await Promise.all([creditAfterTender(d, sale()), creditAfterTender(d, sale())]);
+    expect(out).toEqual([
+      { limit: 50, exposure: 100 },
+      { limit: 50, exposure: 100 },
+    ]);
+    expect(audits).toHaveLength(1);
+    expect(locks).toEqual([
+      "counter-tender:after-tender:ord-1",
+      "counter-tender:after-tender:ord-1",
+    ]);
+  });
+
+  it("SA-877 (2): the audit tx is a pure leaf, lock -> findFirst -> create, opened only after the exposure read", async () => {
+    const { d, db, ops } = deps("true");
+    db.invoice.findMany.mockImplementation(async () => (ops.push("exposure"), []));
+    await creditAfterTender(d, sale());
+    expect(ops).toEqual(["exposure", "tx", "lock_timeout", "lock", "findFirst", "create"]);
+  });
+
+  it("SA-877 (4): a lock timeout (55P03) is swallowed: logged, no row, null; the sale is never failed by it", async () => {
+    const { d, audits, lockFail } = deps("true");
+    lockFail.err = Object.assign(new Error("canceling statement due to lock timeout"), {
+      code: "55P03",
+    });
+    await expect(creditAfterTender(d, sale())).resolves.toBeNull();
+    expect(audits).toHaveLength(0);
+    expect(d.logger.error).toHaveBeenCalledTimes(1);
+  });
+
   it("R3 DARK: one warn line, no audit row, nothing answered", async () => {
-    const { d, audits } = deps("dark");
+    const { d, audits, tenantTransaction } = deps("dark");
     expect(await creditAfterTender(d, sale())).toBeNull();
     expect(d.logger.warn).toHaveBeenCalledTimes(1);
     expect(String(d.logger.warn.mock.calls[0][0])).toContain("after-tender");
     expect(audits).toHaveLength(0);
+    expect(tenantTransaction).not.toHaveBeenCalled(); // no transaction opened for a log-only breach
   });
 
   it("R4 OFF: returns before any other read (the exposure derivation never runs)", async () => {

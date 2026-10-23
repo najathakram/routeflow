@@ -1,14 +1,23 @@
 // OrdersService / InvoicesService pull ESM-only modules: mocks at the module boundary (as counter-sale.service.spec.ts).
 jest.mock("../orders.service", () => ({ OrdersService: class OrdersService {} }));
 jest.mock("../../invoices/invoices.service", () => ({ InvoicesService: class InvoicesService {} }));
-const mockLock = { notAcquired: false };
+// `held` is true only while the tender's session lock is held (released however fn ends, as the real lock is).
+const mockLock = { notAcquired: false, held: false };
 jest.mock("../../common/db-locks", () => ({
   ...jest.requireActual("../../common/db-locks"),
-  withAdvisoryLock: async (_opts: any, fn: () => Promise<unknown>) =>
-    mockLock.notAcquired ? { acquired: false } : { acquired: true, value: await fn() },
+  withAdvisoryLock: async (_opts: any, fn: () => Promise<unknown>) => {
+    if (mockLock.notAcquired) return { acquired: false };
+    mockLock.held = true;
+    try {
+      return { acquired: true, value: await fn() };
+    } finally {
+      mockLock.held = false;
+    }
+  },
 }));
 // SA-849: the post-tender re-check is spied at the boundary (its own rules: credit-after-tender.spec.ts).
 const mockAfterTender = jest.fn();
+const mockHeldAtRecheck: boolean[] = []; // SA-877 (1): was the tender lock still held when the re-check ran?
 jest.mock("../credit-limit-guard", () => ({
   ...jest.requireActual("../credit-limit-guard"),
   creditAfterTender: (...a: unknown[]) => mockAfterTender(...a),
@@ -53,8 +62,13 @@ describe("CounterSaleService.ring: the credit re-check after a failed netted ten
   let invoices: any[];
 
   beforeEach(async () => {
-    mockAfterTender.mockReset().mockResolvedValue(OVER);
+    mockHeldAtRecheck.length = 0;
+    mockAfterTender.mockReset().mockImplementation(async () => {
+      mockHeldAtRecheck.push(mockLock.held);
+      return OVER;
+    });
     mockLock.notAcquired = false;
+    mockLock.held = false;
     mockDayClosed.on = false;
     prisma = createMockPrisma();
     invoices = [{ id: "inv-1", total: 100, status: "SENT", createdAt: new Date(1), payments: [] }];
@@ -125,6 +139,38 @@ describe("CounterSaleService.ring: the credit re-check after a failed netted ten
     expect(r.creditOverLimit).toEqual(OVER);
   });
 
+  // SA-877 (1): the re-check's own xact lock is a leaf: it never runs while the tender's session lock is held.
+  it.each([
+    [
+      "(a) recordPayment throws",
+      () => recordPayment.mockRejectedValueOnce(new Error("503")),
+      "CASH",
+    ],
+    [
+      "(b) a non-cash record throws",
+      () => recordPayment.mockRejectedValueOnce(new Error("dup ref")),
+      "CARD",
+    ],
+    ["(c) the tender lock is not taken", () => (mockLock.notAcquired = true), "CARD"],
+  ])(
+    "SA-877 %s: the tender lock is released before creditAfterTender runs",
+    async (_n, arrange, method) => {
+      arrange();
+      await ring({ method, amount: 100 });
+      expect(mockHeldAtRecheck).toEqual([false]);
+    },
+  );
+
+  it("SA-877 (d) a closed day's 409: the tender lock is released before the re-check, and the 409 is rethrown", async () => {
+    mockDayClosed.on = true;
+    const err: any = await ring({ method: "CASH", amount: 100 }).then(
+      () => undefined,
+      (e) => e,
+    );
+    expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED", message: "closed" });
+    expect(mockHeldAtRecheck).toEqual([false]);
+  });
+
   it("R2 the tender recorded: no re-check, no field", async () => {
     const r: any = await ring({ method: "CASH", amount: 100 });
     expect(r.paymentRecorded).toBe(true);
@@ -151,12 +197,34 @@ describe("CounterSaleService.ring: the credit re-check after a failed netted ten
     });
   });
 
-  it.each([
-    ["on account", { method: "ON_ACCOUNT" }],
-    ["a check dated after today", { method: "CHECK", reference: "1042", checkDate: "2999-01-01" }],
-  ])("R8 %s nets 0: no re-check even when nothing records", async (_n, payment) => {
-    recordPayment.mockRejectedValue(new Error("boom"));
-    await ring(payment).catch(() => undefined);
+  it("SA-876 LOW 1: a re-check that throws on path (d) never replaces the closed-day 409 (its body unchanged)", async () => {
+    mockDayClosed.on = true;
+    mockAfterTender.mockImplementation(() => {
+      throw new Error("re-check blew up");
+    });
+    const err: any = await ring({ method: "CASH", amount: 100 }).catch((e) => e);
+    expect(err?.getStatus?.()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED", message: "closed" });
+  });
+
+  it("a re-check that throws after a failed tender never fails the finished sale (paymentRecorded false, no field)", async () => {
+    recordPayment.mockRejectedValueOnce(new Error("payment-ref 503"));
+    mockAfterTender.mockImplementation(() => {
+      throw new Error("re-check blew up");
+    });
+    const r: any = await ring({ method: "CASH", amount: 100 });
+    expect(r.paymentRecorded).toBe(false);
+    expect(r.creditOverLimit).toBeUndefined();
+  });
+
+  // A post-dated check is refused by ring before any tender (so it can never reach this path); netted = 0 itself is
+  // the guard's own no-op (credit-after-tender.spec.ts R8).
+  it("R8 on account: the sale finishes with no tender to fail, so no re-check", async () => {
+    recordPayment.mockRejectedValue(new Error("boom")); // would fail a tender, were there one
+    const r: any = await ring({ method: "ON_ACCOUNT" });
+    expect(r.orderId).toBe("ord-1");
+    expect(recordPayment).not.toHaveBeenCalled();
     expect(mockAfterTender).not.toHaveBeenCalled();
+    expect(r.creditOverLimit).toBeUndefined();
   });
 });

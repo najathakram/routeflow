@@ -10,6 +10,7 @@ import {
 } from "../selling-restrictions/selling-restrictions.core";
 import type { PrismaService } from "../prisma/prisma.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { advisoryXactLock } from "../common/db-locks";
 
 /**
  * The credit-limit guard, lifted out of `OrdersService` (B585) so that new enforcement points cost
@@ -349,7 +350,9 @@ export async function assertCreditAtEnforcementPoint(
  * the response. Any other error is logged and swallowed (an alert never fails a finished sale).
  */
 export async function creditAfterTender(
-  deps: CreditEnforcementDeps,
+  deps: CreditEnforcementDeps & {
+    prisma: Pick<PrismaService, "getTenantId" | "forTenant" | "tenantTransaction">;
+  },
   p: {
     tenantId: string | null | undefined;
     customerId: string | null | undefined;
@@ -358,6 +361,7 @@ export async function creditAfterTender(
     netted: number;
     planError: string;
     actor?: string | null;
+    impersonatedBy?: string | null;
   },
 ): Promise<{ limit: number; exposure: number } | null> {
   if (!(p.netted > 0) || !p.tenantId || !p.customerId) return null;
@@ -387,11 +391,19 @@ export async function creditAfterTender(
         entityId: p.orderId,
         action: AUDIT_ACTIONS.CREDIT_LIMIT_OVER_AFTER_TENDER,
       };
-      if (!(await db.auditLog.findFirst({ where, select: { id: true } }))) {
-        await db.auditLog.create({
+      // One row per order, atomically: AuditLog has no unique key to catch a P2002 on (adding one is a migration), so the
+      // check-then-insert runs in one short transaction under a per-order xact lock. Its own key in the counter-tender
+      // family: it never waits behind a live tender's session lock on the order (the lock-not-taken path re-checks too).
+      // SA-877: a pure LEAF (lock -> findFirst -> create; no other lock, no FOR UPDATE; the exposure read stays above),
+      // ENFORCED only; a 55P03 or any other failure here falls to the catch below (logged, null), never to the sale.
+      await deps.prisma.tenantTransaction(async (tx) => {
+        await advisoryXactLock(tx, "counter-tender", `after-tender:${p.orderId}`);
+        if (await tx.auditLog.findFirst({ where, select: { id: true } })) return;
+        await tx.auditLog.create({
           data: {
             ...where,
             userId: p.actor ?? null,
+            impersonatedBy: p.impersonatedBy ?? null,
             meta: {
               customerId: p.customerId,
               limit,
@@ -401,7 +413,7 @@ export async function creditAfterTender(
             },
           },
         });
-      }
+      });
       return { limit, exposure };
     }
   } catch (err) {

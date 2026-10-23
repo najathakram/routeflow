@@ -258,6 +258,7 @@ export class CounterSaleService {
           // SA-849 path (d): a closed day's 409 after the sale committed gets the re-check's log + audit; its body is unchanged.
           const code = (e as { getResponse?: () => { code?: string } })?.getResponse?.()?.code;
           if (code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)
+            // SA-876: never let the re-check replace the 409 (async, and its failure is swallowed)
             await this.creditRecheck(
               orderId,
               customerId,
@@ -266,7 +267,7 @@ export class CounterSaleService {
               checkToday,
               code,
               user,
-            );
+            ).catch(() => undefined);
           throw e;
         }
         this.logger.warn(`counter sale ${orderId}: tender lock not taken (${e.message})`);
@@ -285,7 +286,7 @@ export class CounterSaleService {
           checkToday,
           planError,
           user,
-        )
+        ).catch(() => null) // an alert never fails a finished sale (SA-849 rule 1)
       : null;
 
     // SA-764: the stored tendered as the tender left it (the pre-tender read above may hold a stale figure).
@@ -316,7 +317,7 @@ export class CounterSaleService {
    * SA-849 (S1 S-1): what the gate netted (the same `counterCreditPaidNow` over the stored total) and, when it was
    * anything, `creditAfterTender`: DARK warns, ENFORCED warns + audits once per order + answers the figures.
    */
-  private creditRecheck(
+  private async creditRecheck(
     orderId: string,
     customerId: string | null | undefined,
     total: unknown,
@@ -333,7 +334,12 @@ export class CounterSaleService {
       logger: this.logger,
     };
     const at = { tenantId: this.prisma.getTenantId(), customerId, orderId, total: sum, netted };
-    return creditAfterTender(deps, { ...at, planError, actor: user.sub ?? null });
+    return creditAfterTender(deps, {
+      ...at,
+      planError,
+      actor: user.sub ?? null,
+      impersonatedBy: user.impersonatedBy ?? null,
+    });
   }
 
   /**
