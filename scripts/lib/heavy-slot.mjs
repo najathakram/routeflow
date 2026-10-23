@@ -79,6 +79,24 @@ export function parseMs(raw, fallback) {
   return typeof raw === "string" && raw.trim() !== "" && Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+/**
+ * Why `cmd args` must not run under the slot, or null. A bare `npm ci` / `npm install` runs the
+ * lifecycle scripts (husky `prepare`), which rewrite core.hooksPath and silently turn the worktree's
+ * pre-push hooks off (W-679); it must carry `--ignore-scripts` (or npm_config_ignore_scripts=true).
+ */
+export function bareNpmReason(cmd, args = [], env = process.env) {
+  const base = path.basename(String(cmd ?? "")).replace(/\.(cmd|exe)$/i, "");
+  if (base !== "npm") return null;
+  const verb = args.find((a) => !a.startsWith("-"));
+  if (!["ci", "install", "i", "add"].includes(verb)) return null;
+  if (args.some((a) => a === "--ignore-scripts" || a === "--ignore-scripts=true")) return null;
+  if (String(env.npm_config_ignore_scripts).toLowerCase() === "true") return null;
+  return (
+    `heavy-slot: refusing a bare \`npm ${verb}\`: its lifecycle scripts rewrite core.hooksPath and ` +
+    `switch the pre-push hooks off. Re-run with \`--ignore-scripts\`. Nothing was run.`
+  );
+}
+
 export function resolveDir(env = process.env, home = os.homedir()) {
   return env.RF_HEAVY_SLOT_DIR || path.join(home, ".routeflow", "heavy-slot");
 }

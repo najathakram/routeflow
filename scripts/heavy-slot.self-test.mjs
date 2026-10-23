@@ -836,6 +836,45 @@ const t=setInterval(()=>{let n=[];try{n=fs.readdirSync(q)}catch{}if(n.length||Da
   );
 }
 
+{
+  // W-679: a bare `npm ci` runs lifecycle scripts (husky `prepare`) that rewrite core.hooksPath; the
+  // CLI refuses it (exit 2, command never runs) and lets `--ignore-scripts` through. A stub `npm`
+  // on PATH records whether it ran; the real npm is never started.
+  const bin = mkTmp();
+  const marker = path.join(bin, "npm-ran.txt");
+  const stub = path.join(bin, "npm");
+  writeFileSync(stub, `#!/bin/sh\necho "$@" >> ${JSON.stringify(marker)}\n`, { mode: 0o755 });
+  const runNpm = (...args) => {
+    const dir = mkTmp();
+    const r = spawnSync(
+      process.execPath,
+      [CLI, "run", "--label", "w679", "--branch", "t", "--", "npm", ...args],
+      {
+        env: {
+          ...cleanEnv(),
+          RF_HEAVY_SLOT_DIR: dir,
+          PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+        },
+        encoding: "utf8",
+      },
+    );
+    const ran = existsSync(marker) ? readFileSync(marker, "utf8").trim() : null;
+    rmSync(marker, { force: true });
+    return [r.status, ran, /--ignore-scripts/.test(r.stderr)];
+  };
+  check(
+    "W1 bare `npm ci` is refused: exit 2, npm never ran, message names --ignore-scripts",
+    runNpm("ci"),
+    [2, null, true],
+  );
+  check("W2 `npm ci --ignore-scripts` runs", runNpm("ci", "--ignore-scripts"), [
+    0,
+    "ci --ignore-scripts",
+    false,
+  ]);
+  check("W3 other npm commands run", runNpm("run", "lint"), [0, "run lint", false]);
+}
+
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
 console.log(`heavy-slot self-test: ${passed} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
