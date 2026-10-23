@@ -8,10 +8,7 @@ import type {
   HeldLine,
   StaffWriteDecision,
 } from "../selling-restrictions/restriction-warning";
-import {
-  restrictionChannelForPrincipal,
-  type ChannelPrincipal,
-} from "../selling-restrictions/selling-restrictions.core";
+import type { ChannelPrincipal } from "../selling-restrictions/selling-restrictions.core";
 import type {
   SellableLinesArgs,
   SellableLinesParams,
@@ -131,14 +128,19 @@ export type EditPlan = OrderEditRestrictionPlan;
 export type CrPlan = ChangeRequestRestrictionPlan;
 
 /**
- * The choke-point arguments of a built edit / change-request plan: its params, judged at `principal`'s channel. The
- * caller awaits `assertLinesSellable` itself (the sellable-writers coverage pin reads that call at the write site).
+ * `updateOrderItems`: is this edit judged now? A non-draft always. A DRAFT is judged at its promotion UNLESS it has a live
+ * (non-VOID) linked invoice: the reconcile after the edit copies the order's lines onto that sent mirror.
  */
-export function judgeArgs(
-  plan: EditPlan | CrPlan,
-  principal: ChannelPrincipal | null | undefined,
-): SellableLinesParams {
-  return { ...plan.params, channel: restrictionChannelForPrincipal(principal) };
+export async function editIsJudged(
+  prisma: Pick<PrismaService, "forTenant">,
+  order: { status: string },
+  orderId: string,
+): Promise<boolean> {
+  if (order.status !== "DRAFT") return true;
+  const live = await prisma
+    .forTenant()
+    .invoice.findFirst({ where: { orderId, status: { not: "VOID" } }, select: { id: true } });
+  return !!live;
 }
 
 /** `updateOrderItems` (non-draft): the edit's plan, built from the order read before the lock and the payload. */
