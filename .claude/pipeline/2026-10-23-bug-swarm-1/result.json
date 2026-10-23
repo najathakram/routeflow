@@ -1,0 +1,120 @@
+{
+  "run": "2026-10-23-bug-swarm-1",
+  "profile": "bug-swarm",
+  "mode": "bugfix",
+  "scale": "small",
+  "started": "2026-10-23T03:34:46Z",
+  "ended": "2026-10-23T04:46:26Z",
+  "phaseReport": [
+    {
+      "phase": "Triage",
+      "ran": true,
+      "agents": 1,
+      "tokens": 1076921,
+      "estUsd": null,
+      "durationMs": 63874,
+      "model": "claude-haiku-5-5",
+      "effort": "low",
+      "note": "6 of 13 candidate rows called live/unclear were not live; cost null (haiku-5-5 price unknown to session-usage)"
+    },
+    {
+      "phase": "Context pack",
+      "ran": true,
+      "agents": 1,
+      "tokens": 3358592,
+      "estUsd": 1.1790368,
+      "durationMs": 144694,
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "note": "one agent, c3+c4 packs; overturned triage on 8 rows"
+    },
+    {
+      "phase": "Build c3",
+      "ran": true,
+      "agents": 1,
+      "tokens": 4127153,
+      "estUsd": 1.4080133000000001,
+      "durationMs": 2130819,
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "note": "rows 211,285; 1 gate fix round (currency NOT NULL), 1 post-PASS NIT round"
+    },
+    {
+      "phase": "Build c4",
+      "ran": true,
+      "agents": 1,
+      "tokens": 5229654,
+      "estUsd": 1.7987238,
+      "durationMs": 2041794,
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "note": "rows 719,475,609,611 (+705 10x check); 1 review fix round"
+    },
+    {
+      "phase": "Review c3",
+      "ran": true,
+      "agents": 1,
+      "tokens": 1009131,
+      "estUsd": 1.100461,
+      "durationMs": 36361,
+      "model": "claude-opus-5-5",
+      "effort": "medium",
+      "note": "PASS, 0 MUST, 3 NIT"
+    },
+    {
+      "phase": "Review c4",
+      "ran": true,
+      "agents": 1,
+      "tokens": 1909629,
+      "estUsd": 1.734525,
+      "durationMs": 332071,
+      "model": "claude-opus-5-5",
+      "effort": "medium",
+      "note": "FAIL 2 MUST (719) -> re-check CLOSED"
+    },
+    {
+      "phase": "Close-out shas",
+      "ran": true,
+      "agents": 1,
+      "tokens": 1340274,
+      "estUsd": 0.5277785,
+      "durationMs": 47579,
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "note": "8 not-live rows mapped to fixing shas"
+    },
+    {
+      "phase": "Orchestrator",
+      "ran": true,
+      "agents": 0,
+      "tokens": 19397047,
+      "estUsd": 12.74689,
+      "model": "claude-opus-5-5",
+      "effort": "session",
+      "note": "lane session: triage reading, clustering, gates, pushes, PRs, lead traffic"
+    }
+  ],
+  "bugsFixed": 6,
+  "siblingsFixed": 1,
+  "closeouts": 8,
+  "prs": [
+    3620,
+    3622
+  ],
+  "quality": {
+    "firstPassGate": {
+      "c3": "RED: currency NOT NULL, caught by the orchestrator schema read, not by a script",
+      "c4": "GREEN"
+    },
+    "reviewMusts": {
+      "c3": 0,
+      "c4": 2
+    },
+    "specEdits": 0,
+    "specEditsRejected": 0
+  },
+  "remainingFindings": [],
+  "totalUsdKnown": 20.5,
+  "usdPerBug": 3.42,
+  "subagentUsd": 7.75
+}
