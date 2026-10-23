@@ -503,7 +503,7 @@ function ProductPickView({
   // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, `layerOf` is undefined and every
   // price below is master's number.
   const priceLayer = useCustomerPriceLayer(customerId);
-  // W-741: a pick fails closed until the customer, their prices and the layer are read (else it prices at LIST).
+  // W-741 / SA-883: picks and Create fail closed until the customer, their prices and the layer are read.
   const pick = useCustomerPickGate(customerId, customerQuery, pricesQuery, priceLayer);
   const layerOf = priceLayer.layerOf;
   const packPriceFor = (p: Product) => packLinePrice(p, effectiveTierFor(p.id), layerOf(p.id));
@@ -1120,7 +1120,7 @@ function ProductPickView({
       parentProductId: product.parentProductId ?? null,
       parent: null,
     };
-    addOne(product.id, snapshot);
+    if (!addOne(product.id, snapshot)) return; // a refused add: not counted, no scroll
     bumpScanned(product.id);
     setPendingScroll((s) => requestScroll(s, product.id));
     setCreateCode(null);
@@ -1709,9 +1709,10 @@ function ProductPickView({
     Object.keys(items),
     (id) => productById.get(id)?.name ?? id,
   );
-  const canSave = totalItems > 0 && !createOrder.isPending && !submitting && !layerGate.blocked;
+  const idle = !createOrder.isPending && !submitting;
+  const canSave = totalItems > 0 && idle && !pick.blocksSave(items) && !layerGate.blocked;
   // "Save as draft" needs only a customer (a zero-item DRAFT is allowed server-side).
-  const canSaveDraft = !!customerId && !createOrder.isPending && !submitting;
+  const canSaveDraft = !!customerId && idle;
 
   /** Submit with a specific (or no) merge choice; `asDraft` parks it as a DRAFT. */
   const submitOrder = async (mergeChoice?: "merge" | "separate", asDraft = false) => {

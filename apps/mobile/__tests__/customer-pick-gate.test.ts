@@ -1,6 +1,8 @@
 import { customerPricingGate } from "@routeflow/pricing";
 import {
   PICK_PENDING_NOTICE_DELAY_MS,
+  builderSaveBlocked,
+  hasOpenSuggestion,
   customerPickNotice,
   customerPickRefusal,
   retryCustomerPricing,
@@ -112,6 +114,67 @@ describe("W-741: both builders route every pick through the gate", () => {
       expect(src).toMatch(
         /const onRowAdd = useCallback\(\(id: string\) => \{\s*if \(actionsRef\.current\.add\(id\)\) actionsRef\.current\.pickedFromSearch\(id\);/,
       );
+    },
+  );
+});
+
+/**
+ * SA-883 (2) on #3665: Create/Save on both builders also waits on the gate's blockSave. A line picked while the read was fine
+ * whose read then FAILS with no data (a customer change, a cleared cache) is an open suggestion priced at LIST: Create stays
+ * disabled until the read is back or the operator types the price.
+ */
+describe("SA-883: Create/Save waits on blockSave", () => {
+  const failed = { isError: true, data: undefined };
+  const save = (items: Record<string, { unitPrice?: number }>, customer: Record<string, unknown>) =>
+    builderSaveBlocked(
+      customerPricingGate({
+        customerQuery: customer,
+        customerPricesQuery: { data: [] },
+        priceLayer: off,
+        productIds: Object.keys(items),
+        openSuggestions: hasOpenSuggestion(items),
+      }),
+      "c1",
+    );
+
+  it("a picked line (no typed price), then the read fails with no data: Create is disabled", () => {
+    expect(save({ p1: {} }, failed)).toBe(true);
+  });
+  it("the same line with an operator-typed price: Create is allowed", () => {
+    expect(save({ p1: { unitPrice: 4.5 } }, failed)).toBe(false);
+  });
+  it("everything read: Create is allowed", () => {
+    expect(save({ p1: {} }, read)).toBe(false);
+  });
+  it("no customer (walk-in): never blocked by the customer gate", () => {
+    const g = customerPricingGate({
+      customerQuery: { isPending: true },
+      customerPricesQuery: {},
+      priceLayer: off,
+    });
+    expect(builderSaveBlocked(g, null)).toBe(false);
+  });
+  it.each(["components/NewOrderScreen.tsx", "app/(operator)/(tabs)/invoices/new.tsx"])(
+    "%s: canSave checks pick.blocksSave(items)",
+    (rel) => {
+      const { readFileSync } = jest.requireActual<typeof import("fs")>("fs");
+      const { join } = jest.requireActual<typeof import("path")>("path");
+      expect(readFileSync(join(__dirname, "..", rel), "utf8")).toMatch(
+        /const canSave =[^;]*!pick\.blocksSave\(items\)/,
+      );
+    },
+  );
+});
+
+describe("#3665 review NIT: the create-on-miss add stops when the add is refused", () => {
+  it.each(["components/NewOrderScreen.tsx", "app/(operator)/(tabs)/invoices/new.tsx"])(
+    "%s",
+    (rel) => {
+      const { readFileSync } = jest.requireActual<typeof import("fs")>("fs");
+      const { join } = jest.requireActual<typeof import("path")>("path");
+      const src = readFileSync(join(__dirname, "..", rel), "utf8");
+      expect(src).toMatch(/if \(!addOne\(product\.id, snapshot\)\) return;/);
+      expect(src).not.toMatch(/^\s*addOne\(product\.id, snapshot\);/m);
     },
   );
 });

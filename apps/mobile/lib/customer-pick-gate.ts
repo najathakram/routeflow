@@ -48,3 +48,16 @@ export function retryCustomerPricing(
     void deps.refetchPrices();
   } else void deps.refetchLayer();
 }
+
+/** SA-883: a catalog line with no operator-typed price carries a suggested (tier-resolved) price. */
+export function hasOpenSuggestion(items: Record<string, { unitPrice?: number | null }>): boolean {
+  return Object.values(items).some((line) => line.unitPrice == null);
+}
+
+/** SA-883: Create/Save waits on the gate's blockSave once a customer is chosen (a walk-in sale has no customer reads). */
+export function builderSaveBlocked(
+  gate: CustomerPricingGate,
+  customerId: string | null | undefined,
+): boolean {
+  return !!customerId && gate.blockSave;
+}

@@ -890,7 +890,7 @@ function InvoiceComposer({
       parentProductId: product.parentProductId ?? null,
       parent: null,
     };
-    addOne(product.id, snapshot);
+    if (!addOne(product.id, snapshot)) return; // a refused add: not counted, no scroll
     bumpScanned(product.id);
     setPendingScroll((s) => requestScroll(s, product.id));
     setCreateCode(null);
@@ -1283,7 +1283,7 @@ function InvoiceComposer({
     (id) => productById.get(id)?.name ?? id,
   );
   const baseOk = totalItems > 0 && !saving && !anyUnitLoading && !saleRecorded && !saleUnknown;
-  const canSave = baseOk && !layerGate.blocked;
+  const canSave = baseOk && !pick.blocksSave(items) && !layerGate.blocked;
 
   // No FormSheet on this screen, so it applies the same choke-point rule as
   // FormSheet.tsx's handleCancel directly: never prompt "Discard invoice?"

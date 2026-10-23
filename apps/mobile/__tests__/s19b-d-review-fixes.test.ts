@@ -212,7 +212,9 @@ describe("copy names the product the layer could not load", () => {
 describe("wiring pins: the gate is in canSave on all three screens; the hook sends nothing flag-off", () => {
   it("canSave / Save include layerGate.blocked", () => {
     expect(newOrder).toMatch(/const canSave =[^;]*!layerGate\.blocked;/);
-    expect(invoiceNew).toMatch(/const canSave = baseOk && !layerGate\.blocked;/);
+    expect(invoiceNew).toMatch(
+      /const canSave = baseOk && [^;]*!layerGate\.blocked;/ /* SA-883 adds !pick.blocksSave(items) */,
+    );
     expect(editItems).toMatch(/disabled=\{updateMut\.isPending \|\| layerGate\.blocked\}/);
   });
   it("no /price-layer request with the flag off: enabled = flag && customer, and the flag read fails closed", () => {

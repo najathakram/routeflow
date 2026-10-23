@@ -3,6 +3,8 @@ import { customerPricingGate, type PricingReadState } from "@routeflow/pricing";
 import { shownPrice } from "../../lib/price-layer-gate";
 import {
   PICK_PENDING_NOTICE_DELAY_MS,
+  builderSaveBlocked,
+  hasOpenSuggestion,
   customerPickNotice,
   customerPickRefusal,
   retryCustomerPricing,
@@ -33,6 +35,18 @@ export function useCustomerPickGate(
     /** SA-882: the price to SHOW for a product not yet added: null ("…") while the gate blocks the pick. */
     shown: (productId: string, clp: { price: number }) =>
       shownPrice(gate, customerId, priceLayer, productId, clp),
+    /** SA-883: Create/Save is held (pending, an unconfirmed layer price, or a failed read with an open suggestion). */
+    blocksSave: (items: Record<string, { unitPrice?: number | null }>) =>
+      builderSaveBlocked(
+        customerPricingGate({
+          customerQuery,
+          customerPricesQuery,
+          priceLayer,
+          productIds: Object.keys(items),
+          openSuggestions: hasOpenSuggestion(items),
+        }),
+        customerId,
+      ),
     refusal: customerPickRefusal(gate, customerId),
     notice: customerPickNotice(gate, customerId, pendingShown),
     retry: () =>
