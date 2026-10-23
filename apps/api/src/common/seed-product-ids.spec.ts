@@ -16,4 +16,12 @@ describe("seed product ids (B745)", () => {
   it("no stock or order reference still points at a seed-prod-NN id", () => {
     expect(seed.match(/seed-prod-\d+/g) ?? []).toEqual([]);
   });
+
+  it("fails with a clear local:reset message when legacy seed rows hold the SKUs under old ids", () => {
+    const guard = seed.indexOf("legacy");
+    const upsert = seed.indexOf("prisma.product.upsert");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(upsert);
+    expect(seed).toMatch(/local:reset/);
+  });
 });
