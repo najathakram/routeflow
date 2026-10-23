@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { reconcile, linkItemFor } from "../lib/reconcile.mjs";
 import * as REC from "../lib/reconcile.mjs";
 import { fold } from "../lib/fold.mjs";
-import { DEFAULT_CONFIG } from "../lib/config.mjs";
+import { LEGACY_CONFIG as DEFAULT_CONFIG } from "./legacy-config.mjs";
 
 const NOW = Date.parse("2026-10-19T12:00:00Z");
 const MIN = 60000;

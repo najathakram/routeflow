@@ -13,7 +13,7 @@ import {
   parseRailwayStatus,
 } from "../lib/collector.mjs";
 import { buildAreaTree } from "../lib/areas.mjs";
-import { DEFAULT_CONFIG } from "../lib/config.mjs";
+import { LEGACY_CONFIG as DEFAULT_CONFIG } from "./legacy-config.mjs";
 
 const FIX = join(fileURLToPath(new URL(".", import.meta.url)), "fixtures");
 const read = (f) => readFileSync(join(FIX, f), "utf8");

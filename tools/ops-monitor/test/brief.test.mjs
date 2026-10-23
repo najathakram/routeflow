@@ -8,7 +8,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { fold } from "../lib/fold.mjs";
-import { DEFAULT_CONFIG, loadConfig } from "../lib/config.mjs";
+import { loadConfig } from "../lib/config.mjs";
+import { LEGACY_CONFIG as DEFAULT_CONFIG } from "./legacy-config.mjs";
 import {
   ageWords,
   etaWords,
@@ -496,6 +497,8 @@ test("lanes-local: a damaged lanes.json reads as empty", () => {
 function cliEnv(root) {
   const specs = join(root, "specs");
   mkdirSync(join(specs, "events", "testbox"), { recursive: true });
+  mkdirSync(join(specs, "ops"), { recursive: true });
+  writeFileSync(join(specs, "ops", "config.json"), JSON.stringify(DEFAULT_CONFIG)); // legacy lanes
   const env = {
     ...process.env,
     RF_OPS_HOME: join(root, "home"),
