@@ -635,6 +635,68 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
       expect(await prismaA.invoicePayment.count({ where: { invoiceId: s.invs[2].id } })).toBe(0);
     }, 60_000);
 
+    // SA-897 (N1): a HARD-deleted linked row (payment DELETE, invoice/order delete) leaves the link dangling; a dangling
+    // link counts as unlinked, so the date rule finds the advance again. Only a dangling one: a live link to ANOTHER
+    // group's row never attaches by date (R9).
+    it("R7 the linked first row hard-deleted, then B $30 -> $10: no self-409 (head: 409 naming its own advance)", async () => {
+      const { s, rows, advs, edit } = await standalone("w719-r7", 100, [60, 30]);
+      expect(advs[0].sourcePaymentId).toBe(rows[0].id);
+      await s.asTenant(() => invoicesA.deletePayment(rows[0].invoiceId, rows[0].id));
+      const err: any = await edit(rows[1], { amount: 10 });
+      expect(status(err)).toBe("ok");
+      expect(Number((await s.get(rows[1].id))?.amount)).toBe(10);
+    }, 60_000);
+
+    it("R8 the linked first row hard-deleted, then a NEW 'W9' $40 = the group ($30 + its $10 advance): 409 naming the group (head: recorded)", async () => {
+      const { s, rows } = await standalone("w719-r8", 100, [60, 30]);
+      await s.asTenant(() => invoicesA.deletePayment(rows[0].invoiceId, rows[0].id));
+      const err: any = await s
+        .asTenant(() =>
+          invoicesA.recordPayment(
+            s.invs[2].id,
+            { amount: 40, method: "CHECK", reference: "W9" } as any,
+            s.staffOpts(false),
+          ),
+        )
+        .catch((e) => e);
+      expect(status(err)).toBe(409);
+      expect(err.getResponse()).toMatchObject({ existingPayment: { id: rows[1].id } });
+      expect(await prismaA.invoicePayment.count({ where: { invoiceId: s.invs[2].id } })).toBe(0);
+    }, 60_000);
+
+    it("R9 two same-reference groups on one day: group 1's live-linked advance never attaches to group 2 by date", async () => {
+      const { s } = await standalone("w719-r9", 100, [60]); // group 1: $60 + a $40 advance linked to its row
+      await s.asTenant(() =>
+        invoicesA.recordStandalonePayment(
+          {
+            customerId: s.customer.id,
+            totalAmount: 100,
+            method: "CHECK",
+            reference: "W9",
+            paidAt: D0,
+            allocations: [{ invoiceId: s.invs[1].id, amount: 60 }],
+          } as any,
+          s.staffOpts(true), // the repeat, recorded anyway: group 2, its own $40 advance
+        ),
+      );
+      const g2row = await prismaA.invoicePayment.findFirstOrThrow({
+        where: { invoiceId: s.invs[1].id },
+      });
+      // X = $150: group 2 at $70 + its $40 + group 1's $40 would equal it, but group 2 alone is $110
+      await s.row(s.invs[2].id, { amount: 150, reference: "W9" });
+      const err: any = await s
+        .asTenant(() =>
+          invoicesA.updatePayment(
+            s.invs[1].id,
+            g2row.id,
+            { amount: 70, method: "CHECK", reference: "W9" } as any,
+            s.staffOpts(false),
+          ),
+        )
+        .catch((e) => e);
+      expect(status(err)).toBe("ok");
+    }, 60_000);
+
     it("R6 a forced retry of the standalone write: the committed advance links a COMMITTED row", async () => {
       let attempts = 0;
       const { rows, advs } = await standalone("w719-r6", 100, [60, 30], {

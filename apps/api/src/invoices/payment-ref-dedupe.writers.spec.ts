@@ -219,14 +219,13 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
         (r) => r.tenantId === tenant && r.customerId === w.customerId,
       );
       if (!w.OR) return mine.filter((r) => r.method === w.method);
-      // SA-879 groupExcessAdvances: linked to a group row, or (legacy, unlinked) same method on a row's paidAt
+      // SA-879/897 groupExcessAdvances: linked to a group row, or the date candidates (any link; the helper filters)
       const [linked, legacy] = w.OR;
       const at = (d: unknown) => new Date(d as string).getTime();
       return mine.filter(
         (r) =>
           (r.sourcePaymentId != null && linked.sourcePaymentId.in.includes(r.sourcePaymentId)) ||
-          (r.sourcePaymentId == null &&
-            r.method === legacy.method &&
+          (r.method === legacy.method &&
             legacy.receivedAt.in.some((d: unknown) => at(d) === at(r.receivedAt))),
       );
     });

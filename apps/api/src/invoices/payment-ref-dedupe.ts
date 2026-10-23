@@ -185,9 +185,12 @@ export interface PaymentRefGuard {
  * `check`'s composition of another group). An advance is the group's when it is the customer's and its
  * `sourcePaymentId` names one of the group's rows (writeStandalonePayment links its first row). The rows are read in
  * EVERY status, so a VOIDed first row keeps the link; the callers still sum only DEDUPE_STATUSES rows.
- * Legacy fallback (an unlinked advance, booked before the link): same customer, method and normalised reference, and
- * `receivedAt` equal to any row's `paidAt`. Residual (documented, SA-879): a legacy group whose EVERY row's paidAt was
- * edited loses its advance; that is a false 409 with Record anyway, never silent money. A date is never the identity.
+ * Date fallback: same customer, method and normalised reference, and `receivedAt` equal to any row's `paidAt`, for an
+ * advance with NO live link: unlinked (booked before the link) or linked to a row that no longer exists (SA-897: a
+ * hard-deleted row: the payment DELETE, an invoice or order delete). A link to an EXISTING row of another group is never
+ * overridden by a date (two same-reference groups on one day exist after a Record anyway). Residual (documented, SA-879
+ * / SA-897): a group whose linked row is gone (or that never had one) AND whose EVERY remaining row's paidAt was edited
+ * loses its advance; that is a false 409 with Record anyway, never silent money. A date is never the identity.
  */
 export async function groupExcessAdvances(
   tx: any,
@@ -198,23 +201,43 @@ export async function groupExcessAdvances(
     select: { id: true, paidAt: true },
   });
   if (rows.length === 0) return [];
+  const own = new Set(rows.map((r) => r.id));
+  const dates = new Set(rows.map((r) => new Date(r.paidAt).getTime()));
   const advances: any[] = await tx.advancePayment.findMany({
     where: {
       customerId: g.customerId,
       OR: [
-        { sourcePaymentId: { in: rows.map((r) => r.id) } },
-        {
-          sourcePaymentId: null,
-          method: g.method,
-          receivedAt: { in: rows.map((r) => new Date(r.paidAt)) },
-        },
+        { sourcePaymentId: { in: [...own] } },
+        { method: g.method, receivedAt: { in: rows.map((r) => new Date(r.paidAt)) } },
       ],
     },
-    select: { id: true, amount: true, reference: true, sourcePaymentId: true },
+    select: {
+      id: true,
+      amount: true,
+      reference: true,
+      method: true,
+      receivedAt: true,
+      sourcePaymentId: true,
+    },
   });
-  return advances
-    .filter((a) => a.sourcePaymentId != null || normalizePaymentRef(a.reference) === g.normRef)
-    .map((a) => ({ id: a.id, cents: toCents(Number(a.amount)) }));
+  const linked = (a: any) => a.sourcePaymentId != null && own.has(a.sourcePaymentId);
+  const byDate = advances.filter(
+    (a) =>
+      !linked(a) &&
+      a.method === g.method &&
+      dates.has(new Date(a.receivedAt).getTime()) &&
+      normalizePaymentRef(a.reference) === g.normRef,
+  );
+  // A date candidate linked elsewhere attaches only when that row is gone (one indexed read, only when there is one).
+  const foreign = [...new Set(byDate.map((a) => a.sourcePaymentId).filter((id) => id != null))];
+  const live: Array<{ id: string }> = foreign.length
+    ? await tx.invoicePayment.findMany({ where: { id: { in: foreign } }, select: { id: true } })
+    : [];
+  const alive = new Set(live.map((r) => r.id));
+  return [
+    ...advances.filter(linked),
+    ...byDate.filter((a) => a.sourcePaymentId == null || !alive.has(a.sourcePaymentId)),
+  ].map((a) => ({ id: a.id, cents: toCents(Number(a.amount)) }));
 }
 
 /**
