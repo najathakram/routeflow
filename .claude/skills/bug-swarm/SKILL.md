@@ -10,7 +10,6 @@ procedure. **v0** (now) runs the steps with Agent subagents. **v1** moves steps 
 Workflow script once v0 has proven them on the ledger. Improve it through the learning clause below, never on taste.
 
 ## When to use (and when not to)
-
 - **Use:** 3 or more LOW register rows. LOW means wording, layout, copy, a missing guard on display-only
   state, a test or tooling defect, or a small validation gap with no money effect.
 - **Do not:** any HIGH class above, a migration, or a bug whose repro needs a live-tenant reading. Route those
@@ -19,10 +18,9 @@ Workflow script once v0 has proven them on the ledger. Improve it through the le
   next cluster boundary. Never start a swarm at or above the 95% ladder without the owner's yes.
 
 ## Steps (v0)
-
 1. **Triage, Haiku @ low, one agent for the whole batch.** Input: the bug ids. For each bug: the register
    row + its `bugs.mjs` card → `risk` (LOW|HIGH, with the reason), `files` (code-map INDEX + `scripts/graph.mjs
-radius`), `needsDb` (prisma, a `*.db.spec`, or a transaction path), `ui` (yes/no), and a one-line repro. Output:
+   radius`), `needsDb` (prisma, a `*.db.spec`, or a transaction path), `ui` (yes/no), and a one-line repro. Output:
    `manifest.json` in the run dir `.claude/pipeline/<date>-bug-swarm-<n>/`. The lead's context reads only the table.
 2. **Cluster, the lead by hand in v0 (v1: `scripts/cluster.mjs`).** Union bugs that share any file. A file at
    its size-ratchet ceiling (`apps/api/src/common/size-ratchet.spec.ts`) forces its bugs into one cluster with an
@@ -48,30 +46,26 @@ radius`), `needsDb` (prisma, a `*.db.spec`, or a transaction path), `ui` (yes/no
    after the deploy; lesson candidates go to the bookkeeping follow-up PR; then the ledger row (below).
 
 ## Measurement (mandatory, every run)
-
 Append one ledger row per batch: `node ~/.claude/skills/model-routing/scripts/pipeline-ledger.mjs append
 <run-dir>/result.json --run <date>-bug-swarm-<n> --approach dev-pipeline --profile bug-swarm --note "<bugs>"`.
 `result.json` carries, per batch and per bug:
-
 - **Cost:** tokens and $ per agent role (`session-usage.mjs`), total and **per bug fixed**.
 - **Speed:** wall clock from triage start to the last merge; builder minutes per bug.
 - **Quality:** first-pass gate pass rate; review MUSTs per PR; `SPEC-EDIT` count and how many the reviewer
   rejected; post-merge regressions within 7 days (`bug-registry` rows citing the PR).
 - **Baseline:** compare with `pipeline-ledger.mjs summary --profile bug-pipeline` (LOW rows) and with the last
   10 single-PR LOW fixes. Report the ratio, cost per bug and minutes per bug, in the run's RUN-LOG entry.
-  **Adopt as the default for LOW batches** when 3 runs show cost per bug ≤ 0.5× the baseline and first-pass gate
-  rate and post-merge regression rate no worse. **Retire** a step that never changes an outcome in 3 runs; **add**
-  a guard after any regression it should have caught.
+**Adopt as the default for LOW batches** when 3 runs show cost per bug ≤ 0.5× the baseline and first-pass gate
+rate and post-merge regression rate no worse. **Retire** a step that never changes an outcome in 3 runs; **add**
+a guard after any regression it should have caught.
 
 ## Learning clause (improve as we go)
-
 After every run: (1) the ledger row; (2) one RUN-LOG entry, `.claude/pipeline/<run>/RUN-LOG.md`, with what was
 slow, what was wasted and what a gate caught; (3) a change to THIS file only when the ledger supports it, with the run
 id cited in the commit body. v1 work (scripts/cluster.mjs, scripts/gate.sh, a Workflow script) is tracked as
 board item W-653; build it only after v0 has 2 ledger rows.
 
 ## DO NOT
-
 - Do not put a HIGH bug in a swarm, or "just this once" a money fix.
 - Do not let a builder merge, flip visibility, run railway, or touch a live tenant.
 - Do not accept a `SPEC-EDIT` on the builder's word; it is a reviewer question.
