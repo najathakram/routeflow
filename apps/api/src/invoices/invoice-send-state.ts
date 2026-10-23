@@ -338,6 +338,8 @@ export async function recordInvoiceEmailed(
     to: string;
     fingerprint: string | null;
     variant?: string | null;
+    /** A breadcrumb for a CORRECTION record (SA-860): why this row exists beside the one before it. */
+    note?: string;
   },
 ): Promise<void> {
   const tenantId = prisma.getTenantId();
@@ -354,6 +356,7 @@ export async function recordInvoiceEmailed(
           fp: p.fingerprint,
           sentAt: new Date().toISOString(),
           ...(p.variant ? { variant: p.variant } : {}),
+          ...(p.note ? { note: p.note } : {}),
         },
       },
     });

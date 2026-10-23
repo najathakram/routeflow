@@ -374,7 +374,7 @@ describe("the bill-to address is ONE ordering for the PDF and the fingerprint", 
     });
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const pdf = require("fs").readFileSync(
-      require("path").join(__dirname, "invoice-pdf.service.ts"),
+      require("path").join(__dirname, "invoice-send-snapshot.ts"), // SA-860: the PDF service takes this include
       "utf8",
     );
     expect(pdf).toContain("addresses: { orderBy: BILL_TO_ADDRESS_ORDER }");

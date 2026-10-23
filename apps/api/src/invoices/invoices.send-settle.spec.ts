@@ -218,7 +218,14 @@ describe("InvoicesService — send()/sendEmail() settle-before-sweep (TP-INV)", 
 
     // Same call-order oracle as T17 — sendEmail() mirrors send()'s tx block
     // verbatim, so it carries the identical omission today.
-    expect(callLog).toEqual(["settleOrderCreditsInTx", "autoApplyOldestCreditsInTx"]);
+    // SA-860: the same two calls run twice: first in the rolled-back dry run that feeds the email snapshot,
+    // then in the real markSent commit (the only committer of money).
+    expect(callLog).toEqual([
+      "settleOrderCreditsInTx",
+      "autoApplyOldestCreditsInTx",
+      "settleOrderCreditsInTx",
+      "autoApplyOldestCreditsInTx",
+    ]);
     expect(creditNotes.settleOrderCreditsInTx).toHaveBeenCalledWith(expect.anything(), ORDER_ID);
     expect(creditNotes.autoApplyOldestCreditsInTx).toHaveBeenCalledWith(
       expect.anything(),

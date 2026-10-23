@@ -182,9 +182,8 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
 
   it("sendEmail(): VOID committed before the pre-check ⇒ 400, NO email, nothing written", async () => {
     prisma.invoice.findUnique
-      .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // SA-857: fingerprint A (the first read)
       .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // pre-tx read
-      .mockResolvedValue(invoice(InvoiceStatus.VOID)); // the pre-check's locked re-read
+      .mockResolvedValue(invoice(InvoiceStatus.VOID)); // the snapshot tx's locked re-read's locked re-read
     await expect(service.sendEmail(INVOICE_ID)).rejects.toThrow("Cannot send a voided invoice");
     expect(email.sendInvoice).not.toHaveBeenCalled();
     expect(prisma.invoice.update).not.toHaveBeenCalled();
@@ -192,9 +191,9 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
 
   it("sendEmail(): VOID committed between the pre-check and markSent ⇒ email once, 400 that SAYS so, status unchanged", async () => {
     prisma.invoice.findUnique
-      .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // SA-857: fingerprint A (the first read)
       .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // pre-tx read
-      .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // pre-check: still sendable
+      .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // snapshot tx: the locked re-read, still sendable
+      .mockResolvedValueOnce(invoice(InvoiceStatus.SENT)) // snapshot tx: the snapshot itself
       .mockResolvedValue(invoice(InvoiceStatus.VOID)); // markSent's locked re-read
     await expect(service.sendEmail(INVOICE_ID)).rejects.toThrow(VOIDED_DURING_EMAIL);
     expect(email.sendInvoice).toHaveBeenCalledTimes(1);
@@ -258,7 +257,7 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
   it("placement: every Serializable site named in #2255 runs inside retryOnTxConflict", () => {
     const read = (rel: string) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
     const inv = read("invoices/invoices.service.ts");
-    for (const label of ["invoice mark-sent", "invoice send pre-check", "invoice void"]) {
+    for (const label of ["invoice mark-sent", "invoice send snapshot", "invoice void"]) {
       expect(inv).toMatch(new RegExp(`retry(?:OnTxConflict|CreditTx)\\(\\s*\\\`${label}`));
     }
     // send() and sendEmail() share the one retried mark-sent transaction.
