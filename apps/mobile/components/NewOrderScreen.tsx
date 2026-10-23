@@ -161,6 +161,7 @@ import { UnlistedItemModal } from "./new-order/UnlistedItemModal";
 import { styles } from "./new-order/styles";
 import { CatalogSectionLabel, RowSpacer } from "./new-order/CatalogParts";
 import type { UnlistedLine } from "./new-order/types";
+import { unlistedPatched, unlistedWithPrice, unlistedWithQty } from "./new-order/unlisted-lines";
 import { usePosModeState } from "../lib/use-pos-mode";
 import { PosConfirmOnly, PosModeSwitch } from "./PosModeSwitch";
 import { canUsePosMode, posConfirmLabel, posMergeAlert } from "../lib/pos-mode";
@@ -922,18 +923,13 @@ function ProductPickView({
   const addUnlisted = (name: string, unitPrice: number, qty: number) =>
     setUnlisted((u) => [...u, { id: newLocalId(), name: name.trim(), unitPrice, qty }]);
   const updateUnlistedQty = (id: string, qty: number) =>
-    setUnlisted((u) =>
-      qty <= 0 ? u.filter((x) => x.id !== id) : u.map((x) => (x.id === id ? { ...x, qty } : x)),
-    );
+    setUnlisted((u) => unlistedWithQty(u, id, qty));
   const updateUnlistedPrice = (id: string, value: number | null) =>
-    setUnlisted((u) => {
-      const price = value == null || value < 0 ? 0 : value;
-      return u.map((x) => (x.id === id ? { ...x, unitPrice: price } : x));
-    });
+    setUnlisted((u) => unlistedWithPrice(u, id, value));
   const updateUnlistedNote = (id: string, note: string) =>
-    setUnlisted((u) => u.map((x) => (x.id === id ? { ...x, note } : x)));
+    setUnlisted((u) => unlistedPatched(u, id, () => ({ note })));
   const toggleUnlistedNote = (id: string) =>
-    setUnlisted((u) => u.map((x) => (x.id === id ? { ...x, noteOpen: !x.noteOpen } : x)));
+    setUnlisted((u) => unlistedPatched(u, id, (x) => ({ noteOpen: !x.noteOpen })));
   const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
 
   /** Newest scanned line to the top of the tray, and flash it. */
