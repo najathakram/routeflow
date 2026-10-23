@@ -124,6 +124,7 @@ import type { InvoiceKpiSummary } from "@routeflow/types";
 import { computeInvoiceKpiSummary } from "./invoice-kpi-summary";
 import { CHECK_TRANSITIONS } from "../common/check-transitions";
 import { invoicePaymentKey, keyedPayment, standalonePaymentKey } from "./payment-idempotency";
+import { completionEmailParts } from "./invoice-completion-email";
 import {
   RecordInvoicePaymentDto,
   type RecordPaymentOpts,
@@ -3612,8 +3613,16 @@ export class InvoicesService {
     return guardedEmail(this.prisma, args[0], () => this.deliverEmail(...args));
   }
 
+  /** I-120 (SA-861 rule 8): the ONE completion email (every invoice of the order attached), the "Email again" path. */
+  async sendCompletionEmail(orderId: string, invoiceIds: string[], actorId: string | null) {
+    const [first, ...withInvoiceIds] = invoiceIds;
+    const opts = { kind: "COUNTER_COMPLETE" as const, orderId, withInvoiceIds };
+    const sent = await this.sendEmail(first, undefined, "final", actorId, opts);
+    return { delivered: sent?.success === true };
+  }
+
   private async deliverEmail(...args: SendEmailArgs) {
-    const [id, overrideEmail, variant, actorId = null] = args;
+    const [id, overrideEmail, variant, actorId = null, opts] = args;
     // SA-857: fingerprint A is the FIRST read (before the email read and the PDF render); B is taken after the payload is
     // built. A write committed in between makes A !== B and the send is recorded as unverifiable (fp null), never as unchanged.
     const fingerprintA = await invoiceFingerprintOf(this.prisma, this.featureConfig, id, variant);
@@ -3685,6 +3694,8 @@ export class InvoicesService {
       attachment,
       hideOriginalPrice,
     });
+    const parts = [this.prisma, this.pdfService, this.storage, this.logger, opts] as const;
+    Object.assign(emailPayload, await completionEmailParts(...parts)); // I-120: COUNTER_COMPLETE only
     await this.assertSendableUnderLock(id, inv.orderId); // SA-404a: VOID now ⇒ 400, no email
     const fingerprintB = await invoiceFingerprintOf(this.prisma, this.featureConfig, id, variant); // #2088: what this email shows
     const fingerprint = fingerprintA === fingerprintB ? fingerprintA : null;
@@ -3708,6 +3719,7 @@ export class InvoicesService {
       to: recipientEmail,
       fingerprint,
       variant,
+      kind: opts?.kind,
     });
     // Mark as SENT. P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic
     // operation. PDF/email I/O above stays OUTSIDE the tx (a retry never re-sends the email).
