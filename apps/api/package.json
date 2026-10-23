@@ -166,7 +166,10 @@
       "size-ratchet\\.spec\\.ts$",
       "owner-report-db-url\\.spec\\.ts$",
       "no-collection-time-clock-fuse\\.spec\\.ts$",
-      "graph-core\\.spec\\.ts$"
+      "graph-core\\.spec\\.ts$",
+      "denied-identifiers\\.spec\\.ts$",
+      "cleanup-imported-no-client\\.spec\\.ts$",
+      "no-hand-typed-open-invoice-statuses\\.spec\\.ts$"
     ],
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
