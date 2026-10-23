@@ -180,6 +180,43 @@ export interface PaymentRefGuard {
   ): Promise<void>;
 }
 
+/**
+ * SA-865: the amount an edit of a GROUPED payment row is judged on: the group's NEW total, the way a fresh record of the
+ * group is judged (`PaymentRefInput.amount` is a standalone payment's total). Its non-VOID rows (on any invoice) with the
+ * edited row at its new amount, plus the excess AdvancePayment the group booked, matched as `check` matches another
+ * group's (same method, normalised reference, receivedAt = the group's paidAt). The caller's INPUT, not a second
+ * predicate; read under the payment-ref lock the edit already holds. The advance ids are returned too: they are this
+ * attempt's own.
+ */
+export async function groupTotalForEdit(
+  tx: any,
+  payment: {
+    id: string;
+    paymentGroupId: string;
+    method: string;
+    reference: string | null;
+    paidAt: Date;
+    customerId: string;
+  },
+  newAmountCents: number,
+): Promise<{ cents: number; advanceIds: string[] }> {
+  const siblings: any[] = await tx.invoicePayment.findMany({
+    where: { paymentGroupId: payment.paymentGroupId, status: { in: [...DEDUPE_STATUSES] } },
+    select: { id: true, amount: true },
+  });
+  const own = normalizePaymentRef(payment.reference);
+  const advances: any[] = await tx.advancePayment.findMany({
+    where: { customerId: payment.customerId, method: payment.method, receivedAt: payment.paidAt },
+    select: { id: true, amount: true, reference: true },
+  });
+  const mine = advances.filter((a) => normalizePaymentRef(a.reference) === own);
+  const rows = siblings
+    .filter((r) => r.id !== payment.id)
+    .reduce((sum, r) => sum + toCents(Number(r.amount)), newAmountCents);
+  const extra = mine.reduce((sum, a) => sum + toCents(Number(a.amount)), 0);
+  return { cents: rows + extra, advanceIds: mine.map((a) => a.id) };
+}
+
 /** The earliest row of a payment event, as the `Existing` the refusal names. */
 function existingOf(hit: { rows: any[]; cents: number }): Existing {
   const first = [...hit.rows].sort(

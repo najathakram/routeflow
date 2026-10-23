@@ -10,6 +10,8 @@
  *  - R6: no `reference` key in the body: the STORED reference is the effective one (409).
  *  - R7: two concurrent edits moving two rows onto the same NEW key: exactly one 409, one 200; and an edit waits on
  *        the payment-ref lock of its NEW key.
+ *  - SA-865 G1-G3: a GROUPED row is judged on the group's NEW total (its siblings, possibly on other invoices, plus its
+ *        excess advance), the way a fresh record of the group is judged.
  *
  * SAFETY: throwaway `qa-r752-<run>-<n>-<label>` tenants only (`assertTestTenant`); `afterAll` deletes what it made.
  */
@@ -222,7 +224,20 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
     const staffOpts = (recordAnyway: boolean) => ({
       refDedupe: { actor: staff.id, role: "OPERATOR", recordAnyway },
     });
-    return { tenant, customer, staff, invs, asTenant, row, get, audits, staffOpts };
+    /** The group's excess advance, booked as writeStandalonePayment books it (same method, reference, paidAt). */
+    const advance = (amount: number, reference: string) =>
+      prismaA.advancePayment.create({
+        data: {
+          tenantId: tenant.id,
+          customerId: customer.id,
+          amount,
+          balance: amount,
+          method: "CHECK",
+          reference,
+          receivedAt: new Date("2026-10-01T12:00:00Z"),
+        },
+      });
+    return { tenant, customer, staff, invs, asTenant, row, get, audits, staffOpts, advance };
   }
 
   it("R1 B edited onto A's reference and amount is 409 naming A; B is unchanged", async () => {
@@ -401,4 +416,49 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
     await editing;
     expect((await s.get(b.id))?.reference).toBe("new-1");
   }, 60_000);
+
+  describe("SA-865: an edit of a grouped row is judged on the group's NEW total", () => {
+    /** G = $60 (invoice 0) + $30 (invoice 1) on "R9"; X = $100 "R9", another attempt, on invoice 2. */
+    async function groupAndX(label: string) {
+      const s = await seed(label);
+      const g = randomUUID();
+      await s.row(s.invs[0].id, { amount: 60, reference: "R9", paymentGroupId: g });
+      const thirty = await s.row(s.invs[1].id, { amount: 30, reference: "R9", paymentGroupId: g });
+      const x = await s.row(s.invs[2].id, { amount: 100, reference: "R9" });
+      const edit = (amount: number) =>
+        s
+          .asTenant(() =>
+            invoicesA.updatePayment(
+              s.invs[1].id,
+              thirty.id,
+              { amount, method: "CHECK", reference: "R9" } as any,
+              s.staffOpts(false),
+            ),
+          )
+          .catch((e) => e);
+      return { s, thirty, x, edit };
+    }
+
+    it("G1 $30 -> $40 makes G $100, equal to X: 409 naming X", async () => {
+      const { s, thirty, x, edit } = await groupAndX("g1");
+      const err: any = await edit(40);
+      expect(status(err)).toBe(409);
+      expect(err.getResponse()).toMatchObject({ existingPayment: { id: x.id } });
+      expect(Number((await s.get(thirty.id))?.amount)).toBe(30);
+    }, 60_000);
+
+    it("G2 $30 -> $35 makes G $95: 200", async () => {
+      const { s, thirty, edit } = await groupAndX("g2");
+      expect(status(await edit(35))).toBe("ok");
+      expect(Number((await s.get(thirty.id))?.amount)).toBe(35);
+    }, 60_000);
+
+    it("G3 with a $10 excess advance: an unchanged amount runs no check; $30 -> $31 (G + advance $101) is 200", async () => {
+      const { s, thirty, edit } = await groupAndX("g3");
+      await s.advance(10, "R9"); // G + advance = $100 already, equal to X: only a CHANGED key may be judged
+      expect(status(await edit(30))).toBe("ok");
+      expect(status(await edit(31))).toBe("ok");
+      expect(Number((await s.get(thirty.id))?.amount)).toBe(31);
+    }, 60_000);
+  });
 });

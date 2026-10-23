@@ -6385,7 +6385,7 @@ describe("InvoicesService", () => {
           expect(sql).toContain("FOR UPDATE");
           // Row 752 (SA-843 ruling 5): call [0] is the unlocked key pre-read; the LOCKED read is the last call
           expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
-            prisma.invoice.findUnique.mock.invocationCallOrder.at(-1)!,
+            prisma.invoice.findUnique.mock.invocationCallOrder[1],
           );
         });
       });
