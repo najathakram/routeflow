@@ -145,3 +145,20 @@ describe("pickupCompleteErrorCopy: Complete at counter refusals (I-120, mobile)"
     expect(POS_COPY.switchHint).toMatch(/use Counter sale\.$/);
   });
 });
+
+// I-120 R8/R9 (owner 7a), mirrors web.
+describe("pickupCompleteErrorCopy: R8/R9 refusals (mobile)", () => {
+  const { pickupCompleteErrorCopy } = require("../lib/pos-mode");
+  const refusal = (data: Record<string, unknown>) => ({ response: { status: 409, data } });
+  it("the three refusals", () => {
+    expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_SHIPPED" }))).toBe(
+      "Nothing changed. This order has shipped with the carrier.",
+    );
+    expect(
+      pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_ON_RUN", driverName: "Sam" })),
+    ).toBe("Nothing changed. This order is on Sam's run. Completing it here takes it off the run.");
+    expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_STOP_STARTED" }))).toBe(
+      "Nothing changed. The driver has already started this stop.",
+    );
+  });
+});

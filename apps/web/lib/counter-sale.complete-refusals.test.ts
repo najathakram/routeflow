@@ -59,3 +59,26 @@ describe("pickupCompleteErrorCopy: Complete at counter refusals (I-120)", () => 
     );
   });
 });
+
+// I-120 R8/R9 (owner 7a): the new refusals get their own fixed copy too (never the server's message).
+describe("pickupCompleteErrorCopy: R8/R9 refusals (owner 7a)", () => {
+  const refusal = (data: Record<string, unknown>) => ({ response: { status: 409, data } });
+  it("shipped with the carrier (Q2 = A)", () => {
+    expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_SHIPPED" }))).toBe(
+      "Nothing changed. This order has shipped with the carrier.",
+    );
+  });
+  it("on a driver's run, naming the driver (Q1 = A)", () => {
+    expect(
+      pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_ON_RUN", driverName: "Sam" })),
+    ).toBe("Nothing changed. This order is on Sam's run. Completing it here takes it off the run.");
+    expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_ON_RUN" }))).toBe(
+      "Nothing changed. This order is on a delivery run. Completing it here takes it off the run.",
+    );
+  });
+  it("the driver has started the stop", () => {
+    expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_STOP_STARTED" }))).toBe(
+      "Nothing changed. The driver has already started this stop.",
+    );
+  });
+});

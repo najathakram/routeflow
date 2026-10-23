@@ -23,10 +23,25 @@ export const COUNTER_COPY = {
  * residual), so those two never claim it (SA-907 LOW).
  */
 export function counterCompleteRefusalCopy(
-  body: { code?: unknown; limit?: unknown; exposure?: unknown } | null | undefined,
+  body:
+    | { code?: unknown; limit?: unknown; exposure?: unknown; driverName?: unknown }
+    | null
+    | undefined,
   money: (n: number) => string,
 ): string | null {
   switch (body?.code) {
+    // I-120 R8/R9 (owner 7a), all refused before any write
+    case API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED:
+      return "Nothing changed. This order has shipped with the carrier.";
+    case API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN: {
+      const who =
+        typeof body.driverName === "string" && body.driverName
+          ? `${body.driverName}'s`
+          : "a delivery";
+      return `Nothing changed. This order is on ${who} run. Completing it here takes it off the run.`;
+    }
+    case API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED:
+      return "Nothing changed. The driver has already started this stop.";
     case API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE:
       return "Nothing changed. This business doesn't hand orders over at the store.";
     case API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED: {
