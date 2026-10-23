@@ -106,7 +106,7 @@ const follows = (a: Element, b: Element) =>
   !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 
 describe("K11-23 prices v2: the prices region follows Details", () => {
-  it("DOM order: Details, prices region, Image, Stock and cost, Labels, Portal visibility, Units", () => {
+  it("DOM order: Details, prices region, Image, Stock and cost, Labels, Portal visibility, Demand (row 742: no old Units card)", () => {
     renderWithProviders(<ProductDetailPage />);
     const details = screen.getByTestId("product-details-card");
     const region = screen.getByTestId("units-v2-region");
@@ -118,8 +118,9 @@ describe("K11-23 prices v2: the prices region follows Details", () => {
       screen.getByTestId("stock-card"),
       screen.getByTestId("labels-card"),
       screen.getByTestId("portal-card"),
-      screen.getByTestId("units-card"),
+      screen.getByTestId("demand-card"),
     ];
+    expect(screen.queryByTestId("units-card")).toBeNull();
     for (let i = 0; i < chain.length - 1; i++) expect(follows(chain[i], chain[i + 1])).toBe(true);
   });
 
@@ -153,6 +154,6 @@ describe("K11-23 prices v2: the prices region follows Details", () => {
     expect(items[at(screen.getByTestId("portal-card"))]).toBe(
       items[at(screen.getByTestId("labels-card"))],
     );
-    expect(items[at(screen.getByTestId("units-card"))].className).toMatch(/lg:row-start-4/);
+    expect(items[at(screen.getByTestId("demand-card"))].className).toMatch(/lg:row-start-4/);
   });
 });

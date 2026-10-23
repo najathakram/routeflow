@@ -96,6 +96,8 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       // "stock-count-product" (2026-10-11, SA-767 r-note 5 SA-3) names the one-open-count-per-product
       // lock: a transaction-scoped `pg_advisory_xact_lock(hashtext(family), hashtext(tenantId:productId))`
       // taken by whoever adds a product to a count session; it opens no lock pool.
+      // "payment-ref" (2026-10-22, row 498) serialises the payment-reference duplicate check per tenant:method:normRef
+      // around every InvoicePayment writer that carries a reference; a merge lock is taken BEFORE it, never after.
       expect(mod.LOCK_FAMILIES).toEqual([
         "order-merge",
         "cron",
@@ -110,6 +112,7 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
         "counter-park",
         "stock-count",
         "stock-count-product",
+        "payment-ref",
       ]);
     });
   });

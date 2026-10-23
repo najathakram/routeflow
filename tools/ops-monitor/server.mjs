@@ -27,7 +27,13 @@ import {
 } from "./lib/auth.mjs";
 import { renderIcon } from "./lib/icon.mjs";
 import { describeSyncOutcome } from "./lib/sync.mjs";
-import { createNameLoader, maskDeep, maskText } from "./lib/mask.mjs";
+import {
+  createNameLoader,
+  fallbackMaskDeep,
+  fallbackMaskText,
+  maskDeep,
+  maskText,
+} from "./lib/mask.mjs";
 import { verifyGithubSignature } from "./lib/webhooks.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -562,6 +568,29 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       );
     }
   }
+  // Fail closed: with no readable names list the fallback masker runs on every snapshot and the
+  // snapshot says so (maskStatus), so the page can show a banner.
+  const maskState = () => {
+    const names = nameLoader.get();
+    const problem = nameLoader.error();
+    const ok = !problem && names.length > 0;
+    return {
+      names,
+      fallback: !ok,
+      status: ok
+        ? { ok: true, reason: null }
+        : { ok: false, reason: problem ?? "client-names.json missing or empty" },
+    };
+  };
+  const maskOne = (t) => {
+    const m = maskState();
+    return m.fallback ? fallbackMaskText(maskText(t, m.names)) : maskText(t, m.names);
+  };
+  const maskAll = (obj) => {
+    const m = maskState();
+    const once = maskDeep(obj, m.names);
+    return m.fallback ? fallbackMaskDeep(once) : once;
+  };
   let snapshot;
   const listeners = new Set();
   const subscribe = (fn) => {
@@ -577,10 +606,29 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   let webhook = null;
 
   if (opts.fixture) {
-    snapshot = maskDeep(
-      JSON.parse(await readFile(resolve(opts.fixture), "utf8")),
-      nameLoader.get(),
-    );
+    const fx = JSON.parse(await readFile(resolve(opts.fixture), "utf8"));
+    const status = maskState().status;
+    snapshot = maskAll({
+      ...fx,
+      maskStatus: status,
+      alarms: status.ok
+        ? fx.alarms
+        : [
+            {
+              id: "mask-list-missing:mask",
+              kind: "mask-list-missing",
+              severity: "error",
+              message: "client-name mask list missing — tenant names hidden by fallback",
+              suggest: null,
+              item: null,
+              lane: null,
+              pr: null,
+              branch: null,
+              source: "mask",
+            },
+            ...(fx.alarms ?? []),
+          ],
+    });
   } else {
     const cfg = await import("./lib/config.mjs");
     const { createCollector, mergeDeploys } = await import("./lib/collector.mjs");
@@ -601,19 +649,20 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     let viewsTimer = null;
     let snapTimer = null;
     let stopRegisterSync = () => {};
+    let stopStatusSync = () => {};
     let lastViewsHash = null;
     let collector = null;
     const rebuild = () => {
       const config = cfg.loadConfig(specs);
       // Mask the raw inputs BEFORE the snapshot is built (a name cut in half by a clip or a slice
       // would no longer match), and the finished snapshot again below.
-      const names = nameLoader.get();
       const snap = buildSnapshot({
-        sources: maskDeep(withMergedDeploys(collector.sources, mergeDeploys), names),
+        sources: maskAll(withMergedDeploys(collector.sources, mergeDeploys)),
         config,
         now: Date.now(),
         machine: cfg.machineId(config, env),
-        mask: (t) => maskText(t, names),
+        mask: maskOne,
+        maskStatus: maskState().status,
       });
       if (refused) {
         snap.alarms = [
@@ -632,7 +681,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
           },
         ];
       }
-      return maskDeep(snap, names);
+      return maskAll(snap);
     };
     const persistSnapshot = () => {
       if (opts.cloud || opts.once || snapTimer) return;
@@ -681,7 +730,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       now: Date.now,
       env,
       cloud: opts.cloud,
-      mask: (t) => maskText(t, nameLoader.get()),
+      mask: maskOne,
       log: (m) => console.error(`[ops-monitor] ${m}`),
       onUpdate: () => {
         try {
@@ -720,6 +769,37 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     }
     collector.start();
     if (shouldRunRegisterSync(opts)) {
+      // Lane status files -> heartbeat events every 2 min; logs only when something was appended.
+      const { runStatusSync } = await import("./lib/status-sync.mjs");
+      let lastStatusNote = "";
+      let statusBusyRuns = 0;
+      stopStatusSync = startRegisterSync({
+        run: async () => {
+          const res = await runStatusSync({
+            dir: specs,
+            home: cfg.opsHome(env),
+            env,
+            lockWaitMs: REGISTER_SYNC_LOCK_WAIT_MS,
+          });
+          statusBusyRuns = res?.ran === false && res.reason === "busy" ? statusBusyRuns + 1 : 0;
+          const step = registerSyncLog(lastStatusNote, res, { busyRuns: statusBusyRuns });
+          lastStatusNote = step.note;
+          if (step.log)
+            console.error(
+              `[ops-monitor] ${step.log
+                .replace("register sync", "status sync")
+                .replace("register and events agree", "no heartbeat changes")}`,
+            );
+          if (res?.capped)
+            console.error(`[ops-monitor] status sync capped: ${res.capped} left for the next pass`);
+          return res;
+        },
+        onDone: (res) =>
+          console.error(`[ops-monitor] status sync appended ${res.appended} heartbeat(s)`),
+        log: (m) => console.error(`[ops-monitor] ${m.replace("register sync", "status sync")}`),
+        firstDelayMs: 30_000,
+        intervalMs: 120_000,
+      });
       const { runSync } = await import("./lib/sync.mjs");
       const { loadBugIds } = await import("./lib/store.mjs");
       let lastRegisterNote = "";
@@ -733,14 +813,14 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
             dir: specs,
             home: cfg.opsHome(env),
             env,
-            mask: (t) => maskText(t, nameLoader.get()),
+            mask: maskOne,
             bugIds: await loadBugIds(repoRoot),
             lockWaitMs: REGISTER_SYNC_LOCK_WAIT_MS,
           });
           busyRuns = res?.ran === false && res.reason === "busy" ? busyRuns + 1 : 0;
           const step = registerSyncLog(lastRegisterNote, res, {
             busyRuns,
-            mask: (t) => maskText(t, nameLoader.get()),
+            mask: maskOne,
           });
           lastRegisterNote = step.note;
           if (step.log) console.error(`[ops-monitor] ${step.log}`);
@@ -756,6 +836,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     stopCollector = () => {
       collector.stop();
       stopRegisterSync();
+      stopStatusSync();
       if (viewsTimer) clearTimeout(viewsTimer);
       if (snapTimer) clearTimeout(snapTimer);
     };

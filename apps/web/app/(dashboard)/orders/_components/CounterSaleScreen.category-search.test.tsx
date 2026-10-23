@@ -5,7 +5,7 @@ import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
  * CQ-10: typing a category name in "Scan or type an item" lists that category's products (the same server search
- * the product picker uses, paginated) instead of "No product found for that code."
+ * the product picker uses, paginated) instead of a "No product" miss.
  */
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
@@ -95,7 +95,7 @@ describe("counter category search (CQ-10)", () => {
     const picker = await screen.findByTestId("counter-scan-picker");
     expect(picker).toHaveTextContent("Household");
     expect(within(picker).getByRole("button", { name: /Household item 01/ })).toBeInTheDocument();
-    expect(screen.queryByText(/No product found/)).toBeNull();
+    expect(screen.queryByText(/No product for/)).toBeNull();
     fireEvent.click(within(picker).getByRole("button", { name: /Household item 02/ }));
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(lines()[0]).toHaveTextContent("Household item 02");
@@ -154,12 +154,10 @@ describe("counter category search (CQ-10)", () => {
     expect(second).toHaveTextContent("Snacks");
   });
 
-  it("text that is no code and no category still reads 'No product found for that code.'", async () => {
+  it("text that is no code and no category names the rejected text", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("zzzz");
-    await waitFor(() =>
-      expect(screen.getByText(/No product found for that code/)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("No product for 'zzzz'")).toBeInTheDocument());
     expect(screen.queryByTestId("counter-scan-picker")).toBeNull();
   });
 });

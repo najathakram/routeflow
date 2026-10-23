@@ -155,3 +155,135 @@ describe("OrdersService.create — row 718 past delivery date guard", () => {
     expect(h.prisma.order.create).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * Row 735(c) — an Idempotency-Key replay is judged BEFORE the past-date guard: a retry of an order that already
+ * landed returns the original, even when the date it carried (yesterday's, when it was created) has since passed on
+ * the tenant's calendar. The guard still binds a request that is not a replay.
+ */
+describe("row 735(c) — a replay of a past-dated order replays, it does not 400", () => {
+  const ORIGINAL = {
+    id: "ord-old",
+    customerId: "cust-1",
+    status: "PENDING" as const,
+    lineItems: [{ productId: "prod-1", qty: 1, status: "PENDING" }],
+  };
+  const keyed = (day: string) => ({ ...dto(day), idempotencyKey: "k-735" });
+  const replayOf = (h: Awaited<ReturnType<typeof build>>, found: unknown) =>
+    jest.spyOn(h.service as never, "findReplayCandidateByKey").mockResolvedValue(found as never);
+
+  it("create(): yesterday's date, replayed today, returns the original and writes nothing", async () => {
+    at("2026-10-22T15:00:00Z"); // today in New York; the order was created on the 21st with the 21st
+    const h = await build();
+    replayOf(h, ORIGINAL);
+    const onReplay = jest.fn();
+    await expect(
+      h.service.create(keyed("2026-10-21") as never, operatorPayload as never, { onReplay }),
+    ).resolves.toBe(ORIGINAL);
+    expect(onReplay).toHaveBeenCalledTimes(1);
+    expect(h.prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("create(): the same past date with NO original behind the key is still refused", async () => {
+    at("2026-10-22T15:00:00Z");
+    const h = await build();
+    replayOf(h, null);
+    await expect(
+      h.service.create(keyed("2026-10-21") as never, operatorPayload as never),
+    ).rejects.toMatchObject({ response: { code: CODE } });
+    expect(h.prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("create(), a UTC-10 tenant (Pacific/Honolulu): the replay of the tenant's yesterday replays", async () => {
+    at("2026-10-23T05:00:00Z"); // 19:00 on the 22nd in Honolulu; the order carried the 21st
+    const h = await build("Pacific/Honolulu");
+    replayOf(h, ORIGINAL);
+    await expect(
+      h.service.create(keyed("2026-10-21") as never, operatorPayload as never),
+    ).resolves.toBe(ORIGINAL);
+    expect(h.prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("createSale: a requested delivery date of yesterday, replayed today, resumes the original sale", async () => {
+    at("2026-10-22T15:00:00Z");
+    const h = await build();
+    replayOf(h, ORIGINAL);
+    await expect(
+      h.service.createSale(
+        { ...keyed("2026-10-21"), deliveredNow: false } as never,
+        operatorPayload as never,
+      ),
+    ).resolves.toBeDefined();
+    expect(h.prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("createSale: a deliveredOn of yesterday (a backdated delivered sale), replayed today, replays too", async () => {
+    at("2026-10-22T15:00:00Z");
+    const h = await build();
+    replayOf(h, { ...ORIGINAL, status: "DELIVERED" });
+    await expect(
+      h.service.createSale(
+        {
+          customerId: "cust-1",
+          items: dto().items,
+          deliveredNow: false,
+          deliveredOn: "2026-10-21",
+          idempotencyKey: "k-735",
+        } as never,
+        operatorPayload as never,
+      ),
+    ).resolves.toBeDefined();
+    expect(h.prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("createSale, a UTC-10 tenant: a deliveredOn the UTC clock calls today but the tenant calls tomorrow is scheduled (zone read from TenantConfig)", async () => {
+    at("2026-10-22T05:00:00Z"); // 19:00 on the 21st in Honolulu, already the 22nd in UTC
+    const h = await build("Pacific/Honolulu");
+    const create = jest
+      .spyOn(h.service as never, "create")
+      .mockResolvedValue({ id: "ord-1", status: "PENDING" } as never);
+    await h.service.createSale(
+      {
+        customerId: "cust-1",
+        items: dto().items,
+        deliveredNow: true,
+        deliveredOn: "2026-10-22",
+      } as never,
+      operatorPayload as never,
+    );
+    // scheduled: the order carries the day as its requested delivery date and is not marked delivered
+    expect((create.mock.calls[0] as unknown[])[0]).toMatchObject({
+      requestedDeliveryDate: "2026-10-22",
+    });
+    expect(h.prisma.order.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("row 735 — DST: the tenant's day across a 25-hour fall-back day (America/Chicago, 2026-11-01)", () => {
+  it("23:30 CST on the 1st (05:30Z on the 2nd): the 1st is still today, the guard lets it through", async () => {
+    at("2026-11-02T05:30:00Z"); // a fixed CDT (-5) reading would call this 00:30 on the 2nd
+    const h = await build("America/Chicago");
+    await h.service.create(dto("2026-11-01") as never, operatorPayload as never);
+    expect(h.prisma.order.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("00:30 CST on the 2nd (06:30Z): the 1st has passed", async () => {
+    at("2026-11-02T06:30:00Z");
+    const h = await build("America/Chicago");
+    await expect(
+      h.service.create(dto("2026-11-01") as never, operatorPayload as never),
+    ).rejects.toMatchObject({ response: { code: CODE, today: "2026-11-02" } });
+  });
+
+  it("the repeated hour (01:30 CDT 06:30Z and 01:30 CST 07:30Z) is the 1st both times", async () => {
+    for (const iso of ["2026-11-01T06:30:00Z", "2026-11-01T07:30:00Z"]) {
+      at(iso);
+      const h = await build("America/Chicago");
+      await h.service.create(dto("2026-11-01") as never, operatorPayload as never);
+      expect(h.prisma.order.create).toHaveBeenCalledTimes(1);
+      await expect(
+        h.service.create(dto("2026-10-31") as never, operatorPayload as never),
+      ).rejects.toMatchObject({ response: { code: CODE, today: "2026-11-01" } });
+    }
+  });
+});

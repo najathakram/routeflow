@@ -108,6 +108,7 @@ import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
+import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
@@ -1849,7 +1850,7 @@ export default function InvoiceDetailPage() {
     );
   };
 
-  const handleRecordPayment = (data: PaymentFormState, file: File | null) => {
+  const handleRecordPayment = (data: PaymentFormState, file: File | null, recordAnyway = false) => {
     if (paymentKey.hasUnknown()) return; // SA-824: the status check comes before any new attempt
     rememberPaymentProof(keyScope, file); // so a status check that finds the payment can attach it
     recordPayment.mutate(
@@ -1862,6 +1863,7 @@ export default function InvoiceDetailPage() {
         reference: data.reference.trim() || undefined,
         notes: data.notes.trim() || undefined,
         submitKey: paymentKey,
+        ...(recordAnyway ? { recordAnyway: true } : {}),
       },
       {
         onSuccess: (updated) => {
@@ -1890,6 +1892,13 @@ export default function InvoiceDetailPage() {
           }
         },
         onError: (err: any) => {
+          // Row 498: a duplicate reference names the existing payment; staff may "Record anyway".
+          if (
+            toastDuplicatePaymentRef(err, toast, user?.role, () =>
+              handleRecordPayment(data, file, true),
+            )
+          )
+            return;
           toast({
             title: "Failed to record payment",
             description:

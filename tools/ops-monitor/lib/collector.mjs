@@ -52,7 +52,7 @@ export const BUG_FILE_RE = /^\.claude\/campaign\/bugs\/B\d+[^/]*\.md$/;
 export const DEFAULT_CI_GATES = ["verify", "e2e"];
 
 const [OWNER, REPO] = GITHUB_REPO.split("/");
-const CONTEXTS = `statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name conclusion status } ... on StatusContext { context state } } } }`;
+const CONTEXTS = `statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name conclusion status startedAt } ... on StatusContext { context state } } } }`;
 export const GRAPHQL_QUERY = `query {
   repository(owner: "${OWNER}", name: "${REPO}") {
     visibility
@@ -77,11 +77,13 @@ export const GRAPHQL_QUERY = `query {
 
 // ---------- CI checks: contexts -> per-name runs -> gate / probes ----------
 
-const RUN_RANK = { failure: 5, pending: 4, success: 3, cancelled: 2, skipped: 1 };
+const RUN_RANK = { failure: 6, pending: 5, success: 4, cancelled: 3, skipped: 2, notrun: 1 };
 
 /**
  * One GraphQL check context (CheckRun | StatusContext) -> { name, state } with state in
- * success | failure | pending | skipped | cancelled. Unknown shapes -> null.
+ * success | failure | pending | skipped | cancelled | notrun. Unknown shapes -> null.
+ * notrun = the check never started (GraphQL startedAt is null: no runner picked it up, so Actions
+ * was blocked or it is still queued) and it is queued, skipped or cancelled. It is NOT a failure.
  */
 export function normalizeContext(n) {
   if (!n || typeof n !== "object") return null;
@@ -94,8 +96,14 @@ export function normalizeContext(n) {
   }
   if (!n.name) return null;
   const status = String(n.status ?? "").toUpperCase();
-  if (status && status !== "COMPLETED") return { name: String(n.name), state: "pending" };
   const c = String(n.conclusion ?? "").toUpperCase();
+  // startedAt present-and-null = never started. (A fixture without the key keeps the old reading.)
+  const neverStarted = n.startedAt === null;
+  if (neverStarted && ["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(status))
+    return { name: String(n.name), state: "notrun" };
+  if (status && status !== "COMPLETED") return { name: String(n.name), state: "pending" };
+  if (neverStarted && (c === "CANCELLED" || c === "SKIPPED" || c === "STARTUP_FAILURE"))
+    return { name: String(n.name), state: "notrun" };
   let state = "pending"; // COMPLETED without a conclusion, ACTION_REQUIRED: not finished
   if (c === "SUCCESS" || c === "NEUTRAL") state = "success";
   else if (c === "SKIPPED") state = "skipped";
@@ -147,7 +155,8 @@ export function classifyCheck(name, config) {
 
 /**
  * Runs ([{name,state}]) -> { gate, probesFailing, runs: [{name,kind,state}] }.
- * gate = failure | pending | success | skipped | none over the GATE runs only; a failing probe
+ * gate = failure | pending | not-run | success | skipped | none over the GATE runs only;
+ * not-run = a gate check never started (Actions blocked or queued), shown as its own state; a failing probe
  * never fails the gate (it is listed by name in probesFailing). A cancelled gate with nothing
  * better counts as failure (it did not pass and nothing re-ran it).
  */
@@ -163,6 +172,7 @@ export function summarizeChecks(runs, config) {
   if (gates.length) {
     if (has("failure")) gate = "failure";
     else if (has("pending")) gate = "pending";
+    else if (has("notrun")) gate = "not-run";
     else if (has("success")) gate = "success";
     else if (has("cancelled")) gate = "failure";
     else gate = "skipped";

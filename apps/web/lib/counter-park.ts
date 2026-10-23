@@ -84,6 +84,8 @@ export interface ParkCartInput {
   tendered: string;
   reference: string;
   checkDate?: string;
+  /** S5: Walk-in was explicitly chosen (only meaningful with no customer). */
+  walkIn?: boolean;
 }
 
 /**

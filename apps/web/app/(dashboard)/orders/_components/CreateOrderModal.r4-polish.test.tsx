@@ -112,20 +112,39 @@ async function scanLine(code: string, name: string) {
   await screen.findByText(name);
 }
 
-// N05: the merge prompt ignores Enter/Space for MERGE_PROMPT_KEY_GUARD_MS after it mounts (a mount timestamp from
-// performance.now, no timers). A deliberate key press in a test must come AFTER that window, so the clock is
-// controllable: pastKeyGuard() jumps it forward instead of really waiting.
+// N05 / row 744: the merge prompt ignores Enter/Space for MERGE_PROMPT_KEY_GUARD_MS after it mounts. The mount stamp is
+// performance.now(); a key event is judged by its OWN timeStamp (the same clock origin in a browser), never by a clock
+// read while the handler runs. jsdom stamps events from another clock, so every key event gets a timeStamp from the
+// controllable test clock: a capture listener registered BEFORE the component's (it runs first) defines it, unless the
+// test gave the event one (stampedKey). pastKeyGuard() jumps the clock instead of really waiting.
 let clockSkew = 0;
 const realNow = performance.now.bind(performance);
 let nowSpy: jest.SpyInstance;
+const clock = () => realNow() + clockSkew;
 const pastKeyGuard = () => {
   clockSkew += MERGE_PROMPT_KEY_GUARD_MS + 50;
 };
+const stampEvent = (e: Event) => {
+  if (!Object.prototype.hasOwnProperty.call(e, "timeStamp"))
+    Object.defineProperty(e, "timeStamp", { value: clock(), configurable: true });
+};
+/** A key event that carries a timeStamp of its own: one that was queued earlier than it is handled. */
+const stampedKey = (type: "keydown" | "keyup", init: KeyboardEventInit, timeStamp: number) => {
+  const e = new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init });
+  Object.defineProperty(e, "timeStamp", { value: timeStamp, configurable: true });
+  return e;
+};
 beforeEach(() => {
   clockSkew = 0;
-  nowSpy = jest.spyOn(performance, "now").mockImplementation(() => realNow() + clockSkew);
+  nowSpy = jest.spyOn(performance, "now").mockImplementation(clock);
+  document.addEventListener("keydown", stampEvent, true);
+  document.addEventListener("keyup", stampEvent, true);
 });
-afterEach(() => nowSpy.mockRestore());
+afterEach(() => {
+  nowSpy.mockRestore();
+  document.removeEventListener("keydown", stampEvent, true);
+  document.removeEventListener("keyup", stampEvent, true);
+});
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -445,6 +464,77 @@ describe("N05: the pre-check opens the prompt inside the click; an Enter/Space r
     await user.click(merge);
     expect(createOrderMutate).toHaveBeenCalledTimes(1);
     expect(createOrderMutate.mock.calls[0][0]).toMatchObject({ mergeChoice: "merge" });
+  });
+
+  // Row 744: Separate is a button the operator can reach by Tab at once; the window guards it the same as Merge.
+  it("Separate inside the window: Enter and Space on the focused Separate button create nothing", async () => {
+    const user = userEvent.setup();
+    const { prompt } = await openViaPreCheck();
+    await user.tab();
+    const separate = within(prompt).getByRole("button", { name: /create as separate/i });
+    expect(separate).toHaveFocus();
+    const down = fireEvent.keyDown(separate, { key: "Enter", code: "Enter" });
+    if (down) fireEvent.click(separate, { detail: 0 });
+    fireEvent.keyUp(separate, { key: "Enter", code: "Enter" });
+    fireEvent.keyDown(separate, { key: " ", code: "Space" });
+    const up = fireEvent.keyUp(separate, { key: " ", code: "Space" });
+    if (up) fireEvent.click(separate, { detail: 0 });
+    stillOpenAndUnmerged();
+    expect(down).toBe(false);
+    expect(up).toBe(false);
+  });
+
+  it("Tab inside the window, then Enter after it, picks Separate", async () => {
+    const user = userEvent.setup();
+    const { prompt } = await openViaPreCheck();
+    await user.tab(); // Tab is never guarded
+    expect(within(prompt).getByRole("button", { name: /create as separate/i })).toHaveFocus();
+    pastKeyGuard();
+    await user.keyboard("{Enter}");
+    expect(createOrderMutate).toHaveBeenCalledTimes(1);
+    expect(createOrderMutate.mock.calls[0][0]).toMatchObject({ mergeChoice: "separate" });
+  });
+
+  // Row 744: the guard reads the KEY EVENT's own timeStamp, not a clock read while the handler runs. A press that was
+  // queued before the prompt mounted but is handled after it (a long main-thread stall) is "before the window".
+  it("an Enter queued before the prompt mounted, handled after the window has passed, still does not merge", async () => {
+    const queuedAt = clock(); // the press happens now, before the prompt exists
+    const { merge } = await openViaPreCheck();
+    pastKeyGuard(); // the main thread stalled: the handler runs well after the window
+    const down = fireEvent(merge, stampedKey("keydown", { key: "Enter", code: "Enter" }, queuedAt));
+    if (down) fireEvent.click(merge, { detail: 0 });
+    fireEvent(merge, stampedKey("keyup", { key: "Enter", code: "Enter" }, queuedAt));
+    stillOpenAndUnmerged();
+    expect(down).toBe(false);
+  });
+
+  it("a Space queued before the prompt mounted, handled after the window, does not merge on its keyup", async () => {
+    const queuedAt = clock();
+    const { merge } = await openViaPreCheck();
+    pastKeyGuard();
+    fireEvent(merge, stampedKey("keydown", { key: " ", code: "Space" }, queuedAt));
+    const up = fireEvent(merge, stampedKey("keyup", { key: " ", code: "Space" }, queuedAt));
+    if (up) fireEvent.click(merge, { detail: 0 });
+    stillOpenAndUnmerged();
+    expect(up).toBe(false);
+  });
+
+  it("an Enter stamped inside the window but handled after it is swallowed; one stamped after it merges", async () => {
+    const { merge } = await openViaPreCheck();
+    const stampedInside = clock() + 10; // 10 ms after the mount
+    pastKeyGuard(); // the handler runs late
+    const swallowed = fireEvent(
+      merge,
+      stampedKey("keydown", { key: "Enter", code: "Enter" }, stampedInside),
+    );
+    fireEvent(merge, stampedKey("keyup", { key: "Enter", code: "Enter" }, stampedInside));
+    expect(swallowed).toBe(false);
+    stillOpenAndUnmerged();
+    const deliberate = fireEvent(
+      merge,
+      stampedKey("keydown", { key: "Enter", code: "Enter" }, clock()),
+    );
+    expect(deliberate).toBe(true);
   });
 
   it("Escape inside the window still cancels, and Tab still reaches Separate", async () => {

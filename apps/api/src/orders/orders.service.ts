@@ -162,6 +162,7 @@ import {
 import { planChangeRequestRestrictions } from "./change-request-restrictions";
 import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
 import { assertDeliveryDateNotPast } from "./delivery-date-guard";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 import { getOrderTracking } from "./order-tracking";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
@@ -218,6 +219,7 @@ import {
 import {
   assertCreditAtEnforcementPoint,
   assertWithinCreditLimit,
+  creditProjectedTotal,
   isCreditLimitCheckEnabled,
   type CreditPointParams,
 } from "./credit-limit-guard";
@@ -1939,8 +1941,8 @@ export class OrdersService implements OnApplicationBootstrap {
         channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
         fulfilmentKind: saleFulfilmentKind({ counterSale: options.counterSale, fulfillPath }),
       });
-      // B585: credit check for a NEW order (nothing runs unless the tenant switch is set).
-      await this.creditGate({ customerId, projectedTotal: total, principal: user });
+      const projectedTotal = creditProjectedTotal(total, options); // S1: net of the till tender
+      await this.creditGate({ customerId, projectedTotal, principal: user }); // B585: NEW order
     }
 
     // WS9: the oversell policy is resolved ONCE, here, before the transaction (so before any
@@ -2169,7 +2171,16 @@ export class OrdersService implements OnApplicationBootstrap {
     // `2026-02-31`) BEFORE the order is created and stock decremented; the invoice step would
     // otherwise 400 and leave a DELIVERED order with no invoice.
     dueStamp(dto.dueDate, "dueDate");
-    const { deliveredNow, deliveredAt, requestedDeliveryDate } = resolveSaleDelivery(dto, user);
+    // Row 735b: the picker's "today" is the tenant's day. The zone is read only when the picker sent a day.
+    const saleZone =
+      dto.deliveredOn != null
+        ? await tenantTimeZone(this.prisma, { tenantId: user.tenantId })
+        : null;
+    const { deliveredNow, deliveredAt, requestedDeliveryDate } = resolveSaleDelivery(
+      dto,
+      user,
+      saleZone,
+    );
 
     // 1. Create the backing order (reuses pricing tiers/overrides + stock lock/decrement). With an
     //    Idempotency-Key (counter sale only) a replay hands back the ORIGINAL order and `replay` is

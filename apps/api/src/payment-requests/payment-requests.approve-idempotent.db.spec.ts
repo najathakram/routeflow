@@ -34,6 +34,7 @@ import { randomUUID } from "crypto";
 import { InvoicesService } from "../invoices/invoices.service";
 import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { PaymentRequestsService } from "./payment-requests.service";
+import { ConnectChargeReviewService } from "./connect-charge-review.service";
 import { PAYMENT_PROVIDER } from "./provider/payment-provider.interface";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -127,6 +128,8 @@ describeDb(
         providers: [
           InvoicesService,
           PaymentRequestsService,
+          // SA-837b: the Stripe settle path alerts operators of a duplicate-suspect capture; not exercised here.
+          { provide: ConnectChargeReviewService, useValue: { flagDuplicateSuspect: jest.fn() } },
           NumberingService,
           {
             provide: SellingRestrictionsService,

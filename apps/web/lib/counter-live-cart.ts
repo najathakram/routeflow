@@ -12,6 +12,8 @@ export interface LiveCartSnapshot {
   tendered: string;
   reference: string;
   checkDate?: string;
+  /** S5: Walk-in was explicitly chosen (a null customer alone is "not asked yet"). Absent in an older save. */
+  walkIn?: boolean;
 }
 
 export function writeLiveCart(
@@ -28,11 +30,15 @@ export function writeLiveCart(
     // Only what the till re-renders: never the customer's email, phone, address or any other field.
     const c = snap.customer as Record<string, unknown> | null | undefined;
     const customer = c
-      ? Object.fromEntries(
-          (["id", "businessName", "pricingTier", "fulfillPath", "isTaxExempt"] as const)
-            .filter((k) => c[k] !== undefined)
-            .map((k) => [k, c[k]]),
-        )
+      ? {
+          ...Object.fromEntries(
+            (["id", "businessName", "pricingTier", "fulfillPath", "isTaxExempt"] as const)
+              .filter((k) => c[k] !== undefined)
+              .map((k) => [k, c[k]]),
+          ),
+          // S5 (#3610 review): the tenant's walk-in customer RECORD stays a Walk-in after a refresh. Only ever true.
+          ...(c.isWalkIn === true ? { isWalkIn: true } : {}),
+        }
       : null;
     window.localStorage.setItem(
       storeKey,
@@ -66,6 +72,7 @@ export function readLiveCart(storeKey: string | null): LiveCartSnapshot | null {
         tendered: typeof v!.tendered === "string" ? v!.tendered : "",
         reference: typeof v!.reference === "string" ? v!.reference : "",
         ...(isCalendarDay(v!.checkDate) ? { checkDate: v!.checkDate } : {}),
+        walkIn: v!.walkIn === true && !v!.customer,
       };
     }
     window.localStorage.removeItem(storeKey);

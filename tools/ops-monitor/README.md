@@ -132,3 +132,15 @@ good load keeps the last good list. Names are masked from the collector inputs _
 snapshot is built (and again after), and each text is masked before it is cut or clipped, so a
 name is never left as a fragment; incident ids are date + index only (`INC-1015a`), never a file
 slug.
+
+- `.claude/hooks/ops-status.mjs` (Stop + SessionStart): writes `<opsHome>/status/<session>.json`
+  (lane/title, worktree, branch, head, open PR, last assistant message first 300 chars; home dirs
+  become `~`, token/key-like strings and env values are redacted, client names masked; atomic, fail
+  open, 2 s budget, prunes files older than 7 days). On SessionStart it prints one line per other
+  status file on the machine (the lane brief only with `RF_STATUS_BRIEF=1`). `rf status-sync` (the
+  2-min timer in `--views` mode, waiting up to 45 s for the specs lock) pulls the clone, then turns
+  THIS machine's changed files (< 24 h old) into `heartbeat` events in its own `events/<machine>/`
+  file, in one lock hold; a failed pull appends nothing. A change of branch / PR / head / lane /
+  title emits at once; message-only activity emits one keep-alive per session per 10 min; at most
+  20 events per run. `rf brief --refresh` appends locally without pushing. Heartbeats feed lane activity (so `lane-silent` sees them) and never touch items; the
+  snapshot's `machines` list (3 days) drives the "Machines and lanes" panel.

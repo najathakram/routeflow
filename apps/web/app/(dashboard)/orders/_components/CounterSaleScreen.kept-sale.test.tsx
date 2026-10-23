@@ -1,5 +1,6 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -97,7 +98,7 @@ const sendFailure = (status: number, data: Record<string, unknown>) => ({
 
 async function ringColaAndFail(err: unknown) {
   sendSale.mockRejectedValue(err);
-  renderWithProviders(<CounterSaleScreen />);
+  renderTill(<CounterSaleScreen />);
   await scan("COLA", "Cola");
   fireEvent.click(btn("Exact"));
   fireEvent.click(btn("Complete & show receipt"));

@@ -131,3 +131,51 @@ export function createNameLoader({
     },
   };
 }
+
+// ---------- fail-closed fallback (no readable names list) ----------
+// With no list the board cannot know which names are clients, so it over-masks instead:
+//  1. a slug (`acme-foods`, any `word-word` token) next to the word "tenant"/"slug"/"client", or a
+//     token after `tenant:` / `slug=`; the approved test tenants are left readable;
+//  2. the label of a tenant subdomain (`acme.routeflow.info`, `acme.up.railway.app`) except
+//     www/api/app/staging;
+//  3. any e-mail address except the project's own / example / noreply domains.
+// It is deliberately blunt: hiding too much is the safe failure.
+const APPROVED_SLUG =
+  /^(?:test|e2e-routeflow|routeflow-demo|qa-[\w-]+|e2e-[\w-]+|ux-audit-[\w-]+)$/i;
+const SLUG = "[a-z0-9]+(?:-[a-z0-9]+)+";
+const KEEP_HOSTS = new Set(["www", "api", "app", "staging", "mail", "docs"]);
+const KEEP_EMAIL =
+  /@(?:routeflow\.info|example\.(?:com|org|net)|users\.noreply\.github\.com|anthropic\.com|localhost)$/i;
+
+export function fallbackMaskText(text) {
+  if (typeof text !== "string" || !text) return text;
+  const slug = (m, s) =>
+    APPROVED_SLUG.test(s)
+      ? m
+      : m.slice(0, m.lastIndexOf(s)) + MASK_LABEL + m.slice(m.lastIndexOf(s) + s.length);
+  return text
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g, (m) =>
+      KEEP_EMAIL.test(m) ? m : MASK_LABEL,
+    )
+    .replace(/\b([a-z0-9][a-z0-9-]*)\.(?:routeflow\.info|up\.railway\.app)\b/gi, (m, label) =>
+      KEEP_HOSTS.has(label.toLowerCase()) || /^routeflow/i.test(label) ? m : MASK_LABEL,
+    )
+    .replace(new RegExp(`\\b(?:tenants?|slug|client)s?[\\s:=#"'\`]+(${SLUG})\\b`, "gi"), slug)
+    .replace(new RegExp(`\\b(${SLUG})[\\s"'\`]+(?:tenants?|slug|client)\\b`, "gi"), slug)
+    .replace(/\b(?:tenant|slug)\s*[:=]\s*["'`]?(?!a live business)([a-z0-9]+)\b/gi, slug);
+}
+
+/** Deep copy with every string value passed through fallbackMaskText (keys untouched). */
+export function fallbackMaskDeep(obj) {
+  const walk = (v) => {
+    if (typeof v === "string") return fallbackMaskText(v);
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === "object") {
+      const out = {};
+      for (const [k, x] of Object.entries(v)) out[k] = walk(x);
+      return out;
+    }
+    return v;
+  };
+  return walk(obj);
+}
