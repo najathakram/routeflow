@@ -12,7 +12,7 @@ import type {
 } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { useOptionalAuth } from "../auth-context";
-import { counterSaleGate, isPickupHandledError } from "../counter-sale";
+import { counterSaleGate, isCounterSaleHandledError, isPickupHandledError } from "../counter-sale";
 import { useTenantFeatures } from "../tenant-features";
 import { keptSaleHref } from "../kept-draft-invoice";
 import { deniedGroupsOf, useMyPermissions } from "./my-permissions";
@@ -86,6 +86,8 @@ export function useCreateCounterSale() {
     // and the till sits "sending" until the connection comes back (and then sends by itself). The till must try the request
     // and see the network failure, so it can say so and unfreeze; the sale's Idempotency-Key makes any retry safe.
     networkMode: "always",
+    // The till shows these refusals in its own checkout bar; the app-wide toast would say it twice.
+    meta: { localErrorToast: isCounterSaleHandledError },
     mutationFn: ({ dto, idempotencyKey }: { dto: CounterSaleRequest; idempotencyKey: string }) =>
       apiClient
         .post<CounterSaleResponse>("/orders/counter-sale", dto, {

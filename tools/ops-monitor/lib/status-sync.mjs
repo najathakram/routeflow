@@ -110,6 +110,7 @@ export async function runStatusSync({
   now = Date.now(),
   push = true,
   lockWaitMs = 0,
+  lockHeld = false, // the caller holds the specs lock and just pulled
   rand,
 } = {}) {
   const store = await import("./store.mjs");
@@ -118,7 +119,7 @@ export async function runStatusSync({
   if (records.length === 0) return { ran: true, appended: 0, pushed: false };
   const me = machine ?? machineId(loadConfig(dir), env);
   const work = async () => {
-    const pulled = await store.syncSpecs(dir);
+    const pulled = lockHeld ? null : await store.syncSpecs(dir);
     if (pulled?.ok === false)
       return { ran: true, appended: 0, pushed: false, pullError: pulled.error };
     const { events, capped } = planStatusSync({
@@ -139,6 +140,7 @@ export async function runStatusSync({
     };
   };
   try {
+    if (lockHeld) return await work();
     if (lockWaitMs > 0) return await store.withSpecsLock(work, { home, waitMs: lockWaitMs });
     const r = await store.tryWithSpecsLock(work, { home });
     return r.ran ? r.value : { ran: false, reason: "busy", appended: 0 };

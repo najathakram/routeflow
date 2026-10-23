@@ -62,3 +62,22 @@ describe("#2183 DB lane is serial whatever the caller asks for", () => {
     ]);
   });
 });
+
+// W-699: a DB-lane run that never exits (an open handle after "Tests:") would hold the machine's
+// heavy slot for every other lane, so the runner kills jest after a hard timeout and exits 124.
+describe("W-699 the DB lane runner has a hard timeout", () => {
+  it("the runner has a hard timeout: 60 min by default, RF_DB_LANE_TIMEOUT_MIN overrides, junk refused", () => {
+    const probe = `
+      const m = await import(${JSON.stringify(pathToFileURL(path.join(API_DIR, "scripts/run-db-tests.mjs")).href)});
+      const out = [{}, { RF_DB_LANE_TIMEOUT_MIN: "5" }, { RF_DB_LANE_TIMEOUT_MIN: "0" },
+        { RF_DB_LANE_TIMEOUT_MIN: "-3" }, { RF_DB_LANE_TIMEOUT_MIN: "abc" }].map((env) => {
+        try { return m.dbLaneTimeoutMs(env); } catch (e) { return "throws"; }
+      });
+      console.log(JSON.stringify(out));`;
+    const res = spawnSync(process.execPath, ["--input-type=module", "-e", probe], {
+      encoding: "utf8",
+    });
+    expect(res.stderr).toBe("");
+    expect(JSON.parse(res.stdout)).toEqual([3_600_000, 300_000, "throws", "throws", "throws"]);
+  });
+});

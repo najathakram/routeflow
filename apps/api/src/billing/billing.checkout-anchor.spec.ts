@@ -19,7 +19,14 @@ const ONLY_DATE: any[] = [
   "hrtime",
 ];
 
-function make(opts: { addonSkus?: string[]; sub?: Record<string, unknown> } = {}) {
+function make(
+  opts: {
+    addonSkus?: string[];
+    sub?: Record<string, unknown>;
+    /** SA-832 / 453: the tenant's status + readOnlyReason (default: an ordinary ACTIVE tenant). */
+    tenant?: Record<string, unknown>;
+  } = {},
+) {
   const create = jest.fn().mockResolvedValue({ id: "cs_1", url: "https://pay.test" });
   const stripe: any = {
     isConfigured: true,
@@ -32,6 +39,9 @@ function make(opts: { addonSkus?: string[]; sub?: Record<string, unknown> } = {}
         id: "t1",
         slug: "acme",
         name: "Acme",
+        status: "ACTIVE",
+        readOnlyReason: null,
+        ...opts.tenant,
         subscription: { stripeCustomerId: "cus_1" },
         config: { businessName: "Acme" },
       })),
@@ -195,6 +205,52 @@ describe("ordinary checkout gates (Opus B1 + ruling item 8)", () => {
 
   it("a non-externalPayment tenant still checks out normally", async () => {
     const h = make({ sub: { externalPayment: false } });
+    await h.billing.createCheckoutSession("t1", "month");
+    expect(h.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+// SA-832 row 453: checkout CREATION refuses an admin-locked tenant with a coded 409, so the platform never takes money
+// it will not honour (the completion would leave the tenant locked). The same predicate as the completion and subscribe().
+describe("SA-832 / 453: checkout creation refuses an admin-locked tenant", () => {
+  it.each([
+    ["READ_ONLY(admin_set)", { status: "READ_ONLY", readOnlyReason: "admin_set" }],
+    ["READ_ONLY(no reason: a legacy admin write)", { status: "READ_ONLY", readOnlyReason: null }],
+    ["SUSPENDED(admin_set)", { status: "SUSPENDED", readOnlyReason: "admin_set" }],
+    [
+      "CANCELLED (legacy row, no reason: refused until a backfill classifies it)",
+      { status: "CANCELLED", readOnlyReason: null },
+    ],
+    ["CANCELLED by an admin", { status: "CANCELLED", readOnlyReason: "admin_set" }],
+  ])(
+    "%s: 409 TENANT_ADMIN_LOCKED, no add-on read, no customer, no Stripe session",
+    async (_n, tenant) => {
+      const h = make({ tenant });
+      const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.TENANT_ADMIN_LOCKED });
+      expect(h.create).not.toHaveBeenCalled();
+      expect(h.mutations.checkoutAddonLines).not.toHaveBeenCalled();
+      expect(h.stripe.getSubscription).not.toHaveBeenCalled();
+    },
+  );
+
+  it("the refusal copy never names the cause (a customer is not told an admin locked them)", async () => {
+    const h = make({ tenant: { status: "READ_ONLY", readOnlyReason: "admin_set" } });
+    const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+    expect(String(err.getResponse().message)).not.toMatch(/admin_set|administrator/i);
+  });
+
+  it.each([
+    ["ACTIVE", { status: "ACTIVE", readOnlyReason: null }],
+    ["TRIAL", { status: "TRIAL", readOnlyReason: null }],
+    ["READ_ONLY(trial_expired)", { status: "READ_ONLY", readOnlyReason: "trial_expired" }],
+    ["READ_ONLY(payment_overdue)", { status: "READ_ONLY", readOnlyReason: "payment_overdue" }],
+    ["SUSPENDED by billing", { status: "SUSPENDED", readOnlyReason: null }],
+    // SA-832b: the back-office win-back link for a Stripe-churned tenant (POST /platform-admin/tenants/:id/billing/checkout)
+    ["CANCELLED by a Stripe churn", { status: "CANCELLED", readOnlyReason: "stripe_cancelled" }],
+  ])("control: %s checks out normally", async (_n, tenant) => {
+    const h = make({ tenant });
     await h.billing.createCheckoutSession("t1", "month");
     expect(h.create).toHaveBeenCalledTimes(1);
   });
