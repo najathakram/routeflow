@@ -6,7 +6,30 @@ export type PricingReadState = {
   isLoading?: boolean;
   isError?: boolean;
   data?: unknown;
+  /** The read's error (axios shape): SA-884 reads a PLAN_GATE 403 on the customer-price read as an empty read. */
+  error?: unknown;
 };
+
+/**
+ * SA-884: a plan-gated denial (`@RequirePlanFlag`): HTTP 403 whose body code is exactly "PLAN_GATE". A role 403, a
+ * PLAN_GATE_UNAVAILABLE (retryable), 5xx, 404 and a network error (no response) are not.
+ */
+export function isPlanGateError(error: unknown): boolean {
+  const res = (error as { response?: { status?: unknown; data?: { code?: unknown } } } | null)
+    ?.response;
+  return res?.status === 403 && res.data?.code === "PLAN_GATE";
+}
+
+/**
+ * SA-883/884: GET /customers/:id/prices is plan-gated (`@RequirePlanFlag("flag.pricing_tiers")`). A tenant whose plan lacks the
+ * flag (every LITE plan) gets the PLAN_GATE 403: an EMPTY read (no customer-product overrides; the pick prices at the
+ * customer's own tier), never a failure. Applied to that one read only; anything else keeps its read state.
+ */
+function asPlanGatedEmpty(q: PricingReadState): PricingReadState {
+  return q.isError && q.data == null && isPlanGateError(q.error)
+    ? { ...q, isError: false, isPending: false, isLoading: false, data: [] }
+    : q;
+}
 
 /**
  * Are the prices on these product ids unconfirmed? Flag off = never (nothing was read). Flag on and the layer pending or
@@ -53,10 +76,11 @@ export function customerPricingGate(i: {
   // caller without it falls back to `isLoading`. Fails closed: a paused read blocks the pick like a loading one.
   const waiting = (q: PricingReadState) =>
     !q.isError && q.data == null && !!(q.isPending ?? q.isLoading);
-  const readFailed = failedRead(i.customerQuery) || failedRead(i.customerPricesQuery);
+  const customerPricesQuery = asPlanGatedEmpty(i.customerPricesQuery);
+  const readFailed = failedRead(i.customerQuery) || failedRead(customerPricesQuery);
   const pending =
     waiting(i.customerQuery) ||
-    waiting(i.customerPricesQuery) ||
+    waiting(customerPricesQuery) ||
     (i.priceLayer.enabled && !i.priceLayer.ready && !i.priceLayer.failed);
   const failed = readFailed || (i.priceLayer.enabled && i.priceLayer.failed);
   return {

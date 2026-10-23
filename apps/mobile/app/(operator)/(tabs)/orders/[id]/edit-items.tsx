@@ -141,18 +141,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const { data: priceHistory } = useCustomerPriceHistory(customerId);
   // Customer tier pricing (mirrors NewOrderScreen): a newly added line prices
   // off the customer's effective tier, not the raw list price.
-  const {
-    data: customerDetail,
-    isPending: customerPending,
-    isError: customerFailed,
-    refetch: refetchCustomer,
-  } = useCustomer(customerId ?? "");
-  const {
-    data: customerPrices,
-    isPending: pricesPending,
-    isError: pricesFailed,
-    refetch: refetchPrices,
-  } = useCustomerPrices(customerId ?? "");
+  // SA-883: the whole queries go to the gate (their `error` too: a plan-gated 403 on the prices read is an empty read).
+  const customerQuery = useCustomer(customerId ?? "");
+  const { data: customerDetail } = customerQuery;
+  const pricesQuery = useCustomerPrices(customerId ?? "");
+  const { data: customerPrices } = pricesQuery;
   const customerTier = customerTierFor(undefined, customerDetail?.pricingTier);
   // B62 (REG-B62): the tier defaults to 1 while those two queries are in flight,
   // so a line added or substituted in that window bakes the LIST price (the
@@ -168,14 +161,14 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // The layer is part of "pricing is ready": the picker, Substitute, scan and price edits stay closed until it is, so an add
   // never stores a pre-layer price (a product the layer cannot vouch for is also refused at the pick, below).
   const pricingGate = customerPricingGate({
-    customerQuery: { data: customerDetail, isPending: customerPending, isError: customerFailed },
-    customerPricesQuery: { data: customerPrices, isPending: pricesPending, isError: pricesFailed },
+    customerQuery,
+    customerPricesQuery: pricesQuery,
     priceLayer,
   });
   const pricingReady = !customerId || !pricingGate.blockPick;
   const pricingFailed = !!customerId && pricingGate.failed;
   const retryPricing = () => {
-    if (pricingGate.readFailed) void Promise.all([refetchCustomer(), refetchPrices()]);
+    if (pricingGate.readFailed) void Promise.all([customerQuery.refetch(), pricesQuery.refetch()]);
     else priceLayer.refetch();
   };
   const cpMap = useMemo(() => {
@@ -1295,7 +1288,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                       canEditPrice={canEditPriceFor(it.productId)}
                       pricingReady={pricingReady}
                       tier={effectiveTierFor(it.productId)}
-                      pricesUnconfirmed={layerGate.blocked}
+                      pricesUnconfirmed={layerGate.blocked || !pricingReady}
                       marginFloor={floorForCategory(marginConfig, it.category)}
                       acked={floorAcked.has(key)}
                       onSetToFloor={(price) => setLinePrice(key, price)}

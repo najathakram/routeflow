@@ -50,6 +50,7 @@ jest.mock("@/lib/api/invoices", () => ({
   useUpdateInvoice: () => ({ mutate: updateMutate, mutateAsync: jest.fn(), isPending: false }),
 }));
 let mockCustomerRead: Record<string, unknown> = {};
+let mockPricesRead: Record<string, unknown> = {};
 const mockRefetchCustomer = jest.fn();
 const mockRefetchPrices = jest.fn();
 jest.mock("@/lib/api/customers", () => ({
@@ -62,7 +63,12 @@ jest.mock("@/lib/api/customers", () => ({
     refetch: mockRefetchCustomer,
     ...mockCustomerRead,
   }),
-  useCustomerPrices: () => ({ data: [], isLoading: false, refetch: mockRefetchPrices }),
+  useCustomerPrices: () => ({
+    data: [],
+    isLoading: false,
+    refetch: mockRefetchPrices,
+    ...mockPricesRead,
+  }),
 }));
 jest.mock("@/lib/api/products", () => ({ useProducts: () => ({ data: undefined }) }));
 const mockGet = jest.fn((url: string) => {
@@ -116,12 +122,12 @@ async function scanAndSave() {
 beforeEach(() => {
   jest.clearAllMocks();
   mockCustomerRead = {};
+  mockPricesRead = {};
   capturedOnScan = undefined;
   mockBarcodeProduct = TIERED;
   flagOn = true;
   layerResponder = () => Promise.resolve(layer(7));
 });
-
 
 /**
  * W-725 (SA-873 follow-up of SA-868/870, the web half): the invoice edit page's pricing gate counted `isLoading` only, so a
@@ -154,5 +160,46 @@ describe("W-725: the invoice edit page's picks fail closed on an unread customer
     mockCustomerRead = { isError: true };
     const line = await scanAndSave();
     expect(line).toMatchObject({ unitPrice: 8 });
+  });
+});
+
+/** SA-883/884: GET /customers/:id/prices is plan-gated; its PLAN_GATE 403 (un-flagged plan, every LITE tenant) is an EMPTY read. */
+describe("SA-883: the invoice edit page treats a plan-gated 403 on the customer prices as an empty read", () => {
+  const http = (status: number, code?: string) => ({
+    data: undefined,
+    isError: true,
+    error: { response: { status, data: { code } } },
+  });
+
+  it("prices PLAN_GATE 403: the scanner stays open and a scan prices at the customer's tier ($8)", async () => {
+    flagOn = false;
+    mockPricesRead = http(403, "PLAN_GATE");
+    const line = await scanAndSave();
+    expect(line).toMatchObject({ unitPrice: 8 });
+  });
+
+  it("a role 403 on the prices read (no PLAN_GATE code) still closes the scanner", async () => {
+    flagOn = false;
+    mockPricesRead = http(403);
+    renderWithProviders(<EditInvoicePage />);
+    await screen.findByDisplayValue("Old");
+    expect(capturedOnScan).toBeUndefined();
+  });
+
+  it("prices 500: the scanner stays closed with the failed copy", async () => {
+    flagOn = false;
+    mockPricesRead = http(500);
+    renderWithProviders(<EditInvoicePage />);
+    await screen.findByDisplayValue("Old");
+    expect(capturedOnScan).toBeUndefined();
+    expect(screen.getByTitle(PRICE_LAYER_FAILED_COPY)).toBeInTheDocument();
+  });
+
+  it("a 403 on the CUSTOMER read still closes the scanner", async () => {
+    flagOn = false;
+    mockCustomerRead = http(403, "PLAN_GATE");
+    renderWithProviders(<EditInvoicePage />);
+    await screen.findByDisplayValue("Old");
+    expect(capturedOnScan).toBeUndefined();
   });
 });

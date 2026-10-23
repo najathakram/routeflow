@@ -113,6 +113,12 @@ describe("MUST 2: edit-items stays closed until the layer is ready", () => {
       /onPress=\{pricingFailed \? retryPricing : \(\) => setShowPicker\(true\)\}/,
     );
     expect(editItems).toMatch(/: pricingFailed\s*\?\s*LAYER_FAILED_MESSAGE/);
+    // SA-883: the WHOLE queries reach the gate, so their `error` does (a plan-gated 403 on the prices read is an empty read).
+    expect(editItems).toMatch(
+      /customerPricingGate\(\{\s*customerQuery,\s*customerPricesQuery: pricesQuery,/,
+    );
+    // #3658 review MUST-2: a unit change stays closed while pricing is not ready (it would write the tier-1 LIST pack price).
+    expect(editItems).toMatch(/pricesUnconfirmed=\{layerGate\.blocked \|\| !pricingReady\}/);
   });
 });
 
