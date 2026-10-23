@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { roundMoney } from "@routeflow/pricing";
+import { clearedTenderNow, roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { parseCalendarDay, tenantTodayDay } from "../../common/calendar-date";
 import { resolveZone } from "../../common/tenant-time-zone";
@@ -135,4 +135,31 @@ export function allocateOldestFirst(
     left = roundMoney(left - part);
   }
   return out;
+}
+
+/**
+ * S1 (C42): how much of the server `total` this request pays at the till, for the credit gate. The ONE
+ * pricing helper does the cents math. Counter facts: a CARD or CHECK is never charged over the balance
+ * (`planCounterPayment` refuses it, no money is taken), so such a request clears nothing; and a CHECK
+ * dated after the tenant's `today` (a post-dated check) is not money yet, so it counts 0. A CHECK with
+ * no date, or dated today or earlier, counts like cash.
+ */
+export function counterCreditPaidNow(
+  payment: CounterPaymentInput,
+  total: number,
+  today?: string,
+): number {
+  if (
+    payment.method !== "CASH" &&
+    payment.amount != null &&
+    roundMoney(payment.amount) > roundMoney(total)
+  ) {
+    return 0;
+  }
+  const pending =
+    payment.method === "CHECK" &&
+    !!payment.checkDate &&
+    !!today &&
+    payment.checkDate.slice(0, 10) > today;
+  return clearedTenderNow([{ ...payment, pending }], total);
 }
