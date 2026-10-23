@@ -9,6 +9,7 @@ import {
   type RecurringInvoiceItem,
 } from "@/lib/api/invoices";
 import { useCustomer, useCustomerPrices, useCustomers, type Customer } from "@/lib/api/customers";
+import { useDismissOnLeave } from "@/lib/use-dismiss-on-leave";
 import { useProduct, useProducts } from "@/lib/api/products";
 import { customerTierFor } from "@routeflow/pricing";
 import { useCustomerLinePricing } from "@/lib/useCustomerLinePricing";
@@ -148,6 +149,7 @@ function ProductSearchInput({
   const [debouncedQuery, setDebouncedQuery] = React.useState("");
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
+  const leave = useDismissOnLeave(setOpen);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
@@ -183,10 +185,14 @@ function ProductSearchInput({
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
+        {...leave.inputProps}
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
       />
       {open && debouncedQuery.length > 0 && products.length > 0 && (
-        <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+        <div
+          {...leave.listProps}
+          className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg"
+        >
           <ul className="max-h-36 overflow-y-auto">
             {products.map((p: any) => (
               <li key={p.id}>

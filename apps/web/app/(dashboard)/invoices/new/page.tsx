@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useDismissOnLeave } from "@/lib/use-dismiss-on-leave";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import { countNoun } from "@/lib/plural";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
@@ -294,7 +295,7 @@ function ProductSearchInput({
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
   const ref = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
-  const listRef = React.useRef<HTMLDivElement>(null);
+  const leave = useDismissOnLeave(setOpen);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
@@ -353,15 +354,7 @@ function ProductSearchInput({
           setExpandedParentId(null);
         }}
         onFocus={() => setOpen(true)}
-        // Row 446: Tab (or any focus move) away from the field closes its popup, so it never sits
-        // over the unit select below; focus moving into the popup's own list keeps it open.
-        onBlur={(e) => {
-          if (!listRef.current?.contains(e.relatedTarget as Node | null)) setOpen(false);
-        }}
-        // Tab leaves the field: close first, so focus moves to the next field, never into the list
-        onKeyDown={(e) => {
-          if (e.key === "Tab") setOpen(false);
-        }}
+        {...leave.inputProps} // row 446 / W-686: Tab and blur close the popup (shared hook)
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11"
       />
       <BarcodeScannerButton
@@ -387,10 +380,7 @@ function ProductSearchInput({
       />
       {open && debouncedQuery.length > 0 && (products.length > 0 || onCreateProduct) && (
         <div
-          ref={listRef}
-          // a press inside the list keeps focus on the input (Safari never focuses a clicked
-          // button, so a blur would close the list before the click lands)
-          onMouseDown={(e) => e.preventDefault()}
+          {...leave.listProps}
           className="absolute left-0 top-full z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg"
         >
           <ul className="max-h-48 overflow-y-auto">
