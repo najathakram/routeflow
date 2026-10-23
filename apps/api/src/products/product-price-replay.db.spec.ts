@@ -245,4 +245,61 @@ describeDb("units v2 price write replay (SA-845) - real Postgres", () => {
     ).catch((e) => e);
     expect(codeOf(err)).toBe(API_ERROR_CODES.PRICE_UNDO_UNAVAILABLE);
   });
+
+  it("R8c: an undo retry after a later write (live revision moved) stays 409 PRICE_UNDO_UNAVAILABLE", async () => {
+    const t = await seed("r8c");
+    const { res } = await firstSave(t, t.staffA);
+    const g2 = await readGrid(t);
+    const undoBody = { auditId: res.auditId, ...stateOf(g2) };
+    await inTenant(t.tenantId, () => writes.undo(t.productId, undoBody, t.staffA));
+    const g3 = await readGrid(t);
+    await inTenant(t.tenantId, () =>
+      writes.save(
+        t.productId,
+        { ...stateOf(g3), patches: [{ ref: "pack", tier: 4, to: 9 }] },
+        t.staffB,
+      ),
+    );
+    const err = await inTenant(t.tenantId, () =>
+      writes.undo(t.productId, undoBody, t.staffA),
+    ).catch((e) => e);
+    expect(codeOf(err)).toBe(API_ERROR_CODES.PRICE_UNDO_UNAVAILABLE);
+  });
+
+  it("R8d: an undo retry with a different skip list stays 409 PRICE_UNDO_UNAVAILABLE", async () => {
+    const t = await seed("r8d");
+    const { res } = await firstSave(t, t.staffA);
+    const g2 = await readGrid(t);
+    const undoBody = { auditId: res.auditId, ...stateOf(g2) };
+    await inTenant(t.tenantId, () => writes.undo(t.productId, undoBody, t.staffA));
+    const err = await inTenant(t.tenantId, () =>
+      writes.undo(
+        t.productId,
+        { ...undoBody, skip: [{ customerId: randomUUID(), ref: "pack", seen: 1 }] },
+        t.staffA,
+      ),
+    ).catch((e) => e);
+    expect(codeOf(err)).toBe(API_ERROR_CODES.PRICE_UNDO_UNAVAILABLE);
+  });
+
+  it('R1b: a retry naming the factor-1 unit by its row id (stored as "base") is still the same write', async () => {
+    const t = await seed("r1b");
+    const piece = await prisma.productUnit.create({
+      data: { tenantId: t.tenantId, productId: t.productId, label: "Piece", factorToBase: 1 },
+    });
+    const g = await readGrid(t);
+    const body = { ...stateOf(g), patches: [{ ref: piece.id, tier: 1, to: 1.25 }] };
+    const res = await inTenant(t.tenantId, () => writes.save(t.productId, body, t.staffA));
+    const again = await inTenant(t.tenantId, () => writes.save(t.productId, body, t.staffA));
+    expect(again).toMatchObject({ replayed: true, auditId: res.auditId });
+    const asBase = await inTenant(t.tenantId, () =>
+      writes.save(
+        t.productId,
+        { ...body, patches: [{ ref: "base", tier: 1, to: 1.25 }] },
+        t.staffA,
+      ),
+    );
+    expect(asBase).toMatchObject({ replayed: true, auditId: res.auditId });
+    expect(await audits(t, AUDIT_ACTIONS.PRODUCT_PRICES_SAVED)).toHaveLength(1);
+  });
 });
