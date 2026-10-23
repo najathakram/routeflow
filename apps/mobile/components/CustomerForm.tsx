@@ -107,7 +107,7 @@ export interface CustomerPayload {
   phone?: string | null;
   creditLimit?: number;
   pricingTier?: number;
-  currency?: string | null;
+  currency?: string;
   notes?: string | null;
   deliveryWindowStart?: string | null;
   deliveryWindowEnd?: string | null;
@@ -197,7 +197,7 @@ function buildPayload(
     phone: optionalText(mode, form.phone, initial.phone),
     creditLimit: parseOptionalNumber(form.creditLimit),
     pricingTier: form.pricingTier,
-    currency: optionalText(mode, form.currency, initial.currency),
+    currency: form.currency.trim() || undefined,
     notes: optionalText(mode, form.notes, initial.notes),
     // Edit-only: CreateCustomerDto has no delivery-window fields, and
     // `forbidNonWhitelisted` rejects the ENTIRE create payload over one unknown
