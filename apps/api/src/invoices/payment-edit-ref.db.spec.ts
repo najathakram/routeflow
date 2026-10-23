@@ -183,7 +183,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
         tenantId: tenant.id,
       },
     });
-    const invs = [];
+    const invs: { id: string; invoiceNumber: string }[] = [];
     for (let i = 0; i < 3; i++)
       // eslint-disable-next-line no-await-in-loop
       invs.push(
