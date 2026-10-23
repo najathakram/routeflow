@@ -98,12 +98,10 @@ export interface AccrualSalesDb extends InvoicedSalesDb {
   creditNote: {
     aggregate(args: any): Promise<any>;
     groupBy(args: any): Promise<any[]>;
-    findMany(args: any): Promise<any[]>;
   };
   return: {
     aggregate(args: any): Promise<any>;
     groupBy(args: any): Promise<any[]>;
-    findMany(args: any): Promise<any[]>;
   };
 }
 
@@ -344,6 +342,12 @@ export async function fetchAccrualNetSalesByCustomer(
   return result;
 }
 
+/** The row readers below also page the credit-note and return rows (a separate, wider surface than `AccrualSalesDb`). */
+export interface AccrualNetRowsDb extends AccrualSalesDb {
+  creditNote: AccrualSalesDb["creditNote"] & { findMany(args: any): Promise<any[]> };
+  return: AccrualSalesDb["return"] & { findMany(args: any): Promise<any[]> };
+}
+
 /** One bucket of the row-based net-sales reader: the three accrual terms plus the invoice count. */
 export interface AccrualNetBucket extends AccrualNetSales {
   orderCount: number;
@@ -368,7 +372,7 @@ export interface AccrualNetRowsOptions {
  * (`refundedAt`) are instants and are handed to `keyOf` as their tenant-local calendar day.
  */
 async function fetchAccrualNetRows(
-  db: AccrualSalesDb,
+  db: AccrualNetRowsDb,
   tenantId: string,
   window: AccrualWindow,
   keyOf: (src: {
@@ -519,7 +523,7 @@ async function fetchAccrualNetRows(
  * reads this, so it can never disagree with Bookkeeping's `fetchAccrualNetSales` for the same window.
  */
 export async function fetchAccrualNetSalesByPeriod(
-  db: AccrualSalesDb,
+  db: AccrualNetRowsDb,
   tenantId: string,
   window: AccrualWindow,
   opts: AccrualNetRowsOptions & { groupBy?: string } = {},
@@ -530,7 +534,7 @@ export async function fetchAccrualNetSalesByPeriod(
 
 /** Row-based per-customer accrual net sales with the invoice count (for the dashboard's top customers; SA-859). */
 export async function fetchAccrualNetSalesByCustomerRows(
-  db: AccrualSalesDb,
+  db: AccrualNetRowsDb,
   tenantId: string,
   window: AccrualWindow,
   opts: AccrualNetRowsOptions = {},
