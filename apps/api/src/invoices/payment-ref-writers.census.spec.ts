@@ -55,7 +55,7 @@ const WRITERS: Record<
       },
       {
         kind: "CONFIRMED",
-        why: "writeStandalonePayment: the office path keeps [L-O2] (no capacity refusal; Σ allocations <= payment) and the captured path (capturedExternally) is CAPTURED, confirmed-basis and never refused (SA-858 amended). SA-864 holds the office capacity rule for the owner.",
+        why: "writeStandalonePayment: the office path keeps [L-O2] (no capacity refusal; Σ allocations <= payment) and the captured path (capturedExternally) is CAPTURED, confirmed-basis and never refused (SA-858 amended). held: SA-864, owner question 7b.",
       },
       {
         kind: "SPILL",
@@ -70,7 +70,7 @@ const WRITERS: Record<
     capacity: [
       {
         kind: "CONFIRMED",
-        why: "writeLedgerPayment sizes on CONFIRMED money (REG-B11, T-B11s); SA-864 holds the move to capacity for the owner.",
+        why: "writeLedgerPayment sizes on CONFIRMED money (REG-B11, T-B11s); held: SA-864, owner question 7b.",
       },
     ],
   },
@@ -131,6 +131,22 @@ describe("row 498: the InvoicePayment writer census", () => {
   it("row 2299 (R7): every create site carries a capacity kind (a new site fails until classified on both axes)", () => {
     for (const [file, w] of Object.entries(WRITERS))
       expect({ file, kinds: w.capacity.length }).toEqual({ file, kinds: w.creates });
+  });
+
+  it("row 2299 (SA-867 condition 2): the capacityRefusal callers are count-pinned (a new caller fails until classified)", () => {
+    const callers: Record<string, number> = {};
+    for (const file of walk(SRC)) {
+      const n = (fs.readFileSync(file, "utf8").match(/capacityRefusal\(/g) ?? []).length;
+      if (n) callers[rel(file)] = n;
+    }
+    // recordPayment only today; the SA-864 owner answer lowers or raises this in the same diff
+    expect(callers).toEqual({ "invoices/invoices.service.ts": 1 });
+  });
+
+  it("row 2299: every CONFIRMED site names its hold (SA-867 condition 1)", () => {
+    for (const w of Object.values(WRITERS))
+      for (const c of w.capacity)
+        if (c.kind === "CONFIRMED") expect(c.why).toContain("held: SA-864, owner question 7b");
   });
 
   it("row 2299: recordPayment reaches the ONE capacity helper with an explicit policy; the CONFIRMED sites do not (SA-864)", () => {
