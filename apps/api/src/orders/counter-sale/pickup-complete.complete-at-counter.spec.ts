@@ -1,4 +1,9 @@
 // OrdersService / InvoicesService pull ESM-only modules Jest's CommonJS parser cannot load: mocks at the boundary.
+// SA-909: the claim row's atomic jsonb writes, on the spec's in-memory claims (the real SQL: the DB spec)
+jest.mock(
+  "./pickup-complete-claim",
+  () => require("../../testing/pickup-claim-mock").pickupClaimMock,
+);
 jest.mock("../orders.service", () => ({ OrdersService: class OrdersService {} }));
 jest.mock("../../invoices/invoices.service", () => ({ InvoicesService: class InvoicesService {} }));
 jest.mock("../order-status-invoicing", () => ({ settleOrderInvoice: jest.fn() }));
@@ -83,6 +88,8 @@ describe("PickupCompleteService.complete: Complete at counter (I-120, SA-861)", 
   beforeEach(async () => {
     calls.length = 0;
     claims = [];
+    require("../../testing/pickup-claim-mock").mockClaimStore.rows = claims;
+    require("../../testing/pickup-claim-mock").mockClaimStore.recorded = false;
     mockLock.tenderNotAcquired = false;
     capability = STORE_PICKUP;
     prisma = createMockPrisma();
@@ -207,7 +214,7 @@ describe("PickupCompleteService.complete: Complete at counter (I-120, SA-861)", 
 
   it("R5 a replay with the same key after the email went: no second email, no second tender, alreadyPickedUp", async () => {
     await run();
-    expect(claims[0].meta.completionEmailedAt).toBeTruthy();
+    expect(claims[0].meta.completionEmailedFor).toBeTruthy(); // SA-909: per completion (its deliveredAt)
     const res: any = await run();
     expect(inv.sendCompletionEmail).toHaveBeenCalledTimes(1);
     expect(inv.recordPayment).toHaveBeenCalledTimes(1);

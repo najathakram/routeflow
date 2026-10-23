@@ -1,5 +1,10 @@
 // OrdersService / InvoicesService pull ESM-only modules (@react-pdf/renderer, expo-server-sdk)
 // Jest's CommonJS parser cannot load; this spec drives them through mocks at the module boundary.
+// SA-909: the claim row's atomic jsonb writes, on the spec's in-memory claims (the real SQL: the DB spec)
+jest.mock(
+  "./pickup-complete-claim",
+  () => require("../../testing/pickup-claim-mock").pickupClaimMock,
+);
 jest.mock("../orders.service", () => ({ OrdersService: class OrdersService {} }));
 jest.mock("../../invoices/invoices.service", () => ({ InvoicesService: class InvoicesService {} }));
 
@@ -137,6 +142,8 @@ describe("PickupCompleteService.complete", () => {
   beforeEach(async () => {
     calls.length = 0;
     claims = [];
+    require("../../testing/pickup-claim-mock").mockClaimStore.rows = claims;
+    require("../../testing/pickup-claim-mock").mockClaimStore.recorded = false;
     mockSettle.mockReset();
     mockSweepOn.on = false;
     mockLockCalls.length = 0;
@@ -665,16 +672,16 @@ describe("PickupCompleteService.complete", () => {
   describe("the counter-tender advisory lock", () => {
     it("the payment runs under the shared counter-tender lock keyed on the order, in wait mode", async () => {
       await run();
-      // the claim section, then the tender, then the completion email (SA-905), each under the per-order lock (never nested)
+      // the claim section, then the tender, each under the per-order lock (never nested); the completion email holds no
+      // lock (SA-909: a conditional reservation on the claim row)
       expect(mockLockCalls).toEqual([
-        { family: "counter-tender", key: "ord-1", mode: "wait" },
         { family: "counter-tender", key: "ord-1", mode: "wait" },
         { family: "counter-tender", key: "ord-1", mode: "wait" },
       ]);
     });
     it("ON_ACCOUNT takes no money and no lock", async () => {
       await run({ payment: { method: "ON_ACCOUNT" } });
-      expect(mockLockCalls).toHaveLength(2); // the claim and the completion email (SA-905): no tender lock
+      expect(mockLockCalls).toHaveLength(1); // the claim only: no tender lock, and the email holds none (SA-909)
     });
     it.each([
       ["a lock timeout", () => new LockTimeoutError("counter-tender", "ord-1", 20000)],
