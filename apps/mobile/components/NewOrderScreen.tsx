@@ -161,7 +161,7 @@ import { UnlistedItemModal } from "./new-order/UnlistedItemModal";
 import { styles } from "./new-order/styles";
 import { CatalogSectionLabel, RowSpacer } from "./new-order/CatalogParts";
 import type { UnlistedLine } from "./new-order/types";
-import { unlistedPatched, unlistedWithPrice, unlistedWithQty } from "./new-order/unlisted-lines";
+import * as ul from "./new-order/unlisted-lines";
 import { usePosModeState } from "../lib/use-pos-mode";
 import { PosConfirmOnly, PosModeSwitch } from "./PosModeSwitch";
 import { canUsePosMode, posConfirmLabel, posMergeAlert } from "../lib/pos-mode";
@@ -927,14 +927,11 @@ function ProductPickView({
   // ── Unlisted (ad-hoc, non-catalog) line helpers ──────────────────────────
   const addUnlisted = (name: string, unitPrice: number, qty: number) =>
     setUnlisted((u) => [...u, { id: newLocalId(), name: name.trim(), unitPrice, qty }]);
-  const updateUnlistedQty = (id: string, qty: number) =>
-    setUnlisted((u) => unlistedWithQty(u, id, qty));
+  const updateUnlistedQty = (id: string, qty: number) => setUnlisted((u) => ul.qty(u, id, qty));
   const updateUnlistedPrice = (id: string, value: number | null) =>
-    setUnlisted((u) => unlistedWithPrice(u, id, value));
-  const updateUnlistedNote = (id: string, note: string) =>
-    setUnlisted((u) => unlistedPatched(u, id, () => ({ note })));
-  const toggleUnlistedNote = (id: string) =>
-    setUnlisted((u) => unlistedPatched(u, id, (x) => ({ noteOpen: !x.noteOpen })));
+    setUnlisted((u) => ul.price(u, id, value));
+  const updateUnlistedNote = (id: string, note: string) => setUnlisted((u) => ul.note(u, id, note));
+  const toggleUnlistedNote = (id: string) => setUnlisted((u) => ul.toggleNote(u, id));
   const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
 
   /** Newest scanned line to the top of the tray, and flash it. */
