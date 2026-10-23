@@ -35,14 +35,20 @@ export function serialDbArgs(args) {
 /**
  * W-699: the hard ceiling on one DB-lane run. A run that never exits (an open handle after
  * "Tests:") holds the machine's heavy slot for every other lane, so the runner kills it. 60 min by
- * default; RF_DB_LANE_TIMEOUT_MIN (a positive integer) overrides it. Anything else throws.
+ * default; RF_DB_LANE_TIMEOUT_MIN (a positive integer up to MAX_DB_LANE_TIMEOUT_MIN) overrides
+ * it. Anything else throws.
  */
+// setTimeout takes at most 2^31-1 ms; a larger delay overflows and fires at once (40000 min fired
+// after 72 ms), so the ceiling is the largest whole minute below it.
+export const MAX_DB_LANE_TIMEOUT_MIN = Math.floor((2 ** 31 - 1) / 60_000);
+
 export function dbLaneTimeoutMs(env) {
   const raw = env.RF_DB_LANE_TIMEOUT_MIN;
   if (raw === undefined || raw === "") return 60 * 60_000;
-  if (!/^[1-9]\d*$/.test(raw)) {
+  if (!/^[1-9]\d*$/.test(raw) || Number(raw) > MAX_DB_LANE_TIMEOUT_MIN) {
     throw new Error(
-      `RF_DB_LANE_TIMEOUT_MIN must be a positive whole number of minutes, got "${raw}"`,
+      `RF_DB_LANE_TIMEOUT_MIN must be a positive whole number of minutes up to ` +
+        `${MAX_DB_LANE_TIMEOUT_MIN}, got "${raw}"`,
     );
   }
   return Number(raw) * 60_000;
@@ -77,8 +83,10 @@ function killTree(pid, platform) {
  * W-723: runs `command` and kills its WHOLE process tree after `timeoutMs`. spawnSync's `timeout`
  * kills only the direct child, so on Linux/macOS a CLI that a spec spawned (a script under test, a
  * prisma CLI) outlived jest and kept its connection to the throwaway database and the heavy slot.
- * On POSIX the child leads its own process group (SIGINT/SIGTERM sent to this runner are
- * forwarded to it); once the child exits, for any reason, whatever is left of the group is killed
+ * On POSIX the child leads its own process group (and session), so a terminal's or ssh's signals
+ * no longer reach it directly: SIGINT, SIGTERM and SIGHUP sent to this runner are forwarded to the
+ * group (without SIGHUP, a closed terminal killed the runner and its timer and left jest running
+ * with no ceiling). Once the child exits, for any reason, whatever is left of the group is killed
  * and awaited, so nothing still holds the database when local-db-specs.mjs drops it.
  * Resolves `{ status, signal, timedOut }`.
  */
@@ -100,7 +108,7 @@ export function runWithHardTimeout(command, args, opts = {}) {
         /* already gone */
       }
     };
-    const signals = posix ? ["SIGINT", "SIGTERM"] : [];
+    const signals = posix ? ["SIGINT", "SIGTERM", "SIGHUP"] : [];
     for (const s of signals) process.on(s, forward);
     child.on("error", (error) => {
       clearTimeout(timer);
