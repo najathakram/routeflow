@@ -78,6 +78,7 @@ import {
   COUNTER_CHECK_ZONE_FAILED_COPY,
   COUNTER_CHECK_ZONE_LOADING_COPY,
   isPostdatedCheck,
+  isCounterSaleHandledError,
 } from "@/lib/counter-sale";
 import { calendarDayInZone } from "@/lib/calendar-date";
 import { useTenantTimeZoneQuery } from "@/lib/tenant-timezone";
@@ -877,7 +878,12 @@ export function CounterSaleScreen() {
           checkDate,
         });
         // A tender refused for a CLOSED DAY leaves the sale saved but unpaid: say so (the banner below is the generic one).
-        setError(isCounterSaleDayClosed(err) ? counterSaleErrorCopy(err) : "");
+        // A refusal the till owns (its global toast is silenced) says its own copy too, or the clerk would see nothing.
+        setError(
+          isCounterSaleDayClosed(err) || isCounterSaleHandledError(err)
+            ? counterSaleErrorCopy(err)
+            : "",
+        );
         setRecordedHref(keptSaleHref(err));
         setOutcomeUnknown(true);
       }

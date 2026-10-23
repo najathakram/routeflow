@@ -356,6 +356,30 @@ describe("CounterSaleScreen: post-dated check", () => {
     });
   });
 
+  describe("a retry of an unknown-outcome sale refused with the till's own code (#3615 review B, NIT 2)", () => {
+    it.each([
+      ["COUNTER_TENDER_SHORT", "A walk-in customer must pay the full balance."],
+      ["COUNTER_CHECK_POSTDATED", SENTENCE],
+    ])(
+      "a 400 %s on Try again says so in the bar (the global toast is quiet for it)",
+      async (code, copy) => {
+        mutateAsync
+          .mockRejectedValueOnce(new Error("Network Error"))
+          .mockRejectedValueOnce({ response: { status: 400, data: { code } } });
+        renderTill(<CounterSaleScreen />);
+        await scan("COLA");
+        await chooseCheck();
+        fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+        await screen.findByTestId("counter-outcome-unknown");
+        fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+        await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+        await waitFor(() =>
+          expect(screen.getAllByRole("alert").some((x) => x.textContent === copy)).toBe(true),
+        );
+      },
+    );
+  });
+
   describe("a restored held sale (#3615 review)", () => {
     const HELD = "rf.counterSale.heldAttempt:acme:u-a";
     const hold = (checkDate: string | undefined, sent: string) =>
