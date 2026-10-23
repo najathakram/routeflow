@@ -115,13 +115,12 @@ const ALLOW: Record<string, Entry> = {
     why: "old-client Piece echo tier; the charged line is the layer's (A-7)",
   },
   // ── web: tier carriers (each also matches WIRED: it prices through customerLinePrice)
-  "apps/web/app/(dashboard)/estimates/page.tsx": { counts: { chain: 3, mapSet: 1 }, why: TIER },
+  "apps/web/app/(dashboard)/estimates/page.tsx": { counts: { chain: 2, mapSet: 1 }, why: TIER },
   "apps/web/app/(dashboard)/invoices/new/invoice-draft-restore.ts": {
     counts: { chain: 1 },
     why: TIER,
   },
-  "apps/web/app/(dashboard)/invoices/new/page.tsx": { counts: { chain: 5 }, why: TIER },
-  "apps/web/app/(dashboard)/orders/[id]/page.tsx": { counts: { chain: 1, mapSet: 1 }, why: TIER },
+  "apps/web/app/(dashboard)/orders/[id]/page.tsx": { counts: { mapSet: 1 }, why: TIER },
   "apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx": {
     counts: { chain: 4 },
     why: TIER,
