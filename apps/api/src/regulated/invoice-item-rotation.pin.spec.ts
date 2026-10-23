@@ -72,8 +72,9 @@ export function rotationSites(file: string, text: string): string[] {
   const lines = stripComments(text).split("\n");
   const out: string[] = [];
   lines.forEach((line, i) => {
+    // #3682 NIT-2: `items: {` with its deleteMany on the next line counts too.
     const nestedInInvoice =
-      NESTED.test(line) &&
+      (NESTED.test(line) || NESTED.test(`${line} ${lines[i + 1] ?? ""}`)) &&
       lines.slice(Math.max(0, i - 8), i + 1).some((l) => INVOICE_WRITE.test(l));
     if (!ROTATION.test(line) && !nestedInInvoice) return;
     let fn = "<top>";
@@ -88,6 +89,9 @@ export function rotationSites(file: string, text: string): string[] {
   });
   return out;
 }
+
+/** A path relative to SRC as a POSIX key: on Windows `relative` returns backslashes, and no site would match (#3682 review MUST). */
+export const siteKey = (rel: string) => rel.replace(/\\/g, "/");
 
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -111,9 +115,50 @@ describe("Row 683 pin R-P2: every InvoiceItem rotation is classified", () => {
     expect(SITES["x/planted.ts#sneaky"]).toBeUndefined(); // so the scan below would fail on it
   });
 
+  it("a nested items deleteMany inside an invoice write is a site, on one line or split (self-test)", () => {
+    const one = [
+      "export class S {",
+      "  async a(id: string) {",
+      "    await tx.invoice.update({ where: { id }, data: { items: { deleteMany: {} } } });",
+      "  }",
+      "}",
+    ].join("\n");
+    const split = [
+      "export class S {",
+      "  async b(id: string) {",
+      "    await tx.invoice.update({",
+      "      where: { id },",
+      "      data: {",
+      "        items: {",
+      "          deleteMany: {},",
+      "        },",
+      "      },",
+      "    });",
+      "  }",
+      "}",
+    ].join("\n");
+    const bill = [
+      "export class S {",
+      "  async c(id: string) {",
+      "    await tx.vendorBill.update({ where: { id }, data: { items: { deleteMany: {} } } });",
+      "  }",
+      "}",
+    ].join("\n");
+    expect(rotationSites("x/one.ts", one)).toEqual(["x/one.ts#a"]);
+    expect(rotationSites("x/split.ts", split)).toEqual(["x/split.ts#b"]);
+    expect(rotationSites("x/bill.ts", bill)).toEqual([]);
+  });
+
+  it("keys are POSIX on every OS: a Windows-style relative path maps to the classified key (self-test)", () => {
+    expect(siteKey("invoices\\invoices.service.ts")).toBe("invoices/invoices.service.ts");
+    expect(SITES[`${siteKey("invoices\\invoices.service.ts")}#update`]).toBeDefined();
+  });
+
   it("every rotation site in the api source is classified, and every classified site still exists", () => {
     const found = new Set(
-      sources(SRC).flatMap((f) => rotationSites(relative(SRC, f), readFileSync(f, "utf8"))),
+      sources(SRC).flatMap((f) =>
+        rotationSites(siteKey(relative(SRC, f)), readFileSync(f, "utf8")),
+      ),
     );
     const unclassified = [...found].filter((k) => !SITES[k]);
     expect(unclassified).toEqual([]);

@@ -532,6 +532,10 @@ export class SettingsController {
       // left behind would also block the tenant's purge.
       await tx.counterDayClose.deleteMany({ where: { tenantId } });
       await tx.counterParkedCart.deleteMany({ where: { tenantId } });
+
+      // 683 (#3682 review NIT-3): the reads above are READ COMMITTED, so a regulated sale committed after the first check
+      // would go with its invoice. Check again after the deletes, before the commit: any such record rolls the wipe back.
+      await assertNoRegulatedRecords(tx, tenantId);
     });
 
     return { success: true, message: "All financial data cleared successfully" };

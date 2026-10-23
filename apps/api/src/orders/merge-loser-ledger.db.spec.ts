@@ -22,6 +22,21 @@ import { OrdersService } from "./orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { Test } from "@nestjs/testing";
+import { InvoicesService } from "../invoices/invoices.service";
+import { InvoicePdfService } from "../invoices/invoice-pdf.service";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { EmailService } from "../email/email.service";
+import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { MessagingService } from "../messaging/messaging.service";
+import { StorageService } from "../storage/storage.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { EstimatesService } from "../estimates/estimates.service";
+import { NumberingService } from "../import/numbering.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -36,6 +51,8 @@ describeDb(
     let prisma: PrismaService;
     let tenantCtx: TenantContextService;
     let orders: any;
+    /** #3682 NIT-1: the REAL InvoicesService (wired as legacy-rebuild-ledger.db.spec.ts does), for R10b's rebook. */
+    let realInvoices: InvoicesService;
     const run = randomUUID().slice(0, 8);
     const slug = assertTestTenant(`qa-683m-${run}`, "merge-loser-ledger.db.spec.ts");
     let tenantId = "";
@@ -160,6 +177,82 @@ describeDb(
         inlineReturns: {},
         oversellReader: { read: async () => false },
       });
+
+      const invoicesMod = await Test.createTestingModule({
+        providers: [
+          InvoicesService,
+          {
+            provide: SellingRestrictionsService,
+            useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+          },
+          EstimatesService,
+          NumberingService,
+          { provide: PrismaService, useValue: prisma },
+          {
+            provide: RouteFlowGateway,
+            useValue: {
+              emitInvoiceUpdated: jest.fn(),
+              emitOrderCreated: jest.fn(),
+              emitOrderStatusChanged: jest.fn(),
+              emitLowStock: jest.fn(),
+              emitStopCompleted: jest.fn(),
+              emitUrgentOrder: jest.fn(),
+            },
+          },
+          {
+            provide: EmailService,
+            useValue: {
+              sendInvoice: jest.fn(),
+              isEmailConfigured: jest.fn().mockResolvedValue(true),
+            },
+          },
+          { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
+          {
+            provide: SystemConfigService,
+            useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
+          },
+          RegulatedLedgerService,
+          {
+            provide: AuthorizationGuardService,
+            useValue: {
+              assertAuthorizedOrThrow: jest.fn().mockResolvedValue(undefined),
+              checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }),
+            },
+          },
+          {
+            provide: CreditNotesService,
+            useValue: {
+              autoApplyOldestCreditsInTx: jest
+                .fn()
+                .mockResolvedValue({ applied: 0, invoiceStatus: null }),
+              settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
+              releaseInvoiceCreditsInTx: jest.fn().mockResolvedValue([]),
+            },
+          },
+          {
+            provide: MessagingService,
+            useValue: { notify: jest.fn().mockResolvedValue([]), notifyEvent: jest.fn() },
+          },
+          {
+            provide: StorageService,
+            useValue: { upload: jest.fn(), presignedUrl: jest.fn(), delete: jest.fn() },
+          },
+          {
+            provide: EntitlementsService,
+            useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
+          },
+          entitlementAuthorityFromEntitlements,
+          {
+            provide: CommissionEngineService,
+            useValue: {
+              syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+              syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+              removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
+            },
+          },
+        ],
+      }).compile();
+      realInvoices = invoicesMod.get(InvoicesService);
 
       tenantId = (await raw.tenant.create({ data: { slug, name: `683 ${slug}` } })).id;
       operatorUserId = (
@@ -318,6 +411,42 @@ describeDb(
         where: { tenantId, invoiceId: deleted[0] },
       });
       expect(rows.reduce((s, r) => s + Number(r.qty), 0)).toBe(0);
+    }, 120_000);
+
+    it("R10b (#3682 NIT-1): with the REAL invoice rebuild, the tenant's net regulated qty equals the merged qty (24)", async () => {
+      const a = await createOrder(10);
+      const b = await createOrder(14);
+      const drafts = [await draftWithSale(a, 10), await draftWithSale(b, 14)];
+      // The merge's own invoice calls go to the real service: the loser's draft lookup AND the winner's draft rebuild,
+      // which must book the merged lines (if that rebook regressed, the filing would understate by the loser's 14).
+      const stubbed = orders.invoicesService;
+      orders.invoicesService = {
+        ...stubbed,
+        findOpenOrderDraft: (orderId: string, tx?: any) =>
+          realInvoices.findOpenOrderDraft(orderId, tx),
+        reconcileOrderDraftInvoice: (...args: any[]) =>
+          (realInvoices.reconcileOrderDraftInvoice as any)(...args),
+      };
+      try {
+        await inTenant(() => orders.forceConsolidateCustomer(customerId));
+      } finally {
+        orders.invoicesService = stubbed;
+      }
+      const survivors = await raw.order.findMany({ where: { tenantId }, select: { id: true } });
+      expect(survivors).toHaveLength(1);
+      const rows = await raw.regulatedSalesLedger.findMany({ where: { tenantId } });
+      const net = rows.reduce((s, r) => s + Number(r.qty), 0);
+      expect(net).toBe(24);
+      // The loser's draft nets 0; every live row sits on the winner's surviving draft.
+      const live = new Set(
+        (await raw.invoice.findMany({ where: { tenantId }, select: { id: true } })).map(
+          (i) => i.id,
+        ),
+      );
+      const loser = drafts.find((d) => !live.has(d))!;
+      expect(rows.filter((r) => r.invoiceId === loser).reduce((s, r) => s + Number(r.qty), 0)).toBe(
+        0,
+      );
     }, 120_000);
   },
 );

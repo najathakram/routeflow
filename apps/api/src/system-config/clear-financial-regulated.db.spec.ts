@@ -16,6 +16,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { EmailService } from "../email/email.service";
 import { quickKeysSettingsStubProvider } from "../testing/quick-keys-settings-stub";
+import { FINANCIAL_WIPE_BLOCKED_REGULATED_MESSAGE } from "./financial-wipe-guard";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -177,7 +178,10 @@ describeDb("clearFinancialData refuses while regulated records exist (683 R11, S
       const s = await seed(kind, kind);
       const err: any = await wipe(s.tenantId).catch((e) => e);
       expect(err?.getStatus?.()).toBe(409);
-      expect(err.getResponse()).toMatchObject({ code: "FINANCIAL_WIPE_BLOCKED_REGULATED" });
+      expect(err.getResponse()).toMatchObject({
+        code: "FINANCIAL_WIPE_BLOCKED_REGULATED",
+        message: FINANCIAL_WIPE_BLOCKED_REGULATED_MESSAGE, // #3682 NIT-4
+      });
       expect(await invoicesOf(s.tenantId)).toBe(1);
       expect(await prisma.invoiceItem.count({ where: { invoiceId: s.invoiceId } })).toBe(1);
       if (kind === "ledger") {

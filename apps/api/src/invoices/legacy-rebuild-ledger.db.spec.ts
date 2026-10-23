@@ -299,7 +299,15 @@ describeDb(
       const items = await prisma.invoiceItem.findMany({ where: { invoiceId: s.draftId } });
       expect(items.map((i) => Number(i.qty))).toEqual([50]);
       expect(items[0].id).not.toBe(s.itemId); // rotated
-      expect(netQty(await ledgerOf(s))).toBe(50);
+      const rows = await ledgerOf(s);
+      expect(netQty(rows)).toBe(50);
+      // #3682 NIT-4: the shape, not just the net: the seeded SALE 75, its REVERSAL −75, then SALE 50 on the new item.
+      expect(rows.map((r) => [r.entryType, Number(r.qty)])).toEqual([
+        ["SALE", 75],
+        ["REVERSAL", -75],
+        ["SALE", 50],
+      ]);
+      expect(rows[2].invoiceItemId).toBe(items[0].id);
     }, 60_000);
 
     it("R4b: a category change alone (same qty) also resyncs", async () => {

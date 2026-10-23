@@ -372,6 +372,23 @@ describe("SettingsController#clearFinancialData — DELETE /settings/financial-d
     }
   });
 
+  // 683 (#3682 review NIT-3): the in-tx checks are READ COMMITTED reads, so a regulated sale committed after the first one
+  // would go with its invoice. The guard runs again after the deletes, before the commit, and refuses (rolling back).
+  it("T7: a regulated record that appears after the deletes still refuses the wipe (the last in-tx check)", async () => {
+    const { prisma } = makeFakeStore("tenant-a");
+    const controller = await buildController(prisma);
+    const invoiceDeletes = (prisma as any).invoice.deleteMany as jest.Mock;
+    (prisma as any).regulatedSalesLedger.findFirst.mockImplementation(async () =>
+      invoiceDeletes.mock.calls.length > 0 ? { id: "sale-committed-meanwhile" } : null,
+    );
+    const err: any = await callClearFinancialData(controller, {
+      confirmTenantId: "tenant-a",
+    }).catch((e) => e);
+    expect(err?.getStatus?.()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "FINANCIAL_WIPE_BLOCKED_REGULATED" });
+    expect(invoiceDeletes).toHaveBeenCalled(); // the refusal came AFTER the deletes, so the tx rolls them back
+  });
+
   // T3 (R2) — the SUPER_ADMIN / no-tenant-context case must refuse outright rather than
   // inherit prisma.service.ts's `if (!tenantId) return fn(rawTx)` unscoped fall-through.
   it("T3: a null tenantId refuses with ForbiddenException and deletes nothing", async () => {
