@@ -12,6 +12,7 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import {
   fetchAccrualNetSales,
   fetchAccrualNetSalesByCustomer,
+  fetchAccrualNetSalesByCustomerRows,
   fetchBadDebtExpense,
 } from "../common/invoiced-sales";
 
@@ -138,6 +139,17 @@ describeDb("accrual readers on the tenant's own day, real Postgres (SA-906)", ()
       timeZone: CHICAGO,
     });
     expect(by.get(customerId)?.net).toBe(-13);
+  });
+
+  it("R11 parity: with the tenant's zone the total reader (P&L) equals the row reader (dashboard), both months", async () => {
+    for (const w of [OCT, NOV]) {
+      const total = await net(w, CHICAGO);
+      const rows = await fetchAccrualNetSalesByCustomerRows(prisma as any, tenantId, w, {
+        timeZone: CHICAGO,
+      });
+      const rowSum = [...rows.values()].reduce((a, r) => a + r.net, 0);
+      expect(Math.round(rowSum * 100) / 100).toBe(total);
+    }
   });
 
   it("R10: a write-off at 23:30 local on Oct 31 is OCTOBER's bad debt for Chicago, November's for UTC", async () => {
