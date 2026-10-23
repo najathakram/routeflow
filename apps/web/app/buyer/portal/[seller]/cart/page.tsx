@@ -440,7 +440,7 @@ export default function BuyerCartPage() {
   }
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="p-6 max-w-4xl xl:max-w-6xl">
       <button
         onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
         className="mb-4 flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
@@ -483,10 +483,12 @@ export default function BuyerCartPage() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      {/* W-665: 3-up only from xl (with the wider page), so the 2/3 column always holds the table's 640px; at lg
+          beside the portal sidebar it got ~470-555px and the table scrolled inside its card, hiding Remove. */}
+      <div className="grid gap-6 xl:grid-cols-3">
         {/* Items */}
-        {/* min-w-0: below lg the grid is one auto column, which grew to the items table's 640px min-width and made the whole page (and the refusal banner) scroll sideways at 390px. */}
-        <div className="min-w-0 lg:col-span-2">
+        {/* min-w-0: below xl the grid is one auto column, which grew to the items table's 640px min-width and made the whole page (and the refusal banner) scroll sideways at 390px. */}
+        <div className="min-w-0 xl:col-span-2">
           <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
             <div className="overflow-x-auto">
               <table role="table" className="w-full max-md:block md:min-w-[640px]">
