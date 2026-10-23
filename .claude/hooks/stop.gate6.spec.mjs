@@ -20,33 +20,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { scrubbedGitEnv } from "../../scripts/lib/check-git-hooks.mjs";
 
 const STOP_HOOK = fileURLToPath(new URL("./stop.mjs", import.meta.url));
 const WARN = "Design Gate (R19, dark — warn only)";
 const GATE =
   "# SA-747\n\n## Design Gate (Lite) — SA-747 · 2026-10-08 · base 1bf58be42\n- G1 Fit: x\n";
 
-// Git exports repo-scoped variables into every hook it runs. Scrub them, so that a throwaway repo is never
-// silently re-pointed at the real one (the same hazard stop.gate5.spec.mjs handles).
-const GIT_KEYS = [
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_INDEX_FILE",
-  "GIT_COMMON_DIR",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_QUARANTINE_PATH",
-  "GIT_PREFIX",
-  "GIT_NAMESPACE",
-  "GIT_CEILING_DIRECTORIES",
-];
-function cleanEnv() {
-  const env = { ...process.env };
-  for (const k of GIT_KEYS) delete env[k];
-  return env;
-}
 function git(cwd, args) {
-  const res = spawnSync("git", args, { cwd, encoding: "utf8", env: cleanEnv() });
+  const res = spawnSync("git", args, { cwd, encoding: "utf8", env: scrubbedGitEnv() });
   if (res.status !== 0)
     throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${res.stdout}${res.stderr}`);
   return res;
@@ -87,7 +69,7 @@ function makeRepo({ skill = true, branch = null, spec = null, code = "uncommitte
 }
 
 function runStopHook(cwd) {
-  return spawnSync(process.execPath, [STOP_HOOK], { cwd, encoding: "utf8", env: cleanEnv() });
+  return spawnSync(process.execPath, [STOP_HOOK], { cwd, encoding: "utf8", env: scrubbedGitEnv() });
 }
 
 const cases = [

@@ -2,19 +2,15 @@
 name: future-proof
 description: >-
   RouteFlow's mandatory DESIGN GATE (owner ruling R19, 2026-10-08: no plasters, nothing a planned
-  version will replace). Before any spec, bug-fix ruling or lead/SA design ruling is approved, and
-  before any build starts, the author fills a `## Design Gate` block: program-map fit with facts at a
-  pinned sha, an area sweep of open items in the same files, a variation map across business types
-  (wholesaler, jobber, POS counter, delivery, mixed, super admin) and scale tiers marked BUILD NOW /
-  SEAM NOW / LATER, a replace-later check, class-not-instance (one helper + inventory pin, tests red
-  on the wrong value), data and time foresight, scale, the apple-ux lens, change-friendliness with
-  expected diff sizes, a cost/stop rule and batched owner questions. Reviewers PASS/FAIL it and the
-  lead rejects a spec or PR without it. Use when designing or specifying a feature, writing an SA
-  spec or a ruling, before dev-pipeline S1-S3 or a bug-pipeline S3 fix ruling, planning a fix that
-  touches a shared model (billing, units, permissions, settings, tenancy, orders/invoices,
-  counter/POS, money), reviewing a spec or PR against its gate, or when anyone says "future proof",
-  "plaster", "band-aid", "interim", "will this be replaced", "how would other tenants use this",
-  "variation map", "seam", "area sweep", "fix the whole area", "chunk these fixes" or
+  version will replace). Before any spec, bug-fix ruling or SA design ruling is approved, and
+  before any build starts, fill a `## Design Gate` block: program-map fit at a pinned sha, area
+  sweep, variation map across business types and scale tiers (BUILD NOW / SEAM NOW / LATER),
+  replace-later check, class-not-instance, data and time foresight, scale, apple-ux lens,
+  change-friendliness, cost/stop rule, batched owner questions. Reviewers PASS/FAIL it. Use when
+  designing or specifying a feature, writing an SA spec or ruling, before dev-pipeline S1-S3 or a
+  bug-pipeline S3 fix ruling, planning a fix to a shared model (billing, units, permissions,
+  tenancy, orders/invoices, counter/POS, money), reviewing a spec or PR against its gate, or on
+  "future proof", "plaster", "band-aid", "interim", "variation map", "seam", "area sweep" or
   "/future-proof". Typo-class edits are exempt.
 ---
 
