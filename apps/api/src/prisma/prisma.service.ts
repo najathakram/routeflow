@@ -131,11 +131,16 @@ export function isTxClient(db: unknown): boolean {
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+  /** W-720: the pool this service built; PrismaPg never ends a pool its caller supplied. */
+  private readonly pgPool: Pool;
+  private pgPoolEnded = false;
+
   constructor(@Optional() private readonly tenantCtx?: TenantContextService) {
     // Row 361: the session time zone is pinned to UTC on every connection (common/pg-session.ts).
     const pool = new Pool(utcPoolConfig({ connectionString: process.env.DATABASE_URL }));
     const adapter = new PrismaPg(pool);
     super({ adapter });
+    this.pgPool = pool;
   }
 
   async onModuleInit() {
@@ -144,6 +149,18 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   async onModuleDestroy() {
     await this.$disconnect();
+  }
+
+  /**
+   * W-720: also end the pg.Pool built above, once. Without it the pool's idle clients outlived the
+   * disconnect until pg's 10 s idle timeout (every DB spec's "Jest did not exit" tail; a stopping
+   * api holding its sockets). pg throws on a second `end()`, so a repeat disconnect skips it.
+   */
+  override async $disconnect(): Promise<void> {
+    await super.$disconnect();
+    if (this.pgPoolEnded) return;
+    this.pgPoolEnded = true;
+    await this.pgPool.end();
   }
 
   /** Returns the current request's tenantId (null for SUPER_ADMIN / unset context). */

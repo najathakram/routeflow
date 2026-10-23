@@ -62,3 +62,28 @@ describe("#2183 DB lane is serial whatever the caller asks for", () => {
     ]);
   });
 });
+
+// W-720: every DB spec ends the advisory-lock pools (and PrismaService ends its own pool on
+// $disconnect), so jest exits right after "Tests:" instead of ~10 s later.
+describe("W-720 the DB lane closes the advisory-lock pools after every spec", () => {
+  const CLOSE = path.join(API_DIR, "test/db-lane-close-pools.cjs");
+
+  it("jest itself resolves the hook into the lane's setup (a misspelt key would only warn)", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const jestBin = require.resolve("jest/bin/jest", { paths: [API_DIR] });
+    const res = spawnSync(process.execPath, [jestBin, "-c", "jest.db.config.js", "--showConfig"], {
+      cwd: API_DIR,
+      encoding: "utf8",
+    });
+    expect(res.stderr).not.toMatch(/Unknown option/);
+    const resolved: string[] = JSON.parse(res.stdout).configs[0].setupFilesAfterEnv;
+    expect(resolved.map((f) => path.resolve(f))).toContain(CLOSE);
+  });
+
+  it("the hook ends the db-locks pools in an afterAll", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const text: string = require("node:fs").readFileSync(CLOSE, "utf8");
+    expect(text).toMatch(/require\("\.\.\/src\/common\/db-locks"\)/);
+    expect(text).toMatch(/afterAll\(\s*(async\s*)?\(\)\s*=>[\s\S]*_resetLockPoolForTests\(\)/);
+  });
+});
