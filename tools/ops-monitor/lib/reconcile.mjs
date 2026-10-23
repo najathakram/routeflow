@@ -1,12 +1,15 @@
 // Drift detection: compares human-typed state (events) with derived facts (PRs, branches,
 // source freshness) and returns alarms. Pure; never writes anywhere.
 import { DONE_STATUSES } from "./schema.mjs";
+import { resolveLaneId } from "./config.mjs";
 import { itemIdsFromBranch, parseEta } from "./ids.mjs";
 import { DOMAINS, areaDomain } from "./areas.mjs";
 import { isLegacyMonitorItem, isRegisterOwned } from "./sync.mjs";
 
 const SEV_ORDER = { error: 0, warn: 1, info: 2 };
 const HOUR = 3600_000;
+/** An unconfigured lane with no open work only counts while its activity is this recent. */
+export const UNKNOWN_LANE_RECENT_DAYS = 7;
 // Events older than the register's last change by more than this mean the register sync is behind.
 export const ITEMS_STALE_MS = 15 * 60_000;
 const BEHIND_STATUSES = ["idea", "planned", "spec", "building", "review"];
@@ -551,6 +554,43 @@ export function reconcile({
           Number.isFinite(silentMs) ? ago(silentMs) : "forever"
         }`,
         lane: lane.id,
+      });
+    }
+  }
+
+  // unknown-lane: work or events naming a lane that ops/config.json does not list (a retired or
+  // misspelt lane id). One alarm per lane id.
+  if (Array.isArray(config?.lanes) && config.lanes.length) {
+    const byLane = new Map(); // unknown lane id -> open item ids naming it
+    const note = (laneId, itemId) => {
+      if (!laneId || resolveLaneId(laneId, config)) return;
+      if (!byLane.has(laneId)) byLane.set(laneId, []);
+      if (itemId && !byLane.get(laneId).includes(itemId)) byLane.get(laneId).push(itemId);
+    };
+    for (const it of state.items.values()) {
+      if (DONE_STATUSES.includes(it.status)) continue;
+      note(it.lane, it.id);
+      note(it.claimedBy, it.id);
+    }
+    // Bounded: a retired lane id seen only in old events must not warn forever.
+    for (const [id, l] of state.lanes) {
+      const last = l.lastEventAt ?? null; // heartbeats advance lastEventAt too: the latest of both
+      if (last !== null && now - last <= UNKNOWN_LANE_RECENT_DAYS * 24 * HOUR) note(id, null);
+    }
+    for (const [laneId, ids] of byLane) {
+      const named = ids.slice(0, 3).join(", ");
+      add({
+        kind: "unknown-lane",
+        severity: "warn",
+        message: ids.length
+          ? `Lane ${laneId} is not in ops/config.json but ${ids.length} open item(s) name it (${named}${
+              ids.length > 3 ? ", ..." : ""
+            })`
+          : `Lane ${laneId} has sent heartbeats/events but is not in ops/config.json`,
+        suggest: ids.length
+          ? `rf item edit ${ids[0]} --lane <known lane>, or add ${laneId} to ops/config.json lanes`
+          : `add ${laneId} to ops/config.json lanes`,
+        lane: laneId,
       });
     }
   }

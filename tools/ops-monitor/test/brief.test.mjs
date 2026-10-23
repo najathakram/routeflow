@@ -8,7 +8,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { fold } from "../lib/fold.mjs";
-import { DEFAULT_CONFIG, loadConfig } from "../lib/config.mjs";
+import { loadConfig } from "../lib/config.mjs";
+import { LEGACY_CONFIG as DEFAULT_CONFIG } from "./legacy-config.mjs";
 import {
   ageWords,
   etaWords,
@@ -481,6 +482,21 @@ test("lanes-local: Windows paths compare case-insensitively with either slash", 
   }
 });
 
+test("lanes-local: macOS paths compare case-insensitively (APFS default)", () => {
+  const home = tmp("rf-lanes-mac-");
+  try {
+    setLane(home, "/Volumes/X/Code/RouteFlow", "mm-landing", "darwin");
+    assert.equal(
+      laneForCwd("/volumes/x/code/routeflow/apps", {}, { home, platform: "darwin" }),
+      "mm-landing",
+    );
+    assert.equal(normalizeCwd("/A/B/", "darwin"), "/a/b");
+    assert.equal(normalizeCwd("/A/B/", "linux"), "/A/B");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("lanes-local: a damaged lanes.json reads as empty", () => {
   const home = tmp("rf-lanes-bad-");
   try {
@@ -496,6 +512,8 @@ test("lanes-local: a damaged lanes.json reads as empty", () => {
 function cliEnv(root) {
   const specs = join(root, "specs");
   mkdirSync(join(specs, "events", "testbox"), { recursive: true });
+  mkdirSync(join(specs, "ops"), { recursive: true });
+  writeFileSync(join(specs, "ops", "config.json"), JSON.stringify(DEFAULT_CONFIG)); // legacy lanes
   const env = {
     ...process.env,
     RF_OPS_HOME: join(root, "home"),

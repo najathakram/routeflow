@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { reconcile, linkItemFor } from "../lib/reconcile.mjs";
 import * as REC from "../lib/reconcile.mjs";
 import { fold } from "../lib/fold.mjs";
-import { DEFAULT_CONFIG } from "../lib/config.mjs";
+import { LEGACY_CONFIG as DEFAULT_CONFIG } from "./legacy-config.mjs";
 
 const NOW = Date.parse("2026-10-19T12:00:00Z");
 const MIN = 60000;
@@ -859,4 +859,98 @@ test("untracked-merged-pr skips train, docs, dependabot and bookkeeping branches
     .filter((a) => a.kind === "untracked-merged-pr")
     .map((a) => a.pr);
   assert.deepEqual(got, [7]);
+});
+
+test("unknown-lane: one warn per lane id not in config, for open items and silent-session lanes", () => {
+  const config = { ...DEFAULT_CONFIG, lanes: [{ id: "lead" }, { id: "macmini" }] };
+  const state = mkState(
+    [
+      item("5", { lane: "pc-lane" }),
+      item("6", { claimedBy: "pc-lane" }),
+      item("7", { lane: "ghost", claimedBy: "lead" }),
+      item("8", { lane: "pc-lane", status: "verified" }),
+      item("9", { lane: "macmini" }),
+      item("10", { lane: "lead", claimedBy: "macmini" }),
+    ],
+    {
+      lanes: new Map([
+        [
+          "old-box",
+          { id: "old-box", lastEventAt: NOW - HOUR, lastEventKind: "heartbeat", claims: [] },
+        ],
+        ["lead", { id: "lead", lastEventAt: NOW - HOUR, lastEventKind: "heartbeat", claims: [] }],
+      ]),
+    },
+  );
+  const alarms = run({ state, config }).filter((a) => a.kind === "unknown-lane");
+  assert.deepEqual(alarms.map((a) => a.id).sort(), [
+    "unknown-lane:ghost",
+    "unknown-lane:old-box",
+    "unknown-lane:pc-lane",
+  ]);
+  const pc = find(alarms, "unknown-lane:pc-lane");
+  assert.equal(pc.severity, "warn");
+  assert.equal(pc.lane, "pc-lane");
+  assert.match(pc.message, /pc-lane/);
+  assert.match(pc.message, /2 open item/);
+  assert.match(pc.message, /5/);
+  assert.doesNotMatch(pc.message, /\b8\b/); // done item ignored
+  assert.match(pc.suggest, /rf item edit 5 --lane <known lane>/);
+  assert.match(pc.suggest, /ops\/config\.json/);
+  assert.match(find(alarms, "unknown-lane:old-box").message, /heartbeats\/events/);
+});
+
+test("unknown-lane: message names at most three item ids", () => {
+  const config = { ...DEFAULT_CONFIG, lanes: [{ id: "lead" }] };
+  const state = mkState(["1", "2", "3", "4", "5"].map((i) => item(i, { lane: "zz" })));
+  const a = find(run({ state, config }), "unknown-lane:zz");
+  assert.match(a.message, /5 open item/);
+  assert.match(a.message, /1, 2, 3/);
+  assert.doesNotMatch(a.message, /\b4\b/);
+});
+
+test("unknown-lane: items on known lanes and done items raise nothing", () => {
+  const config = { ...DEFAULT_CONFIG, lanes: [{ id: "lead" }, { id: "macmini" }] };
+  const state = mkState([
+    item("1", { lane: "lead" }),
+    item("2", { claimedBy: "macmini" }),
+    item("3", { lane: "gone", status: "verified" }),
+    item("4"),
+  ]);
+  const alarms = run({ state, config }).filter((a) => a.kind === "unknown-lane");
+  assert.deepEqual(alarms, []);
+});
+
+test("unknown-lane: the lanes arm is bounded to 7 days; open items are not", () => {
+  const config = { ...DEFAULT_CONFIG, lanes: [{ id: "lead" }] };
+  const L = (id, at, kind = "note") => [
+    id,
+    { id, lastEventAt: at, lastEventKind: kind, claims: [] },
+  ];
+  const state = mkState([item("5", { claimedBy: "ancient" })], {
+    lanes: new Map([
+      L("old-only", NOW - 8 * 24 * HOUR),
+      L("fresh", NOW - 24 * HOUR, "heartbeat"),
+      L("ancient", NOW - 90 * 24 * HOUR),
+    ]),
+  });
+  const ids = run({ state, config })
+    .filter((a) => a.kind === "unknown-lane")
+    .map((a) => a.id)
+    .sort();
+  assert.deepEqual(ids, ["unknown-lane:ancient", "unknown-lane:fresh"]);
+});
+
+test("unknown-lane: aliased lane ids resolve to their target and raise nothing", async () => {
+  const { DEFAULT_CONFIG: LIVE } = await import("../lib/config.mjs");
+  const state = mkState([
+    item("1", { lane: "pc-lane" }),
+    item("2", { claimedBy: "coordinator" }),
+    item("3", { lane: "ops-monitor" }),
+    item("4", { lane: "ghost" }),
+  ]);
+  const ids = run({ state, config: LIVE })
+    .filter((a) => a.kind === "unknown-lane")
+    .map((a) => a.id);
+  assert.deepEqual(ids, ["unknown-lane:ghost"]);
 });

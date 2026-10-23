@@ -43,9 +43,21 @@ export const DEFAULT_CONFIG = {
   // the sanitized hostname.
   machines: {},
   lanes: [
-    { id: "lead", title: "Routeflow Lead", machine: "pc", areas: [] },
-    { id: "sa", title: "RouteFlow SA rulings queue", machine: "pc", areas: [] },
-    { id: "pc-lane", title: "RouteFlow PC lane planning", machine: "pc", areas: ["*"] },
+    { id: "lead", title: "Routeflow Lead", machine: "windows", areas: [] },
+    { id: "sa", title: "RouteFlow Senior Architect", machine: "windows", areas: [] },
+    {
+      id: "win-heavy",
+      title: "RouteFlow Windows heavy lane",
+      machine: "windows",
+      areas: ["domain:finance"],
+    },
+    {
+      id: "win-billing",
+      title: "RouteFlow Windows billing lane",
+      machine: "windows",
+      areas: ["domain:billing"],
+    },
+    { id: "win-salvage", title: "RouteFlow Windows salvage lane", machine: "windows", areas: [] },
     {
       id: "macmini",
       title: "RouteFlow Mac mini lane",
@@ -53,20 +65,33 @@ export const DEFAULT_CONFIG = {
       areas: ["domain:catalog"],
     },
     {
+      id: "mm-landing",
+      title: "RouteFlow Mac mini landing lane",
+      machine: "macmini",
+      areas: ["domain:tooling"],
+    },
+    {
+      id: "mm-counter",
+      title: "RouteFlow Counter lane",
+      machine: "windows",
+      areas: ["domain:counter"],
+    },
+    {
       id: "macbook",
       title: "RouteFlow MacBook lane",
       machine: "macbook",
-      areas: ["domain:billing", "domain:finance"],
+      areas: ["domain:restrictions"],
     },
-    { id: "ops-monitor", title: "RouteFlow Ops Monitor", machine: "pc", areas: ["domain:tooling"] },
-    { id: "coordinator", title: "RouteFlow Coordinator", machine: "pc", areas: [] },
     { id: "owner", title: "Owner", machine: null, areas: [] },
   ],
   // Lower-cased free text (register "Lane" column, --lane values) → lane id. Longest match wins.
+  // Every target must be a lane id above (config.test.mjs pins it).
   laneAliases: {
-    "pc lane": "pc-lane",
-    "pc-lane": "pc-lane",
-    "pc-l": "pc-lane",
+    "pc lane": "lead",
+    "pc-lane": "lead",
+    "pc-l": "lead",
+    pc: "lead",
+    coordinator: "lead",
     "mac mini": "macmini",
     macmini: "macmini",
     mm: "macmini",
@@ -76,8 +101,20 @@ export const DEFAULT_CONFIG = {
     sa: "sa",
     architect: "sa",
     owner: "owner",
-    "ops monitor": "ops-monitor",
-    "ops-monitor": "ops-monitor",
+    "ops monitor": "mm-landing",
+    "ops-monitor": "mm-landing",
+    landing: "mm-landing",
+    "landing lane": "mm-landing",
+    "mac mini landing": "mm-landing",
+    "mm-landing": "mm-landing",
+    r7b: "mm-counter",
+    counter: "mm-counter",
+    "counter lane": "mm-counter",
+    "mm-counter": "mm-counter",
+    windows: "win-heavy",
+    "windows heavy": "win-heavy",
+    win: "win-heavy",
+    "win-heavy": "win-heavy",
   },
   thresholds: { laneSilentMin: 30, sourceStaleFactor: 3 },
 };
@@ -89,12 +126,18 @@ export function loadConfig(dir = specsDir()) {
   try {
     // Live-client names never live in the specs repo (lead ruling 10-19): see lib/mask.mjs.
     const { clientNames: _dropped, ...raw } = JSON.parse(readFileSync(p, "utf8"));
-    return {
+    const merged = {
       ...structuredClone(DEFAULT_CONFIG),
       ...raw,
       thresholds: { ...DEFAULT_CONFIG.thresholds, ...(raw.thresholds ?? {}) },
       laneAliases: { ...DEFAULT_CONFIG.laneAliases, ...(raw.laneAliases ?? {}) },
     };
+    // The file's lanes replace the defaults, so a merged alias may point at a lane it omits.
+    const ids = new Set((merged.lanes ?? []).map((l) => l.id));
+    merged.laneAliases = Object.fromEntries(
+      Object.entries(merged.laneAliases).filter(([, target]) => ids.has(target)),
+    );
+    return merged;
   } catch {
     return structuredClone(DEFAULT_CONFIG);
   }
@@ -117,6 +160,18 @@ export function machineId(config = DEFAULT_CONFIG, env = process.env, host = hos
   }
   if (config.machines?.[host]) return sanitize(config.machines[host]);
   return sanitize(host);
+}
+
+/**
+ * The configured lane an id stands for: a configured id is itself, else the lane its alias
+ * names when that lane is configured, else null (unknown). One resolver for alarms and snapshot.
+ */
+export function resolveLaneId(id, config = DEFAULT_CONFIG) {
+  if (!id) return null;
+  const lanes = config?.lanes ?? [];
+  if (lanes.some((l) => l.id === id)) return id;
+  const target = config?.laneAliases?.[id] ?? config?.laneAliases?.[String(id).toLowerCase()];
+  return target && lanes.some((l) => l.id === target) ? target : null;
 }
 
 /**

@@ -3,18 +3,25 @@
 // and every hook then resolves the lane from the working directory when neither --lane nor RF_LANE
 // is given. Machine-local file, never committed. Sync IO, no network, no git (hooks call this).
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, posix, win32 } from "node:path";
 import { normalizeLane, opsHome } from "./config.mjs";
 
 export const LANES_FILE = "lanes.json";
 
 export const lanesFile = (home) => join(home, LANES_FILE);
 
-/** Absolute, forward-slash, no trailing slash; lower-cased on Windows (case-insensitive paths). */
+/** Path functions of the platform's own flavour, never the host's (a win32 path on a Mac). */
+const pathFor = (platform) => (platform === "win32" ? win32 : posix);
+
+/** Windows and macOS (APFS default) paths are case-insensitive. A case-sensitive APFS volume would
+ * map two checkouts differing only by case to one lane: rare, accepted. */
+const CASE_INSENSITIVE = new Set(["win32", "darwin"]);
+
+/** Absolute, forward-slash, no trailing slash; lower-cased where paths are case-insensitive. */
 export function normalizeCwd(p, platform = process.platform) {
-  let s = resolve(String(p)).replace(/\\/g, "/");
+  let s = pathFor(platform).resolve(String(p)).replace(/\\/g, "/");
   while (s.length > 1 && s.endsWith("/") && !/^[A-Za-z]:\/$/.test(s)) s = s.slice(0, -1);
-  return platform === "win32" ? s.toLowerCase() : s;
+  return CASE_INSENSITIVE.has(platform) ? s.toLowerCase() : s;
 }
 
 /** The recorded map; a missing or damaged file is an empty map. */
@@ -44,11 +51,12 @@ export function setLane(home, cwd, lane, platform = process.platform) {
  * Nearest directory at or above `cwd` holding a `.git` (a directory, or the file a linked
  * worktree has). fs only, no git call. Null when there is none up the tree.
  */
-export function checkoutRoot(cwd) {
-  let dir = resolve(String(cwd));
+export function checkoutRoot(cwd, platform = process.platform) {
+  const p = pathFor(platform);
+  let dir = p.resolve(String(cwd));
   for (;;) {
-    if (existsSync(join(dir, ".git"))) return dir;
-    const up = dirname(dir);
+    if (existsSync(p.join(dir, ".git"))) return dir;
+    const up = p.dirname(dir);
     if (up === dir) return null;
     dir = up;
   }
@@ -72,7 +80,7 @@ export function laneForCwd(cwd, env = process.env, { config, home, platform } = 
   if (env.RF_LANE) return raw(env.RF_LANE);
   if (!cwd) return null;
   const map = readLanes(home ?? opsHome(env));
-  const top = checkoutRoot(cwd);
+  const top = checkoutRoot(cwd, platform);
   if (top) {
     const key = normalizeCwd(top, platform);
     for (const [dir, lane] of Object.entries(map)) {
