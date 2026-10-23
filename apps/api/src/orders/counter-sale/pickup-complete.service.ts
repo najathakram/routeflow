@@ -46,6 +46,7 @@ import {
 import { tenantTodayDay } from "../../common/calendar-date";
 import { tenantTimeZone } from "../../common/tenant-time-zone";
 import { creditAfterTender } from "../credit-limit-guard";
+import { completeAtCounterRunRefusal, type RunOrder } from "./complete-at-counter-run";
 import {
   completionAlreadyRecorded,
   finishCompletionEmail,
@@ -136,6 +137,11 @@ export class PickupCompleteService {
         code: API_ERROR_CODES.PICKUP_NOT_READY,
         message: "This order is not ready for pickup yet, or it was cancelled",
       });
+    }
+    // I-120 R8/R9 (owner 7a): a shipped order, an order on a driver's run, a stop the driver has started: judged now.
+    if (!alreadyPickedUp) {
+      const refused = completeAtCounterRunRefusal(order as RunOrder, dto.removeFromRun === true);
+      if (refused) throw refused;
     }
     const walkIn = !!order.customer?.isWalkIn;
     // The request's real payment: never overwritten. Absent + nothing owed (same invoice set and capacity
@@ -722,6 +728,15 @@ export class PickupCompleteService {
         counterSale: true,
         registerKey: true,
         total: true,
+        // I-120 R8/R9: the run (through its stop, or a bare routeRunId), the stop's state, the carrier shipment
+        shippedAt: true,
+        routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
+        routeRunStop: {
+          select: {
+            status: true,
+            routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
+          },
+        },
       },
     });
   }

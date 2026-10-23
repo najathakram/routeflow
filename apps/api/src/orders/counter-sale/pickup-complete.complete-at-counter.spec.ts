@@ -290,9 +290,63 @@ describe("PickupCompleteService.complete: Complete at counter (I-120, SA-861)", 
     },
   );
 
-  // SA-861 R8/R9: waiting on OWNER-QUEUE 7a (owner Q1/Q2); built once the owner answers or the SA rules they can ship without.
-  it.todo(
-    "R8 an order on an active run (or OUT_FOR_DELIVERY on a route) -> per Q1; a stop IN_PROGRESS is refused in every answer",
+  // SA-861 R8/R9, owner 7a 2026-10-23 (D-2026-10-23-counter-complete-and-real-money): Q1 = A, Q2 = A. Each refusal is
+  // judged from the row and the request BEFORE any write.
+  it("R9 (Q2 = A) a SHIP order already shipped with the carrier is refused: 'This order has shipped with the carrier.'", async () => {
+    order = orderRow("CONFIRMED", { fulfillPath: "SHIP", shippedAt: new Date(500) });
+    const e = await errorOf(run());
+    expect(e.getStatus()).toBe(409);
+    expect(e.getResponse()).toMatchObject({
+      code: "COUNTER_COMPLETE_SHIPPED",
+      message: "This order has shipped with the carrier.",
+    });
+    expect(calls).toEqual([]);
+  });
+
+  const onRun = (runStatus: string, stopStatus: string) => ({
+    fulfillPath: "ROUTE",
+    routeRunId: "run-1",
+    routeRunStopId: "stop-1",
+    routeRun: { status: runStatus, driver: { contactName: "Sam" } },
+    routeRunStop: { status: stopStatus },
+  });
+
+  it.each(["SCHEDULED", "IN_PROGRESS"])(
+    "R8 (Q1 = A) on a %s run, the stop not started, with NO confirm: 409 naming the driver, nothing written",
+    async (runStatus) => {
+      order = orderRow("CONFIRMED", onRun(runStatus, "PENDING"));
+      const e = await errorOf(run());
+      expect(e.getStatus()).toBe(409);
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_ON_RUN", driverName: "Sam" });
+      expect(calls).toEqual([]);
+    },
   );
-  it.todo("R9 a shipped SHIP order (shippedAt set) -> per Q2");
+
+  it.each(["IN_PROGRESS", "COMPLETED", "SKIPPED"])(
+    "R8 (Q1 = A) the driver has started that stop (%s): refused even WITH the confirm, nothing written",
+    async (stopStatus) => {
+      order = orderRow("CONFIRMED", onRun("IN_PROGRESS", stopStatus));
+      const e = await errorOf(run({ ...(cash as object), removeFromRun: true }));
+      expect(e.getStatus()).toBe(409);
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_STOP_STARTED" });
+      expect(calls).toEqual([]);
+    },
+  );
+
+  it("R8 an OUT_FOR_DELIVERY route order with no run link is treated as on its way: 409 naming no driver", async () => {
+    order = orderRow("OUT_FOR_DELIVERY", { fulfillPath: "ROUTE" });
+    const e = await errorOf(run());
+    expect(e.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_ON_RUN" });
+    expect(calls).toEqual([]);
+  });
+
+  it("R12 a finished run (COMPLETED) is not active: no confirm needed", async () => {
+    order = orderRow("CONFIRMED", { ...onRun("COMPLETED", "COMPLETED"), routeRunId: "run-done" });
+    await run();
+    expect(calls[0]).toBe("updateFulfillPath:PICKUP");
+  });
+
+  it.todo(
+    "R8 (Q1 = A) WITH the confirm: off the run in the same step, then completed (mechanics: SA ruling pending)",
+  );
 });

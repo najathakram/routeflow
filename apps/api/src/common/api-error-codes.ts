@@ -509,6 +509,15 @@ export const API_ERROR_CODES = {
    * an ACTIVE delivery run (SCHEDULED / IN_PROGRESS); remove it from the run first. Nothing was written.
    */
   ORDER_ON_ACTIVE_RUN: "ORDER_ON_ACTIVE_RUN",
+  /** I-120 R9 (owner 7a Q2 = A): POST /orders/:id/pickup-complete, 409: the order has shipped with the carrier. Nothing written. */
+  COUNTER_COMPLETE_SHIPPED: "COUNTER_COMPLETE_SHIPPED",
+  /**
+   * I-120 R8 (owner 7a Q1 = A): POST /orders/:id/pickup-complete, 409: the order is on a driver's run; the body carries
+   * `driverName` for the confirm ("This order is on Sam's run. Completing it here takes it off the run."). Nothing written.
+   */
+  COUNTER_COMPLETE_ON_RUN: "COUNTER_COMPLETE_ON_RUN",
+  /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has already started that stop. Nothing written. */
+  COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
   /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: the hand-over committed, no payment
    * was sent, and the invoices final after DELIVERED (a remainder or rebuild) leave money owing. Retry with a payment.
