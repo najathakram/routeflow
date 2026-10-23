@@ -46,6 +46,8 @@ export const AUDIT_ACTIONS = {
   PAYMENT_REF_DUPLICATE_SUSPECT: "payment.ref-duplicate-suspect",
   /** Row 587 (SA-833): PARTIALLY_DELIVERED -> DELIVERED completed an office-evidenced line; meta {orderId, lineId, from, to, summary}. */
   ORDER_LINE_OFFICE_COMPLETED: "order.line-office-completed",
+  /** SA-737: a STANDARD return's cash/card/check refund recorded; meta {returnId, returnNumber, orderId, customerId, invoiceIds, amount, tender, actor, impersonatedBy}. */
+  STANDARD_REFUND_RECORDED: "return.refund-recorded",
 } as const;
 
 export type AuditActionName = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
