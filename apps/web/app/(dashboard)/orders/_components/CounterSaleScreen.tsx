@@ -644,15 +644,15 @@ export function CounterSaleScreen() {
   const focusPaymentControl = (el: HTMLElement | null | undefined) => el?.focus();
   // W-709 (538 F24): a short cash tender takes the cashier to the fix. Bumped when complete() refuses with TENDER_SHORT; the
   // effect below runs after that render (and after a pointer Complete's own refocus of the scan box), scrolls Amount
-  // tendered into view, centred so Exact beside it shows too at phone width, and focuses it.
+  // tendered into view (nearest edge; Exact sits beside it) and focuses it through focusPaymentControl.
   // A counter, not the error text: a second Complete with the same short tender repeats the same copy and must move focus too.
   const [tenderFix, setTenderFix] = React.useState(0);
   React.useEffect(() => {
     if (tenderFix === 0) return;
     const el = tenderRef.current;
     if (!el) return;
-    el.scrollIntoView?.({ block: "center" });
-    el.focus({ preventScroll: true });
+    el.scrollIntoView?.({ block: "nearest" });
+    focusPaymentControl(el); // the ONE owner of payment focus (counter-focus.structure.test.ts)
   }, [tenderFix]);
   const focusPayment = () =>
     focusPaymentControl(
