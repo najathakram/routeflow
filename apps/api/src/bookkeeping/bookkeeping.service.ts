@@ -13,7 +13,7 @@ import {
   PaymentStatus,
   CreditNoteStatus,
 } from "@prisma/client";
-import { capacityRefusal, roundMoney } from "@routeflow/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import {
   ACCRUAL_REVENUE_STATUSES,
   estimateCogs,
@@ -226,11 +226,11 @@ export class BookkeepingService implements OnModuleInit {
       await lockInvoicesForPayment(tx, [id]);
       const inv = await tx.invoice.findUnique({
         where: { id },
-        // Row 2299 (SA-858 c): every non-VOID row, so the guard is on the CAPACITY basis like recordPayment; the
-        // status write below still sums CONFIRMED (PAID) money only (sumConfirmed, F03/R1). A VOID (bounced) row is
-        // out of both (P5-12).
-        // scan-ok: draft-payment-not-void — see comment above.
-        include: { payments: { where: { status: { not: "VOID" } } } },
+        // F03/R1: this sum ADVANCES invoice state (the status write below is
+        // derived from it), so it counts CONFIRMED (PAID) money only — a DRAFT
+        // payment would mark the invoice PAID off money nobody has, and a VOID
+        // (bounced) one would wrongly reject a legitimate re-payment (P5-12).
+        include: { payments: { where: CONFIRMED_PAYMENT } },
       });
       if (!inv) throw new NotFoundException("Transaction not found");
       // B312: this ledger writer had no status guard at all — unlike invoices.service's
@@ -247,20 +247,20 @@ export class BookkeepingService implements OnModuleInit {
       // still land off-cent in float (0.70 + 0.10 === 0.7999999999999999), which
       // left a fully-paid invoice stuck at PARTIAL and refused every further
       // payment as an overpayment (matches payBillFully's own pattern below).
-      const alreadyPaid = roundMoney(sumConfirmed(inv.payments));
+      const alreadyPaid = roundMoney(inv.payments.reduce((sum, p) => sum + Number(p.amount), 0));
       const totalOwed = Number(inv.total);
+      const remaining = roundMoney(totalOwed - alreadyPaid);
+      if (remaining <= 0) {
+        throw new BadRequestException("Transaction is already fully paid");
+      }
       // B801/SA-121: round every monetary write — a sub-cent dto.amount (e.g.
       // 10.005) would otherwise land off-cent in the stored payment.
       const paymentAmount = roundMoney(dto.amount);
-      // Row 2299: recordPayment's capacity refusal and copy (a DRAFT reserving the rest now refuses).
-      const existing = inv.payments;
-      const over = capacityRefusal({
-        total: totalOwed,
-        existing,
-        amount: paymentAmount,
-        status: "PAID",
-      });
-      if (over) throw new BadRequestException(over.message);
+      if (paymentAmount > remaining + 0.001) {
+        throw new BadRequestException(
+          `Payment of ${paymentAmount} exceeds remaining balance of ${remaining.toFixed(2)}`,
+        );
+      }
 
       // Counter invoice: the instant is the DATABASE clock read under the lock, and a till-CASH row dated before a standing
       // close is refused DAY_CLOSED_FOR_PAYMENT_DATE. Any other invoice keeps the app clock.
