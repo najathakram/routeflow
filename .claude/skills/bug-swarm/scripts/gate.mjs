@@ -11,6 +11,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
 
 const PRETTIER_EXT = new Set([
   ".ts",
@@ -72,12 +73,29 @@ export const CENSUS_LANES = [
       "src/common/script-money-writers.spec.ts",
       "src/common/no-runtime-ddl.spec.ts",
       "src/common/schema-folder.spec.ts",
+      // Scanners of the trigger dirs (prisma/*.ts, prisma/schema, prisma/migrations, scripts).
+      "src/common/tsconfig-prisma-scope.spec.ts",
+      "src/common/tsconfig-spec-prisma-scope.spec.ts",
+      "src/common/numeric-not-nan-check.spec.ts",
+      "src/common/t6-tenantid-guard.spec.ts",
+      "src/common/no-routeflow-ui-import.spec.ts",
+      "src/common/no-ui-package-import.spec.ts",
+      "src/common/units-p0a-schema.spec.ts",
+      "src/common/units-prices-v2-schema.spec.ts",
+      "src/common/wipe-order-fk-pin.spec.ts",
+      "src/common/fulfil-path-pickup-migration-shape.spec.ts",
+      "src/common/order-source-recorded-migration-shape.spec.ts",
     ],
   },
   {
     name: "repo-truth",
     config: "jest.repo-truth.config.js",
-    specs: ["src/common/size-ratchet.spec.ts", "src/common/no-single-schema-path.spec.ts"],
+    specs: [
+      "src/common/size-ratchet.spec.ts",
+      "src/common/no-single-schema-path.spec.ts",
+      "src/common/owner-report-db-url.spec.ts",
+      "src/common/no-dead-deps.spec.ts",
+    ],
   },
 ];
 export const CENSUS_SPECS = CENSUS_LANES.flatMap((l) => l.specs);
@@ -129,12 +147,12 @@ const [base,ids]=process.argv.slice(1);
 const allowed=new Set(ids.split(",").filter(Boolean));
 const subjects=execFileSync("git",["log","--format=%s",base+"..HEAD"],{encoding:"utf8"}).split("\\n").filter(Boolean);
 const bad=[];
-for(const s of subjects)for(const m of s.matchAll(/\\((B\\d+)\\)/g))if(!allowed.has(m[1]))bad.push(m[1]+" in: "+s);
+for(const s of subjects)for(const m of s.matchAll(/\\b(B\\d+)\\b/g))if(!allowed.has(m[1]))bad.push(m[1]+" in: "+s);
 if(bad.length){console.error("commit labels outside the given ids ("+[...allowed].join(", ")+"):\\n"+bad.join("\\n"));process.exit(1);}`;
 
 /** Files ADDED in base..HEAD. */
 export function addedSince(git, base) {
-  const out = git(["diff", "--name-only", "-z", "--diff-filter=A", `${base}..HEAD`]);
+  const out = git(["diff", "--name-only", "-z", "--diff-filter=ACR", `${base}..HEAD`]);
   return out.split("\0").filter(Boolean);
 }
 
@@ -331,7 +349,12 @@ function ownOutputs(root, jsonOut) {
   return rel.startsWith("..") || path.isAbsolute(rel) ? [] : [rel.split(path.sep).join("/")];
 }
 
-const git = (args) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+const git = (args) =>
+  execFileSync("git", args, {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    env: scrubbedGitEnv(),
+  });
 
 /**
  * Poll a gate json in Node (agent harnesses block a foreground `sleep`). Prints the json; exit 0 when

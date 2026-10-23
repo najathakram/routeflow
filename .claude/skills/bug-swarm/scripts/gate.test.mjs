@@ -1,7 +1,7 @@
 // node --test gate.test.mjs — contract tests for gate.mjs (runs 2026-10-23-bug-swarm-1/-2).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
@@ -510,7 +510,7 @@ test("census steps: an ADDED file under apps/api/prisma, apps/api/scripts or scr
     ...opts,
   });
   assert.equal(step(other, "census:repo-truth"), undefined);
-  assert.equal(CENSUS_SPECS.length, 10);
+  assert.equal(CENSUS_SPECS.length, 23);
   const rt = CENSUS_LANES.find((l) => l.name === "repo-truth");
   assert.equal(rt.config, "jest.repo-truth.config.js");
   assert.ok(rt.specs.some((s) => s.includes("no-single-schema-path")));
@@ -554,7 +554,7 @@ test("addedSince lists only added files of the merge-base range", () => {
   const git = (a) => (calls.push(a), "a.ts\0b.ts\0");
   assert.deepEqual(addedSince(git, "abc"), ["a.ts", "b.ts"]);
   assert.deepEqual(calls[0].slice(0, 3), ["diff", "--name-only", "-z"]);
-  assert.ok(calls[0].includes("--diff-filter=A") && calls[0].includes("abc..HEAD"));
+  assert.ok(calls[0].includes("--diff-filter=ACR") && calls[0].includes("abc..HEAD"));
 });
 
 test("id-labels step: a (B###) commit label outside the given ids fails; row labels pass", () => {
@@ -593,4 +593,69 @@ test("id-labels step: a (B###) commit label outside the given ids fails; row lab
   const bad = run();
   assert.equal(bad.status, 1);
   assert.match(bad.stdout + bad.stderr, /B668/);
+});
+
+test("addedSince sees a file renamed INTO apps/api/scripts (R, not A) and census fires", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "gate-rename-"));
+  const env = scrubbedGitEnv();
+  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8", env });
+  sh("init", "-q");
+  sh("config", "user.email", "t@t");
+  sh("config", "user.name", "t");
+  mkdirSync(path.join(dir, "tmp"), { recursive: true });
+  writeFileSync(path.join(dir, "tmp", "a.mjs"), "export const a = 1;\n".repeat(20));
+  sh("add", ".");
+  sh("commit", "-qm", "base");
+  const base = sh("rev-parse", "HEAD").stdout.trim();
+  mkdirSync(path.join(dir, "apps", "api", "scripts"), { recursive: true });
+  sh("mv", "tmp/a.mjs", "apps/api/scripts/a.mjs");
+  sh("commit", "-qm", "move");
+  const git = (args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", env });
+  const added = addedSince(git, base);
+  assert.deepEqual(
+    added.map((f) => f.split(path.sep).join("/")),
+    ["apps/api/scripts/a.mjs"],
+  );
+  const steps = planGate({ changedFiles: added, addedFiles: added, ...opts });
+  assert.ok(step(steps, "census:unit"));
+});
+
+test("census lists the extra scanners of the trigger dirs, each in the lane jest includes it in", () => {
+  const unit = CENSUS_LANES.find((l) => l.name === "unit").specs.map((s) => path.basename(s));
+  const rt = CENSUS_LANES.find((l) => l.name === "repo-truth").specs.map((s) => path.basename(s));
+  for (const n of [
+    "tsconfig-prisma-scope",
+    "tsconfig-spec-prisma-scope",
+    "numeric-not-nan-check",
+    "t6-tenantid-guard",
+    "no-routeflow-ui-import",
+    "no-ui-package-import",
+  ])
+    assert.ok(unit.includes(`${n}.spec.ts`), n);
+  for (const n of ["owner-report-db-url", "no-dead-deps"])
+    assert.ok(rt.includes(`${n}.spec.ts`), n);
+});
+
+test("id-labels also catches a bare B### word in a subject, and --ids may name a bug", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "gate-idl2-"));
+  const env = scrubbedGitEnv();
+  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8", env });
+  sh("init", "-q");
+  sh("config", "user.email", "t@t");
+  sh("config", "user.name", "t");
+  writeFileSync(path.join(dir, "a.txt"), "1");
+  sh("add", ".");
+  sh("commit", "-qm", "base");
+  const base = sh("rev-parse", "HEAD").stdout.trim();
+  writeFileSync(path.join(dir, "a.txt"), "2");
+  sh("commit", "-qam", "fix(x): resolves B668 properly (row 599)");
+  const mk = (ids) => {
+    const st = step(
+      planGate({ changedFiles: [], ...opts, base, root: dir, ids, idSpace: "row" }),
+      "id-labels",
+    );
+    return spawnSync(st.cmd[0], st.cmd.slice(1), { cwd: dir, encoding: "utf8", env });
+  };
+  assert.equal(mk(["599"]).status, 1);
+  assert.equal(mk(["599", "B668"]).status, 0);
 });

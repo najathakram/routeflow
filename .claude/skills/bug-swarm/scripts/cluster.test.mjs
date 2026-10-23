@@ -400,3 +400,54 @@ test("run 4 shape: a root docker-compose change and a tools/ change are never me
   assert.equal(r.clusters.length, 1);
   assert.equal(r.parked.length, 1);
 });
+
+test("an out-of-range numeric entity never crashes titlesMatch; it is left as text; ‹ « fold like › »", () => {
+  assert.doesNotThrow(() => titlesMatch("x &#x110000; y", "x &#99999999; y"));
+  assert.equal(titlesMatch("x &#x110000; y", "x &#x110000; y"), true);
+  assert.equal(titlesMatch("x &#99999999; y", "x y"), false);
+  assert.equal(titlesMatch("x &#xD800;", "x &#xD800;"), true);
+  assert.ok(titlesMatch("A ‹ B « C", "A &gt; B &gt; C"));
+});
+
+test("a malformed title in a manifest never crashes clusterBugs", () => {
+  const resolveId = () => ({ ok: true, title: "ok title" });
+  const r = clusterBugs(
+    { bugs: [{ ...bug("1", ["a.ts"]), resolvedTitle: "bad &#x110000; title" }] },
+    { resolveId },
+  );
+  assert.equal(r.unresolved.length, 1);
+});
+
+test("own-checkout resolver failure retries once with --repo's tool and reports both snippets", () => {
+  const own = path.resolve("/own");
+  const stale = path.resolve("/stale");
+  const calls = [];
+  const exec = (cmd, args) => {
+    calls.push(args[0]);
+    if (args[0].startsWith(own)) {
+      const e = new Error("x");
+      e.stderr = "own boom";
+      throw e;
+    }
+    return JSON.stringify({ title: "From repo" });
+  };
+  const exists = () => true;
+  const ok = resolveIdInSpace({ space: "row", id: "1", repo: stale, exec, ownRoot: own, exists });
+  assert.deepEqual(ok, { ok: true, title: "From repo" });
+  assert.equal(calls.length, 2);
+  const both = resolveIdInSpace({
+    space: "row",
+    id: "1",
+    repo: stale,
+    exec: (cmd, args) => {
+      const e = new Error("x");
+      e.stderr = args[0].startsWith(own) ? "own boom" : "repo boom";
+      throw e;
+    },
+    ownRoot: own,
+    exists,
+  });
+  assert.equal(both.ok, false);
+  assert.match(both.reason, /own boom/);
+  assert.match(both.reason, /repo boom/);
+});

@@ -13,15 +13,20 @@ import path from "node:path";
 import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
 
 const ENTITIES = { gt: ">", lt: "<", amp: "&", quot: '"', apos: "'" };
+// An out-of-range or surrogate code point leaves the entity text as it was (never throws).
+const codePointOr = (text, n) =>
+  Number.isInteger(n) && n > 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff)
+    ? String.fromCodePoint(n)
+    : text;
 const decodeEntities = (t) =>
   String(t ?? "")
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-f]+);/gi, (m, h) => codePointOr(m, parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (m, d) => codePointOr(m, Number(d)))
     .replace(/&(gt|lt|amp|quot|apos);/g, (_, n) => ENTITIES[n]);
 
 const norm = (t) =>
   decodeEntities(t)
-    .replace(/[\u203a\u00bb]/g, ">")
+    .replace(/[\u203a\u00bb\u2039\u00ab]/g, ">")
     .toLowerCase()
     .replace(/(\.{3}|\u2026)\s*$/, "")
     .replace(/\s+/g, " ")
@@ -35,6 +40,14 @@ export function titlesMatch(manifestTitle, resolvedTitle) {
   const n = Math.min(40, a.length, b.length);
   return a.slice(0, n) === b.slice(0, n);
 }
+
+const safeTitlesMatch = (a, b) => {
+  try {
+    return titlesMatch(a, b);
+  } catch {
+    return false;
+  }
+};
 
 /**
  * Resolve one id in the declared id space by running the real tool (no shell, scrubbed env).
@@ -53,42 +66,49 @@ export function resolveIdInSpace({
     ((cmd, args, opts) =>
       execFileSync(cmd, args, { ...opts, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
   // Tools come from the scripts' OWN checkout (a stale --repo main checkout may predate them); --repo is
-  // only the fallback and the working directory.
+  // the retry and the working directory.
   const tool = space === "row" ? "tools/ops-monitor/bin/rf.mjs" : "scripts/campaign/bugs.mjs";
   const toolRoot = exists(path.join(ownRoot, tool)) ? ownRoot : repo;
   const opts = { cwd: exists(repo) ? repo : toolRoot, env: scrubbedGitEnv() };
-  try {
-    if (space === "row") {
-      const out = run(
-        process.execPath,
-        [path.join(toolRoot, tool), "item", "show", id, "--json"],
-        opts,
-      );
-      let j;
-      try {
-        j = JSON.parse(out);
-      } catch {
-        return { ok: false, reason: "not found in row: rf.mjs output unparsable" };
+  const attempt = (root) => {
+    try {
+      if (space === "row") {
+        const out = run(
+          process.execPath,
+          [path.join(root, tool), "item", "show", id, "--json"],
+          opts,
+        );
+        let j;
+        try {
+          j = JSON.parse(out);
+        } catch {
+          return { ok: false, reason: "not found in row: rf.mjs output unparsable" };
+        }
+        const title = typeof j.title === "string" ? j.title.trim() : "";
+        if (!title) return { ok: false, reason: "not found in row: empty title" };
+        return { ok: true, title };
       }
-      const title = typeof j.title === "string" ? j.title.trim() : "";
-      if (!title) return { ok: false, reason: "not found in row: empty title" };
+      const out = run(process.execPath, [path.join(root, tool), "show", id], opts);
+      const m = /^title:\s*(.+)$/m.exec(String(out));
+      const title = m ? m[1].trim() : "";
+      if (!title) return { ok: false, reason: "not found in bug: no title" };
       return { ok: true, title };
+    } catch (e) {
+      const err = String(e?.stderr ?? e?.message ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 200);
+      return {
+        ok: false,
+        reason: `not found in ${space}: resolver exited non-zero${err ? `: ${err}` : ""}`,
+      };
     }
-    const out = run(process.execPath, [path.join(toolRoot, tool), "show", id], opts);
-    const m = /^title:\s*(.+)$/m.exec(String(out));
-    const title = m ? m[1].trim() : "";
-    if (!title) return { ok: false, reason: "not found in bug: no title" };
-    return { ok: true, title };
-  } catch (e) {
-    const err = String(e?.stderr ?? e?.message ?? "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 200);
-    return {
-      ok: false,
-      reason: `not found in ${space}: resolver exited non-zero${err ? `: ${err}` : ""}`,
-    };
-  }
+  };
+  const first = attempt(toolRoot);
+  if (first.ok || toolRoot === repo || !exists(path.join(repo, tool))) return first;
+  const second = attempt(repo);
+  if (second.ok) return second;
+  return { ok: false, reason: `${first.reason} | retry with --repo: ${second.reason}` };
 }
 
 const OWN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
@@ -173,7 +193,7 @@ export function clusterBugs(
       const res = cache.get(b.row);
       const why = !res.ok
         ? res.reason
-        : titlesMatch(b.resolvedTitle, res.title)
+        : safeTitlesMatch(b.resolvedTitle, res.title)
           ? null
           : `title mismatch: manifest ${JSON.stringify(b.resolvedTitle)} vs resolved ${JSON.stringify(res.title)}`;
       if (why) {
