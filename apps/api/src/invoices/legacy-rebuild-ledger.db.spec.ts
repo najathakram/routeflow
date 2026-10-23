@@ -208,6 +208,8 @@ describeDb(
           qty: 75,
           unitPrice: 1,
           subtotal: 75,
+          // B297: the order line's own category snapshot is what the rebuild copies onto the invoice line
+          trackedCategoryId: cat.id,
         },
       });
       const draft = await prisma.invoice.create({
@@ -305,9 +307,9 @@ describeDb(
       const other = await prisma.trackedCategory.create({
         data: { tenantId: s.tenantId, name: "Vape r4b", taxType: "NONE", unitBasis: "pack" },
       });
-      const line = await prisma.orderItem.findUniqueOrThrow({ where: { id: s.lineId } });
-      await prisma.product.update({
-        where: { id: line.productId! },
+      // the order line's category snapshot moves (an edit re-filing the line); the rebuild copies the snapshot
+      await prisma.orderItem.update({
+        where: { id: s.lineId },
         data: { trackedCategoryId: other.id },
       });
       await rebuild(s);
