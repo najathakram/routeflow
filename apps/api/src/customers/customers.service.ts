@@ -1591,6 +1591,20 @@ export class CustomersService {
     if (primary.deletedAt || secondary.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
+    // W-763 (SA-903): ONE business only, checked before the transaction reads or moves anything. A SUPER_ADMIN merge runs with
+    // no tenant, so `forTenant()` above is unscoped and the two rows can belong to different businesses. Refuse a
+    // pair of different (or missing) tenants, and a pair the session's own tenant does not own. The message names no tenant.
+    const sessionTenant = this.prisma.getTenantId() ?? null;
+    if (
+      !primary.tenantId ||
+      primary.tenantId !== secondary.tenantId ||
+      (sessionTenant !== null && primary.tenantId !== sessionTenant)
+    ) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.CUSTOMER_MERGE_TENANT_MISMATCH,
+        message: "These customers can't be merged: they don't belong to the same business.",
+      });
+    }
 
     try {
       return await this.prisma.tenantTransaction(

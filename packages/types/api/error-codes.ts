@@ -893,6 +893,8 @@ export const API_ERROR_CODES = {
    * body carries `field` (the link's name). Nothing was written.
    */
   APP_LINK_URL_INVALID: "APP_LINK_URL_INVALID",
+  /** 400 from POST /customers/merge: the two customers are not both of the session's one business (W-763). Names no tenant. */
+  CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
