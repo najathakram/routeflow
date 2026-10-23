@@ -423,7 +423,8 @@ const readText = (p) => {
  * 30-second specs pass cannot starve it; without it the lock is tried once. A lock still busy skips
  * this pass with `{ ran: false, reason: "busy" }`.
  * Returns `{ ran, events, appended, pushed, warnings, summary, pullError }`; `dry` builds without
- * appending. In generated register mode nothing runs (the register is an output).
+ * appending. `lockHeld: true` means the caller holds the specs lock and just pulled: no lock, no
+ * pull. In generated register mode nothing runs (the register is an output).
  */
 export async function runSync({
   dir = defaultSpecsDir(),
@@ -437,13 +438,17 @@ export async function runSync({
   rand,
   mask,
   lockWaitMs = 0,
+  lockHeld = false,
 } = {}) {
   const store = await import("./store.mjs");
   const config = loadConfig(dir);
   if (registerModeOf(config) === "generated") return { ran: false, reason: "generated" };
   const pull = () => store.syncSpecs(dir, { bugIds });
   let pulled;
-  if (lockWaitMs > 0) {
+  if (lockHeld) {
+    // The caller (the collector's specs pass) holds the lock and has just pulled.
+    pulled = { ran: true, value: null };
+  } else if (lockWaitMs > 0) {
     try {
       pulled = { ran: true, value: await store.withSpecsLock(pull, { home, waitMs: lockWaitMs }) };
     } catch (err) {
@@ -488,7 +493,7 @@ export async function runSync({
     pullError: pulled.value?.error ?? null,
   };
   if (dry || out.events.length === 0) return result;
-  const res = await store.appendEvents(out.events, { dir, home, push, bugIds });
+  const res = await store.appendEvents(out.events, { dir, home, push, bugIds, lockHeld });
   result.appended = res.events.length;
   result.pushed = res.pushed;
   result.warnings = res.warnings;
@@ -497,13 +502,12 @@ export async function runSync({
 
 /**
  * One line for a runSync result that appended nothing (the timer logs it once per change), or null
- * when the pass appended events (the caller logs those). `busyRuns` counts consecutive busy skips.
+ * when the pass appended events (the caller logs those).
  */
-export function describeSyncOutcome(res, { busyRuns = 0, mask = (t) => t } = {}) {
+export function describeSyncOutcome(res, { mask = (t) => t } = {}) {
   if (!res) return "register sync: no result";
   if (res.ran === false) {
-    if (res.reason === "busy")
-      return `register sync skipped: busy (specs lock held${busyRuns > 1 ? `, ${busyRuns} in a row` : ""})`;
+    if (res.reason === "busy") return `register sync skipped: busy (specs lock held)`;
     if (res.reason === "generated") return "register sync off: the register is in generated mode";
     return `register sync did not run: ${res.reason ?? "unknown reason"}`;
   }

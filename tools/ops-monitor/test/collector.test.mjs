@@ -497,6 +497,119 @@ test("specs: the sync runs under tryWithSpecsLock; when the lock is busy it is s
   ]);
 });
 
+test("specs: afterSpecsPull runs inside the lock hold after syncSpecs; its failure never fails the source; never in cloud", async () => {
+  const seen = [];
+  const mkDeps = () => ({
+    store: {
+      tryWithSpecsLock: async (fn) => {
+        seen.push("lock-in");
+        try {
+          return { ran: true, value: await fn() };
+        } finally {
+          seen.push("lock-out");
+        }
+      },
+      ensureClone: async () => {},
+      syncSpecs: async () => {
+        seen.push("sync-start");
+        await new Promise((r) => setTimeout(r, 200));
+        seen.push("sync-end");
+      },
+      readAllEvents: async () => (seen.push("read"), []),
+    },
+    config: { specsRemote: () => "remote" },
+    loadConfig: (d) => ({ dir: d }),
+  });
+  const hookArgs = [];
+  const ok = mk({
+    deps: mkDeps(),
+    afterSpecsPull: async (a) => {
+      hookArgs.push(a);
+      seen.push("hook");
+    },
+  });
+  await ok.c.runOnce("specs");
+  assert.deepEqual(seen, ["lock-in", "sync-start", "sync-end", "hook", "lock-out", "read"]);
+  assert.deepEqual(
+    hookArgs.map(({ pullMs, lockStartedAt, ...a }) => a),
+    [{ specsDir: "/specs", pullOk: true, pullError: null, pullStage: null }],
+  );
+  assert.equal(typeof hookArgs[0].pullMs, "number");
+  assert.equal(typeof hookArgs[0].lockStartedAt, "number");
+
+  seen.length = 0;
+  const bad = mk({
+    deps: mkDeps(),
+    afterSpecsPull: async () => {
+      throw new Error("boom");
+    },
+  });
+  await bad.c.runOnce("specs");
+  assert.equal(bad.c.sources.specs.ok, true, bad.c.sources.specs.error);
+  assert.deepEqual(
+    seen.filter((x) => x.startsWith("lock")),
+    ["lock-in", "lock-out"],
+  );
+
+  seen.length = 0;
+  let cloudCalls = 0;
+  const cloud = mk({
+    cloud: true,
+    deps: { ...mkDeps(), cloudSyncSpecs: async () => ({ ok: true }) },
+    afterSpecsPull: async () => void cloudCalls++,
+  });
+  await cloud.c.runOnce("specs");
+  assert.equal(cloudCalls, 0);
+});
+
+test("specs: a failed pull is passed to the hook (pullOk false + reason); a busy lock calls onSpecsBusy and skips the hook", async () => {
+  const mkStore = (over) => ({
+    tryWithSpecsLock: async (fn) => ({ ran: true, value: await fn() }),
+    ensureClone: async () => {},
+    syncSpecs: async () => ({ ok: true }),
+    readAllEvents: async () => [],
+    ...over,
+  });
+  const base = (store) => ({
+    store,
+    config: { specsRemote: () => "remote" },
+    loadConfig: (d) => ({ dir: d }),
+  });
+  const args = [];
+  const failing = mk({
+    deps: base(mkStore({ syncSpecs: async () => ({ ok: false, error: "network down" }) })),
+    afterSpecsPull: async (a) => void args.push(a),
+  });
+  await failing.c.runOnce("specs");
+  assert.deepEqual(
+    args.map(({ pullMs, lockStartedAt, ...a }) => a),
+    [{ specsDir: "/specs", pullOk: false, pullError: "network down", pullStage: "pull" }],
+  );
+
+  const pushFail = mk({
+    deps: base(
+      mkStore({
+        syncSpecs: async () => ({ ok: false, pulled: true, pushed: false, error: "rejected" }),
+      }),
+    ),
+    afterSpecsPull: async (a) => void args.push(a),
+  });
+  args.length = 0;
+  await pushFail.c.runOnce("specs");
+  assert.equal(args[0].pullStage, "push");
+
+  let hookCalls = 0;
+  let busy = 0;
+  const locked = mk({
+    deps: base(mkStore({ tryWithSpecsLock: async () => ({ ran: false }) })),
+    afterSpecsPull: async () => void hookCalls++,
+    onSpecsBusy: () => void busy++,
+  });
+  await locked.c.runOnce("specs");
+  assert.equal(hookCalls, 0);
+  assert.equal(busy, 1);
+});
+
 test("start/stop: timers run each source once immediately and stop cleanly", async () => {
   const { c, updates } = mk();
   c.start();
@@ -924,7 +1037,10 @@ const EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
 test("A2 GraphQL: asks for PR bodies and check contexts (CheckRun + StatusContext) for open PRs and master", () => {
   assert.match(COL.GRAPHQL_QUERY, /body/);
   assert.match(COL.GRAPHQL_QUERY, /contexts\(first: 50\)/);
-  assert.match(COL.GRAPHQL_QUERY, /\.\.\. on CheckRun \{ name conclusion status startedAt \}/);
+  assert.match(
+    COL.GRAPHQL_QUERY,
+    /\.\.\. on CheckRun \{ name conclusion status startedAt checkSuite \{ createdAt updatedAt \} \}/,
+  );
   assert.match(COL.GRAPHQL_QUERY, /\.\.\. on StatusContext \{ context state \}/);
   // master and the open PRs both carry contexts
   assert.equal((COL.GRAPHQL_QUERY.match(/contexts\(first: 50\)/g) ?? []).length, 2);
@@ -1642,6 +1758,70 @@ test("D6 a queued check is pending, never not-run and never success", () => {
     ]),
     "not-run",
   );
+});
+
+test("D6 a check queued for longer than QUEUED_STALE_MS is not-run (stale), a fresh one stays pending", () => {
+  const n = COL.normalizeContext;
+  const now = Date.parse("2026-10-23T12:00:00Z");
+  const cr = (createdAt, over = {}) => ({
+    __typename: "CheckRun",
+    name: "verify",
+    status: "QUEUED",
+    conclusion: null,
+    startedAt: null,
+    checkSuite: { createdAt },
+    ...over,
+  });
+  assert.equal(COL.QUEUED_STALE_MS, 6 * 3600_000);
+  const at = (ageMs) => new Date(now - ageMs).toISOString();
+  assert.equal(n(cr(at(COL.QUEUED_STALE_MS - 60_000)), now).state, "pending");
+  assert.equal(n(cr(at(COL.QUEUED_STALE_MS + 60_000)), now).state, "notrun");
+  // no suite time known: keeps the old reading
+  assert.equal(n(cr(undefined, { checkSuite: null }), now).state, "pending");
+  // a run that is genuinely in progress is never aged out
+  assert.equal(
+    n(cr(at(COL.QUEUED_STALE_MS * 2), { status: "IN_PROGRESS", startedAt: at(60_000) }), now).state,
+    "pending",
+  );
+});
+
+test("D6 stale-queued times from the suite's last update: a re-run reuses an old suite", () => {
+  const n = COL.normalizeContext;
+  const now = Date.parse("2026-10-23T12:00:00Z");
+  const at = (ageMs) => new Date(now - ageMs).toISOString();
+  const H = 3600_000;
+  const q = (suite) => ({
+    __typename: "CheckRun",
+    name: "verify",
+    status: "QUEUED",
+    conclusion: null,
+    startedAt: null,
+    checkSuite: suite,
+  });
+  // (1) created 8 h ago, updated 1 min ago (a re-run): still pending
+  const rerun = q({ createdAt: at(8 * H), updatedAt: at(60_000) });
+  assert.equal(n(rerun, now).state, "pending");
+  // (2) the old success beside that re-run collapses to pending, never success
+  const done = {
+    __typename: "CheckRun",
+    name: "verify",
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+    startedAt: at(8 * H),
+  };
+  assert.deepEqual(COL.collapseRuns([done, rerun], now), [{ name: "verify", state: "pending" }]);
+  // (3) created AND updated both older than the cut-off: not-run
+  assert.equal(n(q({ createdAt: at(9 * H), updatedAt: at(7 * H) }), now).state, "notrun");
+  assert.match(COL.GRAPHQL_QUERY, /checkSuite \{ createdAt updatedAt \}/);
+});
+
+test("collapseRuns: an old success and a newer queued re-run of the same check read pending (pending outranks success)", () => {
+  const cr = (over) => ({ __typename: "CheckRun", name: "verify", ...over });
+  const runs = COL.collapseRuns([
+    cr({ status: "COMPLETED", conclusion: "SUCCESS", startedAt: "2026-10-23T08:00:00Z" }),
+    cr({ status: "QUEUED", conclusion: null, startedAt: null }),
+  ]);
+  assert.deepEqual(runs, [{ name: "verify", state: "pending" }]);
 });
 
 test("D6 normalizeContext/summarizeChecks: never-started checks are not-run, never failure", () => {

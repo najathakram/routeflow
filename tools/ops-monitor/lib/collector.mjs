@@ -52,7 +52,7 @@ export const BUG_FILE_RE = /^\.claude\/campaign\/bugs\/B\d+[^/]*\.md$/;
 export const DEFAULT_CI_GATES = ["verify", "e2e"];
 
 const [OWNER, REPO] = GITHUB_REPO.split("/");
-const CONTEXTS = `statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name conclusion status startedAt } ... on StatusContext { context state } } } }`;
+const CONTEXTS = `statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name conclusion status startedAt checkSuite { createdAt updatedAt } } ... on StatusContext { context state } } } }`;
 export const GRAPHQL_QUERY = `query {
   repository(owner: "${OWNER}", name: "${REPO}") {
     visibility
@@ -79,13 +79,18 @@ export const GRAPHQL_QUERY = `query {
 
 const RUN_RANK = { failure: 6, pending: 5, success: 4, cancelled: 3, skipped: 2, notrun: 1 };
 
+/** A check still queued (never started) this long after its suite was created counts as not-run. */
+export const QUEUED_STALE_MS = 6 * 3600_000;
+
 /**
  * One GraphQL check context (CheckRun | StatusContext) -> { name, state } with state in
  * success | failure | pending | skipped | cancelled | notrun. Unknown shapes -> null.
  * notrun = the check ended without ever starting (startedAt null, conclusion cancelled / skipped /
- * startup-failure). It is NOT a failure. A queued/waiting check with startedAt null is pending.
+ * startup-failure). It is NOT a failure. A queued/waiting check with startedAt null is pending,
+ * until its suite (last created or updated) is older than QUEUED_STALE_MS: a check queued that long is not going to run
+ * (stuck runner, blocked Actions) and reads notrun, so it cannot hold the gate pending forever.
  */
-export function normalizeContext(n) {
+export function normalizeContext(n, nowMs = Date.now()) {
   if (!n || typeof n !== "object") return null;
   if (n.__typename === "StatusContext" || (n.context && !n.name)) {
     if (!n.context) return null;
@@ -99,8 +104,14 @@ export function normalizeContext(n) {
   const c = String(n.conclusion ?? "").toUpperCase();
   // startedAt present-and-null = never started. (A fixture without the key keeps the old reading.)
   const neverStarted = n.startedAt === null;
-  if (neverStarted && ["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(status))
-    return { name: String(n.name), state: "pending" };
+  if (neverStarted && ["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(status)) {
+    // A re-run reuses the original suite, so time from the LATER of created/updated.
+    const times = [n.checkSuite?.createdAt, n.checkSuite?.updatedAt]
+      .map((t) => Date.parse(t ?? ""))
+      .filter(Number.isFinite);
+    const stale = times.length > 0 && nowMs - Math.max(...times) > QUEUED_STALE_MS;
+    return { name: String(n.name), state: stale ? "notrun" : "pending" };
+  }
   if (status && status !== "COMPLETED") return { name: String(n.name), state: "pending" };
   if (neverStarted && (c === "CANCELLED" || c === "SKIPPED" || c === "STARTUP_FAILURE"))
     return { name: String(n.name), state: "notrun" };
@@ -117,10 +128,10 @@ export function normalizeContext(n) {
  * duplicate must never hide the real result). Worst wins: failure > pending > success >
  * cancelled > skipped. First-appearance order.
  */
-export function collapseRuns(nodes) {
+export function collapseRuns(nodes, nowMs = Date.now()) {
   const by = new Map();
   for (const raw of nodes ?? []) {
-    const r = normalizeContext(raw);
+    const r = normalizeContext(raw, nowMs);
     if (!r) continue;
     const had = by.get(r.name);
     if (!had || RUN_RANK[r.state] > RUN_RANK[had]) by.set(r.name, r.state);
@@ -156,7 +167,9 @@ export function classifyCheck(name, config) {
 /**
  * Runs ([{name,state}]) -> { gate, probesFailing, runs: [{name,kind,state}] }.
  * gate = failure | pending | not-run | success | skipped | none over the GATE runs only;
- * not-run = a gate check never started (Actions blocked or queued), shown as its own state; a failing probe
+ * not-run = a gate check that ended without ever starting (cancelled / skipped / startup-failure,
+ * e.g. Actions blocked), or sat queued past QUEUED_STALE_MS; shown as its own state. A fresh queued
+ * check is pending, not not-run; a failing probe
  * never fails the gate (it is listed by name in probesFailing). A cancelled gate with nothing
  * better counts as failure (it did not pass and nothing re-ran it).
  */
@@ -819,6 +832,8 @@ export function createCollector({
   cloud = false,
   fetch: fetchFn = globalThis.fetch,
   mask = (t) => t,
+  afterSpecsPull = null, // local only: runs inside the specs-lock hold, right after the pull
+  onSpecsBusy = null, // local only: the specs lock was busy, so the pull and the hook were skipped
 } = {}) {
   // Cloud never writes git: every git call goes through the read-only allow-list.
   const guardedExec = cloud ? readOnlyExec(exec) : exec;
@@ -858,6 +873,7 @@ export function createCollector({
       // Writers (rf, the views writer) hold the specs lock for a whole append; a poll never waits
       // for it. When busy this run skips the sync and reads the working tree as it is.
       const underLock = (fn) => (store.tryWithSpecsLock ? store.tryWithSpecsLock(fn) : fn());
+      let lockResult;
       if (cloud) {
         // Read-only clone made at boot: fetch + reset to origin, never pull --rebase or push.
         await underLock(async () => {
@@ -865,15 +881,42 @@ export function createCollector({
           if (!r.ok) fail(r.error);
         });
       } else {
-        await underLock(async () => {
+        lockResult = await underLock(async () => {
+          const lockStartedAt = now();
           if (store.ensureClone) {
             await store.ensureClone({
               dir: specsDir,
               remote: cfg.specsRemote ? cfg.specsRemote() : undefined,
             });
           }
-          await store.syncSpecs(specsDir);
+          const pullStartedAt = now();
+          const pulled = await store.syncSpecs(specsDir);
+          const pullMs = now() - pullStartedAt;
+          // Piggyback on the lock this pass already holds (a timer would lose to us). A failing
+          // hook never fails the source; the lock is released by underLock's finally.
+          if (afterSpecsPull) {
+            try {
+              await afterSpecsPull({
+                specsDir,
+                pullOk: pulled?.ok !== false,
+                pullError: pulled?.ok === false ? String(pulled.error ?? "pull failed") : null,
+                // "push": the pull went through and the push/reconcile/views step failed after it
+                pullStage: pulled?.ok === false ? (pulled.pulled === true ? "push" : "pull") : null,
+                pullMs,
+                lockStartedAt,
+              });
+            } catch (e) {
+              log(`after-pull hook failed: ${String(e?.message ?? e).slice(0, 160)}`);
+            }
+          }
         });
+        if (lockResult?.ran === false && onSpecsBusy) {
+          try {
+            onSpecsBusy();
+          } catch (e) {
+            log(`busy hook failed: ${String(e?.message ?? e).slice(0, 160)}`);
+          }
+        }
       }
       const events = await store.readAllEvents(specsDir);
       const config = (deps.loadConfig ?? cfg.loadConfig)(specsDir);

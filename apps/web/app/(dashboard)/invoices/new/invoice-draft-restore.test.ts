@@ -240,11 +240,33 @@ describe("checkDraftReferences: prices are re-resolved, not trusted (ROW 447)", 
       expect(r.pricesUnchecked).toBe(1);
     });
 
-    it("a 403 on the price rows (plan flag off) simply means there are none", async () => {
-      const r = await run([stored({ unitPrice: 5 })], { "/customers/c-1/prices": status(403) });
+    it("a PLAN_GATE 403 on the price rows (plan flag off) simply means there are none", async () => {
+      const r = await run([stored({ unitPrice: 5 })], {
+        "/customers/c-1/prices": {
+          reject: { response: { status: 403, data: { code: "PLAN_GATE" } } },
+        },
+      });
       expect(r.snapshot.lines[0].unitPrice).toBe(10);
       expect(r.pricesUpdated).toBe(1);
       expect(r.pricesUnchecked).toBe(0);
+    });
+
+    // W-745 (SA-884): only the PLAN_GATE 403 means "no rows". A role 403 leaves the rows unknown: before, it re-priced at LIST.
+    it("a role 403 on the price rows (no PLAN_GATE code) keeps the stored prices, uncounted, and reports them", async () => {
+      const r = await run([stored({ unitPrice: 5 })], { "/customers/c-1/prices": status(403) });
+      expect(r.snapshot.lines[0].unitPrice).toBe(5);
+      expect(r.pricesUpdated).toBe(0);
+      expect(r.pricesUnchecked).toBe(1);
+    });
+
+    // W-745: a customer read that FAILED (not gone) leaves the tier unknown: the snapshot's stored tier may be stale or
+    // absent (tier 1 = LIST). Before, an untyped line was re-priced at LIST (10).
+    it("a failed customer read (5xx) keeps untyped stored prices, uncounted, and reports them", async () => {
+      const r = await run([stored({ unitPrice: 5 })], { "/customers/c-1": status(500) });
+      expect(r.customerCleared).toBe(false);
+      expect(r.snapshot.lines[0].unitPrice).toBe(5);
+      expect(r.pricesUpdated).toBe(0);
+      expect(r.pricesUnchecked).toBe(1);
     });
 
     it("a product that could not be read keeps its stored price and is reported", async () => {

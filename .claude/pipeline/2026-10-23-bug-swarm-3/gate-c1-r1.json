@@ -1,0 +1,70 @@
+{
+  "ok": true,
+  "head": "953384b9133867ea2b036c2c23a148b1007c1144",
+  "base": "f49ddba765c2b59baca82cc641f46dd6cb712c28",
+  "steps": [
+    {
+      "name": "clean-tree",
+      "ok": true,
+      "exit": 0,
+      "ms": 90,
+      "tail": ""
+    },
+    {
+      "name": "packages-build",
+      "ok": true,
+      "exit": 0,
+      "ms": 342,
+      "tail": "@routeflow/returns:build: cache hit, replaying logs 548f6350f8a6c7e7\n@routeflow/returns:build: \n@routeflow/returns:build: > @routeflow/returns@0.0.1 build\n@routeflow/returns:build: > tsc -p tsconfig.build.json\n@routeflow/returns:build: \n@routeflow/pricing:build: cache hit, replaying logs 3719ce30697aab8c\n@routeflow/pricing:build: \n@routeflow/pricing:build: > @routeflow/pricing@0.0.1 build\n@routeflow/pricing:build: > tsc -p tsconfig.build.json\n@routeflow/pricing:build: \n@routeflow/scanning:build: cache hit, replaying logs 07f603f9c0ebade4\n@routeflow/scanning:build: \n@routeflow/scanning:build: > @routeflow/scanning@0.0.1 build\n@routeflow/scanning:build: > tsc -p tsconfig.build.json\n@routeflow/scanning:build: \n\n Tasks:    3 successful, 3 total\nCached:    3 cached, 3 total\n  Time:    60ms >>> FULL TURBO\n"
+    },
+    {
+      "name": "signature-scan",
+      "ok": true,
+      "exit": 0,
+      "ms": 5445,
+      "tail": "  register: B03 | severity: medium | MEDIUM | 3 hit(s) | 1 suppressed\n    apps/mobile/app/(auth)/login.tsx:18  username: z.string().min(1, \"Username is required\"),  [client .min(1) vs server @MinLength(3) at apps/api/src/platform-admin/dto/create-tenant-admin.dto.ts:26]\n    apps/web/app/(auth)/login/page.tsx:34  username: z.string().min(1, \"Username is required\"),  [client .min(1) vs server @MinLength(3) at apps/api/src/platform-admin/dto/create-tenant-admin.dto.ts:26]\n    apps/web/app/buyer/register/page.tsx:19  name: z.string().min(2, \"Name must be at least 2 characters\"),  [client .min(2) vs server @MinLength(1) at apps/api/src/promotions/dto/create-promotion.dto.ts:26]\n\n■ dead-model-guard — Safety check reading a model nothing writes\n  The guard always passes/fails the same way — protection that protects nothing (B54).\n  register: B54 | severity: medium | MEDIUM | 9 hit(s) | 37 suppressed\n    apps/api/src/drafts/drafts.service.ts:150  const other = await this.prisma.forTenant().saleDraft.findFirst({  [model \"saleDraft\" is read here but never written anywhere in apps/api]\n    apps/api/src/import/batch-import.service.ts:260  const items = await this.prisma.forTenant().importQueueItem.findMany({  [model \"importQueueItem\" is read here but never written anywhere in apps/api]\n    apps/api/src/import/batch-import.service.ts:423  const clean = await this.prisma.forTenant().importQueueItem.findMany({  [model \"importQueueItem\" is read here but never written anywhere in apps/api]\n    apps/api/src/import/batch-import.service.ts:527  const counts = await this.prisma.forTenant().importQueueItem.groupBy({  [model \"importQueueItem\" is read here but never written anywhere in apps/api]\n    apps/api/src/inventory/low-stock-digest.service.ts:190  const optOuts = await this.prisma.userPreference.findMany({  [model \"userPreference\" is read here but never written anywhere in apps/api]\n    apps/api/src/invoices/payment-idempotency.ts:268  deps.forTenant().paymentIdempotencyKey.findFirst({  [model \"paymentIdempotencyKey\" is read here but never written anywhere in apps/api]\n    apps/api/src/invoices/payment-key-status.service.ts:72  return this.prisma.forTenant().paymentIdempotencyKey.findFirst({  [model \"paymentIdempotencyKey\" is read here but never written anywhere in apps/api]\n    apps/api/src/messaging/staff-order-email.ts:197  const prefs = await this.prisma.forTenant().userPreference.findMany({  [model \"userPreference\" is read here but never written anywhere in apps/api]\n    apps/api/src/notifications/notifications.service.ts:65  const pref = await this.prisma.forTenant().userPreference.findUnique({  [model \"userPreference\" is read here but never written anywhere in apps/api]\n\n24 hit(s) across 6 signature(s); scanned 7114 files.\nEXIT 0 — no high-signal hits."
+    },
+    {
+      "name": "commitlint",
+      "ok": true,
+      "exit": 0,
+      "ms": 339,
+      "tail": ""
+    },
+    {
+      "name": "prettier",
+      "ok": true,
+      "exit": 0,
+      "ms": 318,
+      "tail": "Checking formatting...\nAll matched files use Prettier code style!"
+    },
+    {
+      "name": "tsc:apps/web",
+      "ok": true,
+      "exit": 0,
+      "ms": 3533,
+      "tail": ""
+    },
+    {
+      "name": "lint:apps/web",
+      "ok": true,
+      "exit": 0,
+      "ms": 13628,
+      "tail": "1439:7  Warning: Unexpected console statement.  no-console\n1863:31  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element\n\n./components/TenantLogo.tsx\n49:9  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element\n\n./components/import/ImportCsvPanel.tsx\n564:6  Warning: React Hook React.useEffect has a missing dependency: 'job'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps\n\n./components/portal-limits/LiftLimitsDialog.tsx\n29:39  Warning: React Hook React.useEffect has a complex expression in the dependency array. Extract it to a separate variable so it can be statically checked.  react-hooks/exhaustive-deps\n\n./lib/buyer-auth-context.tsx\n88:27  Warning: Unexpected console statement.  no-console\n102:33  Warning: Unexpected console statement.  no-console\n\n./lib/hooks/useRealtimeUpdates.ts\n25:7  Warning: Unexpected console statement.  no-console\n\ninfo  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules"
+    },
+    {
+      "name": "jest:apps/web",
+      "ok": true,
+      "exit": 0,
+      "ms": 83424,
+      "tail": "      at VirtualConsole.<anonymous> (../../node_modules/@jest/environment-jsdom-abstract/build/index.js:87:23)\n      at Object.dispatchError (../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-utils.js:65:53)\n      at EventEmitter.<anonymous> (../../node_modules/jsdom/lib/jsdom/living/xhr/XMLHttpRequest-impl.js:655:18)\n      at Request.<anonymous> (../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-utils.js:349:16)\n      at Request._processResponse (../../node_modules/jsdom/lib/jsdom/living/helpers/http-request.js:240:12)\n      at ClientRequest.<anonymous> (../../node_modules/jsdom/lib/jsdom/living/helpers/http-request.js:107:12)\n\nPASS app/(dashboard)/layout.counter-gate-roles.test.tsx\nPASS components/DraftDock.narrow-tray.test.tsx\nPASS components/DraftDock.add-to-draft.test.tsx\nPASS components/DraftDock.leave-guard.test.tsx\n\nTest Suites: 10 passed, 10 total\nTests:       101 passed, 101 total\nSnapshots:   0 total\nTime:        7.021 s\nRan all test suites related to files matching components/DraftDock.narrow-tray.test.tsx|components/DraftDock.tsx.\nJest did not exit one second after the test run has completed.\n\n'This usually means that there are asynchronous operations that weren't stopped in your tests. Consider running Jest with `--detectOpenHandles` to troubleshoot this issue."
+    },
+    {
+      "name": "size-ratchet",
+      "ok": true,
+      "exit": 0,
+      "ms": 847,
+      "tail": "    ✓ apps/api/src/invoices/invoices.service.ts stays within 5857 + HEADROOM lines\n    ✓ apps/api/src/orders/orders.service.spec.ts stays within 9439 + HEADROOM lines (1 ms)\n    ✓ apps/api/src/customers/customers.service.ts stays within 3276 + HEADROOM lines\n    ✓ apps/api/src/invoices/invoices.service.spec.ts stays within 9351 + HEADROOM lines (1 ms)\n    ✓ apps/web/app/(dashboard)/customers/[id]/page.tsx stays within 4378 + HEADROOM lines\n    ✓ apps/web/app/(dashboard)/orders/[id]/page.tsx stays within 3705 + HEADROOM lines (1 ms)\n    ✓ apps/api/src/customers/customers.service.spec.ts stays within 3138 + HEADROOM lines\n    ✓ apps/api/src/routes/routes.service.ts stays within 3119 + HEADROOM lines (1 ms)\n    ✓ apps/web/app/(dashboard)/products/[id]/page.tsx stays within 2942 + HEADROOM lines\n    ✓ apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx stays within 1405 + HEADROOM lines\n    ✓ apps/mobile/components/NewOrderScreen.tsx stays within 2560 + HEADROOM lines (1 ms)\n    ✓ apps/web/app/(dashboard)/inventory/page.tsx stays within 3303 + HEADROOM lines\n    ✓ apps/web/app/(marketing)/marketing.css stays within 9941 + HEADROOM lines (1 ms)\n    ✓ apps/web/components/ScanInvoiceModal.tsx stays within 3134 + HEADROOM lines (1 ms)\n\nTest Suites: 1 passed, 1 total\nTests:       16 passed, 16 total\nSnapshots:   0 total\nTime:        0.266 s\nRan all test suites matching size-ratchet."
+    }
+  ]
+}

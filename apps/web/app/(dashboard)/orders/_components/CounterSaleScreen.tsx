@@ -86,6 +86,7 @@ import { keptSaleHref } from "@/lib/kept-draft-invoice";
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
 import { CounterPaymentNotRecorded } from "./CounterPaymentNotRecorded";
+import { CounterCreditOverLimit } from "./CounterCreditOverLimit";
 import { CounterReceiptBody } from "./CounterReceiptBody";
 import { CounterCustomerCredit } from "./CounterCustomerCredit";
 import { CounterGateOffline } from "./CounterGateOffline";
@@ -642,6 +643,18 @@ export function CounterSaleScreen() {
   const tenderRef = React.useRef<HTMLInputElement>(null);
   // The ONE place the payment area takes focus (Enter in an empty scan box, and the tender radiogroup's arrow keys).
   const focusPaymentControl = (el: HTMLElement | null | undefined) => el?.focus();
+  // W-709 (538 F24): a short cash tender takes the cashier to the fix. Bumped when complete() refuses with TENDER_SHORT; the
+  // effect below runs after that render (and after a pointer Complete's own refocus of the scan box), scrolls Amount
+  // tendered into view (nearest edge; Exact sits beside it) and focuses it through focusPaymentControl.
+  // A counter, not the error text: a second Complete with the same short tender repeats the same copy and must move focus too.
+  const [tenderFix, setTenderFix] = React.useState(0);
+  React.useEffect(() => {
+    if (tenderFix === 0) return;
+    const el = tenderRef.current;
+    if (!el) return;
+    el.scrollIntoView?.({ block: "nearest" });
+    focusPaymentControl(el); // the ONE owner of payment focus (counter-focus.structure.test.ts)
+  }, [tenderFix]);
   const focusPayment = () =>
     focusPaymentControl(
       method === "CASH" && tenderRef.current
@@ -931,6 +944,7 @@ export function CounterSaleScreen() {
         setCheckDate("");
       }
       setError(paymentProblemCopy(problem, totals.total));
+      if (problem === "TENDER_SHORT") setTenderFix((n) => n + 1);
       return null;
     }
     // The day is read NOW, not when the screen was drawn: a till left idle across the business's midnight dates the check,
@@ -1153,6 +1167,7 @@ export function CounterSaleScreen() {
           headingRef={receiptHeadingRef}
         />
         <CounterPaymentNotRecorded receipt={receipt} onReceipt={setReceipt} />
+        <CounterCreditOverLimit receipt={receipt} customerName={customer?.businessName} />
         <CounterReceiptActions
           orderId={receipt.orderId}
           customer={customer}

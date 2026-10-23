@@ -109,7 +109,7 @@ import {
   type BulkDeleteSkip,
   type ProductDeleteOutcome,
 } from "./product-delete-classify";
-import { stockTxBounded } from "../common/stock-tx";
+import { boundedTenantTx, stockTxBounded } from "../common/stock-tx";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
   applyFamilyPriceBeforeUpdate,
@@ -974,7 +974,9 @@ export class ProductsService {
       ? await readFamilyPriceMode(this.featureConfig, tenantId)
       : "off";
     const tierFallback = newProductTierFallback(unitsV2, dto.pricePerUnit);
-    const created = await this.prisma.tenantTransaction(async (tx: any) => {
+    // Row 232 (SA-855): every lock below waits at most 5 s (55P03 -> the coded 503), never the whole time another
+    // writer holds a code; a single attempt, the client retries on Retry-After.
+    const created = await boundedTenantTx(this.prisma, async (tx: any) => {
       // SA-572b Q4/SA-572c: lock the code BEFORE the create — otherwise a concurrent create of the
       // same code races on the legacy unique index and surfaces a raw P2002 instead of a 409.
       await claimCodes(tx, {

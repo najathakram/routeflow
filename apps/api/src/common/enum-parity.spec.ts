@@ -163,6 +163,9 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["INVOICE_ORDER_BILLING_ROLE_VALUES", "InvoiceOrderBillingRole"],
   // SA-824: the payment Idempotency-Key scope, mirrored as the one source of `PaymentKeyScope`.
   ["PAYMENT_IDEMPOTENCY_SCOPE_VALUES", "PaymentIdempotencyScope"],
+  // SA-827 PR2: Customer.invoiceUnitDefault, a brand-new Prisma enum.
+  ["INVOICE_UNIT_DEFAULT_VALUES", "InvoiceUnitDefault"],
+  ["ADJUSTMENT_REASON_VALUES", "AdjustmentReason"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -287,7 +290,11 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for PaymentIdempotencyState (SA-824 race ruling 1, the same unapplied migration folder): a brand-new Prisma
 // enum, explicitly LEFT UNMIRRORED: server-only (CLAIMED / COMPLETED / TOMBSTONED of a key row); the clients read the
 // resolve / by-key body's lowercase `state` ("found" | "tombstoned"), never this enum (117 → 118).
-const PINNED_PRISMA_ENUM_COUNT = 118;
+// Triage for InvoiceUnitDefault (SA-827 PR2, migration 20261020120000_customer_invoice_unit_default) and
+// AdjustmentReason (SA-804(3), SA-828 row 657, migration 20261020130000_stock_movement_adjustment_reason): two
+// brand-new Prisma enums, mirrored as `INVOICE_UNIT_DEFAULT_VALUES` / `ADJUSTMENT_REASON_VALUES` + their `ENUM_TABLE`
+// rows (118 → 120).
+const PINNED_PRISMA_ENUM_COUNT = 120;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

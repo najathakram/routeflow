@@ -271,7 +271,7 @@ const KEEP: Array<{ file: string; mustContain: string[] }> = [
     file: `${D}orders/_components/scan/PriceEditor.tsx`,
     mustContain: ['(["case", "unit"] as const)'],
   },
-  { file: `${D}orders/[id]/page.tsx`, mustContain: ['"case"'] },
+  { file: `${D}orders/[id]/_components/order-line-edit.tsx`, mustContain: ['"case"'] },
   {
     file: `${W}components/PriceHistory.tsx`,
     mustContain: ['"case"', 'v === "box" || v === "cases" || v === "boxes" ? "case" : v'],

@@ -66,6 +66,8 @@ import { isPendingMirrorInvoice, pendingMirrorCopy } from "@/lib/invoice-pending
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { isStoreOnly } from "@/lib/counter-sale";
 import { canSendReminder } from "@/lib/invoice-reminder";
+import { canEmailAgain, invoiceSendStateLine, sendsAfterLabel } from "@/lib/invoice-send-state";
+import { EmailInvoiceAction } from "@/components/invoices/EmailInvoiceAction";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
@@ -1633,6 +1635,7 @@ export default function InvoiceDetailPage() {
   // the order and can't be edited or sent until the order is delivered. Edit the
   // order, not the invoice.
   const isPendingMirror = isPendingMirrorInvoice({ ...invoice, status });
+  const sendStateLine = invoiceSendStateLine(invoice.sendState); // #2088: "Emailed Oct 2 to x. Modified since."
 
   const canRecordPayment = isOpenInvoiceStatus(status);
   const canWriteOff = isOpenInvoiceStatus(status);
@@ -1920,7 +1923,7 @@ export default function InvoiceDetailPage() {
     });
   };
 
-  const handleSavePayment = (data: PaymentFormState) => {
+  const handleSavePayment = (data: PaymentFormState, recordAnyway = false) => {
     if (!editingPayment) return;
     updatePayment.mutate(
       {
@@ -1933,6 +1936,7 @@ export default function InvoiceDetailPage() {
         settledAt: data.settledAt || null,
         reference: data.reference.trim() || undefined,
         notes: data.notes.trim() || undefined,
+        ...(recordAnyway ? { recordAnyway: true } : {}),
       },
       {
         onSuccess: () => {
@@ -1940,6 +1944,9 @@ export default function InvoiceDetailPage() {
           toast({ title: "Payment updated", variant: "success" });
         },
         onError: (err: any) => {
+          // W-718: an edit onto a used reference names the existing payment; staff may "Record anyway".
+          if (toastDuplicatePaymentRef(err, toast, user?.role, () => handleSavePayment(data, true)))
+            return;
           toast({
             title: "Failed to update payment",
             description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
@@ -2155,17 +2162,20 @@ export default function InvoiceDetailPage() {
             </Button>
           )}
 
-          {/* Send (DRAFT) / Send Reminder (SENT/VIEWED/OVERDUE) */}
-          {status === "DRAFT" && !isPendingMirror && (
-            <Button
-              size="sm"
-              variant="primary"
-              leftIcon={<Send className="h-3.5 w-3.5" />}
-              onClick={handleSend}
+          {/* #2088: Send (DRAFT) / Email again (SENT/VIEWED/OVERDUE/PARTIAL/PAID), with the tracked state in the
+              confirmation; a locked draft says why instead of hiding the action. Send Reminder stays separate. */}
+          {((status === "DRAFT" && !isPendingMirror) ||
+            canEmailAgain(status) ||
+            invoice.sendLocked) && (
+            <EmailInvoiceAction
+              sendState={invoice.sendState}
+              sendLocked={invoice.sendLocked}
+              lockedLabel={sendsAfterLabel(
+                fulfilmentCapability == null ? null : isStoreOnly(fulfilmentCapability),
+              )}
               loading={sendInvoiceEmail.isPending || sendInvoice.isPending}
-            >
-              Send
-            </Button>
+              onSend={handleSend}
+            />
           )}
           {canSendReminder({ status, balanceDue }) && (
             <Button
@@ -2368,6 +2378,12 @@ export default function InvoiceDetailPage() {
           />
         </div>
       </div>
+
+      {sendStateLine && (
+        <p data-testid="invoice-send-state-line" className="text-xs font-medium text-navy/60">
+          {sendStateLine}
+        </p>
+      )}
 
       {/* Write-off reason banner */}
       {status === "WRITTEN_OFF" && invoice.writeOffReason && (

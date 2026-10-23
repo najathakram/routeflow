@@ -45,7 +45,7 @@ const invoice = {
   orderId: ORDER_ID,
   customerId: CUSTOMER_ID,
   invoiceNumber: "INV-B1052-1",
-  status: InvoiceStatus.SENT,
+  status: InvoiceStatus.DRAFT, // SA-857: only the DRAFT -> SENT issue settles and sweeps credits
   deliveryBatchId: null as string | null,
   total: 100,
   issueDate: new Date("2026-09-01T00:00:00.000Z"),
@@ -112,7 +112,10 @@ describe("InvoicesService.send — markSent takes the customer-wide note lock be
         { provide: RegulatedLedgerService, useValue: {} },
         { provide: AuthorizationGuardService, useValue: {} },
         { provide: CreditNotesService, useValue: creditNotes },
-        { provide: MessagingService, useValue: { notifyEvent: jest.fn() } },
+        {
+          provide: MessagingService,
+          useValue: { notifyEvent: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: StorageService, useValue: {} },
         {
           provide: EntitlementAuthority,
