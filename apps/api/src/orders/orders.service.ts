@@ -77,7 +77,7 @@ import {
   saleCreateOptions,
   type SaleOptions,
 } from "./sale-options";
-import { notifyOrderStatusChange } from "./order-status-notify";
+import { notifyOrderStatusChange, type ChangeStatusOpts } from "./order-status-notify";
 import { assertPriceEditAllowed, decideTierOverride } from "./staff-override";
 import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
 import {
@@ -2247,7 +2247,16 @@ export class OrdersService implements OnApplicationBootstrap {
     return invoices[0];
   }
 
-  async changeStatus(id: string, dto: ChangeOrderStatusDto, user: JwtPayload) {
+  /**
+   * `opts` (I-120, SA-861 rules 5-6; set only by the counter hand-over): `silent` skips the transition's customer
+   * messages (push + messaging event); `creditPaidNow` nets the till tender at the B585 delivery gate (the S1 rule).
+   */
+  async changeStatus(
+    id: string,
+    dto: ChangeOrderStatusDto,
+    user: JwtPayload,
+    opts: ChangeStatusOpts = {},
+  ) {
     await driverAccess.assertDriverMayEditOrder(this.prisma.forTenant(), id, user); // SA-434: FIRST, before any read
     const order = await this.findOneOrThrow(id);
 
@@ -2330,7 +2339,8 @@ export class OrdersService implements OnApplicationBootstrap {
         order.status !== OrderStatus.PARTIALLY_DELIVERED) ||
       (dto.status === OrderStatus.DELIVERED && !alreadyOut);
     if (goodsLeaving) {
-      const p = { customerId: order.customerId, projectedTotal: Number(order.total) };
+      const projectedTotal = creditProjectedTotal(Number(order.total), opts); // S1 netting (I-120)
+      const p = { customerId: order.customerId, projectedTotal };
       await this.creditGate({ ...p, excludeOrderId: id, action: "delivery", principal: user });
     }
 
@@ -2557,12 +2567,13 @@ export class OrdersService implements OnApplicationBootstrap {
       notifications: this.notifications,
       messaging: this.messaging,
     };
-    await notifyOrderStatusChange(notifyDeps, {
-      order,
-      updated,
-      status: dto.status,
-      userSub: user.sub,
-    });
+    if (!opts.silent)
+      await notifyOrderStatusChange(notifyDeps, {
+        order,
+        updated,
+        status: dto.status,
+        userSub: user.sub,
+      });
 
     // B105 (REG-B105): the delivery is persisted and everyone has been told;
     // NOW surface the invoicing failure so the operator can retry it instead of

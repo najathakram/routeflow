@@ -8,6 +8,14 @@ import { notifyPickupHandover, pickupOutForDeliveryPush } from "./order-pickup-w
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
 import { shippedPushCopy } from "./shipped-push-copy";
 
+/** `OrdersService.changeStatus`'s options (I-120, SA-861 rules 5-6). Set only by the counter hand-over. */
+export interface ChangeStatusOpts {
+  /** Skip BOTH customer messages of this transition (the push and the messaging event, every kind). */
+  silent?: boolean;
+  /** What the till takes now, for the B585 delivery gate (`creditProjectedTotal`): the S1 netting. */
+  creditPaidNow?: (total: number) => number;
+}
+
 /**
  * The customer notifications of an order status change: the push (`notifMap`) and the messaging event (the rules
  * matrix), fire-and-forget AFTER the status write. Moved verbatim out of `OrdersService.changeStatus` (SA-861 commit 1,
@@ -20,7 +28,6 @@ export async function notifyOrderStatusChange(
     notifications: NotificationsService;
     messaging: MessagingService;
   },
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- changeStatus's loaded order and its updated row
   p: { order: any; updated: any; status: OrderStatus; userSub: string | null | undefined },
 ): Promise<void> {
   const { order, updated, status, userSub } = p;
