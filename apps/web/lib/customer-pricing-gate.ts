@@ -1,7 +1,20 @@
 import { pricesUnconfirmed } from "@/components/PriceLayerNotice";
 import type { CustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
 
-type ReadState = { isPending?: boolean; isLoading?: boolean; isError?: boolean; data?: unknown };
+type ReadState = {
+  isPending?: boolean;
+  isLoading?: boolean;
+  isError?: boolean;
+  data?: unknown;
+  error?: unknown;
+};
+
+/** The HTTP status of a failed read: axios (`response.status`) or a fetch-style `status`; else undefined. */
+function httpStatus(error: unknown): number | undefined {
+  const e = error as { response?: { status?: unknown }; status?: unknown } | null | undefined;
+  const status = e?.response?.status ?? e?.status;
+  return typeof status === "number" ? status : undefined;
+}
 
 /**
  * SA-868 (W-693): money fails CLOSED. A staff form that pre-fills a customer's price may suggest one only once the
@@ -33,7 +46,16 @@ export function customerPricingGate(i: {
   // Waiting = no data yet and no error. TanStack v5 `isPending` (a query paused offline is pending but not loading); a
   // caller without it falls back to `isLoading`. Fails closed: a paused read blocks the pick like a loading one.
   const waiting = (q: ReadState) => !q.isError && q.data == null && !!(q.isPending ?? q.isLoading);
-  const readFailed = failedRead(i.customerQuery) || failedRead(i.customerPricesQuery);
+  // SA-883 #3: a plan without flag.pricing_tiers gets 403 (PLAN_GATE) on GET /customers/:id/prices. That tenant has no
+  // customer-product price rows to honour, so the read is SETTLED EMPTY (neither failed nor waiting) and the pick is
+  // priced by the customer's own tier. ONLY this read and ONLY a 403: a 5xx, 404 or network error still fails closed,
+  // and so does any error on the customer read.
+  const pricesPlanGated =
+    !!i.customerPricesQuery.isError &&
+    i.customerPricesQuery.data == null &&
+    httpStatus(i.customerPricesQuery.error) === 403;
+  const readFailed =
+    failedRead(i.customerQuery) || (failedRead(i.customerPricesQuery) && !pricesPlanGated);
   const pending =
     waiting(i.customerQuery) ||
     waiting(i.customerPricesQuery) ||
