@@ -60,6 +60,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/prisma/report-product-barcode-conflicts.ts": "read-only",
   "apps/api/prisma/report-variant-tier-drift.ts": "read-only",
   "apps/api/prisma/seed-expenses.ts": "global-catalog",
+  "apps/api/prisma/seed-legacy-products.ts": "read-only",
   "apps/api/prisma/seed-parity-buyer.ts": "test-slug-only",
   "apps/api/prisma/seed.ts": "test-slug-only",
   "apps/api/scripts/apply-rls.js": "schema-only",
