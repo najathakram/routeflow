@@ -9,6 +9,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { fmtCurrency } from "../utils/format";
 import { duplicateRefPrompt } from "./duplicate-payment-ref";
 import { creditOverLimitSentence } from "@routeflow/types/credit-over-limit-copy";
+import { COUNTER_COPY } from "@routeflow/types/counter-copy";
 
 import { isPosOrder } from "./order-status-flow";
 
@@ -33,9 +34,9 @@ export function posModePrefPatch(next: boolean): Record<string, string> {
 
 /** Fixed visible copy (never an API message). Same words as web `POS_COPY`. */
 export const POS_COPY = {
-  switchLabel: "POS mode",
+  switchLabel: COUNTER_COPY.storePickup,
   switchHint: "A named customer, invoiced now. For walk-in, pay-now sales use Counter.",
-  switchFailed: "Couldn't save your POS mode setting. Try again.",
+  switchFailed: `Couldn't save your ${COUNTER_COPY.storePickup} setting. Try again.`,
   confirmAndInvoice: "Confirm & invoice",
   confirmOnly: "Confirm only",
   confirmedInvoiced: "Order confirmed and invoiced",

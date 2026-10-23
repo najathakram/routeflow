@@ -144,12 +144,13 @@ const ENTRIES: IndexEntry[] = [
   {
     id: "info-pos-mode",
     kind: "info",
-    label: "POS mode",
+    label: "Store pickup",
     desc: "Sell to a named customer and invoice now",
     answer:
-      "Turn on POS mode in the New order window on the Orders screen. It books a named customer and invoices right away.",
+      "Turn on Store pickup in the New order window on the Orders screen. It books a named customer and invoices right away.",
     groupKey: "fulfilment",
-    keywords: ["pos", "pos mode", "point of sale", "invoice now", "named customer"],
+    // "pos" / "pos mode" stay: the switch was called POS mode until I-120 (SA-861 rule 10)
+    keywords: ["store pickup", "pos", "pos mode", "point of sale", "invoice now", "named customer"],
   },
   // ── Business & team ──────────────────────────────────────────────────────────────────────
   {
