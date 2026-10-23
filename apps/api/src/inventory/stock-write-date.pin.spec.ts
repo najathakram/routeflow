@@ -59,4 +59,17 @@ describe("Row 563 pin: one date gate for person-dated stock writes", () => {
     // adjustment + purchase, the legacy count, the session commit
     expect(inv.match(/await stockWriteDate\(/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
   });
+
+  it("W-755 R9: the session commit gates the date AFTER its under-lock COMMITTED re-read (a committed count is never refused)", () => {
+    const inv = stripComments(readFileSync(join(__dirname, "inventory.service.ts"), "utf8"));
+    const start = inv.indexOf("private async commitStockCountBatches(");
+    expect(start).toBeGreaterThan(-1);
+    const body = inv.slice(start);
+    const reread = body.search(/\.stockCountSession\.findUnique\(/);
+    const committed = body.search(/fresh\.status\s*===\s*"COMMITTED"/);
+    const gate = body.search(/await\s+stockWriteDate\(/);
+    expect(reread).toBeGreaterThan(-1);
+    expect(committed).toBeGreaterThan(reread);
+    expect(gate).toBeGreaterThan(committed);
+  });
 });
