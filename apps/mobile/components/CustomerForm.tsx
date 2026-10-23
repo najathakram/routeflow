@@ -5,6 +5,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "./FormSheet";
 import { AddressAutocompleteInput } from "./AddressAutocompleteInput";
 import { isInternalEmail } from "../lib/internal-email";
+import { clearableField, optionalText } from "../lib/clearable-field";
 import { useTierLabels } from "../lib/api/tier-labels";
 import { tierLabel } from "../lib/tier-label";
 import { shouldConfirmDiscard } from "../lib/discard-guard";
@@ -103,15 +104,15 @@ export interface CustomerPayload {
   username?: string;
   contactName?: string;
   email?: string;
-  phone?: string;
+  phone?: string | null;
   creditLimit?: number;
   pricingTier?: number;
-  currency?: string;
-  notes?: string;
-  deliveryWindowStart?: string;
-  deliveryWindowEnd?: string;
+  currency?: string | null;
+  notes?: string | null;
+  deliveryWindowStart?: string | null;
+  deliveryWindowEnd?: string | null;
   isTaxExempt?: boolean;
-  taxId?: string;
+  taxId?: string | null;
   /**
    * The customer's default fulfillment mode — seeds new orders' fulfillment
    * row (mobile `NewOrderScreen`, web `CreateOrderModal`). Accepted on both
@@ -157,6 +158,7 @@ function deriveUsername(email: string, businessName: string, contactName: string
 
 function buildPayload(
   form: CustomerFormValues,
+  initial: CustomerFormValues,
   mode: "create" | "edit",
 ): CustomerPayload | { error: string } {
   const businessName = form.businessName.trim();
@@ -192,19 +194,25 @@ function buildPayload(
     // CreateCustomerDto's @IsEmail rejects "" and the service mints its own
     // placeholder for an absent email.
     email: mode === "edit" ? email : email || undefined,
-    phone: form.phone.trim() || undefined,
+    phone: optionalText(mode, form.phone, initial.phone),
     creditLimit: parseOptionalNumber(form.creditLimit),
     pricingTier: form.pricingTier,
-    currency: form.currency.trim() || undefined,
-    notes: form.notes.trim() || undefined,
+    currency: optionalText(mode, form.currency, initial.currency),
+    notes: optionalText(mode, form.notes, initial.notes),
     // Edit-only: CreateCustomerDto has no delivery-window fields, and
     // `forbidNonWhitelisted` rejects the ENTIRE create payload over one unknown
     // property — a filled window would take the address bundle down with it.
     // The window is set from the edit screen instead (section below matches).
-    deliveryWindowStart: mode === "edit" ? form.deliveryWindowStart.trim() || undefined : undefined,
-    deliveryWindowEnd: mode === "edit" ? form.deliveryWindowEnd.trim() || undefined : undefined,
+    deliveryWindowStart:
+      mode === "edit"
+        ? clearableField(form.deliveryWindowStart, initial.deliveryWindowStart)
+        : undefined,
+    deliveryWindowEnd:
+      mode === "edit"
+        ? clearableField(form.deliveryWindowEnd, initial.deliveryWindowEnd)
+        : undefined,
     isTaxExempt: form.isTaxExempt,
-    taxId: form.taxId.trim() || undefined,
+    taxId: optionalText(mode, form.taxId, initial.taxId),
     fulfillPath: writableFulfillPath(form.fulfillPath),
     addresses:
       mode === "create" && hasFullAddress
@@ -245,7 +253,7 @@ export function CustomerForm({
   }, [form, initial]);
 
   const submit = () => {
-    const res = buildPayload(form, mode);
+    const res = buildPayload(form, initial, mode);
     if ("error" in res) {
       setError(res.error);
       return;

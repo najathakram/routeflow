@@ -356,6 +356,11 @@ export function useMyAccountSummary() {
 
 // ─── Mutations (operator) ────────────────────────────────────────────────────
 
+/** Edit may send `null` to CLEAR an optional text column (see lib/clearable-field). */
+export type UpdateCustomerDto = {
+  [K in keyof CreateCustomerDto]?: CreateCustomerDto[K] | null;
+};
+
 export interface CreateCustomerDto {
   businessName: string;
   /** Create-only, and REQUIRED there — the API mints the linked User from it. */
@@ -399,7 +404,7 @@ export function useCreateCustomer() {
 
 export function useUpdateCustomer() {
   const qc = useQueryClient();
-  return useMutation<{ id: string }, Error, { id: string } & Partial<CreateCustomerDto>>({
+  return useMutation<{ id: string }, Error, { id: string } & UpdateCustomerDto>({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/customers/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["customers"] });
