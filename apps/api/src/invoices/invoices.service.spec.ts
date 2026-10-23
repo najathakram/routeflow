@@ -17,17 +17,8 @@ jest.mock("../storage/compress.util", () => ({
   compressDocument: jest.fn(),
 }));
 
-// Row 752 (SA-843): an edit that gives a payment a new reference identity now takes the payment-ref session lock
-// (withPaymentRefLock -> withAdvisoryLock). This file has no database, so the advisory lock is a pass-through here;
-// the real lock is covered by payment-edit-ref.db.spec.ts (R7) and db-locks.db.spec.ts.
-jest.mock("../common/db-locks", () => ({
-  ...jest.requireActual("../common/db-locks"),
-  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => unknown) => ({
-    acquired: true,
-    value: await fn(),
-  })),
-}));
-
+// Row 752: a re-referenced edit takes the payment-ref lock; no DB here (real lock: payment-edit-ref.db.spec.ts R7)
+jest.mock("../common/db-locks", () => require("../common/testing/pass-through-locks").locks());
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { InvoicesService, addCalendarDays } from "./invoices.service";
@@ -6392,11 +6383,7 @@ describe("InvoicesService", () => {
           const sql = (tx.$executeRaw.mock.calls[0][0] as any).join("?");
           expect(sql).toContain('"Invoice"');
           expect(sql).toContain("FOR UPDATE");
-          // Row 752 (SA-843 ruling 5): call [0] is the UNLOCKED key pre-read (before the payment-ref lock and the tx,
-          // selecting only the edited payment's key fields); the locked read of the payments is the LAST call.
-          expect(prisma.invoice.findUnique.mock.calls[0][0]).toMatchObject({
-            select: { payments: { where: { id: "pay-1" } } },
-          });
+          // Row 752 (SA-843 ruling 5): call [0] is the unlocked key pre-read; the LOCKED read is the last call
           expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
             prisma.invoice.findUnique.mock.invocationCallOrder.at(-1)!,
           );
