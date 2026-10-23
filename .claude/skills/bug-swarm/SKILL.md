@@ -78,3 +78,29 @@ board item W-653; build it only after v0 has 2 ledger rows.
 - Do not accept a `SPEC-EDIT` on the builder's word; it is a reviewer question.
 - Do not run more than one gate per machine at a time (`scripts/heavy-slot.mjs`).
 - Do not grow the lead's context: read the manifests and verdict lines, never agent transcripts.
+
+## v1 (scripts + Workflow)
+
+Evidence: runs `2026-10-23-bug-swarm-1` and `2026-10-23-bug-swarm-2`. The orchestrator carried 62-70% of
+cost, the hand-typed gate broke twice (unquoted `(dashboard)` paths, a drifting `origin/master..HEAD`), and a
+cloned stale `packages/*/dist` failed web tsc. v1 moves the deterministic work into scripts and the agent
+choreography into one Workflow script. The v0 steps above stay valid as the fallback.
+
+- **Run:** the Workflow tool with `scriptPath: .claude/skills/bug-swarm/workflow.js` and `args`
+  `{ run, rows, idSpace, repo, runDir, fromWorktree, maxClusters, avoidFiles? }` (`scriptsDir`, `registerPath` optional).
+  `idSpace` is REQUIRED, `row` (WORK-REGISTER rows, W- ids, via `rf.mjs item show`) or `bug` (B### via
+  `bugs.mjs show`); there is no default, because run 2026-10-23-bug-swarm-3 fixed the wrong bug by resolving rows as B### ids.
+- **Scripts** (`scripts/`): `cluster.mjs` (union by shared file, ratchet files, cap), `worktree.mjs` (worktree +
+  cloned node_modules + packages build + prisma generate), `gate.mjs` (argv-array gate on the merge-base diff,
+  `--json`, `--needs-db`). `workflow.dry-run.mjs` proves the workflow against stubbed agents; run it with
+  `node --test .claude/skills/bug-swarm/scripts/*.test.mjs` after any edit to `workflow.js`.
+- `gate.mjs` replaces the planned `gate.sh` (lead-accepted): argv arrays, no shell, because shell quoting broke the hand gate twice in runs 1-2.
+- The HIGH guard rests on Triage's risk label: a mislabelled HIGH row can reach Build; Review is the backstop.
+- **Workflow:** Triage+Pack (sonnet) -> Cluster (haiku) -> per cluster Build (sonnet) -> Gate (haiku,
+  one build fix round) -> Review (opus, one fix round plus re-check), then a Report. A red cluster is parked.
+- **Stays with the orchestrator:** push, PRs, captures for UI clusters, the public window and landing, the
+  ledger row and RUN-LOG (v0 steps 7 and 8). No agent pushes or merges.
+- **Folded, applied:** Triage and the context pack are ONE sonnet @ low agent per batch, before clustering
+  (it resolves ids, verifies liveness with file:line, writes `manifest.json` and a pack per bug). Applied after
+  runs 2026-10-23-bug-swarm-1/-2/-3: triage was wrong in 3 of 3 (8 not-live rows called live in run 1; a duplicate
+  in run 2; the wrong id space in run 3) and the pack re-verified every row anyway.
