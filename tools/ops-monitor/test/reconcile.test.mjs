@@ -316,6 +316,15 @@ test("fixLinksFor: only text that names the item makes a fix link", () => {
   assert.deepEqual(f({ title: "Resolves row 7", body: "Fixes B9" }), ["7", "B9"]);
 });
 
+test('fixLinksFor: the house label "Register row N" in a body names the item with no closing verb', () => {
+  const f = (o) => fixLinksFor({ branch: null, title: "", body: "", ...o }, KNOWN);
+  assert.deepEqual(f({ body: "Register row 525" }), ["525"]);
+  assert.deepEqual(f({ body: "Register rows 555/556 (W-1)" }), ["555", "556"]);
+  assert.deepEqual(f({ body: "register row: 7" }), ["7"]);
+  assert.deepEqual(f({ body: "Register row 9999" }), []); // unknown row
+  assert.deepEqual(f({ body: "Supersedes parked row 525" }), []); // plain \"row N\" stays a background mention
+});
+
 test("fixLinksFor: real background sentences in a body are not fix links", () => {
   const f = (body) =>
     fixLinksFor({ branch: null, title: "", body }, new Set(["402", "527", "1232"]));
