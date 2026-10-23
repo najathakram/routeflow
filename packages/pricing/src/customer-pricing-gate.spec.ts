@@ -14,11 +14,22 @@ import { customerPricingGate, pricesUnconfirmed } from "./customer-pricing-gate"
 const off = { enabled: false, ready: true, failed: false, lineReady: () => true };
 const read = (over: Record<string, unknown> = {}) => ({ data: {}, ...over });
 const gate = (over: Partial<Parameters<typeof customerPricingGate>[0]> = {}) =>
-  customerPricingGate({ customerQuery: read(), customerPricesQuery: read(), priceLayer: off, ...over });
+  customerPricingGate({
+    customerQuery: read(),
+    customerPricesQuery: read(),
+    priceLayer: off,
+    ...over,
+  });
 
 describe("customerPricingGate (W-725 truth table)", () => {
   it("everything read: nothing blocks", () => {
-    expect(gate()).toEqual({ pending: false, failed: false, readFailed: false, blockPick: false, blockSave: false });
+    expect(gate()).toEqual({
+      pending: false,
+      failed: false,
+      readFailed: false,
+      blockPick: false,
+      blockSave: false,
+    });
   });
 
   it("a read still loading blocks the pick and Save", () => {
@@ -65,14 +76,65 @@ describe("customerPricingGate (W-725 truth table)", () => {
 
   it("a layer still being read is pending", () => {
     const layer = { enabled: true, ready: false, failed: false, lineReady: () => false };
-    expect(gate({ priceLayer: layer })).toMatchObject({ pending: true, blockPick: true, blockSave: true });
+    expect(gate({ priceLayer: layer })).toMatchObject({
+      pending: true,
+      blockPick: true,
+      blockSave: true,
+    });
+  });
+});
+
+const http = (status: number) => ({
+  isError: true,
+  data: undefined,
+  error: { response: { status } },
+});
+
+/**
+ * SA-883 (#3658 MUST): GET /customers/:id/prices is @RequirePlanFlag("flag.pricing_tiers"), enforced in prod since 09-17. A
+ * tenant whose plan lacks the flag gets 403 there: that is an EMPTY customer-price read (no overrides), not a failure, so the
+ * pick prices at the customer's own tier. Only that one read and only 403: the customer read, 5xx, 404 and network errors
+ * still fail closed.
+ */
+describe("customerPricingGate: a plan-gated 403 on the customer-price read is an empty read (SA-883)", () => {
+  it("prices 403 with no data: nothing blocks (an un-flagged tenant can pick)", () => {
+    expect(gate({ customerPricesQuery: http(403) })).toEqual({
+      pending: false,
+      failed: false,
+      readFailed: false,
+      blockPick: false,
+      blockSave: false,
+    });
+  });
+
+  it("a 403 given as a top-level `status` counts the same", () => {
+    expect(gate({ customerPricesQuery: { isError: true, error: { status: 403 } } }).blockPick).toBe(
+      false,
+    );
+  });
+
+  it("prices 500, 404 or a network error (no response) still fail closed", () => {
+    for (const q of [http(500), http(404), { isError: true, error: new Error("Network Error") }])
+      expect(gate({ customerPricesQuery: q })).toMatchObject({
+        failed: true,
+        readFailed: true,
+        blockPick: true,
+      });
+  });
+
+  it("a 403 on the CUSTOMER read still fails closed", () => {
+    expect(gate({ customerQuery: http(403) })).toMatchObject({ failed: true, blockPick: true });
   });
 });
 
 describe("pricesUnconfirmed (moved, pure)", () => {
   it("flag off never blocks; pending or failed blocks; an incomplete layer blocks only absent products", () => {
-    expect(pricesUnconfirmed({ enabled: false, ready: false, lineReady: () => false }, ["p1"])).toBe(false);
-    expect(pricesUnconfirmed({ enabled: true, ready: false, lineReady: () => true }, [])).toBe(true);
+    expect(
+      pricesUnconfirmed({ enabled: false, ready: false, lineReady: () => false }, ["p1"]),
+    ).toBe(false);
+    expect(pricesUnconfirmed({ enabled: true, ready: false, lineReady: () => true }, [])).toBe(
+      true,
+    );
     const partial = { enabled: true, ready: true, lineReady: (id?: string | null) => id === "p1" };
     expect(pricesUnconfirmed(partial, ["p1"])).toBe(false);
     expect(pricesUnconfirmed(partial, ["p1", "p2"])).toBe(true);

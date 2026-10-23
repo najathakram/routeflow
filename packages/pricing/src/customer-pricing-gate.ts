@@ -6,7 +6,27 @@ export type PricingReadState = {
   isLoading?: boolean;
   isError?: boolean;
   data?: unknown;
+  /** The read's error (axios `response.status`, or a top-level `status`): SA-883 reads a 403 on the customer-price read. */
+  error?: unknown;
 };
+
+/** The HTTP status on a read's error: axios `error.response.status`, else a top-level `status`; null for a network error. */
+function errorStatus(error: unknown): number | null {
+  const e = error as { response?: { status?: unknown }; status?: unknown } | null | undefined;
+  const s = e?.response?.status ?? e?.status;
+  return typeof s === "number" ? s : null;
+}
+
+/**
+ * SA-883: GET /customers/:id/prices is plan-gated (`@RequirePlanFlag("flag.pricing_tiers")`). A tenant whose plan lacks the
+ * flag gets 403: that is an EMPTY read (no customer-product overrides; the pick prices at the customer's own tier), never a
+ * failure. Only this read and only 403; anything else keeps its read state.
+ */
+function asPlanGatedEmpty(q: PricingReadState): PricingReadState {
+  return q.isError && q.data == null && errorStatus(q.error) === 403
+    ? { ...q, isError: false, isPending: false, isLoading: false, data: [] }
+    : q;
+}
 
 /**
  * Are the prices on these product ids unconfirmed? Flag off = never (nothing was read). Flag on and the layer pending or
@@ -53,10 +73,11 @@ export function customerPricingGate(i: {
   // caller without it falls back to `isLoading`. Fails closed: a paused read blocks the pick like a loading one.
   const waiting = (q: PricingReadState) =>
     !q.isError && q.data == null && !!(q.isPending ?? q.isLoading);
-  const readFailed = failedRead(i.customerQuery) || failedRead(i.customerPricesQuery);
+  const customerPricesQuery = asPlanGatedEmpty(i.customerPricesQuery);
+  const readFailed = failedRead(i.customerQuery) || failedRead(customerPricesQuery);
   const pending =
     waiting(i.customerQuery) ||
-    waiting(i.customerPricesQuery) ||
+    waiting(customerPricesQuery) ||
     (i.priceLayer.enabled && !i.priceLayer.ready && !i.priceLayer.failed);
   const failed = readFailed || (i.priceLayer.enabled && i.priceLayer.failed);
   return {

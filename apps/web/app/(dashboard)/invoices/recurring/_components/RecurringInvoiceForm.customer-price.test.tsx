@@ -33,6 +33,7 @@ let mockCustomerLoading = false;
 let mockCustomerError = false;
 let mockPricesError = false;
 let mockPricesErrorWithData = false;
+let mockPricesStatus = 500;
 let mockCustomerPaused = false;
 const mockRefetchCustomer = jest.fn();
 const mockRefetchPrices = jest.fn();
@@ -70,6 +71,7 @@ jest.mock("@/lib/api/customers", () => ({
     data: id && !mockPricesError ? mockCustomerPrices : undefined,
     isLoading: false,
     isError: !!id && (mockPricesError || mockPricesErrorWithData),
+    error: id && mockPricesError ? { response: { status: mockPricesStatus } } : null,
     refetch: mockRefetchPrices,
   }),
 }));
@@ -83,6 +85,7 @@ beforeEach(() => {
   mockCustomerError = false;
   mockPricesError = false;
   mockPricesErrorWithData = false;
+  mockPricesStatus = 500;
   mockCustomerPaused = false;
   mockCustomerPrices = [];
   mockLayer = layerOff();
@@ -228,6 +231,33 @@ describe("SA-868: a failed customer-price read fails CLOSED (never a list-price 
     // Save stays allowed: no suggestion can get in while picking is closed (typed and stored prices are the operator's).
     expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * SA-883 (#3658 MUST): GET /customers/:id/prices is plan-gated (flag.pricing_tiers). A tenant whose plan lacks the flag (every
+ * LITE plan) gets 403 there: an EMPTY read, so the pick prices at the customer's own tier. At 44170adcf (and master since
+ * #3639) the form treated it as a failed read and refused every pick for those tenants.
+ */
+describe("SA-883: a plan-gated 403 on the customer-price read is an empty read", () => {
+  it("a tier-3 customer on an un-flagged plan picks at the tier-3 price (8.00)", async () => {
+    mockPricesError = true;
+    mockPricesStatus = 403;
+    renderCreate();
+    await chooseCustomer("Tier Three Cafe");
+    expect(
+      screen.queryByPlaceholderText("Couldn't load this customer's prices."),
+    ).not.toBeInTheDocument();
+    await pickProduct();
+    expect(await screen.findByDisplayValue("8.00")).toBeInTheDocument();
+  });
+
+  it("a 500 on the same read still refuses the pick", async () => {
+    mockPricesError = true;
+    mockPricesStatus = 500;
+    renderCreate();
+    await chooseCustomer("Tier Three Cafe");
+    expect(screen.getByPlaceholderText("Couldn't load this customer's prices.")).toBeDisabled();
   });
 });
 
