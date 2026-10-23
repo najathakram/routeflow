@@ -44,7 +44,7 @@ import { fmtCalendarDate } from "../../../../lib/format-date";
 import { isInternalEmail } from "../../../../lib/internal-email";
 import {
   canRecordPayment,
-  canSendInvoiceNow,
+  invoiceSendAction,
   canWriteOff,
   invoiceActionFlags,
   isOpenInvoiceStatus,
@@ -52,6 +52,7 @@ import {
   isPendingOrderMirror,
 } from "../../../../lib/invoices-logic";
 import { reminderErrorCopy } from "../../../../lib/invoice-reminder-error-copy";
+import { invoiceSendStateLine } from "../../../../lib/invoice-send-state";
 import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-notes-logic";
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
@@ -228,7 +229,13 @@ export default function InvoiceDetailScreen() {
     deliveryBatchId: invoice.deliveryBatchId,
     orderStatus: invoice.order?.status,
   });
-  const canSend = canSendInvoiceNow(invoice.status, pendingMirror);
+  // #2088: Send / "Email again" (with the tracked state in the confirmation) / locked-with-reason.
+  const sendAction = invoiceSendAction({
+    status: invoice.status,
+    pendingMirror,
+    sendState: invoice.sendState,
+    sendLocked: invoice.sendLocked,
+  });
   // Draft/Final PDF stage (mirrors web): smart default per stage, operator-overridable
   // via the toggle. Governs BOTH Share and Send.
   const defaultPdfVariant = deriveInvoiceVariant(invoice);
@@ -292,6 +299,11 @@ export default function InvoiceDetailScreen() {
         onError: (e: any) => {
           const code = e?.response?.data?.code;
           const msg = e?.response?.data?.message ?? e?.message ?? "Try again.";
+          if (code === "EMAIL_SEND_FAILED" && invoice.status !== "DRAFT") {
+            // #2088: a re-send of an invoice that was already sent: it is NOT "not sent", and Mark as Sent is meaningless.
+            showToast(msg);
+            return;
+          }
           if (code === "EMAIL_SEND_FAILED") {
             // Invoice is still DRAFT (R5 honesty). Offer Mark as Sent so a broken
             // mail transport can't leave it stuck. Mirrors the web recovery modal.
@@ -773,6 +785,13 @@ export default function InvoiceDetailScreen() {
             </View>
           ) : null}
 
+          {/* #2088: what was emailed and whether it changed since (same words as web). */}
+          {invoiceSendStateLine(invoice.sendState) ? (
+            <Text testID="invoice-send-state-line" style={styles.mirrorHintText}>
+              {invoiceSendStateLine(invoice.sendState)}
+            </Text>
+          ) : null}
+
           {/* Action grid */}
           <View style={styles.actionsGrid}>
             {canRecord ? (
@@ -782,13 +801,19 @@ export default function InvoiceDetailScreen() {
                 onPress={() => router.push(`/(operator)/invoices/${id}/record-payment`)}
               />
             ) : null}
-            {canSend ? (
+            {sendAction.show ? (
               <ActionTile
                 icon="paper-plane-outline"
-                label={sendMut.isPending ? "Sending…" : "Send"}
+                label={sendMut.isPending ? "Sending…" : sendAction.label}
                 // B6: was tappable while pending — a fast double-tap fired two send emails.
-                disabled={sendMut.isPending}
-                onPress={handleSend}
+                disabled={sendMut.isPending || sendAction.locked}
+                onPress={() =>
+                  sendAction.confirm
+                    ? confirm(sendAction.label, sendAction.confirm, handleSend, {
+                        confirmText: sendAction.confirmButton,
+                      })
+                    : handleSend()
+                }
               />
             ) : null}
             {flags.canEdit && !pendingMirror ? (

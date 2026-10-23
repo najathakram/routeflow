@@ -10,6 +10,17 @@ enum MovementType {
   COST_BASIS
 }
 
+/// SA-804(3): why a stock ADJUSTMENT was made. NULL on history and on every other movement type.
+/// A write-off is derived (`isWriteOff` in @routeflow/pricing), never stored.
+enum AdjustmentReason {
+  DAMAGED
+  EXPIRED
+  THEFT
+  SAMPLE
+  COUNT_CORRECTION
+  OTHER
+}
+
 enum CostingMethod {
   FIFO
   LIFO
@@ -319,6 +330,9 @@ model StockMovement {
   reference     String?
   notes         String?
   performedById String?
+  // SA-804(3): set on ADJUSTMENT rows only (manual adjust, product count, count commits); OTHER carries a note.
+  reason        AdjustmentReason?
+  reasonNote    String?
   // B562 (SA-136 §3): the ACCOUNTING date of the movement — a backdated purchase/adjustment/bill
   // receive carries its effective date here. `createdAt` is write-once insertion time and is only
   // a tiebreaker. Replay, point-in-time cost and every "when did this happen" read order/filter by

@@ -1,0 +1,70 @@
+{
+  "run": "2026-10-23-bug-swarm-3",
+  "profile": "bug-swarm",
+  "mode": "bugfix",
+  "scale": "small",
+  "engine": "bug-swarm v1 workflow (wf_559cdef6-d16)",
+  "started": "2026-10-23T08:17:43Z",
+  "ended": "2026-10-23T08:32:27Z",
+  "phaseReport": [
+    {
+      "phase": "Workflow v1 (Triage, Cluster, Pack, Build, Gate, Review)",
+      "ran": true,
+      "agents": 6,
+      "tokens": 4050183,
+      "estUsd": 1.7528618,
+      "model": "mixed",
+      "effort": "per role",
+      "note": "haiku-5-5 2.12M tokens unpriced (null) in session-usage"
+    },
+    {
+      "phase": "UI captures",
+      "ran": true,
+      "agents": 1,
+      "tokens": 2024084,
+      "estUsd": 0.7798945,
+      "model": "claude-sonnet-5-5",
+      "effort": "medium"
+    },
+    {
+      "phase": "Orchestrator (delta)",
+      "ran": true,
+      "agents": 0,
+      "tokens": 12897777,
+      "estUsd": 7.0099,
+      "model": "claude-opus-5-5",
+      "effort": "session",
+      "note": "upper bound: includes v1.1 coordination with the lead in the same window"
+    }
+  ],
+  "bugsFixed": 1,
+  "requestedIds": 8,
+  "builtIds": [
+    "B668"
+  ],
+  "notAttempted": [
+    "302",
+    "599",
+    "668",
+    "745",
+    "W-652",
+    "W-679",
+    "W-685",
+    "W-687"
+  ],
+  "quality": {
+    "firstPassGate": {
+      "c1": "GREEN (all 9 steps)"
+    },
+    "reviewMusts": {
+      "c1": 0
+    },
+    "specEdits": 0,
+    "captures": "390/768/1440 no overlap"
+  },
+  "finding": "v1 resolved board-row ids as B### catalogue ids (id-space gap) -> v1.1",
+  "totalUsdKnown": 9.54,
+  "usdPerBug": 9.54,
+  "subagentUsd": 2.53,
+  "remainingFindings": []
+}
