@@ -271,17 +271,66 @@ export function collectedDateOf(p: { settledAt?: unknown; paidAt?: unknown }): u
  * this money held/confirmed", a different question from "does this row already consume
  * capacity against the invoice/allocation it was recorded on".
  *
- * Internal to this module — `remainingCapacity` below is the public entry point. Not exported
- * because "not void" is a capacity concept, not a payment-confirmation concept, and giving it
- * its own top-level export would invite a second, competing "which payments count" predicate in
- * this file.
+ * Internal to this module: `remainingCapacity` and `capacityRefusal` below are the public entry points, and
+ * `consumesCapacity` is the ONE per-row predicate they sum with (row 2299 / SA-858 ruling 1).
  */
 function sumNotVoid(
   payments: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined,
 ): number {
   return (payments ?? [])
-    .filter((p) => p.status !== "VOID")
+    .filter((p) => consumesCapacity(p.status))
     .reduce((sum, p) => sum + Number(p.amount), 0);
+}
+
+/**
+ * Row 2299 / SA-858 ruling 1: does a payment row in this status consume its invoice's capacity? CAPACITY = every
+ * non-VOID row (DRAFT + PAID + PENDING), the N4 rule below. The ONE predicate: every capacity guard (API writers,
+ * the mobile edit cap via remainingCapacity) reads it; a fifth PaymentStatus fails payment-capacity.spec.ts.
+ */
+export function consumesCapacity(status: string | null | undefined): boolean {
+  return status !== "VOID";
+}
+
+/** The capacity writers' tolerance for a sub-cent float residue (their existing `+ 0.001`), named once. */
+export const CAPACITY_EPSILON = 0.001;
+
+/** Why a capacity-consuming write is refused, with the fixed copy every writer shows (recordPayment's three cases). */
+export interface CapacityRefusal {
+  kind: "FULLY_PAID" | "RESERVED_BY_UNCONFIRMED" | "EXCEEDS";
+  remaining: number;
+  message: string;
+}
+
+/**
+ * Row 2299 / SA-858: null when a write of `amount` in `status` fits the invoice's remaining CAPACITY (`existing` =
+ * its other payment rows; VOID ones are ignored), else the refusal. A write that consumes nothing (VOID) never refuses.
+ * `remaining` can hit 0 while CONFIRMED money is still below the total: the rest is then RESERVED by unconfirmed rows.
+ */
+export function capacityRefusal(p: {
+  total: number;
+  existing: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined;
+  amount: number;
+  status: string;
+}): CapacityRefusal | null {
+  if (!consumesCapacity(p.status)) return null;
+  const total = Number(p.total);
+  const remaining = remainingCapacity(total, p.existing);
+  if (remaining <= 0) {
+    return sumConfirmed(p.existing) >= total - CAPACITY_EPSILON
+      ? { kind: "FULLY_PAID", remaining, message: "Invoice is already fully paid" }
+      : {
+          kind: "RESERVED_BY_UNCONFIRMED",
+          remaining,
+          message: "Invoice's remaining balance is already reserved by unconfirmed payments",
+        };
+  }
+  if (p.amount > remaining + CAPACITY_EPSILON)
+    return {
+      kind: "EXCEEDS",
+      remaining,
+      message: `Payment exceeds remaining balance of ${remaining.toFixed(2)}`,
+    };
+  return null;
 }
 
 /**
