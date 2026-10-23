@@ -482,6 +482,21 @@ test("lanes-local: Windows paths compare case-insensitively with either slash", 
   }
 });
 
+test("lanes-local: macOS paths compare case-insensitively (APFS default)", () => {
+  const home = tmp("rf-lanes-mac-");
+  try {
+    setLane(home, "/Volumes/X/Code/RouteFlow", "mm-landing", "darwin");
+    assert.equal(
+      laneForCwd("/volumes/x/code/routeflow/apps", {}, { home, platform: "darwin" }),
+      "mm-landing",
+    );
+    assert.equal(normalizeCwd("/A/B/", "darwin"), "/a/b");
+    assert.equal(normalizeCwd("/A/B/", "linux"), "/A/B");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("lanes-local: a damaged lanes.json reads as empty", () => {
   const home = tmp("rf-lanes-bad-");
   try {
