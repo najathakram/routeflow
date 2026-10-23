@@ -1382,14 +1382,16 @@ function ProductPickView({
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
       // SA-085i: never the pack's tier price for a unit-sold line ("/Case", not "/each").
-      const price = line ? lineUnitFor(line, p, effectiveTierFor(p.id)) : tierPriceFor(p);
+      const price = line
+        ? lineUnitFor(line, p, effectiveTierFor(p.id))
+        : pick.shown(p.id, packPriceFor(p)); // SA-882: "…" until the gate opens
       const band =
         line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 && !line.unitLabel ? (
           <BoxedQtyBand
             line={line}
             unitsPerBox={Number(p.unitsPerBox)}
             unit={p.unit}
-            unitPrice={price}
+            unitPrice={price ?? 0}
             productName={displayName(p)}
             onChangeBoxes={(n) => onRowChangeBoxes(p.id, n)}
             onChangePieces={(n) => onRowChangePieces(p.id, n)}
@@ -1422,6 +1424,7 @@ function ProductPickView({
       items,
       cpMap,
       customerTier,
+      pick.gate.blockPick,
       onRowAdd,
       onRowChangeQty,
       onRowIncrement,

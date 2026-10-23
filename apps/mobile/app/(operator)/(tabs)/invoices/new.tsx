@@ -1208,7 +1208,9 @@ function InvoiceComposer({
       if (isCatalogHeader(p)) return <CatalogSectionLabel label={p.label} />;
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
-      const price = line ? unitPriceBase(lineFor(line, p), tierPriceFor(p)) : tierPriceFor(p);
+      const price = line
+        ? unitPriceBase(lineFor(line, p), tierPriceFor(p))
+        : pick.shown(p.id, packPriceFor(p)); // SA-882: "…" until the gate opens
       const band =
         line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 && !line.unitLabel ? (
           <BoxedQtyBand
@@ -1248,6 +1250,7 @@ function InvoiceComposer({
       items,
       cpMap,
       customerTier,
+      pick.gate.blockPick,
       onRowAdd,
       onRowChangeQty,
       onRowIncrement,

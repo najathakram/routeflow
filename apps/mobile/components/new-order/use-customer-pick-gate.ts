@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { customerPricingGate, type PricingReadState } from "@routeflow/pricing";
+import { shownPrice } from "../../lib/price-layer-gate";
 import {
   PICK_PENDING_NOTICE_DELAY_MS,
   customerPickNotice,
@@ -28,6 +29,10 @@ export function useCustomerPickGate(
     return () => clearTimeout(t);
   }, [waiting]);
   return {
+    gate,
+    /** SA-882: the price to SHOW for a product not yet added: null ("…") while the gate blocks the pick. */
+    shown: (productId: string, clp: { price: number }) =>
+      shownPrice(gate, customerId, priceLayer, productId, clp),
     refusal: customerPickRefusal(gate, customerId),
     notice: customerPickNotice(gate, customerId, pendingShown),
     retry: () =>

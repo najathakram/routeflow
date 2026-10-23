@@ -11,8 +11,8 @@ export interface ProductRowProps {
   /** Loose-unit noun ("bottle"), shown when the product isn't case-packed. */
   unit?: string | null;
   unitsPerBox?: number | null;
-  /** The customer's effective per-selling-unit price. */
-  price: number;
+  /** The customer's effective per-selling-unit price; null = not confirmed yet (SA-882), shown as "…". */
+  price: number | null;
   /** Catalog list price — struck through when `price` undercuts it. */
   listPrice: number;
   /** Total pieces on the line; 0 renders the add button instead of a stepper. */
@@ -58,9 +58,9 @@ export const ProductRow = React.memo(function ProductRow({
   // units_v1 (SA-105 LOW): listPrice is the PACK's own list price — comparing a unit-sold
   // line's price against it is meaningless (a $2 Piece would read "was $24.00 $2.00 / Piece").
   // Suppress the marker on a unit line rather than fetch its own list price just for this hint.
-  const isSpecial = !unitLabel && price < listPrice - 0.0001;
+  const isSpecial = price != null && !unitLabel && price < listPrice - 0.0001;
   // Display-only hint on the case price — never fed back into line math.
-  const perUnitHint = isBoxed ? perUnitPrice(price, upb) : null;
+  const perUnitHint = isBoxed && price != null ? perUnitPrice(price, upb) : null;
   const showBand = isBoxed && qty > 0 && children != null;
 
   return (
@@ -77,7 +77,9 @@ export const ProductRow = React.memo(function ProductRow({
           <Text style={styles.meta} numberOfLines={2}>
             {sku ? `SKU ${sku} · ` : ""}
             {isSpecial ? <Text style={styles.metaWas}>${listPrice.toFixed(2)} </Text> : null}
-            <Text style={isSpecial ? styles.metaSpecial : undefined}>${price.toFixed(2)}</Text>
+            <Text style={isSpecial ? styles.metaSpecial : undefined}>
+              {price == null ? "\u2026" : `$${price.toFixed(2)}`}
+            </Text>
             {isBoxed
               ? ` / case of ${upb}`
               : unitLabel
