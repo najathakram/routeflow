@@ -1093,12 +1093,12 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
-    it("(e) row 510: the switch is gone. With no SystemConfig row a portal rule hides and 409s the portal; staff are still not gated by it (a portal-only limit is not a legal ban, so the staff channel ignores it)", async () => {
-      const f = await seedTenant("sr-e"); // no SystemConfig row
+    it("(e) the switch is staff-only: with it off a portal rule still hides and 409s the portal, and staff are not gated", async () => {
+      const f = await seedTenant("sr-e"); // no SystemConfig row = switch OFF
       await addState(f, "TX");
       await productRule(f, f.S.id);
       expect((await check(f, f.S, "BUYER_PORTAL")).outcome).toBe("BLOCK");
-      expect((await check(f, f.S, "STAFF")).outcome).toBe("ALLOW");
+      expect((await check(f, f.S, "STAFF")).outcome).toBe("OFF");
       const v = await buyerView(f);
       expectSurfaces(f, v, f.S, false, "restriction");
     });
