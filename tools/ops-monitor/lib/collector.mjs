@@ -52,7 +52,7 @@ export const BUG_FILE_RE = /^\.claude\/campaign\/bugs\/B\d+[^/]*\.md$/;
 export const DEFAULT_CI_GATES = ["verify", "e2e"];
 
 const [OWNER, REPO] = GITHUB_REPO.split("/");
-const CONTEXTS = `statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name conclusion status startedAt checkSuite { createdAt updatedAt } } ... on StatusContext { context state } } } }`;
+const CONTEXTS = `statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name conclusion status startedAt completedAt checkSuite { createdAt updatedAt } } ... on StatusContext { context state } } } }`;
 export const GRAPHQL_QUERY = `query {
   repository(owner: "${OWNER}", name: "${REPO}") {
     visibility
@@ -86,15 +86,18 @@ export const QUEUED_STALE_MS = 6 * 3600_000;
  * A CheckRun that never started and whose suite was last created or updated more than
  * QUEUED_STALE_MS ago. A re-run reuses the original suite, so time from the LATER of the two.
  */
-function isStaleQueued(n, nowMs) {
-  if (!n || n.startedAt !== null || n.__typename === "StatusContext") return false;
+function staleQueuedAt(n, nowMs) {
+  if (!n || n.startedAt !== null || n.__typename === "StatusContext") return null;
   if (!["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(String(n.status ?? "").toUpperCase()))
-    return false;
+    return null;
   const times = [n.checkSuite?.createdAt, n.checkSuite?.updatedAt]
     .map((t) => Date.parse(t ?? ""))
     .filter(Number.isFinite);
-  return times.length > 0 && nowMs - Math.max(...times) > QUEUED_STALE_MS;
+  if (times.length === 0) return null;
+  const at = Math.max(...times);
+  return nowMs - at > QUEUED_STALE_MS ? at : null;
 }
+const isStaleQueued = (n, nowMs) => staleQueuedAt(n, nowMs) !== null;
 
 /**
  * One GraphQL check context (CheckRun | StatusContext) -> { name, state } with state in
@@ -136,21 +139,37 @@ export function normalizeContext(n, nowMs = Date.now()) {
  * Context nodes -> one run per check NAME (several workflow runs report the same name; a skipped
  * duplicate must never hide the real result). Worst wins: failure > pending > success >
  * cancelled > skipped. First-appearance order. Exception: a stale-queued attempt (a re-run stuck
- * past QUEUED_STALE_MS) stops an older success from winning: the check reads notrun, never success.
+ * past QUEUED_STALE_MS) stops an OLDER success from winning (the check reads notrun, never
+ * success), decided by time, not node order: the stale attempt's suite time must be newer than the
+ * success's completedAt/startedAt. A success with no time is treated as older (conservative).
  */
 export function collapseRuns(nodes, nowMs = Date.now()) {
   const by = new Map();
-  const stuck = new Set();
+  const stuckAt = new Map(); // name -> newest stale-queued attempt's suite time
+  const okAt = new Map(); // name -> newest success time (NaN when any success has none)
   for (const raw of nodes ?? []) {
     const r = normalizeContext(raw, nowMs);
     if (!r) continue;
-    if (isStaleQueued(raw, nowMs)) stuck.add(r.name);
+    const st = staleQueuedAt(raw, nowMs);
+    if (st !== null) stuckAt.set(r.name, Math.max(stuckAt.get(r.name) ?? st, st));
+    if (r.state === "success") {
+      const t = Date.parse(raw.completedAt ?? raw.startedAt ?? "");
+      okAt.set(
+        r.name,
+        Number.isNaN(t) || Number.isNaN(okAt.get(r.name))
+          ? NaN
+          : Math.max(okAt.get(r.name) ?? t, t),
+      );
+    }
     const had = by.get(r.name);
     if (!had || RUN_RANK[r.state] > RUN_RANK[had]) by.set(r.name, r.state);
   }
   return [...by].map(([name, state]) => ({
     name,
-    state: state === "success" && stuck.has(name) ? "notrun" : state,
+    state:
+      state === "success" && stuckAt.has(name) && !(stuckAt.get(name) <= okAt.get(name))
+        ? "notrun"
+        : state,
   }));
 }
 
