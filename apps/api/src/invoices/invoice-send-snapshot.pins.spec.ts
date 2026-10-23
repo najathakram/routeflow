@@ -76,48 +76,73 @@ describe("W-702 the email snapshot (SA-860)", () => {
     return src.slice(start, end);
   };
   const FORBIDDEN =
-    /this\.(gateway|messaging|storage|emailService|pdfService|notifications|email)\b|\bemit[A-Z]\w*\(|notifyEvent\(|\.notify\(|sendInvoice\(|\.upload\(|getOrGenerate\(|afterCommit\(|onCommit\(|runAfterCommit\(/;
+    /this\.(gateway|messaging|storage|emailService|pdfService|notifications|email)\b|\bemit[A-Z]\w*\(|\.emit\(|\.publish\(|notifyEvent\(|\.notify\(|sendInvoice\(|\.upload\(|getOrGenerate\(|afterCommit\(|onCommit\(|runAfterCommit\(/;
+
+  // Walk a class's methods from the given entries, following every `this.<method>(` call to a method of the same class.
+  const walkClass = (src: string, entries: string[]) => {
+    const seen = new Set<string>();
+    const queue = [...entries];
+    const hits: Array<{ method: string; hit: string | null }> = [];
+    while (queue.length) {
+      const name = queue.shift() as string;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const body = classBody(src, name);
+      hits.push({ method: name, hit: FORBIDDEN.exec(body)?.[0] ?? null });
+      for (const m of body.matchAll(/this\.([A-Za-z_]\w*)\(/g)) {
+        const callee = m[1];
+        if (
+          !seen.has(callee) &&
+          new RegExp(`\\n  (?:private |public |protected )?(?:async )?${callee}\\s*\\(`).test(src)
+        ) {
+          queue.push(callee);
+        }
+      }
+    }
+    return { seen, hits };
+  };
+  const noHits = (hits: Array<{ method: string; hit: string | null }>) =>
+    expect(hits.filter((h) => h.hit !== null)).toEqual([]);
 
   it("R6 (SA-874): the credit code the dry run executes has no non-DB effect and no after-commit hook", () => {
     const credits = readFileSync(
       join(__dirname, "../credit-notes/credit-notes.service.ts"),
       "utf8",
     );
-    const seen = new Set<string>();
-    const queue = ["settleOrderCreditsInTx", "autoApplyOldestCreditsInTx", "applyCreditInTx"];
-    while (queue.length) {
-      const name = queue.shift() as string;
-      if (seen.has(name)) continue;
-      seen.add(name);
-      const body = classBody(credits, name);
-      expect({ method: name, hit: FORBIDDEN.exec(body)?.[0] ?? null }).toEqual({
-        method: name,
-        hit: null,
-      });
-      for (const m of body.matchAll(/this\.([A-Za-z_]\w*)\(/g)) {
-        const callee = m[1];
-        if (
-          !seen.has(callee) &&
-          new RegExp(`\\n  (?:private |public |protected )?(?:async )?${callee}\\s*\\(`).test(
-            credits,
-          )
-        ) {
-          queue.push(callee);
-        }
-      }
-    }
+    const { seen, hits } = walkClass(credits, [
+      "settleOrderCreditsInTx",
+      "autoApplyOldestCreditsInTx",
+      "applyCreditInTx",
+    ]);
+    noHits(hits);
     // the walk really reached helpers (so the pin is not vacuous)
     expect(seen.size).toBeGreaterThan(3);
-    // the commission sync applyCreditInTx runs: a SAVEPOINT inside the caller's tx, no emit
+  });
+
+  it("R6 (SA-880): the commission sync that RUNS INSIDE the dry-run tx is walked too (syncInvoiceCommission, runSync, helpers)", () => {
     const engine = readFileSync(
       join(__dirname, "../sales-agents/commission-engine.service.ts"),
       "utf8",
     );
-    for (const name of ["syncInvoiceCommissionSafe", "logSyncFailure"]) {
-      expect({ method: name, hit: FORBIDDEN.exec(classBody(engine, name))?.[0] ?? null }).toEqual({
-        method: name,
-        hit: null,
-      });
+    const { seen, hits } = walkClass(engine, [
+      "syncInvoiceCommissionSafe",
+      "syncInvoiceCommission",
+    ]);
+    noHits(hits);
+    expect(seen.has("runSync")).toBe(true);
+    expect(seen.has("logSyncFailure")).toBe(true);
+  });
+
+  it("the forbidden pattern catches a bare .emit( / .publish( as well as the named APIs (so a new effect turns R6 red)", () => {
+    for (const bad of [
+      'this.events.emit("x")',
+      "this.gateway.emitInvoiceUpdated(a)",
+      "bus.publish(msg)",
+      "this.messaging.notifyEvent(e)",
+      "afterCommit(() => 1)",
+    ]) {
+      expect(FORBIDDEN.test(bad)).toBe(true);
     }
+    expect(FORBIDDEN.test("await tx.invoice.update({ where: { id } })")).toBe(false);
   });
 });
