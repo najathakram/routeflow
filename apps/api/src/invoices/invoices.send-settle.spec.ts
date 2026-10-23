@@ -215,7 +215,21 @@ describe("InvoicesService — send()/sendEmail() settle-before-sweep (TP-INV)", 
 
     // Same call-order oracle as T17 — sendEmail() mirrors send()'s tx block
     // verbatim, so it carries the identical omission today.
-    expect(callLog).toEqual(["settleOrderCreditsInTx", "autoApplyOldestCreditsInTx"]);
+    // SA-860: the same two calls run twice: first in the rolled-back dry run that feeds the email snapshot,
+    // then in the real markSent commit (the only committer of money).
+    expect(callLog).toEqual([
+      "settleOrderCreditsInTx",
+      "autoApplyOldestCreditsInTx",
+      "settleOrderCreditsInTx",
+      "autoApplyOldestCreditsInTx",
+    ]);
+    // and the two settle/sweep pairs ran on DIFFERENT transactions: the dry run's (rolled back), then markSent's
+    const settleTx = creditNotes.settleOrderCreditsInTx.mock.calls.map((c: unknown[]) => c[0]);
+    const sweepTx = creditNotes.autoApplyOldestCreditsInTx.mock.calls.map((c: unknown[]) => c[0]);
+    expect(settleTx).toHaveLength(2);
+    expect(settleTx[0]).not.toBe(settleTx[1]);
+    expect(sweepTx[0]).toBe(settleTx[0]);
+    expect(sweepTx[1]).toBe(settleTx[1]);
     expect(creditNotes.settleOrderCreditsInTx).toHaveBeenCalledWith(expect.anything(), ORDER_ID);
     expect(creditNotes.autoApplyOldestCreditsInTx).toHaveBeenCalledWith(
       expect.anything(),

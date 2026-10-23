@@ -20,11 +20,8 @@ import {
 } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
-import {
-  PRICE_LAYER_FAILED_COPY,
-  PriceLayerNotice,
-  pricesUnconfirmed,
-} from "@/components/PriceLayerNotice";
+import { PRICE_LAYER_FAILED_COPY, PriceLayerNotice } from "@/components/PriceLayerNotice";
+import { customerPricingGate } from "@/lib/customer-pricing-gate";
 import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -42,6 +39,7 @@ import {
   normalizeBoxesPieces,
   packFromOwnSplit,
   customerLinePrice,
+  customerTierFor,
   isNsfLine,
   TAX_RATE_FRACTION_DECIMALS,
 } from "@routeflow/pricing";
@@ -481,10 +479,11 @@ export default function EditInvoicePage() {
   // S19b (SA-811a/813): flag-on, billing's own customer layer. Flag off = no request, master's chain below. Until it is read
   // (or after it failed) a pick would price at the tier, so selection waits and Save stays disabled with the M3 copy.
   const priceLayer = useCustomerPriceLayer(invoice?.customerId);
-  const tierPricingPending =
-    customerQuery.isLoading ||
-    customerPricesQuery.isLoading ||
-    (priceLayer.enabled && !priceLayer.ready);
+  // W-725: the one shared gate (money fails closed). A read that FAILED with no data, or was PAUSED offline, blocks the pick
+  // too; with only `isLoading` a failed customer read left the scanner open and every pick priced at LIST. No pick can
+  // land while a read has failed, and the edited lines are the operator's own, so no `openSuggestions` here.
+  const pickGate = customerPricingGate({ customerQuery, customerPricesQuery, priceLayer });
+  const tierPricingPending = pickGate.blockPick;
   // Per-product PRICE resolved from the CustomerPrice TIER override through the
   // product's tier ladder. An msrp-only override row has pricingTier null —
   // price at the customer's default tier (Post-MSRP hazard).
@@ -495,7 +494,7 @@ export default function EditInvoicePage() {
       // No layer row: customerLinePrice returns master's getTierPrice number exactly.
       const price = customerLinePrice({
         product: cp.product as unknown as Record<string, unknown>,
-        tier: cp.pricingTier ?? customer?.pricingTier ?? 1,
+        tier: customerTierFor(cp.pricingTier, customer?.pricingTier),
       }).price;
       if (Number.isFinite(price)) map[cp.productId] = price;
     }
@@ -509,7 +508,7 @@ export default function EditInvoicePage() {
   const tierPriceFor = React.useCallback(
     (product: TierPriceableProduct) => {
       const listPrice = parseFloat(String(product.pricePerUnit ?? 0)) || 0;
-      const customerTier = customer?.pricingTier ?? 1;
+      const customerTier = customerTierFor(undefined, customer?.pricingTier);
       const layer = layerOfRef.current(product.id);
       if (layer) {
         // The layer row, when this product has one for its pack (R3); otherwise master's chain below.
@@ -518,7 +517,7 @@ export default function EditInvoicePage() {
         );
         const r = customerLinePrice({
           product: product as unknown as Record<string, unknown>,
-          tier: cp?.pricingTier ?? customerTier,
+          tier: customerTierFor(cp?.pricingTier, customerTier),
           layer,
           unitLabel: null,
         });
@@ -682,10 +681,12 @@ export default function EditInvoicePage() {
 
   // ── Submit ────────────────────────────────────────────────────────────────────
 
-  const priceBlocked = pricesUnconfirmed(
+  const priceBlocked = customerPricingGate({
+    customerQuery,
+    customerPricesQuery,
     priceLayer,
-    items.map((i) => i.productId),
-  );
+    productIds: items.map((i) => i.productId),
+  }).blockSave;
 
   function handleSubmit() {
     if (priceBlocked) return;
@@ -940,7 +941,7 @@ export default function EditInvoicePage() {
                       value={item.description}
                       tierPriceFor={tierPriceFor}
                       pricingPending={tierPricingPending}
-                      pricingFailed={priceLayer.failed}
+                      pricingFailed={pickGate.failed}
                       onCreateProduct={(searchTerm) => {
                         const idx = items.findIndex((it) => it.key === item.key);
                         const looksLikeSku = /^\d{6,}$/.test(searchTerm.trim());

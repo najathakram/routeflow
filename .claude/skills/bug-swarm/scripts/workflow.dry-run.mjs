@@ -331,7 +331,7 @@ export async function runAll() {
   const cap = await runWorkflow(
     {
       clusters: [two[0]],
-      parked: [{ id: "c9" }],
+      parked: [{ cluster: { id: "c9", bugs: [{ row: "9" }], files: [] }, reason: "over cap 4" }],
       overCap: true,
       unaccounted: ["7"],
       gateGreen: true,
@@ -340,7 +340,7 @@ export async function runAll() {
     ARGS,
   );
   assert.equal(cap.result.overCap, true);
-  assert.ok(cap.result.parked.some((p) => p.id === "c9"));
+  assert.ok(cap.result.parked.some((p) => p.cluster.id === "c9" && p.reason === "over cap 4"));
   assert.ok(cap.result.unaccounted.includes("7"));
 
   // 13. worktree-failed and pack failure park the cluster; missing rows reports an error.
@@ -470,9 +470,9 @@ export async function runAll() {
   for (const needle of [
     "gate-c1.pid",
     "stop any earlier gate",
-    "ps -p P -o command=",
-    "ONLY if that output contains gate.mjs",
-    "never kill otherwise",
+    'gate.mjs" --stop',
+    "only if that pid is a gate.mjs process",
+    "never kill anything by hand",
     "--pid-file",
   ])
     assert.ok(gp.includes(needle), `gate prompt pins: ${needle}`);
@@ -489,6 +489,19 @@ export async function runAll() {
     { ...ARGS, rows: ["1", "7"] },
   );
   assert.equal(realParked.result.parked.filter((p) => p.reason === "over cap").length, 1);
+  assert.ok(realParked.result.parked.every((p) => p.cluster && typeof p.reason === "string"));
+  assert.ok(!gp.includes("ps -p"));
+  // The legacy flat shape ({ bugs }) no longer counts: its row is not silently accounted.
+  const legacy = await runWorkflow(
+    {
+      clusters: [two[0]],
+      parked: [{ id: "c9", bugs: [{ row: "7" }] }],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    { ...ARGS, rows: ["1", "7"] },
+  );
+  assert.ok(legacy.result.unaccounted.includes("7"));
   assert.ok(!realParked.result.unaccounted.includes("7"));
 
   // 21. idSpace is required and validated: no agent call without it.

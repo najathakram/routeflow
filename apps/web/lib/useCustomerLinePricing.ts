@@ -18,11 +18,12 @@ const specialProductOf = (line?: SpecialLine) =>
     : undefined;
 
 /**
- * The order-edit page's customer pricing: the customer's price layer (S19b) plus the tier-aware price / SPECIAL
- * callbacks `EditableLineItems` and the save-time reason check share. Extracted from page.tsx; the page keeps the
- * customer's tier lookup (`tierForProductId`) and hands it in.
+ * A staff form's customer pricing (SA-856: moved as-is from the order-edit page, the ONE web helper): the customer's
+ * price layer (S19b) plus the tier-aware price / SPECIAL callbacks. The caller keeps the customer's tier lookup
+ * (`tierForProductId`, from `customerTierFor(cp.pricingTier, customer.pricingTier)`) and hands it in. Used by the order
+ * edit page and the recurring-invoice form.
  */
-export function useOrderCustomerPricing(
+export function useCustomerLinePricing(
   customerId: string | null | undefined,
   tierForProductId: (productId: string) => number,
 ) {

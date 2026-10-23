@@ -107,8 +107,8 @@ describe("payment hooks: meta.localErrorToast answers a closed-day refusal (row 
     expect(predicate!(new Error("network"))).toBe(false);
   });
 
-  it.each(HOOKS.filter(([name]) => /Record/.test(name)))(
-    "%s also answers a 409 DUPLICATE_PAYMENT_REF itself (row 498: the 'Record anyway' toast)",
+  it.each(HOOKS.filter(([name]) => /Record|UpdateInvoicePayment/.test(name)))(
+    "%s also answers a 409 DUPLICATE_PAYMENT_REF itself (row 498, W-718 for the edit: the 'Record anyway' toast)",
     async (_name, make) => {
       const predicate = (await metaOf(make))?.localErrorToast;
       expect(predicate!(duplicateRefusal)).toBe(true);

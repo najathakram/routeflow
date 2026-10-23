@@ -1,12 +1,10 @@
+import type { RevenuePeriod } from "@routeflow/types";
 import { csvDate, csvFilename } from "@/lib/export";
 
 type Cell = string | number | null;
 
 /** Row shapes of the analytics cards (structurally the page's own interfaces). */
-export interface RevenuePeriodRow {
-  period: string;
-  revenue: number;
-}
+export type RevenuePeriodRow = RevenuePeriod;
 export interface DsoRow {
   dso: number;
   count: number;

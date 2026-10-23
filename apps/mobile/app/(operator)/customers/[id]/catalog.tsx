@@ -23,10 +23,15 @@ import {
 } from "../../../../lib/api/customers";
 import { useAdminProducts, type AdminProduct } from "../../../../lib/api/admin";
 import { useTierLabels } from "../../../../lib/api/tier-labels";
-import { isSpecialTier, getTierPrice } from "@routeflow/pricing";
+import {
+  customerPricingGate,
+  customerTierFor,
+  isSpecialTier,
+  getTierPrice,
+} from "@routeflow/pricing";
 import { useCustomerPriceLayer } from "../../../../lib/api/price-layer";
 import { packLinePrice } from "../../../../lib/cart-order-total";
-import { confirmedPrice } from "../../../../lib/price-layer-gate";
+import { shownPrice } from "../../../../lib/price-layer-gate";
 import { tierLabel } from "../../../../lib/tier-label";
 import { showToast } from "../../../../lib/toast";
 import { confirm } from "../../../../lib/confirm";
@@ -251,13 +256,21 @@ export default function CustomerCatalogScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const customerId = id ?? "";
 
-  const { data: prices, isLoading: pricesLoading } = useCustomerPrices(customerId);
+  const pricesQuery = useCustomerPrices(customerId);
+  const { data: prices, isLoading: pricesLoading } = pricesQuery;
   // An msrp-only override row (created on web) has pricingTier null — it prices
   // at the customer's default tier, so that tier is needed for the row's price.
-  const { data: customerDetail } = useCustomer(customerId);
-  const customerTier = customerDetail?.pricingTier ?? 1;
+  const customerQuery = useCustomer(customerId);
+  const { data: customerDetail } = customerQuery;
+  const customerTier = customerTierFor(undefined, customerDetail?.pricingTier);
   // S19b slice D (SA-811a/813): the row's price is billing's own (the customer layer); flag off = no request, master's number.
   const priceLayer = useCustomerPriceLayer(customerId);
+  // SA-882: a failed customer read resolves an msrp-only row to tier 1, so its price waits on the shared gate ("…").
+  const pricingGate = customerPricingGate({
+    customerQuery,
+    customerPricesQuery: pricesQuery,
+    priceLayer,
+  });
   const { data: productsData, isLoading: productsLoading } = useAdminProducts({
     isActive: true,
     limit: 200,
@@ -319,12 +332,14 @@ export default function CustomerCatalogScreen() {
           ) : (
             <View style={styles.list}>
               {priceList.map((cp, i) => {
-                const effectiveTier = cp.pricingTier ?? customerTier;
+                const effectiveTier = customerTierFor(cp.pricingTier, customerTier);
                 const clp = cp.product
                   ? packLinePrice(cp.product, effectiveTier, priceLayer.layerOf(cp.productId))
                   : null;
-                // null = the layer is still being read (or failed): never show the tier price as final.
-                const tierPrice = clp ? confirmedPrice(priceLayer, cp.productId, clp) : 0;
+                // null = the customer, their prices or the layer are still being read (or failed): never final.
+                const tierPrice = clp
+                  ? shownPrice(pricingGate, customerId, priceLayer, cp.productId, clp)
+                  : 0;
                 const listPrice = cp.product?.pricePerUnit;
                 const isLast = i === priceList.length - 1;
                 return (

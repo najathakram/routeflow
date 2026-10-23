@@ -13,6 +13,13 @@ import type { DraftMirrorStorage } from "@/lib/order-draft/storage";
 
 const user = { id: "u1", tenantId: "t1" };
 
+type Ui = ReturnType<typeof userEvent.setup>;
+/** Click once the target is interactive: a Radix dialog still entering/leaving sets `pointer-events: none`, which userEvent refuses (W-744, same class as W-687). */
+async function clickReady(ui: Ui, el: HTMLElement) {
+  await waitFor(() => expect(getComputedStyle(el).pointerEvents).not.toBe("none"));
+  await ui.click(el);
+}
+
 function Host({ signOut, who = user }: { signOut: () => void; who?: typeof user }) {
   const { requestSignOut, dialog } = useGuardedSignOut(signOut, who);
   return (
@@ -64,7 +71,7 @@ describe("sign-out with unsent work (SA-817 A8)", () => {
     expect(await screen.findByText(/You have 1 unsent order on this device/)).toBeInTheDocument();
     expect(signOut).not.toHaveBeenCalled();
 
-    await ui.click(screen.getByRole("button", { name: "Sign out anyway" }));
+    await clickReady(ui, screen.getByRole("button", { name: "Sign out anyway" }));
     expect(signOut).toHaveBeenCalledTimes(1);
     // signing out never deletes the local copy: the same user finds it at the next sign-in
     expect(await storage.list("rf:draft:t1:u1:")).toHaveLength(1);
@@ -76,7 +83,7 @@ describe("sign-out with unsent work (SA-817 A8)", () => {
     const ui = userEvent.setup({ delay: null });
     renderWithProviders(<Host signOut={signOut} />);
     await ui.click(screen.getByRole("button", { name: "Sign out" }));
-    await ui.click(await screen.findByRole("button", { name: "Stay signed in" }));
+    await clickReady(ui, await screen.findByRole("button", { name: "Stay signed in" }));
     await waitFor(() => expect(screen.queryByText(/unsent order/)).not.toBeInTheDocument());
     expect(signOut).not.toHaveBeenCalled();
     expect(await storage.list("rf:draft:t1:u1:")).toHaveLength(1);

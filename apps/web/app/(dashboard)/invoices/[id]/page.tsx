@@ -1923,7 +1923,7 @@ export default function InvoiceDetailPage() {
     });
   };
 
-  const handleSavePayment = (data: PaymentFormState) => {
+  const handleSavePayment = (data: PaymentFormState, recordAnyway = false) => {
     if (!editingPayment) return;
     updatePayment.mutate(
       {
@@ -1936,6 +1936,7 @@ export default function InvoiceDetailPage() {
         settledAt: data.settledAt || null,
         reference: data.reference.trim() || undefined,
         notes: data.notes.trim() || undefined,
+        ...(recordAnyway ? { recordAnyway: true } : {}),
       },
       {
         onSuccess: () => {
@@ -1943,6 +1944,9 @@ export default function InvoiceDetailPage() {
           toast({ title: "Payment updated", variant: "success" });
         },
         onError: (err: any) => {
+          // W-718: an edit onto a used reference names the existing payment; staff may "Record anyway".
+          if (toastDuplicatePaymentRef(err, toast, user?.role, () => handleSavePayment(data, true)))
+            return;
           toast({
             title: "Failed to update payment",
             description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",

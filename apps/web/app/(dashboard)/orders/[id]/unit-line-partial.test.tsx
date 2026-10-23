@@ -8,7 +8,7 @@
  */
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
-import { buildEditItemFromLine } from "./page";
+import { buildEditItemFromLine } from "./_components/order-line-edit";
 import {
   LockedUnitLineBadge,
   lockedUnitLineDisplay,

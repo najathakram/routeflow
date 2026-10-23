@@ -31,31 +31,70 @@ describe("census paths are separator-neutral", () => {
 });
 
 type Kind = "GUARDED" | "NO_REFERENCE" | "SYSTEM_METHOD" | "IMPORT";
-const WRITERS: Record<string, { creates: number; kind: Kind; why: string }> = {
+/**
+ * Row 2299 / SA-858 ruling 4: the SECOND axis of the same table, one capacity kind per create site (in file order).
+ * CAPACITY: checked with capacityRefusal / remainingCapacity (@routeflow/pricing) on the non-VOID basis. CAPTURED: money
+ * already taken outside RouteFlow, never refused (SA-837b). SPILL: caps on the CONFIRMED balance and books the excess as
+ * an advance. IMPORT: reproduces the source system's ledger, no check by design. CONFIRMED: sizes on the CONFIRMED
+ * balance by a standing decision; whether it moves to CAPACITY is the SA-864 owner question (real money vs an
+ * unconfirmed row), so it is held, not missed.
+ */
+type CapacityKind = "CAPACITY" | "CAPTURED" | "SPILL" | "IMPORT" | "CONFIRMED";
+const WRITERS: Record<
+  string,
+  { creates: number; kind: Kind; why: string; capacity: Array<{ kind: CapacityKind; why: string }> }
+> = {
   "invoices/invoices.service.ts": {
     creates: 3,
     kind: "GUARDED",
     why: "writeInvoicePayment + writeStandalonePayment run behind keyedPayment (payment-idempotency.ts), which composes the predicate; the third create is recordDeliveryPaymentInTx (a driver's at-door cash: it carries no reference).",
+    capacity: [
+      {
+        kind: "CAPACITY",
+        why: "recordPayment: capacityRefusal on every capacity-consuming status (2299).",
+      },
+      {
+        kind: "CONFIRMED",
+        why: "writeStandalonePayment: the office path keeps [L-O2] (no capacity refusal; Σ allocations <= payment) and the captured path (capturedExternally) is CAPTURED, confirmed-basis and never refused (SA-858 amended). held: SA-864, owner question 7b.",
+      },
+      {
+        kind: "SPILL",
+        why: "recordDeliveryPaymentInTx caps on the CONFIRMED balance; excess to the advance (follow-up row).",
+      },
+    ],
   },
   "bookkeeping/bookkeeping.service.ts": {
     creates: 1,
     kind: "GUARDED",
     why: "BookkeepingService.recordPayment (POST /bookkeeping/transactions/:id/payments) calls the same predicate and lock.",
+    capacity: [
+      {
+        kind: "CONFIRMED",
+        why: "writeLedgerPayment sizes on CONFIRMED money (REG-B11, T-B11s); held: SA-864, owner question 7b.",
+      },
+    ],
   },
   "credit-notes/credit-notes.service.ts": {
     creates: 1,
     kind: "SYSTEM_METHOD",
     why: "method CREDIT_NOTE, server-generated reference: not a customer-typed payment reference.",
+    capacity: [{ kind: "CAPACITY", why: "applyCreditInTx: remainingCapacity." }],
   },
   "customers/customers.service.ts": {
     creates: 1,
     kind: "SYSTEM_METHOD",
     why: "method ADVANCE (applies an advance balance), server-generated AP-<id> reference.",
+    capacity: [{ kind: "CAPACITY", why: "applyAdvancePaymentToInvoiceLocked: remainingCapacity." }],
   },
   "import/import.service.ts": {
     creates: 3,
     kind: "IMPORT",
     why: "bulk import, already idempotent on the source system's own payment id (zohoId / reference per invoice).",
+    capacity: [
+      { kind: "IMPORT", why: "historical payment: paid = total - imported balanceDue." },
+      { kind: "IMPORT", why: "historical payment rows of an imported invoice." },
+      { kind: "IMPORT", why: "replaces an import placeholder row." },
+    ],
   },
 };
 
@@ -87,6 +126,34 @@ describe("row 498: the InvoicePayment writer census", () => {
         .map(([k, v]) => [k, v.creates]),
     );
     expect(actual).toEqual(expected);
+  });
+
+  it("row 2299 (R7): every create site carries a capacity kind (a new site fails until classified on both axes)", () => {
+    for (const [file, w] of Object.entries(WRITERS))
+      expect({ file, kinds: w.capacity.length }).toEqual({ file, kinds: w.creates });
+  });
+
+  it("row 2299 (SA-867 condition 2): the capacityRefusal callers are count-pinned (a new caller fails until classified)", () => {
+    const callers: Record<string, number> = {};
+    for (const file of walk(SRC)) {
+      const n = (fs.readFileSync(file, "utf8").match(/capacityRefusal\(/g) ?? []).length;
+      if (n) callers[rel(file)] = n;
+    }
+    // recordPayment only today; the SA-864 owner answer lowers or raises this in the same diff
+    expect(callers).toEqual({ "invoices/invoices.service.ts": 1 });
+  });
+
+  it("row 2299: every CONFIRMED site names its hold (SA-867 condition 1)", () => {
+    for (const w of Object.values(WRITERS))
+      for (const c of w.capacity)
+        if (c.kind === "CONFIRMED") expect(c.why).toContain("held: SA-864, owner question 7b");
+  });
+
+  it("row 2299: recordPayment reaches the ONE capacity helper with an explicit policy; the CONFIRMED sites do not (SA-864)", () => {
+    const inv = read("invoices/invoices.service.ts");
+    expect(inv.match(/capacityRefusal\(/g)?.length).toBe(1); // recordPayment only, until the owner answers
+    expect(inv).toMatch(/capacityRefusal\(\{[^}]*overpay: "REFUSE"/);
+    expect(read("bookkeeping/bookkeeping.service.ts")).not.toMatch(/capacityRefusal\(/);
   });
 
   it("every GUARDED writer file reaches the ONE predicate module", () => {
