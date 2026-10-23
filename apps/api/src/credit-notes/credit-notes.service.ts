@@ -623,6 +623,12 @@ export class CreditNotesService {
             // (a stale snapshot aborts 40001 and re-reads the shared per-line headroom).
             // B947: with 2+ creditable invoices on the order, the Order and ALL of them are locked FIRST (Order -> Invoice,
             // id-sorted), so a refund on Y and a credit note on X serialise and no writer takes an Invoice then the Order.
+            // SA-893 (ROW_LOCK_ORDER): a note that links a Return (internal.returnId; processRefund calls this AFTER its
+            // claim committed, so no Return is held) locks that Return FIRST. Writing the link after the Order and
+            // Invoice locks was Order -> Invoice -> Return, the inverse of inline issueCredit (Return -> Order): 40P01.
+            if (internal.returnId) {
+              await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${internal.returnId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+            }
             if (dto.invoiceId) await lockOrderPoolRows(tx, dto.invoiceId, tenantId);
             if (dto.invoiceId) {
               await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} AND "tenantId" = ${tenantId} FOR UPDATE`;

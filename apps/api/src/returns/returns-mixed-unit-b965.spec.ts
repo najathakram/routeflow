@@ -72,6 +72,8 @@ describe("ReturnsService.processRefund — mixed-unit product at the refund door
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-737: the claim re-reads the Return's status under its row lock
+    prisma.return.findFirst.mockResolvedValue({ id: "ret", status: "RECEIVED", kind: "STANDARD" });
     creditNotesCreate = jest.fn().mockResolvedValue({ id: "cn-1" });
     const mod = await Test.createTestingModule({
       providers: [
@@ -198,6 +200,8 @@ describe("ReturnsService.processRefund — the order pool in PIECES (B967)", () 
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-737: the claim re-reads the Return's status under its row lock
+    prisma.return.findFirst.mockResolvedValue({ id: "ret", status: "RECEIVED", kind: "STANDARD" });
     creditNotesCreate = jest.fn().mockResolvedValue({ id: "cn-1" });
     const mod = await Test.createTestingModule({
       providers: [
