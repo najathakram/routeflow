@@ -356,10 +356,12 @@ export function useMyAccountSummary() {
 
 // ─── Mutations (operator) ────────────────────────────────────────────────────
 
-/** Edit may send `null` to CLEAR an optional text column (see lib/clearable-field). */
-export type UpdateCustomerDto = {
-  [K in keyof CreateCustomerDto]?: CreateCustomerDto[K] | null;
+/** Edit may send `null` to CLEAR these nullable columns (currency is NOT NULL) (see lib/clearable-field). */
+export type UpdateCustomerDto = Partial<Omit<CreateCustomerDto, NullableOnUpdate>> & {
+  [K in NullableOnUpdate]?: CreateCustomerDto[K] | null;
 };
+
+type NullableOnUpdate = "phone" | "notes" | "taxId" | "deliveryWindowStart" | "deliveryWindowEnd";
 
 export interface CreateCustomerDto {
   businessName: string;
