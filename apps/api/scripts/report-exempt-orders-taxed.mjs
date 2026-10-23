@@ -152,7 +152,13 @@ async function main() {
     await client.query("SET default_transaction_read_only = on");
     await client.query("SET statement_timeout = '60s'");
     await client.query("SET lock_timeout = '5s'");
+    // #3685 review NIT2: read the setting back; a session that is not read-only never runs the census.
+    const ro = (await client.query("SHOW default_transaction_read_only")).rows[0];
+    if (ro?.default_transaction_read_only !== "on")
+      throw new Error("the session is not read-only; refusing to run");
+    await client.query("BEGIN READ ONLY");
     const { rows } = await client.query(ORDERS_SQL);
+    await client.query("ROLLBACK");
     const report = summarize(rows);
     if (json) console.log(JSON.stringify(report, null, 2));
     else {

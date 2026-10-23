@@ -49,7 +49,8 @@ export const ORDERS_SQL = `SELECT DENSE_RANK() OVER (ORDER BY x.tn)::int AS tena
        x.live::int AS live_invoices,
        x.issued::int AS issued_invoices,
        x.paid::int AS paid_invoices,
-       x."invDisc"::text AS invoice_discount
+       x."invDisc"::text AS invoice_discount,
+       x."invSub"::text AS invoice_subtotal
   FROM (
     SELECT o."tenantId" AS tn,
            o.status::text AS status,
@@ -67,7 +68,9 @@ export const ORDERS_SQL = `SELECT DENSE_RANK() OVER (ORDER BY x.tn)::int AS tena
            (SELECT COUNT(*) FROM "Invoice" v
              WHERE v."orderId" = o.id AND v.status::text = 'PAID') AS paid,
            COALESCE((SELECT SUM(v.discount) FROM "Invoice" v
-                      WHERE v."orderId" = o.id AND v.status::text NOT IN ('VOID', 'WRITTEN_OFF')), 0) AS "invDisc"
+                      WHERE v."orderId" = o.id AND v.status::text NOT IN ('VOID', 'WRITTEN_OFF')), 0) AS "invDisc",
+           COALESCE((SELECT SUM(v.subtotal) FROM "Invoice" v
+                      WHERE v."orderId" = o.id AND v.status::text NOT IN ('VOID', 'WRITTEN_OFF')), 0) AS "invSub"
       FROM "Order" o
       JOIN "Tenant" t ON t.id = o."tenantId" AND t.class::text = 'PRODUCTION' AND t."deletedAt" IS NULL
      WHERE o."discountAmount" > 0
@@ -76,30 +79,53 @@ export const ORDERS_SQL = `SELECT DENSE_RANK() OVER (ORDER BY x.tn)::int AS tena
 const c = (v) => Math.round((Number(v ?? 0) || 0) * 100);
 const money = (n) => (n / 100).toFixed(2);
 
-/** Pure: classify one order row. Cents throughout. */
+/** A cent of rounding is not a finding (#3685 review NIT3): stored money is rounded per writer. */
+const TOLERANCE_CENTS = 1;
+const near = (a, b) => Math.abs(a - b) <= TOLERANCE_CENTS;
+
+/**
+ * Pure: classify one order row. Cents throughout.
+ * The invoices' expected discount is the order's discount scaled by the BILLED share (Σ live invoice subtotal / order
+ * subtotal, capped at 1): the invoice allocator spreads the discount over what each invoice bills, so a partly invoiced
+ * order is short only against its own share (#3685 review NIT1). A partial invoice cut with no discount at all (row 407)
+ * still shows as "zero" with its share as the shortfall.
+ */
 export function classify(r) {
   const disc = c(r.disc);
   const expected = c(r.subtotal) + c(r.tax) + c(r.levy) + c(r.shipping) - disc;
   const total = c(r.total);
-  const totalClass =
-    total === expected ? "consistent" : total === expected + disc ? "gapEqualsDiscount" : "other";
+  const totalClass = near(total, expected)
+    ? "consistent"
+    : near(total, expected + disc)
+      ? "gapEqualsDiscount"
+      : "other";
   const live = Number(r.live_invoices) > 0;
   const invDisc = c(r.invoice_discount);
+  const subtotal = c(r.subtotal);
+  const billedShare = subtotal > 0 ? Math.min(1, c(r.invoice_subtotal) / subtotal) : 1;
+  const expectedInvDisc = Math.round(disc * billedShare);
   let invoiceClass = "noInvoice";
   if (live)
     invoiceClass =
-      invDisc === 0 ? "zero" : invDisc < disc ? "partial" : invDisc === disc ? "full" : "over";
-  const shortfall = live ? Math.max(0, disc - invDisc) : 0;
-  const subtotal = c(r.subtotal);
+      invDisc === 0 && expectedInvDisc > TOLERANCE_CENTS
+        ? "zero"
+        : near(invDisc, expectedInvDisc)
+          ? "full"
+          : invDisc < expectedInvDisc
+            ? "partial"
+            : "over";
+  const shortfall =
+    live && !near(invDisc, expectedInvDisc) ? Math.max(0, expectedInvDisc - invDisc) : 0;
   const taxBaseDelta = subtotal > 0 ? Math.round((c(r.tax) * disc) / subtotal) : 0;
   return {
     totalClass,
     gap: totalClass === "gapEqualsDiscount" ? disc : 0,
     invoiceClass,
+    partlyInvoiced: live && billedShare < 1,
     shortfall,
     issuedShortfall: shortfall > 0 && Number(r.issued_invoices) > 0,
     paidShortfall: shortfall > 0 && Number(r.paid_invoices) > 0,
-    over: invoiceClass === "over" ? invDisc - disc : 0,
+    over: invoiceClass === "over" ? invDisc - expectedInvDisc : 0,
     taxBaseDelta,
   };
 }
@@ -111,6 +137,7 @@ const blank = () => ({
   otherTotal: 0,
   gapCents: 0,
   withLiveInvoices: 0,
+  partlyInvoiced: 0,
   invoiceDiscountZero: 0,
   invoiceDiscountPartial: 0,
   invoiceDiscountFull: 0,
@@ -140,6 +167,7 @@ export function summarize(rows) {
       else b.otherTotal += 1;
       b.gapCents += k.gap;
       if (k.invoiceClass !== "noInvoice") b.withLiveInvoices += 1;
+      if (k.partlyInvoiced) b.partlyInvoiced += 1;
       if (k.invoiceClass === "zero") b.invoiceDiscountZero += 1;
       if (k.invoiceClass === "partial") b.invoiceDiscountPartial += 1;
       if (k.invoiceClass === "full") b.invoiceDiscountFull += 1;
@@ -174,6 +202,7 @@ export function selfTest() {
     levy: "0",
     shipping: "4",
     disc: "5",
+    invoice_subtotal: "40", // fully billed unless a case says otherwise
   };
   // 40 + 3.30 + 0 + 4 - 5 = 42.30
   eq(
@@ -333,6 +362,44 @@ export function selfTest() {
     ["tenant-1", "tenant-2"],
     "anonymous tenants",
   );
+  // #3685 NIT1/NIT3: half billed (20 of 40) with half the discount is full, not short; with none it is short its share;
+  // a total a cent off is still consistent.
+  const half = {
+    ...base,
+    total: "42.30",
+    live_invoices: 1,
+    issued_invoices: 1,
+    paid_invoices: 0,
+    invoice_subtotal: "20",
+  };
+  eq(
+    [
+      classify({ ...half, invoice_discount: "2.50" }).invoiceClass,
+      classify({ ...half, invoice_discount: "2.50" }).shortfall,
+    ],
+    ["full", 0],
+    "partly invoiced, its share of the discount",
+  );
+  eq(
+    [
+      classify({ ...half, invoice_discount: "0" }).invoiceClass,
+      classify({ ...half, invoice_discount: "0" }).shortfall,
+    ],
+    ["zero", 250],
+    "partly invoiced, no discount (row 407)",
+  );
+  eq(classify({ ...half, invoice_discount: "2.50" }).partlyInvoiced, true, "partly invoiced flag");
+  eq(
+    classify({ ...half, total: "42.31", invoice_discount: "2.50" }).totalClass,
+    "consistent",
+    "1c tolerance",
+  );
+  eq(
+    classify({ ...half, invoice_subtotal: "40", invoice_discount: "4.99" }).shortfall,
+    0,
+    "1c tolerance on the invoice discount",
+  );
+
   // the one SELECT list the report returns carries no identifier, slug, name or email
   const outerSelect = ORDERS_SQL.split(/\n\s*FROM \(/)[0];
   if (/\bslug\b|\bemail\b|businessName|\bAS\s+"?(id|tenantId|orderId)"?\b/i.test(outerSelect))
@@ -346,7 +413,7 @@ function printBlock(name, b) {
   console.log(
     `${name}: ${b.orders} order(s); total consistent ${b.consistent}, gap == discount ${b.gapEqualsDiscount} ` +
       `($${money(b.gapCents)}), other ${b.otherTotal}; ` +
-      `${b.withLiveInvoices} with live invoices (discount 0: ${b.invoiceDiscountZero}, partial ${b.invoiceDiscountPartial}, ` +
+      `${b.withLiveInvoices} with live invoices, ${b.partlyInvoiced} partly invoiced (discount 0: ${b.invoiceDiscountZero}, partial ${b.invoiceDiscountPartial}, ` +
       `full ${b.invoiceDiscountFull}, over ${b.invoiceDiscountOver}); shortfall $${money(b.shortfallCents)}` +
       `${b.overCents ? `, over-discounted $${money(b.overCents)}` : ""}; ` +
       `issued with shortfall ${b.issuedWithShortfall}, PAID with shortfall ${b.paidWithShortfall}; ` +
@@ -370,7 +437,10 @@ async function main() {
     await client.query("SET default_transaction_read_only = on");
     await client.query("SET statement_timeout = '60s'");
     await client.query("SET lock_timeout = '5s'");
+    await assertReadOnly(client);
+    await client.query("BEGIN READ ONLY");
     const { rows } = await client.query(ORDERS_SQL);
+    await client.query("ROLLBACK");
     const report = summarize(rows);
     if (json) console.log(JSON.stringify(report, null, 2));
     else {
@@ -386,6 +456,13 @@ async function main() {
   } finally {
     await client.end().catch(() => {});
   }
+}
+
+/** #3685 review NIT2: read the setting back; a session that is not read-only never runs the census. */
+async function assertReadOnly(client) {
+  const { rows } = await client.query("SHOW default_transaction_read_only");
+  if (rows[0]?.default_transaction_read_only !== "on")
+    throw new Error("the session is not read-only; refusing to run");
 }
 
 export function isInvokedDirectly(entry = process.argv[1], self = fileURLToPath(import.meta.url)) {
