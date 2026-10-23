@@ -336,3 +336,44 @@ test("parseCli reads --id-space and --repo", () => {
   assert.equal(o.repo, "/x");
   assert.throws(() => parseCli(["m.json", "--id-space", "other"]));
 });
+
+test("titlesMatch decodes HTML entities and folds the angle quotes (run 4: row 302 &gt; vs ›)", () => {
+  assert.ok(titlesMatch("Settings &gt; Business &amp; profile", "Settings › Business & profile"));
+  assert.ok(
+    titlesMatch("A &#39;quoted&#39; &quot;x&quot; &lt;b&gt; &#x3E;", "A 'quoted' \"x\" <b> >"),
+  );
+  assert.ok(titlesMatch("Back » Next", "Back &gt; Next"));
+  assert.ok(!titlesMatch("A &gt; B", "A < B"));
+});
+
+test("resolveIdInSpace uses the scripts' own checkout first, --repo only as a fallback", () => {
+  const seen = [];
+  const exec = (cmd, args) => (seen.push(args[0]), JSON.stringify({ title: "T" }));
+  const own = path.resolve("/own/checkout");
+  const stale = path.resolve("/stale/main");
+  const has = (p) => p.startsWith(own);
+  resolveIdInSpace({ space: "row", id: "1", repo: stale, exec, ownRoot: own, exists: has });
+  assert.equal(seen[0], path.join(own, "tools/ops-monitor/bin/rf.mjs"));
+  resolveIdInSpace({ space: "row", id: "1", repo: stale, exec, ownRoot: own, exists: () => false });
+  assert.equal(seen[1], path.join(stale, "tools/ops-monitor/bin/rf.mjs"));
+  resolveIdInSpace({
+    space: "bug",
+    id: "B1",
+    repo: stale,
+    exec: () => "title: T",
+    ownRoot: own,
+    exists: has,
+  });
+});
+
+test("a failing resolver puts the first 200 chars of its stderr in the reason", () => {
+  const exec = () => {
+    const e = new Error("exit 1");
+    e.stderr = Buffer.from(`cannot find module ${"x".repeat(400)}`);
+    throw e;
+  };
+  const r = resolveIdInSpace({ space: "row", id: "1", repo: "/r", exec });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /cannot find module x+/);
+  assert.ok(r.reason.length < 300);
+});

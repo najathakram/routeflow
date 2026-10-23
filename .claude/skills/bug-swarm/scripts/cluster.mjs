@@ -12,8 +12,16 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
 
-const norm = (t) =>
+const ENTITIES = { gt: ">", lt: "<", amp: "&", quot: '"', apos: "'" };
+const decodeEntities = (t) =>
   String(t ?? "")
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&(gt|lt|amp|quot|apos);/g, (_, n) => ENTITIES[n]);
+
+const norm = (t) =>
+  decodeEntities(t)
+    .replace(/[\u203a\u00bb]/g, ">")
     .toLowerCase()
     .replace(/(\.{3}|\u2026)\s*$/, "")
     .replace(/\s+/g, " ")
@@ -32,17 +40,28 @@ export function titlesMatch(manifestTitle, resolvedTitle) {
  * Resolve one id in the declared id space by running the real tool (no shell, scrubbed env).
  * exec(cmd, args, opts) -> stdout string, throws on non-zero. Returns { ok, title } or { ok: false, reason }.
  */
-export function resolveIdInSpace({ space, id, repo, exec }) {
+export function resolveIdInSpace({
+  space,
+  id,
+  repo,
+  exec,
+  ownRoot = OWN_ROOT,
+  exists = existsSync,
+}) {
   const run =
     exec ??
     ((cmd, args, opts) =>
       execFileSync(cmd, args, { ...opts, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
-  const opts = { cwd: repo, env: scrubbedGitEnv() };
+  // Tools come from the scripts' OWN checkout (a stale --repo main checkout may predate them); --repo is
+  // only the fallback and the working directory.
+  const tool = space === "row" ? "tools/ops-monitor/bin/rf.mjs" : "scripts/campaign/bugs.mjs";
+  const toolRoot = exists(path.join(ownRoot, tool)) ? ownRoot : repo;
+  const opts = { cwd: exists(repo) ? repo : toolRoot, env: scrubbedGitEnv() };
   try {
     if (space === "row") {
       const out = run(
         process.execPath,
-        [path.join(repo, "tools/ops-monitor/bin/rf.mjs"), "item", "show", id, "--json"],
+        [path.join(toolRoot, tool), "item", "show", id, "--json"],
         opts,
       );
       let j;
@@ -55,20 +74,24 @@ export function resolveIdInSpace({ space, id, repo, exec }) {
       if (!title) return { ok: false, reason: "not found in row: empty title" };
       return { ok: true, title };
     }
-    const out = run(
-      process.execPath,
-      [path.join(repo, "scripts/campaign/bugs.mjs"), "show", id],
-      opts,
-    );
+    const out = run(process.execPath, [path.join(toolRoot, tool), "show", id], opts);
     const m = /^title:\s*(.+)$/m.exec(String(out));
     const title = m ? m[1].trim() : "";
     if (!title) return { ok: false, reason: "not found in bug: no title" };
     return { ok: true, title };
-  } catch {
-    return { ok: false, reason: `not found in ${space}: resolver exited non-zero` };
+  } catch (e) {
+    const err = String(e?.stderr ?? e?.message ?? "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 200);
+    return {
+      ok: false,
+      reason: `not found in ${space}: resolver exited non-zero${err ? `: ${err}` : ""}`,
+    };
   }
 }
 
+const OWN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 const RATCHET_SPEC = "apps/api/src/common/size-ratchet.spec.ts";
 
 /** Workspace of a repo path: apps/<x>, packages/<x>, or "other". */
