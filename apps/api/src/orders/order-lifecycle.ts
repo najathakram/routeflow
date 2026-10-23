@@ -186,13 +186,14 @@ export async function updateFulfillPathImpl(
     (dto.fulfillPath === FulfillPath.SHIP || dto.fulfillPath === FulfillPath.PICKUP) &&
     onActiveRun
   ) {
-    throw new BadRequestException(
-      `This order is out on an active delivery run${
+    throw new BadRequestException({
+      code: API_ERROR_CODES.ORDER_ON_ACTIVE_RUN,
+      message: `This order is out on an active delivery run${
         run?.driver?.contactName ? ` with ${run.driver.contactName}` : ""
       }. Remove it from the run before switching it to ${
         dto.fulfillPath === FulfillPath.PICKUP ? "pickup" : "shipping"
       }.`,
-    );
+    });
   }
   // L8: re-judge selling restrictions on the new path BEFORE any write (a 409 leaves the path unchanged).
   if (restrictions)
