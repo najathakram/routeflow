@@ -315,7 +315,8 @@ export class CounterSaleService {
 
   /**
    * SA-849 (S1 S-1): what the gate netted (the same `counterCreditPaidNow` over the stored total) and, when it was
-   * anything, `creditAfterTender`: DARK warns, ENFORCED warns + audits once per order + answers the figures.
+   * anything, `creditAfterTender`: DARK warns, ENFORCED warns + audits once per order + answers the figures. `"read-only"`
+   * (W-736, by-key): the figures alone, no log line or audit row.
    */
   private async creditRecheck(
     orderId: string,
@@ -324,7 +325,7 @@ export class CounterSaleService {
     tender: CounterPaymentInput,
     checkToday: string | undefined,
     planError: string,
-    user: JwtPayload,
+    user: JwtPayload | "read-only",
   ) {
     const sum = Number(total ?? 0);
     const netted = counterCreditPaidNow(tender, sum, checkToday);
@@ -334,6 +335,7 @@ export class CounterSaleService {
       logger: this.logger,
     };
     const at = { tenantId: this.prisma.getTenantId(), customerId, orderId, total: sum, netted };
+    if (user === "read-only") return creditAfterTender(deps, { ...at, planError, readOnly: true });
     return creditAfterTender(deps, {
       ...at,
       planError,
@@ -564,13 +566,28 @@ export class CounterSaleService {
     }
     const invoices = await this.readInvoices(order.id);
     // With the till's own method the SAME rule POST applies decides paymentRecorded (one function, no copy).
-    return buildCounterSaleResponse({
+    const response = buildCounterSaleResponse({
       payment: method ? { method } : undefined,
       order,
       invoices,
       replayed: true,
       configuredTaxPercent: await configuredTaxRatePercent(this.prisma),
     });
+    // W-736 (SA-876 LOW 2): the same credit line the POST answered, READ-ONLY (no log line, no audit row). Only with the
+    // till's method: without it the tender, and so what the gate netted, is unknown.
+    const creditOverLimit =
+      method && response.paymentRecorded === false
+        ? await this.creditRecheck(
+            order.id,
+            order.customerId,
+            order.total,
+            { method } as CounterPaymentInput,
+            undefined,
+            response.paymentErrorCode ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED,
+            "read-only",
+          ).catch(() => null)
+        : null;
+    return creditOverLimit ? { ...response, creditOverLimit } : response;
   }
 
   /** Every product must exist for this tenant; answers each one's pack size (the writer's `unitsPerBox`). */

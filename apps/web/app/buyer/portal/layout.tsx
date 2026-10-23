@@ -163,6 +163,14 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
   // Hooks must be called unconditionally — before any early returns
   const sellerSlug = activeSeller?.tenant.slug;
   const { totalQty: cartItemCount } = useBuyerCart(buyer?.id, sellerSlug);
+  // The global floating cart button (below). W-669: while it shows, main keeps a bottom clearance (pb-24 = its 56 px +
+  // its 24 px offset + a margin) so a page's last row (the order detail's subtotal) scrolls clear of it.
+  // W-753: not on the cart, and not on the shop, whose sticky bar carries the same "View Cart" (the button sat on it).
+  const showFloatingCart =
+    !!sellerSlug &&
+    cartItemCount > 0 &&
+    !pathname.includes("/cart") &&
+    !/\/shop\/?$/.test(pathname);
   const { notifications, unreadCount, markAllRead, clearAll, sessionExpired } =
     useBuyerNotifications(activeSeller?.tenant.id ?? null);
   const { data: expiring = [] } = useBuyerExpiringAuthorizations(!!activeSeller);
@@ -550,7 +558,10 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
       {/* Right column: a mobile-only top bar (this shell has no separate header — the sidebar's
           own header carries brand/notifications on desktop) so the drawer is reachable below lg,
           then the page content. */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      {/* W-753: the shell grows with its content and the WINDOW scrolls, so neither this column nor main may be a scroll
+          container (overflow-*): a sticky child (the shop's cart bar) sticks to its nearest one, and these never scroll.
+          min-w-0 keeps wide content from stretching the flex column instead. */}
+      <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-surface-border bg-white px-4 lg:hidden">
           <MobileNavTrigger
             onOpen={sidebar.openMobileNav}
@@ -559,7 +570,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
           <BrandMark size={24} className="rounded" />
           <span className="text-sm font-bold text-navy">RouteFlow</span>
         </header>
-        <main className="flex-1 overflow-auto">
+        <main className={cn("min-w-0 flex-1", showFloatingCart && "pb-24")}>
           {sessionExpired && (
             // #2167: the realtime socket's token expired and the refresh failed. Say so instead of
             // leaving tracking and notifications silently frozen.
@@ -587,12 +598,13 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
         </main>
       </div>
 
-      {/* Global floating cart button — visible on all pages when cart has items */}
-      {sellerSlug && cartItemCount > 0 && !pathname.includes("/cart") && (
+      {/* Global floating cart button — visible on all pages when cart has items. W-753: z-40, under every overlay (an
+          in-page modal at z-50 comes earlier in the DOM and lost the tie). */}
+      {showFloatingCart && (
         <button
           type="button"
           onClick={() => router.push(`/buyer/portal/${sellerSlug}/cart`)}
-          className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-buyer-500 text-white shadow-lg hover:bg-buyer-600 transition-colors"
+          className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-buyer-500 text-white shadow-lg hover:bg-buyer-600 transition-colors"
           aria-label={`View cart (${cartItemCount} items)`}
         >
           <ShoppingCart className="h-6 w-6" />

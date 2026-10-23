@@ -80,7 +80,7 @@ import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
 import type { LineComponentView } from "@routeflow/types";
-import { CHECK_TRANSITIONS } from "@routeflow/types";
+import { CHECK_TRANSITIONS, withRecordAnyway } from "@routeflow/types";
 import { unvoidAmendedPeriodNote, type UnvoidInvoiceResult } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import { InvoiceLineAmount } from "./InvoiceLineAmount";
@@ -1925,19 +1925,19 @@ export default function InvoiceDetailPage() {
 
   const handleSavePayment = (data: PaymentFormState, recordAnyway = false) => {
     if (!editingPayment) return;
+    const body = {
+      invoiceId: invoice.id,
+      paymentId: editingPayment.id,
+      method: data.method,
+      amount: parseFloat(data.amount),
+      paidAt: data.paidAt || undefined,
+      // Explicit null so emptying the field clears the stored bank date.
+      settledAt: data.settledAt || null,
+      reference: data.reference.trim() || undefined,
+      notes: data.notes.trim() || undefined,
+    };
     updatePayment.mutate(
-      {
-        invoiceId: invoice.id,
-        paymentId: editingPayment.id,
-        method: data.method,
-        amount: parseFloat(data.amount),
-        paidAt: data.paidAt || undefined,
-        // Explicit null so emptying the field clears the stored bank date.
-        settledAt: data.settledAt || null,
-        reference: data.reference.trim() || undefined,
-        notes: data.notes.trim() || undefined,
-        ...(recordAnyway ? { recordAnyway: true } : {}),
-      },
+      recordAnyway ? withRecordAnyway(body) : body, // W-718: the resend is the SAME body plus the flag
       {
         onSuccess: () => {
           setEditingPayment(null);

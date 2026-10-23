@@ -132,7 +132,11 @@ export function useCountDbHarness(spec: string) {
         await prisma.stockCountSession.deleteMany({ where: { tenantId } });
         await prisma.stockLot.deleteMany({ where: { tenantId } });
         await prisma.stockMovement.deleteMany({ where: { tenantId } });
+        // Row 563's cases seed filed periods (a tenant cannot be deleted while they reference it).
+        await prisma.tobaccoReport.deleteMany({ where: { tenantId } });
+        await prisma.regulatedFiling.deleteMany({ where: { tenantId } });
         await prisma.product.deleteMany({ where: { tenantId } });
+        await prisma.trackedCategory.deleteMany({ where: { tenantId } });
         await prisma.user.deleteMany({ where: { tenantId } });
         await prisma.tenant.delete({ where: { id: tenantId } });
       })().catch((e: unknown) => {

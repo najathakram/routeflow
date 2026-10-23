@@ -96,10 +96,20 @@ describe("NIT 2 + SA-865: a grouped row's guard inputs", () => {
   const txFor = (
     siblings: Array<{ id: string; amount: number }>,
     advances: Array<Record<string, unknown>>,
-  ) => ({
-    invoicePayment: { findMany: jest.fn(async () => siblings) },
-    advancePayment: { findMany: jest.fn(async () => advances) },
-  });
+  ) => {
+    // one payment date for the group; the advances are unlinked (legacy) at that date, so the date rule finds them
+    const at = new Date("2026-10-01T12:00:00Z");
+    return {
+      invoicePayment: {
+        findMany: jest.fn(async () => siblings.map((r) => ({ ...r, paidAt: at }))),
+      },
+      advancePayment: {
+        findMany: jest.fn(async () =>
+          advances.map((a) => ({ method: "CHECK", receivedAt: at, sourcePaymentId: null, ...a })),
+        ),
+      },
+    };
+  };
 
   it("seeds the row id and its group's excess advance (same method, normalised reference, receivedAt = paidAt)", async () => {
     const prisma = fake(

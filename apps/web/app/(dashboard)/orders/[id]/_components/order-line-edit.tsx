@@ -783,6 +783,9 @@ export function EditableLineItems({
     explicit?: scan.SellLevel,
     startOnDefaultUnit?: boolean,
   ) {
+    // W-745 (#3670 review MUST-1): every add path lands here (a scan, the picker, a created product): no price is suggested
+    // until the customer's prices are confirmed (a failed or pending read would price at tier 1, LIST).
+    if (!pricingReady) return;
     const existing = items.find((it) => it.productId === p.id && !it.cancelled);
     const unitScan = scan.isUnitScanOnBoxed(p, level ?? "BOX");
     if (existing) {
@@ -897,6 +900,7 @@ export function EditableLineItems({
    * new baseline (via `PriceEditRow`) should.
    */
   function setLineUnit(id: string, option: UnitOption, refresh: boolean) {
+    if (!pricingReady) return; // W-745 (MUST-2): a unit change re-prices from the ladder at the customer's tier
     const current = items.find((it) => it.id === id);
     if (!current) return;
     // Units P0b / SA-728: a DERIVED Piece is the pack's pieces, and going back to the pack from it is one whole pack.
@@ -1104,6 +1108,7 @@ export function EditableLineItems({
                   tier={tierForProductId(item.productId)}
                   layer={layerOf?.(item.productId)}
                   startOnDefaultUnit={item.startOnDefaultUnit}
+                  disabled={!pricingReady}
                   onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
                 />
               )}
