@@ -19,7 +19,7 @@ export const isReplayCorrection = (m: {
 
 /** One ledger row as the fold reads it. */
 export interface FoldRow {
-  type: MovementType | string;
+  type: string;
   quantity: Prisma.Decimal | number | string;
   unitCost: Prisma.Decimal | number | string | null;
   reference: string | null;
