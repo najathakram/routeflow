@@ -1,12 +1,15 @@
 // Drift detection: compares human-typed state (events) with derived facts (PRs, branches,
 // source freshness) and returns alarms. Pure; never writes anywhere.
 import { DONE_STATUSES } from "./schema.mjs";
+import { resolveLaneId } from "./config.mjs";
 import { itemIdsFromBranch, parseEta } from "./ids.mjs";
 import { DOMAINS, areaDomain } from "./areas.mjs";
 import { isLegacyMonitorItem, isRegisterOwned } from "./sync.mjs";
 
 const SEV_ORDER = { error: 0, warn: 1, info: 2 };
 const HOUR = 3600_000;
+/** An unconfigured lane with no open work only counts while its activity is this recent. */
+export const UNKNOWN_LANE_RECENT_DAYS = 7;
 // Events older than the register's last change by more than this mean the register sync is behind.
 export const ITEMS_STALE_MS = 15 * 60_000;
 const BEHIND_STATUSES = ["idea", "planned", "spec", "building", "review"];
@@ -82,6 +85,26 @@ export function bodyRefsFor(body, known, { mentions = true } = {}) {
   }
   return out;
 }
+
+/** GitHub's revert PR: title `Revert "..."` or branch `revert-<N>-...`. */
+export const isRevertPr = (p) =>
+  /^Revert "/.test(String(p?.title ?? "")) || /^revert-/.test(String(p?.branch ?? ""));
+
+/** PR numbers a revert PR undoes: body "Reverts owner/repo#N", branch `revert-<N>-...`. */
+export function revertedNumbers(p) {
+  const out = new Set();
+  for (const m of String(p?.body ?? "").matchAll(/\breverts\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi))
+    out.add(Number(m[1]));
+  const b = /^revert-(\d+)-/.exec(String(p?.branch ?? ""));
+  if (b) out.add(Number(b[1]));
+  return out;
+}
+
+/** Merged PRs that need no work item: trains, docs, dependabot and bookkeeping follow-ups. */
+export const isNoiseMergedPr = (p) =>
+  /^(?:train|docs|dependabot)\//.test(String(p?.branch ?? "")) ||
+  /^(?:docs|chore)\/bookkeeping-/.test(String(p?.branch ?? "")) ||
+  /^docs: bookkeeping/i.test(String(p?.title ?? ""));
 
 /**
  * Item id a PR/branch belongs to: an item linking the PR number or the branch (register-cited
@@ -294,7 +317,7 @@ export function reconcile({
   // untracked-merged-pr: a PR merged in the last 7 days that no item claims.
   for (const p of merged) {
     const at = toMs(p.mergedAt);
-    if (at === null || now - at > 7 * DAY) continue;
+    if (at === null || now - at > 7 * DAY || isNoiseMergedPr(p)) continue;
     if (linkItemFor({ number: p.number, branch: p.branch, title: p.title, body: p.body }, state))
       continue;
     add({
@@ -531,6 +554,43 @@ export function reconcile({
           Number.isFinite(silentMs) ? ago(silentMs) : "forever"
         }`,
         lane: lane.id,
+      });
+    }
+  }
+
+  // unknown-lane: work or events naming a lane that ops/config.json does not list (a retired or
+  // misspelt lane id). One alarm per lane id.
+  if (Array.isArray(config?.lanes) && config.lanes.length) {
+    const byLane = new Map(); // unknown lane id -> open item ids naming it
+    const note = (laneId, itemId) => {
+      if (!laneId || resolveLaneId(laneId, config)) return;
+      if (!byLane.has(laneId)) byLane.set(laneId, []);
+      if (itemId && !byLane.get(laneId).includes(itemId)) byLane.get(laneId).push(itemId);
+    };
+    for (const it of state.items.values()) {
+      if (DONE_STATUSES.includes(it.status)) continue;
+      note(it.lane, it.id);
+      note(it.claimedBy, it.id);
+    }
+    // Bounded: a retired lane id seen only in old events must not warn forever.
+    for (const [id, l] of state.lanes) {
+      const last = l.lastEventAt ?? null; // heartbeats advance lastEventAt too: the latest of both
+      if (last !== null && now - last <= UNKNOWN_LANE_RECENT_DAYS * 24 * HOUR) note(id, null);
+    }
+    for (const [laneId, ids] of byLane) {
+      const named = ids.slice(0, 3).join(", ");
+      add({
+        kind: "unknown-lane",
+        severity: "warn",
+        message: ids.length
+          ? `Lane ${laneId} is not in ops/config.json but ${ids.length} open item(s) name it (${named}${
+              ids.length > 3 ? ", ..." : ""
+            })`
+          : `Lane ${laneId} has sent heartbeats/events but is not in ops/config.json`,
+        suggest: ids.length
+          ? `rf item edit ${ids[0]} --lane <known lane>, or add ${laneId} to ops/config.json lanes`
+          : `add ${laneId} to ops/config.json lanes`,
+        lane: laneId,
       });
     }
   }

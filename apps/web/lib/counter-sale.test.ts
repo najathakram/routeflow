@@ -1,5 +1,6 @@
 import type { FulfilmentCapability } from "@routeflow/types";
 import * as keys from "./counter-live-cart-keys";
+import * as counterSaleModule from "./counter-sale";
 import {
   AUTO_PRINT_KEY,
   isNotSentOffline,
@@ -8,6 +9,9 @@ import {
   changeDue,
   COUNTER_OUTCOME_UNKNOWN_COPY,
   counterSaleErrorCopy,
+  COUNTER_CHECK_POSTDATED_COPY,
+  isPostdatedCheck,
+  isCounterSaleHandledError,
   COUNTER_SALE_CHANGED_COPY,
   COUNTER_SALE_VOIDED_COPY,
   finalCounterSaleCopy,
@@ -832,5 +836,78 @@ describe("isNotSentOffline (CQ-29)", () => {
     expect(isNotSentOffline(new Error("Network Error"), false)).toBe(false);
     expect(isNotSentOffline({ response: { status: 503 } }, true)).toBe(false);
     expect(isNotSentOffline(null, true)).toBe(false);
+  });
+});
+
+describe("post-dated check: pins from review round 1", () => {
+  it("the pickup dialog's global toast stays quiet for COUNTER_CHECK_POSTDATED (it answers with fixed copy)", () => {
+    expect(
+      isPickupHandledError({
+        response: { status: 400, data: { code: "COUNTER_CHECK_POSTDATED" } },
+      }),
+    ).toBe(true);
+  });
+  it("one business-day helper: counter-sale has no copy of calendarDayInZone (lib/calendar-date.ts)", () => {
+    expect("tenantDayIn" in counterSaleModule).toBe(false);
+  });
+  it("a held attempt written and read through the REAL storage keeps its typed check date and its dto's", () => {
+    const SK = "rf.counterSale.heldAttempt:acme:u-a";
+    window.sessionStorage.clear();
+    writeHeldAttempt(SK, {
+      key: "k1",
+      dto: {
+        walkIn: true,
+        items: [],
+        payment: { method: "CHECK", reference: "1", checkDate: "2026-10-20" },
+      },
+      next: false,
+      estimate: { total: 2.5, change: 0 },
+      lines: [{ tempId: "t", productId: "p1", name: "Cola", unitPrice: 2.5, qty: 1 }],
+      customer: null,
+      method: "CHECK",
+      tendered: "",
+      reference: "1",
+      checkDate: "2026-10-20",
+    });
+    const back = readHeldAttempt(SK) as {
+      dto: { payment: { checkDate: string } };
+      checkDate?: string;
+    };
+    expect(back.dto.payment.checkDate).toBe("2026-10-20");
+    expect(back.checkDate).toBe("2026-10-20");
+  });
+});
+
+describe("post-dated check (interim till guard)", () => {
+  it("one sentence, shared by the inline message and the refusal", () => {
+    expect(COUNTER_CHECK_POSTDATED_COPY).toBe(
+      "Post-dated check: put this sale on account and record the check when it clears.",
+    );
+    const refusal = {
+      response: { status: 400, data: { code: "COUNTER_CHECK_POSTDATED", message: "raw" } },
+    };
+    expect(counterSaleErrorCopy(refusal)).toBe(COUNTER_CHECK_POSTDATED_COPY);
+    expect(counterSaleErrorCopy(refusal, { walkIn: true })).toBe(COUNTER_CHECK_POSTDATED_COPY);
+    expect(pickupCompleteErrorCopy(refusal)).toBe(COUNTER_CHECK_POSTDATED_COPY);
+  });
+  it("isPostdatedCheck: only a real day strictly after the tenant's today", () => {
+    expect(isPostdatedCheck("2026-10-23", "2026-10-22")).toBe(true);
+    expect(isPostdatedCheck("2026-10-22", "2026-10-22")).toBe(false);
+    expect(isPostdatedCheck("2026-10-21", "2026-10-22")).toBe(false);
+    expect(isPostdatedCheck("", "2026-10-22")).toBe(false);
+    expect(isPostdatedCheck("2026-02-30", "2026-10-22")).toBe(false);
+    expect(isPostdatedCheck("2026-10-23", "")).toBe(false);
+    // the shared strict day (isCalendarDay, @routeflow/pricing): no padding slack, no trailing text
+    expect(isPostdatedCheck("2026-10-23 ", "2026-10-22")).toBe(false);
+    expect(isPostdatedCheck("2026-11-1", "2026-10-22")).toBe(false);
+    expect(isPostdatedCheck("2026-10-23", "2026-10-22T00:00:00Z")).toBe(false);
+  });
+  it("the till owns its COUNTER_CHECK_POSTDATED and COUNTER_TENDER_SHORT copy: the global toast stays quiet", () => {
+    const refusal = (code: string) => ({ response: { status: 400, data: { code } } });
+    expect(isCounterSaleHandledError(refusal("COUNTER_CHECK_POSTDATED"))).toBe(true);
+    expect(isCounterSaleHandledError(refusal("COUNTER_TENDER_SHORT"))).toBe(true);
+    expect(isCounterSaleHandledError(refusal("SOMETHING_ELSE"))).toBe(false);
+    expect(isCounterSaleHandledError({ response: { status: 500, data: {} } })).toBe(false);
+    expect(isCounterSaleHandledError(new Error("Network Error"))).toBe(false);
   });
 });

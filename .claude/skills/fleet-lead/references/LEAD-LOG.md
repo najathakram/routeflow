@@ -1301,3 +1301,60 @@ Format: `## <date> <anchor>` then `- what:` `- cause:` `- guard:` `- rule:` (opt
 - cause: #3063's gate runs on every push ahead of the `SKIP_VERIFY` hatch and needs jest resolvable from `apps/api`; a fresh worktree has no installed tree.
 - guard: for a docs-only push (and commit: lint-staged needs prettier) link the main checkout's `node_modules` into the worktree, push, then remove the link; never `HUSKY=0` or `--no-verify`. L-254 states the worktree hook rules.
 - rule: A gate placed before the escape hatch needs its install precondition written down where the hatch is documented.
+## 2026-10-22 B5/SA-837b
+- what: Lead ruled B5 dedupe predicate in:[PAID,DRAFT]; it dropped PENDING and would have broken payment-ref-dedupe.writers.spec.ts:449
+- cause: Enum values taken from bug-signatures.md §22 (a second copy listing DRAFT|PAID|VOID) instead of the Prisma schema, which also has PENDING
+- guard: Any ruling that names enum members cites apps/api/prisma/schema/*.prisma or packages/types/api/enums.ts at path:line, read in the same turn
+- rule: A fact restated in a second place is the copy that goes wrong; resolve against the primary source
+
+## 2026-10-22 post-dated guard I-1 / lib/counter-sale.ts:602
+- what: Lead told R7b 'a held attempt resends its stored DTO, so it keeps checkDate already' without reading writeHeldAttempt; true for the request, but the restored display drops checkDate
+- cause: Claim about code behaviour made from memory of the review note, not from the file at master
+- guard: A lead ruling that asserts what a function does quotes its path:line read in the same turn; otherwise it is phrased as a red-first 'observe and report' case
+- rule: Verify before instructing
+
+## 2026-10-22 S1 I-A / credit-exposure.ts:144
+- what: Lead's S1 ruling assumed callers pass the unpaid projected total; they pass gross, and the netting is inside the guard, so the ruled fix could not make the till case green
+- cause: Ruling written from the guard's doc comment and the caller list without reading editedOrderContribution or the till caller
+- guard: Money-gate rulings go to the local SA for a read-at-sha check before relay (SA round before builder)
+- rule: Verify before instructing
+
+## 2026-10-22 #3606 / ops releases panel
+- what: The ops releases panel showed the old plan for ~2.5 h after #3606 merged; the owner had to ask
+- cause: Lead waited on stopping the PC writer (the PC lead's bridge kept dropping) instead of checking whether a one-shot rf sync from the new code was safe alongside it; it was (the old-code fold ignores T-ids, so no flip-flop)
+- guard: The 30-min LEAD CHECK item (8) now requires the train counts from 'rf ls --open --json' to show the newest PLAN's T-ids; if not, run 'rf sync' from the Windows deploy dir the same check
+- rule: Verify before instructing
+
+## 2026-10-23 #2554
+- what: Repo stayed PUBLIC ~4 h (23:17Z to 03:15Z) after window 22; no watchdog process was alive at the account switch
+- cause: The handoff assumed window 22's watchdog would flip private; it was gone across the switch and the 30-min check only read visibility while a lead session was running
+- guard: LEAD CHECK item (5) now requires a live visibility-watchdog process whenever visibility is PUBLIC, else arm one at once; the next-lead prompt checks visibility first
+
+## 2026-10-23 #3615
+- what: Mac mini shared core.hooksPath was the relative .husky/_ so every worktree there ran no hooks; #3615 9984889f was pushed unverified
+- cause: A relative hooksPath resolves per worktree and new worktrees have no .husky/_; the lead cron only checked the Windows box's own hooksPath
+- guard: Each lane runs scripts/check-git-hooks.mjs in every worktree before its first commit (lane prompt 2), and the 30-min check asks every Mac lane for its check-git-hooks result
+
+## 2026-10-23 #2554
+- what: Lead's owner-queue edit ran 'railway run' twice by accident: backticked text inside a double-quoted bash node -e string became command substitution; both runs failed with 'No linked project', so nothing executed
+- cause: Shell-quoting: backticks in a double-quoted bash string are executed; the text mentioned the command in markdown code style
+- guard: File edits that contain backticks or $ go through the Edit/Write tools (or a quoted heredoc <<'EOF'), never node -e/echo inside double quotes; guard.mjs candidate: block a Bash command whose double-quoted argument contains a backticked 'railway'
+- rule: Never put markdown backticks inside a double-quoted shell string
+
+## 2026-10-23 #3615
+- what: Mac mini hooks went off twice in one night: a lane's plain 'npm ci' ran husky's prepare script and reset the shared core.hooksPath to the relative .husky/_; pushes 2s later ran no pre-push
+- cause: The fleet rule 'npm ci --ignore-scripts' (10-07) lives in memory, not in the lane prompt or a check; husky prepare rewrites a shared config
+- guard: Lane prompt 2 gains 'npm ci --ignore-scripts only'; heavy-slot refuses a job whose command is a bare 'npm ci' (candidate W-row for mm-landing); check-git-hooks.mjs runs in the pre-push path
+- rule: Never run a bare npm ci on a shared checkout
+
+## 2026-10-23 e4a9ce7
+- what: Lead relayed 'rf sync reverts lane edits, so edit the register via bugs.mjs first' from a lane's report agent without reading sync.mjs; both premises were false (sync diffs vs registerFields; bugs.mjs does not edit WORK-REGISTER.md)
+- cause: A subagent's claim about code behaviour became a lead instruction with no path:line read
+- guard: Any lead instruction that rests on what a function does quotes the path:line read at a sha in the same message (fleet-lead §2 verify-before-instructing); a relay without it is marked UNVERIFIED
+- rule: Verify before instructing
+
+## 2026-10-23 #3618
+- what: Lead created duplicate board items for merged PRs twice (W-683 for #3619, W-688 for #3618); the lanes had already filed W-682 and W-678 linked to those PRs
+- cause: The lead created an item on merge without first looking up items already linked to the PR
+- guard: Before 'rf item new' for a merged PR, run 'rf ls --json' filtered on links.prs containing the PR number; link and status the existing item if one exists
+

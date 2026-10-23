@@ -179,6 +179,7 @@ test("groupAlarms: plain labels for known kinds, dash-to-space fallback", () => 
     "untracked-pr",
     "unknown-status",
     "untracked-branch",
+    "unknown-lane",
   ];
   for (const k of known) {
     const label = UI.kindLabel(k);
@@ -215,4 +216,20 @@ test("announceDue: at most once per 60 seconds", () => {
   assert.equal(UI.announceDue(null, 1000), true);
   assert.equal(UI.announceDue(1000, 1000 + 59999), false);
   assert.equal(UI.announceDue(1000, 1000 + 60000), true);
+});
+
+test("laneBeat: heartbeat text and the not-in-config mark", () => {
+  assert.deepEqual(UI.laneBeat({ lastHeartbeatAt: "2026-10-19T11:30:00.000Z", known: true }), {
+    label: "heartbeat",
+    at: "2026-10-19T11:30:00.000Z",
+    unknown: false,
+  });
+  assert.deepEqual(UI.laneBeat({ lastHeartbeatAt: null, known: true }), {
+    label: "no heartbeat",
+    at: null,
+    unknown: false,
+  });
+  // Older snapshots carry neither field: nothing is marked unknown.
+  assert.equal(UI.laneBeat({ id: "x" }).unknown, false);
+  assert.equal(UI.laneBeat({ id: "x", known: false }).unknown, true);
 });

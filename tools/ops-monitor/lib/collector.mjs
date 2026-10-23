@@ -82,8 +82,8 @@ const RUN_RANK = { failure: 6, pending: 5, success: 4, cancelled: 3, skipped: 2,
 /**
  * One GraphQL check context (CheckRun | StatusContext) -> { name, state } with state in
  * success | failure | pending | skipped | cancelled | notrun. Unknown shapes -> null.
- * notrun = the check never started (GraphQL startedAt is null: no runner picked it up, so Actions
- * was blocked or it is still queued) and it is queued, skipped or cancelled. It is NOT a failure.
+ * notrun = the check ended without ever starting (startedAt null, conclusion cancelled / skipped /
+ * startup-failure). It is NOT a failure. A queued/waiting check with startedAt null is pending.
  */
 export function normalizeContext(n) {
   if (!n || typeof n !== "object") return null;
@@ -100,7 +100,7 @@ export function normalizeContext(n) {
   // startedAt present-and-null = never started. (A fixture without the key keeps the old reading.)
   const neverStarted = n.startedAt === null;
   if (neverStarted && ["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(status))
-    return { name: String(n.name), state: "notrun" };
+    return { name: String(n.name), state: "pending" };
   if (status && status !== "COMPLETED") return { name: String(n.name), state: "pending" };
   if (neverStarted && (c === "CANCELLED" || c === "SKIPPED" || c === "STARTUP_FAILURE"))
     return { name: String(n.name), state: "notrun" };
@@ -819,6 +819,8 @@ export function createCollector({
   cloud = false,
   fetch: fetchFn = globalThis.fetch,
   mask = (t) => t,
+  afterSpecsPull = null, // local only: runs inside the specs-lock hold, right after the pull
+  onSpecsBusy = null, // local only: the specs lock was busy, so the pull and the hook were skipped
 } = {}) {
   // Cloud never writes git: every git call goes through the read-only allow-list.
   const guardedExec = cloud ? readOnlyExec(exec) : exec;
@@ -858,6 +860,7 @@ export function createCollector({
       // Writers (rf, the views writer) hold the specs lock for a whole append; a poll never waits
       // for it. When busy this run skips the sync and reads the working tree as it is.
       const underLock = (fn) => (store.tryWithSpecsLock ? store.tryWithSpecsLock(fn) : fn());
+      let lockResult;
       if (cloud) {
         // Read-only clone made at boot: fetch + reset to origin, never pull --rebase or push.
         await underLock(async () => {
@@ -865,15 +868,40 @@ export function createCollector({
           if (!r.ok) fail(r.error);
         });
       } else {
-        await underLock(async () => {
+        lockResult = await underLock(async () => {
+          const lockStartedAt = now();
           if (store.ensureClone) {
             await store.ensureClone({
               dir: specsDir,
               remote: cfg.specsRemote ? cfg.specsRemote() : undefined,
             });
           }
-          await store.syncSpecs(specsDir);
+          const pullStartedAt = now();
+          const pulled = await store.syncSpecs(specsDir);
+          const pullMs = now() - pullStartedAt;
+          // Piggyback on the lock this pass already holds (a timer would lose to us). A failing
+          // hook never fails the source; the lock is released by underLock's finally.
+          if (afterSpecsPull) {
+            try {
+              await afterSpecsPull({
+                specsDir,
+                pullOk: pulled?.ok !== false,
+                pullError: pulled?.ok === false ? String(pulled.error ?? "pull failed") : null,
+                pullMs,
+                lockStartedAt,
+              });
+            } catch (e) {
+              log(`after-pull hook failed: ${String(e?.message ?? e).slice(0, 160)}`);
+            }
+          }
         });
+        if (lockResult?.ran === false && onSpecsBusy) {
+          try {
+            onSpecsBusy();
+          } catch (e) {
+            log(`busy hook failed: ${String(e?.message ?? e).slice(0, 160)}`);
+          }
+        }
       }
       const events = await store.readAllEvents(specsDir);
       const config = (deps.loadConfig ?? cfg.loadConfig)(specsDir);

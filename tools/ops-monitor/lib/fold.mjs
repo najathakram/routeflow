@@ -382,6 +382,9 @@ export function fold(events, { bugs = new Map() } = {}) {
             l = { id: ev.lane, lastEventAt: null, lastEventKind: null, claims: [] };
             state.lanes.set(ev.lane, l);
           }
+          // Kept apart from lastEventAt (which any event on the lane moves): "is a session alive?"
+          if (Number.isFinite(active) && (l.lastHeartbeatAt == null || active > l.lastHeartbeatAt))
+            l.lastHeartbeatAt = active;
           if (l.lastEventAt === null || active > l.lastEventAt) {
             l.lastEventAt = active;
             l.lastEventKind = ev.kind;

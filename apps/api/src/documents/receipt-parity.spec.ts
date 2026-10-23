@@ -47,8 +47,8 @@ interface Pay {
   amount: string;
   /** a credit-note application: the note it applied (issued against this sale's invoice) */
   creditNoteId?: string;
-  /** the invoice that note was issued against; default this sale's own (`inv-1`) */
-  noteInvoice?: string;
+  /** the invoice that note was issued against; default this sale's own (`inv-1`); null = none (an INLINE return's real mint) */
+  noteInvoice?: string | null;
 }
 interface Scenario {
   total: string;
@@ -118,7 +118,10 @@ function build(s: Scenario) {
     amount: p.amount,
     status: "PAID",
     ...(p.creditNoteId
-      ? { creditNoteId: p.creditNoteId, creditNote: { invoiceId: p.noteInvoice ?? "inv-1" } }
+      ? {
+          creditNoteId: p.creditNoteId,
+          creditNote: { invoiceId: p.noteInvoice === undefined ? "inv-1" : p.noteInvoice },
+        }
       : {}),
   }));
   const invoice = {
@@ -730,6 +733,29 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
         notes: appliedTo(5.5),
       });
       same(b, ["Payment method Cash $7.00", "Paid $7.00", "Returned −$5.50"]);
+    });
+
+    it("SA-838b: an own INLINE return whose note has NO invoice (the real mint) and a PAID application here: Returned −$3.00, Paid excludes the credit", () => {
+      const ownInline = ret({
+        id: "r-inl",
+        kind: "INLINE",
+        creditSubtotal: "3.00",
+        items: [{ sourceOrderId: "ord-1", subtotal: "3.00", taxAmount: "0", categoryTax: "0" }],
+      });
+      const b = build({
+        total: "7.50",
+        tax: "0.00",
+        payments: [note("3.00", { noteInvoice: null })],
+        returns: [ownInline],
+        notes: appliedTo(3),
+      });
+      // master (wrong): the old tender wording, "Payment method Store credit $3.00 / Paid $3.00", and no Returned line
+      same(b, ["Returned −$3.00", "Balance due $4.50"]);
+      expect(b.reprint.returned).toBe(3);
+      expect(b.reprint.paid).toBe(0);
+      expect(b.emailModel.returned).toBe(3);
+      expect(b.emailModel.paid).toBe(0);
+      expect(b.reprint.methodLabel).toBeNull(); // no tender at all: the credit is no method
     });
 
     it("(f) the payment's credit note was issued against ANOTHER invoice: it stays a tender, nothing is hidden", () => {
