@@ -63,10 +63,10 @@ itself.** When you catch one, write the guard, not the apology.
 
 ## 3. Gates (the merge contract)
 
-| Tier | Applies to                                                 | Gate                                                                                                                   |
-| ---- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| 1    | pricing, regulated ledger, invoice/order money, migrations | **two independent PASSes posted on the board (#2554; #938 until 2026-09-27) at the exact merging sha** + real green CI |
-| 2    | UI, docs, tests, tooling                                   | real green CI + one posted PASS at the sha (+ Playwright 1440/768/390 for any UI, from one host, OS/Chromium recorded) |
+| Tier | Applies to                                                 | Gate                                                                                                                                           |
+| ---- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | pricing, regulated ledger, invoice/order money, migrations | **two independent PASSes posted on the board (#3686; #2554 until 2026-10-23; #938 until 2026-09-27) at the exact merging sha** + real green CI |
+| 2    | UI, docs, tests, tooling                                   | real green CI + one posted PASS at the sha (+ Playwright 1440/768/390 for any UI, from one host, OS/Chromium recorded)                         |
 
 - The coordinator resolves every sha against origin before merging (`merge-base --is-ancestor`);
   tree-identity is the only exception, and only when tree hashes match.
@@ -168,7 +168,7 @@ frontmatter blocked every push fleet-wide).
 Keep three documents current as you go, never at the end: the **owner brief** (plain words,
 decisions the owner must make in order, what changed since they last read it), the **lead
 handoff card** (`.claude/handoffs/<date>-lead-*.md`: bridge addresses, gates, in-flight state,
-rulings, lessons), and the **board** (#2554, successor of #938 — roll at ~2,300 comments, L-240) where verdicts and shas live. Update the tracker
+rulings, lessons), and the **board** (#3686, successor of #2554 and #938 — roll at ~2,300 comments, L-240) where verdicts and shas live. Update the tracker
 artifact only from master's registers. Write the memory entry for the lead rules at day's end.
 
 ## 10. Checklist per window
@@ -207,7 +207,7 @@ The skill improves only through its log. `scripts/lead-closeout.mjs` beside this
 **Decision relay:** "Owner, question box HH:MMZ: '<verbatim>'. Supersedes <earlier>. Build list:
 (1)… (2)…; NOT tonight: …; reviewers: …; declaration after …"
 
-**Gate message to the coordinator:** "#N at <full sha>: PASS 1 <who> + PASS 2 <who> on #2554 at
+**Gate message to the coordinator:** "#N at <full sha>: PASS 1 <who> + PASS 2 <who> on #3686 at
 that sha; tier 1; squash; base check before, ref check after; BUILDING → SUCCESS; then …"
 
 **Checkpoint timer:** `until [ "$(date -u +%H%M)" -ge HHMM ]; do sleep 30; done; …` in the
