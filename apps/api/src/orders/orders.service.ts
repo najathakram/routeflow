@@ -4613,8 +4613,7 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
-    // Lane R: an at-door add / qty raise of a banned product warns the office (a DRIVER is refused) BEFORE the tx;
-    // re-judged under the row lock below (change-request-restrictions.ts).
+    // Lane R: an at-door add / qty raise of a banned product warns (a DRIVER is refused) pre-tx; re-judged under the lock.
     const tenant = rGate.tenantId(this.prisma, resolver, order.tenantId);
     // F1(i): the line is judged at the stricter of the resolver's and the REQUESTER's channel (a buyer's add
     // approved by a driver is still a buyer's add); an unknown requester is the buyer.

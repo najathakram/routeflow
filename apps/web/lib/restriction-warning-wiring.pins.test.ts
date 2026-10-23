@@ -39,6 +39,11 @@ const EXEMPT: Record<string, string> = {
     "the wrapper: it uses useRestrictionWarningRetry (checked below)",
   "lib/use-generate-template-order-action.tsx":
     "the wrapper: it uses useRestrictionWarningRetry (checked below)",
+  // SA-837b "Record anyway" (#3611): the resend of a sale that already rang
+  "app/(dashboard)/orders/_components/CounterPaymentNotRecorded.tsx":
+    "re-sends the SAME rung sale (same key, the remembered dto that succeeded, which already carries any restriction ack) only to record its refused payment",
+  "lib/counter-last-sale.ts":
+    "names useCreateCounterSale in a comment only: it stores the last sale for the Record-anyway resend and calls no hook",
 };
 
 function walk(dir: string, out: string[] = []): string[] {

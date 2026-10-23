@@ -1,5 +1,6 @@
 import * as React from "react";
-import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
+import { screen, waitFor, fireEvent } from "@/test-utils/render";
+import { renderTill } from "@/test-utils/render-till";
 import userEvent from "@testing-library/user-event";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
@@ -114,7 +115,7 @@ describe("CounterSaleScreen: row 510 restriction warning", () => {
     const user = userEvent.setup();
     mutateAsync.mockRejectedValueOnce(warning409);
     mutateAsync.mockResolvedValueOnce(SALE);
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await ringCola();
     fireEvent.click(complete());
     expect(await screen.findByText("This product is banned in CA by law.")).toBeInTheDocument();
@@ -137,7 +138,7 @@ describe("CounterSaleScreen: row 510 restriction warning", () => {
   it("Go back keeps the cart and unlocks the screen", async () => {
     const user = userEvent.setup();
     mutateAsync.mockRejectedValueOnce(warning409);
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await ringCola();
     fireEvent.click(complete());
     await user.click(await screen.findByRole("button", { name: "Go back" }));
