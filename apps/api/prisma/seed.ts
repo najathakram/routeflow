@@ -5,6 +5,7 @@ import * as bcrypt from "bcrypt";
 import { assertTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import { localConnectionConfig } from "../scripts/lib/local-db-target.cjs";
 import { ensureParityBuyers } from "./seed-parity-buyer";
+import { assertNoLegacySeedProducts } from "./seed-legacy-products";
 import { addressStateFields } from "../src/customers/address-state";
 
 // A provably-local target dials the explicit fields that were vetted (never the raw string, whose ?host= could
@@ -516,20 +517,7 @@ async function main() {
 
   // B745: a DB seeded before products got UUID ids still holds these SKUs under the old
   // `seed-prod-NN` ids; the upsert below would hit P2002 on (tenantId, sku). Fail loudly instead.
-  const legacyProducts = await prisma.product.findMany({
-    where: {
-      tenantId,
-      sku: { in: productDefs.map((p) => p.sku) },
-      id: { notIn: productDefs.map((p) => p.id) },
-    },
-    select: { id: true, sku: true },
-  });
-  if (legacyProducts.length > 0) {
-    throw new Error(
-      `seed: ${legacyProducts.length} legacy seed product(s) (e.g. ${legacyProducts[0].id} / ${legacyProducts[0].sku}) ` +
-        "already hold the seeded SKUs under pre-UUID ids. Run `npm run local:reset` (wipes the local volumes) and seed again.",
-    );
-  }
+  await assertNoLegacySeedProducts(prisma, tenantId, productDefs);
 
   await Promise.all(
     productDefs.map((p) =>

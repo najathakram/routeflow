@@ -1,4 +1,5 @@
 import * as crypto from "crypto";
+import { Logger } from "@nestjs/common";
 import { webBaseUrl } from "./web-base-url";
 
 /**
@@ -46,6 +47,28 @@ function positiveIntEnv(name: string, fallback: number): number {
   if (!/^\d+$/.test(raw)) return fallback;
   const value = Number(raw);
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+/** Highest DEFAULT_THROTTLE_LIMIT honoured; above it the limit is no longer a throttle. */
+export const MAX_DEFAULT_THROTTLE_LIMIT = 10_000;
+const DEFAULT_THROTTLE_LIMIT_FALLBACK = 100;
+
+/**
+ * DEFAULT_THROTTLE_LIMIT -> an integer in 1..MAX_DEFAULT_THROTTLE_LIMIT, else 100. A set-but-invalid
+ * value (0, negative, non-integer, non-numeric, above the cap) logs ONE warning and falls back.
+ */
+export function parseDefaultThrottleLimit(raw: string | undefined): number {
+  const trimmed = raw?.trim() ?? "";
+  if (trimmed === "") return DEFAULT_THROTTLE_LIMIT_FALLBACK;
+  const value = /^\d+$/.test(trimmed) ? Number(trimmed) : NaN;
+  if (Number.isSafeInteger(value) && value >= 1 && value <= MAX_DEFAULT_THROTTLE_LIMIT) {
+    return value;
+  }
+  new Logger("Configuration").warn(
+    `DEFAULT_THROTTLE_LIMIT must be an integer 1..${MAX_DEFAULT_THROTTLE_LIMIT}; ` +
+      `ignoring the set value and using ${DEFAULT_THROTTLE_LIMIT_FALLBACK}`,
+  );
+  return DEFAULT_THROTTLE_LIMIT_FALLBACK;
 }
 
 export interface AppConfig {
@@ -178,7 +201,7 @@ export const configuration = (): AppConfig => ({
     stableUrlWindowSeconds: positiveIntEnv("STORAGE_URL_STABLE_WINDOW_SECONDS", 43_200),
   },
   throttle: {
-    defaultLimit: positiveIntEnv("DEFAULT_THROTTLE_LIMIT", 100),
+    defaultLimit: parseDefaultThrottleLimit(process.env.DEFAULT_THROTTLE_LIMIT),
     uploadsLimit: positiveIntEnv("UPLOADS_THROTTLE_LIMIT", 1200),
   },
   ors: {
