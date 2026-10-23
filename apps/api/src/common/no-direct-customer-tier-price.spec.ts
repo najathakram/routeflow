@@ -121,7 +121,6 @@ const ALLOW: Record<string, Entry> = {
     why: TIER,
   },
   "apps/web/app/(dashboard)/invoices/new/page.tsx": { counts: { chain: 5 }, why: TIER },
-  "apps/web/app/(dashboard)/invoices/[id]/edit/page.tsx": { counts: { chain: 4 }, why: TIER },
   "apps/web/app/(dashboard)/orders/[id]/page.tsx": { counts: { chain: 1, mapSet: 1 }, why: TIER },
   "apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx": {
     counts: { chain: 4 },
@@ -144,16 +143,16 @@ const ALLOW: Record<string, Entry> = {
   },
   // ── mobile
   "apps/mobile/app/(operator)/(tabs)/invoices/new.tsx": {
-    counts: { chain: 1, mapSet: 1 },
+    counts: { mapSet: 1 },
     why: TIER,
   },
   "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx": {
-    counts: { chain: 1, mapSet: 1 },
+    counts: { mapSet: 1 },
     why: TIER,
   },
-  "apps/mobile/components/NewOrderScreen.tsx": { counts: { chain: 1, mapSet: 1 }, why: TIER },
+  "apps/mobile/components/NewOrderScreen.tsx": { counts: { mapSet: 1 }, why: TIER },
   "apps/mobile/app/(operator)/customers/[id]/catalog.tsx": {
-    counts: { getTierPrice: 2, chain: 3 },
+    counts: { getTierPrice: 2, chain: 1 },
     why: "SHOWS-LIST rows (the tier list); the priced row reads the layer (slice D)",
     showsList: true,
   },
