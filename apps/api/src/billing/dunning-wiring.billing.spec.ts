@@ -371,7 +371,7 @@ describe("BillingService x dunning wiring (SA-733r7 PR-B3)", () => {
       // the SUSPENDED -> CANCELLED CAS is the only other status write; it finds nothing, and no churn is booked
       expect(prisma.tenant.updateMany).toHaveBeenCalledWith({
         where: { id: "t1", status: "SUSPENDED" },
-        data: { status: "CANCELLED" },
+        data: { status: "CANCELLED", readOnlyReason: "stripe_cancelled" }, // SA-832b
       });
       expect(eventsOfType(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toHaveLength(0);
     });
@@ -381,7 +381,12 @@ describe("BillingService x dunning wiring (SA-733r7 PR-B3)", () => {
     it("409 PAYMENT_OVERDUE with hosted_invoice_url; no Stripe checkout session is created", async () => {
       process.env.BILLING_PAUSE_MODE = "enforced";
       const { svc, prisma, stripe } = make();
-      prisma.tenant.findUnique.mockResolvedValue({ id: "t1", slug: "acme", status: "READ_ONLY" });
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: "t1",
+        slug: "acme",
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue", // SA-832 / 453: a pause is a billing lock (an admin lock is refused first)
+      });
       prisma.tenantSubscription.findUnique.mockResolvedValue({
         stripeSubId: null,
         externalPayment: false,

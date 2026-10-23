@@ -119,3 +119,7 @@ A 7 · B 5 · C 1 · D 4 (lead) · SA own: A 11 · B 14 | needless asks ("you di
 ## Prediction (update weekly)
 
 - 2026-09-20 · A dominates (5 of 11) → the fix is mechanical: re-derive at the moment of decision and name the sha. Next likely instance: a "ready to land", "N behind" or ratchet figure relayed from a lane across a merge window. D is the expensive class: watch every "the flag is off" and every merge list that is mostly one lane.
+
+- SA-E12 · 2026-10-23 · A · SA-836 (10-21) ruled on #3455 @ 91876c65b that the branch removes the staff switch; 249517467 restored it the next morning and nobody re-read the ruling's premise, so the 10-22 owner box and the lead's 672 brief still carried "#3455 closes the staff gap". Caught by SA-844 reading the current head. Fits OP-11 / check 1 (a ruling about an UNMERGED branch is a claim about its head: re-read at the head before relying on it), no new rule. Guard: an SA ruling that depends on an open PR names the head sha, and the delta read of that PR re-checks every premise line.
+
+- SA-E13 · 2026-10-23 · B · SA-847 stated that the rf-sitting2 salvage patch "differs only by Windows CRLF" → the raw patch has 0 CR bytes; the CRs came from my own `git apply` into a scratch repo with core.autocrlf=true and no .gitattributes. Caught by my own re-read in SA-854 (no builder harm: the ruling landed the PR-head bytes, not the patch). Fits check 11 ("produced, not imagined": attribute an observed artifact only after checking it is not my tool's). No new rule.
