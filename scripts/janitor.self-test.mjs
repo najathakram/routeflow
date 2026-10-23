@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   lutimesSync,
@@ -27,6 +28,7 @@ import {
   isProtectedBranch,
   classifyWorktree,
   linkedIntoBy,
+  scanLinkTargets,
   isStaleByAge,
   meetsThreshold,
   findOrphanWorktreeDirs,
@@ -1903,6 +1905,88 @@ t("row 719: classifyWorktree skips (reports) a merged tree that other trees link
   assert.equal(v.nodeModules, "skip");
   assert.equal(v.worktree, "skip");
   assert.match(v.reason, /other trees link into it/);
+});
+
+t(
+  "row 719 (A): a link inside another tree's apps/*/node_modules into the candidate is found",
+  () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-xlink-a-")));
+    try {
+      const cand = join(root, "cand");
+      const other = join(root, "other");
+      mkdirSync(join(cand, "apps", "mobile", "node_modules", "react-native"), { recursive: true });
+      mkdirSync(join(other, "apps", "mobile", "node_modules"), { recursive: true });
+      mkdirSync(join(other, "packages", "ui", "node_modules"), { recursive: true });
+      symlinkSync(
+        join(cand, "apps", "mobile", "node_modules", "react-native"),
+        join(other, "apps", "mobile", "node_modules", "react-native"),
+      );
+      const hits = linkedIntoBy(cand, [other, cand]);
+      assert.equal(hits.length, 1);
+      assert.match(hits[0], /apps.mobile.node_modules.react-native$/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+t("row 719 (B): another tree whose node_modules IS a symlink into the candidate is found", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-xlink-b-")));
+  try {
+    const cand = join(root, "cand");
+    const other = join(root, "other");
+    mkdirSync(join(cand, "node_modules", "pkg"), { recursive: true });
+    mkdirSync(other, { recursive: true });
+    symlinkSync(join(cand, "node_modules"), join(other, "node_modules"));
+    const hits = linkedIntoBy(cand, [other, cand]);
+    assert.equal(hits.length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+t(
+  "row 719 (fail closed): an unreadable node_modules dir makes the scan unknown, and the tree is skipped",
+  () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-xlink-c-")));
+    const locked = join(root, "other", "node_modules");
+    try {
+      const cand = join(root, "cand");
+      mkdirSync(cand, { recursive: true });
+      mkdirSync(locked, { recursive: true });
+      chmodSync(locked, 0o000);
+      assert.equal(linkedIntoBy(cand, [join(root, "other"), cand]), null);
+      const v = classifyWorktree({
+        name: "rf-unk",
+        branch: "fix/shipped",
+        isMainCheckout: false,
+        isMerged: true,
+        isDirty: false,
+        isRecent: false,
+        hasUnpushed: false,
+        linkedFrom: null,
+      });
+      assert.equal(v.nodeModules, "skip");
+      assert.equal(v.worktree, "skip");
+      assert.match(v.reason, /link scan/);
+    } finally {
+      chmodSync(locked, 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+t("row 719: a precomputed scan map is reused across candidates", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-xlink-d-")));
+  try {
+    const a = join(root, "a");
+    const b = join(root, "b");
+    mkdirSync(join(a, "node_modules", "p"), { recursive: true });
+    mkdirSync(join(b, "node_modules"), { recursive: true });
+    symlinkSync(join(a, "node_modules", "p"), join(b, "node_modules", "p"));
+    const scan = scanLinkTargets([a, b]);
+    assert.equal(linkedIntoBy(a, [a, b], scan).length, 1);
+    assert.deepEqual(linkedIntoBy(b, [a, b], scan), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 console.log(`janitor self-test: ${pass} passed, ${failures.length} failed`);

@@ -196,7 +196,7 @@ export function isRecentlyActive(lastActivityMs, nowMs, hours = RECENT_ACTIVITY_
  */
 export function classifyWorktree(info) {
   const { name, branch, isMainCheckout, isMerged, isDirty, isRecent, hasUnpushed, isLocked } = info;
-  const linkedFrom = info.linkedFrom ?? [];
+  const linkedFrom = info.linkedFrom === undefined ? [] : info.linkedFrom;
   if (isMainCheckout) return { nodeModules: "skip", worktree: "skip", reason: "main checkout" };
   if (isProtectedWorktreeName(name)) {
     return { nodeModules: "skip", worktree: "skip", reason: "protected worktree" };
@@ -228,6 +228,13 @@ export function classifyWorktree(info) {
   }
   // Row 719: another worktree's node_modules entries may be symlinks INTO this tree; clearing it
   // (or removing the worktree) would leave those trees with dangling packages.
+  if (linkedFrom === null) {
+    return {
+      nodeModules: "skip",
+      worktree: "skip",
+      reason: "link scan of the other trees failed (unreadable) — never touched",
+    };
+  }
   if (linkedFrom.length > 0) {
     return {
       nodeModules: "skip",
@@ -240,47 +247,101 @@ export function classifyWorktree(info) {
   return { nodeModules: "clear", worktree: "remove", reason: "merged, clean, pushed" };
 }
 
-/**
- * Row 719: symlinks in OTHER worktrees' node_modules (top level and one @scope level) whose real
- * path lies inside `candidatePath`. Read-only; unreadable entries are skipped (never throws).
- */
-export function linkedIntoBy(candidatePath, otherWorktreePaths) {
-  const candReal = realOr(candidatePath);
-  const candKey = resolve(candidatePath);
-  const hits = [];
-  const check = (p) => {
-    if (!isLinkPath(p)) return;
-    let real;
+/** The node_modules dirs of one tree: the root's plus apps/* and packages/* (as the clear does). */
+function nodeModulesCandidates(tree, unknown) {
+  const out = [join(tree, "node_modules")];
+  for (const group of ["apps", "packages"]) {
+    const groupDir = join(tree, group);
+    let names;
     try {
-      real = realpathSync(p);
-    } catch {
-      return;
-    }
-    if (real === candReal || real.startsWith(candReal + sep)) hits.push(p);
-  };
-  for (const other of otherWorktreePaths) {
-    if (resolve(other) === candKey || realOr(other) === candReal) continue;
-    const nm = join(other, "node_modules");
-    let entries;
-    try {
-      entries = readdirSync(nm);
-    } catch {
+      names = readdirSync(groupDir);
+    } catch (e) {
+      if (e?.code !== "ENOENT" && e?.code !== "ENOTDIR") unknown.push(`${groupDir}: ${e?.code}`);
       continue;
     }
-    for (const e of entries) {
-      const p = join(nm, e);
-      if (e.startsWith("@") && !isLinkPath(p)) {
-        let scoped = [];
-        try {
-          scoped = readdirSync(p);
-        } catch {
-          /* unreadable scope dir: skip */
-        }
-        for (const c of scoped) check(join(p, c));
-      } else check(p);
-    }
+    for (const n of names) out.push(join(groupDir, n, "node_modules"));
   }
-  return hits;
+  return out;
+}
+
+/**
+ * Row 719: ONE pass over the given trees, recording every symlink found in their node_modules
+ * dirs (root, apps/*, packages/*; top level and one @scope level) with its real path. A
+ * node_modules dir that is ITSELF a link is recorded as a link. Fail closed (B818): any
+ * lstat/readdir/realpath error other than "not there" lands in `unknown`. A broken link (ENOENT)
+ * is harmless and ignored. Read-only; never throws.
+ * Returns { links: [{ tree, path, real }], unknown: { [tree]: [reason] } }.
+ */
+export function scanLinkTargets(trees) {
+  const links = [];
+  const unknown = {};
+  for (const tree of trees) {
+    const bad = [];
+    const record = (p) => {
+      try {
+        links.push({ tree, path: p, real: realpathSync(p) });
+      } catch (e) {
+        if (e?.code !== "ENOENT") bad.push(`${p}: ${e?.code}`);
+      }
+    };
+    for (const nm of nodeModulesCandidates(tree, bad)) {
+      let st;
+      try {
+        st = lstatSync(nm);
+      } catch (e) {
+        if (e?.code !== "ENOENT" && e?.code !== "ENOTDIR") bad.push(`${nm}: ${e?.code}`);
+        continue;
+      }
+      if (st.isSymbolicLink()) {
+        record(nm);
+        continue;
+      }
+      if (!st.isDirectory()) continue;
+      let entries;
+      try {
+        entries = readdirSync(nm);
+      } catch (e) {
+        bad.push(`${nm}: ${e?.code}`);
+        continue;
+      }
+      for (const e of entries) {
+        const p = join(nm, e);
+        if (isLinkPath(p)) {
+          record(p);
+        } else if (e.startsWith("@")) {
+          let scoped;
+          try {
+            scoped = readdirSync(p);
+          } catch (err) {
+            if (err?.code !== "ENOTDIR") bad.push(`${p}: ${err?.code}`);
+            continue;
+          }
+          for (const c of scoped) if (isLinkPath(join(p, c))) record(join(p, c));
+        }
+      }
+    }
+    if (bad.length) unknown[tree] = bad;
+  }
+  return { links, unknown };
+}
+
+/**
+ * Row 719: paths in OTHER worktrees' node_modules that link into `candidatePath`. Returns null
+ * ("unknown") when any other tree could not be scanned fully; the caller must then skip.
+ * `scan` is a scanLinkTargets() result to reuse across candidates.
+ */
+export function linkedIntoBy(candidatePath, otherWorktreePaths, scan = null) {
+  const candReal = realOr(candidatePath);
+  const isCand = (p) => resolve(p) === resolve(candidatePath) || realOr(p) === candReal;
+  const others = otherWorktreePaths.filter((o) => !isCand(o));
+  const sc = scan ?? scanLinkTargets(others);
+  if (others.some((o) => sc.unknown[o])) return null;
+  const otherSet = new Set(others);
+  return sc.links
+    .filter(
+      (l) => otherSet.has(l.tree) && (l.real === candReal || l.real.startsWith(candReal + sep)),
+    )
+    .map((l) => l.path);
 }
 
 export function isStaleByAge(mtimeMs, nowMs, days = STALE_PROOF_AGE_DAYS) {
@@ -1012,6 +1073,8 @@ export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
   const actions = [];
   const skipped = [];
   const nowMs = Date.now();
+  // Row 719: ONE scan of every tree's node_modules links, reused for each candidate below.
+  const linkScan = scanLinkTargets(worktrees.map((w) => w.path));
 
   for (const wt of worktrees) {
     const name = wt.path.split(/[\\/]/).pop();
@@ -1044,6 +1107,7 @@ export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
           : linkedIntoBy(
               wt.path,
               worktrees.map((w) => w.path),
+              linkScan,
             ),
     };
     const verdict = classifyWorktree(info);
@@ -1113,6 +1177,18 @@ export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
         continue;
       }
       const facts = orphanFacts(target);
+      const orphanLinks = linkedIntoBy(target, listedPaths, linkScan);
+      if (orphanLinks === null || orphanLinks.length > 0) {
+        skipped.push({
+          worktree: orphan,
+          branch: null,
+          reason:
+            orphanLinks === null
+              ? "link scan of the worktrees failed (unreadable) — never touched"
+              : `other trees link into it (${orphanLinks.length}, e.g. ${orphanLinks[0]}) — never touched`,
+        });
+        continue;
+      }
       if (orphanEligible({ ...facts, nowMs })) {
         actions.push({ step: 3, kind: "orphan-dir", target });
       } else {
