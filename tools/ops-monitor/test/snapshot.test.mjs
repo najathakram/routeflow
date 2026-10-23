@@ -13,7 +13,7 @@ import {
   parseRailwayStatus,
 } from "../lib/collector.mjs";
 import { buildAreaTree } from "../lib/areas.mjs";
-import { DEFAULT_CONFIG } from "../lib/config.mjs";
+import { LEGACY_CONFIG as DEFAULT_CONFIG } from "./legacy-config.mjs";
 
 const FIX = join(fileURLToPath(new URL(".", import.meta.url)), "fixtures");
 const read = (f) => readFileSync(join(FIX, f), "utf8");
@@ -1643,4 +1643,82 @@ test("D7 maskStatus rides the snapshot; ok:false raises an error alarm", () => {
   const a = bad.alarms.find((x) => x.kind === "mask-list-missing");
   assert.equal(a.severity, "error");
   assert.equal(a.message, "client-name mask list missing — tenant names hidden by fallback");
+});
+
+test("lanes: lastHeartbeatAt, heartbeatAgeMin and known", () => {
+  const hb = ev("2026-10-19T11:30:00Z", "heartbeat", null, "sa", {
+    session: "s1",
+    lastActiveAt: "2026-10-19T11:30:00Z",
+  });
+  const unknown = ev("2026-10-19T11:40:00Z", "heartbeat", null, "ghost-lane", {
+    session: "s2",
+    lastActiveAt: "2026-10-19T11:40:00Z",
+  });
+  const s = build({
+    specs: okSource(30, { events: [...events(), hb, unknown], config: DEFAULT_CONFIG }),
+  });
+  const sa = s.lanes.find((l) => l.id === "sa");
+  assert.equal(sa.lastHeartbeatAt, "2026-10-19T11:30:00.000Z");
+  assert.equal(sa.heartbeatAgeMin, 30);
+  assert.equal(sa.known, true);
+  const owner = s.lanes.find((l) => l.id === "owner"); // configured, never heartbeat
+  assert.equal(owner.lastHeartbeatAt, null);
+  assert.equal(owner.heartbeatAgeMin, null);
+  assert.equal(owner.known, true);
+  const ghost = s.lanes.find((l) => l.id === "ghost-lane");
+  assert.equal(ghost.heartbeatAgeMin, 20);
+  assert.equal(ghost.known, false);
+});
+
+test("lanes: unconfigured lanes appear only with open work or activity in the last 7 days", () => {
+  const hb = (at, lane, session) => ev(at, "heartbeat", null, lane, { session, lastActiveAt: at });
+  const s = build({
+    specs: okSource(30, {
+      events: [
+        ...events(),
+        hb("2026-10-10T00:00:00Z", "retired-lane", "s1"), // 9 days
+        hb("2026-10-18T12:00:00Z", "fresh-lane", "s2"), // 1 day
+      ],
+      config: DEFAULT_CONFIG,
+    }),
+  });
+  const ids = s.lanes.map((l) => l.id);
+  assert.ok(!ids.includes("retired-lane"));
+  assert.equal(s.lanes.find((l) => l.id === "fresh-lane").known, false);
+  assert.ok(ids.includes("owner")); // configured lanes always appear
+  assert.ok(!s.alarms.some((a) => a.id === "unknown-lane:retired-lane"));
+  assert.ok(s.alarms.some((a) => a.id === "unknown-lane:fresh-lane"));
+});
+
+test("lanes: aliased lane ids fold into their target row, no separate row", async () => {
+  const { loadConfig } = await import("../lib/config.mjs");
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const live = loadConfig(mkdtempSync(join(tmpdir(), "ops-snap-")));
+  const hb = (at, lane, session) => ev(at, "heartbeat", null, lane, { session, lastActiveAt: at });
+  const s = buildSnapshot({
+    config: live,
+    now: NOW,
+    machine: "pc",
+    sources: sources({
+      specs: okSource(30, {
+        events: [
+          hb("2026-10-19T11:50:00Z", "coordinator", "s1"),
+          ev("2026-10-19T11:00:00Z", "item.new", "901", "lead", {
+            title: "Aliased claim",
+            type: "feature",
+            status: "building",
+            lane: "ops-monitor",
+          }),
+          ev("2026-10-19T11:10:00Z", "claim", "901", "ops-monitor", {}),
+        ],
+        config: live,
+      }),
+    }),
+  });
+  const ids = s.lanes.map((l) => l.id);
+  assert.ok(!ids.includes("coordinator") && !ids.includes("ops-monitor"), ids.join());
+  assert.equal(s.lanes.find((l) => l.id === "lead").lastHeartbeatAt, "2026-10-19T11:50:00.000Z");
+  assert.ok(s.lanes.find((l) => l.id === "mm-landing").now.includes("901"));
+  assert.ok(!s.alarms.some((a) => a.kind === "unknown-lane"));
 });
