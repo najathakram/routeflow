@@ -8,7 +8,7 @@
 // cleared from this lane's environment, where nothing downstream can forward it. Every other
 // argument (a path, `-t`, `--ci`, ...) passes through. test/db-lane-serial.cjs refuses a parallel
 // run that reaches jest some other way.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,9 +48,91 @@ export function dbLaneTimeoutMs(env) {
   return Number(raw) * 60_000;
 }
 
+/** True while any process in POSIX process group `pgid` is still alive. */
+function groupAlive(pgid) {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (e) {
+    return e?.code === "EPERM";
+  }
+}
+
+/** Kills `pid` and every process it started. Best-effort: a tree that is already gone is fine. */
+function killTree(pid, platform) {
+  try {
+    if (platform === "win32") {
+      // Node already ends a killed child's own children on Windows (job object); /T also reaches
+      // a detached one.
+      spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+    } else {
+      process.kill(-pid, "SIGKILL");
+    }
+  } catch {
+    /* already gone */
+  }
+}
+
+/**
+ * W-723: runs `command` and kills its WHOLE process tree after `timeoutMs`. spawnSync's `timeout`
+ * kills only the direct child, so on Linux/macOS a CLI that a spec spawned (a script under test, a
+ * prisma CLI) outlived jest and kept its connection to the throwaway database and the heavy slot.
+ * On POSIX the child leads its own process group (SIGINT/SIGTERM sent to this runner are
+ * forwarded to it); once the child exits, for any reason, whatever is left of the group is killed
+ * and awaited, so nothing still holds the database when local-db-specs.mjs drops it.
+ * Resolves `{ status, signal, timedOut }`.
+ */
+export function runWithHardTimeout(command, args, opts = {}) {
+  const { timeoutMs, platform = process.platform, ...spawnOpts } = opts;
+  const posix = platform !== "win32";
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: "inherit", ...spawnOpts, detached: posix });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child.pid, platform);
+    }, timeoutMs);
+    const forward = (sig) => {
+      try {
+        if (posix) process.kill(-child.pid, sig);
+        else child.kill(sig);
+      } catch {
+        /* already gone */
+      }
+    };
+    const signals = posix ? ["SIGINT", "SIGTERM"] : [];
+    for (const s of signals) process.on(s, forward);
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      for (const s of signals) process.off(s, forward);
+      resolve({ status: null, signal: null, timedOut, error });
+    });
+    child.on("exit", async (status, signal) => {
+      clearTimeout(timer);
+      for (const s of signals) process.off(s, forward);
+      if (posix && groupAlive(child.pid)) {
+        killTree(child.pid, platform);
+        // Capped: where no init reaps orphans (this runner as PID 1 in a bare container), SIGKILLed
+        // members linger as zombies that still answer kill(0) although they hold nothing.
+        const deadline = Date.now() + 10_000;
+        while (groupAlive(child.pid) && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
+      resolve({ status, signal, timedOut });
+    });
+  });
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { kept, dropped } = serialDbArgs(process.argv.slice(2));
-  const timeoutMs = dbLaneTimeoutMs(process.env);
+  let timeoutMs;
+  try {
+    timeoutMs = dbLaneTimeoutMs(process.env);
+  } catch (e) {
+    console.error(`run-db-tests: ${e.message}`);
+    process.exit(2);
+  }
   const env = { ...process.env };
   if (dropped.length) {
     console.warn(
@@ -62,12 +144,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   delete env.JEST_MAX_WORKERS;
 
   const jestBin = createRequire(import.meta.url).resolve("jest/bin/jest");
-  const res = spawnSync(
+  const res = await runWithHardTimeout(
     process.execPath,
     [jestBin, "-c", "jest.db.config.js", "--maxWorkers=1", ...kept],
-    { cwd: apiDir, stdio: "inherit", env, timeout: timeoutMs, killSignal: "SIGKILL" },
+    { cwd: apiDir, env, timeoutMs },
   );
-  if (res.error?.code === "ETIMEDOUT") {
+  if (res.timedOut) {
     console.error(
       `run-db-tests: killed jest after ${timeoutMs / 60_000} min (W-699 hard timeout). If "Tests:" ` +
         `had printed, a spec left an open handle; RF_DB_LANE_TIMEOUT_MIN raises the ceiling.`,
