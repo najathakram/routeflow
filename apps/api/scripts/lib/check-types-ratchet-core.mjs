@@ -11,16 +11,28 @@
 //     entry was not lowered in the same diff.
 // Pinned in both directions by src/common/check-types-ratchet-script.spec.ts.
 
+import os from "node:os";
+
 const SPEC_FILE = /\.spec\.ts$/;
-// 6144, not 4096: the api program (src + specs, ~1715 files) peaked at 4394 MB RSS under the old
-// 4096 cap and now OOMs on the Mac mini (#2717 M3; CI runners have the headroom). Raise again only
-// with the same evidence.
-export const HEAP_MB = 8192;
+const GIB = 1024 ** 3;
+/**
+ * The heap for the one src + specs program, by host. 8192 MB on a small host (an 8 GB Mac: more would
+ * swap), 9216 MB from 14 GiB of RAM up (the 16 GB ubuntu CI runners), because the program outgrew 8192
+ * there at #3455 (CI run 39965372256): linear spec growth, no single type exploding (lead ruling
+ * 2026-10-23). `CHECK_TYPES_HEAP_MB` (a positive integer) wins over both; any other value is ignored.
+ * Raise again only with the same evidence. The root fix is splitting the program in two (W-738).
+ */
+export function chooseHeapMb(totalMemBytes = os.totalmem(), env = process.env) {
+  const override = Number(env.CHECK_TYPES_HEAP_MB);
+  if (Number.isInteger(override) && override > 0) return override;
+  return totalMemBytes >= 14 * GIB ? 9216 : 8192;
+}
+export const HEAP_MB = chooseHeapMb();
 const OOM_HINT =
   `the type-check ran out of memory at the ${HEAP_MB} MB heap this script already sets ` +
   `(--max-old-space-size=${HEAP_MB}, also exported in NODE_OPTIONS to the compile worker). ` +
   `Free memory first (on an 8 GB machine: no other verify, push or Jest run at the same time); ` +
-  `if the program has genuinely outgrown it, raise HEAP_MB in scripts/lib/check-types-ratchet-core.mjs`;
+  `if the program has genuinely outgrown it, raise HEAP_MB (chooseHeapMb() in scripts/lib/check-types-ratchet-core.mjs), or set CHECK_TYPES_HEAP_MB for one run`;
 // `// @ts-nocheck`, `/// @ts-nocheck`, any case — the text fallback for isNoCheckFile().
 const NOCHECK = /^\s*\/{2,3}\s*@ts-nocheck\b/im;
 

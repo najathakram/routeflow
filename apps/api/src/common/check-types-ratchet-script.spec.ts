@@ -103,7 +103,22 @@ describe("check-types ratchet rules (B806)", () => {
     const cli = readFileSync(path.join(API_DIR, "scripts/check-types-ratchet.mjs"), "utf8");
     expect(cli).toMatch(/--max-old-space-size=\$\{HEAP_MB\}/);
     expect(cli).toMatch(/NODE_OPTIONS/);
-    expect(core(`console.log(JSON.stringify(c.HEAP_MB));`)).toBe(8192);
+    expect(core(`console.log(JSON.stringify(c.HEAP_MB === c.chooseHeapMb()));`)).toBe(true);
+  });
+
+  it("the heap follows the host: 8192 MB under 14 GiB, 9216 MB from 14 GiB (CI), and CHECK_TYPES_HEAP_MB wins", () => {
+    const GIB = 1024 ** 3;
+    const pick = (bytes: number, env: Record<string, string>) =>
+      core(`console.log(JSON.stringify(c.chooseHeapMb(${bytes}, ${JSON.stringify(env)})));`);
+    expect(pick(8 * GIB, {})).toBe(8192);
+    expect(pick(14 * GIB - 1, {})).toBe(8192);
+    expect(pick(14 * GIB, {})).toBe(9216);
+    expect(pick(16 * GIB, {})).toBe(9216);
+    expect(pick(8 * GIB, { CHECK_TYPES_HEAP_MB: "6144" })).toBe(6144);
+    expect(pick(16 * GIB, { CHECK_TYPES_HEAP_MB: "12288" })).toBe(12288);
+    // anything that is not a positive integer is ignored, never a 0 / NaN heap flag
+    for (const bad of ["", "0", "-1", "9216.5", "lots"])
+      expect(pick(16 * GIB, { CHECK_TYPES_HEAP_MB: bad })).toBe(9216);
   });
 
   it("tsconfig.spec.json covers everything the old check-types did, plus the specs", () => {
