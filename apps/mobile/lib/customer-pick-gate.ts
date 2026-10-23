@@ -61,3 +61,19 @@ export function builderSaveBlocked(
 ): boolean {
   return !!customerId && gate.blockSave;
 }
+
+/**
+ * #3665: ONE save gate for the footer, the cart sheet and onSave: the layer gate, widened by the customer gate's blockSave
+ * (`gate` computed with the line ids and open suggestions). The layer's own block keeps its message; otherwise the pending
+ * or failed copy, with Retry on a failure. Nothing blocks: the layer gate unchanged.
+ */
+export function builderSaveGate(
+  gate: CustomerPricingGate,
+  customerId: string | null | undefined,
+  layerGate: PriceLayerGate,
+): PriceLayerGate {
+  if (layerGate.blocked || !builderSaveBlocked(gate, customerId)) return layerGate;
+  return gate.failed
+    ? { blocked: true, message: LAYER_FAILED_MESSAGE, canRetry: true }
+    : { blocked: true, message: LAYER_PENDING_MESSAGE, canRetry: false };
+}

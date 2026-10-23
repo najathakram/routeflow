@@ -1416,7 +1416,7 @@ function InvoiceComposer({
    */
   const onSave = async (fromReview = false) => {
     // D-5: name the layer block instead of the misleading "add an item" copy.
-    const layerBlock = guardLayerSave(layerGate, false);
+    const layerBlock = guardLayerSave(pick.saveGate(items, layerGate), false);
     if (layerBlock) {
       alertInfo("Prices aren't confirmed", layerBlock);
       return;

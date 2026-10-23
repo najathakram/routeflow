@@ -2019,7 +2019,7 @@ function ProductPickView({
     // Not while a submit is in flight: Confirm only mid-flight must not downgrade Confirm & invoice.
     if (!submittingRef.current) pos.finishRef.current = finish;
     // D-5: a charge is never saved on unconfirmed prices (a draft is not a charge).
-    const layerBlock = guardLayerSave(layerGate, asDraft);
+    const layerBlock = guardLayerSave(pick.saveGate(items, layerGate), asDraft);
     if (layerBlock) {
       alertInfo("Prices aren't confirmed", layerBlock);
       return;
@@ -2488,8 +2488,8 @@ function ProductPickView({
         tierPriceFor={tierPriceFor}
         isSpecialFor={isSpecialFor}
         layerOf={layerOf}
-        layerGate={layerGate}
-        onRetryLayer={priceLayer.refetch}
+        layerGate={pick.saveGate(items, layerGate)}
+        onRetryLayer={pick.retry}
         tierForProductId={effectiveTierFor}
         marginFloorFor={(p) => floorForCategory(marginConfig, p.category)}
         unlisted={unlisted}

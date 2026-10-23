@@ -2,12 +2,17 @@ import { customerPricingGate } from "@routeflow/pricing";
 import {
   PICK_PENDING_NOTICE_DELAY_MS,
   builderSaveBlocked,
+  builderSaveGate,
   hasOpenSuggestion,
   customerPickNotice,
   customerPickRefusal,
   retryCustomerPricing,
 } from "../lib/customer-pick-gate";
-import { LAYER_FAILED_MESSAGE, LAYER_PENDING_MESSAGE } from "../lib/price-layer-gate";
+import {
+  LAYER_FAILED_MESSAGE,
+  LAYER_PENDING_MESSAGE,
+  guardLayerSave,
+} from "../lib/price-layer-gate";
 
 /**
  * W-741 (W-725 follow-up, SA-868): NewOrderScreen and invoices/new let a product be picked while the customer or
@@ -177,4 +182,76 @@ describe("#3665 review NIT: the create-on-miss add stops when the add is refused
       expect(src).not.toMatch(/^\s*addOne\(product\.id, snapshot\);/m);
     },
   );
+});
+
+/**
+ * #3665 delta review MUST: the CART SHEET's Create/Confirm and onSave read only the layer gate, so after a picked line and a
+ * failed prices read the footer Create was held but the cart's Create still submitted. Both now read ONE save gate: the layer
+ * gate, widened by blocksSave, with a message to alert and a Retry that refetches the failed reads.
+ */
+describe("#3665: one save gate for the footer, the cart sheet and onSave", () => {
+  const layerOpen = { blocked: false, message: null, canRetry: false };
+  const failedGate = customerPricingGate({
+    customerQuery: { isError: true, data: undefined },
+    customerPricesQuery: { data: [] },
+    priceLayer: off,
+    productIds: ["p1"],
+    openSuggestions: true,
+  });
+
+  it("a failed read with an open suggestion blocks with the failed copy and offers Retry", () => {
+    expect(builderSaveGate(failedGate, "c1", layerOpen)).toEqual({
+      blocked: true,
+      message: LAYER_FAILED_MESSAGE,
+      canRetry: true,
+    });
+    expect(guardLayerSave(builderSaveGate(failedGate, "c1", layerOpen), false)).toBe(
+      LAYER_FAILED_MESSAGE,
+    );
+    expect(guardLayerSave(builderSaveGate(failedGate, "c1", layerOpen), true)).toBeNull(); // a draft is never gated
+  });
+
+  it("the layer's own block keeps its message", () => {
+    const layer = { blocked: true, message: "Checking this customer's prices…", canRetry: false };
+    expect(builderSaveGate(gate(read), "c1", layer)).toBe(layer);
+  });
+
+  it("nothing blocks: the layer gate as is", () => {
+    expect(builderSaveGate(gate(read), "c1", layerOpen)).toBe(layerOpen);
+  });
+
+  it("a PLAN_GATE 403 on the prices read (un-flagged plan): pick and Create both allowed", () => {
+    const planGated = customerPricingGate({
+      customerQuery: read,
+      customerPricesQuery: {
+        isError: true,
+        data: undefined,
+        error: { response: { status: 403, data: { code: "PLAN_GATE" } } },
+      },
+      priceLayer: off,
+      productIds: ["p1"],
+      openSuggestions: true,
+    });
+    expect(customerPickRefusal(planGated, "c1")).toBeNull();
+    expect(builderSaveGate(planGated, "c1", layerOpen).blocked).toBe(false);
+  });
+
+  it.each([
+    [
+      "components/NewOrderScreen.tsx",
+      /guardLayerSave\(pick\.saveGate\(items, layerGate\), asDraft\)/,
+    ],
+    [
+      "components/NewOrderScreen.tsx",
+      /layerGate=\{pick\.saveGate\(items, layerGate\)\}\s*onRetryLayer=\{pick\.retry\}/,
+    ],
+    [
+      "app/(operator)/(tabs)/invoices/new.tsx",
+      /guardLayerSave\(pick\.saveGate\(items, layerGate\), false\)/,
+    ],
+  ])("%s wires the save gate (%s)", (rel, re) => {
+    const { readFileSync } = jest.requireActual<typeof import("fs")>("fs");
+    const { join } = jest.requireActual<typeof import("path")>("path");
+    expect(readFileSync(join(__dirname, "..", rel), "utf8")).toMatch(re);
+  });
 });

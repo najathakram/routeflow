@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { customerPricingGate, type PricingReadState } from "@routeflow/pricing";
-import { shownPrice } from "../../lib/price-layer-gate";
+import { shownPrice, type PriceLayerGate } from "../../lib/price-layer-gate";
 import {
   PICK_PENDING_NOTICE_DELAY_MS,
   builderSaveBlocked,
+  builderSaveGate,
   hasOpenSuggestion,
   customerPickNotice,
   customerPickRefusal,
@@ -11,6 +12,7 @@ import {
 } from "../../lib/customer-pick-gate";
 
 type Read = PricingReadState & { refetch: () => unknown };
+type Lines = Record<string, { unitPrice?: number | null }>;
 
 /**
  * W-741: the builder screens' pick gate (NewOrderScreen, invoices/new). `refusal` is checked at the screen's add choke point;
@@ -30,23 +32,24 @@ export function useCustomerPickGate(
     const t = setTimeout(() => setPendingShown(true), PICK_PENDING_NOTICE_DELAY_MS);
     return () => clearTimeout(t);
   }, [waiting]);
+  const saveGateFor = (items: Lines) =>
+    customerPricingGate({
+      customerQuery,
+      customerPricesQuery,
+      priceLayer,
+      productIds: Object.keys(items),
+      openSuggestions: hasOpenSuggestion(items),
+    });
   return {
     gate,
     /** SA-882: the price to SHOW for a product not yet added: null ("…") while the gate blocks the pick. */
     shown: (productId: string, clp: { price: number }) =>
       shownPrice(gate, customerId, priceLayer, productId, clp),
     /** SA-883: Create/Save is held (pending, an unconfirmed layer price, or a failed read with an open suggestion). */
-    blocksSave: (items: Record<string, { unitPrice?: number | null }>) =>
-      builderSaveBlocked(
-        customerPricingGate({
-          customerQuery,
-          customerPricesQuery,
-          priceLayer,
-          productIds: Object.keys(items),
-          openSuggestions: hasOpenSuggestion(items),
-        }),
-        customerId,
-      ),
+    blocksSave: (items: Lines) => builderSaveBlocked(saveGateFor(items), customerId),
+    /** #3665: the layer gate widened by blocksSave, for the cart sheet's Create/Confirm and onSave's alert. */
+    saveGate: (items: Lines, layerGate: PriceLayerGate) =>
+      builderSaveGate(saveGateFor(items), customerId, layerGate),
     refusal: customerPickRefusal(gate, customerId),
     notice: customerPickNotice(gate, customerId, pendingShown),
     retry: () =>
