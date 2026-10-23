@@ -1338,7 +1338,12 @@ export default function OrderDetailScreen() {
         onSubmit={function submitHandOver(body: PickupCompleteRequest) {
           pickupMut.mutate(body, {
             onSuccess: (res) => {
-              const d = decidePickupResponse(res, staffRole, order.customer?.businessName);
+              const d = decidePickupResponse(
+                res,
+                staffRole,
+                order.customer?.businessName,
+                completeMode,
+              );
               if (d.kind === "retry-tender") {
                 // Committed but unpaid: back to the tender step, same Idempotency-Key.
                 setHandOverOwed(d.owed);
@@ -1373,7 +1378,7 @@ export default function OrderDetailScreen() {
               showToast(d.message);
               refetch();
             },
-            onError: (e) => setHandOverError(pickupCompleteErrorCopy(e)),
+            onError: (e) => setHandOverError(pickupCompleteErrorCopy(e, completeMode)),
           });
         }}
       />

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Providers } from "@/app/providers";
 import { seedSession } from "@/test-utils/session";
 import OrderDetailPage from "./page";
@@ -143,16 +143,39 @@ describe("order page: Complete at counter (I-120 PR-2)", () => {
     expect(!!completeButton() && !!handOverButton()).toBe(false);
   });
 
-  it("OWNER-QUEUE 7a (R8/R9): not offered with a driver or carrier, nor once shipped", async () => {
-    await open("OUT_FOR_DELIVERY", { fulfillPath: "ROUTE" });
-    expect(completeButton()).toBeNull();
-    document.body.innerHTML = "";
-    await open("CONFIRMED", { fulfillPath: "SHIP", shippedAt: "2026-10-20T10:00:00.000Z" });
-    expect(completeButton()).toBeNull();
-  });
-
-  it("OWNER-QUEUE 7a (Q1), SA-905 LOW: not offered on an ACTIVE run (the server refuses the switch)", async () => {
-    await open("PENDING", { routeRun: { status: "SCHEDULED" } });
+  // OWNER-QUEUE 7a (R8/R9 + SA-905 LOW): each held case beside its OFFERED twin, the same wait before both, so an absence
+  // can never pass because the gate had not answered yet (a COMPLETE_AT_COUNTER_AWAITS_OWNER_7A=false mutation turns it red).
+  it.each([
+    [
+      "a driver (R8)",
+      "OUT_FOR_DELIVERY",
+      { fulfillPath: "ROUTE" },
+      { status: "CONFIRMED", extra: { fulfillPath: "ROUTE" } },
+    ],
+    [
+      "a carrier (R8)",
+      "OUT_FOR_DELIVERY",
+      { fulfillPath: "SHIP" },
+      { status: "CONFIRMED", extra: { fulfillPath: "SHIP" } },
+    ],
+    [
+      "shipped (R9)",
+      "CONFIRMED",
+      { fulfillPath: "SHIP", shippedAt: "2026-10-20T10:00:00.000Z" },
+      { status: "CONFIRMED", extra: { fulfillPath: "SHIP", shippedAt: null } },
+    ],
+    [
+      "an active run (Q1, SA-905 LOW)",
+      "PENDING",
+      { routeRun: { status: "SCHEDULED" } },
+      { status: "PENDING", extra: { routeRun: { status: "COMPLETED" } } },
+    ],
+  ])("OWNER-QUEUE 7a: %s is held, while its twin is offered", async (_n, status, extra, twin) => {
+    await open(twin.status, twin.extra); // positive control: the gate has answered and offers the twin
+    expect(await screen.findByRole("button", { name: COMPLETE })).toBeInTheDocument();
+    cleanup();
+    await open(status, extra);
+    expect(screen.getAllByRole("button").length).toBeGreaterThan(0); // the page rendered its actions
     expect(completeButton()).toBeNull();
   });
 

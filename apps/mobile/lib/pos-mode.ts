@@ -9,7 +9,11 @@ import { completeAtCounterOffered, roundMoney } from "@routeflow/pricing";
 import { fmtCurrency } from "../utils/format";
 import { duplicateRefPrompt } from "./duplicate-payment-ref";
 import { creditOverLimitSentence } from "@routeflow/types/credit-over-limit-copy";
-import { COUNTER_COPY } from "@routeflow/types/counter-copy";
+import {
+  COMPLETE_MODE_ERROR_COPY,
+  COUNTER_COPY,
+  counterCompleteRefusalCopy,
+} from "@routeflow/types/counter-copy";
 
 import { isPosOrder } from "./order-status-flow";
 
@@ -35,7 +39,7 @@ export function posModePrefPatch(next: boolean): Record<string, string> {
 /** Fixed visible copy (never an API message). Same words as web `POS_COPY`. */
 export const POS_COPY = {
   switchLabel: COUNTER_COPY.storePickup,
-  switchHint: "A named customer, invoiced now. For walk-in, pay-now sales use Counter.",
+  switchHint: "A named customer, invoiced now. For walk-in, pay-now sales use Counter sale.",
   switchFailed: `Couldn't save your ${COUNTER_COPY.storePickup} setting. Try again.`,
   confirmAndInvoice: "Confirm & invoice",
   confirmOnly: "Confirm only",
@@ -347,8 +351,17 @@ export function posErrorCode(err: unknown): string | undefined {
 }
 
 /** Hand over (pickup-complete): fixed copy by error code, mirroring web `pickupCompleteErrorCopy`. */
-export function pickupCompleteErrorCopy(err: unknown): string {
-  switch (posErrorCode(err)) {
+export function pickupCompleteErrorCopy(err: unknown, complete = false): string {
+  // I-120: the refusals before any write (the shared copy), then complete mode's own words for the shared lines
+  const data = (err as { response?: { data?: Record<string, unknown> } } | null)?.response?.data;
+  const refused = counterCompleteRefusalCopy(data, fmtCurrency);
+  if (refused) return refused;
+  const code = posErrorCode(err);
+  if (complete && code === API_ERROR_CODES.PICKUP_NOT_READY)
+    return COMPLETE_MODE_ERROR_COPY.notReady;
+  if (complete && code === API_ERROR_CODES.PICKUP_KEY_CONFLICT)
+    return COMPLETE_MODE_ERROR_COPY.keyConflict;
+  switch (code) {
     case API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED:
       return PICKUP_COPY.paymentRequired;
     case API_ERROR_CODES.COUNTER_TENDER_SHORT:
@@ -370,7 +383,7 @@ export function pickupCompleteErrorCopy(err: unknown): string {
     case API_ERROR_CODES.COUNTER_CHECK_POSTDATED:
       return PICKUP_COPY.checkPostdated;
     default:
-      return PICKUP_COPY.generic;
+      return complete ? COMPLETE_MODE_ERROR_COPY.generic : PICKUP_COPY.generic;
   }
 }
 
@@ -543,8 +556,10 @@ export function decidePickupResponse(
   res: PickupCompleteResponse,
   role?: string | null,
   customerName?: string | null,
+  /** I-120: opened from "Complete at counter": the outcome says so (web's COUNTER_COPY words), never "Handed over" */
+  complete = false,
 ): PickupDecision {
-  const d = decidePickup(res, role);
+  const d = decidePickup(res, role, complete);
   if (res.paymentRecorded || !res.creditOverLimit) return d;
   return {
     ...d,
@@ -552,7 +567,11 @@ export function decidePickupResponse(
   };
 }
 
-function decidePickup(res: PickupCompleteResponse, role?: string | null): PickupDecision {
+function decidePickup(
+  res: PickupCompleteResponse,
+  role: string | null | undefined,
+  complete: boolean,
+): PickupDecision {
   const code = res.paymentRecorded ? undefined : res.paymentErrorCode;
   if (!res.paymentRecorded && res.paymentCauseCode === API_ERROR_CODES.DUPLICATE_PAYMENT_REF) {
     const prompt = duplicateRefPrompt(
@@ -589,12 +608,22 @@ function decidePickup(res: PickupCompleteResponse, role?: string | null): Pickup
   return {
     kind: "done",
     releaseKey: true,
-    message: res.paymentRecorded
-      ? (res.change ?? 0) > 0
-        ? `Handed over. Change ${fmtCurrency(res.change ?? 0)}`
-        : "Handed over"
-      : "Handed over, but the payment wasn't recorded. Record it on the invoice.",
+    message: complete
+      ? completeOutcome(res)
+      : res.paymentRecorded
+        ? (res.change ?? 0) > 0
+          ? `Handed over. Change ${fmtCurrency(res.change ?? 0)}`
+          : "Handed over"
+        : "Handed over, but the payment wasn't recorded. Record it on the invoice.",
   };
+}
+
+/** I-120: the "Complete at counter" outcome line (web's PickupCompleteDialog words, one shared copy object). */
+function completeOutcome(res: PickupCompleteResponse): string {
+  if (!res.paymentRecorded)
+    return "Completed at counter, but the payment wasn't recorded. Record it on the invoice.";
+  const done = res.emailed ? COUNTER_COPY.completedEmailed : COUNTER_COPY.completed;
+  return (res.change ?? 0) > 0 ? `${done} Change ${fmtCurrency(res.change ?? 0)}` : done;
 }
 
 /** The staff "Record anyway" resend of a hand-over: the same body with `payment.recordAnyway: true` (same Idempotency-Key). */

@@ -82,3 +82,66 @@ describe("order screen wiring (source-pinned: RN screens aren't renderable in th
     );
   });
 });
+
+// #3689 review MUST 3: the complete-mode outcome says "Completed at counter", as web does, never "Handed over".
+describe("decidePickupResponse in complete mode (I-120 PR-2)", () => {
+  const { decidePickupResponse } = require("../lib/pos-mode");
+  const res = (over: Record<string, unknown>) => ({
+    orderId: "o",
+    orderNumber: "1",
+    invoiceId: "i",
+    invoiceNumber: "I-1",
+    total: 25,
+    paid: 25,
+    balanceDue: 0,
+    paymentRecorded: true,
+    ...over,
+  });
+  it("recorded and emailed: the emailed line", () => {
+    expect(decidePickupResponse(res({ emailed: true }), "OPERATOR", "Acme", true).message).toBe(
+      "Completed at counter. The invoice was emailed to the customer.",
+    );
+  });
+  it("recorded, no email (a walk-in): the plain line", () => {
+    expect(decidePickupResponse(res({}), "OPERATOR", "Acme", true).message).toBe(
+      "Completed at counter.",
+    );
+  });
+  it("the hand-over itself keeps its words", () => {
+    expect(decidePickupResponse(res({}), "OPERATOR", "Acme").message).toBe("Handed over");
+  });
+});
+
+// #3689 review MUST 4 + NIT (mirrors web): the refusals' own copy, "Nothing changed"; complete mode never says pickup.
+describe("pickupCompleteErrorCopy: Complete at counter refusals (I-120, mobile)", () => {
+  const { pickupCompleteErrorCopy } = require("../lib/pos-mode");
+  const refusal = (data: Record<string, unknown>) => ({ response: { status: 409, data } });
+  it("the four refusals", () => {
+    expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_UNAVAILABLE" }))).toBe(
+      "Nothing changed. This business doesn't hand orders over at the store.",
+    );
+    expect(
+      pickupCompleteErrorCopy(refusal({ code: "CREDIT_LIMIT_EXCEEDED", limit: 50, exposure: 120 })),
+    ).toBe(
+      "Nothing changed. This customer is over their credit limit ($120.00 of $50.00). Take payment now, or record a payment first.",
+    );
+    expect(pickupCompleteErrorCopy(refusal({ code: "SELLING_RESTRICTED" }))).toBe(
+      "Nothing changed. An item on this order can't be sold at the store. Edit the order, or deliver it.",
+    );
+    expect(pickupCompleteErrorCopy(refusal({ code: "ORDER_ON_ACTIVE_RUN" }))).toBe(
+      "Nothing changed. This order is on an active delivery run. Remove it from the run first.",
+    );
+  });
+  it("complete mode never says pickup", () => {
+    expect(pickupCompleteErrorCopy(refusal({}), true)).toBe(
+      "Couldn't complete the order. Check it and try again.",
+    );
+    expect(pickupCompleteErrorCopy(refusal({ code: "PICKUP_KEY_CONFLICT" }), true)).toBe(
+      "Already completed. Record any payment on the invoice.",
+    );
+  });
+  it("the New order switch hint names Counter sale", () => {
+    const { POS_COPY } = require("../lib/pos-mode");
+    expect(POS_COPY.switchHint).toMatch(/use Counter sale\.$/);
+  });
+});

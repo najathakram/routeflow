@@ -148,7 +148,9 @@ export function PickupCompleteDialog({
         // Back to the tender step; the next attempt is the same hand-over (same key) carrying the payment.
         if (res.balanceDue > 0) setOwed(res.balanceDue);
         setErrorCode(code);
-        setError(pickupCompleteErrorCopy({ response: { data: { code } } }));
+        setError(
+          pickupCompleteErrorCopy({ response: { data: { code } } }, undefined, completeMode),
+        );
         return;
       }
       held.current = null;
@@ -161,7 +163,7 @@ export function PickupCompleteDialog({
       if (unknown) writeHeldPickupKey(storeKey, keyRef.current);
       else clearHeldPickupKey(storeKey);
       setErrorCode(pickupErrorCode(err));
-      setError(pickupCompleteErrorCopy(err, due ?? undefined));
+      setError(pickupCompleteErrorCopy(err, due ?? undefined, completeMode));
     }
   }
 
