@@ -12,6 +12,7 @@ import {
   parseCli,
   ratchetFilesFrom,
   resolveIdInSpace,
+  workspaceOf,
   titlesMatch,
 } from "./cluster.mjs";
 
@@ -376,4 +377,26 @@ test("a failing resolver puts the first 200 chars of its stderr in the reason", 
   assert.equal(r.ok, false);
   assert.match(r.reason, /cannot find module x+/);
   assert.ok(r.reason.length < 300);
+});
+
+test("workspaceOf: outside apps/* and packages/* the key is the top-level dir, or the file name at the root", () => {
+  assert.equal(workspaceOf("tools/ops-monitor/bin/rf.mjs"), "tools");
+  assert.equal(workspaceOf("docker-compose.yml"), "docker-compose.yml");
+  assert.equal(workspaceOf("scripts/lib/x.mjs"), "scripts");
+  assert.equal(workspaceOf("apps/api/src/a.ts"), "apps/api");
+});
+
+test("run 4 shape: a root docker-compose change and a tools/ change are never merged by the cap", () => {
+  const r = clusterBugs(
+    {
+      bugs: [
+        bug("599", ["docker-compose.yml", "apps/api/src/a.ts"]),
+        bug("W-652", ["tools/ops-monitor/x.mjs"]),
+      ],
+    },
+    { maxClusters: 1 },
+  );
+  assert.equal(r.overCap, true);
+  assert.equal(r.clusters.length, 1);
+  assert.equal(r.parked.length, 1);
 });

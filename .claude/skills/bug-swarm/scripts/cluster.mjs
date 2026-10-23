@@ -94,10 +94,12 @@ export function resolveIdInSpace({
 const OWN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 const RATCHET_SPEC = "apps/api/src/common/size-ratchet.spec.ts";
 
-/** Workspace of a repo path: apps/<x>, packages/<x>, or "other". */
+/** Workspace of a repo path: apps/<x>, packages/<x>, else the top-level dir (the file name for a root file). */
 export function workspaceOf(file) {
   const m = /^(apps|packages)\/([^/]+)\//.exec(file);
-  return m ? `${m[1]}/${m[2]}` : "other";
+  if (m) return `${m[1]}/${m[2]}`;
+  const top = file.split(/[\\/]/)[0];
+  return top || "other";
 }
 
 /** Keys of the `BASELINE` map in size-ratchet.spec.ts (comments are ignored). */

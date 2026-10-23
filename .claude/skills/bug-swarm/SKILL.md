@@ -98,6 +98,8 @@ choreography into one Workflow script. The v0 steps above stay valid as the fall
 - The HIGH guard rests on Triage's risk label: a mislabelled HIGH row can reach Build; Review is the backstop.
 - **Resolver (run 2026-10-23-bug-swarm-4):** `cluster.mjs` runs `rf.mjs` / `bugs.mjs` from its own checkout (`--repo` only
   as a fallback), shows the resolver's stderr in the reason, and decodes HTML entities and `›`/`»` before comparing titles.
+- **Workspace key (run 2026-10-23-bug-swarm-4):** files outside `apps/*` and `packages/*` key on their top-level dir (file name
+  at the root), so the cap merge never groups `tools/` with a root docker-compose change.
 - **Workflow:** Triage+Pack (sonnet) -> Cluster (haiku) -> per cluster Build (sonnet) -> Gate (haiku,
   one build fix round) -> Review (opus, one fix round plus re-check), then a Report. A red cluster is parked.
 - **Stays with the orchestrator:** push, PRs, captures for UI clusters, the public window and landing, the
