@@ -26,6 +26,10 @@ import {
   HISTORY_MAX_LINES,
   HeavySlotTimeout,
   STALE_MS,
+  TIMEOUT_EXIT_CODE,
+  holderIdle,
+  parseIdleWarnMs,
+  spawnAsync,
   formatStatus,
   formatWaitLine,
   historyRecord,
@@ -961,6 +965,108 @@ const t=setInterval(()=>{let n=[];try{n=fs.readdirSync(q)}catch{}if(n.length||Da
     "W9 nothing reached a real npm: temp cwd has no node_modules / package-lock",
     readdirSync(work),
     [],
+  );
+}
+
+// ---- J: W-759 the holder enforces its own hold cap, and an idle holder is flagged ---------------
+{
+  // J1: a live, heartbeating holder whose job hangs is ended at the cap (its OWN child tree), the slot is released and
+  // the run is recorded as a timeout (exit 75). Nothing else is killed. Without the cap this child would sleep 60 s.
+  const dir = mkTmp();
+  let childAfter = null;
+  const out = await withHeavySlot(
+    { label: "hung", branch: "b", dir, env: {}, maxHoldMs: 400, ...FAST },
+    async () => {
+      const r = await spawnAsync(process.execPath, ["-e", "setTimeout(() => {}, 60000)"]);
+      childAfter = r;
+      return r.status;
+    },
+  );
+  const h = history(dir);
+  check(
+    "J1 a holder that hangs past the cap is ended: returns the timeout code, lock released, history exit 75",
+    [out, existsSync(lockFile(dir)), h.length, h[0]?.exit],
+    [TIMEOUT_EXIT_CODE, false, 1, TIMEOUT_EXIT_CODE],
+  );
+  check(
+    "J1b the guarded child did not exit normally (it was terminated)",
+    childAfter?.status === 0,
+    false,
+  );
+
+  // J2: a job that finishes inside the cap is untouched (its own exit code, history exit 0)
+  const dir2 = mkTmp();
+  const ok = await withHeavySlot(
+    { label: "fine", branch: "b", dir: dir2, env: {}, maxHoldMs: 60_000, ...FAST },
+    async () => (await spawnAsync(process.execPath, ["-e", "0"])).status,
+  );
+  check("J2 a job inside the cap keeps its own exit code", [ok, history(dir2)[0]?.exit], [0, 0]);
+
+  // J3: the idle signal is pure: no output for longer than the warn window, measured from the last output (or the start)
+  const t0 = 1_000_000;
+  check(
+    "J3 holderIdle: last output older than the window, falling back to startedAt; a fresh holder is not idle",
+    [
+      holderIdle({ startedAt: t0, lastOutputAt: t0 + 5 * 60_000 }, t0 + 30 * 60_000, 20 * 60_000),
+      holderIdle({ startedAt: t0 }, t0 + 30 * 60_000, 20 * 60_000),
+      holderIdle({ startedAt: t0, lastOutputAt: t0 + 25 * 60_000 }, t0 + 30 * 60_000, 20 * 60_000),
+      holderIdle(null, t0 + 30 * 60_000, 20 * 60_000),
+    ],
+    [true, true, false, false],
+  );
+  check(
+    "J3b RF_HEAVY_SLOT_IDLE_WARN_MIN parses; unset/invalid -> 20 min",
+    [
+      parseIdleWarnMs("5"),
+      parseIdleWarnMs(undefined),
+      parseIdleWarnMs("nope"),
+      parseIdleWarnMs("0"),
+    ],
+    [300_000, 1_200_000, 1_200_000, 1_200_000],
+  );
+  // J4: status and the waiter's line both say the holder looks idle (warn only; nothing is killed)
+  const dir3 = mkTmp();
+  const now = Date.now();
+  ghost(dir3, { startedAt: now - 40 * 60_000, lastOutputAt: now - 30 * 60_000 });
+  check(
+    "J4 status flags an idle holder as warn-only",
+    [
+      formatStatus(dir3, { idleWarnMs: 20 * 60_000 }).includes("HOLDER IDLE"),
+      formatStatus(dir3, { idleWarnMs: 60 * 60_000 }).includes("HOLDER IDLE"),
+    ],
+    [true, false],
+  );
+  check(
+    "J4b the waiter's progress line carries the idle warning",
+    [
+      formatWaitLine({
+        position: 1,
+        total: 2,
+        holder: {
+          label: "v",
+          branch: "b",
+          pid: 1,
+          startedAt: now - 40 * 60_000,
+          lastOutputAt: now - 30 * 60_000,
+        },
+        now,
+        idleWarnMs: 20 * 60_000,
+      }).includes("HOLDER IDLE"),
+      formatWaitLine({
+        position: 1,
+        total: 2,
+        holder: {
+          label: "v",
+          branch: "b",
+          pid: 1,
+          startedAt: now - 40 * 60_000,
+          lastOutputAt: now - 1 * 60_000,
+        },
+        now,
+        idleWarnMs: 20 * 60_000,
+      }).includes("HOLDER IDLE"),
+    ],
+    [true, false],
   );
 }
 

@@ -19,7 +19,9 @@
 // NOT a reason to give up.
 //
 // Knobs (env): RF_HEAVY_SLOT_DIR, RF_HEAVY_SLOTS (default 1), RF_HEAVY_SLOT_MAX_WAIT_MIN (default
-// 720), RF_HEAVY_SLOT_MAX_HOLD_MIN (default 180), RF_HEAVY_SLOT=off (owner/lead escape hatch, loud), CI (no slot, silent). Test-only timing
+// 720), RF_HEAVY_SLOT_MAX_HOLD_MIN (default 180: ALSO enforced by the holder itself, W-759: past the cap it ends its own
+// job's process tree and exits 75), RF_HEAVY_SLOT_IDLE_WARN_MIN (default 20: warn-only 'holder idle' flag when a holder's
+// job has printed nothing for that long; only visible when stdout is not a TTY), RF_HEAVY_SLOT=off (owner/lead escape hatch, loud), CI (no slot, silent). Test-only timing
 // knobs: RF_HEAVY_SLOT_POLL_MS, RF_HEAVY_SLOT_HEARTBEAT_MS.
 //
 // Node's spawnSync blocks the event loop, so the heartbeat could never fire: callers must run the
@@ -35,6 +37,7 @@ export const HEARTBEAT_MS = 30_000;
 export const STALE_MS = 120_000;
 export const DEFAULT_MAX_WAIT_MIN = 720;
 export const DEFAULT_MAX_HOLD_MIN = 180;
+export const DEFAULT_IDLE_WARN_MIN = 20;
 export const POLL_MS = 1_000;
 export const WAIT_LOG_MS = 60_000;
 export const HISTORY_MAX_LINES = 500;
@@ -66,6 +69,23 @@ export function parseMaxWaitMs(raw) {
 /** RF_HEAVY_SLOT_MAX_HOLD_MIN (minutes, fractions allowed) -> ms; unset/invalid -> 180 min. */
 export function parseMaxHoldMs(raw) {
   return parseMinutesMs(raw, DEFAULT_MAX_HOLD_MIN);
+}
+
+/** RF_HEAVY_SLOT_IDLE_WARN_MIN (minutes, > 0) -> ms; unset/invalid/zero -> 20 min. */
+export function parseIdleWarnMs(raw) {
+  const m = Number(raw);
+  const ok = typeof raw === "string" && raw.trim() !== "" && Number.isFinite(m) && m > 0;
+  return (ok ? m : DEFAULT_IDLE_WARN_MIN) * 60_000;
+}
+
+/**
+ * A holder whose job has printed nothing for `idleMs` (measured from its last output, else from its start). Warn-only: a
+ * quiet phase (a docker layer, a long compile) is legitimate; the flag is what lets a lane notice a hung holder before the hold cap.
+ */
+export function holderIdle(holder, now, idleMs) {
+  if (!holder) return false;
+  const last = holder.lastOutputAt ?? holder.startedAt;
+  return typeof last === "number" && now - last > idleMs;
 }
 
 /** A (live, heartbeating) holder that has held its slot longer than the hold cap. */
@@ -282,13 +302,22 @@ export function nextGrant({ order, myName, freeSlots }) {
   };
 }
 
-export function formatWaitLine({ position, total, holder, now }) {
+export function formatWaitLine({
+  position,
+  total,
+  holder,
+  now,
+  idleWarnMs = parseIdleWarnMs(undefined),
+}) {
   const held = holder
     ? `held by ${holder.label} on ${holder.branch || "?"}, pid ${holder.pid}, ${(
         Math.max(0, now - (holder.startedAt ?? now)) / 60_000
       ).toFixed(1)} min`
     : "held by (none yet)";
-  return `heavy-slot: waiting (position ${position} of ${total}) — ${held}`;
+  const idle = holderIdle(holder, now, idleWarnMs)
+    ? ` — HOLDER IDLE (no output for over ${Math.round(idleWarnMs / 60_000)} min; may be hung)`
+    : "";
+  return `heavy-slot: waiting (position ${position} of ${total}) — ${held}${idle}`;
 }
 
 /** Keep the last `max` non-empty lines of a history file's text. */
@@ -449,6 +478,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const activeChildren = new Set();
 let interruptedBy = null;
+let holdExpired = false; // W-759: the holder's cap fired; no further child may start under this lease
+let lastOutputAt = 0; // last time a guarded child printed (stdout/stderr piped through when not a TTY)
 
 /** Awaited async spawn with the heartbeat free to run. Resolves `{ status, signal, error }`. */
 export function spawnAsync(cmd, args = [], options = {}) {
@@ -457,9 +488,29 @@ export function spawnAsync(cmd, args = [], options = {}) {
       resolve({ status: interruptedBy === "SIGINT" ? 130 : 143, signal: interruptedBy });
       return;
     }
+    if (holdExpired) {
+      resolve({ status: TIMEOUT_EXIT_CODE, signal: null });
+      return;
+    }
+    // Not a TTY (agents, redirected logs): pipe stdout/stderr THROUGH so the lease can see activity. A TTY keeps `inherit`
+    // (a human is watching, and colour/progress must survive); stdin is always inherited.
+    const piped = !options.stdio && !process.stdout.isTTY;
     let child;
     try {
-      child = spawn(cmd, args, { stdio: "inherit", ...options });
+      child = spawn(cmd, args, {
+        stdio: piped ? ["inherit", "pipe", "pipe"] : "inherit",
+        ...options,
+      });
+      if (piped) {
+        child.stdout?.on("data", (d) => {
+          lastOutputAt = Date.now();
+          process.stdout.write(d);
+        });
+        child.stderr?.on("data", (d) => {
+          lastOutputAt = Date.now();
+          process.stderr.write(d);
+        });
+      }
     } catch (error) {
       resolve({ status: null, signal: null, error });
       return;
@@ -513,6 +564,7 @@ function resolveConfig(opts, env) {
     slots: opts.slots ?? parseSlots(env.RF_HEAVY_SLOTS),
     maxWaitMs: opts.maxWaitMs ?? parseMaxWaitMs(env.RF_HEAVY_SLOT_MAX_WAIT_MIN),
     maxHoldMs: opts.maxHoldMs ?? parseMaxHoldMs(env.RF_HEAVY_SLOT_MAX_HOLD_MIN),
+    idleWarnMs: opts.idleWarnMs ?? parseIdleWarnMs(env.RF_HEAVY_SLOT_IDLE_WARN_MIN),
     pollMs: opts.pollMs ?? parseMs(env.RF_HEAVY_SLOT_POLL_MS, POLL_MS),
     heartbeatMs: opts.heartbeatMs ?? parseMs(env.RF_HEAVY_SLOT_HEARTBEAT_MS, HEARTBEAT_MS),
     waitLogMs: opts.waitLogMs ?? WAIT_LOG_MS,
@@ -647,6 +699,7 @@ async function acquire(cfg, state) {
             total: g.total,
             holder: snap.holders[0]?.entry,
             now,
+            idleWarnMs: cfg.idleWarnMs,
           }),
         );
         lastLog = now;
@@ -669,7 +722,11 @@ function makeLease(cfg, lock, index) {
     const cur = readEntry(file);
     if (cur && !cur.unreadable && cur.token === lock.token) {
       try {
-        writeJson(file, { ...lock, heartbeatAt: cfg.now() });
+        writeJson(file, {
+          ...lock,
+          heartbeatAt: cfg.now(),
+          ...(lastOutputAt > 0 ? { lastOutputAt } : {}),
+        });
       } catch {
         /* next beat */
       }
@@ -754,13 +811,30 @@ export async function withHeavySlot(opts, fn) {
   try {
     lease = await acquire(cfg, state);
     process.env.RF_HEAVY_SLOT_TOKEN = lease.token;
+    holdExpired = false;
+    lastOutputAt = 0;
+    // W-759: the holder enforces its OWN cap. A job that hangs while this process still heartbeats would otherwise stall every
+    // waiter until they give up; past the cap the holder ends its own guarded children (their process tree only) and exits 75.
+    const capTimer = setTimeout(() => {
+      holdExpired = true;
+      cfg.log(
+        `heavy-slot: WARNING "${cfg.label}" held the slot past the ${(cfg.maxHoldMs / 60_000).toFixed(2)} min cap ` +
+          "(RF_HEAVY_SLOT_MAX_HOLD_MIN); ending its job and releasing the slot",
+      );
+      forwardSignal("SIGTERM");
+    }, cfg.maxHoldMs);
+    capTimer.unref?.();
     let result;
     try {
       result = await fn({ token: lease.token, held: true });
     } catch (e) {
+      clearTimeout(capTimer);
       lease.release(1);
       throw e;
     }
+    clearTimeout(capTimer);
+    if (holdExpired) result = TIMEOUT_EXIT_CODE;
+    holdExpired = false;
     lease.release(typeof result === "number" ? result : 0);
     return result;
   } finally {
@@ -786,6 +860,7 @@ export function formatStatus(
     now = Date.now(),
     hostname = os.hostname(),
     maxHoldMs = parseMaxHoldMs(process.env.RF_HEAVY_SLOT_MAX_HOLD_MIN),
+    idleWarnMs = parseIdleWarnMs(process.env.RF_HEAVY_SLOT_IDLE_WARN_MIN),
   } = {},
 ) {
   const st = readState(dir, { now, hostname }, false);
@@ -798,6 +873,9 @@ export function formatStatus(
         `heartbeat ${Math.round((now - e.heartbeatAt) / 1000)}s ago (${h.name})` +
         (holderOverCap(e, now, maxHoldMs)
           ? ` \u2014 OVER HOLD CAP (> ${(maxHoldMs / 60_000).toFixed(0)} min; waiters will give up)`
+          : "") +
+        (holderIdle(e, now, idleWarnMs)
+          ? ` \u2014 HOLDER IDLE (no output for over ${Math.round(idleWarnMs / 60_000)} min; warn only)`
           : ""),
     );
   }
