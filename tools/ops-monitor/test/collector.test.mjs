@@ -1848,6 +1848,36 @@ test("collapseRuns: a stale attempt only outranks a success that is OLDER than i
   assert.equal(state([ok({}), stuck()]), "notrun");
 });
 
+test("collapseRuns: the tie and the success timestamp choice (completedAt first, startedAt fallback)", () => {
+  const now = Date.parse("2026-10-23T12:00:00Z");
+  const at = (ageMs) => new Date(now - ageMs).toISOString();
+  const H = 3600_000;
+  const stuck = {
+    __typename: "CheckRun",
+    name: "verify",
+    status: "QUEUED",
+    conclusion: null,
+    startedAt: null,
+    checkSuite: { createdAt: at(20 * H), updatedAt: at(10 * H) },
+  };
+  const ok = (over) => ({
+    __typename: "CheckRun",
+    name: "verify",
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+    ...over,
+  });
+  const state = (n) => COL.collapseRuns([n, stuck], now)[0].state;
+  // N1: a success completed at exactly the stuck suite time is not older than it: stays success
+  assert.equal(state(ok({ completedAt: at(10 * H) })), "success");
+  // N2(i): completedAt (newer than the stuck time) wins over an older startedAt
+  assert.equal(state(ok({ startedAt: at(12 * H), completedAt: at(9 * H) })), "success");
+  // N2(ii): only startedAt present, newer than the stuck time
+  assert.equal(state(ok({ startedAt: at(9 * H) })), "success");
+  // and one tick older than the stuck time is still not-run
+  assert.equal(state(ok({ completedAt: at(10 * H + 1000) })), "notrun");
+});
+
 test("collapseRuns: an old success beside a STALE queued re-run is never success (reads notrun)", () => {
   const now = Date.parse("2026-10-23T12:00:00Z");
   const at = (ageMs) => new Date(now - ageMs).toISOString();

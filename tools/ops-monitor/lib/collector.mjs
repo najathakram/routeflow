@@ -84,7 +84,8 @@ export const QUEUED_STALE_MS = 6 * 3600_000;
 
 /**
  * A CheckRun that never started and whose suite was last created or updated more than
- * QUEUED_STALE_MS ago. A re-run reuses the original suite, so time from the LATER of the two.
+ * QUEUED_STALE_MS ago (timed by the suite's max(createdAt, updatedAt), the same
+ * assumption D6 makes for a lone queued check). A re-run reuses the original suite, so time from the LATER of the two.
  */
 function staleQueuedAt(n, nowMs) {
   if (!n || n.startedAt !== null || n.__typename === "StatusContext") return null;
