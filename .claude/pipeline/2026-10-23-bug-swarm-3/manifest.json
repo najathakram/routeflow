@@ -1,0 +1,154 @@
+{
+  "run": "2026-10-23-bug-swarm-3",
+  "bugs": [
+    {
+      "row": "302",
+      "title": "Web new-invoice preview shows sales tax for a tax-exempt customer that the saved invoice will not carry",
+      "risk": "HIGH",
+      "riskReason": "Money: the confirmed total on the web preview differs from the saved invoice total (tax on an exempt customer). Money path, so HIGH by house rule.",
+      "status": "live",
+      "files": [
+        "apps/web/app/(dashboard)/invoices/new/page.tsx",
+        "packages/pricing (computeInvoiceTotals, isTaxExempt input)",
+        "apps/mobile/lib/invoice-totals.ts (reference: already zeroes tax for isTaxExempt, its header calls out the web gap)",
+        "apps/api/src/invoices/invoices.service.ts (server truth, zeroes tax for isTaxExempt)"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "repro": "Select a customer with isTaxExempt=true on web invoices/new and add a taxable line. computeInvoiceTotals at page.tsx ~L1342 is called without isTaxExempt, so the footer shows tax (e.g. $107.50) while the saved invoice is $100.00.",
+      "laneOwner": "web invoices"
+    },
+    {
+      "row": "599",
+      "title": "(no record found)",
+      "risk": "HIGH",
+      "riskReason": "Cannot assess: bugs.mjs has no record for B599 (show/list say it is absent; expand was not run because it writes). Conservatively HIGH until the row is read.",
+      "status": "unclear",
+      "files": [],
+      "needsDb": false,
+      "ui": false,
+      "repro": "Unknown: no register record or card available in this worktree. Needs the owner or the orchestrator to supply the row text."
+    },
+    {
+      "row": "668",
+      "title": "The global 'N parked drafts' tray covers page content at 768/390 (at 768 it covers the New-unit fields)",
+      "risk": "LOW",
+      "riskReason": "Layout/z-index only in the global draft dock; no money, ledger or tenancy change.",
+      "status": "live",
+      "files": [
+        "apps/web/components/DraftDock.tsx"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "repro": "At 768px and 390px with parked drafts present, DraftDock container (bottom-24 left-4 z-40, w-[min(92vw,420px)], max-h-[70vh]) overlays page content such as the New-unit fields. Verify visually; capture is the orchestrator's call."
+    },
+    {
+      "row": "745",
+      "title": "Docker build broken: packages/returns not COPY'd into the image (postinstall builds it)",
+      "risk": "LOW",
+      "riskReason": "Build/Dockerfile only; no runtime money, ledger or tenancy path.",
+      "status": "fixed-on-master",
+      "files": [
+        "apps/api/Dockerfile",
+        "apps/web/Dockerfile"
+      ],
+      "needsDb": false,
+      "ui": false,
+      "repro": "On origin/master both Dockerfiles now COPY packages/returns/ and packages/types/ before the postinstall build. Remaining check: confirm the image builds at the deployed sha (no capture needed)."
+    },
+    {
+      "row": "W-652",
+      "title": "(no record found)",
+      "risk": "HIGH",
+      "riskReason": "Cannot assess: the W-652 id is not in the bug register, the repo, or the swarm folders. Conservatively HIGH until the row is read.",
+      "status": "unclear",
+      "files": [],
+      "needsDb": false,
+      "ui": false,
+      "repro": "Unknown: no record available in this worktree."
+    },
+    {
+      "row": "W-679",
+      "title": "(no record found)",
+      "risk": "HIGH",
+      "riskReason": "Cannot assess: the W-679 id is not in the bug register, the repo, or the swarm folders. Conservatively HIGH until the row is read.",
+      "status": "unclear",
+      "files": [],
+      "needsDb": false,
+      "ui": false,
+      "repro": "Unknown: no record available in this worktree."
+    },
+    {
+      "row": "W-685",
+      "title": "(no record found)",
+      "risk": "HIGH",
+      "riskReason": "Cannot assess: the W-685 id is not in the bug register, the repo, or the swarm folders. Conservatively HIGH until the row is read.",
+      "status": "unclear",
+      "files": [],
+      "needsDb": false,
+      "ui": false,
+      "repro": "Unknown: no record available in this worktree."
+    },
+    {
+      "row": "W-687",
+      "title": "(no record found)",
+      "risk": "HIGH",
+      "riskReason": "Cannot assess: the W-687 id is not in the bug register, the repo, or the swarm folders. Conservatively HIGH until the row is read.",
+      "status": "unclear",
+      "files": [],
+      "needsDb": false,
+      "ui": false,
+      "repro": "Unknown: no record available in this worktree."
+    }
+  ],
+  "clusters": [
+    {
+      "id": "c1",
+      "bugs": [
+        {
+          "row": "668"
+        }
+      ],
+      "files": [
+        "apps/web/components/DraftDock.tsx"
+      ],
+      "workspaces": [
+        "apps/web"
+      ],
+      "needsDb": false,
+      "ui": true,
+      "extractionFirst": false
+    }
+  ],
+  "excluded": [
+    {
+      "row": "302",
+      "reason": "risk HIGH: HIGH-risk bugs never enter the swarm"
+    },
+    {
+      "row": "599",
+      "reason": "risk HIGH: HIGH-risk bugs never enter the swarm"
+    },
+    {
+      "row": "745",
+      "reason": "status fixed-on-master: only live bugs enter"
+    },
+    {
+      "row": "W-652",
+      "reason": "risk HIGH: HIGH-risk bugs never enter the swarm"
+    },
+    {
+      "row": "W-679",
+      "reason": "risk HIGH: HIGH-risk bugs never enter the swarm"
+    },
+    {
+      "row": "W-685",
+      "reason": "risk HIGH: HIGH-risk bugs never enter the swarm"
+    },
+    {
+      "row": "W-687",
+      "reason": "risk HIGH: HIGH-risk bugs never enter the swarm"
+    }
+  ],
+  "unaccounted": []
+}
