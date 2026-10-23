@@ -7,7 +7,7 @@ jest.mock("@/lib/api/product-units", () => ({ useProductUnits: () => ({ data: []
 jest.mock("@/lib/api/margin", () => ({ useMarginConfig: () => ({ data: undefined }) }));
 jest.mock("@/lib/api/products", () => ({ useProducts: () => ({ data: undefined }) }));
 
-import { needsSpecialTierReason } from "./page";
+import { needsSpecialTierReason } from "./_components/order-line-edit";
 
 const line = (o: Record<string, unknown> = {}) => ({ unitPrice: 8, originalUnitPrice: 8, ...o });
 

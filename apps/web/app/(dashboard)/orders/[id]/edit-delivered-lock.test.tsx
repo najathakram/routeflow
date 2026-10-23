@@ -8,7 +8,7 @@ import * as React from "react";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { renderWithProviders, screen, within } from "@/test-utils/render";
-import { EditableLineItems, type EditItemState } from "./page";
+import { EditableLineItems, type EditItemState } from "./_components/order-line-edit";
 
 jest.mock("@/lib/api/product-units", () => ({
   useUnitsEnabled: () => false,
