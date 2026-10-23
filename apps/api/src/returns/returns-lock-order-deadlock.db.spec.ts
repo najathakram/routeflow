@@ -355,61 +355,71 @@ describeDb(
       return { deadlockedReps, notClean, barrierMisses, serverDelta };
     }
 
-    it("pair (i): customer merge (Order -> Invoice -> Return) vs inline approve (Return -> Order), 20 reps, no 40P01", async () => {
-      const tenantId = await newTenant("i");
-      const primary = await seedCustomer(tenantId, "i-primary");
-      const before = await serverDeadlocks();
-      const outcomes: RepOutcome[] = [];
+    // SA-900: the merge also runs with NO tenant (SUPER_ADMIN satisfies @Roles(OPERATOR)); its Return lock must still match.
+    it.each([
+      ["(i)", false],
+      ["(i, no tenant)", true],
+    ])(
+      "pair %s: customer merge (Order -> Invoice -> Return) vs inline approve (Return -> Order), 20 reps, no 40P01",
+      async (label: string, mergeAsSuperAdmin: boolean) => {
+        const tenantId = await newTenant(mergeAsSuperAdmin ? "i0" : "i");
+        const primary = await seedCustomer(tenantId, "i-primary");
+        const before = await serverDeadlocks();
+        const outcomes: RepOutcome[] = [];
 
-      for (let rep = 0; rep < REPS; rep++) {
-        // The loser (secondary) owns the order, its invoice and the held return that approve touches.
-        const secondary = await seedCustomer(tenantId, "i-secondary");
-        const { orderId } = await seedOrder(tenantId, secondary.id, 1);
-        const returnId = await seedReturn(tenantId, orderId, secondary.id, true);
+        for (let rep = 0; rep < REPS; rep++) {
+          // The loser (secondary) owns the order, its invoice and the held return that approve touches.
+          const secondary = await seedCustomer(tenantId, "i-secondary");
+          const { orderId } = await seedOrder(tenantId, secondary.id, 1);
+          const returnId = await seedReturn(tenantId, orderId, secondary.id, true);
 
-        const barrier = makeBarrier();
-        const approveSide = newSide();
-        const mergeSide = newSide();
-        const inlineSvc = buildInline(
-          instrument(prismaA, (tx) => waitAfterFirstRaw(tx, barrier, approveSide), approveSide),
-          buildCreditNotes(prismaA),
-          prismaA,
-        );
-        const customers: CustomersService = Object.assign(
-          Object.create(CustomersService.prototype),
-          {
-            prisma: instrument(
-              prismaB,
-              (tx) => waitAfterFirstOrderUpdate(tx, barrier, mergeSide),
-              mergeSide,
+          const barrier = makeBarrier();
+          const approveSide = newSide();
+          const mergeSide = newSide();
+          const inlineSvc = buildInline(
+            instrument(prismaA, (tx) => waitAfterFirstRaw(tx, barrier, approveSide), approveSide),
+            buildCreditNotes(prismaA),
+            prismaA,
+          );
+          const customers: CustomersService = Object.assign(
+            Object.create(CustomersService.prototype),
+            {
+              prisma: instrument(
+                prismaB,
+                (tx) => waitAfterFirstOrderUpdate(tx, barrier, mergeSide),
+                mergeSide,
+              ),
+              logger: new Logger("r4-customers"),
+            },
+          );
+
+          const results = await Promise.allSettled([
+            tenantCtx.run(tenantId, () =>
+              inlineSvc.approve(returnId, { sub: primary.userId } as any),
             ),
-            logger: new Logger("r4-customers"),
-          },
-        );
+            tenantCtx.run(mergeAsSuperAdmin ? null : tenantId, () =>
+              customers.mergeCustomers(primary.id, secondary.id),
+            ),
+          ]);
+          outcomes.push({
+            barrierReleased: barrier.bothArrived,
+            deadlockedA: approveSide.deadlocks,
+            deadlockedB: mergeSide.deadlocks,
+            results,
+          });
+        }
 
-        const results = await Promise.allSettled([
-          tenantCtx.run(tenantId, () =>
-            inlineSvc.approve(returnId, { sub: primary.userId } as any),
-          ),
-          tenantCtx.run(tenantId, () => customers.mergeCustomers(primary.id, secondary.id)),
-        ]);
-        outcomes.push({
-          barrierReleased: barrier.bothArrived,
-          deadlockedA: approveSide.deadlocks,
-          deadlockedB: mergeSide.deadlocks,
-          results,
+        const s = await summarise(label, outcomes, before);
+        // The barrier proves the race on the pre-fix tree (each side holds its first lock, then the inverse one deadlocks:
+        // 20/20 and 19/20 there). Under the one lock order the second side blocks on the Return BEFORE its barrier, so a
+        // barrier miss is the serialised outcome, logged but not asserted.
+        expect({ deadlockedReps: s.deadlockedReps, notClean: s.notClean }).toEqual({
+          deadlockedReps: 0,
+          notClean: [],
         });
-      }
-
-      const s = await summarise("(i)", outcomes, before);
-      // The barrier proves the race on the pre-fix tree (each side holds its first lock, then the inverse one deadlocks:
-      // 20/20 and 19/20 there). Under the one lock order the second side blocks on the Return BEFORE its barrier, so a
-      // barrier miss is the serialised outcome, logged but not asserted.
-      expect({ deadlockedReps: s.deadlockedReps, notClean: s.notClean }).toEqual({
-        deadlockedReps: 0,
-        notClean: [],
-      });
-    }, 600_000);
+      },
+      600_000,
+    );
 
     it("pair (ii): credit-note create with returnId (Order -> Invoice -> Return) vs inline issueCredit (Return -> Order), 20 reps, no 40P01", async () => {
       const tenantId = await newTenant("ii");

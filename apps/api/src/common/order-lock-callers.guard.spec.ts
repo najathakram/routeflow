@@ -499,8 +499,12 @@ describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNo
   const CALLER_HELD: Record<string, string> = {
     "credit-notes/credit-note-locks.ts#lockCreditsForSend":
       "SA-860: both callers (markSent, readSendSnapshot) take lockInvoiceRow (Order -> Invoice) BEFORE it; its Invoice lock re-takes a held row",
+  };
+
+  /** KNOWN inverses: NOT safe, each tied to the work item that removes it. Never add one without a W- item. */
+  const KNOWN_INVERSE: Record<string, string> = {
     "credit-notes/credit-notes.service.ts#restoreCreditFromPaymentInTx":
-      "runs inside a payment or credit reversal whose caller is documented to hold the Invoice (SA-706a); UNVERIFIED for 4 of its 6 callers (cancelStandaloneInTx, pullBackOrderCreditPair, releaseCreditsInTx, unapplyFromInvoice): a row 631 follow-up, an Invoice/CreditNote audit outside SA-893's Return tier",
+      "W-757 (SA-898/SA-900): CreditNote -> Invoice. Traced: pullBackOrderCreditPair and releaseCreditsInTx are SAFE; unapplyFromInvoice and cancelStandaloneInTx (via inline cancel, no retry: a 500) are REAL inverses; the rest are to be verified there",
   };
 
   it("the order is the one constant: Return -> Order -> Invoice -> CreditNote", () => {
@@ -513,15 +517,20 @@ describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNo
     expect(sites).toEqual(ROW_LOCK_SITES);
   });
 
-  it("every classified order follows ROW_LOCK_ORDER, or is a listed caller-held exception", () => {
-    const off = Object.entries(lockSequences().sites)
-      .filter(([site, seq]) => !follows(seq) && !(site in CALLER_HELD))
+  it("every classified order follows ROW_LOCK_ORDER, or is a listed caller-held exception or known inverse", () => {
+    const sites = lockSequences().sites;
+    const off = Object.entries(sites)
+      .filter(([site, seq]) => !follows(seq) && !(site in CALLER_HELD) && !(site in KNOWN_INVERSE))
       .map(([site, seq]) => `${site}: ${seq}`);
     expect(off).toEqual([]);
-    for (const site of Object.keys(CALLER_HELD)) expect(site in ROW_LOCK_SITES).toBe(true);
+    for (const site of [...Object.keys(CALLER_HELD), ...Object.keys(KNOWN_INVERSE)]) {
+      expect(site in ROW_LOCK_SITES).toBe(true);
+      expect(follows(sites[site])).toBe(false); // a stale exception (now in order) must be removed
+    }
+    for (const why of Object.values(KNOWN_INVERSE)) expect(why).toMatch(/^W-\d+/);
   });
 
-  it("SA-898: the restoreCreditFromPaymentInTx exception cannot widen: exactly its 6 classified callers", () => {
+  it("SA-898: the restoreCreditFromPaymentInTx known inverse cannot widen: exactly its 6 classified callers", () => {
     const CS = "credit-notes/credit-notes.service.ts";
     const callers = [
       "cancelStandaloneInTx", // UNVERIFIED (W-757)
