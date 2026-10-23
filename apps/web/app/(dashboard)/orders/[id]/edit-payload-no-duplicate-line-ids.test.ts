@@ -3,7 +3,11 @@
  * with 400 DUPLICATE_LINE_ID. Builders covered: `buildItemUpdates` (the per-line diff), and the Reload rebase
  * (`rebaseEditItems` + `rebasePendingDeletes`) whose output feeds the save as `[...pendingDeletes DELETE, ...diff]`.
  */
-import { buildEditItemFromLine, buildItemUpdates, type EditItemState } from "./page";
+import {
+  buildEditItemFromLine,
+  buildItemUpdates,
+  type EditItemState,
+} from "./_components/order-line-edit";
 import { rebaseEditItems, rebasePendingDeletes } from "./_components/order-edit-rebase";
 import type { OrderItem, ItemUpdate } from "@/lib/api/orders";
 
