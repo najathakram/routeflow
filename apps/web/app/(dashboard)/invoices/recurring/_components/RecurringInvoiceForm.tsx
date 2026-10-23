@@ -357,7 +357,10 @@ export function RecurringInvoiceForm({
   });
   const pricingPending = gate.pending;
   const pricingFailed = gate.failed;
-  const priceBlocked = gate.blockSave;
+  // SA-868: after a failed customer / customer-price read, a line still carrying a SUGGESTED price (picked here, not typed)
+  // cannot be confirmed, so Save waits for Retry; typed and stored prices are the operator's and never hold Save.
+  const priceBlocked =
+    gate.blockSave || (gate.readFailed && items.some((it) => it.product && !it.priceEdited));
   const retryCustomerPrices = () => {
     void customerQuery.refetch?.();
     void customerPricesQuery.refetch?.();
@@ -370,7 +373,8 @@ export function RecurringInvoiceForm({
 
   // A customer change re-suggests ONLY the lines picked here whose price the operator has not typed (SA-856 rule 2).
   React.useEffect(() => {
-    if (gate.blockPick) return;
+    // No customer (cleared): keep every price as it is; a re-suggest waits for the next customer's confirmed prices.
+    if (!customerId || gate.blockPick) return;
     setItems((prev) => {
       let changed = false;
       const next = prev.map((it) => {

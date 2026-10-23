@@ -224,6 +224,25 @@ describe("SA-868: a failed customer-price read fails CLOSED (never a list-price 
   });
 });
 
+describe("SA-868: a customer change whose read fails never re-prices a line", () => {
+  it("an unedited tier-3 line keeps 8.00 when the next customer's read fails (never re-priced to list 10.00)", async () => {
+    renderCreate();
+    await chooseCustomer("Tier Three Cafe");
+    await pickProduct();
+    expect(await screen.findByDisplayValue("8.00")).toBeInTheDocument();
+    clearCustomer("Tier Three Cafe");
+    mockCustomerError = true;
+    await chooseCustomer("Retail Cafe");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't load this customer's prices.",
+    );
+    expect(screen.getByDisplayValue("8.00")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("10.00")).not.toBeInTheDocument();
+    // The line's price is a suggestion the failed read cannot confirm: Save waits for Retry.
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+});
+
 describe("SA-856: existing templates change nothing automatically", () => {
   const template: RecurringInvoice = {
     id: "ri-1",
