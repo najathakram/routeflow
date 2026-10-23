@@ -96,6 +96,18 @@ choreography into one Workflow script. The v0 steps above stay valid as the fall
   `node --test .claude/skills/bug-swarm/scripts/*.test.mjs` after any edit to `workflow.js`.
 - `gate.mjs` replaces the planned `gate.sh` (lead-accepted): argv arrays, no shell, because shell quoting broke the hand gate twice in runs 1-2.
 - The HIGH guard rests on Triage's risk label: a mislabelled HIGH row can reach Build; Review is the backstop.
+- **Resolver (run 2026-10-23-bug-swarm-4):** `cluster.mjs` runs `rf.mjs` / `bugs.mjs` from its own checkout (`--repo` only
+  as a fallback), shows the resolver's stderr in the reason, and decodes HTML entities and `›`/`»` before comparing titles.
+- **Workspace key (run 2026-10-23-bug-swarm-4):** files outside `apps/*` and `packages/*` key on their top-level dir (file name
+  at the root), so the cap merge never groups `tools/` with a root docker-compose change.
+- **Label as given (run 2026-10-23-bug-swarm-4):** commits and tests carry the id exactly as given in `idSpace` (`row 599`,
+  `W-679`, `B668`); `gate.mjs --ids a,b --id-space row|bug` adds an `id-labels` step that fails on a `(B###)` subject
+  outside the given ids; a bare `B123` word counts too, so pass `--ids 599,B123` when a branch legitimately
+  names a bug.
+- **Census (run 2026-10-23-bug-swarm-4, #3659; review of #3674):** a branch that touches ANY file under
+  `apps/api/prisma/`, `apps/api/scripts/` or `scripts/` (add, modify, delete, rename or copy; both paths of a move,
+  `--diff-filter=ACMRD`) runs the FULL api lanes in `gate.mjs`: `npm test -w apps/api` (parallel + serial `-script` lanes) and `npx jest -c jest.repo-truth.config.js`
+  in `apps/api`, 30 minutes each. A hand-listed subset of census specs missed about 25 scanners, so none is kept.
 - **Workflow:** Triage+Pack (sonnet) -> Cluster (haiku) -> per cluster Build (sonnet) -> Gate (haiku,
   one build fix round) -> Review (opus, one fix round plus re-check), then a Report. A red cluster is parked.
 - **Stays with the orchestrator:** push, PRs, captures for UI clusters, the public window and landing, the
