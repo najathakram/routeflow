@@ -1,3 +1,4 @@
+import { BadRequestException } from "@nestjs/common";
 // OrdersService / InvoicesService pull ESM-only modules Jest's CommonJS parser cannot load: driven through mocks.
 jest.mock("../orders.service", () => ({ OrdersService: class OrdersService {} }));
 jest.mock("../../invoices/invoices.service", () => ({ InvoicesService: class InvoicesService {} }));
@@ -20,6 +21,7 @@ jest.mock("../../common/db-locks", () => ({
 
 import { Test } from "@nestjs/testing";
 import { PickupCompleteService } from "./pickup-complete.service";
+import { FULFILMENT_CAPABILITY_READER } from "./fulfilment-capability-reader";
 import { OrdersService } from "../orders.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -141,6 +143,13 @@ describe("PickupCompleteService.complete — the day-close lock and window (SA-7
           },
         },
         { provide: PrismaService, useValue: prisma },
+        // I-120: a business that hands over at the store (the engine's capability gate)
+        {
+          provide: FULFILMENT_CAPABILITY_READER,
+          useValue: {
+            get: async () => ({ methods: ["ROUTE", "SHIP", "PICKUP"], counter: "off" }),
+          } as never,
+        },
       ],
     }).compile();
     service = mod.get(PickupCompleteService);
@@ -303,6 +312,12 @@ describe("PickupCompleteService.complete — a POS-mode PICKUP order's cash coun
               order = { ...order, status: "DELIVERED", deliveredAt: new Date(T_DELIVERED) };
               return order;
             }),
+            // I-120: the real switch refuses an OUT_FOR_DELIVERY order (order-lifecycle.ts, "only while the order is open")
+            updateFulfillPath: jest.fn(async () => {
+              throw new BadRequestException(
+                "Fulfillment path can only be changed while the order is open",
+              );
+            }),
           },
         },
         {
@@ -316,6 +331,13 @@ describe("PickupCompleteService.complete — a POS-mode PICKUP order's cash coun
           },
         },
         { provide: PrismaService, useValue: prisma },
+        // I-120: a business that hands over at the store (the engine's capability gate)
+        {
+          provide: FULFILMENT_CAPABILITY_READER,
+          useValue: {
+            get: async () => ({ methods: ["ROUTE", "SHIP", "PICKUP"], counter: "off" }),
+          } as never,
+        },
       ],
     }).compile();
     service = mod.get(PickupCompleteService);
@@ -407,10 +429,12 @@ describe("PickupCompleteService.complete — a POS-mode PICKUP order's cash coun
     expect(res).toMatchObject({ paymentRecorded: false });
   });
 
-  it("a non-PICKUP order is still refused PICKUP_ONLY before any lock", async () => {
-    order = orderRow("OUT_FOR_DELIVERY", { fulfillPath: "DELIVERY" });
+  it("I-120: a non-PICKUP order is no longer refused PICKUP_ONLY; a refused path switch takes no tender lock", async () => {
+    order = orderRow("OUT_FOR_DELIVERY", { fulfillPath: "ROUTE" });
     const err: any = await run(withKey("b")).catch((e) => e);
-    expect(err.getResponse()).toMatchObject({ code: "PICKUP_ONLY" });
-    expect(lockCalls).toHaveLength(0);
+    expect(err?.getStatus?.()).toBe(400); // the switch's own refusal, not PICKUP_ONLY
+    expect(err?.getResponse?.()?.code).not.toBe("PICKUP_ONLY");
+    // only the claim section ran; the tender's counter-tender lock (with the shared close lock) was never asked for
+    expect(lockCalls.every((c: any) => !c.sharedAlso)).toBe(true);
   });
 });

@@ -190,6 +190,8 @@ export interface PickupCompleteResponse {
   existingPayment?: DuplicatePaymentRefExisting;
   /** true when the order was already picked up: no status write; only a planned shortfall of this hand-over's tender is recorded. */
   alreadyPickedUp?: boolean;
+  /** I-120 (SA-861 rule 8): true when THIS call sent the ONE completion email (a named customer, the tender final). */
+  emailed?: boolean;
 }
 
 // ─── Today's sales (register panel) — GET /orders/counter-sale/today ──────────────────────────

@@ -41,6 +41,7 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { LockTimeoutError, LockUnavailableError } from "../../common/db-locks";
 import { PickupCompleteService } from "./pickup-complete.service";
+import { FULFILMENT_CAPABILITY_READER } from "./fulfilment-capability-reader";
 import { OrdersService } from "../orders.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -84,6 +85,7 @@ describe("PickupCompleteService.complete", () => {
   let invoices: Inv[];
   let changeStatus: jest.Mock;
   let decrementStockForSale: jest.Mock;
+  let updateFulfillPath: jest.Mock;
   let send: jest.Mock;
   let recordPayment: jest.Mock;
   let tick: number;
@@ -150,6 +152,12 @@ describe("PickupCompleteService.complete", () => {
       return order;
     });
     decrementStockForSale = jest.fn();
+    // I-120 (SA-861 rule 4): the ONE path switch, ahead of the transitions for a ROUTE / SHIP order.
+    updateFulfillPath = jest.fn(async (_id: string, dto: { fulfillPath: string }) => {
+      calls.push("updateFulfillPath");
+      order = { ...order, fulfillPath: dto.fulfillPath };
+      return order;
+    });
     send = jest.fn(async (id: string) => {
       calls.push("send");
       invoices.find((i) => i.id === id)!.status = "SENT";
@@ -177,9 +185,19 @@ describe("PickupCompleteService.complete", () => {
     const mod = await Test.createTestingModule({
       providers: [
         PickupCompleteService,
-        { provide: OrdersService, useValue: { changeStatus, decrementStockForSale } },
+        {
+          provide: OrdersService,
+          useValue: { changeStatus, decrementStockForSale, updateFulfillPath },
+        },
         { provide: InvoicesService, useValue: { send, recordPayment } },
         { provide: PrismaService, useValue: prisma },
+        // I-120: a business that hands over at the store (the engine's capability gate)
+        {
+          provide: FULFILMENT_CAPABILITY_READER,
+          useValue: {
+            get: async () => ({ methods: ["ROUTE", "SHIP", "PICKUP"], counter: "off" }),
+          } as never,
+        },
       ],
     }).compile();
     service = mod.get(PickupCompleteService);
@@ -188,16 +206,15 @@ describe("PickupCompleteService.complete", () => {
   // ── refusals write nothing ─────────────────────────────────────────────────
   describe("refusals", () => {
     it.each(["ROUTE", "SHIP"])(
-      "a %s order is 400 PICKUP_ONLY and nothing is written",
+      "I-120: a %s order is no longer PICKUP_ONLY: it is switched to Store pickup before the hand-over",
       async (fulfillPath) => {
         order = orderRow("CONFIRMED", { fulfillPath });
-        const e = await errorOf(run());
-        expect(e.getStatus()).toBe(400);
-        expect(e.getResponse().code).toBe("PICKUP_ONLY");
-        nothingWritten();
+        await run();
+        expect(updateFulfillPath).toHaveBeenCalledWith("ord-1", { fulfillPath: "PICKUP" }, staff);
+        expect(calls.slice(0, 3)).toEqual(["claim", "updateFulfillPath", "changeStatus"]);
       },
     );
-    it.each(["PENDING", "DRAFT", "CANCELLED", "PARTIALLY_DELIVERED"])(
+    it.each(["DRAFT", "CANCELLED", "PARTIALLY_DELIVERED"])(
       "a %s pickup order is 409 PICKUP_NOT_READY and nothing is written",
       async (status) => {
         order = orderRow(status);
@@ -228,9 +245,12 @@ describe("PickupCompleteService.complete", () => {
         order = orderRow(status);
         const res = await run();
         expect(changeStatus).toHaveBeenCalledTimes(1);
-        expect(changeStatus).toHaveBeenCalledWith("ord-1", { status: "DELIVERED" }, staff);
+        expect(changeStatus).toHaveBeenCalledWith("ord-1", { status: "DELIVERED" }, staff, {
+          silent: true, // I-120 rule 5
+          creditPaidNow: expect.any(Function), // I-120 rule 6: the till tender nets the delivery gate
+        });
         expect(decrementStockForSale).not.toHaveBeenCalled();
-        expect(send).toHaveBeenCalledWith("inv-1");
+        expect(send).toHaveBeenCalledWith("inv-1", { suppressNotify: true }); // I-120: quiet for everyone
         expect(calls).toEqual(["claim", "changeStatus", "send", "recordPayment"]);
         expect(recordPayment).toHaveBeenCalledWith(
           "inv-1",

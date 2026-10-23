@@ -200,7 +200,11 @@ describe("S1 wiring pins", () => {
       // type/plumbing declarations that only carry the option through
       .filter((f) => !/^orders\/(order-create-options|sale-options)\.ts$/.test(f))
       .sort();
-    expect(setters).toEqual(["orders/counter-sale/counter-sale.service.ts"]);
+    // I-120 (SA-861 rule 6): the counter hand-over nets its till tender at the delivery gate too
+    expect(setters).toEqual([
+      "orders/counter-sale/counter-sale.service.ts",
+      "orders/counter-sale/pickup-complete.service.ts",
+    ]);
   });
 });
 

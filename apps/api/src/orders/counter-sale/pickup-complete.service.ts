@@ -2,12 +2,13 @@ import {
   BadRequestException,
   ServiceUnavailableException,
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { createHash } from "crypto";
-import { roundMoney, remainingCapacity } from "@routeflow/pricing";
+import { mayCompleteAtCounter, roundMoney, remainingCapacity } from "@routeflow/pricing";
 import type { PickupCompleteResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
@@ -25,6 +26,7 @@ import {
 import {
   allocateOldestFirst,
   assertCheckNotPostdatedForTenant,
+  counterCreditPaidNow,
   assertPaymentShape,
   planCounterPayment,
   toPrismaMethod,
@@ -36,6 +38,15 @@ import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
 import type { PickupCompleteDto } from "./pickup-complete.dto";
 import { counterCloseShared, counterTenderPaidAt, pickupRegisterOf } from "./counter-tender-window";
+import {
+  FULFILMENT_CAPABILITY_READER,
+  type FulfilmentCapabilityReader,
+} from "./fulfilment-capability-reader";
+import { tenantTodayDay } from "../../common/calendar-date";
+import { tenantTimeZone } from "../../common/tenant-time-zone";
+
+/** I-120 (SA-861 rule 3): the statuses "Complete at counter" finishes; DELIVERED is the replay. */
+const COMPLETABLE = new Set(["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"]);
 
 type OrderRow = {
   id: string;
@@ -84,6 +95,7 @@ export class PickupCompleteService {
     private readonly orders: OrdersService,
     private readonly invoices: InvoicesService,
     private readonly prisma: PrismaService,
+    @Inject(FULFILMENT_CAPABILITY_READER) private readonly capability: FulfilmentCapabilityReader,
   ) {}
 
   async complete(
@@ -95,14 +107,19 @@ export class PickupCompleteService {
     // 1. The order, tenant-scoped, and everything judged from the row and the request alone.
     let order = await this.readOrder(id);
     if (!order) throw new NotFoundException("Order not found");
-    if (order.fulfillPath !== "PICKUP") {
-      throw new BadRequestException({
-        code: API_ERROR_CODES.PICKUP_ONLY,
-        message: "Only a pickup order can be handed over this way",
+    // I-120 (SA-861 rule 2): a business that hands over at the store. The till permission half of the ONE predicate is
+    // the route's TillPermissionGuard (a principal without it is a 403 before this runs).
+    const cap = await this.capability.get(this.prisma.getTenantId() ?? null);
+    if (!mayCompleteAtCounter({ mayUseTill: true, methods: cap.methods, counter: cap.counter })) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE,
+        message: "This business does not hand orders over at the store.",
       });
     }
+    // I-120 (SA-861 rule 3): any not-yet-delivered order, any path (rule 4 switches it to Store pickup first). PICKUP_ONLY
+    // is no longer thrown (it stays in the codes list).
     let alreadyPickedUp = order.status === "DELIVERED";
-    if (!alreadyPickedUp && order.status !== "CONFIRMED" && order.status !== "OUT_FOR_DELIVERY") {
+    if (!alreadyPickedUp && !COMPLETABLE.has(order.status)) {
       throw new ConflictException({
         code: API_ERROR_CODES.PICKUP_NOT_READY,
         message: "This order is not ready for pickup yet, or it was cancelled",
@@ -153,8 +170,26 @@ export class PickupCompleteService {
     // 2. The hand-over: the existing status change (invoice + no stock). Its own refusals propagate,
     // except the race loser's: a concurrent call that delivered it first makes this one the replay.
     if (!alreadyPickedUp) {
+      // I-120 (SA-861 rules 4, 5, 9). Each step is skipped when the row already shows it done, so a crash between steps
+      // resumes. 4: the path becomes Store pickup first, through the ONE switch (it re-judges selling restrictions at the
+      // store's state and releases a finished run's link; its refusals propagate with nothing else written).
+      if (order.fulfillPath !== "PICKUP") {
+        await this.orders.updateFulfillPath(id, { fulfillPath: "PICKUP" } as never, user);
+        order = (await this.readOrder(id)) ?? order;
+      }
+      // 5: PENDING cannot go straight to DELIVERED; both transitions are silent (the ONE completion email follows).
+      if (order.status === "PENDING") {
+        await this.orders.changeStatus(id, { status: "CONFIRMED" } as never, user, {
+          silent: true,
+        });
+        order = (await this.readOrder(id)) ?? order;
+      }
+      const creditPaidNow = await this.tenderCreditPaidNow(sent);
       try {
-        await this.orders.changeStatus(id, { status: "DELIVERED" } as never, user);
+        await this.orders.changeStatus(id, { status: "DELIVERED" } as never, user, {
+          silent: true,
+          creditPaidNow,
+        });
       } catch (e) {
         const now = await this.readOrder(id);
         if (now?.status !== "DELIVERED") throw e;
@@ -180,7 +215,8 @@ export class PickupCompleteService {
         });
       }
     }
-    const sendOpts = walkIn ? [{ suppressNotify: true }] : [];
+    // I-120 (SA-861 rule 5): no INVOICE_SENT on this path for anyone; a named customer gets the ONE completion email.
+    const sendOpts = [{ suppressNotify: true }];
     let issued = false;
     for (const inv of invoices) {
       if (inv.status !== "DRAFT") continue;
@@ -238,15 +274,73 @@ export class PickupCompleteService {
     // neither the register nor the cashier, so a closed day's rows never gain a writer.
     await this.stampSoldBy(id, user);
 
-    return this.respond(
-      order,
-      invoices,
-      shown,
-      handedOverAt,
-      planError,
-      alreadyPickedUp,
-      duplicate,
-    );
+    const emailed = await this.completionEmail(id, invoices, walkIn, planError, user);
+    return {
+      ...this.respond(order, invoices, shown, handedOverAt, planError, alreadyPickedUp, duplicate),
+      ...(emailed ? { emailed: true } : {}),
+    };
+  }
+
+  /**
+   * I-120 (SA-861 rule 6): what the till takes NOW, for the B585 delivery gate (the S1 netting): cash / card / a check
+   * dated today or earlier count, a post-dated check and on account count 0 (`counterCreditPaidNow`).
+   */
+  private async tenderCreditPaidNow(
+    sent: CounterPaymentInput | undefined,
+  ): Promise<((total: number) => number) | undefined> {
+    if (!sent || sent.method === "ON_ACCOUNT") return undefined;
+    let today: string | undefined;
+    if (sent.method === "CHECK" && sent.checkDate) {
+      today = tenantTodayDay(await tenantTimeZone(this.prisma), new Date());
+    }
+    return (total: number) => counterCreditPaidNow(sent, total, today);
+  }
+
+  /**
+   * I-120 (SA-861 rule 8): the ONE customer email of a completion, the invoice email of every invoice of the order with
+   * the COUNTER_COMPLETE wording. Only a named customer (a walk-in gets nothing), only once the tender outcome is final
+   * (recorded, or on account by choice: no `planError`), exactly once per completion (`completionEmailedAt` on the claim
+   * row, written after a delivered send; a replay finding it sends nothing). The hand-over is committed: a failed send
+   * is logged, never thrown, and the retry with the same key sends it.
+   */
+  private async completionEmail(
+    orderId: string,
+    invoices: InvoiceRow[],
+    walkIn: boolean,
+    planError: string | undefined,
+    user: JwtPayload,
+  ): Promise<boolean> {
+    if (walkIn || planError || invoices.length === 0) return false;
+    const db = this.prisma.forTenant();
+    const claim = await db.auditLog.findFirst({
+      where: {
+        tenantId: user.tenantId,
+        entityType: "Order",
+        entityId: orderId,
+        action: "PICKUP_COMPLETE_CLAIM",
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    const meta = (claim?.meta ?? {}) as Record<string, unknown>;
+    if (!claim || meta.completionEmailedAt) return false;
+    try {
+      const sent = await this.invoices.sendCompletionEmail(
+        orderId,
+        invoices.map((i) => i.id),
+        user.sub ?? null,
+      );
+      if (!sent?.delivered) return false;
+      await db.auditLog.update({
+        where: { id: claim.id },
+        data: { meta: { ...meta, completionEmailedAt: new Date().toISOString() } },
+      });
+      return true;
+    } catch (e) {
+      this.logger.warn(
+        `pickup complete ${orderId}: completion email not sent (${(e as Error)?.message ?? e})`,
+      );
+      return false;
+    }
   }
 
   /**
