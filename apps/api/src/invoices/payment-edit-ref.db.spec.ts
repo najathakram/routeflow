@@ -453,6 +453,61 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
       expect(Number((await s.get(thirty.id))?.amount)).toBe(35);
     }, 60_000);
 
+    it("G6 the group's excess advance makes the 409: X = $101; G $60 + $30 + a $10 advance, $30 -> $31", async () => {
+      const s = await seed("g6");
+      const g = randomUUID();
+      await s.row(s.invs[0].id, { amount: 60, reference: "R9", paymentGroupId: g });
+      const thirty = await s.row(s.invs[1].id, { amount: 30, reference: "R9", paymentGroupId: g });
+      const x = await s.row(s.invs[2].id, { amount: 101, reference: "R9" });
+      await s.advance(10, "R9");
+      const err: any = await s
+        .asTenant(() =>
+          invoicesA.updatePayment(
+            s.invs[1].id,
+            thirty.id,
+            { amount: 31, method: "CHECK", reference: "R9" } as any,
+            s.staffOpts(false),
+          ),
+        )
+        .catch((e) => e);
+      expect(status(err)).toBe(409);
+      expect(err.getResponse()).toMatchObject({ existingPayment: { id: x.id } });
+      expect(Number((await s.get(thirty.id))?.amount)).toBe(30);
+    }, 60_000);
+
+    /** SA-867: G = $60 + $40 on "R9"; Y on "Q5" (another attempt). The $40 row's reference moves to "Q5". */
+    async function moveOutOfGroup(label: string, yAmount: number) {
+      const s = await seed(label);
+      const g = randomUUID();
+      await s.row(s.invs[0].id, { amount: 60, reference: "R9", paymentGroupId: g });
+      const forty = await s.row(s.invs[1].id, { amount: 40, reference: "R9", paymentGroupId: g });
+      const y = await s.row(s.invs[2].id, { amount: yAmount, reference: "Q5" });
+      const err = await s
+        .asTenant(() =>
+          invoicesA.updatePayment(
+            s.invs[1].id,
+            forty.id,
+            { amount: 40, method: "CHECK", reference: "Q5" } as any,
+            s.staffOpts(false),
+          ),
+        )
+        .catch((e) => e);
+      return { s, forty, y, err };
+    }
+
+    it("G4 (SA-867) a grouped row whose reference MOVES is judged alone: $40 onto Y = $40 'Q5' is 409 naming Y", async () => {
+      const { s, forty, y, err } = await moveOutOfGroup("g4", 40);
+      expect(status(err)).toBe(409);
+      expect((err as any).getResponse()).toMatchObject({ existingPayment: { id: y.id } });
+      expect((await s.get(forty.id))?.reference).toBe("R9");
+    }, 60_000);
+
+    it("G5 (SA-867) the same move onto Y = $100 'Q5' is 200 (a $40 row is not a $100 payment)", async () => {
+      const { s, forty, err } = await moveOutOfGroup("g5", 100);
+      expect(status(err)).toBe("ok");
+      expect((await s.get(forty.id))?.reference).toBe("Q5");
+    }, 60_000);
+
     it("G3 with a $10 excess advance: an unchanged amount runs no check; $30 -> $31 (G + advance $101) is 200", async () => {
       const { s, thirty, edit } = await groupAndX("g3");
       await s.advance(10, "R9"); // G + advance = $100 already, equal to X: only a CHANGED key may be judged

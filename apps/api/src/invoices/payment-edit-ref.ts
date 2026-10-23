@@ -134,7 +134,12 @@ export async function withPaymentEditRef<T>(
           toCents(key.amount),
         );
         for (const id of group.advanceIds) attempt.ids.add(id);
-        amount = group.cents / 100;
+        // SA-867: only an AMOUNT-ONLY edit is judged on the group total. A row whose method or normalised reference
+        // changes leaves its group's key, so it is judged alone (its own group and advance stay seeded either way).
+        const sameKey =
+          key.method === row.method &&
+          normalizePaymentRef(key.reference) === normalizePaymentRef(row.reference);
+        if (sameKey) amount = group.cents / 100;
       }
       const guard = createPaymentRefGuard({
         method: key.method,

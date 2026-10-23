@@ -200,6 +200,7 @@ export async function groupTotalForEdit(
   },
   newAmountCents: number,
 ): Promise<{ cents: number; advanceIds: string[] }> {
+  // A payment group is single-customer (minted once per writeStandalonePayment for one dto.customerId), so no customer filter.
   const siblings: any[] = await tx.invoicePayment.findMany({
     where: { paymentGroupId: payment.paymentGroupId, status: { in: [...DEDUPE_STATUSES] } },
     select: { id: true, amount: true },
