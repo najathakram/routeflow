@@ -1,4 +1,5 @@
 import {
+  isCalendarDay,
   roundMoney,
   saleTotals,
   type ChargeLine,
@@ -284,39 +285,7 @@ export const COUNTER_CHECK_ZONE_FAILED_COPY =
 
 /** True when `checkDate` names a real YYYY-MM-DD day strictly after `today` (the business's day). Anything else is not post-dated. */
 export function isPostdatedCheck(checkDate: string, today: string): boolean {
-  const real = (v: string) => {
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
-    if (!m) return false;
-    const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-    return (
-      d.getUTCFullYear() === Number(m[1]) &&
-      d.getUTCMonth() === Number(m[2]) - 1 &&
-      d.getUTCDate() === Number(m[3])
-    );
-  };
-  return real(checkDate) && real(today) && checkDate > today;
-}
-
-/**
- * The business's own calendar day (YYYY-MM-DD) at `now` in its IANA `zone`; UTC while the zone is unknown or invalid.
- * Never the browser's day: a till in one zone for a business in another must agree with the server's day.
- */
-export function tenantDayIn(zone: string | undefined, now: Date = new Date()): string {
-  const fmt = (timeZone: string) => {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(now);
-    const at = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-    return `${at("year")}-${at("month")}-${at("day")}`;
-  };
-  try {
-    return fmt(zone || "UTC");
-  } catch {
-    return fmt("UTC");
-  }
+  return isCalendarDay(checkDate) && isCalendarDay(today) && checkDate > today;
 }
 
 /** The scan field: 1-3 digits are a QUANTITY to multiply the next scan by; anything else is a code. */
@@ -698,6 +667,15 @@ const PICKUP_HANDLED_CODES: ReadonlySet<string> = new Set([
   API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
   API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
 ]);
+/** Counter-sale codes the till answers with its own fixed copy (counterSaleErrorCopy): the global error toast stays quiet. */
+const COUNTER_SALE_HANDLED_CODES: ReadonlySet<string> = new Set([
+  API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
+  API_ERROR_CODES.COUNTER_TENDER_SHORT,
+]);
+export function isCounterSaleHandledError(err: unknown): boolean {
+  const code = pickupErrorCode(err);
+  return code !== undefined && COUNTER_SALE_HANDLED_CODES.has(code);
+}
 export function isPickupHandledError(err: unknown): boolean {
   const code = pickupErrorCode(err);
   return code !== undefined && PICKUP_HANDLED_CODES.has(code);

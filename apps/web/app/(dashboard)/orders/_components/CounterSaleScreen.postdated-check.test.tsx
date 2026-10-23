@@ -6,8 +6,9 @@ import { apiClient } from "@/lib/api-client";
 import {
   COUNTER_CHECK_ZONE_FAILED_COPY,
   COUNTER_CHECK_ZONE_LOADING_COPY,
-  tenantDayIn,
+  writeHeldAttempt,
 } from "@/lib/counter-sale";
+import { calendarDayInZone } from "@/lib/calendar-date";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -41,6 +42,7 @@ jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn(), post: jest.fn(), delete: jest.fn() },
 }));
 const mutateAsync = jest.fn();
+const lookupSale = jest.fn();
 jest.mock("@/lib/api/counter-sale", () => ({
   useCounterSaleGate: () => ({
     showButton: true,
@@ -49,7 +51,7 @@ jest.mock("@/lib/api/counter-sale", () => ({
     capability: { counter: "always" },
   }),
   useCreateCounterSale: () => ({ mutateAsync, isPending: false }),
-  useCounterSaleByKey: () => ({ mutateAsync: jest.fn(), isPending: false }),
+  useCounterSaleByKey: () => ({ mutateAsync: lookupSale, isPending: false }),
 }));
 
 const SENTENCE = "Post-dated check: put this sale on account and record the check when it clears.";
@@ -64,7 +66,7 @@ const SALE = {
   paymentRecorded: true,
 };
 const dayPlus = (n: number) => {
-  const d = new Date(`${tenantDayIn("UTC")}T00:00:00Z`);
+  const d = new Date(`${calendarDayInZone("UTC")}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 };
@@ -294,6 +296,104 @@ describe("CounterSaleScreen: post-dated check", () => {
       } finally {
         jest.useRealTimers();
       }
+    });
+  });
+
+  describe("the day is read when Complete is pressed (#3615 review)", () => {
+    const fakeNow = (iso: string) =>
+      jest.useFakeTimers({
+        now: new Date(iso),
+        doNotFake: [
+          "hrtime",
+          "nextTick",
+          "performance",
+          "queueMicrotask",
+          "requestAnimationFrame",
+          "cancelAnimationFrame",
+          "requestIdleCallback",
+          "cancelIdleCallback",
+          "setImmediate",
+          "clearImmediate",
+          "setInterval",
+          "clearInterval",
+          "setTimeout",
+          "clearTimeout",
+        ] as never,
+      });
+    it("a till left idle across the business's midnight sends the NEW day, not the day it was drawn on", async () => {
+      fakeNow("2026-10-22T23:59:30Z");
+      try {
+        renderTill(<CounterSaleScreen />);
+        await scan("COLA");
+        fireEvent.click(screen.getByRole("radio", { name: "Check" }));
+        await waitFor(() => expect(screen.getByLabelText("Check date")).toHaveValue("2026-10-22"));
+        fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
+        jest.setSystemTime(new Date("2026-10-23T00:00:30Z")); // midnight passes with nothing re-drawn
+        fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+        await screen.findByTestId("counter-sale-receipt");
+        expect(mutateAsync.mock.calls[0][0].dto.payment.checkDate).toBe("2026-10-23");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+    it("a check typed for tomorrow just before midnight is tendered once midnight has passed", async () => {
+      fakeNow("2026-10-22T23:59:30Z");
+      try {
+        renderTill(<CounterSaleScreen />);
+        await scan("COLA");
+        fireEvent.click(screen.getByRole("radio", { name: "Check" }));
+        await waitFor(() => expect(screen.getByLabelText("Check date")).toHaveValue("2026-10-22"));
+        fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
+        fireEvent.change(screen.getByLabelText("Check date"), { target: { value: "2026-10-23" } });
+        expect(screen.getByTestId("counter-check-postdated")).toHaveTextContent(SENTENCE);
+        jest.setSystemTime(new Date("2026-10-23T00:00:30Z"));
+        fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+        await screen.findByTestId("counter-sale-receipt");
+        expect(mutateAsync.mock.calls[0][0].dto.payment.checkDate).toBe("2026-10-23");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
+
+  describe("a restored held sale (#3615 review)", () => {
+    const HELD = "rf.counterSale.heldAttempt:acme:u-a";
+    const hold = (checkDate: string | undefined, sent: string) =>
+      writeHeldAttempt(HELD, {
+        key: "k-held",
+        dto: {
+          walkIn: true,
+          items: [{ productId: COLA.id, qty: 1 }],
+          payment: { method: "CHECK", reference: "1042", checkDate: sent },
+        },
+        next: false,
+        estimate: { total: 2.5, change: 0 },
+        lines: [{ tempId: "t1", productId: COLA.id, name: "Cola", unitPrice: 2.5, qty: 1 }],
+        customer: null,
+        method: "CHECK",
+        tendered: "",
+        reference: "1042",
+        ...(checkDate === undefined ? {} : { checkDate }),
+      });
+    it("shows the date the attempt SENT, not today, when the clerk had left the date at its default", async () => {
+      hold("", dayPlus(-1));
+      renderTill(<CounterSaleScreen />);
+      await screen.findByTestId("counter-outcome-unknown");
+      await waitFor(() => expect(screen.getByLabelText("Check date")).toHaveValue(dayPlus(-1)));
+    });
+    it("a stored check date that is not a real day is dropped: once unlocked, the sale is dated today", async () => {
+      hold("2026-02-31", dayPlus(0));
+      lookupSale.mockRejectedValueOnce({
+        response: { status: 404, data: { code: "COUNTER_SALE_NOT_FOUND" } },
+      });
+      renderTill(<CounterSaleScreen />);
+      await screen.findByTestId("counter-outcome-unknown");
+      fireEvent.click(screen.getByRole("button", { name: "Check sale status" }));
+      await waitFor(() => expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull());
+      await waitFor(() => expect(screen.getByLabelText("Check date")).toHaveValue(dayPlus(0)));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+      await screen.findByTestId("counter-sale-receipt");
+      expect(mutateAsync.mock.calls[0][0].dto.payment.checkDate).toBe(dayPlus(0));
     });
   });
 

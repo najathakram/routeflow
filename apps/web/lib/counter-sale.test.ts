@@ -1,5 +1,6 @@
 import type { FulfilmentCapability } from "@routeflow/types";
 import * as keys from "./counter-live-cart-keys";
+import * as counterSaleModule from "./counter-sale";
 import {
   AUTO_PRINT_KEY,
   isNotSentOffline,
@@ -10,7 +11,7 @@ import {
   counterSaleErrorCopy,
   COUNTER_CHECK_POSTDATED_COPY,
   isPostdatedCheck,
-  tenantDayIn,
+  isCounterSaleHandledError,
   COUNTER_SALE_CHANGED_COPY,
   COUNTER_SALE_VOIDED_COPY,
   finalCounterSaleCopy,
@@ -846,25 +847,8 @@ describe("post-dated check: pins from review round 1", () => {
       }),
     ).toBe(true);
   });
-  it("tenantDayIn builds YYYY-MM-DD from the parts, not from the locale's string shape", () => {
-    const Real = Intl.DateTimeFormat;
-    // a formatter whose own string shape is NOT year-month-day: only formatToParts can still give the right day
-    const Odd = function (...args: ConstructorParameters<typeof Intl.DateTimeFormat>) {
-      const real = new Real(...args);
-      return {
-        format: () => "22/10/2026, 3:00 AM",
-        formatToParts: (d?: Date) => real.formatToParts(d),
-      };
-    };
-    (Intl as unknown as { DateTimeFormat: unknown }).DateTimeFormat = Odd;
-    try {
-      expect(tenantDayIn("America/Los_Angeles", new Date("2026-10-22T03:00:00Z"))).toBe(
-        "2026-10-21",
-      );
-    } finally {
-      (Intl as unknown as { DateTimeFormat: unknown }).DateTimeFormat = Real;
-    }
-    expect(tenantDayIn("Australia/Sydney", new Date("2026-10-21T21:00:00Z"))).toBe("2026-10-22");
+  it("one business-day helper: counter-sale has no copy of calendarDayInZone (lib/calendar-date.ts)", () => {
+    expect("tenantDayIn" in counterSaleModule).toBe(false);
   });
   it("a held attempt written and read through the REAL storage keeps its typed check date and its dto's", () => {
     const SK = "rf.counterSale.heldAttempt:acme:u-a";
@@ -913,13 +897,17 @@ describe("post-dated check (interim till guard)", () => {
     expect(isPostdatedCheck("", "2026-10-22")).toBe(false);
     expect(isPostdatedCheck("2026-02-30", "2026-10-22")).toBe(false);
     expect(isPostdatedCheck("2026-10-23", "")).toBe(false);
+    // the shared strict day (isCalendarDay, @routeflow/pricing): no padding slack, no trailing text
+    expect(isPostdatedCheck("2026-10-23 ", "2026-10-22")).toBe(false);
+    expect(isPostdatedCheck("2026-11-1", "2026-10-22")).toBe(false);
+    expect(isPostdatedCheck("2026-10-23", "2026-10-22T00:00:00Z")).toBe(false);
   });
-  it("tenantDayIn: the business's own calendar day, not the browser's or UTC's", () => {
-    const now = new Date("2026-10-22T03:00:00Z");
-    expect(tenantDayIn("America/Los_Angeles", now)).toBe("2026-10-21");
-    expect(tenantDayIn("Pacific/Auckland", new Date("2026-10-22T20:00:00Z"))).toBe("2026-10-23");
-    expect(tenantDayIn("UTC", now)).toBe("2026-10-22");
-    expect(tenantDayIn(undefined, now)).toBe("2026-10-22");
-    expect(tenantDayIn("Not/AZone", now)).toBe("2026-10-22");
+  it("the till owns its COUNTER_CHECK_POSTDATED and COUNTER_TENDER_SHORT copy: the global toast stays quiet", () => {
+    const refusal = (code: string) => ({ response: { status: 400, data: { code } } });
+    expect(isCounterSaleHandledError(refusal("COUNTER_CHECK_POSTDATED"))).toBe(true);
+    expect(isCounterSaleHandledError(refusal("COUNTER_TENDER_SHORT"))).toBe(true);
+    expect(isCounterSaleHandledError(refusal("SOMETHING_ELSE"))).toBe(false);
+    expect(isCounterSaleHandledError({ response: { status: 500, data: {} } })).toBe(false);
+    expect(isCounterSaleHandledError(new Error("Network Error"))).toBe(false);
   });
 });
