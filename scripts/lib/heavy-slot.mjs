@@ -79,6 +79,158 @@ export function parseMs(raw, fallback) {
   return typeof raw === "string" && raw.trim() !== "" && Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+/**
+ * Every npm verb (and alias) that runs lifecycle scripts on install. Source: npm 11.9
+ * `lib/utils/cmd-list.js` (`shorthands`/`aliases`) plus `npm help install` / `npm help ci`.
+ */
+export const NPM_INSTALL_VERBS = new Set([
+  "ci",
+  "clean-install",
+  "ic",
+  "install-clean",
+  "isntall-clean",
+  "install",
+  "i",
+  "add",
+  "in",
+  "ins",
+  "inst",
+  "insta",
+  "instal",
+  "isnt",
+  "isnta",
+  "isntal",
+  "isntall",
+  "it",
+  "install-test",
+  "cit",
+  "install-ci-test",
+  "clean-install-test",
+  "sit",
+]);
+
+/** npm global/config options that consume the NEXT arg unless written `--opt=value`. */
+const NPM_VALUE_OPTS = new Set([
+  "--prefix",
+  "-C",
+  "-w",
+  "--workspace",
+  "--loglevel",
+  "--registry",
+  "--userconfig",
+  "--globalconfig",
+  "--cache",
+  "--include",
+  "--omit",
+  "--tag",
+  "--otp",
+  "--install-strategy",
+  "--before",
+  "--scope",
+  "--omit-lockfile-disabled",
+  "--lockfile-version",
+  "--audit-level",
+  "--fetch-retries",
+  "--logs-dir",
+  "--logs-max",
+  "--script-shell",
+  "--node-options",
+  "--cafile",
+  "--ca",
+  "--proxy",
+  "--https-proxy",
+  "--noproxy",
+  "--auth-type",
+  "--package",
+  "-c",
+  "--call",
+  "--json-pointer",
+]);
+
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "cmd", "powershell", "pwsh"]);
+
+function npmVerbIndex(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = String(args[i]);
+    if (!a.startsWith("-")) return i;
+    if (NPM_VALUE_OPTS.has(a)) i++; // `--prefix dir`: skip the value too
+  }
+  return -1;
+}
+
+/** Last of --ignore-scripts / --ignore-scripts=<v> / --no-ignore-scripts wins; null = not given. */
+function argIgnoreScripts(args) {
+  let v = null;
+  for (const a of args.map(String)) {
+    if (a === "--ignore-scripts" || a === "--ignore-scripts=true") v = true;
+    else if (a === "--no-ignore-scripts" || a === "--ignore-scripts=false") v = false;
+  }
+  return v;
+}
+
+function envIgnoreScripts(env) {
+  for (const k of ["npm_config_ignore_scripts", "NPM_CONFIG_IGNORE_SCRIPTS"]) {
+    if (String(env[k]).toLowerCase() === "true") return true;
+  }
+  return false;
+}
+
+/**
+ * Why `cmd args` must not run under the slot, or null. A bare `npm ci` / `npm install` (or any alias
+ * of them, after npm's own global options) runs the lifecycle scripts (husky `prepare`), which
+ * rewrite core.hooksPath and silently turn the worktree's pre-push hooks off (W-679); it must carry
+ * `--ignore-scripts` (or npm_config_ignore_scripts=true). Shell-string forms (`"npm ci"`,
+ * `sh -c 'npm ci'`) are parsed too, so they cannot sidestep the guard.
+ */
+export function bareNpmReason(cmd, args = [], env = process.env) {
+  const c = String(cmd ?? "").trim();
+  if (/\s/.test(c)) {
+    // one shell-string "command": split it and judge the first command word as `cmd`.
+    const words = c.split(/\s+/);
+    return bareNpmReason(words[0], [...words.slice(1), ...args], env);
+  }
+  const base = path
+    .basename(c)
+    .replace(/\.(cmd|exe|bat|ps1)$/i, "")
+    .toLowerCase();
+  if (SHELLS.has(base)) {
+    for (const a of args.map(String)) {
+      if (!/\s/.test(a)) continue;
+      for (const seg of a.split(/&&|\|\||[;|\n]/)) {
+        const w = seg
+          .replace(/['"`()]/g, " ")
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean);
+        for (let i = 0; i < w.length; i++) {
+          if (
+            path
+              .basename(w[i])
+              .replace(/\.(cmd|exe)$/i, "")
+              .toLowerCase() === "npm"
+          ) {
+            const r = bareNpmReason("npm", w.slice(i + 1), env);
+            if (r) return r;
+          }
+        }
+      }
+    }
+    return null;
+  }
+  if (base !== "npm") return null;
+  const list = args.map(String);
+  const at = npmVerbIndex(list);
+  if (at < 0) return null;
+  const verb = list[at].toLowerCase();
+  if (!NPM_INSTALL_VERBS.has(verb)) return null;
+  const viaArg = argIgnoreScripts(list);
+  if (viaArg !== null ? viaArg : envIgnoreScripts(env)) return null;
+  return (
+    `heavy-slot: refusing a bare \`npm ${verb}\`: its lifecycle scripts rewrite core.hooksPath and ` +
+    `switch the pre-push hooks off. Re-run with \`--ignore-scripts\`. Nothing was run.`
+  );
+}
+
 export function resolveDir(env = process.env, home = os.homedir()) {
   return env.RF_HEAVY_SLOT_DIR || path.join(home, ".routeflow", "heavy-slot");
 }

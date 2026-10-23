@@ -49,14 +49,6 @@ export function guardLayerSave(gate: PriceLayerGate, asDraft: boolean): string |
   return !asDraft && gate.blocked ? gate.message : null;
 }
 
-/** edit-items' `pricingReady` with the layer folded in: the picker, Substitute, scan and price edits wait for it (flag off: the base). */
-export function pricingReadyWithLayer(
-  base: boolean,
-  status: Pick<PriceLayerStatus, "enabled" | "ready">,
-): boolean {
-  return base && (!status.enabled || status.ready);
-}
-
 /** A unit option's price detail, or an ellipsis while the layer is unconfirmed (never a tier price shown as final). */
 export function unitDetailOrUnconfirmed(detail: string, unconfirmed: boolean): string {
   return unconfirmed ? "…" : detail;
@@ -81,4 +73,20 @@ export function confirmedPrice(
   clp: Pick<CustomerLinePrice, "price">,
 ): number | null {
   return status.lineReady(productId) ? clp.price : null;
+}
+
+/**
+ * SA-882 (W-741): the price shown for a product NOT yet added. Null (the caller renders "…") while the customer pricing gate
+ * blocks the pick: an unread or failed customer read resolves the tier to 1, so the number would be LIST shown as the
+ * customer's price. Otherwise `confirmedPrice` (the layer's own rule). No customer chosen: the catalogue price.
+ */
+export function shownPrice(
+  gate: { blockPick: boolean },
+  customerId: string | null | undefined,
+  status: Pick<PriceLayerStatus, "lineReady">,
+  productId: string | null | undefined,
+  clp: Pick<CustomerLinePrice, "price">,
+): number | null {
+  if (customerId && gate.blockPick) return null;
+  return confirmedPrice(status, productId, clp);
 }
