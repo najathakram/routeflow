@@ -73,7 +73,7 @@ import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
-import { effectiveQty, isSpecialTier, roundMoney } from "@routeflow/pricing";
+import { customerTierFor, effectiveQty, isSpecialTier, roundMoney } from "@routeflow/pricing";
 import { useCustomerPriceLayer } from "../lib/api/price-layer";
 import { PriceLayerGateNotice } from "./PriceLayerGateNotice";
 import { buildInvoiceSplitPreview } from "../lib/invoice-split-preview";
@@ -151,8 +151,8 @@ import {
 import { useDraftAutosave, type DraftRowMeta } from "../lib/use-draft-autosave";
 import { useStopCartStore } from "../store/stopCartStore";
 import { useDraftLeaveNotice } from "./new-order/use-draft-leave-notice";
-import { announceAfterFlush } from "../lib/draft-leave-notice";
 import { CartModal } from "./new-order/CartModal";
+import { useCustomerPickGate } from "./new-order/use-customer-pick-gate";
 import { CreateCreditNoteSheet } from "./new-order/CreateCreditNoteSheet";
 import { CustomerPickerView } from "./new-order/CustomerPickerView";
 import { LinePriceModal } from "./new-order/LinePriceModal";
@@ -462,7 +462,9 @@ function ProductPickView({
   // the per-product CustomerPrice override, else the customer's default tier.
   // Prices shown/summed/submitted use getTierPrice(product, effectiveTier), not
   // the raw list price — so a tier-N customer sees the price the server bills.
-  const { data: customerDetail } = useCustomer(customerId);
+  const customerQuery = useCustomer(customerId);
+  const { data: customerDetail } = customerQuery;
+  const pricesQuery = useCustomerPrices(customerId);
   const {
     data: customerPrices,
     isFetched: fetched,
@@ -470,7 +472,7 @@ function ProductPickView({
     isFetching: fetching,
     error: pricesError,
     refetch: refetchPrices,
-  } = useCustomerPrices(customerId);
+  } = pricesQuery;
   const pricesSettled = (fetched || errored) && !fetching;
   // Tenant margin config for the live cost/margin hint in the cart rows.
   const { data: marginConfig } = useMarginConfig();
@@ -490,7 +492,7 @@ function ProductPickView({
       m.set(c.id, { id: c.id, name: c.name, invoiceTreatment: c.invoiceTreatment });
     return m;
   }, [splitTrackedCategories]);
-  const customerTier = customerDetail?.pricingTier ?? 1;
+  const customerTier = customerTierFor(undefined, customerDetail?.pricingTier);
   // Ad-hoc trips (plan §WP11): the customer's default fulfillment mode, which
   // seeds this order's own fulfillPath below (never constrains it).
   const customerFulfillPath = customerDetail?.fulfillPath;
@@ -499,11 +501,13 @@ function ProductPickView({
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
     return m;
   }, [customerPrices]);
-  const effectiveTierFor = (id: string) => cpMap.get(id) ?? customerTier ?? 1;
+  const effectiveTierFor = (id: string) => customerTierFor(cpMap.get(id), customerTier);
   /** The customer's effective per-selling-unit (box) price for a product. */
   // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, `layerOf` is undefined and every
   // price below is master's number.
   const priceLayer = useCustomerPriceLayer(customerId);
+  // W-741 / SA-883: picks and Create fail closed until the customer, their prices and the layer are read.
+  const pick = useCustomerPickGate(customerId, customerQuery, pricesQuery, priceLayer);
   const layerOf = priceLayer.layerOf;
   const packPriceFor = (p: Product) => packLinePrice(p, effectiveTierFor(p.id), layerOf(p.id));
   const tierPriceFor = (p: Product) => packPriceFor(p).price;
@@ -805,6 +809,7 @@ function ProductPickView({
     viaRow?: boolean,
     code?: string,
   ): boolean => {
+    if (pick.refusal) return (showToast(pick.refusal), false);
     const p = snap ?? productById.get(id);
     // A FAMILY container is never a line (scan, tap or restored draft): refuse at this one choke point.
     if (isFamilyProduct(p as { kind?: "FAMILY" } | undefined)) {
@@ -972,6 +977,7 @@ function ProductPickView({
   const scanGuardRef = useRef(createScanAcceptGuard<Product>());
 
   const finishAccept: ScanLadderDeps<Product>["accept"] = (product, level, opts) => {
+    if (pick.refusal) return refusedScanOutcome(scanOpen, pick.refusal); // W-741: ONE message, the gate's
     if (!addOne(product.id, product, level, opts?.startOnDefault, false, opts?.code))
       return refusedScanOutcome(scanOpen); // a refused scan: not counted, not "Added", ONE message
     bumpScanned(product.id);
@@ -1112,7 +1118,7 @@ function ProductPickView({
       parentProductId: product.parentProductId ?? null,
       parent: null,
     };
-    addOne(product.id, snapshot);
+    if (!addOne(product.id, snapshot)) return; // a refused add: not counted, no scroll
     bumpScanned(product.id);
     setPendingScroll((s) => requestScroll(s, product.id));
     setCreateCode(null);
@@ -1257,8 +1263,7 @@ function ProductPickView({
   actionsRef.current = rowActions;
 
   const onRowAdd = useCallback((id: string) => {
-    actionsRef.current.add(id);
-    actionsRef.current.pickedFromSearch(id);
+    if (actionsRef.current.add(id)) actionsRef.current.pickedFromSearch(id); // W-741: a refused add keeps the search
   }, []);
   const onRowIncrement = useCallback((id: string) => actionsRef.current.add(id), []);
   const onRowDecrement = useCallback((id: string) => actionsRef.current.remove(id), []);
@@ -1375,14 +1380,16 @@ function ProductPickView({
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
       // SA-085i: never the pack's tier price for a unit-sold line ("/Case", not "/each").
-      const price = line ? lineUnitFor(line, p, effectiveTierFor(p.id)) : tierPriceFor(p);
+      const price = line
+        ? lineUnitFor(line, p, effectiveTierFor(p.id))
+        : pick.shown(p.id, packPriceFor(p)); // SA-882: "…" until the gate opens
       const band =
         line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 && !line.unitLabel ? (
           <BoxedQtyBand
             line={line}
             unitsPerBox={Number(p.unitsPerBox)}
             unit={p.unit}
-            unitPrice={price}
+            unitPrice={price ?? 0}
             productName={displayName(p)}
             onChangeBoxes={(n) => onRowChangeBoxes(p.id, n)}
             onChangePieces={(n) => onRowChangePieces(p.id, n)}
@@ -1415,6 +1422,7 @@ function ProductPickView({
       items,
       cpMap,
       customerTier,
+      pick.gate.blockPick,
       onRowAdd,
       onRowChangeQty,
       onRowIncrement,
@@ -1605,20 +1613,14 @@ function ProductPickView({
     return () => sub.remove();
   }, [flushDraftQuietly]);
   useEffect(() => () => void flushDraftQuietly(), [flushDraftQuietly]);
-  const navigation = useNavigation();
-  // Row 699: a kept draft is no longer silent on leave ("Draft saved. Find it in Orders."); Discard stays in DraftStrip.
-  const draftLeave = useDraftLeaveNotice(getDraftId, stopCartParkable);
-  useEffect(() => {
-    const nav = navigation as unknown as {
-      addListener: (event: "beforeRemove", cb: () => void) => () => void;
-    };
-    const unsubscribe = nav.addListener("beforeRemove", () => {
-      // Row 699: "Draft saved" only after the flush succeeded; a failed save raises its own error, never the notice.
-      const saved = () => (setDraftSaveFailed(false), draftLeave.announce(submittingRef.current));
-      void announceAfterFlush(flushDraft, saved, noteDraftSaveError);
-    });
-    return unsubscribe;
-  }, [navigation, flushDraft, noteDraftSaveError, draftLeave.announce]);
+  // Row 699: leaving says where the kept draft is ("Draft saved. Find it in Orders.") after a successful flush.
+  const draftLeave = useDraftLeaveNotice(getDraftId, stopCartParkable, {
+    navigation: useNavigation(),
+    flush: flushDraft,
+    onSaved: () => setDraftSaveFailed(false),
+    onError: noteDraftSaveError,
+    isSubmitting: () => submittingRef.current,
+  });
   useEffect(() => {
     if (Platform.OS !== "web") return;
     if (typeof document === "undefined") return;
@@ -1705,9 +1707,10 @@ function ProductPickView({
     Object.keys(items),
     (id) => productById.get(id)?.name ?? id,
   );
-  const canSave = totalItems > 0 && !createOrder.isPending && !submitting && !layerGate.blocked;
+  const idle = !createOrder.isPending && !submitting;
+  const canSave = totalItems > 0 && idle && !pick.blocksSave(items) && !layerGate.blocked;
   // "Save as draft" needs only a customer (a zero-item DRAFT is allowed server-side).
-  const canSaveDraft = !!customerId && !createOrder.isPending && !submitting;
+  const canSaveDraft = !!customerId && idle;
 
   /** Submit with a specific (or no) merge choice; `asDraft` parks it as a DRAFT. */
   const submitOrder = async (mergeChoice?: "merge" | "separate", asDraft = false) => {
@@ -2016,7 +2019,7 @@ function ProductPickView({
     // Not while a submit is in flight: Confirm only mid-flight must not downgrade Confirm & invoice.
     if (!submittingRef.current) pos.finishRef.current = finish;
     // D-5: a charge is never saved on unconfirmed prices (a draft is not a charge).
-    const layerBlock = guardLayerSave(layerGate, asDraft);
+    const layerBlock = guardLayerSave(pick.saveGate(items, layerGate), asDraft);
     if (layerBlock) {
       alertInfo("Prices aren't confirmed", layerBlock);
       return;
@@ -2337,8 +2340,8 @@ function ProductPickView({
           </Pressable>
         </View>
         <PriceLayerGateNotice
-          gate={layerGate}
-          onRetry={priceLayer.refetch}
+          gate={pick.notice.message ? pick.notice : layerGate}
+          onRetry={pick.notice.message ? pick.retry : priceLayer.refetch}
           textStyle={{ color: ios.system.orangeInk, fontSize: 12, textAlign: "center" }}
         />
         <View style={styles.footerSubRow}>
@@ -2486,8 +2489,8 @@ function ProductPickView({
         tierPriceFor={tierPriceFor}
         isSpecialFor={isSpecialFor}
         layerOf={layerOf}
-        layerGate={layerGate}
-        onRetryLayer={priceLayer.refetch}
+        layerGate={pick.saveGate(items, layerGate)}
+        onRetryLayer={pick.retry}
         tierForProductId={effectiveTierFor}
         marginFloorFor={(p) => floorForCategory(marginConfig, p.category)}
         unlisted={unlisted}

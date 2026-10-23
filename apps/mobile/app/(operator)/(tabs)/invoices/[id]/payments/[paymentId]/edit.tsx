@@ -19,7 +19,7 @@ import {
   useDeletePaymentImage,
   useGetPaymentImageUrl,
 } from "../../../../../../../lib/api/payments";
-import { editPaymentMaxAmount } from "../../../../../../../lib/payments-logic";
+import { editPaymentDto, editPaymentMaxAmount } from "../../../../../../../lib/payments-logic";
 import {
   SELECTABLE_METHOD_OPTIONS,
   type SelectablePaymentMethod,
@@ -190,19 +190,20 @@ export default function EditPaymentScreen() {
     }
     setError(null);
     mut.mutate(
-      {
-        invoiceId: id,
-        paymentId,
-        method,
-        amount: n,
-        reference: (reference ?? "").trim() || undefined,
-        notes: (notes ?? "").trim() || undefined,
-        bankCharges: (bankCharges ?? "").trim() ? Number(bankCharges) || undefined : undefined,
-        paidAt: (paidAt ?? "").trim() || undefined,
-        // Always sent: an emptied field has to clear the stored bank date.
-        settledAt: (settledAt ?? "").trim() || null,
-        ...(recordAnyway ? { recordAnyway: true } : {}),
-      },
+      editPaymentDto(
+        {
+          invoiceId: id,
+          paymentId,
+          method,
+          amount: n,
+          reference,
+          notes,
+          bankCharges,
+          paidAt,
+          settledAt,
+        },
+        recordAnyway,
+      ),
       {
         onSuccess: () => {
           showToast("Payment updated");

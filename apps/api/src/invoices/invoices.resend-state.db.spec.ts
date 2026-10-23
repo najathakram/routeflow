@@ -325,8 +325,9 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
     mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
     mockCreditNotes.settleOrderCreditsInTx.mockClear();
     await email(id);
-    expect(sweepCalls()).toBe(1);
-    expect(mockCreditNotes.settleOrderCreditsInTx).toHaveBeenCalledTimes(1);
+    // SA-860: twice, once in the rolled-back dry run that feeds the email snapshot and once in the real markSent commit
+    expect(sweepCalls()).toBe(2);
+    expect(mockCreditNotes.settleOrderCreditsInTx).toHaveBeenCalledTimes(2);
   }, 60_000);
 
   it("GUARD: Mark as Sent of a DRAFT still runs the credit sweep", async () => {
@@ -334,6 +335,37 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
     mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
     await run(() => invoicesService.send(id));
     expect(sweepCalls()).toBe(1);
+  }, 60_000);
+
+  it("a Mark as Sent RE-SEND of an issued invoice runs no credit sweep (SA-857 MUST-2)", async () => {
+    const id = await create();
+    // an order is linked, as in the Email-again case, so the settle assertion below can actually fail
+    const order = await prisma.order.create({
+      data: {
+        tenantId,
+        customerId,
+        orderNumber: `ORD-MS-${RUN_SUFFIX}-${id.slice(0, 6)}`,
+        status: "DELIVERED",
+      },
+    });
+    await prisma.invoice.update({ where: { id }, data: { orderId: order.id } });
+    await run(() => invoicesService.send(id)); // the issue
+    mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
+    mockCreditNotes.settleOrderCreditsInTx.mockClear();
+    await run(() => invoicesService.send(id)); // a second Mark as Sent on the issued invoice
+    expect(sweepCalls()).toBe(0);
+    expect(mockCreditNotes.settleOrderCreditsInTx).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("a DRAFT revert makes the next send an ISSUE again: the credit sweep runs", async () => {
+    const id = await create();
+    await email(id); // the issue
+    await run(() => invoicesService.revertInvoiceToDraft(id));
+    expect((await row(id)).status).toBe("DRAFT");
+    mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
+    await email(id); // the re-issue
+    // SA-860: twice, once in the rolled-back dry run that feeds the email snapshot and once in the markSent commit
+    expect(sweepCalls()).toBe(2);
   }, 60_000);
 
   // GUARD (SA-852 rule 3): green before and after the fold; it pins the stage a revert leaves behind.

@@ -96,6 +96,18 @@ describe("void feedback", () => {
     ).toContain("This period is already filed");
   });
 
+  it("W-755 (SA-894 LOW-1): the void refusal names WHAT is filed when the api sends it", () => {
+    const err = {
+      response: {
+        status: 409,
+        data: { code: "STOCK_DATE_IN_FILED_PERIOD", period: "September 2026", filedFor: "Tobacco" },
+      },
+    };
+    expect(voidFailureToast(err).description).toBe(
+      "September 2026 is already filed for Tobacco, a product on this bill, so it can't be voided today. Ask an admin before voiding it.",
+    );
+  });
+
   it("S2: the void mutation opts out of the app-wide error toast (the page toasts once)", async () => {
     mockedPost.mockRejectedValue(new Error("x"));
     const qc = createTestQueryClient();

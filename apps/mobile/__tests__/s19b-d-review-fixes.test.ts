@@ -1,6 +1,11 @@
 import { readFileSync } from "fs";
 import { join } from "path";
-import { isSpecialTier, priceLayerStatus, type CustomerLayerUnit } from "@routeflow/pricing";
+import {
+  customerPricingGate,
+  isSpecialTier,
+  priceLayerStatus,
+  type CustomerLayerUnit,
+} from "@routeflow/pricing";
 import type { UnitOption as LadderOption } from "../lib/unit-options";
 import {
   lineIsSpecial,
@@ -14,7 +19,6 @@ import {
   LAYER_INCOMPLETE_MESSAGE,
   guardLayerSave,
   priceLayerGate,
-  pricingReadyWithLayer,
   unitDetailOrUnconfirmed,
 } from "../lib/price-layer-gate";
 
@@ -75,31 +79,46 @@ describe("MUST 1: Create/Confirm in the cart sheet and onSave honour the D-5 gat
   it("CartModal takes layerGate and disables Create and Confirm on it; NewOrderScreen passes it and guards onSave", () => {
     expect(cartModal).toMatch(/layerGate\??:\s*PriceLayerGate/);
     expect(cartModal.match(/layerGate\?\.blocked/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
-    expect(newOrder).toMatch(/layerGate=\{layerGate\}/);
-    expect(newOrder).toMatch(/guardLayerSave\(layerGate, asDraft\)/);
+    expect(newOrder).toMatch(/layerGate=\{pick\.saveGate\(items, layerGate\)\}/); // #3665: the layer gate widened by blocksSave
+    expect(newOrder).toMatch(/guardLayerSave\(pick\.saveGate\(items, layerGate\), asDraft\)/);
   });
   it("invoices/new onSave names the layer block before any other check", () => {
-    expect(invoiceNew).toMatch(/guardLayerSave\(layerGate, false\)/);
+    expect(invoiceNew).toMatch(/guardLayerSave\(pick\.saveGate\(items, layerGate\), false\)/);
   });
 });
 
 describe("MUST 2: edit-items stays closed until the layer is ready", () => {
-  it("pricingReadyWithLayer: flag off = the base; flag on needs a ready layer", () => {
-    const off = status({ enabled: false, isPending: false, isError: false });
-    expect(pricingReadyWithLayer(true, off)).toBe(true);
-    expect(pricingReadyWithLayer(false, off)).toBe(false);
-    expect(
-      pricingReadyWithLayer(true, status({ enabled: true, isPending: true, isError: false })),
-    ).toBe(false);
-    expect(
-      pricingReadyWithLayer(true, status({ enabled: true, isPending: false, isError: true })),
-    ).toBe(false);
-    expect(pricingReadyWithLayer(true, ready({ p1: [packA] }))).toBe(true);
+  it("the shared gate folds the layer in: pending or failed blocks the pick, flag off never does", () => {
+    const gate = (layer: Parameters<typeof customerPricingGate>[0]["priceLayer"]) =>
+      customerPricingGate({
+        customerQuery: { data: {} },
+        customerPricesQuery: { data: [] },
+        priceLayer: layer,
+      });
+    expect(gate(status({ enabled: false, isPending: false, isError: false })).blockPick).toBe(
+      false,
+    );
+    expect(gate(status({ enabled: true, isPending: true, isError: false })).blockPick).toBe(true);
+    expect(gate(status({ enabled: true, isPending: false, isError: true })).blockPick).toBe(true);
+    expect(gate(ready({ p1: [packA] })).blockPick).toBe(false);
   });
   it("pricingReady uses it, and a pick or substitute of a product the layer cannot vouch for is refused", () => {
-    expect(editItems).toMatch(/pricingReadyWithLayer\(/);
+    expect(editItems).toMatch(
+      /customerPricingGate\(\{[\s\S]*?priceLayer,\s*\}\);\s*const pricingReady = !customerId \|\| !pricingGate\.blockPick;/,
+    );
     expect(editItems).toMatch(/priceLayerGate\(priceLayer, \[p\.id\]/);
     expect(editItems).toMatch(/refuseUnconfirmedPick\(p\)/);
+    // W-725: a failed read (no data) fails closed: the add button shows the failed copy and retries, never tier 1.
+    expect(editItems).toMatch(
+      /onPress=\{pricingFailed \? retryPricing : \(\) => setShowPicker\(true\)\}/,
+    );
+    expect(editItems).toMatch(/: pricingFailed\s*\?\s*LAYER_FAILED_MESSAGE/);
+    // SA-883: the WHOLE queries reach the gate, so their `error` does (a plan-gated 403 on the prices read is an empty read).
+    expect(editItems).toMatch(
+      /customerPricingGate\(\{\s*customerQuery,\s*customerPricesQuery: pricesQuery,/,
+    );
+    // #3658 review MUST-2: a unit change stays closed while pricing is not ready (it would write the tier-1 LIST pack price).
+    expect(editItems).toMatch(/pricesUnconfirmed=\{layerGate\.blocked \|\| !pricingReady\}/);
   });
 });
 
@@ -193,7 +212,9 @@ describe("copy names the product the layer could not load", () => {
 describe("wiring pins: the gate is in canSave on all three screens; the hook sends nothing flag-off", () => {
   it("canSave / Save include layerGate.blocked", () => {
     expect(newOrder).toMatch(/const canSave =[^;]*!layerGate\.blocked;/);
-    expect(invoiceNew).toMatch(/const canSave = baseOk && !layerGate\.blocked;/);
+    expect(invoiceNew).toMatch(
+      /const canSave = baseOk && [^;]*!layerGate\.blocked;/ /* SA-883 adds !pick.blocksSave(items) */,
+    );
     expect(editItems).toMatch(/disabled=\{updateMut\.isPending \|\| layerGate\.blocked\}/);
   });
   it("no /price-layer request with the flag off: enabled = flag && customer, and the flag read fails closed", () => {

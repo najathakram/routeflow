@@ -33,6 +33,8 @@ describe("ReturnsService.processRefund: B959 nothing billed", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-737: the claim re-reads the Return's status under its row lock
+    prisma.return.findFirst.mockResolvedValue({ id: "ret", status: "RECEIVED", kind: "STANDARD" });
     create = jest.fn().mockResolvedValue({ id: "cn-1" });
     const mod: TestingModule = await Test.createTestingModule({
       providers: [

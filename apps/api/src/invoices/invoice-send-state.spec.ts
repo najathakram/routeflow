@@ -8,6 +8,8 @@ import {
   FINGERPRINT_VERSION,
   TRACKING_SINCE,
   FINGERPRINT_INCLUDE,
+  FINGERPRINT_ITEM_ORDER,
+  FINGERPRINT_PAYMENT_ORDER,
   assertOrderInvoiceUnlockedFor,
   sendFieldsFor,
   SEND_THROTTLE_MAX,
@@ -169,8 +171,23 @@ describe("decideSendState", () => {
     );
   });
 
-  it("SA-857: the payment listing orders by paidAt THEN id, so same-instant payments always hash the same", () => {
-    expect(FINGERPRINT_INCLUDE.payments.orderBy).toEqual([{ paidAt: "asc" }, { id: "asc" }]);
+  it("SA-874: items and payments are read in ONE shared order by the live fingerprint AND the send snapshot", () => {
+    expect(FINGERPRINT_INCLUDE.items.orderBy).toBe(FINGERPRINT_ITEM_ORDER);
+    expect(FINGERPRINT_INCLUDE.payments.orderBy).toBe(FINGERPRINT_PAYMENT_ORDER);
+    expect(FINGERPRINT_ITEM_ORDER).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+    // tied rows order by their HASHED content before the (random, differing-per-tx) id
+    expect(FINGERPRINT_PAYMENT_ORDER).toEqual([
+      { paidAt: "asc" },
+      { method: "asc" },
+      { status: "asc" },
+      { amount: "asc" },
+      { reference: "asc" },
+      { id: "asc" },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { SEND_SNAPSHOT_INCLUDE } = require("./invoice-send-snapshot");
+    expect(SEND_SNAPSHOT_INCLUDE.items.orderBy).toBe(FINGERPRINT_ITEM_ORDER);
+    expect(SEND_SNAPSHOT_INCLUDE.payments.orderBy).toBe(FINGERPRINT_PAYMENT_ORDER);
   });
 
   it("SA-852 MUST: a sentAt the evening before the planned deploy day, no row, reads sentBeforeTracking (may have been emailed)", () => {
@@ -374,7 +391,7 @@ describe("the bill-to address is ONE ordering for the PDF and the fingerprint", 
     });
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const pdf = require("fs").readFileSync(
-      require("path").join(__dirname, "invoice-pdf.service.ts"),
+      require("path").join(__dirname, "invoice-send-snapshot.ts"), // SA-860: the PDF service takes this include
       "utf8",
     );
     expect(pdf).toContain("addresses: { orderBy: BILL_TO_ADDRESS_ORDER }");

@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useDismissOnLeave } from "@/lib/use-dismiss-on-leave";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { useInvoice, useUpdateInvoice, type UpdateInvoiceItem } from "@/lib/api/invoices";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
@@ -21,11 +22,8 @@ import {
 } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
-import {
-  PRICE_LAYER_FAILED_COPY,
-  PriceLayerNotice,
-  pricesUnconfirmed,
-} from "@/components/PriceLayerNotice";
+import { PRICE_LAYER_FAILED_COPY, PriceLayerNotice } from "@/components/PriceLayerNotice";
+import { customerPricingGate, gateNoticeLayer } from "@/lib/customer-pricing-gate";
 import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -43,6 +41,7 @@ import {
   normalizeBoxesPieces,
   packFromOwnSplit,
   customerLinePrice,
+  customerTierFor,
   isNsfLine,
   TAX_RATE_FRACTION_DECIMALS,
 } from "@routeflow/pricing";
@@ -137,7 +136,7 @@ function ProductSearchInput({
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
-  const listRef = React.useRef<HTMLDivElement>(null);
+  const leave = useDismissOnLeave(setOpen);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
@@ -180,15 +179,7 @@ function ProductSearchInput({
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
-        // Row 446: Tab (or any focus move) away from the field closes its popup, so it never sits
-        // over the unit select below; focus moving into the popup's own list keeps it open.
-        onBlur={(e) => {
-          if (!listRef.current?.contains(e.relatedTarget as Node | null)) setOpen(false);
-        }}
-        // Tab leaves the field: close first, so focus moves to the next field, never into the list
-        onKeyDown={(e) => {
-          if (e.key === "Tab") setOpen(false);
-        }}
+        {...leave.inputProps} // row 446 / W-686: Tab and blur close the popup (shared hook)
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:cursor-not-allowed disabled:bg-surface-raised"
       />
       {/* Hold every product-selection path until the tier data lands: picking or
@@ -235,10 +226,7 @@ function ProductSearchInput({
         debouncedQuery.length > 0 &&
         (products.length > 0 || onCreateProduct) && (
           <div
-            ref={listRef}
-            // a press inside the list keeps focus on the input (Safari never focuses a clicked
-            // button, so a blur would close the list before the click lands)
-            onMouseDown={(e) => e.preventDefault()}
+            {...leave.listProps}
             className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg"
           >
             <ul className="max-h-36 overflow-y-auto">
@@ -483,10 +471,11 @@ export default function EditInvoicePage() {
   // S19b (SA-811a/813): flag-on, billing's own customer layer. Flag off = no request, master's chain below. Until it is read
   // (or after it failed) a pick would price at the tier, so selection waits and Save stays disabled with the M3 copy.
   const priceLayer = useCustomerPriceLayer(invoice?.customerId);
-  const tierPricingPending =
-    customerQuery.isLoading ||
-    customerPricesQuery.isLoading ||
-    (priceLayer.enabled && !priceLayer.ready);
+  // W-725: the one shared gate (money fails closed). A read that FAILED with no data, or was PAUSED offline, blocks the pick
+  // too; with only `isLoading` a failed customer read left the scanner open and every pick priced at LIST. No pick can
+  // land while a read has failed, and the edited lines are the operator's own, so no `openSuggestions` here.
+  const pickGate = customerPricingGate({ customerQuery, customerPricesQuery, priceLayer });
+  const tierPricingPending = pickGate.blockPick;
   // Per-product PRICE resolved from the CustomerPrice TIER override through the
   // product's tier ladder. An msrp-only override row has pricingTier null —
   // price at the customer's default tier (Post-MSRP hazard).
@@ -497,7 +486,7 @@ export default function EditInvoicePage() {
       // No layer row: customerLinePrice returns master's getTierPrice number exactly.
       const price = customerLinePrice({
         product: cp.product as unknown as Record<string, unknown>,
-        tier: cp.pricingTier ?? customer?.pricingTier ?? 1,
+        tier: customerTierFor(cp.pricingTier, customer?.pricingTier),
       }).price;
       if (Number.isFinite(price)) map[cp.productId] = price;
     }
@@ -511,7 +500,7 @@ export default function EditInvoicePage() {
   const tierPriceFor = React.useCallback(
     (product: TierPriceableProduct) => {
       const listPrice = parseFloat(String(product.pricePerUnit ?? 0)) || 0;
-      const customerTier = customer?.pricingTier ?? 1;
+      const customerTier = customerTierFor(undefined, customer?.pricingTier);
       const layer = layerOfRef.current(product.id);
       if (layer) {
         // The layer row, when this product has one for its pack (R3); otherwise master's chain below.
@@ -520,7 +509,7 @@ export default function EditInvoicePage() {
         );
         const r = customerLinePrice({
           product: product as unknown as Record<string, unknown>,
-          tier: cp?.pricingTier ?? customerTier,
+          tier: customerTierFor(cp?.pricingTier, customerTier),
           layer,
           unitLabel: null,
         });
@@ -684,10 +673,12 @@ export default function EditInvoicePage() {
 
   // ── Submit ────────────────────────────────────────────────────────────────────
 
-  const priceBlocked = pricesUnconfirmed(
+  const priceBlocked = customerPricingGate({
+    customerQuery,
+    customerPricesQuery,
     priceLayer,
-    items.map((i) => i.productId),
-  );
+    productIds: items.map((i) => i.productId),
+  }).blockSave;
 
   function handleSubmit() {
     if (priceBlocked) return;
@@ -943,7 +934,7 @@ export default function EditInvoicePage() {
                       value={item.description}
                       tierPriceFor={tierPriceFor}
                       pricingPending={tierPricingPending}
-                      pricingFailed={priceLayer.failed}
+                      pricingFailed={pickGate.failed}
                       onCreateProduct={(searchTerm) => {
                         const idx = items.findIndex((it) => it.key === item.key);
                         const looksLikeSku = /^\d{6,}$/.test(searchTerm.trim());
@@ -1249,8 +1240,11 @@ export default function EditInvoicePage() {
                 </div>
               )}
               <PriceLayerNotice
-                layer={priceLayer}
-                unconfirmed={priceBlocked}
+                layer={gateNoticeLayer(pickGate, priceLayer, () => {
+                  void customerQuery.refetch();
+                  void customerPricesQuery.refetch();
+                })}
+                unconfirmed={priceBlocked || pickGate.readFailed}
                 className="block text-xs text-amber-700"
               />
               <Button

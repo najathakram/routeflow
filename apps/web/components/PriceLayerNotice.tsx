@@ -6,19 +6,8 @@ export const PRICE_LAYER_PENDING_COPY = "Checking this customer's prices\u2026";
 export const PRICE_LAYER_FAILED_COPY = "Couldn't load this customer's prices.";
 export const PRICE_LAYER_TOO_MANY_COPY = "This customer has too many prices to load here.";
 
-/**
- * Are the prices on these product ids unconfirmed? Flag off = never (nothing was read). Flag on and the layer pending or
- * failed = yes for the whole document; an incomplete layer = yes for each product it does not list (`lineReady`).
- * Save/Send stay disabled while this is true.
- */
-export function pricesUnconfirmed(
-  layer: Pick<CustomerPriceLayer, "enabled" | "ready" | "lineReady">,
-  productIds: ReadonlyArray<string | null | undefined>,
-): boolean {
-  if (!layer.enabled) return false;
-  if (!layer.ready) return true;
-  return productIds.some((id) => !!id && !layer.lineReady(id));
-}
+// W-725: the rule lives in @routeflow/pricing (shared with mobile); re-exported for the web call sites.
+export { pricesUnconfirmed } from "@routeflow/pricing";
 
 export function PriceLayerNotice({
   layer,

@@ -107,9 +107,10 @@ import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry"
 import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
 import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
 import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
-import { roundMoney } from "@routeflow/pricing";
+import { customerTierFor, roundMoney } from "@routeflow/pricing";
 import { useCustomer, useCustomerPrices } from "@/lib/api/customers";
 import { PriceLayerNotice, pricesUnconfirmed } from "@/components/PriceLayerNotice";
+import { customerPricingGate, gateNoticeLayer } from "@/lib/customer-pricing-gate";
 import { useCustomerLinePricing } from "@/lib/useCustomerLinePricing";
 import { MoneyInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -184,21 +185,16 @@ export default function OrderDetailPage() {
   const { data: priceHistory } = useCustomerPriceHistory(order?.customerId);
   // Customer tier pricing (mirrors mobile's edit-items screen): a substituted
   // line prices off the customer's effective tier, not the raw list price.
-  const {
-    data: customerDetail,
-    isPending: customerPending,
-    isError: customerFailed,
-  } = useCustomer(order?.customerId ?? "");
-  const {
-    data: customerPrices,
-    isPending: pricesPending,
-    isError: pricesFailed,
-  } = useCustomerPrices(order?.customerId);
+  const customerQuery = useCustomer(order?.customerId ?? "");
+  const { data: customerDetail } = customerQuery;
+  const customerPricesQuery = useCustomerPrices(order?.customerId);
+  const { data: customerPrices } = customerPricesQuery;
   // B62 (REG-B62): tier defaults to 1 while these queries are in flight, so any
   // line added/substituted in that window bakes the LIST price (the substitute
   // path even SENDS it). Gate pricing-dependent controls until both settle.
   // NOTE: a disabled query is isPending forever — short-circuit when there is no
-  // customer. An errored fetch falls back to today's tier-1 degraded mode.
+  // customer. W-745: an errored read with no data no longer falls back to a tier-1 "degraded mode" (LIST): the shared gate
+  // fails closed, with the failed copy and Retry; a PLAN_GATE 403 on the prices read is an empty read.
   const cpMap = React.useMemo(() => {
     const m = new Map<string, number | null>();
     for (const cp of (customerPrices ?? []) as Array<{
@@ -209,20 +205,30 @@ export default function OrderDetailPage() {
     }
     return m;
   }, [customerPrices]);
-  const customerTier = (customerDetail as { pricingTier?: number } | undefined)?.pricingTier ?? 1;
+  const customerTier = customerTierFor(
+    undefined,
+    (customerDetail as { pricingTier?: number } | undefined)?.pricingTier,
+  );
   // units_v1: the EFFECTIVE numeric tier `OrderLineUnitPicker` needs (it resolves the ladder
   // price at this tier, same source as isSpecialTierForProductId below).
   const tierForProductId = React.useCallback(
-    (productId: string) => cpMap.get(productId) ?? customerTier ?? 1,
+    (productId: string) => customerTierFor(cpMap.get(productId), customerTier),
     [cpMap, customerTier],
   );
   const { priceLayer, tierPriceFor, isSpecialTierFor, isSpecialTierForProductId } =
     useCustomerLinePricing(order?.customerId, tierForProductId);
   // S19b: flag on, the customer's price layer must also have settled (a price is UNCONFIRMED while it reads or failed); flag
   // off it is ready at once, no request.
-  const pricingReady =
-    !order?.customerId ||
-    ((!customerPending || customerFailed) && (!pricesPending || pricesFailed) && priceLayer.ready);
+  const pricingGate = customerPricingGate({
+    customerQuery: order?.customerId ? customerQuery : {},
+    customerPricesQuery: order?.customerId ? customerPricesQuery : {},
+    priceLayer,
+  });
+  const pricingReady = !order?.customerId || !pricingGate.blockPick;
+  const retryCustomerPricing = () => {
+    void customerQuery.refetch();
+    void customerPricesQuery.refetch();
+  };
   const router = useRouter();
   const updateStatus = useUpdateOrderStatus();
   // The cancel flow renders its own error (every other status change keeps the global toast), so it has its own instance.
@@ -1509,8 +1515,8 @@ export default function OrderDetailPage() {
 
                 <StickyEditBar total={formatMoney(editTotal)}>
                   <PriceLayerNotice
-                    layer={priceLayer}
-                    unconfirmed={layerBlocked}
+                    layer={gateNoticeLayer(pricingGate, priceLayer, retryCustomerPricing)}
+                    unconfirmed={layerBlocked || !pricingReady}
                     className="w-full text-xs text-navy/60"
                   />
                   {localStatus === "DRAFT" ? (

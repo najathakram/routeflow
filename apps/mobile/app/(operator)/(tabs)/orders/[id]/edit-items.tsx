@@ -26,7 +26,12 @@ import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers
 import { showToast } from "../../../../../lib/toast";
 import { FAMILY_ADD_MESSAGE, isFamilyProduct } from "../../../../../lib/sellable-products";
 import { confirm } from "../../../../../lib/confirm";
-import { effectiveQty, type SellLevel } from "@routeflow/pricing";
+import {
+  customerPricingGate,
+  customerTierFor,
+  effectiveQty,
+  type SellLevel,
+} from "@routeflow/pricing";
 import { useEditItemsTrayHandlers } from "../../../../../hooks/useEditItemsTrayHandlers";
 import { PriceLayerGateNotice } from "../../../../../components/PriceLayerGateNotice";
 import { draftTotal } from "../../../../../lib/edit-items-total";
@@ -39,7 +44,7 @@ import {
   packLinePrice,
   type PriceProduct,
 } from "../../../../../lib/cart-order-total";
-import { priceLayerGate, pricingReadyWithLayer } from "../../../../../lib/price-layer-gate";
+import { LAYER_FAILED_MESSAGE, priceLayerGate } from "../../../../../lib/price-layer-gate";
 import { marginFloorPrice } from "../../../../../lib/margin-floor-price";
 import { isUnitLine, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
@@ -137,42 +142,43 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const { data: priceHistory } = useCustomerPriceHistory(customerId);
   // Customer tier pricing (mirrors NewOrderScreen): a newly added line prices
   // off the customer's effective tier, not the raw list price.
-  const {
-    data: customerDetail,
-    isPending: customerPending,
-    isError: customerFailed,
-  } = useCustomer(customerId ?? "");
-  const {
-    data: customerPrices,
-    isPending: pricesPending,
-    isError: pricesFailed,
-  } = useCustomerPrices(customerId ?? "");
-  const customerTier = customerDetail?.pricingTier ?? 1;
+  // SA-883: the whole queries go to the gate (their `error` too: a plan-gated 403 on the prices read is an empty read).
+  const customerQuery = useCustomer(customerId ?? "");
+  const { data: customerDetail } = customerQuery;
+  const pricesQuery = useCustomerPrices(customerId ?? "");
+  const { data: customerPrices } = pricesQuery;
+  const customerTier = customerTierFor(undefined, customerDetail?.pricingTier);
   // B62 (REG-B62): the tier defaults to 1 while those two queries are in flight,
   // so a line added or substituted in that window bakes the LIST price (the
   // substitute path even SENDS it). Gate the pricing-dependent controls — the
   // product picker and Substitute — until both settle, mirroring web's order
   // editor (apps/web/app/(dashboard)/orders/[id]/_components/order-line-edit.tsx).
   // NOTE: a disabled query stays `isPending` forever, so short-circuit when
-  // there is no customer; an errored fetch falls back to the tier-1 degraded
-  // mode rather than wedging the editor.
+  // there is no customer. W-725: an errored read with no data no longer falls back to tier 1 (LIST): the shared gate fails
+  // closed, the picker shows the failed copy and a tap retries both reads.
   // S19b slice D (SA-811a/813): billing's own customer price layer. Flag off: no request, every number is master's.
   const priceLayer = useCustomerPriceLayer(customerId);
   const layerOf = priceLayer.layerOf;
   // The layer is part of "pricing is ready": the picker, Substitute, scan and price edits stay closed until it is, so an add
   // never stores a pre-layer price (a product the layer cannot vouch for is also refused at the pick, below).
-  const pricingReady =
-    !customerId ||
-    pricingReadyWithLayer(
-      (!customerPending || customerFailed) && (!pricesPending || pricesFailed),
-      priceLayer,
-    );
+  const pricingGate = customerPricingGate({
+    customerQuery,
+    customerPricesQuery: pricesQuery,
+    priceLayer,
+  });
+  const pricingReady = !customerId || !pricingGate.blockPick;
+  const pricingFailed = !!customerId && pricingGate.failed;
+  const retryPricing = () => {
+    if (pricingGate.readFailed) void Promise.all([customerQuery.refetch(), pricesQuery.refetch()]);
+    else priceLayer.refetch();
+  };
   const cpMap = useMemo(() => {
     const m = new Map<string, number | null>();
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
     return m;
   }, [customerPrices]);
-  const effectiveTierFor = (productId: string) => cpMap.get(productId) ?? customerTier ?? 1;
+  const effectiveTierFor = (productId: string) =>
+    customerTierFor(cpMap.get(productId), customerTier);
   /** SPECIAL (a tier other than 1) lines are the customer's permanent price — never overridable
    *  (the create surface's own rule, components/NewOrderScreen.tsx:627). Mobile's
    *  editor contradicted mobile's builder until this landed; the api-side gate is
@@ -280,7 +286,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   );
 
   const tierPriceFor = (p: { id: string } & PriceProduct) =>
-    packLinePrice(p, cpMap.get(p.id) ?? customerTier ?? 1, layerOf(p.id)).price;
+    packLinePrice(p, customerTierFor(cpMap.get(p.id), customerTier), layerOf(p.id)).price;
 
   // Latched by a successful save. Read by the hydration guard below (the
   // post-save refetch IS the new truth, so it re-hydrates) and by the snapshot
@@ -656,7 +662,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     if (refuseUnconfirmedPick(p)) return resolveDraftKeyForPick(draftRef.current, p.id, null);
     const catalogPrice = tierPriceFor(p);
     const listPrice = toNumber(p.pricePerUnit);
-    const lp = packLinePrice(p, cpMap.get(p.id) ?? customerTier ?? 1, layerOf(p.id));
+    const lp = packLinePrice(p, customerTierFor(cpMap.get(p.id), customerTier), layerOf(p.id));
     const isSpecial = lp.isSpecial || lp.layered; // R3: a layered price is the resolver's, no last-given pre-fill
     const upbRaw = p.unitsPerBox;
     const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
@@ -1279,7 +1285,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                       canEditPrice={canEditPriceFor(it.productId)}
                       pricingReady={pricingReady}
                       tier={effectiveTierFor(it.productId)}
-                      pricesUnconfirmed={layerGate.blocked}
+                      pricesUnconfirmed={layerGate.blocked || !pricingReady}
                       marginFloor={floorForCategory(marginConfig, it.category)}
                       acked={floorAcked.has(key)}
                       onSetToFloor={(price) => setLinePrice(key, price)}
@@ -1328,16 +1334,23 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                   here, so it stays shut until the customer's contract is loaded. */}
               <Pressable
                 style={[styles.addBtn, !pricingReady && styles.addBtnDisabled]}
-                onPress={() => setShowPicker(true)}
-                disabled={!pricingReady}
+                onPress={pricingFailed ? retryPricing : () => setShowPicker(true)}
+                disabled={!pricingReady && !pricingFailed}
+                accessibilityRole="button"
               >
                 {pricingReady ? (
                   <Ionicons name="add-circle-outline" size={18} color={ios.brand} />
+                ) : pricingFailed ? (
+                  <Ionicons name="refresh" size={18} color={ios.brand} />
                 ) : (
                   <ActivityIndicator size="small" color={ios.brand} />
                 )}
                 <Text style={styles.addBtnText}>
-                  {pricingReady ? "Add product" : "Loading customer pricing…"}
+                  {pricingReady
+                    ? "Add product"
+                    : pricingFailed
+                      ? LAYER_FAILED_MESSAGE
+                      : "Loading customer pricing…"}
                 </Text>
               </Pressable>
               <Pressable style={styles.addUnlistedBtn} onPress={() => setUnlistedModalOpen(true)}>

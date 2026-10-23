@@ -211,7 +211,7 @@ ones run in the ruling line as `checked: 1-12`, and say which were NOT run and w
     assertions about a thing not yet run, read or produced.
 12. **Pins kept or superseded (OP-17)** — for every writer, helper or status call the ruling
     changes, the fact table names each existing pin on it (`git grep -n "REG-\|T-B\|\[L-\|SA-" <file>
-    <its specs>` + the `it(…)` names on the changed lines) as KEPT or SUPERSEDED, with the pin's own
+<its specs>` + the `it(…)` names on the changed lines) as KEPT or SUPERSEDED, with the pin's own
     quoted reason; a superseded pin with a staff- or customer-visible effect becomes an owner
     question (E61-E63 — three rulings in one session ran over F03/R1, [L-O2] and REG-B11).
 

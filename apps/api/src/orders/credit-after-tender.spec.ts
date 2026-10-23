@@ -161,6 +161,23 @@ describe("creditAfterTender (SA-849)", () => {
     expect(d.logger.error).toHaveBeenCalledTimes(1);
   });
 
+  it("W-736 readOnly (by-key): ENFORCED answers the figures with NO warn line, NO transaction, NO audit row", async () => {
+    const { d, audits, tenantTransaction } = deps("true");
+    expect(await creditAfterTender(d, sale({ readOnly: true }))).toEqual({
+      limit: 50,
+      exposure: 100,
+    });
+    expect(d.logger.warn).not.toHaveBeenCalled();
+    expect(tenantTransaction).not.toHaveBeenCalled();
+    expect(audits).toHaveLength(0);
+  });
+
+  it("W-736 readOnly under DARK: nothing answered, nothing logged", async () => {
+    const { d } = deps("dark");
+    expect(await creditAfterTender(d, sale({ readOnly: true }))).toBeNull();
+    expect(d.logger.warn).not.toHaveBeenCalled();
+  });
+
   it("R3 DARK: one warn line, no audit row, nothing answered", async () => {
     const { d, audits, tenantTransaction } = deps("dark");
     expect(await creditAfterTender(d, sale())).toBeNull();

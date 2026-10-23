@@ -82,9 +82,12 @@ export function reserveAdd(ref: { current: Items }, input: AddToItemsInput): boo
  * A refused scan: EXACTLY ONE message, in the layer the operator can see. With the scan sheet open its own error pill (the app
  * toast renders UNDER the sheet's Modal); otherwise the app toast and no pill (a pill beside it was the stacked second copy).
  */
-export function refusedScanOutcome(sheetOpen: boolean): ScanOutcome {
-  if (sheetOpen) return { feedback: { kind: "error", text: UNITS_LOADING_SCAN_MESSAGE } };
-  showToast(UNITS_LOADING_SCAN_MESSAGE);
+export function refusedScanOutcome(
+  sheetOpen: boolean,
+  text: string = UNITS_LOADING_SCAN_MESSAGE, // W-741: a pick refused by the customer pricing gate passes its own copy
+): ScanOutcome {
+  if (sheetOpen) return { feedback: { kind: "error", text } };
+  showToast(text);
   return undefined;
 }
 

@@ -676,6 +676,29 @@ export async function runAll() {
   assert.match(codeRej.result.ids.find((i) => i.id === "2").reason, /title mismatch/);
   assert.ok(codeRej.result.unaccounted.includes("2"));
 
+  // 31. Label as given: the Build brief carries the rule and an example from the cluster's own ids;
+  // the gate gets --ids/--id-space so the id-labels step can check commit subjects.
+  const lbl = await runWorkflow(
+    { clusters: [{ id: "c1", rows: ["599", "W-679"] }], gateGreen: true, verdict: "PASS" },
+    { ...ARGS, rows: ["599", "W-679"] },
+  );
+  const bl = lbl.calls.find((c) => c.label === "build:c1").prompt;
+  assert.ok(
+    bl.includes("exactly as given in the") && bl.includes("never translate a row id to B###"),
+  );
+  assert.ok(bl.includes("row 599, W-679"), "labels from the cluster's own ids");
+  assert.ok(!bl.includes("(B<id>)"));
+  assert.ok(
+    lbl.calls
+      .find((c) => c.label === "gate:c1")
+      .prompt.includes('--ids "599,W-679" --id-space row'),
+  );
+  const lblBug = await runWorkflow(
+    { clusters: [{ id: "c1", rows: ["B668"] }], gateGreen: true, verdict: "PASS" },
+    { ...ARGS, idSpace: "bug", rows: ["B668"] },
+  );
+  assert.ok(lblBug.calls.find((c) => c.label === "build:c1").prompt.includes("labels: B668."));
+
   return out;
 }
 

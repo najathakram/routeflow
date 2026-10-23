@@ -181,12 +181,71 @@ export interface PaymentRefGuard {
 }
 
 /**
+ * SA-879: the excess AdvancePayment(s) a payment group booked, for BOTH matchers (an edit's group total below, and
+ * `check`'s composition of another group). An advance is the group's when it is the customer's and its
+ * `sourcePaymentId` names one of the group's rows (writeStandalonePayment links its first row). The rows are read in
+ * EVERY status, so a VOIDed first row keeps the link; the callers still sum only DEDUPE_STATUSES rows.
+ * Date fallback: same customer, method and normalised reference, and `receivedAt` equal to any row's `paidAt`, for an
+ * advance with NO live link: unlinked (booked before the link) or linked to a row that no longer exists (SA-897: a
+ * hard-deleted row: the payment DELETE, an invoice or order delete). A link to an EXISTING row of another group is never
+ * overridden by a date (two same-reference groups on one day exist after a Record anyway). Residual (documented, SA-879
+ * / SA-897): a group whose linked row is gone (or that never had one) AND whose EVERY remaining row's paidAt was edited
+ * loses its advance; that is a false 409 with Record anyway, never silent money. A date is never the identity.
+ */
+export async function groupExcessAdvances(
+  tx: any,
+  g: { customerId: string; method: string; normRef: string | null; groupId: string },
+): Promise<Array<{ id: string; cents: number }>> {
+  const rows: Array<{ id: string; paidAt: Date }> = await tx.invoicePayment.findMany({
+    where: { paymentGroupId: g.groupId },
+    select: { id: true, paidAt: true },
+  });
+  if (rows.length === 0) return [];
+  const own = new Set(rows.map((r) => r.id));
+  const dates = new Set(rows.map((r) => new Date(r.paidAt).getTime()));
+  const advances: any[] = await tx.advancePayment.findMany({
+    where: {
+      customerId: g.customerId,
+      OR: [
+        { sourcePaymentId: { in: [...own] } },
+        { method: g.method, receivedAt: { in: rows.map((r) => new Date(r.paidAt)) } },
+      ],
+    },
+    select: {
+      id: true,
+      amount: true,
+      reference: true,
+      method: true,
+      receivedAt: true,
+      sourcePaymentId: true,
+    },
+  });
+  const linked = (a: any) => a.sourcePaymentId != null && own.has(a.sourcePaymentId);
+  const byDate = advances.filter(
+    (a) =>
+      !linked(a) &&
+      a.method === g.method &&
+      dates.has(new Date(a.receivedAt).getTime()) &&
+      normalizePaymentRef(a.reference) === g.normRef,
+  );
+  // A date candidate linked elsewhere attaches only when that row is gone (one indexed read, only when there is one).
+  const foreign = [...new Set(byDate.map((a) => a.sourcePaymentId).filter((id) => id != null))];
+  const live: Array<{ id: string }> = foreign.length
+    ? await tx.invoicePayment.findMany({ where: { id: { in: foreign } }, select: { id: true } })
+    : [];
+  const alive = new Set(live.map((r) => r.id));
+  return [
+    ...advances.filter(linked),
+    ...byDate.filter((a) => a.sourcePaymentId == null || !alive.has(a.sourcePaymentId)),
+  ].map((a) => ({ id: a.id, cents: toCents(Number(a.amount)) }));
+}
+
+/**
  * SA-865: the amount an edit of a GROUPED payment row is judged on: the group's NEW total, the way a fresh record of the
  * group is judged (`PaymentRefInput.amount` is a standalone payment's total). Its non-VOID rows (on any invoice) with the
- * edited row at its new amount, plus the excess AdvancePayment the group booked, matched as `check` matches another
- * group's (same method, normalised reference, receivedAt = the group's paidAt). The caller's INPUT, not a second
- * predicate; read under the payment-ref lock the edit already holds. The advance ids are returned too: they are this
- * attempt's own.
+ * edited row at its new amount, plus the excess AdvancePayment the group booked (`groupExcessAdvances`, SA-879). The
+ * caller's INPUT, not a second predicate; read under the payment-ref lock the edit already holds. The advance ids are
+ * returned too: they are this attempt's own.
  */
 export async function groupTotalForEdit(
   tx: any,
@@ -205,16 +264,16 @@ export async function groupTotalForEdit(
     where: { paymentGroupId: payment.paymentGroupId, status: { in: [...DEDUPE_STATUSES] } },
     select: { id: true, amount: true },
   });
-  const own = normalizePaymentRef(payment.reference);
-  const advances: any[] = await tx.advancePayment.findMany({
-    where: { customerId: payment.customerId, method: payment.method, receivedAt: payment.paidAt },
-    select: { id: true, amount: true, reference: true },
+  const mine = await groupExcessAdvances(tx, {
+    customerId: payment.customerId,
+    method: payment.method,
+    normRef: normalizePaymentRef(payment.reference),
+    groupId: payment.paymentGroupId,
   });
-  const mine = advances.filter((a) => normalizePaymentRef(a.reference) === own);
   const rows = siblings
     .filter((r) => r.id !== payment.id)
     .reduce((sum, r) => sum + toCents(Number(r.amount)), newAmountCents);
-  const extra = mine.reduce((sum, a) => sum + toCents(Number(a.amount)), 0);
+  const extra = mine.reduce((sum, a) => sum + a.cents, 0);
   return { cents: rows + extra, advanceIds: mine.map((a) => a.id) };
 }
 
@@ -321,23 +380,22 @@ export function createPaymentRefGuard(p: PaymentRefInput): PaymentRefGuard {
       }
       let hit = [...events.values()].find((e) => e.cents === target);
       if (!hit && [...events.values()].some((e) => e.grouped)) {
-        // A standalone payment's excess is booked as an AdvancePayment with the same method, reference and date.
-        const advances: any[] = await tx.advancePayment.findMany({
-          where: { customerId, method: p.method },
-          select: { amount: true, reference: true, receivedAt: true },
-        });
-        hit = [...events.values()].find((e) => {
-          if (!e.grouped) return false;
-          const at = new Date(e.rows[0].paidAt).getTime();
-          const extra = advances
-            .filter(
-              (a) =>
-                normalizePaymentRef(a.reference) === norm &&
-                new Date(a.receivedAt).getTime() === at,
-            )
-            .reduce((s, a) => s + toCents(Number(a.amount)), 0);
-          return extra > 0 && e.cents + extra === target;
-        });
+        // A standalone payment's excess is booked as the group's own AdvancePayment (SA-879: the one helper).
+        for (const e of events.values()) {
+          if (!e.grouped) continue;
+          // eslint-disable-next-line no-await-in-loop -- one indexed read per grouped candidate, only on a miss
+          const own = await groupExcessAdvances(tx, {
+            customerId,
+            method: p.method,
+            normRef: norm,
+            groupId: e.rows[0].paymentGroupId,
+          });
+          const extra = own.reduce((s, a) => s + a.cents, 0);
+          if (extra > 0 && e.cents + extra === target) {
+            hit = e;
+            break;
+          }
+        }
         if (hit) hit.cents = target; // the named amount is the whole payment, excess included
       }
       let existing: Existing | null = hit ? existingOf(hit) : null;

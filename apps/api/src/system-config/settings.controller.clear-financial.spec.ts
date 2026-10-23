@@ -145,7 +145,15 @@ function makeFakeStore(tenantId: string | null) {
     (typeof MODELS)[number],
     ReturnType<typeof model>
   >;
-  const txClient = { ...models, $executeRaw: jest.fn().mockResolvedValue(0) };
+  // 683 (SA-896): the wipe first checks the tenant holds no regulated records; this store holds none (the refusal is proven
+  // against real Postgres in clear-financial-regulated.db.spec.ts).
+  const noRegulated = { findFirst: jest.fn().mockResolvedValue(null) };
+  const regulated = {
+    regulatedSalesLedger: noRegulated,
+    tobaccoReport: noRegulated,
+    regulatedFiling: noRegulated,
+  };
+  const txClient = { ...models, ...regulated, $executeRaw: jest.fn().mockResolvedValue(0) };
 
   // The REAL tenant proxy from prisma.service.ts, not an imitation of it. `deleteMany` is
   // in its SCOPED_METHODS, so it rewrites every call as `where: { ...args.where, tenantId }`
@@ -163,6 +171,7 @@ function makeFakeStore(tenantId: string | null) {
     rows,
     prisma: {
       ...models,
+      ...regulated,
       getTenantId: jest.fn().mockReturnValue(tenantId),
       forTenant: jest.fn().mockReturnValue(models),
       // Mirrors PrismaService.tenantTransaction: proxied when a tenant is in context,
@@ -361,6 +370,23 @@ describe("SettingsController#clearFinancialData — DELETE /settings/financial-d
       expect(prisma[model].deleteMany).toHaveBeenCalledTimes(1);
       expect(prisma[model].deleteMany).toHaveBeenCalledWith({ where: { tenantId: "test-tenant" } });
     }
+  });
+
+  // 683 (#3682 review NIT-3): the in-tx checks are READ COMMITTED reads, so a regulated sale committed after the first one
+  // would go with its invoice. The guard runs again after the deletes, before the commit, and refuses (rolling back).
+  it("T7: a regulated record that appears after the deletes still refuses the wipe (the last in-tx check)", async () => {
+    const { prisma } = makeFakeStore("tenant-a");
+    const controller = await buildController(prisma);
+    const invoiceDeletes = (prisma as any).invoice.deleteMany as jest.Mock;
+    (prisma as any).regulatedSalesLedger.findFirst.mockImplementation(async () =>
+      invoiceDeletes.mock.calls.length > 0 ? { id: "sale-committed-meanwhile" } : null,
+    );
+    const err: any = await callClearFinancialData(controller, {
+      confirmTenantId: "tenant-a",
+    }).catch((e) => e);
+    expect(err?.getStatus?.()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "FINANCIAL_WIPE_BLOCKED_REGULATED" });
+    expect(invoiceDeletes).toHaveBeenCalled(); // the refusal came AFTER the deletes, so the tx rolls them back
   });
 
   // T3 (R2) — the SUPER_ADMIN / no-tenant-context case must refuse outright rather than

@@ -134,7 +134,7 @@ describe("edit-items.tsx per-line price gate (REG-EDIT-PRICE-GATE)", () => {
       /const isSpecialFor = \(productId: string\) =>\s*packIsSpecial\(effectiveTierFor\(productId\), layerOf\(productId\)\)/,
     );
     expect(parentSrc).toContain(
-      "const effectiveTierFor = (productId: string) => cpMap.get(productId) ?? customerTier ?? 1;",
+      "const effectiveTierFor = (productId: string) =>\n    customerTierFor(cpMap.get(productId), customerTier);",
     );
   });
 
