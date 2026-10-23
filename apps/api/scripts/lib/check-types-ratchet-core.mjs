@@ -17,14 +17,17 @@ const SPEC_FILE = /\.spec\.ts$/;
 const GIB = 1024 ** 3;
 /**
  * The heap for the one src + specs program, by host. 8192 MB on a small host (an 8 GB Mac: more would
- * swap), 9216 MB from 14 GiB of RAM up (the 16 GB ubuntu CI runners), because the program outgrew 8192
- * there at #3455 (CI run 39965372256): linear spec growth, no single type exploding (lead ruling
- * 2026-10-23). `CHECK_TYPES_HEAP_MB` (a positive integer) wins over both; any other value is ignored.
+ * swap), 9216 MB from 14 GiB of RAM up (the 16 GB ubuntu CI runners, the 16 GB Mac mini, the 64 GB PC),
+ * because the program outgrew 8192 on CI at #3455 (run 39965372256): linear spec growth, no single type
+ * exploding (lead ruling 2026-10-23). `CHECK_TYPES_HEAP_MB` wins over both when it is a whole number of
+ * MB from 1024 to 65536 (digits only); any other value is ignored. turbo.json passes it through to
+ * `@routeflow/api#check-types` (strict env mode would drop it otherwise).
  * Raise again only with the same evidence. The root fix is splitting the program in two (W-738).
  */
 export function chooseHeapMb(totalMemBytes = os.totalmem(), env = process.env) {
-  const override = Number(env.CHECK_TYPES_HEAP_MB);
-  if (Number.isInteger(override) && override > 0) return override;
+  const raw = String(env.CHECK_TYPES_HEAP_MB ?? "").trim();
+  const override = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (override >= 1024 && override <= 65536) return override;
   return totalMemBytes >= 14 * GIB ? 9216 : 8192;
 }
 export const HEAP_MB = chooseHeapMb();

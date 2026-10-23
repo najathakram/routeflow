@@ -15,7 +15,8 @@ function core(body: string): unknown {
   const res = spawnSync(
     process.execPath,
     ["--input-type=module", "-e", `import * as c from "${CORE}";\n${body}`],
-    { encoding: "utf8" },
+    // hermetic: a CHECK_TYPES_HEAP_MB in the runner's env must not change what the module chooses
+    { encoding: "utf8", env: (({ CHECK_TYPES_HEAP_MB: _drop, ...rest }) => rest)(process.env) },
   );
   if (res.status !== 0 || !res.stdout.trim()) {
     throw new Error(`core shim failed (${res.status}):\n${res.stdout}\n${res.stderr}`);
@@ -92,7 +93,8 @@ describe("check-types ratchet rules (B806)", () => {
       c.classifyWorkerExit({ status: 0, signal: null, stderr: "" }),
     ]));`) as Array<{ kind: string; message: string } | null>;
     expect(out[0]?.kind).toBe("oom");
-    expect(out[0]?.message).toContain("--max-old-space-size=8192");
+    // the hint names the heap THIS host chose (8192 under 14 GiB, 9216 on CI / the Mac mini / the PC)
+    expect(out[0]?.message).toContain(`--max-old-space-size=${core("console.log(c.HEAP_MB)")}`);
     expect(out[0]?.message).toContain("raise HEAP_MB");
     expect(out[1]).toBeNull();
   });
@@ -103,7 +105,11 @@ describe("check-types ratchet rules (B806)", () => {
     const cli = readFileSync(path.join(API_DIR, "scripts/check-types-ratchet.mjs"), "utf8");
     expect(cli).toMatch(/--max-old-space-size=\$\{HEAP_MB\}/);
     expect(cli).toMatch(/NODE_OPTIONS/);
-    expect(core(`console.log(JSON.stringify(c.HEAP_MB === c.chooseHeapMb()));`)).toBe(true);
+    expect(
+      core(
+        `import os from "node:os";\nconsole.log(JSON.stringify(c.HEAP_MB === c.chooseHeapMb(os.totalmem(), process.env)));`,
+      ),
+    ).toBe(true);
   });
 
   it("the heap follows the host: 8192 MB under 14 GiB, 9216 MB from 14 GiB (CI), and CHECK_TYPES_HEAP_MB wins", () => {
@@ -116,8 +122,10 @@ describe("check-types ratchet rules (B806)", () => {
     expect(pick(16 * GIB, {})).toBe(9216);
     expect(pick(8 * GIB, { CHECK_TYPES_HEAP_MB: "6144" })).toBe(6144);
     expect(pick(16 * GIB, { CHECK_TYPES_HEAP_MB: "12288" })).toBe(12288);
-    // anything that is not a positive integer is ignored, never a 0 / NaN heap flag
-    for (const bad of ["", "0", "-1", "9216.5", "lots"])
+    expect(pick(8 * GIB, { CHECK_TYPES_HEAP_MB: "1024" })).toBe(1024);
+    expect(pick(8 * GIB, { CHECK_TYPES_HEAP_MB: "65536" })).toBe(65536);
+    // anything but whole MB in [1024, 65536] is ignored: never a 0 / NaN / runaway heap flag
+    for (const bad of ["", "0", "1", "-1", "1023", "65537", "9216.5", "1e21", "0x2400", "lots"])
       expect(pick(16 * GIB, { CHECK_TYPES_HEAP_MB: bad })).toBe(9216);
   });
 
