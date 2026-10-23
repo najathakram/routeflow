@@ -82,6 +82,7 @@ import { phoneActionItems } from "./_components/phone-action-items";
 import { useInvoiceDraftNotice } from "./_components/use-invoice-draft-notice";
 import { SAVE_CHORD_KEYS, saveChordHandler } from "./_components/use-save-chord";
 import { PickupHandOverButton, PickupHandOverDialog } from "./_components/PickupHandOver";
+import { CompleteAtCounterButton } from "./_components/CompleteAtCounter";
 import {
   ConfirmedPrimaryAction,
   OutForDeliveryPrimary,
@@ -248,6 +249,7 @@ export default function OrderDetailPage() {
   const [showUnmarkConfirm, setShowUnmarkConfirm] = React.useState(false);
   // Picked-up dialog + a pending move off pickup: page-level so they outlive the status-gated action rows.
   const [pickupOpen, setPickupOpen] = React.useState(false);
+  const [completeOpen, setCompleteOpen] = React.useState(false); // I-120: Complete at counter
   const [pendingPath, setPendingPath] = React.useState<"ROUTE" | "SHIP" | null>(null);
 
   // Order-level commission override (staff + sales_agents addon only — the
@@ -1162,6 +1164,11 @@ export default function OrderDetailPage() {
                   </Button>
                 </ActionTier>
               )}
+              {access.staff && (
+                <ActionTier tier="secondary">
+                  <CompleteAtCounterButton order={order} onOpen={() => setCompleteOpen(true)} />
+                </ActionTier>
+              )}
             </>
           )}
 
@@ -1252,6 +1259,10 @@ export default function OrderDetailPage() {
                   <PickupHandOverButton onOpen={() => setPickupOpen(true)} />
                 </ActionTier>
               )}
+              {/* I-120: never beside the hand-over above (completeAtCounterOffered hides it on PICKUP) */}
+              <ActionTier tier="secondary">
+                <CompleteAtCounterButton order={order} onOpen={() => setCompleteOpen(true)} />
+              </ActionTier>
               {/* CONFIRMED→PENDING is a demotion — the server rejects it without a
                   reason, so the ONLY path is the DemoteReasonModal. A second
                   "Unconfirm" button used to submit directly (predating the
@@ -2127,6 +2138,15 @@ export default function OrderDetailPage() {
           order={order}
           open={pickupOpen}
           onClose={() => setPickupOpen(false)}
+        />
+      )}
+      {/* I-120: mounted outside the status rows, like the hand-over: completing refetches the order as DELIVERED */}
+      {access.staff && (
+        <PickupHandOverDialog
+          order={order}
+          open={completeOpen}
+          onClose={() => setCompleteOpen(false)}
+          complete
         />
       )}
       <FulfillPathMoveConfirm

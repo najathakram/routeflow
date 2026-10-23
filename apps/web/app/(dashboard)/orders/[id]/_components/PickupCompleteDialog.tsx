@@ -9,6 +9,7 @@ import {
   RECORD_ANYWAY_LABEL,
   canRecordAnyway,
   creditOverLimitSentence,
+  COUNTER_COPY,
 } from "@routeflow/types";
 import type { CounterSalePaymentMethod, PickupCompleteResponse } from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
@@ -63,6 +64,7 @@ export function PickupCompleteDialog({
   invoices,
   isWalkIn,
   handOver = false,
+  completeMode = false,
   heldKey,
   storeKey = null,
   customerName = null,
@@ -76,6 +78,8 @@ export function PickupCompleteDialog({
   isWalkIn: boolean;
   /** POS-mode order (PICKUP, not a counter sale): the confirm button reads "Hand over". Counter / portal keep "Picked up". */
   handOver?: boolean;
+  /** I-120: "Complete at counter" (any open order): its title, confirm and outcome copy; the payment step is the same. */
+  completeMode?: boolean;
   heldKey?: React.MutableRefObject<HeldPickupKey>;
   /** sessionStorage key (tenant + user + order) that keeps an UNKNOWN outcome's key across a reload. */
   storeKey?: string | null;
@@ -212,7 +216,7 @@ export function PickupCompleteDialog({
     <Modal
       open={open}
       onClose={onClose}
-      title={`${handOver ? "Hand over" : "Picked up"}${orderNumber ? ` ${orderNumber}` : ""}`}
+      title={`${completeMode ? COUNTER_COPY.completeAtCounter : handOver ? "Hand over" : "Picked up"}${orderNumber ? ` ${orderNumber}` : ""}`}
       className="max-w-md"
       footer={
         outcome ? (
@@ -270,7 +274,13 @@ export function PickupCompleteDialog({
                   loading={complete.isPending}
                   disabled={due === null}
                 >
-                  {handOver ? "Hand over" : nothingToCollect ? "Confirm picked up" : "Picked up"}
+                  {completeMode
+                    ? COUNTER_COPY.completeConfirm
+                    : handOver
+                      ? "Hand over"
+                      : nothingToCollect
+                        ? "Confirm picked up"
+                        : "Picked up"}
                 </Button>
               </>
             )}
@@ -290,9 +300,16 @@ export function PickupCompleteDialog({
               </p>
             ) : (
               <p className="text-sm font-semibold text-navy">
-                {outcome.balanceDue > 0
-                  ? `Picked up. ${money(outcome.balanceDue)} still due.`
-                  : "Picked up and paid."}
+                {completeMode
+                  ? outcome.emailed
+                    ? COUNTER_COPY.completedEmailed
+                    : COUNTER_COPY.completed
+                  : outcome.balanceDue > 0
+                    ? `Picked up. ${money(outcome.balanceDue)} still due.`
+                    : "Picked up and paid."}
+                {completeMode && outcome.balanceDue > 0
+                  ? ` ${money(outcome.balanceDue)} still due.`
+                  : ""}
               </p>
             )}
             {unrecorded && (

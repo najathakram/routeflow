@@ -5,7 +5,7 @@
  */
 import { API_ERROR_CODES, PREF, staffMay } from "@routeflow/types";
 import type { PickupCompleteRequest, PickupCompleteResponse } from "@routeflow/types";
-import { roundMoney } from "@routeflow/pricing";
+import { completeAtCounterOffered, roundMoney } from "@routeflow/pricing";
 import { fmtCurrency } from "../utils/format";
 import { duplicateRefPrompt } from "./duplicate-payment-ref";
 import { creditOverLimitSentence } from "@routeflow/types/credit-over-limit-copy";
@@ -600,4 +600,42 @@ function decidePickup(res: PickupCompleteResponse, role?: string | null): Pickup
 /** The staff "Record anyway" resend of a hand-over: the same body with `payment.recordAnyway: true` (same Idempotency-Key). */
 export function withPickupRecordAnyway(body: PickupCompleteRequest): PickupCompleteRequest {
   return body.payment ? { ...body, payment: { ...body.payment, recordAnyway: true } } : body;
+}
+
+/**
+ * I-120 PR-2 (SA-861 rules 1-3, G7; mirrors web's CompleteAtCounterButton): is "Complete at counter" shown on this order?
+ * The ONE shared rule (`completeAtCounterOffered`, @routeflow/pricing) with the session's till permission (USE_POS_MODE)
+ * and the tenant's fulfilment capability (GET /tenants/me/features). Unknown = hidden; the server refuses the rest.
+ */
+export function completeAtCounterShown(
+  order:
+    | {
+        status: string;
+        fulfillPath?: string | null;
+        counterSale?: boolean | null;
+        shippedAt?: string | null;
+      }
+    | null
+    | undefined,
+  role: string | null | undefined,
+  features:
+    { capabilities?: { fulfilment?: { methods?: string[]; counter?: string } } } | null | undefined,
+): boolean {
+  const cap = features?.capabilities?.fulfilment;
+  if (!order || !cap) return false;
+  return completeAtCounterOffered({
+    mayUseTill: canUsePosMode(role),
+    methods: cap.methods,
+    counter: cap.counter,
+    status: order.status,
+    fulfillPath: order.fulfillPath,
+    counterSale: order.counterSale,
+    shippedAt: order.shippedAt,
+  });
+}
+
+/** The hand-over sheet's words: "Complete at counter" when it was opened from that button, else the POS hand-over's. */
+export function completeAtCounterSheetCopy(complete: boolean): { title: string; action: string } {
+  const word = complete ? COUNTER_COPY.completeAtCounter : POS_COPY.handOver;
+  return { title: word, action: word };
 }
