@@ -2527,11 +2527,11 @@ export class OrdersService implements OnApplicationBootstrap {
       // write conflicts) up to 3 times with a short backoff before giving up.
       // The old single-attempt try/catch swallowed the FIRST failure behind a
       // comment claiming send()/sendEmail()'s auto-apply would catch up —
-      // that catch-up is real (R13 wires settleOrderCreditsInTx into both,
-      // on the ISSUING send only - SA-857: a re-send moves no money), which is
-      // what makes a survived final failure here safe: delivery must still never fail on
-      // a settle failure, but giving up now logs at ERROR (not warn) so an
-      // operator can find and manually settle the order.
+      // that catch-up is real only on the ISSUING send (R13, SA-857); an invoice
+      // already SENT before delivery gets NO catch-up, so the ERROR log below is
+      // then the only signal. Delivery must still never fail on a settle failure,
+      // but giving up logs at ERROR (not warn) so an operator can find and
+      // manually settle the order.
       const MAX_SETTLE_ATTEMPTS = 3;
       for (let attempt = 1; attempt <= MAX_SETTLE_ATTEMPTS; attempt++) {
         try {

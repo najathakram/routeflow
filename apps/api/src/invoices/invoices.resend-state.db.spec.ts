@@ -339,6 +339,16 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
 
   it("a Mark as Sent RE-SEND of an issued invoice runs no credit sweep (SA-857 MUST-2)", async () => {
     const id = await create();
+    // an order is linked, as in the Email-again case, so the settle assertion below can actually fail
+    const order = await prisma.order.create({
+      data: {
+        tenantId,
+        customerId,
+        orderNumber: `ORD-MS-${RUN_SUFFIX}-${id.slice(0, 6)}`,
+        status: "DELIVERED",
+      },
+    });
+    await prisma.invoice.update({ where: { id }, data: { orderId: order.id } });
     await run(() => invoicesService.send(id)); // the issue
     mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
     mockCreditNotes.settleOrderCreditsInTx.mockClear();
