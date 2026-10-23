@@ -12,7 +12,7 @@ import {
   buildEditItemFromLine,
   buildItemUpdates,
   type EditItemState,
-} from "./page";
+} from "./_components/order-line-edit";
 
 jest.mock("@/lib/api/product-units", () => ({
   useUnitsEnabled: () => true,

@@ -9,7 +9,11 @@ import * as React from "react";
 import { computeLineSubtotal } from "@routeflow/pricing";
 import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import { applyCasesPieces } from "./edit-cases-pieces";
-import { EditableLineItems, buildItemUpdates, type EditItemState } from "./page";
+import {
+  EditableLineItems,
+  buildItemUpdates,
+  type EditItemState,
+} from "./_components/order-line-edit";
 
 jest.mock("@/lib/api/product-units", () => ({
   useUnitsEnabled: () => false,

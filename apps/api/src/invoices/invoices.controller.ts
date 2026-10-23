@@ -220,10 +220,14 @@ export class InvoicesController {
   /** Send the invoice as an actual email (marks as SENT). Optional `variant`
    * (draft|final) controls which version of the PDF is attached. */
   @Post(":id/send-email")
-  sendEmail(@Param("id") id: string, @Body() body: { email?: string; variant?: string }) {
+  sendEmail(
+    @Param("id") id: string,
+    @Body() body: { email?: string; variant?: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
     const variant =
       body?.variant === "draft" || body?.variant === "final" ? body.variant : undefined;
-    return this.invoicesService.sendEmail(id, body?.email, variant);
+    return this.invoicesService.sendEmail(id, body?.email, variant, user?.sub ?? null);
   }
 
   /** Send a payment reminder email (does not change invoice status). */
@@ -305,8 +309,11 @@ export class InvoicesController {
     @Param("id") id: string,
     @Param("paymentId") paymentId: string,
     @Body() dto: UpdatePaymentDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.invoicesService.updatePayment(id, paymentId, dto);
+    return this.invoicesService.updatePayment(id, paymentId, dto, {
+      refDedupe: refDedupeFromRequest(user, dto), // row 752: the staff "record anyway" flag on an edit
+    });
   }
 
   @Post(":id/price-adjustment")
