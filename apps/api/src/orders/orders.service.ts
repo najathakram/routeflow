@@ -2864,16 +2864,13 @@ export class OrdersService implements OnApplicationBootstrap {
         .invoice.findFirst({ where: { orderId, status: { not: "VOID" } }, select: { id: true } }));
     if (judgeEdit) {
       const tenant = rGate.tenantId(this.prisma, user, order.tenantId);
-      restrictionPlan = await rGate.editPlan(
-        { restrictions: this.sellingRestrictions, prisma: this.prisma },
-        { tenant, order, user, dto, isDiffPayload },
-      );
-      // null = the tenant's owner-only switch is off for this staff edit: no judgement, no call
+      const deps = { restrictions: this.sellingRestrictions, prisma: this.prisma };
+      restrictionPlan = await rGate.editPlan(deps, { tenant, order, user, dto, isDiffPayload });
       if (restrictionPlan)
-        restrictionPlan.decision = await this.sellingRestrictions.assertLinesSellable({
-          ...restrictionPlan.params,
-          channel: restrictionChannelForPrincipal(user),
-        });
+        // null = the owner-only switch is off for this staff edit: no judgement, no call
+        restrictionPlan.decision = await this.sellingRestrictions.assertLinesSellable(
+          rGate.judgeArgs(restrictionPlan, user),
+        );
     }
 
     // SA-812a G-1: a failed customer-prices read (503) must surface BEFORE the un-tx'd invoice revert below commits.
@@ -4613,22 +4610,20 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
-    // Lane R: an at-door add / qty raise of a banned product warns (a DRIVER is refused) pre-tx; re-judged under the lock.
+    // Lane R: an at-door add / qty raise of a banned product warns the office (a DRIVER is refused) BEFORE the tx;
+    // re-judged under the row lock below (change-request-restrictions.ts).
     const tenant = rGate.tenantId(this.prisma, resolver, order.tenantId);
     // F1(i): the line is judged at the stricter of the resolver's and the REQUESTER's channel (a buyer's add
     // approved by a driver is still a buyer's add); an unknown requester is the buyer.
     const judgedAs = authorship.leastPrivilegedPrincipal(resolver, cr.requestedByRole);
     const crAuthor = authorship.lineAuthorFor(judgedAs); // SA ruling #3418: requester's (stricter)
-    const restrictionPlan = await rGate.crPlan(
-      { restrictions: this.sellingRestrictions },
-      { tenant, order, cr, user: judgedAs, ack },
-    );
-    // null = the tenant's owner-only switch is off for this staff resolver: no judgement, no call
+    const crArgs = { tenant, order, cr, user: judgedAs, ack };
+    const restrictionPlan = await rGate.crPlan({ restrictions: this.sellingRestrictions }, crArgs);
     if (restrictionPlan)
-      restrictionPlan.decision = await this.sellingRestrictions.assertLinesSellable({
-        ...restrictionPlan.params,
-        channel: restrictionChannelForPrincipal(judgedAs),
-      });
+      // null = the owner-only switch is off for this staff resolver: no judgement, no call
+      restrictionPlan.decision = await this.sellingRestrictions.assertLinesSellable(
+        rGate.judgeArgs(restrictionPlan, judgedAs),
+      );
 
     // P5-08b posture: reference reads on separate pooled connections are
     // hoisted BEFORE the interactive tx (pool-starvation guard, :1660-1672).

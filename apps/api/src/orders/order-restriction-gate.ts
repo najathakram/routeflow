@@ -8,7 +8,10 @@ import type {
   HeldLine,
   StaffWriteDecision,
 } from "../selling-restrictions/restriction-warning";
-import type { ChannelPrincipal } from "../selling-restrictions/selling-restrictions.core";
+import {
+  restrictionChannelForPrincipal,
+  type ChannelPrincipal,
+} from "../selling-restrictions/selling-restrictions.core";
 import type {
   SellableLinesArgs,
   SellableLinesParams,
@@ -126,6 +129,17 @@ export function whole(a: {
 
 export type EditPlan = OrderEditRestrictionPlan;
 export type CrPlan = ChangeRequestRestrictionPlan;
+
+/**
+ * The choke-point arguments of a built edit / change-request plan: its params, judged at `principal`'s channel. The
+ * caller awaits `assertLinesSellable` itself (the sellable-writers coverage pin reads that call at the write site).
+ */
+export function judgeArgs(
+  plan: EditPlan | CrPlan,
+  principal: ChannelPrincipal | null | undefined,
+): SellableLinesParams {
+  return { ...plan.params, channel: restrictionChannelForPrincipal(principal) };
+}
 
 /** `updateOrderItems` (non-draft): the edit's plan, built from the order read before the lock and the payload. */
 export function editPlan(
