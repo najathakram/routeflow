@@ -466,6 +466,8 @@ export function fold(events, { bugs = new Map() } = {}) {
       it.updatedAt = ts;
       const h = { ts, kind: ev.kind, actor: ev.actor };
       if (ev.kind === "status") h.status = d.status;
+      else if (ev.kind === "item.edit" && d.fields?.status !== undefined)
+        h.status = d.fields.status;
       if (ev.lane) h.lane = ev.lane;
       it.history.push(h);
       if (it.history.length > HISTORY_CAP) it.history.splice(0, it.history.length - HISTORY_CAP);

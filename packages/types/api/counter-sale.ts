@@ -100,6 +100,12 @@ export interface CounterSaleResponse {
   paymentCauseCode?: string;
   existingPayment?: DuplicatePaymentRefExisting;
   /**
+   * SA-849 (S1 S-1): the credit gate counted this sale's till tender, the tender did not record, and without it the
+   * customer is over their limit (the tenant enforces the limit). The till shows it inside the "payment not recorded"
+   * state; the sale stands, and recording the payment clears it. Omitted otherwise.
+   */
+  creditOverLimit?: { limit: number; exposure: number };
+  /**
    * The cash handed over, as stored on the order. Optional because it is OMITTED (never null) when nothing was stored
    * (card / check / on account / a sale rung before it was stored); the Today's-sales row carries `number | null`.
    */

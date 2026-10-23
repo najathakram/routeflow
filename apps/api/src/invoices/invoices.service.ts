@@ -40,6 +40,7 @@ import {
   roundMoney,
   normalizeBoxesPieces,
   remainingCapacity,
+  capacityRefusal,
   OVERPAID_EPSILON,
   isPaidAtSale,
 } from "@routeflow/pricing";
@@ -4522,27 +4523,13 @@ export class InvoicesService {
 
       const total = Number(inv.total);
       const alreadyPaid = sumConfirmed(inv.payments);
-      const remaining = remainingCapacity(total, inv.payments);
       const paymentStatus = dto.status ?? "PAID";
       const amount = roundMoney(dto.amount); // #2293: ONE rounded value — guard, write, status
-
-      if (paymentStatus === "PAID") {
-        if (remaining <= 0) {
-          // PR-2 review (routeflow-Lead, 2026-09-16): `remaining` is capacity
-          // (DRAFT+PAID+PENDING), so it can hit 0 while `alreadyPaid` (CONFIRMED
-          // only) is still below the total — the invoice isn't actually fully
-          // paid, its remaining capacity is reserved by unconfirmed payments.
-          throw new BadRequestException(
-            alreadyPaid >= total - 0.001
-              ? "Invoice is already fully paid"
-              : "Invoice's remaining balance is already reserved by unconfirmed payments",
-          );
-        }
-        if (amount > remaining + 0.001)
-          throw new BadRequestException(
-            `Payment exceeds remaining balance of ${remaining.toFixed(2)}`,
-          );
-      }
+      // Row 2299 (SA-858): EVERY capacity-consuming write is checked, a DRAFT too (it was PAID only).
+      const existing = inv.payments;
+      const status = paymentStatus;
+      const overCapacity = capacityRefusal({ total, existing, amount, status, overpay: "REFUSE" });
+      if (overCapacity) throw new BadRequestException(overCapacity.message);
 
       const paidAt = await counterPay.assertDatedOk(
         tx,
