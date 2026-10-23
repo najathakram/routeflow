@@ -4,21 +4,11 @@
  *
  *  - R1: recordPayment DRAFT on an invoice whose PAID rows cover the total is 400 FULLY_PAID, nothing written.
  *  - R2: recordPayment DRAFT above the remaining capacity is 400 EXCEEDS.
- *  - R3: an office standalone payment (not capturedExternally) with one allocation above that invoice's capacity is
- *        a 400 naming the invoice; the whole group rolls back, no advance.
- *  - R4: a bookkeeping ledger payment where a DRAFT reserves the remainder is 400 RESERVED_BY_UNCONFIRMED.
+ *  SA-864 (owner question): the office standalone and bookkeeping cases return with the owner's answer.
  *
  * SAFETY: throwaway `qa-r2299-<run>-<n>-<label>` tenants only (`assertTestTenant`); `afterAll` deletes what it made.
  */
 
-// BookkeepingService pulls ESM-only chains in (as payment-ref-dedupe.bookkeeping.spec.ts mocks them)
-jest.mock("@anthropic-ai/sdk", () => ({ __esModule: true, default: jest.fn() }));
-jest.mock("../bookkeeping/invoice.service", () => ({
-  InvoiceService: jest.fn().mockImplementation(() => ({})),
-}));
-jest.mock("../vendor-bills/vendor-bills.service", () => ({
-  VendorBillsService: jest.fn().mockImplementation(() => ({})),
-}));
 jest.mock("./invoice-pdf.service", () => ({
   InvoicePdfService: jest.fn().mockImplementation(() => ({
     getOrGenerate: jest.fn().mockResolvedValue("https://example.com/invoice.pdf"),
@@ -48,10 +38,6 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { _resetLockPoolForTests } from "../common/db-locks";
-import { BookkeepingService } from "../bookkeeping/bookkeeping.service";
-import { InvoiceService } from "../bookkeeping/invoice.service";
-import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
-import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -124,33 +110,10 @@ async function buildInvoices(prisma: PrismaService, tenantCtx: TenantContextServ
 
 const status = (e: any) => (typeof e?.getStatus === "function" ? e.getStatus() : "ok");
 
-async function buildBookkeeping(prisma: PrismaService) {
-  const module = await Test.createTestingModule({
-    providers: [
-      BookkeepingService,
-      { provide: PrismaService, useValue: prisma },
-      { provide: InvoiceService, useValue: {} },
-      { provide: StorageService, useValue: {} },
-      { provide: VendorBillsService, useValue: {} },
-      {
-        provide: SystemConfigService,
-        useValue: { get: jest.fn(), set: jest.fn(), getAll: jest.fn() },
-      },
-      { provide: PlatformConfigService, useValue: {} },
-      {
-        provide: CommissionEngineService,
-        useValue: { syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined) },
-      },
-    ],
-  }).compile();
-  return module.get(BookkeepingService);
-}
-
 describeDb("row 2299 payment capacity — real Postgres", () => {
   let tenantCtx: TenantContextService;
   let prisma: PrismaService;
   let invoices: InvoicesService;
-  let bookkeeping: BookkeepingService;
   const createdTenantIds: string[] = [];
 
   beforeAll(async () => {
@@ -159,7 +122,6 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
     prisma = new PrismaService(tenantCtx);
     await prisma.$connect();
     invoices = await buildInvoices(prisma, tenantCtx);
-    bookkeeping = await buildBookkeeping(prisma);
   });
 
   afterAll(async () => {
@@ -269,45 +231,5 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
     expect(status(err)).toBe(400);
     expect(err.message).toMatch(/^Payment exceeds remaining balance of /);
     expect(await s.count(s.invs[0].id)).toBe(1);
-  }, 60_000);
-
-  it("R3 an office standalone allocation above one invoice's capacity is 400 naming it; the whole group rolls back", async () => {
-    const s = await seed("r3");
-    await s.row(s.invs[1].id, 90, "DRAFT"); // invoice 2 has 10 of capacity left
-    const err: any = await s
-      .asTenant(() =>
-        invoices.recordStandalonePayment({
-          customerId: s.customer.id,
-          totalAmount: 80,
-          method: "CASH",
-          paidAt: "2026-10-02",
-          allocations: [
-            { invoiceId: s.invs[0].id, amount: 50 },
-            { invoiceId: s.invs[1].id, amount: 30 },
-          ],
-        } as any),
-      )
-      .catch((e) => e);
-    expect(status(err)).toBe(400);
-    expect(String(err.message)).toContain(s.invs[1].invoiceNumber);
-    expect(await s.count(s.invs[0].id)).toBe(0); // rolled back with the group
-    expect(await s.count(s.invs[1].id)).toBe(1); // only the seeded DRAFT
-    expect(await prisma.advancePayment.count({ where: { tenantId: s.tenant.id } })).toBe(0);
-  }, 60_000);
-
-  it("R4 a bookkeeping payment where a DRAFT reserves the rest is 400 RESERVED_BY_UNCONFIRMED", async () => {
-    const s = await seed("r4");
-    await s.row(s.invs[0].id, 60, "PAID");
-    await s.row(s.invs[0].id, 40, "DRAFT");
-    const err = await s
-      .asTenant(() =>
-        bookkeeping.recordPayment(s.invs[0].id, { amount: 10, method: "CASH" } as any),
-      )
-      .catch((e) => e);
-    expect(status(err)).toBe(400);
-    expect(err.message).toBe(
-      "Invoice's remaining balance is already reserved by unconfirmed payments",
-    );
-    expect(await s.count(s.invs[0].id)).toBe(2);
   }, 60_000);
 });
