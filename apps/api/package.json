@@ -169,7 +169,8 @@
       "graph-core\\.spec\\.ts$",
       "denied-identifiers\\.spec\\.ts$",
       "cleanup-imported-no-client\\.spec\\.ts$",
-      "no-hand-typed-open-invoice-statuses\\.spec\\.ts$"
+      "no-hand-typed-open-invoice-statuses\\.spec\\.ts$",
+      "no-stray-pipeline-state\\.spec\\.ts$"
     ],
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
