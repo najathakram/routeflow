@@ -4,6 +4,7 @@ import { withAfterCommit, type AfterCommit } from "../common/after-commit";
 import type { PrismaService } from "../prisma/prisma.service";
 import {
   createPaymentRefGuard,
+  groupTotalForEdit,
   normalizePaymentRef,
   paymentRefLockUnavailable,
   withPaymentRefLock,
@@ -118,23 +119,27 @@ export async function withPaymentEditRef<T>(
   const edit: PaymentEditRef = {
     async check(tx, row, customerId) {
       const key = editDedupeKey(row, dto);
-      if (editLockKey(key) !== locked) throw paymentRefLockUnavailable(); // a concurrent edit moved it
+      // A concurrent edit moved the key this edit locked: retry. A locked row that needs no check any more (a
+      // double-clicked Save whose first save landed) is no conflict (#3635 review B NIT 1).
+      if (key && editLockKey(key) !== locked) throw paymentRefLockUnavailable();
       if (!key) return null;
       // Other attempts only (SA-843 ruling 3): this payment, its own group, and the excess advance its group booked.
       const attempt = { ids: new Set<string>([row.id]) };
+      let amount = key.amount;
       if (row.paymentGroupId) {
-        const own = normalizePaymentRef(row.reference);
-        const advances: any[] = await tx.advancePayment.findMany({
-          where: { customerId, method: row.method, receivedAt: row.paidAt },
-          select: { id: true, reference: true },
-        });
-        for (const a of advances)
-          if (normalizePaymentRef(a.reference) === own) attempt.ids.add(a.id);
+        // SA-865: a grouped row is judged on the group's NEW total, as a fresh record of the group would be.
+        const group = await groupTotalForEdit(
+          tx,
+          { ...row, paymentGroupId: row.paymentGroupId, customerId },
+          toCents(key.amount),
+        );
+        for (const id of group.advanceIds) attempt.ids.add(id);
+        amount = group.cents / 100;
       }
       const guard = createPaymentRefGuard({
         method: key.method,
         reference: key.reference,
-        amount: key.amount,
+        amount,
         customerId,
         invoiceId: ids.invoiceId,
         opts: {
