@@ -19,9 +19,9 @@
 // NOT a reason to give up.
 //
 // Knobs (env): RF_HEAVY_SLOT_DIR, RF_HEAVY_SLOTS (default 1), RF_HEAVY_SLOT_MAX_WAIT_MIN (default
-// 720), RF_HEAVY_SLOT_MAX_HOLD_MIN (default 180: ALSO enforced by the holder itself, W-759: past the cap it ends its own
-// job's process tree and exits 75), RF_HEAVY_SLOT_IDLE_WARN_MIN (default 20: warn-only 'holder idle' flag when a holder's
-// job has printed nothing for that long; only visible when stdout is not a TTY), RF_HEAVY_SLOT=off (owner/lead escape hatch, loud), CI (no slot, silent). Test-only timing
+// 720), RF_HEAVY_SLOT_MAX_HOLD_MIN (default 90; the HOLDER enforces it too, W-759: at the cap it ends its own job's
+// process tree and releases the slot with exit 76 and `capped: true` in history; waiters give up only HOLD_GRACE after the cap, so a
+// queued job gets the slot the holder just freed), RF_HEAVY_SLOT=off (owner/lead escape hatch, loud), CI (no slot, silent). Test-only timing
 // knobs: RF_HEAVY_SLOT_POLL_MS, RF_HEAVY_SLOT_HEARTBEAT_MS.
 //
 // Node's spawnSync blocks the event loop, so the heartbeat could never fire: callers must run the
@@ -36,8 +36,10 @@ export const DEFAULT_SLOTS = 1;
 export const HEARTBEAT_MS = 30_000;
 export const STALE_MS = 120_000;
 export const DEFAULT_MAX_WAIT_MIN = 720;
-export const DEFAULT_MAX_HOLD_MIN = 180;
-export const DEFAULT_IDLE_WARN_MIN = 20;
+export const DEFAULT_MAX_HOLD_MIN = 90;
+export const HOLD_GRACE_MS = 5 * 60_000; // waiters give up at cap + this, never at the cap itself
+export const HOLD_KILL_MS = 15_000; // after the cap's SIGTERM the holder releases the slot regardless of fn
+export const HOLD_CAP_EXIT_CODE = 76; // the job was ended at the hold cap
 export const POLL_MS = 1_000;
 export const WAIT_LOG_MS = 60_000;
 export const HISTORY_MAX_LINES = 500;
@@ -66,26 +68,9 @@ export function parseMaxWaitMs(raw) {
   return parseMinutesMs(raw, DEFAULT_MAX_WAIT_MIN);
 }
 
-/** RF_HEAVY_SLOT_MAX_HOLD_MIN (minutes, fractions allowed) -> ms; unset/invalid -> 180 min. */
+/** RF_HEAVY_SLOT_MAX_HOLD_MIN (minutes, fractions allowed) -> ms; unset/invalid -> 90 min. */
 export function parseMaxHoldMs(raw) {
   return parseMinutesMs(raw, DEFAULT_MAX_HOLD_MIN);
-}
-
-/** RF_HEAVY_SLOT_IDLE_WARN_MIN (minutes, > 0) -> ms; unset/invalid/zero -> 20 min. */
-export function parseIdleWarnMs(raw) {
-  const m = Number(raw);
-  const ok = typeof raw === "string" && raw.trim() !== "" && Number.isFinite(m) && m > 0;
-  return (ok ? m : DEFAULT_IDLE_WARN_MIN) * 60_000;
-}
-
-/**
- * A holder whose job has printed nothing for `idleMs` (measured from its last output, else from its start). Warn-only: a
- * quiet phase (a docker layer, a long compile) is legitimate; the flag is what lets a lane notice a hung holder before the hold cap.
- */
-export function holderIdle(holder, now, idleMs) {
-  if (!holder) return false;
-  const last = holder.lastOutputAt ?? holder.startedAt;
-  return typeof last === "number" && now - last > idleMs;
 }
 
 /** A (live, heartbeating) holder that has held its slot longer than the hold cap. */
@@ -302,22 +287,13 @@ export function nextGrant({ order, myName, freeSlots }) {
   };
 }
 
-export function formatWaitLine({
-  position,
-  total,
-  holder,
-  now,
-  idleWarnMs = parseIdleWarnMs(undefined),
-}) {
+export function formatWaitLine({ position, total, holder, now }) {
   const held = holder
     ? `held by ${holder.label} on ${holder.branch || "?"}, pid ${holder.pid}, ${(
         Math.max(0, now - (holder.startedAt ?? now)) / 60_000
       ).toFixed(1)} min`
     : "held by (none yet)";
-  const idle = holderIdle(holder, now, idleWarnMs)
-    ? ` — HOLDER IDLE (no output for over ${Math.round(idleWarnMs / 60_000)} min; may be hung)`
-    : "";
-  return `heavy-slot: waiting (position ${position} of ${total}) — ${held}${idle}`;
+  return `heavy-slot: waiting (position ${position} of ${total}) — ${held}`;
 }
 
 /** Keep the last `max` non-empty lines of a history file's text. */
@@ -327,7 +303,7 @@ export function trimHistoryText(text, max = HISTORY_MAX_LINES) {
 }
 
 /** One history record (ISO times; waitSec/heldSec to the millisecond). */
-export function historyRecord(lease, endedAt, exit) {
+export function historyRecord(lease, endedAt, exit, extra = {}) {
   return {
     label: lease.label,
     branch: lease.branch,
@@ -339,6 +315,7 @@ export function historyRecord(lease, endedAt, exit) {
     waitSec: Math.round(lease.startedAt - lease.queuedAt) / 1000,
     heldSec: Math.round(endedAt - lease.startedAt) / 1000,
     exit,
+    ...extra,
   };
 }
 
@@ -479,9 +456,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const activeChildren = new Set();
 let interruptedBy = null;
 let holdExpired = false; // W-759: the holder's cap fired; no further child may start under this lease
-let lastOutputAt = 0; // last time a guarded child printed (stdout/stderr piped through when not a TTY)
 
 /** Awaited async spawn with the heartbeat free to run. Resolves `{ status, signal, error }`. */
+export function activeChildCount() {
+  return activeChildren.size;
+}
+
 export function spawnAsync(cmd, args = [], options = {}) {
   return new Promise((resolve) => {
     if (interruptedBy) {
@@ -489,28 +469,12 @@ export function spawnAsync(cmd, args = [], options = {}) {
       return;
     }
     if (holdExpired) {
-      resolve({ status: TIMEOUT_EXIT_CODE, signal: null });
+      resolve({ status: HOLD_CAP_EXIT_CODE, signal: null });
       return;
     }
-    // Not a TTY (agents, redirected logs): pipe stdout/stderr THROUGH so the lease can see activity. A TTY keeps `inherit`
-    // (a human is watching, and colour/progress must survive); stdin is always inherited.
-    const piped = !options.stdio && !process.stdout.isTTY;
     let child;
     try {
-      child = spawn(cmd, args, {
-        stdio: piped ? ["inherit", "pipe", "pipe"] : "inherit",
-        ...options,
-      });
-      if (piped) {
-        child.stdout?.on("data", (d) => {
-          lastOutputAt = Date.now();
-          process.stdout.write(d);
-        });
-        child.stderr?.on("data", (d) => {
-          lastOutputAt = Date.now();
-          process.stderr.write(d);
-        });
-      }
+      child = spawn(cmd, args, { stdio: "inherit", ...options });
     } catch (error) {
       resolve({ status: null, signal: null, error });
       return;
@@ -523,6 +487,9 @@ export function spawnAsync(cmd, args = [], options = {}) {
       activeChildren.delete(child);
       resolve(r);
     };
+    // 'exit' (not only 'close'): 'close' waits for every holder of the child's stdio, and an exited child's PID may be reused;
+    // an exited child must never be a target of the cap's kill (SA review of #3688).
+    child.on("exit", () => activeChildren.delete(child));
     child.on("error", (error) => finish({ status: null, signal: null, error }));
     child.on("close", (code, signal) => finish({ status: code, signal }));
   });
@@ -530,6 +497,7 @@ export function spawnAsync(cmd, args = [], options = {}) {
 
 function forwardSignal(sig) {
   for (const child of activeChildren) {
+    if (child.exitCode !== null || child.signalCode !== null) continue; // already gone: its PID may belong to someone else now
     try {
       if (process.platform === "win32" && child.pid) {
         // child.kill() only ends the shell on Windows; take the child's own tree down.
@@ -564,7 +532,8 @@ function resolveConfig(opts, env) {
     slots: opts.slots ?? parseSlots(env.RF_HEAVY_SLOTS),
     maxWaitMs: opts.maxWaitMs ?? parseMaxWaitMs(env.RF_HEAVY_SLOT_MAX_WAIT_MIN),
     maxHoldMs: opts.maxHoldMs ?? parseMaxHoldMs(env.RF_HEAVY_SLOT_MAX_HOLD_MIN),
-    idleWarnMs: opts.idleWarnMs ?? parseIdleWarnMs(env.RF_HEAVY_SLOT_IDLE_WARN_MIN),
+    holdGraceMs: opts.holdGraceMs ?? HOLD_GRACE_MS,
+    holdKillMs: opts.holdKillMs ?? HOLD_KILL_MS,
     pollMs: opts.pollMs ?? parseMs(env.RF_HEAVY_SLOT_POLL_MS, POLL_MS),
     heartbeatMs: opts.heartbeatMs ?? parseMs(env.RF_HEAVY_SLOT_HEARTBEAT_MS, HEARTBEAT_MS),
     waitLogMs: opts.waitLogMs ?? WAIT_LOG_MS,
@@ -671,14 +640,14 @@ async function acquire(cfg, state) {
       if (
         free < 0 &&
         snap.holders.length &&
-        snap.holders.every((h) => holderOverCap(h.entry, now, cfg.maxHoldMs))
+        snap.holders.every((h) => holderOverCap(h.entry, now, cfg.maxHoldMs + cfg.holdGraceMs))
       ) {
         const holder = snap.holders[0].entry;
         throw new HeavySlotTimeout(
           `heavy-slot: gave up waiting for a slot (position ${g.position} of ${g.total}); ` +
             `held by ${describeHolder(holder)} for ${((now - holder.startedAt) / 60_000).toFixed(1)} min, ` +
             `over the ${(cfg.maxHoldMs / 60_000).toFixed(2)} min hold cap (RF_HEAVY_SLOT_MAX_HOLD_MIN) ` +
-            `while still heartbeating (wedged but alive?). Nothing was run. ` +
+            `and its ${(cfg.holdGraceMs / 60_000).toFixed(2)} min grace, while still heartbeating (wedged but alive?). Nothing was run. ` +
             `Check \`node scripts/heavy-slot.mjs status\`, then retry.`,
           holder,
         );
@@ -699,7 +668,6 @@ async function acquire(cfg, state) {
             total: g.total,
             holder: snap.holders[0]?.entry,
             now,
-            idleWarnMs: cfg.idleWarnMs,
           }),
         );
         lastLog = now;
@@ -722,11 +690,7 @@ function makeLease(cfg, lock, index) {
     const cur = readEntry(file);
     if (cur && !cur.unreadable && cur.token === lock.token) {
       try {
-        writeJson(file, {
-          ...lock,
-          heartbeatAt: cfg.now(),
-          ...(lastOutputAt > 0 ? { lastOutputAt } : {}),
-        });
+        writeJson(file, { ...lock, heartbeatAt: cfg.now() });
       } catch {
         /* next beat */
       }
@@ -740,7 +704,7 @@ function makeLease(cfg, lock, index) {
   return {
     token: lock.token,
     lock,
-    release(exit = 0) {
+    release(exit = 0, extra = {}) {
       if (released) return;
       released = true;
       clearInterval(beat);
@@ -753,7 +717,7 @@ function makeLease(cfg, lock, index) {
           /* gone */
         }
       }
-      appendHistory(cfg.dir, historyRecord(lock, endedAt, exit));
+      appendHistory(cfg.dir, historyRecord(lock, endedAt, exit, extra));
     },
   };
 }
@@ -812,29 +776,49 @@ export async function withHeavySlot(opts, fn) {
     lease = await acquire(cfg, state);
     process.env.RF_HEAVY_SLOT_TOKEN = lease.token;
     holdExpired = false;
-    lastOutputAt = 0;
     // W-759: the holder enforces its OWN cap. A job that hangs while this process still heartbeats would otherwise stall every
-    // waiter until they give up; past the cap the holder ends its own guarded children (their process tree only) and exits 75.
+    // waiter. At the cap the holder ends its own guarded children (their process tree only); if fn still has not returned
+    // HOLD_KILL_MS later, the slot is released anyway and fn's late result is ignored.
+    // The timers are NOT unref'd: while armed they must keep the process alive, or a job hung on a bare promise would end the
+    // process with the slot never released by this path. They are cleared on release.
+    let capped = false;
+    let hardTimer = null;
+    let hardResolve = () => {};
+    const hard = new Promise((resolve) => {
+      hardResolve = resolve;
+    });
     const capTimer = setTimeout(() => {
+      capped = true;
       holdExpired = true;
       cfg.log(
         `heavy-slot: WARNING "${cfg.label}" held the slot past the ${(cfg.maxHoldMs / 60_000).toFixed(2)} min cap ` +
           "(RF_HEAVY_SLOT_MAX_HOLD_MIN); ending its job and releasing the slot",
       );
       forwardSignal("SIGTERM");
+      hardTimer = setTimeout(() => {
+        forwardSignal("SIGKILL");
+        hardResolve(HOLD_CAP_EXIT_CODE);
+      }, cfg.holdKillMs);
     }, cfg.maxHoldMs);
-    capTimer.unref?.();
+    const stopTimers = () => {
+      clearTimeout(capTimer);
+      if (hardTimer) clearTimeout(hardTimer);
+    };
     let result;
     try {
-      result = await fn({ token: lease.token, held: true });
+      result = await Promise.race([fn({ token: lease.token, held: true }), hard]);
     } catch (e) {
-      clearTimeout(capTimer);
-      lease.release(1);
+      stopTimers();
+      holdExpired = false;
+      lease.release(capped ? HOLD_CAP_EXIT_CODE : 1, capped ? { capped: true } : {});
       throw e;
     }
-    clearTimeout(capTimer);
-    if (holdExpired) result = TIMEOUT_EXIT_CODE;
+    stopTimers();
     holdExpired = false;
+    if (capped) {
+      lease.release(HOLD_CAP_EXIT_CODE, { capped: true });
+      return HOLD_CAP_EXIT_CODE;
+    }
     lease.release(typeof result === "number" ? result : 0);
     return result;
   } finally {
@@ -860,7 +844,6 @@ export function formatStatus(
     now = Date.now(),
     hostname = os.hostname(),
     maxHoldMs = parseMaxHoldMs(process.env.RF_HEAVY_SLOT_MAX_HOLD_MIN),
-    idleWarnMs = parseIdleWarnMs(process.env.RF_HEAVY_SLOT_IDLE_WARN_MIN),
   } = {},
 ) {
   const st = readState(dir, { now, hostname }, false);
@@ -872,10 +855,7 @@ export function formatStatus(
       `holder: ${e.label} on ${e.branch || "?"} — pid ${e.pid}, ${min(now - e.startedAt)} min, ` +
         `heartbeat ${Math.round((now - e.heartbeatAt) / 1000)}s ago (${h.name})` +
         (holderOverCap(e, now, maxHoldMs)
-          ? ` \u2014 OVER HOLD CAP (> ${(maxHoldMs / 60_000).toFixed(0)} min; waiters will give up)`
-          : "") +
-        (holderIdle(e, now, idleWarnMs)
-          ? ` \u2014 HOLDER IDLE (no output for over ${Math.round(idleWarnMs / 60_000)} min; warn only)`
+          ? ` \u2014 OVER HOLD CAP (> ${(maxHoldMs / 60_000).toFixed(0)} min; the holder ends its job at the cap, waiters give up ${HOLD_GRACE_MS / 60_000} min later)`
           : ""),
     );
   }
