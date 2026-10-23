@@ -161,6 +161,17 @@ export class PickupCompleteService {
       }
       await this.assertNoOpenCredit(order.customerId);
     }
+    // SA-905 MUST 1: the delivery credit gate the DELIVERED step runs (B585, netted), judged NOW through the same ONE entry,
+    // read-only, so a refusal writes nothing (no claim, no switch, no silent CONFIRMED). The DELIVERED step's own gate stays
+    // the authority. Residual (documented): a limit or exposure moving between here and DELIVERED leaves a switched order
+    // that is not yet confirmed to the customer. OUT_FOR_DELIVERY was gated on its way out (changeStatus' alreadyOut).
+    if (!alreadyPickedUp && (order.status === "PENDING" || order.status === "CONFIRMED")) {
+      const creditPaidNow = await this.tenderCreditPaidNow(sent);
+      if (order.customerId) {
+        const at = { id: order.id, customerId: order.customerId, total: order.total };
+        await this.orders.assertDeliveryCreditGate(at, user, { creditPaidNow });
+      }
+    }
     try {
       await this.claimHandOver(id, _idempotencyKey, sent, user);
     } catch (e) {
@@ -358,6 +369,28 @@ export class PickupCompleteService {
     user: JwtPayload,
   ): Promise<boolean> {
     if (walkIn || planError || invoices.length === 0) return false;
+    // SA-905 MUST 2 (b): read -> send -> write under the per-order counter-tender lock (the claim's family, waiting), so a
+    // concurrent call (a retry while the first is still sending, a double submit) finds the flag and sends nothing. A lock
+    // that is not taken sends nothing now (logged); the retry with the same key sends it.
+    try {
+      const locked = await withAdvisoryLock(
+        { family: "counter-tender", key: orderId, mode: "wait" },
+        () => this.sendCompletionOnce(orderId, invoices, user),
+      );
+      return locked.acquired ? locked.value : false;
+    } catch (e) {
+      this.logger.warn(
+        `pickup complete ${orderId}: completion email lock not taken (${(e as Error)?.message ?? e})`,
+      );
+      return false;
+    }
+  }
+
+  private async sendCompletionOnce(
+    orderId: string,
+    invoices: InvoiceRow[],
+    user: JwtPayload,
+  ): Promise<boolean> {
     const db = this.prisma.forTenant();
     const claim = await db.auditLog.findFirst({
       where: {
@@ -457,9 +490,10 @@ export class PickupCompleteService {
               message: "Already picked up. Record any payment on the invoice.",
             });
           }
+          // SA-905 MUST 2 (a): the replacement keeps the completion's fields (completionEmailedAt): never a second email.
           await db.auditLog.update({
             where: { id: row.id },
-            data: { meta: { idempotencyKey: key, bodyHash } },
+            data: { meta: { ...meta, idempotencyKey: key, bodyHash } },
           });
           return;
         }

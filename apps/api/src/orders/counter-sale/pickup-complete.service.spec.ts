@@ -187,7 +187,12 @@ describe("PickupCompleteService.complete", () => {
         PickupCompleteService,
         {
           provide: OrdersService,
-          useValue: { changeStatus, decrementStockForSale, updateFulfillPath },
+          useValue: {
+            changeStatus,
+            decrementStockForSale,
+            updateFulfillPath,
+            assertDeliveryCreditGate: jest.fn(async () => undefined), // SA-905: the pre-judge
+          },
         },
         { provide: InvoicesService, useValue: { send, recordPayment } },
         { provide: PrismaService, useValue: prisma },
@@ -660,15 +665,16 @@ describe("PickupCompleteService.complete", () => {
   describe("the counter-tender advisory lock", () => {
     it("the payment runs under the shared counter-tender lock keyed on the order, in wait mode", async () => {
       await run();
-      // the claim section, then the tender, both under the per-order lock (never nested)
+      // the claim section, then the tender, then the completion email (SA-905), each under the per-order lock (never nested)
       expect(mockLockCalls).toEqual([
+        { family: "counter-tender", key: "ord-1", mode: "wait" },
         { family: "counter-tender", key: "ord-1", mode: "wait" },
         { family: "counter-tender", key: "ord-1", mode: "wait" },
       ]);
     });
     it("ON_ACCOUNT takes no money and no lock", async () => {
       await run({ payment: { method: "ON_ACCOUNT" } });
-      expect(mockLockCalls).toHaveLength(1); // the claim only: no tender lock
+      expect(mockLockCalls).toHaveLength(2); // the claim and the completion email (SA-905): no tender lock
     });
     it.each([
       ["a lock timeout", () => new LockTimeoutError("counter-tender", "ord-1", 20000)],
