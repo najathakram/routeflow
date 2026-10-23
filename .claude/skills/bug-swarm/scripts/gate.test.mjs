@@ -4,9 +4,10 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import {
+  holdPidFile,
   beginJson,
   changedSince,
   execStep,
@@ -18,6 +19,7 @@ import {
 } from "./gate.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const norm = (p) => path.normalize(p);
 const opts = { root: "/r", base: "abc123", exists: () => true, hasLint: () => true };
 const names = (steps) => steps.map((s) => s.name);
 const step = (steps, name) => steps.find((s) => s.name === name);
@@ -77,11 +79,11 @@ test("lint is npm run lint -w <ws> for every touched workspace with a lint scrip
     "-w",
     "packages/ui",
   ]);
-  assert.equal(step(steps, "lint:apps/api").cwd, path.join("/r"));
+  assert.equal(norm(step(steps, "lint:apps/api").cwd), norm("/r"));
   const none = planGate({ changedFiles: ["packages/nolint/a.ts"], ...opts, hasLint: () => false });
   assert.ok(!names(none).some((n) => n.startsWith("lint:")));
   const jest = step(steps, "jest:apps/api");
-  assert.equal(jest.cwd, path.join("/r/apps/api"));
+  assert.equal(norm(jest.cwd), norm("/r/apps/api"));
   assert.ok(jest.cmd.includes("--findRelatedTests"));
   assert.ok(jest.cmd.includes("src/orders/a.service.ts"));
   assert.deepEqual(step(steps, "tsc:apps/api").cmd, [
@@ -100,7 +102,7 @@ test("packages/types or packages/pricing change adds consumer type checks and en
       assert.deepEqual(step(steps, `tsc:${ws}`).cmd, ["npm", "run", "check-types", "-w", ws]);
     }
     const ep = step(steps, "enum-parity");
-    assert.equal(ep.cwd, path.join("/r/apps/api"));
+    assert.equal(norm(ep.cwd), norm("/r/apps/api"));
     assert.deepEqual(ep.cmd, ["npx", "jest", "src/common/enum-parity.spec.ts"]);
   }
   const plain = planGate({ changedFiles: ["packages/ui/a.tsx"], ...opts });
@@ -234,8 +236,8 @@ test("web and package workspaces use tsc --noEmit in their own directory", () =>
     ...opts,
   });
   assert.deepEqual(step(steps, "tsc:apps/web").cmd, ["npx", "tsc", "--noEmit"]);
-  assert.deepEqual(step(steps, "tsc:apps/web").cwd, path.join("/r/apps/web"));
-  assert.equal(step(steps, "tsc:packages/pricing").cwd, path.join("/r/packages/pricing"));
+  assert.equal(norm(step(steps, "tsc:apps/web").cwd), norm("/r/apps/web"));
+  assert.equal(norm(step(steps, "tsc:packages/pricing").cwd), norm("/r/packages/pricing"));
 });
 
 test("fixed steps: packages-build, signature-scan, commitlint on the merge-base, size-ratchet", () => {
@@ -253,7 +255,7 @@ test("fixed steps: packages-build, signature-scan, commitlint on the merge-base,
   ]);
   assert.deepEqual(step(steps, "commitlint").cmd.slice(-4), ["--from", "abc123", "--to", "HEAD"]);
   const sr = step(steps, "size-ratchet");
-  assert.equal(sr.cwd, path.join("/r/apps/api"));
+  assert.equal(norm(sr.cwd), norm("/r/apps/api"));
   assert.deepEqual(sr.cmd, ["npx", "jest", "-c", "jest.repo-truth.config.js", "size-ratchet"]);
 });
 
@@ -373,4 +375,38 @@ test("clean-tree is the first step and fails on a dirty tracked file, passes whe
   writeFileSync(path.join(dir, "gate.json"), "{}");
   assert.equal(run().status, 1);
   assert.equal(run(["gate.json"]).status, 0);
+});
+
+test("clean-tree fails on a new untracked file inside a new directory", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "gate-untracked-"));
+  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8" });
+  sh("init", "-q");
+  sh("config", "user.email", "t@t");
+  sh("config", "user.name", "t");
+  writeFileSync(path.join(dir, "a.txt"), "1");
+  sh("add", ".");
+  sh("commit", "-qm", "base");
+  const st = planGate({ changedFiles: [], ...opts, root: dir })[0];
+  const run = () => spawnSync(st.cmd[0], st.cmd.slice(1), { cwd: st.cwd, encoding: "utf8" });
+  assert.equal(run().status, 0);
+  mkdirSync(path.join(dir, "newdir", "deep"), { recursive: true });
+  writeFileSync(path.join(dir, "newdir", "deep", "b.ts"), "x");
+  const bad = run();
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout + bad.stderr, /b\.ts/);
+});
+
+test("holdPidFile writes the pid and removes the file on exit and on signals", () => {
+  const f = path.join(mkdtempSync(path.join(tmpdir(), "gate-pid-")), "g.pid");
+  const handlers = {};
+  const exits = [];
+  const proc = { pid: 4242, on: (e, fn) => (handlers[e] = fn), exit: (c) => exits.push(c) };
+  holdPidFile(f, proc);
+  assert.equal(readFileSync(f, "utf8").trim(), "4242");
+  handlers.exit();
+  assert.equal(existsSync(f), false);
+  writeFileSync(f, "4242");
+  handlers.SIGTERM();
+  assert.equal(existsSync(f), false);
+  assert.deepEqual(exits, [143]);
 });
