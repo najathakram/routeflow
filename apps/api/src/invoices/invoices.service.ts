@@ -124,6 +124,7 @@ import type { InvoiceKpiSummary } from "@routeflow/types";
 import { computeInvoiceKpiSummary } from "./invoice-kpi-summary";
 import { CHECK_TRANSITIONS } from "../common/check-transitions";
 import { invoicePaymentKey, keyedPayment, standalonePaymentKey } from "./payment-idempotency";
+import { withPaymentEditRef, type RefOpts } from "./payment-edit-ref";
 import {
   RecordInvoicePaymentDto,
   type RecordPaymentOpts,
@@ -4930,7 +4931,7 @@ export class InvoicesService {
     return { tenantShort, start: counter.next - count };
   }
 
-  async updatePayment(invoiceId: string, paymentId: string, dto: UpdatePaymentDto) {
+  async updatePayment(invoiceId: string, paymentId: string, dto: UpdatePaymentDto, opts?: RefOpts) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     if ((dto.method as any) === "CREDIT_NOTE" || (dto.method as any) === "ADVANCE") {
       throw new BadRequestException(
@@ -4938,7 +4939,8 @@ export class InvoicesService {
       );
     }
     const till = await counterPay.scope(this.prisma, invoiceId); // SA-750r3: counter sales only
-    return withAfterCommit(this.prisma, async (tx, after) => {
+    const ids = { invoiceId, paymentId }; // row 752 (SA-843): the payment-ref lock on the NEW key, then the tx
+    return withPaymentEditRef(this.prisma, ids, dto, opts, async (tx, after, edit) => {
       // PR-2 (B1, m3): row-lock the invoice before reading its payments, like recordPayment, so two
       // concurrent edits cannot jointly overshoot the total. SA-750r3: a counter sale's shared close lock comes first.
       await counterPay.lock(tx, till);
@@ -5002,6 +5004,7 @@ export class InvoicesService {
         throw new BadRequestException(`Payment amount exceeds remaining balance`);
       }
 
+      const guard = await edit.check(tx, payment, inv.customerId); // a NEW dedupe identity only
       await tx.invoicePayment.update({
         where: { id: paymentId },
         data: {
@@ -5018,6 +5021,7 @@ export class InvoicesService {
           status: newPaymentStatus,
         },
       });
+      await guard?.recorded(tx, [paymentId], invoiceId);
 
       const newPaid = othersTotal + effectiveAmount;
       const newStatus = statusFromPayments(newPaid, total, inv.dueDate, inv.status, tz, "NOT_PAID");

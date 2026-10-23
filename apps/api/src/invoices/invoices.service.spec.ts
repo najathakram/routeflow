@@ -17,6 +17,8 @@ jest.mock("../storage/compress.util", () => ({
   compressDocument: jest.fn(),
 }));
 
+// Row 752: a re-referenced edit takes the payment-ref lock; no DB here (real lock: payment-edit-ref.db.spec.ts R7)
+jest.mock("../common/db-locks", () => require("../common/testing/pass-through-locks").locks());
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { InvoicesService, addCalendarDays } from "./invoices.service";
@@ -6381,8 +6383,9 @@ describe("InvoicesService", () => {
           const sql = (tx.$executeRaw.mock.calls[0][0] as any).join("?");
           expect(sql).toContain('"Invoice"');
           expect(sql).toContain("FOR UPDATE");
+          // Row 752 (SA-843 ruling 5): call [0] is the unlocked key pre-read; the LOCKED read is the last call
           expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
-            prisma.invoice.findUnique.mock.invocationCallOrder[0],
+            prisma.invoice.findUnique.mock.invocationCallOrder[1],
           );
         });
       });

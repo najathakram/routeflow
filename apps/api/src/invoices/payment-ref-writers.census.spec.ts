@@ -128,6 +128,7 @@ describe("row 498: the InvoicePayment writer census", () => {
     );
     expect(callers.map((f) => rel(f)).sort()).toEqual([
       "bookkeeping/bookkeeping.service.ts",
+      "invoices/payment-edit-ref.ts",
       "invoices/payment-idempotency.ts",
     ]);
     // M2: the files whose inTx / claim hooks run UNDER the lock are scanned too (they must never take the merge lock).
@@ -142,6 +143,60 @@ describe("row 498: the InvoicePayment writer census", () => {
         takesMergeLock: false,
       });
     }
+  });
+});
+
+/**
+ * Row 752 / SA-843 ruling 7 (OP-7): every EDIT of an InvoicePayment row is listed with a kind per site. Only
+ * updatePayment can change the method, reference or amount of a typed-reference row or move a row INTO the dedupe
+ * set, and it runs the ONE predicate (GUARDED). A new `invoicePayment.update` / `updateMany` anywhere in
+ * apps/api/src that is not listed here FAILS the build: add it with its kind, or route it through the guard.
+ */
+type EditKind = "GUARDED" | "SYSTEM_METHOD" | "TO_VOID" | "NO_KEY_FIELD";
+const EDITS: Record<string, Array<{ kind: EditKind; why: string }>> = {
+  "invoices/invoices.service.ts": [
+    {
+      kind: "GUARDED",
+      why: "updatePayment: withPaymentEditRef (payment-edit-ref.ts) runs createPaymentRefGuard + withPaymentRefLock when the edit gives the row a new dedupe identity.",
+    },
+    { kind: "NO_KEY_FIELD", why: "setCheckStatus: check lifecycle dates and status only." },
+    { kind: "TO_VOID", why: "a bounced check's payment moves OUT of the set (to VOID)." },
+  ],
+  "credit-notes/credit-notes.service.ts": [
+    { kind: "SYSTEM_METHOD", why: "shrinks a CREDIT_NOTE row (system method, system reference)." },
+    { kind: "SYSTEM_METHOD", why: "shrinks a CREDIT_NOTE row (system method, system reference)." },
+  ],
+  "invoices/payment-void-tx.ts": [
+    { kind: "TO_VOID", why: "voidPayment: moves the row OUT of the set." },
+  ],
+  "invoices/payment-image.ts": [
+    { kind: "NO_KEY_FIELD", why: "attach a receipt image to the group (image fields only)." },
+    { kind: "NO_KEY_FIELD", why: "attach a receipt image to one row (image fields only)." },
+    { kind: "NO_KEY_FIELD", why: "clear the group's receipt image (image fields only)." },
+    { kind: "NO_KEY_FIELD", why: "clear one row's receipt image (image fields only)." },
+  ],
+};
+const EDIT_RE = /invoicePayment\s*\.\s*update(?:Many)?\(/g;
+
+describe("row 752: the InvoicePayment EDIT census (SA-843)", () => {
+  it("lists every InvoicePayment edit in apps/api/src, with a kind per site (a new edit writer fails here)", () => {
+    const actual: Record<string, number> = {};
+    for (const f of walk(SRC)) {
+      const n = (fs.readFileSync(f, "utf8").match(EDIT_RE) ?? []).length;
+      if (n) actual[rel(f)] = n;
+    }
+    const expected = Object.fromEntries(Object.entries(EDITS).map(([k, v]) => [k, v.length]));
+    expect(Object.fromEntries(Object.entries(actual).sort())).toEqual(
+      Object.fromEntries(Object.entries(expected).sort()),
+    );
+  });
+
+  it("the GUARDED edit reaches the ONE predicate and its lock", () => {
+    const edit = read("invoices/payment-edit-ref.ts");
+    expect(edit).toContain('from "./payment-ref-dedupe"');
+    expect(edit).toContain("createPaymentRefGuard");
+    expect(edit).toContain("withPaymentRefLock");
+    expect(read("invoices/invoices.service.ts")).toMatch(/withPaymentEditRef\(/);
   });
 });
 
