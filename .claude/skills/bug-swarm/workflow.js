@@ -42,6 +42,9 @@ const REQUESTED = Array.isArray(args.rows) ? args.rows.map(String) : [];
 const SCRIPTS = args.scriptsDir || `${R}/.claude/skills/bug-swarm/scripts`;
 const AVOID = Array.isArray(args.avoidFiles) ? args.avoidFiles : [];
 const MAX = args.maxClusters ?? 4;
+const SPACE = args.idSpace;
+const REGISTER =
+  args.registerPath || "$HOME/.routeflow/ops/routeflow-specs/register/WORK-REGISTER.md";
 const avoidFlags = AVOID.map((f) => ` --avoid "${f}"`).join("");
 
 const RULES = `Hard rules: never push, merge, stash, amend, rebase, flip repo visibility, run railway or touch a live tenant. Use the Edit tool for file edits (never sed -i). Chain shell steps with && and quote every path (paths like (dashboard) break unquoted). Read-only git is fine; all writes stay inside your own worktree. Do not run captures (screenshots); the orchestrator decides those.`;
@@ -54,6 +57,7 @@ const BUG_SCHEMA = {
   properties: {
     row: { type: "string" },
     sub: { type: "string" },
+    resolvedTitle: { type: "string" },
     risk: { type: "string", enum: ["LOW", "HIGH"] },
     riskReason: { type: "string" },
     status: { type: "string", enum: ["live", "fixed-on-master", "unclear"] },
@@ -62,11 +66,15 @@ const BUG_SCHEMA = {
     ui: { type: "boolean" },
     repro: { type: "string" },
   },
-  required: ["row", "risk", "status", "files", "needsDb", "ui"],
+  required: ["row", "resolvedTitle", "risk", "status", "files", "needsDb", "ui"],
 };
 const MANIFEST_SCHEMA = {
   type: "object",
-  properties: { run: { type: "string" }, bugs: { type: "array", items: BUG_SCHEMA } },
+  properties: {
+    run: { type: "string" },
+    bugs: { type: "array", items: BUG_SCHEMA },
+    unresolved: { type: "array", items: { type: "string" } },
+  },
   required: ["run", "bugs"],
 };
 const ROWREF = {
@@ -195,6 +203,19 @@ const settleGate = async (c, wt, head, round) => {
 // Green only when the gate ran on the commit the builder reported and says it finished ok.
 const gateGreen = (g, head) => !!g && g.ok === true && !g.running && !!head && g.head === head;
 
+// Why unaccounted ids are unaccounted, and the titles the ids resolved to (run 3 fixed the wrong bug
+// because Triage resolved W- ids in the wrong id space).
+const WHY = new Map();
+const TITLES = new Map();
+const idsReport = (unaccounted) =>
+  REQUESTED.map((id) => {
+    const title = TITLES.get(id) || null;
+    if (unaccounted.includes(id)) {
+      return { id, resolvedTitle: title, unaccounted: true, reason: WHY.get(id) || "in no bucket" };
+    }
+    return { id, resolvedTitle: title, unaccounted: false };
+  });
+
 const report = (extra) => {
   phase("Report");
   const r = {
@@ -206,6 +227,9 @@ const report = (extra) => {
     overCap: false,
     ...extra,
   };
+  r.ids = idsReport(r.unaccounted);
+  for (const i of r.ids)
+    log(`${i.id}: ${i.unaccounted ? `UNACCOUNTED (${i.reason})` : i.resolvedTitle}`);
   log(`excluded: ${r.excluded.length}`);
   log(`parked: ${r.parked.length}`);
   log(`unaccounted: ${r.unaccounted.length}${r.error ? ` (${r.error})` : ""}`);
@@ -213,6 +237,9 @@ const report = (extra) => {
   return r;
 };
 
+if (SPACE !== "row" && SPACE !== "bug") {
+  return report({ error: 'args.idSpace is required and must be "row" or "bug" (no default)' });
+}
 if (!RUN || !R || !RUN_DIR || !args.fromWorktree || REQUESTED.length === 0) {
   return report({
     error:
@@ -223,13 +250,18 @@ if (!RUN || !R || !RUN_DIR || !args.fromWorktree || REQUESTED.length === 0) {
 // ---- Triage ----
 phase("Triage");
 const manifest = await agent(
-  `Triage these RouteFlow bug register rows for run ${RUN}: ${REQUESTED.join(", ")}.
-Repo: ${R}. For each row read the register row and its card (node scripts/campaign/bugs.mjs card <id>), then decide:
-risk LOW or HIGH (HIGH = money, ledger, units, locks, tenancy, migrations, billing, auth, or a repro needing a live-tenant reading), the reason, status (live | fixed-on-master | unclear: check the code on origin/master), files (use .claude/code-map/INDEX.md and scripts/graph.mjs radius), needsDb (prisma, a *.db.spec, or a transaction path), ui (yes/no) and a one-line repro. Split a row into sub-bugs (sub: "a", "b") when it holds several defects.
-Write the result as JSON to ${RUN_DIR}/manifest.json (shape {"run": "${RUN}", "bugs": [...]}) and return the same object. Read-only apart from that file. ${RULES}`,
+  `Triage these ids for run ${RUN}: ${REQUESTED.join(", ")}. The id space is "${SPACE}" and ONLY that space: ${
+    SPACE === "row"
+      ? `an id is a WORK-REGISTER row (including W- ids). Resolve each with: cd "${args.fromWorktree}" && node tools/ops-monitor/bin/rf.mjs item show <id>, and confirm with grep -n '| <id> |' "${REGISTER}". NEVER use bugs.mjs and never read a number as a B### catalogue id.`
+      : `an id is a B### bug catalogue id. Resolve each with: cd "${R}" && node scripts/campaign/bugs.mjs show <id>.`
+  }
+Report the resolved title of every id in resolvedTitle. An id that does not resolve in the "${SPACE}" space goes in the "unresolved" list (not in bugs): it is never HIGH and never built; do not try the other space.
+Repo: ${R}. For each resolved id decide: risk LOW or HIGH (HIGH = money, ledger, units, locks, tenancy, migrations, billing, auth, or a repro needing a live-tenant reading), the reason, status (live | fixed-on-master | unclear: check the code on origin/master), files (use .claude/code-map/INDEX.md and scripts/graph.mjs radius), needsDb (prisma, a *.db.spec, or a transaction path), ui (yes/no) and a one-line repro. Split an id into sub-bugs (sub: "a", "b") when it holds several defects.
+Write the result as JSON to ${RUN_DIR}/manifest.json (shape {"run": "${RUN}", "bugs": [...], "unresolved": [...]}) and return the same object. Read-only apart from that file. ${RULES}`,
   { label: "triage", phase: "Triage", schema: MANIFEST_SCHEMA, model: "haiku", effort: "low" },
 );
 if (!manifest) {
+  for (const id of REQUESTED) WHY.set(id, "triage agent died");
   return report({ error: "triage agent died", unaccounted: REQUESTED });
 }
 
@@ -247,12 +279,15 @@ if (!clustered) {
 // HIGH or not-live bugs never reach Build, whatever the script returned.
 const key = (b) => `${b.row}|${b.sub || ""}`;
 const meta2 = new Map(manifest.bugs.map((b) => [key(b), b]));
+const unresolved = new Set((manifest.unresolved || []).map(String));
+for (const b of manifest.bugs)
+  if (!TITLES.has(String(b.row))) TITLES.set(String(b.row), b.resolvedTitle);
 const excluded = [...clustered.excluded];
 const clusters = [];
 for (const c of clustered.clusters) {
   const keep = c.bugs.filter((b) => {
     const m = meta2.get(key(b));
-    const ok = m && m.risk === "LOW" && m.status === "live";
+    const ok = m && !unresolved.has(String(b.row)) && m.risk === "LOW" && m.status === "live";
     if (!ok) {
       const reason = m ? `risk ${m.risk}, status ${m.status}` : "not in manifest";
       excluded.push({ row: b.row, sub: b.sub, reason: `dropped before Build: ${reason}` });
@@ -286,12 +321,17 @@ for (const p of clustered.parked || []) {
 for (const u of clustered.unaccounted || []) noteLabel(u);
 const bucketed = (row, sub) => seenKeys.has(`${row}|${sub || "*"}`) || seenKeys.has(`${row}|*`);
 const unaccounted = [...(clustered.unaccounted || []).map(String)];
-const addMissing = (label) => {
+const addMissing = (label, why = "in no bucket") => {
+  if (!WHY.has(label)) WHY.set(label, why);
   if (!unaccounted.includes(label)) {
     unaccounted.push(label);
-    log(`unaccounted (in no bucket): ${label}`);
+    log(`unaccounted (${why}): ${label}`);
   }
 };
+for (const u of unresolved) {
+  WHY.set(u, `not found in ${SPACE}`);
+  addMissing(u, `not found in ${SPACE}`);
+}
 for (const r of REQUESTED) if (!seenRows.has(r)) addMissing(r);
 for (const b of manifest.bugs) {
   if (!bucketed(b.row, b.sub)) addMissing(b.sub ? `${b.row}${b.sub}` : String(b.row));

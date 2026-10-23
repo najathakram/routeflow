@@ -57,7 +57,9 @@ export async function runWorkflow(scenario, args = {}) {
   const lastHead = {};
   const manifestBugs =
     scenario.manifestBugs ??
-    scenario.clusters.flatMap((c) => c.rows.map((r) => ({ row: r, risk: "LOW", status: "live" })));
+    scenario.clusters.flatMap((c) =>
+      c.rows.map((r) => ({ row: r, resolvedTitle: `title-${r}`, risk: "LOW", status: "live" })),
+    );
   const pick = (v, n) => (typeof v === "function" ? v(n) : v);
   const agent = async (prompt, opts = {}) => {
     calls.push({ prompt, ...opts });
@@ -67,7 +69,11 @@ export async function runWorkflow(scenario, args = {}) {
       case "triage":
         return scenario.triageNull
           ? null
-          : { run: args.run, bugs: scenario.triageBugs ?? manifestBugs };
+          : {
+              run: args.run,
+              bugs: scenario.triageBugs ?? manifestBugs,
+              unresolved: scenario.unresolved ?? [],
+            };
       case "cluster":
         return {
           clusters,
@@ -173,6 +179,7 @@ export async function runWorkflow(scenario, args = {}) {
 }
 
 const ARGS = {
+  idSpace: "row",
   run: "2026-10-23-bug-swarm-9",
   rows: ["1", "2"],
   repo: "/repo",
@@ -481,6 +488,62 @@ export async function runAll() {
   );
   assert.equal(realParked.result.parked.filter((p) => p.reason === "over cap").length, 1);
   assert.ok(!realParked.result.unaccounted.includes("7"));
+
+  // 21. idSpace is required and validated: no agent call without it.
+  for (const bad of [undefined, "", "bugs", "ROW"]) {
+    const noSpace = await runWorkflow(
+      { clusters: two, gateGreen: true, verdict: "PASS" },
+      { ...ARGS, idSpace: bad },
+    );
+    assert.equal(noSpace.calls.length, 0);
+    assert.match(noSpace.result.error, /idSpace/);
+  }
+
+  // 22. A W- id resolves in row space (resolvedTitle from the stub) and is clustered and built.
+  const wid = await runWorkflow(
+    {
+      clusters: [{ id: "c1", rows: ["W-652"] }],
+      triageBugs: [
+        { row: "W-652", resolvedTitle: "Parked sales label", risk: "LOW", status: "live" },
+      ],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    { ...ARGS, rows: ["W-652"] },
+  );
+  assert.equal(count(wid.calls, /^build:/), 1);
+  const tp = wid.calls.find((c) => c.label === "triage").prompt;
+  assert.ok(tp.includes("rf.mjs item show") && tp.includes("NEVER use bugs.mjs"));
+  assert.ok(tp.includes("WORK-REGISTER.md"));
+  assert.deepEqual(wid.result.ids, [
+    { id: "W-652", resolvedTitle: "Parked sales label", unaccounted: false },
+  ]);
+
+  // 23. Bug space uses bugs.mjs and never rf.mjs.
+  const bugSp = await runWorkflow(
+    { clusters: [two[0]], gateGreen: true, verdict: "PASS" },
+    { ...ARGS, idSpace: "bug", rows: ["1"] },
+  );
+  const bp2 = bugSp.calls.find((c) => c.label === "triage").prompt;
+  assert.ok(bp2.includes("bugs.mjs show") && !bp2.includes("rf.mjs"));
+
+  // 24. An unresolvable id is unaccounted with a reason, never built, and the Report lists it.
+  const unres = await runWorkflow(
+    {
+      clusters: [two[0]],
+      triageBugs: [{ row: "1", resolvedTitle: "t1", risk: "LOW", status: "live" }],
+      unresolved: ["99"],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    { ...ARGS, rows: ["1", "99"] },
+  );
+  assert.equal(count(unres.calls, /^build:/), 1);
+  assert.ok(unres.result.unaccounted.includes("99"));
+  const i99 = unres.result.ids.find((i) => i.id === "99");
+  assert.equal(i99.reason, "not found in row");
+  assert.equal(i99.unaccounted, true);
+  assert.equal(unres.result.ids.find((i) => i.id === "1").resolvedTitle, "t1");
 
   return out;
 }
