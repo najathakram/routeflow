@@ -16,6 +16,7 @@ import { pathToFileURL } from "node:url";
 //   (CI's 25 min RF_DB_LANE_TIMEOUT_MIN on the DB-backed specs step ships separately: a workflow edit.)
 
 const API_DIR = path.resolve(__dirname, "../..");
+const REPO_ROOT = path.resolve(API_DIR, "../..");
 const RUNNER = path.join(API_DIR, "scripts/run-db-tests.mjs");
 const posixOnly = process.platform === "win32" ? it.skip : it;
 
@@ -142,5 +143,16 @@ describe("W-723 the DB-lane hard timeout", () => {
     expect(max).toBe(35791);
     expect(ms).toBe(35791 * 60_000);
     expect(ms).toBeLessThanOrEqual(2 ** 31 - 1);
+  });
+
+  it("CI's DB-backed specs step sets a 25 min ceiling", () => {
+    const wf = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/db-migrations.yml"), "utf8");
+    const start = wf.indexOf("- name: DB-backed specs");
+    expect(start).toBeGreaterThan(-1);
+    const rest = wf.slice(start + 1);
+    const next = rest.search(/\n\s*- name:/);
+    const step = next === -1 ? rest : rest.slice(0, next);
+    expect(step).toMatch(/run: npm run test:db -w apps\/api/);
+    expect(step).toMatch(/RF_DB_LANE_TIMEOUT_MIN:\s*["']?25["']?\s*$/m);
   });
 });
