@@ -532,7 +532,7 @@ test("specs: afterSpecsPull runs inside the lock hold after syncSpecs; its failu
   assert.deepEqual(seen, ["lock-in", "sync-start", "sync-end", "hook", "lock-out", "read"]);
   assert.deepEqual(
     hookArgs.map(({ pullMs, lockStartedAt, ...a }) => a),
-    [{ specsDir: "/specs", pullOk: true, pullError: null }],
+    [{ specsDir: "/specs", pullOk: true, pullError: null, pullStage: null }],
   );
   assert.equal(typeof hookArgs[0].pullMs, "number");
   assert.equal(typeof hookArgs[0].lockStartedAt, "number");
@@ -583,8 +583,20 @@ test("specs: a failed pull is passed to the hook (pullOk false + reason); a busy
   await failing.c.runOnce("specs");
   assert.deepEqual(
     args.map(({ pullMs, lockStartedAt, ...a }) => a),
-    [{ specsDir: "/specs", pullOk: false, pullError: "network down" }],
+    [{ specsDir: "/specs", pullOk: false, pullError: "network down", pullStage: "pull" }],
   );
+
+  const pushFail = mk({
+    deps: base(
+      mkStore({
+        syncSpecs: async () => ({ ok: false, pulled: true, pushed: false, error: "rejected" }),
+      }),
+    ),
+    afterSpecsPull: async (a) => void args.push(a),
+  });
+  args.length = 0;
+  await pushFail.c.runOnce("specs");
+  assert.equal(args[0].pullStage, "push");
 
   let hookCalls = 0;
   let busy = 0;

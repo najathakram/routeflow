@@ -887,6 +887,8 @@ export function createCollector({
                 specsDir,
                 pullOk: pulled?.ok !== false,
                 pullError: pulled?.ok === false ? String(pulled.error ?? "pull failed") : null,
+                // "push": the pull went through and the push/reconcile/views step failed after it
+                pullStage: pulled?.ok === false ? (pulled.pulled === true ? "push" : "pull") : null,
                 pullMs,
                 lockStartedAt,
               });
