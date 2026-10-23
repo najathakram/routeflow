@@ -820,6 +820,7 @@ export function createCollector({
   fetch: fetchFn = globalThis.fetch,
   mask = (t) => t,
   afterSpecsPull = null, // local only: runs inside the specs-lock hold, right after the pull
+  onSpecsBusy = null, // local only: the specs lock was busy, so the pull and the hook were skipped
 } = {}) {
   // Cloud never writes git: every git call goes through the read-only allow-list.
   const guardedExec = cloud ? readOnlyExec(exec) : exec;
@@ -859,6 +860,7 @@ export function createCollector({
       // Writers (rf, the views writer) hold the specs lock for a whole append; a poll never waits
       // for it. When busy this run skips the sync and reads the working tree as it is.
       const underLock = (fn) => (store.tryWithSpecsLock ? store.tryWithSpecsLock(fn) : fn());
+      let lockResult;
       if (cloud) {
         // Read-only clone made at boot: fetch + reset to origin, never pull --rebase or push.
         await underLock(async () => {
@@ -866,24 +868,40 @@ export function createCollector({
           if (!r.ok) fail(r.error);
         });
       } else {
-        await underLock(async () => {
+        lockResult = await underLock(async () => {
+          const lockStartedAt = now();
           if (store.ensureClone) {
             await store.ensureClone({
               dir: specsDir,
               remote: cfg.specsRemote ? cfg.specsRemote() : undefined,
             });
           }
-          await store.syncSpecs(specsDir);
+          const pullStartedAt = now();
+          const pulled = await store.syncSpecs(specsDir);
+          const pullMs = now() - pullStartedAt;
           // Piggyback on the lock this pass already holds (a timer would lose to us). A failing
           // hook never fails the source; the lock is released by underLock's finally.
           if (afterSpecsPull) {
             try {
-              await afterSpecsPull({ specsDir });
+              await afterSpecsPull({
+                specsDir,
+                pullOk: pulled?.ok !== false,
+                pullError: pulled?.ok === false ? String(pulled.error ?? "pull failed") : null,
+                pullMs,
+                lockStartedAt,
+              });
             } catch (e) {
               log(`after-pull hook failed: ${String(e?.message ?? e).slice(0, 160)}`);
             }
           }
         });
+        if (lockResult?.ran === false && onSpecsBusy) {
+          try {
+            onSpecsBusy();
+          } catch (e) {
+            log(`busy hook failed: ${String(e?.message ?? e).slice(0, 160)}`);
+          }
+        }
       }
       const events = await store.readAllEvents(specsDir);
       const config = (deps.loadConfig ?? cfg.loadConfig)(specsDir);

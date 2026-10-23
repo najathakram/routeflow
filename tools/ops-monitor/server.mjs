@@ -461,7 +461,7 @@ export function makeSpecsPassStep({
 }) {
   let due = now() + firstMs;
   return async () => {
-    if (now() < due) return;
+    if (now() < due) return false;
     due = now() + intervalMs;
     try {
       const res = await run();
@@ -469,6 +469,53 @@ export function makeSpecsPassStep({
     } catch (err) {
       log(`register sync failed: ${err?.message ?? err}`);
     }
+    return true;
+  };
+}
+
+// At most one "lock starved the syncs" line per this window.
+export const SYNC_STARVATION_LOG_MS = 600_000;
+
+/**
+ * The collector's specs-pass hooks for the register + status syncs. `afterPull` (inside the lock
+ * hold, right after the pull) runs each step in order, each only when due, then logs one timing
+ * line; a failed pull skips them all for this pass with one log line. `onBusy` (the pass found the specs lock held and
+ * skipped) logs, at most once per `throttleMs`, how long since the last pass that ran the syncs.
+ */
+export function makeSpecsPassHook({
+  steps,
+  log = () => {},
+  now = Date.now,
+  throttleMs = SYNC_STARVATION_LOG_MS,
+}) {
+  const startedAt = now();
+  let lastOkAt = null;
+  let lastBusyLogAt = null;
+  return {
+    async afterPull({ pullOk = true, pullError = null, pullMs = 0, lockStartedAt = now() } = {}) {
+      if (pullOk === false) {
+        log(`specs pull failed, register and status sync skipped this pass: ${pullError}`);
+        return;
+      }
+      lastOkAt = now();
+      const took = {};
+      for (const { name, run } of steps) {
+        const t0 = now();
+        took[name] = (await run()) === false ? "skip" : now() - t0;
+      }
+      log(
+        `specs pass: lock ${now() - lockStartedAt} ms (pull ${pullMs}, register ${took.register ?? "skip"}, status ${took.status ?? "skip"})`,
+      );
+    },
+    onBusy() {
+      if (lastBusyLogAt !== null && now() - lastBusyLogAt < throttleMs) return;
+      lastBusyLogAt = now();
+      const mins = Math.floor((now() - (lastOkAt ?? startedAt)) / 60000);
+      log(
+        `specs lock busy, register and status sync skipped: no sync for ${mins} min` +
+          (lastOkAt === null ? " (since start)" : ""),
+      );
+    },
   };
 }
 
@@ -673,7 +720,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     let refused = null;
     let viewsTimer = null;
     let snapTimer = null;
-    let pullHook = null; // set once the register/status syncs are wired (local --views only)
+    let pullHook = null; // (collector hooks) set once the register/status syncs are wired (local --views only)
     let lastViewsHash = null;
     let collector = null;
     const rebuild = () => {
@@ -756,7 +803,8 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       cloud: opts.cloud,
       mask: maskOne,
       log: (m) => console.error(`[ops-monitor] ${m}`),
-      afterSpecsPull: (a) => pullHook?.(a),
+      afterSpecsPull: (a) => pullHook?.afterPull(a),
+      onSpecsBusy: () => pullHook?.onBusy(),
       onUpdate: () => {
         try {
           publish(rebuild());
@@ -846,10 +894,13 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       say(
         `register sync on: inside the specs pass (holds the specs lock already), first in ${REGISTER_SYNC_FIRST_MS / 1000} s, then every ${REGISTER_SYNC_MS / 60000} min`,
       );
-      pullHook = async () => {
-        await statusStep();
-        await registerStep();
-      };
+      pullHook = makeSpecsPassHook({
+        steps: [
+          { name: "status", run: statusStep },
+          { name: "register", run: registerStep },
+        ],
+        log: say,
+      });
     }
     stopCollector = () => {
       collector.stop();

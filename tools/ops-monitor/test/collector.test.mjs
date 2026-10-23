@@ -530,7 +530,12 @@ test("specs: afterSpecsPull runs inside the lock hold after syncSpecs; its failu
   });
   await ok.c.runOnce("specs");
   assert.deepEqual(seen, ["lock-in", "sync-start", "sync-end", "hook", "lock-out", "read"]);
-  assert.deepEqual(hookArgs, [{ specsDir: "/specs" }]);
+  assert.deepEqual(
+    hookArgs.map(({ pullMs, lockStartedAt, ...a }) => a),
+    [{ specsDir: "/specs", pullOk: true, pullError: null }],
+  );
+  assert.equal(typeof hookArgs[0].pullMs, "number");
+  assert.equal(typeof hookArgs[0].lockStartedAt, "number");
 
   seen.length = 0;
   const bad = mk({
@@ -555,6 +560,42 @@ test("specs: afterSpecsPull runs inside the lock hold after syncSpecs; its failu
   });
   await cloud.c.runOnce("specs");
   assert.equal(cloudCalls, 0);
+});
+
+test("specs: a failed pull is passed to the hook (pullOk false + reason); a busy lock calls onSpecsBusy and skips the hook", async () => {
+  const mkStore = (over) => ({
+    tryWithSpecsLock: async (fn) => ({ ran: true, value: await fn() }),
+    ensureClone: async () => {},
+    syncSpecs: async () => ({ ok: true }),
+    readAllEvents: async () => [],
+    ...over,
+  });
+  const base = (store) => ({
+    store,
+    config: { specsRemote: () => "remote" },
+    loadConfig: (d) => ({ dir: d }),
+  });
+  const args = [];
+  const failing = mk({
+    deps: base(mkStore({ syncSpecs: async () => ({ ok: false, error: "network down" }) })),
+    afterSpecsPull: async (a) => void args.push(a),
+  });
+  await failing.c.runOnce("specs");
+  assert.deepEqual(
+    args.map(({ pullMs, lockStartedAt, ...a }) => a),
+    [{ specsDir: "/specs", pullOk: false, pullError: "network down" }],
+  );
+
+  let hookCalls = 0;
+  let busy = 0;
+  const locked = mk({
+    deps: base(mkStore({ tryWithSpecsLock: async () => ({ ran: false }) })),
+    afterSpecsPull: async () => void hookCalls++,
+    onSpecsBusy: () => void busy++,
+  });
+  await locked.c.runOnce("specs");
+  assert.equal(hookCalls, 0);
+  assert.equal(busy, 1);
 });
 
 test("start/stop: timers run each source once immediately and stop cleanly", async () => {
