@@ -59,9 +59,13 @@ describe("mergeCustomers — Order rows before Invoice rows (SA-218 (1), #2116)"
     await expect(service.mergeCustomers(PRIMARY.id, SECONDARY.id)).resolves.toEqual(PRIMARY);
 
     const ops = log.map((e) => e.op);
-    // The Order re-point is the transaction's FIRST statement: nothing — above all no Invoice
-    // row — is locked before it.
-    expect(ops[0]).toBe("order.updateMany");
+    // SA-893 (ROW_LOCK_ORDER, amends SA-218 (1)'s "first statement"): both customers' Returns are locked FIRST, then
+    // the Order re-point is the first write: nothing, above all no Invoice row, is locked before the Orders.
+    expect(ops[0]).toBe("$queryRaw");
+    expect(log[0].sql).toMatch(
+      /FROM "Return" WHERE "customerId" IN \(\?, \?\) ORDER BY id FOR UPDATE/,
+    );
+    expect(ops[1]).toBe("order.updateMany");
     expect(ops.indexOf("order.updateMany")).toBeLessThan(ops.indexOf("invoice.updateMany"));
     // Nothing else moved: invoices, then estimates and credit notes, exactly as before the swap.
     const moves = ops.filter((op) => op.endsWith(".updateMany")).map((op) => op.split(".")[0]);
