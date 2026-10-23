@@ -69,3 +69,38 @@ describe("calendarDayInZone — the business's today (row 735a)", () => {
     expect(calendarDayInZone("Not/AZone", new Date("2026-10-22T05:00:00Z"))).toBe("2026-10-22");
   });
 });
+
+describe("calendarDayInZone is the till's business day (moved from counter-sale's tenantDayIn, #3615 review)", () => {
+  it("Sydney 08:00 on the 22nd while UTC is still the 21st: the 22nd", () => {
+    expect(calendarDayInZone("Australia/Sydney", new Date("2026-10-21T21:00:00Z"))).toBe(
+      "2026-10-22",
+    );
+  });
+  it("the business's own day, not the browser's or UTC's", () => {
+    const now = new Date("2026-10-22T03:00:00Z");
+    expect(calendarDayInZone("America/Los_Angeles", now)).toBe("2026-10-21");
+    expect(calendarDayInZone("Pacific/Auckland", new Date("2026-10-22T20:00:00Z"))).toBe(
+      "2026-10-23",
+    );
+    expect(calendarDayInZone("UTC", now)).toBe("2026-10-22");
+  });
+  it("builds YYYY-MM-DD from the parts, not from the locale's string shape", () => {
+    const Real = Intl.DateTimeFormat;
+    // a formatter whose own string shape is NOT year-month-day: only formatToParts can still give the right day
+    const Odd = function (...args: ConstructorParameters<typeof Intl.DateTimeFormat>) {
+      const real = new Real(...args);
+      return {
+        format: () => "22/10/2026, 3:00 AM",
+        formatToParts: (d?: Date) => real.formatToParts(d),
+      };
+    };
+    (Intl as unknown as { DateTimeFormat: unknown }).DateTimeFormat = Odd;
+    try {
+      expect(calendarDayInZone("America/Los_Angeles", new Date("2026-10-22T03:00:00Z"))).toBe(
+        "2026-10-21",
+      );
+    } finally {
+      (Intl as unknown as { DateTimeFormat: unknown }).DateTimeFormat = Real;
+    }
+  });
+});

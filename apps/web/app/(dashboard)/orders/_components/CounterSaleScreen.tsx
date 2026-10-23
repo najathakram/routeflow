@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, TAP_TARGET, cn } from "@routeflow/ui/web";
 import {
   formatReceiptMoney as money,
+  isCalendarDay,
   normalizeBoxesPieces,
   roundMoney,
   type ParkedCartPayload,
@@ -73,7 +74,14 @@ import {
   validatePayment,
   writeAutoPrint,
   writeHeldAttempt,
+  COUNTER_CHECK_POSTDATED_COPY,
+  COUNTER_CHECK_ZONE_FAILED_COPY,
+  COUNTER_CHECK_ZONE_LOADING_COPY,
+  isPostdatedCheck,
+  isCounterSaleHandledError,
 } from "@/lib/counter-sale";
+import { calendarDayInZone } from "@/lib/calendar-date";
+import { useTenantTimeZoneQuery } from "@/lib/tenant-timezone";
 import { keptSaleHref } from "@/lib/kept-draft-invoice";
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
@@ -126,6 +134,7 @@ import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 import { ParkedSales } from "./ParkedSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
+import { CounterCheckDetails } from "./CounterCheckDetails";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 interface PickedCustomer {
@@ -213,6 +222,7 @@ export function CounterSaleScreen() {
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
   const [tendered, setTendered] = React.useState("");
   const [reference, setReference] = React.useState("");
+  const [checkDate, setCheckDate] = React.useState(""); // "" = today (the business's day)
   const [error, setError] = React.useState("");
   const [receipt, setReceipt] = React.useState<CounterSaleResponse | null>(null);
   // Set only when the receipt came from "Check sale status": the cash the clerk ENTERED on the attempt (the server stores
@@ -244,6 +254,7 @@ export function CounterSaleScreen() {
     setMethod(held.method as CounterSalePaymentMethod);
     setTendered(held.tendered ?? "");
     setReference(held.reference ?? "");
+    setCheckDate(isCalendarDay(held.checkDate) ? held.checkDate : "");
     setOutcomeUnknown(true);
   }, [heldKey, restoreBuyer]);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
@@ -272,6 +283,7 @@ export function CounterSaleScreen() {
       method,
       tendered,
       reference,
+      checkDate,
       walkIn: buyerChoice.kind === "walk-in",
     },
     suspended: createSale.isPending || outcomeUnknown || receipt !== null,
@@ -283,12 +295,14 @@ export function CounterSaleScreen() {
       setMethod(snap.method as CounterSalePaymentMethod);
       // The cash is not restored: prices may have moved since it was tapped, so it is entered against today's total.
       setReference(snap.reference);
+      setCheckDate(snap.checkDate ?? "");
     },
     onClearedElsewhere: () => {
       setLines([]);
       setCustomer(null);
       buyerChoice.reset();
       setReference("");
+      setCheckDate("");
     },
   });
   const hasLines = lines.length > 0; // POS-7: the register header's Exit asks before discarding a cart with lines
@@ -428,11 +442,22 @@ export function CounterSaleScreen() {
   }, [receipt, refocus]);
 
   const isWalkIn = customer === null;
+  const zoneRead = useTenantTimeZoneQuery();
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
     queryKey: ["settings"],
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
     staleTime: 60_000,
   });
+  // A check is dated against the BUSINESS's day. Until /settings has answered that day is unknown: nothing is judged (never
+  // against UTC), a CHECK sale is refused with its own copy, and a failed read offers a retry.
+  const zoneStatus = settings !== undefined ? "ready" : zoneRead.isError ? "failed" : "loading";
+  const businessToday = () =>
+    zoneStatus === "ready" ? calendarDayInZone(zoneRead.zone ?? "UTC") : "";
+  const today = businessToday(); // for the Check fields; complete() reads the day again when it is pressed
+  const checkDateValue = checkDate || today;
+  // A held (outcome unknown) sale shows the date its attempt SENT, never one re-derived from today.
+  const shownCheckDate =
+    (outcomeUnknown ? attemptRef.current?.dto.payment.checkDate : undefined) ?? checkDateValue;
   const taxRate = (settings?.taxRate ?? 0) / 100;
   // The regulated levy and the exempt customer's $0 tax are in the estimate, so it is the receipt's figure to the cent
   // (CQ-01 / CQ-02 / CQ-28): the same saleTotals the order and invoice sums run.
@@ -760,6 +785,7 @@ export function CounterSaleScreen() {
     setMethod("CASH");
     setTendered("");
     setReference("");
+    setCheckDate("");
     setError("");
     setReceipt(null);
     setEnteredTender(null);
@@ -786,6 +812,7 @@ export function CounterSaleScreen() {
     setMethod(p.method as CounterSalePaymentMethod);
     setTendered(p.tendered);
     setReference(p.reference);
+    setCheckDate(p.checkDate ?? "");
     setRepriceEpoch((n) => n + 1);
   }
 
@@ -848,9 +875,15 @@ export function CounterSaleScreen() {
           method,
           tendered,
           reference,
+          checkDate,
         });
         // A tender refused for a CLOSED DAY leaves the sale saved but unpaid: say so (the banner below is the generic one).
-        setError(isCounterSaleDayClosed(err) ? counterSaleErrorCopy(err) : "");
+        // A refusal the till owns (its global toast is silenced) says its own copy too, or the clerk would see nothing.
+        setError(
+          isCounterSaleDayClosed(err) || isCounterSaleHandledError(err)
+            ? counterSaleErrorCopy(err)
+            : "",
+        );
         setRecordedHref(keptSaleHref(err));
         setOutcomeUnknown(true);
       }
@@ -895,8 +928,26 @@ export function CounterSaleScreen() {
         setMethod("CASH");
         setTendered("");
         setReference("");
+        setCheckDate("");
       }
       setError(paymentProblemCopy(problem, totals.total));
+      return null;
+    }
+    // The day is read NOW, not when the screen was drawn: a till left idle across the business's midnight dates the check,
+    // and judges a post-dated one, against the new day.
+    const submitToday = businessToday();
+    const submitCheckDate = checkDate || submitToday;
+    if (
+      method === "CHECK" &&
+      (zoneStatus !== "ready" || isPostdatedCheck(submitCheckDate, submitToday))
+    ) {
+      setError(
+        zoneStatus === "loading"
+          ? COUNTER_CHECK_ZONE_LOADING_COPY
+          : zoneStatus === "failed"
+            ? COUNTER_CHECK_ZONE_FAILED_COPY
+            : COUNTER_CHECK_POSTDATED_COPY,
+      );
       return null;
     }
     const tenderAmount = roundMoney(tenderedNum);
@@ -907,6 +958,7 @@ export function CounterSaleScreen() {
         method,
         ...(method === "CASH" ? { amount: tenderAmount } : {}),
         ...(reference.trim() ? { reference: reference.trim() } : {}),
+        ...(method === "CHECK" && submitCheckDate ? { checkDate: submitCheckDate } : {}),
       },
     };
     dropUndo(); // the sale is going out: a removed line can no longer come back
@@ -1132,6 +1184,7 @@ export function CounterSaleScreen() {
             method,
             tendered,
             reference,
+            checkDate,
             walkIn: buyerChoice.kind === "walk-in",
           }}
           blocked={
@@ -1523,16 +1576,24 @@ export function CounterSaleScreen() {
             ) : null}
 
             {method === "CHECK" ? (
-              <label className="block text-sm">
-                Check number
-                <input
-                  aria-label="Check number"
-                  className="mt-1 min-h-[44px] w-full rounded border px-3 py-2"
-                  value={reference}
-                  disabled={locked}
-                  onChange={(e) => setReference(e.target.value)}
-                />
-              </label>
+              <CounterCheckDetails
+                reference={reference}
+                onReferenceChange={setReference}
+                checkDate={shownCheckDate}
+                onCheckDateChange={setCheckDate}
+                today={today}
+                zoneStatus={zoneStatus}
+                onRetryZone={zoneRead.retry}
+                walkIn={!customer || !!customer.isWalkIn}
+                disabled={locked}
+                onPutOnAccount={() => {
+                  setMethod("ON_ACCOUNT");
+                  setError("");
+                  focusPaymentControl(
+                    document.querySelector<HTMLElement>('[data-method="ON_ACCOUNT"]'),
+                  );
+                }}
+              />
             ) : null}
           </section>
 
