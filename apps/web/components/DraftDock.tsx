@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { usePathname } from "next/navigation";
 import { useGuardedRouter } from "@/lib/use-guarded-router";
 import { X, Layers, ChevronUp } from "lucide-react";
 import { Button, cn, useToast } from "@routeflow/ui/web";
@@ -71,12 +72,15 @@ function useNarrowViewport(): boolean {
 
 function DraftDockInner() {
   const narrow = useNarrowViewport();
+  const pathname = usePathname();
   const router = useGuardedRouter(); // POS-7: Resume / Start new cannot leave the counter mid-sale
   const { toast } = useToast();
   const { data: drafts } = useDrafts();
   const deleteDraft = useDeleteDraft();
 
   const [collapsed, setCollapsed] = React.useState(true);
+  const pillRef = React.useRef<HTMLButtonElement>(null);
+  const chipsId = React.useId();
   const [deleteTarget, setDeleteTarget] = React.useState<SaleDraft | null>(null);
   // A pending scan awaiting the operator's "add to which draft?" choice.
   const [scanPrompt, setScanPrompt] = React.useState<string | null>(null);
@@ -87,10 +91,29 @@ function DraftDockInner() {
   const resume = React.useCallback(
     (draft: SaleDraft, scanCode?: string) => {
       setScanPrompt(null);
+      setCollapsed(true); // the tray folds back to the pill once an action is taken
       router.push(resumeHref(draft, scanCode));
     },
     [router],
   );
+
+  // A route change folds an expanded tray back to the pill.
+  React.useEffect(() => {
+    setCollapsed(true);
+  }, [pathname]);
+
+  // Escape folds the expanded tray and hands focus back to the pill.
+  React.useEffect(() => {
+    if (collapsed) return;
+    const onEscape = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (document.querySelector('[role="dialog"][data-state="open"]')) return;
+      setCollapsed(true);
+      pillRef.current?.focus();
+    };
+    document.addEventListener("keydown", onEscape);
+    return () => document.removeEventListener("keydown", onEscape);
+  }, [collapsed]);
 
   // ── Scan-to-draft: a global wedge-scanner listener, active only while at least
   // one draft is parked. A fast keystroke burst ending in Enter (and not typed
@@ -149,7 +172,10 @@ function DraftDockInner() {
         {/* Collapse control — a badge with the parked count (shown when >2). */}
         {(list.length > 2 || (narrow && list.length > 0)) && (
           <button
+            ref={pillRef}
             type="button"
+            aria-expanded={!collapsed}
+            aria-controls={chipsId}
             onClick={() => setCollapsed((c) => !c)}
             className="pointer-events-auto flex items-center gap-2 self-start rounded-full bg-navy px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-modal transition-colors hover:bg-navy/90"
           >
@@ -161,41 +187,43 @@ function DraftDockInner() {
           </button>
         )}
 
-        {visible.map((draft, i) => {
-          const { title, itemCount, total } = draftSummary(draft);
-          return (
-            <div
-              key={draft.id}
-              className={cn(
-                "pointer-events-auto flex items-center gap-3 rounded-xl bg-navy px-3.5 py-2.5 text-white shadow-modal",
-                i > 0 && "opacity-90",
-              )}
-            >
-              <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-300">
-                Draft
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-semibold">{title}</p>
-                <p className="truncate text-[11.5px] text-white/55">
-                  {itemCount} item{itemCount === 1 ? "" : "s"} ·{" "}
-                  <span className="font-mono">${total.toFixed(2)}</span> · paused{" "}
-                  {parkedAgo(draft.updatedAt)}
-                </p>
-              </div>
-              <Button size="sm" onClick={() => resume(draft)}>
-                Resume
-              </Button>
-              <button
-                type="button"
-                onClick={() => setDeleteTarget(draft)}
-                className="shrink-0 rounded p-1 text-white/55 transition-colors hover:bg-white/10 hover:text-white"
-                aria-label="Discard draft"
+        <div id={chipsId} className="flex flex-col gap-2">
+          {visible.map((draft, i) => {
+            const { title, itemCount, total } = draftSummary(draft);
+            return (
+              <div
+                key={draft.id}
+                className={cn(
+                  "pointer-events-auto flex items-center gap-3 rounded-xl bg-navy px-3.5 py-2.5 text-white shadow-modal",
+                  i > 0 && "opacity-90",
+                )}
               >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          );
-        })}
+                <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-300">
+                  Draft
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-semibold">{title}</p>
+                  <p className="truncate text-[11.5px] text-white/55">
+                    {itemCount} item{itemCount === 1 ? "" : "s"} ·{" "}
+                    <span className="font-mono">${total.toFixed(2)}</span> · paused{" "}
+                    {parkedAgo(draft.updatedAt)}
+                  </p>
+                </div>
+                <Button size="sm" onClick={() => resume(draft)}>
+                  Resume
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setDeleteTarget(draft)}
+                  className="shrink-0 rounded p-1 text-white/55 transition-colors hover:bg-white/10 hover:text-white"
+                  aria-label="Discard draft"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Delete confirm — parked drafts never expire, so removal is explicit. */}
