@@ -348,6 +348,8 @@ export async function assertCreditAtEnforcementPoint(
  * Record anyway. Reads the SAME switch as the gate (`order`): OFF returns before any other read. DARK: one warn line.
  * ENFORCED: the warn line, ONE audit row per order (a retried sale that fails again writes no second), and the figures for
  * the response. Any other error is logged and swallowed (an alert never fails a finished sale).
+ * `readOnly` (W-736, a GET re-serving the stored sale): the same derivation, ENFORCED figures only; no warn line, no audit
+ * row (the POST that failed already logged and audited it, and a polled read must not repeat either).
  */
 export async function creditAfterTender(
   deps: CreditEnforcementDeps & {
@@ -362,6 +364,7 @@ export async function creditAfterTender(
     planError: string;
     actor?: string | null;
     impersonatedBy?: string | null;
+    readOnly?: boolean;
   },
 ): Promise<{ limit: number; exposure: number } | null> {
   if (!(p.netted > 0) || !p.tenantId || !p.customerId) return null;
@@ -379,6 +382,7 @@ export async function creditAfterTender(
     } catch (e) {
       if (!isCreditLimitExceeded(e)) throw e;
       const { limit, exposure } = e.getResponse() as { limit: number; exposure: number };
+      if (p.readOnly) return mode === "ENFORCED" ? { limit, exposure } : null;
       deps.logger.warn(
         `credit limit would DENY an order (after-tender, ${mode === "ENFORCED" ? "enforced" : "dark"}): ` +
           `tenant=${p.tenantId} customer=${p.customerId} order=${p.orderId} exposure=${exposure} limit=${limit} ` +
@@ -396,6 +400,8 @@ export async function creditAfterTender(
       // family: it never waits behind a live tender's session lock on the order (the lock-not-taken path re-checks too).
       // SA-877: a pure LEAF (lock -> findFirst -> create; no other lock, no FOR UPDATE; the exposure read stays above),
       // ENFORCED only; a 55P03 or any other failure here falls to the catch below (logged, null), never to the sale.
+      // SA-878: keep READ COMMITTED - under REPEATABLE READ/SERIALIZABLE the snapshot predates the lock wait and the
+      // findFirst would miss the other row.
       await deps.prisma.tenantTransaction(async (tx) => {
         await advisoryXactLock(tx, "counter-tender", `after-tender:${p.orderId}`);
         if (await tx.auditLog.findFirst({ where, select: { id: true } })) return;
