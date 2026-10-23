@@ -281,4 +281,10 @@ describe("PickupCompleteService.complete: Complete at counter (I-120, SA-861)", 
       expect(calls).toEqual([]);
     },
   );
+
+  // SA-861 R8/R9: waiting on OWNER-QUEUE 7a (owner Q1/Q2); built once the owner answers or the SA rules they can ship without.
+  it.todo(
+    "R8 an order on an active run (or OUT_FOR_DELIVERY on a route) -> per Q1; a stop IN_PROGRESS is refused in every answer",
+  );
+  it.todo("R9 a shipped SHIP order (shippedAt set) -> per Q2");
 });
