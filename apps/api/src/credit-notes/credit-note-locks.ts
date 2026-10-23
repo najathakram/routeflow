@@ -40,6 +40,28 @@ export async function lockCreditNotes(
   await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE id IN (${Prisma.join(sorted)}) AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR NO KEY UPDATE`;
 }
 
+/**
+ * W-757: the Orders and Invoices a note's live CREDIT_NOTE payments sit on. A caller that restores those payments
+ * (restoreCreditFromPaymentInTx writes each Invoice) adds them to its ONE sorted Order -> Invoice lock pass first, so
+ * no restore takes an Invoice after the note (CreditNote -> Invoice) or an Order after an Invoice.
+ */
+export async function creditPaymentTargets(
+  tx: any,
+  creditNoteId: string,
+): Promise<{ orderIds: string[]; invoiceIds: string[] }> {
+  // scan-ok: draft-payment-not-void — a CREDIT_NOTE-method payment is written CONFIRMED by this service (see
+  // cancelStandaloneInTx), so not-VOID is the complete filter.
+  const pays: Array<{ invoiceId: string; invoice: { orderId: string | null } | null }> =
+    (await tx.invoicePayment.findMany({
+      where: { creditNoteId, method: "CREDIT_NOTE", status: { not: "VOID" } },
+      select: { invoiceId: true, invoice: { select: { orderId: true } } },
+    })) ?? [];
+  return {
+    orderIds: pays.map((p) => p.invoice?.orderId).filter((id): id is string => !!id),
+    invoiceIds: pays.map((p) => p.invoiceId),
+  };
+}
+
 /** An invoice's Order (when it has one), then the invoice: the SA-214 prefix of a credit write. */
 export async function lockInvoiceForCredit(
   tx: LockTx,

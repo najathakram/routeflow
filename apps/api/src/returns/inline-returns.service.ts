@@ -42,7 +42,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService, type FiledPeriod } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
-import { lockOrderRow } from "../credit-notes/credit-note-locks";
+import { creditPaymentTargets, lockOrderRow } from "../credit-notes/credit-note-locks";
 import { NumberingService } from "../import/numbering.service";
 import {
   countCreditableInvoices,
@@ -1797,9 +1797,16 @@ export class InlineReturnsService {
         fresh.status === "REFUNDED" && fresh.creditNoteId
           ? await ledgerDocumentTargets(tx, { creditNoteId: fresh.creditNoteId })
           : { orderIds: [], invoiceIds: [] };
+      // W-757: and the Orders / Invoices the note's credit PAYMENTS sit on, which cancelStandaloneInTx below restores
+      // (each restore writes its Invoice). Without them in THIS one sorted pass the restore took CreditNote -> Invoice
+      // on another order's invoice: 40P01 against markSent, a 500 with no retry.
+      const paid =
+        fresh.status === "REFUNDED" && fresh.creditNoteId
+          ? await creditPaymentTargets(tx, fresh.creditNoteId)
+          : { orderIds: [], invoiceIds: [] };
       await lockLedgerDocumentRows(tx, tenantId, {
-        orderIds: [fresh.orderId, ...ret.orderIds, ...note.orderIds],
-        invoiceIds: [...ret.invoiceIds, ...note.invoiceIds],
+        orderIds: [fresh.orderId, ...ret.orderIds, ...note.orderIds, ...paid.orderIds],
+        invoiceIds: [...ret.invoiceIds, ...note.invoiceIds, ...paid.invoiceIds],
       });
 
       // HIGH-4: "applied" (restocked + regulated-ledger reversed) is no longer just
