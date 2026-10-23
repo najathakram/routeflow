@@ -150,7 +150,6 @@ import {
 import { useDraftAutosave, type DraftRowMeta } from "../lib/use-draft-autosave";
 import { useStopCartStore } from "../store/stopCartStore";
 import { useDraftLeaveNotice } from "./new-order/use-draft-leave-notice";
-import { announceAfterFlush } from "../lib/draft-leave-notice";
 import { CartModal } from "./new-order/CartModal";
 import { useCustomerPickGate } from "./new-order/use-customer-pick-gate";
 import { CreateCreditNoteSheet } from "./new-order/CreateCreditNoteSheet";
@@ -1617,20 +1616,14 @@ function ProductPickView({
     return () => sub.remove();
   }, [flushDraftQuietly]);
   useEffect(() => () => void flushDraftQuietly(), [flushDraftQuietly]);
-  const navigation = useNavigation();
-  // Row 699: a kept draft is no longer silent on leave ("Draft saved. Find it in Orders."); Discard stays in DraftStrip.
-  const draftLeave = useDraftLeaveNotice(getDraftId, stopCartParkable);
-  useEffect(() => {
-    const nav = navigation as unknown as {
-      addListener: (event: "beforeRemove", cb: () => void) => () => void;
-    };
-    const unsubscribe = nav.addListener("beforeRemove", () => {
-      // Row 699: "Draft saved" only after the flush succeeded; a failed save raises its own error, never the notice.
-      const saved = () => (setDraftSaveFailed(false), draftLeave.announce(submittingRef.current));
-      void announceAfterFlush(flushDraft, saved, noteDraftSaveError);
-    });
-    return unsubscribe;
-  }, [navigation, flushDraft, noteDraftSaveError, draftLeave.announce]);
+  // Row 699: leaving says where the kept draft is ("Draft saved. Find it in Orders.") after a successful flush.
+  const draftLeave = useDraftLeaveNotice(getDraftId, stopCartParkable, {
+    navigation: useNavigation(),
+    flush: flushDraft,
+    onSaved: () => setDraftSaveFailed(false),
+    onError: noteDraftSaveError,
+    isSubmitting: () => submittingRef.current,
+  });
   useEffect(() => {
     if (Platform.OS !== "web") return;
     if (typeof document === "undefined") return;
