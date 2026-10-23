@@ -22,8 +22,9 @@ const num = (v: unknown) => {
 };
 
 /** One comparable string per regulated line, keyed by its order line (`""` for a line with none). */
-function signature(lines: readonly RegulatedLineContent[]): string[] {
-  return lines
+function signature(lines: readonly RegulatedLineContent[] | null | undefined): string[] {
+  // A caller's read can come back empty-handed (no rows, or a partial unit-test double): no lines, never a throw.
+  return (Array.isArray(lines) ? lines : [])
     .filter((l) => !!l.trackedCategoryId)
     .map((l) =>
       [
@@ -41,8 +42,8 @@ function signature(lines: readonly RegulatedLineContent[]): string[] {
 }
 
 export function regulatedContentChanged(
-  before: readonly RegulatedLineContent[],
-  after: readonly RegulatedLineContent[],
+  before: readonly RegulatedLineContent[] | null | undefined,
+  after: readonly RegulatedLineContent[] | null | undefined,
 ): boolean {
   const a = signature(before);
   const b = signature(after);

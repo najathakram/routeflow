@@ -53,3 +53,9 @@ describe("regulatedContentChanged (683)", () => {
     expect(regulatedContentChanged(a, [...a].reverse())).toBe(false);
   });
 });
+
+it("a missing read on either side counts as no regulated lines, never a throw", () => {
+  expect(regulatedContentChanged(undefined, [])).toBe(false);
+  expect(regulatedContentChanged(null, [])).toBe(false);
+  expect(regulatedContentChanged(undefined, [line()])).toBe(true);
+});
