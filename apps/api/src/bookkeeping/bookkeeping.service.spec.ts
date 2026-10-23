@@ -234,9 +234,12 @@ describe("BookkeepingService", () => {
           $executeRaw: jest.fn(), // SA-404f F1: lockInvoicesForPayment
           invoice: {
             findMany: jest.fn(async () => []),
-            findUnique: jest
-              .fn()
-              .mockResolvedValue({ id: "inv-b812", total: 0.8, payments: existingPayments }),
+            findUnique: jest.fn().mockResolvedValue({
+              id: "inv-b812",
+              total: 0.8,
+              // row 2299: the read returns every non-VOID row with its status; these are PAID money
+              payments: existingPayments.map((p) => ({ status: "PAID", ...p })),
+            }),
             update,
           },
           invoicePayment: { create },
@@ -260,7 +263,7 @@ describe("BookkeepingService", () => {
 
       await expect(
         service.recordPayment("inv-b812", { amount: 0.01, method: "CASH" as any }),
-      ).rejects.toThrow("Transaction is already fully paid");
+      ).rejects.toThrow("Invoice is already fully paid"); // row 2299: recordPayment's copy (SA-858 c)
     });
   });
 
@@ -949,11 +952,11 @@ describe("BookkeepingService", () => {
         expect.objectContaining({ data: expect.objectContaining({ amount: 40 }) }),
       );
       // Proves the fix is at the payment level (scoped include), not just invoice
-      // status. F03 narrowed the include to the CONFIRMED predicate, which still
-      // excludes VOID (it is strictly narrower than `not: VOID`).
+      // status. Row 2299 (SA-858 c): the include is the CAPACITY basis (`not: VOID`),
+      // which still excludes the bounced VOID row; the status write sums PAID only.
       expect(prisma.invoice.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({
-          include: { payments: { where: { status: "PAID" } } },
+          include: { payments: { where: { status: { not: "VOID" } } } },
         }),
       );
     });
@@ -1534,7 +1537,7 @@ describe("BookkeepingService", () => {
       expect(result.totals.total).toBe(CONFIRMED_BALANCE);
     });
 
-    it("T-B11s: recordPayment sizes the remaining balance from CONFIRMED money only", async () => {
+    it("T-B11s (row 2299): the guard is on CAPACITY (a DRAFT reserves its share); the status stays on CONFIRMED money", async () => {
       const create = jest.fn();
       const update = jest.fn().mockResolvedValue({
         id: "inv-b11",
@@ -1565,16 +1568,20 @@ describe("BookkeepingService", () => {
         }),
       );
 
-      // $700 fits inside the $800 genuinely still owed. On the old `not: VOID`
-      // basis remaining was only $500 and this legitimate payment was rejected.
-      await service.recordPayment("inv-b11", { amount: 700, method: "CASH" as any });
+      // Row 2299 / SA-858 (c) supersedes the old confirmed-basis GUARD: the DRAFT $300 reserves its share, so
+      // capacity is $500 and $700 is refused (recordPayment's EXCEEDS copy), with nothing written.
+      await expect(
+        service.recordPayment("inv-b11", { amount: 700, method: "CASH" as any }),
+      ).rejects.toThrow("Payment exceeds remaining balance of 500.00");
+      expect(create).not.toHaveBeenCalled();
 
-      expect(create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ amount: 700 }) }),
-      );
-      // $200 confirmed + $700 new = $900 < $1,000 ⇒ PARTIAL. The DRAFT $300 must
-      // not let this write PAID off money nobody has (the lying-status class B74
+      // $500 fits. $200 confirmed + $500 new = $700 < $1,000 ⇒ PARTIAL: the DRAFT $300 must
+      // still not let this write PAID off money nobody has (the lying-status class B74
       // fixes on the invoices side).
+      await service.recordPayment("inv-b11", { amount: 500, method: "CASH" as any });
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ amount: 500 }) }),
+      );
       expect(update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ status: "PARTIAL" }) }),
       );
