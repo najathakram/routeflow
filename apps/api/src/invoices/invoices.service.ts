@@ -3513,6 +3513,9 @@ export class InvoicesService {
           const refusal = sendRefusal(locked.status, emailSent);
           if (refusal) throw new BadRequestException(refusal);
           const nextStatus = nextSentStatus(locked.status);
+          // SA-857: the ONE gate for money on a send. Only the DRAFT -> SENT issue settles order credits and runs the
+          // oldest-first sweep; a re-send (Email again) of an issued invoice is a copy and moves no money.
+          const issuing = locked.status === InvoiceStatus.DRAFT;
           await lockCreditsForSend(tx, this.prisma.getTenantId(), locked);
           const updated = await tx.invoice.update({
             where: { id },
@@ -3526,27 +3529,25 @@ export class InvoicesService {
           // The explicitIds exclusion just below is deliberately KEPT — settling
           // an explicit intent doesn't change that the sweep must still never
           // override it.
-          if (updated.orderId) {
+          if (issuing && updated.orderId) {
             await this.creditNotes.settleOrderCreditsInTx(tx, updated.orderId);
           }
           // An operator's EXPLICIT-amount order selection must not be overridden by the
           // oldest-first sweep; null-amount intents are already settled and clamp to 0.
-          const explicitIds = updated.orderId
-            ? (
-                await tx.orderCreditNote.findMany({
-                  where: { orderId: updated.orderId, amount: { not: null } },
-                  select: { creditNoteId: true },
-                })
-              ).map((r: any) => r.creditNoteId)
-            : [];
-          const auto = await this.creditNotes.autoApplyOldestCreditsInTx(
-            tx,
-            id,
-            updated.customerId,
-            {
-              excludeCreditNoteIds: explicitIds,
-            },
-          );
+          const explicitIds =
+            issuing && updated.orderId
+              ? (
+                  await tx.orderCreditNote.findMany({
+                    where: { orderId: updated.orderId, amount: { not: null } },
+                    select: { creditNoteId: true },
+                  })
+                ).map((r: any) => r.creditNoteId)
+              : [];
+          const auto: { applied: number; invoiceStatus: InvoiceStatus | null } = issuing
+            ? await this.creditNotes.autoApplyOldestCreditsInTx(tx, id, updated.customerId, {
+                excludeCreditNoteIds: explicitIds,
+              })
+            : { applied: 0, invoiceStatus: null };
           // A credit pre-applied at order time can already cover this invoice. Auto-apply
           // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
           // a fully-credited invoice stuck SENT — recompute from the payments it has.
@@ -3613,6 +3614,9 @@ export class InvoicesService {
 
   private async deliverEmail(...args: SendEmailArgs) {
     const [id, overrideEmail, variant, actorId = null] = args;
+    // SA-857: fingerprint A is the FIRST read (before the email read and the PDF render); B is taken after the payload is
+    // built. A write committed in between makes A !== B and the send is recorded as unverifiable (fp null), never as unchanged.
+    const fingerprintA = await invoiceFingerprintOf(this.prisma, this.featureConfig, id, variant);
     const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
       include: {
@@ -3682,7 +3686,8 @@ export class InvoicesService {
       hideOriginalPrice,
     });
     await this.assertSendableUnderLock(id, inv.orderId); // SA-404a: VOID now ⇒ 400, no email
-    const fingerprint = await invoiceFingerprintOf(this.prisma, this.featureConfig, id, variant); // #2088: what this email shows
+    const fingerprintB = await invoiceFingerprintOf(this.prisma, this.featureConfig, id, variant); // #2088: what this email shows
+    const fingerprint = fingerprintA === fingerprintB ? fingerprintA : null;
     const sendResult = await this.emailService.sendInvoice(emailPayload);
 
     // R5: the email server was configured but the actual send did NOT succeed

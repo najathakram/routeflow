@@ -7,6 +7,7 @@ import { resolvePendingMirror } from "./pending-mirror";
 import {
   FINGERPRINT_VERSION,
   TRACKING_SINCE,
+  FINGERPRINT_INCLUDE,
   assertOrderInvoiceUnlockedFor,
   sendFieldsFor,
   SEND_THROTTLE_MAX,
@@ -166,6 +167,10 @@ describe("decideSendState", () => {
     expect(decideSendState(row("v2:" + "a".repeat(64)), cur, null).state).toBe(
       "sentBeforeTracking",
     );
+  });
+
+  it("SA-857: the payment listing orders by paidAt THEN id, so same-instant payments always hash the same", () => {
+    expect(FINGERPRINT_INCLUDE.payments.orderBy).toEqual([{ paidAt: "asc" }, { id: "asc" }]);
   });
 
   it("SA-852 MUST: a sentAt the evening before the planned deploy day, no row, reads sentBeforeTracking (may have been emailed)", () => {

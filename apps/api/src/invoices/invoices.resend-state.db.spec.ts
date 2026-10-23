@@ -73,6 +73,7 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
     get: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue(undefined),
   };
+  const mockPdf = { getOrGenerate: jest.fn() };
   const mockCreditNotes = {
     autoApplyOldestCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, invoiceStatus: null }),
     settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
@@ -111,7 +112,7 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: mockGateway },
         { provide: EmailService, useValue: mockEmailService },
-        { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
+        { provide: InvoicePdfService, useValue: mockPdf },
         { provide: SystemConfigService, useValue: mockSystemConfig },
         {
           provide: RegulatedLedgerService,
@@ -270,6 +271,69 @@ describeDb("Invoice re-email: tracked send state - real Postgres", () => {
     // the revert puts the plain-send stage back to DRAFT, a different document from the FINAL that was emailed
     expect(s.state).toBe("changedSinceSent");
     expect(s.lastSentAt).not.toBeNull();
+  }, 60_000);
+
+  // SA-857 MUST-1: the fingerprint is bracketed around the build window; a write inside it records null.
+  it("RACE: a payload edit committed while the PDF renders is recorded as unverifiable, never as unchanged", async () => {
+    const id = await create();
+    mockPdf.getOrGenerate.mockImplementationOnce(async () => {
+      await prisma.invoice.update({ where: { id }, data: { notes: "edited mid-render" } });
+      return undefined;
+    });
+    await email(id);
+    expect((await state(id)).state).toBe("sentBeforeTracking");
+  }, 60_000);
+
+  it("a send with no write in the window still records the fingerprint and reads unchanged", async () => {
+    const id = await create();
+    await email(id);
+    expect((await state(id)).state).toBe("unchanged");
+  }, 60_000);
+
+  // SA-857 MUST-2: a re-send moves no money; only the DRAFT -> SENT issue runs the credit sweep.
+  const sweepCalls = () => mockCreditNotes.autoApplyOldestCreditsInTx.mock.calls.length;
+  it("a RE-SEND of an issued invoice runs no credit sweep and settles no order credits", async () => {
+    const id = await create();
+    const order = await prisma.order.create({
+      data: {
+        tenantId,
+        customerId,
+        orderNumber: `ORD-SW-${RUN_SUFFIX}-${id.slice(0, 6)}`,
+        status: "DELIVERED",
+      },
+    });
+    await prisma.invoice.update({ where: { id }, data: { orderId: order.id } });
+    await email(id); // the issuing send
+    mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
+    mockCreditNotes.settleOrderCreditsInTx.mockClear();
+    await email(id); // Email again
+    expect(sweepCalls()).toBe(0);
+    expect(mockCreditNotes.settleOrderCreditsInTx).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("GUARD: the DRAFT first send still runs the credit sweep and settles order credits", async () => {
+    const id = await create();
+    const order = await prisma.order.create({
+      data: {
+        tenantId,
+        customerId,
+        orderNumber: `ORD-SX-${RUN_SUFFIX}-${id.slice(0, 6)}`,
+        status: "DELIVERED",
+      },
+    });
+    await prisma.invoice.update({ where: { id }, data: { orderId: order.id } });
+    mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
+    mockCreditNotes.settleOrderCreditsInTx.mockClear();
+    await email(id);
+    expect(sweepCalls()).toBe(1);
+    expect(mockCreditNotes.settleOrderCreditsInTx).toHaveBeenCalledTimes(1);
+  }, 60_000);
+
+  it("GUARD: Mark as Sent of a DRAFT still runs the credit sweep", async () => {
+    const id = await create();
+    mockCreditNotes.autoApplyOldestCreditsInTx.mockClear();
+    await run(() => invoicesService.send(id));
+    expect(sweepCalls()).toBe(1);
   }, 60_000);
 
   // GUARD (SA-852 rule 3): green before and after the fold; it pins the stage a revert leaves behind.

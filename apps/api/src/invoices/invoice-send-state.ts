@@ -21,6 +21,11 @@ import { resolveInvoiceVariant } from "./invoice-stage";
  * version reads as `sentBeforeTracking` (emailed, changes cannot be checked). The DRAFT / FINAL stage is part of it (a
  * final after a proforma is a different document). Internal-only fields (internal notes, override reasons, restriction
  * stamps, cost/margin, updatedAt) are NEVER part of it.
+ * Also deliberately NOT part of it (SA-857): status badges and the OVERDUE label and "paid on" (they derive from dates and
+ * payments the fingerprint already holds; hashing the status would flip every invoice to "changed" the day it goes
+ * overdue), and tenant-wide presentation (hideOriginalPrice, branding: one settings change would flip every invoice).
+ * The send is BRACKETED: deliverEmail takes fingerprint A before it reads the invoice or renders the PDF and B after the
+ * payload is built, and records A only when A === B (a write inside the window records null = `sentBeforeTracking`).
  *
  * A `sentAt` with NO tracked row is two different things: before `TRACKING_SINCE` it is an old send we cannot check
  * (`sentBeforeTracking`); on/after it, every real email has a row, so it was only MARKED sent (`markedSentNotEmailed`:
@@ -219,7 +224,10 @@ export const FINGERPRINT_INCLUDE = {
     },
   },
   // the PDF's Payment History: every non-VOID row (the confirmed ones also feed Amount Paid / Balance Due)
-  payments: { where: { status: { not: "VOID" as const } }, orderBy: { paidAt: "asc" as const } },
+  payments: {
+    where: { status: { not: "VOID" as const } },
+    orderBy: [{ paidAt: "asc" as const }, { id: "asc" as const }],
+  },
   order: { select: { status: true, fulfillPath: true, shippedAt: true } },
 } as const;
 
