@@ -113,6 +113,18 @@ const CLUSTER_SCHEMA = {
     },
     parked: { type: "array", items: { type: "object", properties: { id: { type: "string" } } } },
     unaccounted: { type: "array", items: { type: "string" } },
+    unresolved: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          row: { type: "string" },
+          sub: { type: "string" },
+          reason: { type: "string" },
+        },
+        required: ["row", "reason"],
+      },
+    },
     overCap: { type: "boolean" },
     bugs: {
       type: "array",
@@ -220,6 +232,11 @@ const report = (extra) => {
     overCap: false,
     ...extra,
   };
+  if (r.error) {
+    // An error means nothing was done: every requested id is unaccounted, with the error as the reason.
+    r.unaccounted = [...new Set([...r.unaccounted.map(String), ...REQUESTED])];
+    for (const id of REQUESTED) if (!WHY.has(id)) WHY.set(id, r.error);
+  }
   r.ids = idsReport(r.unaccounted);
   for (const i of r.ids)
     log(`${i.id}: ${i.unaccounted ? `UNACCOUNTED (${i.reason})` : i.resolvedTitle}`);
@@ -232,6 +249,13 @@ const report = (extra) => {
 
 if (SPACE !== "row" && SPACE !== "bug") {
   return report({ error: 'args.idSpace is required and must be "row" or "bug" (no default)' });
+}
+const SHAPE = SPACE === "row" ? /^(W-\d+|\d+)$/ : /^B\d{1,4}$/;
+const badShapes = REQUESTED.filter((id) => !SHAPE.test(id));
+if (badShapes.length) {
+  return report({
+    error: `id shape does not match idSpace "${SPACE}" (row: W-<n> or <n>; bug: B<n>): ${badShapes.join(", ")}`,
+  });
 }
 if (REQUESTED.length > 10) {
   return report({
@@ -273,7 +297,7 @@ if (!manifest) {
 // ---- Cluster ----
 phase("Cluster");
 const clustered = await agent(
-  `Run exactly: cd "${R}" && node "${SCRIPTS}/cluster.mjs" "${RUN_DIR}/manifest.json" --write --max ${MAX} --rows "${REQUESTED.join(",")}" --packs${avoidFlags}
+  `Run exactly: cd "${R}" && node "${SCRIPTS}/cluster.mjs" "${RUN_DIR}/manifest.json" --write --max ${MAX} --rows "${REQUESTED.join(",")}" --packs --id-space ${SPACE} --repo "${R}"${avoidFlags}
 Return its printed JSON verbatim (clusters, excluded, parked, unaccounted, overCap), and add "bugs": [] (the workflow reads risk and status from Triage, not from you). Do not edit anything else, do not reinterpret. ${RULES}`,
   { label: "cluster", phase: "Cluster", schema: CLUSTER_SCHEMA, model: "haiku", effort: "low" },
 );
@@ -291,6 +315,12 @@ for (const b of manifest.bugs)
 // Not found in the declared id space: an unresolved id, or a bug whose resolvedTitle is empty. These are
 // unaccounted ("not found in <space>"), never excluded, never built, and never mislabelled by risk/status.
 const notFound = new Set(unresolved);
+// cluster.mjs resolves every id in code (rf.mjs / bugs.mjs); what it rejects is not found either.
+const codeWhy = new Map();
+for (const u of clustered.unresolved || []) {
+  notFound.add(String(u.row));
+  codeWhy.set(String(u.row), u.reason);
+}
 for (const b of manifest.bugs) {
   if (typeof b.resolvedTitle !== "string" || b.resolvedTitle.trim() === "")
     notFound.add(String(b.row));
@@ -350,8 +380,9 @@ const addMissing = (label, why = "in no bucket") => {
   }
 };
 for (const u of notFound) {
-  WHY.set(u, `not found in ${SPACE}`);
-  addMissing(u, `not found in ${SPACE}`);
+  const why = codeWhy.get(u) || `not found in ${SPACE}`;
+  WHY.set(u, why);
+  addMissing(u, why);
 }
 for (const r of REQUESTED) if (!seenRows.has(r)) addMissing(r);
 for (const b of manifest.bugs) {

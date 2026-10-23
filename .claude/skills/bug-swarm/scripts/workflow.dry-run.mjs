@@ -84,6 +84,7 @@ export async function runWorkflow(scenario, args = {}) {
           excluded: scenario.excluded ?? [],
           parked: scenario.parked ?? [],
           unaccounted: scenario.unaccounted ?? [],
+          unresolved: scenario.clusterUnresolved ?? [],
           overCap: !!scenario.overCap,
           bugs: manifestBugs,
         };
@@ -522,8 +523,8 @@ export async function runAll() {
 
   // 23. Bug space uses bugs.mjs and never rf.mjs.
   const bugSp = await runWorkflow(
-    { clusters: [two[0]], gateGreen: true, verdict: "PASS" },
-    { ...ARGS, idSpace: "bug", rows: ["1"] },
+    { clusters: [{ id: "c1", rows: ["B1"] }], gateGreen: true, verdict: "PASS" },
+    { ...ARGS, idSpace: "bug", rows: ["B1"] },
   );
   const bp2 = bugSp.calls.find((c) => c.label === "triagepack").prompt;
   assert.ok(bp2.includes("bugs.mjs show") && !bp2.includes("rf.mjs"));
@@ -612,6 +613,55 @@ export async function runAll() {
   assert.equal(many.calls.length, 0);
   assert.match(many.result.error, /10 ids/);
   assert.ok(fold.calls.find((c) => c.label === "cluster").prompt.includes("--packs"));
+
+  // 28. Id shapes are checked before any agent runs, per idSpace.
+  for (const [space, rows] of [
+    ["row", ["B302"]],
+    ["row", ["12x"]],
+    ["bug", ["302"]],
+    ["bug", ["B12345"]],
+  ]) {
+    const sh = await runWorkflow(
+      { clusters: two, gateGreen: true, verdict: "PASS" },
+      { ...ARGS, idSpace: space, rows },
+    );
+    assert.equal(sh.calls.length, 0, `${space} ${rows}`);
+    assert.match(sh.result.error, /id shape/);
+    assert.equal(sh.result.ids[0].unaccounted, true);
+    assert.match(sh.result.ids[0].reason, /id shape/);
+  }
+  const okShapes = await runWorkflow(
+    { clusters: [two[0]], gateGreen: true, verdict: "PASS" },
+    { ...ARGS, rows: ["1"] },
+  );
+  assert.ok(okShapes.calls.length > 0);
+  const okBug = await runWorkflow(
+    { clusters: [{ id: "c1", rows: ["B302"] }], gateGreen: true, verdict: "PASS" },
+    { ...ARGS, idSpace: "bug", rows: ["B302"] },
+  );
+  assert.equal(count(okBug.calls, /^build:/), 1);
+
+  // 29. Every error path marks every requested id unaccounted with a reason (never missing).
+  assert.ok(many.result.ids.every((i) => i.unaccounted && i.reason));
+  assert.ok(nofrom.result.ids.every((i) => i.unaccounted && /required/.test(i.reason)));
+  assert.ok(dead.result.ids.every((i) => i.unaccounted));
+
+  // 30. cluster.mjs gets the id space and repo; what it rejects in code is unaccounted, not built.
+  assert.ok(
+    fold.calls.find((c) => c.label === "cluster").prompt.includes('--id-space row --repo "/repo"'),
+  );
+  const codeRej = await runWorkflow(
+    {
+      clusters: [two[0], two[1]],
+      clusterUnresolved: [{ row: "2", reason: 'title mismatch: manifest "a" vs resolved "b"' }],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    ARGS,
+  );
+  assert.equal(count(codeRej.calls, /^build:/), 1);
+  assert.match(codeRej.result.ids.find((i) => i.id === "2").reason, /title mismatch/);
+  assert.ok(codeRej.result.unaccounted.includes("2"));
 
   return out;
 }
