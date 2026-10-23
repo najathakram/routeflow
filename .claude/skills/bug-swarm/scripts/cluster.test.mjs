@@ -1,7 +1,9 @@
 // node --test cluster.test.mjs — contract tests for cluster.mjs (runs 2026-10-23-bug-swarm-1/-2).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { clusterBugs, parseCli, ratchetFilesFrom } from "./cluster.mjs";
@@ -220,4 +222,23 @@ test("triage exclusions are carried into excluded (one per row) and requested ro
   );
   assert.equal(again.excluded.length, 2);
   assert.deepEqual(again.unaccounted, ["9"]);
+});
+
+test("--packs: a bug without pack-<row>.md next to the manifest is excluded as no context pack", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "cl-packs-"));
+  writeFileSync(path.join(dir, "pack-1.md"), "pack");
+  const packExists = (row) => existsSync(path.join(dir, `pack-${row}.md`));
+  const r = clusterBugs({ bugs: [bug("1", ["a.ts"]), bug("2", ["b.ts"])] }, { packExists });
+  assert.equal(r.clusters.length, 1);
+  assert.deepEqual(r.excluded, [{ row: "2", reason: "no context pack" }]);
+  assert.equal(parseCli(["m.json", "--packs"]).packs, true);
+  assert.equal(parseCli(["m.json"]).packs, undefined);
+  // CLI: resolves the pack dir from the manifest's directory.
+  const mf = path.join(dir, "manifest.json");
+  writeFileSync(mf, JSON.stringify({ bugs: [bug("1", ["a.ts"]), bug("2", ["b.ts"])] }));
+  const out = spawnSync(process.execPath, [path.join(here, "cluster.mjs"), mf, "--packs"], {
+    encoding: "utf8",
+  });
+  assert.equal(out.status, 0);
+  assert.deepEqual(JSON.parse(out.stdout).excluded, [{ row: "2", reason: "no context pack" }]);
 });

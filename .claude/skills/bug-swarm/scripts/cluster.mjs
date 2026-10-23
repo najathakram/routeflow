@@ -7,7 +7,7 @@
 //
 // Pure core: clusterBugs(manifest, { ratchetFiles, maxClusters }) -> { clusters, excluded, overCap? }.
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -58,24 +58,25 @@ function affinity(x, y) {
   return best;
 }
 
-function exclusionReason(b, avoid) {
+function exclusionReason(b, avoid, packExists) {
   if (b.risk !== "LOW") return `risk ${b.risk}: HIGH-risk bugs never enter the swarm`;
   if (b.status !== "live") return `status ${b.status}: only live bugs enter`;
   if (!b.files || b.files.length === 0) return "no files: triage found no touched file";
   const hit = b.files.find((f) => avoid.has(f));
   if (hit) return `touches avoided file ${hit}`;
+  if (packExists && !packExists(b.row)) return "no context pack";
   return null;
 }
 
 export function clusterBugs(
   manifest,
-  { ratchetFiles = [], maxClusters = 4, avoidFiles = [], requestedRows } = {},
+  { ratchetFiles = [], maxClusters = 4, avoidFiles = [], requestedRows, packExists } = {},
 ) {
   const avoid = new Set(avoidFiles);
   const excluded = [];
   const bugs = [];
   for (const b of manifest.bugs ?? []) {
-    const reason = exclusionReason(b, avoid);
+    const reason = exclusionReason(b, avoid, packExists);
     if (reason) excluded.push({ row: b.row, ...(b.sub ? { sub: b.sub } : {}), reason });
     else bugs.push(b);
   }
@@ -188,6 +189,7 @@ export function parseCli(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--write") o.write = true;
+    else if (a === "--packs") o.packs = true;
     else if (a === "--max") {
       const n = Number(argv[++i]);
       if (!Number.isInteger(n) || n < 1) throw new Error("--max needs a positive integer");
@@ -211,7 +213,7 @@ export function main(argv = process.argv.slice(2)) {
     if (!cli.file) throw new Error("manifest path required");
   } catch (e) {
     console.error(
-      `cluster: ${e.message}\nusage: node cluster.mjs <manifest.json> [--write] [--max N] [--avoid <file>]... [--rows a,b,c]`,
+      `cluster: ${e.message}\nusage: node cluster.mjs <manifest.json> [--write] [--max N] [--avoid <file>]... [--rows a,b,c] [--packs]`,
     );
     return 2;
   }
@@ -228,6 +230,13 @@ export function main(argv = process.argv.slice(2)) {
     ratchetFiles,
     avoidFiles: cli.avoidFiles,
     requestedRows: cli.requestedRows,
+    // --packs: a bug enters a cluster only if pack-<row>.md sits next to the manifest (proof, not the agent's word).
+    ...(cli.packs
+      ? {
+          packExists: (row) =>
+            existsSync(path.join(path.dirname(path.resolve(file)), `pack-${row}.md`)),
+        }
+      : {}),
     ...(cli.maxClusters ? { maxClusters: cli.maxClusters } : {}),
   });
   if (cli.write) {

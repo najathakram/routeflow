@@ -54,7 +54,7 @@ const BUG_SCHEMA = {
   properties: {
     row: { type: "string" },
     sub: { type: "string" },
-    resolvedTitle: { type: "string" },
+    resolvedTitle: { type: "string", minLength: 1 },
     packWritten: { type: "boolean" },
     risk: { type: "string", enum: ["LOW", "HIGH"] },
     riskReason: { type: "string" },
@@ -233,6 +233,11 @@ const report = (extra) => {
 if (SPACE !== "row" && SPACE !== "bug") {
   return report({ error: 'args.idSpace is required and must be "row" or "bug" (no default)' });
 }
+if (REQUESTED.length > 10) {
+  return report({
+    error: "at most 10 ids per batch: split the batch (the orchestrator does that)",
+  });
+}
 if (!RUN || !R || !RUN_DIR || !args.fromWorktree || REQUESTED.length === 0) {
   return report({
     error:
@@ -268,11 +273,12 @@ if (!manifest) {
 // ---- Cluster ----
 phase("Cluster");
 const clustered = await agent(
-  `Run exactly: cd "${R}" && node "${SCRIPTS}/cluster.mjs" "${RUN_DIR}/manifest.json" --write --max ${MAX} --rows "${REQUESTED.join(",")}"${avoidFlags}
+  `Run exactly: cd "${R}" && node "${SCRIPTS}/cluster.mjs" "${RUN_DIR}/manifest.json" --write --max ${MAX} --rows "${REQUESTED.join(",")}" --packs${avoidFlags}
 Return its printed JSON verbatim (clusters, excluded, parked, unaccounted, overCap), and add "bugs": [] (the workflow reads risk and status from Triage, not from you). Do not edit anything else, do not reinterpret. ${RULES}`,
   { label: "cluster", phase: "Cluster", schema: CLUSTER_SCHEMA, model: "haiku", effort: "low" },
 );
 if (!clustered) {
+  for (const id of REQUESTED) WHY.set(id, "cluster agent died");
   return report({ error: "cluster agent died", unaccounted: REQUESTED });
 }
 
@@ -282,17 +288,23 @@ const meta2 = new Map(manifest.bugs.map((b) => [key(b), b]));
 const unresolved = new Set((manifest.unresolved || []).map(String));
 for (const b of manifest.bugs)
   if (!TITLES.has(String(b.row))) TITLES.set(String(b.row), b.resolvedTitle);
-const excluded = [...clustered.excluded];
+// Not found in the declared id space: an unresolved id, or a bug whose resolvedTitle is empty. These are
+// unaccounted ("not found in <space>"), never excluded, never built, and never mislabelled by risk/status.
+const notFound = new Set(unresolved);
+for (const b of manifest.bugs) {
+  if (typeof b.resolvedTitle !== "string" || b.resolvedTitle.trim() === "")
+    notFound.add(String(b.row));
+}
+const excluded = clustered.excluded.filter((e) => !notFound.has(String(e.row)));
 const clusters = [];
 for (const c of clustered.clusters) {
   const keep = c.bugs.filter((b) => {
     const m = meta2.get(key(b));
-    const ok =
-      m &&
-      !unresolved.has(String(b.row)) &&
-      m.packWritten === true &&
-      m.risk === "LOW" &&
-      m.status === "live";
+    if (notFound.has(String(b.row))) {
+      log(`dropped ${key(b)} from ${c.id}: not found in ${SPACE}`);
+      return false;
+    }
+    const ok = m && m.packWritten === true && m.risk === "LOW" && m.status === "live";
     if (!ok) {
       const reason = !m
         ? "not in manifest"
@@ -337,7 +349,7 @@ const addMissing = (label, why = "in no bucket") => {
     log(`unaccounted (${why}): ${label}`);
   }
 };
-for (const u of unresolved) {
+for (const u of notFound) {
   WHY.set(u, `not found in ${SPACE}`);
   addMissing(u, `not found in ${SPACE}`);
 }

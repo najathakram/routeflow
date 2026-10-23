@@ -72,11 +72,13 @@ export async function runWorkflow(scenario, args = {}) {
               run: args.run,
               bugs: (scenario.triageBugs ?? manifestBugs).map((b) => ({
                 packWritten: !scenario.packFail,
+                resolvedTitle: `title-${b.row}`,
                 ...b,
               })),
               unresolved: scenario.unresolved ?? [],
             };
       case "cluster":
+        if (scenario.clusterNull) return null;
         return {
           clusters,
           excluded: scenario.excluded ?? [],
@@ -559,6 +561,57 @@ export async function runAll() {
   assert.ok(fold.calls.find((c) => c.label === "build:c1").prompt.includes("/pack-1.md"));
   assert.ok(!fold.calls.find((c) => c.label === "build:c1").prompt.includes("/pack-2.md"));
   assert.ok(!fold.phases.includes("Pack") && !fold.phases.includes("Triage"));
+
+  // 26. Empty resolvedTitle: not found in the space, never built, not excluded; unresolved AND listed in
+  // bugs is "not found" too (no risk/status mislabel, one entry).
+  const blank = await runWorkflow(
+    {
+      clusters: [two[0], two[1]],
+      triageBugs: [
+        { row: "1", resolvedTitle: "t1", risk: "LOW", status: "live" },
+        { row: "2", resolvedTitle: "  ", risk: "LOW", status: "live" },
+      ],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    ARGS,
+  );
+  assert.equal(count(blank.calls, /^build:/), 1);
+  assert.ok(blank.result.unaccounted.includes("2"));
+  assert.equal(blank.result.ids.find((i) => i.id === "2").reason, "not found in row");
+  assert.ok(!blank.result.excluded.some((e) => e.row === "2"));
+  const both = await runWorkflow(
+    {
+      clusters: [two[0], two[1]],
+      triageBugs: [
+        { row: "1", resolvedTitle: "t1", risk: "LOW", status: "live" },
+        { row: "2", resolvedTitle: "t2", risk: "LOW", status: "live" },
+      ],
+      unresolved: ["2"],
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    ARGS,
+  );
+  assert.equal(count(both.calls, /^build:/), 1);
+  assert.equal(both.result.ids.find((i) => i.id === "2").reason, "not found in row");
+  assert.equal(both.result.unaccounted.filter((u) => u === "2").length, 1);
+  assert.ok(!both.result.excluded.some((e) => e.row === "2"));
+
+  // 27. Cluster agent death is named in the Report; more than 10 ids is an error with no agent call;
+  // the Cluster step demands pack proof from cluster.mjs.
+  const cdead = await runWorkflow(
+    { clusters: two, clusterNull: true, gateGreen: true, verdict: "PASS" },
+    ARGS,
+  );
+  assert.equal(cdead.result.ids[0].reason, "cluster agent died");
+  const many = await runWorkflow(
+    { clusters: two, gateGreen: true, verdict: "PASS" },
+    { ...ARGS, rows: Array.from({ length: 11 }, (_, i) => String(i + 1)) },
+  );
+  assert.equal(many.calls.length, 0);
+  assert.match(many.result.error, /10 ids/);
+  assert.ok(fold.calls.find((c) => c.label === "cluster").prompt.includes("--packs"));
 
   return out;
 }
