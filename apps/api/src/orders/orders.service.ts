@@ -279,6 +279,7 @@ import { tenantSafeParentView } from "../products/product-parent";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { clearLoserDraftForDelete } from "./merge-loser-draft";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 
 @Injectable()
@@ -1031,9 +1032,7 @@ export class OrdersService implements OnApplicationBootstrap {
               // deleteLoserGuarded re-checks the same predicate on the delete itself).
               const loserDraft = await this.invoicesService.findOpenOrderDraft(loser.id, tx);
               if (loserDraft) {
-                // B214 (REG-B214): a DRAFT mirror can source a credit note; refuse before the FK
-                // SET NULL orphans it.
-                await assertNoUnspentSourcedCredits(tx, [loserDraft.id]);
+                await clearLoserDraftForDelete(tx, this.ledger, loserDraft);
                 await tx.invoiceItem.deleteMany({ where: { invoiceId: loserDraft.id } });
                 await tx.invoice.delete({ where: { id: loserDraft.id } });
               }
@@ -2527,11 +2526,11 @@ export class OrdersService implements OnApplicationBootstrap {
       // write conflicts) up to 3 times with a short backoff before giving up.
       // The old single-attempt try/catch swallowed the FIRST failure behind a
       // comment claiming send()/sendEmail()'s auto-apply would catch up —
-      // that catch-up is real now that R13 wires settleOrderCreditsInTx into
-      // both of those methods (WP-API-INVOICES), which is what makes a
-      // survived final failure here safe: delivery must still never fail on
-      // a settle failure, but giving up now logs at ERROR (not warn) so an
-      // operator can find and manually settle the order.
+      // that catch-up is real only on the ISSUING send (R13, SA-857); an invoice
+      // already SENT before delivery gets NO catch-up, so the ERROR log below is
+      // then the only signal. Delivery must still never fail on a settle failure,
+      // but giving up logs at ERROR (not warn) so an operator can find and
+      // manually settle the order.
       const MAX_SETTLE_ATTEMPTS = 3;
       for (let attempt = 1; attempt <= MAX_SETTLE_ATTEMPTS; attempt++) {
         try {

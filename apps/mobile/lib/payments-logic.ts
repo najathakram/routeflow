@@ -1,6 +1,7 @@
 import type { Ionicons } from "@expo/vector-icons";
 import type { PaymentMethod } from "./api/invoices";
-import type { PaymentStatus } from "./api/payments";
+import type { PaymentStatus, UpdatePaymentDto } from "./api/payments";
+import { withRecordAnyway } from "@routeflow/types/payment-ref-copy";
 import { remainingCapacity, roundMoney } from "@routeflow/pricing";
 import { CHECK_TRANSITIONS, type CheckStatus } from "@routeflow/types";
 import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
@@ -200,4 +201,37 @@ export function changeCustomerGate(hasUnknownAttempt: boolean): {
   return hasUnknownAttempt
     ? { blocked: true, reason: PAYMENT_STATUS_COPY.customerLocked }
     : { blocked: false, reason: null };
+}
+
+/**
+ * W-718: the payment edit screen's PATCH body from its form fields. The staff "Record anyway" resend (a 409
+ * DUPLICATE_PAYMENT_REF) is the SAME body plus `recordAnyway: true` (`withRecordAnyway`); a first save never carries it.
+ */
+export function editPaymentDto(
+  f: {
+    invoiceId: string;
+    paymentId: string;
+    method: UpdatePaymentDto["method"];
+    amount: number;
+    reference: string | null;
+    notes: string | null;
+    bankCharges: string | null;
+    paidAt: string | null;
+    settledAt: string | null;
+  },
+  recordAnyway: boolean,
+): UpdatePaymentDto {
+  const body: UpdatePaymentDto = {
+    invoiceId: f.invoiceId,
+    paymentId: f.paymentId,
+    method: f.method,
+    amount: f.amount,
+    reference: (f.reference ?? "").trim() || undefined,
+    notes: (f.notes ?? "").trim() || undefined,
+    bankCharges: (f.bankCharges ?? "").trim() ? Number(f.bankCharges) || undefined : undefined,
+    paidAt: (f.paidAt ?? "").trim() || undefined,
+    // Always sent: an emptied field has to clear the stored bank date.
+    settledAt: (f.settledAt ?? "").trim() || null,
+  };
+  return recordAnyway ? withRecordAnyway(body) : body;
 }

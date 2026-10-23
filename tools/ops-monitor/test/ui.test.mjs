@@ -233,3 +233,17 @@ test("laneBeat: heartbeat text and the not-in-config mark", () => {
   assert.equal(UI.laneBeat({ id: "x" }).unknown, false);
   assert.equal(UI.laneBeat({ id: "x", known: false }).unknown, true);
 });
+
+test("gateLabel: every gate state has its own label and tone; not-run is never read as a pass", () => {
+  assert.deepEqual(UI.gateLabel("success"), { label: "gate passes", kind: "ok" });
+  assert.deepEqual(UI.gateLabel("failure"), { label: "gate fails", kind: "err" });
+  assert.deepEqual(UI.gateLabel("pending"), { label: "gate running", kind: "warn" });
+  assert.deepEqual(UI.gateLabel("skipped", true), {
+    label: "gate skipped (private)",
+    kind: "info",
+  });
+  assert.deepEqual(UI.gateLabel("skipped"), { label: "gate skipped", kind: "info" });
+  assert.deepEqual(UI.gateLabel("none"), { label: "no gate runs", kind: "info" });
+  assert.deepEqual(UI.gateLabel("not-run"), { label: "gate not run", kind: "warn" });
+  assert.equal(UI.gateLabel("something-new"), null);
+});

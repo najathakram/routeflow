@@ -437,6 +437,15 @@ export function codedToastCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.BILL_HAS_PAYMENTS) return billHasPaymentsCopy(data);
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
   if (code === API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING) return receiveExceedsCopy(data);
+  // Row 563: a backdated stock write into a filed period (tobacco report / regulated filing). Fixed copy, the period from
+  // the structured field (B986): what is wrong, and the next step.
+  if (code === API_ERROR_CODES.STOCK_DATE_IN_FILED_PERIOD) {
+    const period = typeof data.period === "string" && data.period ? data.period : "That period";
+    // W-755: WHAT is filed ("Tobacco" or the category name), when the api names it.
+    const what =
+      typeof data.filedFor === "string" && data.filedFor ? data.filedFor : "this product";
+    return `${period} is already filed for ${what}, so stock can't be dated on or before it. Choose a later date.`;
+  }
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);
   if (code === API_ERROR_CODES.ACTIVATION_PERIOD_ALREADY_ENDED) return activationEndedCopy(err);

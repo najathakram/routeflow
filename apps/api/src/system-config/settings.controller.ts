@@ -1,4 +1,5 @@
 import { clearTenantInvoicePdfPointers } from "../invoices/invoice-pdf-pointer";
+import { assertNoRegulatedRecords } from "./financial-wipe-guard";
 import {
   BadRequestException,
   Body,
@@ -467,6 +468,9 @@ export class SettingsController {
       );
     }
 
+    // 683 (SA-896): refused while the tenant holds regulated records (checked here, and again inside the tx below).
+    await assertNoRegulatedRecords(this.prisma, tenantId);
+
     // R1 — scope every delete. ⚠️ CHILDREN ARE MATCHED THROUGH THEIR PARENT, NOT BY
     // THEIR OWN tenantId: `tenantId` is `String?` on ALL of these models and
     // nested-created child rows (invoice lines, bill payments written via their
@@ -497,6 +501,8 @@ export class SettingsController {
     // own. A tenant holding commission accruals still fails this wipe on that FK.
     await this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`;
+      // 683 (SA-896): the same refusal as the tx's first read, so a regulated record written meanwhile still stops the wipe.
+      await assertNoRegulatedRecords(tx, tenantId);
 
       await tx.invoicePayment.deleteMany({ where: { invoice: { tenantId } } });
       await tx.invoiceItem.deleteMany({ where: { invoice: { tenantId } } });
@@ -526,6 +532,10 @@ export class SettingsController {
       // left behind would also block the tenant's purge.
       await tx.counterDayClose.deleteMany({ where: { tenantId } });
       await tx.counterParkedCart.deleteMany({ where: { tenantId } });
+
+      // 683 (#3682 review NIT-3): the reads above are READ COMMITTED, so a regulated sale committed after the first check
+      // would go with its invoice. Check again after the deletes, before the commit: any such record rolls the wipe back.
+      await assertNoRegulatedRecords(tx, tenantId);
     });
 
     return { success: true, message: "All financial data cleared successfully" };

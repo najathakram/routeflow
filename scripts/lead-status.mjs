@@ -29,7 +29,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { makeProc } from "./lib/proc.mjs";
 
 const REPO = "najathakram/routeflow";
-const BOARD_ISSUE = Number(process.env.FLEET_BOARD_ISSUE || 2554);
+const BOARD_ISSUE = Number(process.env.FLEET_BOARD_ISSUE || 3686);
 const MIGRATIONS_PATH = "apps/api/prisma/migrations";
 const DRIFT_CMD = "railway run --service postgres node apps/api/scripts/schema-drift.mjs";
 const VERDICT_VALUES = ["PASS", "PASS-WITH-NITS", "FAIL", "HOLD"];
