@@ -22,6 +22,7 @@ import path from "node:path";
 import { main as cliMain } from "./heavy-slot.mjs";
 import {
   DEFAULT_SLOTS,
+  bareNpmReason,
   HISTORY_MAX_LINES,
   HeavySlotTimeout,
   STALE_MS,
@@ -837,24 +838,104 @@ const t=setInterval(()=>{let n=[];try{n=fs.readdirSync(q)}catch{}if(n.length||Da
 }
 
 {
-  // W-679: a bare `npm ci` runs lifecycle scripts (husky `prepare`) that rewrite core.hooksPath; the
-  // CLI refuses it (exit 2, command never runs) and lets `--ignore-scripts` through. A stub `npm`
-  // on PATH records whether it ran; the real npm is never started.
+  // W-679: a bare `npm ci` (or any alias of it) runs lifecycle scripts (husky `prepare`) that
+  // rewrite core.hooksPath; the guard refuses it and lets `--ignore-scripts` through.
+  // Pure-function cases first (injected argv/env), then the CLI against a stub that is a node script.
+  const refused = (cmd, args, env = {}) => bareNpmReason(cmd, args, env) !== null;
+  const verbs = [
+    ...[
+      "ci",
+      "clean-install",
+      "ic",
+      "install-clean",
+      "isntall-clean",
+      "cit",
+      "it",
+      "install-ci-test",
+    ],
+    ...["install", "i", "add", "in", "ins", "inst", "insta", "instal", "isnt", "isnta", "isntal"],
+    ...["isntall", "install-test", "clean-install-test", "sit"],
+  ];
+  check(
+    "W1 every npm install/ci alias is refused (npm 11 cmd-list.js + npm help install/ci)",
+    verbs.filter((v) => !refused("npm", [v])),
+    [],
+  );
+  check(
+    "W2 verb is found after npm global options (value-taking options consume the next arg)",
+    [
+      refused("npm", ["--prefix", "apps/api", "ci"]),
+      refused("npm", ["-w", "apps/web", "install"]),
+      refused("npm", ["--workspace", "web", "--loglevel", "error", "isntall"]),
+      refused("npm", ["-C", "x", "-s", "-d", "i"]),
+      refused("npm", ["--prefix=apps/api", "--silent", "ic"]),
+      refused("npm.cmd", ["--loglevel=warn", "ci"]),
+    ],
+    [true, true, true, true, true, true],
+  );
+  check(
+    "W3 non-install npm verbs and a value that merely looks like a verb are allowed",
+    [
+      refused("npm", ["run", "lint"]),
+      refused("npm", ["--prefix", "ci", "run", "build"]),
+      refused("npm", ["-w", "install", "test"]),
+      refused("npm", []),
+      refused("node", ["ci"]),
+    ],
+    [false, false, false, false, false],
+  );
+  check(
+    "W4 a single shell-string argument is parsed and refused",
+    [
+      refused("npm ci", []),
+      refused("npm --prefix x install", []),
+      refused("sh", ["-c", "npm ci"]),
+      refused("bash", ["-lc", "cd x && npm i"]),
+      refused("cmd", ["/c", "npm ci"]),
+      refused("sh", ["-c", "echo hi"]),
+      refused("sh", ["-c", "npm ci --ignore-scripts"]),
+    ],
+    [true, true, true, true, true, false, false],
+  );
+  check(
+    "W5 --ignore-scripts / =true / env true allow; =false, --no-ignore-scripts, env false do not",
+    [
+      refused("npm", ["ci", "--ignore-scripts"]),
+      refused("npm", ["ci", "--ignore-scripts=true"]),
+      refused("npm", ["ci"], { npm_config_ignore_scripts: "true" }),
+      refused("npm", ["ci"], { NPM_CONFIG_IGNORE_SCRIPTS: "true" }),
+      refused("npm", ["ci", "--ignore-scripts=false"]),
+      refused("npm", ["ci", "--no-ignore-scripts"]),
+      refused("npm", ["ci"], { npm_config_ignore_scripts: "false" }),
+      refused("npm", ["ci"], { NPM_CONFIG_IGNORE_SCRIPTS: "false" }),
+      refused("npm", ["ci", "--ignore-scripts", "--ignore-scripts=false"]),
+    ],
+    [false, false, false, false, true, true, true, true, true],
+  );
+
+  // CLI: the stub `npm` is a node script (stub.mjs) reached through a sh shim (unix) / .cmd twin
+  // (win32). PATH is ONLY the stub dir, so no real npm can be found, and the CLI runs in a temp cwd;
+  // the test also asserts no node_modules appeared there and that the marker came from the stub.
   const bin = mkTmp();
+  const work = mkTmp();
   const marker = path.join(bin, "npm-ran.txt");
-  const stub = path.join(bin, "npm");
-  writeFileSync(stub, `#!/bin/sh\necho "$@" >> ${JSON.stringify(marker)}\n`, { mode: 0o755 });
+  const stubJs = path.join(bin, "stub.mjs");
+  writeFileSync(
+    stubJs,
+    `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(marker)}, process.argv.slice(2).join(" ") + "\\n");\n`,
+  );
+  writeFileSync(path.join(bin, "npm"), `#!/bin/sh\nexec "${process.execPath}" "${stubJs}" "$@"\n`, {
+    mode: 0o755,
+  });
+  writeFileSync(path.join(bin, "npm.cmd"), `@"${process.execPath}" "${stubJs}" %*\r\n`);
   const runNpm = (...args) => {
     const dir = mkTmp();
     const r = spawnSync(
       process.execPath,
       [CLI, "run", "--label", "w679", "--branch", "t", "--", "npm", ...args],
       {
-        env: {
-          ...cleanEnv(),
-          RF_HEAVY_SLOT_DIR: dir,
-          PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-        },
+        cwd: work,
+        env: { ...cleanEnv(), RF_HEAVY_SLOT_DIR: dir, PATH: bin },
         encoding: "utf8",
       },
     );
@@ -863,16 +944,24 @@ const t=setInterval(()=>{let n=[];try{n=fs.readdirSync(q)}catch{}if(n.length||Da
     return [r.status, ran, /--ignore-scripts/.test(r.stderr)];
   };
   check(
-    "W1 bare `npm ci` is refused: exit 2, npm never ran, message names --ignore-scripts",
-    runNpm("ci"),
-    [2, null, true],
+    "W6 CLI: bare `npm ci` / aliased forms refused: exit 2, stub never ran, message names --ignore-scripts",
+    [runNpm("ci"), runNpm("--prefix", "x", "isntall")],
+    [
+      [2, null, true],
+      [2, null, true],
+    ],
   );
-  check("W2 `npm ci --ignore-scripts` runs", runNpm("ci", "--ignore-scripts"), [
-    0,
-    "ci --ignore-scripts",
-    false,
-  ]);
-  check("W3 other npm commands run", runNpm("run", "lint"), [0, "run lint", false]);
+  check(
+    "W7 CLI: `npm ci --ignore-scripts` runs the stub (marker written by the stub)",
+    runNpm("ci", "--ignore-scripts"),
+    [0, "ci --ignore-scripts", false],
+  );
+  check("W8 CLI: other npm commands run the stub", runNpm("run", "lint"), [0, "run lint", false]);
+  check(
+    "W9 nothing reached a real npm: temp cwd has no node_modules / package-lock",
+    readdirSync(work),
+    [],
+  );
 }
 
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
