@@ -954,3 +954,35 @@ test("unknown-lane: aliased lane ids resolve to their target and raise nothing",
     .map((a) => a.id);
   assert.deepEqual(ids, ["unknown-lane:ghost"]);
 });
+
+test("register-sync-silent: warns when no register-sync event for 30 min (or ever); quiet when fresh, untracked, or no register", () => {
+  const reg = { duplicateIds: [], rowIds: ["614"] };
+  const stale = find(
+    run({ register: reg, state: mkState([], { lastRegisterSyncAt: NOW - 45 * MIN }) }),
+    "register-sync-silent:register",
+  );
+  assert.equal(stale.severity, "warn");
+  assert.match(stale.message, /No register sync for 45 min/);
+  assert.equal(stale.source, "register");
+  const never = find(
+    run({ register: reg, state: mkState([], { lastRegisterSyncAt: null }) }),
+    "register-sync-silent:register",
+  );
+  assert.match(never.message, /No register sync has ever run/);
+  assert.equal(
+    find(
+      run({ register: reg, state: mkState([], { lastRegisterSyncAt: NOW - 5 * MIN }) }),
+      "register-sync-silent:register",
+    ),
+    undefined,
+  );
+  // not tracked by this state, or no register at all: no alarm
+  assert.deepEqual(run({ register: reg }), []);
+  assert.deepEqual(
+    run({
+      register: { duplicateIds: [], rowIds: null },
+      state: mkState([], { lastRegisterSyncAt: null }),
+    }),
+    [],
+  );
+});

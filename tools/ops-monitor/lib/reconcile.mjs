@@ -242,6 +242,7 @@ export function reconcile({
     sourceStaleFactor: 3,
     buildingStaleHours: 48,
     bugUnownedHours: 4,
+    registerSyncSilentMin: 30,
     ...(config?.thresholds ?? {}),
   };
   const open = prs?.open ?? [];
@@ -636,6 +637,25 @@ export function reconcile({
       message: `The register has duplicate row ids (${dupIds.join(", ")}); the monitor ignores register changes until it is repaired`,
       source: "register",
     });
+  }
+
+  // register-sync-silent: the register sync (one writer, the local --views monitor) has written no event for a while, or
+  // never. Only when the register exists and this state tracks the sync (fold does; a bare test state does not).
+  if (register?.rowIds && state.lastRegisterSyncAt !== undefined) {
+    const at = state.lastRegisterSyncAt;
+    const silentMs = at === null ? Infinity : now - at;
+    if (silentMs > th.registerSyncSilentMin * 60000) {
+      add({
+        kind: "register-sync-silent",
+        severity: "warn",
+        message: Number.isFinite(silentMs)
+          ? `No register sync for ${Math.round(silentMs / 60000)} min; register edits are not reaching the board`
+          : "No register sync has ever run; register edits are not reaching the board",
+        suggest:
+          "run `rf sync`, or start the monitor with --views on the machine that keeps the register",
+        source: "register",
+      });
+    }
   }
 
   // items-stale: a dry register sync would still append events (rows or edits the board lacks) and
