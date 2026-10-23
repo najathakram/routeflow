@@ -45,7 +45,13 @@ const judgement = (
   breaches: StaffBreachDetail[],
   basis: "CUSTOMER" | "STORE" = "CUSTOMER",
 ): StaffJudgement => ({
-  outcome: breaches.some((b) => b.outcome === "BLOCK") ? "BLOCK" : "INDETERMINATE",
+  // as the engine answers: nothing breached is ALLOW (an empty BLOCK / INDETERMINATE is the fail-closed case below)
+  outcome:
+    breaches.length === 0
+      ? "ALLOW"
+      : breaches.some((b) => b.outcome === "BLOCK")
+        ? "BLOCK"
+        : "INDETERMINATE",
   reasons: breaches.map((b): BlockedLine => ({
     productId: b.productId,
     productName: b.productName,
@@ -117,6 +123,34 @@ describe("decideStaffWrite: the warning", () => {
     const d = decideStaffWrite(base({ judgement: judgement([]) }));
     expect(d.stamps).toEqual([]);
     expect(d.active).toBe(false);
+  });
+
+  it.each(["BLOCK", "INDETERMINATE"] as const)(
+    "fails closed: an engine %s with no breach to warn on is the hard block, never a sale",
+    (outcome) => {
+      const reasons: BlockedLine[] = [
+        {
+          productId: "p1",
+          productName: "Gummies",
+          ruleId: "r1",
+          reason: "STATE_BAN",
+          message: "x",
+        },
+      ];
+      const e = thrown(() =>
+        decideStaffWrite(
+          base({ judgement: { outcome, reasons, breaches: [], basis: "CUSTOMER" } }),
+        ),
+      );
+      expect(e.getResponse()).toMatchObject({ code: "SELLING_RESTRICTED", blockedLines: reasons });
+    },
+  );
+
+  it("an OPERATOR whose ORDERS group is denied may not override: the hard block, not the warning", () => {
+    const e = thrown(() =>
+      decideStaffWrite(base({ principal: { ...OPERATOR, deniedGroups: ["ORDERS"] } })),
+    );
+    expect(e.getResponse()).toMatchObject({ code: "SELLING_RESTRICTED" });
   });
 
   describe("legal copy", () => {
@@ -749,7 +783,10 @@ describe("pins", () => {
 
   it("the owner-only tenant switch is read in the engine and the two edit plans only (D-2026-09-25-banned-items-rules)", () => {
     const readers = walk(SRC)
-      .map((f) => ({ rel: path.relative(SRC, f), code: strip(fs.readFileSync(f, "utf8")) }))
+      .map((f) => ({
+        rel: path.relative(SRC, f).split(path.sep).join("/"), // separator-agnostic (a Windows lane runs this)
+        code: strip(fs.readFileSync(f, "utf8")),
+      }))
       .filter(({ code }) => /\brestrictionsApply\b|\bswitchGated\b/.test(code))
       .map(({ rel }) => rel);
     expect(readers).toEqual([

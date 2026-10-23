@@ -443,12 +443,17 @@ export interface DecideParams {
  * 409 SELLING_RESTRICTED through `blocked` (override impossible), 400 RESTRICTION_OVERRIDE_REASON_INVALID.
  */
 export function decideStaffWrite(p: DecideParams): StaffWriteDecision {
+  // Fail closed (review NIT): the engine answered BLOCK / INDETERMINATE but the breach list (staff-breaches.ts, its parity
+  // mirror) found nothing to warn on. A disagreement never sells: the hard block, with the engine's own reasons.
+  const refused = p.judgement.outcome === "BLOCK" || p.judgement.outcome === "INDETERMINATE";
+  if (refused && p.judgement.breaches.length === 0) throw p.blocked(p.judgement.reasons);
   const held = p.held ?? [];
   const rows = uncoveredRows(p.judgement.breaches, p.lines, held);
   // A support session can't override whatever its role says (see the header): a token carrying impersonatedBy.
   const supportSession = !!p.principal?.impersonatedBy;
   const mayOverride =
-    !supportSession && staffMay(p.principal?.role, "OVERRIDE_SELLING_RESTRICTION");
+    !supportSession &&
+    staffMay(p.principal?.role, "OVERRIDE_SELLING_RESTRICTION", p.principal?.deniedGroups ?? []);
   const base: DecisionInput = {
     judgement: p.judgement,
     lines: p.lines,

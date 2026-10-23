@@ -347,16 +347,19 @@ export interface RuleEditCommitRequest extends RuleEditRequest {
 export const IMPACT_SCAN_MAX_DOCUMENTS = 2000;
 
 /**
- * The ONE copy for the edit impact line. Row 510: staff are WARNED (and may sell with a reason), buyers are blocked, so
- * the line says both. It never says staff are untouched (a pin in the API reads this function's output). `capped`: the
- * scan stopped at `IMPACT_SCAN_MAX_DOCUMENTS`, so the count is a lower bound.
+ * The ONE copy for the edit impact line, by the tenant's owner-only staff-orders switch (`selling_restrictions.enabled`).
+ * ON (row 510): staff are WARNED (and may sell with a reason) and buyers are blocked. OFF: buyers are blocked and staff
+ * orders are not checked, so it never says staff are warned. `capped`: the scan stopped at `IMPACT_SCAN_MAX_DOCUMENTS`, so
+ * the count is a lower bound.
  */
-export function ruleEditImpactCopy(count: number, capped = false): string {
-  if (capped) {
-    return `${IMPACT_SCAN_MAX_DOCUMENTS.toLocaleString("en-US")}+ open orders and drafts have products this change now restricts. Staff will be warned when they next edit or promote them; buyers can't order them.`;
-  }
-  const one = count === 1;
-  const n = `${count} open order${one ? "" : "s"}`;
+export function ruleEditImpactCopy(count: number, capped: boolean, staffChecked: boolean): string {
+  const one = !capped && count === 1;
+  const subject = capped
+    ? `${IMPACT_SCAN_MAX_DOCUMENTS.toLocaleString("en-US")}+ open orders and drafts have`
+    : `${count} open order${one ? " has" : "s have"}`;
   const them = one ? "it" : "them";
-  return `${n} ${one ? "has" : "have"} products this change now restricts. Staff will be warned when they next edit or promote ${them}; buyers can't order ${them}.`;
+  const tail = staffChecked
+    ? `Staff will be warned when they next edit or promote ${them}; buyers can't order ${them}.`
+    : `Buyers can't order ${them}. Staff orders and invoices aren't checked (turn on 'Also block restricted products on staff orders and invoices' to block them).`;
+  return `${subject} products this change now restricts. ${tail}`;
 }

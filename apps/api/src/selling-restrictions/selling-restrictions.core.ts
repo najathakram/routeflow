@@ -136,6 +136,8 @@ export interface ChannelPrincipal {
    * someone else made, so the protocol hard-blocks it ("Ask the account admin").
    */
   impersonatedBy?: string | null;
+  /** The caller's effective denied staff groups (perms PR7 fills it; absent today = none denied). */
+  deniedGroups?: readonly string[];
 }
 
 /** Roles that positively sell as staff. Compared as strings so the core stays free of Prisma. */

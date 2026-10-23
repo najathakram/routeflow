@@ -6,6 +6,7 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
+import { STAFF_ORDERS_SWITCH_LABEL } from "@/lib/unknown-state";
 import {
   twoStepNotice,
   useRestrictionsSettings,
@@ -98,13 +99,11 @@ export default function RestrictionsSettingsPage() {
 
       <section className="mb-5 rounded-xl border border-surface-border bg-white p-4">
         <label className="flex items-center justify-between gap-3">
-          <span className="font-medium text-navy">
-            Also block restricted products on staff orders and invoices
-          </span>
+          <span className="font-medium text-navy">{STAFF_ORDERS_SWITCH_LABEL}</span>
           <input
             type="checkbox"
             role="switch"
-            aria-label="Also block restricted products on staff orders and invoices"
+            aria-label={STAFF_ORDERS_SWITCH_LABEL}
             checked={data.enabled}
             disabled={!isAdmin || update.isPending}
             onChange={(e) => save({ enabled: e.target.checked })}
@@ -134,7 +133,7 @@ export default function RestrictionsSettingsPage() {
         ))}
       </section>
 
-      <CustomersWithoutState canFix={canFix} />
+      <CustomersWithoutState canFix={canFix} staffOrdersChecked={data.enabled} />
     </div>
   );
 }

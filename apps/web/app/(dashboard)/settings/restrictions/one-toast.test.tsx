@@ -67,6 +67,17 @@ describe("one failed save = exactly one toast", () => {
     expect(toast.mock.calls[0][0].title).not.toMatch(/can't enable yet|raw/i);
   });
 
+  it("400 enable+policy (guided): the page's toast only, never the raw server text", async () => {
+    reject(400, {
+      code: "SELLING_RESTRICTIONS_ENABLE_AND_POLICY_TOGETHER",
+      message: "raw server text",
+    });
+    await flip();
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast.mock.calls[0][0].title).toMatch(/two steps/i);
+  });
+
   it("any other error: the global handler's toast only, with FIXED copy (B980)", async () => {
     reject(500, { message: "Boom" });
     await flip();

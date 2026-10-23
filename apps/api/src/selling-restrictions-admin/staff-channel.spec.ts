@@ -1,8 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { ruleEditImpactCopy } from "@routeflow/types";
 import { staffChannelJudged } from "./staff-channel";
-import { ruleEditChanges, type RuleEditSettings } from "./rule-edit-direction";
 
 /** SA cross-row ruling: the staff-channel question has ONE answer, and the edit code asks only it. */
 describe("staffChannelJudged", () => {
