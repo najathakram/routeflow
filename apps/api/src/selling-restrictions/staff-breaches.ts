@@ -1,8 +1,9 @@
-import type { StaffBreach } from "@routeflow/types";
+import type { RestrictionRemedyFields, StaffBreach } from "@routeflow/types";
 import {
   matchingRules,
   ruleStates,
   UNKNOWN_PRODUCT_NAME,
+  unresolvedStateRemedy,
   type EvaluateInput,
   type ProductFacts,
   type RestrictionRuleFacts,
@@ -34,7 +35,7 @@ export interface StaffBreachRule {
 }
 
 /** A breach with the detail the warning needs. Extends the shared `StaffBreach` (productId / outcome / ruleIds). */
-export interface StaffBreachDetail extends StaffBreach {
+export interface StaffBreachDetail extends StaffBreach, RestrictionRemedyFields {
   productName: string;
   rules: StaffBreachRule[];
   /** An unresolvable product: no rule matched, the engine fails closed (INDETERMINATE with `ruleIds: []`). */
@@ -130,6 +131,7 @@ function breachOf(
     ruleIds: pending.map((r) => r.id),
     rules: pending,
     unknownProduct: false,
+    ...unresolvedStateRemedy(input), // row 672: what fixes it (display only, never in breachKeys or the hash)
   };
 }
 

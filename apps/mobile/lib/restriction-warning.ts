@@ -198,3 +198,58 @@ export function ruleText(rule: RestrictionWarningRule): string {
   }
   return RESTRICTION_COPY.unchecked;
 }
+
+// ─── Row 672 (SA-844): the remedy beside the override ─────────────────────────────────────────────────────────────
+
+/** One fix the warned lines ask for: give this customer a state, or give the store one. */
+export type RemedyAction =
+  { kind: "ADD_CUSTOMER_STATE"; customerId: string } | { kind: "ADD_STORE_STATE" };
+
+/** The distinct remedies of the warned lines, in line order: one per customer, one for the store. */
+export function remedyActions(lines: readonly RestrictionWarningLine[]): RemedyAction[] {
+  const out: RemedyAction[] = [];
+  const seen = new Set<string>();
+  for (const l of lines) {
+    if (l.remedy === "ADD_STORE_STATE" && !seen.has("store")) {
+      seen.add("store");
+      out.push({ kind: "ADD_STORE_STATE" });
+    } else if (l.remedy === "ADD_CUSTOMER_STATE" && l.customerId && !seen.has(l.customerId)) {
+      seen.add(l.customerId);
+      out.push({ kind: "ADD_CUSTOMER_STATE", customerId: l.customerId });
+    }
+  }
+  return out;
+}
+
+/**
+ * How to give a customer a governing state in place: no address = create the minimal default address; exactly one
+ * default = set the state on it (a state awaiting review is confirmed by the same write); otherwise (several addresses
+ * and no single default) the full "Customers without a state" fixer chooses the default first.
+ */
+export type CustomerStateFix =
+  { kind: "create" } | { kind: "setState"; addressId: string } | { kind: "chooseDefault" };
+
+export function customerStateFix(
+  addresses: ReadonlyArray<{ id: string; isDefault?: boolean | null }>,
+): CustomerStateFix {
+  if (addresses.length === 0) return { kind: "create" };
+  const defaults = addresses.filter((a) => a.isDefault === true);
+  return defaults.length === 1
+    ? { kind: "setState", addressId: defaults[0].id }
+    : { kind: "chooseDefault" };
+}
+
+/** Fixed copy for the remedy action, shared by the web dialog and the mobile modal. */
+export const REMEDY_COPY = {
+  thisCustomer: "this customer",
+  stateLabel: "State",
+  save: "Save state",
+  saving: "Saving…",
+  saved: "State saved. Check the sale again to see if it can go ahead.",
+  checkAgain: "Check the sale again",
+  chooseDefault: "This customer has more than one address. Choose which one sets their state.",
+  openFixer: "Open Customers without a state",
+  failed: "Couldn't save. Try again.",
+  /** Mobile has no business-address screen: the store's state is set on the web. */
+  storeOnWeb: "Add it on the web: Settings > Business address.",
+} as const;

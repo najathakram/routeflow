@@ -40,7 +40,34 @@ export type RestrictionReason =
   | "UNKNOWN_PRODUCT"
   | "HIDDEN_FROM_PORTAL";
 
-export interface BlockedLine {
+/**
+ * Row 672 (SA-844): what fixes an INDETERMINATE line, i.e. a state rule matched and the governing state can't be
+ * resolved. ADD_CUSTOMER_STATE = the customer's address (with `customerId`); ADD_STORE_STATE = Settings > Business
+ * address (a counter / pickup sale, or the walk-in).
+ */
+export const RESTRICTION_REMEDY_VALUES = ["ADD_CUSTOMER_STATE", "ADD_STORE_STATE"] as const;
+export type RestrictionRemedy = (typeof RESTRICTION_REMEDY_VALUES)[number];
+
+/**
+ * Response-only and staff-only: set on an unresolved-state INDETERMINATE line, absent otherwise (and never on a buyer
+ * body, B612). Display only: never part of `warningHash`.
+ */
+export interface RestrictionRemedyFields {
+  remedy?: RestrictionRemedy;
+  /** ADD_CUSTOMER_STATE only: the customer whose address needs a state. */
+  customerId?: string;
+}
+
+/** The staff action beside "Sell anyway" on a line with `remedy: "ADD_CUSTOMER_STATE"`. */
+export const noStateOnFileLine = (customerName: string) =>
+  `No state on file for ${customerName}: add one`;
+/** The same action for `remedy: "ADD_STORE_STATE"` (opens Settings > Business address). */
+export const NO_STORE_STATE_LINE = "No state on file for this store: add one";
+/** The buyer's checkout refusal when every refused line is waiting on the buyer's own state. */
+export const PORTAL_NEEDS_STATE_MESSAGE =
+  "We need your delivery state before we can sell this item. Add it in your account.";
+
+export interface BlockedLine extends RestrictionRemedyFields {
   productId: string;
   productName: string;
   categoryName?: string;
@@ -121,7 +148,7 @@ export interface RestrictionWarningRule {
 }
 
 /** One warned line. `lineKey` = "n:<index>" | "l:<lineId>" | "cr:<changeRequestId>" (stable for the same payload). */
-export interface RestrictionWarningLine {
+export interface RestrictionWarningLine extends RestrictionRemedyFields {
   lineKey: string;
   productId: string;
   displayName: string;

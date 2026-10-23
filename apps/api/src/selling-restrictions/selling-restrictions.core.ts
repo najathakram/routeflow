@@ -18,6 +18,7 @@ import type {
   BlockedLine,
   RestrictionAddressPrecedence,
   RestrictionChannel,
+  RestrictionRemedyFields,
   RestrictionsEvaluation,
   RestrictionsPolicy,
 } from "@routeflow/types";
@@ -430,6 +431,26 @@ export interface EvaluateInput {
   storeJudged?: boolean;
   /** categoryId → display name, for messages. */
   categoryNames?: ReadonlyMap<string, string>;
+  /**
+   * Row 672 (SA-844): whose state an unresolved answer is waiting on. `basis` is where the state was read (the store for a
+   * counter / pickup sale and the walk-in); `customerId` is set only when a real customer of this tenant was read.
+   * Absent (a JS caller): the store when `storeJudged`, else a customer with no id (no remedy).
+   */
+  stateSource?: { basis: "STORE" | "CUSTOMER"; customerId: string | null };
+}
+
+/**
+ * Row 672 (SA-844): the remedy an unresolved-state INDETERMINATE line names. The one place it is decided, read by the
+ * engine's reason and by the staff breach (`staff-breaches.ts`), so the two never disagree. A customer sale with no
+ * customer read (none sent, or not this tenant's) has nothing to fix in place: no remedy.
+ */
+export function unresolvedStateRemedy(
+  input: Pick<EvaluateInput, "stateSource" | "storeJudged">,
+): RestrictionRemedyFields {
+  const basis = input.stateSource?.basis ?? (input.storeJudged ? "STORE" : "CUSTOMER");
+  if (basis === "STORE") return { remedy: "ADD_STORE_STATE" };
+  const customerId = input.stateSource?.customerId;
+  return customerId ? { remedy: "ADD_CUSTOMER_STATE", customerId } : {};
 }
 
 /** Decision for the switch-ON case. (OFF never reaches here — see `offEvaluation`.) */
@@ -536,13 +557,14 @@ export function evaluateRestrictions(input: EvaluateInput): RestrictionsEvaluati
       if (!input.storeJudged && stateRules.every((r) => (r.surface as string) === "BUYER_PORTAL"))
         continue;
       indeterminate = true;
-      reasons.push(
-        line(
+      reasons.push({
+        ...line(
           stateRules[0],
           "INDETERMINATE_ADDRESS",
           `"${product.name}" is restricted in some states and this customer's state can't be determined — add or correct the customer's address.`,
         ),
-      );
+        ...unresolvedStateRemedy(input),
+      });
       continue;
     }
 

@@ -28,6 +28,7 @@ import {
   type StaffWriteDecision,
   type StampTarget,
 } from "./restriction-warning";
+import { PORTAL_NEEDS_STATE_MESSAGE } from "./override-constants";
 import { staffBreaches } from "./staff-breaches";
 import {
   activeRuleWhere,
@@ -561,6 +562,7 @@ export class SellingRestrictionsService {
       }
     }
     let governingState = UNRESOLVED_STATE;
+    let remedyCustomerId: string | null = null;
     const stateInPlay = stateRuleInPlay(matched, channel, at); // asked ONCE (the no-state card asks the same)
     if (stateInPlay && storeJudged) {
       // L8: a counter sale / pickup is judged where the STORE is, whoever the customer is (or none). No usable store
@@ -586,10 +588,9 @@ export class SellingRestrictionsService {
         basis = "STORE";
         const state = await tenantBusinessState(this.prisma, tenantId);
         governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
-      } else {
-        governingState = customer
-          ? resolveGoverningState(customer.addresses, policy.addressPrecedence)
-          : UNRESOLVED_STATE;
+      } else if (customer) {
+        governingState = resolveGoverningState(customer.addresses, policy.addressPrecedence);
+        remedyCustomerId = customerId; // row 672: a real customer of this tenant, so their address is the fix
       }
     }
 
@@ -613,6 +614,7 @@ export class SellingRestrictionsService {
       governingState,
       categoryNames,
       storeJudged,
+      stateSource: { basis, customerId: remedyCustomerId },
     };
     return { evaluation: evaluateRestrictions(input), input, basis };
   }
@@ -829,9 +831,11 @@ export class SellingRestrictionsService {
       seen.add(r.productId);
       blockedLines.push({ productId: r.productId, productName: r.productName });
     }
+    // Row 672 (SA-844): when every refused line only waits on the buyer's own state, say so (names stay the only detail).
+    const needsOwnState = evaluation.reasons.every((r) => r.remedy === "ADD_CUSTOMER_STATE");
     const body: BuyerSellingRestrictedError = {
       code: API_ERROR_CODES.SELLING_RESTRICTED,
-      message: buyerRestrictedSummary(blockedLines),
+      message: needsOwnState ? PORTAL_NEEDS_STATE_MESSAGE : buyerRestrictedSummary(blockedLines),
       blockedLines,
     };
     throw new ConflictException(body);
