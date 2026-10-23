@@ -7,6 +7,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 import {
+  CONFIRMED_STATUS,
   COUNTER_DEFAULT_REGISTER,
   ROW_ITEM_NAMES_MAX,
   billedChargeLines,
@@ -755,39 +756,54 @@ export interface ReturnProvenance {
 }
 
 /**
- * B1262 / SA-838: which credit notes applied to this sale are its OWN return credit (the return settling the invoice).
+ * B1262 / SA-838 + SA-838b: which credit notes applied to this sale are its OWN return credit (the return settling the invoice).
  * BOTH links must agree or the payment stays a tender (never hide money):
  *   1. the payment's credit note was made by a live return of THIS order (`isOwnReturn` in pricing, the ONE predicate: a
  *      STANDARD return filed on it, or an INLINE return, filed on any order, with an item sold on it); and
- *   2. that credit note was issued against one of this order's invoices (`CreditNote.invoiceId`).
- * A rejected or cancelled return proves nothing. `Return.creditNoteId` has no Prisma relation, so the caller supplies the
- * returns (this order's own, plus the INLINE ones the batched read finds).
+ *   2. the second link, by the kind of return:
+ *      - STANDARD: that credit note was issued against one of this order's invoices (`CreditNote.invoiceId`).
+ *      - INLINE: the real mint writes `CreditNote.invoiceId = NULL` (`mintStandaloneInTx`), so the note's invoice cannot be the
+ *        link. A note stamped with ANOTHER order's invoice is never own (fail closed); a NULL one may be. Instead EVERY item
+ *        of the return is sold on this order, and the credit has a PAID application on one of this order's invoices
+ *        (`payments` are the payments of this order's own live invoices). A MIXED return (items sold on
+ *        several orders) is not provably this order's alone, so its credit stays a tender (the safe default).
+ * A note shared by several live returns (`Return.creditNoteId` is not unique) is own only if EVERY one of them passes; a return
+ * sold elsewhere vetoes it. A rejected or cancelled return proves nothing (and vetoes nothing). `Return.creditNoteId` has no
+ * Prisma relation, so the caller supplies the returns (this order's own, plus the INLINE ones the batched read finds).
  */
 export function ownReturnCreditNoteIds(input: {
   orderId: string;
   invoiceIds: readonly string[];
   payments: ReadonlyArray<{
+    status?: string;
     creditNoteId?: string | null;
     creditNote?: { invoiceId: string | null } | null;
   }>;
   returns: readonly ReturnProvenance[];
 }): Set<string> {
-  const madeByThisOrder = new Set(
-    input.returns
-      .filter((r) => r.creditNoteId && !isDeadReturn(r.status) && isOwnReturn(input.orderId, r))
-      .map((r) => r.creditNoteId as string),
-  );
+  // EVERY live return that names a note: `Return.creditNoteId` is not unique, so one note can be shared by a return of this
+  // order and a return sold only elsewhere. The note is this order's own only if ALL of them pass (a veto, never a `some`).
+  const namingNote = new Map<string, ReturnProvenance[]>();
+  for (const r of input.returns) {
+    if (!r.creditNoteId || isDeadReturn(r.status)) continue;
+    namingNote.set(r.creditNoteId, [...(namingNote.get(r.creditNoteId) ?? []), r]);
+  }
   const own = new Set<string>();
   for (const p of input.payments) {
+    const made = p.creditNoteId ? namingNote.get(p.creditNoteId) : undefined;
+    if (!p.creditNoteId || !made) continue;
     const invoiceId = p.creditNote?.invoiceId;
-    if (
-      p.creditNoteId &&
-      madeByThisOrder.has(p.creditNoteId) &&
-      invoiceId &&
-      input.invoiceIds.includes(invoiceId)
-    ) {
-      own.add(p.creditNoteId);
-    }
+    const noteOnThisOrder = !!invoiceId && input.invoiceIds.includes(invoiceId);
+    const proven = made.every(
+      (r) =>
+        isOwnReturn(input.orderId, r) &&
+        (r.kind === "INLINE"
+          ? p.status === CONFIRMED_STATUS &&
+            (r.items ?? []).every((i) => i.sourceOrderId === input.orderId) &&
+            (!invoiceId || noteOnThisOrder)
+          : noteOnThisOrder),
+    );
+    if (proven) own.add(p.creditNoteId);
   }
   return own;
 }

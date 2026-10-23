@@ -640,6 +640,18 @@ describe("toTodaysSaleRow: the receipt invariant over every fixture (SA-838a, in
       notes({ "cn-1": ["APPLIED", 5.5] }),
       [inline],
     ],
+    [
+      "inline, note invoiceId null (the real mint, SA-838b)",
+      order([pay("CASH", 7), creditPay(5.5, "cn-1", null)], []),
+      notes({ "cn-1": ["APPLIED", 5.5] }),
+      [inline],
+    ],
+    [
+      "inline mixed-source, note invoiceId null (stays a tender)",
+      order([pay("CASH", 7), creditPay(5.5, "cn-1", null)], []),
+      notes({ "cn-1": ["APPLIED", 5.5] }),
+      [{ ...inline, items: [...(inline.items ?? []), { sourceOrderId: "o-9", subtotal: "1.00" }] }],
+    ],
   ];
 
   it.each(fixtures)("%s: Balance due = Total - Paid - Returned", (_n, rec, seen, carriedRets) => {
@@ -648,5 +660,249 @@ describe("toTodaysSaleRow: the receipt invariant over every fixture (SA-838a, in
     expect(cents(row.balanceDue)).toBe(cents(row.total) - cents(row.tenderPaid!) - cents(applied));
     expect(cents(row.tenderPaid!) + cents(row.returnCredit!)).toBe(cents(row.paid));
     expect(row.returnCredit).toBe(applied);
+  });
+});
+
+describe("B1262 follow-up / SA-838b: an INLINE return's credit note has no invoice, and is still its own return credit", () => {
+  /**
+   * The REAL inline mint (`mintStandaloneInTx`) writes `CreditNote.invoiceId = null`; the credit is then applied to the
+   * carrying order's invoice as a PAID CREDIT_NOTE payment. Link 2 for an INLINE return is therefore not the note's invoice:
+   * every item the return covers is sold on this order, and the credit has a PAID application on one of this order's invoices.
+   */
+  const inlineNote = (amount: number, noteId = "cn-1", status = "PAID"): Pay => ({
+    ...creditPay(amount, noteId, null),
+    status,
+  });
+  /** the inline return as the row's own query reads it (carried on this very order, sold on it) */
+  const ownInline = (over: Partial<Ret> = {}): Ret =>
+    ret({
+      id: "r-inl",
+      kind: "INLINE",
+      creditSubtotal: "3.00",
+      items: [{ sourceOrderId: "o-1", subtotal: "3.00", taxAmount: "0", categoryTax: "0" }],
+      ...over,
+    });
+  const base = { orderId: "o-1", invoiceIds: ["i-1"] };
+
+  it("ROOT CAUSE: the credit note of a real inline mint has invoiceId null, so master's link 2 dropped it", () => {
+    // the shape the real mint + settle leave behind: note.invoiceId null, applied PAID on the order's invoice
+    const row = toTodaysSaleRow(
+      order([inlineNote(3)], [ownInline()], "7.50"),
+      null,
+      [],
+      notes({ "cn-1": ["APPLIED", 3, [[3, "i-1"]]] }),
+    );
+    // master (wrong): returnCredit 0, tenderPaid 3, methods "Store credit $3.00", returnLines.applied 0
+    expect(row.returnCredit).toBe(3);
+    expect(row.tenderPaid).toBe(0);
+    expect(row.tenderMethods).toEqual([]);
+    expect(row.returnLines?.applied).toBe(3);
+    expect(row.paid).toBe(3);
+    expect(row.balanceDue).toBe(4.5);
+  });
+
+  it("the same credit read through the carried-return path (a return filed on ANOTHER order, sold here) splits too", () => {
+    const row = toTodaysSaleRow(
+      order([pay("CASH", 4.5), inlineNote(3)], [], "7.50"),
+      null,
+      [carried({ items: [{ sourceOrderId: "o-1", subtotal: "3.00" }] })],
+      notes({ "cn-1": ["APPLIED", 3, [[3, "i-1"]]] }),
+    );
+    expect(row.returnCredit).toBe(3);
+    expect(row.tenderPaid).toBe(4.5);
+    expect(row.tenderMethods).toEqual([{ method: "CASH", amount: 4.5 }]);
+    expect(row.returnLines?.applied).toBe(3);
+  });
+
+  it("a legacy INLINE note (invoiceId null) now splits; a note that DID get an invoice id still does", () => {
+    for (const noteInvoiceId of [null, "i-1"]) {
+      expect([
+        ...ownReturnCreditNoteIds({
+          ...base,
+          payments: [creditPay(3, "cn-1", noteInvoiceId)],
+          returns: [carried({ items: [{ sourceOrderId: "o-1" }] })],
+        }),
+      ]).toEqual(["cn-1"]);
+    }
+  });
+
+  it("GUARD: an INLINE note stamped with another order's invoice is never own (fail closed, stays a tender)", () => {
+    expect(
+      ownReturnCreditNoteIds({
+        ...base,
+        payments: [creditPay(3, "cn-1", "i-9")],
+        returns: [carried({ items: [{ sourceOrderId: "o-1" }] })],
+      }).size,
+    ).toBe(0);
+  });
+
+  it("a MIXED inline return (items sold on several orders) falls back to a tender on every order it touches", () => {
+    const mixed = carried({ items: [{ sourceOrderId: "o-1" }, { sourceOrderId: "o-3" }] });
+    expect(
+      ownReturnCreditNoteIds({ ...base, payments: [creditPay(3, "cn-1", null)], returns: [mixed] })
+        .size,
+    ).toBe(0);
+    // one item with no source order is also "not all from this order"
+    const loose = carried({ items: [{ sourceOrderId: "o-1" }, { sourceOrderId: null }] });
+    expect(
+      ownReturnCreditNoteIds({ ...base, payments: [creditPay(3, "cn-1", null)], returns: [loose] })
+        .size,
+    ).toBe(0);
+    // the row: the credit prints as the Store credit tender, nothing is hidden, and the invariant holds
+    const row = toTodaysSaleRow(
+      order([inlineNote(3)], [], "7.50"),
+      null,
+      [mixed],
+      notes({ "cn-1": ["APPLIED", 3, [[3, "i-1"]]] }),
+    );
+    expect(row.returnCredit).toBe(0);
+    expect(row.tenderPaid).toBe(3);
+    expect(row.tenderMethods).toEqual([{ method: "STORE_CREDIT", amount: 3 }]);
+    expect(row.returnLines?.applied).toBe(0);
+    expect(Math.round(row.balanceDue * 100)).toBe(
+      Math.round(row.total * 100) - Math.round(row.tenderPaid! * 100),
+    );
+  });
+
+  it("a note SHARED by a return sold only on another order is never own (Return.creditNoteId is not unique)", () => {
+    // note cn-1 is named by an all-this-order INLINE return AND by a return whose goods were sold on order o-b only
+    const mine = carried({ id: "r-mine", items: [{ sourceOrderId: "o-1" }] });
+    const theirs = carried({ id: "r-theirs", items: [{ sourceOrderId: "o-b" }] });
+    const payments = [creditPay(3, "cn-1", null)];
+    expect(ownReturnCreditNoteIds({ ...base, payments, returns: [mine] }).size).toBe(1);
+    for (const returns of [
+      [mine, theirs],
+      [theirs, mine],
+    ]) {
+      expect(ownReturnCreditNoteIds({ ...base, payments, returns }).size).toBe(0);
+    }
+    // a STANDARD return of another order naming the same note vetoes it too
+    const otherStandard: ReturnProvenance = {
+      id: "r-std",
+      creditNoteId: "cn-1",
+      orderId: "o-b",
+      kind: "STANDARD",
+      status: "REFUNDED",
+    };
+    expect(ownReturnCreditNoteIds({ ...base, payments, returns: [mine, otherStandard] }).size).toBe(
+      0,
+    );
+    // a DEAD return naming the note proves nothing either way: it does not veto
+    const dead = carried({ id: "r-dead", status: "CANCELLED", items: [{ sourceOrderId: "o-b" }] });
+    expect(ownReturnCreditNoteIds({ ...base, payments, returns: [mine, dead] }).size).toBe(1);
+    // and the row falls back to the Store credit tender
+    const row = toTodaysSaleRow(
+      order([inlineNote(3)], [], "7.50"),
+      null,
+      [mine, theirs],
+      notes({ "cn-1": ["APPLIED", 3, [[3, "i-1"]]] }),
+    );
+    expect(row.returnCredit).toBe(0);
+    expect(row.tenderMethods).toEqual([{ method: "STORE_CREDIT", amount: 3 }]);
+  });
+
+  it("a credit applied on ANOTHER order's invoice is never this order's own credit", () => {
+    // sale A (o-1) sold the goods, the credit was spent on sale B's invoice: A has no application, so nothing is own on A
+    expect(
+      ownReturnCreditNoteIds({
+        ...base,
+        payments: [pay("CASH", 4.5)],
+        returns: [carried({ items: [{ sourceOrderId: "o-1" }] })],
+      }).size,
+    ).toBe(0);
+    const rowA = toTodaysSaleRow(
+      order([pay("CASH", 7.5)], [], "7.50"),
+      null,
+      [carried({ items: [{ sourceOrderId: "o-1", subtotal: "3.00" }] })],
+      notes({ "cn-1": ["APPLIED", 3, [[3, "i-b"]]] }),
+    );
+    expect(rowA.returnCredit).toBe(0);
+    expect(rowA.returnLines?.applied).toBe(0);
+    expect(rowA.returnLines?.used).toBe(3);
+    // sale B (o-b) holds the application but sold none of the goods: the credit is its tender
+    expect(
+      ownReturnCreditNoteIds({
+        orderId: "o-b",
+        invoiceIds: ["i-b"],
+        payments: [creditPay(3, "cn-1", null)],
+        returns: [carried({ items: [{ sourceOrderId: "o-1" }] })],
+      }).size,
+    ).toBe(0);
+  });
+
+  it("the inline application must be PAID: a voided or draft application proves nothing", () => {
+    for (const status of ["VOID", "DRAFT"]) {
+      expect(
+        ownReturnCreditNoteIds({
+          ...base,
+          payments: [inlineNote(3, "cn-1", status)],
+          returns: [carried({ items: [{ sourceOrderId: "o-1" }] })],
+        }).size,
+      ).toBe(0);
+    }
+    // a payment with no status at all (a hand-built record) is not read as PAID
+    const { status: _status, ...noStatus } = creditPay(3, "cn-1", null);
+    expect(
+      ownReturnCreditNoteIds({
+        ...base,
+        payments: [noStatus],
+        returns: [carried({ items: [{ sourceOrderId: "o-1" }] })],
+      }).size,
+    ).toBe(0);
+  });
+
+  it("a rejected or cancelled inline return proves nothing", () => {
+    for (const status of ["REJECTED", "CANCELLED"]) {
+      expect(
+        ownReturnCreditNoteIds({
+          ...base,
+          payments: [inlineNote(3)],
+          returns: [carried({ status, items: [{ sourceOrderId: "o-1" }] })],
+        }).size,
+      ).toBe(0);
+    }
+  });
+
+  it("STANDARD is unchanged: BOTH links are still required (a note with no invoice stays a tender)", () => {
+    const standard: ReturnProvenance = {
+      creditNoteId: "cn-1",
+      orderId: "o-1",
+      kind: "STANDARD",
+      status: "REFUNDED",
+    };
+    expect(
+      ownReturnCreditNoteIds({
+        ...base,
+        payments: [creditPay(3, "cn-1", null)],
+        returns: [standard],
+      }).size,
+    ).toBe(0);
+    expect(
+      ownReturnCreditNoteIds({
+        ...base,
+        payments: [creditPay(3, "cn-1", "i-1")],
+        returns: [standard],
+      }).size,
+    ).toBe(1);
+    // STANDARD does not need the PAID check it never had (unchanged): a status-less payment still counts
+    const { status: _status, ...noStatus } = creditPay(3, "cn-1", "i-1");
+    expect(
+      ownReturnCreditNoteIds({ ...base, payments: [noStatus], returns: [standard] }).size,
+    ).toBe(1);
+  });
+
+  it("the receipt invariant holds for the inline-null variant, in cents", () => {
+    const row = toTodaysSaleRow(
+      order([pay("CASH", 2), inlineNote(3)], [ownInline()], "7.50"),
+      null,
+      [],
+      notes({ "cn-1": ["APPLIED", 3, [[3, "i-1"]]] }),
+    );
+    const cents = (n: number) => Math.round(n * 100);
+    expect(cents(row.balanceDue)).toBe(
+      cents(row.total) - cents(row.tenderPaid!) - cents(row.returnLines!.applied),
+    );
+    expect(cents(row.tenderPaid!) + cents(row.returnCredit!)).toBe(cents(row.paid));
+    expect(row.returnCredit).toBe(row.returnLines!.applied);
   });
 });

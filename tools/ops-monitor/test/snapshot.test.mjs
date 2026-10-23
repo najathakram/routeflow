@@ -1547,6 +1547,77 @@ test("D3 item with a merged linked PR and in-flight status reads 'Merged, awaiti
   assert.equal(by("816").statusLabel, "Merged, awaiting deploy");
 });
 
+test("D3 a merged revert never labels, and clears the label its original PR set", () => {
+  const evs = [
+    lrItem("830", { type: "feature", title: "Reverted thing", status: "building" }),
+    lrItem("831", { type: "feature", title: "Kept thing", status: "building" }),
+  ];
+  const merged = [
+    {
+      number: 4301,
+      title: "feat: a (Row 830)",
+      branch: "feat/a",
+      mergedAt: ago(90),
+      base: "master",
+    },
+    {
+      number: 4302,
+      title: 'Revert "feat: a (Row 830)"',
+      branch: "revert-4301-feat/a",
+      body: "Reverts najathakram/routeflow#4301",
+      mergedAt: ago(30),
+      base: "master",
+    },
+    {
+      number: 4303,
+      title: "feat: b (Row 831)",
+      branch: "feat/b",
+      mergedAt: ago(90),
+      base: "master",
+    },
+    // a revert whose original merged AFTER it does not clear the original
+    {
+      number: 4304,
+      title: 'Revert "feat: b (Row 831)"',
+      branch: "revert-4303-feat/b",
+      body: "Reverts najathakram/routeflow#4303",
+      mergedAt: ago(120),
+      base: "master",
+    },
+  ];
+  const s = lr(evs, { merged });
+  const by = (id) => s.items.find((i) => i.id === id);
+  assert.equal(by("830").statusLabel, "Being built");
+  assert.equal(by("830").awaitingDeploy, undefined);
+  assert.equal(by("831").statusLabel, "Merged, awaiting deploy");
+});
+
+test("D3 an item moved back into work after the merge is not relabelled", () => {
+  const evs = [
+    lrItem("840", {
+      type: "feature",
+      title: "Reworked",
+      status: "building",
+      links: { prs: [4401] },
+    }),
+    ev(ago(10), "status", "840", "lead", { status: "building" }),
+    lrItem("841", {
+      type: "feature",
+      title: "Fresh merge",
+      status: "building",
+      links: { prs: [4402] },
+    }),
+  ];
+  const merged = [
+    { number: 4401, title: "t", branch: "feat/y", mergedAt: ago(30), base: "master" },
+    { number: 4402, title: "t", branch: "feat/z", mergedAt: ago(30), base: "master" },
+  ];
+  const s = lr(evs, { merged });
+  const by = (id) => s.items.find((i) => i.id === id);
+  assert.equal(by("840").statusLabel, "Being built");
+  assert.equal(by("841").statusLabel, "Merged, awaiting deploy");
+});
+
 test("D4 merged PR with no item raises untracked-merged-pr through the snapshot", () => {
   const merged = [
     { number: 4200, title: "chore: x", branch: "chore/x", mergedAt: ago(60), base: "master" },

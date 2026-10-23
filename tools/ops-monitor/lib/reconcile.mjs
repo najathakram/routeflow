@@ -83,6 +83,26 @@ export function bodyRefsFor(body, known, { mentions = true } = {}) {
   return out;
 }
 
+/** GitHub's revert PR: title `Revert "..."` or branch `revert-<N>-...`. */
+export const isRevertPr = (p) =>
+  /^Revert "/.test(String(p?.title ?? "")) || /^revert-/.test(String(p?.branch ?? ""));
+
+/** PR numbers a revert PR undoes: body "Reverts owner/repo#N", branch `revert-<N>-...`. */
+export function revertedNumbers(p) {
+  const out = new Set();
+  for (const m of String(p?.body ?? "").matchAll(/\breverts\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi))
+    out.add(Number(m[1]));
+  const b = /^revert-(\d+)-/.exec(String(p?.branch ?? ""));
+  if (b) out.add(Number(b[1]));
+  return out;
+}
+
+/** Merged PRs that need no work item: trains, docs, dependabot and bookkeeping follow-ups. */
+export const isNoiseMergedPr = (p) =>
+  /^(?:train|docs|dependabot)\//.test(String(p?.branch ?? "")) ||
+  /^(?:docs|chore)\/bookkeeping-/.test(String(p?.branch ?? "")) ||
+  /^docs: bookkeeping/i.test(String(p?.title ?? ""));
+
 /**
  * Item id a PR/branch belongs to: an item linking the PR number or the branch (register-cited
  * refPrs never count), a pr event for the number, or an id its branch, title or body names
@@ -294,7 +314,7 @@ export function reconcile({
   // untracked-merged-pr: a PR merged in the last 7 days that no item claims.
   for (const p of merged) {
     const at = toMs(p.mergedAt);
-    if (at === null || now - at > 7 * DAY) continue;
+    if (at === null || now - at > 7 * DAY || isNoiseMergedPr(p)) continue;
     if (linkItemFor({ number: p.number, branch: p.branch, title: p.title, body: p.body }, state))
       continue;
     add({

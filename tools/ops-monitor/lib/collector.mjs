@@ -82,8 +82,8 @@ const RUN_RANK = { failure: 6, pending: 5, success: 4, cancelled: 3, skipped: 2,
 /**
  * One GraphQL check context (CheckRun | StatusContext) -> { name, state } with state in
  * success | failure | pending | skipped | cancelled | notrun. Unknown shapes -> null.
- * notrun = the check never started (GraphQL startedAt is null: no runner picked it up, so Actions
- * was blocked or it is still queued) and it is queued, skipped or cancelled. It is NOT a failure.
+ * notrun = the check ended without ever starting (startedAt null, conclusion cancelled / skipped /
+ * startup-failure). It is NOT a failure. A queued/waiting check with startedAt null is pending.
  */
 export function normalizeContext(n) {
   if (!n || typeof n !== "object") return null;
@@ -100,7 +100,7 @@ export function normalizeContext(n) {
   // startedAt present-and-null = never started. (A fixture without the key keeps the old reading.)
   const neverStarted = n.startedAt === null;
   if (neverStarted && ["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(status))
-    return { name: String(n.name), state: "notrun" };
+    return { name: String(n.name), state: "pending" };
   if (status && status !== "COMPLETED") return { name: String(n.name), state: "pending" };
   if (neverStarted && (c === "CANCELLED" || c === "SKIPPED" || c === "STARTUP_FAILURE"))
     return { name: String(n.name), state: "notrun" };
