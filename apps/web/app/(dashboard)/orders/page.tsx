@@ -498,11 +498,9 @@ export default function OrdersPage() {
   // The bulk cancel shows its own single summary toast — no per-order global error toasts.
   const updateStatus = useUpdateOrderStatus({ localErrorToast: true });
   const bulkDelete = useBulkDeleteOrders();
-  // B823: DraftDock (layout.tsx) floats over the bottom-left of every dashboard screen;
-  // below md there isn't enough vertical room for the toolbar above it AND the dock's own
-  // footprint, so the dock can land on top of the first visible rows. Reserve clearance
-  // (the spacer below) only when a draft is actually parked — same react-query cache key
-  // as the dock's own fetch, so this costs no extra request.
+  // B823: DraftDock (layout.tsx) floats over the bottom-left of every dashboard screen. Below md the list reserves bottom
+  // clearance (the spacer after the pager) only when a draft is actually parked, so the last card can clear the dock — same
+  // react-query cache key as the dock's own fetch, so this costs no extra request.
   const { data: drafts } = useDrafts();
   const hasDrafts = (drafts?.length ?? 0) > 0;
 
@@ -1325,12 +1323,10 @@ export default function OrdersPage() {
           )}
         </div>
       ) : (
-        <div id="orders-list" className="contents">
-          {/* B823: clearance for the parked-draft dock (see hasDrafts above) — only
-              needed below md, where the toolbar leaves no room to keep the dock clear
-              of the first rows on its own. */}
-          {hasDrafts && <div className="h-40 md:hidden" aria-hidden />}
-
+        // W-673: a real box (not `contents`), so the page's space-y-5 rhythm sets the gap under the search/Filters row: one
+        // fixed gap whatever the draft state. The dock is pinned to the bottom (and a pill on narrow screens, B668), so only
+        // the bottom clearance below the pager is needed.
+        <div id="orders-list">
           {/* Card list — below md the desktop table only scrolled sideways with TOTAL
               off-screen and no visible affordance that it could scroll at all (B823).
               One tappable card per order instead, mirroring the buyer orders list
@@ -1647,11 +1643,9 @@ export default function OrdersPage() {
         </div>
       )}
 
-      {/* B823 review (Opus): the top-of-list spacer only helps the FIRST paint — the
-          DraftDock sits `absolute` outside <main>'s scroll container, so it stays pinned
-          to the same screen band regardless of scroll position. Scrolled all the way
-          down, the LAST card and this pager land in that exact band. Bottom clearance,
-          matching the top spacer's own size, so the end of the list can clear it too. */}
+      {/* B823 review (Opus): the DraftDock sits `absolute` outside <main>'s scroll container, so it stays pinned to the same
+          screen band regardless of scroll position. Scrolled all the way down, the LAST card and this pager land in that
+          exact band: this bottom clearance lets the end of the list clear it. */}
       {hasDrafts && <div className="h-40 md:hidden" aria-hidden />}
 
       <CreateOrderModal

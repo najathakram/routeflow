@@ -616,3 +616,45 @@ describe("P: parity and the draft preview", () => {
 
 // keep the helper imports referenced
 void within;
+
+/**
+ * SA-891 (#3670 MUST): a UNIT line's price is customer-dependent (the level's tier column). With the layer OFF, a Case picked
+ * for tier-3 Acme ($22.00) kept Acme's price after switching to tier-1 Beta, and Save sent it. After the switch the line is
+ * re-resolved at Beta's tier ($24.00); a typed unit price stays.
+ */
+describe("SA-891: a customer switch re-resolves an untyped unit line", () => {
+  async function switchToBeta(user: ReturnType<typeof userEvent.setup>) {
+    mockCustomers = [
+      { id: "cust-1", businessName: "Acme Co", pricingTier: 3 },
+      { id: "cust-2", businessName: "Beta Mart", pricingTier: 1 },
+    ];
+    await user.click(screen.getByTitle("Remove customer"));
+    await user.click(screen.getByPlaceholderText(/search customers/i));
+    await user.click(await screen.findByText("Beta Mart"));
+  }
+
+  it("a Case picked for tier-3 Acme ($22.00), switched to tier-1 Beta: Save sends $24.00 (head: $22.00)", async () => {
+    const { user } = await open("other", 3);
+    await scan(user, BOXED);
+    await pick(user, "Soda", "Case");
+    expect(screen.getByLabelText("Unit price")).toHaveValue("22.00");
+    await switchToBeta(user);
+    await waitFor(() => expect(screen.getByLabelText("Unit price")).toHaveValue("24.00"));
+    await saveDraft(user);
+    await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
+    expect(posted()[0]).toMatchObject({ unitLabel: "Case", unitPrice: 24 });
+  });
+
+  it("a typed unit price survives the switch", async () => {
+    const { user } = await open("other", 3);
+    await scan(user, BOXED);
+    await pick(user, "Soda", "Case");
+    await typeInto(user, screen.getByLabelText("Unit price"), "21.50");
+    const reason = screen.queryByLabelText("Reason (required)");
+    if (reason) await user.type(reason, "agreed"); // H3b: off a special price needs a reason
+    await switchToBeta(user);
+    await saveDraft(user);
+    await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
+    expect(posted()[0]).toMatchObject({ unitLabel: "Case", unitPrice: 21.5 });
+  });
+});

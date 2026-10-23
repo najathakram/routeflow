@@ -18,6 +18,7 @@ jest.mock("../../common/db-locks", () => ({
 // SA-849: the post-tender re-check is spied at the boundary (its own rules: credit-after-tender.spec.ts).
 const mockAfterTender = jest.fn();
 const mockHeldAtRecheck: boolean[] = []; // SA-877 (1): was the tender lock still held when the re-check ran?
+const mockReplayCandidate = jest.fn(); // W-736: the by-key lookup's stored sale
 jest.mock("../credit-limit-guard", () => ({
   ...jest.requireActual("../credit-limit-guard"),
   creditAfterTender: (...a: unknown[]) => mockAfterTender(...a),
@@ -69,6 +70,7 @@ describe("CounterSaleService.ring: the credit re-check after a failed netted ten
     });
     mockLock.notAcquired = false;
     mockLock.held = false;
+    mockReplayCandidate.mockReset().mockResolvedValue(null);
     mockDayClosed.on = false;
     prisma = createMockPrisma();
     invoices = [{ id: "inv-1", total: 100, status: "SENT", createdAt: new Date(1), payments: [] }];
@@ -104,7 +106,7 @@ describe("CounterSaleService.ring: the credit re-check after a failed netted ten
           provide: OrdersService,
           useValue: {
             createSale: jest.fn(async () => ({ id: "inv-1", orderId: "ord-1" })),
-            findReplayCandidateByKey: jest.fn(async () => null),
+            findReplayCandidateByKey: (...a: unknown[]) => mockReplayCandidate(...a),
             entitlements: { hasFlag: async () => true },
           },
         },
@@ -140,23 +142,34 @@ describe("CounterSaleService.ring: the credit re-check after a failed netted ten
   });
 
   // SA-877 (1): the re-check's own xact lock is a leaf: it never runs while the tender's session lock is held.
+  // SA-878: the rows are named after SA-849's failure paths (a)-(c); (d), the closed day, is the case below.
   it.each([
+    ["(a) the tender lock is not taken", () => (mockLock.notAcquired = true), "CARD"],
     [
-      "(a) recordPayment throws",
+      "(b) the cash-tendered store fails",
+      () =>
+        prisma.order.updateMany.mockImplementation(async (a: any) => {
+          if (a?.data?.counterCashTendered !== undefined) throw new Error("store down");
+          return { count: 1 };
+        }),
+      "CASH",
+    ],
+    [
+      "(c) recordPayment throws (CASH)",
       () => recordPayment.mockRejectedValueOnce(new Error("503")),
       "CASH",
     ],
     [
-      "(b) a non-cash record throws",
+      "(c) recordPayment throws (non-cash, e.g. a duplicate reference)",
       () => recordPayment.mockRejectedValueOnce(new Error("dup ref")),
       "CARD",
     ],
-    ["(c) the tender lock is not taken", () => (mockLock.notAcquired = true), "CARD"],
   ])(
     "SA-877 %s: the tender lock is released before creditAfterTender runs",
     async (_n, arrange, method) => {
       arrange();
-      await ring({ method, amount: 100 });
+      const r: any = await ring({ method, amount: 100 });
+      expect(r.paymentRecorded).toBe(false);
       expect(mockHeldAtRecheck).toEqual([false]);
     },
   );
@@ -226,5 +239,58 @@ describe("CounterSaleService.ring: the credit re-check after a failed netted ten
     expect(recordPayment).not.toHaveBeenCalled();
     expect(mockAfterTender).not.toHaveBeenCalled();
     expect(r.creditOverLimit).toBeUndefined();
+  });
+
+  // W-736 (SA-876 LOW 2): GET by-key serves the same credit line the POST answered, READ-ONLY (no log line, no audit row).
+  describe("byKey: the stored sale's credit line (W-736)", () => {
+    beforeEach(() => {
+      mockReplayCandidate.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        counterSale: true,
+        status: "DELIVERED",
+        customerId: "cust-1",
+        total: 100,
+        counterCashTendered: null,
+      });
+    });
+
+    it("the till's CASH tender did not record: the re-check runs read-only and the line is served", async () => {
+      const r: any = await service.byKey("key-1", "CASH");
+      expect(r.paymentRecorded).toBe(false);
+      expect(mockAfterTender).toHaveBeenCalledTimes(1);
+      expect(mockAfterTender.mock.calls[0][1]).toMatchObject({
+        customerId: "cust-1",
+        orderId: "ord-1",
+        total: 100,
+        netted: 100,
+        readOnly: true,
+      });
+      expect(r.creditOverLimit).toEqual(OVER);
+    });
+
+    it("the payment is recorded: no re-check, no line", async () => {
+      invoices[0].payments.push({ id: "p0", amount: 100, method: "CASH", status: "PAID" });
+      invoices[0].status = "PAID";
+      const r: any = await service.byKey("key-1", "CASH");
+      expect(r.paymentRecorded).toBe(true);
+      expect(mockAfterTender).not.toHaveBeenCalled();
+      expect(r.creditOverLimit).toBeUndefined();
+    });
+
+    it("no till method (the tender is unknown, so nothing was netted to re-check): no re-check, no line", async () => {
+      const r: any = await service.byKey("key-1");
+      expect(mockAfterTender).not.toHaveBeenCalled();
+      expect(r.creditOverLimit).toBeUndefined();
+    });
+
+    it("a re-check that throws never fails the read", async () => {
+      mockAfterTender.mockImplementation(() => {
+        throw new Error("re-check blew up");
+      });
+      const r: any = await service.byKey("key-1", "CASH");
+      expect(r.paymentRecorded).toBe(false);
+      expect(r.creditOverLimit).toBeUndefined();
+    });
   });
 });

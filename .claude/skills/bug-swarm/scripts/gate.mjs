@@ -4,13 +4,14 @@
 // 2026-10-23-bug-swarm-2: the same chain was re-typed. Steps here are argv arrays (never a shell
 // string) and the diff range is always `git merge-base origin/master HEAD`..HEAD.
 //
-//   node gate.mjs [--needs-db] [--json out.json] [--dry-run]     (run from a worktree root)
+//   node gate.mjs [--needs-db] [--json out.json] [--ids a,b --id-space row|bug] [--dry-run]     (run from a worktree root)
 //
 // Pure core: planGate(...) -> steps[]; runGate(steps, { exec }) runs every step, never stops early.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
 
 const PRETTIER_EXT = new Set([
   ".ts",
@@ -55,6 +56,41 @@ function lintScriptExists(root, ws) {
   }
 }
 
+// Repo-wide census specs read files BY NAME (run 2026-10-23-bug-swarm-4: #3659 went red on one after a script
+// was added). They run when the branch touches ANY file (add, modify, delete, rename, copy: both paths of a move)
+// under apps/api/prisma/, apps/api/scripts/ or scripts/.
+// Run 2026-10-23-bug-swarm-4 (#3659) went red on a repo-wide census; a hand-listed subset still missed ~25
+// scanners (v1.2 review of #3674). So when a trigger dir changes, run the FULL api lanes, not a list.
+export const FULL_LANE_TIMEOUT_MS = 30 * 60_000;
+const CENSUS_DIRS = ["apps/api/prisma/", "apps/api/scripts/", "scripts/"];
+const posix = (f) => f.split("\\").join("/");
+
+// Fails when a commit subject carries a (B###) label that is not one of the ids the run was given
+// (run 4 fixed row 668 under the label B668: a row id translated to a bug id).
+const ID_LABELS_SCRIPT = `const {execFileSync}=require("node:child_process");
+const [base,ids]=process.argv.slice(1);
+const allowed=new Set(ids.split(",").filter(Boolean));
+const subjects=execFileSync("git",["log","--format=%s",base+"..HEAD"],{encoding:"utf8"}).split("\\n").filter(Boolean);
+const bad=[];
+for(const s of subjects)for(const m of s.matchAll(/\\b(B\\d+)\\b/g))if(!allowed.has(m[1]))bad.push(m[1]+" in: "+s);
+if(bad.length){console.error("commit labels outside the given ids ("+[...allowed].join(", ")+"):\\n"+bad.join("\\n"));process.exit(1);}`;
+
+/**
+ * Every path touched in base..HEAD by an add, copy, modify, rename or delete (for a rename or copy BOTH the
+ * old and the new path), so editing, deleting or moving a script also counts.
+ */
+export function touchedSince(git, base) {
+  const out = git(["diff", "--name-status", "-z", "--diff-filter=ACMRD", "-M", `${base}..HEAD`]);
+  const parts = out.split("\0").filter(Boolean);
+  const files = [];
+  for (let i = 0; i < parts.length;) {
+    const status = parts[i++];
+    const n = /^[RC]/.test(status) ? 2 : 1;
+    for (let k = 0; k < n && i < parts.length; k++) files.push(parts[i++]);
+  }
+  return [...new Set(files)];
+}
+
 /** { base, files } for the whole branch: merge-base with origin/master, deleted files dropped. */
 export function changedSince(git) {
   const base = git(["merge-base", "origin/master", "HEAD"]).trim();
@@ -66,6 +102,9 @@ const workspaceOf = (f) => /^(apps|packages)\/[^/]+(?=\/)/.exec(f)?.[0] ?? null;
 
 export function planGate({
   changedFiles,
+  touchedFiles = [],
+  ids = [],
+  idSpace,
   needsDb = false,
   base = "origin/master",
   root = process.cwd(),
@@ -81,6 +120,9 @@ export function planGate({
   add("packages-build", root, ["npx", "turbo", "run", "build", "--filter=./packages/*"]);
   add("signature-scan", root, ["node", ".claude/skills/bug-hunt/scripts/scan-signatures.mjs"]);
   add("commitlint", root, ["npx", "commitlint", "--from", base, "--to", "HEAD"]);
+
+  if (ids.length && idSpace)
+    add("id-labels", root, ["node", "-e", ID_LABELS_SCRIPT, base, ids.join(",")]);
 
   if (avoid.length) add("avoid-files", root, ["node", "-e", AVOID_SCRIPT, base, ...avoid]);
 
@@ -131,6 +173,18 @@ export function planGate({
     if (exists(path.join(root, test))) add(`self-test:scripts/${m[1]}`, root, ["node", test]);
   }
 
+  if (touchedFiles.some((f) => CENSUS_DIRS.some((d) => posix(f).startsWith(d)))) {
+    const api = path.join(root, "apps/api");
+    // `npm test -w apps/api` is the api unit entry (run-unit-tests.mjs): the parallel lane AND the serial
+    // `-script.spec.ts` lane that tests the scripts themselves; bare `npx jest` skips the latter.
+    add("census:unit", root, ["npm", "test", "-w", "apps/api"], FULL_LANE_TIMEOUT_MS);
+    add(
+      "census:repo-truth",
+      api,
+      ["npx", "jest", "-c", "jest.repo-truth.config.js"],
+      FULL_LANE_TIMEOUT_MS,
+    );
+  }
   add("size-ratchet", path.join(root, "apps/api"), [
     "npx",
     "jest",
@@ -160,6 +214,8 @@ export function execStep(step, { platform = process.platform, killTree } = {}) {
   return new Promise((resolve) => {
     const child = spawn(step.cmd[0], step.cmd.slice(1), {
       cwd: step.cwd,
+      // Git's repo-scoped env (GIT_DIR ...) must not leak into the inline git scripts of a step.
+      env: step.env ?? scrubbedGitEnv(),
       stdio: ["ignore", "pipe", "pipe"],
       detached: platform !== "win32",
     });
@@ -232,7 +288,12 @@ function ownOutputs(root, jsonOut) {
   return rel.startsWith("..") || path.isAbsolute(rel) ? [] : [rel.split(path.sep).join("/")];
 }
 
-const git = (args) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+const git = (args) =>
+  execFileSync("git", args, {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    env: scrubbedGitEnv(),
+  });
 
 /**
  * Poll a gate json in Node (agent harnesses block a foreground `sleep`). Prints the json; exit 0 when
@@ -401,8 +462,22 @@ export async function main(argv = process.argv.slice(2)) {
   const head = git(["rev-parse", "HEAD"]).trim();
   if (jsonOut && !dryRun && process.env.RF_HEAVY_SLOT_HELD !== "1") beginJson(jsonOut, head);
   const { base, files } = changedSince(git);
+  const touchedFiles = touchedSince(git, base);
+  const ii = argv.indexOf("--ids");
+  const ids =
+    ii === -1
+      ? []
+      : String(argv[ii + 1] ?? "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+  const si2 = argv.indexOf("--id-space");
+  const idSpace = si2 === -1 ? undefined : argv[si2 + 1];
   const steps = planGate({
     changedFiles: files,
+    touchedFiles,
+    ids,
+    idSpace,
     needsDb,
     base,
     root,

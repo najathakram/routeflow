@@ -41,10 +41,12 @@ import {
   computeInvoiceLineTotal,
   computeInvoiceTotals,
   customerLinePrice,
+  customerTierFor,
   type InvoiceTotalsLine,
 } from "@routeflow/pricing";
 import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
-import { PriceLayerNotice, pricesUnconfirmed } from "@/components/PriceLayerNotice";
+import { PriceLayerNotice } from "@/components/PriceLayerNotice";
+import { customerPricingGate, gateNoticeLayer } from "@/lib/customer-pricing-gate";
 import { apiClient } from "@/lib/api-client";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
@@ -203,7 +205,8 @@ function CreateEstimateModal({
   const [errors, setErrors] = React.useState<Record<string, string>>({});
 
   // Customer per-product tier overrides
-  const { data: customerPricesData } = useCustomerPrices(selectedCustomer?.id);
+  const customerPricesQuery = useCustomerPrices(selectedCustomer?.id);
+  const { data: customerPricesData } = customerPricesQuery;
   const cpMap = React.useMemo(() => {
     const map = new Map<string, number>();
     (customerPricesData ?? []).forEach((cp: any) => map.set(cp.productId, cp.pricingTier));
@@ -212,6 +215,17 @@ function CreateEstimateModal({
 
   // S19b (SA-811a/813): flag-on, billing's own customer layer. Flag off = no request and master's chain.
   const priceLayer = useCustomerPriceLayer(selectedCustomer?.id);
+  // W-745 (SA-868/884): the one shared gate. The customer is the picked row (its tier is read); a customer-price read that
+  // failed with no data blocks the pick (it would drop every per-product override); a PLAN_GATE 403 is an empty read.
+  const pricingGate = customerPricingGate({
+    customerQuery: selectedCustomer ? { data: selectedCustomer } : {},
+    customerPricesQuery: selectedCustomer ? customerPricesQuery : {},
+    priceLayer,
+    productIds: lineItems.map((li) => li.productId),
+    openSuggestions: lineItems.some(
+      (li) => li.priceType === "STANDARD" || li.priceType === "SPECIAL",
+    ),
+  });
 
   // Debounce
   React.useEffect(() => {
@@ -275,13 +289,11 @@ function CreateEstimateModal({
       scheduleScannerRefocus(productSearchRef, 50);
       return;
     }
-    // Flag on and the layer not read yet (or failed): a pick would price at the tier, so wait (the notice says why).
-    if (priceLayer.enabled && !priceLayer.ready) return;
+    // The customer's prices or (flag on) the layer not read yet, or failed: a pick would mis-price, so wait (the notice says why).
+    if (pricingGate.blockPick) return;
     const upb: number | undefined = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
     const listPrice = Number(product.pricePerUnit ?? 0);
-    const customerTier = selectedCustomer?.pricingTier ?? 1;
-    const tierOverride = cpMap.get(product.id);
-    const effectiveTier = tierOverride ?? customerTier;
+    const effectiveTier = customerTierFor(cpMap.get(product.id), selectedCustomer?.pricingTier);
     let tierPrice = customerLinePrice({ product, tier: effectiveTier }).price;
     let priceType: EstimateLineItem["priceType"] = isSpecialTier(effectiveTier)
       ? "SPECIAL"
@@ -419,10 +431,7 @@ function CreateEstimateModal({
   // Footer subtotal: boxed-aware per-line totals, summed and rounded once in pricing.
   const { subtotal } = computeInvoiceTotals(lineItems.map(toTotalsLine));
 
-  const priceBlocked = pricesUnconfirmed(
-    priceLayer,
-    lineItems.map((li) => li.productId),
-  );
+  const priceBlocked = pricingGate.blockSave;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -482,8 +491,12 @@ function CreateEstimateModal({
             Cancel
           </Button>
           <PriceLayerNotice
-            layer={priceLayer}
-            unconfirmed={priceBlocked}
+            layer={gateNoticeLayer(
+              pricingGate,
+              priceLayer,
+              () => void customerPricesQuery.refetch(),
+            )}
+            unconfirmed={priceBlocked || pricingGate.blockPick}
             className="mr-auto self-center text-xs text-amber-700"
           />
           <Button

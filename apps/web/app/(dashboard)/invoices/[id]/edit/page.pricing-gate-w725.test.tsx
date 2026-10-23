@@ -203,3 +203,16 @@ describe("SA-883: the invoice edit page treats a plan-gated 403 on the customer 
     expect(capturedOnScan).toBeUndefined();
   });
 });
+
+/** W-745 (the #3658 review NIT): a FAILED customer read on the edit page offers Retry for the customer reads, not the layer only. */
+describe("W-745: the invoice edit page retries a failed customer read", () => {
+  it("customer read failed (no data): the failed copy has a Retry that refetches the customer and price reads", async () => {
+    flagOn = false;
+    mockCustomerRead = { data: undefined, isError: true };
+    renderWithProviders(<EditInvoicePage />);
+    await screen.findByDisplayValue("Old");
+    await userEvent.click(await screen.findByRole("button", { name: /retry/i }));
+    expect(mockRefetchCustomer).toHaveBeenCalled();
+    expect(mockRefetchPrices).toHaveBeenCalled();
+  });
+});
