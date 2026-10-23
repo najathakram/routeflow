@@ -37,7 +37,7 @@ const SITES: Record<string, { class: RotationClass; why: string }> = {
   },
   "orders/orders.service.ts#forceConsolidateCustomer": {
     class: "WHOLE_INVOICE_DELETE_REVERSED",
-    why: "the merge loser's DRAFT mirror is settled to zero (INVOICE_ZEROED) before its delete (R10)",
+    why: "clearLoserDraftForDelete settles the loser's DRAFT mirror to zero (INVOICE_ZEROED) before its delete (R10)",
   },
   "customers/customers.service.ts#deleteAllCustomers": {
     class: "WHOLE_INVOICE_DELETE_REVERSED",

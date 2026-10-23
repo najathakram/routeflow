@@ -120,9 +120,9 @@ const SETTLE_SITES: Record<string, LockRow> = {
     locks: ['FROM "Order"', 'FROM "Invoice"'],
     why: "SA-608g: Order then Invoice FOR UPDATE, re-read under them",
   },
-  "orders/orders.service.ts#forceConsolidateCustomer": {
-    locks: ["lockAndRecheckMergeInputs(", "lockInvoiceRowsInOrder("],
-    why: "683 (SA-896): the merge group's Orders FOR UPDATE, then the loser's DRAFT Invoice, before INVOICE_ZEROED",
+  "orders/merge-loser-draft.ts#clearLoserDraftForDelete": {
+    locks: ["lockInvoiceRowsInOrder("],
+    why: "683 (SA-896): its only caller, forceConsolidateCustomer, holds the merge group's Orders (lockAndRecheckMergeInputs); then the loser's DRAFT Invoice, before INVOICE_ZEROED",
   },
   "orders/orders.service.ts#deleteOrder": {
     locks: ["lockDeleteLines(", "lockRows: true"],

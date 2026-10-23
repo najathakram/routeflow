@@ -279,7 +279,7 @@ import { tenantSafeParentView } from "../products/product-parent";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { lockInvoiceRowsInOrder } from "../regulated/ledger-locks";
+import { clearLoserDraftForDelete } from "./merge-loser-draft";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 
 @Injectable()
@@ -1032,17 +1032,7 @@ export class OrdersService implements OnApplicationBootstrap {
               // deleteLoserGuarded re-checks the same predicate on the delete itself).
               const loserDraft = await this.invoicesService.findOpenOrderDraft(loser.id, tx);
               if (loserDraft) {
-                // B214 (REG-B214): a DRAFT mirror can source a credit note; refuse before the FK
-                // SET NULL orphans it.
-                await assertNoUnspentSourcedCredits(tx, [loserDraft.id]);
-                // 683 (SA-789 F3, SA-896): a draft mirror carries SALE rows (booked at creation). Settle them to zero BEFORE
-                // the delete, the customer-purge shape: the merged lines are booked again on the winner's draft.
-                // SA-839 order: the merge group's Orders are held (lockAndRecheckMergeInputs), then this Invoice row.
-                await lockInvoiceRowsInOrder(tx, this.prisma.getTenantId(), [loserDraft.id]);
-                await this.ledger.settleRegulatedLedger(tx, {
-                  kind: "INVOICE_ZEROED",
-                  invoiceId: loserDraft.id,
-                });
+                await clearLoserDraftForDelete(tx, this.ledger, loserDraft);
                 await tx.invoiceItem.deleteMany({ where: { invoiceId: loserDraft.id } });
                 await tx.invoice.delete({ where: { id: loserDraft.id } });
               }
