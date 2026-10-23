@@ -87,6 +87,7 @@ import {
   pendingScanDecision,
   pillLabel,
   plural,
+  taxRowLabel,
   unitWords,
   type CustomerLayerUnit,
   type SellLevel,
@@ -2953,7 +2954,7 @@ export default function NewInvoicePage() {
                   </div>
                   {tax > 0 && (
                     <div className="flex justify-between text-navy/70">
-                      <span>Tax ({(taxRate * 100).toFixed(0)}%)</span>
+                      <span>{taxRowLabel(settings?.taxRate)}</span>
                       <span>{fmt(tax)}</span>
                     </div>
                   )}
@@ -3009,7 +3010,7 @@ export default function NewInvoicePage() {
                 </div>
                 {tax > 0 && (
                   <div className="flex justify-between">
-                    <dt className="text-navy/70">Tax ({(taxRate * 100).toFixed(0)}%)</dt>
+                    <dt className="text-navy/70">{taxRowLabel(settings?.taxRate)}</dt>
                     <dd className="font-medium text-navy">{fmt(tax)}</dd>
                   </div>
                 )}

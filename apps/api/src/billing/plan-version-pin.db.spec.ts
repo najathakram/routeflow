@@ -197,6 +197,8 @@ describeDb(
       label: string,
       o: {
         status: TenantStatus;
+        /** SA-832 / 453: a READ_ONLY a payment may lift carries a billing reason (a bare READ_ONLY is an admin lock). */
+        readOnlyReason?: string | null;
         planKey: "GROWTH" | "SCALE";
         sku: "FORECASTING" | "REGULATED_ITEMS";
         row: { priceSnapshot: number; stripeItemId?: string | null };
@@ -214,6 +216,7 @@ describeDb(
           name: slug,
           class: TenantClass.PRODUCTION,
           status: o.status,
+          readOnlyReason: o.readOnlyReason ?? null,
           planVersionId: pins.tenant,
         },
       });
@@ -298,6 +301,7 @@ describeDb(
     it("subscribe GROWTH from a lapsed SCALE tenant (manual): the plan LEFT is judged by the pinned version, so the admin-only add-on is priced; both pins land on the published version", async () => {
       const t = await pinnedTenant("sub", {
         status: TenantStatus.READ_ONLY,
+        readOnlyReason: "subscription_cancelled", // SA-832 / 453: a billing lapse, which a subscribe may lift
         planKey: "SCALE",
         sku: "REGULATED_ITEMS",
         row: { priceSnapshot: 0 },

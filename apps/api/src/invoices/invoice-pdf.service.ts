@@ -1,4 +1,5 @@
 import React from "react";
+import { BILL_TO_ADDRESS_ORDER } from "./invoice-bill-to";
 import { writeInvoicePdfPointer } from "./invoice-pdf-pointer";
 import { Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { renderToBuffer } from "@react-pdf/renderer";
@@ -64,7 +65,7 @@ export class InvoicePdfService {
             businessName: true,
             contactName: true,
             phone: true,
-            addresses: { orderBy: { isDefault: "desc" } },
+            addresses: { orderBy: BILL_TO_ADDRESS_ORDER }, // #2088: the fingerprint reads the same first row
           },
         },
         items: {

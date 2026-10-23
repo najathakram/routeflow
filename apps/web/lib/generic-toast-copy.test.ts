@@ -117,6 +117,17 @@ describe("genericToastCopy: codes users rely on", () => {
     ).toBe("Another change is in progress. Try again in a moment.");
   });
 
+  it("SA-832 / 453: TENANT_ADMIN_LOCKED shows its fixed sentence, never the raw 409 text or the cause", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.TENANT_ADMIN_LOCKED, message: "raw server text" }),
+    );
+    expect(copy).toBe(
+      "This workspace is locked and can't take a payment right now. Please contact support.",
+    );
+    expect(copy).not.toBe(NEUTRAL_409);
+    expect(copy).not.toMatch(/admin_set|administrator/i);
+  });
+
   it("SA-733r5: the catch-up refusals show fixed copy, never the server message", () => {
     for (const code of [
       API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP,

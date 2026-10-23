@@ -2573,7 +2573,7 @@ export function CreateOrderModal({
                   type="button"
                   ref={customerUndo.chipRef}
                   onClick={customerUndo.change}
-                  className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
+                  className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded p-1 text-navy/70 hover:text-danger transition-colors lg:min-h-0 lg:min-w-0"
                   title="Change customer"
                   aria-label="Change customer"
                 >
@@ -3111,7 +3111,7 @@ export function CreateOrderModal({
                         focusAfterToggle.current = "link";
                         setBackdateOpen(false);
                       }}
-                      className="font-medium text-brand-500 hover:underline"
+                      className="inline-flex min-h-[44px] items-center font-medium text-brand-500 hover:underline lg:min-h-0"
                     >
                       Use today
                     </button>
@@ -3126,7 +3126,7 @@ export function CreateOrderModal({
                       focusAfterToggle.current = "date";
                       setBackdateOpen(true);
                     }}
-                    className="min-h-10 text-sm font-medium text-brand-500 hover:underline"
+                    className="min-h-[44px] text-sm font-medium text-brand-500 hover:underline lg:min-h-10"
                   >
                     Backdate this order
                   </button>

@@ -66,6 +66,8 @@ module.exports = {
     "^@routeflow/types/estimate-tax-basis$": "<rootDir>/../../packages/types/estimate-tax-basis.ts",
     // Row 485: the pure sale-retry rule (definitive refusal, per-attempt key), same subpath trick.
     "^@routeflow/types/sale-attempt$": "<rootDir>/../../packages/types/sale-attempt.ts",
+    // #2088: the shared invoice re-email copy + states (pure), same subpath trick.
+    "^@routeflow/types/invoice-send-state$": "<rootDir>/../../packages/types/invoice-send-state.ts",
     // SA-824: the shared payment submit-key rule (builds on sale-attempt), same subpath trick.
     "^@routeflow/types/payment-submit-key$": "<rootDir>/../../packages/types/payment-submit-key.ts",
     // Row 498: the shared duplicate-payment-reference copy and 409 reader (pure), same subpath trick.

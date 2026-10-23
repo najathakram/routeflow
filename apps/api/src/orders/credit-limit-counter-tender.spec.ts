@@ -4,6 +4,11 @@ import path from "node:path";
 import { assertCreditAtEnforcementPoint, creditProjectedTotal } from "./credit-limit-guard";
 import { counterCreditPaidNow } from "./counter-sale/counter-sale-payment";
 
+/** A relative path with "/" separators, so the repo-wide scan's keys match on Windows as well as on Linux CI. */
+function toPosixRel(rel: string, sep: string = path.sep): string {
+  return rel.split(sep).join("/");
+}
+
 // S1 (C42): the credit gate at order create counts only what STAYS OWED after this request's tender.
 // Limit 100, exposure 90 (one sent invoice), a $50 counter sale. Real gate, mocked db.
 
@@ -191,10 +196,18 @@ describe("S1 wiring pins", () => {
       });
     const setters = walk(root)
       .filter((f) => SETTER.test(fs.readFileSync(f, "utf8")))
-      .map((f) => path.relative(root, f))
+      .map((f) => toPosixRel(path.relative(root, f)))
       // type/plumbing declarations that only carry the option through
       .filter((f) => !/^orders\/(order-create-options|sale-options)\.ts$/.test(f))
       .sort();
     expect(setters).toEqual(["orders/counter-sale/counter-sale.service.ts"]);
+  });
+});
+
+describe("repo-wide scan paths are separator-neutral", () => {
+  it("a Windows-style relative path reads as the posix key", () => {
+    expect(toPosixRel("orders\\counter-sale\\counter-sale.service.ts", "\\")).toBe(
+      "orders/counter-sale/counter-sale.service.ts",
+    );
   });
 });

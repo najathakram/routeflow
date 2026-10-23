@@ -14,7 +14,10 @@ function serviceReturning(inv: object) {
       getTenantId: () => null, // row 308: the zone lookup short-circuits with no tenant
       forTenant: () => ({
         invoice: { findUnique: jest.fn().mockResolvedValue(inv) },
-        auditLog: { groupBy: jest.fn().mockResolvedValue([]) }, // revisedAt: never revised
+        auditLog: {
+          groupBy: jest.fn().mockResolvedValue([]),
+          findFirst: jest.fn().mockResolvedValue(null), // #2088: no tracked email
+        }, // revisedAt: never revised
       }),
     },
     systemConfig: { get: jest.fn().mockResolvedValue(null) },

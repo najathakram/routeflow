@@ -180,7 +180,8 @@ function ProductSearchInput({
                   onClick={() => {
                     const label = displayProductName(p);
                     setQuery(label);
-                    onChange(label, p.id, p.pricePerUnit);
+                    // The API serves pricePerUnit as a decimal string; the line's price is a number (W-693 hotfix).
+                    onChange(label, p.id, Number(p.pricePerUnit));
                     setOpen(false);
                   }}
                 >

@@ -363,6 +363,52 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(prisma.tenant.update.mock.calls[0][0].data.readOnlyReason).toBe("admin_set");
     });
 
+    // SA-832 / 453: the admin SUSPENDED writer stamps the same reason, so the shared payment predicate
+    // (paymentReinstatable) can tell it from a billing suspension (which carries none) and a payment cannot lift it.
+    it("SUSPENDED is written with readOnlyReason 'admin_set', never null (a payment must not lift an admin suspension)", async () => {
+      before();
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "SUSPENDED",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data).toEqual({
+        status: "SUSPENDED",
+        readOnlyReason: "admin_set",
+      });
+    });
+
+    it("SUSPENDED over a payment_overdue pause is 'admin_set' too (not nulled)", async () => {
+      before({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "SUSPENDED",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data.readOnlyReason).toBe("admin_set");
+    });
+
+    // SA-832b: an admin CANCELLED is stamped too, so it is never mistaken for a Stripe churn (stripe_cancelled), which
+    // a payment / the back-office win-back link CAN lift.
+    it("CANCELLED is written with readOnlyReason 'admin_set' (never null, never stripe_cancelled)", async () => {
+      before({ status: "CANCELLED", readOnlyReason: "stripe_cancelled" });
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "CANCELLED",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update.mock.calls[0][0].data).toEqual({
+        status: "CANCELLED",
+        readOnlyReason: "admin_set",
+      });
+    });
+
     it("CANCELLED with a live stripeSubId: 409 TENANT_CANCEL_SUBSCRIPTION_FIRST, nothing written", async () => {
       before({
         subscription: {
@@ -5907,7 +5953,8 @@ describe("PlatformAdminService — audit provenance", () => {
       await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
       expect(prisma.tenant.update).toHaveBeenCalledWith({
         where: { id: TENANT_ID },
-        data: { status: "SUSPENDED", readOnlyReason: null },
+        // SA-832 / 453: an admin SUSPENDED is stamped admin_set (it replaces the cleared payment_overdue)
+        data: { status: "SUSPENDED", readOnlyReason: "admin_set" },
       });
       // only pausedAt is cleared: the clock / marker stay (the invoice is still owed)
       expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith({
@@ -5938,7 +5985,7 @@ describe("PlatformAdminService — audit provenance", () => {
       await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
       expect(prisma.tenant.update).toHaveBeenCalledWith({
         where: { id: TENANT_ID },
-        data: { status: "SUSPENDED" },
+        data: { status: "SUSPENDED", readOnlyReason: "admin_set" },
       });
       expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
       expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith(null);
