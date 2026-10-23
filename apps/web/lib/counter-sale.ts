@@ -421,6 +421,8 @@ export function counterSaleErrorCopy(err: unknown, opts: { walkIn?: boolean } = 
     return COUNTER_SALE_DAY_CLOSED_TILL_COPY;
   if (status === 409 && ORDER_EXISTS_CODES.has(res?.data?.code))
     return COUNTER_OUTCOME_UNKNOWN_COPY; // the order exists
+  if (status === 400 && res?.data?.code === API_ERROR_CODES.WALK_IN_NO_ACCOUNT)
+    return "A walk-in has no account. Pick a customer to put this sale on account.";
   if (status === 409 && res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT)
     return "This walk-in has open credit. Resolve it on the customer, then ring the sale again.";
   // B1209: a walk-in's cash below the server's total was refused (400, as pickup-complete) BEFORE anything was written.

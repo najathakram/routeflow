@@ -26,7 +26,8 @@ const X = (why: string): Row => ({ kind: "EXEMPT", why });
 const EXEMPT_BASELINE = 0; // #2262 / SA-424: the import writers moved to TOUCHES (was 2)
 
 const TABLE: Record<string, Row> = {
-  "bookkeeping/bookkeeping.service.ts::BookkeepingService.recordPayment": T,
+  // Row 498: recordPayment is the payment-ref lock wrapper; the body is writeLedgerPayment.
+  "bookkeeping/bookkeeping.service.ts::BookkeepingService.writeLedgerPayment": T,
   "credit-notes/credit-notes.service.ts::CreditNotesService.applyCreditInTx": T,
   "customers/customers.service.ts::CustomersService.applyAdvancePaymentToInvoiceLocked": T,
   "invoices/invoices.service.ts::InvoicesService.recordDeliveryPaymentInTx": T,

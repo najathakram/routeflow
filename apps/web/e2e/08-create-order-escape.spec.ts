@@ -100,7 +100,7 @@ test.describe("Operator — Create Order Escape scoping (WP-1)", () => {
     // POST has definitely landed before afterEach deletes the draft.
     await page.keyboard.press("Escape");
     await expect(title).toBeHidden({ timeout: 10_000 });
-    await expect(page.getByText(/saved as draft|draft parked/i).first()).toBeVisible({
+    await expect(page.getByText(/draft saved|saved as draft|draft parked/i).first()).toBeVisible({
       timeout: 10_000,
     });
   });
@@ -111,11 +111,15 @@ test.describe("Operator — Create Order Escape scoping (WP-1)", () => {
     const title = await openBuilderWithCustomer(page);
 
     // Cancel with a customer selected → the order is parked to a draft, not lost.
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true })
+      .first()
+      .click();
     await expect(title).toBeHidden({ timeout: 10_000 });
 
     // The parked order surfaces in the draft dock (toast confirms the save).
-    await expect(page.getByText(/saved as draft|draft parked/i).first()).toBeVisible({
+    await expect(page.getByText(/draft saved|saved as draft|draft parked/i).first()).toBeVisible({
       timeout: 10_000,
     });
   });
@@ -337,7 +341,11 @@ test.describe("Operator — Create Order product search scan button, mobile (B49
     );
     expect(hasHorizontalOverflow).toBe(false);
 
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true })
+      .first()
+      .click();
   });
 });
 

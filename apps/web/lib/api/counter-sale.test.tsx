@@ -1,6 +1,7 @@
 import * as React from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { counterSaleToResend, forgetCounterSale } from "../counter-last-sale";
 import { useCounterSaleByKey, useCounterSaleGate, useCreateCounterSale } from "./counter-sale";
 
 const post = jest.fn();
@@ -30,6 +31,33 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
     {children}
   </QueryClientProvider>
 );
+
+describe("useCreateCounterSale: remembers an unrecorded sale for Record anyway (SA-837b)", () => {
+  beforeEach(() => {
+    post.mockReset();
+    forgetCounterSale();
+  });
+  const dto = { walkIn: true, items: [], payment: { method: "CHECK" as const, reference: "1042" } };
+
+  it("an unrecorded payment keeps the sale's key and cart under its order id", async () => {
+    post.mockResolvedValue({ data: { orderId: "o9", paymentRecorded: false } });
+    const { result } = renderHook(() => useCreateCounterSale(), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync({ dto, idempotencyKey: "key-9" });
+    });
+    expect(counterSaleToResend("o9")).toEqual({ orderId: "o9", key: "key-9", dto });
+    expect(counterSaleToResend("o-other")).toBeNull();
+  });
+
+  it("a recorded payment keeps nothing", async () => {
+    post.mockResolvedValue({ data: { orderId: "o9", paymentRecorded: true } });
+    const { result } = renderHook(() => useCreateCounterSale(), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync({ dto, idempotencyKey: "key-9" });
+    });
+    expect(counterSaleToResend("o9")).toBeNull();
+  });
+});
 
 describe("useCreateCounterSale: the Idempotency-Key header", () => {
   beforeEach(() => post.mockReset());

@@ -28,6 +28,16 @@ jest.mock("@/lib/api-client", () => {
 const refusal = (status: number, code?: string) =>
   Object.assign(new Error("Request failed"), { response: { status, data: { code } } });
 
+const duplicateRefusal = Object.assign(new Error("Request failed"), {
+  response: {
+    status: 409,
+    data: {
+      code: API_ERROR_CODES.DUPLICATE_PAYMENT_REF,
+      existingPayment: { id: "p1", paidAt: "2026-10-01T00:00:00.000Z", amount: 1, invoiceId: "i" },
+    },
+  },
+});
+
 type Predicate = (error: unknown) => boolean;
 
 /** Run `make()` once and return the `meta` the mutation registered in the cache. */
@@ -88,9 +98,22 @@ describe("payment hooks: meta.localErrorToast answers a closed-day refusal (row 
     expect(toast).toHaveBeenCalledTimes(1);
   });
 
-  it("the bookkeeping invoice page's useRecordPayment() does not opt out: the global toast is its only one", async () => {
-    expect(await metaOf(() => useRecordPayment())).toBeUndefined();
+  it("the bookkeeping invoice page's useRecordPayment() owns ONLY the duplicate-reference refusal (row 498): everything else, a closed day included, reaches the global toast", async () => {
+    const predicate = (await metaOf(() => useRecordPayment()))?.localErrorToast;
+    expect(typeof predicate).toBe("function");
+    expect(predicate!(duplicateRefusal)).toBe(true);
+    expect(predicate!(refusal(409, API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED))).toBe(false);
+    expect(predicate!(refusal(409))).toBe(false);
+    expect(predicate!(new Error("network"))).toBe(false);
   });
+
+  it.each(HOOKS.filter(([name]) => /Record/.test(name)))(
+    "%s also answers a 409 DUPLICATE_PAYMENT_REF itself (row 498: the 'Record anyway' toast)",
+    async (_name, make) => {
+      const predicate = (await metaOf(make))?.localErrorToast;
+      expect(predicate!(duplicateRefusal)).toBe(true);
+    },
+  );
 
   it("useRejectPaymentRequest is untouched (a reject writes no money)", async () => {
     expect(await metaOf(() => useRejectPaymentRequest())).toBeUndefined();

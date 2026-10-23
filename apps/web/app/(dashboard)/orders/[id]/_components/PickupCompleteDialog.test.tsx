@@ -11,7 +11,11 @@ import { PickupHandOverDialog } from "./PickupHandOver";
  * rules are the till's (validatePayment, change, check number); a payment that was not recorded is
  * retried under the SAME key.
  */
-let authUser: { id: string; tenantSlug: string | null } | null = { id: "u-a", tenantSlug: "acme" };
+let authUser: { id: string; tenantSlug: string | null; role?: string } | null = {
+  id: "u-a",
+  tenantSlug: "acme",
+  role: "OPERATOR",
+};
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useOptionalAuth: () => ({ user: authUser }),
@@ -69,7 +73,7 @@ const confirm = () =>
 beforeEach(() => {
   jest.clearAllMocks();
   window.sessionStorage.clear();
-  authUser = { id: "u-a", tenantSlug: "acme" };
+  authUser = { id: "u-a", tenantSlug: "acme", role: "OPERATOR" };
   post.mockResolvedValue(result());
 });
 
@@ -612,5 +616,57 @@ describe("PickupCompleteDialog — the global error toast", () => {
     confirm();
     await screen.findByRole("alert");
     expect(toast).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PickupCompleteDialog: SA-837b Record anyway on a duplicate payment reference", () => {
+  const SENTENCE =
+    "A payment with this reference was already recorded on Oct 1, 2026 for $25.00 (INV-0042).";
+  const dupResult = () =>
+    result({
+      paymentRecorded: false,
+      paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      paymentCauseCode: "DUPLICATE_PAYMENT_REF",
+      existingPayment: {
+        id: "pay-1",
+        paymentNumber: "PAY-A-0001",
+        paidAt: "2026-10-01T12:00:00.000Z",
+        amount: 25,
+        invoiceId: "inv-9",
+        invoiceNumber: "INV-0042",
+      },
+      paid: 0,
+      balanceDue: 25,
+    });
+
+  it("names the existing payment and Record anyway reposts the SAME key and body with payment.recordAnyway", async () => {
+    balance(25);
+    post.mockResolvedValueOnce(dupResult());
+    post.mockResolvedValueOnce(result());
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+    expect(await screen.findByText(SENTENCE)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Record anyway" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(post.mock.calls[1][2].headers["Idempotency-Key"]).toBe(
+      post.mock.calls[0][2].headers["Idempotency-Key"],
+    );
+    expect(post.mock.calls[0][1].payment).not.toHaveProperty("recordAnyway");
+    expect(post.mock.calls[1][1].payment).toEqual({
+      ...post.mock.calls[0][1].payment,
+      recordAnyway: true,
+    });
+  });
+
+  it("a role that may not use the flag sees the sentence and no Record anyway", async () => {
+    authUser = { id: "u-a", tenantSlug: "acme", role: "DRIVER" };
+    balance(25);
+    post.mockResolvedValueOnce(dupResult());
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+    expect(await screen.findByText(SENTENCE)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Record anyway" })).toBeNull();
   });
 });

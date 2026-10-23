@@ -3,6 +3,8 @@
 // POST /orders/counter-sale. The server (OrdersModule, counter-sale/) and the web screen both import this one file;
 // never keep a second copy. The server always rings the sale as a PICKUP order (the client sends no fulfillPath).
 
+import type { DuplicatePaymentRefExisting } from "./payment-ref";
+
 export const COUNTER_SALE_PAYMENT_METHOD_VALUES = ["CASH", "CARD", "CHECK", "ON_ACCOUNT"] as const;
 export type CounterSalePaymentMethod = (typeof COUNTER_SALE_PAYMENT_METHOD_VALUES)[number];
 
@@ -31,6 +33,13 @@ export interface CounterSalePayment {
   amount?: number;
   /** a check number or card reference */
   reference?: string;
+  /**
+   * Row 498 (SA-837b): the staff cashier's "Record anyway" resend of a payment the server refused as a duplicate
+   * reference. The server ignores it unless the signed-in user is a staff role.
+   */
+  recordAnyway?: boolean;
+  /** CHECK only: the date written on the check, YYYY-MM-DD. After the tenant's today = 400 COUNTER_CHECK_POSTDATED. Omitted = not checked. */
+  checkDate?: string;
 }
 
 export interface CounterSaleRequest {
@@ -83,6 +92,13 @@ export interface CounterSaleResponse {
    */
   paymentRecorded: boolean;
   paymentErrorCode?: string;
+  /**
+   * Row 498 (SA-837b): WHY the payment was not recorded when the cause is a duplicate payment reference
+   * (`DUPLICATE_PAYMENT_REF`), with the existing payment it repeats; the till shows the shared sentence and a
+   * "Record anyway" action. Omitted for every other cause.
+   */
+  paymentCauseCode?: string;
+  existingPayment?: DuplicatePaymentRefExisting;
   /**
    * The cash handed over, as stored on the order. Optional because it is OMITTED (never null) when nothing was stored
    * (card / check / on account / a sale rung before it was stored); the Today's-sales row carries `number | null`.
@@ -169,6 +185,9 @@ export interface PickupCompleteResponse {
   /** false when the hand-over committed but recording the payment failed; `paymentErrorCode` names why. */
   paymentRecorded: boolean;
   paymentErrorCode?: string;
+  /** Row 498 (SA-837b): as on the counter-sale response. */
+  paymentCauseCode?: string;
+  existingPayment?: DuplicatePaymentRefExisting;
   /** true when the order was already picked up: no status write; only a planned shortfall of this hand-over's tender is recorded. */
   alreadyPickedUp?: boolean;
 }

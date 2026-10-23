@@ -1,6 +1,7 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -123,7 +124,7 @@ const nextBtn = () => screen.getByRole("button", { name: "Complete & next sale" 
 
 describe("POS stack: re-price x line row x Undo x checkout", () => {
   it("a customer pick re-prices the line shown in CounterLineRow", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     expect(colaRow()).toHaveTextContent("$2.50");
     pickAcme();
@@ -132,7 +133,7 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
   });
 
   it("an Undo-restored line keeps its re-priced price (and a re-price during the undo window reaches it)", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await scan("WATER");
     pickAcme();
@@ -154,7 +155,7 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
   it("Complete is disabled while re-pricing, and while the POST is in flight (both buttons)", async () => {
     let release: (v: { data: unknown }) => void = () => {};
     pricesFor = () => new Promise((res) => (release = res));
-    const view = renderWithProviders(<CounterSaleScreen />);
+    const view = renderTill(<CounterSaleScreen />);
     await scan("COLA");
     pickAcme();
     await waitFor(() => expect(screen.getByTestId("counter-reprice-busy")).toBeInTheDocument());
@@ -176,7 +177,7 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
   });
 
   it("a line note survives a re-price and goes out as items[].note, with NO unitPrice", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     click("Add a note to Cola");
     fireEvent.change(screen.getByLabelText("Note for Cola"), { target: { value: "no ice" } });
@@ -194,7 +195,7 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
   });
 
   it("the re-price Undo restores prices without losing a line note or quantity", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     click("Add a note to Cola");
     fireEvent.change(screen.getByLabelText("Note for Cola"), { target: { value: "no ice" } });
@@ -208,7 +209,7 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
   });
 
   it("the receipt shows a line's note as muted text under the line", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await scan("WATER");
     click("Add a note to Cola");
@@ -222,7 +223,7 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
   });
 
   it("after the re-price Undo the customer stays and a line scanned LATER keeps that customer's tier", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     pickAcme();
     await waitFor(() => expect(total()).toHaveTextContent("$2.00"));
@@ -235,7 +236,7 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
   });
 
   it("the customer pick, Use Walk-in and the re-price Undo are disabled while the sale POST is pending", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     pickAcme();
     await waitFor(() => expect(screen.getByTestId("counter-reprice-note")).toBeInTheDocument());
@@ -252,7 +253,7 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
   });
 
   it("the scan field is disabled during the POST", async () => {
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA");
     pending = true;
     click("Card");
@@ -261,7 +262,7 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
 
   it("an outcome-unknown cart is never re-priced: a restored held attempt keeps its prices", async () => {
     mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
-    const view = renderWithProviders(<CounterSaleScreen />);
+    const view = renderTill(<CounterSaleScreen />);
     await scan("COLA");
     pickAcme();
     await waitFor(() => expect(total()).toHaveTextContent("$2.00"));
@@ -271,7 +272,7 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
     view.unmount();
     // the customer's tiers change under the held sale: it must NOT re-price
     pricesFor = async () => ({ data: [{ productId: "p-cola", pricingTier: 3 }] });
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await screen.findByTestId("counter-outcome-unknown");
     await new Promise((r) => setTimeout(r, 50));
     expect(total()).toHaveTextContent("$2.00");

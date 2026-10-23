@@ -32,7 +32,11 @@ import { pickupTenderGroupId } from "./pickup-tender-group";
  * COUNTER_SALE_DAY_CLOSED, nothing stamped or recorded). A non-counter order counts toward its STAMPED register, else the
  * request's, else 'main', and is stamped when it has none. A replay with nothing left to collect returns the stored result.
  */
-const TILL = { paymentGroupId: pickupTenderGroupId("ord-1"), tillLockHeld: true };
+const TILL = {
+  paymentGroupId: pickupTenderGroupId("ord-1"),
+  tillLockHeld: true,
+  refDedupe: expect.anything(),
+};
 const DB_NOW = new Date("2026-10-09T15:00:00.456Z");
 const T_DELIVERED = 1000;
 const staff = { sub: "op-1", role: "OPERATOR", tenantId: "t-1" } as never;

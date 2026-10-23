@@ -34,7 +34,9 @@ describe("family page with units v2 on: parity", () => {
   it("v2 never shows the old units card on a family (K14: `!(v2 && isFamily)`; rendered case in page.units-card-readonly.test.tsx) (K11-25: the create-an-order link is hidden on EVERY family, in FamilySalesCards)", () => {
     const uses = src.split("\n").filter((l) => l.includes("v2Family"));
     expect(uses).toHaveLength(0);
-    expect(src).toMatch(/\{!cardRo && !\(v2 && isFamily\) && \(\s*<ProductUnitsCard/);
+    expect(src).toMatch(
+      /\{\(!v2 \|\| \(!isFamily && unitStructureGoverned\(product\)\)\) && \(\s*<ProductUnitsCard/,
+    );
     const cards = fs.readFileSync(path.join(__dirname, "FamilySalesCards.tsx"), "utf8");
     expect(cards).toMatch(
       /<SalesHistoryCard productId=\{productId\} hideCreateOrder compactEmpty \/>/,
@@ -62,8 +64,6 @@ describe("family page with units v2 on: parity", () => {
       .filter((l) => !/const v2( |Family)/.test(l))
       .map((l) => l.trim());
     expect(refs).toEqual([
-      // The Units & prices card reads only where the grid shell mounts the controls that replace it (D-2026-10-18)
-      "const cardRo = v2 && unitStructure;",
       // K11-23: the prices region is its own grid item right after Details
       'const pricingSplit = v2 && product.kind !== "FAMILY";',
       // K11-20c: prices are edited in the floating window (and shown read-only in Details) for a non-governed product
@@ -72,10 +72,10 @@ describe("family page with units v2 on: parity", () => {
       "<ProductHeaderLine product={product} currentStock={currentStock} pricesV2={v2} />",
       '{v2 && product.kind !== "FAMILY" ? <ProductJumpLinks reserveSpace /> : null}',
       "pricesV2={v2}",
-      // K14: the old Units card is absent where the v2 grid owns the controls, and on every v2 family
-      "{!cardRo && !(v2 && isFamily) && (",
-      // K10d: the v2 flag drops the old Units card's always-open Add form (the shell's Add a unit replaces it)
-      "<ProductUnitsCard product={product} hideAddForm={v2} />",
+      // Row 742: under v2 the old Units card stays only on a variant or recipe (never a family), structure only
+      "{(!v2 || (!isFamily && unitStructureGoverned(product))) && (",
+      // K10d: the v2 flag drops the old Units card's always-open Add form; row 742: and its prices
+      "<ProductUnitsCard product={product} hideAddForm={v2} structureOnly={v2} />",
     ]);
   });
 });
