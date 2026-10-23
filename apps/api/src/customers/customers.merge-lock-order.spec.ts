@@ -37,6 +37,7 @@ describe("mergeCustomers — Order rows before Invoice rows (SA-218 (1), #2116)"
         },
       }),
       tenantTransaction: jest.fn((fn: (t: any) => unknown) => fn(tx)),
+      getTenantId: () => "tenant-1",
     };
     const module = await Test.createTestingModule({
       providers: [
@@ -63,7 +64,7 @@ describe("mergeCustomers — Order rows before Invoice rows (SA-218 (1), #2116)"
     // the Order re-point is the first write: nothing, above all no Invoice row, is locked before the Orders.
     expect(ops[0]).toBe("$queryRaw");
     expect(log[0].sql).toMatch(
-      /FROM "Return" WHERE "customerId" IN \(\?, \?\) ORDER BY id FOR UPDATE/,
+      /FROM "Return" WHERE "customerId" IN \(\?, \?\) AND "tenantId" = \? ORDER BY id FOR UPDATE/,
     );
     expect(ops[1]).toBe("order.updateMany");
     expect(ops.indexOf("order.updateMany")).toBeLessThan(ops.indexOf("invoice.updateMany"));

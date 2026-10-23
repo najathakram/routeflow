@@ -520,4 +520,19 @@ describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNo
     expect(off).toEqual([]);
     for (const site of Object.keys(CALLER_HELD)) expect(site in ROW_LOCK_SITES).toBe(true);
   });
+
+  it("SA-898: the restoreCreditFromPaymentInTx exception cannot widen: exactly its 6 classified callers", () => {
+    const CS = "credit-notes/credit-notes.service.ts";
+    const callers = [
+      "cancelStandaloneInTx", // UNVERIFIED (W-757)
+      "pullBackOrderCreditPair", // UNVERIFIED (W-757)
+      "releaseCreditsInTx", // UNVERIFIED (W-757)
+      "settleOrderCreditsInTx",
+      "unapplyFromInvoice", // UNVERIFIED (W-757)
+      "voidWithReversalInTx",
+    ].map((m) => `${CS}#${m}`);
+    expect(callSites("restoreCreditFromPaymentInTx")).toEqual(callers);
+    const src = strip(fs.readFileSync(path.join(SRC, CS), "utf8"));
+    expect(src.match(/\bthis\.restoreCreditFromPaymentInTx\(/g)).toHaveLength(6);
+  });
 });
