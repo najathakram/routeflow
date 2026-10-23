@@ -1815,6 +1815,35 @@ test("D6 stale-queued times from the suite's last update: a re-run reuses an old
   assert.match(COL.GRAPHQL_QUERY, /checkSuite \{ createdAt updatedAt \}/);
 });
 
+test("collapseRuns: an old success beside a STALE queued re-run is never success (reads notrun)", () => {
+  const now = Date.parse("2026-10-23T12:00:00Z");
+  const at = (ageMs) => new Date(now - ageMs).toISOString();
+  const H = 3600_000;
+  const done = {
+    __typename: "CheckRun",
+    name: "verify",
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+    startedAt: at(10 * H),
+  };
+  const stuck = {
+    __typename: "CheckRun",
+    name: "verify",
+    status: "QUEUED",
+    conclusion: null,
+    startedAt: null,
+    checkSuite: { createdAt: at(10 * H), updatedAt: at(7 * H) },
+  };
+  for (const nodes of [
+    [done, stuck],
+    [stuck, done],
+  ]) {
+    const runs = COL.collapseRuns(nodes, now);
+    assert.deepEqual(runs, [{ name: "verify", state: "notrun" }]);
+    assert.equal(COL.summarizeChecks(runs, {}).gate, "not-run");
+  }
+});
+
 test("collapseRuns: an old success and a newer queued re-run of the same check read pending (pending outranks success)", () => {
   const cr = (over) => ({ __typename: "CheckRun", name: "verify", ...over });
   const runs = COL.collapseRuns([

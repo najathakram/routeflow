@@ -79,8 +79,22 @@ export const GRAPHQL_QUERY = `query {
 
 const RUN_RANK = { failure: 6, pending: 5, success: 4, cancelled: 3, skipped: 2, notrun: 1 };
 
-/** A check still queued (never started) this long after its suite was created counts as not-run. */
+/** A check still queued (never started) this long after its suite was last created or updated counts as not-run. */
 export const QUEUED_STALE_MS = 6 * 3600_000;
+
+/**
+ * A CheckRun that never started and whose suite was last created or updated more than
+ * QUEUED_STALE_MS ago. A re-run reuses the original suite, so time from the LATER of the two.
+ */
+function isStaleQueued(n, nowMs) {
+  if (!n || n.startedAt !== null || n.__typename === "StatusContext") return false;
+  if (!["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(String(n.status ?? "").toUpperCase()))
+    return false;
+  const times = [n.checkSuite?.createdAt, n.checkSuite?.updatedAt]
+    .map((t) => Date.parse(t ?? ""))
+    .filter(Number.isFinite);
+  return times.length > 0 && nowMs - Math.max(...times) > QUEUED_STALE_MS;
+}
 
 /**
  * One GraphQL check context (CheckRun | StatusContext) -> { name, state } with state in
@@ -105,12 +119,7 @@ export function normalizeContext(n, nowMs = Date.now()) {
   // startedAt present-and-null = never started. (A fixture without the key keeps the old reading.)
   const neverStarted = n.startedAt === null;
   if (neverStarted && ["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(status)) {
-    // A re-run reuses the original suite, so time from the LATER of created/updated.
-    const times = [n.checkSuite?.createdAt, n.checkSuite?.updatedAt]
-      .map((t) => Date.parse(t ?? ""))
-      .filter(Number.isFinite);
-    const stale = times.length > 0 && nowMs - Math.max(...times) > QUEUED_STALE_MS;
-    return { name: String(n.name), state: stale ? "notrun" : "pending" };
+    return { name: String(n.name), state: isStaleQueued(n, nowMs) ? "notrun" : "pending" };
   }
   if (status && status !== "COMPLETED") return { name: String(n.name), state: "pending" };
   if (neverStarted && (c === "CANCELLED" || c === "SKIPPED" || c === "STARTUP_FAILURE"))
@@ -126,17 +135,23 @@ export function normalizeContext(n, nowMs = Date.now()) {
 /**
  * Context nodes -> one run per check NAME (several workflow runs report the same name; a skipped
  * duplicate must never hide the real result). Worst wins: failure > pending > success >
- * cancelled > skipped. First-appearance order.
+ * cancelled > skipped. First-appearance order. Exception: a stale-queued attempt (a re-run stuck
+ * past QUEUED_STALE_MS) stops an older success from winning: the check reads notrun, never success.
  */
 export function collapseRuns(nodes, nowMs = Date.now()) {
   const by = new Map();
+  const stuck = new Set();
   for (const raw of nodes ?? []) {
     const r = normalizeContext(raw, nowMs);
     if (!r) continue;
+    if (isStaleQueued(raw, nowMs)) stuck.add(r.name);
     const had = by.get(r.name);
     if (!had || RUN_RANK[r.state] > RUN_RANK[had]) by.set(r.name, r.state);
   }
-  return [...by].map(([name, state]) => ({ name, state }));
+  return [...by].map(([name, state]) => ({
+    name,
+    state: state === "success" && stuck.has(name) ? "notrun" : state,
+  }));
 }
 
 function compileGates(config) {
