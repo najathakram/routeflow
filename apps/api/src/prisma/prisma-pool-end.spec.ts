@@ -1,8 +1,8 @@
 // W-720: PrismaService builds its own pg.Pool and hands it to PrismaPg. The adapter never ends a
-// pool its caller supplied, so `$disconnect()` (and `onModuleDestroy`, which calls it) left the
-// pool's idle clients open until pg's 10 s idle timeout: every DB spec printed "Jest did not exit"
-// and held the heavy slot ~10 s longer, and a shutting-down api kept its sockets. These pin that
-// the service ends the pool it built, exactly once.
+// pool its caller supplied, so `$disconnect()` left the pool's idle clients open until pg's 10 s
+// idle timeout: every DB spec printed "Jest did not exit" and held the heavy slot ~10 s longer.
+// These pin that an explicit $disconnect ends the pool it built, exactly once, and that app
+// shutdown (Nest lifecycle hooks) never does: draining requests, crons and Bull jobs still query.
 const mockPools: Array<{ end: jest.Mock; on: jest.Mock }> = [];
 jest.mock("pg", () => {
   const actual = jest.requireActual("pg");
@@ -39,12 +39,10 @@ describe("W-720 PrismaService ends the pg.Pool it built", () => {
     expect(mockPools[0].end).not.toHaveBeenCalled();
   });
 
-  it("onApplicationShutdown() (after HTTP and crons stopped) ends it, once", async () => {
-    const svc = new PrismaService();
-    await svc.onModuleDestroy();
-    await svc.onApplicationShutdown();
-    await svc.onApplicationShutdown();
-    expect(mockPools[0].end).toHaveBeenCalledTimes(1);
+  it("the service has no onApplicationShutdown: Bull queues close in theirs, maybe after it, and their running jobs still query", () => {
+    expect(
+      (PrismaService.prototype as { onApplicationShutdown?: unknown }).onApplicationShutdown,
+    ).toBeUndefined();
   });
 
   it("a pool pg already marks as ending is never ended again", async () => {
@@ -54,12 +52,13 @@ describe("W-720 PrismaService ends the pg.Pool it built", () => {
     expect(mockPools[0].end).not.toHaveBeenCalled();
   });
 
-  it("a Nest TestingModule close() runs the hooks in order and ends the pool exactly once", async () => {
+  it("a full Nest close() (every lifecycle hook) never ends the pool; only an explicit $disconnect does", async () => {
     const mod = await Test.createTestingModule({ providers: [PrismaService] }).compile();
     const svc = mod.get(PrismaService);
     const pool = mockPools[mockPools.length - 1];
-    jest.spyOn(svc, "$connect").mockResolvedValue(undefined);
     await mod.close();
+    expect(pool.end).not.toHaveBeenCalled();
+    await svc.$disconnect();
     expect(pool.end).toHaveBeenCalledTimes(1);
   });
 
