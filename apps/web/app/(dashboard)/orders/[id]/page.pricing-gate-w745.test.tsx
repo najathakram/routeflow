@@ -67,6 +67,17 @@ async function openEdit() {
     if (url === "/tenants/me/addons") return Promise.resolve({ data: { addons: [] } });
     if (url === "/customers/c1") return Promise.resolve({ data: { id: "c1", pricingTier: 3 } });
     if (String(url).startsWith("/customers/c1/prices")) return pricesReply();
+    if (String(url).startsWith("/products/barcode/"))
+      return Promise.resolve({
+        data: {
+          id: "p9",
+          name: "Gadget",
+          unit: "each",
+          pricePerUnit: "10",
+          priceTier3: "8",
+          isActive: true,
+        },
+      });
     return Promise.resolve({ data: [] });
   });
   render(
@@ -77,6 +88,8 @@ async function openEdit() {
   fireEvent.click(await screen.findByRole("button", { name: /edit items/i }), { detail: 1 });
   await screen.findByRole("button", { name: /^save changes$/i });
 }
+window.HTMLElement.prototype.scrollIntoView = jest.fn(); // jsdom: an added line is scrolled to
+const qtyInputs = () => document.querySelectorAll('input[type="number"]');
 const substitute = () => screen.getByRole("button", { name: /^substitute$/i });
 const httpError = (status: number, code?: string) =>
   Object.assign(new Error(`HTTP ${status}`), { response: { status, data: { code } } });
@@ -107,5 +120,29 @@ describe("W-745: the order editor fails closed on a failed customer-price read",
   it("everything read: Substitute opens", async () => {
     await openEdit();
     await waitFor(() => expect(substitute()).not.toBeDisabled(), { timeout: 5000 });
+  });
+});
+
+/** #3670 review MUST-1: the scan path (and InlineCreateProductModal.onCreated) reached addProduct with no gate. */
+describe("W-745: the order editor's scan/add path is gated too", () => {
+  it("prices read failed: a scanned code adds nothing (master: a Gadget line priced from tier 1)", async () => {
+    pricesReply = () => Promise.reject(httpError(500));
+    await openEdit();
+    await screen.findByText(/couldn't load this customer's prices/i, {}, { timeout: 5000 });
+    const box = screen.getByPlaceholderText(/scan barcode/i);
+    fireEvent.change(box, { target: { value: "111" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(qtyInputs()).toHaveLength(1); // only the stored line
+    expect(screen.getByRole("button", { name: /scan barcode/i })).toBeDisabled();
+  });
+
+  it("everything read: the same scan adds the line", async () => {
+    await openEdit();
+    await waitFor(() => expect(substitute()).not.toBeDisabled(), { timeout: 5000 });
+    const box = screen.getByPlaceholderText(/scan barcode/i);
+    fireEvent.change(box, { target: { value: "111" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() => expect(qtyInputs()).toHaveLength(2), { timeout: 5000 });
   });
 });

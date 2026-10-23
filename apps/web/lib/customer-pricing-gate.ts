@@ -18,7 +18,8 @@ export function gateNoticeLayer(
 ): NoticeLayer {
   if (gate.readFailed)
     return { enabled: true, ready: false, pending: false, failed: true, refetch: refetchReads };
-  if (gate.pending && !priceLayer.enabled)
+  // SA-890 LOW: the layer itself is only the answer while IT is the thing being read (flag on, not ready).
+  if (gate.pending && !(priceLayer.enabled && !priceLayer.ready))
     return { enabled: true, ready: false, pending: true, failed: false, refetch: refetchReads };
   return priceLayer;
 }

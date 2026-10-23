@@ -148,11 +148,12 @@ describe("W-745: the new-invoice builder fails closed on a failed customer-price
     expect(await screen.findByText(/couldn't load this customer's prices/i)).toBeInTheDocument();
     capturedOnScan?.("111");
     await new Promise((r) => setTimeout(r, 50));
-    // The line is NOT priced: no unit price lands (master: 8, the tier price with the overrides dropped). The search box
-    // itself still echoes the picked name, as it does while the layer is pending.
+    // The line is NOT priced: no unit price lands (master: 8, the tier price with the overrides dropped), and the search
+    // box does not pretend the product was picked (#3670 review NIT: it used to show the refused product's name).
     expect((screen.getByLabelText("Unit price") as HTMLInputElement).value).not.toMatch(
       /^8(\.00)?$/,
     );
+    expect(screen.queryByDisplayValue("Tiered Widget")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /retry/i }));
     expect(mockRefetchPrices).toHaveBeenCalled();
   });
@@ -166,5 +167,52 @@ describe("W-745: the new-invoice builder fails closed on a failed customer-price
     await saveDraft(user);
     await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
     expect(sentItems()[0]).toMatchObject({ productId: "prod-1", unitPrice: 8 });
+  });
+});
+
+/**
+ * SA-890 (P1, filed on #3670): the builder kept the PREVIOUS customer's suggested prices after a customer switch. A line
+ * picked for tier-3 Acme at $8.00 was saved for tier-1 Beta at $8.00. Now, once the new customer's prices are confirmed, a line
+ * picked on this form whose price the operator has not typed is re-suggested at the new customer's price (the recurring
+ * form's SA-856 rule 2); a typed price stays.
+ */
+describe("SA-890: a customer switch re-suggests untyped picked prices", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockCustomers = [
+      { id: "cust-1", businessName: "Acme Co", pricingTier: 3 },
+      { id: "cust-2", businessName: "Beta Mart", pricingTier: 1 },
+    ];
+    mockBarcodeProduct = TIERED;
+    mockSearchProducts = [TIERED];
+    mockPricesRead = {};
+  });
+
+  async function switchTo(user: ReturnType<typeof userEvent.setup>, name: string) {
+    await user.click(screen.getByTitle("Remove customer"));
+    await user.click(screen.getByPlaceholderText(/search customers/i));
+    await user.click(await screen.findByText(name));
+  }
+
+  it("picked at $8.00 for tier-3 Acme, switched to tier-1 Beta: Save sends $10.00 (master: $8.00)", async () => {
+    const user = await openOtherCharge();
+    capturedOnScan!("111");
+    await screen.findByDisplayValue("Tiered Widget");
+    await switchTo(user, "Beta Mart");
+    await saveDraft(user);
+    await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
+    expect(sentItems()[0]).toMatchObject({ productId: "prod-1", unitPrice: 10 });
+  });
+
+  it("a typed price survives the switch", async () => {
+    const user = await openOtherCharge();
+    capturedOnScan!("111");
+    await screen.findByDisplayValue("Tiered Widget");
+    await typePrice(user, "7.25");
+    await user.type(screen.getByLabelText("Reason (required)"), "agreed"); // H3b: off a special price needs a reason
+    await switchTo(user, "Beta Mart");
+    await saveDraft(user);
+    await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
+    expect(sentItems()[0]).toMatchObject({ productId: "prod-1", unitPrice: 7.25 });
   });
 });

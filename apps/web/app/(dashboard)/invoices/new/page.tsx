@@ -283,7 +283,8 @@ function ProductSearchInput({
     product?: Record<string, unknown>,
     /** #2717 M4a-1: the level a SCAN resolved (undefined for a picker tap). */
     scanLevel?: SellLevel,
-  ) => void;
+    /** W-745: false = the pick was refused (the customer's prices are not confirmed); the box keeps what was typed. */
+  ) => boolean | void;
   onCreateProduct?: (searchTerm: string) => void;
   onBarcodeNotFound?: (barcode: string) => void;
 }) {
@@ -324,7 +325,7 @@ function ProductSearchInput({
   function selectProduct(p: any, scanLevel?: SellLevel) {
     if (isFamilyProduct(p)) return; // a FAMILY is a container, never a line (B1215 C7)
     const label = displayProductName(p);
-    onChange(
+    const accepted = onChange(
       label,
       p.id,
       String(p.pricePerUnit),
@@ -333,7 +334,7 @@ function ProductSearchInput({
       p,
       scanLevel,
     );
-    setQuery(label);
+    if (accepted !== false) setQuery(label);
     setOpen(false);
     setExpandedParentId(null);
   }
@@ -1046,6 +1047,42 @@ export default function NewInvoicePage() {
     openSuggestions: items.some((i) => !!i.productId && !i.priceEdited),
   });
   const priceBlocked = pricingGate.blockSave;
+  // SA-890 (the recurring form's SA-856 rule 2): the products picked on THIS form, so a customer switch can re-suggest them.
+  const pickedProducts = React.useRef(new Map<string, any>());
+  // A customer switch re-suggests ONLY pack lines picked here whose price the operator has not typed, once the new customer's
+  // prices are confirmed (the gate is open); a typed price, a unit line and a restored line keep theirs.
+  React.useEffect(() => {
+    if (!customer || pricingGate.blockPick) return;
+    setItems((prev) => {
+      let changed = false;
+      const next = prev.map((it) => {
+        const product = it.productId ? pickedProducts.current.get(it.productId) : undefined;
+        if (!product || it.priceEdited || it.unitLabel) return it;
+        const fresh = catalogPricing(product, {
+          customerTier: customerTierFor(undefined, customer.pricingTier),
+          customerPrice: priceMap[product.id],
+          lineTier: tierFor(product.id),
+          layerLine: layerLineFor(product),
+        });
+        if (fresh.effectivePrice === it.unitPrice) return it;
+        changed = true;
+        const special = fresh.effectivePrice !== fresh.listPrice;
+        return {
+          ...it,
+          unitPrice: fresh.effectivePrice,
+          regularPrice: special ? fresh.listPrice : undefined,
+          isSpecialPrice: special,
+          pricing: fresh.pricing,
+          listPrice: fresh.listPrice,
+          priceType: fresh.priceType,
+          tierPrices: fresh.tierPrices,
+          overrideReason: undefined,
+        };
+      });
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a customer switch, or its prices arriving (blockPick flips open)
+  }, [customer?.id, pricingGate.blockPick]);
 
   // ── Selling units (VU-4a, B1218) ────────────────────────────────────────────
   // Staff only, and only under flag.units_v1: everyone else keeps today's row byte for byte.
@@ -1413,6 +1450,7 @@ export default function NewInvoicePage() {
       layerLine: layerLineFor(product),
     });
     const { listPrice, effectivePrice } = fresh;
+    pickedProducts.current.set(product.id, product);
 
     const seed = seedLineQty(upb, scanLevel);
     const lineItem: LineItemState = {
@@ -2573,7 +2611,8 @@ export default function NewInvoicePage() {
                         onChange={(desc, pid, price, avgCost, unitsPerBox, product, scanLevel) => {
                           // #2696(c) SA-558e: a picked product prices at the customer's TIER (the
                           // server's own baseline) — list for a tier customer would be refused.
-                          if (pid && pricingGate.blockPick) return;
+                          if (pid && pricingGate.blockPick) return false;
+                          if (pid && product) pickedProducts.current.set(pid, product);
                           const layerLine = pid && product ? layerLineFor(product) : undefined;
                           const pricing = layerLine
                             ? {
