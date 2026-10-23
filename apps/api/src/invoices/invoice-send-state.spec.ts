@@ -86,7 +86,7 @@ describe("invoiceFingerprint", () => {
     ["a line levy (category tax)", (s) => (s.items![0].categoryTaxAmount = "1.00")],
     [
       "an added line",
-      (s) => s.items!.push({ description: "Extra", qty: 1, unitPrice: 1, subtotal: 1 }),
+      (s) => (s.items = [...s.items!, { description: "Extra", qty: 1, unitPrice: 1, subtotal: 1 }]),
     ],
     ["the total", (s) => (s.total = "114.25")],
     ["the discount", (s) => (s.discount = "2")],
