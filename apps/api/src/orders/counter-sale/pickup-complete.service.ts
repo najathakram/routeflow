@@ -200,12 +200,15 @@ export class PickupCompleteService {
         order = (await this.readOrder(id)) ?? order;
       }
       const creditPaidNow = await this.tenderCreditPaidNow(sent);
+      // the B585 delivery gate runs on this step only for goods not already out (changeStatus' alreadyOut)
+      const gated = order.status !== "OUT_FOR_DELIVERY" && order.status !== "PARTIALLY_DELIVERED";
       try {
         await this.orders.changeStatus(id, { status: "DELIVERED" } as never, user, {
           silent: true,
           creditPaidNow,
         });
-        gateNetted = creditPaidNow; // THIS call's gate counted the tender (a lost race netted nothing of ours)
+        // THIS call's gate counted the tender (a lost race, or goods already out, netted nothing of ours)
+        if (gated) gateNetted = creditPaidNow;
       } catch (e) {
         const now = await this.readOrder(id);
         if (now?.status !== "DELIVERED") throw e;
@@ -333,6 +336,7 @@ export class PickupCompleteService {
         total,
         netted: gateNetted(total),
         planError,
+        action: "delivery", // SA-849 rule 1: the hand-over is netted at the DELIVERED gate (enforce_delivery)
         actor: user.sub ?? null,
         impersonatedBy: user.impersonatedBy ?? null,
       },
