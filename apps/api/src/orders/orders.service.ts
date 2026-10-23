@@ -279,6 +279,7 @@ import { tenantSafeParentView } from "../products/product-parent";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { clearLoserDraftForDelete } from "./merge-loser-draft";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 
 @Injectable()
@@ -1031,9 +1032,7 @@ export class OrdersService implements OnApplicationBootstrap {
               // deleteLoserGuarded re-checks the same predicate on the delete itself).
               const loserDraft = await this.invoicesService.findOpenOrderDraft(loser.id, tx);
               if (loserDraft) {
-                // B214 (REG-B214): a DRAFT mirror can source a credit note; refuse before the FK
-                // SET NULL orphans it.
-                await assertNoUnspentSourcedCredits(tx, [loserDraft.id]);
+                await clearLoserDraftForDelete(tx, this.ledger, loserDraft);
                 await tx.invoiceItem.deleteMany({ where: { invoiceId: loserDraft.id } });
                 await tx.invoice.delete({ where: { id: loserDraft.id } });
               }
