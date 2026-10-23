@@ -22,9 +22,9 @@ export const AUDIT_ACTIONS = {
   VENDOR_BILL_LEDGER_EXCESS: "vendor-bill.ledger-excess",
   /** B288 (SA-814 R5-3): a cash payment moved off a vendor bill into a supplier credit dated at the payment; meta {billNumber, paymentId, supplierCreditId, amount, paidAt, method, statusBefore, statusAfter}. */
   VENDOR_BILL_PAYMENT_MOVED_TO_CREDIT: "vendor-bill.payment-moved-to-credit",
-  /** Units v2 (SA-799 b): one price Save; meta {request, undo, revisionBefore, revisionAfter, actor}. Undoable once. */
+  /** Units v2 (SA-799 b): one price Save; meta {request, undo, revisionBefore, revisionAfter, actor, priceStateBefore, priceStateAfter (SA-845 replay)}. Undoable once. */
   PRODUCT_PRICES_SAVED: "product.prices-saved",
-  /** Units v2 (SA-799 b): the Undo of a PRODUCT_PRICES_SAVED row; meta {undoes, revisionBefore, revisionAfter, actor}. */
+  /** Units v2 (SA-799 b): the Undo of a PRODUCT_PRICES_SAVED row; meta {undoes, skipped, revisionBefore, revisionAfter, actor, request: {skip}, priceStateAfter (SA-845 replay)}. */
   PRODUCT_PRICES_UNDONE: "product.prices-undone",
   /** SA-823 R11: a product moved under (or out of) a family; meta {productId, fromParentId, toParentId, variantName, via}. Written in the reparent's own transaction. */
   PRODUCT_FAMILY_ASSIGNED: "product.family_assigned",

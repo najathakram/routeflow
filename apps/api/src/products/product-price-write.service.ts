@@ -31,6 +31,7 @@ import {
   setStockLockTimeout,
 } from "../common/product-locks";
 import { familyPriceAuthorityError } from "./family-price";
+import { priceWriteReplay } from "./product-price-replay";
 import { assertOrderUnitSwitchAllowed, pricingRulesNotReady } from "../common/pricing-rules-ready";
 import { PrismaService } from "../prisma/prisma.service";
 import {
@@ -77,22 +78,21 @@ export class ProductPriceWriteService {
   ): Promise<SavePricesResponse> {
     return this.locked(productId, async (tx, m, tenantId) => {
       this.assertNotGoverned(m);
-      this.assertFresh(m, dto.expectedRevision, dto.expectedPriceState);
+      if (!this.isFresh(m, dto.expectedRevision, dto.expectedPriceState)) {
+        // SA-845: a would-be 409 that is this actor's own save, re-sent after a lost reply, is that save.
+        const replayed = await this.replayedSave(tx, m, productId, tenantId, dto, actorId);
+        if (replayed) return replayed;
+        throw this.stale(m);
+      }
       if (dto.orderUnit != null && dto.orderUnit !== m.view.anchor) assertOrderUnitSwitchAllowed();
 
       const cells = this.planCells(m, dto);
       const moves = await this.checkMoves(tx, m, productId, tenantId, dto.customerMoves ?? []);
       const { inverse } = await this.apply(tx, m, productId, cells, moves);
 
-      // The stored request names levels, not rows (SA-809), like every ref this write stores.
-      const lv = (ref: string) => canonicalUnitRef(m.units, ref);
-      const request = {
-        patches: dto.patches.map((p) => ({ ...p, ref: lv(p.ref) })),
-        keeps: (dto.keeps ?? []).map((k) => ({ ...k, ref: lv(k.ref) })),
-        customerMoves: (dto.customerMoves ?? []).map((mv) => ({ ...mv, ref: lv(mv.ref) })),
-        ...(dto.orderUnit != null ? { orderUnit: dto.orderUnit } : {}),
-      };
+      const request = this.storedRequest(m, dto);
       const undo = { patches: inverse.patches, customerMoves: moves.inverse };
+      const fresh = await this.grid.read(tx, productId);
       const audit = await tx.auditLog.create({
         data: {
           userId: actorId,
@@ -105,11 +105,13 @@ export class ProductPriceWriteService {
             revisionBefore: m.revision,
             revisionAfter: m.revision + 1,
             actor: actorId,
+            // SA-845: the live states around this write, so a retry can prove nothing was written since.
+            priceStateBefore: m.priceState,
+            priceStateAfter: fresh.priceState,
           },
         },
         select: { id: true },
       });
-      const fresh = await this.grid.read(tx, productId);
       return { revision: fresh.revision, auditId: audit.id, undo, grid: fresh.grid };
     });
   }
@@ -145,9 +147,27 @@ export class ProductPriceWriteService {
           action: AUDIT_ACTIONS.PRODUCT_PRICES_UNDONE,
           meta: { path: ["undoes"], equals: dto.auditId },
         },
-        select: { id: true },
+        select: { id: true, meta: true },
       });
-      if (already) throw this.undoUnavailable();
+      if (already) {
+        // SA-845: this actor's own undo, re-sent after a lost reply, is that undo.
+        const replay = priceWriteReplay({
+          stored: already.meta,
+          actorId,
+          expectedRevision: dto.expectedRevision,
+          request: { skip: dto.skip ?? [] },
+          live: { revision: m.revision, priceState: m.priceState },
+        });
+        if (!replay) throw this.undoUnavailable();
+        const skipped = (already.meta as { skipped?: SkippedCustomerCell[] }).skipped ?? [];
+        return {
+          revision: m.revision,
+          auditId: already.id,
+          grid: m.grid,
+          ...(skipped.length > 0 ? { skipped } : {}),
+          replayed: true,
+        };
+      }
       this.assertFresh(m, dto.expectedRevision, dto.expectedPriceState);
 
       const patches = (stored.patches ?? []).map((p) => ({
@@ -171,6 +191,7 @@ export class ProductPriceWriteService {
       );
       await this.apply(tx, m, productId, patches, moves);
 
+      const fresh = await this.grid.read(tx, productId);
       const audit = await tx.auditLog.create({
         data: {
           userId: actorId,
@@ -183,11 +204,13 @@ export class ProductPriceWriteService {
             revisionBefore: m.revision,
             revisionAfter: m.revision + 1,
             actor: actorId,
+            // SA-845: what a re-sent undo must match.
+            request: { skip: dto.skip ?? [] },
+            priceStateAfter: fresh.priceState,
           },
         },
         select: { id: true },
       });
-      const fresh = await this.grid.read(tx, productId);
       return {
         revision: fresh.revision,
         auditId: audit.id,
@@ -515,8 +538,61 @@ export class ProductPriceWriteService {
     if (reason) throw this.invalid([reason]);
   }
 
+  private isFresh(m: PriceModel, expectedRevision: number, expectedPriceState: string): boolean {
+    return m.revision === expectedRevision && m.priceState === expectedPriceState;
+  }
+
   private assertFresh(m: PriceModel, expectedRevision: number, expectedPriceState: string): void {
-    if (m.revision !== expectedRevision || m.priceState !== expectedPriceState) throw this.stale(m);
+    if (!this.isFresh(m, expectedRevision, expectedPriceState)) throw this.stale(m);
+  }
+
+  /** The stored request names levels, not rows (SA-809), like every ref this write stores. */
+  private storedRequest(m: PriceModel, dto: SavePricesRequest) {
+    const lv = (ref: string) => canonicalUnitRef(m.units, ref);
+    return {
+      patches: dto.patches.map((p) => ({ ...p, ref: lv(p.ref) })),
+      keeps: (dto.keeps ?? []).map((k) => ({ ...k, ref: lv(k.ref) })),
+      customerMoves: (dto.customerMoves ?? []).map((mv) => ({ ...mv, ref: lv(mv.ref) })),
+      ...(dto.orderUnit != null ? { orderUnit: dto.orderUnit } : {}),
+    };
+  }
+
+  /**
+   * SA-845: the ONE save whose `revisionBefore` is the client's expected revision (the revision bumps once per write,
+   * so there is at most one), replayed only if `priceWriteReplay` proves it is this actor's identical write with
+   * nothing written since. Nothing is written; the stored undo and auditId come back so Undo still works.
+   */
+  private async replayedSave(
+    tx: Tx,
+    m: PriceModel,
+    productId: string,
+    tenantId: string,
+    dto: SavePricesRequest,
+    actorId: string | null,
+  ): Promise<SavePricesResponse | null> {
+    if (actorId == null) return null;
+    const saved = await tx.auditLog.findFirst({
+      where: {
+        tenantId,
+        entityType: "Product",
+        entityId: productId,
+        action: AUDIT_ACTIONS.PRODUCT_PRICES_SAVED,
+        meta: { path: ["revisionBefore"], equals: dto.expectedRevision },
+      },
+      select: { id: true, meta: true },
+    });
+    if (!saved) return null;
+    const ok = priceWriteReplay({
+      stored: saved.meta,
+      actorId,
+      expectedRevision: dto.expectedRevision,
+      expectedPriceState: dto.expectedPriceState,
+      request: this.storedRequest(m, dto),
+      live: { revision: m.revision, priceState: m.priceState },
+    });
+    if (!ok) return null;
+    const undo = (saved.meta as { undo?: SavePricesResponse["undo"] }).undo;
+    return { revision: m.revision, auditId: saved.id, undo, grid: m.grid, replayed: true };
   }
 
   private stale(m: PriceModel, conflicts?: CustomerPriceConflict[]): ConflictException {
