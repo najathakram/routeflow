@@ -82,7 +82,7 @@ import { phoneActionItems } from "./_components/phone-action-items";
 import { useInvoiceDraftNotice } from "./_components/use-invoice-draft-notice";
 import { SAVE_CHORD_KEYS, saveChordHandler } from "./_components/use-save-chord";
 import { PickupHandOverButton, PickupHandOverDialog } from "./_components/PickupHandOver";
-import { CompleteAtCounterButton } from "./_components/CompleteAtCounter";
+import { CompleteAtCounterButton, CompleteAtCounterDialog } from "./_components/CompleteAtCounter";
 import {
   ConfirmedPrimaryAction,
   OutForDeliveryPrimary,
@@ -2146,13 +2146,11 @@ export default function OrderDetailPage() {
           onClose={() => setPickupOpen(false)}
         />
       )}
-      {/* I-120: mounted outside the status rows, like the hand-over: completing refetches the order as DELIVERED */}
       {access.staff && (
-        <PickupHandOverDialog
+        <CompleteAtCounterDialog
           order={order}
           open={completeOpen}
           onClose={() => setCompleteOpen(false)}
-          complete
         />
       )}
       <FulfillPathMoveConfirm

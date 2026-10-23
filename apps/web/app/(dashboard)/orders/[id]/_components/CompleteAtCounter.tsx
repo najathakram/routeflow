@@ -7,6 +7,20 @@ import { completeAtCounterOffered } from "@routeflow/pricing";
 import { COUNTER_COPY } from "@routeflow/types";
 import type { Order } from "@/lib/api/orders";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { PickupHandOverDialog } from "./PickupHandOver";
+
+/**
+ * The "Complete at counter" dialog: the pickup hand-over dialog in complete mode. Mounted by the page OUTSIDE the status
+ * rows, like the hand-over: completing refetches the order as DELIVERED, which unmounts those rows, and the outcome must
+ * outlive that.
+ */
+export function CompleteAtCounterDialog(props: {
+  order: Order;
+  open: boolean;
+  onClose: () => void;
+}) {
+  return <PickupHandOverDialog {...props} complete />;
+}
 
 /**
  * I-120 (SA-861 rules 1-3, G7): "Complete at counter" finishes an open order at the store in one step (hand over,
