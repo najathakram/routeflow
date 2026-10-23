@@ -18,7 +18,9 @@ export const COUNTER_COPY = {
 /**
  * I-120 (#3689 review MUST 4): the fixed copy of a refused "Complete at counter" (and pickup hand-over), shared by web
  * and mobile, each with its own money formatter; null for a code this does not own. Every one of these refusals happens
- * before the first write (the credit gate is pre-judged, SA-905 MUST 1), so each says nothing changed.
+ * before the first write and says nothing changed, except the credit and selling-restriction lines: their gates are
+ * pre-judged (SA-905 MUST 1), but the authoritative DELIVERED-step gate can still refuse after the switch (the documented
+ * residual), so those two never claim it (SA-907 LOW).
  */
 export function counterCompleteRefusalCopy(
   body: { code?: unknown; limit?: unknown; exposure?: unknown } | null | undefined,
@@ -32,10 +34,10 @@ export function counterCompleteRefusalCopy(
         typeof body.limit === "number" && typeof body.exposure === "number"
           ? ` (${money(body.exposure)} of ${money(body.limit)})`
           : "";
-      return `Nothing changed. This customer is over their credit limit${figures}. Take payment now, or record a payment first.`;
+      return `This customer is over their credit limit${figures}. Take payment now, or record a payment first.`;
     }
     case API_ERROR_CODES.SELLING_RESTRICTED:
-      return "Nothing changed. An item on this order can't be sold at the store. Edit the order, or deliver it.";
+      return "An item on this order can't be sold at the store. Edit the order, or deliver it.";
     case API_ERROR_CODES.ORDER_ON_ACTIVE_RUN:
       return "Nothing changed. This order is on an active delivery run. Remove it from the run first.";
     default:

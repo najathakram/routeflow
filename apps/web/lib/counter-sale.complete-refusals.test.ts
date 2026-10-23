@@ -20,16 +20,16 @@ describe("pickupCompleteErrorCopy: Complete at counter refusals (I-120)", () => 
         refusal(409, { code: "CREDIT_LIMIT_EXCEEDED", limit: 50, exposure: 120 }),
       ),
     ).toBe(
-      "Nothing changed. This customer is over their credit limit ($120.00 of $50.00). Take payment now, or record a payment first.",
+      "This customer is over their credit limit ($120.00 of $50.00). Take payment now, or record a payment first.",
     );
     expect(pickupCompleteErrorCopy(refusal(409, { code: "CREDIT_LIMIT_EXCEEDED" }))).toBe(
-      "Nothing changed. This customer is over their credit limit. Take payment now, or record a payment first.",
+      "This customer is over their credit limit. Take payment now, or record a payment first.",
     );
   });
 
   it("a selling restriction at the store", () => {
     expect(pickupCompleteErrorCopy(refusal(409, { code: "SELLING_RESTRICTED" }))).toBe(
-      "Nothing changed. An item on this order can't be sold at the store. Edit the order, or deliver it.",
+      "An item on this order can't be sold at the store. Edit the order, or deliver it.",
     );
   });
 
