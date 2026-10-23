@@ -104,6 +104,11 @@ frontmatter blocked every push fleet-wide).
 
 ## 6. Working with the Senior Architect
 
+- **Design Gate (owner R19).** The lead rejects any spec, ruling or PR without a passing
+  `future-proof` Design Gate: run `node .claude/skills/future-proof/scripts/check-gate.mjs <spec>`
+  before dispatching a review (exit 1 → back to the SA unreviewed); a ruling that folds review text
+  names the gate headings it re-checked; owner questions are batched into ONE question box at
+  planning, recommended option first, never asked mid-build.
 - SA rulings are numbered and recorded; carry them into the brief **in the owner's terms** with
   attribution, never as a relay. Ask for a ruling with the facts already gathered (path:line),
   the question, and your own recommendation; SA amends or confirms.
