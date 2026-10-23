@@ -199,6 +199,10 @@ const REVIEW_SCHEMA = {
   required: ["verdict", "musts", "nits"],
 };
 
+// The label a commit/test carries for an id: exactly as given in the declared id space.
+const labelOf = (row) => (SPACE === "row" && !/^W-/.test(row) ? `row ${row}` : row);
+const labelRule = (c) =>
+  `Label commits and test names with the id exactly as given in the "${SPACE}" id space (row ids as \`row 599\` / \`W-679\`; bug ids as \`B668\`), never translate a row id to B###. This cluster's labels: ${[...new Set(c.bugs.map((b) => labelOf(String(b.row))))].join(", ")}.`;
 const rowsOf = (c) => c.bugs.map((b) => (b.sub ? `${b.row}${b.sub}` : b.row));
 const redTails = (g) =>
   g.steps
@@ -413,13 +417,13 @@ Read the context pack(s) first: ${pack}. Files in scope: ${c.files.join(", ")}.$
 LOW only: if a fix needs a HIGH path (money, ledger, units, locks, tenancy, migration, billing, auth) stop and report it in the lesson field; do not fix it.
 ${AVOID_RULE}
 Worktree: ${t.exists ? `already at ${t.dir} (branch ${t.name}); work there, do not recreate it.` : `create it first: cd "${R}" && node "${SCRIPTS}/worktree.mjs" --dir "${t.dir}" --branch "${t.name}" --from "${args.fromWorktree}". If worktree.mjs exits non-zero, STOP and return status "worktree-failed" with its message in "message" (other fields empty); never reuse or delete an existing tree or branch.`}
-For each bug in order: (1) write a test that fails on the bug's own wrong value and run it; record the failing assertion text (the wrong value) in redValues; (2) make the minimal fix; (3) one commit "fix(<area>): <what> (B<id>)". Editing an existing assertion needs a line "SPEC-EDIT: <file:line> <why>" in specEdits. Put trailers on the LAST commit: "Bookkeeping-Follow-Up: pending" and "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>".
+For each bug in order: (1) write a test that fails on the bug's own wrong value and run it; record the failing assertion text (the wrong value) in redValues; (2) make the minimal fix; (3) one commit "fix(<area>): <what> (<label>)". ${labelRule(c)} Editing an existing assertion needs a line "SPEC-EDIT: <file:line> <why>" in specEdits. Put trailers on the LAST commit: "Bookkeeping-Follow-Up: pending" and "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>".
 ${RULES}
 Return {status "ok", commits (full shas of the commits made in THIS round; empty if you changed nothing), redValues, specEdits, lesson (one candidate or "none"), worktree (absolute path), head (git rev-parse HEAD after your last commit)}.`;
 
 const runGate = (c, wt, label, round) =>
   agent(
-    `First stop any earlier gate of this cluster by running: node "${SCRIPTS}/gate.mjs" --stop "${RUN_DIR}/gate-${c.id}.pid" (it kills the gate's process tree on any platform only if that pid is a gate.mjs process, then removes the pid file; never kill anything by hand). Then start the gate with Bash run_in_background (it queues behind other clusters and can run for a long time): cd "${wt}" && node "${SCRIPTS}/gate.mjs" --json "${RUN_DIR}/gate-${c.id}-r${round}.json" --pid-file "${RUN_DIR}/gate-${c.id}.pid"${c.needsDb ? " --needs-db" : ""}${avoidFlags}
+    `First stop any earlier gate of this cluster by running: node "${SCRIPTS}/gate.mjs" --stop "${RUN_DIR}/gate-${c.id}.pid" (it kills the gate's process tree on any platform only if that pid is a gate.mjs process, then removes the pid file; never kill anything by hand). Then start the gate with Bash run_in_background (it queues behind other clusters and can run for a long time): cd "${wt}" && node "${SCRIPTS}/gate.mjs" --json "${RUN_DIR}/gate-${c.id}-r${round}.json" --pid-file "${RUN_DIR}/gate-${c.id}.pid" --ids "${[...new Set(c.bugs.map((b) => b.row))].join(",")}" --id-space ${SPACE}${c.needsDb ? " --needs-db" : ""}${avoidFlags}
 Then wait for it with: node "${SCRIPTS}/gate.mjs" --wait "${RUN_DIR}/gate-${c.id}-r${round}.json" (Bash timeout 600000). It prints the json and exits 0 when the gate finished, or exits 3 if it is still running: call it again, up to 5 times in total, until it exits 0. Never use sleep (it is blocked). Return {ok, running, head, base, steps:[{name, ok, tail}]} exactly as printed (keep the tail only for failed steps). If it still exits 3 after 5 calls, or the file is missing, return what you have (ok false, running true, head empty) and do not retry. Do not fix anything, do not rerun with other flags. ${RULES}`,
     { label, phase: "Gate", schema: GATE_SCHEMA, model: "haiku", effort: "low" },
   );

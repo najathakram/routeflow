@@ -4,7 +4,7 @@
 // 2026-10-23-bug-swarm-2: the same chain was re-typed. Steps here are argv arrays (never a shell
 // string) and the diff range is always `git merge-base origin/master HEAD`..HEAD.
 //
-//   node gate.mjs [--needs-db] [--json out.json] [--dry-run]     (run from a worktree root)
+//   node gate.mjs [--needs-db] [--json out.json] [--ids a,b --id-space row|bug] [--dry-run]     (run from a worktree root)
 //
 // Pure core: planGate(...) -> steps[]; runGate(steps, { exec }) runs every step, never stops early.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
@@ -55,6 +55,38 @@ function lintScriptExists(root, ws) {
   }
 }
 
+// Specs that census files BY NAME across the repo (run 2026-10-23-bug-swarm-4: #3659 went red on one after
+// adding a script). They run when the branch ADDS a file under apps/api/prisma/, apps/api/scripts/ or scripts/.
+export const CENSUS_SPECS = [
+  "src/common/scripts-live-target-guard.spec.ts",
+  "src/common/fixture-git-env-scrub.spec.ts",
+  "src/common/size-ratchet.spec.ts",
+  "src/common/script-spec-lane.spec.ts",
+  "src/common/scripts-unscoped-delete.spec.ts",
+  "src/common/scripts-product-mirror-tripwire.spec.ts",
+  "src/common/script-money-writers.spec.ts",
+  "src/common/no-runtime-ddl.spec.ts",
+  "src/common/no-single-schema-path.spec.ts",
+  "src/common/schema-folder.spec.ts",
+];
+const CENSUS_DIRS = ["apps/api/prisma/", "apps/api/scripts/", "scripts/"];
+
+// Fails when a commit subject carries a (B###) label that is not one of the ids the run was given
+// (run 4 fixed row 668 under the label B668: a row id translated to a bug id).
+const ID_LABELS_SCRIPT = `const {execFileSync}=require("node:child_process");
+const [base,ids]=process.argv.slice(1);
+const allowed=new Set(ids.split(",").filter(Boolean));
+const subjects=execFileSync("git",["log","--format=%s",base+"..HEAD"],{encoding:"utf8"}).split("\\n").filter(Boolean);
+const bad=[];
+for(const s of subjects)for(const m of s.matchAll(/\\((B\\d+)\\)/g))if(!allowed.has(m[1]))bad.push(m[1]+" in: "+s);
+if(bad.length){console.error("commit labels outside the given ids ("+[...allowed].join(", ")+"):\\n"+bad.join("\\n"));process.exit(1);}`;
+
+/** Files ADDED in base..HEAD. */
+export function addedSince(git, base) {
+  const out = git(["diff", "--name-only", "-z", "--diff-filter=A", `${base}..HEAD`]);
+  return out.split("\0").filter(Boolean);
+}
+
 /** { base, files } for the whole branch: merge-base with origin/master, deleted files dropped. */
 export function changedSince(git) {
   const base = git(["merge-base", "origin/master", "HEAD"]).trim();
@@ -66,6 +98,9 @@ const workspaceOf = (f) => /^(apps|packages)\/[^/]+(?=\/)/.exec(f)?.[0] ?? null;
 
 export function planGate({
   changedFiles,
+  addedFiles = [],
+  ids = [],
+  idSpace,
   needsDb = false,
   base = "origin/master",
   root = process.cwd(),
@@ -81,6 +116,9 @@ export function planGate({
   add("packages-build", root, ["npx", "turbo", "run", "build", "--filter=./packages/*"]);
   add("signature-scan", root, ["node", ".claude/skills/bug-hunt/scripts/scan-signatures.mjs"]);
   add("commitlint", root, ["npx", "commitlint", "--from", base, "--to", "HEAD"]);
+
+  if (ids.length && idSpace)
+    add("id-labels", root, ["node", "-e", ID_LABELS_SCRIPT, base, ids.join(",")]);
 
   if (avoid.length) add("avoid-files", root, ["node", "-e", AVOID_SCRIPT, base, ...avoid]);
 
@@ -131,6 +169,9 @@ export function planGate({
     if (exists(path.join(root, test))) add(`self-test:scripts/${m[1]}`, root, ["node", test]);
   }
 
+  if (addedFiles.some((f) => CENSUS_DIRS.some((d) => f.startsWith(d)))) {
+    add("census", path.join(root, "apps/api"), ["npx", "jest", ...CENSUS_SPECS]);
+  }
   add("size-ratchet", path.join(root, "apps/api"), [
     "npx",
     "jest",
@@ -401,8 +442,22 @@ export async function main(argv = process.argv.slice(2)) {
   const head = git(["rev-parse", "HEAD"]).trim();
   if (jsonOut && !dryRun && process.env.RF_HEAVY_SLOT_HELD !== "1") beginJson(jsonOut, head);
   const { base, files } = changedSince(git);
+  const addedFiles = addedSince(git, base);
+  const ii = argv.indexOf("--ids");
+  const ids =
+    ii === -1
+      ? []
+      : String(argv[ii + 1] ?? "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+  const si2 = argv.indexOf("--id-space");
+  const idSpace = si2 === -1 ? undefined : argv[si2 + 1];
   const steps = planGate({
     changedFiles: files,
+    addedFiles,
+    ids,
+    idSpace,
     needsDb,
     base,
     root,

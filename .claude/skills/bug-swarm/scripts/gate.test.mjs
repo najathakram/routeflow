@@ -8,6 +8,8 @@ import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync } from 
 import { tmpdir } from "node:os";
 import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
 import {
+  addedSince,
+  CENSUS_SPECS,
   commandLineOf,
   holdPidFile,
   stopGate,
@@ -481,4 +483,78 @@ test("stopGate kills only a gate.mjs pid, per platform, and removes the file", (
   assert.equal(stopGate("/no/such/file.pid").stopped, false);
   const f3 = mk("abc");
   assert.equal(stopGate(f3, { exec: () => "gate.mjs" }).stopped, false);
+});
+
+test("census step: an ADDED file under apps/api/prisma, apps/api/scripts or scripts runs the file-census specs", () => {
+  for (const f of [
+    "apps/api/scripts/new.mjs",
+    "apps/api/prisma/seed-x.ts",
+    "scripts/lib/new.mjs",
+  ]) {
+    const steps = planGate({ changedFiles: [f], addedFiles: [f], ...opts });
+    const s = step(steps, "census");
+    assert.ok(s, f);
+    assert.equal(norm(s.cwd), norm("/r/apps/api"));
+    assert.deepEqual(s.cmd.slice(0, 2), ["npx", "jest"]);
+    for (const spec of CENSUS_SPECS) assert.ok(s.cmd.includes(spec), spec);
+    for (const must of ["scripts-live-target-guard", "fixture-git-env-scrub", "size-ratchet"])
+      assert.ok(
+        s.cmd.some((a) => a.includes(must)),
+        must,
+      );
+  }
+  const edited = planGate({ changedFiles: ["scripts/x.mjs"], addedFiles: [], ...opts });
+  assert.equal(step(edited, "census"), undefined);
+  const other = planGate({
+    changedFiles: ["apps/api/src/a.ts"],
+    addedFiles: ["apps/api/src/a.ts"],
+    ...opts,
+  });
+  assert.equal(step(other, "census"), undefined);
+});
+
+test("addedSince lists only added files of the merge-base range", () => {
+  const calls = [];
+  const git = (a) => (calls.push(a), "a.ts\0b.ts\0");
+  assert.deepEqual(addedSince(git, "abc"), ["a.ts", "b.ts"]);
+  assert.deepEqual(calls[0].slice(0, 3), ["diff", "--name-only", "-z"]);
+  assert.ok(calls[0].includes("--diff-filter=A") && calls[0].includes("abc..HEAD"));
+});
+
+test("id-labels step: a (B###) commit label outside the given ids fails; row labels pass", () => {
+  const steps = planGate({ changedFiles: [], ...opts, ids: ["599", "W-679"], idSpace: "row" });
+  const s = step(steps, "id-labels");
+  assert.ok(s);
+  assert.equal(names(steps).indexOf("id-labels") > names(steps).indexOf("commitlint"), true);
+  assert.equal(step(planGate({ changedFiles: [], ...opts }), "id-labels"), undefined);
+  const dir = mkdtempSync(path.join(tmpdir(), "gate-idl-"));
+  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8", env: scrubbedGitEnv() });
+  sh("init", "-q");
+  sh("config", "user.email", "t@t");
+  sh("config", "user.name", "t");
+  writeFileSync(path.join(dir, "a.txt"), "1");
+  sh("add", ".");
+  sh("commit", "-qm", "base");
+  const base = sh("rev-parse", "HEAD").stdout.trim();
+  const plan = planGate({
+    changedFiles: [],
+    ...opts,
+    base,
+    root: dir,
+    ids: ["599", "W-679"],
+    idSpace: "row",
+  });
+  const st = step(plan, "id-labels");
+  const run = () =>
+    spawnSync(st.cmd[0], st.cmd.slice(1), { cwd: dir, encoding: "utf8", env: scrubbedGitEnv() });
+  writeFileSync(path.join(dir, "a.txt"), "2");
+  sh("commit", "-qam", "fix(x): thing (row 599)");
+  writeFileSync(path.join(dir, "a.txt"), "3");
+  sh("commit", "-qam", "fix(x): other (W-679)");
+  assert.equal(run().status, 0);
+  writeFileSync(path.join(dir, "a.txt"), "4");
+  sh("commit", "-qam", "fix(x): translated (B668)");
+  const bad = run();
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout + bad.stderr, /B668/);
 });

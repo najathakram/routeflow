@@ -100,6 +100,11 @@ choreography into one Workflow script. The v0 steps above stay valid as the fall
   as a fallback), shows the resolver's stderr in the reason, and decodes HTML entities and `›`/`»` before comparing titles.
 - **Workspace key (run 2026-10-23-bug-swarm-4):** files outside `apps/*` and `packages/*` key on their top-level dir (file name
   at the root), so the cap merge never groups `tools/` with a root docker-compose change.
+- **Label as given (run 2026-10-23-bug-swarm-4):** commits and tests carry the id exactly as given in `idSpace` (`row 599`,
+  `W-679`, `B668`); `gate.mjs --ids a,b --id-space row|bug` adds an `id-labels` step that fails on a `(B###)` subject
+  outside the given ids.
+- **Census (run 2026-10-23-bug-swarm-4):** a branch that ADDS a file under `apps/api/prisma/`, `apps/api/scripts/` or
+  `scripts/` also runs the file-census specs (`CENSUS_SPECS` in `gate.mjs`).
 - **Workflow:** Triage+Pack (sonnet) -> Cluster (haiku) -> per cluster Build (sonnet) -> Gate (haiku,
   one build fix round) -> Review (opus, one fix round plus re-check), then a Report. A red cluster is parked.
 - **Stays with the orchestrator:** push, PRs, captures for UI clusters, the public window and landing, the
