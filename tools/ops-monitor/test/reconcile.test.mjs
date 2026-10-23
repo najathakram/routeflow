@@ -837,3 +837,26 @@ test("agoWords: minutes, hours and days in words", () => {
   assert.equal(REC.agoWords(3 * HOUR), "3 hours");
   assert.equal(REC.agoWords(72 * HOUR), "3 days");
 });
+
+test("untracked-merged-pr skips train, docs, dependabot and bookkeeping branches", () => {
+  const mk = (number, branch, title = "chore: x") => ({
+    number,
+    branch,
+    title,
+    mergedAt: new Date(NOW - HOUR).toISOString(),
+    base: "master",
+  });
+  const merged = [
+    mk(1, "train/r9"),
+    mk(2, "docs/notes"),
+    mk(3, "dependabot/npm/x"),
+    mk(4, "chore/bookkeeping-1"),
+    mk(5, "docs/bookkeeping-2"),
+    mk(6, "chore/other", "docs: bookkeeping for #12"),
+    mk(7, "chore/real"),
+  ];
+  const got = run({ prs: { open: [], merged } })
+    .filter((a) => a.kind === "untracked-merged-pr")
+    .map((a) => a.pr);
+  assert.deepEqual(got, [7]);
+});

@@ -21,9 +21,10 @@ Workflow script once v0 has proven them on the ledger. Improve it through the le
 ## Steps (v0)
 
 1. **Triage, Haiku @ low, one agent for the whole batch.** Input: the bug ids. For each bug: the register
-   row + its `bugs.mjs` card → `risk` (LOW|HIGH, with the reason), `files` (code-map INDEX + `scripts/graph.mjs
-radius`), `needsDb` (prisma, a `*.db.spec`, or a transaction path), `ui` (yes/no), and a one-line repro. Output:
-   `manifest.json` in the run dir `.claude/pipeline/<date>-bug-swarm-<n>/`. The lead's context reads only the table.
+   row + its `bugs.mjs` card → `risk` (LOW|HIGH, with the reason), `files` (code-map INDEX +
+   `scripts/graph.mjs radius`), `needsDb` (prisma, a `*.db.spec`, or a transaction path), `ui` (yes/no), and a
+   one-line repro. Output: `manifest.json` in the run dir `.claude/pipeline/<date>-bug-swarm-<n>/`. The lead's
+   context reads only the table.
 2. **Cluster, the lead by hand in v0 (v1: `scripts/cluster.mjs`).** Union bugs that share any file. A file at
    its size-ratchet ceiling (`apps/api/src/common/size-ratchet.spec.ts`) forces its bugs into one cluster with an
    extraction-first task. Run ≤ 4 clusters at once per machine.
