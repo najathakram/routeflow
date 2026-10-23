@@ -29,6 +29,7 @@ import { renderIcon } from "./lib/icon.mjs";
 import { describeSyncOutcome } from "./lib/sync.mjs";
 import {
   createNameLoader,
+  emptyListReason,
   fallbackMaskDeep,
   fallbackMaskText,
   maskDeep,
@@ -479,7 +480,8 @@ export const SYNC_STARVATION_LOG_MS = 600_000;
 /**
  * The collector's specs-pass hooks for the register + status syncs. `afterPull` (inside the lock
  * hold, right after the pull) runs each step in order, each only when due, then logs one timing
- * line; a failed pull skips them all for this pass with one log line. `onBusy` (the pass found the specs lock held and
+ * line, only when at least one step ran; a failed pull (or a failed push/reconcile after a good
+ * pull) skips them all for this pass with one log line saying which. `onBusy` (the pass found the specs lock held and
  * skipped) logs, at most once per `throttleMs`, how long since the last pass that ran the syncs.
  */
 export function makeSpecsPassHook({
@@ -492,20 +494,34 @@ export function makeSpecsPassHook({
   let lastOkAt = null;
   let lastBusyLogAt = null;
   return {
-    async afterPull({ pullOk = true, pullError = null, pullMs = 0, lockStartedAt = now() } = {}) {
+    async afterPull({
+      pullOk = true,
+      pullError = null,
+      pullStage = "pull",
+      pullMs = 0,
+      lockStartedAt = now(),
+    } = {}) {
       if (pullOk === false) {
-        log(`specs pull failed, register and status sync skipped this pass: ${pullError}`);
+        log(
+          pullStage === "push"
+            ? `specs push/reconcile failed after a good pull, register and status sync skipped this pass: ${pullError}`
+            : `specs pull failed, register and status sync skipped this pass: ${pullError}`,
+        );
         return;
       }
       lastOkAt = now();
       const took = {};
+      let ranAny = false;
       for (const { name, run } of steps) {
         const t0 = now();
-        took[name] = (await run()) === false ? "skip" : now() - t0;
+        const ran = (await run()) !== false;
+        took[name] = ran ? now() - t0 : "skip";
+        ranAny ||= ran;
       }
-      log(
-        `specs pass: lock ${now() - lockStartedAt} ms (pull ${pullMs}, register ${took.register ?? "skip"}, status ${took.status ?? "skip"})`,
-      );
+      if (ranAny)
+        log(
+          `specs pass: lock ${now() - lockStartedAt} ms (pull ${pullMs}, register ${took.register ?? "skip"}, status ${took.status ?? "skip"})`,
+        );
     },
     onBusy() {
       if (lastBusyLogAt !== null && now() - lastBusyLogAt < throttleMs) return;
@@ -520,54 +536,14 @@ export function makeSpecsPassHook({
 }
 
 /**
- * Runs `run()` after `firstDelayMs`, then every `intervalMs` (never overlapping). `onDone` gets
- * the result of each pass that appended events; errors are logged and the schedule goes on.
- * Returns a stop function. `schedule`/`cancel` are injectable for tests.
- */
-export function startRegisterSync({
-  run,
-  onDone = () => {},
-  log = () => {},
-  firstDelayMs = REGISTER_SYNC_FIRST_MS,
-  intervalMs = REGISTER_SYNC_MS,
-  schedule = (fn, ms) => {
-    const t = setTimeout(fn, ms);
-    t.unref?.();
-    return t;
-  },
-  cancel = clearTimeout,
-}) {
-  let handle = null;
-  let stopped = false;
-  const tick = async () => {
-    handle = null;
-    try {
-      const res = await run();
-      if (res?.appended > 0) onDone(res);
-    } catch (err) {
-      log(`register sync failed: ${err?.message ?? err}`);
-    }
-    if (!stopped) handle = schedule(tick, intervalMs);
-  };
-  handle = schedule(tick, firstDelayMs);
-  return () => {
-    stopped = true;
-    if (handle !== null) cancel(handle);
-  };
-}
-
-/**
  * The register-sync log line for one pass. Every pass that appends nothing says why (busy lock,
  * pull error, generated mode, no changes), plus a refused register or refused rows, logged once per
- * change of that text so a stalled sync is never silent and a steady state never spams. A busy
- * streak logs at its first pass and then every BUSY_LOG_EVERY-th. Returns `{ note, log }`: `note`
- * is the new last-logged text, `log` the line to print or null.
+ * change of that text so a stalled sync is never silent and a steady state never spams. Returns
+ * `{ note, log }`: `note` is the new last-logged text, `log` the line to print or null.
  */
-export const BUSY_LOG_EVERY = 6;
-export function registerSyncLog(lastNote, res, { busyRuns = 0, mask = (t) => t } = {}) {
-  if (busyRuns > 1 && busyRuns % BUSY_LOG_EVERY !== 0) return { note: lastNote, log: null };
+export function registerSyncLog(lastNote, res, { mask = (t) => t } = {}) {
   const note = [
-    describeSyncOutcome(res, { busyRuns, mask }),
+    describeSyncOutcome(res, { mask }),
     res?.refused ? `register refused: ${res.refused}` : null,
     res?.collisions?.length
       ? `register rows refused (id shared with a monitor item): ${res.collisions.join(", ")}`
@@ -636,7 +612,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     const problem = nameLoader.error();
     if (problem || nameLoader.get().length === 0) {
       console.error(
-        `[ops-monitor] warning: ${problem ?? "no client names"} - the board is not masked; fill client-names.json in the ops home.`,
+        `[ops-monitor] warning: ${problem ?? emptyListReason(env)} - the board is not masked; fill client-names.json in the ops home or set CLIENT_NAMES_JSON.`,
       );
     }
   }
@@ -651,7 +627,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       fallback: !ok,
       status: ok
         ? { ok: true, reason: null }
-        : { ok: false, reason: problem ?? "client-names.json missing or empty" },
+        : { ok: false, reason: problem ?? emptyListReason(env) },
     };
   };
   const maskOne = (t) => {

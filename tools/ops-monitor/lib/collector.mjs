@@ -52,7 +52,7 @@ export const BUG_FILE_RE = /^\.claude\/campaign\/bugs\/B\d+[^/]*\.md$/;
 export const DEFAULT_CI_GATES = ["verify", "e2e"];
 
 const [OWNER, REPO] = GITHUB_REPO.split("/");
-const CONTEXTS = `statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name conclusion status startedAt } ... on StatusContext { context state } } } }`;
+const CONTEXTS = `statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name conclusion status startedAt completedAt checkSuite { createdAt updatedAt } } ... on StatusContext { context state } } } }`;
 export const GRAPHQL_QUERY = `query {
   repository(owner: "${OWNER}", name: "${REPO}") {
     visibility
@@ -79,13 +79,36 @@ export const GRAPHQL_QUERY = `query {
 
 const RUN_RANK = { failure: 6, pending: 5, success: 4, cancelled: 3, skipped: 2, notrun: 1 };
 
+/** A check still queued (never started) this long after its suite was last created or updated counts as not-run. */
+export const QUEUED_STALE_MS = 6 * 3600_000;
+
+/**
+ * A CheckRun that never started and whose suite was last created or updated more than
+ * QUEUED_STALE_MS ago (timed by the suite's max(createdAt, updatedAt), the same
+ * assumption D6 makes for a lone queued check). A re-run reuses the original suite, so time from the LATER of the two.
+ */
+function staleQueuedAt(n, nowMs) {
+  if (!n || n.startedAt !== null || n.__typename === "StatusContext") return null;
+  if (!["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(String(n.status ?? "").toUpperCase()))
+    return null;
+  const times = [n.checkSuite?.createdAt, n.checkSuite?.updatedAt]
+    .map((t) => Date.parse(t ?? ""))
+    .filter(Number.isFinite);
+  if (times.length === 0) return null;
+  const at = Math.max(...times);
+  return nowMs - at > QUEUED_STALE_MS ? at : null;
+}
+const isStaleQueued = (n, nowMs) => staleQueuedAt(n, nowMs) !== null;
+
 /**
  * One GraphQL check context (CheckRun | StatusContext) -> { name, state } with state in
  * success | failure | pending | skipped | cancelled | notrun. Unknown shapes -> null.
  * notrun = the check ended without ever starting (startedAt null, conclusion cancelled / skipped /
- * startup-failure). It is NOT a failure. A queued/waiting check with startedAt null is pending.
+ * startup-failure). It is NOT a failure. A queued/waiting check with startedAt null is pending,
+ * until its suite (last created or updated) is older than QUEUED_STALE_MS: a check queued that long is not going to run
+ * (stuck runner, blocked Actions) and reads notrun, so it cannot hold the gate pending forever.
  */
-export function normalizeContext(n) {
+export function normalizeContext(n, nowMs = Date.now()) {
   if (!n || typeof n !== "object") return null;
   if (n.__typename === "StatusContext" || (n.context && !n.name)) {
     if (!n.context) return null;
@@ -99,8 +122,9 @@ export function normalizeContext(n) {
   const c = String(n.conclusion ?? "").toUpperCase();
   // startedAt present-and-null = never started. (A fixture without the key keeps the old reading.)
   const neverStarted = n.startedAt === null;
-  if (neverStarted && ["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(status))
-    return { name: String(n.name), state: "pending" };
+  if (neverStarted && ["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(status)) {
+    return { name: String(n.name), state: isStaleQueued(n, nowMs) ? "notrun" : "pending" };
+  }
   if (status && status !== "COMPLETED") return { name: String(n.name), state: "pending" };
   if (neverStarted && (c === "CANCELLED" || c === "SKIPPED" || c === "STARTUP_FAILURE"))
     return { name: String(n.name), state: "notrun" };
@@ -115,17 +139,39 @@ export function normalizeContext(n) {
 /**
  * Context nodes -> one run per check NAME (several workflow runs report the same name; a skipped
  * duplicate must never hide the real result). Worst wins: failure > pending > success >
- * cancelled > skipped. First-appearance order.
+ * cancelled > skipped. First-appearance order. Exception: a stale-queued attempt (a re-run stuck
+ * past QUEUED_STALE_MS) stops an OLDER success from winning (the check reads notrun, never
+ * success), decided by time, not node order: the stale attempt's suite time must be newer than the
+ * success's completedAt/startedAt. A success with no time is treated as older (conservative).
  */
-export function collapseRuns(nodes) {
+export function collapseRuns(nodes, nowMs = Date.now()) {
   const by = new Map();
+  const stuckAt = new Map(); // name -> newest stale-queued attempt's suite time
+  const okAt = new Map(); // name -> newest success time (NaN when any success has none)
   for (const raw of nodes ?? []) {
-    const r = normalizeContext(raw);
+    const r = normalizeContext(raw, nowMs);
     if (!r) continue;
+    const st = staleQueuedAt(raw, nowMs);
+    if (st !== null) stuckAt.set(r.name, Math.max(stuckAt.get(r.name) ?? st, st));
+    if (r.state === "success") {
+      const t = Date.parse(raw.completedAt ?? raw.startedAt ?? "");
+      okAt.set(
+        r.name,
+        Number.isNaN(t) || Number.isNaN(okAt.get(r.name))
+          ? NaN
+          : Math.max(okAt.get(r.name) ?? t, t),
+      );
+    }
     const had = by.get(r.name);
     if (!had || RUN_RANK[r.state] > RUN_RANK[had]) by.set(r.name, r.state);
   }
-  return [...by].map(([name, state]) => ({ name, state }));
+  return [...by].map(([name, state]) => ({
+    name,
+    state:
+      state === "success" && stuckAt.has(name) && !(stuckAt.get(name) <= okAt.get(name))
+        ? "notrun"
+        : state,
+  }));
 }
 
 function compileGates(config) {
@@ -156,7 +202,9 @@ export function classifyCheck(name, config) {
 /**
  * Runs ([{name,state}]) -> { gate, probesFailing, runs: [{name,kind,state}] }.
  * gate = failure | pending | not-run | success | skipped | none over the GATE runs only;
- * not-run = a gate check never started (Actions blocked or queued), shown as its own state; a failing probe
+ * not-run = a gate check that ended without ever starting (cancelled / skipped / startup-failure,
+ * e.g. Actions blocked), or sat queued past QUEUED_STALE_MS; shown as its own state. A fresh queued
+ * check is pending, not not-run; a failing probe
  * never fails the gate (it is listed by name in probesFailing). A cancelled gate with nothing
  * better counts as failure (it did not pass and nothing re-ran it).
  */
@@ -887,6 +935,8 @@ export function createCollector({
                 specsDir,
                 pullOk: pulled?.ok !== false,
                 pullError: pulled?.ok === false ? String(pulled.error ?? "pull failed") : null,
+                // "push": the pull went through and the push/reconcile/views step failed after it
+                pullStage: pulled?.ok === false ? (pulled.pulled === true ? "push" : "pull") : null,
                 pullMs,
                 lockStartedAt,
               });

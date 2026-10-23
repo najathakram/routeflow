@@ -128,6 +128,8 @@ export interface UpdatePaymentDto {
   bankCharges?: number;
   reference?: string;
   notes?: string;
+  /** W-718: the staff "Record anyway" resend of an edit refused 409 DUPLICATE_PAYMENT_REF. */
+  recordAnyway?: boolean;
 }
 
 /**

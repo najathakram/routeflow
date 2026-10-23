@@ -477,3 +477,21 @@ test("D7 spawned server with NO names list: fallback masks, maskStatus ok:false 
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("W-652 an empty CLIENT_NAMES_JSON names that variable, not the machine-local file", async () => {
+  const home = tmp();
+  try {
+    const snap = JSON.parse(readFileSync(FIXTURE, "utf8"));
+    writeFileSync(join(home, "fx.json"), JSON.stringify(snap));
+    const { child, port } = await startServer({ RF_OPS_HOME: home, CLIENT_NAMES_JSON: "[]" });
+    try {
+      const api = JSON.parse(await get(port, "/api/snapshot"));
+      assert.equal(api.maskStatus.ok, false);
+      assert.match(api.maskStatus.reason, /CLIENT_NAMES_JSON/);
+    } finally {
+      child.kill();
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

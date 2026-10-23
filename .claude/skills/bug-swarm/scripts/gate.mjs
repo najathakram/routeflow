@@ -278,7 +278,15 @@ export async function waitForJson(file, argv = []) {
  */
 export function holdPidFile(file, proc = process) {
   writeFileSync(file, `${proc.pid}\n`);
-  const cleanup = () => rmSync(file, { force: true });
+  // Only delete the file while it still holds OUR pid: a newer gate may have overwritten it.
+  const cleanup = () => {
+    try {
+      if (readFileSync(file, "utf8").trim() !== String(proc.pid)) return;
+    } catch {
+      return;
+    }
+    rmSync(file, { force: true });
+  };
   proc.on("exit", cleanup);
   for (const sig of ["SIGINT", "SIGTERM"]) {
     proc.on(sig, () => {
@@ -289,7 +297,80 @@ export function holdPidFile(file, proc = process) {
   return cleanup;
 }
 
+/** Command line of a pid, or "" when it does not exist. ps on posix; PowerShell CIM on win32 (tasklist has no cmdline). */
+export function commandLineOf(pid, { platform = process.platform, exec } = {}) {
+  const run =
+    exec ??
+    ((cmd, args) =>
+      execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
+  try {
+    if (platform === "win32") {
+      return String(
+        run("powershell", [
+          "-NoProfile",
+          "-Command",
+          `(Get-CimInstance Win32_Process -Filter 'ProcessId=${Number(pid)}').CommandLine`,
+        ]),
+      ).trim();
+    }
+    return String(run("ps", ["-p", String(pid), "-o", "command="])).trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Stop the gate recorded in a pid file: kill its tree ONLY if the pid's command line contains gate.mjs
+ * (a reused pid is never killed), then remove the file if it still holds that pid.
+ * Returns { stopped, reason }.
+ */
+export function stopGate(file, { platform = process.platform, exec, killTree } = {}) {
+  let pid;
+  try {
+    pid = Number(readFileSync(file, "utf8").trim());
+  } catch {
+    return { stopped: false, reason: "no pid file" };
+  }
+  const cleanup = () => {
+    try {
+      if (Number(readFileSync(file, "utf8").trim()) === pid) rmSync(file, { force: true });
+    } catch {
+      /* already gone */
+    }
+  };
+  if (!Number.isInteger(pid) || pid <= 0) {
+    cleanup();
+    return { stopped: false, reason: "pid file is not a pid" };
+  }
+  if (!commandLineOf(pid, { platform, exec }).includes("gate.mjs")) {
+    cleanup();
+    return { stopped: false, reason: "pid is not a gate.mjs process (not killed)" };
+  }
+  if (killTree) killTree(pid, platform);
+  else if (platform === "win32") {
+    spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+  } else {
+    spawnSync("pkill", ["-P", String(pid)], { stdio: "ignore" });
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      /* already exited */
+    }
+  }
+  cleanup();
+  return { stopped: true, reason: "killed" };
+}
+
 export async function main(argv = process.argv.slice(2)) {
+  const si = argv.indexOf("--stop");
+  if (si !== -1) {
+    if (!argv[si + 1]) {
+      console.error("gate: --stop needs a pid file path");
+      return 2;
+    }
+    console.log(JSON.stringify(stopGate(path.resolve(argv[si + 1]))));
+    return 0;
+  }
   const wi = argv.indexOf("--wait");
   if (wi !== -1) return waitForJson(argv[wi + 1], argv);
   const needsDb = argv.includes("--needs-db");

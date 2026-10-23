@@ -20,4 +20,9 @@ module.exports = {
   // any run that still resolved to more than one worker.
   maxWorkers: 1,
   globalSetup: "<rootDir>/../test/db-lane-serial.cjs",
+  // W-720: ends the lazy advisory-lock pools after every DB spec, so jest exits after "Tests:".
+  setupFilesAfterEnv: [
+    ...(base.setupFilesAfterEnv ?? []),
+    "<rootDir>/../test/db-lane-close-pools.cjs",
+  ],
 };

@@ -5,6 +5,7 @@ import * as bcrypt from "bcrypt";
 import { assertTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import { localConnectionConfig } from "../scripts/lib/local-db-target.cjs";
 import { ensureParityBuyers } from "./seed-parity-buyer";
+import { assertNoLegacySeedProducts } from "./seed-legacy-products";
 import { addressStateFields } from "../src/customers/address-state";
 
 // A provably-local target dials the explicit fields that were vetted (never the raw string, whose ?host= could
@@ -361,7 +362,7 @@ async function main() {
   const productDefs = [
     // Beverages
     {
-      id: "seed-prod-01",
+      id: "5eed0000-0000-4000-8000-000000000001",
       name: "Purified Water 5gal",
       sku: "BEV-H2O-5G",
       unit: "jug",
@@ -371,7 +372,7 @@ async function main() {
       isActive: true,
     },
     {
-      id: "seed-prod-02",
+      id: "5eed0000-0000-4000-8000-000000000002",
       name: "Orange Juice 1gal",
       sku: "BEV-OJ-1G",
       unit: "jug",
@@ -381,7 +382,7 @@ async function main() {
       isActive: true,
     },
     {
-      id: "seed-prod-03",
+      id: "5eed0000-0000-4000-8000-000000000003",
       name: "Iced Tea 1gal",
       sku: "BEV-IT-1G",
       unit: "jug",
@@ -391,7 +392,7 @@ async function main() {
       isActive: true,
     },
     {
-      id: "seed-prod-04",
+      id: "5eed0000-0000-4000-8000-000000000004",
       name: "Sparkling Water 24-pack",
       sku: "BEV-SW-24",
       unit: "case",
@@ -401,7 +402,7 @@ async function main() {
       isActive: true,
     },
     {
-      id: "seed-prod-05",
+      id: "5eed0000-0000-4000-8000-000000000005",
       name: "Cold Brew Coffee 32oz",
       sku: "BEV-CB-32",
       unit: "bottle",
@@ -412,7 +413,7 @@ async function main() {
     },
     // Snacks
     {
-      id: "seed-prod-06",
+      id: "5eed0000-0000-4000-8000-000000000006",
       name: "Kettle Chips 8oz",
       sku: "SNK-KC-8",
       unit: "bag",
@@ -422,7 +423,7 @@ async function main() {
       isActive: true,
     },
     {
-      id: "seed-prod-07",
+      id: "5eed0000-0000-4000-8000-000000000007",
       name: "Mixed Nuts 16oz",
       sku: "SNK-MN-16",
       unit: "bag",
@@ -432,7 +433,7 @@ async function main() {
       isActive: true,
     },
     {
-      id: "seed-prod-08",
+      id: "5eed0000-0000-4000-8000-000000000008",
       name: "Granola Bars 12-pack",
       sku: "SNK-GB-12",
       unit: "box",
@@ -442,7 +443,7 @@ async function main() {
       isActive: true,
     },
     {
-      id: "seed-prod-09",
+      id: "5eed0000-0000-4000-8000-000000000009",
       name: "Beef Jerky 4oz",
       sku: "SNK-BJ-4",
       unit: "bag",
@@ -452,7 +453,7 @@ async function main() {
       isActive: true,
     },
     {
-      id: "seed-prod-10",
+      id: "5eed0000-0000-4000-8000-000000000010",
       name: "Trail Mix 24oz",
       sku: "SNK-TM-24",
       unit: "bag",
@@ -463,7 +464,7 @@ async function main() {
     },
     // Cleaning Supplies
     {
-      id: "seed-prod-11",
+      id: "5eed0000-0000-4000-8000-000000000011",
       name: "All-Purpose Cleaner 32oz",
       sku: "CLN-APC-32",
       unit: "bottle",
@@ -473,7 +474,7 @@ async function main() {
       isActive: true,
     },
     {
-      id: "seed-prod-12",
+      id: "5eed0000-0000-4000-8000-000000000012",
       name: "Paper Towels 12-roll",
       sku: "CLN-PT-12",
       unit: "case",
@@ -483,7 +484,7 @@ async function main() {
       isActive: true,
     },
     {
-      id: "seed-prod-13",
+      id: "5eed0000-0000-4000-8000-000000000013",
       name: "Dish Soap 25oz",
       sku: "CLN-DS-25",
       unit: "bottle",
@@ -493,7 +494,7 @@ async function main() {
       isActive: true,
     },
     {
-      id: "seed-prod-14",
+      id: "5eed0000-0000-4000-8000-000000000014",
       name: "Hand Sanitizer 8oz",
       sku: "CLN-HS-8",
       unit: "bottle",
@@ -503,7 +504,7 @@ async function main() {
       isActive: true,
     },
     {
-      id: "seed-prod-15",
+      id: "5eed0000-0000-4000-8000-000000000015",
       name: "Trash Bags 30gal 50ct",
       sku: "CLN-TB-50",
       unit: "box",
@@ -513,6 +514,10 @@ async function main() {
       isActive: false,
     },
   ];
+
+  // Row 745: a DB seeded before products got UUID ids still holds these SKUs under the old
+  // `seed-prod-NN` ids; the upsert below would hit P2002 on (tenantId, sku). Fail loudly instead.
+  await assertNoLegacySeedProducts(prisma, tenantId, productDefs);
 
   await Promise.all(
     productDefs.map((p) =>
@@ -536,21 +541,21 @@ async function main() {
   // ─── Initial Stock ────────────────────────────────────────────────────────────
   // Seed realistic stock levels via PURCHASE movements (idempotent: only if no movements exist)
   const stockSeeds: { productId: string; qty: number; unitCost: number }[] = [
-    { productId: "seed-prod-01", qty: 48, unitCost: 5.5 }, // Purified Water
-    { productId: "seed-prod-02", qty: 36, unitCost: 3.0 }, // Orange Juice
-    { productId: "seed-prod-03", qty: 24, unitCost: 2.5 }, // Iced Tea
-    { productId: "seed-prod-04", qty: 20, unitCost: 9.0 }, // Sparkling Water
-    { productId: "seed-prod-05", qty: 5, unitCost: 4.5 }, // Cold Brew Coffee (low stock)
-    { productId: "seed-prod-06", qty: 60, unitCost: 1.5 }, // Kettle Chips
-    { productId: "seed-prod-07", qty: 30, unitCost: 5.2 }, // Mixed Nuts
-    { productId: "seed-prod-08", qty: 18, unitCost: 5.8 }, // Granola Bars
-    { productId: "seed-prod-09", qty: 4, unitCost: 3.2 }, // Beef Jerky (low stock)
-    { productId: "seed-prod-10", qty: 22, unitCost: 6.5 }, // Trail Mix
-    { productId: "seed-prod-11", qty: 40, unitCost: 2.2 }, // All-Purpose Cleaner
-    { productId: "seed-prod-12", qty: 15, unitCost: 10.5 }, // Paper Towels
-    { productId: "seed-prod-13", qty: 28, unitCost: 2.6 }, // Dish Soap
-    { productId: "seed-prod-14", qty: 3, unitCost: 1.8 }, // Hand Sanitizer (low stock)
-    // seed-prod-15 (Trash Bags) is inactive — no stock
+    { productId: "5eed0000-0000-4000-8000-000000000001", qty: 48, unitCost: 5.5 }, // Purified Water
+    { productId: "5eed0000-0000-4000-8000-000000000002", qty: 36, unitCost: 3.0 }, // Orange Juice
+    { productId: "5eed0000-0000-4000-8000-000000000003", qty: 24, unitCost: 2.5 }, // Iced Tea
+    { productId: "5eed0000-0000-4000-8000-000000000004", qty: 20, unitCost: 9.0 }, // Sparkling Water
+    { productId: "5eed0000-0000-4000-8000-000000000005", qty: 5, unitCost: 4.5 }, // Cold Brew Coffee (low stock)
+    { productId: "5eed0000-0000-4000-8000-000000000006", qty: 60, unitCost: 1.5 }, // Kettle Chips
+    { productId: "5eed0000-0000-4000-8000-000000000007", qty: 30, unitCost: 5.2 }, // Mixed Nuts
+    { productId: "5eed0000-0000-4000-8000-000000000008", qty: 18, unitCost: 5.8 }, // Granola Bars
+    { productId: "5eed0000-0000-4000-8000-000000000009", qty: 4, unitCost: 3.2 }, // Beef Jerky (low stock)
+    { productId: "5eed0000-0000-4000-8000-000000000010", qty: 22, unitCost: 6.5 }, // Trail Mix
+    { productId: "5eed0000-0000-4000-8000-000000000011", qty: 40, unitCost: 2.2 }, // All-Purpose Cleaner
+    { productId: "5eed0000-0000-4000-8000-000000000012", qty: 15, unitCost: 10.5 }, // Paper Towels
+    { productId: "5eed0000-0000-4000-8000-000000000013", qty: 28, unitCost: 2.6 }, // Dish Soap
+    { productId: "5eed0000-0000-4000-8000-000000000014", qty: 3, unitCost: 1.8 }, // Hand Sanitizer (low stock)
+    // 5eed0000-0000-4000-8000-000000000015 (Trash Bags) is inactive — no stock
   ];
   await Promise.all(
     stockSeeds.map(async ({ productId, qty, unitCost }) => {
@@ -814,56 +819,56 @@ async function main() {
 
   // 3 OUT_FOR_DELIVERY linked to today's run (2 urgent)
   await seedOrder("seed-order-01", customers[0].id, "OUT_FOR_DELIVERY", true, activeRun.id, [
-    { productId: "seed-prod-01", qty: 4, unitPrice: 8.99 },
-    { productId: "seed-prod-06", qty: 12, unitPrice: 2.49 },
-    { productId: "seed-prod-11", qty: 6, unitPrice: 3.49 },
+    { productId: "5eed0000-0000-4000-8000-000000000001", qty: 4, unitPrice: 8.99 },
+    { productId: "5eed0000-0000-4000-8000-000000000006", qty: 12, unitPrice: 2.49 },
+    { productId: "5eed0000-0000-4000-8000-000000000011", qty: 6, unitPrice: 3.49 },
   ]);
 
   await seedOrder("seed-order-02", customers[1].id, "OUT_FOR_DELIVERY", true, activeRun.id, [
-    { productId: "seed-prod-02", qty: 8, unitPrice: 4.49 },
-    { productId: "seed-prod-08", qty: 4, unitPrice: 8.49 },
+    { productId: "5eed0000-0000-4000-8000-000000000002", qty: 8, unitPrice: 4.49 },
+    { productId: "5eed0000-0000-4000-8000-000000000008", qty: 4, unitPrice: 8.49 },
   ]);
 
   await seedOrder("seed-order-03", customers[2].id, "OUT_FOR_DELIVERY", false, activeRun.id, [
-    { productId: "seed-prod-03", qty: 6, unitPrice: 3.99 },
-    { productId: "seed-prod-07", qty: 3, unitPrice: 7.99 },
-    { productId: "seed-prod-14", qty: 10, unitPrice: 2.99 },
+    { productId: "5eed0000-0000-4000-8000-000000000003", qty: 6, unitPrice: 3.99 },
+    { productId: "5eed0000-0000-4000-8000-000000000007", qty: 3, unitPrice: 7.99 },
+    { productId: "5eed0000-0000-4000-8000-000000000014", qty: 10, unitPrice: 2.99 },
   ]);
 
   // Remaining mix
   await seedOrder("seed-order-04", customers[3].id, "CONFIRMED", false, null, [
-    { productId: "seed-prod-04", qty: 5, unitPrice: 12.99 },
-    { productId: "seed-prod-10", qty: 6, unitPrice: 9.99 },
+    { productId: "5eed0000-0000-4000-8000-000000000004", qty: 5, unitPrice: 12.99 },
+    { productId: "5eed0000-0000-4000-8000-000000000010", qty: 6, unitPrice: 9.99 },
   ]);
 
   await seedOrder("seed-order-05", customers[4].id, "PENDING", false, null, [
-    { productId: "seed-prod-05", qty: 3, unitPrice: 6.99 },
-    { productId: "seed-prod-09", qty: 8, unitPrice: 4.99 },
+    { productId: "5eed0000-0000-4000-8000-000000000005", qty: 3, unitPrice: 6.99 },
+    { productId: "5eed0000-0000-4000-8000-000000000009", qty: 8, unitPrice: 4.99 },
   ]);
 
   await seedOrder("seed-order-06", customers[0].id, "DELIVERED", false, null, [
-    { productId: "seed-prod-12", qty: 2, unitPrice: 14.99 },
-    { productId: "seed-prod-13", qty: 4, unitPrice: 3.99 },
+    { productId: "5eed0000-0000-4000-8000-000000000012", qty: 2, unitPrice: 14.99 },
+    { productId: "5eed0000-0000-4000-8000-000000000013", qty: 4, unitPrice: 3.99 },
   ]);
 
   await seedOrder("seed-order-07", customers[1].id, "DELIVERED", false, null, [
-    { productId: "seed-prod-01", qty: 3, unitPrice: 8.99 },
-    { productId: "seed-prod-06", qty: 6, unitPrice: 2.49 },
+    { productId: "5eed0000-0000-4000-8000-000000000001", qty: 3, unitPrice: 8.99 },
+    { productId: "5eed0000-0000-4000-8000-000000000006", qty: 6, unitPrice: 2.49 },
   ]);
 
   await seedOrder("seed-order-08", customers[2].id, "CANCELLED", false, null, [
-    { productId: "seed-prod-08", qty: 2, unitPrice: 8.49 },
+    { productId: "5eed0000-0000-4000-8000-000000000008", qty: 2, unitPrice: 8.49 },
   ]);
 
   await seedOrder("seed-order-09", customers[3].id, "PENDING", false, null, [
-    { productId: "seed-prod-11", qty: 4, unitPrice: 3.49 },
-    { productId: "seed-prod-12", qty: 1, unitPrice: 14.99 },
+    { productId: "5eed0000-0000-4000-8000-000000000011", qty: 4, unitPrice: 3.49 },
+    { productId: "5eed0000-0000-4000-8000-000000000012", qty: 1, unitPrice: 14.99 },
   ]);
 
   await seedOrder("seed-order-10", customers[4].id, "CONFIRMED", false, null, [
-    { productId: "seed-prod-02", qty: 5, unitPrice: 4.49 },
-    { productId: "seed-prod-07", qty: 2, unitPrice: 7.99 },
-    { productId: "seed-prod-15", qty: 3, unitPrice: 9.99 },
+    { productId: "5eed0000-0000-4000-8000-000000000002", qty: 5, unitPrice: 4.49 },
+    { productId: "5eed0000-0000-4000-8000-000000000007", qty: 2, unitPrice: 7.99 },
+    { productId: "5eed0000-0000-4000-8000-000000000015", qty: 3, unitPrice: 9.99 },
   ]);
 
   // ─── Seed Transactions ───────────────────────────────────────────────────────

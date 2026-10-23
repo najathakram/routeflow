@@ -502,13 +502,12 @@ export async function runSync({
 
 /**
  * One line for a runSync result that appended nothing (the timer logs it once per change), or null
- * when the pass appended events (the caller logs those). `busyRuns` counts consecutive busy skips.
+ * when the pass appended events (the caller logs those).
  */
-export function describeSyncOutcome(res, { busyRuns = 0, mask = (t) => t } = {}) {
+export function describeSyncOutcome(res, { mask = (t) => t } = {}) {
   if (!res) return "register sync: no result";
   if (res.ran === false) {
-    if (res.reason === "busy")
-      return `register sync skipped: busy (specs lock held${busyRuns > 1 ? `, ${busyRuns} in a row` : ""})`;
+    if (res.reason === "busy") return `register sync skipped: busy (specs lock held)`;
     if (res.reason === "generated") return "register sync off: the register is in generated mode";
     return `register sync did not run: ${res.reason ?? "unknown reason"}`;
   }

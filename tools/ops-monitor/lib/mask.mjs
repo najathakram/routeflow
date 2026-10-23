@@ -30,6 +30,22 @@ function readSource(text, label) {
   return { names: cleanList(parsed), error: null };
 }
 
+/**
+ * Which source the empty/missing-list problem is about: CLIENT_NAMES_JSON when that variable is
+ * the active source (set, and no machine-local file shadows it), else the machine-local file.
+ */
+export function emptyListReason(env = process.env, home) {
+  let fileExists = true;
+  try {
+    statSync(join(home ?? opsHome(env), NAMES_FILE));
+  } catch {
+    fileExists = false;
+  }
+  return env.CLIENT_NAMES_JSON && !fileExists
+    ? "CLIENT_NAMES_JSON missing or empty"
+    : `${NAMES_FILE} missing or empty`;
+}
+
 /** The file's path for this env/home. */
 export const namesFile = (env = process.env, home) => join(home ?? opsHome(env), NAMES_FILE);
 
