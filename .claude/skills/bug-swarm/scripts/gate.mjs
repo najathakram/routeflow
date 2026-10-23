@@ -42,7 +42,7 @@ if(out){console.error("avoided files touched:\\n"+out);process.exit(1);}`;
 // Fails on any uncommitted change (tracked or untracked), except the gate's own output paths.
 const CLEAN_SCRIPT = `const {execFileSync}=require("node:child_process");
 const ignore=process.argv.slice(1).map((p)=>":(exclude)"+p);
-const out=execFileSync("git",["status","--porcelain","--","."].concat(ignore),{encoding:"utf8"}).trim();
+const out=execFileSync("git",["status","--porcelain","--untracked-files=all","--","."].concat(ignore),{encoding:"utf8"}).trim();
 if(out){console.error("working tree is not clean (commit or discard first):\\n"+out);process.exit(1);}`;
 
 function lintScriptExists(root, ws) {
@@ -271,6 +271,24 @@ export async function waitForJson(file, argv = []) {
   return done(txt) ? 0 : 3;
 }
 
+/**
+ * Record this gate's pid so a later gate agent can stop it, and remove the file on every exit path
+ * (normal exit, process.exit, SIGINT/SIGTERM). A SIGKILL cannot clean up, which is why the reader must
+ * check that the pid still runs gate.mjs before killing it.
+ */
+export function holdPidFile(file, proc = process) {
+  writeFileSync(file, `${proc.pid}\n`);
+  const cleanup = () => rmSync(file, { force: true });
+  proc.on("exit", cleanup);
+  for (const sig of ["SIGINT", "SIGTERM"]) {
+    proc.on(sig, () => {
+      cleanup();
+      proc.exit(128 + (sig === "SIGINT" ? 2 : 15));
+    });
+  }
+  return cleanup;
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const wi = argv.indexOf("--wait");
   if (wi !== -1) return waitForJson(argv[wi + 1], argv);
@@ -286,6 +304,14 @@ export async function main(argv = process.argv.slice(2)) {
     jsonOut = path.resolve(jsonOut);
     argv = argv.map((a, i) => (i === ji + 1 ? jsonOut : a));
   }
+  const pi = argv.indexOf("--pid-file");
+  if (pi !== -1 && !argv[pi + 1]) {
+    console.error("gate: --pid-file needs a file path");
+    return 2;
+  }
+  if (pi !== -1) argv = argv.map((a, i) => (i === pi + 1 ? path.resolve(a) : a));
+  // Only the outer process (the one the agent launched) owns the pid file; the heavy-slot child skips it.
+  if (pi !== -1 && process.env.RF_HEAVY_SLOT_HELD !== "1") holdPidFile(argv[pi + 1]);
   const avoid = [];
   argv.forEach((a, i) => {
     if (a === "--avoid" && argv[i + 1]) avoid.push(argv[i + 1]);

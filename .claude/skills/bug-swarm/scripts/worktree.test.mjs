@@ -4,6 +4,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { planWorktree, parseArgs, preflight } from "./worktree.mjs";
 
+const norm = (p) => path.normalize(p);
 const base = {
   repo: "/r/main",
   dir: "/r/wt",
@@ -17,28 +18,21 @@ const flat = (plan) => plan.map((s) => s.cmd.join(" "));
 test("darwin clones node_modules with cp -cR (APFS), after git worktree add", () => {
   const plan = planWorktree({ ...base, platform: "darwin" });
   assert.deepEqual(plan[0].cmd, ["git", "fetch", "origin"]);
-  assert.deepEqual(plan[1].cmd, [
-    "git",
-    "worktree",
-    "add",
-    "-b",
-    "fix/swarm-1-c1",
-    "/r/wt",
-    "origin/master",
-  ]);
-  assert.equal(plan[1].cwd, path.join("/r/main"));
+  assert.deepEqual(
+    plan[1].cmd.map((x, i) => (i === 5 ? norm(x) : x)),
+    ["git", "worktree", "add", "-b", "fix/swarm-1-c1", norm("/r/wt"), "origin/master"],
+  );
+  assert.equal(norm(plan[1].cwd), norm("/r/main"));
   const cps = plan.filter((s) => s.cmd[0] === "cp");
   assert.equal(cps.length, 4);
   for (const s of cps) assert.deepEqual(s.cmd.slice(0, 2), ["cp", "-cR"]);
-  assert.deepEqual(cps[0].cmd, [
-    "cp",
-    "-cR",
-    path.join("/r/src/node_modules"),
-    path.join("/r/wt/node_modules"),
-  ]);
-  assert.deepEqual(cps[1].cmd.slice(2), [
-    path.join("/r/src/apps/api/node_modules"),
-    path.join("/r/wt/apps/api/node_modules"),
+  assert.deepEqual(
+    cps[0].cmd.map((x, i) => (i < 2 ? x : norm(x))),
+    ["cp", "-cR", norm("/r/src/node_modules"), norm("/r/wt/node_modules")],
+  );
+  assert.deepEqual(cps[1].cmd.slice(2).map(norm), [
+    norm("/r/src/apps/api/node_modules"),
+    norm("/r/wt/apps/api/node_modules"),
   ]);
 });
 
@@ -57,8 +51,8 @@ test("packages build and prisma generate are always present, last, in order", ()
     ]);
   }
   const plan = planWorktree({ ...base, platform: "darwin" });
-  assert.equal(plan.at(-2).cwd, path.join("/r/wt"));
-  assert.equal(plan.at(-1).cwd, path.join("/r/wt/apps/api"));
+  assert.equal(norm(plan.at(-2).cwd), norm("/r/wt"));
+  assert.equal(norm(plan.at(-1).cwd), norm("/r/wt/apps/api"));
 });
 
 test("never runs npm ci or npm install", () => {

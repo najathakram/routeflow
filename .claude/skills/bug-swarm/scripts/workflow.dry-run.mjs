@@ -458,7 +458,29 @@ export async function runAll() {
   );
   assert.ok(nofrom.result.error);
   assert.equal(nofrom.calls.length, 0);
-  assert.ok(gp.includes("gate-c1.pid") && gp.includes("stop any earlier gate"));
+  for (const needle of [
+    "gate-c1.pid",
+    "stop any earlier gate",
+    "ps -p P -o command=",
+    "ONLY if that output contains gate.mjs",
+    "never kill otherwise",
+    "--pid-file",
+  ])
+    assert.ok(gp.includes(needle), `gate prompt pins: ${needle}`);
+
+  // 21. Real cluster.mjs parked shape ({ cluster: { bugs }, reason }): the row is parked only.
+  const realParked = await runWorkflow(
+    {
+      clusters: [two[0]],
+      parked: [{ cluster: { id: "c9", bugs: [{ row: "7" }], files: [] }, reason: "over cap" }],
+      overCap: true,
+      gateGreen: true,
+      verdict: "PASS",
+    },
+    { ...ARGS, rows: ["1", "7"] },
+  );
+  assert.equal(realParked.result.parked.filter((p) => p.reason === "over cap").length, 1);
+  assert.ok(!realParked.result.unaccounted.includes("7"));
 
   return out;
 }

@@ -280,7 +280,7 @@ const noteLabel = (label) => {
 for (const c of clustered.clusters) for (const b of c.bugs) note(b.row, b.sub);
 for (const e of excluded) note(e.row, e.sub);
 for (const p of clustered.parked || []) {
-  for (const b of p.bugs || []) note(b.row, b.sub);
+  for (const b of (p.cluster && p.cluster.bugs) || p.bugs || []) note(b.row, b.sub);
   for (const l of p.rows || []) noteLabel(l);
 }
 for (const u of clustered.unaccounted || []) noteLabel(u);
@@ -313,7 +313,7 @@ Return {status "ok", commits (full shas of the commits made in THIS round; empty
 
 const runGate = (c, wt, label, round) =>
   agent(
-    `First stop any earlier gate of this cluster: if "${RUN_DIR}/gate-${c.id}.pid" exists, run pkill -P "$(cat "${RUN_DIR}/gate-${c.id}.pid")"; kill "$(cat "${RUN_DIR}/gate-${c.id}.pid")"; rm -f "${RUN_DIR}/gate-${c.id}.pid" (ignore errors). Then start the gate with Bash run_in_background (it queues behind other clusters and can run for a long time): cd "${wt}" && echo $$ > "${RUN_DIR}/gate-${c.id}.pid" && exec node "${SCRIPTS}/gate.mjs" --json "${RUN_DIR}/gate-${c.id}-r${round}.json"${c.needsDb ? " --needs-db" : ""}${avoidFlags}
+    `First stop any earlier gate of this cluster: if "${RUN_DIR}/gate-${c.id}.pid" exists, read its pid P and run ps -p P -o command=; ONLY if that output contains gate.mjs, run pkill -P P; kill P (never kill otherwise: the pid may have been reused by another process). Then rm -f the pid file (ignore errors). Then start the gate with Bash run_in_background (it queues behind other clusters and can run for a long time): cd "${wt}" && node "${SCRIPTS}/gate.mjs" --json "${RUN_DIR}/gate-${c.id}-r${round}.json" --pid-file "${RUN_DIR}/gate-${c.id}.pid"${c.needsDb ? " --needs-db" : ""}${avoidFlags}
 Then wait for it with: node "${SCRIPTS}/gate.mjs" --wait "${RUN_DIR}/gate-${c.id}-r${round}.json" (Bash timeout 600000). It prints the json and exits 0 when the gate finished, or exits 3 if it is still running: call it again, up to 5 times in total, until it exits 0. Never use sleep (it is blocked). Return {ok, running, head, base, steps:[{name, ok, tail}]} exactly as printed (keep the tail only for failed steps). If it still exits 3 after 5 calls, or the file is missing, return what you have (ok false, running true, head empty) and do not retry. Do not fix anything, do not rerun with other flags. ${RULES}`,
     { label, phase: "Gate", schema: GATE_SCHEMA, model: "haiku", effort: "low" },
   );
