@@ -173,6 +173,19 @@ describe("stockWriteDate (row 563)", () => {
       expect(body2).toMatchObject({ period: "October 2026", filedFor: "Tobacco" });
     });
 
+    it("a TIE keeps tobacco (the common case: tobacco products carry the Tobacco tracked category too)", async () => {
+      // The tobacco report's inclusive end + 1 ms and the September filing's exclusive end are the same instant.
+      const d = db({
+        products: [
+          { id: "p1", isTobacco: true, trackedCategoryId: "cat-1", categoryName: "Vapes" },
+        ],
+        report: SEPT, // periodEnd 2026-09-30T23:59:59.999Z → through 2026-10-01T00:00:00.000Z
+        filing: SEPT_FILING, // periodEnd 2026-10-01T00:00:00.000Z
+      });
+      const body = await conflict(call(d, "2026-09-15T10:00:00.000Z"));
+      expect(body).toMatchObject({ period: "September 2026", filedFor: "Tobacco" });
+    });
+
     it("the 409 names what is filed: Tobacco", async () => {
       const d = db({ products: [{ id: "p1", isTobacco: true }], report: SEPT });
       const body = await conflict(call(d, "2026-09-15T10:00:00.000Z"));

@@ -44,8 +44,11 @@ export interface FiledThrough {
 }
 
 /**
- * One filing read per key per call (W-755): the tobacco report is tenant-wide and a filing is per category, so a count
- * of many products reads each once. Lives only for one `stockWriteDate` / `documentStockDate` call, inside its tx.
+ * One filing read per key per call (W-755): the tobacco report is tenant-wide and a filing is per
+ * category, so a count of many products reads each once. Lives only for one `stockWriteDate` /
+ * `documentStockDate` call, on whatever client the caller passes: a transaction for the bill paths
+ * and the legacy count, `forTenant()` for an adjustment, a purchase and the session commit (their
+ * date gate reads before their own write transaction).
  */
 type FiledCache = Map<string, Promise<FiledThrough | null>>;
 
