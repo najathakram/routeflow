@@ -29,6 +29,7 @@ import { fold } from "../lib/fold.mjs";
 import { laneNow, rankCandidates } from "../lib/next.mjs";
 import { registerModeOf, runSync } from "../lib/sync.mjs";
 import { checkoutRoot, laneForCwd, setLane } from "../lib/lanes-local.mjs";
+import { runStatusSync } from "../lib/status-sync.mjs";
 import { lastEventId, renderBrief, renderSince, splitAtMarker } from "../lib/brief.mjs";
 import { registerHook } from "../lib/views.mjs";
 import { BRIEF_DISABLED_NOTE, loadClientNames } from "../lib/mask.mjs";
@@ -102,6 +103,7 @@ const USAGE = `usage: rf <command> [args]
   sync [--dry] [--no-push]                         turn changed register / owner-queue rows into events
   audit [--json] [--snapshot FILE]                 the accuracy counts (items, alarms, problems, queue, PRs, bugs)
   bug file <args...>                               files a bug via scripts/campaign/bugs.mjs (lead, coordinator only)
+  status-sync [--no-push]                                          lane status files -> heartbeat events
   brief [--lane L] [--since <eventId|iso>] [--refresh] [--json]   what the monitor says, in plain words
   whoami [--machine M] [--lane L]   backfill [--dry]   views [--dry] [--no-push]   doctor   hash-password
 global: --json  --no-push  --no-sync  --quiet (no stdout on success)`;
@@ -625,7 +627,8 @@ async function cmdSync(flags, env) {
   const s = res.summary;
   const text =
     `sync${flags.dry ? " (dry)" : ""}: ${res.events.length} event(s): ${s.registerNew} new row(s), ` +
-    `${s.registerEdits} edited, ${s.answered} answered, ${s.dropped} board item(s) dropped` +
+    `${s.registerEdits} edited, ${s.answered} answered, ${s.dropped} board item(s) dropped, ` +
+    `${s.planNew} plan train(s) new, ${s.planEdits} edited, ${s.planDropped} dropped` +
     (flags.dry
       ? "\n" + res.events.map((e) => `  ${e.kind} ${e.item ?? "-"}`).join("\n")
       : `; appended ${res.appended}${res.pushed ? " and pushed" : ""}`) +
@@ -788,6 +791,13 @@ async function cmdBrief(flags, env) {
       );
     } catch (e) {
       if (!flags.quiet) process.stderr.write(`warning: refresh failed: ${e?.message ?? e}\n`);
+    }
+    // Lane status files -> this machine's heartbeat events, committed locally and NOT pushed
+    // (the monitor timer / `rf status-sync` push; a brief must stay read-mostly and fast).
+    try {
+      await runStatusSync({ dir: ctx.dir, home: ctx.home, env, push: false });
+    } catch {
+      // best effort
     }
   }
   if (flags.quiet) return 0;
@@ -977,6 +987,20 @@ export async function main(argv, env = process.env) {
       case "sync":
         code = await cmdSync(flags, env);
         break;
+      case "status-sync": {
+        const r = await runStatusSync({ env, push: !flags["no-push"], lockWaitMs: 5000 });
+        print(
+          flags,
+          r,
+          !r.ran
+            ? "status-sync skipped (busy)"
+            : r.pullError
+              ? `status-sync skipped: pull failed (${String(r.pullError).slice(0, 120)})`
+              : `status-sync: appended ${r.appended} heartbeat(s)${r.capped ? `, ${r.capped} left (capped)` : ""}`,
+        );
+        code = 0;
+        break;
+      }
       case "audit":
         code = await cmdAudit(flags, env);
         break;

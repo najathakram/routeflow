@@ -5,6 +5,10 @@ description: The house pipeline for BUG FIXES — a known defect with an observa
 
 # Bug pipeline
 
+> **Routing (2026-10-22):** a batch of 3 or more **LOW** bugs goes to `/bug-swarm` (`.claude/skills/bug-swarm/`).
+> This pipeline remains the path for every HIGH-risk bug (money, ledger, units, locks, tenancy, migrations,
+> billing, auth), for single bugs, and for any swarm cluster that turns out to touch a HIGH path.
+
 A bug fix is not a small feature. It starts from a **known wrong behavior**, so the value is not in discovering
 what to build — it is in proving the **cause**, making the **minimal correct fix**, proving the fix **bites**
 (the repro test fails without it), and proving the defect's **twin does not ship elsewhere**. This skill owns

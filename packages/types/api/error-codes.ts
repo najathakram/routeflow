@@ -218,6 +218,7 @@
 //                    COUNTER_SALES_DISABLED (the tenant's fulfilment capability has no counter); 409 WALK_IN_OPEN_CREDIT (the walk-in
 //                    customer holds open credit that send would auto-apply); 400 WALK_IN_NO_ACCOUNT (a walk-in cannot buy on account),
 //                    WALK_IN_WITH_CUSTOMER (customerId and walkIn together), COUNTER_CHECK_NUMBER_REQUIRED (a check needs its number),
+//                    COUNTER_CHECK_POSTDATED (the check is dated after the tenant's today),
 //                    IDEMPOTENCY_KEY_REQUIRED (the Idempotency-Key header is missing or blank: the till must send one per sale);
 //                    403 PRICE_EDIT_NOT_PERMITTED (a line carries a real price change from a caller who may not edit prices).
 //                    COUNTER_TENDER_SHORT (a zero tender), COUNTER_PAYMENT_EXCEEDS_TOTAL (card or check above the balance) and
@@ -567,6 +568,7 @@ export const API_ERROR_CODES = {
   WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
   COUNTER_TENDER_SHORT: "COUNTER_TENDER_SHORT",
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
+  COUNTER_CHECK_POSTDATED: "COUNTER_CHECK_POSTDATED",
   COUNTER_PAYMENT_EXCEEDS_TOTAL: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
   COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
   /**
@@ -633,6 +635,14 @@ export const API_ERROR_CODES = {
    * Thrown by the server and matched by the clients (`isPaymentKeyConflict`) through this ONE constant.
    */
   PAYMENT_MISMATCH: "PAYMENT_MISMATCH",
+  /**
+   * 409 from every InvoicePayment writer that carries a typed reference (row 498, SA-837): a non-VOID payment of the
+   * same customer, method, NORMALISED reference (trim, uppercase, no spaces or dashes) and amount already exists, with
+   * no time window. The body names it (`existingPayment`: date, amount, invoice number). A staff caller may resend with
+   * `recordAnyway: true` (one audit row). Never raised for the shared walk-in customer or between the payments of one
+   * attempt. Nothing was written.
+   */
+  DUPLICATE_PAYMENT_REF: "DUPLICATE_PAYMENT_REF",
   /**
    * 409 from GET /orders/counter-sale/by-key/:key: the sale's PENDING or DELIVERED order exists but has NO invoice
    * rows at all (a half-written sale: the first attempt stopped before the invoice step). Re-POST with the same

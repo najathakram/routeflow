@@ -118,6 +118,7 @@ function UnitRow({
   onMakeDefault,
   hideRemove,
   figures,
+  noPrices,
 }: {
   unit: ProductUnitLevel;
   product: UnitsCardProduct;
@@ -140,6 +141,8 @@ function UnitRow({
     card: () => HTMLElement | null;
     heading: () => HTMLElement | null;
   };
+  /** Row 742: structure only (name, size, default, remove); the product's prices follow its family or recipe. */
+  noPrices?: boolean;
 }) {
   const [draft, setDraft] = React.useState<Draft>(() => draftOf(unit));
   const base = draftOf(unit);
@@ -150,7 +153,7 @@ function UnitRow({
   const dirty =
     draft.label !== base.label ||
     draft.factor !== base.factor ||
-    (!figures && draft.prices.some((p, i) => p !== base.prices[i]));
+    (!figures && !noPrices && draft.prices.some((p, i) => p !== base.prices[i]));
   const gridRow = figures ? rowForUnit(figures.grid, unit) : undefined;
   const figure = (t: (typeof TIERS)[number]) =>
     figures ? (
@@ -220,61 +223,67 @@ function UnitRow({
             onChange={(v) => setDraft({ ...draft, factor: v })}
           />
         </div>
-        <div className="col-span-2">
-          <label className={LABEL} htmlFor={`${idp}-price`}>
-            Price
-          </label>
-          {figures ? (
-            <div id={`${idp}-price`}>{figure(1)}</div>
-          ) : (
-            <DecimalInput
-              id={`${idp}-price`}
-              aria-label={`${unit.label} price`}
-              className={FIELD}
-              value={draft.prices[0]}
-              placeholder={derived(1) != null ? fmt(derived(1) as number) : ""}
-              onChange={(v) =>
-                setDraft({ ...draft, prices: draft.prices.map((p, i) => (i ? p : v)) })
-              }
-            />
-          )}
-        </div>
+        {!noPrices && (
+          <div className="col-span-2">
+            <label className={LABEL} htmlFor={`${idp}-price`}>
+              Price
+            </label>
+            {figures ? (
+              <div id={`${idp}-price`}>{figure(1)}</div>
+            ) : (
+              <DecimalInput
+                id={`${idp}-price`}
+                aria-label={`${unit.label} price`}
+                className={FIELD}
+                value={draft.prices[0]}
+                placeholder={derived(1) != null ? fmt(derived(1) as number) : ""}
+                onChange={(v) =>
+                  setDraft({ ...draft, prices: draft.prices.map((p, i) => (i ? p : v)) })
+                }
+              />
+            )}
+          </div>
+        )}
       </div>
-      {!figures && (
+      {!figures && !noPrices && (
         <p className="mt-1.5 text-[11px] text-navy/50">
           A grey figure is worked out automatically from the {w.pack.lower} price. Type a price to
           set it yourself, or clear it to go back to automatic.
         </p>
       )}
-      <details className="mt-2">
-        <summary className="cursor-pointer text-xs font-medium text-brand-600">Tier prices</summary>
-        <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {[2, 3, 4, 5].map((t) => (
-            <div key={t}>
-              <label className={LABEL} htmlFor={`${idp}-t${t}`}>
-                {productTierLabel(tierNames, t)}
-              </label>
-              {figures ? (
-                <div id={`${idp}-t${t}`}>{figure(t as (typeof TIERS)[number])}</div>
-              ) : (
-                <DecimalInput
-                  id={`${idp}-t${t}`}
-                  aria-label={`${unit.label} ${productTierLabel(tierNames, t)} price`}
-                  className={FIELD}
-                  value={draft.prices[t - 1]}
-                  placeholder={derived(t) != null ? fmt(derived(t) as number) : ""}
-                  onChange={(v) =>
-                    setDraft({
-                      ...draft,
-                      prices: draft.prices.map((p, i) => (i === t - 1 ? v : p)),
-                    })
-                  }
-                />
-              )}
-            </div>
-          ))}
-        </div>
-      </details>
+      {!noPrices && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs font-medium text-brand-600">
+            Tier prices
+          </summary>
+          <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[2, 3, 4, 5].map((t) => (
+              <div key={t}>
+                <label className={LABEL} htmlFor={`${idp}-t${t}`}>
+                  {productTierLabel(tierNames, t)}
+                </label>
+                {figures ? (
+                  <div id={`${idp}-t${t}`}>{figure(t as (typeof TIERS)[number])}</div>
+                ) : (
+                  <DecimalInput
+                    id={`${idp}-t${t}`}
+                    aria-label={`${unit.label} ${productTierLabel(tierNames, t)} price`}
+                    className={FIELD}
+                    value={draft.prices[t - 1]}
+                    placeholder={derived(t) != null ? fmt(derived(t) as number) : ""}
+                    onChange={(v) =>
+                      setDraft({
+                        ...draft,
+                        prices: draft.prices.map((p, i) => (i === t - 1 ? v : p)),
+                      })
+                    }
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <label className="flex items-center gap-2 text-sm text-navy">
           <input
@@ -373,6 +382,7 @@ export function ProductUnitsCard({
   product,
   hideAddForm = false,
   readOnly = false,
+  structureOnly = false,
 }: {
   product: UnitsCardProduct;
   /**
@@ -386,6 +396,13 @@ export function ProductUnitsCard({
    * then (or if its query fails) the card keeps its own, and nothing is ever without a control.
    */
   readOnly?: boolean;
+  /**
+   * Row 742 (owner ruling 2026-10-22, "keep structure, drop prices"): under the v2 grid a variant or recipe keeps this
+   * card for its unit STRUCTURE only (name, size, add, remove, default order unit). Its prices follow the family or
+   * recipe, as the grid says ("Priced by ..."), so no price field, tier field or cascade is shown or sent here. The card
+   * goes away entirely when row 659 (family ladder with variant inherit / override) ships.
+   */
+  structureOnly?: boolean;
 }) {
   const { user } = useAuth();
   // GET /billing/subscription is OPERATOR-only — never fire it (and 403) for other roles.
@@ -469,7 +486,7 @@ export function ProductUnitsCard({
     const newPrices = d.prices.map(priceOrNull);
     // Only a price the operator changed is sent (a draft price that still equals the value the row was seeded with is
     // left out): a v2 price save moves prices outside this card, so the row's snapshot is never written back.
-    const dirtyPrice = (i: number) => !figures && d.prices[i] !== oldPrices[i];
+    const dirtyPrice = (i: number) => !figures && !structureOnly && d.prices[i] !== oldPrices[i];
     const body = {
       id: unit.id,
       label: d.label.trim(),
@@ -485,7 +502,9 @@ export function ProductUnitsCard({
       onSuccess: (saved) => {
         notListed(saved);
         // No price moved from this card in v2, so there is nothing to offer to the other units.
-        if (!figures) setProposals(proposeCascade(units, unit.id, oldPrices, newPrices));
+        if (!figures && !structureOnly) {
+          setProposals(proposeCascade(units, unit.id, oldPrices, newPrices));
+        }
       },
     });
   };
@@ -517,7 +536,7 @@ export function ProductUnitsCard({
         label: name.trim(),
         factorToBase: factor,
         // v2: prices are written only through the price window (S9), never by creating a unit.
-        ...(figures ? {} : { price: priceOrNull(price) }),
+        ...(figures || structureOnly ? {} : { price: priceOrNull(price) }),
       },
       {
         onSuccess: (saved) => {
@@ -547,7 +566,7 @@ export function ProductUnitsCard({
             tabIndex={-1}
             className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70 outline-none"
           >
-            Units &amp; prices
+            {structureOnly ? "Units" : <>Units &amp; prices</>}
           </h3>
           {figures && opener && anyEditable && !ro && (
             <button
@@ -573,7 +592,7 @@ export function ProductUnitsCard({
             <span className="font-medium">{product.unit || w.pack.one}</span>{" "}
             <span className="text-navy/60">
               · {packPieces} {w.baseFor(packPieces)} ·{" "}
-              {figures || ro ? (
+              {figures || ro || structureOnly ? (
                 <>the {w.pack.lower}</>
               ) : (
                 <>the {w.pack.lower} (edit its price above)</>
@@ -596,7 +615,7 @@ export function ProductUnitsCard({
                 fallback={() => headingRef.current}
                 plainValue={gridQuery.isError && !grid ? product.pricePerUnit : undefined}
               />
-            ) : (
+            ) : structureOnly ? null : (
               <span className="font-mono tabular-nums text-navy">
                 {fmt(Number(product.pricePerUnit) || 0)}
               </span>
@@ -697,6 +716,7 @@ export function ProductUnitsCard({
                   onDelete={setRemoving}
                   hideRemove={shellOwns && !gridQuery.isError && shellRemovesUnit(grid, u.id)}
                   figures={figureCtx}
+                  noPrices={structureOnly}
                   onMakeDefault={dflt.change}
                 />
               ),
@@ -738,7 +758,7 @@ export function ProductUnitsCard({
                 onChange={setFactor}
               />
             </div>
-            {!figures && (
+            {!figures && !structureOnly && (
               <div>
                 <label className={LABEL} htmlFor="new-unit-price">
                   Price (optional)

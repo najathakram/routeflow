@@ -35,6 +35,9 @@ export interface ReplayedOrder {
  *    is no override and passes. `undefined` (every other caller) and `true` change nothing.
  *  - `beforeWrite` (B1209): called with the SERVER-computed order total right after pricing and before any
  *    stock lock or transaction (never on a replay, never for a draft); a throw refuses with nothing written.
+ *  - `creditPaidNow` (S1, C42): ONLY the counter sale sets it: given the SERVER total, how much is paid at the till
+ *    by this request's tender (`clearedTenderNow`). The B585 credit gate then judges `total - paid` (what stays owed),
+ *    not the whole total. Absent (every other caller) = the whole total, unchanged.
  *  - `internalCustomerDraft` (F1 ii): INTERNAL only, never a DTO field. create() refuses a DRAFT from a CUSTOMER
  *    principal (ORDER_DRAFT_STAFF_ONLY); the one caller that drafts under the buyer pseudo-user on purpose is the
  *    not-on-truck change-request approval (a next-delivery draft), which sets this.
@@ -55,6 +58,7 @@ export interface CreateOrderOptions {
   priceEditAllowed?: boolean;
   onReplay?: (order: ReplayedOrder) => void;
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;
+  creditPaidNow?: (total: number) => number;
 }
 
 /**

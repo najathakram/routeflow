@@ -2,6 +2,7 @@ import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY } from "@/lib/counter-sale";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -232,7 +233,7 @@ const resumeBtn = (label: string) => screen.getByRole("button", { name: `Resume 
 const discardBtn = (label: string) => screen.getByRole("button", { name: `Discard ${label}` });
 
 function renderScreen() {
-  return renderWithProviders(<CounterSaleScreen />);
+  return renderTill(<CounterSaleScreen />);
 }
 
 describe("header controls (nothing removed, Park and Parked added)", () => {
@@ -360,7 +361,7 @@ describe("Park", () => {
 
     answer({ data: { id: body.id } });
     await waitFor(() => expect(itemNames().join(" ")).toContain("No items yet."));
-    expect(screen.getByText("Walk-in customer")).toBeInTheDocument();
+    expect(screen.getByText("Who's buying?")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Cash" })).toHaveAttribute("aria-checked", "true");
     expect(total()).toHaveTextContent("$0.00");
     await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
@@ -541,7 +542,8 @@ describe("Resume with an empty cart", () => {
     await openList(1);
     fireEvent.click(resumeBtn("Hold A"));
     await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("20"));
-    expect(screen.getByText("Walk-in customer")).toBeInTheDocument();
+    // an older park (no walkIn flag) never said who was buying: the till asks, it does not assume a walk-in
+    expect(screen.getByText("Who's buying?")).toBeInTheDocument();
   });
 
   it("PARK_TAKEN shows the fixed copy, leaves the cart as it was and refreshes the list", async () => {
@@ -677,6 +679,7 @@ describe("price edits on a resumed cart (the existing Complete-time check)", () 
   const edited = () =>
     parkedPayload({
       customer: null,
+      walkIn: true, // S5: this cart was parked after Walk-in was tapped
       method: "CASH",
       reference: "",
       lines: [

@@ -24,10 +24,11 @@
  */
 
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
+import { ConnectChargeReviewService } from "./connect-charge-review.service";
 import { PaymentRequestsService } from "./payment-requests.service";
 import { PAYMENT_PROVIDER } from "./provider/payment-provider.interface";
 import { ListPaymentRequestsDto } from "./payment-requests.controller";
@@ -127,6 +128,8 @@ describe("PaymentRequestsService", () => {
   const mockGateway = {
     emitBuyerPaymentRequest: jest.fn(),
   };
+  // Row 498 / SA-837b: the duplicate-suspect breadcrumb + operator notification of Stripe-captured money.
+  const mockReview = { flagDuplicateSuspect: jest.fn() };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -142,6 +145,7 @@ describe("PaymentRequestsService", () => {
     mockProvider.expireCheckout.mockReset();
     mockProvider.verifyEvent.mockReset();
     mockGateway.emitBuyerPaymentRequest.mockReset();
+    mockReview.flagDuplicateSuspect.mockReset().mockResolvedValue(undefined);
     mockTenantContext.get.mockReset().mockReturnValue("tenant-1");
     mockTenantContext.getOrNull.mockReset().mockReturnValue("tenant-1");
     mockTenantContext.run
@@ -158,6 +162,7 @@ describe("PaymentRequestsService", () => {
         { provide: PAYMENT_PROVIDER, useValue: mockProvider },
         { provide: TenantContextService, useValue: mockTenantContext },
         { provide: RouteFlowGateway, useValue: mockGateway },
+        { provide: ConnectChargeReviewService, useValue: mockReview },
       ],
     }).compile();
 
@@ -576,7 +581,10 @@ describe("PaymentRequestsService", () => {
 
       expect(mockInvoices.recordStandalonePayment).toHaveBeenCalledWith(
         expect.objectContaining({ totalAmount: 45 }),
-        { assertAllocationsWithinBalance: true },
+        {
+          assertAllocationsWithinBalance: true,
+          capturedExternally: expect.objectContaining({ source: "STRIPE" }),
+        },
       );
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("amount mismatch"));
     });
@@ -599,7 +607,10 @@ describe("PaymentRequestsService", () => {
 
       expect(mockInvoices.recordStandalonePayment).toHaveBeenLastCalledWith(
         expect.objectContaining({ method: "ACH", settledAt: "2026-08-21T12:00:00.000Z" }),
-        { assertAllocationsWithinBalance: true },
+        {
+          assertAllocationsWithinBalance: true,
+          capturedExternally: expect.objectContaining({ source: "STRIPE" }),
+        },
       );
     });
 
@@ -621,7 +632,10 @@ describe("PaymentRequestsService", () => {
 
       expect(mockInvoices.recordStandalonePayment).toHaveBeenLastCalledWith(
         expect.objectContaining({ method: "CREDIT_CARD", settledAt: null }),
-        { assertAllocationsWithinBalance: true },
+        {
+          assertAllocationsWithinBalance: true,
+          capturedExternally: expect.objectContaining({ source: "STRIPE" }),
+        },
       );
     });
 
@@ -651,6 +665,93 @@ describe("PaymentRequestsService", () => {
       expect(result).toEqual({ handled: false });
       expect(mockConnect.assertEventAccount).not.toHaveBeenCalled();
       expect(mockInvoices.recordStandalonePayment).not.toHaveBeenCalled();
+    });
+
+    describe("SA-837b: Stripe-captured money is recorded and flagged, never refused", () => {
+      const pendingRequest = () => {
+        buyerPaymentRequest.findFirst.mockResolvedValue({ ...baseRequest, status: "PENDING" });
+        buyerPaymentRequest.updateMany.mockResolvedValue({ count: 1 });
+        prisma.invoice.findMany.mockResolvedValue([
+          invoiceRow({
+            id: "inv-1",
+            invoiceNumber: "INV-0001",
+            issueDate: new Date("2026-01-01"),
+            total: 40,
+          }),
+        ]);
+      };
+
+      it("passes the structural capture marker (source STRIPE + the payment intent id), never a client flag", async () => {
+        pendingRequest();
+        mockInvoices.recordStandalonePayment.mockResolvedValue({
+          paymentGroupId: "pg-1",
+          excess: 0,
+        });
+        await service.settleByPaymentIntent(piSucceededEvent() as any);
+        const opts = mockInvoices.recordStandalonePayment.mock.calls[0][1];
+        expect(opts.capturedExternally).toMatchObject({ source: "STRIPE", sourceRef: "pi_123" });
+        expect(opts.refDedupe).toBeUndefined();
+      });
+
+      it("a duplicate-suspect capture is recorded (the request settles) and the operators are alerted once", async () => {
+        pendingRequest();
+        mockInvoices.recordStandalonePayment.mockImplementation(async (_dto: any, opts: any) => {
+          opts.capturedExternally.suspects.push({
+            paymentIds: ["pay-2"],
+            invoiceId: "inv-1",
+            duplicateOfPaymentId: "pay-1",
+          });
+          return { paymentGroupId: "pg-1", excess: 0 };
+        });
+        const result = await service.settleByPaymentIntent(piSucceededEvent() as any);
+        expect(result).toEqual({ handled: true });
+        expect(buyerPaymentRequest.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ status: "SETTLED" }) }),
+        );
+        expect(mockReview.flagDuplicateSuspect).toHaveBeenCalledTimes(1);
+        expect(mockReview.flagDuplicateSuspect).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tenantId: "tenant-1",
+            paymentIntentId: "pi_123",
+            invoiceId: "inv-1",
+            duplicateOfPaymentId: "pay-1",
+          }),
+        );
+      });
+
+      it("a failing alert never fails the settlement (the audit row inside the payment transaction is the durable record)", async () => {
+        pendingRequest();
+        mockInvoices.recordStandalonePayment.mockImplementation(async (_dto: any, opts: any) => {
+          opts.capturedExternally.suspects.push({
+            paymentIds: ["pay-2"],
+            invoiceId: "inv-1",
+            duplicateOfPaymentId: "pay-1",
+          });
+          return { paymentGroupId: "pg-1", excess: 0 };
+        });
+        mockReview.flagDuplicateSuspect.mockRejectedValue(new Error("push down"));
+        await expect(service.settleByPaymentIntent(piSucceededEvent() as any)).resolves.toEqual({
+          handled: true,
+        });
+      });
+
+      it("M1: the same payment intent already recorded (a crash between the record and the SETTLED flip) flips to SETTLED and returns success", async () => {
+        pendingRequest();
+        const already = Object.assign(new Error("already recorded"), {
+          name: "PaymentAlreadyRecordedError",
+          paymentGroupId: "pg-old",
+        });
+        mockInvoices.recordStandalonePayment.mockRejectedValue(already);
+        await expect(service.settleByPaymentIntent(piSucceededEvent() as any)).resolves.toEqual({
+          handled: true,
+        });
+        expect(buyerPaymentRequest.updateMany).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ status: "SETTLED", paymentGroupId: "pg-old" }),
+          }),
+        );
+        expect(mockReview.flagDuplicateSuspect).not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -738,6 +839,40 @@ describe("PaymentRequestsService", () => {
       );
       expect(mockInvoices.recordStandalonePayment).not.toHaveBeenCalled();
       expect(buyerPaymentRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    describe("SA-837b: the approving staff member may record a duplicate reference anyway", () => {
+      const cash = {
+        id: "req-cash",
+        tenantId: "tenant-1",
+        customerId: "cust-1",
+        kind: "CASH",
+        status: "PENDING",
+        amount: 300,
+        reference: "receipt 7",
+        note: null,
+      };
+
+      it("threads the approving user's refDedupe (actor, role, recordAnyway) into recordStandalonePayment", async () => {
+        buyerPaymentRequest.findFirst.mockResolvedValue(cash);
+        prisma.invoice.findMany.mockResolvedValue([]);
+        mockInvoices.recordStandalonePayment.mockResolvedValue({
+          paymentGroupId: "pg-1",
+          excess: 300,
+        });
+        const refDedupe = { actor: "user-1", role: "OPERATOR", recordAnyway: true };
+        await (service as any).approve("req-cash", decidedBy, refDedupe);
+        expect(mockInvoices.recordStandalonePayment.mock.calls[0][1].refDedupe).toEqual(refDedupe);
+      });
+
+      it("a duplicate refusal leaves the request PENDING and propagates the 409 body", async () => {
+        buyerPaymentRequest.findFirst.mockResolvedValue(cash);
+        prisma.invoice.findMany.mockResolvedValue([]);
+        const conflict = new ConflictException({ code: "DUPLICATE_PAYMENT_REF" });
+        mockInvoices.recordStandalonePayment.mockRejectedValue(conflict);
+        await expect(service.approve("req-cash", decidedBy)).rejects.toBe(conflict);
+        expect(buyerPaymentRequest.updateMany).not.toHaveBeenCalled();
+      });
     });
 
     describe("row 615 — the claim and the link commit inside the payment transaction", () => {

@@ -333,6 +333,50 @@ describe("CounterSaleService.ring", () => {
       expect(createSale).not.toHaveBeenCalled();
     });
 
+    it("the kept walk-in RECORD named by customerId (dto.walkIn false) + ON_ACCOUNT is 400 WALK_IN_NO_ACCOUNT, nothing written", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-w", isWalkIn: true });
+      expect(await codeOf(service.ring(named({ method: "ON_ACCOUNT" }) as never, staff))).toBe(
+        "WALK_IN_NO_ACCOUNT",
+      );
+      expect(createSale).not.toHaveBeenCalled();
+    });
+
+    it("the kept walk-in RECORD holding open credit is refused 409 WALK_IN_OPEN_CREDIT BEFORE create, like dto.walkIn", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-w", isWalkIn: true });
+      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 4 }]);
+      expect(await codeOf(service.ring(named({ method: "CASH" }) as never, staff))).toBe(
+        "WALK_IN_OPEN_CREDIT",
+      );
+      expect(createSale).not.toHaveBeenCalled();
+    });
+
+    it("the kept walk-in RECORD gets the walk-in tender rule: CASH $20 on $50 is COUNTER_TENDER_SHORT from beforeWrite, nothing recorded", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-w", isWalkIn: true });
+      createSale.mockImplementation(async (_d: any, _u: any, sale: any) => {
+        await sale.beforeWrite?.({ total: 50 });
+        return { id: "inv-1", orderId: "ord-1", invoiceNumber: "INV-1" };
+      });
+      expect(
+        await codeOf(service.ring(named({ method: "CASH", amount: 20 }) as never, staff)),
+      ).toBe("COUNTER_TENDER_SHORT");
+      expect(recordPayment).not.toHaveBeenCalled();
+    });
+
+    it("the kept walk-in RECORD suppresses the INVOICE_SENT email, like dto.walkIn", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-w", isWalkIn: true });
+      await service.ring(named({ method: "CASH" }) as never, staff);
+      expect(createSale.mock.calls[0][2].suppressInvoiceNotify).toBe(true);
+      expect(typeof createSale.mock.calls[0][2].beforeWrite).toBe("function");
+    });
+
+    it("a normal account customer (isWalkIn false or null) may still ring ON_ACCOUNT", async () => {
+      for (const isWalkIn of [false, null]) {
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", isWalkIn });
+        await service.ring(named({ method: "ON_ACCOUNT" }) as never, staff);
+      }
+      expect(createSale).toHaveBeenCalledTimes(2);
+    });
+
     it("another tenant's customer id is a 404 (tenant-scoped lookup) before anything is created", async () => {
       prisma.customer.findFirst.mockResolvedValue(null);
       await expect(service.ring(named({ method: "CASH" }) as never, staff)).rejects.toMatchObject({
@@ -566,7 +610,7 @@ describe("CounterSaleService.ring", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 37.25 }),
-        { tillLockHeld: true },
+        { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
       );
       expect(r).toMatchObject({
         invoiceId: "inv-1",
@@ -596,7 +640,7 @@ describe("CounterSaleService.ring", () => {
           reference: undefined,
           paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
-        { tillLockHeld: true },
+        { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
       );
       expect(r).toEqual({
         orderId: "ord-1",
@@ -625,7 +669,7 @@ describe("CounterSaleService.ring", () => {
           reference: "auth-77",
           paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
-        { tillLockHeld: true },
+        { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
       );
       expect(r.change).toBeUndefined();
       expect(r.balanceDue).toBe(0);
@@ -638,6 +682,117 @@ describe("CounterSaleService.ring", () => {
       expect(createSale).not.toHaveBeenCalled();
     });
 
+    describe("post-dated check (interim guard: a check dated after the TENANT's today is never tendered)", () => {
+      const FAKE_ALL_BUT_DATE = [
+        "hrtime",
+        "nextTick",
+        "performance",
+        "queueMicrotask",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        "requestIdleCallback",
+        "cancelIdleCallback",
+        "setImmediate",
+        "clearImmediate",
+        "setInterval",
+        "clearInterval",
+        "setTimeout",
+        "clearTimeout",
+      ] as never;
+      const at = (iso: string, timezone: string | null) => {
+        jest.useFakeTimers({ now: new Date(iso), doNotFake: FAKE_ALL_BUT_DATE });
+        prisma.tenantConfig.findUnique.mockResolvedValue({
+          creditAutoApplyOnSend: true,
+          timezone,
+        });
+      };
+      afterEach(() => jest.useRealTimers());
+      const check = (checkDate?: string) =>
+        named({ method: "CHECK", reference: "1042", ...(checkDate ? { checkDate } : {}) });
+
+      it("tenant tomorrow: 400 COUNTER_CHECK_POSTDATED and NOTHING is written", async () => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const e = await errorOf(service.ring(check("2026-10-23") as never, staff));
+        expect(e).toBeInstanceOf(BadRequestException);
+        expect(e.getResponse().code).toBe("COUNTER_CHECK_POSTDATED");
+        expect(createSale).not.toHaveBeenCalled();
+        expect(recordPayment).not.toHaveBeenCalled();
+        expect(walkIn.getOrCreateWalkIn).not.toHaveBeenCalled();
+        expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      });
+
+      it("a walk-in sale with a post-dated check is refused the same way, before the walk-in row exists", async () => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const dto = {
+          walkIn: true,
+          items: [item],
+          payment: { method: "CHECK", reference: "7", checkDate: "2026-12-01" },
+        };
+        expect(await codeOf(service.ring(dto as never, staff))).toBe("COUNTER_CHECK_POSTDATED");
+        expect(walkIn.getOrCreateWalkIn).not.toHaveBeenCalled();
+        expect(createSale).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ["today", "2026-10-22"],
+        ["yesterday", "2026-10-21"],
+        ["a year ago", "2025-10-22"],
+      ])("a check dated %s is tendered as before (201, paid)", async (_n, d) => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const r = await service.ring(check(d) as never, staff);
+        expect(createSale).toHaveBeenCalledTimes(1);
+        expect(recordPayment).toHaveBeenCalledWith(
+          "inv-1",
+          expect.objectContaining({ method: "CHECK", reference: "1042", amount: 37.25 }),
+          { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
+        );
+        expect(r.paymentRecorded).toBe(true);
+      });
+
+      it("no checkDate (older client): unchanged and tendered", async () => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const r = await service.ring(check() as never, staff);
+        expect(r.paymentRecorded).toBe(true);
+      });
+
+      it("a future checkDate on a non-check method is ignored (CASH is not a dated instrument)", async () => {
+        at("2026-10-22T15:00:00Z", "UTC");
+        const r = await service.ring(
+          named({ method: "CASH", checkDate: "2026-12-01" }) as never,
+          staff,
+        );
+        expect(r.paymentRecorded).toBe(true);
+      });
+
+      it("west of UTC: it is already the 22nd in UTC but the tenant's day is the 21st, so the 22nd is TOMORROW (refused) and the 21st is today (tendered)", async () => {
+        at("2026-10-22T03:00:00Z", "America/Los_Angeles");
+        expect(await codeOf(service.ring(check("2026-10-22") as never, staff))).toBe(
+          "COUNTER_CHECK_POSTDATED",
+        );
+        expect(createSale).not.toHaveBeenCalled();
+        const r = await service.ring(check("2026-10-21") as never, staff);
+        expect(r.paymentRecorded).toBe(true);
+      });
+
+      it("east of UTC: UTC is still the 22nd but the tenant's day is the 23rd, so the 23rd is today (NO false refusal) and the 24th is refused", async () => {
+        at("2026-10-22T20:00:00Z", "Pacific/Auckland");
+        const r = await service.ring(check("2026-10-23") as never, staff);
+        expect(r.paymentRecorded).toBe(true);
+        createSale.mockClear();
+        expect(await codeOf(service.ring(check("2026-10-24") as never, staff))).toBe(
+          "COUNTER_CHECK_POSTDATED",
+        );
+        expect(createSale).not.toHaveBeenCalled();
+      });
+
+      it("a tenant with no configured zone judges its day in UTC", async () => {
+        at("2026-10-22T23:30:00Z", null);
+        expect(await codeOf(service.ring(check("2026-10-23") as never, staff))).toBe(
+          "COUNTER_CHECK_POSTDATED",
+        );
+      });
+    });
+
     it("CASH 20 on a 37.25 sale: a PARTIAL payment of 20, paid 20, balanceDue read back from storage, no change", async () => {
       const r = await service.ring(named({ method: "CASH", amount: 20 }) as never, staff);
       expect(recordPayment).toHaveBeenCalledWith(
@@ -648,7 +803,7 @@ describe("CounterSaleService.ring", () => {
           reference: undefined,
           paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
-        { tillLockHeld: true },
+        { tillLockHeld: true, paymentAttempt: expect.anything(), refDedupe: expect.anything() },
       );
       expect(r).toMatchObject({
         paid: 20,
@@ -687,6 +842,8 @@ describe("CounterSaleService.ring", () => {
       const r = await service.ring(named({ method: "CASH", amount: 30 }) as never, staff);
       expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 30 }), {
         tillLockHeld: true,
+        paymentAttempt: expect.anything(),
+        refDedupe: expect.anything(),
       });
       expect(r).toMatchObject({ total: 40, paid: 40, balanceDue: 0, paymentRecorded: true });
       // a 30 cash tender on the 30 left after the credit: nothing handed back
@@ -887,6 +1044,8 @@ describe("CounterSaleService.ring", () => {
       expect(recordPayment).toHaveBeenCalledTimes(1);
       expect(recordPayment).toHaveBeenCalledWith("inv-2", expect.objectContaining({ amount: 20 }), {
         tillLockHeld: true,
+        paymentAttempt: expect.anything(),
+        refDedupe: expect.anything(),
       });
       expect(second).toMatchObject({
         total: 50,
@@ -896,6 +1055,19 @@ describe("CounterSaleService.ring", () => {
         replayed: true,
       });
       expect(invoices[0].payments).toHaveLength(1); // sibling 1 is never charged twice
+      // Row 498: the resumed call's attempt is seeded with the sale's stored tender rows, so the shortfall payment
+      // never collides with sibling 1's payment under the same reference.
+      expect([...recordPayment.mock.calls[0][2].paymentAttempt.ids]).toContain("pay-inv-1");
+    });
+
+    it("row 498: the sibling payments of one sale share ONE payment attempt (they never collide on the reference)", async () => {
+      invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 30, [], 2)];
+      recordPayment.mockImplementation(async (invoiceId: string) => ({ id: invoiceId }));
+      await service.ring(named({ method: "CASH", amount: 60 }) as never, staff, "k");
+      expect(recordPayment).toHaveBeenCalledTimes(2);
+      const [a, b] = recordPayment.mock.calls.map((c) => c[2].paymentAttempt);
+      expect(a).toBeDefined();
+      expect(a).toBe(b);
     });
 
     it("a replay whose planned allocation is already fully stored records nothing", async () => {
@@ -1662,5 +1834,115 @@ describe("CounterSaleService.ring", () => {
         expect(a.include.items.select.id).toBe(true);
       }
     });
+  });
+
+  // ── SA-837b: the till's escape from a duplicate payment reference ─────────────────────────────
+  describe("SA-837b: DUPLICATE_PAYMENT_REF reaches the till, and Record anyway resends through the generic flag", () => {
+    const existingPayment = {
+      id: "pay-old",
+      paymentNumber: "PAY-A-0001",
+      paidAt: "2026-10-01T12:00:00.000Z",
+      amount: 37.25,
+      invoiceId: "inv-9",
+      invoiceNumber: "INV-0009",
+    };
+    const dupConflict = () =>
+      new ConflictException({
+        code: "DUPLICATE_PAYMENT_REF",
+        message: "dup",
+        existingPayment,
+      });
+
+    it("a refused duplicate keeps the sale unpaid and carries the cause + the existing payment through the response", async () => {
+      recordPayment.mockRejectedValueOnce(dupConflict());
+      const r = await service.ring(
+        named({ method: "CARD", reference: "4242" }) as never,
+        staff,
+        "k",
+      );
+      expect(r).toMatchObject({
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+        paymentCauseCode: "DUPLICATE_PAYMENT_REF",
+        existingPayment,
+      });
+    });
+
+    it("any other tender failure carries no duplicate cause", async () => {
+      recordPayment.mockRejectedValueOnce(new BadRequestException("nope"));
+      const r: any = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(r.paymentRecorded).toBe(false);
+      expect(r.paymentCauseCode).toBeUndefined();
+      expect(r.existingPayment).toBeUndefined();
+    });
+
+    it("the staff cashier's payment.recordAnyway is the generic refDedupe flag on every recordPayment (actor + role from the signed-in user)", async () => {
+      await service.ring(
+        named({ method: "CARD", reference: "4242", recordAnyway: true }) as never,
+        staff,
+        "k",
+      );
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        expect.any(Object),
+        expect.objectContaining({
+          refDedupe: { actor: "op-1", role: "OPERATOR", recordAnyway: true },
+        }),
+      );
+    });
+
+    it("without the flag the call still names the user, so the writer can judge the role", async () => {
+      await service.ring(named({ method: "CARD", reference: "4242" }) as never, staff, "k");
+      expect(recordPayment.mock.calls[0][2].refDedupe).toEqual({
+        actor: "op-1",
+        role: "OPERATOR",
+        recordAnyway: false,
+      });
+    });
+  });
+});
+
+describe("CounterSaleService.ring: S1 credit gate sees only what stays owed", () => {
+  it("hands createSale a creditPaidNow that clears CASH/CARD at the server total and nothing for ON_ACCOUNT; a same-day CHECK counts like cash", async () => {
+    const paidNow = async (payment: any) => {
+      const prisma = createMockPrisma();
+      const createSale = jest.fn(async () => ({ id: "inv-1", orderId: "ord-1" }));
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([{ id: "p1" }]);
+      prisma.order.findFirst.mockResolvedValue({ id: "ord-1", orderNumber: "ORD-1" });
+      prisma.invoice.findMany.mockResolvedValue([]);
+      const mod = await Test.createTestingModule({
+        providers: [
+          CounterSaleService,
+          { provide: OrdersService, useValue: { createSale } },
+          { provide: InvoicesService, useValue: { recordPayment: jest.fn() } },
+          { provide: WalkInCustomerService, useValue: {} },
+          { provide: PrismaService, useValue: prisma },
+          {
+            provide: FULFILMENT_CAPABILITY_READER,
+            useValue: { get: jest.fn().mockResolvedValue(cap("optional")) },
+          },
+          { provide: AuditService, useValue: { log: jest.fn() } },
+        ],
+      }).compile();
+      await mod
+        .get(CounterSaleService)
+        .ring({ customerId: "cust-1", items: [item], payment } as never, staff)
+        .catch(() => undefined);
+      const sale = (createSale.mock.calls[0] as any[])[2];
+      expect(typeof sale.creditPaidNow).toBe("function");
+      return sale.creditPaidNow(50) as number;
+    };
+    expect(await paidNow({ method: "CASH", amount: 50 })).toBe(50);
+    expect(await paidNow({ method: "CARD", amount: 50 })).toBe(50);
+    expect(await paidNow({ method: "CASH", amount: 20 })).toBe(20);
+    expect(await paidNow({ method: "CASH", amount: 100 })).toBe(50);
+    expect(await paidNow({ method: "CHECK", amount: 50, reference: "12" })).toBe(50);
+    expect(
+      await paidNow({ method: "CHECK", amount: 50, reference: "12", checkDate: "2000-01-01" }),
+    ).toBe(50);
+    // A post-dated CHECK never reaches createSale since the till guard (PR-A) refuses it first; its 0 is
+    // pinned on counterCreditPaidNow itself (credit-limit-counter-tender.spec.ts).
+    expect(await paidNow({ method: "ON_ACCOUNT" })).toBe(0);
   });
 });

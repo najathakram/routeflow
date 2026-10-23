@@ -1,3 +1,4 @@
+import type { PaymentMethod } from "@prisma/client";
 /**
  * DB twin for SA-824 (row 661 step 1): a customer payment submitted twice with the same
  * `Idempotency-Key` records ONE payment set, against real Postgres.
@@ -370,11 +371,13 @@ describeDb(
       expect(after.keys).toHaveLength(1);
       expect(after.keys[0]).toMatchObject({ scope: "INVOICE_PAYMENT", state: "COMPLETED" });
 
-      // A throw after the claim (inside withAfterCommit's transaction) rolls the key and the payment back.
+      // A throw after the claim (inside withAfterCommit's transaction) rolls the key and the payment back. A NEW key
+      // with the SAME method, reference and amount is a genuine duplicate (row 498: 409 before the injected throw),
+      // so this second payment carries its own reference.
       const failKey = `inv-fail-${randomUUID()}`;
       await expect(
         asTenant(() =>
-          invoicesA.recordPayment(invoice.id, body, {
+          invoicesA.recordPayment(invoice.id, { ...body, reference: "receipt 10" }, {
             idempotencyKey: failKey,
             inTx: async () => {
               throw new Error("injected failure after the claim");
@@ -406,7 +409,7 @@ describeDb(
       const customersA = mk(prismaA);
       const customersB = mk(prismaB);
       const key = `adv-race-${randomUUID()}`;
-      const body = { amount: 75, method: "CASH", reference: "adv 1" };
+      const body = { amount: 75, method: "CASH" as PaymentMethod, reference: "adv 1" };
       let winnerInTx!: () => void;
       const winnerHoldsKey = new Promise<void>((r) => (winnerInTx = r));
       let releasedAt = 0;

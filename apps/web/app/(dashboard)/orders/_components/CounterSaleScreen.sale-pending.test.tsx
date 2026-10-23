@@ -1,5 +1,6 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
+import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -114,7 +115,7 @@ const itemCount = () =>
 async function startPendingSale() {
   const post = deferred<typeof SALE>();
   sendSale.mockReturnValue(post.promise);
-  renderWithProviders(<CounterSaleScreen />);
+  renderTill(<CounterSaleScreen />);
   await scan("COLA", "Cola");
   fireEvent.click(btn("Exact"));
   fireEvent.click(btn("Complete & show receipt"));
@@ -141,7 +142,7 @@ describe("counter sale: nothing changes while the sale request is in flight", ()
   it("Ship instead is disabled while a sale is completing (B1228), 'next sale' with a customer too", async () => {
     const post = deferred<typeof SALE>();
     sendSale.mockReturnValue(post.promise);
-    renderWithProviders(<CounterSaleScreen />);
+    renderTill(<CounterSaleScreen />);
     await scan("COLA", "Cola");
     fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
     fireEvent.click(screen.getByRole("option", { name: "Acme Co" }));

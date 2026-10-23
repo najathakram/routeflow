@@ -21,6 +21,7 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { refDedupeFromRequest } from "./payment-ref-dedupe";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { InvoicesService } from "./invoices.service";
 import { optionalIdempotencyKey } from "../orders/counter-sale/required-idempotency-key";
@@ -114,6 +115,7 @@ export class InvoicesController {
     return this.invoicesService.recordStandalonePayment(dto, {
       actor: user?.sub ?? null,
       idempotencyKey: optionalIdempotencyKey(rawIdempotencyKey),
+      refDedupe: refDedupeFromRequest(user, dto), // row 498: the staff "record anyway" flag
     });
   }
 
@@ -277,12 +279,13 @@ export class InvoicesController {
   recordPayment(
     @Param("id") id: string,
     @Body() dto: RecordInvoicePaymentDto,
+    @CurrentUser() user: JwtPayload,
     @Headers("idempotency-key") rawIdempotencyKey?: string, // SA-824: optional, as above
   ) {
-    const idempotencyKey = optionalIdempotencyKey(rawIdempotencyKey);
-    return idempotencyKey
-      ? this.invoicesService.recordPayment(id, dto, { idempotencyKey })
-      : this.invoicesService.recordPayment(id, dto);
+    return this.invoicesService.recordPayment(id, dto, {
+      idempotencyKey: optionalIdempotencyKey(rawIdempotencyKey),
+      refDedupe: refDedupeFromRequest(user, dto), // row 498: the staff "record anyway" flag
+    });
   }
 
   @Patch(":id/payments/:paymentId/void")

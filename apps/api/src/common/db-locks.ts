@@ -119,6 +119,7 @@ export const LOCK_FAMILIES = [
   "counter-park",
   "stock-count",
   "stock-count-product",
+  "payment-ref",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 /**
@@ -230,6 +231,13 @@ const POOL_MAX: Record<string, number | undefined> = {
   // across every tenant; a committer that finds no slot gets the retryable 503 LOCK_UNAVAILABLE, and a
   // second commit of the same session loses the try-lock at once (409 STOCK_COUNT_COMMITTING).
   "stock-count": 4,
+  // `payment-ref` (row 498, SA-837): every InvoicePayment writer that carries a typed reference serialises per
+  // `tenant:method:normalisedRef` around its transaction, so two NEW attempts with the same reference cannot both
+  // pass the duplicate check. Staff/counter request-path and short (one payment transaction); a waiter pins a slot,
+  // bounded by its 10 s wait (a retryable 503). LOCK ORDER: the customer merge lock ("order-merge"), when a path
+  // holds it, is ALWAYS taken BEFORE this lock; nothing under this lock takes it (pinned by
+  // invoices/payment-ref-writers.census.spec.ts).
+  "payment-ref": 8,
   // `stock-count-product` (SA-767 r-note 5 SA-3) opens no lock pool: it is the one-open-count-per-product lock,
   // a transaction-scoped `pg_advisory_xact_lock` on the adder's own Prisma connection ({@link advisoryXactLock}),
   // keyed `<tenantId>:<productId>`. It is listed so the family name is reserved in the one namespace.

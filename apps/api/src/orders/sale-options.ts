@@ -4,6 +4,7 @@ import type { CreateOrderOptions, ReplayedOrder } from "./order-create-options";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { CreateSaleDto } from "./dto/create-sale.dto";
 import { parseOrderDate } from "./order-parsers";
+import { calendarDateFromIso, startOfCalendarDay } from "../common/calendar-date";
 
 /**
  * INTERNAL options of `OrdersService.createSale` (SA-655): the counter sale threads these through the
@@ -12,6 +13,7 @@ import { parseOrderDate } from "./order-parsers";
  *  - `counterSale` (SA-672e): stamp Order.counterSale (only the counter POST sets it).
  *  - `suppressInvoiceNotify`: send the invoice without the INVOICE_SENT message (the walk-in has no mailbox).
  *  - `priceEditAllowed` (POS-5): create()'s option of the same name (counter sale only; absent for /sell).
+ *  - `creditPaidNow` (S1): create()'s option of the same name (counter sale only; absent for /sell).
  *  - `onReplay`: called when `dto.idempotencyKey` replayed an earlier sale; createSale then RESUMES it.
  */
 export interface SaleOptions {
@@ -22,6 +24,8 @@ export interface SaleOptions {
   onReplay?: (order: ReplayedOrder) => void;
   /** B1209: create()'s `beforeWrite` (the server total, before anything is written). */
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;
+  /** S1: create()'s `creditPaidNow` (the credit gate counts only what stays owed after this tender). */
+  creditPaidNow?: (total: number) => number;
 }
 
 /**
@@ -29,32 +33,32 @@ export interface SaleOptions {
  * present — past/today is a (back)dated delivered sale, a future date is a scheduled deliver-later
  * order carrying that requested date. `deliveredNow` is still honoured alone for older clients; when
  * both are sent, `deliveredOn` wins. Extracted verbatim from createSale.
+ *
+ * Row 735b: "today" is the TENANT's calendar day in `zone` (`TenantConfig.timezone`, UTC when null/invalid - the
+ * `calendar-date.ts` contract and the same helpers as the past-date guard), not the UTC day. The day the picker
+ * sent is read by its literal first ten characters (the house rule) and compared as a day: later than the tenant's
+ * today is a scheduled order, today and earlier a delivered sale. `now` is the clock (tests).
  */
-export function resolveSaleDelivery(dto: CreateSaleDto, user: JwtPayload) {
+export function resolveSaleDelivery(
+  dto: CreateSaleDto,
+  user: JwtPayload,
+  zone?: string | null,
+  now: Date = new Date(),
+) {
   let deliveredNow = dto.deliveredNow;
   let deliveredAt = parseOrderDate(dto.orderDate, user.role);
   let requestedDeliveryDate = dto.requestedDeliveryDate;
   if (dto.deliveredOn != null) {
     const parsed = new Date(dto.deliveredOn);
     if (Number.isNaN(parsed.getTime())) throw new BadRequestException("Invalid delivery date");
-    const now = new Date();
-    const endOfToday = Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      23,
-      59,
-      59,
-      999,
-    );
-    if (parsed.getTime() > endOfToday) {
+    if (dto.deliveredOn.slice(0, 10) > calendarDateFromIso(startOfCalendarDay(now, zone))) {
       deliveredNow = false;
       requestedDeliveryDate = dto.deliveredOn;
     } else {
       // Past/today: the sale happened on that day, so it goes through the same
       // staff-only gate and 2-year floor backdating has always had.
       deliveredNow = true;
-      deliveredAt = parseOrderDate(dto.deliveredOn, user.role);
+      deliveredAt = parseOrderDate(dto.deliveredOn, user.role, { zone, now });
     }
   }
   return { deliveredNow, deliveredAt, requestedDeliveryDate };
@@ -80,6 +84,7 @@ export function saleCreateOptions(
     ...(sale.counterSale ? { counterSale: true } : {}),
     ...(sale.priceEditAllowed !== undefined ? { priceEditAllowed: sale.priceEditAllowed } : {}),
     ...(sale.beforeWrite ? { beforeWrite: sale.beforeWrite } : {}),
+    ...(sale.creditPaidNow ? { creditPaidNow: sale.creditPaidNow } : {}),
     ...(idempotencyKey
       ? {
           onReplay: (order) => {

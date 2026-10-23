@@ -11,6 +11,7 @@ import type {
 } from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
 import { fmtCurrency } from "../utils/format";
+import { duplicateRefPrompt } from "./duplicate-payment-ref";
 
 import { isPosOrder } from "./order-status-flow";
 
@@ -349,6 +350,8 @@ const PICKUP_COPY = {
   walkInOnAccount:
     "A walk-in customer can't be charged on account. Pick a customer or another payment method.",
   checkNumber: "Enter the check number.",
+  /** Mirrors web COUNTER_CHECK_POSTDATED_COPY. No mobile path sends a checkDate yet (the server judges one only when sent); mapped so the day one does, the refusal reads right. */
+  checkPostdated: "Post-dated check: put this sale on account and record the check when it clears.",
 } as const;
 
 export function posErrorCode(err: unknown): string | undefined {
@@ -377,6 +380,8 @@ export function pickupCompleteErrorCopy(err: unknown): string {
       return PICKUP_COPY.walkInOnAccount;
     case API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED:
       return PICKUP_COPY.checkNumber;
+    case API_ERROR_CODES.COUNTER_CHECK_POSTDATED:
+      return PICKUP_COPY.checkPostdated;
     default:
       return PICKUP_COPY.generic;
   }
@@ -529,6 +534,15 @@ export function posConfirmLabel(posMode: boolean, saving: boolean): string {
 
 export type PickupDecision =
   | { kind: "retry-tender"; releaseKey: false; owed: number | null; message: string }
+  /** SA-837b item 3: the payment was refused as a duplicate reference; same key, the shared sentence, staff may record anyway. */
+  | {
+      kind: "duplicate-ref";
+      releaseKey: false;
+      owed: number | null;
+      title: string;
+      message: string;
+      recordAnywayLabel: string | null;
+    }
   | { kind: "done"; releaseKey: true; message: string };
 
 /**
@@ -537,8 +551,32 @@ export type PickupDecision =
  * SAME Idempotency-Key (so the retry adds the payment to this hand-over) owing `balanceDue`. The key is
  * released only when the payment was recorded (or none was requested). Mirrors web's PickupCompleteDialog.
  */
-export function decidePickupResponse(res: PickupCompleteResponse): PickupDecision {
+export function decidePickupResponse(
+  res: PickupCompleteResponse,
+  role?: string | null,
+): PickupDecision {
   const code = res.paymentRecorded ? undefined : res.paymentErrorCode;
+  if (!res.paymentRecorded && res.paymentCauseCode === API_ERROR_CODES.DUPLICATE_PAYMENT_REF) {
+    const prompt = duplicateRefPrompt(
+      {
+        response: {
+          status: 409,
+          data: { code: res.paymentCauseCode, existingPayment: res.existingPayment },
+        },
+      },
+      role,
+    );
+    if (prompt) {
+      return {
+        kind: "duplicate-ref",
+        releaseKey: false,
+        owed: res.balanceDue > 0 ? res.balanceDue : null,
+        title: prompt.title,
+        message: prompt.message,
+        recordAnywayLabel: prompt.recordAnywayLabel,
+      };
+    }
+  }
   if (
     code === API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED ||
     code === API_ERROR_CODES.COUNTER_TENDER_SHORT
@@ -559,4 +597,9 @@ export function decidePickupResponse(res: PickupCompleteResponse): PickupDecisio
         : "Handed over"
       : "Handed over, but the payment wasn't recorded. Record it on the invoice.",
   };
+}
+
+/** The staff "Record anyway" resend of a hand-over: the same body with `payment.recordAnyway: true` (same Idempotency-Key). */
+export function withPickupRecordAnyway(body: PickupCompleteRequest): PickupCompleteRequest {
+  return body.payment ? { ...body, payment: { ...body.payment, recordAnyway: true } } : body;
 }

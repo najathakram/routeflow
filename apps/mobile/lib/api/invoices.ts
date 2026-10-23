@@ -137,6 +137,8 @@ export interface RecordPaymentDto {
   settledAt?: string | null;
   /** SA-824: the screen's Idempotency-Key holder (never sent in the body). */
   submitKey?: PaymentKeyHolder;
+  /** Row 498: the staff "Record anyway" resend of a payment refused 409 DUPLICATE_PAYMENT_REF. */
+  recordAnyway?: boolean;
 }
 
 export function useRecordInvoicePayment() {

@@ -853,20 +853,19 @@ export async function appendEvents(
     bugIds = new Set(),
     _beforePush,
     afterCommit,
+    lockHeld = false, // the caller already holds the specs lock (runStatusSync plans + appends in one hold)
   } = {},
 ) {
   if (!events || events.length === 0)
     return { events: [], pushed: false, attempts: 0, warnings: [], refused: [] };
-  return withSpecsLock(
-    async () =>
-      doAppend(events, {
-        dir,
-        push,
-        retries,
-        bugIds,
-        _beforePush,
-        afterCommit: await viewsHookFor(dir, afterCommit),
-      }),
-    { home },
-  );
+  const go = async () =>
+    doAppend(events, {
+      dir,
+      push,
+      retries,
+      bugIds,
+      _beforePush,
+      afterCommit: await viewsHookFor(dir, afterCommit),
+    });
+  return lockHeld ? go() : withSpecsLock(go, { home });
 }

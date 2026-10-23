@@ -78,6 +78,7 @@ import { keptSaleHref } from "@/lib/kept-draft-invoice";
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
+import { CounterPaymentNotRecorded } from "./CounterPaymentNotRecorded";
 import { CounterReceiptBody } from "./CounterReceiptBody";
 import { CounterCustomerCredit } from "./CounterCustomerCredit";
 import { CounterGateOffline } from "./CounterGateOffline";
@@ -117,6 +118,10 @@ import {
   toSaleItem,
 } from "./counter-sale-line-edit";
 import { useCounterSaleScan } from "./useCounterSaleScan";
+import { CounterScanFeedback } from "./CounterScanFeedback";
+import { CounterBuyerChoice } from "./CounterBuyerChoice";
+import { BUYER_REASON_COPY, kindOfPick } from "./counter-buyer-choice";
+import { useCounterBuyerChoice } from "./useCounterBuyerChoice";
 import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
@@ -199,7 +204,10 @@ export function CounterSaleScreen() {
   }, []);
   const awaitingCustomerRef = React.useRef(false);
 
-  const [customer, setCustomer] = React.useState<PickedCustomer | null>(null); // null = Walk-in customer
+  const [customer, setCustomer] = React.useState<PickedCustomer | null>(null); // null = Walk-in customer (once chosen)
+  // S5: null is NOT a walk-in until the clerk says so. Complete waits on this.
+  const buyerChoice = useCounterBuyerChoice();
+  const restoreBuyer = buyerChoice.restore;
   const [customerSearch, setCustomerSearch] = React.useState("");
   const [lines, setLines] = React.useState<SaleLine[]>([]);
   const [lastSale, setLastSale] = useLastSaleNote(lines.length); // CQ-17: the order "Complete & next" just finished
@@ -234,11 +242,12 @@ export function CounterSaleScreen() {
     estimateRef.current = held.estimate ?? { total: 0, change: 0 };
     setLines(held.lines as SaleLine[]);
     setCustomer((held.customer as PickedCustomer | null) ?? null);
+    restoreBuyer((held.customer as PickedCustomer | null) ?? null, true); // that sale was already sent: its buyer was chosen
     setMethod(held.method as CounterSalePaymentMethod);
     setTendered(held.tendered ?? "");
     setReference(held.reference ?? "");
     setOutcomeUnknown(true);
-  }, [heldKey]);
+  }, [heldKey, restoreBuyer]);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
   // While a walk-in sale waits for the customer to ship to, the customer field keeps focus instead.
   const { refocus, focusCustomerFind, refocusFromActive } = useCounterScanFocus({
@@ -259,12 +268,20 @@ export function CounterSaleScreen() {
   const liveCart = useCounterLiveCart({
     storeKey: liveKey,
     heldKey,
-    snapshot: { lines, customer, method, tendered, reference },
+    snapshot: {
+      lines,
+      customer,
+      method,
+      tendered,
+      reference,
+      walkIn: buyerChoice.kind === "walk-in",
+    },
     suspended: createSale.isPending || outcomeUnknown || receipt !== null,
     canRestore: lines.length === 0 && !receipt,
     onRestore: (snap) => {
       setLines(snap.lines as SaleLine[]);
       setCustomer((snap.customer as PickedCustomer | null) ?? null);
+      buyerChoice.restore((snap.customer as PickedCustomer | null) ?? null, snap.walkIn === true);
       setMethod(snap.method as CounterSalePaymentMethod);
       // The cash is not restored: prices may have moved since it was tapped, so it is entered against today's total.
       setReference(snap.reference);
@@ -272,6 +289,7 @@ export function CounterSaleScreen() {
     onClearedElsewhere: () => {
       setLines([]);
       setCustomer(null);
+      buyerChoice.reset();
       setReference("");
     },
   });
@@ -445,6 +463,8 @@ export function CounterSaleScreen() {
   const pickCustomer = (c: PickedCustomer) => {
     if (lineLocked || saleInFlight()) return;
     setCustomer(c);
+    if (kindOfPick(c) === "walk-in") buyerChoice.chooseWalkIn();
+    else buyerChoice.chooseCustomer();
     setCustomerSearch("");
     refocus();
   };
@@ -734,6 +754,7 @@ export function CounterSaleScreen() {
     dropUndo();
     setLastSale(null);
     setCustomer(null);
+    buyerChoice.reset();
     setCustomerSearch("");
     setLines([]);
     setScanText("");
@@ -763,6 +784,7 @@ export function CounterSaleScreen() {
     resetSale();
     setLines(p.lines as SaleLine[]);
     setCustomer(p.customer as PickedCustomer | null);
+    buyerChoice.restore(p.customer as PickedCustomer | null, p.walkIn === true);
     setMethod(p.method as CounterSalePaymentMethod);
     setTendered(p.tendered);
     setReference(p.reference);
@@ -932,9 +954,22 @@ export function CounterSaleScreen() {
     } else setReceipt(res);
   };
 
+  // S5: why Complete is off (linked from both buttons), next to the read-only hint when that shows too
+  const completeDescribedBy =
+    [
+      readOnlyGate.readOnly ? readOnlyGate.hintId : null,
+      buyerChoice.chosen ? null : "counter-buyer-reason",
+    ]
+      .filter(Boolean)
+      .join(" ") || undefined;
+
   const completeSale = async (next: boolean, retry = false) => {
     if (submittingRef.current) return; // a double Enter / click is one sale
     if (parkBusyRef.current) return; // a park / resume request is still running
+    if (!buyerChoice.chosen && !attemptRef.current) {
+      setError(BUYER_REASON_COPY); // S5: the Enter key in the tender field gets the same answer as the disabled buttons
+      return;
+    }
     if (shipRunningRef.current || createDraft.isPending) return; // a ship hand-off is saving this cart
     // A scan still resolving (or waiting on Retry / the picker) is not on the cart yet: never post without it.
     if (!retry && (scanBusyRef.current || repriceBlockedRef.current)) return;
@@ -1075,6 +1110,7 @@ export function CounterSaleScreen() {
           customerName={receiptCustomerName(customer)}
           headingRef={receiptHeadingRef}
         />
+        <CounterPaymentNotRecorded receipt={receipt} onReceipt={setReceipt} />
         <CounterReceiptActions
           orderId={receipt.orderId}
           customer={customer}
@@ -1100,7 +1136,14 @@ export function CounterSaleScreen() {
         <h1 className="text-xl font-semibold">Counter sale</h1>
         <CounterTodaysSales />
         <ParkedSales
-          cart={{ lines, customer, method, tendered, reference }}
+          cart={{
+            lines,
+            customer,
+            method,
+            tendered,
+            reference,
+            walkIn: buyerChoice.kind === "walk-in",
+          }}
           blocked={
             locked ||
             salePosting ||
@@ -1134,32 +1177,24 @@ export function CounterSaleScreen() {
         data-testid="counter-sale-columns"
       >
         <div className="min-w-0 space-y-4" data-testid="counter-cart-column">
-          {/* customer: Walk-in by default */}
+          {/* S5: who's buying? Walk-in is one explicit tap, never the default */}
           <section aria-label="Customer" className="space-y-2">
-            <div className="flex items-center gap-2 text-sm">
-              <span className="font-medium">
-                {customer ? customer.businessName : "Walk-in customer"}
-              </span>
-              {customer ? (
-                <button
-                  type="button"
-                  className="min-h-[44px] text-brand-700 underline"
-                  disabled={lineLocked}
-                  onClick={() => {
-                    if (lineLocked || saleInFlight()) return;
-                    setCustomer(null);
-                  }}
-                >
-                  Use Walk-in customer
-                </button>
-              ) : null}
-            </div>
+            <CounterBuyerChoice
+              kind={buyerChoice.kind}
+              customerName={customer?.businessName}
+              disabled={lineLocked}
+              onWalkIn={() => {
+                if (lineLocked || saleInFlight()) return;
+                setCustomer(null);
+                buyerChoice.chooseWalkIn();
+              }}
+            />
             <input
               {...customerListbox.inputProps}
               ref={customerFindRef}
               aria-label="Find a customer"
               className="min-h-[44px] w-full rounded border px-3 py-2 text-sm"
-              placeholder="Find a customer (optional)"
+              placeholder="Find a customer"
               disabled={lineLocked}
               value={customerSearch}
               onChange={(e) => {
@@ -1240,6 +1275,7 @@ export function CounterSaleScreen() {
               onChange={(e) => {
                 if (lineLocked || saleInFlight()) return;
                 lastScanActivityRef.current = performance.now();
+                scan.dismissMessage(); // F05: a miss message goes at the next keystroke
                 setScanText(e.target.value);
               }}
               onKeyDown={(e) => {
@@ -1278,16 +1314,7 @@ export function CounterSaleScreen() {
           <p id="counter-scan-hint" className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
             Type a quantity first to multiply.
           </p>
-          {scanCue ? (
-            <p
-              role="status"
-              className="rounded bg-navy/5 px-2 py-1 text-sm font-medium"
-              data-testid="counter-scan-cue"
-            >
-              {scanCue}
-            </p>
-          ) : null}
-          {scan.message ? <p className="text-sm text-red-700">{scan.message}</p> : null}
+          <CounterScanFeedback miss={scan.message} cue={scanCue} added={scan.added} />
           {scan.failed ? (
             <div
               role="alert"
@@ -1720,13 +1747,24 @@ export function CounterSaleScreen() {
               </p>
             ) : null}
 
+            {!buyerChoice.chosen ? (
+              <p
+                id="counter-buyer-reason"
+                className="text-sm font-medium text-brand-700"
+                data-testid="counter-buyer-reason"
+              >
+                {BUYER_REASON_COPY}
+              </p>
+            ) : null}
+
             <div className="flex flex-wrap gap-2" data-testid="counter-checkout-actions">
               <Button
                 className="min-h-[44px]"
                 onClick={() => void completeSale(false)}
-                aria-describedby={readOnlyGate.readOnly ? readOnlyGate.hintId : undefined}
+                aria-describedby={completeDescribedBy}
                 disabled={
                   readOnlyGate.readOnly ||
+                  !buyerChoice.chosen ||
                   salePosting ||
                   createDraft.isPending ||
                   locked ||
@@ -1741,9 +1779,10 @@ export function CounterSaleScreen() {
                 className="min-h-[44px]"
                 variant="secondary"
                 onClick={() => void completeSale(true)}
-                aria-describedby={readOnlyGate.readOnly ? readOnlyGate.hintId : undefined}
+                aria-describedby={completeDescribedBy}
                 disabled={
                   readOnlyGate.readOnly ||
+                  !buyerChoice.chosen ||
                   salePosting ||
                   createDraft.isPending ||
                   locked ||
